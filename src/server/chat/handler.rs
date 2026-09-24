@@ -14,22 +14,26 @@ use super::structured::run_structured_loop;
 use super::types::ChatRequest;
 use super::ChatRunCtx;
 
+/// A message that opens by addressing someone: `@name body` (or the older
+/// `@@name body`). The name is a run of letters, digits, `_` or `-` in any
+/// script (`@银月`), ended by whitespace or a comma/colon — so `@src/main.rs`
+/// is never a name. Whether the name is an agent is the caller's lookup.
 pub(super) fn parse_explicit_target_prefix(message: &str) -> Option<(&str, &str)> {
     let rest = message.strip_prefix('@')?;
-    let space_idx = rest.find(' ')?;
-    let candidate = rest[..space_idx].trim();
-    let body = rest[space_idx + 1..].trim_start();
-    if candidate.is_empty() {
-        return None;
-    }
-    if !candidate
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-    {
+    let rest = rest.strip_prefix('@').unwrap_or(rest);
+    let end = rest.find(|c: char| c.is_whitespace() || MENTION_ENDS.contains(&c))?;
+    let candidate = &rest[..end];
+    let body =
+        rest[end..].trim_start_matches(|c: char| c.is_whitespace() || MENTION_ENDS.contains(&c));
+    let is_name_char = |c: char| c.is_alphanumeric() || c == '_' || c == '-';
+    if candidate.is_empty() || body.is_empty() || !candidate.chars().all(is_name_char) {
         return None;
     }
     Some((candidate, body))
 }
+
+/// What may close an `@name` besides whitespace.
+const MENTION_ENDS: &[char] = &[',', ':', '\u{ff0c}', '\u{ff1a}', '\u{3001}'];
 
 /// Lead-in filler the auto-titler strips before picking words. Matched
 /// case-insensitively at a word boundary so "hide" is never read as
@@ -266,17 +270,16 @@ async fn maybe_auto_rename(state: &Arc<ServerState>, session_id: &str, message: 
 
 /// Resolve the effective `(target_agent_id, clean_message)` pair.
 ///
-/// Honors a leading `@agent_id ` prefix when the named agent exists in the
-/// project; otherwise the request's `agent_id` and message stand as-is.
+/// Honors a leading `@name ` when it names an agent by id or declared alias
+/// (`@银月`); otherwise the request's `agent_id` and message stand as-is.
 async fn route_target(
     state: &Arc<ServerState>,
     req: &ChatRequest,
     root: &PathBuf,
 ) -> (String, String) {
     if let Some((candidate, body)) = parse_explicit_target_prefix(&req.message) {
-        let candidate_id = candidate.to_string();
-        if state.manager.agent_exists(root, &candidate_id).await {
-            return (candidate_id, body.to_string());
+        if let Some(agent_id) = state.manager.resolve_agent_mention(root, candidate).await {
+            return (agent_id, body.to_string());
         }
     }
     (req.agent_id.clone(), req.message.clone())
@@ -532,15 +535,16 @@ async fn restore_chat_history_if_empty(
     manager: &Arc<AgentManager>,
     root: &Path,
     session_id: Option<&str>,
+    own_agent: &str,
     current_from: &str,
     current_user_msg: &str,
-) {
+) -> bool {
     if !engine.chat_history.is_empty() {
-        return;
+        return false;
     }
     let sid = session_id.unwrap_or("default");
     let Ok(mut msgs) = manager.global_sessions.get_chat_history(sid) else {
-        return;
+        return false;
     };
     // Drop the trailing entry if it matches the just-persisted current
     // user message; push_user_turn_with_recall will add it back exactly
@@ -569,7 +573,10 @@ async fn restore_chat_history_if_empty(
         // was asking. Pseudo-senders that are context rather than speech
         // (memory-recall, compaction) are not agents and stay assistant
         // context, exactly as before.
-        let is_own = m.from_id == m.agent_id;
+        // Own = this engine's agent spoke it. Another agent's reply in the
+        // same session (the companion answering in an app's chat) is a
+        // labeled relay, never words put in this agent's mouth.
+        let is_own = m.from_id == own_agent;
         let is_relay = !is_own && m.from_id != "user" && {
             match is_agent.get(m.from_id.as_str()) {
                 Some(known) => *known,
@@ -601,6 +608,7 @@ async fn restore_chat_history_if_empty(
             engine.chat_history.len()
         );
     }
+    true
 }
 
 /// Activate a session-bound skill (set on the session meta, e.g. for
@@ -777,11 +785,17 @@ pub(crate) async fn run_session_turn(
     manager: &Arc<AgentManager>,
     max_live_msgs: Option<usize>,
 ) {
-    restore_chat_history_if_empty(
+    // A guest reads the table as it stands now: its thread is the session's
+    // transcript, rebuilt each turn, never a stale copy of its last visit.
+    if ctx.guest {
+        engine.chat_history.clear();
+    }
+    let restored = restore_chat_history_if_empty(
         engine,
         manager,
         &ctx.root,
         ctx.session_id.as_deref(),
+        &ctx.agent_id,
         ctx.from_id(),
         &ctx.clean_msg,
     )
@@ -791,9 +805,29 @@ pub(crate) async fn run_session_turn(
     if let Some(cap) = max_live_msgs {
         trim_live_history(&mut engine.chat_history, cap);
     }
-    apply_session_bound_skill(engine, ctx).await;
-    apply_session_bound_mission(engine, ctx).await;
+    catch_up_side_lines(engine, ctx, restored);
+    if !ctx.guest {
+        apply_session_bound_skill(engine, ctx).await;
+        apply_session_bound_mission(engine, ctx).await;
+    }
     dispatch_turn(ctx, engine, manager, &ctx.clean_msg).await;
+}
+
+/// Hand the agent what others said in its session since its last turn (see
+/// `side_lines`). A thread just rebuilt from disk already holds them.
+fn catch_up_side_lines(engine: &mut crate::engine::AgentEngine, ctx: &ChatRunCtx, restored: bool) {
+    let Some(sid) = ctx.session_id.as_deref() else {
+        return;
+    };
+    let lines = super::side_lines::take_for(sid, &ctx.agent_id);
+    if restored || ctx.guest {
+        return;
+    }
+    if let Some(text) = super::side_lines::as_message(&lines) {
+        engine
+            .chat_history
+            .push(crate::message::ChatMessage::new("user", text));
+    }
 }
 
 /// Keep a capped session's live history near `cap` messages — in chunks.
@@ -828,25 +862,87 @@ fn turn_creator(
     "user"
 }
 
+/// Where a chat turn comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TurnOrigin {
+    /// Someone sent it — the user at a surface, or an agent relayed in.
+    Person,
+    /// The engine woke the session's agent with a hidden kickoff that offers
+    /// silence (the one exchange after an app moment). It stamps no
+    /// presence, never interrupts a running turn — it waits behind it — and
+    /// a SILENT reply leaves nothing in the chat.
+    Kickoff,
+}
+
 pub(crate) async fn chat_handler(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<ChatRequest>,
-) -> impl IntoResponse {
+) -> axum::response::Response {
+    start_turn(state, req, TurnOrigin::Person).await
+}
+
+/// Wake `agent_id` in an existing session with a hidden kickoff that offers
+/// silence (`TurnOrigin::Kickoff`). Runs through the same pipeline as a sent
+/// message — the session's bound skill, its queue — without being one: it
+/// stamps no presence and waits behind a running turn. False when the session
+/// is unknown.
+pub(crate) async fn kickoff_in_session(
+    state: Arc<ServerState>,
+    session_id: &str,
+    agent_id: &str,
+    text: &str,
+) -> bool {
+    let Ok(Some(meta)) = state.manager.global_sessions.get_session_meta(session_id) else {
+        return false;
+    };
+    let req = ChatRequest {
+        project_root: meta.cwd.or(meta.project).unwrap_or_default(),
+        agent_id: agent_id.to_string(),
+        message: format!("[HIDDEN] {text}"),
+        session_id: Some(session_id.to_string()),
+        user_type: super::types::default_user_type(),
+        mission_id: None,
+        skill_name: None,
+        model_id: meta.model_id,
+        user_id: None,
+        images: Vec::new(),
+        sender: None,
+        followups: false,
+    };
+    start_turn(state, req, TurnOrigin::Kickoff).await;
+    true
+}
+
+/// The companion was addressed in a session that isn't hers — an app's chat.
+/// She answers there as a guest (`resident::answer_as_guest`), when she is on.
+async fn companion_is_guest(state: &Arc<ServerState>, target_id: &str, session_id: &str) -> bool {
+    target_id == crate::engine::agent::COMPANION_AGENT_ID
+        && !crate::server::resident::is_own_session(session_id)
+        && state.manager.get_config_snapshot().await.pet.enabled
+}
+
+pub(crate) async fn start_turn(
+    state: Arc<ServerState>,
+    req: ChatRequest,
+    origin: TurnOrigin,
+) -> axum::response::Response {
     let root = resolve_request_root(&req.project_root);
     let project_root_str = root.to_string_lossy().to_string();
 
-    // Any user chat turn stamps the quiet clock — background mission work
-    // (catch-up, deferrable cron fires) waits for a quiet window instead of
-    // competing with the user for the model. See quiet_for_background.
-    state.last_user_turn_at.store(
-        crate::util::now_ts_secs(),
-        std::sync::atomic::Ordering::Relaxed,
-    );
-    // And it stamps presence. The beat that feeds presence comes from browser
-    // surfaces only, so a turn typed anywhere else — a skill page, the phone —
-    // read as "away" and Yinyue heralded "their reply is ready" at somebody
-    // watching it arrive.
-    state.manager.mark_user_turn_presence();
+    if origin == TurnOrigin::Person {
+        // Any user chat turn stamps the quiet clock — background mission work
+        // (catch-up, deferrable cron fires) waits for a quiet window instead of
+        // competing with the user for the model. See quiet_for_background.
+        state.last_user_turn_at.store(
+            crate::util::now_ts_secs(),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        // And it stamps presence. The beat that feeds presence comes from browser
+        // surfaces only, so a turn typed anywhere else — a skill page, the phone —
+        // read as "away" and Yinyue heralded "their reply is ready" at somebody
+        // watching it arrive.
+        state.manager.mark_user_turn_presence();
+    }
 
     let bound_skill = req
         .session_id
@@ -872,6 +968,18 @@ pub(crate) async fn chat_handler(
 
     let (target_id, clean_msg) = route_target(&state, &req, &root).await;
 
+    if companion_is_guest(&state, &target_id, &effective_session_id).await {
+        crate::server::resident::answer_as_guest(
+            state.clone(),
+            effective_session_id.clone(),
+            root.clone(),
+            req.message.clone(),
+        )
+        .await;
+        return Json(serde_json::json!({ "status": "started", "session_id": session_id }))
+            .into_response();
+    }
+
     // A relayed message names its speaker (an agent id like "yinyue"); the
     // user's own messages carry no sender. Persisted as from_id so every chat
     // surface labels the bubble from the same fact.
@@ -893,6 +1001,7 @@ pub(crate) async fn chat_handler(
 
     let was_busy = agent.try_lock().is_err();
     let queue = match bound_skill.as_deref() {
+        _ if origin == TurnOrigin::Kickoff => QueueMode::AfterTurn,
         Some(name) if was_busy => state
             .manager
             .skills
@@ -1048,6 +1157,8 @@ pub(crate) async fn chat_handler(
             images: req_images,
             policy,
             sender,
+            guest: false,
+            silence_ok: origin == TurnOrigin::Kickoff,
         };
 
         run_session_turn(&ctx, &mut engine, &manager, None).await;
@@ -1148,6 +1259,25 @@ mod tests {
     fn parse_explicit_target_prefix_rejects_missing_body() {
         let parsed = parse_explicit_target_prefix("@coder");
         assert_eq!(parsed, None);
+    }
+
+    #[test]
+    fn a_mention_names_an_agent_in_any_script_but_never_a_path() {
+        assert_eq!(
+            parse_explicit_target_prefix("@银月 你看这一局"),
+            Some(("银月", "你看这一局"))
+        );
+        assert_eq!(
+            parse_explicit_target_prefix("@银月，你看"),
+            Some(("银月", "你看"))
+        );
+        assert_eq!(
+            parse_explicit_target_prefix("@@Yinyue: hi"),
+            Some(("Yinyue", "hi"))
+        );
+        assert_eq!(parse_explicit_target_prefix("@src/main.rs explain"), None);
+        assert_eq!(parse_explicit_target_prefix("@notes.md explain"), None);
+        assert_eq!(parse_explicit_target_prefix("hi @yinyue there"), None);
     }
 
     #[test]

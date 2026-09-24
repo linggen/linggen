@@ -360,6 +360,8 @@ async fn run_approved_plan_task(
         images: Vec::new(),
         policy: crate::engine::session_policy::SessionPolicy::default(),
         sender: None,
+        guest: false,
+        silence_ok: false,
     };
     run_plan_execution(&ctx, &mut engine).await;
 

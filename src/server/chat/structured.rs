@@ -76,7 +76,12 @@ pub(super) async fn run_structured_loop(ctx: &ChatRunCtx, engine: &mut crate::en
     push_user_turn_with_recall(ctx, engine).await;
 
     let (thinking_tx, thinking_rx) = tokio::sync::mpsc::unbounded_channel();
-    engine.thinking_tx = Some(thinking_tx);
+    // A kickoff that offers silence streams nothing: the reply is shown
+    // whole, or — when it is SILENT — not at all.
+    engine.silence_ok = ctx.silence_ok;
+    if !ctx.silence_ok {
+        engine.thinking_tx = Some(thinking_tx);
+    }
 
     let interrupt_key = wire_interrupt_channel(ctx, engine).await;
     wire_engine_bridges(&ctx.state, engine, ctx.session_id.clone());
@@ -101,6 +106,7 @@ pub(super) async fn run_structured_loop(ctx: &ChatRunCtx, engine: &mut crate::en
 
     // Drop the thinking sender so the forwarder task exits.
     engine.thinking_tx = None;
+    engine.silence_ok = false;
     unwire_interrupt_channel(ctx, engine, &interrupt_key).await;
 
     // Agent requested plan mode — re-dispatch using existing plan machinery.

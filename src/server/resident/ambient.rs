@@ -47,7 +47,10 @@ pub(super) async fn ambient_glance(state: &Arc<ServerState>) {
         // The re-arm starts only if she actually said it. A SILENT reply is
         // her judging the moment, not the user being told — and this condition
         // fires two days before the disk is full.
-        if wake_herald(state.clone(), kickoff, "neutral").await {
+        if wake_herald(state.clone(), kickoff, "neutral")
+            .await
+            .is_some()
+        {
             crate::perception::conditions::spoken(notice.topic);
         }
         return;

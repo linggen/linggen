@@ -352,37 +352,46 @@ pub(super) async fn ask_still_pending(state: &Arc<ServerState>, question_id: &st
 /// Wake Yinyue to herald a worker event — a finished mission/run, or an agent
 /// blocked on the user. She reads the room (the Right now block) and decides whether it's
 /// worth a word; `SILENT` means say nothing (the never-nag discipline).
-/// True when she actually spoke — a caller that bought silence with a notice
-/// needs to know whether anyone heard it.
-pub(crate) async fn wake_herald(state: Arc<ServerState>, kickoff: String, emotion: &str) -> bool {
+/// The line when she actually spoke — a caller that bought silence with a
+/// notice needs to know whether anyone heard it.
+pub(crate) async fn wake_herald(
+    state: Arc<ServerState>,
+    kickoff: String,
+    emotion: &str,
+) -> Option<String> {
     wake_and_speak(state, kickoff, emotion, "event").await
 }
 
 /// Wake her to answer what the user asked her for: the same spoken final
 /// paragraph, under the contract that offers no SILENT.
-pub(crate) async fn wake_asked(state: Arc<ServerState>, kickoff: String, emotion: &str) -> bool {
+pub(crate) async fn wake_asked(
+    state: Arc<ServerState>,
+    kickoff: String,
+    emotion: &str,
+) -> Option<String> {
     wake_and_speak(state, kickoff, emotion, "asked").await
 }
 
+/// Wake her, and speak her line. Returns the line she said aloud — `None`
+/// when the run failed, she produced nothing, or chose silence.
 pub(super) async fn wake_and_speak(
     state: Arc<ServerState>,
     kickoff: String,
     emotion: &str,
     trigger_source: &str,
-) -> bool {
-    let Some(reply) = run_yinyue_turn(&state, kickoff, trigger_source).await else {
-        return false; // run failed or she produced nothing
-    };
+) -> Option<String> {
+    // `None`: the run failed or she produced nothing.
+    let reply = run_yinyue_turn(&state, kickoff, trigger_source).await?;
     let Some(line) = spoken_line(&reply) else {
         tracing::info!("[yinyue-watch] Yinyue chose silence");
-        return false;
+        return None;
     };
     tracing::info!(
         "[yinyue-watch] Yinyue heralds ({} chars, {emotion})",
         line.len()
     );
-    crate::server::api::yinyue::emit_speak(&state, line, Some(emotion.to_string()));
-    true
+    crate::server::api::yinyue::emit_speak(&state, line.clone(), Some(emotion.to_string()));
+    Some(line)
 }
 
 /// Deliver an `agent_chat` message to a CHAT agent (Ling, …): show it in that
@@ -473,6 +482,8 @@ pub(super) async fn deliver_to_chat_agent(
             images: Vec::new(),
             policy: crate::engine::session_policy::SessionPolicy::owner(),
             sender: Some(from.clone()),
+            guest: false,
+            silence_ok: false,
         };
         crate::server::chat::run_session_turn(&ctx, &mut engine, &state.manager, None).await;
         engine.set_run_id(None);

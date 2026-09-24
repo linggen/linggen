@@ -699,6 +699,19 @@ impl AgentManager {
         Ok(out)
     }
 
+    /// The agent a leading `@name` addresses — by id or declared alias.
+    pub async fn resolve_agent_mention(
+        &self,
+        project_root: &PathBuf,
+        name: &str,
+    ) -> Option<String> {
+        let specs = self.list_agent_specs(project_root).await.ok()?;
+        specs
+            .into_iter()
+            .find(|s| s.answers_to(name))
+            .map(|s| s.agent_id)
+    }
+
     pub async fn agent_exists(&self, project_root: &PathBuf, agent_id: &str) -> bool {
         matches!(self.agents.find(project_root, agent_id).await, Ok(Some(_)))
     }

@@ -30,9 +30,62 @@ pub(crate) async fn run_yinyue_turn(
     let session_id = resolve_current_session(state).await;
     ensure_session_exists(state, &session_id, &root);
 
+    // Engine-authored kickoffs (heralds, agent_chat, asked) carry the
+    // spoken-line contract; a person's own words are never appended to.
+    let task = with_contract(task, trigger_source);
+    let seat = Seat {
+        session_id,
+        root,
+        guest: false,
+    };
+    run_at(state, &seat, &pet, task, trigger_source).await
+}
+
+/// Run her turn as a guest in another session — an app's chat where the user
+/// addressed her (`@银月 …`). The message is already in that session; she
+/// reads its transcript, answers there in her own voice, with her own tools:
+/// the session's skill is not hers to take up (`ChatRunCtx::guest`).
+pub(crate) async fn run_guest_turn(
+    state: &Arc<ServerState>,
+    session_id: String,
+    root: std::path::PathBuf,
+    message: String,
+) -> Option<String> {
+    let pet = state.manager.get_config_snapshot().await.pet;
+    if !pet.enabled {
+        return None;
+    }
+    let seat = Seat {
+        session_id,
+        root,
+        guest: true,
+    };
+    run_at(state, &seat, &pet, message, "user").await
+}
+
+/// Where one of her turns runs: her own rolling thread, or a guest seat at
+/// another session's table.
+struct Seat {
+    session_id: String,
+    root: std::path::PathBuf,
+    guest: bool,
+}
+
+/// One turn of hers at `seat`, through the shared turn-core, on her model.
+/// Returns her final text, trimmed; `None` when she produced none.
+async fn run_at(
+    state: &Arc<ServerState>,
+    seat: &Seat,
+    pet: &crate::config::PetConfig,
+    task: String,
+    trigger_source: &str,
+) -> Option<String> {
+    let Seat {
+        session_id, root, ..
+    } = seat;
     let agent = match state
         .manager
-        .get_or_create_session_agent(&session_id, &root, YINYUE_AGENT)
+        .get_or_create_session_agent(session_id, root, YINYUE_AGENT)
         .await
     {
         Ok(a) => a,
@@ -45,7 +98,7 @@ pub(crate) async fn run_yinyue_turn(
     let run_id = state
         .manager
         .begin_agent_run(
-            &root,
+            root,
             Some(session_id.as_str()),
             YINYUE_AGENT,
             None,
@@ -54,36 +107,33 @@ pub(crate) async fn run_yinyue_turn(
         .await
         .unwrap_or_else(|_| format!("run-{YINYUE_AGENT}-fallback"));
 
-    // Engine-authored kickoffs (heralds, agent_chat, asked) carry the
-    // spoken-line contract; a person's own words are never appended to.
-    let task = with_contract(task, trigger_source);
-
     let spoken = {
         let mut engine = agent.lock().await;
-        // Persist the incoming message to the session store so it survives
-        // reload and the turn-core's restore sees a complete thread. (The turn
-        // core only mirrors it into in-memory history; disk persistence
-        // happens here — the same split the Web-UI chat handler uses.) Inside
-        // the lock: two wakes racing for her engine keep each kickoff next to
-        // its own turn, never both kickoffs ahead of both answers.
-        crate::server::chat::helpers::persist_message_only(
-            &state.manager,
-            &root,
-            YINYUE_AGENT,
-            "user",
-            YINYUE_AGENT,
-            &task,
-            Some(&session_id),
-            false,
-        )
-        .await;
+        // Her own thread: persist the incoming message to the session store so
+        // it survives reload and the turn-core's restore sees a complete
+        // thread. (The turn core only mirrors it into in-memory history.)
+        // Inside the lock: two wakes racing for her engine keep each kickoff
+        // next to its own turn. A guest's message is already on the table.
+        if !seat.guest {
+            crate::server::chat::helpers::persist_message_only(
+                &state.manager,
+                root,
+                YINYUE_AGENT,
+                "user",
+                YINYUE_AGENT,
+                &task,
+                Some(session_id),
+                false,
+            )
+            .await;
+        }
         // Loop-break: if this turn was woken by an agent_chat, mark the session so
         // the agent_chat tool refuses to relay onward (one hop; user re-arms).
         // Mark/clear INSIDE the lock so the flag's lifetime matches exactly the
         // turn holding the engine — a concurrent same-session turn can't observe
         // or clear another turn's mark.
         if trigger_source == "agent_chat" {
-            state.manager.mark_agent_chat_session(&session_id);
+            state.manager.mark_agent_chat_session(session_id);
         }
         engine.set_parent_agent(None);
         engine.set_run_id(Some(run_id.clone()));
@@ -97,6 +147,11 @@ pub(crate) async fn run_yinyue_turn(
         // Idempotent — safe to set each turn, and picks up live settings edits.
         engine.cfg.memory_recall_count = pet.recall_count.max(1);
         engine.cfg.memory_inject_min_score = Some(pet.recall_min_score);
+        // A guest leaves no recall rows on someone else's table.
+        if seat.guest && engine.prompt_profile.include_memory {
+            engine.prompt_profile.include_memory = false;
+            engine.cached_system_prompt = None;
+        }
 
         // Pick her brain per the Pet model setting (tier-aware default: the
         // metered Linggen Cloud model for signed-in users, the engine default
@@ -116,7 +171,9 @@ pub(crate) async fn run_yinyue_turn(
         // a one-line "Previously" note so a thread mid-flight doesn't snap.
         // Deeper continuity rides shared memory (auto-recall + core), injected
         // by the turn core.
-        seed_previously_if_fresh(state, &mut engine, &session_id);
+        if !seat.guest {
+            seed_previously_if_fresh(state, &mut engine, session_id);
+        }
 
         let ctx = crate::server::chat::ChatRunCtx {
             state: state.clone(),
@@ -129,6 +186,8 @@ pub(crate) async fn run_yinyue_turn(
             images: Vec::new(),
             policy: crate::engine::session_policy::SessionPolicy::owner(),
             sender: None,
+            guest: seat.guest,
+            silence_ok: false,
         };
         crate::server::chat::run_session_turn(
             &ctx,
@@ -140,7 +199,7 @@ pub(crate) async fn run_yinyue_turn(
 
         engine.set_run_id(None);
         if trigger_source == "agent_chat" {
-            state.manager.clear_agent_chat_session(&session_id);
+            state.manager.clear_agent_chat_session(session_id);
         }
         engine.last_assistant_text.clone()
     };

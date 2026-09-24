@@ -26,6 +26,7 @@ mod handler;
 pub(super) mod helpers;
 mod plan_flow;
 mod runtime;
+pub(crate) mod side_lines;
 mod skill_dispatch;
 mod structured;
 mod types;
@@ -34,7 +35,7 @@ pub(crate) use admin::{
     ask_user_response_handler, clear_chat_history_api, compact_chat_api, compact_config_api,
     get_system_prompt_api, pending_ask_user_handler,
 };
-pub(crate) use handler::{chat_handler, run_session_turn};
+pub(crate) use handler::{chat_handler, kickoff_in_session, run_session_turn};
 pub(crate) use plan_flow::{approve_plan_handler, edit_plan_handler, reject_plan_handler};
 
 use crate::engine::agent::AgentManager;
@@ -60,6 +61,14 @@ pub(super) struct ChatRunCtx {
     /// this themselves. One fact, two renderings: persisted as the message's
     /// from_id for the chat surfaces, prefixed as "[Yinyue]: …" for the model.
     pub(super) sender: Option<String>,
+    /// The agent is a guest in this session (the companion addressed in an
+    /// app's chat): the session's bound skill and mission are not its to take
+    /// up — no skill tools, no skill prompt — and its thread is rebuilt from
+    /// the session's transcript each turn.
+    pub(super) guest: bool,
+    /// The kickoff offers silence: a reply that is exactly `SILENT` is
+    /// neither streamed, shown nor kept.
+    pub(super) silence_ok: bool,
 }
 
 impl ChatRunCtx {

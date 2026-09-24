@@ -27,16 +27,19 @@ use super::state::ServerState;
 use crate::engine::events::{NotificationPayload, ServerEvent};
 
 mod ambient;
+mod guest;
 mod session_roll;
 mod spoken;
 mod triggers;
 mod turn;
 
 pub use ambient::yinyue_ambient_loop;
+pub(crate) use guest::{answer_as_guest, is_own_session};
 use session_roll::*;
 use spoken::*;
 pub use triggers::yinyue_watch_loop;
 pub(crate) use triggers::{wake_asked, wake_herald};
+use turn::run_guest_turn;
 pub(crate) use turn::run_yinyue_turn;
 
 const YINYUE_AGENT: &str = crate::engine::agent::COMPANION_AGENT_ID;

@@ -153,6 +153,9 @@ impl AgentEngine {
         content: &str,
         session_id: Option<&str>,
     ) -> anyhow::Result<()> {
+        if self.silence_ok && is_silence(content) {
+            return Ok(()); // silence was the answer: nothing to show, nothing to keep
+        }
         if let Some(manager) = self.tools.get_manager() {
             let agent_id = self
                 .agent_id
@@ -726,5 +729,27 @@ impl AgentEngine {
                 None
             }
         }
+    }
+}
+
+/// The whole reply is the silence marker (`SILENT`, any case, bare
+/// punctuation around it allowed).
+pub(crate) fn is_silence(reply: &str) -> bool {
+    reply
+        .trim()
+        .trim_matches(|c: char| c.is_ascii_punctuation() || c == '\u{2026}')
+        .eq_ignore_ascii_case("silent")
+}
+
+#[cfg(test)]
+mod silence_tests {
+    use super::is_silence;
+
+    #[test]
+    fn only_the_bare_marker_is_silence() {
+        assert!(is_silence("SILENT"));
+        assert!(is_silence(" silent.\n"));
+        assert!(!is_silence("The hall falls silent."));
+        assert!(!is_silence(""));
     }
 }

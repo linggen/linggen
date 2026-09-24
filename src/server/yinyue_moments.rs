@@ -2,7 +2,8 @@
 //! only when the room has gone quiet.
 //!
 //! An app (a game, a player, anything on a page) posts what just happened as a
-//! plain fact: `POST /api/yinyue/event { app, text, big?, mood? }`. Nothing is
+//! plain fact: `POST /api/yinyue/event { app, text, big?, asked?, mood?,
+//! session?, converse? }`. Nothing is
 //! said then. The moments wait here until the user has been at the screen and
 //! still for a while — or, for a `big` one (a loss, a hard win), until the
 //! screen has settled — and only then is she woken, once, with everything that
@@ -13,6 +14,12 @@
 //! always responds, so a companion who is told every event talks over the
 //! game. Silence is decided here, in code (the lesson Intra's lunch scene
 //! taught — six NPCs, six monologues a turn).
+//!
+//! A moment that names the app's chat `session` has her line land there too,
+//! as a message from her — in the chat, and in the context of the session's
+//! agent (Ling) — without waking him. A `converse` moment then gives him ONE
+//! hidden kickoff to answer her in a line, or SILENT; never back to her, and
+//! at most once per [`CONVERSE_GAP_SECS`] per session.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -39,6 +46,8 @@ const STALE_SECS: u64 = 15 * 60;
 const MAX_MOMENTS: usize = 24;
 /// A presence beat older than this means no surface is showing the app.
 const BEAT_FRESH_SECS: u64 = 60;
+/// At least this long between two conversational exchanges in one session.
+const CONVERSE_GAP_SECS: u64 = 120;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Moment {
@@ -50,6 +59,10 @@ pub(crate) struct Moment {
     pub asked: bool,
     pub mood: Option<String>,
     pub at: u64,
+    /// The app's chat session: her line lands there as a message from her.
+    pub session: Option<String>,
+    /// After her line lands, the session's agent answers her once.
+    pub converse: bool,
 }
 
 static MOMENTS: Mutex<VecDeque<Moment>> = Mutex::new(VecDeque::new());
@@ -235,6 +248,110 @@ pub(crate) fn tell_unanswered(state: &Arc<ServerState>, moments: &[Moment]) {
     }
 }
 
+/// Where her line lands: each chat session the moments named, once, in
+/// order, and whether that chat asked for one exchange. Nothing when she
+/// said nothing (SILENT) — silence leaves no trace in a chat.
+fn landings(moments: &[Moment], spoke: bool) -> Vec<(&str, bool)> {
+    let mut out: Vec<(&str, bool)> = Vec::new();
+    if !spoke {
+        return out;
+    }
+    for m in moments {
+        let Some(sid) = m.session.as_deref() else {
+            continue;
+        };
+        match out.iter_mut().find(|(s, _)| *s == sid) {
+            Some(landing) => landing.1 |= m.converse,
+            None => out.push((sid, m.converse)),
+        }
+    }
+    out
+}
+
+/// When each session last had a conversational exchange.
+static LAST_CONVERSE: Mutex<Vec<(String, u64)>> = Mutex::new(Vec::new());
+
+/// Whether a session may have another exchange now. Pure.
+fn converse_due(last: Option<u64>, now: u64) -> bool {
+    last.is_none_or(|t| now.saturating_sub(t) >= CONVERSE_GAP_SECS)
+}
+
+/// Claim the session's exchange slot: true (and stamped) when it is due.
+fn claim_converse(session_id: &str, now: u64) -> bool {
+    let mut last = LAST_CONVERSE.lock().unwrap_or_else(|e| e.into_inner());
+    let at = last.iter().position(|(s, _)| s == session_id);
+    if !converse_due(at.map(|i| last[i].1), now) {
+        return false;
+    }
+    match at {
+        Some(i) => last[i].1 = now,
+        None => last.push((session_id.to_string(), now)),
+    }
+    true
+}
+
+/// The agent who answers in a session: the one whose own replies are there,
+/// newest first — never the companion.
+fn answering_agent(rows: &[crate::state_fs::sessions::ChatMsg]) -> Option<String> {
+    rows.iter()
+        .rev()
+        .find(|r| r.from_id == r.agent_id && r.agent_id != crate::engine::agent::COMPANION_AGENT_ID)
+        .map(|r| r.agent_id.clone())
+}
+
+/// The hidden kickoff the session's agent gets after her line. Her words are
+/// already in his context (the chat's newest line from her).
+pub(crate) fn converse_kickoff() -> String {
+    "Yinyue just spoke in this chat — her line is the newest one from her, above. \
+     If a reply from you fits, answer her in ONE line, in-world and in your role here, in \
+     the chat's language. Don't ask her anything back and don't start a new scene; this is \
+     one exchange. If nothing fits, reply exactly SILENT."
+        .to_string()
+}
+
+/// Her spoken line, landed in each app chat the moments named: a message from
+/// her (the session's agent reads it on his next turn), then — for a
+/// `converse` moment, when the session is due — one kickoff for that agent.
+async fn land_in_chats(state: &Arc<ServerState>, moments: &[Moment], line: Option<&str>) {
+    let companion = crate::engine::agent::COMPANION_AGENT_ID;
+    for (sid, wants_reply) in landings(moments, line.is_some()) {
+        let Some(line) = line else { break };
+        let Ok(Some(_)) = state.manager.global_sessions.get_session_meta(sid) else {
+            continue; // the session is gone
+        };
+        crate::server::chat::helpers::persist_and_emit_to_store(
+            &state.manager.global_sessions,
+            &state.events_tx,
+            companion,
+            companion,
+            "user",
+            line,
+            Some(sid),
+            false,
+        )
+        .await;
+        crate::server::chat::side_lines::note(
+            sid,
+            companion,
+            format!("[{}]: {line}", crate::server::chat::sender_label(companion)),
+        );
+        if !wants_reply || !claim_converse(sid, crate::util::now_ts_secs()) {
+            continue;
+        }
+        let rows = state
+            .manager
+            .global_sessions
+            .get_chat_history(sid)
+            .unwrap_or_default();
+        let Some(agent) = answering_agent(&rows) else {
+            continue; // nobody has answered in this chat yet
+        };
+        tracing::info!("[yinyue-moments] one exchange: {agent} answers her in {sid}");
+        crate::server::chat::kickoff_in_session(state.clone(), sid, &agent, &converse_kickoff())
+            .await;
+    }
+}
+
 pub async fn yinyue_moment_loop(state: Arc<ServerState>) {
     tracing::info!("[yinyue-moments] started");
     loop {
@@ -281,12 +398,13 @@ pub async fn yinyue_moment_loop(state: Arc<ServerState>) {
         *IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner()) = taken.clone();
         let state = state.clone();
         tokio::spawn(async move {
-            if asked {
-                super::resident::wake_asked(state, asked_kickoff(&taken), &emotion).await;
+            let line = if asked {
+                super::resident::wake_asked(state.clone(), asked_kickoff(&taken), &emotion).await
             } else {
-                super::resident::wake_herald(state, kickoff(&taken), &emotion).await;
-            }
+                super::resident::wake_herald(state.clone(), kickoff(&taken), &emotion).await
+            };
             IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner()).clear();
+            land_in_chats(&state, &taken, line.as_deref()).await;
         });
     }
 }
@@ -303,6 +421,8 @@ mod tests {
             asked: false,
             mood: None,
             at,
+            session: None,
+            converse: false,
         }
     }
     const HERE: Room = Room {
@@ -397,6 +517,8 @@ mod tests {
                 asked: false,
                 mood: None,
                 at: 1,
+                session: None,
+                converse: false,
             },
             Moment {
                 app: "game".into(),
@@ -405,6 +527,8 @@ mod tests {
                 asked: false,
                 mood: Some("sad".into()),
                 at: 2,
+                session: None,
+                converse: false,
             },
         ]);
         assert!(k.starts_with("While the user was in game,"));
@@ -497,5 +621,68 @@ mod tests {
         let (taken, stay) = take_for_wake(vec![quiet.clone()]);
         assert_eq!(taken, vec![quiet]);
         assert!(stay.is_empty());
+    }
+
+    fn in_chat(session: Option<&str>, converse: bool) -> Moment {
+        Moment {
+            session: session.map(str::to_string),
+            converse,
+            ..m(1, true)
+        }
+    }
+
+    #[test]
+    fn her_line_lands_in_each_named_chat_once_and_silence_lands_nowhere() {
+        let moments = [
+            in_chat(Some("s1"), false),
+            in_chat(None, false),
+            in_chat(Some("s1"), true),
+            in_chat(Some("s2"), false),
+        ];
+        assert_eq!(landings(&moments, true), vec![("s1", true), ("s2", false)]);
+        assert!(
+            landings(&moments, false).is_empty(),
+            "SILENT appends nothing"
+        );
+        assert!(
+            landings(&[in_chat(None, true)], true).is_empty(),
+            "no session, no chat"
+        );
+    }
+
+    #[test]
+    fn one_exchange_per_session_per_gap() {
+        assert!(converse_due(None, 1_000));
+        assert!(!converse_due(Some(1_000), 1_000 + CONVERSE_GAP_SECS - 1));
+        assert!(converse_due(Some(1_000), 1_000 + CONVERSE_GAP_SECS));
+        assert!(claim_converse("s-conv-1", 5_000));
+        assert!(
+            !claim_converse("s-conv-1", 5_030),
+            "30 s later: still resting"
+        );
+        assert!(claim_converse("s-conv-2", 5_030), "another chat is its own");
+        assert!(claim_converse("s-conv-1", 5_000 + CONVERSE_GAP_SECS));
+    }
+
+    #[test]
+    fn the_answering_agent_is_whoever_answers_there_never_her() {
+        let row = |agent: &str, from: &str| crate::state_fs::sessions::ChatMsg {
+            agent_id: agent.into(),
+            from_id: from.into(),
+            to_id: "user".into(),
+            content: "…".into(),
+            timestamp: 0,
+            is_observation: false,
+        };
+        let rows = [
+            row("ling", "user"),
+            row("ling", "ling"),
+            row("yinyue", "user"),
+            row("yinyue", "yinyue"),
+        ];
+        assert_eq!(answering_agent(&rows).as_deref(), Some("ling"));
+        assert_eq!(answering_agent(&rows[2..]), None);
+        let k = converse_kickoff();
+        assert!(k.contains("SILENT") && k.contains("ONE line"));
     }
 }

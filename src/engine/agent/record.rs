@@ -27,6 +27,26 @@ pub struct AgentSpec {
     /// Yinyue run the flagship at low effort for snappier replies.
     #[serde(default)]
     pub reasoning_effort: Option<String>,
+    /// Other names a person may address the agent by at the start of a
+    /// message (`@银月 …`), beside its id. Matched case-insensitively.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<String>,
+}
+
+impl AgentSpecFile {
+    /// Whether `name` (an `@name` at a message's start) addresses this agent:
+    /// its id or one of its declared aliases, case-insensitively.
+    pub fn answers_to(&self, name: &str) -> bool {
+        let name = name.trim();
+        !name.is_empty()
+            && (self.agent_id.eq_ignore_ascii_case(name)
+                || self.spec.name.eq_ignore_ascii_case(name)
+                || self
+                    .spec
+                    .aliases
+                    .iter()
+                    .any(|a| a.trim().to_lowercase() == name.to_lowercase()))
+    }
 }
 
 /// A loaded agent: frontmatter (`spec`) + body (`system_prompt`) +
@@ -40,4 +60,36 @@ pub struct AgentSpecFile {
     pub spec_path: PathBuf,
     #[serde(skip)]
     pub system_prompt: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spec(id: &str, aliases: &[&str]) -> AgentSpecFile {
+        AgentSpecFile {
+            agent_id: id.into(),
+            spec: AgentSpec {
+                name: id.into(),
+                description: String::new(),
+                tools: Vec::new(),
+                model: None,
+                personality: None,
+                reasoning_effort: None,
+                aliases: aliases.iter().map(|a| a.to_string()).collect(),
+            },
+            spec_path: PathBuf::new(),
+            system_prompt: String::new(),
+        }
+    }
+
+    #[test]
+    fn an_agent_answers_to_its_id_and_its_declared_aliases() {
+        let yinyue = spec("yinyue", &["银月"]);
+        assert!(yinyue.answers_to("Yinyue"));
+        assert!(yinyue.answers_to("银月"));
+        assert!(!yinyue.answers_to("ling"));
+        assert!(!yinyue.answers_to(""));
+        assert!(!spec("ling", &[]).answers_to("银月"));
+    }
 }

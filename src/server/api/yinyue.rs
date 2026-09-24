@@ -94,14 +94,21 @@ pub(crate) struct EventRequest {
     pub asked: bool,
     #[serde(default)]
     pub mood: Option<String>,
+    /// The app's chat session: her line lands there too, as her message.
+    #[serde(default)]
+    pub session: Option<String>,
+    /// With `session`: after her line, the session's agent answers her once.
+    #[serde(default)]
+    pub converse: bool,
 }
 
 const EVENT_TEXT_MAX: usize = 300;
 
-/// POST /api/yinyue/event — `{ app, text, big?, asked?, mood? }`. An app tells Yinyue
-/// what just happened, as a plain fact. Nothing is said now: the moment waits
-/// until the user has gone quiet (or, `big`, until the screen settles), and
-/// then she judges whether a word fits (server/yinyue_moments.rs).
+/// POST /api/yinyue/event — `{ app, text, big?, asked?, mood?, session?,
+/// converse? }`. An app tells Yinyue what just happened, as a plain fact.
+/// Nothing is said now: the moment waits until the user has gone quiet (or,
+/// `big`, until the screen settles), and then she judges whether a word fits
+/// (server/yinyue_moments.rs). A `session` has her line land in that chat.
 pub(crate) async fn event_handler(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<EventRequest>,
@@ -121,6 +128,18 @@ pub(crate) async fn event_handler(
         text.len(),
         req.big
     );
+    let session = req
+        .session
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    if let Some(sid) = session.as_deref() {
+        if !matches!(
+            state.manager.global_sessions.get_session_meta(sid),
+            Ok(Some(_))
+        ) {
+            return (StatusCode::BAD_REQUEST, "unknown session").into_response();
+        }
+    }
     // Asked while the pet is off: nobody will answer — say so now, rather
     // than let the page wait on a silence.
     if req.asked && !state.manager.get_config_snapshot().await.pet.enabled {
@@ -133,6 +152,8 @@ pub(crate) async fn event_handler(
         asked: req.asked,
         mood,
         at: crate::util::now_ts_secs(),
+        converse: req.converse && session.is_some(),
+        session,
     });
     (StatusCode::OK, "ok").into_response()
 }
@@ -160,9 +181,7 @@ pub(crate) async fn chat_handler(
     // user's reply and the open prompt land in the same turn (no cross-turn recall).
     let task = frame_with_pending_prompt(&state, &text).await;
     tokio::spawn(async move {
-        if let Some(reply) =
-            crate::server::resident::run_yinyue_turn(&state, task, "user").await
-        {
+        if let Some(reply) = crate::server::resident::run_yinyue_turn(&state, task, "user").await {
             if !reply.eq_ignore_ascii_case("silent") {
                 emit_speak(&state, reply, None);
             }

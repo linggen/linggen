@@ -285,6 +285,10 @@ pub struct AgentEngine {
     /// so the server can route events without a shared mutable map.
     pub session_id: Option<String>,
     pub thinking_tx: Option<mpsc::UnboundedSender<ThinkingEvent>>,
+    /// This turn may answer with silence: a final reply that is exactly the
+    /// silence marker (`SILENT`) is neither shown nor kept. Set per turn by
+    /// whoever woke the agent with a kickoff that offers silence.
+    pub silence_ok: bool,
     /// Receiver for user interrupt messages injected while the agent loop is running.
     pub interrupt_rx: Option<mpsc::UnboundedReceiver<String>>,
     // Plan mode
@@ -536,6 +540,7 @@ impl AgentEngine {
             run_id: None,
             session_id: None,
             thinking_tx: None,
+            silence_ok: false,
             interrupt_rx: None,
             plan_mode: false,
             plan: None,
