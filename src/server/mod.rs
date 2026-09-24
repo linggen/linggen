@@ -2,6 +2,7 @@ pub(crate) mod api;
 pub(crate) mod bridge;
 mod chat;
 mod events;
+mod loopback_guard;
 mod mcp;
 mod mcp_agent;
 pub(crate) mod rtc;
@@ -1526,6 +1527,24 @@ async fn watch_for_late_servers(servers: std::collections::BTreeMap<String, McpS
     }
 }
 
+/// Why a loopback request is refused, if it is: a Host that isn't this machine
+/// (DNS rebinding) or a browser Origin from another site. See `loopback_guard`.
+/// `authority` is the request URI's (HTTP/2 `:authority`, absolute-form).
+fn loopback_rejection(
+    headers: &axum::http::HeaderMap,
+    authority: Option<&str>,
+) -> Option<&'static str> {
+    let header = |name| headers.get(name).and_then(|v| v.to_str().ok());
+    let bad_host = |h: &str| !loopback_guard::host_is_loopback(h);
+    if header(axum::http::header::HOST).is_some_and(bad_host) || authority.is_some_and(bad_host) {
+        return Some("host_not_allowed");
+    }
+    if !loopback_guard::origin_allowed(header(axum::http::header::ORIGIN)) {
+        return Some("origin_not_allowed");
+    }
+    None
+}
+
 /// The LAN trust gate (see `api::pair`). Loopback callers — the local web UI,
 /// app shells, skills, the simulator — pass untouched. Anything arriving over
 /// the network must present a paired-device token; only the health check and
@@ -1537,7 +1556,18 @@ async fn lan_gate(
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     if addr.ip().is_loopback() {
-        return next.run(req).await;
+        let authority = req.uri().authority().map(|a| a.as_str().to_string());
+        return match loopback_rejection(req.headers(), authority.as_deref()) {
+            None => next.run(req).await,
+            Some(why) => {
+                tracing::warn!("[gate] rejected loopback {} {}: {why}", req.method(), req.uri().path());
+                (
+                    axum::http::StatusCode::FORBIDDEN,
+                    axum::Json(serde_json::json!({ "error": why })),
+                )
+                    .into_response()
+            }
+        };
     }
     let path = req.uri().path();
     if matches!(
@@ -1951,6 +1981,64 @@ async fn get_ollama_status(State(state): State<Arc<ServerState>>) -> impl IntoRe
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn loopback_gate_refuses_rebound_hosts_and_foreign_origins() {
+        use axum::http::{header, HeaderMap, HeaderValue};
+        let with = |pairs: &[(header::HeaderName, &'static str)]| {
+            let mut h = HeaderMap::new();
+            for (k, v) in pairs {
+                h.insert(k.clone(), HeaderValue::from_static(v));
+            }
+            h
+        };
+        // Local UI, curl, app shells, the extension.
+        assert_eq!(loopback_rejection(&with(&[]), None), None);
+        assert_eq!(
+            loopback_rejection(
+                &with(&[
+                    (header::HOST, "127.0.0.1:9527"),
+                    (header::ORIGIN, "http://127.0.0.1:9527")
+                ]),
+                None
+            ),
+            None
+        );
+        assert_eq!(
+            loopback_rejection(&with(&[(header::HOST, "localhost:9527")]), None),
+            None
+        );
+        assert_eq!(
+            loopback_rejection(
+                &with(&[
+                    (header::HOST, "127.0.0.1:9527"),
+                    (header::ORIGIN, "chrome-extension://abc")
+                ]),
+                None
+            ),
+            None
+        );
+        // DNS rebinding: the browser says the page's own name.
+        assert_eq!(
+            loopback_rejection(&with(&[(header::HOST, "evil.example:9527")]), None),
+            Some("host_not_allowed")
+        );
+        assert_eq!(
+            loopback_rejection(&with(&[]), Some("evil.example:9527")),
+            Some("host_not_allowed")
+        );
+        // Another site's page posting to 127.0.0.1.
+        assert_eq!(
+            loopback_rejection(
+                &with(&[
+                    (header::HOST, "127.0.0.1:9527"),
+                    (header::ORIGIN, "https://evil.example")
+                ]),
+                None
+            ),
+            Some("origin_not_allowed")
+        );
+    }
 
     /// Ensure every ServerEvent variant maps without panicking.
     /// Acts as a documentation checkpoint — if a new variant is added, this test

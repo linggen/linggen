@@ -691,7 +691,7 @@ fn origin_allowed(headers: &HeaderMap) -> bool {
         None => true,
         Some(value) => value
             .to_str()
-            .map(|o| o.starts_with("http://127.0.0.1") || o.starts_with("http://localhost"))
+            .map(super::loopback_guard::origin_is_loopback_page)
             .unwrap_or(false),
     }
 }
@@ -870,6 +870,8 @@ mod tests {
         headers.insert(ORIGIN, "http://127.0.0.1:9527".parse().unwrap());
         assert!(origin_allowed(&headers));
         headers.insert(ORIGIN, "https://evil.example".parse().unwrap());
+        assert!(!origin_allowed(&headers));
+        headers.insert(ORIGIN, "http://localhost.evil.example".parse().unwrap());
         assert!(!origin_allowed(&headers));
     }
 }
