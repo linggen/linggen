@@ -6,6 +6,7 @@ mod loopback_guard;
 mod mcp;
 mod mcp_agent;
 pub(crate) mod rtc;
+mod shared_pages;
 mod state;
 mod yinyue_moments;
 mod yinyue_watch;
@@ -1380,6 +1381,7 @@ async fn prepare_server(
             "/apps/{skill_name}/capability/{tool_name}",
             post(capability_dispatch),
         )
+        .route("/shared/{file}", get(shared_pages::serve))
         .route("/apps/{skill_name}/{*file_path}", get(serve_app_file))
         .fallback(static_handler)
         .with_state(state.clone())

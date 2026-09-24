@@ -313,6 +313,7 @@ pub(super) async fn process_control_request_async(
             let path_ok = url_path.starts_with("/api/")
                 || url_path.starts_with("/assets/")
                 || url_path.starts_with("/apps/")
+                || url_path.starts_with("/shared/")
                 || url_path == "/index.html"
                 || url_path == "/logo.svg";
             if !path_ok
