@@ -16,6 +16,19 @@ export class ApiError extends Error {
   }
 }
 
+/** A user-facing message for a failed call: the server's `{ "error": … }`
+ *  when it sent one, else `fallback` (or the raw text). */
+export function apiErrorMessage(e: unknown, fallback?: string): string {
+  if (e instanceof ApiError) {
+    try {
+      const body = JSON.parse(e.message);
+      if (body && typeof body.error === 'string') return body.error;
+    } catch { /* not JSON */ }
+    return fallback ?? e.message;
+  }
+  return e instanceof Error ? e.message : fallback ?? String(e);
+}
+
 async function parseError(resp: Response): Promise<ApiError> {
   const text = await resp.text().catch(() => '');
   return new ApiError(resp.status, text || `HTTP ${resp.status}`);
