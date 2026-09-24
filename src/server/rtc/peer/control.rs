@@ -1,8 +1,8 @@
 //! Control-channel message handling.
 //!
 //! The control data channel carries three categories of message:
-//! - **Synchronous replies** (`heartbeat`, `set_view_context`, `room_chat`) —
-//!   handled inline inside the str0m event loop.
+//! - **Synchronous replies** (`heartbeat`, `set_view_context`, `room_chat`,
+//!   `fact`) — handled inline inside the str0m event loop.
 //! - **RPC requests** (`http_request`, `chat`, `plan_*`, `ask_user_response`,
 //!   `inference`, `list_models`) — returned as a pending `ControlRequest` so
 //!   the main loop can run them off-loop and deliver the response via the
@@ -132,6 +132,14 @@ pub(super) fn handle_control_message(
                 msg_type,
                 body: msg,
             })
+        }
+
+        // A paired device saying a kind of thing happened, at a time. The
+        // device is this channel's bound identity, never the payload.
+        "fact" => {
+            let device = actor.lock_ok().as_ref().map(|a| a.device.clone());
+            crate::server::facts::heard(state, device, &msg);
+            None
         }
 
         "set_view_context" => {

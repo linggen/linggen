@@ -139,6 +139,7 @@ Three groups of fields. Standard fields work across tools; the others are extens
 | `product` | The Linggen Cloud product its turns bill to (see "Product") |
 | `closing-ask` | `true`: the skill's tools hand each turn its closing question; the engine asks it when the model doesn't (see "Closing question") |
 | `queue` | `steer` (default) or `after-turn`: whether a message sent mid-turn steers the turn or waits for it (see "Queue") |
+| `quests` | Which phone facts stamp which of the skill's quests, and the skill's own writer that stamps them (see "Quests") |
 | `requires` | External dependencies to resolve at install |
 | `renamed-from` | Slugs this skill used to be called (see "Renaming a skill") |
 
@@ -304,6 +305,21 @@ A message sent while a session's agent is mid-turn is queued. What happens to th
 - **`steer`** (default) — the turn stops at its next step and the message is taken up next (ordinary chat: the user redirects the agent).
 - **`after-turn`** — the turn plays out: its tools, its words, its question. The message runs when the run ends.
 - Either way, **a message never cancels an open question**: an AskUser (or a permission prompt) stays on screen until it is answered or skipped, and the message waits behind it.
+
+## Quests
+
+A paired phone tells the Mac that a kind of thing happened, and when (`doc/phone-facts-design.md`). A skill takes the kinds it cares about:
+
+```yaml
+quests:
+  stamp: bash scripts/quest.sh stamp {id} {at}   # the one writer of quests/<app>.json
+  facts:                                          # phone fact kind → quest id
+    photos-clean: shifu-clear
+```
+
+- The engine runs `stamp` in the skill's working folder (edit tier, within the skill's grant, one call per skill at a time, 10 s timeout). It fills `{id}` (`[a-z0-9-]`) and `{at}` (`YYYY-MM-DDTHH:MM:SSZ`) as quoted words, only after checking both.
+- The writer must never move `done_at` back, and must exit 0 once the file holds the stamp or a later one. Any other exit is a failure, and the engine tries again when the phone next connects.
+- The engine names no app: a kind stamps whatever declares it.
 
 ## App skills
 

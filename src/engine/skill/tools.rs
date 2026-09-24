@@ -103,6 +103,92 @@ pub async fn run(skill: &Skill, tool_name: &str, args: &Value) -> Result<ToolRes
     Ok(result)
 }
 
+/// Stamp one of the skill's quests done at `at` through its declared writer
+/// (`quests.stamp`) — the fact door. Runs like a page's tool: the skill's
+/// working folder, its lock, an edit tier its grant must cover. `id` and
+/// `at` are checked here and ride as quoted words. Ok only on exit 0.
+pub async fn stamp_quest(skill: &Skill, id: &str, at: &str) -> Result<(), Refusal> {
+    let tool = stamp_tool(skill, id, at)?;
+    let cwd = working_folder(skill);
+    within_grant(skill, &tool, &cwd)?;
+    let lock = skill_lock(&skill.name);
+    let _one = lock.lock().await;
+    let args = serde_json::json!({ "id": id, "at": at });
+    let ran = tokio::task::spawn_blocking(move || tool.execute(&args, &cwd, &[])).await;
+    match ran {
+        Ok(Ok(ToolResult::CommandOutput {
+            exit_code: Some(0), ..
+        })) => Ok(()),
+        Ok(Ok(other)) => Err(Refusal::BadCall(format!(
+            "'{}' quest stamp failed: {}",
+            skill.name,
+            output(other)
+        ))),
+        Ok(Err(e)) => Err(Refusal::BadCall(format!("{e:#}"))),
+        Err(e) => Err(Refusal::Crashed(format!("{e}"))),
+    }
+}
+
+const STAMP_TIMEOUT_MS: u64 = 10_000;
+
+/// The skill's stamp command as a shell tool with two string arguments.
+fn stamp_tool(skill: &Skill, id: &str, at: &str) -> Result<SkillToolDef, Refusal> {
+    let Some(q) = skill.quests.as_ref() else {
+        return Err(Refusal::NoTool(format!(
+            "'{}' declares no quests",
+            skill.name
+        )));
+    };
+    if !q.stamp.contains("{id}") || !q.stamp.contains("{at}") {
+        return Err(Refusal::NotRunnable(format!(
+            "'{}' quests.stamp needs {{id}} and {{at}}",
+            skill.name
+        )));
+    }
+    if !valid_quest_id(id) || !valid_stamp_time(at) {
+        return Err(Refusal::BadCall(format!("bad quest stamp {id:?} {at:?}")));
+    }
+    let arg = |name: &str| {
+        let p = crate::engine::skill_tool::SkillParamDef {
+            param_type: "string".into(),
+            required: true,
+            default: None,
+            description: String::new(),
+            items: None,
+        };
+        (name.to_string(), p)
+    };
+    Ok(SkillToolDef {
+        name: "quests.stamp".into(),
+        description: "Stamp a quest done.".into(),
+        cmd: q.stamp.replace("{id}", "{{id}}").replace("{at}", "{{at}}"),
+        endpoint: None,
+        tier: Some("edit".into()),
+        args: [arg("id"), arg("at")].into_iter().collect(),
+        returns: None,
+        timeout_ms: STAMP_TIMEOUT_MS,
+        max_output_bytes: 4096,
+        page_only: true,
+        pet: false,
+        skill_name: Some(skill.name.clone()),
+        skill_dir: skill.skill_dir.clone(),
+    })
+}
+
+/// A quest id: `[a-z0-9-]`, 1–64, no leading dash (never read as a flag).
+pub fn valid_quest_id(id: &str) -> bool {
+    (1..=64).contains(&id.len())
+        && !id.starts_with('-')
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
+/// Exactly `YYYY-MM-DDTHH:MM:SSZ`, a real UTC time.
+pub fn valid_stamp_time(at: &str) -> bool {
+    at.len() == 20 && chrono::NaiveDateTime::parse_from_str(at, "%Y-%m-%dT%H:%M:%SZ").is_ok()
+}
+
 /// The companion's door: only a tool the skill offers her (`pet: true`)
 /// whose own tier is read — checked here, not left to the prompt.
 pub async fn run_for_pet(
@@ -324,6 +410,53 @@ body
         let err = run_for_pet(&s, "Nope", &args()).await.unwrap_err();
         assert!(matches!(err, Refusal::NoTool(_)), "{err}");
         assert_eq!(err.to_string(), "'zz-pet-test' declares no tool 'Nope'");
+    }
+
+    fn stamper(dir: &Path, stamp: &str) -> Skill {
+        let text = format!(
+            "---\nname: zz-stamp-test\ndescription: t\npermission:\n  paths:\n    - {{ path: \"{}\", mode: edit }}\nquests:\n  stamp: \"{stamp}\"\n  facts:\n    zz-seen: zz-quest\n---\nbody\n",
+            dir.to_string_lossy()
+        );
+        let mut s = crate::extensions::skills::parse_skill_text(&text, SkillSource::Project)
+            .expect("parses");
+        s.skill_dir = Some(dir.to_path_buf());
+        s
+    }
+
+    #[tokio::test]
+    async fn a_quest_stamp_runs_the_declared_writer_with_quoted_words() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = stamper(dir.path(), "printf '%s|%s' {id} {at} > out.txt");
+        stamp_quest(&s, "zz-quest", "2026-09-24T14:03:11Z")
+            .await
+            .expect("stamped");
+        let out = std::fs::read_to_string(dir.path().join("out.txt")).unwrap();
+        assert_eq!(out, "zz-quest|2026-09-24T14:03:11Z");
+    }
+
+    #[tokio::test]
+    async fn a_quest_stamp_refuses_bad_words_and_reports_a_failed_writer() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = stamper(dir.path(), "touch ran; exit 1 # {id} {at}");
+        for (id, at) in [
+            ("zz;rm", "2026-09-24T14:03:11Z"),
+            ("-rf", "2026-09-24T14:03:11Z"),
+            ("zz-quest", "2026-09-24 14:03:11"),
+            ("zz-quest", "2026-09-24T14:03:11.000Z"),
+            ("zz-quest", "2026-13-24T14:03:11Z"),
+        ] {
+            assert!(stamp_quest(&s, id, at).await.is_err(), "{id} {at}");
+        }
+        assert!(!dir.path().join("ran").exists(), "nothing ran");
+        let err = stamp_quest(&s, "zz-quest", "2026-09-24T14:03:11Z").await;
+        assert!(err.is_err(), "exit 1 is a failed stamp");
+        assert!(dir.path().join("ran").exists());
+
+        let no_at = stamper(dir.path(), "true {id}");
+        assert!(matches!(
+            stamp_quest(&no_at, "zz-quest", "2026-09-24T14:03:11Z").await,
+            Err(Refusal::NotRunnable(_))
+        ));
     }
 
     #[test]

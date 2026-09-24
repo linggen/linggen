@@ -383,6 +383,9 @@ struct SkillFrontmatter {
     /// `steer` (default) or `after-turn` — see `doc/skill-spec.md` § Queue.
     #[serde(default)]
     queue: crate::engine::skill::QueueMode,
+    /// Phone facts → the skill's quests — see `doc/skill-spec.md` § Quests.
+    #[serde(default)]
+    quests: Option<crate::engine::skill::QuestsConfig>,
 }
 
 pub struct SkillLoader {
@@ -664,6 +667,7 @@ pub fn parse_skill_text(text: &str, source: SkillSource) -> Result<Skill> {
         suggestions: frontmatter.suggestions,
         closing_ask: frontmatter.closing_ask,
         queue: frontmatter.queue,
+        quests: frontmatter.quests,
         skill_dir: None,
     })
 }
@@ -947,6 +951,23 @@ Help commit."#;
         )
         .unwrap();
         assert!(plain.product.is_none());
+    }
+
+    /// A skill declares which phone facts stamp which of its quests, and its
+    /// own writer — the engine names neither.
+    #[test]
+    fn a_skill_declares_its_quest_facts() {
+        let text = "---\nname: zz\ndescription: d\nquests:\n  stamp: bash scripts/quest.sh {id} {at}\n  facts:\n    photos-clean: shifu-clear\n---\nBody.";
+        let skill = parse_skill_text(text, SkillSource::Global).unwrap();
+        let q = skill.quests.expect("quests parsed");
+        assert_eq!(q.stamp, "bash scripts/quest.sh {id} {at}");
+        assert_eq!(
+            q.facts.get("photos-clean").map(String::as_str),
+            Some("shifu-clear")
+        );
+        let plain =
+            parse_skill_text("---\nname: zz\ndescription: d\n---\nB", SkillSource::Global).unwrap();
+        assert!(plain.quests.is_none());
     }
 
     #[test]

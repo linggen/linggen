@@ -124,6 +124,22 @@ impl From<&str> for SavePaths {
     }
 }
 
+/// How a skill's quests take facts the engine hears about — a paired phone
+/// saying "this kind of thing happened, at this time". The engine never
+/// learns what a kind means: it looks the kind up here and runs the skill's
+/// own quest writer. See `doc/skill-spec.md` § Quests.
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, Eq)]
+pub struct QuestsConfig {
+    /// The skill's one writer of its quest file, run in the skill's working
+    /// folder: `{id}` and `{at}` are filled with a validated quest id and a
+    /// UTC time (`2026-09-24T14:03:11Z`). It must never move `done_at` back,
+    /// and exits 0 once the file holds the stamp (or a later one).
+    pub stamp: String,
+    /// Fact kind → the quest id it stamps (`photos-clean: shifu-clear`).
+    #[serde(default)]
+    pub facts: std::collections::BTreeMap<String, String>,
+}
+
 /// How a message sent while the skill's session is mid-turn meets that turn.
 /// See `doc/skill-spec.md` § Queue.
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, Default, PartialEq, Eq)]
@@ -233,6 +249,9 @@ pub struct Skill {
     /// Whether a busy-time message steers the running turn or waits for it.
     #[serde(default)]
     pub queue: QueueMode,
+    /// Which phone facts stamp which of the skill's quests, and how.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quests: Option<QuestsConfig>,
     /// Filesystem path to the skill directory (set at load time, not serialized to clients).
     #[serde(skip)]
     pub skill_dir: Option<PathBuf>,

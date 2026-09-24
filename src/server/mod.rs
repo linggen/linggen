@@ -3,6 +3,7 @@ mod app_pages;
 mod background;
 pub(crate) mod bridge;
 mod chat;
+mod facts;
 mod loopback_guard;
 mod mcp;
 mod mcp_agent;

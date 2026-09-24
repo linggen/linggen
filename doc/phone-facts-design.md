@@ -1,7 +1,7 @@
 ---
 type: design
 reader: Hanli (review before any build), then the coding agent
-status: DRAFT for review, 2026-09-24. Nothing built.
+status: APPROVED 2026-09-24 (every recommendation in §7). Built: Mac side (engine `src/server/facts.rs`, skills' `quests:`) and phone side.
 ---
 
 # Phone facts (手机事实)
@@ -53,7 +53,7 @@ The engine gets one general handler (`src/server/facts.rs`, fed by a `"fact"` ar
 
 ```yaml
 quests:
-  stamp: bash scripts/quest.sh {id} {at}   # the one writer of quests/<app>.json
+  stamp: bash scripts/quest.sh stamp {id} {at}   # the one writer of quests/<app>.json
   facts:                                    # phone fact kind → quest id
     photos-clean: shifu-clear
 ```
@@ -72,12 +72,12 @@ quests:
 | `cfo-import` | `services/cfo/cfo_repo_sync.dart:546` `_recordImport` (n > 0). Covers the button and the share sheet, since both go through `cfo_screen.dart:311` `_import`. Skip the dev `AUTO_IMPORT` (`sync:false`) | `cfo.json` `cfo-import` |
 | `cfo-trends` | `screens/cfo/cfo_screen.dart:152` `_showSection(sectionTrends)`. Not from the dev auto-sections at `:127`/`:145` | `cfo.json` `cfo-review` |
 | `cfo-invest` | same place, `sectionInvest` | new `cfo-invest` (week, pool) in CFO's menu |
-| `dj-listen` | `services/dj/dj_player.dart:47`, where the queue reaches `completed` after a playlist ran through (≥ half its tracks counted by `_counter`) | new `dj-listen` (day, pool). **DJ has no quest file yet**, so it needs a `quest` writer plus a menu |
+| `dj-listen` | `services/dj/dj_player.dart:47`, where the queue reaches `completed` after a playlist ran through (≥ half its tracks counted by `_counter`) | new `dj-listen` (day, pool) in DJ's menu (`dj/scripts/quest.mjs`) |
 | `dj-karaoke` | `screens/dj/karaoke_screen.dart:84`: arm on open, emit on the first counted play (`dj_player.dart:131`) while the screen is up | new `dj-karaoke` (week) |
 | `photos-clean` | `screens/photos/photos_controller.dart:743`, after `removed` is non-empty, which means past the OS confirm | `apple-shifu.json` `shifu-clear` |
 | `health-doctor` | `screens/health/health_doctor_screen.dart:28` `initState`, once the note resolves non-null | new `health-doctor` (week, pool) in Health's menu |
 
-Out of scope: `health-report` already works through letters. The `track-played` op should be fixed inside DJ (`actions.mjs` → play history). It is a separate bug, not a fact.
+Out of scope: `health-report` already works through letters. The `track-played` op is now applied by DJ's `phone-ops.mjs` (play counts); it is not a fact.
 
 ## 5. Privacy
 

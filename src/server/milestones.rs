@@ -46,11 +46,16 @@ pub(super) struct Milestone {
     /// The Linggen page where it is done.
     open: &'static str,
     check: Check,
+    /// A phone fact kind that also does it, stamped at the fact's own time
+    /// (`facts.rs`). This table is the engine's own, so naming a kind here
+    /// is the engine speaking for itself.
+    fact: Option<&'static str>,
 }
 
 /// Milestones taken out of the table: their entries leave the file, done or
-/// not, so no app keeps offering them (linggen-skill, Hanli 2026-09-24).
-const RETIRED: &[&str] = &["linggen-skill"];
+/// not, so no app keeps offering them (linggen-skill, linggen-mcp — Hanli
+/// 2026-09-24).
+const RETIRED: &[&str] = &["linggen-skill", "linggen-mcp"];
 
 const MILESTONES: &[Milestone] = &[
     Milestone {
@@ -60,6 +65,7 @@ const MILESTONES: &[Milestone] = &[
         en: "Bind a phone · pair your phone",
         open: "/settings?tab=phone",
         check: paired_device,
+        fact: None,
     },
     Milestone {
         id: "linggen-model",
@@ -68,6 +74,7 @@ const MILESTONES: &[Milestone] = &[
         en: "Summon a spirit · add a model",
         open: "/settings?tab=models",
         check: own_model,
+        fact: None,
     },
     Milestone {
         id: "linggen-chatgpt",
@@ -76,6 +83,7 @@ const MILESTONES: &[Milestone] = &[
         en: "Borrow heaven's fire · sign in with ChatGPT",
         open: "/settings?tab=models",
         check: chatgpt_signed_in,
+        fact: None,
     },
     Milestone {
         id: "linggen-account",
@@ -84,6 +92,7 @@ const MILESTONES: &[Milestone] = &[
         en: "Enrol · sign in to linggen.dev",
         open: "/",
         check: account_signed_in,
+        fact: None,
     },
     Milestone {
         id: "linggen-browser",
@@ -92,14 +101,7 @@ const MILESTONES: &[Milestone] = &[
         en: "Open the heavenly eye · connect the browser extension",
         open: "/settings?tab=tools",
         check: browser_connected,
-    },
-    Milestone {
-        id: "linggen-mcp",
-        device: "mac",
-        zh: "结网 · 接一个 MCP 服务器",
-        en: "Weave the net · add an MCP server",
-        open: "/settings?tab=mcp",
-        check: mcp_server,
+        fact: None,
     },
     Milestone {
         id: "linggen-mission",
@@ -108,6 +110,7 @@ const MILESTONES: &[Milestone] = &[
         en: "Keep the hours · turn on a mission",
         open: "/settings?tab=mission",
         check: user_enabled_mission,
+        fact: None,
     },
     Milestone {
         id: "linggen-voice",
@@ -116,6 +119,7 @@ const MILESTONES: &[Milestone] = &[
         en: "Call Yinyue · hear her voice",
         open: "/settings?tab=general",
         check: voice_heard,
+        fact: None,
     },
     Milestone {
         id: "linggen-phone-chat",
@@ -124,6 +128,7 @@ const MILESTONES: &[Milestone] = &[
         en: "Speak across · talk to Yinyue on your phone",
         open: "/settings?tab=phone",
         check: phone_chat,
+        fact: Some("yinyue-chat"),
     },
     Milestone {
         id: "linggen-remote",
@@ -132,6 +137,7 @@ const MILESTONES: &[Milestone] = &[
         en: "Travel far · reach home remotely",
         open: "/settings?tab=phone",
         check: remote_peer,
+        fact: None,
     },
     Milestone {
         id: "linggen-memory",
@@ -140,6 +146,7 @@ const MILESTONES: &[Milestone] = &[
         en: "Be remembered · your first memories",
         open: "/",
         check: memory_rows,
+        fact: None,
     },
 ];
 
@@ -206,14 +213,6 @@ fn account_signed_in(_: Arc<ServerState>) -> CheckFuture {
 
 fn browser_connected(state: Arc<ServerState>) -> CheckFuture {
     Box::pin(async move { Ok(state.bridge.has_connected().await) })
-}
-
-/// `[mcp_servers]` holds only what the user added; built-ins join at connect.
-fn mcp_server(state: Arc<ServerState>) -> CheckFuture {
-    Box::pin(async move {
-        let cfg = state.manager.get_config_snapshot().await;
-        Ok(!cfg.mcp_servers.is_empty())
-    })
 }
 
 /// A mission the user turned on — theirs, a skill's, or a built-in: enabled
@@ -323,7 +322,7 @@ async fn tick<F>(path: &Path, table: &'static [Milestone], probe: F) -> usize
 where
     F: Fn(&'static Milestone) -> CheckFuture,
 {
-    let mut doc = match load(path) {
+    let doc = match load(path) {
         Ok(d) => d,
         Err(e) => {
             tracing::warn!(
@@ -342,14 +341,56 @@ where
         }
     }
     let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-    if record(&mut doc, table, &done, &now) {
-        let bytes = serde_json::to_vec_pretty(&doc).unwrap_or_default();
-        match crate::state_fs::devices::write_atomic(path, &bytes) {
-            Ok(()) => tracing::info!("[milestones] recorded {}", done.join(", ")),
-            Err(e) => tracing::warn!("[milestones] could not write {}: {e}", path.display()),
+    let stamps: Vec<(&str, &str)> = done.iter().map(|id| (*id, now.as_str())).collect();
+    match update(path, table, &stamps) {
+        Ok(doc) => table.iter().filter(|m| !is_done(&doc, m.id)).count(),
+        Err(e) => {
+            tracing::warn!("[milestones] could not write {}: {e}", path.display());
+            table.len()
         }
     }
-    table.iter().filter(|m| !is_done(&doc, m.id)).count()
+}
+
+/// One writer at a time for the file: the tick and a phone fact both
+/// read-merge-write it, so neither may write over what the other just did.
+static FILE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Re-read the file, bring it up to the table with `stamps` (id → done_at),
+/// and write it when anything changed. Returns what the file now holds.
+fn update(path: &Path, table: &[Milestone], stamps: &[(&str, &str)]) -> std::io::Result<Value> {
+    let _one = FILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut doc = load(path)?;
+    if record(&mut doc, table, stamps) {
+        let bytes = serde_json::to_vec_pretty(&doc).unwrap_or_default();
+        crate::state_fs::devices::write_atomic(path, &bytes)?;
+        let ids: Vec<&str> = stamps.iter().map(|(id, _)| *id).collect();
+        tracing::info!("[milestones] recorded {}", ids.join(", "));
+    }
+    Ok(doc)
+}
+
+/// The milestones a phone fact of `kind` does.
+pub(crate) fn for_fact(kind: &str) -> Vec<&'static str> {
+    MILESTONES
+        .iter()
+        .filter(|m| m.fact == Some(kind))
+        .map(|m| m.id)
+        .collect()
+}
+
+/// A phone fact did milestone `id` at `at`: stamp it then — not at the tick —
+/// when it is still open. A done milestone stays as it is (set once). Ok
+/// once the file holds a `done_at` for it.
+pub(crate) fn stamp_fact(id: &str, at: &str) -> std::io::Result<()> {
+    stamp_fact_in(&quests_file(), MILESTONES, id, at)
+}
+
+fn stamp_fact_in(path: &Path, table: &[Milestone], id: &str, at: &str) -> std::io::Result<()> {
+    let doc = update(path, table, &[(id, at)])?;
+    if is_done(&doc, id) {
+        return Ok(());
+    }
+    Err(std::io::Error::other(format!("no milestone '{id}'")))
 }
 
 /// The quests file: missing = a fresh one; anything unparseable, or without a
@@ -378,13 +419,13 @@ fn is_done(doc: &Value, id: &str) -> bool {
 }
 
 /// Bring the file up to the table: drop retired milestones, add each missing
-/// one (done now if just seen), and stamp `done_at` on an open one just seen.
-/// An entry with a `done_at` is never otherwise touched, and entries the
-/// table doesn't know are kept. True when anything changed.
-fn record(doc: &mut Value, table: &[Milestone], done: &[&str], now: &str) -> bool {
+/// one (done at its stamp if just seen), and stamp `done_at` on an open one
+/// just seen. An entry with a `done_at` is never otherwise touched, and
+/// entries the table doesn't know are kept. True when anything changed.
+fn record(doc: &mut Value, table: &[Milestone], stamps: &[(&str, &str)]) -> bool {
     let mut changed = drop_retired(doc);
     for m in table {
-        let stamp = done.contains(&m.id).then_some(now);
+        let stamp = stamps.iter().find(|(id, _)| *id == m.id).map(|(_, at)| *at);
         let Some(quests) = doc["quests"].as_array_mut() else {
             return changed;
         };
@@ -476,10 +517,15 @@ mod tests {
     fn a_retired_milestone_leaves_the_file() {
         let mut doc = json!({ "app": "linggen", "quests": [
             { "id": "linggen-skill", "done_at": null },
+            { "id": "linggen-mcp", "done_at": "2026-09-01T00:00:00.000Z" },
             { "id": "somebody-else", "done_at": null }
         ]});
-        assert!(record(&mut doc, &[], &[], "now"));
+        assert!(record(&mut doc, &[], &[]));
         assert!(entry(&doc, "linggen-skill").is_none());
+        assert!(
+            entry(&doc, "linggen-mcp").is_none(),
+            "done or not, it leaves"
+        );
         assert!(entry(&doc, "somebody-else").is_some());
         assert!(!MILESTONES.iter().any(|m| RETIRED.contains(&m.id)));
     }
@@ -523,9 +569,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("linggen.json");
         tick(&path, MILESTONES, |_| ok(false)).await;
-        assert!(entry(&load(&path).unwrap(), "linggen-mcp").unwrap()["done_at"].is_null());
-        tick(&path, MILESTONES, |m| ok(m.id == "linggen-mcp")).await;
-        assert!(entry(&load(&path).unwrap(), "linggen-mcp").unwrap()["done_at"].is_string());
+        assert!(entry(&load(&path).unwrap(), "linggen-voice").unwrap()["done_at"].is_null());
+        tick(&path, MILESTONES, |m| ok(m.id == "linggen-voice")).await;
+        assert!(entry(&load(&path).unwrap(), "linggen-voice").unwrap()["done_at"].is_string());
     }
 
     #[tokio::test]
@@ -628,6 +674,46 @@ mod tests {
         );
         assert!(turned_on(true, None), "the user's own mission, enabled");
         assert!(!turned_on(false, None));
+    }
+
+    /// A phone fact stamps its milestone at the fact's own time, not the
+    /// tick's; a done milestone stays as it was.
+    #[test]
+    fn a_fact_stamps_its_milestone_at_the_facts_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("linggen.json");
+        assert_eq!(for_fact("yinyue-chat"), vec!["linggen-phone-chat"]);
+        assert!(for_fact("zz-other").is_empty());
+
+        stamp_fact_in(
+            &path,
+            MILESTONES,
+            "linggen-phone-chat",
+            "2026-09-20T08:00:00Z",
+        )
+        .unwrap();
+        let doc = load(&path).unwrap();
+        assert_eq!(
+            entry(&doc, "linggen-phone-chat").unwrap()["done_at"],
+            "2026-09-20T08:00:00Z"
+        );
+        assert!(entry(&doc, "linggen-pair").unwrap()["done_at"].is_null());
+        assert_eq!(doc["quests"].as_array().unwrap().len(), MILESTONES.len());
+
+        stamp_fact_in(
+            &path,
+            MILESTONES,
+            "linggen-phone-chat",
+            "2026-09-24T08:00:00Z",
+        )
+        .unwrap();
+        let doc = load(&path).unwrap();
+        assert_eq!(
+            entry(&doc, "linggen-phone-chat").unwrap()["done_at"],
+            "2026-09-20T08:00:00Z",
+            "set once"
+        );
+        assert!(stamp_fact_in(&path, MILESTONES, "nope", "2026-09-24T08:00:00Z").is_err());
     }
 
     #[tokio::test]
