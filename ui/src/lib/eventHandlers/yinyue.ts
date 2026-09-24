@@ -7,7 +7,7 @@
  * show the speech bubble, and publish a live **mouth-opening** signal so the VRM
  * avatar can lip-sync in step with the audio it doesn't own.
  */
-import type { UiEvent } from '../../types';
+import type { UiEventOf } from '../../types';
 import { _originalFetch } from '../fetchProxy';
 import { useUiStore } from '../../stores/uiStore';
 
@@ -72,12 +72,12 @@ function flushExpress(): void {
 /** Per-peer presenter push: does THIS surface hold the FCFS singleton lock?
  *  Drives whether her avatar/bubble mount (parent gates on the store flag) and
  *  guards her voice/expression below. */
-export function handleYinyuePresent(item: UiEvent): void {
+export function handleYinyuePresent(item: UiEventOf<'yinyue_present'>): void {
   const present = !!(item.data as { present?: boolean } | undefined)?.present;
   useUiStore.getState().setYinyuePresenter(present);
 }
 
-export function handlePetExpress(item: UiEvent): void {
+export function handlePetExpress(item: UiEventOf<'pet_express'>): void {
   // Singleton guard: only the presenter renders her (server already unicasts
   // pet events to the holder; this is belt-and-suspenders across handoffs).
   if (!useUiStore.getState().yinyuePresenter) return;
@@ -105,7 +105,7 @@ export function handlePetExpress(item: UiEvent): void {
   }
 }
 
-export function handlePetSpeak(item: UiEvent): void {
+export function handlePetSpeak(item: UiEventOf<'pet_speak'>): void {
   // Singleton guard: only the presenter speaks (see handlePetExpress).
   if (!useUiStore.getState().yinyuePresenter) return;
   const text = ((item.data?.text as string | undefined) ?? item.text ?? '').trim();
@@ -124,7 +124,7 @@ export function handlePetSpeak(item: UiEvent): void {
 
 /// Her voice was turned off or on (`/mute`, her Voice tool, Settings). Every
 /// surface hears it: muting cuts off whatever she is saying now.
-export function handlePetVoice(item: UiEvent): void {
+export function handlePetVoice(item: UiEventOf<'pet_voice'>): void {
   if (item.data?.muted !== true) return;
   current?.stop();
   current = null;

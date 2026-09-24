@@ -4,6 +4,7 @@
  */
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { X } from 'lucide-react';
+import type { SessionInfo, SkillInfo } from '../types';
 import { SessionList } from '../components/SessionList';
 import { FilePreview } from '../components/FilePreview';
 import { ChatWidget } from '../components/chat';
@@ -228,7 +229,7 @@ export const MainApp: React.FC = () => {
   }, [isMobile]);
 
   // --- Info panel props (shared between desktop sidebar and mobile drawer) ---
-  const handleClickSkill = useCallback((skill: any) => {
+  const handleClickSkill = useCallback((skill: SkillInfo) => {
     recordSkillUsage(skill.name);
     if (skill.app) {
       if (skill.app.launcher === 'web') {
@@ -255,7 +256,7 @@ export const MainApp: React.FC = () => {
     onToggleDefault: agentStore.toggleDefaultModel,
     onChangeReasoningEffort: agentStore.setReasoningEffort,
     onReloadSkills: () => agentStore.reloadSkills(),
-    onOpenSettings: (tab: string) => openSettings(tab as any),
+    onOpenSettings: openSettings,
     onClickSkill: handleClickSkill,
   };
 
@@ -272,7 +273,7 @@ export const MainApp: React.FC = () => {
     );
   }
 
-  const selectSession = (session: any, closeMenu?: () => void) => {
+  const selectSession = (session: SessionInfo, closeMenu?: () => void) => {
     // A session bound to a mission is a mission session regardless of who
     // opened it — an attended dream session has creator 'user' and still
     // lives in the mission's world (its transcript is served by the mission
@@ -319,7 +320,7 @@ export const MainApp: React.FC = () => {
                   onSelectSession={(session) => selectSession(session, () => setMobileMenuOpen(false))}
                   onCreateSession={() => { projectStore.createSession(); setMobileMenuOpen(false); }}
                   onDeleteSession={(id) => projectStore.removeSession(id)}
-                  onOpenSettings={(tab) => { openSettings(tab as any); setMobileMenuOpen(false); }}
+                  onOpenSettings={(tab) => { openSettings(tab); setMobileMenuOpen(false); }}
                 />
               </div>
             </>
@@ -332,7 +333,7 @@ export const MainApp: React.FC = () => {
               onSelectSession={(session) => selectSession(session)}
               onCreateSession={() => projectStore.createSession()}
               onDeleteSession={(id) => projectStore.removeSession(id)}
-              onOpenSettings={(tab) => openSettings(tab as any)}
+              onOpenSettings={openSettings}
             />
             <RoomChatPanel />
           </div>

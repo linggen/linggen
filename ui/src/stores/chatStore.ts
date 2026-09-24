@@ -631,7 +631,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
 
       const resp = await dedupFetch(url.toString());
-      const data = await resp.json();
+      const data: SessionState = await resp.json();
       // Skip update if workspace state hasn't meaningfully changed (prevents re-render loops)
       const prev = get().sessionState;
       const prevMsgCount = prev?.messages?.length ?? 0;
@@ -644,9 +644,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const state = get();
       if (data.messages && !state.isInClearCooldown()) {
         const msgs: ChatMessage[] = data.messages
-          .filter(([meta, body]: any) => !shouldHideInternalChatMessage(meta.from, body))
-          .filter(([_meta, body]: any) => !isPersistedToolOnlyMessage(String(body || '')))
-          .flatMap(([meta, body]: any) => {
+          .filter(([meta, body]) => !shouldHideInternalChatMessage(meta.from, body))
+          .filter(([_meta, body]) => !isPersistedToolOnlyMessage(String(body || '')))
+          .flatMap(([meta, body]) => {
             const isUser = meta.from === 'user' || meta.from === 'system';
             let bodyStr = String(body || '');
 

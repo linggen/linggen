@@ -11,7 +11,7 @@ import { useSuggestionStore } from '../stores/suggestionStore';
 import { useInteractionStore } from '../stores/interactionStore';
 import { getTransport } from '../lib/transport';
 import { contentBlockSummary } from '../components/chat/utils/content-block';
-import type { ChatMessage, ContentBlock } from '../types';
+import type { AskUserAnswer, ChatMessage, ContentBlock } from '../types';
 import { appConfig, sessionApi, workspaceApi } from '../lib/endpoints';
 import { ApiError, apiErrorMessage } from '../lib/api';
 import { postToParent } from '../lib/parentFrame';
@@ -125,8 +125,8 @@ export function useChatActions(
     if (trimmed === '/status') {
       try {
         const data = await sessionApi.status(root);
-        const modelLines = (data.models || []).map((m: any) => `- \`${m.id}${m.id === data.default_model ? ' ✓' : ''}\`  (${m.provider}: ${m.model})`);
-        const usageLines = (data.model_usage || []).map((entry: [string, number]) => `- \`${entry[0]}\` — ${entry[1]} runs`);
+        const modelLines = (data.models || []).map((m) => `- \`${m.id}${m.id === data.default_model ? ' ✓' : ''}\`  (${m.provider}: ${m.model})`);
+        const usageLines = (data.model_usage || []).map((entry) => `- \`${entry[0]}\` — ${entry[1]} runs`);
         const fmt = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(1)}K` : `${n}`;
         const promptTok = data.session_prompt_tokens || 0;
         const completionTok = data.session_completion_tokens || 0;
@@ -190,7 +190,7 @@ export function useChatActions(
         setAgentStatusText((s) => ({ ...s, [sid]: 'Compacting conversation' }));
       }
       try {
-        const data = await getTransport().sendCompact(root, sid, agentToUse, focus) as any;
+        const data = await getTransport().sendCompact(root, sid, agentToUse, focus);
         const clearStatus = () => {
           if (!sid) return;
           setAgentStatusText((s) => { const n = { ...s }; delete n[sid]; return n; });
@@ -251,7 +251,7 @@ export function useChatActions(
         ...(sessionModel ? { model_id: sessionModel } : {}),
         ...(images && images.length > 0 ? { images } : {}),
         followups: true,
-      }) as any;
+      });
       if (data?.session_id && !sid) {
         if (data.status !== 'queued') useServerStore.getState().setPendingSend(data.session_id, true);
         useSessionStore.getState().setActiveSessionId(data.session_id);
@@ -316,7 +316,7 @@ export function useChatActions(
     sendChatMessage(text, agentId, images, { resend: !persisted });
   }, [sendChatMessage]);
 
-  const respondToAskUser = useCallback(async (questionId: string, answers: any[]) => {
+  const respondToAskUser = useCallback(async (questionId: string, answers: AskUserAnswer[]) => {
     try {
       await getTransport().sendAskUserResponse({
         question_id: questionId,

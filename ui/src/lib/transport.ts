@@ -88,7 +88,7 @@ export interface Transport {
   // --- Outbound requests ---
 
   /** Send a chat message. */
-  sendChat(req: ChatRequest): Promise<{ session_id?: string; status?: string }>;
+  sendChat(req: ChatRequest): Promise<{ session_id?: string; status?: string; agent_id?: string }>;
 
   /** Respond to an AskUser prompt. */
   sendAskUserResponse(req: AskUserResponse): Promise<void>;

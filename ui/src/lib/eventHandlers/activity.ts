@@ -1,4 +1,4 @@
-import type { UiEvent, SubagentToolStep } from '../../types';
+import type { UiEventOf, SubagentToolStep } from '../../types';
 import { useChatStore } from '../../stores/chatStore';
 import { useServerStore } from '../../stores/serverStore';
 import { useInteractionStore } from '../../stores/interactionStore';
@@ -8,7 +8,7 @@ import { agentTracker } from '../agentTracker';
 import { normalizeAgentStatus } from '../messageUtils';
 import { getSessionId, toolPrefixMap } from './_shared';
 
-export function handleActivity(item: UiEvent): void {
+export function handleActivity(item: UiEventOf<'activity'>): void {
   const agentId = String(item.agent_id || '');
   if (!agentId) return;
   const statusRaw = String(item.data?.status || '').trim();
@@ -27,9 +27,7 @@ export function handleActivity(item: UiEvent): void {
   // root cause of the "Idle spinner stuck after encoder run" bug.
   const runIdFromData = item.data?.run_id ? String(item.data.run_id) : null;
   const trackingId = runIdFromData || agentId;
-  const parentIdFromData =
-    (item.data?.parent_agent_id ? String(item.data.parent_agent_id) : null) ||
-    (item.data?.parent_id ? String(item.data.parent_id) : null);
+  const parentIdFromData = item.data?.parent_id ? String(item.data.parent_id) : null;
   const parentIdForSubagent =
     agentTracker.getParent(trackingId) ||
     (parentIdFromData ? parentIdFromData.toLowerCase() : null);
@@ -38,7 +36,7 @@ export function handleActivity(item: UiEvent): void {
     applySubagentActivity({
       parentId: parentIdForSubagent,
       agentId: trackingId,
-      phase: item.phase,
+      phase: item.phase ?? undefined,
       nextStatus,
       statusText,
     });
@@ -47,7 +45,7 @@ export function handleActivity(item: UiEvent): void {
 
   applyTopLevelActivity({
     agentId,
-    phase: item.phase,
+    phase: item.phase ?? undefined,
     nextStatus,
     statusRaw,
     statusText,

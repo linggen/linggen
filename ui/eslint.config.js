@@ -7,7 +7,8 @@ const reactRefreshPlugin =
   reactRefresh.default || reactRefresh.reactRefresh || reactRefresh;
 
 module.exports = tseslint.config(
-  { ignores: ['dist'] },
+  // Generated from the Rust wire types (scripts/gen-types.sh).
+  { ignores: ['dist', 'src/types/generated'] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ['**/*.{ts,tsx}'],
@@ -21,7 +22,9 @@ module.exports = tseslint.config(
     },
     rules: {
       ...reactHooks.configs.recommended.rules,
-      '@typescript-eslint/no-explicit-any': 'off',
+      // Wire shapes come from src/types/generated; `unknown` + a narrow type
+      // where a payload really is open.
+      '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/no-unused-vars': [
         'error',
         {

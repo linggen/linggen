@@ -1,4 +1,4 @@
-import type { UiEvent } from '../../types';
+import type { UiEventOf } from '../../types';
 import { useChatStore } from '../../stores/chatStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useServerStore } from '../../stores/serverStore';
@@ -10,7 +10,7 @@ import { getSessionId } from './_shared';
 // AskUser — model is asking the user a structured question
 // ---------------------------------------------------------------------------
 
-export function handleAskUser(item: UiEvent): void {
+export function handleAskUser(item: UiEventOf<'ask_user'>): void {
   const { question_id, questions } = item.data || {};
   if (!question_id || !questions) return;
 
@@ -33,7 +33,7 @@ export function handleAskUser(item: UiEvent): void {
 // Widget resolved — dismiss interactive widgets (permission prompts, etc.)
 // ---------------------------------------------------------------------------
 
-export function handleWidgetResolved(item: UiEvent): void {
+export function handleWidgetResolved(item: UiEventOf<'widget_resolved'>): void {
   const widgetId = item.data?.widget_id as string | undefined;
   if (!widgetId) return;
   const interaction = useInteractionStore.getState();
@@ -52,7 +52,7 @@ export function handleWidgetResolved(item: UiEvent): void {
 // Queue — pending-user-message queue for a busy agent
 // ---------------------------------------------------------------------------
 
-export function handleQueue(item: UiEvent): void {
+export function handleQueue(item: UiEventOf<'queue'>): void {
   const { activeSessionId } = useSessionStore.getState();
   const session = activeSessionId || 'default';
   if (item.session_id !== session) return;
@@ -64,7 +64,7 @@ export function handleQueue(item: UiEvent): void {
 // Model fallback — preferred model failed, fell back to another
 // ---------------------------------------------------------------------------
 
-export function handleModelFallback(item: UiEvent): void {
+export function handleModelFallback(item: UiEventOf<'model_fallback'>): void {
   const text = String(item.text || 'Model switched');
   useChatStore.getState().addMessage({
     role: 'agent' as const,

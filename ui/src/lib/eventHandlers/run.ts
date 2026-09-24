@@ -1,4 +1,4 @@
-import type { UiEvent, SubagentTreeEntry, Plan } from '../../types';
+import type { RunEventOf, UiEventOf, SubagentTreeEntry, Plan } from '../../types';
 import { useChatStore } from '../../stores/chatStore';
 import { useServerStore } from '../../stores/serverStore';
 import { useInteractionStore } from '../../stores/interactionStore';
@@ -6,7 +6,7 @@ import { agentTracker } from '../agentTracker';
 import { getSessionId } from './_shared';
 import { markRunsCompletedForSession } from './chat';
 
-export function handleRun(item: UiEvent): void {
+export function handleRun(item: UiEventOf<'run'>): void {
   switch (item.phase) {
     case 'sync':
     case 'resync':
@@ -38,21 +38,22 @@ function handleRunOutcome(): void {
   useServerStore.setState({ tokensPerSec: 0 });
 }
 
-function handleContextUsage(item: UiEvent): void {
-  if (!item.data) return;
+function handleContextUsage(item: RunEventOf<'context_usage'>): void {
+  const data = item.data;
+  if (!data) return;
   const agentIdKey =
-    typeof item.data.agent_id === 'string'
-      ? item.data.agent_id.toLowerCase()
+    typeof data.agent_id === 'string'
+      ? data.agent_id.toLowerCase()
       : (item.agent_id || '').toLowerCase();
   if (!agentIdKey) return;
 
   const sid = getSessionId(item);
-  const estTokens = Number(item.data.estimated_tokens || 0);
+  const estTokens = Number(data.estimated_tokens || 0);
   if (sid) agentTracker.latestContextTokens[sid] = estTokens;
 
   // Accumulate session token usage from actual_prompt/completion_tokens
-  const promptDelta = Number(item.data.actual_prompt_tokens || 0);
-  const completionDelta = Number(item.data.actual_completion_tokens || 0);
+  const promptDelta = Number(data.actual_prompt_tokens || 0);
+  const completionDelta = Number(data.actual_completion_tokens || 0);
   if (promptDelta > 0 || completionDelta > 0) {
     const prev = useServerStore.getState().sessionTokens;
     useServerStore.setState({
@@ -76,10 +77,10 @@ function handleContextUsage(item: UiEvent): void {
       ...prev,
       [sid]: {
         tokens: estTokens,
-        messages: Number(item.data.message_count || 0),
+        messages: Number(data.message_count || 0),
         tokenLimit:
-          typeof item.data.token_limit === 'number'
-            ? Number(item.data.token_limit)
+          typeof data.token_limit === 'number'
+            ? Number(data.token_limit)
             : prev[sid]?.tokenLimit,
       },
     }));
@@ -89,9 +90,9 @@ function handleContextUsage(item: UiEvent): void {
   // summary pass; without an on-screen line it's silent — and compaction can
   // drop tool results (e.g. fetched threads) the agent still needs. Rendered
   // as a divider via `from: 'compaction'` (see ChatPanel/CompactionMessage).
-  if ((item.data as { compressed?: boolean }).compressed && !parentId) {
+  if (data.compressed && !parentId) {
     const tk = Math.round(estTokens / 1000);
-    const limit = typeof item.data.token_limit === 'number' ? Number(item.data.token_limit) : 0;
+    const limit = typeof data.token_limit === 'number' ? Number(data.token_limit) : 0;
     const limitTxt = limit > 0 ? ` / ${Math.round(limit / 1000)}k` : '';
     useChatStore.getState().addMessage({
       role: 'agent',
@@ -102,7 +103,7 @@ function handleContextUsage(item: UiEvent): void {
   }
 }
 
-function handlePlanUpdate(item: UiEvent): void {
+function handlePlanUpdate(item: RunEventOf<'plan_update'>): void {
   if (!item.data?.plan) return;
   const plan = item.data.plan as Plan;
   const rawId = String(item.agent_id || '');
@@ -123,7 +124,7 @@ function handlePlanUpdate(item: UiEvent): void {
   useChatStore.getState().upsertPlan(agentId, planText);
 }
 
-function handleSubagentSpawned(item: UiEvent): void {
+function handleSubagentSpawned(item: RunEventOf<'subagent_spawned'>): void {
   if (!item.data) return;
   const parentId = String(item.agent_id || '').toLowerCase();
   // Prefer the unique run_id (distinguishes parallel subagents that share
@@ -149,7 +150,7 @@ function handleSubagentSpawned(item: UiEvent): void {
   useChatStore.getState().addSubagentToTree(parentId, newEntry);
 }
 
-function handleSubagentResult(item: UiEvent): void {
+function handleSubagentResult(item: RunEventOf<'subagent_result'>): void {
   if (!item.data) return;
   const parentId = String(item.agent_id || '').toLowerCase();
   const trackingId = String(item.data.subagent_run_id || item.data.subagent_id || '');

@@ -3,6 +3,7 @@
  * UI makes goes through here or a sibling `*-api.ts`, so the RTC fetch
  * proxy, JSON encoding and error handling are the same everywhere.
  */
+import type { StatusResponse } from '../types/generated/StatusResponse';
 import type { AgentFileInfo, AppConfig, BuiltInSkillInfo, ModelHealthInfo, OllamaPsResponse, SkillInfoFull } from '../types';
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from './api';
 
@@ -29,9 +30,41 @@ export const appConfig = {
 
 // ── Account (linggen.dev) ───────────────────────────────────────────────
 
+/** GET /api/account (server/api/account.rs). Signed out → only `signed_in`. */
 export interface Account {
   signed_in?: boolean;
-  [key: string]: any;
+  source?: string | null;
+  user_name?: string | null;
+  avatar_url?: string | null;
+  offline?: boolean;
+  /** What linggen.dev says this account holds (its own shape; the meter
+   *  reads `usage` and `apps`). */
+  entitlement?: { usage?: UsageState; apps?: Record<string, unknown>; developer?: boolean } | null;
+  /** Present when asked with `?app=`: may this app run. */
+  gate?: {
+    app?: string | null;
+    entitled?: boolean;
+    developer?: boolean;
+    trial?: TrialState | null;
+    allowed?: boolean;
+  };
+}
+
+/** Monthly allowance on a plan. */
+export interface UsageState {
+  used: number;
+  allowance: number;
+  warn: boolean;
+  over: boolean;
+}
+
+/** A trial's token budget. */
+export interface TrialState {
+  tokens: number;
+  budget: number;
+  started_at: number | null;
+  expires_at: number | null;
+  active: boolean;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -86,7 +119,7 @@ export const sessionApi = {
     apiGet<{ system_prompt?: string; tools?: unknown[] }>(
       `/api/chat/system-prompt?${q({ project_root: projectRoot, agent_id: agentId, session_id: sessionId || undefined })}`,
     ),
-  status: (projectRoot: string) => apiGet<any>(`/api/status?${q({ project_root: projectRoot })}`),
+  status: (projectRoot: string) => apiGet<StatusResponse>(`/api/status?${q({ project_root: projectRoot })}`),
   task: (projectRoot: string, agentId: string, task: string) =>
     apiPost<void>('/api/task', { project_root: projectRoot, agent_id: agentId, task }),
 };

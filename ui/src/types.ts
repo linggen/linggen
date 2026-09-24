@@ -1,4 +1,15 @@
-import type { EventKind } from './lib/eventKinds';
+// Wire types generated from the Rust structs (scripts/gen-types.sh).
+export type { UiEvent, UiEventOf, UiEventByKind, RunEvent, RunEventOf, ContentBlockEvent, PageState } from './types/uiEvents';
+export type { QueuedChatItem } from './types/generated/QueuedChatItem';
+export type { Plan } from './types/generated/Plan';
+export type { PlanItem } from './types/generated/PlanItem';
+export type { PlanStatus } from './types/generated/PlanStatus';
+export type { AskUserOption } from './types/generated/AskUserOption';
+export type { AskUserQuestion } from './types/generated/AskUserQuestion';
+export type { AskUserAnswer } from './types/generated/AskUserAnswer';
+export type { AgentRunRecord as AgentRunInfo } from './types/generated/AgentRunRecord';
+import type { AskUserQuestion } from './types/generated/AskUserQuestion';
+
 
 export interface SubagentToolStep {
   toolName: string;
@@ -88,27 +99,7 @@ export interface ChatMessage {
   resend?: { text: string; agentId: string; images?: string[]; persisted?: boolean };
 }
 
-export interface UiEvent {
-  id: string;
-  seq: number;
-  rev: number;
-  ts_ms: number;
-  kind: EventKind;
-  phase?: string;
-  text?: string;
-  agent_id?: string;
-  session_id?: string;
-  project_root?: string;
-  data?: any;
-}
 
-export interface QueuedChatItem {
-  id: string;
-  agent_id: string;
-  session_id: string;
-  preview: string;
-  timestamp: number;
-}
 
 export interface FileEntry {
   name: string;
@@ -116,11 +107,19 @@ export interface FileEntry {
   path: string;
 }
 
+/** A persisted transcript row's header. */
+export interface PersistedMeta {
+  from: string;
+  to?: string;
+  ts: number;
+  [key: string]: unknown;
+}
+
 export interface SessionState {
-  active_task: [any, string] | null;
-  user_stories: [any, string] | null;
-  tasks: [any, string][];
-  messages: [any, string][];
+  active_task: [PersistedMeta, string] | null;
+  user_stories: [PersistedMeta, string] | null;
+  tasks: [PersistedMeta, string][];
+  messages: [PersistedMeta, string][];
   agent_status?: string;
   plan_status?: string;
 }
@@ -254,23 +253,11 @@ export interface SessionInfo {
   permission_mode?: string | null; // effective permission mode (read/edit/admin)
 }
 
-export interface AgentRunInfo {
-  run_id: string;
-  repo_path: string;
-  session_id: string;
-  agent_id: string;
-  agent_kind?: string | null;
-  parent_run_id?: string | null;
-  status: 'running' | 'completed' | 'failed' | 'cancelled' | string;
-  detail?: string | null;
-  started_at: number;
-  ended_at?: number | null;
-}
 
 export interface SkillToolParamDef {
   type: string;
   required: boolean;
-  default?: any;
+  default?: unknown;
   description: string;
 }
 
@@ -286,6 +273,8 @@ export interface SkillToolDef {
 export interface SkillAppConfig {
   launcher: 'web' | 'bash' | 'url';
   entry: string;
+  /** `false` keeps an installed-but-unfinished app out of the tab bar. */
+  list?: boolean;
   width?: number;
   height?: number;
 }
@@ -402,43 +391,6 @@ export interface StorageEntry {
   size?: number | null;
   modified?: number | null;
   children_count?: number | null;
-}
-
-// Plan mode types
-export type PlanStatus = 'planned' | 'approved' | 'executing' | 'completed' | 'rejected';
-
-export interface PlanItem {
-  id: string;
-  title: string;
-  status: string;
-}
-
-export interface Plan {
-  summary: string;
-  status: PlanStatus;
-  plan_text: string;
-  items?: PlanItem[];
-}
-
-// --- AskUser types ---
-
-export interface AskUserOption {
-  label: string;
-  description?: string | null;
-  preview?: string | null;
-}
-
-export interface AskUserQuestion {
-  question: string;
-  header: string;
-  options: AskUserOption[];
-  multi_select?: boolean;
-}
-
-export interface AskUserAnswer {
-  question_index: number;
-  selected: string[];
-  custom_text?: string | null;
 }
 
 export interface PendingAskUser {

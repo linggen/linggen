@@ -33,7 +33,8 @@ export function dispatchEvent(item: UiEvent, sessionIdOverride?: string): void {
     warnUnknownKind(item.kind);
     return;
   }
-  eventHandlers[kind](item);
+  // The table's handlers take their own kind's event; `kind` came off this item.
+  (eventHandlers[kind] as (e: UiEvent) => void)(item);
 }
 
 // ---------------------------------------------------------------------------
@@ -110,9 +111,13 @@ function ownActivity(item: UiEvent): ActivityKind | null {
   return null;
 }
 
+/** The routing keys any payload may carry; which ones depends on the kind. */
+type RoutingKeys = { parent_agent_id?: string | null; parent_id?: string | null; run_id?: string | null };
+
 function isSubagentEvent(item: UiEvent): boolean {
-  if (item.data?.parent_agent_id || item.data?.parent_id) return true;
-  const runId = item.data?.run_id ? String(item.data.run_id) : '';
+  const keys = (item.data ?? {}) as RoutingKeys;
+  if (keys.parent_agent_id || keys.parent_id) return true;
+  const runId = keys.run_id ? String(keys.run_id) : '';
   return !!(agentTracker.getParent(runId) || agentTracker.getParent(String(item.agent_id || '')));
 }
 
@@ -183,7 +188,7 @@ function relayToSkillIframe(item: UiEvent): void {
         tool: item.data?.tool,
         args: item.data?.args,
         blockId: item.data?.block_id,
-        output: item.data?.output,
+        output: item.phase === 'update' ? item.data?.output : undefined,
       },
     });
   }

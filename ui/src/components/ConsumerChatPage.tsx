@@ -8,6 +8,7 @@
  */
 import React, { useCallback, useState } from 'react';
 import { ShieldAlert, Menu, LogOut } from 'lucide-react';
+import type { SessionInfo, SkillInfo } from '../types';
 import { getTransport } from '../lib/transport';
 import { ChatWidget } from './chat/ChatWidget';
 import { SessionList } from './SessionList';
@@ -29,7 +30,7 @@ export const ConsumerChatPage: React.FC = () => {
   // Skills are already filtered by the server in page_state
   const filteredSkills = skills;
 
-  const handleClickSkill = useCallback((skill: any) => {
+  const handleClickSkill = useCallback((skill: SkillInfo) => {
     if (skill.app) {
       if (skill.app.launcher === 'web') {
         const appUrl = `/apps/${skill.name}/${skill.app.entry}`;
@@ -46,7 +47,7 @@ export const ConsumerChatPage: React.FC = () => {
     }
   }, []);
 
-  const handleSelectSession = (session: any) => {
+  const handleSelectSession = (session: SessionInfo) => {
     projectStore.setActiveSessionId(session.id);
     projectStore.setIsMissionSession(false);
     const isSkill = session.creator === 'skill' || (!session.project && session.skill);

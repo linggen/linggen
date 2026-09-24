@@ -98,7 +98,7 @@ export const BareSessions: React.FC = () => {
         onSelectSession={handleSelect}
         onCreateSession={handleCreate}
         onDeleteSession={(id) => sessionStore.removeSession(id)}
-        onOpenSettings={skillParam ? undefined : (tab) => openSettings(tab as any)}
+        onOpenSettings={skillParam ? undefined : openSettings}
         filterSessions={filtered}
         hideMissions={!!skillParam}
         hideFilters={!!skillParam}

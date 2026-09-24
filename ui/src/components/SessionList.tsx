@@ -12,7 +12,7 @@ import {
   CheckSquare, Loader2, MoreHorizontal, Pencil,
 } from 'lucide-react';
 import { cn } from '../lib/cn';
-import type { SessionInfo, CronMission } from '../types';
+import type { SessionInfo, CronMission, ManagementTab } from '../types';
 import { useSessionStore } from '../stores/sessionStore';
 import { useServerStore, isSessionBusy } from '../stores/serverStore';
 import { useShallow } from 'zustand/react/shallow';
@@ -110,7 +110,7 @@ export const SessionList: React.FC<{
   onSelectSession: (session: SessionInfo) => void;
   onCreateSession: () => void;
   onDeleteSession?: (id: string) => void;
-  onOpenSettings?: (tab?: string) => void;
+  onOpenSettings?: (tab?: ManagementTab) => void;
   /** When provided, overrides the sessions from the store (used by consumer mode to filter). */
   filterSessions?: SessionInfo[];
   /** Hide the Missions section at the bottom (skill iframes don't need it). */

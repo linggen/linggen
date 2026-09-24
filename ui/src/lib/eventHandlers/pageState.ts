@@ -2,10 +2,8 @@
  * page_state — aggregated state push from the server over the control channel.
  * Replaces individual HTTP polling for session list, models, skills, etc.
  */
-import type {
-  AgentInfo, AgentRunInfo, ModelInfo, QueuedChatItem, SessionInfo, SkillInfo,
-} from '../../types';
-import type { UiEvent } from '../../types';
+import type { AgentRunInfo } from '../../types';
+import type { UiEventOf, PageState } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useServerStore } from '../../stores/serverStore';
 import { useUserStore } from '../../stores/userStore';
@@ -15,28 +13,9 @@ import { useChatStore } from '../../stores/chatStore';
 import { UNSPOKEN_SENDERS } from '../messageUtils';
 import { isPermissionSuppressed } from './_shared';
 
-/** The page_state push (server/rtc/page_state.rs `PageState`). Every field
- *  is optional: the server omits what didn't change or doesn't apply. */
-interface PageState {
-  permission?: string;
-  room_name?: string | null;
-  room_enabled?: boolean | null;
-  all_sessions?: SessionInfo[];
-  models?: ModelInfo[];
-  default_models?: string[];
-  skills?: SkillInfo[];
-  missions?: unknown[];
-  pending_ask_user?: Array<{ question_id: string; agent_id?: string; questions?: any[]; session_id?: string | null }>;
-  busy_sessions?: Record<string, string>;
-  agents?: AgentInfo[];
-  agent_runs?: AgentRunInfo[];
-  queued?: Array<{ agent_id?: string; items?: QueuedChatItem[] }>;
-  sessions?: SessionInfo[];
-  session_permission?: { effective_mode?: string } | null;
-}
 
-export function handlePageState(item: UiEvent): void {
-  const ps = item.data as PageState | undefined;
+export function handlePageState(item: UiEventOf<'page_state'>): void {
+  const ps = item.data;
   if (!ps) return;
 
   applyPermission(ps);

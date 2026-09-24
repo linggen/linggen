@@ -6,12 +6,12 @@
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import { X } from 'lucide-react';
-import { account as accountApi, appConfig, skillsApi, workspaceApi } from '../lib/endpoints';
+import { account as accountApi, appConfig, skillsApi, workspaceApi, type Account } from '../lib/endpoints';
+import type { AppConfig, SkillAppConfig, SkillInfoFull } from '../types';
 
-interface AppSkill {
-  name: string;
-  app: { launcher: string; entry: string };
-}
+/** A skill that is an app. */
+type AppSkill = SkillInfoFull & { app: SkillAppConfig };
+const isApp = (s: SkillInfoFull): s is AppSkill => !!s.app;
 
 const LABELS: Record<string, string> = {
   cfo: 'CFO',
@@ -40,7 +40,7 @@ async function bash(command: string): Promise<string> {
 
 // ── Account panel (shared; one linggen.dev account for every app) ──
 const AccountPanel: React.FC = () => {
-  const [acct, setAcct] = useState<any>(null);
+  const [acct, setAcct] = useState<Account | null>(null);
   const load = useCallback(() => {
     accountApi.get().then(setAcct).catch(() => setAcct(null));
   }, []);
@@ -119,7 +119,7 @@ const GeneralPanel: React.FC = () => {
 const YinyuePanel: React.FC = () => {
   const [shown, setShown] = useState<boolean | null>(null);
   const [onTop, setOnTop] = useState<boolean | null>(null);
-  const [config, setConfig] = useState<any>(null);
+  const [config, setConfig] = useState<AppConfig | null>(null);
 
   useEffect(() => {
     bash('[ -f "$HOME/.linggen/pet-disabled" ] && echo off || echo on; [ -f "$HOME/.linggen/pet-always-on" ] && echo on || echo off')
@@ -143,7 +143,7 @@ const YinyuePanel: React.FC = () => {
     await appConfig.save(updated).catch(() => {});
   };
   // Only the user's configured models — never offer an id that isn't wired up.
-  const modelOptions: string[] = (config?.models ?? []).map((m: any) => m.id);
+  const modelOptions: string[] = (config?.models ?? []).map((m) => m.id);
 
   const toggleShown = async () => {
     const next = !shown; setShown(next);
@@ -200,8 +200,8 @@ export const LauncherSettings: React.FC<{ onClose: () => void }> = ({ onClose })
   useEffect(() => {
     skillsApi.list()
       .then((data) => {
-        const list: any[] = Array.isArray(data) ? data : [];
-        setApps(list.filter((s) => s.app && s.app.launcher === 'web' && HAS_SETTINGS.has(s.name)));
+        const list: SkillInfoFull[] = Array.isArray(data) ? data : [];
+        setApps(list.filter(isApp).filter((s) => s.app.launcher === 'web' && HAS_SETTINGS.has(s.name)));
       })
       .catch(() => {});
   }, []);

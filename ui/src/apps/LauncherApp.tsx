@@ -12,11 +12,11 @@ import logoUrl from '../assets/logo.svg';
 import { LauncherSettings } from './LauncherSettings';
 import { AccountAvatar } from '../components/AccountAvatar';
 import { skillsApi } from '../lib/endpoints';
+import type { SkillAppConfig, SkillInfoFull } from '../types';
 
-interface AppSkill {
-  name: string;
-  app: { launcher: string; entry: string; list?: boolean };
-}
+/** A skill that is an app. */
+type AppSkill = SkillInfoFull & { app: SkillAppConfig };
+const isApp = (s: SkillInfoFull): s is AppSkill => !!s.app;
 
 /** Friendly labels for the known apps; falls back to the raw skill name. */
 const LABELS: Record<string, string> = {
@@ -64,10 +64,10 @@ export const LauncherApp: React.FC = () => {
   useEffect(() => {
     skillsApi.list()
       .then((data) => {
-        const list: any[] = Array.isArray(data) ? data : [];
+        const list: SkillInfoFull[] = Array.isArray(data) ? data : [];
         // `list: false` is how a skill that is installed but not finished stays
         // out of the tab bar. It still runs when opened directly.
-        const web = list.filter((s) => s.app && s.app.launcher === 'web' && s.app.list !== false);
+        const web = list.filter(isApp).filter((s) => s.app.launcher === 'web' && s.app.list !== false);
         web.sort((a, b) =>
           orderIndex(a.name) - orderIndex(b.name) ||
           labelFor(a.name).localeCompare(labelFor(b.name)));

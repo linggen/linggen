@@ -53,17 +53,17 @@ const MermaidBlock: React.FC<{ code: string }> = ({ code }) => {
 const REMARK_PLUGINS = [remarkGfm];
 const REHYPE_PLUGINS = [rehypeHighlight];
 const MD_COMPONENTS: Components = {
-  a: ({ href, children, ...props }: any) => (
+  a: ({ href, children, node: _node, ...props }) => (
     <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>
   ),
   pre: ({ children }) => <>{children}</>,
-  code: ({ inline, className, children, node: _node, ...props }: any) => {
+  code: ({ className, children, node: _node, ...props }) => {
     // Extract raw text from children (may be React elements from rehype-highlight).
     const extractText = (node: unknown): string => {
       if (typeof node === 'string') return node;
       if (Array.isArray(node)) return node.map(extractText).join('');
       if (node && typeof node === 'object' && 'props' in node) {
-        return extractText((node as any).props?.children);
+        return extractText((node as { props?: { children?: unknown } }).props?.children);
       }
       return '';
     };
@@ -71,10 +71,12 @@ const MD_COMPONENTS: Components = {
 
     const match = /language-([\w-]+)/.exec(className || '');
     const lang = match?.[1]?.toLowerCase();
-    if (!inline && lang === 'mermaid') {
+    if (lang === 'mermaid') {
       return <MermaidBlock code={rawText} />;
     }
-    const isInlineCode = Boolean(inline) || (!className && !rawText.includes('\n'));
+    // react-markdown 9+ passes no `inline`: a span is code with no language
+    // class and no newline.
+    const isInlineCode = !className && !rawText.includes('\n');
     if (isInlineCode) {
       return <code {...props}>{children}</code>;
     }

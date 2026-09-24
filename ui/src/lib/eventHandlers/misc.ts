@@ -1,4 +1,4 @@
-import type { UiEvent } from '../../types';
+import type { UiEventOf } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useUiStore } from '../../stores/uiStore';
 import { useUserStore, type UserType } from '../../stores/userStore';
@@ -9,11 +9,11 @@ import { useRoomChatStore } from '../../stores/roomChatStore';
 // Notification — mission completed, session created, etc.
 // ---------------------------------------------------------------------------
 
-export function handleNotification(item: UiEvent): void {
+export function handleNotification(item: UiEventOf<'notification'>): void {
   const data = item.data;
   if (!data) return;
 
-  switch (data.kind as string) {
+  switch (data.kind) {
     case 'mission_completed': {
       const name = String(data.mission_name || data.mission_id || 'Mission');
       const status = String(data.status || 'completed');
@@ -35,7 +35,7 @@ export function handleNotification(item: UiEvent): void {
 // App launched — skill fired an external/popup app
 // ---------------------------------------------------------------------------
 
-export function handleAppLaunched(item: UiEvent): void {
+export function handleAppLaunched(item: UiEventOf<'app_launched'>): void {
   const url = item.data?.url || '';
   if (!url) return;
   const instanceMeta = document.querySelector('meta[name="linggen-instance"]');
@@ -52,7 +52,7 @@ export function handleAppLaunched(item: UiEvent): void {
 // Working folder — session's cwd/project changed
 // ---------------------------------------------------------------------------
 
-export function handleWorkingFolder(item: UiEvent): void {
+export function handleWorkingFolder(item: UiEventOf<'working_folder'>): void {
   const data = item.data;
   if (!data || !item.session_id) return;
 
@@ -81,7 +81,7 @@ export function handleWorkingFolder(item: UiEvent): void {
 // User info — sent on control channel open for ALL peers
 // ---------------------------------------------------------------------------
 
-export function handleUserInfo(item: UiEvent): void {
+export function handleUserInfo(item: UiEventOf<'user_info'>): void {
   const data = item.data;
   if (!data) return;
 
@@ -118,7 +118,7 @@ export function handleUserInfo(item: UiEvent): void {
 // Room chat — relayed between all peers in a proxy room
 // ---------------------------------------------------------------------------
 
-export function handleRoomChat(item: UiEvent): void {
+export function handleRoomChat(item: UiEventOf<'room_chat'>): void {
   const data = item.data;
   if (!data?.text) return;
   const senderId = data.sender_id || '';
@@ -139,8 +139,8 @@ export function handleRoomChat(item: UiEvent): void {
 // bystander: it keeps the wire honest by handling the kind, but the apps act.
 // ---------------------------------------------------------------------------
 
-export function handleDeviceTopic(_item: UiEvent): void {}
+export function handleDeviceTopic(_item: UiEventOf<'device_topic'>): void {}
 
 /** A skill's cloud save was pulled — only its page redraws (the embed relays
  *  it there before this handler runs); the console holds nothing of it. */
-export function handleSkillSaveChanged(_item: UiEvent): void {}
+export function handleSkillSaveChanged(_item: UiEventOf<'skill_save_changed'>): void {}

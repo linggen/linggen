@@ -88,8 +88,8 @@ export class RtcTransport implements Transport {
   private intentionalDisconnect = false;
   // Pending request/response pairs for control channel RPC
   private pendingRequests = new Map<string, {
-    resolve: (value: any) => void;
-    reject: (reason: any) => void;
+    resolve: (value: unknown) => void;
+    reject: (reason: unknown) => void;
     timer: ReturnType<typeof setTimeout>;
   }>();
   private requestIdCounter = 0;
@@ -150,10 +150,10 @@ export class RtcTransport implements Transport {
 
   // --- Outbound (via control channel RPC or session data channel) ---
 
-  async sendChat(req: ChatRequest): Promise<{ session_id?: string; status?: string }> {
+  async sendChat(req: ChatRequest): Promise<{ session_id?: string; status?: string; agent_id?: string }> {
     // Always use control channel RPC for chat messages — we need the response
     // to detect { status: "queued" } and remove the optimistic user message.
-    return this.controlRequest({ type: 'chat', ...req });
+    return this.controlRequest<{ session_id?: string; status?: string; agent_id?: string }>({ type: 'chat', ...req });
   }
 
   async sendAskUserResponse(req: AskUserResponse): Promise<void> {
@@ -172,11 +172,11 @@ export class RtcTransport implements Transport {
   }
 
   async sendCompact(projectRoot: string, sessionId: string | null, agentId: string, focus?: string): Promise<{ compacted?: boolean; referenced_files?: string[] }> {
-    return this.controlRequest({ type: 'compact', project_root: projectRoot, session_id: sessionId, agent_id: agentId, focus });
+    return this.controlRequest<{ compacted?: boolean; referenced_files?: string[] }>({ type: 'compact', project_root: projectRoot, session_id: sessionId, agent_id: agentId, focus });
   }
 
-  async httpProxy(method: string, url: string, body?: any): Promise<{ status: number; body: string }> {
-    return this.controlRequest({ type: 'http_request', method, url, body });
+  async httpProxy(method: string, url: string, body?: unknown): Promise<{ status: number; body: string }> {
+    return this.controlRequest<{ status: number; body: string }>({ type: 'http_request', method, url, body });
   }
 
   // Sticky — re-sent on every (re)connect, like the Yinyue subscription.
@@ -466,7 +466,8 @@ export class RtcTransport implements Transport {
 
   // --- Internal: control channel RPC ---
 
-  private async controlRequest(msg: Record<string, unknown>): Promise<any> {
+  /** One request/response over the control channel. `T` is the reply's shape. */
+  private async controlRequest<T = void>(msg: Record<string, unknown>): Promise<T> {
     // Wait for the control channel to open (handles calls during WHIP exchange)
     if (!this.controlChannel || this.controlChannel.readyState !== 'open') {
       await Promise.race([
@@ -491,7 +492,7 @@ export class RtcTransport implements Transport {
       }, 30000);
 
       this.pendingRequests.set(requestId, {
-        resolve: (v) => { clearTimeout(timer); resolve(v); },
+        resolve: (v) => { clearTimeout(timer); resolve(v as T); },
         reject: (r) => { clearTimeout(timer); reject(r); },
         timer,
       });

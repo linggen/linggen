@@ -8,7 +8,7 @@
  * TypeScript enforces both: missing entries fail to compile because the map
  * is typed `Record<EventKind, EventHandler>`.
  */
-import type { UiEvent } from '../../types';
+import type { UiEvent, UiEventByKind } from '../../types';
 import type { EventKind } from '../eventKinds';
 
 import { handleRun } from './run';
@@ -42,7 +42,8 @@ import { handlePetSpeak, handlePetVoice, handlePetExpress, handleYinyuePresent }
 
 export type EventHandler = (item: UiEvent) => void;
 
-export const eventHandlers: Record<EventKind, EventHandler> = {
+/** Each kind's handler takes that kind's event. */
+export const eventHandlers: { [K in EventKind]: (item: UiEventByKind[K]) => void } = {
   // Chat / streaming
   message: handleMessage,
   token: handleToken,

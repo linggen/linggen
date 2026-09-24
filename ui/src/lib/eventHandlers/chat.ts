@@ -1,4 +1,6 @@
-import type { UiEvent, ContentBlock, SubagentToolStep } from '../../types';
+import type { UiEvent, UiEventOf, ContentBlock, ContentBlockEvent, SubagentToolStep } from '../../types';
+import type { ContentBlockStartData } from '../../types/generated/ContentBlockStartData';
+import type { ContentBlockUpdateData } from '../../types/generated/ContentBlockUpdateData';
 import { useChatStore } from '../../stores/chatStore';
 import { useServerStore } from '../../stores/serverStore';
 import { useInteractionStore } from '../../stores/interactionStore';
@@ -15,7 +17,7 @@ import { getSessionId, formatToolStartLine } from './_shared';
 // Text segment
 // ---------------------------------------------------------------------------
 
-export function handleTextSegment(item: UiEvent): void {
+export function handleTextSegment(item: UiEventOf<'text_segment'>): void {
   const agentId = String(item.agent_id || '');
   if (!agentId) return;
   if (agentTracker.getParent(agentId)) return;
@@ -28,7 +30,7 @@ export function handleTextSegment(item: UiEvent): void {
 // Next-prompt hint — forked after the turn, so it can land late
 // ---------------------------------------------------------------------------
 
-export function handleFollowups(item: UiEvent): void {
+export function handleFollowups(item: UiEventOf<'followups'>): void {
   const sid = item.session_id;
   if (!sid) return;
   if (agentTracker.getParent(String(item.agent_id || ''))) return;
@@ -64,7 +66,7 @@ function flushTokenBuffer(): void {
   useServerStore.getState().recomputeTokenRate();
 }
 
-export function handleToken(item: UiEvent): void {
+export function handleToken(item: UiEventOf<'token'>): void {
   const agentId = String(item.agent_id || '');
   const isThinking = item.data?.thinking === true;
   if (!agentId) return;
@@ -104,7 +106,7 @@ export function handleToken(item: UiEvent): void {
 // Message (finalized chat message)
 // ---------------------------------------------------------------------------
 
-export function handleMessage(item: UiEvent): void {
+export function handleMessage(item: UiEventOf<'message'>): void {
   const agentId = String(item.agent_id || '');
   let content = String(item.text || '');
   if (!content) return;
@@ -116,9 +118,7 @@ export function handleMessage(item: UiEvent): void {
   // arrive before SubagentSpawned has registered the tracker).
   if (agentId) {
     const subagentTrackingId = String(item.data?.run_id || agentId);
-    const parentFromData =
-      (item.data?.parent_agent_id ? String(item.data.parent_agent_id) : null) ||
-      (item.data?.parent_id ? String(item.data.parent_id) : null);
+    const parentFromData = item.data?.parent_agent_id ? String(item.data.parent_agent_id) : null;
     const subagentParent =
       agentTracker.getParent(subagentTrackingId) ||
       agentTracker.getParent(agentId) ||
@@ -165,10 +165,10 @@ export function handleMessage(item: UiEvent): void {
 // Content block (tool_use / text blocks, streamed with phase)
 // ---------------------------------------------------------------------------
 
-export function handleContentBlock(item: UiEvent): void {
+export function handleContentBlock(item: UiEventOf<'content_block'>): void {
   const agentId = String(item.agent_id || '');
   if (!agentId) return;
-  const data = item.data || {};
+  const data = item.data;
 
   // Route subagent content blocks to parent tree. Prefer run_id as the
   // tracking key so parallel subagents with the same agent_id don't collide.
@@ -176,28 +176,42 @@ export function handleContentBlock(item: UiEvent): void {
   const trackingId = runIdFromData || agentId;
   const parentId = agentTracker.getParent(trackingId);
   if (parentId) {
-    applySubagentContentBlock(parentId, trackingId, item.phase, data);
+    applySubagentContentBlock(parentId, trackingId, item);
     return;
   }
+  if (!item.data) return;
 
   if (item.phase === 'start') {
-    applyContentBlockStart(item, data);
+    applyContentBlockStart(item, item.data);
     return;
   }
   if (item.phase === 'update') {
-    applyContentBlockUpdate(agentId, data);
+    applyContentBlockUpdate(agentId, item.data);
   }
+}
+
+/** The extra fields a tool's update carries flat beside the fixed ones
+ *  (Edit/Write diffs, Bash output). */
+interface ToolExtras {
+  diff_type?: 'edit' | 'write';
+  path?: string;
+  old_string?: string;
+  new_string?: string;
+  new_content?: string;
+  start_line?: number;
+  lines_written?: number;
+  bash_output?: string[];
 }
 
 function applySubagentContentBlock(
   parentId: string,
   agentId: string,
-  phase: string | undefined,
-  data: any,
+  item: ContentBlockEvent,
 ): void {
   const chatStore = useChatStore.getState();
 
-  if (phase === 'start' && data.block_type === 'tool_use') {
+  if (item.phase === 'start' && item.data?.block_type === 'tool_use') {
+    const data = item.data;
     const toolCount = agentTracker.incrementToolCount(agentId);
     const newStep: SubagentToolStep = {
       toolName: data.tool || 'Tool',
@@ -215,7 +229,8 @@ function applySubagentContentBlock(
     return;
   }
 
-  if (phase === 'update') {
+  if (item.phase === 'update' && item.data) {
+    const data = item.data;
     const isFailed = data.status === 'failed';
     chatStore.updateSubagentTree(parentId, agentId,
       (entry) => {
@@ -228,7 +243,7 @@ function applySubagentContentBlock(
   }
 }
 
-function applyContentBlockStart(item: UiEvent, data: any): void {
+function applyContentBlockStart(item: UiEvent, data: ContentBlockStartData): void {
   const agentId = String(item.agent_id || '');
   const chatStore = useChatStore.getState();
   const blockType = String(data.block_type || 'text');
@@ -258,8 +273,9 @@ function applyContentBlockStart(item: UiEvent, data: any): void {
   agentTracker.ensureRunStarted(sid);
 }
 
-function applyContentBlockUpdate(agentId: string, data: any): void {
+function applyContentBlockUpdate(agentId: string, update: ContentBlockUpdateData): void {
   const chatStore = useChatStore.getState();
+  const data = update as ContentBlockUpdateData & ToolExtras;
   const diffData = data.diff_type
     ? {
         diff_type: data.diff_type as 'edit' | 'write',
@@ -290,14 +306,14 @@ function applyContentBlockUpdate(agentId: string, data: any): void {
 // Turn complete
 // ---------------------------------------------------------------------------
 
-export function handleTurnComplete(item: UiEvent): void {
+export function handleTurnComplete(item: UiEventOf<'turn_complete'>): void {
   const agentId = String(item.agent_id || '');
   if (!agentId) return;
   if (agentTracker.getParent(agentId)) return;
 
-  const data = item.data || {};
-  const durationMs = typeof data.duration_ms === 'number' ? data.duration_ms : undefined;
-  const contextTokens = typeof data.context_tokens === 'number' ? data.context_tokens : undefined;
+  const data = item.data;
+  const durationMs = typeof data?.duration_ms === 'number' ? data.duration_ms : undefined;
+  const contextTokens = typeof data?.context_tokens === 'number' ? data.context_tokens : undefined;
 
   const sid = getSessionId(item);
   const cleared = sid ? agentTracker.clearRun(sid) : {};
@@ -342,7 +358,7 @@ function markRunsCompletedForSession(
     } else if (opts.topLevelOnly && r.parent_run_id) {
       return r;
     }
-    return { ...r, status: 'completed', ended_at: Date.now() };
+    return { ...r, status: 'completed' as const, ended_at: Date.now() };
   });
   useServerStore.setState({ agentRuns: next });
 }
@@ -353,7 +369,7 @@ export { markRunsCompletedForSession };
 // Tool progress (stdout/stderr lines from running tools)
 // ---------------------------------------------------------------------------
 
-export function handleToolProgress(item: UiEvent): void {
+export function handleToolProgress(item: UiEventOf<'tool_progress'>): void {
   const agentId = String(item.agent_id || '');
   if (!agentId) return;
   if (agentTracker.getParent(agentId)) return;

@@ -11,22 +11,7 @@
  * small dropdown with the progress bar and a link to linggen.dev billing.
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { account } from '../lib/endpoints';
-
-interface TrialState {
-  tokens: number;
-  budget: number;
-  started_at: number | null;
-  expires_at: number | null;
-  active: boolean;
-}
-
-interface UsageState {
-  used: number;
-  allowance: number;
-  warn: boolean;
-  over: boolean;
-}
+import { account, type TrialState, type UsageState } from '../lib/endpoints';
 
 interface Meter {
   kind: 'trial' | 'monthly';
@@ -55,7 +40,7 @@ async function fetchMeter(): Promise<Meter | null> {
     return { kind: 'monthly', used: u.used, total: u.allowance, exhausted: u.over, pastPlan: false };
   }
 
-  const t: TrialState | undefined = acc.gate?.trial;
+  const t: TrialState | null | undefined = acc.gate?.trial;
   if (!t || !t.budget) return null;
   const pastPlan = Object.keys(acc.entitlement.apps ?? {}).length > 0;
   return { kind: 'trial', used: t.tokens, total: t.budget, exhausted: !t.active, pastPlan };

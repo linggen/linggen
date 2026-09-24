@@ -36,7 +36,7 @@ export const BareInfoPanel: React.FC = () => {
         onToggleDefault={server.toggleDefaultModel}
         onChangeReasoningEffort={server.setReasoningEffort}
         onReloadSkills={() => server.reloadSkills()}
-        onOpenSettings={(tab) => openSettings(tab as any)}
+        onOpenSettings={openSettings}
         onClickSkill={onClickSkill}
       />
     </div>
