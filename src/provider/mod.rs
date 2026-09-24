@@ -14,7 +14,6 @@ pub mod codex_auth;
 pub mod models;
 pub mod ollama;
 pub mod openai;
-pub mod openai_schema;
 pub mod proxy_provider;
 pub mod routing;
 
