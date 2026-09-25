@@ -545,18 +545,21 @@ pub(super) async fn push_user_turn_with_recall(
         // agent's id, and the dream mission's replies were being
         // swallowed into recall chips by the collision. Content is the
         // same text the model received — no separate channel — so what
-        // the user sees is exactly what the model saw.
-        crate::server::chat::helpers::persist_and_emit_to_store(
-            &ctx.manager.global_sessions,
-            &ctx.events_tx,
-            &ctx.agent_id,
-            "memory-recall",
-            &ctx.agent_id,
-            &model_text,
-            ctx.session_id.as_deref(),
-            false,
-        )
-        .await;
+        // the user sees is exactly what the model saw. A guest's recall is
+        // hers alone: read by her model, never a row on another's table.
+        if !ctx.guest {
+            crate::server::chat::helpers::persist_and_emit_to_store(
+                &ctx.manager.global_sessions,
+                &ctx.events_tx,
+                &ctx.agent_id,
+                "memory-recall",
+                &ctx.agent_id,
+                &model_text,
+                ctx.session_id.as_deref(),
+                false,
+            )
+            .await;
+        }
     }
 
     // Always-on per-turn capture nudge — model-only, fires every owner turn

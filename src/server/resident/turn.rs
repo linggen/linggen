@@ -225,44 +225,7 @@ async fn run_at(
         if trigger_source == "agent_chat" {
             state.manager.mark_agent_chat_session(session_id);
         }
-        engine.set_parent_agent(None);
-        // Set every turn: her rolling engine outlives this one.
-        engine.withheld_tools = withheld_for(seat.reach);
-        // Clear so we read THIS turn's final line — the engine is reused across
-        // turns and would otherwise hold the prior one.
-        engine.last_assistant_text = None;
-
-        // Her turn is a person's session, not a task: the owner policy's
-        // profile, applied to the engine (a fresh engine's default profile
-        // frames the turn as an autonomous task — a second "Task:" message).
-        let policy = crate::engine::session_policy::SessionPolicy::owner();
-        policy.apply(&mut engine);
-
-        // Tune her memory injection from the Pet settings (default: one
-        // high-relevance record at ≥0.8). Set on her own engine's cfg (a
-        // per-session clone), so Ling's full-store recall is untouched.
-        // Idempotent — safe to set each turn, and picks up live settings edits.
-        engine.cfg.memory_recall_count = pet.recall_count.max(1);
-        engine.cfg.memory_inject_min_score = Some(pet.recall_min_score);
-        // A guest leaves no recall rows on someone else's table.
-        if seat.guest && engine.prompt_profile.include_memory {
-            engine.prompt_profile.include_memory = false;
-            engine.cached_system_prompt = None;
-        }
-
-        // Pick her brain per the Pet model setting (tier-aware default: the
-        // metered Linggen Cloud model for signed-in users, the engine default
-        // for BYOK). An unavailable id falls back to whatever she's already on.
-        if let Some(m) = resolve_pet_model(&pet.model) {
-            if engine.model_manager.has_model(&m) {
-                engine.model_id = m;
-            } else {
-                tracing::warn!(
-                    "[yinyue] model '{m}' unavailable; using {}",
-                    engine.model_id
-                );
-            }
-        }
+        let policy = ready_for_turn(&mut engine, seat, pet);
 
         // First turn of a freshly rolled session: bridge the day/size roll with
         // a one-line "Previously" note so a thread mid-flight doesn't snap.
@@ -306,6 +269,60 @@ async fn run_at(
     spoken
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
+}
+
+/// Set her engine up for one turn at `seat`. Idempotent — her rolling
+/// engine outlives the turn, and this picks up live settings edits. Returns
+/// the policy the turn runs under.
+fn ready_for_turn(
+    engine: &mut crate::engine::AgentEngine,
+    seat: &Seat,
+    pet: &crate::config::PetConfig,
+) -> crate::engine::session_policy::SessionPolicy {
+    engine.set_parent_agent(None);
+    engine.withheld_tools = withheld_for(seat.reach);
+    // Clear so we read THIS turn's final line — the engine is reused across
+    // turns and would otherwise hold the prior one.
+    engine.last_assistant_text = None;
+
+    // Her turn is a person's session, not a task: the owner policy's
+    // profile, applied to the engine (a fresh engine's default profile
+    // frames the turn as an autonomous task — a second "Task:" message).
+    // Her own memory with it, at every seat: her core block (who the user
+    // is), her recall — which a guest's turn reads but never leaves as a
+    // row on someone else's table (`ChatRunCtx::guest`).
+    let policy = crate::engine::session_policy::SessionPolicy::owner();
+    policy.apply(engine);
+
+    // Her memory tools act for the session she speaks in: a write is stamped
+    // with it (`source_session`), and a table whose skill keeps a memory
+    // context holds her reads and writes to that context, as it holds its
+    // own agent's (`memory_mcp::skill_scope`).
+    engine
+        .tools
+        .builtins
+        .set_session_id(Some(seat.session_id.clone()));
+
+    // Tune her memory injection from the Pet settings (default: one
+    // high-relevance record at ≥0.8). Set on her own engine's cfg (a
+    // per-session clone), so Ling's full-store recall is untouched.
+    engine.cfg.memory_recall_count = pet.recall_count.max(1);
+    engine.cfg.memory_inject_min_score = Some(pet.recall_min_score);
+
+    // Pick her brain per the Pet model setting (tier-aware default: the
+    // metered Linggen Cloud model for signed-in users, the engine default
+    // for BYOK). An unavailable id falls back to whatever she's already on.
+    if let Some(m) = resolve_pet_model(&pet.model) {
+        if engine.model_manager.has_model(&m) {
+            engine.model_id = m;
+        } else {
+            tracing::warn!(
+                "[yinyue] model '{m}' unavailable; using {}",
+                engine.model_id
+            );
+        }
+    }
+    policy
 }
 
 /// Resolve Yinyue's model from the `pet.model` setting. An explicit id wins;
@@ -361,6 +378,15 @@ mod tests {
         engine
     }
 
+    fn seat(guest: bool) -> Seat {
+        Seat {
+            session_id: "sess-1758700000-cfo".to_string(),
+            root: std::env::temp_dir(),
+            guest,
+            reach: Reach::Sealed,
+        }
+    }
+
     /// Her turn is a person's: the request ends on the message itself, never
     /// wrapped a second time as an autonomous task (2026-09-25: every turn
     /// of hers carried "Autonomous agent loop started… Task:" — her engine
@@ -372,7 +398,7 @@ mod tests {
             engine.prompt_profile.task_bootstrap,
             "a fresh engine frames a task"
         );
-        crate::engine::session_policy::SessionPolicy::owner().apply(&mut engine);
+        ready_for_turn(&mut engine, &seat(true), &Default::default());
         engine
             .chat_history
             .push(crate::message::ChatMessage::new("user", "[User]: 你好"));
@@ -389,11 +415,27 @@ mod tests {
         assert!(!messages
             .iter()
             .any(|m| m.content.contains("Autonomous agent loop")));
+    }
 
-        // And her turn code applies it, before anything narrows the profile.
-        let src = include_str!("turn.rs");
-        let apply = src.find(concat!("policy.apply", "(&mut engine)")).unwrap();
-        let narrowed = src.find(concat!("engine.prompt_profile", ".")).unwrap();
-        assert!(apply < narrowed, "the policy is applied first");
+    /// At another's table she keeps her own memory — her core block (who
+    /// the user is) — and her memory tools act for that table's session, so
+    /// its skill's memory context holds them and her writes are stamped
+    /// with it.
+    #[test]
+    fn a_guest_keeps_her_memory_and_her_tools_act_for_the_table() {
+        let mut engine = her_engine();
+        ready_for_turn(&mut engine, &seat(true), &Default::default());
+        assert!(engine.prompt_profile.include_memory, "her core block stays");
+        assert_eq!(
+            engine.tools.builtins.session_id.as_deref(),
+            Some("sess-1758700000-cfo")
+        );
+        assert!(engine.withheld_tools.contains("agent_chat"));
+
+        // Her recall reaches her model only: a guest leaves no recall row.
+        let runtime = include_str!("../chat/runtime.rs");
+        let guard = runtime.find(concat!("if !ctx", ".guest {")).unwrap();
+        let row = runtime.find(concat!("\"memory", "-recall\",")).unwrap();
+        assert!(guard < row);
     }
 }

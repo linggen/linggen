@@ -160,7 +160,11 @@ so she can't message Ling into the app's chat; `converse` is the only exchange.
 spec `aliases:` name) goes to her, in the same session, as a **guest**: her own
 engine and tools (never the session's skill, its tools or prompt), the thread
 rebuilt from the chat's visible dialogue, her reply persisted as hers and
-spoken (`PetSpeak`). Ling is not woken; what was said reaches him at the start
+spoken (`PetSpeak`). Her memory stays hers: her core block (who the user
+is) and her recall, read by her model and never left as a row on the table;
+her memory tools act for the table's session, so a skill with a
+`memory-context` holds her reads and writes to that context, and her writes
+are stamped with the session. Ling is not woken; what was said reaches him at the start
 of his next turn (`chat/side_lines.rs`). No mention → Ling, as always.
 
 **One conversation per app.** She reads the whole visible dialogue of an app's
