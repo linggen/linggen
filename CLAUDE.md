@@ -63,9 +63,9 @@ Linggen is a local-first, multi-agent coding assistant. The binary is
 
 ### Configuration
 
-Config search: `$LINGGEN_CONFIG` → `./linggen.toml` → `~/.config/linggen/` → `~/.local/share/linggen/`.
+Config search: `$LINGGEN_CONFIG` → `~/.linggen/config/linggen.runtime.toml` → `~/.linggen/config/linggen.toml` (`~/.linggen` is `$LINGGEN_HOME` when set).
 
-Key sections: `[[models]]` (LLM providers), `[server]` (port), `[agent]` (max_iters, safety mode, tool_permission_mode), `[logging]`, `[[agents]]` (agent spec references), `[routing]` (model selection policies).
+Key sections: `[[models]]` (LLM providers), `[server]` (port), `[agent]` (max_iters, safety mode, tool_permission_mode), `[logging]`, `[[agents]]` (agent spec references), `[routing]` (the default model chain and auto-fallback).
 
 ## Code Style
 
