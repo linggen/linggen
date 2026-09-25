@@ -136,7 +136,7 @@ The system prompt is rebuilt each turn from layers. Which layers are included de
 ```
 [1]  Agent personality       — always (sets response style)
 [2]  Agent body              — always (sets identity and behavior)
-[3]  Available skills        — skill names + descriptions for discovery
+[3]  Available skills        — skill names + descriptions for discovery; none in a skill-bound session (app or not), whose skill is its place
 [4]  Active skill body       — when session has a bound skill
 [5]  Environment             — always (platform, cwd, date)
 [6]  Project instructions    — when in project mode and CLAUDE.md exists at git root

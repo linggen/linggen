@@ -68,6 +68,26 @@ fn an_app_session_keeps_the_soul_and_the_skill_is_its_place() {
     assert!(!p.contains("IGNORED FOR THE APP'S OWN AGENT."));
 }
 
+/// A session bound to a skill with no app is that skill's, as an app's is:
+/// its SKILL.md is the place — no main-chat block, no list of other skills.
+/// The same skill taken up mid-chat leaves the agent where it was.
+#[test]
+fn a_skill_bound_session_has_its_skill_for_a_place_even_without_an_app() {
+    let text = "---\nname: zz\ndescription: A plain skill.\n---\nTHE SKILL'S OWN RULES.";
+    let plain = crate::extensions::skills::parse_skill_text(text, SkillSource::Global).unwrap();
+    let mut engine = engine_as("ling", LING);
+    engine.available_skills_metadata = vec![("other".into(), "OTHER SKILL.".into(), true)];
+    engine.active_skill = Some(plain);
+    engine.skill_bound = true;
+    let p = engine.system_prompt();
+    at(&p, "THE SKILL'S OWN RULES.");
+    assert!(!p.contains(MAC_CHAT) && !p.contains("OTHER SKILL."));
+
+    engine.skill_bound = false;
+    let p = engine.system_prompt();
+    at(&p, MAC_CHAT);
+}
+
 #[test]
 fn yinyue_at_home_is_on_the_desktop_and_a_guest_at_an_app_table() {
     let home = engine_as("yinyue", YINYUE).system_prompt();
@@ -113,6 +133,23 @@ fn a_guest_reads_the_tables_skill_for_her_own_place_only() {
         !p.contains("THE APP'S OWN RULES."),
         "a guest takes up no skill"
     );
+}
+
+/// Her line landing in an app chat from her own thread: she speaks from
+/// that table — the table's declaration for her, else the guest block —
+/// with her own tools (no guest seat).
+#[test]
+fn a_line_landing_at_a_table_speaks_from_it() {
+    let table = skill("place:\n  yinyue: AT THE PLAYER'S SIDE.\n");
+    let mut engine = engine_as("yinyue", YINYUE);
+    engine.speaks_at_table = true;
+    let p = engine.system_prompt();
+    at(&p, GUEST);
+    assert!(!p.contains(DESKTOP));
+    engine.seat_places = table.place.clone();
+    let p = engine.system_prompt();
+    at(&p, "AT THE PLAYER'S SIDE.");
+    assert!(!engine.is_guest_seat());
 }
 
 #[test]

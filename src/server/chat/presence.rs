@@ -24,16 +24,9 @@ pub(crate) async fn session_places(manager: &AgentManager, session_id: &str) -> 
     session_skill(manager, session_id).await?.place
 }
 
-/// Whether `agent` is absent from `skill` right now. A gate whose state
-/// can't be read keeps the agent away.
+/// Whether `agent` is absent from `skill` right now (`Skill::keeps_away`).
 fn absent_from(skill: &Skill, agent: &str) -> bool {
-    let Some(places) = &skill.place else {
-        return false;
-    };
-    match &skill.skill_dir {
-        Some(dir) => places.is_absent(agent, dir),
-        None => places.gate_for(agent).is_some(),
-    }
+    skill.keeps_away(agent)
 }
 
 /// Whether `agent` is absent from the skill bound to `session_id`.

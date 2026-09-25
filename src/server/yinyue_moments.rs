@@ -381,6 +381,12 @@ async fn land_in_chats(state: &Arc<ServerState>, moments: &[Moment], line: Optio
         let Ok(Some(_)) = state.manager.global_sessions.get_session_meta(sid) else {
             continue; // the session is gone
         };
+        // Not there (any more) in that app's world: her line lands nowhere
+        // she isn't — the gate is read again as it lands, not only when the
+        // moment was posted.
+        if crate::server::chat::presence::absent_in_session(&state.manager, sid, companion).await {
+            continue;
+        }
         crate::server::chat::helpers::persist_and_emit_to_store(
             &state.manager.global_sessions,
             &state.events_tx,
@@ -466,9 +472,14 @@ pub async fn yinyue_moment_loop(state: Arc<ServerState>) {
                 kickoff(&taken)
             };
             let aside = aside(&state, &taken).await;
-            let line =
-                super::resident::wake_for_moment(state.clone(), (words, aside), &emotion, asked)
-                    .await;
+            let table = chats_named(&taken).first().map(|(_, sid)| sid.to_string());
+            let line = super::resident::wake_for_moment(
+                state.clone(),
+                (words, aside, table),
+                &emotion,
+                asked,
+            )
+            .await;
             IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner()).clear();
             land_in_chats(&state, &taken, line.as_deref()).await;
         });

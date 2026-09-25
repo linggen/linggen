@@ -73,6 +73,12 @@ impl Tool for AppTool {
                 .ok_or_else(|| anyhow::anyhow!(Refusal::no_skill(app).to_string()))?],
             None => manager.skills.list_skills().await,
         };
+        // An app that keeps the caller away (`place.<agent>.absent_until`)
+        // offers it nothing: it isn't in that world yet.
+        let skills = reachable(skills, tools.agent_id());
+        if let (Some(app), true) = (args.app.as_deref(), skills.is_empty()) {
+            anyhow::bail!(Refusal::no_skill(app).to_string());
+        }
         let Some(tool) = named_tool(args.tool.as_deref()) else {
             return Ok(ToolResult::Success(listing(&skills)));
         };
@@ -94,6 +100,17 @@ impl Tool for AppTool {
 /// `{app: "lingjing", tool: ""}` was refused as a tool named '').
 fn named_tool(tool: Option<&str>) -> Option<&str> {
     tool.map(str::trim).filter(|t| !t.is_empty())
+}
+
+/// The apps `agent` may reach now: every app, less those keeping it away.
+fn reachable(skills: Vec<Skill>, agent: Option<&str>) -> Vec<Skill> {
+    let Some(agent) = agent else {
+        return skills;
+    };
+    skills
+        .into_iter()
+        .filter(|s| !s.keeps_away(agent))
+        .collect()
 }
 
 /// Every tool the given apps offer the companion, as JSON lines.
@@ -120,7 +137,34 @@ fn listing(skills: &[Skill]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::named_tool;
+    use super::{named_tool, reachable};
+
+    /// An app whose world she hasn't entered yet offers her nothing — listed
+    /// or called by name; everyone else, and every app with no gate, is
+    /// reached as before.
+    #[test]
+    fn an_app_keeping_her_away_offers_her_nothing() {
+        let parse = |extra: &str| {
+            let text = format!("---\nname: zz\ndescription: d\n{extra}---\nBody.");
+            let mut skill = crate::extensions::skills::parse_skill_text(
+                &text,
+                crate::engine::skill::SkillSource::Global,
+            )
+            .unwrap();
+            skill.skill_dir = Some(std::env::temp_dir().join("no-such-skill-dir"));
+            skill
+        };
+        let gated =
+            parse("place:\n  yinyue:\n    absent_until: {file: state.json, path: companion}\n");
+        let open = parse("");
+        let names = |v: Vec<crate::engine::skill::Skill>| v.len();
+        assert_eq!(
+            names(reachable(vec![gated.clone(), open.clone()], Some("yinyue"))),
+            1
+        );
+        assert_eq!(names(reachable(vec![gated.clone()], Some("ling"))), 1);
+        assert_eq!(names(reachable(vec![gated], None)), 1);
+    }
 
     #[test]
     fn a_blank_tool_is_no_tool_and_lists_instead() {

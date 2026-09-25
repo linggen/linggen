@@ -18,21 +18,21 @@ pub(crate) async fn run_yinyue_turn(
     task: String,
     trigger_source: &str,
 ) -> Option<String> {
-    run_home(state, task, None, trigger_source, Reach::Open).await
+    run_home(state, (task, None, None), trigger_source, Reach::Open).await
 }
 
 /// Her turn on her own thread, woken by an app moment: her line is all she
 /// gives — spoken, and landed in the app's chat by the moment path — or
 /// SILENT. She reaches no other agent from it ([`Reach::Sealed`]).
 /// `aside` is what she reads for this turn only — the app chat's dialogue —
-/// and never kept on her thread.
+/// and never kept on her thread. `table`: the app chat her line lands in;
+/// she speaks from there, as its guest (`AgentEngine::speaks_at_table`).
 pub(crate) async fn run_moment_turn(
     state: &Arc<ServerState>,
-    task: String,
-    aside: Option<String>,
+    (task, aside, table): (String, Option<String>, Option<String>),
     trigger_source: &str,
 ) -> Option<String> {
-    run_home(state, task, aside, trigger_source, Reach::Sealed).await
+    run_home(state, (task, aside, table), trigger_source, Reach::Sealed).await
 }
 
 /// What a turn of hers may reach past her own line.
@@ -62,8 +62,7 @@ pub(super) fn withheld_for(reach: Reach) -> std::collections::HashSet<String> {
 /// Her turn on her own rolling thread, with the given reach.
 async fn run_home(
     state: &Arc<ServerState>,
-    task: String,
-    aside: Option<String>,
+    (task, aside, table): (String, Option<String>, Option<String>),
     trigger_source: &str,
     reach: Reach,
 ) -> Option<String> {
@@ -87,6 +86,7 @@ async fn run_home(
         root,
         guest: false,
         reach,
+        table,
     };
     run_at(state, &seat, &pet, (task, aside), trigger_source).await
 }
@@ -111,6 +111,7 @@ pub(crate) async fn run_guest_turn(
         root: her_root(),
         guest: true,
         reach: Reach::Sealed,
+        table: None,
     };
     run_at(state, &seat, &pet, (message, None), "user").await
 }
@@ -127,6 +128,10 @@ struct Seat {
     root: std::path::PathBuf,
     guest: bool,
     reach: Reach,
+    /// Another session's chat her words land in from her own thread (an app
+    /// moment): she speaks from that table. `None` for a guest — seated
+    /// there, the table is `session_id`.
+    table: Option<String>,
 }
 
 /// Her engine for a seat. Her own thread is her session's engine. A guest
@@ -226,6 +231,14 @@ async fn run_at(
             state.manager.mark_agent_chat_session(session_id);
         }
         let policy = ready_for_turn(&mut engine, seat, pet);
+        // A guest's places are read as she sits down (`seat_at_table`); a
+        // line landing in an app chat from her own thread reads them here.
+        if !seat.guest {
+            engine.seat_places = match &seat.table {
+                Some(t) => crate::server::chat::presence::session_places(&state.manager, t).await,
+                None => None,
+            };
+        }
 
         // First turn of a freshly rolled session: bridge the day/size roll with
         // a one-line "Previously" note so a thread mid-flight doesn't snap.
@@ -281,6 +294,7 @@ fn ready_for_turn(
 ) -> crate::engine::session_policy::SessionPolicy {
     engine.set_parent_agent(None);
     engine.withheld_tools = withheld_for(seat.reach);
+    engine.speaks_at_table = !seat.guest && seat.table.is_some();
     // Clear so we read THIS turn's final line — the engine is reused across
     // turns and would otherwise hold the prior one.
     engine.last_assistant_text = None;
@@ -384,6 +398,7 @@ mod tests {
             root: std::env::temp_dir(),
             guest,
             reach: Reach::Sealed,
+            table: None,
         }
     }
 
@@ -415,6 +430,26 @@ mod tests {
         assert!(!messages
             .iter()
             .any(|m| m.content.contains("Autonomous agent loop")));
+    }
+
+    /// A moment whose line lands in an app chat runs on her own thread but
+    /// speaks from that table: the guest place, not her desktop's. The next
+    /// turn at home is at home again.
+    #[test]
+    fn a_moment_landing_in_an_app_chat_speaks_from_its_table() {
+        let mut engine = her_engine();
+        let mut moment = seat(false);
+        moment.table = Some("sess-1758700000-lingjing".to_string());
+        ready_for_turn(&mut engine, &moment, &Default::default());
+        assert_eq!(
+            engine.surface(),
+            Some(crate::engine::prompt::place::Surface::Guest)
+        );
+        ready_for_turn(&mut engine, &seat(false), &Default::default());
+        assert_eq!(
+            engine.surface(),
+            Some(crate::engine::prompt::place::Surface::Home)
+        );
     }
 
     /// At another's table she keeps her own memory — her core block (who

@@ -357,6 +357,22 @@ pub struct Skill {
     pub skill_dir: Option<PathBuf>,
 }
 
+impl Skill {
+    /// Whether this skill keeps `agent` away right now (`place.<agent>.
+    /// absent_until`, read from the skill's own state). A gate whose state
+    /// can't be read keeps the agent away; an agent the skill declares no
+    /// gate for is always there.
+    pub fn keeps_away(&self, agent: &str) -> bool {
+        let Some(places) = &self.place else {
+            return false;
+        };
+        match &self.skill_dir {
+            Some(dir) => places.is_absent(agent, dir),
+            None => places.gate_for(agent).is_some(),
+        }
+    }
+}
+
 fn default_user_invocable() -> bool {
     true
 }

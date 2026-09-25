@@ -326,6 +326,14 @@ pub struct AgentEngine {
     /// A guest seat's place: what the skill of the session it sits at
     /// declares (`place:`). A guest takes up nothing else of that skill.
     pub seat_places: Option<crate::engine::skill::record::Places>,
+    /// This turn's words land in another session's chat though the turn runs
+    /// on the agent's own thread (the companion's app moment): it speaks
+    /// from that table — the guest place, and `seat_places` for what the
+    /// table's skill declares. Set per turn by whoever drives it.
+    pub speaks_at_table: bool,
+    /// The active skill is the one the session is bound to, not one taken up
+    /// mid-chat: like an app's, its SKILL.md is the agent's place.
+    pub(crate) skill_bound: bool,
     /// Tools the caller of this turn withholds: never offered to the model,
     /// and refused if called anyway. Set per turn by whoever drives it (a
     /// companion woken by an app moment speaks its own line and reaches no
@@ -565,6 +573,8 @@ impl AgentEngine {
             session_permissions: permission::SessionPermissions::default(),
             seat_permissions: None,
             seat_places: None,
+            speaks_at_table: false,
+            skill_bound: false,
             withheld_tools: Default::default(),
             prompt_profile: super::prompt::profile::PromptProfile::default(),
             session_dir: None,

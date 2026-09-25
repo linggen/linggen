@@ -273,14 +273,25 @@ impl AgentEngine {
             .render_or_fallback(crate::prompts::keys::SYSTEM_FALLBACK_IDENTITY, &[])
     }
 
+    /// The active skill is this session's place: an app, or the skill the
+    /// session is bound to — its SKILL.md says where the agent is, and the
+    /// agent takes up no other skill there.
     fn is_app_session(&self) -> bool {
-        self.active_skill.as_ref().is_some_and(|s| s.app.is_some())
+        self.active_skill
+            .as_ref()
+            .is_some_and(|s| s.app.is_some() || self.skill_bound)
+    }
+
+    /// Whether this turn speaks from another session's table: seated there
+    /// as a guest, or landing its line there from its own thread.
+    fn speaks_as_guest(&self) -> bool {
+        self.is_guest_seat() || self.speaks_at_table
     }
 
     /// Where this engine speaks from, as far as the engine can tell. A
     /// delegate works for another agent and has no place of its own.
     pub(crate) fn surface(&self) -> Option<place::Surface> {
-        if self.is_guest_seat() {
+        if self.speaks_as_guest() {
             return Some(place::Surface::Guest);
         }
         if self.parent_agent_id.is_some() {
@@ -295,7 +306,7 @@ impl AgentEngine {
     /// The places the skill in view declares: the table's skill for a guest,
     /// else the active skill.
     fn declared_places(&self) -> Option<&crate::engine::skill::record::Places> {
-        if self.is_guest_seat() {
+        if self.speaks_as_guest() {
             return self.seat_places.as_ref();
         }
         self.active_skill.as_ref().and_then(|s| s.place.as_ref())

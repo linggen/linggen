@@ -85,7 +85,9 @@ The engine stays a general core: it knows devices and surfaces, never an app.
 - **Engine surfaces** (Mac main chat, desktop pet, guest in an app chat): the
   engine writes the block itself.
 - **Apps:** for the app's own agent, the SKILL.md body is the place — no
-  separate block. For a guest, a skill may declare `place: {yinyue: "..."}`;
+  separate block, no list of other skills. The same holds for any session
+  bound to a skill, with or without `app:`; a skill taken up mid-chat leaves
+  the agent in its own place. For a guest, a skill may declare `place: {yinyue: "..."}`;
   the engine injects it in place of the guest block. An app that declares
   nothing for Yinyue gets the plain guest block.
 - **Live state** (e.g. before or after 结丹): the skill says it — Lingjing's

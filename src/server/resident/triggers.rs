@@ -359,28 +359,29 @@ pub(crate) async fn wake_herald(
     kickoff: String,
     emotion: &str,
 ) -> Option<String> {
-    wake_and_speak(state, (kickoff, None), emotion, "event", Reach::Open).await
+    wake_and_speak(state, (kickoff, None, None), emotion, "event", Reach::Open).await
 }
 
 /// Wake her for an app moment. `asked`: the user asked her for this — the
 /// same spoken final paragraph, under the contract that offers no SILENT.
 /// Sealed either way: her line is the whole of her answer (`Reach::Sealed`).
-/// `aside`: the app chat's dialogue, read for this turn only.
+/// `aside`: the app chat's dialogue, read for this turn only. `table`: the
+/// app chat her line lands in, which she speaks from.
 pub(crate) async fn wake_for_moment(
     state: Arc<ServerState>,
-    (kickoff, aside): (String, Option<String>),
+    moment: (String, Option<String>, Option<String>),
     emotion: &str,
     asked: bool,
 ) -> Option<String> {
     let source = if asked { "asked" } else { "event" };
-    wake_and_speak(state, (kickoff, aside), emotion, source, Reach::Sealed).await
+    wake_and_speak(state, moment, emotion, source, Reach::Sealed).await
 }
 
 /// Wake her, and speak her line. Returns the line she said aloud — `None`
 /// when the run failed, she produced nothing, or chose silence.
 pub(super) async fn wake_and_speak(
     state: Arc<ServerState>,
-    (kickoff, aside): (String, Option<String>),
+    (kickoff, aside, table): (String, Option<String>, Option<String>),
     emotion: &str,
     trigger_source: &str,
     reach: Reach,
@@ -388,7 +389,7 @@ pub(super) async fn wake_and_speak(
     // `None`: the run failed or she produced nothing.
     let reply = match reach {
         Reach::Open => run_yinyue_turn(&state, kickoff, trigger_source).await,
-        Reach::Sealed => run_moment_turn(&state, kickoff, aside, trigger_source).await,
+        Reach::Sealed => run_moment_turn(&state, (kickoff, aside, table), trigger_source).await,
     }?;
     let Some(line) = spoken_line(&reply) else {
         tracing::info!("[yinyue-watch] Yinyue chose silence");

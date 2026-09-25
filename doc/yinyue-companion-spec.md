@@ -146,7 +146,10 @@ to fight).
 **In the app's chat.** `session` (the app's chat session id; unknown → 400)
 has her spoken line also land there as a message from her — `[Yinyue]` in the
 embed chat, and in Ling's context on his next turn — without starting a Ling
-run. SILENT lands nothing. `converse: true` (with `session`, for big moments)
+run. SILENT lands nothing, and nothing lands in a chat whose skill keeps her
+away when the line is ready (`absent_until` is read again then). The turn
+runs on her own thread but speaks from that chat: the guest place (or the
+skill's `place.yinyue`), not her desktop's. `converse: true` (with `session`, for big moments)
 then gives the session's agent **one** hidden kickoff to answer her in a line,
 in-world, or `SILENT` (nothing shown, nothing kept). It waits behind a running
 turn, never interrupts, never wakes her back, and a session gets at most one

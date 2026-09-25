@@ -65,6 +65,9 @@ impl AgentEngine {
         skill: Skill,
         mode: ActivationMode,
     ) -> ActivationOutcome {
+        // The session's own skill (bound at creation; an export renders
+        // only that one) is the agent's place; one taken up mid-chat is not.
+        self.skill_bound = matches!(mode, ActivationMode::SessionBound | ActivationMode::Export);
         // Export: throwaway engine — set active_skill + scope, no grant side
         // effects, no save, no prompt. Used by the Copy-System-Prompt button.
         // Tools NOT registered on export — the export path is a read-only
