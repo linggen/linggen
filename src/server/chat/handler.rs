@@ -14,24 +14,6 @@ use super::structured::run_structured_loop;
 use super::types::ChatRequest;
 use super::ChatRunCtx;
 
-/// A message that opens by addressing someone: `@name body` (or the older
-/// `@@name body`). The name is a run of letters, digits, `_` or `-` in any
-/// script (`@银月`), ended by whitespace or a comma/colon — so `@src/main.rs`
-/// is never a name. Whether the name is an agent is the caller's lookup.
-pub(super) fn parse_explicit_target_prefix(message: &str) -> Option<(&str, &str)> {
-    let rest = message.strip_prefix('@')?;
-    let rest = rest.strip_prefix('@').unwrap_or(rest);
-    let end = rest.find(|c: char| c.is_whitespace() || MENTION_ENDS.contains(&c))?;
-    let candidate = &rest[..end];
-    let body =
-        rest[end..].trim_start_matches(|c: char| c.is_whitespace() || MENTION_ENDS.contains(&c));
-    let is_name_char = |c: char| c.is_alphanumeric() || c == '_' || c == '-';
-    if candidate.is_empty() || body.is_empty() || !candidate.chars().all(is_name_char) {
-        return None;
-    }
-    Some((candidate, body))
-}
-
 /// What may close an `@name` besides whitespace.
 const MENTION_ENDS: &[char] = &[',', ':', '\u{ff0c}', '\u{ff1a}', '\u{3001}'];
 
@@ -40,7 +22,7 @@ const MENTION_ENDS: &[char] = &[',', ':', '\u{ff0c}', '\u{ff1a}', '\u{3001}'];
 /// (agent id, name) — the text starts with, case-insensitively. The name is
 /// whole when what follows is the end, whitespace or a closing mark, or
 /// when either side of the seam is CJK (`@银月你好`): `@lingo` is never
-/// `@ling`. The chat input reads the same rule (`ui/src/lib/chatMentions.ts`).
+/// `@ling`. The chat input reads the same rule (`ui/src/lib/chatMentions.mts`).
 pub(super) fn leading_mention<'a>(
     message: &'a str,
     names: &[(String, String)],
@@ -223,16 +205,18 @@ pub(super) fn resolve_request_root(req_root: &str) -> PathBuf {
 /// Ensure a session exists for this request. Auto-creates a fresh `sess-…`
 /// id when none was sent; otherwise inserts the requested id into the
 /// session store if it isn't there yet so the Web UI can list it.
-/// Returns the resolved session id.
+/// Returns the resolved session id. `words` is the message without the
+/// `@name` that addressed it — what a title is made from.
 async fn ensure_session(
     state: &Arc<ServerState>,
     req: &ChatRequest,
     project_root_str: &str,
     session_creator: &str,
+    words: &str,
 ) -> Option<String> {
     let global_sessions = &state.manager.global_sessions;
     let now = crate::util::now_ts_secs();
-    let title = auto_session_title(&req.message);
+    let title = auto_session_title(words);
 
     let make_meta = |id: String| crate::state_fs::sessions::SessionMeta {
         id,
@@ -260,7 +244,7 @@ async fn ensure_session(
         if !exists {
             let _ = global_sessions.add_session(&make_meta(sid.clone()));
         } else {
-            maybe_auto_rename(state, &sid, &req.message).await;
+            maybe_auto_rename(state, &sid, words).await;
         }
         return Some(sid);
     }
@@ -283,31 +267,20 @@ async fn ensure_session(
 
 /// If the session was created with a placeholder title (UI's time-based
 /// "Chat May 22, 3:20 PM" or "New Chat"), replace it with a title derived
-/// from the user's first substantive message and lock it.
+/// from the user's first substantive message and lock it. `words` comes
+/// without the `@name` that addressed it ([`leading_mention`]).
 ///
 /// Best-effort: any read/write failure is swallowed — chat must not block
 /// on a cosmetic rename.
-async fn maybe_auto_rename(state: &Arc<ServerState>, session_id: &str, message: &str) {
+async fn maybe_auto_rename(state: &Arc<ServerState>, session_id: &str, words: &str) {
     let store = &state.manager.global_sessions;
     let Ok(Some(meta)) = store.get_session_meta(session_id) else {
         return;
     };
-    if meta.title_locked {
+    if meta.title_locked || words.trim().is_empty() {
         return;
     }
-    let trimmed = message.trim();
-    if trimmed.is_empty() {
-        return;
-    }
-    // Strip the optional `@agent ` routing prefix so the rename reflects
-    // the actual user intent, not the routing token.
-    let body = parse_explicit_target_prefix(trimmed)
-        .map(|(_, rest)| rest)
-        .unwrap_or(trimmed);
-    if body.trim().is_empty() {
-        return;
-    }
-    let new_title = auto_session_title(body);
+    let new_title = auto_session_title(words);
     if new_title == meta.title {
         return;
     }
@@ -1163,11 +1136,11 @@ pub(crate) async fn start_turn(
         bound_skill.as_deref(),
     );
 
-    let session_id = ensure_session(&state, &req, &project_root_str, session_creator).await;
+    let (target_id, clean_msg) = route_target(&state, &req, &root).await;
+    let session_id =
+        ensure_session(&state, &req, &project_root_str, session_creator, &clean_msg).await;
     let effective_session_id = session_id.clone().unwrap_or_else(|| "default".to_string());
     let events_tx = state.events_tx.clone();
-
-    let (target_id, clean_msg) = route_target(&state, &req, &root).await;
 
     match seat_for(&state, &target_id, &req.agent_id, &effective_session_id).await {
         Seat::Own => {}
@@ -1407,8 +1380,8 @@ pub(crate) async fn start_turn(
 #[cfg(test)]
 mod tests {
     use super::{
-        auto_session_title, leading_mention, parse_explicit_target_prefix, session_host,
-        take_aside, trim_live_history, turn_creator,
+        auto_session_title, leading_mention, session_host, take_aside, trim_live_history,
+        turn_creator,
     };
     use super::{busy_message, BusyMessage};
     use crate::engine::skill::QueueMode;
@@ -1462,18 +1435,6 @@ mod tests {
         assert_eq!(turn_creator(Some("dream"), None, Some("game")), "mission");
     }
 
-    #[test]
-    fn parse_explicit_target_prefix_accepts_valid_mention() {
-        let parsed = parse_explicit_target_prefix("@coder please review src/main.rs");
-        assert_eq!(parsed, Some(("coder", "please review src/main.rs")));
-    }
-
-    #[test]
-    fn parse_explicit_target_prefix_rejects_missing_body() {
-        let parsed = parse_explicit_target_prefix("@coder");
-        assert_eq!(parsed, None);
-    }
-
     /// A moment's aside (an app chat's dialogue) is read for its turn only:
     /// afterwards her thread holds the turn, never the aside — even when
     /// the thread shifted under it.
@@ -1490,25 +1451,6 @@ mod tests {
         take_aside(&mut h, None);
         take_aside(&mut h, Some("[User]: 去临淄"));
         assert_eq!(h.len(), 3, "nothing else is taken");
-    }
-
-    #[test]
-    fn a_mention_names_an_agent_in_any_script_but_never_a_path() {
-        assert_eq!(
-            parse_explicit_target_prefix("@银月 你看这一局"),
-            Some(("银月", "你看这一局"))
-        );
-        assert_eq!(
-            parse_explicit_target_prefix("@银月，你看"),
-            Some(("银月", "你看"))
-        );
-        assert_eq!(
-            parse_explicit_target_prefix("@@Yinyue: hi"),
-            Some(("Yinyue", "hi"))
-        );
-        assert_eq!(parse_explicit_target_prefix("@src/main.rs explain"), None);
-        assert_eq!(parse_explicit_target_prefix("@notes.md explain"), None);
-        assert_eq!(parse_explicit_target_prefix("hi @yinyue there"), None);
     }
 
     fn names() -> Vec<(String, String)> {
@@ -1545,9 +1487,27 @@ mod tests {
         assert_eq!(got("@ling hi"), pair("ling", "hi"));
         assert_eq!(got("@LING, hi"), pair("ling", "hi"));
         assert_eq!(got("@lingo hi"), None);
+        assert_eq!(got("@notes.md explain"), None);
         assert_eq!(got("@src/main.rs explain"), None);
         assert_eq!(got("@银月"), None, "no words, no message");
         assert_eq!(got("hi @yinyue there"), None);
+    }
+
+    /// A title is made from the words, never the name that addressed them
+    /// — and the turn is routed before its session is named.
+    #[test]
+    fn a_title_leaves_the_mention_out() {
+        let n = names();
+        let (_, words) = leading_mention("@银月你好 帮我看看这一局", &n).unwrap();
+        assert_eq!(auto_session_title(words), "你好 帮我看看这一局");
+        let src = include_str!("handler.rs");
+        let body = &src[src
+            .find(concat!("pub(crate) async fn ", "start_turn("))
+            .unwrap()..];
+        assert!(
+            body.find(concat!("route_target", "(&state")).unwrap()
+                < body.find(concat!("ensure_session", "(")).unwrap()
+        );
     }
 
     fn row(agent: &str, from: &str) -> crate::state_fs::sessions::ChatMsg {
@@ -1599,12 +1559,6 @@ mod tests {
             .find(concat!(".get_or_create_", "session_agent("))
             .unwrap();
         assert!(seat < engine);
-    }
-
-    #[test]
-    fn parse_explicit_target_prefix_rejects_invalid_agent_token() {
-        let parsed = parse_explicit_target_prefix("@coder! please review");
-        assert_eq!(parsed, None);
     }
 
     #[test]
