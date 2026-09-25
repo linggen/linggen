@@ -3,7 +3,7 @@
 // and auto-collapsed 10 minutes after the last one finishes.
 import { useEffect, useMemo, useState } from 'react';
 import type { ChatMessage, PendingAskUser, SubagentTreeEntry } from '../../types';
-import { normalizeAgentKey } from './utils/message';
+import { normalizeAgentKey } from '../../lib/messageUtils';
 
 const COLLAPSE_AFTER_MS = 600_000;
 

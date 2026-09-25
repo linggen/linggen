@@ -7,7 +7,7 @@ import { MarkdownContent } from './MarkdownContent';
 import { TodoPanel } from './TodoPanel';
 import { SuggestionRow } from './SuggestionRow';
 import { useSuggestionStore } from '../../stores/suggestionStore';
-import { normalizeAgentKey } from './utils/message';
+import { normalizeAgentKey } from '../../lib/messageUtils';
 import type {
   AgentInfo,
   FileEntry,

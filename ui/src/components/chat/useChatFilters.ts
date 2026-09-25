@@ -5,7 +5,7 @@ import { useMemo } from 'react';
 import type { ChatMessage, QueuedChatItem, SubagentInfo } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useStableArray } from '../../hooks/useStableArray';
-import { normalizeAgentKey, sortMessagesByTime, collapseProgressMessages } from './utils/message';
+import { normalizeAgentKey, sortMessagesByTime, collapseProgressMessages } from '../../lib/messageUtils';
 
 /** A main-chat row for `selected`: its own traffic, the user's to it,
  *  unrouted notices (system, compaction, skill-page `assistant` rows), and a

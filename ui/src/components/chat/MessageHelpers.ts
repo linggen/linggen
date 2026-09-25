@@ -1,5 +1,5 @@
 import type { ChatMessage } from '../../types';
-import { sanitizeAgentMessageText } from './utils/message';
+import { sanitizeAgentMessageText } from '../../lib/messageUtils';
 
 export const statusBadgeClass = (status?: string) => {
   if (status === 'working') return 'bg-green-500/15 text-green-600 dark:text-green-300';

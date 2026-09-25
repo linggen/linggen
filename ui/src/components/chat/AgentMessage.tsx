@@ -119,7 +119,7 @@ export const AgentMessage: React.FC<{
   }
 
   // Plan messages store JSON in msg.text — don't sanitize or the plan JSON
-  // gets stripped by stripStructuredJsonFromText, hiding the PlanBlock.
+  // gets stripped by stripEmbeddedStructuredJson, hiding the PlanBlock.
   const fallbackText = !hasToolBlocks
     ? (isPlanMessage(msg) ? (msg.text || '').trim() : visibleMessageText(msg))
     : '';

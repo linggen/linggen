@@ -14,7 +14,7 @@ import type {
   SkillInfo,
   SubagentInfo,
 } from '../../types';
-import { normalizeAgentKey } from './utils/message';
+import { normalizeAgentKey } from '../../lib/messageUtils';
 import { ChatMessageList, ChatMessageRow } from './ChatMessageList';
 import { RunStatusLine } from './RunStatusLine';
 import { useChatFilters } from './useChatFilters';
