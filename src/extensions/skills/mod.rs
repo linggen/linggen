@@ -193,15 +193,9 @@ struct GitHubContentEntry {
 async fn fetch_builtin_skills_inner() -> Result<Vec<BuiltInRemote>> {
     let client = super::marketplace::http_client()?;
 
-    // List repo contents
-    let entries: Vec<GitHubContentEntry> = client
-        .get(GITHUB_CONTENTS_URL)
-        .header("Accept", "application/vnd.github.v3+json")
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
+    // List repo contents — GitHub first, linggen.dev's /dl mirror second.
+    let entries: Vec<GitHubContentEntry> =
+        crate::mirror::get_json(&client, GITHUB_CONTENTS_URL).await?;
 
     let dirs: Vec<&GitHubContentEntry> = entries
         .iter()
@@ -213,11 +207,8 @@ async fn fetch_builtin_skills_inner() -> Result<Vec<BuiltInRemote>> {
         let client = &client;
         let url = format!("{}/{}/SKILL.md", GITHUB_RAW_URL, entry.name);
         async move {
-            let resp = client.get(&url).send().await.ok()?;
-            if !resp.status().is_success() {
-                return None;
-            }
-            let text = resp.text().await.ok()?;
+            let body = crate::mirror::get_bytes(client, &url).await.ok()?;
+            let text = String::from_utf8(body).ok()?;
             let (name, description) = parse_frontmatter_meta(&text)?;
             Some(BuiltInRemote {
                 dir_name: entry.name.clone(),

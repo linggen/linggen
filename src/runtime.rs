@@ -631,12 +631,9 @@ async fn download_verified(asset: &str, sha256: &str, dest: &Path) -> Result<()>
         return Ok(());
     }
     std::fs::create_dir_all(dest.parent().context("dest parent")?)?;
-    let urls = [
-        format!(
-            "https://github.com/linggen/linggen-releases/releases/download/{PY_RELEASE_TAG}/{asset}"
-        ),
-        format!("https://linggen.dev/dl/release/linggen-releases/{PY_RELEASE_TAG}/{asset}"),
-    ];
+    let urls = crate::mirror::sources(&format!(
+        "https://github.com/linggen/linggen-releases/releases/download/{PY_RELEASE_TAG}/{asset}"
+    ));
     let part = dest.with_extension("part");
     let mut last = None;
     for url in &urls {
@@ -665,7 +662,9 @@ async fn download_verified(asset: &str, sha256: &str, dest: &Path) -> Result<()>
 
 async fn download_resumable(url: &str, part: &Path) -> Result<()> {
     let have = part.metadata().map(|m| m.len()).unwrap_or(0);
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .connect_timeout(crate::mirror::CONNECT_TIMEOUT)
+        .build()?;
     let mut req = client.get(url);
     if have > 0 {
         req = req.header(reqwest::header::RANGE, format!("bytes={have}-"));

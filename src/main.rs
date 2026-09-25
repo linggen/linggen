@@ -7,6 +7,7 @@ mod extensions;
 mod logging;
 mod mcp_client;
 mod message;
+mod mirror;
 mod paths;
 mod perception;
 mod pictures;

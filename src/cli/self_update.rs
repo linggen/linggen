@@ -46,8 +46,9 @@ pub async fn run() -> Result<()> {
         // read tripped "operation timed out" mid-transfer. Use a connect timeout
         // (fail fast on a dead host) plus a read/stall timeout (fail only if the
         // stream goes quiet), so a slow-but-progressing transfer of any size
-        // completes instead of being killed by a wall-clock cap.
-        .connect_timeout(Duration::from_secs(30))
+        // completes instead of being killed by a wall-clock cap. The connect
+        // timeout stays short so a blocked GitHub hands over to the mirror fast.
+        .connect_timeout(crate::mirror::CONNECT_TIMEOUT)
         .read_timeout(Duration::from_secs(60))
         .build()
         .context("Failed to build HTTP client")?;
@@ -72,24 +73,20 @@ async fn update_binary(
     current_version: Option<&str>,
     install_dir: Option<&Path>,
 ) -> Result<()> {
-    let manifest = match client.get(manifest_url).send().await {
-        Ok(resp) if resp.status().is_success() => match resp.json::<ReleaseManifest>().await {
+    // GitHub first, linggen.dev's /dl mirror when GitHub is unreachable.
+    let manifest = match crate::mirror::get_bytes(client, manifest_url).await {
+        Ok(body) => match serde_json::from_slice::<ReleaseManifest>(&body) {
             Ok(m) => m,
             Err(e) => {
                 println!("[{}] Failed to parse release manifest: {}", binary_name, e);
                 return Ok(());
             }
         },
-        Ok(resp) => {
-            println!(
-                "[{}] Release manifest returned HTTP {}. No releases available yet.",
-                binary_name,
-                resp.status()
-            );
-            return Ok(());
-        }
         Err(e) => {
-            println!("[{}] Failed to fetch release manifest: {}", binary_name, e);
+            println!(
+                "[{}] Failed to fetch release manifest: {:#}",
+                binary_name, e
+            );
             return Ok(());
         }
     };
@@ -123,21 +120,9 @@ async fn update_binary(
 
     println!("[{}] Downloading v{} ...", binary_name, manifest.version);
 
-    let resp = client
-        .get(&asset.url)
-        .send()
+    let bytes = crate::mirror::get_bytes(client, &asset.url)
         .await
-        .context("Failed to download release asset")?;
-
-    if !resp.status().is_success() {
-        anyhow::bail!(
-            "[{}] Download failed with HTTP {}",
-            binary_name,
-            resp.status()
-        );
-    }
-
-    let bytes = resp.bytes().await.context("Failed to read download")?;
+        .with_context(|| format!("[{}] Failed to download release asset", binary_name))?;
 
     let target_dir = if let Some(dir) = install_dir {
         dir.to_path_buf()
