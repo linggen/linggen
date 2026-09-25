@@ -565,12 +565,51 @@ pub async fn ensure_venv(name: &str) -> Result<PathBuf> {
     Ok(dir)
 }
 
+/// PyPI mirrors a failed install retries through, in order — for regions
+/// where pypi.org is blocked or crawling (mainland China).
+const PYPI_MIRRORS: &[&str] = &[
+    "https://pypi.tuna.tsinghua.edu.cn/simple",
+    "https://mirrors.aliyun.com/pypi/simple/",
+];
+
+/// The pip invocations to try: `args` unchanged first, then once per
+/// mirror with `-i <mirror>` — only for installs, and never when the
+/// caller already named an index.
+fn pip_attempts(args: &[&str]) -> Vec<Vec<String>> {
+    let first: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+    let install = args.first() == Some(&"install");
+    let names_index = args
+        .iter()
+        .any(|a| *a == "-i" || a.starts_with("--index-url") || a.starts_with("--extra-index-url"));
+    let mut out = vec![first.clone()];
+    if install && !names_index {
+        for m in PYPI_MIRRORS {
+            let mut a = first.clone();
+            a.insert(1, "-i".into());
+            a.insert(2, m.to_string());
+            out.push(a);
+        }
+    }
+    out
+}
+
 async fn pip(env: &str, args: &[&str]) -> Result<String> {
-    run_ok(
-        tokio::process::Command::new(env_bin(env, "pip")).args(args),
-        "pip",
-    )
-    .await
+    let mut last = None;
+    for (i, attempt) in pip_attempts(args).iter().enumerate() {
+        if i > 0 {
+            tracing::warn!("[runtime] pip retrying through {}", attempt[2]);
+        }
+        match run_ok(
+            tokio::process::Command::new(env_bin(env, "pip")).args(attempt),
+            "pip",
+        )
+        .await
+        {
+            Ok(out) => return Ok(out),
+            Err(e) => last = Some(e),
+        }
+    }
+    Err(last.unwrap_or_else(|| anyhow::anyhow!("pip: nothing to run")))
 }
 
 /// Warm the TTS model into the shared HF cache (the same one Kokoro uses),
@@ -774,6 +813,35 @@ mod tests {
     #[test]
     fn unreadable_memory_fails_closed() {
         assert!(gate(&VOICE_LANE, &mac(0, 100)).is_err());
+    }
+
+    #[test]
+    fn pip_install_retries_through_the_mirrors_after_the_plain_try() {
+        let got = pip_attempts(&["install", "-q", "--upgrade", "--pre", "yt-dlp"]);
+        assert_eq!(got.len(), 3);
+        assert_eq!(got[0], ["install", "-q", "--upgrade", "--pre", "yt-dlp"]);
+        assert_eq!(
+            got[1],
+            [
+                "install",
+                "-i",
+                "https://pypi.tuna.tsinghua.edu.cn/simple",
+                "-q",
+                "--upgrade",
+                "--pre",
+                "yt-dlp"
+            ]
+        );
+        assert_eq!(got[2][2], "https://mirrors.aliyun.com/pypi/simple/");
+    }
+
+    #[test]
+    fn pip_keeps_a_named_index_and_non_installs_alone() {
+        assert_eq!(
+            pip_attempts(&["install", "-i", "https://x/simple", "a"]).len(),
+            1
+        );
+        assert_eq!(pip_attempts(&["list"]).len(), 1);
     }
 
     #[test]
