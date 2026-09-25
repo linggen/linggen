@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowUpRight, Book, Check, ChevronRight, Download, ExternalLink, FilePlus2, Package, Pencil, RefreshCw, Save, Search, ShieldAlert, Sparkles, Trash2, Wrench, X, Zap } from 'lucide-react';
 import type { BuiltInSkillInfo, MarketplaceSkill, SkillInfoFull, SkillFileInfo } from '../types';
 import { CM6Editor } from './CM6Editor';
+import { useNameSet } from '../hooks/useNameSet';
 import { confirmDialog, promptDialog } from '../lib/confirmDialog';
 import { apiErrorMessage } from '../lib/api';
 import { skillFiles as skillFilesApi, skillsApi } from '../lib/endpoints';
@@ -72,8 +73,8 @@ export const SkillsTab: React.FC<{
 }> = ({ projectRoot }) => {
   const [allSkills, setAllSkills] = useState<SkillInfoFull[]>([]);
   const [skillFiles, setSkillFiles] = useState<SkillFileInfo[]>([]);
-  const [expandedSkills, setExpandedSkills] = useState<Set<string>>(new Set());
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const expandedSkills = useNameSet();
+  const collapsedGroups = useNameSet();
   const [editingSkill, setEditingSkill] = useState<string | null>(null);
   const [editContent, setEditContent] = useState<string>('');
   const [savedEditContent, setSavedEditContent] = useState<string>('');
@@ -85,8 +86,8 @@ export const SkillsTab: React.FC<{
   const [mpQuery, setMpQuery] = useState('');
   const [mpResults, setMpResults] = useState<MarketplaceSkill[]>([]);
   const [mpLoading, setMpLoading] = useState(false);
-  const [mpInstalling, setMpInstalling] = useState<Set<string>>(new Set());
-  const [mpUninstalling, setMpUninstalling] = useState<Set<string>>(new Set());
+  const mpInstalling = useNameSet();
+  const mpUninstalling = useNameSet();
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Trending community skills (auto-loaded)
@@ -101,15 +102,14 @@ export const SkillsTab: React.FC<{
 
   // Built-in skills state
   const [builtInSkills, setBuiltInSkills] = useState<BuiltInSkillInfo[]>([]);
-  const [biInstalling, setBiInstalling] = useState<Set<string>>(new Set());
+  const biInstalling = useNameSet();
   const fetchBuiltInSkills = useCallback(async (refresh = false) => {
     try {
       setBuiltInSkills(await skillsApi.builtIn(refresh));
     } catch { /* ignore */ }
   }, []);
 
-  const installBuiltInSkill = async (name: string) => {
-    setBiInstalling((prev) => new Set(prev).add(name));
+  const installBuiltInSkill = (name: string) => biInstalling.busy(name, async () => {
     setError(null);
     try {
       await skillsApi.installBuiltIn(name);
@@ -117,12 +117,7 @@ export const SkillsTab: React.FC<{
     } catch (e) {
       setError(apiErrorMessage(e));
     }
-    setBiInstalling((prev) => {
-      const next = new Set(prev);
-      next.delete(name);
-      return next;
-    });
-  };
+  });
 
   const fetchSkills = useCallback(async () => {
     try {
@@ -166,8 +161,7 @@ export const SkillsTab: React.FC<{
 
   const installedNames = new Set(allSkills.map((s) => s.name));
 
-  const installMarketplaceSkill = async (skill: MarketplaceSkill, scope: 'project' | 'global' = 'global') => {
-    setMpInstalling((prev) => new Set(prev).add(skill.name));
+  const installMarketplaceSkill = (skill: MarketplaceSkill, scope: 'project' | 'global' = 'global') => mpInstalling.busy(skill.name, async () => {
     setError(null);
     try {
       await skillsApi.install({
@@ -183,15 +177,9 @@ export const SkillsTab: React.FC<{
     } catch (e) {
       setError(apiErrorMessage(e));
     }
-    setMpInstalling((prev) => {
-      const next = new Set(prev);
-      next.delete(skill.name);
-      return next;
-    });
-  };
+  });
 
-  const uninstallMarketplaceSkill = async (name: string, scope: 'project' | 'global' = 'global') => {
-    setMpUninstalling((prev) => new Set(prev).add(name));
+  const uninstallMarketplaceSkill = (name: string, scope: 'project' | 'global' = 'global') => mpUninstalling.busy(name, async () => {
     setError(null);
     try {
       await skillsApi.uninstall({ name, scope, project_root: scope === 'project' ? projectRoot : undefined });
@@ -199,17 +187,11 @@ export const SkillsTab: React.FC<{
     } catch (e) {
       setError(apiErrorMessage(e));
     }
-    setMpUninstalling((prev) => {
-      const next = new Set(prev);
-      next.delete(name);
-      return next;
-    });
-  };
+  });
 
-  const [mpMoving, setMpMoving] = useState<Set<string>>(new Set());
+  const mpMoving = useNameSet();
 
-  const handleMoveToGlobal = async (skillName: string) => {
-    setMpMoving((prev) => new Set(prev).add(skillName));
+  const handleMoveToGlobal = (skillName: string) => mpMoving.busy(skillName, async () => {
     setError(null);
     try {
       await skillsApi.moveToGlobal(skillName, projectRoot);
@@ -217,12 +199,7 @@ export const SkillsTab: React.FC<{
     } catch (e) {
       setError(apiErrorMessage(e));
     }
-    setMpMoving((prev) => {
-      const next = new Set(prev);
-      next.delete(skillName);
-      return next;
-    });
-  };
+  });
 
   const builtInNames = new Set(builtInSkills.map((bi) => bi.name));
 
@@ -243,23 +220,8 @@ export const SkillsTab: React.FC<{
   const communitySource = mpQuery.trim() ? mpResults : trendingSkills;
   const filteredMpResults = communitySource.filter((s) => !builtInNames.has(s.name));
 
-  const toggleExpanded = (name: string) => {
-    setExpandedSkills((prev) => {
-      const next = new Set(prev);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
-      return next;
-    });
-  };
-
-  const toggleGroup = (source: string) => {
-    setCollapsedGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(source)) next.delete(source);
-      else next.add(source);
-      return next;
-    });
-  };
+  const toggleExpanded = expandedSkills.toggle;
+  const toggleGroup = collapsedGroups.toggle;
 
   const startEditing = (skill: SkillInfoFull) => {
     const file = skillFiles.find((f) => f.name === skill.name);
