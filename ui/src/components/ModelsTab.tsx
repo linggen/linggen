@@ -43,6 +43,12 @@ const PROVIDER_PRESETS: Record<string, { url: string; defaultModel: string; plac
   deepseek: { url: 'https://api.deepseek.com/v1', defaultModel: 'deepseek-chat', placeholder: 'e.g. deepseek-chat' },
   openrouter: { url: 'https://openrouter.ai/api/v1', defaultModel: '', placeholder: 'e.g. google/gemini-2.5-pro' },
   github: { url: 'https://models.inference.ai.azure.com', defaultModel: 'gpt-4o-mini', placeholder: 'e.g. gpt-4o-mini' },
+  // Mainland-China providers (OpenAI-compatible, own key like DeepSeek).
+  // Keep the names in step with KNOWN_PROVIDERS in src/config.rs.
+  qwen: { url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', defaultModel: 'qwen-plus', placeholder: 'e.g. qwen-plus, qwen3.8-max' },
+  moonshot: { url: 'https://api.moonshot.cn/v1', defaultModel: 'kimi-k2.6', placeholder: 'e.g. kimi-k2.6, kimi-k3' },
+  zhipu: { url: 'https://open.bigmodel.cn/api/paas/v4', defaultModel: 'glm-5.3', placeholder: 'e.g. glm-5.3, glm-5.3-flash' },
+  siliconflow: { url: 'https://api.siliconflow.cn/v1', defaultModel: 'Pro/deepseek-ai/DeepSeek-R1', placeholder: 'e.g. Pro/deepseek-ai/DeepSeek-R1' },
 };
 
 const emptyModel = (): ModelConfigUI => ({
@@ -512,6 +518,10 @@ export const ModelsTab: React.FC<{
                       <option value="deepseek">DeepSeek</option>
                       <option value="openrouter">OpenRouter</option>
                       <option value="github">GitHub Models</option>
+                      <option value="qwen">Qwen (DashScope)</option>
+                      <option value="moonshot">Kimi (Moonshot)</option>
+                      <option value="zhipu">GLM (Zhipu)</option>
+                      <option value="siliconflow">SiliconFlow</option>
                     </select>
                   </div>
                   <div>

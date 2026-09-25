@@ -171,11 +171,10 @@ pub(crate) async fn get_system_prompt_api(
     let tools: Vec<serde_json::Value> = canonical_tools
         .iter()
         .filter_map(|t| match provider {
-            "chatgpt" | "openai" | "gemini" | "deepseek" => {
-                crate::provider::openai::wire_tool_def(t)
-            }
+            "ollama" => crate::provider::ollama::wire_tool_def(t),
             "anthropic" => crate::provider::anthropic::wire_tool_def(t),
-            _ => crate::provider::ollama::wire_tool_def(t),
+            // Every other provider speaks the OpenAI-compatible API.
+            _ => crate::provider::openai::wire_tool_def(t),
         })
         .collect();
     Json(serde_json::json!({
