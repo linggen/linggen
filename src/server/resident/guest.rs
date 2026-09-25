@@ -5,12 +5,71 @@
 
 use super::*;
 use crate::server::{AgentStatusKind, ServerEvent};
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
+use tokio::sync::oneshot;
 
 /// Whether `session_id` is one of her own rolling sessions.
 pub(crate) fn is_own_session(session_id: &str) -> bool {
     session_id
         .strip_prefix(&yinyue_session_prefix())
         .is_some_and(|rest| rest.is_empty() || rest.starts_with('-'))
+}
+
+/// Her guest turns at each table, in line: the newest one's ticket and the
+/// signal it gives when done. Two quick `@银月` messages each get a turn of
+/// their own, in the order sent — never two at once, whose run, interrupt
+/// channel (keyed by session and agent) and status would clear each other's.
+static LINE: LazyLock<Mutex<HashMap<String, (u64, oneshot::Receiver<()>)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+static TICKETS: AtomicU64 = AtomicU64::new(0);
+
+/// A place in the line at one table.
+struct Turn {
+    session_id: String,
+    ticket: u64,
+    /// The turn before this one, done when it signals (or is dropped).
+    before: Option<oneshot::Receiver<()>>,
+    done: oneshot::Sender<()>,
+}
+
+impl Turn {
+    /// Join the end of the line at `session_id` — at once, in call order.
+    fn join(session_id: &str) -> Self {
+        let (done, next) = oneshot::channel();
+        let ticket = TICKETS.fetch_add(1, Ordering::Relaxed);
+        let before = LINE
+            .lock_ok()
+            .insert(session_id.to_string(), (ticket, next))
+            .map(|(_, rx)| rx);
+        Turn {
+            session_id: session_id.to_string(),
+            ticket,
+            before,
+            done,
+        }
+    }
+
+    /// Wait until the turn before this one is over.
+    async fn wait(&mut self) {
+        if let Some(before) = self.before.take() {
+            let _ = before.await;
+        }
+    }
+
+    /// Hand the table to the next turn. True when nobody is waiting — the
+    /// last in line, whose end is the table's end of her turns.
+    fn finish(self) -> bool {
+        let mut line = LINE.lock_ok();
+        let last = line
+            .get(&self.session_id)
+            .is_some_and(|(t, _)| *t == self.ticket);
+        if last {
+            line.remove(&self.session_id);
+        }
+        let _ = self.done.send(());
+        last
+    }
 }
 
 /// Put the user's message on the table and answer it in the background.
@@ -27,7 +86,9 @@ pub(crate) async fn answer_as_guest(state: Arc<ServerState>, session_id: String,
     )
     .await;
     crate::server::chat::side_lines::note(&session_id, YINYUE_AGENT, message.clone());
+    let mut turn = Turn::join(&session_id);
     tokio::spawn(async move {
+        turn.wait().await;
         let sid = Some(session_id.clone());
         state
             .send_agent_status(
@@ -62,6 +123,11 @@ pub(crate) async fn answer_as_guest(state: Arc<ServerState>, session_id: String,
             run_id: None,
             parent_run_id: None,
         });
+        // The next message's turn keeps the table busy: only the last in
+        // line says she is idle there.
+        if !turn.finish() {
+            return;
+        }
         state
             .send_agent_status(
                 YINYUE_AGENT.to_string(),
@@ -76,7 +142,8 @@ pub(crate) async fn answer_as_guest(state: Arc<ServerState>, session_id: String,
 
 #[cfg(test)]
 mod tests {
-    use super::is_own_session;
+    use super::{is_own_session, Turn};
+    use crate::util::LockExt;
 
     /// A guest takes up nothing of the session's skill (`ChatRunCtx::guest`
     /// skips its activation), so what she can do there is exactly her own
@@ -112,6 +179,29 @@ mod tests {
             let calls = src.matches(concat!(".begin_agent_run", "(")).count();
             assert_eq!(calls, 0, "{file} begins a run around the turn core");
         }
+    }
+
+    /// Two quick messages at one table: the second waits for the first,
+    /// and only the last in line ends her turns there. Another table has a
+    /// line of its own.
+    #[tokio::test]
+    async fn her_guest_turns_at_one_table_run_one_at_a_time_in_order() {
+        let first = Turn::join("sess-line-test");
+        let mut second = Turn::join("sess-line-test");
+        let mut elsewhere = Turn::join("sess-line-other");
+        elsewhere.wait().await;
+        assert!(elsewhere.finish(), "its own line, done at once");
+
+        let waiting = tokio::spawn(async move {
+            second.wait().await;
+            second
+        });
+        tokio::task::yield_now().await;
+        assert!(!waiting.is_finished(), "the second waits for the first");
+        assert!(!first.finish(), "someone is waiting: not the end");
+        let second = waiting.await.unwrap();
+        assert!(second.finish(), "the last in line ends her turns here");
+        assert!(!super::LINE.lock_ok().contains_key("sess-line-test"));
     }
 
     #[test]
