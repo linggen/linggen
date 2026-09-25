@@ -3,7 +3,7 @@
 //              this message only (only at the start of a message)
 //   @@agent  — the same, and the chat stays with that agent
 //   @path    — a file: `@src/` browses a directory, `@name` searches
-// The server reads the same grammar (chat/handler.rs parse_explicit_target_prefix),
+// The server reads the same grammar (chat/handler.rs leading_mention — the longest id or alias at the start),
 // so a page that sends `@银月 …` through the embed reaches her either way.
 
 /** A main agent and the names it answers to besides its id. */
