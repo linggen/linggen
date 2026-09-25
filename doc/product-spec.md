@@ -101,7 +101,7 @@ Parsed from user input only (not model output):
 
 ### 5. Multi-model routing
 
-Users configure multiple providers (Ollama, OpenAI, Claude, Bedrock). Named routing policies (`local-first`, `cloud-first`, custom) control which model handles each request. See `models.md`.
+Users configure multiple providers (Ollama, OpenAI, Claude, Bedrock). An ordered list of default models picks which model handles each request, with auto-fallback on transient errors. See `models.md`.
 
 ### 6. Cross-tool skill ecosystem
 
@@ -125,7 +125,7 @@ Owners can open rooms to share their models with others. Inference flows P2P ove
 - **User interrupt** — users can message a running agent; model sees it and adapts.
 - **Multi-agent concurrency** — multiple agents running simultaneously.
 - **Unified CLI** — `ling` starts the server and opens the Web UI.
-- **Multi-model routing** — named policies (local-first, cloud-first, custom).
+- **Multi-model routing** — ordered default models with auto-fallback.
 - **Cross-tool compatibility** — Agent Skills standard.
 - **Durable memory** — persistent identity, preferences, and trajectory across sessions.
 - **Own-your-models sharing** — proxy rooms over P2P WebRTC, no cloud middleman.

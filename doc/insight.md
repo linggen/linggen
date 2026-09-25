@@ -43,7 +43,7 @@ Skills, agents, missions — all files. New apps are a folder away.
 ## Where Linggen Sits
 
 - **Local-first.** The runtime, the data, and inference (when local models are picked) all live on the user's machine. Cloud is opt-in and goes through user-owned API keys.
-- **Model-agnostic.** Any model — local Ollama, Claude, GPT, Gemini, OpenRouter — and routing policies decide which one handles each request.
+- **Model-agnostic.** Any model — local Ollama, Claude, GPT, Gemini, OpenRouter — and an ordered default-model list decides which one handles each request.
 - **App platform, not a single product.** The agent loop, tool surface, permission system, memory, and P2P fabric are general-purpose. Coding is one app among many.
 - **P2P, not centralized.** Remote access and model sharing flow over WebRTC data channels. linggen.dev acts as a signaling relay and account directory; it does not see chat content.
 - **Skills as the contract.** Apps follow the open [Agent Skills](https://agentskills.io) standard, so the same skill works in Linggen, Claude Code, and Codex.

@@ -9,7 +9,7 @@ guide: |
 
 # Models
 
-Hardware abstraction: model providers, routing policies, credentials, and auto-fallback.
+Hardware abstraction: model providers, default-model routing, credentials, and auto-fallback.
 
 ## Related docs
 
@@ -144,9 +144,8 @@ model: gpt-5.4
 ## Implementation
 
 - `credentials.rs`: credential store, resolution, API endpoints.
-- `config.rs`: `ModelConfig`, `RoutingConfig`, routing policy definitions.
+- `config.rs`: `ModelConfig`, `RoutingConfig` (default models + auto-fallback).
 - `provider/models.rs`: multi-provider dispatch, streaming, fallback error classification.
-- `provider/routing.rs`: model routing, complexity signal, policy resolution.
 - `engine/mod.rs`: `stream_with_fallback()` — auto-retry with model fallback.
 - `provider/ollama.rs`: Ollama API client.
 - `provider/openai.rs`: OpenAI-compatible API client (used by all cloud providers).

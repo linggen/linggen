@@ -394,10 +394,8 @@ pub struct LoggingConfig {
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct RoutingConfig {
-    #[serde(default)]
-    pub default_policy: Option<String>,
-    #[serde(default)]
-    pub policies: Vec<RoutingPolicy>,
+    // Retired keys `default_policy` / `policies` (named routing policies that
+    // never ran) are ignored on load — serde skips unknown keys.
     /// Ordered list of model IDs selected as defaults by the user.
     /// The first model in the list is the primary default; others are fallbacks.
     #[serde(default)]
@@ -410,35 +408,6 @@ pub struct RoutingConfig {
 
 pub(crate) fn default_true() -> bool {
     true
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
-pub struct RoutingPolicy {
-    pub name: String,
-    #[serde(default)]
-    pub rules: Vec<RoutingRule>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
-pub struct RoutingRule {
-    pub model: String,
-    #[serde(default)]
-    pub priority: u32,
-    #[serde(default)]
-    pub min_complexity: Option<ComplexityLevel>,
-    #[serde(default)]
-    pub max_complexity: Option<ComplexityLevel>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(rename_all = "snake_case")]
-#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
-pub enum ComplexityLevel {
-    Low,
-    Medium,
-    High,
 }
 
 impl Config {
@@ -763,6 +732,17 @@ mod tests {
         let pet: PetConfig = toml::from_str("enabled = true\nvoice = \"vivian\"\n").unwrap();
         assert!(!pet.muted);
         assert!(!Config::default().pet.muted);
+    }
+
+    /// Retired routing-policy keys still in old configs load and are ignored.
+    #[test]
+    fn a_config_with_retired_routing_policies_still_loads() {
+        let routing: RoutingConfig = toml::from_str(
+            "default_policy = \"local-first\"\ndefault_models = [\"m1\"]\n\n[[policies]]\nname = \"p\"\n\n[[policies.rules]]\nmodel = \"m1\"\nmin_complexity = \"high\"\n",
+        )
+        .unwrap();
+        assert_eq!(routing.default_models, vec!["m1".to_string()]);
+        assert!(routing.auto_fallback);
     }
 
     // ---- Config::validate tests ----

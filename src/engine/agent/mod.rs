@@ -178,8 +178,7 @@ impl AgentManager {
     /// 1. Config agent override (if exists in configured models)
     /// 2. Frontmatter model (if exists in configured models)
     /// 3. First model in routing.default_models
-    /// 4. Routing policy
-    /// 5. First configured model
+    /// 4. First configured model
     fn resolve_model_id(
         config: &Config,
         models: &ModelManager,
@@ -237,21 +236,7 @@ impl AgentManager {
             }
         }
 
-        // 4. Routing policy
-        if let Some(id) = crate::provider::routing::resolve_model(
-            &config.routing,
-            None,
-            &crate::provider::routing::ComplexitySignal {
-                estimated_tokens: None,
-                tool_depth: None,
-                _skill_model_hint: None,
-            },
-            &config.models,
-        ) {
-            return Ok(id);
-        }
-
-        // 5. First configured model
+        // 4. First configured model
         if let Some(m) = config.models.first() {
             return Ok(m.id.clone());
         }
