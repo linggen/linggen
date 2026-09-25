@@ -197,7 +197,7 @@ mod tests {
         );
     }
 
-    /// Her own lines are her replies; Ling's reach her labeled as his.
+    /// Her own lines are her replies; Ling's reach her labeled as hers.
     #[test]
     fn as_her_thread_her_lines_are_hers_and_others_are_labeled() {
         let rows = vec![

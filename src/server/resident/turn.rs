@@ -44,7 +44,7 @@ pub(super) enum Reach {
     /// exchange with an app's agent is the moment's `converse` path, never
     /// hers to start — a message from her lands in the app's chat and wakes
     /// that agent (2026-09-24: an idle moment's turn relayed its kickoff to
-    /// Ling, which started his loop in the Lingjing chat).
+    /// Ling, which started her loop in the Lingjing chat).
     Sealed,
 }
 
@@ -132,7 +132,7 @@ struct Seat {
 /// Her engine for a seat. Her own thread is her session's engine. A guest
 /// seat gets a fresh engine of hers: a session holds ONE engine, built for
 /// the agent that runs it — asking it for hers in an app's chat hands back
-/// Ling's, with his prompt and the app's tools (seen 2026-09-24). A fresh one
+/// Ling's, with her prompt and the app's tools (seen 2026-09-24). A fresh one
 /// costs nothing a guest keeps: her thread there is rebuilt each turn.
 async fn engine_for(
     state: &Arc<ServerState>,

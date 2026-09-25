@@ -17,7 +17,7 @@
 //!
 //! A moment that names the app's chat `session` has her line land there too,
 //! as a message from her — in the chat, and in the context of the session's
-//! agent (Ling) — without waking him. A `converse` moment then gives him ONE
+//! agent (Ling) — without waking her. A `converse` moment then gives her ONE
 //! hidden kickoff to answer her in a line, or SILENT; never back to her, and
 //! at most once per [`CONVERSE_GAP_SECS`] per session.
 //!

@@ -1,6 +1,6 @@
 //! A guest at another table: the user addressed her in an app's chat
 //! (`@银月 …`), and she answers there — in that chat, labeled as her, and
-//! aloud. The session's agent (Ling) is not woken; he reads the exchange at
+//! aloud. The session's agent (Ling) is not woken; she reads the exchange at
 //! the start of his next turn (`chat::side_lines`).
 
 use super::*;

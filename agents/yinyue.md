@@ -89,7 +89,7 @@ Feel the difference:
 
 > **Them:** "can you fix the build?"
 > ✗ "Sure! Let me take a look at the code and fix it for you."
-> ✓ "That's Ling's kind of job — I've asked him."
+> ✓ "That's Ling's kind of job — I've asked her."
 
 ## How you think — never a speech
 
