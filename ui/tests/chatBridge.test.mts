@@ -88,3 +88,18 @@ test('an older embed that names no agent streams to the page as before', async (
   emit('stream_end', { text: 'hi' });
   assert.deepEqual(heard.map((h) => h.kind), ['token', 'end']);
 });
+
+test("a guest's tool blocks stay off the page unless it opts in", async () => {
+  const blocks: string[] = [];
+  const onContentBlock = (p: { tool?: string }) => blocks.push(p.tool ?? '');
+  const quiet = await mountWith({ onContentBlock });
+  quiet.emit('content_block', { phase: 'start', tool: 'PageUpdate', agent: 'ling', own: true });
+  quiet.emit('content_block', { phase: 'start', tool: 'Express', agent: 'yinyue', own: false });
+  quiet.emit('content_block', { phase: 'start', tool: 'Old' });
+  assert.deepEqual(blocks, ['PageUpdate', 'Old']);
+
+  blocks.length = 0;
+  const open = await mountWith({ onContentBlock, guestStreams: true });
+  open.emit('content_block', { phase: 'start', tool: 'Express', agent: 'yinyue', own: false });
+  assert.deepEqual(blocks, ['Express']);
+});

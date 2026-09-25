@@ -192,6 +192,9 @@ function relayToSkillIframe(item: UiEvent): void {
   }
 
   if (item.kind === 'content_block') {
+    // A tool block belongs to the page when its own agent (or a subagent it
+    // started) runs it; a guest's blocks (`@银月`) carry `own: false`.
+    const ownBlock = ownsStream(agent, pageAgent()) || !!agentTracker.getParent(agent);
     postToParent({
       type: 'linggen-skill-event',
       event: 'content_block',
@@ -202,6 +205,7 @@ function relayToSkillIframe(item: UiEvent): void {
         blockId: item.data?.block_id,
         output: item.phase === 'update' ? item.data?.output : undefined,
         agent,
+        own: ownBlock,
       },
     });
   }

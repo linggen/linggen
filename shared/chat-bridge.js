@@ -33,7 +33,7 @@ import { createSession, removeSkillSession } from '/shared/api.js';
  *   onStreamToken?: (fullText: string, info: { agent: string, own: boolean }) => void,
  *   onStreamEnd?: (text: string, info: { agent: string, own: boolean }) => void,
  *   guestStreams?: boolean,
- *   onContentBlock?: (payload: { phase: string, tool?: string, args?: string, blockId?: string, output?: string }) => void,
+ *   onContentBlock?: (payload: { phase: string, tool?: string, args?: string, blockId?: string, output?: string, agent?: string, own?: boolean }, info?: { agent: string, own: boolean }) => void,
  *   onActivity?: (payload: { sessionId: string, kind: 'turn_start' | 'thinking' | 'tool' }) => void,
  *   onSendFailed?: (payload: { text: string }) => void,
  *   onConnectionChange?: (status: 'connected' | 'reconnecting' | 'disconnected') => void,
@@ -151,7 +151,11 @@ export async function mount(el, options) {
       streamBuffers.delete(info.agent);
       if (onStreamEnd && heard(info)) onStreamEnd(text, info);
     },
-    content_block(payload) { options.onContentBlock?.(payload); },
+    content_block(payload) {
+      // A guest's tool blocks reach the page only with guestStreams, like her stream.
+      const info = streamInfo(payload);
+      if (heard(info)) options.onContentBlock?.(payload, info);
+    },
     // The agent is working though nothing streams — at most one per ~5 s.
     activity(payload) { options.onActivity?.(payload); },
     send_failed(payload) { options.onSendFailed?.(payload); },
