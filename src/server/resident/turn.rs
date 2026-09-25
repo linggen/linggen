@@ -232,6 +232,12 @@ async fn run_at(
         // turns and would otherwise hold the prior one.
         engine.last_assistant_text = None;
 
+        // Her turn is a person's session, not a task: the owner policy's
+        // profile, applied to the engine (a fresh engine's default profile
+        // frames the turn as an autonomous task — a second "Task:" message).
+        let policy = crate::engine::session_policy::SessionPolicy::owner();
+        policy.apply(&mut engine);
+
         // Tune her memory injection from the Pet settings (default: one
         // high-relevance record at ≥0.8). Set on her own engine's cfg (a
         // per-session clone), so Ling's full-store recall is untouched.
@@ -275,7 +281,7 @@ async fn run_at(
             session_id: Some(session_id.clone()),
             clean_msg: task,
             images: Vec::new(),
-            policy: crate::engine::session_policy::SessionPolicy::owner(),
+            policy,
             sender: None,
             guest: seat.guest,
             silence_ok: false,
@@ -327,5 +333,67 @@ mod tests {
     fn a_sealed_turn_withholds_agent_chat_and_an_open_one_nothing() {
         assert!(withheld_for(Reach::Sealed).contains("agent_chat"));
         assert!(withheld_for(Reach::Open).is_empty());
+    }
+
+    fn her_engine() -> crate::engine::AgentEngine {
+        let cfg = crate::engine::EngineConfig::from_app_config(
+            &crate::config::Config::default(),
+            std::env::temp_dir(),
+            crate::engine::InterfaceMode::Web,
+        );
+        let models =
+            std::sync::Arc::new(crate::provider::models::ModelManager::new_with_credentials(
+                Vec::new(),
+                &crate::credentials::Credentials::default(),
+            ));
+        let mut engine = crate::engine::AgentEngine::new(
+            cfg,
+            models,
+            "m".to_string(),
+            crate::engine::AgentRole::Lead,
+        )
+        .unwrap();
+        let (spec, body) = crate::extensions::agents::parse_agent_markdown(include_str!(
+            "../../../agents/yinyue.md"
+        ))
+        .unwrap();
+        engine.set_spec(YINYUE_AGENT.to_string(), spec, body);
+        engine
+    }
+
+    /// Her turn is a person's: the request ends on the message itself, never
+    /// wrapped a second time as an autonomous task (2026-09-25: every turn
+    /// of hers carried "Autonomous agent loop started… Task:" — her engine
+    /// kept the default profile because the owner policy was never applied).
+    #[test]
+    fn her_turn_ends_on_the_message_with_no_task_wrapper() {
+        let mut engine = her_engine();
+        assert!(
+            engine.prompt_profile.task_bootstrap,
+            "a fresh engine frames a task"
+        );
+        crate::engine::session_policy::SessionPolicy::owner().apply(&mut engine);
+        engine
+            .chat_history
+            .push(crate::message::ChatMessage::new("user", "[User]: 你好"));
+        let (messages, _, _) = engine.prepare_loop_messages(
+            "[User]: 你好",
+            true,
+            crate::engine::prompt::PromptPurpose::Preview,
+        );
+        let last = messages.last().unwrap();
+        assert_eq!(
+            (last.role.as_str(), last.content.as_str()),
+            ("user", "[User]: 你好")
+        );
+        assert!(!messages
+            .iter()
+            .any(|m| m.content.contains("Autonomous agent loop")));
+
+        // And her turn code applies it, before anything narrows the profile.
+        let src = include_str!("turn.rs");
+        let apply = src.find(concat!("policy.apply", "(&mut engine)")).unwrap();
+        let narrowed = src.find(concat!("engine.prompt_profile", ".")).unwrap();
+        assert!(apply < narrowed, "the policy is applied first");
     }
 }
