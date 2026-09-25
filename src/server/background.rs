@@ -105,6 +105,9 @@ fn prewarm_runtime(state: &Arc<ServerState>, pet_enabled: bool) {
     });
     crate::runtime::set_progress_sink(progress.clone());
     tokio::spawn(crate::runtime::prewarm(pet_enabled, progress));
+    // The region fact (which services are unreachable here) is probed now,
+    // so a skill's first ask does not wait on it.
+    tokio::spawn(crate::reach::region());
 }
 
 /// Pre-warm the voice providers off the hot path when the pet is enabled:

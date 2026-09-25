@@ -117,6 +117,8 @@ pub(super) fn routes() -> Routes {
         )
         // Utilities
         .route("/api/health", get(health_handler))
+        // Which well-known services this machine cannot reach (src/reach.rs).
+        .route("/api/reach", get(crate::reach::reach_api))
         .route("/api/utils/ollama-status", get(get_ollama_status))
         // Storage browser
         .route("/api/storage/roots", get(storage_roots))

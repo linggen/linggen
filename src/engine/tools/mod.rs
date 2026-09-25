@@ -445,12 +445,16 @@ impl Tools {
     /// person has sent in this session, the one being answered included. A
     /// script that keeps count of the person's turns (a game paying a tale
     /// by turns played) takes the number from here instead of trusting the
-    /// model to report each one. Names no app.
+    /// model to report each one. And `LINGGEN_RESTRICTED` — the
+    /// well-known services this machine cannot reach (`youtube,google`;
+    /// empty when all answer; see `reach`). Names no app.
     pub fn tool_env(&self) -> Vec<(String, String)> {
+        let restricted = crate::reach::tool_env();
         let Some(sid) = &self.session_id else {
-            return Vec::new();
+            return restricted.into_iter().collect();
         };
         let mut env = vec![("LINGGEN_SESSION_ID".to_string(), sid.clone())];
+        env.extend(restricted);
         if let Some(manager) = self.get_manager() {
             if let Ok(history) = manager.global_sessions.get_chat_history(sid) {
                 let turns = history.iter().filter(|m| m.from_id == "user").count();
