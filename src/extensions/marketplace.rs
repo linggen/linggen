@@ -257,7 +257,14 @@ pub async fn install_skill(
     let temp_zip = download_to_temp(&client, &zip_url).await?;
 
     // Extract
-    let result = extract_skill_from_zip(&temp_zip, name, &repo, target_dir);
+    let result = extract_skills_from_zip(
+        &temp_zip,
+        target_dir,
+        SkillPick::Named {
+            skill: name,
+            repo: &repo,
+        },
+    );
     let _ = fs::remove_file(&temp_zip);
 
     match result {
@@ -312,7 +319,14 @@ async fn install_skill_inner(
     let client = http_client()?;
     let temp_zip = download_to_temp(&client, &zip_url).await?;
 
-    let result = extract_skill_from_zip(&temp_zip, name, &repo, target_dir);
+    let result = extract_skills_from_zip(
+        &temp_zip,
+        target_dir,
+        SkillPick::Named {
+            skill: name,
+            repo: &repo,
+        },
+    );
     let _ = fs::remove_file(&temp_zip);
 
     result?;
@@ -362,7 +376,7 @@ pub async fn install_from_clawhub(
     // Extract to a temp directory first, then move only the target skill to target_dir.
     // This prevents stray dirs from multi-skill ZIPs polluting the parent.
     let temp_dir = tempfile::tempdir().context("Failed to create temp dir for extraction")?;
-    let result = extract_all_skills_from_zip(&temp_zip, temp_dir.path());
+    let result = extract_skills_from_zip(&temp_zip, temp_dir.path(), SkillPick::All);
     let _ = fs::remove_file(&temp_zip);
 
     let installed = result?;
@@ -609,133 +623,190 @@ fn is_retryable_status(status: reqwest::StatusCode) -> bool {
 // ZIP extraction
 // ---------------------------------------------------------------------------
 
-fn extract_skill_from_zip(
+/// Which skills to take out of a ZIP.
+pub(crate) enum SkillPick<'a> {
+    /// Every skill, each into `<target>/<dir name>/`. A lone SKILL.md at
+    /// the archive root makes the whole archive one skill, in `<target>/_root/`.
+    All,
+    /// One named skill, straight into `target`. `repo` lets a repo-root
+    /// SKILL.md stand for a skill named after the repo.
+    Named { skill: &'a str, repo: &'a str },
+}
+
+/// A `<dir>/SKILL.md` entry: the skill's directory name, its root inside
+/// the archive, the entry's full name, and how deep the entry sits.
+struct SkillMd {
+    dir_name: String,
+    root: PathBuf,
+    entry: String,
+    depth: usize,
+}
+
+/// Extract skills from a ZIP archive. Returns the extracted skill directory
+/// names (for `Named`, the one matched).
+pub(crate) fn extract_skills_from_zip(
     zip_path: &Path,
-    skill_name: &str,
-    repo_name: &str,
-    target_dir: &Path,
-) -> Result<()> {
+    target: &Path,
+    pick: SkillPick,
+) -> Result<Vec<String>> {
     let file = fs::File::open(zip_path)?;
     let mut archive = ZipArchive::new(file)?;
+    let (found, bare_root) = scan_skill_mds(&mut archive)?;
 
-    let mut skill_root_in_zip = None;
-    let mut candidates: Vec<(String, PathBuf, String)> = Vec::new();
-    let mut root_skill_md_candidate: Option<(String, PathBuf, String)> = None;
+    match pick {
+        SkillPick::Named { skill, repo } => {
+            let md = resolve_named_skill(&found, skill, repo)?;
+            fs::create_dir_all(target)?;
+            copy_zip_dir(&mut archive, md.root.to_str().unwrap_or(""), target)?;
+            Ok(vec![md.dir_name.clone()])
+        }
+        SkillPick::All => {
+            let nested: Vec<&SkillMd> = found.iter().filter(|m| !m.dir_name.is_empty()).collect();
+            // Root-level SKILL.md — all ZIP contents belong to one skill.
+            // Extract into a "_root" subdirectory; the caller renames as needed.
+            if bare_root && nested.is_empty() {
+                let dir_name = "_root".to_string();
+                let target_dir = target.join(&dir_name);
+                fs::create_dir_all(&target_dir)?;
+                copy_zip_dir(&mut archive, "", &target_dir)?;
+                return Ok(vec![dir_name]);
+            }
+            // Deduplicate by dir name (first occurrence wins).
+            let mut seen = BTreeSet::new();
+            let mut installed = Vec::new();
+            for md in nested {
+                if !seen.insert(md.dir_name.clone()) {
+                    continue;
+                }
+                let target_dir = target.join(&md.dir_name);
+                fs::create_dir_all(&target_dir)?;
+                copy_zip_dir(&mut archive, md.root.to_str().unwrap_or(""), &target_dir)?;
+                installed.push(md.dir_name.clone());
+            }
+            Ok(installed)
+        }
+    }
+}
 
+/// Every `<dir>/SKILL.md` (or `skill.md`) in the archive, in archive order,
+/// plus whether a bare `SKILL.md` sits at the archive root.
+fn scan_skill_mds(archive: &mut ZipArchive<fs::File>) -> Result<(Vec<SkillMd>, bool)> {
+    let mut found = Vec::new();
+    let mut bare_root = false;
     for i in 0..archive.len() {
-        let file = archive.by_index(i)?;
-        let name = file.name().to_string();
-
+        let name = archive.by_index(i)?.name().to_string();
+        if name == "SKILL.md" || name == "skill.md" {
+            bare_root = true;
+            continue;
+        }
         if !(name.ends_with("/SKILL.md") || name.ends_with("/skill.md")) {
             continue;
         }
-
         let path = Path::new(&name);
         let Some(parent) = path.parent() else {
             continue;
         };
-
         let dir_name = parent
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("")
             .to_string();
-        candidates.push((dir_name.clone(), parent.to_path_buf(), name.clone()));
-
-        let normal_count = path
+        let depth = path
             .components()
             .filter(|c| matches!(c, Component::Normal(_)))
             .count();
-        if normal_count == 2 {
-            root_skill_md_candidate = Some((dir_name.clone(), parent.to_path_buf(), name.clone()));
-        }
+        found.push(SkillMd {
+            dir_name,
+            root: parent.to_path_buf(),
+            entry: name.clone(),
+            depth,
+        });
+    }
+    Ok((found, bare_root))
+}
 
-        // Match directory name against skill name, normalizing hyphens/underscores
-        let norm_skill = skill_name.replace('-', "_");
-        let norm_dir = dir_name.replace('-', "_");
-        if norm_dir == norm_skill || name.contains(&format!("/{}/", skill_name)) {
-            skill_root_in_zip = Some(parent.to_path_buf());
-            break;
-        }
+/// Find the one skill named `skill`: by directory name (hyphens and
+/// underscores alike) or path segment, then a unique `<prefix>-<dir>` match,
+/// then a repo-root SKILL.md when nothing else can be meant.
+fn resolve_named_skill<'a>(found: &'a [SkillMd], skill: &str, repo: &str) -> Result<&'a SkillMd> {
+    let norm_skill = skill.replace('-', "_");
+    let segment = format!("/{}/", skill);
+    if let Some(md) = found
+        .iter()
+        .find(|m| m.dir_name.replace('-', "_") == norm_skill || m.entry.contains(&segment))
+    {
+        return Ok(md);
     }
 
     // Fallback: prefixed skill names
-    if skill_root_in_zip.is_none() && !candidates.is_empty() {
-        let matches: Vec<&(String, PathBuf, String)> = candidates
-            .iter()
-            .filter(|(dir_name, _, _)| {
-                !dir_name.is_empty() && skill_name.ends_with(&format!("-{}", dir_name))
-            })
-            .collect();
-
-        if matches.len() == 1 {
-            skill_root_in_zip = Some(matches[0].1.clone());
-        }
+    let prefixed: Vec<&SkillMd> = found
+        .iter()
+        .filter(|m| !m.dir_name.is_empty() && skill.ends_with(&format!("-{}", m.dir_name)))
+        .collect();
+    if prefixed.len() == 1 {
+        return Ok(prefixed[0]);
     }
 
     // Fallback: root SKILL.md
-    if skill_root_in_zip.is_none() {
-        if let Some((root_dir_name, root, _)) = &root_skill_md_candidate {
-            let has_only_root = candidates
-                .iter()
-                .all(|(dir_name, _, _)| dir_name == root_dir_name);
-
-            if skill_name == repo_name || candidates.len() == 1 || has_only_root {
-                skill_root_in_zip = Some(root.clone());
-            }
+    if let Some(root) = found.iter().rev().find(|m| m.depth == 2) {
+        let has_only_root = found.iter().all(|m| m.dir_name == root.dir_name);
+        if skill == repo || found.len() == 1 || has_only_root {
+            return Ok(root);
         }
     }
 
-    let skill_root = skill_root_in_zip.ok_or_else(|| {
-        let available: BTreeSet<String> = candidates
-            .iter()
-            .map(|(dir, _, _)| dir.clone())
-            .filter(|s| !s.is_empty())
-            .collect();
-        let shown: Vec<String> = available.iter().take(10).cloned().collect();
+    let available: BTreeSet<String> = found
+        .iter()
+        .map(|m| m.dir_name.clone())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let shown: Vec<String> = available.iter().take(10).cloned().collect();
+    let mut msg = format!(
+        "Could not find skill '{}' in the repository. Make sure it contains a SKILL.md file.",
+        skill
+    );
+    if !shown.is_empty() {
+        msg.push_str(&format!(
+            " Available skills: {}{}",
+            shown.join(", "),
+            if available.len() > shown.len() {
+                ", ..."
+            } else {
+                ""
+            }
+        ));
+    }
+    Err(anyhow::anyhow!(msg))
+}
 
-        let mut msg = format!(
-            "Could not find skill '{}' in the repository. Make sure it contains a SKILL.md file.",
-            skill_name
-        );
-        if !shown.is_empty() {
-            msg.push_str(&format!(
-                " Available skills: {}{}",
-                shown.join(", "),
-                if available.len() > shown.len() {
-                    ", ..."
-                } else {
-                    ""
-                }
-            ));
-        }
-        anyhow::anyhow!(msg)
-    })?;
-
-    // Extract files
-    fs::create_dir_all(target_dir)?;
-    let skill_root_str = skill_root.to_str().unwrap();
-
+/// Copy every file under `root/` in the archive into `target_dir`, keeping
+/// the relative layout. An empty `root` copies the whole archive.
+fn copy_zip_dir(archive: &mut ZipArchive<fs::File>, root: &str, target_dir: &Path) -> Result<()> {
     for i in 0..archive.len() {
-        let mut file = archive.by_index(i)?;
-        let name = file.name().to_string();
-
-        if name.starts_with(skill_root_str) && !file.is_dir() {
-            let rel_path = name[skill_root_str.len()..].trim_start_matches('/');
-            if !is_safe_zip_path(rel_path, target_dir) {
-                continue;
-            }
-
-            let dest = target_dir.join(rel_path);
-            if let Some(parent) = dest.parent() {
-                fs::create_dir_all(parent)?;
-            }
-
-            let mut outfile = fs::File::create(&dest)?;
-            std::io::copy(&mut file, &mut outfile)?;
+        let mut entry = archive.by_index(i)?;
+        if entry.is_dir() {
+            continue;
         }
+        let name = entry.name().to_string();
+        let rel_path = if root.is_empty() {
+            name.as_str()
+        } else {
+            // `root/` — a sibling like `root-extra/` is another skill.
+            match name.strip_prefix(root) {
+                Some(rest) if rest.starts_with('/') => rest.trim_start_matches('/'),
+                _ => continue,
+            }
+        };
+        if !is_safe_zip_path(rel_path, target_dir) {
+            continue;
+        }
+        let dest = target_dir.join(rel_path);
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut outfile = fs::File::create(&dest)?;
+        std::io::copy(&mut entry, &mut outfile)?;
     }
-
     Ok(())
 }
 
@@ -758,104 +829,6 @@ fn is_safe_zip_path(rel_path: &str, base_dir: &Path) -> bool {
     let canonical: PathBuf = dest.components().collect();
     let base_canonical: PathBuf = base_dir.components().collect();
     canonical.starts_with(&base_canonical)
-}
-
-/// Extract all skills from a ZIP archive into `target_base_dir/<name>/`.
-/// Returns the list of installed skill directory names.
-pub(crate) fn extract_all_skills_from_zip(
-    zip_path: &Path,
-    target_base_dir: &Path,
-) -> Result<Vec<String>> {
-    let file = fs::File::open(zip_path)?;
-    let mut archive = ZipArchive::new(file)?;
-
-    // First pass: find all SKILL.md files and their parent dirs.
-    let mut skill_roots: Vec<(String, PathBuf)> = Vec::new();
-    let mut has_root_skill = false;
-    for i in 0..archive.len() {
-        let entry = archive.by_index(i)?;
-        let name = entry.name().to_string();
-        // Check for root-level SKILL.md (no parent directory)
-        if name == "SKILL.md" || name == "skill.md" {
-            has_root_skill = true;
-            continue;
-        }
-        if !(name.ends_with("/SKILL.md") || name.ends_with("/skill.md")) {
-            continue;
-        }
-        let path = Path::new(&name);
-        let Some(parent) = path.parent() else {
-            continue;
-        };
-        let dir_name = parent
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .to_string();
-        if dir_name.is_empty() {
-            continue;
-        }
-        skill_roots.push((dir_name, parent.to_path_buf()));
-    }
-
-    // Handle root-level SKILL.md — all ZIP contents belong to one skill.
-    // Extract into a "_root" subdirectory; the caller will rename as needed.
-    if has_root_skill && skill_roots.is_empty() {
-        let dir_name = "_root".to_string();
-        let target_dir = target_base_dir.join(&dir_name);
-        fs::create_dir_all(&target_dir)?;
-        for i in 0..archive.len() {
-            let mut entry = archive.by_index(i)?;
-            let entry_name = entry.name().to_string();
-            if entry.is_dir() {
-                continue;
-            }
-            if !is_safe_zip_path(&entry_name, &target_dir) {
-                continue;
-            }
-            let dest = target_dir.join(&entry_name);
-            if let Some(parent) = dest.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            let mut outfile = fs::File::create(&dest)?;
-            std::io::copy(&mut entry, &mut outfile)?;
-        }
-        return Ok(vec![dir_name]);
-    }
-
-    // Deduplicate by dir_name (first occurrence wins).
-    let mut seen = BTreeSet::new();
-    skill_roots.retain(|(name, _)| seen.insert(name.clone()));
-
-    // Second pass: extract files for each skill.
-    let mut installed = Vec::new();
-    for (dir_name, skill_root) in &skill_roots {
-        let skill_root_str = skill_root.to_str().unwrap_or("");
-        let target_dir = target_base_dir.join(dir_name);
-        fs::create_dir_all(&target_dir)?;
-
-        for i in 0..archive.len() {
-            let mut entry = archive.by_index(i)?;
-            let entry_name = entry.name().to_string();
-            if !entry_name.starts_with(skill_root_str) || entry.is_dir() {
-                continue;
-            }
-            let rel_path = entry_name[skill_root_str.len()..].trim_start_matches('/');
-            if !is_safe_zip_path(rel_path, &target_dir) {
-                continue;
-            }
-            let dest = target_dir.join(rel_path);
-            if let Some(parent) = dest.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            let mut outfile = fs::File::create(&dest)?;
-            std::io::copy(&mut entry, &mut outfile)?;
-        }
-
-        installed.push(dir_name.clone());
-    }
-
-    Ok(installed)
 }
 
 // ---------------------------------------------------------------------------
@@ -905,6 +878,106 @@ async fn search_skills_sh(query: &str) -> Result<Option<SkillsShSkill>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- extract_skills_from_zip ----
+
+    fn write_zip(dir: &Path, files: &[&str]) -> PathBuf {
+        use std::io::Write;
+        let path = dir.join("skills.zip");
+        let mut zip = zip::ZipWriter::new(fs::File::create(&path).unwrap());
+        for name in files {
+            zip.start_file(*name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(name.as_bytes()).unwrap();
+        }
+        zip.finish().unwrap();
+        path
+    }
+
+    const REPO: &[&str] = &[
+        "skills-main/README.md",
+        "skills-main/foo/SKILL.md",
+        "skills-main/foo/scripts/a.js",
+        "skills-main/foo-extra/SKILL.md",
+        "skills-main/foo-extra/b.js",
+    ];
+
+    #[test]
+    fn a_named_pick_takes_only_that_skill() {
+        let tmp = tempfile::tempdir().unwrap();
+        let zip = write_zip(tmp.path(), REPO);
+        let out = tmp.path().join("foo");
+        let got = extract_skills_from_zip(
+            &zip,
+            &out,
+            SkillPick::Named {
+                skill: "foo",
+                repo: "skills",
+            },
+        )
+        .unwrap();
+        assert_eq!(got, vec!["foo".to_string()]);
+        assert!(out.join("SKILL.md").is_file());
+        assert!(out.join("scripts/a.js").is_file());
+        // A sibling whose name only starts the same is another skill.
+        assert!(!out.join("-extra").exists() && !out.join("b.js").exists());
+    }
+
+    #[test]
+    fn a_named_pick_that_matches_nothing_lists_what_is_there() {
+        let tmp = tempfile::tempdir().unwrap();
+        let zip = write_zip(tmp.path(), REPO);
+        let err = extract_skills_from_zip(
+            &zip,
+            &tmp.path().join("x"),
+            SkillPick::Named {
+                skill: "nope",
+                repo: "skills",
+            },
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("Available skills: foo, foo-extra"), "{err}");
+    }
+
+    #[test]
+    fn a_repo_root_skill_answers_to_the_repo_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let zip = write_zip(tmp.path(), &["tool-main/SKILL.md", "tool-main/run.sh"]);
+        let out = tmp.path().join("tool");
+        extract_skills_from_zip(
+            &zip,
+            &out,
+            SkillPick::Named {
+                skill: "tool",
+                repo: "tool",
+            },
+        )
+        .unwrap();
+        assert!(out.join("run.sh").is_file());
+    }
+
+    #[test]
+    fn pick_all_takes_every_skill_into_its_own_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let zip = write_zip(tmp.path(), REPO);
+        let out = tmp.path().join("all");
+        let got = extract_skills_from_zip(&zip, &out, SkillPick::All).unwrap();
+        assert_eq!(got, vec!["foo".to_string(), "foo-extra".to_string()]);
+        assert!(out.join("foo/scripts/a.js").is_file());
+        assert!(out.join("foo-extra/b.js").is_file());
+        assert!(!out.join("foo/-extra").exists());
+    }
+
+    #[test]
+    fn pick_all_with_a_bare_root_skill_lands_in_root_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let zip = write_zip(tmp.path(), &["SKILL.md", "lib/x.py"]);
+        let out = tmp.path().join("all");
+        let got = extract_skills_from_zip(&zip, &out, SkillPick::All).unwrap();
+        assert_eq!(got, vec!["_root".to_string()]);
+        assert!(out.join("_root/lib/x.py").is_file());
+    }
 
     // ---- normalize_github_url ----
 

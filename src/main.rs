@@ -455,7 +455,11 @@ async fn auto_install_builtin_skills() -> Result<()> {
     let zip_url = extensions::marketplace::build_github_zip_url("linggen", "skills", "main");
     let client = extensions::marketplace::http_client()?;
     let temp_zip = extensions::marketplace::download_to_temp(&client, &zip_url).await?;
-    let result = extensions::marketplace::extract_all_skills_from_zip(&temp_zip, &target);
+    let result = extensions::marketplace::extract_skills_from_zip(
+        &temp_zip,
+        &target,
+        extensions::marketplace::SkillPick::All,
+    );
     let _ = std::fs::remove_file(&temp_zip);
     result?;
     // Run install scripts for all newly installed skills.

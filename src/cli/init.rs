@@ -254,8 +254,12 @@ async fn install_default_skills() {
 
     match marketplace::download_to_temp(&client, &zip_url).await {
         Ok(temp_zip) => {
-            match marketplace::extract_all_skills_from_zip(&temp_zip, &target_dir)
-                .context("Failed to extract skills")
+            match marketplace::extract_skills_from_zip(
+                &temp_zip,
+                &target_dir,
+                marketplace::SkillPick::All,
+            )
+            .context("Failed to extract skills")
             {
                 Ok(installed) if !installed.is_empty() => {
                     println!(
