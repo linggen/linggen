@@ -214,6 +214,10 @@ When a user sends a message to a busy agent, it queues. The agent picks it up at
 
 It waits for the run to end instead when a question is open (a message never cancels an AskUser or permission prompt), or when the session's skill declares `queue: after-turn` (`skill-spec.md` § Queue).
 
+## Addressing an agent
+
+A message that opens with `@name` (or `@@name`) goes to that agent: the name is the longest id or alias the text starts with, case-insensitive, and a CJK name needs no space after it (`@银月你好`). A session holds one engine, its own agent's. Another name is answered only as a guest (the companion at another's table, `yinyue-companion-spec.md`); otherwise the reply is `{status: "unavailable"}` — or `"absent"` when the session's skill keeps that agent away — and no turn runs. The session's title comes from the words after the name.
+
 ## Suggestions
 
 A row of short buttons above the chat input, and a grey hint inside it, so a person can talk to an agent without composing a message. A tap sends a button's words as their own message; Tab puts the hint in the input and Enter sends it. Both hide while they type and while a turn runs; at most four buttons.
