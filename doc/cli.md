@@ -36,7 +36,6 @@ ling install                      # Install/update ling
 ling update                       # Update ling
 ling init                         # Bootstrap skills
 ling skills add/remove/list/search
-ling eval                         # Run eval tasks
 ```
 
 ## Subcommands overview
@@ -47,7 +46,6 @@ ling eval                         # Run eval tasks
 | `stop` | Stop background daemon | No |
 | `status` | Show agent server status | No |
 | `doctor` | Diagnose installation health | No |
-| `eval` | Run eval tasks against agents | Yes |
 | `init` | Bulk-install skills from `linggen/skills` | No |
 | `install` | Install/update the ling binary | No |
 | `update` | Update the ling binary | No |
@@ -123,26 +121,6 @@ Checks (each prints `[OK]`, `[FAIL]`, or `[INFO]` with ANSI colours):
 7. Skills directories (global + project)
 8. Agent definition files count
 9. Log directory exists and is writable
-
----
-
-## eval
-
-Run evaluation tasks against agents.
-
-```
-ling eval [OPTIONS]
-```
-
-| Flag | Description |
-|:-----|:-----------|
-| `--filter <SUBSTRING>` | Filter tasks by name |
-| `--max-iters <N>` | Override max iterations per task |
-| `--timeout <SECS>` | Per-task timeout (default: 300) |
-| `--agent <ID>` | Override agent for all tasks |
-| `--verbose` | Print agent messages during execution |
-
-Exits with code 1 if any task fails. The `--root` global flag sets the workspace root.
 
 ---
 

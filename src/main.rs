@@ -3,7 +3,6 @@ mod cli;
 mod config;
 mod credentials;
 mod engine;
-mod eval;
 mod extensions;
 mod logging;
 mod mcp_client;
@@ -75,28 +74,6 @@ enum Command {
     /// Alias for status
     #[command(hide = true)]
     Doctor,
-    /// Run eval tasks against the agent
-    Eval {
-        /// Filter tasks by name (substring match)
-        #[arg(long)]
-        filter: Option<String>,
-
-        /// Override max iterations per task
-        #[arg(long)]
-        max_iters: Option<usize>,
-
-        /// Per-task timeout in seconds (default 300)
-        #[arg(long, default_value_t = 300)]
-        timeout: u64,
-
-        /// Override agent_id for all tasks
-        #[arg(long)]
-        agent: Option<String>,
-
-        /// Print agent messages during execution
-        #[arg(long, default_value_t = false)]
-        verbose: bool,
-    },
     /// Set up ~/.linggen/ environment (directories, agents, config, skills)
     Init,
     /// Install/update the ling binary to latest
@@ -333,27 +310,6 @@ async fn main() -> Result<()> {
     };
 
     match cli.cmd {
-        Some(Command::Eval {
-            filter,
-            max_iters,
-            timeout,
-            agent,
-            verbose: _,
-        }) => {
-            let ws_root = crate::paths::resolve_workspace_root(global_root)?;
-            let eval_cfg = eval::EvalConfig {
-                ws_root,
-                filter,
-                max_iters,
-                timeout,
-                agent_override: agent,
-            };
-            let summary = eval::run_eval(eval_cfg).await?;
-            if summary.failed > 0 {
-                std::process::exit(1);
-            }
-        }
-
         // --web (foreground mode)
         None => {
             let ws_root = crate::paths::resolve_workspace_root(global_root)?;

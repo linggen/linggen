@@ -1,6 +1,0 @@
-name = "003-add-function"
-description = "Add a function to existing code"
-agent_id = "coder"
-prompt = "Add a public function `fn multiply(a: i32, b: i32) -> i32` that returns `a * b` to src/lib.rs."
-max_iters = 15
-timeout_secs = 90

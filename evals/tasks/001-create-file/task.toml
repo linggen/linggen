@@ -1,6 +1,0 @@
-name = "001-create-file"
-description = "Create a file with specific content"
-agent_id = "coder"
-prompt = "Create a file called hello.txt containing exactly 'Hello, World!' on one line."
-max_iters = 10
-timeout_secs = 60

@@ -1,6 +1,0 @@
-name = "002-fix-typo"
-description = "Fix a typo in existing code"
-agent_id = "coder"
-prompt = "Fix the typo in src/lib.rs. The function `calulate_sum` should be `calculate_sum`."
-max_iters = 10
-timeout_secs = 60

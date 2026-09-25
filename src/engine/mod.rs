@@ -16,12 +16,12 @@ pub mod skill_activation;
 pub mod skill_tool;
 mod streaming;
 pub mod suggestion;
-mod tool_exec;
-pub mod tool_registry;
-pub mod tool_scope;
 #[cfg(test)]
 pub(crate) mod test_registries;
+mod tool_exec;
+pub mod tool_registry;
 pub(crate) mod tool_render;
+pub mod tool_scope;
 pub mod tools;
 mod types;
 pub mod web_fetch;
@@ -29,8 +29,8 @@ pub mod web_search;
 
 // Re-export public API types
 pub use types::{
-    ActiveMission, AgentEngine, AgentOutcome, AgentRole, ContextRecord, ContextType, EngineConfig,
-    InterfaceMode, Plan, PlanStatus, ThinkingEvent,
+    ActiveMission, AgentEngine, AgentOutcome, AgentRole, ContextType, EngineConfig, InterfaceMode,
+    Plan, PlanStatus, ThinkingEvent,
 };
 
 pub use actions::{
