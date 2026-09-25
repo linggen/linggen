@@ -9,7 +9,7 @@
 //! Layers
 //! ------
 //! - [`model`]  — types, bash classification, path matching, tier mapping,
-//!                and `check_permission` (the core decision function).
+//!   and `check_permission` (the core decision function).
 //! - [`store`]  — `SessionPermissions` (load/save permission.json, set_path_mode).
 //! - [`prompt`] — AskUser widget construction and answer parsing.
 

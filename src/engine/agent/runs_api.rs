@@ -13,12 +13,12 @@
 use crate::engine::agent::{AgentEvent, AgentManager, AgentRunRecord, AgentRunStatus};
 use anyhow::Result;
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 impl AgentManager {
     pub async fn begin_agent_run(
         &self,
-        project_root: &PathBuf,
+        project_root: &Path,
         session_id: Option<&str>,
         agent_id: &str,
         parent_run_id: Option<String>,
@@ -26,7 +26,7 @@ impl AgentManager {
     ) -> Result<String> {
         let project_root = project_root
             .canonicalize()
-            .unwrap_or_else(|_| project_root.clone());
+            .unwrap_or_else(|_| project_root.to_path_buf());
         let run_id = self.make_run_id(agent_id);
         let started_at = crate::util::now_ts_secs();
         let repo_path = project_root.to_string_lossy().to_string();

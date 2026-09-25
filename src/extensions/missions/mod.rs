@@ -393,7 +393,7 @@ impl MissionLoader {
         let mut ids = self.user_mission_ids();
         ids.extend(skill_missions::discover(&self.skills_dir));
         let mut missions: Vec<Mission> = ids.iter().filter_map(|id| self.read_one(id)).collect();
-        missions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        missions.sort_by_key(|m| std::cmp::Reverse(m.created_at));
         Ok(missions)
     }
 

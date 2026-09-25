@@ -191,7 +191,7 @@ impl SessionStore {
                 }
             }
         }
-        sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        sessions.sort_by_key(|m| std::cmp::Reverse(m.updated_at));
         let off = offset.unwrap_or(0);
         if off > 0 {
             sessions = sessions.into_iter().skip(off).collect();
@@ -374,7 +374,7 @@ impl SessionStore {
         let file = fs::File::open(&msgs_path)?;
         let count = BufReader::new(file)
             .lines()
-            .filter_map(|l| l.ok())
+            .map_while(Result::ok)
             .filter(|l| !l.trim().is_empty())
             .count();
         // Truncate

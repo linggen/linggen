@@ -102,6 +102,7 @@ pub fn install_default_agents() -> Result<()> {
 }
 
 /// Ids of the missions this build ships (each `missions/<id>/…` folder).
+#[cfg(test)]
 pub fn builtin_mission_ids() -> Vec<String> {
     let mut ids: Vec<String> = MissionAssets::iter()
         .filter_map(|f| f.split('/').next().map(str::to_string))

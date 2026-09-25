@@ -2,19 +2,19 @@
 //!
 //! Stages
 //! ------
-//! - [`handler`]        — `chat_handler` entry point: session bootstrap,
-//!                        agent locking, queueing, model resolution, then
-//!                        dispatches into one of the three flows below.
+//! - [`handler`] — `chat_handler` entry point: session bootstrap,
+//!   agent locking, queueing, model resolution, then
+//!   dispatches into one of the three flows below.
 //! - [`skill_dispatch`] — slash-command (`/skill`) and trigger-prefix paths
-//!                        (incl. app-launcher branches and skill permission
-//!                        prompt).
-//! - [`structured`]     — the default agentic loop; promotes plan/PlanModeRequested
-//!                        outcomes back into the plan flow.
-//! - [`plan_flow`]      — plan-mode dispatch, plan execution, and
-//!                        approve/reject/edit handlers.
-//! - [`admin`]          — side-channel handlers (clear, compact, system-prompt
-//!                        export, AskUser response/pending) that don't run the
-//!                        agent loop.
+//!   (incl. app-launcher branches and skill permission
+//!   prompt).
+//! - [`structured`] — the default agentic loop; promotes plan/PlanModeRequested
+//!   outcomes back into the plan flow.
+//! - [`plan_flow`] — plan-mode dispatch, plan execution, and
+//!   approve/reject/edit handlers.
+//! - [`admin`] — side-channel handlers (clear, compact, system-prompt
+//!   export, AskUser response/pending) that don't run the
+//!   agent loop.
 //!
 //! Cross-cutting helpers live in [`runtime`]: run_loop_with_tracking,
 //! interrupt + AskUser bridge wiring, the thinking-channel forwarder,

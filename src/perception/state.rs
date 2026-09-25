@@ -137,7 +137,7 @@ fn disk_lines() -> Vec<String> {
     let Some((free, total)) = disk() else {
         return Vec::new();
     };
-    let pct = if total > 0 { free * 100 / total } else { 0 };
+    let pct = (free * 100).checked_div(total).unwrap_or(0);
     // "% free", never a bare "%": half the readers of a disk figure assume the
     // other one, and the agent says out loud whichever it assumed.
     let mut line = format!("disk: {} free of {} · {pct}% free", gb(free), gb(total));

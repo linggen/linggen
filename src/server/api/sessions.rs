@@ -182,7 +182,6 @@ pub(crate) async fn get_skill_session_state(
 
 #[derive(Deserialize)]
 pub(crate) struct RemoveSkillSessionRequest {
-    skill: String,
     session_id: String,
 }
 
@@ -208,7 +207,6 @@ pub(crate) async fn remove_skill_session_api(
 
 #[derive(Deserialize)]
 pub(crate) struct RenameSessionRequest {
-    project_root: String,
     session_id: String,
     #[serde(default)]
     title: Option<String>,
@@ -274,15 +272,6 @@ pub(crate) async fn rename_session_api(
 #[derive(Deserialize)]
 pub(crate) struct DeleteUnifiedSessionRequest {
     session_id: String,
-    /// For project sessions — which project owns it.
-    #[serde(default)]
-    project: Option<String>,
-    /// For mission sessions — which mission owns it.
-    #[serde(default)]
-    mission_id: Option<String>,
-    /// For skill sessions — which skill owns it.
-    #[serde(default)]
-    skill: Option<String>,
 }
 
 /// DELETE /api/sessions/all — delete a session from the global store.

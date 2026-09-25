@@ -21,8 +21,6 @@ pub async fn enter_mission(
     skills: &dyn SkillRegistry,
 ) -> Option<Skill> {
     engine.active_mission = Some(crate::engine::ActiveMission {
-        name: mission.name.clone().unwrap_or_else(|| mission.id.clone()),
-        description: mission.description.clone(),
         body: mission.prompt.clone(),
         mission_dir: Some(missions.mission_dir(&mission.id)),
     });

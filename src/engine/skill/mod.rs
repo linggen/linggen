@@ -17,7 +17,5 @@ pub mod record;
 pub mod registry;
 pub mod tools;
 
-pub use record::{
-    AppConfig, CloudConfig, QuestsConfig, QueueMode, SavePaths, Skill, SkillSource, SyncConfig,
-};
+pub use record::{AppConfig, CloudConfig, QuestsConfig, QueueMode, Skill, SkillSource, SyncConfig};
 pub use registry::SkillRegistry;

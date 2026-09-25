@@ -8,11 +8,9 @@
 use std::ffi::OsStr;
 use std::path::Path;
 
-/// How to invoke the script: either a path to a file (run as `bash <file>`)
-/// or an inline command (run as `bash -c <cmd>`).
+/// How to invoke the script: a path to a file, run as `bash <file>`.
 pub enum Invocation<'a> {
     File(&'a Path),
-    Inline(&'a str),
 }
 
 /// Build a sync `std::process::Command` configured to invoke bash with the
@@ -28,13 +26,7 @@ pub fn sync_command(
     for (k, v) in env {
         cmd.env(*k, *v);
     }
-    match inv {
-        Invocation::File(p) => {
-            cmd.arg(p);
-        }
-        Invocation::Inline(s) => {
-            cmd.arg("-c").arg(s);
-        }
-    }
+    let Invocation::File(p) = inv;
+    cmd.arg(p);
     cmd
 }

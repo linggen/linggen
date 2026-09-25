@@ -20,9 +20,6 @@ pub struct McpTool {
 }
 
 pub struct McpClient {
-    /// The name the server is configured under, used to prefix its tools so
-    /// two servers may both offer `search`.
-    pub server: String,
     transport: Arc<dyn Transport>,
     next_id: AtomicI64,
     /// A server's own guidance, from `initialize`. This is how a server ships
@@ -35,7 +32,7 @@ pub struct McpClient {
 impl McpClient {
     /// Connect and handshake. Errors here mean "this server is unavailable",
     /// never "the turn failed" — the caller reports and carries on.
-    pub async fn connect(server: &str, cfg: &McpServerConfig) -> Result<Self> {
+    pub async fn connect(cfg: &McpServerConfig) -> Result<Self> {
         let transport: Arc<dyn Transport> = match cfg.transport().map_err(anyhow::Error::msg)? {
             TransportKind::Stdio { command, args, env } => {
                 Arc::new(StdioTransport::spawn(&command, &args, &env).await?)
@@ -43,7 +40,6 @@ impl McpClient {
             TransportKind::Http { url, headers } => Arc::new(HttpTransport::new(url, headers)?),
         };
         let mut client = Self {
-            server: server.to_string(),
             transport,
             next_id: AtomicI64::new(1),
             instructions: None,
@@ -231,7 +227,7 @@ mod tests {
             url: Some(URL.into()),
             ..Default::default()
         };
-        let client = McpClient::connect("ling-mem", &cfg).await.expect("connect");
+        let client = McpClient::connect(&cfg).await.expect("connect");
 
         let tools = client.list_tools().await.expect("tools/list");
         assert!(

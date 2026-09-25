@@ -16,8 +16,8 @@ pub const COMPANION_AGENT_ID: &str = "yinyue";
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::time::Instant;
@@ -151,7 +151,7 @@ impl AgentManager {
         agent_id.trim().to_lowercase()
     }
 
-    fn canonical_project_root(project_root: &PathBuf) -> PathBuf {
+    fn canonical_project_root(project_root: &Path) -> PathBuf {
         crate::util::resolve_path(project_root)
     }
 
@@ -255,8 +255,8 @@ impl AgentManager {
 
     /// Build a fully-initialized `AgentEngine` for the given project + agent_id.
     ///
-    /// Centralizes the construction sequence shared by `get_or_create_agent`,
-    /// `get_or_create_session_agent`, and `spawn_delegation_engine`:
+    /// Centralizes the construction sequence shared by
+    /// `get_or_create_session_agent` and `spawn_delegation_engine`:
     ///
     /// 1. Resolve the agent spec and effective model id.
     /// 2. Build the engine with `EngineConfig::from_app_config(...)`.
@@ -269,7 +269,7 @@ impl AgentManager {
     /// used by `spawn_delegation_engine` whose caller chooses the depth.
     async fn build_engine_for_agent(
         self: &Arc<Self>,
-        project_root: &PathBuf,
+        project_root: &Path,
         normalized_id: &str,
         apply_delegation_depth: bool,
     ) -> Result<AgentEngine> {
@@ -295,7 +295,7 @@ impl AgentManager {
         )?;
 
         let mut engine = AgentEngine::new(
-            EngineConfig::from_app_config(&config, project_root.clone(), self.interface_mode),
+            EngineConfig::from_app_config(&config, project_root.to_path_buf(), self.interface_mode),
             models,
             model_id,
             AgentRole::Lead,
@@ -400,15 +400,6 @@ impl AgentManager {
         flag
     }
 
-    pub fn trigger_tool_cancel(&self, block_id: &str) -> bool {
-        if let Some(flag) = self.tool_cancel_flags.lock_ok().get(block_id) {
-            flag.store(true, Ordering::Relaxed);
-            true
-        } else {
-            false
-        }
-    }
-
     pub fn clear_tool_cancel_flag(&self, block_id: &str) {
         self.tool_cancel_flags.lock_ok().remove(block_id);
     }
@@ -505,28 +496,6 @@ impl AgentManager {
 
         projects.insert(key, ctx.clone());
         Ok(ctx)
-    }
-
-    pub async fn get_or_create_agent(
-        self: &Arc<Self>,
-        project_root: &PathBuf,
-        agent_id: &str,
-    ) -> Result<Arc<Mutex<AgentEngine>>> {
-        let project_root = Self::canonical_project_root(project_root);
-        let ctx = self.get_or_create_project(project_root.clone()).await?;
-        let mut agents = ctx.agents.lock().await;
-        let normalized_id = Self::normalize_agent_id(agent_id);
-
-        if let Some(agent) = agents.get(&normalized_id) {
-            return Ok(agent.clone());
-        }
-
-        let engine = self
-            .build_engine_for_agent(&project_root, &normalized_id, true)
-            .await?;
-        let agent = Arc::new(Mutex::new(engine));
-        agents.insert(normalized_id, agent.clone());
-        Ok(agent)
     }
 
     /// Get or create an agent engine for a specific session.
@@ -644,8 +613,7 @@ impl AgentManager {
 
     /// Create a fresh, uncached `AgentEngine` for a single delegation call.
     ///
-    /// Unlike `get_or_create_agent`, the returned engine is **not** inserted into the project's
-    /// agent cache.  It is intended for one-shot delegation tasks that run concurrently — each
+    /// Unlike `get_or_create_session_agent`, the returned engine is **not** cached.  It is intended for one-shot delegation tasks that run concurrently — each
     /// spawned delegation gets its own engine instance, avoiding the lock contention / deadlock
     /// that would occur if two delegations tried to share a single `Arc<Mutex<AgentEngine>>`.
     pub async fn spawn_delegation_engine(
@@ -675,7 +643,7 @@ impl AgentManager {
         true
     }
 
-    pub async fn list_agent_specs(&self, project_root: &PathBuf) -> Result<Vec<AgentSpecFile>> {
+    pub async fn list_agent_specs(&self, project_root: &Path) -> Result<Vec<AgentSpecFile>> {
         self.agents.list(project_root).await
     }
 
@@ -700,7 +668,7 @@ impl AgentManager {
             .map(|s| s.agent_id)
     }
 
-    pub async fn agent_exists(&self, project_root: &PathBuf, agent_id: &str) -> bool {
+    pub async fn agent_exists(&self, project_root: &Path, agent_id: &str) -> bool {
         matches!(self.agents.find(project_root, agent_id).await, Ok(Some(_)))
     }
 
@@ -921,10 +889,10 @@ impl AgentManager {
         self.last_activity.lock().await.insert(key, Instant::now());
     }
 
-    pub async fn sync_world_state(&self, project_root: &PathBuf) -> Result<()> {
+    pub async fn sync_world_state(&self, project_root: &Path) -> Result<()> {
         let project_root = project_root
             .canonicalize()
-            .unwrap_or_else(|_| project_root.clone());
+            .unwrap_or_else(|_| project_root.to_path_buf());
         let ctx = self.get_or_create_project(project_root.clone()).await?;
         let tasks = ctx.state_fs.list_tasks()?;
         // All agents are patch-capable; pick the first.

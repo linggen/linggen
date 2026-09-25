@@ -26,18 +26,6 @@ Description: {description}
 {content}
 -------------------'''
 
-[active_mission_frame]
-description = "Wraps the active mission content injected into the system prompt. Mirrors active_skill_frame — the mission body is step-by-step instructions the agent executes autonomously."
-vars = ["name", "description", "content"]
-text = '''
-
---- ACTIVE MISSION ---
-Mission: {name}
-Description: {description}
-
-{content}
-----------------------'''
-
 [app_skill_dashboard_hint]
 description = "Generic PageUpdate reminder appended after an app-skill body. Only used when the skill body itself does not already document PageUpdate."
 text = '''

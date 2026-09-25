@@ -259,9 +259,9 @@ fn normalize_agent_md_path(path: &str) -> Result<String, String> {
 /// project-relative paths (`agents/coder.md`) and global paths
 /// (`~/.linggen/agents/coder.md`).
 fn resolve_agent_path(root: &std::path::Path, rel: &str) -> PathBuf {
-    if rel.starts_with("~/") {
+    if let Some(rest) = rel.strip_prefix("~/") {
         let home = dirs::home_dir().unwrap_or_default();
-        home.join(&rel[2..])
+        home.join(rest)
     } else {
         root.join(rel)
     }

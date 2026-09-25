@@ -18,7 +18,6 @@ pub mod keys {
     pub const SYSTEM_SKILLS_HEADER: &str = "system-prompt.skills_header";
     pub const SYSTEM_SKILL_ENTRY: &str = "system-prompt.skill_entry";
     pub const SYSTEM_ACTIVE_SKILL_FRAME: &str = "system-prompt.active_skill_frame";
-    pub const SYSTEM_ACTIVE_MISSION_FRAME: &str = "system-prompt.active_mission_frame";
     pub const SYSTEM_APP_SKILL_DASHBOARD_HINT: &str = "system-prompt.app_skill_dashboard_hint";
     pub const SYSTEM_PROJECT_INSTRUCTIONS_HEADER: &str =
         "system-prompt.project_instructions_header";
@@ -44,8 +43,6 @@ pub mod keys {
     pub const TOOL_EXEC_FAILED: &str = "system-reminder.tool_exec_failed";
     pub const PERMISSION_DENIED: &str = "system-reminder.permission_denied";
     pub const PERMISSION_TIMEOUT: &str = "system-reminder.permission_timeout";
-    pub const PATCH_NOT_ALLOWED: &str = "system-reminder.patch_not_allowed";
-    pub const PATCH_VALIDATION_FAILED: &str = "system-reminder.patch_validation_failed";
     pub const DELEGATION_BLOCKED: &str = "system-reminder.delegation_blocked";
     pub const DELEGATION_VALIDATION_FAILED: &str = "system-reminder.delegation_validation_failed";
     pub const DELEGATION_FAILED: &str = "system-reminder.delegation_failed";
@@ -58,13 +55,11 @@ pub mod keys {
     pub const READ_IS_DIRECTORY: &str = "tool-result.read_is_directory";
     pub const SMART_SEARCH_REDIRECT: &str = "tool-result.smart_search_redirect";
     pub const SMART_SEARCH_REDIRECT_MULTI: &str = "tool-result.smart_search_redirect_multi";
-    pub const ASKUSER_SUBAGENT_BLOCKED: &str = "tool-result.askuser_subagent_blocked";
     pub const ASKUSER_CLI_BLOCKED: &str = "tool-result.askuser_cli_blocked";
     pub const ASKUSER_CANCELLED: &str = "tool-result.askuser_cancelled";
     pub const ASKUSER_TIMEOUT: &str = "tool-result.askuser_timeout";
     pub const PLAN_SUBMITTED: &str = "tool-result.plan_submitted";
     pub const PLAN_UPDATED: &str = "tool-result.plan_updated";
-    pub const DONE_DEFAULT: &str = "tool-result.done_default";
     pub const OBSERVATION_WRAPPER: &str = "tool-result.observation_wrapper";
 
     // -- bailout.* --------------------------------------------------------
@@ -317,7 +312,6 @@ mod tests {
             keys::SYSTEM_SKILLS_HEADER,
             keys::SYSTEM_SKILL_ENTRY,
             keys::SYSTEM_ACTIVE_SKILL_FRAME,
-            keys::SYSTEM_ACTIVE_MISSION_FRAME,
             keys::SYSTEM_APP_SKILL_DASHBOARD_HINT,
             keys::SYSTEM_PROJECT_INSTRUCTIONS_HEADER,
             keys::SYSTEM_PROJECT_INSTRUCTIONS_ENTRY,
@@ -338,8 +332,6 @@ mod tests {
             keys::TOOL_EXEC_FAILED,
             keys::PERMISSION_DENIED,
             keys::PERMISSION_TIMEOUT,
-            keys::PATCH_NOT_ALLOWED,
-            keys::PATCH_VALIDATION_FAILED,
             keys::DELEGATION_BLOCKED,
             keys::DELEGATION_VALIDATION_FAILED,
             keys::DELEGATION_FAILED,
@@ -350,13 +342,11 @@ mod tests {
             keys::READ_IS_DIRECTORY,
             keys::SMART_SEARCH_REDIRECT,
             keys::SMART_SEARCH_REDIRECT_MULTI,
-            keys::ASKUSER_SUBAGENT_BLOCKED,
             keys::ASKUSER_CLI_BLOCKED,
             keys::ASKUSER_CANCELLED,
             keys::ASKUSER_TIMEOUT,
             keys::PLAN_SUBMITTED,
             keys::PLAN_UPDATED,
-            keys::DONE_DEFAULT,
             keys::OBSERVATION_WRAPPER,
             keys::BAILOUT_LOOP_LIMIT,
             keys::BAILOUT_MALFORMED_OUTPUT,

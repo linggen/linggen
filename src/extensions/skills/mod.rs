@@ -508,7 +508,7 @@ impl SkillLoader {
         }
         // Sort triggers longest-first for greedy matching.
         let mut sorted: Vec<(&String, &String)> = triggers.iter().collect();
-        sorted.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        sorted.sort_by_key(|t| std::cmp::Reverse(t.0.len()));
 
         for (prefix, skill_name) in sorted {
             if input.starts_with(prefix.as_str()) {
@@ -604,15 +604,6 @@ impl crate::engine::skill::registry::SkillRegistry for SkillLoader {
                 (s.name, s.description, is_app)
             })
             .collect()
-    }
-}
-
-/// Priority for deterministic capability resolution. Lower wins.
-fn source_priority(src: &SkillSource) -> u8 {
-    match src {
-        SkillSource::Project => 0,
-        SkillSource::Compat { .. } => 1,
-        SkillSource::Global => 2,
     }
 }
 

@@ -95,7 +95,7 @@ pub(super) fn last_spoken_line(state: &Arc<ServerState>, current_sid: &str) -> O
     let store = &state.manager.global_sessions;
     let mut sessions = store.list_sessions().ok()?;
     sessions.retain(|m| m.id.starts_with(&yinyue_session_prefix()) && m.id != current_sid);
-    sessions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    sessions.sort_by_key(|m| std::cmp::Reverse(m.created_at));
     for meta in sessions {
         let Ok(history) = store.get_chat_history(&meta.id) else {
             continue;

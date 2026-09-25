@@ -24,8 +24,6 @@ use tokio::sync::mpsc;
 /// authors can write mission bodies in the same SKILL.md style.
 #[derive(Debug, Clone)]
 pub struct ActiveMission {
-    pub name: String,
-    pub description: String,
     pub body: String,
     /// Absolute path to the mission directory on disk. Used to replace the
     /// `$MISSION_DIR` literal inside the body, matching `$SKILL_DIR` behavior.
@@ -127,10 +125,6 @@ pub struct EngineConfig {
     pub skill_allowed_tools: Option<std::collections::HashSet<String>>,
     /// When set, restricts available skills for proxy room consumers.
     pub consumer_allowed_skills: Option<std::collections::HashSet<String>>,
-    /// Episodic-memory retention in days; the user-triggered `dream` mission
-    /// terminally decides rows older than this, the evict backstop sweeps the
-    /// rest. Default 7. See `memory-spec.md` §2.
-    pub episodic_ttl_days: u64,
     /// Global default auto-compaction trigger as a fraction of context_window_tokens.
     /// 0.10–0.99. None = hardcoded fallback (0.95). Per-session `compact_threshold`
     /// on the `AgentEngine` still takes precedence over this.
@@ -172,7 +166,6 @@ impl EngineConfig {
             consumer_allowed_tools: None,
             skill_allowed_tools: None,
             consumer_allowed_skills: None,
-            episodic_ttl_days: config.agent.episodic_ttl_days,
             compact_threshold_default: config.agent.compact_threshold,
             memory_inject_min_score: config.agent.memory_inject_min_score,
             memory_recall_count: config.agent.memory_recall_count,

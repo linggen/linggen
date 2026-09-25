@@ -48,10 +48,6 @@ pub enum ActivationOutcome {
     /// `session_permissions` was modified — the caller should emit
     /// `ServerEvent::StateUpdated` so the UI's permission badge refreshes.
     Activated { grants_changed: bool },
-    /// User cancelled the permission prompt (only possible for
-    /// `SlashCommand` on interactive sessions). Caller should abort
-    /// dispatch and surface a "skill cancelled" message.
-    Cancelled,
 }
 
 impl AgentEngine {
@@ -63,8 +59,7 @@ impl AgentEngine {
     /// - `session_permissions` (when grants apply per the mode + interactive
     ///   gating) — stamp each `permission.paths` entry into `path_modes`,
     ///   skipping entries that already cover the path at the same tier.
-    /// - `active_skill` — committed last so a `Cancelled` outcome leaves
-    ///   the engine unchanged.
+    /// - `active_skill` — committed last.
     pub async fn activate_skill(
         &mut self,
         skill: Skill,

@@ -81,15 +81,6 @@ Choose a different approach, skip this step, or use AskUser to ask the user what
 description = "Feedback when permission prompt times out with no user response"
 text = "Permission prompt timed out. Stopping."
 
-[patch_not_allowed]
-description = "Feedback when agent tries Patch without the policy capability"
-text = "Error: This agent is not allowed to output 'patch'. Add `Patch` to the agent frontmatter `policy` to enable it."
-
-[patch_validation_failed]
-description = "Feedback when a unified diff patch fails validation"
-vars = ["errors"]
-text = "The patch failed validation. Fix and respond with a new patch JSON. Errors:\n{errors}"
-
 [delegation_blocked]
 description = "Feedback when Task tool is not in the allowed tool set"
 vars = ["target"]

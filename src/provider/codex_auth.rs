@@ -506,12 +506,12 @@ pub async fn device_code_login() -> Result<CodexAuthTokens> {
 }
 
 // ---------------------------------------------------------------------------
-// Auth manager — shared token state with auto-refresh
+// Auth manager — the stored token state, for `ling auth logout`
+// (the OpenAI provider refreshes tokens itself)
 // ---------------------------------------------------------------------------
 
 pub struct CodexAuthManager {
     tokens: RwLock<CodexAuthTokens>,
-    http: reqwest::Client,
 }
 
 impl CodexAuthManager {
@@ -519,64 +519,7 @@ impl CodexAuthManager {
         let tokens = CodexAuthTokens::load(&codex_auth_file());
         Self {
             tokens: RwLock::new(tokens),
-            http: auth_http(),
         }
-    }
-
-    /// Get current access token and account ID, refreshing if needed.
-    /// Returns (access_token, account_id).
-    pub async fn get_auth(&self) -> Result<(String, Option<String>)> {
-        {
-            let tokens = self.tokens.read().await;
-            if tokens.is_valid() && !tokens.needs_refresh() {
-                return Ok((
-                    tokens.access_token.clone().unwrap(),
-                    tokens.account_id.clone(),
-                ));
-            }
-        }
-
-        // Need refresh
-        let mut tokens = self.tokens.write().await;
-        // Double-check after acquiring write lock
-        if tokens.is_valid() && !tokens.needs_refresh() {
-            return Ok((
-                tokens.access_token.clone().unwrap(),
-                tokens.account_id.clone(),
-            ));
-        }
-
-        if !tokens.is_valid() {
-            anyhow::bail!(
-                "ChatGPT OAuth not configured. Run `ling auth login` or sign in via Web UI Settings."
-            );
-        }
-
-        info!("Refreshing ChatGPT OAuth tokens...");
-        match refresh_tokens(&self.http, &tokens).await {
-            Ok(new_tokens) => {
-                if let Err(e) = new_tokens.save(&codex_auth_file()) {
-                    warn!("Failed to save refreshed tokens: {}", e);
-                }
-                let access = new_tokens.access_token.clone().unwrap();
-                let account = new_tokens.account_id.clone();
-                *tokens = new_tokens;
-                Ok((access, account))
-            }
-            Err(e) => {
-                warn!("Token refresh failed: {}. Using existing token.", e);
-                if let Some(ref access) = tokens.access_token {
-                    Ok((access.clone(), tokens.account_id.clone()))
-                } else {
-                    Err(e)
-                }
-            }
-        }
-    }
-
-    /// Check if tokens are present and valid.
-    pub async fn is_authenticated(&self) -> bool {
-        self.tokens.read().await.is_valid()
     }
 
     /// Clear stored tokens (logout).
@@ -589,13 +532,6 @@ impl CodexAuthManager {
         }
         info!("ChatGPT OAuth tokens cleared.");
         Ok(())
-    }
-
-    /// Reload tokens from disk (after browser login completes).
-    pub async fn reload(&self) {
-        let new_tokens = CodexAuthTokens::load(&codex_auth_file());
-        let mut tokens = self.tokens.write().await;
-        *tokens = new_tokens;
     }
 }
 

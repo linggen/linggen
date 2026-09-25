@@ -61,35 +61,11 @@ pub(super) async fn run_skill_dispatch(ctx: &ChatRunCtx, engine: &mut crate::eng
         // SKILL.md declaration is the approval); undeclared runtime access
         // still prompts via the per-operation ceiling check. So no grant
         // prompt fires here regardless of mode.
-        match engine
+        let ActivationOutcome::Activated { grants_changed } = engine
             .activate_skill(skill, ActivationMode::SlashCommand)
-            .await
-        {
-            ActivationOutcome::Activated {
-                grants_changed: true,
-            } => {
-                let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
-            }
-            ActivationOutcome::Activated {
-                grants_changed: false,
-            } => {}
-            ActivationOutcome::Cancelled => {
-                let msg = format!("Skill '{}' cancelled — permission not granted.", cmd);
-                persist_and_emit_message(
-                    &ctx.manager,
-                    &ctx.events_tx,
-                    &ctx.root,
-                    &ctx.agent_id,
-                    &ctx.agent_id,
-                    "user",
-                    &msg,
-                    ctx.session_id.as_deref(),
-                    false,
-                )
-                .await;
-                unwire_interrupt_channel(ctx, engine, &interrupt_key).await;
-                return;
-            }
+            .await;
+        if grants_changed {
+            let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
         }
     }
 

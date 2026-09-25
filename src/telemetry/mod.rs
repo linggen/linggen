@@ -67,6 +67,7 @@
 //! Runtime:
 //!   - env: `LINGGEN_NO_TELEMETRY=1`
 //!   - file: `touch ~/.linggen/no-telemetry`
+//!
 //! Compile time:
 //!   - `cargo build --no-default-features`
 //!

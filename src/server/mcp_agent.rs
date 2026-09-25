@@ -155,8 +155,10 @@ pub async fn run(
     // Linggen-side user to answer a prompt, so a permission-needed action
     // silently denies and the agent continues) and Read on the workspace.
     {
-        let mut perms = crate::engine::permission::SessionPermissions::default();
-        perms.interactive = false;
+        let mut perms = crate::engine::permission::SessionPermissions {
+            interactive: false,
+            ..Default::default()
+        };
         perms.set_path_mode(&root_str, PermissionMode::Read);
         perms.save(&crate::paths::global_sessions_dir().join(&session_id));
     }

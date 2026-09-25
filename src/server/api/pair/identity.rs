@@ -45,9 +45,6 @@ pub fn caller_device(headers: &axum::http::HeaderMap) -> Option<String> {
     actor_for_headers(headers).map(|a| a.device)
 }
 
-/// Show the code on THIS Mac — the screen-confirm half of the handshake.
-/// Best-effort: the dialog needs macOS; the daemon log always carries it.
-
 pub(super) fn mac_identity() -> (String, Option<String>) {
     let mac_name = local_host_name().unwrap_or_else(|| "Mac".to_string());
     let account = crate::account::load_account().and_then(|a| a.user_name);

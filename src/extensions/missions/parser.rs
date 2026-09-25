@@ -302,8 +302,6 @@ pub(super) fn name_to_filename(name: &str) -> String {
         .map(|c| {
             if c.is_alphanumeric() {
                 c.to_lowercase().next().unwrap_or(c)
-            } else if c == ' ' || c == '_' {
-                '-'
             } else {
                 '-'
             }

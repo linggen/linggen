@@ -299,10 +299,10 @@ pub async fn build_page_state(
                 .filter_map(|s| {
                     let mut v = serde_json::to_value(s).ok()?;
                     // Strip large fields — UI only needs metadata for sidebar cards
-                    v.as_object_mut().map(|m| {
+                    if let Some(m) = v.as_object_mut() {
                         m.remove("content");
                         m.remove("context");
-                    });
+                    }
                     Some(v)
                 })
                 .collect(),

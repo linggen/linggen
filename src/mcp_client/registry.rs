@@ -368,13 +368,12 @@ fn describe(cfg: &McpServerConfig) -> String {
 }
 
 struct Discovered {
-    name: String,
     client: Arc<McpClient>,
     tools: Vec<AdvertisedTool>,
 }
 
 async fn discover(name: &str, cfg: &McpServerConfig) -> Result<Discovered> {
-    let client = Arc::new(McpClient::connect(name, cfg).await?);
+    let client = Arc::new(McpClient::connect(cfg).await?);
     let tools = client
         .list_tools()
         .await?
@@ -387,11 +386,7 @@ async fn discover(name: &str, cfg: &McpServerConfig) -> Result<Discovered> {
             input_schema: t.input_schema,
         })
         .collect();
-    Ok(Discovered {
-        name: name.to_string(),
-        client,
-        tools,
-    })
+    Ok(Discovered { client, tools })
 }
 
 #[cfg(test)]

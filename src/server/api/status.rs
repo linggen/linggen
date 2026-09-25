@@ -109,7 +109,7 @@ pub(crate) async fn get_status_api(
     }
 
     let mut model_usage: Vec<(String, usize)> = model_count.into_iter().collect();
-    model_usage.sort_by(|a, b| b.1.cmp(&a.1));
+    model_usage.sort_by_key(|u| std::cmp::Reverse(u.1));
 
     let sessions = state.manager.global_sessions.count_sessions();
 

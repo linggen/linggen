@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 fn expand_project_root(raw: &str) -> PathBuf {
     if raw == "~" {
         dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
-    } else if raw.starts_with("~/") {
-        dirs::home_dir().unwrap_or_default().join(&raw[2..])
+    } else if let Some(rest) = raw.strip_prefix("~/") {
+        dirs::home_dir().unwrap_or_default().join(rest)
     } else {
         PathBuf::from(raw)
     }

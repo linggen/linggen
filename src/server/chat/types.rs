@@ -57,7 +57,6 @@ pub(crate) struct EditPlanRequest {
 
 #[derive(Deserialize)]
 pub(crate) struct ClearChatRequest {
-    pub(super) project_root: String,
     pub(super) session_id: Option<String>,
 }
 

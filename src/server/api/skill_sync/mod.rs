@@ -234,7 +234,7 @@ fn file_chunks(
 async fn open_file(path: &std::path::Path) -> Option<(tokio::fs::File, u64)> {
     let file = tokio::fs::File::open(path).await.ok()?;
     let meta = file.metadata().await.ok()?;
-    meta.is_file().then(|| (file, meta.len()))
+    meta.is_file().then_some((file, meta.len()))
 }
 
 fn mime_for(name: &str) -> &'static str {

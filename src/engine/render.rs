@@ -110,10 +110,9 @@ pub fn render_tool_result(r: &ToolResult) -> String {
 
 fn preview_text(content: &str, max_lines: usize, max_chars: usize) -> (String, bool) {
     let mut out = String::new();
-    let mut lines = 0usize;
     let mut truncated = false;
 
-    for line in content.lines() {
+    for (lines, line) in content.lines().enumerate() {
         if lines >= max_lines {
             truncated = true;
             break;
@@ -122,7 +121,6 @@ fn preview_text(content: &str, max_lines: usize, max_chars: usize) -> (String, b
             out.push('\n');
         }
         out.push_str(line);
-        lines += 1;
 
         if out.len() >= max_chars {
             truncated = true;

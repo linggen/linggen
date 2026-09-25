@@ -26,10 +26,6 @@ description = "Note prepended when Read auto-resolves with multiple candidates"
 vars = ["original", "count", "found", "others"]
 text = "Note: Original path '{original}' not found. Found {count} candidate files, reading '{found}'. Others: {others}"
 
-[askuser_subagent_blocked]
-description = "AskUser result when called from a delegated sub-agent"
-text = "AskUser is not available for delegated sub-agents. Return your question to the parent agent instead."
-
 [askuser_cli_blocked]
 description = "AskUser result when no UI bridge is available (CLI mode)"
 text = "AskUser is not available in CLI mode."
@@ -50,10 +46,6 @@ text = "Plan submitted for review."
 description = "UpdatePlan action acknowledgement"
 vars = ["count"]
 text = "Plan updated with {count} items."
-
-[done_default]
-description = "Default message for Done action when no message is provided"
-text = "Task completed."
 
 [observation_wrapper]
 description = "Format for observation messages fed back to the model"

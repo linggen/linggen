@@ -781,14 +781,13 @@ async fn run_peer(
         };
 
         // Immediate page state push on view context change (don't wait for 2s tick)
-        if force_page_state && control_channel_id.is_some() {
+        if let Some(cid) = control_channel_id.filter(|_| force_page_state) {
             let now_inst = Instant::now();
             if now_inst.duration_since(last_page_state_at) >= Duration::from_millis(200) {
                 let flags = dirty_flags | super::page_state::DIRTY_ALL;
                 dirty_flags = 0;
                 force_page_state = false;
                 last_page_state_at = now_inst;
-                let cid = control_channel_id.unwrap();
                 let st = state.clone();
                 let tx = ctrl_resp_tx.clone();
                 let user_ctx_clone = user_ctx.clone();
