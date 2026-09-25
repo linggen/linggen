@@ -294,6 +294,30 @@ fn wrap_endpoint_response(status: u16, body: serde_json::Value) -> serde_json::V
     serde_json::json!({ "error": reason })
 }
 
+/// One loopback request to this engine's own HTTP API. GET carries no body;
+/// every other method sends `body` as JSON. `actor_device` names the paired
+/// device asking, for handlers that keep per-device state.
+async fn loopback(
+    client: &reqwest::Client,
+    method: &str,
+    url: &str,
+    body: &serde_json::Value,
+    actor_device: Option<&str>,
+) -> reqwest::Result<reqwest::Response> {
+    let req = match method {
+        "POST" => client.post(url).json(body),
+        "PUT" => client.put(url).json(body),
+        "PATCH" => client.patch(url).json(body),
+        "DELETE" => client.delete(url).json(body),
+        _ => client.get(url),
+    };
+    let req = match actor_device {
+        Some(d) => req.header(crate::server::api::pair::ACTOR_DEVICE_HEADER, d),
+        None => req,
+    };
+    req.send().await
+}
+
 /// Process a pending control channel request asynchronously.
 /// Runs in a spawned task — returns the result to be sent on the data channel
 /// via the ctrl_resp channel (avoiding blocking str0m's event loop).
@@ -363,18 +387,7 @@ pub(super) async fn process_control_request_async(
             // paired device is asking — which is what per-phone state, like the
             // delete queue, needs to be correct with more than one phone.
             let actor_device = actor.lock_ok().as_ref().map(|a| a.device.clone());
-            let tag = |b: reqwest::RequestBuilder| match &actor_device {
-                Some(d) => b.header(crate::server::api::pair::ACTOR_DEVICE_HEADER, d),
-                None => b,
-            };
-            let resp = match method {
-                "POST" => tag(client.post(&url).json(&body_val)).send().await,
-                "PUT" => tag(client.put(&url).json(&body_val)).send().await,
-                "PATCH" => tag(client.patch(&url).json(&body_val)).send().await,
-                "DELETE" => tag(client.delete(&url).json(&body_val)).send().await,
-                _ => tag(client.get(&url)).send().await,
-            };
-            match resp {
+            match loopback(client, method, &url, &body_val, actor_device.as_deref()).await {
                 Ok(r) => {
                     let status = r.status().as_u16();
                     let body = r.text().await.unwrap_or_default();
@@ -403,7 +416,7 @@ pub(super) async fn process_control_request_async(
                 serde_json::Value::String(user_ctx.user_type_for(identified).to_string());
             body["user_id"] = serde_json::Value::String(user_ctx.user_id.clone());
             let url = format!("http://127.0.0.1:{port}{endpoint}");
-            match client.post(&url).json(&body).send().await {
+            match loopback(client, "POST", &url, &body, None).await {
                 Ok(r) => {
                     let status = r.status().as_u16();
                     let body: serde_json::Value = r.json().await.unwrap_or(serde_json::Value::Null);

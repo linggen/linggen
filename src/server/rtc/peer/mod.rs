@@ -6,7 +6,7 @@
 //!
 //! Data channels:
 //! - "control": session lifecycle, heartbeat, RPC (request/response)
-//! - "sess-{id}": per-session chat events, bridged to events_tx
+//! - "sess-{id}": per-session chat events, server→client only
 
 use crate::util::LockExt;
 use anyhow::{Context, Result};
@@ -27,14 +27,12 @@ mod inbound;
 mod inference;
 mod media_channel;
 mod response;
-mod session;
 mod stun;
 use control::{handle_control_message, process_control_request_async};
 use forward::{forward_event_to_channels, EventFilter};
 use inbound::{Inbound, InboundReassembly};
 use inference::process_inference_request;
 use response::{enqueue_push, enqueue_response, DcWrite, MAX_DC_WRITE_QUEUE};
-use session::handle_session_message;
 
 /// How long a peer may make no progress at all before we stop waiting for it.
 /// Generous on purpose: any packet in either direction resets the clock, so
@@ -729,37 +727,9 @@ async fn run_peer(
                                     );
                                 }
                             }
-                        } else if let Some(session_id) = channel_sessions.get(&data.id).cloned() {
-                            // Check token budget before session messages
-                            if let Some(budget) = user_ctx.token_budget_daily {
-                                if tokens_used.load(std::sync::atomic::Ordering::Relaxed) >= budget
-                                {
-                                    tracing::info!(
-                                        "Token budget exhausted, rejecting session message"
-                                    );
-                                    continue;
-                                }
-                            }
-                            // Spawn session message handling to avoid blocking str0m.
-                            let st = state.clone();
-                            let client = http_client.clone();
-                            let ctx_clone = user_ctx.clone();
-                            // Read on the loop thread, where identify also
-                            // runs, so the label this message carries is the
-                            // one in force when it arrived.
-                            let identified = peer_actor.lock_ok().is_some();
-                            tokio::spawn(async move {
-                                handle_session_message(
-                                    &text,
-                                    &session_id,
-                                    &st,
-                                    &client,
-                                    &ctx_clone,
-                                    identified,
-                                )
-                                .await;
-                            });
                         }
+                        // `sess-` channels are server→client only: the web
+                        // UI and the phone send nothing on them.
                     }
 
                     Event::ChannelClose(id) => {
