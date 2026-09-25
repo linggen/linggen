@@ -15,10 +15,23 @@ use anyhow::Result;
 use futures_util::{Stream, StreamExt};
 use reqwest::Client;
 
-/// Reads one SSE `data:` payload of a text turn.
-type TextParser = fn(&str) -> Option<Result<StreamChunk>>;
-/// Reads one SSE `data:` payload of a tool turn.
-type ToolParser = fn(&str) -> Vec<Result<StreamChunk>>;
+/// Reads one SSE `data:` payload of a turn into the chunks it carries. It may
+/// keep state across the stream (the Responses API tracks output items).
+type Parser = Box<dyn FnMut(&str) -> Vec<Result<StreamChunk>> + Send>;
+
+/// A response's SSE lines read into chunks — one line can yield several
+/// (batched tool call deltas from Gemini/Groq, a new item's paragraph break).
+fn parse_sse(
+    resp: reqwest::Response,
+    mut parse: Parser,
+) -> impl Stream<Item = Result<StreamChunk>> + Send {
+    sse_lines(resp)
+        .map(move |line_result| match line_result {
+            Ok(line) => sse_data(&line).map(&mut parse).unwrap_or_default(),
+            Err(e) => vec![Err(crate::provider::stream_read_error(e))],
+        })
+        .flat_map(futures_util::stream::iter)
+}
 
 /// The `data:` payload of one SSE line, or `None` for blank lines, `event:`
 /// lines, non-data lines and the `[DONE]` sentinel.
@@ -404,25 +417,24 @@ impl OpenAiClient {
             tracing::debug!("Last msg ({}): {:.200}", last.role, last.content);
         }
 
-        let (rb, parse): (_, TextParser) = if self.uses_responses_api() {
+        let (rb, parse): (_, Parser) = if self.uses_responses_api() {
+            let mut stream = responses_api::ResponsesStream::default();
             (
                 responses_api::text_request(self, model, messages),
-                responses_api::parse_text_event,
+                Box::new(move |data| stream.text_event(data)),
             )
         } else {
             (
                 chat_completions::text_request(self, model, messages, reasoning_effort),
-                chat_completions::parse_text_chunk,
+                Box::new(|data| {
+                    chat_completions::parse_text_chunk(data)
+                        .into_iter()
+                        .collect()
+                }),
             )
         };
         let resp = self.send_turn(rb, app).await?;
-        let token_stream = sse_lines(resp).filter_map(move |line_result| async move {
-            match line_result {
-                Ok(line) => sse_data(&line).and_then(parse),
-                Err(e) => Some(Err(crate::provider::stream_read_error(e))),
-            }
-        });
-        Ok(token_stream)
+        Ok(parse_sse(resp, parse))
     }
 
     /// Streaming chat with native tool calling support (SSE format).
@@ -445,26 +457,19 @@ impl OpenAiClient {
             tools.len()
         );
 
-        let (rb, parse): (_, ToolParser) = if self.uses_responses_api() {
+        let (rb, parse): (_, Parser) = if self.uses_responses_api() {
+            let mut stream = responses_api::ResponsesStream::default();
             (
                 responses_api::tool_request(self, model, messages, &tools, reasoning_effort),
-                responses_api::parse_tool_event,
+                Box::new(move |data| stream.tool_event(data)),
             )
         } else {
             (
                 chat_completions::tool_request(self, model, messages, tools, reasoning_effort),
-                chat_completions::parse_tool_chunk,
+                Box::new(chat_completions::parse_tool_chunk),
             )
         };
         let resp = self.send_turn(rb, app).await?;
-        // Use map + flat_map so a single SSE line can yield multiple
-        // StreamChunks (e.g. batched tool call deltas from Gemini/Groq).
-        let token_stream = sse_lines(resp)
-            .map(move |line_result| match line_result {
-                Ok(line) => sse_data(&line).map(parse).unwrap_or_default(),
-                Err(e) => vec![Err(crate::provider::stream_read_error(e))],
-            })
-            .flat_map(futures_util::stream::iter);
-        Ok(token_stream)
+        Ok(parse_sse(resp, parse))
     }
 }
