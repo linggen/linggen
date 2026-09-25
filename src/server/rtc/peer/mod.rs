@@ -10,7 +10,7 @@
 
 use crate::util::LockExt;
 use anyhow::{Context, Result};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
@@ -242,13 +242,94 @@ async fn create_peer_inner(
     Ok(answer_sdp)
 }
 
+/// Bulk chunks wait in their own lane so a 10 MB file can never queue
+/// ahead of heartbeats and RPC responses — control frames stay
+/// interactive while media drains at whatever the path allows. Bounded
+/// so spawn_get's channel stays the real backpressure.
+const MEDIA_BACKLOG_MAX: usize = 128;
+
+type CtrlResp = (Option<String>, str0m::channel::ChannelId, serde_json::Value);
+
+/// Whether the event loop goes on after a step.
+enum Flow {
+    Continue,
+    Exit,
+}
+
+/// Everything one peer's event loop keeps between iterations, except the
+/// socket and the receivers the loop waits on.
+struct PeerLoop {
+    rtc: Rtc,
+    state: Arc<ServerState>,
+    user_ctx: super::UserContext,
+    peer_id: u64,
+    /// Who this peer says it is, once `identify` lands. Shared because the
+    /// control channel (which sets it), the media channel (which stamps it onto
+    /// uploads) and the teardown that records the departure all need it.
+    peer_actor: PeerActor,
+    control_channel_id: Option<str0m::channel::ChannelId>,
+    /// Bulk bytes live on their own channel so a photo can't stall chat, and
+    /// so they never pass through the control channel's text envelope.
+    media_channel_id: Option<str0m::channel::ChannelId>,
+    media_transfer: Option<media_channel::MediaTransfer>,
+    /// Download chunks are produced off-loop and queued here; bounded so a slow
+    /// peer applies backpressure to the reader instead of growing memory.
+    media_out_tx: tokio::sync::mpsc::Sender<DcWrite>,
+    /// See [MEDIA_BACKLOG_MAX].
+    media_backlog: VecDeque<DcWrite>,
+    inference_channel_id: Option<str0m::channel::ChannelId>,
+    /// Per-peer token counter — synced with persistent store for consumers.
+    tokens_used: Arc<std::sync::atomic::AtomicI64>,
+    session_channels: HashMap<String, str0m::channel::ChannelId>,
+    channel_sessions: HashMap<str0m::channel::ChannelId, String>,
+    /// Reassembly for control messages the client had to split — a chat with
+    /// an image does not fit in one SCTP message. Per-peer, dropped with it.
+    inbound: InboundReassembly,
+    /// Buffer events for sessions whose data channels aren't open yet.
+    /// When a session channel opens, flush the buffer.
+    /// Entries expire after 60s to prevent unbounded growth from dead sessions.
+    pending_events: HashMap<String, (Instant, Vec<String>)>,
+    /// Reuse a single HTTP client for all proxy requests (connection pooling).
+    http_client: reqwest::Client,
+    /// Channel for async control request responses — avoids blocking str0m's event loop.
+    ctrl_resp_tx: tokio::sync::mpsc::Sender<CtrlResp>,
+    /// Queue of pending data channel writes — drained as fast as SCTP buffer
+    /// allows. Each entry carries its own text/binary flag: control and session
+    /// frames are JSON, media downloads are raw bytes.
+    pending_dc_writes: VecDeque<DcWrite>,
+    dc_write_paused: bool,
+    /// Track when ICE entered Disconnected state for timeout-based cleanup.
+    disconnected_since: Option<Instant>,
+    /// When the peer was last heard from at all. A live browser peer is never
+    /// quiet: ICE consent checks alone arrive every few seconds. A peer whose
+    /// page was reloaded can stay `Connected` for ever in str0m's eyes — it never
+    /// reports `Disconnected`, so the timer above never starts — and on
+    /// 2026-09-21 six of sixteen such peers were still running an hour later,
+    /// one of them holding Yinyue's presenter lock away from every live page.
+    last_heard: Instant,
+    /// Track which session IDs belong to this user (for event filtering).
+    /// Populated from session store on connect, updated on SessionCreated events.
+    user_session_ids: HashSet<String>,
+    // -- Page state push (replaces HTTP polling storm) --
+    view_ctx: super::page_state::ViewContext,
+    dirty_flags: u64,
+    force_page_state: bool,
+    last_page_state_at: Instant,
+}
+
 /// Run the str0m event loop for a single peer connection.
 ///
 /// This bridges:
 /// - Inbound data channel messages → server actions (chat, plan, etc.)
 /// - Server events (events_tx) → outbound data channel messages
+///
+/// Each turn: fill the send buffer, poll str0m (transmit / handle one event),
+/// check the exit conditions, push forced page state, then either spin on an
+/// elapsed timeout or wait for the socket, a server event, a control reply,
+/// the page-state tick or the timeout.
+#[allow(clippy::too_many_arguments)]
 async fn run_peer(
-    mut rtc: Rtc,
+    rtc: Rtc,
     socket: UdpSocket,
     local_candidate_addr: std::net::SocketAddr,
     state: Arc<ServerState>,
@@ -258,82 +339,18 @@ async fn run_peer(
     peer_actor: PeerActor,
 ) -> Result<()> {
     let mut buf = vec![0u8; 65536];
-    let mut control_channel_id = None;
-    // Bulk bytes live on their own channel so a photo can't stall chat, and
-    // so they never pass through the control channel's text envelope.
-    let mut media_channel_id: Option<str0m::channel::ChannelId> = None;
-    let mut media_transfer: Option<media_channel::MediaTransfer> = None;
-    // Who this peer says it is, once `identify` lands. Shared because the
-    // control channel (which sets it), the media channel (which stamps it onto
-    // uploads) and the teardown that records the departure all need it.
-    // Download chunks are produced off-loop and queued here; bounded so a slow
-    // peer applies backpressure to the reader instead of growing memory.
-    let (media_out_tx, mut media_out_rx) = tokio::sync::mpsc::channel::<response::DcWrite>(64);
-    // Bulk chunks wait in their own lane so a 10 MB file can never queue
-    // ahead of heartbeats and RPC responses — control frames stay
-    // interactive while media drains at whatever the path allows. Bounded
-    // so spawn_get's channel stays the real backpressure.
-    let mut media_backlog: std::collections::VecDeque<response::DcWrite> =
-        std::collections::VecDeque::new();
-    const MEDIA_BACKLOG_MAX: usize = 128;
-    let mut inference_channel_id: Option<str0m::channel::ChannelId> = None;
-    // Per-peer token counter — synced with persistent store for consumers.
-    let tokens_used = std::sync::Arc::new(std::sync::atomic::AtomicI64::new(0));
-    // Load existing usage from persistent store for this consumer
-    if user_ctx.is_consumer() {
-        let store = state.token_usage.lock().await;
-        let (consumer_used, _) = store.get_usage(&user_ctx.user_id);
-        tokens_used.store(consumer_used, std::sync::atomic::Ordering::Relaxed);
-    }
-    let mut session_channels: HashMap<String, str0m::channel::ChannelId> = HashMap::new();
-    let mut channel_sessions: HashMap<str0m::channel::ChannelId, String> = HashMap::new();
-    // Reassembly for control messages the client had to split — a chat with
-    // an image does not fit in one SCTP message. Per-peer, dropped with it.
-    let mut inbound = InboundReassembly::default();
-    // Buffer events for sessions whose data channels aren't open yet.
-    // When a session channel opens, flush the buffer.
-    // Entries expire after 60s to prevent unbounded growth from dead sessions.
-    let mut pending_events: HashMap<String, (Instant, Vec<String>)> = HashMap::new();
-    // Reuse a single HTTP client for all proxy requests (connection pooling).
-    let http_client = reqwest::Client::new();
-    // Channel for async control request responses — avoids blocking str0m's event loop.
-    let (ctrl_resp_tx, mut ctrl_resp_rx) = tokio::sync::mpsc::channel::<(
-        Option<String>,
-        str0m::channel::ChannelId,
-        serde_json::Value,
-    )>(32);
-    // Queue of pending data channel writes — drained as fast as SCTP buffer
-    // allows. Each entry carries its own text/binary flag: control and session
-    // frames are JSON, media downloads are raw bytes.
-    let mut pending_dc_writes: std::collections::VecDeque<DcWrite> =
-        std::collections::VecDeque::new();
-    let mut dc_write_paused = false;
-    // Track when ICE entered Disconnected state for timeout-based cleanup.
-    let mut disconnected_since: Option<Instant> = None;
-    // When the peer was last heard from at all. A live browser peer is never
-    // quiet: ICE consent checks alone arrive every few seconds. A peer whose
-    // page was reloaded can stay `Connected` for ever in str0m's eyes — it never
-    // reports `Disconnected`, so the timer above never starts — and on
-    // 2026-09-21 six of sixteen such peers were still running an hour later,
-    // one of them holding Yinyue's presenter lock away from every live page.
-    let mut last_heard = Instant::now();
-
-    // Track which session IDs belong to this user (for event filtering).
-    // Populated from session store on connect, updated on SessionCreated events.
-    let mut user_session_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
-    if let Ok(sessions) = state.manager.global_sessions.list_sessions() {
-        for s in sessions {
-            if s.user_id.as_deref() == Some(&user_ctx.user_id) {
-                user_session_ids.insert(s.id);
-            }
-        }
-    }
-
-    // -- Page state push (replaces HTTP polling storm) --
-    let mut view_ctx = super::page_state::ViewContext::default();
-    let mut dirty_flags: u64 = 0;
-    let mut force_page_state = false;
-    let mut last_page_state_at = Instant::now();
+    let (media_out_tx, mut media_out_rx) = tokio::sync::mpsc::channel::<DcWrite>(64);
+    let (ctrl_resp_tx, mut ctrl_resp_rx) = tokio::sync::mpsc::channel::<CtrlResp>(32);
+    let mut p = PeerLoop::new(
+        rtc,
+        state,
+        user_ctx,
+        peer_id,
+        peer_actor,
+        media_out_tx,
+        ctrl_resp_tx,
+    )
+    .await;
     let mut page_state_interval = tokio::time::interval(Duration::from_secs(2));
     page_state_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
@@ -343,433 +360,28 @@ async fn run_peer(
     let mut stalled_since: Option<Instant> = None;
 
     loop {
-        // Fill the SCTP send buffer each cycle instead of one chunk per wake.
-        // One-write-per-SACK pacing capped relay transfers near 80 KB/s while
-        // str0m happily buffers 128 KiB (MAX_BUFFERED_ACROSS_STREAMS); write()
-        // itself is the gate — it refuses at that cap, and sctp-proto accepts
-        // any message under max_send_message_size in full, so the write()
-        // assert behind the old "multi-drain crashes SCTP" revert cannot fire
-        // on this stack. Control frames always go first: a bulk download must
-        // never wedge heartbeats or RPC behind megabytes of song bytes. The
-        // per-cycle caps keep the socket reads below from starving.
-        if !dc_write_paused {
-            for _ in 0..32 {
-                let Some(write) = pending_dc_writes.pop_front() else {
-                    break;
-                };
-                let written = rtc
-                    .channel(write.channel)
-                    .map(|mut ch| ch.write(write.binary, &write.data))
-                    .unwrap_or(Ok(false));
-                match written {
-                    Ok(true) => { /* accepted — keep filling */ }
-                    _ => {
-                        pending_dc_writes.push_front(write);
-                        dc_write_paused = true;
-                        break;
-                    }
-                }
-            }
-        }
-        if !dc_write_paused {
-            while media_backlog.len() < MEDIA_BACKLOG_MAX {
-                match media_out_rx.try_recv() {
-                    Ok(w) => media_backlog.push_back(w),
-                    Err(_) => break,
-                }
-            }
-            for _ in 0..32 {
-                let Some(write) = media_backlog.pop_front() else {
-                    break;
-                };
-                let written = rtc
-                    .channel(write.channel)
-                    .map(|mut ch| ch.write(write.binary, &write.data))
-                    .unwrap_or(Ok(false));
-                match written {
-                    Ok(true) => { /* accepted — keep filling */ }
-                    _ => {
-                        media_backlog.push_front(write);
-                        dc_write_paused = true;
-                        break;
-                    }
-                }
-            }
-        }
+        p.fill_send_buffer(&mut media_out_rx);
 
         // Poll str0m for output
-        let timeout = match rtc.poll_output()? {
+        let timeout = match p.rtc.poll_output()? {
             Output::Timeout(t) => t,
 
             Output::Transmit(t) => {
                 socket.send_to(&t.contents, t.destination).await?;
-                dc_write_paused = false; // buffer drained, can try writing again
+                p.dc_write_paused = false; // buffer drained, can try writing again
                 continue;
             }
 
             Output::Event(event) => {
-                match event {
-                    Event::IceConnectionStateChange(ice_state) => {
-                        tracing::info!("WebRTC ICE state: {ice_state:?}");
-                        if matches!(ice_state, IceConnectionState::Disconnected) {
-                            if !rtc.is_alive() {
-                                tracing::info!(
-                                    "WebRTC peer disconnected and no longer alive, exiting"
-                                );
-                                media_channel::abandon(&mut media_transfer).await;
-                                return Ok(());
-                            }
-                            // Start a disconnect timer — if still disconnected after 30s, exit.
-                            disconnected_since = Some(Instant::now());
-                        } else {
-                            disconnected_since = None;
-                        }
-                    }
-
-                    Event::ChannelOpen(id, label) => {
-                        tracing::info!("Data channel opened: {label} (id: {id:?})");
-                        if label == "media" {
-                            media_channel_id = Some(id);
-                        } else if label == "control" {
-                            control_channel_id = Some(id);
-                            // Send connection metadata: user info + room info.
-                            // A LAN peer has not identified yet, so this says
-                            // "owner" for a phone; `identify` corrects it with
-                            // a second one of these rather than leaving the
-                            // greeting to disagree with everything after it.
-                            let info_msg = user_info_msg(&user_ctx, false);
-                            if pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {
-                                pending_dc_writes
-                                    .push_back(DcWrite::text(id, info_msg.to_string()));
-                            }
-                            // Privacy warning for consumers
-                            if user_ctx.is_consumer() {
-                                let warning = serde_json::json!({
-                                    "kind": "notification",
-                                    "data": {
-                                        "type": "privacy_warning",
-                                        "message": "You are chatting via a proxy room. The proxy owner can see your messages.",
-                                        "persistent": true
-                                    }
-                                });
-                                if pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {
-                                    pending_dc_writes
-                                        .push_back(DcWrite::text(id, warning.to_string()));
-                                }
-                            }
-                        } else if label == "inference" {
-                            inference_channel_id = Some(id);
-                        } else if let Some(session_id) = label.strip_prefix("sess-") {
-                            // Verify session ownership for non-admin users.
-                            // Check user_session_ids first (fast), then fall back to session store
-                            // (handles race where channel opens before session_created event).
-                            let mut allowed = user_ctx.permission.is_admin()
-                                || user_session_ids.contains(session_id);
-                            if !allowed {
-                                // Check session store — session may have just been created
-                                if let Ok(Some(meta)) =
-                                    state.manager.global_sessions.get_session_meta(session_id)
-                                {
-                                    if meta.user_id.as_deref() == Some(&user_ctx.user_id) {
-                                        user_session_ids.insert(session_id.to_string());
-                                        allowed = true;
-                                    }
-                                }
-                            }
-                            if !allowed {
-                                tracing::warn!("Rejected session channel for {session_id} — not owned by user {}", user_ctx.user_id);
-                            } else {
-                                session_channels.insert(session_id.to_string(), id);
-                                channel_sessions.insert(id, session_id.to_string());
-                                // Catch up whoever just attached. The buffer
-                                // below only covers the window before a channel
-                                // first opens — it is pruned after 60s and dies
-                                // with the peer — so a channel that reopens
-                                // late, or a fresh peer after a reconnect, would
-                                // otherwise keep whatever the UI last painted.
-                                // A scoped push re-states the truth: busy
-                                // sessions, runs, and the message queue.
-                                dirty_flags |= super::page_state::DIRTY_SCOPED;
-                                // Flush buffered events through the write queue (not directly —
-                                // direct writes without poll_output() cause SCTP corruption).
-                                if let Some((_created, buffered)) =
-                                    pending_events.remove(session_id)
-                                {
-                                    tracing::debug!(
-                                        "Flushing {} buffered events for session {session_id}",
-                                        buffered.len()
-                                    );
-                                    for json in buffered {
-                                        if pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {
-                                            pending_dc_writes.push_back(DcWrite::text(id, json));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    Event::ChannelData(data) => {
-                        if Some(data.id) == media_channel_id {
-                            // Uploads write into the owner's library, so only a
-                            // fully paired admin peer may start one; gets follow
-                            // the control channel's endpoint rules.
-                            let pairing = user_ctx.pairing_only();
-                            let may_put = !pairing && user_ctx.permission.is_admin();
-                            let reply = if data.binary {
-                                media_channel::handle_binary(&data.data, &mut media_transfer).await
-                            } else {
-                                let text = String::from_utf8_lossy(&data.data).to_string();
-                                let perm = user_ctx.permission.clone();
-                                if media_channel::spawn_get(
-                                    &text,
-                                    state.port,
-                                    data.id,
-                                    media_out_tx.clone(),
-                                    move |url| !pairing && perm.can_access_endpoint("GET", url),
-                                ) {
-                                    continue;
-                                }
-                                // Copy the actor out before awaiting — the
-                                // guard is not Send and would poison the task.
-                                let who = peer_actor.lock_ok().clone();
-                                media_channel::handle_text(&text, &mut media_transfer, who, may_put)
-                                    .await
-                            };
-                            if let Some(msg) = reply {
-                                if pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {
-                                    pending_dc_writes.push_back(DcWrite::text(data.id, msg));
-                                }
-                            }
-                            continue;
-                        }
-                        let text = String::from_utf8_lossy(&data.data).to_string();
-                        tracing::trace!(
-                            "Data channel message on {:?}: {}bytes",
-                            data.id,
-                            text.len()
-                        );
-                        if Some(data.id) == control_channel_id {
-                            // A control message too big for one SCTP message
-                            // arrives gzipped and split; hold the pieces until
-                            // the tail, then handle the whole thing as if it
-                            // had come in one go. Anything else falls straight
-                            // through untouched.
-                            let text = match serde_json::from_str::<serde_json::Value>(&text) {
-                                Ok(v) => match inbound.accept(&v) {
-                                    Inbound::NotChunked => text,
-                                    Inbound::Buffered => continue,
-                                    Inbound::Complete(full) => {
-                                        tracing::debug!(
-                                            "Reassembled inbound control message: {}KB",
-                                            full.len() / 1024
-                                        );
-                                        full
-                                    }
-                                    Inbound::Failed(why) => {
-                                        tracing::warn!("Inbound transfer failed: {why}");
-                                        continue;
-                                    }
-                                },
-                                // Not valid JSON — let the normal path log it.
-                                Err(_) => text,
-                            };
-                            if let Some(req) = handle_control_message(
-                                &mut rtc,
-                                data.id,
-                                &text,
-                                &state,
-                                &mut session_channels,
-                                &mut channel_sessions,
-                                &mut view_ctx,
-                                &mut force_page_state,
-                                &user_ctx,
-                                &peer_actor,
-                                peer_id,
-                            ) {
-                                // Enforce consumer permissions: browser consumers can only chat
-                                // and load static assets. All dynamic data (sessions, models,
-                                // skills) is pushed via page_state — no HTTP needed.
-                                if req.msg_type == "http_request" {
-                                    let url =
-                                        req.body.get("url").and_then(|v| v.as_str()).unwrap_or("");
-                                    let method = req
-                                        .body
-                                        .get("method")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("GET");
-                                    // A phone mid-pairing reached us on the QR
-                                    // alone, and this tunnel re-issues to
-                                    // loopback, which the LAN gate trusts
-                                    // completely — a channel is by itself full
-                                    // access to this machine. It has proved
-                                    // only that somebody stood at this screen,
-                                    // so it gets the one call that turns a scan
-                                    // into a device token and nothing else.
-                                    let allowed = if user_ctx.pairing_only() {
-                                        url == "/api/pair/qr-confirm"
-                                    } else {
-                                        user_ctx.permission.can_access_endpoint(method, url)
-                                    };
-                                    if !allowed {
-                                        if let Some(rid) = &req.request_id {
-                                            let err = serde_json::json!({
-                                                "request_id": rid,
-                                                "data": { "status": 403, "body": "{\"error\":\"Not allowed\"}" }
-                                            });
-                                            if pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {
-                                                pending_dc_writes.push_back(DcWrite::text(
-                                                    data.id,
-                                                    err.to_string(),
-                                                ));
-                                            }
-                                        }
-                                        continue;
-                                    }
-                                }
-
-                                // Spawn async processing to avoid blocking str0m's event loop.
-                                let tx = ctrl_resp_tx.clone();
-                                let st = state.clone();
-                                let client = http_client.clone();
-                                let rid = req.request_id.clone();
-                                let cid = req.channel_id;
-                                let ctx_clone = user_ctx.clone();
-                                let who = peer_actor.clone();
-                                let tok = tokens_used.clone();
-
-                                if req.msg_type == "inference" || req.msg_type == "list_models" {
-                                    // Inference/model-list: may stream multiple responses
-                                    tokio::spawn(async move {
-                                        process_inference_request(
-                                            &req, &st, &ctx_clone, &tok, &tx, cid,
-                                        )
-                                        .await;
-                                    });
-                                } else {
-                                    tokio::spawn(async move {
-                                        let result = process_control_request_async(
-                                            &req, &st, &client, &ctx_clone, &who, &tok,
-                                        )
-                                        .await;
-                                        let _ = tx.send((rid, cid, result)).await;
-                                    });
-                                }
-                            }
-                        } else if Some(data.id) == inference_channel_id {
-                            // Inference channel: proxy client sends list_models / inference / room_chat
-                            if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&text) {
-                                let msg_type = msg
-                                    .get("type")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string();
-                                let request_id = msg
-                                    .get("request_id")
-                                    .and_then(|v| v.as_str())
-                                    .map(|s| s.to_string());
-                                if msg_type == "inference" || msg_type == "list_models" {
-                                    let req = ControlRequest {
-                                        request_id,
-                                        channel_id: data.id,
-                                        msg_type,
-                                        body: msg,
-                                    };
-                                    let tx = ctrl_resp_tx.clone();
-                                    let st = state.clone();
-                                    let ctx_clone = user_ctx.clone();
-                                    let tok = tokens_used.clone();
-                                    let cid = data.id;
-                                    tokio::spawn(async move {
-                                        process_inference_request(
-                                            &req, &st, &ctx_clone, &tok, &tx, cid,
-                                        )
-                                        .await;
-                                    });
-                                } else if msg_type == "room_chat" {
-                                    // Room chat from proxy consumer — broadcast to all local peers
-                                    let chat_text = msg
-                                        .get("text")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("")
-                                        .to_string();
-                                    if !chat_text.is_empty() && chat_text.len() <= 2000 {
-                                        let sender_name = msg
-                                            .get("sender_name")
-                                            .and_then(|v| v.as_str())
-                                            .or(user_ctx.user_name.as_deref())
-                                            .unwrap_or(&user_ctx.user_id)
-                                            .chars()
-                                            .take(64)
-                                            .collect();
-                                        let avatar_url = msg
-                                            .get("avatar_url")
-                                            .and_then(|v| v.as_str())
-                                            .map(|s| s.to_string())
-                                            .or_else(|| user_ctx.avatar_url.clone());
-                                        tracing::info!(
-                                            "[room_chat] inbound on inference channel from user_id={} text_len={}",
-                                            user_ctx.user_id,
-                                            chat_text.len()
-                                        );
-                                        let _ = state.events_tx.send(
-                                            crate::server::ServerEvent::RoomChat {
-                                                sender_id: user_ctx.user_id.clone(),
-                                                sender_name,
-                                                avatar_url,
-                                                text: chat_text,
-                                            },
-                                        );
-                                    }
-                                } else {
-                                    tracing::warn!(
-                                        "Unknown inference channel message type: {msg_type}"
-                                    );
-                                }
-                            }
-                        }
-                        // `sess-` channels are server→client only: the web
-                        // UI and the phone send nothing on them.
-                    }
-
-                    Event::ChannelClose(id) => {
-                        if let Some(session_id) = channel_sessions.remove(&id) {
-                            session_channels.remove(&session_id);
-                            tracing::info!("Session channel closed: {session_id}");
-                        }
-                        if Some(id) == inference_channel_id {
-                            inference_channel_id = None;
-                            tracing::info!("Inference channel closed");
-                        }
-                        if Some(id) == control_channel_id {
-                            control_channel_id = None;
-                            tracing::info!("Control channel closed");
-                            // A half-sent transfer must not outlive the
-                            // channel that started it.
-                            inbound.clear();
-                        }
-                    }
-
-                    _ => {}
+                if let Flow::Exit = p.on_event(event).await {
+                    return Ok(());
                 }
                 continue;
             }
         };
 
-        // Silence is death, whatever ICE believes.
-        if Instant::now().duration_since(last_heard) > PEER_SILENCE_LIMIT {
-            tracing::info!("WebRTC peer silent for {:?} — exiting", PEER_SILENCE_LIMIT);
-            media_channel::abandon(&mut media_transfer).await;
+        if let Flow::Exit = p.check_liveness().await {
             return Ok(());
-        }
-
-        // Exit if disconnected for more than 30 seconds (str0m has no Failed/Closed states).
-        if let Some(since) = disconnected_since {
-            if Instant::now().duration_since(since) > Duration::from_secs(30) {
-                tracing::info!("WebRTC peer disconnected for 30s — exiting");
-                media_channel::abandon(&mut media_transfer).await;
-                return Ok(());
-            }
         }
 
         // Calculate how long to wait
@@ -781,43 +393,7 @@ async fn run_peer(
         };
 
         // Immediate page state push on view context change (don't wait for 2s tick)
-        if let Some(cid) = control_channel_id.filter(|_| force_page_state) {
-            let now_inst = Instant::now();
-            if now_inst.duration_since(last_page_state_at) >= Duration::from_millis(200) {
-                let flags = dirty_flags | super::page_state::DIRTY_ALL;
-                dirty_flags = 0;
-                force_page_state = false;
-                last_page_state_at = now_inst;
-                let st = state.clone();
-                let tx = ctrl_resp_tx.clone();
-                let user_ctx_clone = user_ctx.clone();
-                let ctx = view_ctx.clone();
-                let identified = peer_actor.lock_ok().is_some();
-                tokio::spawn(async move {
-                    let ps = super::page_state::build_page_state(
-                        &st,
-                        &ctx,
-                        flags,
-                        &user_ctx_clone,
-                        identified,
-                    )
-                    .await;
-                    if let Ok(data) = serde_json::to_value(&ps) {
-                        let size = data.to_string().len();
-                        tracing::info!(
-                            "Pushing page_state (forced): {}bytes, models={}",
-                            size,
-                            data.get("models")
-                                .and_then(|v| v.as_array())
-                                .map(|a| a.len())
-                                .unwrap_or(0)
-                        );
-                        let msg = serde_json::json!({ "kind": "page_state", "data": data });
-                        let _ = tx.send((None, cid, msg)).await;
-                    }
-                });
-            }
-        }
+        p.push_forced_page_state();
 
         // Keep spinning without blocking if: timeout elapsed OR we have writes ready to send.
         // But do NOT spin when paused — we need to enter select! to receive UDP (SCTP ACKs).
@@ -827,7 +403,7 @@ async fn run_peer(
         // transfer paced on unrelated wakes instead of filling until the
         // buffer refused.
         let draining =
-            !dc_write_paused && !(pending_dc_writes.is_empty() && media_backlog.is_empty());
+            !p.dc_write_paused && !(p.pending_dc_writes.is_empty() && p.media_backlog.is_empty());
         if wait.is_zero() || draining {
             if draining {
                 // Emptying the write queue is progress, however long it takes.
@@ -849,12 +425,12 @@ async fn run_peer(
                 tracing::warn!(
                     "WebRTC peer made no progress for {:?} (alive={}) — tearing it down",
                     now.duration_since(since),
-                    rtc.is_alive()
+                    p.rtc.is_alive()
                 );
-                media_channel::abandon(&mut media_transfer).await;
+                media_channel::abandon(&mut p.media_transfer).await;
                 return Ok(());
             }
-            rtc.handle_input(Input::Timeout(Instant::now()))?;
+            p.rtc.handle_input(Input::Timeout(Instant::now()))?;
             tokio::task::yield_now().await;
             continue;
         }
@@ -868,38 +444,14 @@ async fn run_peer(
             // Leaving the chunks in the bounded channel backpressures the
             // producer instead, which is what we want anyway.
             Some(write) = media_out_rx.recv(),
-                if media_backlog.len() < MEDIA_BACKLOG_MAX => {
-                media_backlog.push_back(write);
+                if p.media_backlog.len() < MEDIA_BACKLOG_MAX => {
+                p.media_backlog.push_back(write);
             }
 
             result = socket.recv_from(&mut buf) => {
                 match result {
                     Ok((n, source)) => {
-                        let contents: &[u8] = &buf[..n];
-                        // Pick the local candidate destination that matches the
-                        // packet's source. A packet from 127.0.0.1 must have been
-                        // sent to 127.0.0.1; one from a LAN address went to the
-                        // LAN candidate. Without this, str0m can't pair STUN
-                        // checks and consent-freshness fails ~15s after Connected.
-                        let destination = if source.ip().is_loopback() {
-                            std::net::SocketAddr::new(
-                                std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
-                                local_candidate_addr.port(),
-                            )
-                        } else {
-                            local_candidate_addr
-                        };
-                        let receive = Receive {
-                            proto: Protocol::Udp,
-                            source,
-                            destination,
-                            contents: contents.try_into()?,
-                        };
-                        rtc.handle_input(Input::Receive(Instant::now(), receive))?;
-                        last_heard = Instant::now();
-                        // An inbound packet may carry SCTP acks, which is what
-                        // frees send-buffer space — retry any paused write.
-                        dc_write_paused = false;
+                        p.on_udp(&buf[..n], source, local_candidate_addr)?;
                     }
                     Err(e) => {
                         tracing::warn!("UDP recv error: {e}");
@@ -910,31 +462,12 @@ async fn run_peer(
             // Forward server events to the appropriate session data channel
             result = events_rx.recv() => {
                 match result {
-                    Ok(crate::server::ServerEvent::RoomDisabled) if user_ctx.is_consumer() => {
+                    Ok(crate::server::ServerEvent::RoomDisabled) if p.user_ctx.is_consumer() => {
                         tracing::info!("Room disabled by owner — disconnecting consumer peer");
-                        media_channel::abandon(&mut media_transfer).await;
+                        media_channel::abandon(&mut p.media_transfer).await;
                         return Ok(());
                     }
-                    Ok(event) => {
-                        let mut filter = EventFilter {
-                            session_ids: &mut user_session_ids,
-                            user_id: &user_ctx.user_id,
-                            is_admin: user_ctx.permission.is_admin(),
-                            view: view_ctx.view.as_deref(),
-                            pinned_session_id: if view_ctx.view.as_deref() == Some("embed") {
-                                view_ctx.session_id.as_deref()
-                            } else {
-                                None
-                            },
-                            peer_id,
-                        };
-                        forward_event_to_channels(
-                            &event, &session_channels, control_channel_id,
-                            inference_channel_id,
-                            &mut pending_events, &mut pending_dc_writes,
-                            &state, &mut dirty_flags, &mut filter,
-                        );
-                    }
+                    Ok(event) => p.forward_server_event(&event),
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!("WebRTC event relay lagged — dropped {n} events");
                     }
@@ -945,52 +478,658 @@ async fn run_peer(
             // Receive async control request responses and send on data channel
             Some((rid, cid, result)) = ctrl_resp_rx.recv() => {
                 match rid {
-                    Some(rid) => enqueue_response(&mut pending_dc_writes, cid, &rid, result),
+                    Some(rid) => enqueue_response(&mut p.pending_dc_writes, cid, &rid, result),
                     None => {
                         // Unsolicited push (e.g. page_state) — chunk if large so
                         // an oversized frame can't reset the data channel.
-                        enqueue_push(&mut pending_dc_writes, cid, result);
+                        enqueue_push(&mut p.pending_dc_writes, cid, result);
                     }
                 }
             }
 
             // Page state heartbeat — push aggregated state every 2s when dirty
             _ = page_state_interval.tick() => {
-                let should_send = (dirty_flags != 0 || force_page_state)
-                    && control_channel_id.is_some();
-                if should_send {
-                    let now_inst = Instant::now();
-                    // Debounce: skip if last push was < 200ms ago (rapid context changes)
-                    if now_inst.duration_since(last_page_state_at) >= Duration::from_millis(200) {
-                        let flags = dirty_flags;
-                        dirty_flags = 0;
-                        force_page_state = false;
-                        last_page_state_at = now_inst;
-                        let cid = control_channel_id.unwrap();
-                        let st = state.clone();
-                        let tx = ctrl_resp_tx.clone();
-                        let user_ctx_clone = user_ctx.clone();
-                        let ctx = view_ctx.clone();
-                        let identified = peer_actor.lock_ok().is_some();
-                        tokio::spawn(async move {
-                            let ps = super::page_state::build_page_state(
-                                &st, &ctx, flags, &user_ctx_clone, identified,
-                            )
-                            .await;
-                            if let Ok(data) = serde_json::to_value(&ps) {
-                                let msg = serde_json::json!({ "kind": "page_state", "data": data });
-                                let _ = tx.send((None, cid, msg)).await;
-                            }
-                        });
-                    }
-                }
+                p.push_page_state_heartbeat();
             }
 
             _ = tokio::time::sleep(wait) => {
-                rtc.handle_input(Input::Timeout(Instant::now()))?;
+                p.rtc.handle_input(Input::Timeout(Instant::now()))?;
             }
         }
     }
+}
+
+impl PeerLoop {
+    async fn new(
+        rtc: Rtc,
+        state: Arc<ServerState>,
+        user_ctx: super::UserContext,
+        peer_id: u64,
+        peer_actor: PeerActor,
+        media_out_tx: tokio::sync::mpsc::Sender<DcWrite>,
+        ctrl_resp_tx: tokio::sync::mpsc::Sender<CtrlResp>,
+    ) -> Self {
+        let tokens_used = Arc::new(std::sync::atomic::AtomicI64::new(0));
+        // Load existing usage from persistent store for this consumer
+        if user_ctx.is_consumer() {
+            let store = state.token_usage.lock().await;
+            let (consumer_used, _) = store.get_usage(&user_ctx.user_id);
+            tokens_used.store(consumer_used, std::sync::atomic::Ordering::Relaxed);
+        }
+        let mut user_session_ids = HashSet::new();
+        if let Ok(sessions) = state.manager.global_sessions.list_sessions() {
+            for s in sessions {
+                if s.user_id.as_deref() == Some(&user_ctx.user_id) {
+                    user_session_ids.insert(s.id);
+                }
+            }
+        }
+        Self {
+            rtc,
+            state,
+            user_ctx,
+            peer_id,
+            peer_actor,
+            control_channel_id: None,
+            media_channel_id: None,
+            media_transfer: None,
+            media_out_tx,
+            media_backlog: VecDeque::new(),
+            inference_channel_id: None,
+            tokens_used,
+            session_channels: HashMap::new(),
+            channel_sessions: HashMap::new(),
+            inbound: InboundReassembly::default(),
+            pending_events: HashMap::new(),
+            http_client: reqwest::Client::new(),
+            ctrl_resp_tx,
+            pending_dc_writes: VecDeque::new(),
+            dc_write_paused: false,
+            disconnected_since: None,
+            last_heard: Instant::now(),
+            user_session_ids,
+            view_ctx: super::page_state::ViewContext::default(),
+            dirty_flags: 0,
+            force_page_state: false,
+            last_page_state_at: Instant::now(),
+        }
+    }
+
+    /// Queue a text frame, unless the write queue is already full.
+    fn queue_text(&mut self, channel: str0m::channel::ChannelId, text: String) {
+        if self.pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {
+            self.pending_dc_writes
+                .push_back(DcWrite::text(channel, text));
+        }
+    }
+
+    /// Fill the SCTP send buffer each cycle instead of one chunk per wake.
+    /// One-write-per-SACK pacing capped relay transfers near 80 KB/s while
+    /// str0m happily buffers 128 KiB (MAX_BUFFERED_ACROSS_STREAMS); write()
+    /// itself is the gate — it refuses at that cap, and sctp-proto accepts
+    /// any message under max_send_message_size in full, so the write()
+    /// assert behind the old "multi-drain crashes SCTP" revert cannot fire
+    /// on this stack. Control frames always go first: a bulk download must
+    /// never wedge heartbeats or RPC behind megabytes of song bytes. The
+    /// per-cycle caps keep the socket reads below from starving.
+    fn fill_send_buffer(&mut self, media_out_rx: &mut tokio::sync::mpsc::Receiver<DcWrite>) {
+        if !self.dc_write_paused {
+            self.drain_lane(Lane::Control);
+        }
+        if !self.dc_write_paused {
+            while self.media_backlog.len() < MEDIA_BACKLOG_MAX {
+                match media_out_rx.try_recv() {
+                    Ok(w) => self.media_backlog.push_back(w),
+                    Err(_) => break,
+                }
+            }
+            self.drain_lane(Lane::Media);
+        }
+    }
+
+    /// Write up to 32 queued frames from one lane; pause when str0m refuses.
+    fn drain_lane(&mut self, lane: Lane) {
+        for _ in 0..32 {
+            let queue = match lane {
+                Lane::Control => &mut self.pending_dc_writes,
+                Lane::Media => &mut self.media_backlog,
+            };
+            let Some(write) = queue.pop_front() else {
+                break;
+            };
+            let written = self
+                .rtc
+                .channel(write.channel)
+                .map(|mut ch| ch.write(write.binary, &write.data))
+                .unwrap_or(Ok(false));
+            match written {
+                Ok(true) => { /* accepted — keep filling */ }
+                _ => {
+                    let queue = match lane {
+                        Lane::Control => &mut self.pending_dc_writes,
+                        Lane::Media => &mut self.media_backlog,
+                    };
+                    queue.push_front(write);
+                    self.dc_write_paused = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    async fn on_event(&mut self, event: Event) -> Flow {
+        match event {
+            Event::IceConnectionStateChange(ice_state) => {
+                tracing::info!("WebRTC ICE state: {ice_state:?}");
+                if matches!(ice_state, IceConnectionState::Disconnected) {
+                    if !self.rtc.is_alive() {
+                        tracing::info!("WebRTC peer disconnected and no longer alive, exiting");
+                        media_channel::abandon(&mut self.media_transfer).await;
+                        return Flow::Exit;
+                    }
+                    // Start a disconnect timer — if still disconnected after 30s, exit.
+                    self.disconnected_since = Some(Instant::now());
+                } else {
+                    self.disconnected_since = None;
+                }
+            }
+            Event::ChannelOpen(id, label) => self.on_channel_open(id, &label),
+            Event::ChannelData(data) => self.on_channel_data(data).await,
+            Event::ChannelClose(id) => self.on_channel_close(id),
+            _ => {}
+        }
+        Flow::Continue
+    }
+
+    fn on_channel_open(&mut self, id: str0m::channel::ChannelId, label: &str) {
+        tracing::info!("Data channel opened: {label} (id: {id:?})");
+        if label == "media" {
+            self.media_channel_id = Some(id);
+        } else if label == "control" {
+            self.control_channel_id = Some(id);
+            // Send connection metadata: user info + room info.
+            // A LAN peer has not identified yet, so this says
+            // "owner" for a phone; `identify` corrects it with
+            // a second one of these rather than leaving the
+            // greeting to disagree with everything after it.
+            let info_msg = user_info_msg(&self.user_ctx, false);
+            self.queue_text(id, info_msg.to_string());
+            // Privacy warning for consumers
+            if self.user_ctx.is_consumer() {
+                let warning = serde_json::json!({
+                    "kind": "notification",
+                    "data": {
+                        "type": "privacy_warning",
+                        "message": "You are chatting via a proxy room. The proxy owner can see your messages.",
+                        "persistent": true
+                    }
+                });
+                self.queue_text(id, warning.to_string());
+            }
+        } else if label == "inference" {
+            self.inference_channel_id = Some(id);
+        } else if let Some(session_id) = label.strip_prefix("sess-") {
+            self.open_session_channel(id, session_id);
+        }
+    }
+
+    fn open_session_channel(&mut self, id: str0m::channel::ChannelId, session_id: &str) {
+        // Verify session ownership for non-admin users.
+        // Check user_session_ids first (fast), then fall back to session store
+        // (handles race where channel opens before session_created event).
+        let mut allowed =
+            self.user_ctx.permission.is_admin() || self.user_session_ids.contains(session_id);
+        if !allowed {
+            // Check session store — session may have just been created
+            if let Ok(Some(meta)) = self
+                .state
+                .manager
+                .global_sessions
+                .get_session_meta(session_id)
+            {
+                if meta.user_id.as_deref() == Some(&self.user_ctx.user_id) {
+                    self.user_session_ids.insert(session_id.to_string());
+                    allowed = true;
+                }
+            }
+        }
+        if !allowed {
+            tracing::warn!(
+                "Rejected session channel for {session_id} — not owned by user {}",
+                self.user_ctx.user_id
+            );
+            return;
+        }
+        self.session_channels.insert(session_id.to_string(), id);
+        self.channel_sessions.insert(id, session_id.to_string());
+        // Catch up whoever just attached. The buffer
+        // below only covers the window before a channel
+        // first opens — it is pruned after 60s and dies
+        // with the peer — so a channel that reopens
+        // late, or a fresh peer after a reconnect, would
+        // otherwise keep whatever the UI last painted.
+        // A scoped push re-states the truth: busy
+        // sessions, runs, and the message queue.
+        self.dirty_flags |= super::page_state::DIRTY_SCOPED;
+        // Flush buffered events through the write queue (not directly —
+        // direct writes without poll_output() cause SCTP corruption).
+        if let Some((_created, buffered)) = self.pending_events.remove(session_id) {
+            tracing::debug!(
+                "Flushing {} buffered events for session {session_id}",
+                buffered.len()
+            );
+            for json in buffered {
+                self.queue_text(id, json);
+            }
+        }
+    }
+
+    async fn on_channel_data(&mut self, data: str0m::channel::ChannelData) {
+        if Some(data.id) == self.media_channel_id {
+            self.on_media_data(data).await;
+            return;
+        }
+        let text = String::from_utf8_lossy(&data.data).to_string();
+        tracing::trace!("Data channel message on {:?}: {}bytes", data.id, text.len());
+        if Some(data.id) == self.control_channel_id {
+            self.on_control_data(data.id, text);
+        } else if Some(data.id) == self.inference_channel_id {
+            self.on_inference_data(data.id, &text);
+        }
+        // `sess-` channels are server→client only: the web
+        // UI and the phone send nothing on them.
+    }
+
+    async fn on_media_data(&mut self, data: str0m::channel::ChannelData) {
+        // Uploads write into the owner's library, so only a
+        // fully paired admin peer may start one; gets follow
+        // the control channel's endpoint rules.
+        let pairing = self.user_ctx.pairing_only();
+        let may_put = !pairing && self.user_ctx.permission.is_admin();
+        let reply = if data.binary {
+            media_channel::handle_binary(&data.data, &mut self.media_transfer).await
+        } else {
+            let text = String::from_utf8_lossy(&data.data).to_string();
+            let perm = self.user_ctx.permission.clone();
+            if media_channel::spawn_get(
+                &text,
+                self.state.port,
+                data.id,
+                self.media_out_tx.clone(),
+                move |url| !pairing && perm.can_access_endpoint("GET", url),
+            ) {
+                return;
+            }
+            // Copy the actor out before awaiting — the
+            // guard is not Send and would poison the task.
+            let who = self.peer_actor.lock_ok().clone();
+            media_channel::handle_text(&text, &mut self.media_transfer, who, may_put).await
+        };
+        if let Some(msg) = reply {
+            self.queue_text(data.id, msg);
+        }
+    }
+
+    fn on_control_data(&mut self, channel: str0m::channel::ChannelId, text: String) {
+        // A control message too big for one SCTP message
+        // arrives gzipped and split; hold the pieces until
+        // the tail, then handle the whole thing as if it
+        // had come in one go. Anything else falls straight
+        // through untouched.
+        let text = match serde_json::from_str::<serde_json::Value>(&text) {
+            Ok(v) => match self.inbound.accept(&v) {
+                Inbound::NotChunked => text,
+                Inbound::Buffered => return,
+                Inbound::Complete(full) => {
+                    tracing::debug!(
+                        "Reassembled inbound control message: {}KB",
+                        full.len() / 1024
+                    );
+                    full
+                }
+                Inbound::Failed(why) => {
+                    tracing::warn!("Inbound transfer failed: {why}");
+                    return;
+                }
+            },
+            // Not valid JSON — let the normal path log it.
+            Err(_) => text,
+        };
+        let Some(req) = handle_control_message(
+            &mut self.rtc,
+            channel,
+            &text,
+            &self.state,
+            &mut self.session_channels,
+            &mut self.channel_sessions,
+            &mut self.view_ctx,
+            &mut self.force_page_state,
+            &self.user_ctx,
+            &self.peer_actor,
+            self.peer_id,
+        ) else {
+            return;
+        };
+        if !self.may_make_request(channel, &req) {
+            return;
+        }
+
+        // Spawn async processing to avoid blocking str0m's event loop.
+        let tx = self.ctrl_resp_tx.clone();
+        let st = self.state.clone();
+        let client = self.http_client.clone();
+        let rid = req.request_id.clone();
+        let cid = req.channel_id;
+        let ctx_clone = self.user_ctx.clone();
+        let who = self.peer_actor.clone();
+        let tok = self.tokens_used.clone();
+
+        if req.msg_type == "inference" || req.msg_type == "list_models" {
+            // Inference/model-list: may stream multiple responses
+            tokio::spawn(async move {
+                process_inference_request(&req, &st, &ctx_clone, &tok, &tx, cid).await;
+            });
+        } else {
+            tokio::spawn(async move {
+                let result =
+                    process_control_request_async(&req, &st, &client, &ctx_clone, &who, &tok).await;
+                let _ = tx.send((rid, cid, result)).await;
+            });
+        }
+    }
+
+    /// Enforce consumer permissions: browser consumers can only chat
+    /// and load static assets. All dynamic data (sessions, models,
+    /// skills) is pushed via page_state — no HTTP needed. A refused
+    /// `http_request` is answered 403 here.
+    fn may_make_request(
+        &mut self,
+        channel: str0m::channel::ChannelId,
+        req: &ControlRequest,
+    ) -> bool {
+        if req.msg_type != "http_request" {
+            return true;
+        }
+        let url = req.body.get("url").and_then(|v| v.as_str()).unwrap_or("");
+        let method = req
+            .body
+            .get("method")
+            .and_then(|v| v.as_str())
+            .unwrap_or("GET");
+        // A phone mid-pairing reached us on the QR
+        // alone, and this tunnel re-issues to
+        // loopback, which the LAN gate trusts
+        // completely — a channel is by itself full
+        // access to this machine. It has proved
+        // only that somebody stood at this screen,
+        // so it gets the one call that turns a scan
+        // into a device token and nothing else.
+        let allowed = if self.user_ctx.pairing_only() {
+            url == "/api/pair/qr-confirm"
+        } else {
+            self.user_ctx.permission.can_access_endpoint(method, url)
+        };
+        if !allowed {
+            if let Some(rid) = &req.request_id {
+                let err = serde_json::json!({
+                    "request_id": rid,
+                    "data": { "status": 403, "body": "{\"error\":\"Not allowed\"}" }
+                });
+                self.queue_text(channel, err.to_string());
+            }
+        }
+        allowed
+    }
+
+    /// Inference channel: proxy client sends list_models / inference / room_chat
+    fn on_inference_data(&mut self, channel: str0m::channel::ChannelId, text: &str) {
+        let Ok(msg) = serde_json::from_str::<serde_json::Value>(text) else {
+            return;
+        };
+        let msg_type = msg
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let request_id = msg
+            .get("request_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        if msg_type == "inference" || msg_type == "list_models" {
+            let req = ControlRequest {
+                request_id,
+                channel_id: channel,
+                msg_type,
+                body: msg,
+            };
+            let tx = self.ctrl_resp_tx.clone();
+            let st = self.state.clone();
+            let ctx_clone = self.user_ctx.clone();
+            let tok = self.tokens_used.clone();
+            let cid = channel;
+            tokio::spawn(async move {
+                process_inference_request(&req, &st, &ctx_clone, &tok, &tx, cid).await;
+            });
+        } else if msg_type == "room_chat" {
+            self.on_room_chat(&msg);
+        } else {
+            tracing::warn!("Unknown inference channel message type: {msg_type}");
+        }
+    }
+
+    /// Room chat from proxy consumer — broadcast to all local peers
+    fn on_room_chat(&self, msg: &serde_json::Value) {
+        let chat_text = msg
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if chat_text.is_empty() || chat_text.len() > 2000 {
+            return;
+        }
+        let sender_name = msg
+            .get("sender_name")
+            .and_then(|v| v.as_str())
+            .or(self.user_ctx.user_name.as_deref())
+            .unwrap_or(&self.user_ctx.user_id)
+            .chars()
+            .take(64)
+            .collect();
+        let avatar_url = msg
+            .get("avatar_url")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| self.user_ctx.avatar_url.clone());
+        tracing::info!(
+            "[room_chat] inbound on inference channel from user_id={} text_len={}",
+            self.user_ctx.user_id,
+            chat_text.len()
+        );
+        let _ = self
+            .state
+            .events_tx
+            .send(crate::server::ServerEvent::RoomChat {
+                sender_id: self.user_ctx.user_id.clone(),
+                sender_name,
+                avatar_url,
+                text: chat_text,
+            });
+    }
+
+    fn on_channel_close(&mut self, id: str0m::channel::ChannelId) {
+        if let Some(session_id) = self.channel_sessions.remove(&id) {
+            self.session_channels.remove(&session_id);
+            tracing::info!("Session channel closed: {session_id}");
+        }
+        if Some(id) == self.inference_channel_id {
+            self.inference_channel_id = None;
+            tracing::info!("Inference channel closed");
+        }
+        if Some(id) == self.control_channel_id {
+            self.control_channel_id = None;
+            tracing::info!("Control channel closed");
+            // A half-sent transfer must not outlive the
+            // channel that started it.
+            self.inbound.clear();
+        }
+    }
+
+    /// Exit when the peer has gone silent, or stayed disconnected too long.
+    async fn check_liveness(&mut self) -> Flow {
+        // Silence is death, whatever ICE believes.
+        if Instant::now().duration_since(self.last_heard) > PEER_SILENCE_LIMIT {
+            tracing::info!("WebRTC peer silent for {:?} — exiting", PEER_SILENCE_LIMIT);
+            media_channel::abandon(&mut self.media_transfer).await;
+            return Flow::Exit;
+        }
+
+        // Exit if disconnected for more than 30 seconds (str0m has no Failed/Closed states).
+        if let Some(since) = self.disconnected_since {
+            if Instant::now().duration_since(since) > Duration::from_secs(30) {
+                tracing::info!("WebRTC peer disconnected for 30s — exiting");
+                media_channel::abandon(&mut self.media_transfer).await;
+                return Flow::Exit;
+            }
+        }
+        Flow::Continue
+    }
+
+    /// One inbound UDP packet into str0m.
+    fn on_udp(
+        &mut self,
+        contents: &[u8],
+        source: std::net::SocketAddr,
+        local_candidate_addr: std::net::SocketAddr,
+    ) -> Result<()> {
+        // Pick the local candidate destination that matches the
+        // packet's source. A packet from 127.0.0.1 must have been
+        // sent to 127.0.0.1; one from a LAN address went to the
+        // LAN candidate. Without this, str0m can't pair STUN
+        // checks and consent-freshness fails ~15s after Connected.
+        let destination = if source.ip().is_loopback() {
+            std::net::SocketAddr::new(
+                std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+                local_candidate_addr.port(),
+            )
+        } else {
+            local_candidate_addr
+        };
+        let receive = Receive {
+            proto: Protocol::Udp,
+            source,
+            destination,
+            contents: contents.try_into()?,
+        };
+        self.rtc
+            .handle_input(Input::Receive(Instant::now(), receive))?;
+        self.last_heard = Instant::now();
+        // An inbound packet may carry SCTP acks, which is what
+        // frees send-buffer space — retry any paused write.
+        self.dc_write_paused = false;
+        Ok(())
+    }
+
+    fn forward_server_event(&mut self, event: &crate::server::ServerEvent) {
+        let mut filter = EventFilter {
+            session_ids: &mut self.user_session_ids,
+            user_id: &self.user_ctx.user_id,
+            is_admin: self.user_ctx.permission.is_admin(),
+            view: self.view_ctx.view.as_deref(),
+            pinned_session_id: if self.view_ctx.view.as_deref() == Some("embed") {
+                self.view_ctx.session_id.as_deref()
+            } else {
+                None
+            },
+            peer_id: self.peer_id,
+        };
+        forward_event_to_channels(
+            event,
+            &self.session_channels,
+            self.control_channel_id,
+            self.inference_channel_id,
+            &mut self.pending_events,
+            &mut self.pending_dc_writes,
+            &self.state,
+            &mut self.dirty_flags,
+            &mut filter,
+        );
+    }
+
+    /// A view-context change pushes page state at once (debounced 200 ms)
+    /// instead of waiting for the 2 s tick.
+    fn push_forced_page_state(&mut self) {
+        let Some(cid) = self.control_channel_id.filter(|_| self.force_page_state) else {
+            return;
+        };
+        let now_inst = Instant::now();
+        if now_inst.duration_since(self.last_page_state_at) < Duration::from_millis(200) {
+            return;
+        }
+        let flags = self.dirty_flags | super::page_state::DIRTY_ALL;
+        self.dirty_flags = 0;
+        self.force_page_state = false;
+        self.last_page_state_at = now_inst;
+        self.spawn_page_state(cid, flags, true);
+    }
+
+    /// The 2 s heartbeat: push aggregated page state when dirty.
+    fn push_page_state_heartbeat(&mut self) {
+        let should_send =
+            (self.dirty_flags != 0 || self.force_page_state) && self.control_channel_id.is_some();
+        if !should_send {
+            return;
+        }
+        let now_inst = Instant::now();
+        // Debounce: skip if last push was < 200ms ago (rapid context changes)
+        if now_inst.duration_since(self.last_page_state_at) < Duration::from_millis(200) {
+            return;
+        }
+        let Some(cid) = self.control_channel_id else {
+            return;
+        };
+        let flags = self.dirty_flags;
+        self.dirty_flags = 0;
+        self.force_page_state = false;
+        self.last_page_state_at = now_inst;
+        self.spawn_page_state(cid, flags, false);
+    }
+
+    /// Build page state off-loop and hand it back through the control reply
+    /// channel. A forced push logs its size.
+    fn spawn_page_state(&self, cid: str0m::channel::ChannelId, flags: u64, forced: bool) {
+        let st = self.state.clone();
+        let tx = self.ctrl_resp_tx.clone();
+        let user_ctx_clone = self.user_ctx.clone();
+        let ctx = self.view_ctx.clone();
+        let identified = self.peer_actor.lock_ok().is_some();
+        tokio::spawn(async move {
+            let ps =
+                super::page_state::build_page_state(&st, &ctx, flags, &user_ctx_clone, identified)
+                    .await;
+            if let Ok(data) = serde_json::to_value(&ps) {
+                if forced {
+                    let size = data.to_string().len();
+                    tracing::info!(
+                        "Pushing page_state (forced): {}bytes, models={}",
+                        size,
+                        data.get("models")
+                            .and_then(|v| v.as_array())
+                            .map(|a| a.len())
+                            .unwrap_or(0)
+                    );
+                }
+                let msg = serde_json::json!({ "kind": "page_state", "data": data });
+                let _ = tx.send((None, cid, msg)).await;
+            }
+        });
+    }
+}
+
+/// The two write queues, drained control first.
+#[derive(Clone, Copy)]
+enum Lane {
+    Control,
+    Media,
 }
 
 /// Pending control channel requests that need async processing.
