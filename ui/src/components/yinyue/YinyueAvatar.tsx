@@ -16,7 +16,8 @@
  * Audio is independent of the model, so the voice still works if it fails.
  */
 import React, { useEffect, useRef, useState } from 'react';
-import { PetStage, type EmotionName, type ActionName, type SeqStep } from './PetStage';
+// Type-only: the renderer (three.js + three-vrm) is loaded on mount, in its own chunk.
+import type { PetStage, EmotionName, ActionName, SeqStep } from './PetStage';
 import { loadIntents, pickClip } from './petActions';
 import { getMouthOpening } from '../../lib/eventHandlers/yinyue';
 import { _originalFetch } from '../../lib/fetchProxy';
@@ -42,33 +43,46 @@ export const YinyueAvatar: React.FC = () => {
   const [draft, setDraft] = useState('');
 
   // Mount the renderer + drive the mouth from the live audio signal each frame.
+  // The renderer module (three.js) is imported here so it stays out of the
+  // main bundle; `stage` state lets the effects below re-apply once it exists.
+  const [stage, setStage] = useState<PetStage | null>(null);
   useEffect(() => {
-    if (!canvasRef.current) return;
-    const stage = new PetStage(canvasRef.current);
-    stageRef.current = stage;
+    let cancelled = false;
+    let mounted: PetStage | null = null;
+    let raf = 0;
     // A page that stands her in a place (an iframe host) holds a placeholder
     // until she is DRAWN — the iframe's own load fires long before: the peer
     // connects, the presenter lock arrives, then the model loads. Tell it.
     const tellHost = (event: 'ready' | 'gone') => {
       postToParent({ type: 'linggen-pet', event });
     };
-    stage
-      .load('/yinyue.vrm')
-      .then(() => { if (stageRef.current === stage) tellHost('ready'); })
-      .catch((e) => console.warn('[yinyue] avatar model load failed', e));
-
-    let raf = 0;
-    const tick = () => {
-      raf = requestAnimationFrame(tick);
-      stage.setMouthTarget(getMouthOpening());
-    };
-    raf = requestAnimationFrame(tick);
+    import('./PetStage')
+      .then(({ PetStage }) => {
+        if (cancelled || !canvasRef.current) return;
+        const s = new PetStage(canvasRef.current);
+        mounted = s;
+        stageRef.current = s;
+        setStage(s);
+        s
+          .load('/yinyue.vrm')
+          .then(() => { if (stageRef.current === s) tellHost('ready'); })
+          .catch((e) => console.warn('[yinyue] avatar model load failed', e));
+        const tick = () => {
+          raf = requestAnimationFrame(tick);
+          s.setMouthTarget(getMouthOpening());
+        };
+        raf = requestAnimationFrame(tick);
+      })
+      .catch((e) => console.warn('[yinyue] avatar renderer load failed', e));
 
     return () => {
+      cancelled = true;
       cancelAnimationFrame(raf);
-      stage.dispose();
-      stageRef.current = null;
-      tellHost('gone');
+      if (mounted) {
+        mounted.dispose();
+        stageRef.current = null;
+        tellHost('gone');
+      }
     };
   }, []);
 
@@ -76,7 +90,6 @@ export const YinyueAvatar: React.FC = () => {
   // (possibly single-step) sequence dispatched by render kind. `action` may be a
   // comma-joined chain (e.g. "wave,tilt_head,shrug") from Express's `sequence`.
   useEffect(() => {
-    const stage = stageRef.current;
     if (!stage || !express) return;
     const { emotion, action } = express;
     void loadIntents().then((intents) => {
@@ -120,20 +133,20 @@ export const YinyueAvatar: React.FC = () => {
       }
       if (steps.length) void stage.playSequence(steps);
     });
-    // Replays only when a new expression arrives (its id), not when the store
-    // hands back an equal object.
+    // Replays only when a new expression arrives (its id) or the renderer
+    // first comes up, not when the store hands back an equal object.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [express?.id]);
+  }, [express?.id, stage]);
 
   // A reply is in flight → hold the pondering pose until she responds.
   useEffect(() => {
-    stageRef.current?.setThinking(thinking);
-  }, [thinking]);
+    stage?.setThinking(thinking);
+  }, [stage, thinking]);
 
   // Her voice is playing → run the talking body loop.
   useEffect(() => {
-    stageRef.current?.setSpeaking(speaking);
-  }, [speaking]);
+    stage?.setSpeaking(speaking);
+  }, [stage, speaking]);
 
   // Close the talk-input when the window loses focus — clicking another window
   // (app switch) doesn't fire the input's own blur in a webview, so it would

@@ -16,17 +16,12 @@
  * The `view` signal is pushed to the server whenever it changes; each App
  * notifies on session/project changes within its own view.
  */
-import React, { useEffect } from 'react';
+import React, { Suspense, lazy, useEffect } from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { MainApp } from '../apps/MainApp';
 import { EmbedApp } from '../apps/EmbedApp';
 import { ConsumerApp } from '../apps/ConsumerApp';
-import { PetApp } from '../apps/PetApp';
-import { LauncherApp } from '../apps/LauncherApp';
-import { SettingsHome } from '../pages/Settings/SettingsHome';
-import { BareSection } from '../pages/Settings/BareSection';
-import { MissionEditorPage } from '../pages/Mission/MissionEditorPage';
 import { BareChat } from '../pages/Bare/BareChat';
 import { BareSessions } from '../pages/Bare/BareSessions';
 import { BareInfoPanel } from '../pages/Bare/BareInfoPanel';
@@ -38,6 +33,21 @@ import '../index.css';
 import { installFetchProxy } from '../lib/fetchProxy';
 
 installFetchProxy();
+
+// Code-split: surfaces most loads never reach (the pet window, the desktop
+// launcher, settings, the mission editor) load on demand, so the chat shell
+// doesn't pay for their tabs and editors up front.
+const PetApp = lazy(() => import('../apps/PetApp').then((m) => ({ default: m.PetApp })));
+const LauncherApp = lazy(() => import('../apps/LauncherApp').then((m) => ({ default: m.LauncherApp })));
+const SettingsHome = lazy(() => import('../pages/Settings/SettingsHome').then((m) => ({ default: m.SettingsHome })));
+const BareSection = lazy(() => import('../pages/Settings/BareSection').then((m) => ({ default: m.BareSection })));
+const MissionEditorPage = lazy(() => import('../pages/Mission/MissionEditorPage').then((m) => ({ default: m.MissionEditorPage })));
+
+/** Full-screen placeholder with the settings/editor page background, so the
+ *  chunk load shows the same empty page rather than a flash of nothing. */
+const PageFallback: React.FC = () => (
+  <div className="h-screen bg-slate-100/70 dark:bg-[#0a0a0a]" />
+);
 
 const path = window.location.pathname;
 const urlParams = new URLSearchParams(window.location.search);
@@ -85,8 +95,8 @@ const Root: React.FC = () => {
     sendViewContext();
   }, [view, sessionId]);
 
-  if (view === 'pet') return <PetApp />;
-  if (view === 'launcher') return <LauncherApp />;
+  if (view === 'pet') return <Suspense fallback={null}><PetApp /></Suspense>;
+  if (view === 'launcher') return <Suspense fallback={null}><LauncherApp /></Suspense>;
   if (view === 'embed') return <EmbedApp />;
   if (view === 'consumer') return <ConsumerApp />;
 
@@ -101,9 +111,9 @@ const Root: React.FC = () => {
     <>
       {!isBareRoute && <MainApp />}
       <Routes>
-        <Route path="/settings" element={<SettingsHome />} />
-        <Route path="/settings/:section" element={<BareSection />} />
-        <Route path="/missions/edit" element={<MissionEditorPage />} />
+        <Route path="/settings" element={<Suspense fallback={<PageFallback />}><SettingsHome /></Suspense>} />
+        <Route path="/settings/:section" element={<Suspense fallback={<PageFallback />}><BareSection /></Suspense>} />
+        <Route path="/missions/edit" element={<Suspense fallback={<PageFallback />}><MissionEditorPage /></Suspense>} />
         <Route path="/chat" element={<BareChat />} />
         <Route path="/sessions" element={<BareSessions />} />
         <Route path="/info-panel" element={<BareInfoPanel />} />

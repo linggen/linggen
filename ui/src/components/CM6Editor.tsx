@@ -1,89 +1,19 @@
-import React, { useMemo, useState, useEffect } from 'react';
-import CodeMirror from '@uiw/react-codemirror';
-import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
-import { languages } from '@codemirror/language-data';
-import { LanguageDescription } from '@codemirror/language';
-import { oneDark } from '@codemirror/theme-one-dark';
-import { EditorView } from '@codemirror/view';
-import type { Extension } from '@codemirror/state';
-import {
-  livePreviewPlugin,
-  livePreviewTableField,
-  livePreviewTheme,
-  livePreviewLightTheme,
-} from './cm6-live-preview';
+import React, { Suspense, lazy } from 'react';
+import type { CM6EditorProps } from './CM6EditorImpl';
 
-export const CM6Editor: React.FC<{
-  value: string;
-  onChange: (value: string) => void;
-  readOnly?: boolean;
-  livePreview?: boolean;
-  /** File path used for syntax detection. Falls back to markdown when absent. */
-  filePath?: string;
-}> = ({ value, onChange, readOnly = false, livePreview = false, filePath }) => {
-  const isDark = useMemo(() => {
-    if (typeof window === 'undefined') return false;
-    return document.documentElement.classList.contains('dark');
-  }, []);
+// CodeMirror + its language data is a large chunk; load it on first edit.
+const CM6EditorImpl = lazy(() => import('./CM6EditorImpl').then((m) => ({ default: m.CM6EditorImpl })));
 
-  // Resolve language extension from filePath via @codemirror/language-data
-  const [langExt, setLangExt] = useState<Extension | null>(null);
-  const isMarkdownFile = !filePath || /\.md$/i.test(filePath);
+/** While the editor chunk loads, show the text as-is in the editor's font so
+ *  the pane keeps its height and nothing jumps when CodeMirror mounts. */
+const EditorFallback: React.FC<{ value: string }> = ({ value }) => (
+  <pre className="m-0 px-2 py-1 font-mono text-[13px] leading-[1.4] whitespace-pre-wrap break-words text-slate-400">
+    {value}
+  </pre>
+);
 
-  useEffect(() => {
-    if (!filePath || isMarkdownFile) {
-      setLangExt(null);
-      return;
-    }
-    const desc = LanguageDescription.matchFilename(languages, filePath);
-    if (desc) {
-      desc.load().then((support) => setLangExt(support));
-    } else {
-      setLangExt(null);
-    }
-  }, [filePath, isMarkdownFile]);
-
-  const extensions = useMemo(() => {
-    const exts: Extension[] = [];
-    if (isMarkdownFile) {
-      exts.push(
-        markdown({
-          base: markdownLanguage,
-          codeLanguages: languages,
-        }),
-      );
-    } else if (langExt) {
-      exts.push(langExt);
-    }
-    exts.push(EditorView.lineWrapping);
-    if (livePreview && isMarkdownFile) {
-      exts.push(livePreviewPlugin);
-      // Block-decoration field for tables (must come from a StateField,
-      // not the plugin above).
-      exts.push(livePreviewTableField);
-      exts.push(livePreviewTheme);
-      if (!isDark) {
-        exts.push(livePreviewLightTheme);
-      }
-    }
-    return exts;
-  }, [livePreview, isDark, isMarkdownFile, langExt]);
-
-  return (
-    <CodeMirror
-      value={value}
-      onChange={onChange}
-      readOnly={readOnly}
-      height="auto"
-      theme={isDark ? oneDark : 'light'}
-      extensions={extensions}
-      basicSetup={{
-        lineNumbers: !livePreview,
-        foldGutter: true,
-        highlightActiveLineGutter: !livePreview,
-        highlightActiveLine: true,
-        history: true,
-      }}
-    />
-  );
-};
+export const CM6Editor: React.FC<CM6EditorProps> = (props) => (
+  <Suspense fallback={<EditorFallback value={props.value} />}>
+    <CM6EditorImpl {...props} />
+  </Suspense>
+);
