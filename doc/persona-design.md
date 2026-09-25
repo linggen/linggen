@@ -1,19 +1,22 @@
 # Ling and Yinyue — one soul, many places
 
-Status: engine built, not deployed (2026-09-25). Souls rewritten; place files
-for the engine surfaces under `agents/places/`:
+Status: engine built and live (deployed 2026-09-25); simplified the same day —
+an app's own agent has no place block (its SKILL.md is its place), and a
+skill's `place:` speaks only to guests. Place files for the engine's own
+surfaces under `agents/places/`:
 
 | File | Agent | Surface |
 |---|---|---|
 | `mac-chat.md` | Ling | Mac main chat (own session, no app) |
-| `app.md` | Ling | running an app (generic; a skill's `place.ling` replaces it) |
 | `desktop-pet.md` | Yinyue | her own thread on the Mac — desktop body, moments, first meeting |
 | `app-guest.md` | Yinyue | a guest in an app's chat (generic; a skill's `place.yinyue` replaces it) |
 
 Order in the system prompt: soul (identity + body) → voice → `## Where you are`
 → skills list → active skill. Missions, consumer frames and delegates get no
 place. `place:` and `absent_until` are in `skill-spec.md` § Place. Phone and
-Lingjing's `place:` are still to do (their lanes).
+Lingjing's `place.yinyue` + pre-结丹 page are the Lingjing lane's. The phone
+ships the same `yinyue.md` with its own `phone.md` place (linggen-mobile
+e403ad8); the phone's `get_environment` tool gives network facts, not a place.
 
 ## The rule
 
@@ -81,10 +84,10 @@ The engine stays a general core: it knows devices and surfaces, never an app.
 
 - **Engine surfaces** (Mac main chat, desktop pet, guest in an app chat): the
   engine writes the block itself.
-- **Apps:** a skill declares its place per agent in SKILL.md frontmatter —
-  `place: {ling: "...", yinyue: "..."}` — and the engine injects the text for
-  whichever agent is speaking there. An app that declares nothing for Yinyue
-  gets the plain guest block.
+- **Apps:** for the app's own agent, the SKILL.md body is the place — no
+  separate block. For a guest, a skill may declare `place: {yinyue: "..."}`;
+  the engine injects it in place of the guest block. An app that declares
+  nothing for Yinyue gets the plain guest block.
 - **Live state** (e.g. before or after 结丹): the skill says it — Lingjing's
   Look already carries `companion`. A declared place may mark an agent
   `absent_until` a state the skill reports; while absent, the engine refuses a

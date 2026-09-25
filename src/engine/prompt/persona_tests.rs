@@ -41,7 +41,6 @@ fn at(hay: &str, needle: &str) -> usize {
 }
 
 const MAC_CHAT: &str = "Linggen's main chat";
-const APP: &str = "Inside one of the user's apps";
 const DESKTOP: &str = "a body on the desktop";
 const GUEST: &str = "A guest in one of the user's apps' chats";
 
@@ -54,28 +53,18 @@ fn ling_at_home_gets_soul_then_voice_then_the_main_chat() {
     let place = at(&p, "## Where you are");
     assert!(identity < body && body < voice && voice < place);
     at(&p, MAC_CHAT);
-    assert!(!p.contains(APP));
 }
 
 #[test]
-fn an_app_session_keeps_the_soul_and_adds_the_app_as_a_place() {
+fn an_app_session_keeps_the_soul_and_the_skill_is_its_place() {
     let mut engine = engine_as("ling", LING);
-    engine.active_skill = Some(skill(""));
+    engine.active_skill = Some(skill("place:\n  ling: IGNORED FOR THE APP'S OWN AGENT.\n"));
     let p = engine.system_prompt();
     let body = at(&p, "## How you work");
-    let place = at(&p, APP);
     let rules = at(&p, "THE APP'S OWN RULES.");
-    assert!(body < place && place < rules, "soul → place → skill");
-    assert!(!p.contains(MAC_CHAT));
-}
-
-#[test]
-fn a_skills_declared_place_replaces_the_generic_block() {
-    let mut engine = engine_as("ling", LING);
-    engine.active_skill = Some(skill("place:\n  ling: THE WORLD AND ITS STORYTELLER.\n"));
-    let p = engine.system_prompt();
-    at(&p, "## Where you are\n\nTHE WORLD AND ITS STORYTELLER.");
-    assert!(!p.contains(APP));
+    assert!(body < rules, "soul → skill");
+    assert!(!p.contains(MAC_CHAT) && !p.contains("## Where you are"));
+    assert!(!p.contains("IGNORED FOR THE APP'S OWN AGENT."));
 }
 
 #[test]

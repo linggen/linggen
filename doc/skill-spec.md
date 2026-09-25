@@ -324,17 +324,16 @@ quests:
 
 ## Place
 
-An agent's soul is the same everywhere; a skill says where its sessions put it (`doc/persona-design.md`). Keyed by agent id:
+An agent's soul is the same everywhere (`doc/persona-design.md`). For the skill's own agent, the SKILL.md body already is its place. `place:` is for the agents that come to the skill's chat as **guests**, keyed by agent id:
 
 ```yaml
 place:
-  ling: You are the world of this game and its storyteller.   # plain text
   yinyue:
     text: At the player's side, on the road with them.
     absent_until: {file: data/state.json, path: companion.joined}
 ```
 
-- **Text.** When that agent speaks in the skill's sessions — running the app, or a guest at its chat — the engine puts the text under `## Where you are`, after the soul and voice and before the skill's own content. It replaces the engine's generic block for that surface (`agents/places/app.md` for the app's operator, `app-guest.md` for a guest). An agent with no entry gets the generic block.
+- **Text** (a plain string, or `text:`). When that agent sits at the skill's chat as a guest, the engine puts the text under `## Where you are`, after the soul and voice, in place of the engine's guest block (`agents/places/app-guest.md`). A guest with no entry gets the guest block. An entry for the skill's own agent is ignored — its place is the SKILL.md.
 - **`absent_until`** — the agent isn't in the skill's sessions until the value at `path` (dot-separated keys) in the skill's JSON `file` (relative to the skill folder) is set: present and not `null`, `false`, `0`, `""`, `[]` or `{}`. Read on every check; unreadable counts as unset. While absent:
   - a message addressed to it in the skill's chat runs no turn and keeps nothing: `/api/chat` answers `{"status": "absent", "agent_id", "session_id"}`, and the embedded chat posts `linggen-skill-event` `agent_absent {agent, text}` to the page, which says its own line;
   - an app moment for it naming the skill's chat (or the skill as `app`) is refused (`409 absent`) and never queued;
