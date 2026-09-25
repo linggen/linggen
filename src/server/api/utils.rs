@@ -34,44 +34,6 @@ pub(crate) async fn health_handler(
     axum::Json(json!({ "ok": true, "version": env!("CARGO_PKG_VERSION") }))
 }
 
-pub(crate) async fn pick_folder() -> impl IntoResponse {
-    #[cfg(target_os = "macos")]
-    {
-        let result = tokio::process::Command::new("osascript")
-            .arg("-e")
-            .arg("POSIX path of (choose folder with prompt \"Select project folder\")")
-            .output()
-            .await;
-        match result {
-            Ok(output) if output.status.success() => {
-                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                // osascript returns path with trailing slash — strip it
-                let path = path.trim_end_matches('/').to_string();
-                if path.is_empty() {
-                    return (axum::http::StatusCode::NO_CONTENT, "").into_response();
-                }
-                axum::Json(serde_json::json!({ "path": path })).into_response()
-            }
-            Ok(_) => {
-                // User cancelled the dialog
-                (axum::http::StatusCode::NO_CONTENT, "").into_response()
-            }
-            Err(e) => {
-                tracing::warn!("Folder picker failed: {e}");
-                (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
-            }
-        }
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        (
-            axum::http::StatusCode::NOT_IMPLEMENTED,
-            "Folder picker not available on this platform",
-        )
-            .into_response()
-    }
-}
-
 pub(crate) async fn get_ollama_status(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
     let models_guard = state.manager.models.read().await;
     if let Some(client) = models_guard.first_ollama_client() {

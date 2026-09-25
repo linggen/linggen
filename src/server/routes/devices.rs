@@ -9,7 +9,6 @@ pub(super) fn routes() -> Routes {
     Routes::new()
         // Companion
         .route("/api/tts", post(api::tts::tts_handler))
-        .route("/api/yinyue/say", post(api::yinyue::say_handler))
         .route("/api/yinyue/chat", post(api::yinyue::chat_handler))
         .route("/api/yinyue/event", post(api::yinyue::event_handler))
         .route("/api/presence", post(api::yinyue::presence_handler))

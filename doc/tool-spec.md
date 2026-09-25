@@ -61,7 +61,7 @@ cannot draw never sees the tool, so the model never reaches for it. The
 lane installs on first use, never at boot (pictures are not a daily
 model): the first call starts the install in the background (venv +
 ~5 GB model) and answers in one line;
-`GET /api/runtime/lanes` reports every lane's verdict. Renders run one at
+every runtime progress payload carries each lane's verdict. Renders run one at
 a time, one process per picture, `square` 512×512 or `landscape`
 768×512; a `reference` (a file inside the skill) keeps its pose and shape.
 

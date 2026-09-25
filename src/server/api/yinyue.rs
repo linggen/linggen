@@ -1,6 +1,6 @@
 //! Yinyue-specific HTTP endpoints.
 //!
-//! `POST /api/yinyue/say` pushes a "speak" cue onto the event bus; it fans out
+//! `emit_speak` pushes a "speak" cue onto the event bus; it fans out
 //! to every connected surface (pet / menubar / web overlay) over the WebRTC
 //! data channel. Surfaces render the bubble + expression and fetch the audio
 //! from `/api/tts` — the cue is small, the blob is pulled. See the "Adaptive
@@ -16,16 +16,8 @@ use serde::Deserialize;
 
 use crate::server::{ServerEvent, ServerState};
 
-#[derive(Deserialize)]
-pub(crate) struct SayRequest {
-    pub text: String,
-    #[serde(default)]
-    pub emotion: Option<String>,
-}
-
 /// Push a speak cue to all of the user's surfaces. The single producer — the
-/// event-reactive watch loop calls this when Yinyue reacts, and the test
-/// endpoint below calls it directly.
+/// event-reactive watch loop calls this when Yinyue reacts.
 pub fn emit_speak(state: &Arc<ServerState>, text: String, emotion: Option<String>) {
     // Muted, the line still goes out — as words only.
     let voice = !state.manager.pet_muted();
@@ -63,24 +55,6 @@ pub(crate) async fn run_voice_command(state: &Arc<ServerState>, muted: bool) -> 
             "Couldn't change Yinyue's voice — try again."
         }
     }
-}
-
-/// POST /api/yinyue/say — `{ text, emotion? }`. Trigger entry point for the
-/// spine (manual + tests); the reaction path will call `emit_speak` directly.
-pub(crate) async fn say_handler(
-    State(state): State<Arc<ServerState>>,
-    Json(req): Json<SayRequest>,
-) -> impl IntoResponse {
-    if req.text.trim().is_empty() {
-        return (StatusCode::BAD_REQUEST, "empty text").into_response();
-    }
-    tracing::info!(
-        "[yinyue] speak cue emotion={:?} ({} chars)",
-        req.emotion,
-        req.text.len()
-    );
-    emit_speak(&state, req.text, req.emotion);
-    (StatusCode::OK, "ok").into_response()
 }
 
 #[derive(Deserialize)]
@@ -162,12 +136,17 @@ pub(crate) async fn event_handler(
     (StatusCode::OK, "ok").into_response()
 }
 
+#[derive(Deserialize)]
+pub(crate) struct ChatRequest {
+    pub text: String,
+}
+
 /// POST /api/yinyue/chat — `{ text }`. The user talks to Yinyue directly (e.g.
 /// clicking the desktop avatar). Her turn runs in the background and her reply
 /// is spoken over the event spine; returns immediately so the UI isn't blocked.
 pub(crate) async fn chat_handler(
     State(state): State<Arc<ServerState>>,
-    Json(req): Json<SayRequest>,
+    Json(req): Json<ChatRequest>,
 ) -> impl IntoResponse {
     let text = req.text.trim().to_string();
     if text.is_empty() {

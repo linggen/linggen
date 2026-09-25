@@ -251,8 +251,9 @@ This is how `ling` can delegate exploration to itself: the sub-task runs in an i
 ## API
 
 - `POST /api/sessions` — create session (accepts `skill`, `title`). No project required — starts in home mode.
-- `GET /api/sessions` — list all user sessions (optionally filter by project)
-- `DELETE /api/sessions/:id` — delete a session
+- `PATCH /api/sessions` — rename / set the session model
+- `DELETE /api/sessions/all` — delete a session (`session_id`)
+- Session lists reach surfaces through `page_state`; skill pages use `GET /api/skill-sessions?skill=`.
 - `POST /api/chat` — send message to a session (creates session if needed)
 
 ## UI behavior

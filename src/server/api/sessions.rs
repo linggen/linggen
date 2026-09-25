@@ -84,32 +84,6 @@ pub(crate) async fn create_session(
     }
 }
 
-#[derive(Deserialize)]
-pub(crate) struct RemoveSessionRequest {
-    project_root: String,
-    session_id: String,
-}
-
-pub(crate) async fn remove_session_api(
-    State(state): State<Arc<ServerState>>,
-    Json(req): Json<RemoveSessionRequest>,
-) -> impl IntoResponse {
-    state.manager.remove_session_engine(&req.session_id).await;
-    match state
-        .manager
-        .global_sessions
-        .remove_session(&req.session_id)
-    {
-        Ok(_) => {
-            let _ = state
-                .events_tx
-                .send(crate::server::ServerEvent::StateUpdated);
-            StatusCode::OK
-        }
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Skill session endpoints (sessions stored under ~/.linggen/skills/{name}/sessions/)
 // ---------------------------------------------------------------------------

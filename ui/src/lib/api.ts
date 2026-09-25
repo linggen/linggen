@@ -7,7 +7,6 @@
  *
  * Endpoint helpers (`sessions.*`, etc.) live below the generic core.
  */
-import type { SessionInfo } from '../types';
 
 export class ApiError extends Error {
   constructor(public readonly status: number, message: string) {
@@ -107,5 +106,4 @@ export const sessions = {
     apiDelete<void>('/api/sessions/all', req),
   rename: (req: SessionRenameRequest) =>
     apiPatch<void>('/api/sessions', req),
-  list: () => apiGet<{ sessions: SessionInfo[] }>('/api/sessions'),
 };

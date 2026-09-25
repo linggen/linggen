@@ -135,8 +135,8 @@ game's loss, a hard win, a wound. **Nothing is said then.** The moments queue
 
 Then she is woken once with everything queued (`wake_herald`), in her own
 voice, and may answer `SILENT`. Every `PetSpeak` stamps the cooldown
-(`emit_speak` → `note_spoke`), so a line an app had her say through
-`/api/yinyue/say` counts too. The engine names no app: it carries the app's
+(`emit_speak` → `note_spoke`), so every line she says counts, whatever
+the path. The engine names no app: it carries the app's
 words. Why a gate and not a wake per event: a model asked to respond always
 responds, and a companion told every event talks over the game — silence is
 decided here. `yinyue.md` § Beside them in what they play is how she answers.

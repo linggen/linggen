@@ -32,11 +32,11 @@ use crate::server::api::skills::{
     delete_skill_file_api, get_skill_file_api, list_skill_files_api, list_skills, reload_skills,
     upsert_skill_file_api,
 };
-use crate::server::api::status::{get_runtime_lanes_api, get_status_api, list_models_api};
+use crate::server::api::status::{get_status_api, list_models_api};
 use crate::server::api::storage::{
     storage_delete_file, storage_read_file, storage_roots, storage_tree, storage_write_file,
 };
-use crate::server::api::utils::{get_ollama_status, get_user_name, health_handler, pick_folder};
+use crate::server::api::utils::{get_ollama_status, get_user_name, health_handler};
 use axum::routing::{any, delete, get, post, put};
 
 pub(super) fn routes() -> Routes {
@@ -97,7 +97,6 @@ pub(super) fn routes() -> Routes {
         )
         // Status & account
         .route("/api/status", get(get_status_api))
-        .route("/api/runtime/lanes", get(get_runtime_lanes_api))
         .route("/api/account", get(get_account))
         .route("/api/user/name", get(get_user_name))
         .route("/api/account/login", post(post_account_login))
@@ -118,7 +117,6 @@ pub(super) fn routes() -> Routes {
         )
         // Utilities
         .route("/api/health", get(health_handler))
-        .route("/api/utils/pick-folder", get(pick_folder))
         .route("/api/utils/ollama-status", get(get_ollama_status))
         // Storage browser
         .route("/api/storage/roots", get(storage_roots))

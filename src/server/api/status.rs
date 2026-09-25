@@ -157,14 +157,3 @@ pub(crate) async fn get_status_api(
     })
     .into_response()
 }
-
-/// Which local-model lanes this machine may carry, with the reason when
-/// it may not. Read by Settings; the same block rides on every runtime
-/// progress payload. The gate runs two 60 ms shell reads, so it stays
-/// off the async executor.
-pub(crate) async fn get_runtime_lanes_api() -> impl IntoResponse {
-    let status = tokio::task::spawn_blocking(crate::runtime::lanes_status)
-        .await
-        .unwrap_or_else(|_| serde_json::json!({ "lanes": [] }));
-    axum::Json(status)
-}
