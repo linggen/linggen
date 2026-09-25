@@ -30,6 +30,23 @@ const pinnedModel = params.get('model') || '';
 const vscProject = params.get('project') || '';
 const hideToolbar = params.get('hide_toolbar') === '1';
 
+/** The session list as soon as page_state has filled it, or empty after `ms`. */
+function sessionsOnceLoaded(ms: number): Promise<SessionInfo[]> {
+  const now = useSessionStore.getState().allSessions;
+  if (now.length > 0) return Promise.resolve(now);
+  return new Promise((resolve) => {
+    const done = (list: SessionInfo[]) => {
+      clearTimeout(timer);
+      unsubscribe();
+      resolve(list);
+    };
+    const timer = setTimeout(() => done([]), ms);
+    const unsubscribe = useSessionStore.subscribe((s) => {
+      if (s.allSessions.length > 0) done(s.allSessions);
+    });
+  });
+}
+
 /** Detect remote/tunnel mode (blob iframe with injected instance meta tag). */
 const isRemoteMode = typeof document !== 'undefined' && !!document.querySelector('meta[name="linggen-instance"]');
 
@@ -97,10 +114,12 @@ export const EmbedApp: React.FC = () => {
     useSessionStore.getState().setSelectedProjectRoot(vscProject);
     (async () => {
       try {
-        const resp = await fetch(`/api/sessions?project_root=${encodeURIComponent(vscProject)}`);
-        const data = await resp.json();
-        const sessionList = data.sessions ?? data ?? [];
-        const existing = (sessionList as SessionInfo[]).find((s) => s.title?.startsWith('VS Code'));
+        // The session list arrives with the first page_state event, not over
+        // HTTP; give it a moment before deciding there is no VS Code session.
+        const sessionList = await sessionsOnceLoaded(3000);
+        const existing = sessionList.find(
+          (s) => s.title?.startsWith('VS Code') && (s.project ?? s.repo_path) === vscProject,
+        );
         if (existing) {
           useSessionStore.getState().setActiveSessionId(existing.id);
         } else {
