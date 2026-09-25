@@ -77,6 +77,7 @@ pub struct ClawHubSearchResult {
 pub fn http_client() -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .user_agent("linggen")
+        .connect_timeout(crate::mirror::CONNECT_TIMEOUT)
         .timeout(Duration::from_secs(30))
         .build()
         .context("Failed to build HTTP client")
@@ -566,51 +567,36 @@ pub(crate) async fn download_to_temp(client: &reqwest::Client, url: &str) -> Res
     // Persist immediately so the path is stable; caller is responsible for cleanup.
     let tmp_path = tmp.into_temp_path();
 
+    // GitHub first, then linggen.dev's mirror (crate::mirror) — the same
+    // download from anywhere GitHub can't be reached. A definitive answer (a
+    // 404) is final; an unreachable round is tried again with a backoff.
     let max_attempts = 3;
-    let mut last_error = None;
-
+    let mut last_error = String::new();
     for attempt in 0..max_attempts {
-        match client.get(url).send().await {
-            Ok(r) if r.status().is_success() => {
-                let bytes = r.bytes().await.context("Failed to read response")?;
+        match crate::mirror::get_bytes(client, url).await {
+            Ok(bytes) => {
                 fs::write(&tmp_path, &bytes).context("Failed to write temp file")?;
                 let kept = tmp_path
                     .keep()
                     .map_err(|e| anyhow::anyhow!("tempfile keep error: {}", e))?;
                 return Ok(kept);
             }
-            Ok(r) if attempt < max_attempts - 1 && is_retryable_status(r.status()) => {
-                let delay = Duration::from_secs(1 << attempt);
-                tracing::warn!(
-                    status = %r.status(),
-                    attempt = attempt + 1,
-                    "Download returned retryable status, retrying..."
-                );
-                tokio::time::sleep(delay).await;
-            }
-            Ok(r) => {
-                last_error = Some(format!("HTTP {}", r.status()));
-                break;
-            }
-            Err(e) if attempt < max_attempts - 1 => {
-                let delay = Duration::from_secs(1 << attempt);
-                tracing::warn!(err = %e, attempt = attempt + 1, "Network error, retrying...");
-                tokio::time::sleep(delay).await;
-                last_error = Some(e.to_string());
-            }
             Err(e) => {
-                last_error = Some(e.to_string());
-                break;
+                let definitive = e
+                    .downcast_ref::<crate::mirror::HttpStatus>()
+                    .is_some_and(|h| !is_retryable_status(h.status));
+                last_error = e.to_string();
+                if definitive || attempt == max_attempts - 1 {
+                    break;
+                }
+                let delay = Duration::from_secs(1 << attempt);
+                tracing::warn!(err = %e, attempt = attempt + 1, "Download failed, retrying...");
+                tokio::time::sleep(delay).await;
             }
         }
     }
 
-    anyhow::bail!(
-        "Download failed after {} attempts: {} - {}",
-        max_attempts,
-        url,
-        last_error.unwrap_or_else(|| "Unknown".into())
-    )
+    anyhow::bail!("Download failed: {} - {}", url, last_error)
 }
 
 fn is_retryable_status(status: reqwest::StatusCode) -> bool {
