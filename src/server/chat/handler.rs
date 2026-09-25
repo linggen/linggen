@@ -1007,23 +1007,119 @@ pub(crate) async fn kickoff_in_session(
     true
 }
 
-/// The reply to a message for an agent the session's skill keeps away
-/// (`place.<agent>.absent_until`): no turn ran and nothing was kept.
-fn absent_reply(session_id: Option<&str>, agent_id: &str) -> axum::response::Response {
+/// The reply to a message no turn was run for: the addressed agent is kept
+/// away by the session's skill (`absent`, `place.<agent>.absent_until`), or
+/// can't answer in this session at all (`unavailable`). Nothing was kept.
+fn refused_reply(
+    status: &str,
+    session_id: Option<&str>,
+    agent_id: &str,
+) -> axum::response::Response {
     Json(serde_json::json!({
-        "status": "absent",
+        "status": status,
         "session_id": session_id,
         "agent_id": agent_id,
     }))
     .into_response()
 }
 
-/// The companion was addressed in a session that isn't hers — an app's chat.
-/// She answers there as a guest (`resident::answer_as_guest`), when she is on.
-async fn companion_is_guest(state: &Arc<ServerState>, target_id: &str, session_id: &str) -> bool {
-    target_id == crate::engine::agent::COMPANION_AGENT_ID
-        && !crate::server::resident::is_own_session(session_id)
-        && state.manager.get_config_snapshot().await.pet.enabled
+/// Who takes a message in a session, decided before any engine is touched.
+#[derive(Debug, PartialEq, Eq)]
+enum Seat {
+    /// The session's own agent: its engine, its skill.
+    Own,
+    /// The companion at another session's table (`resident::answer_as_guest`).
+    Guest,
+    /// Kept away by the session's skill for now.
+    Absent,
+    /// Neither the session's agent nor a guest it can seat — the pet is off,
+    /// or the name is another agent's. The session holds ONE engine, built
+    /// for its own agent: a turn for anyone else would run on it (that
+    /// agent's prompt, tools and memory) under the wrong name.
+    Unavailable,
+}
+
+/// Where `target_id` sits for a message in `session_id`. The surface's own
+/// agent (`req_agent`) runs as always; another name — addressed with `@` —
+/// runs only as a guest, or when it is the agent the session already runs.
+async fn seat_for(
+    state: &Arc<ServerState>,
+    target_id: &str,
+    req_agent: &str,
+    session_id: &str,
+) -> Seat {
+    let companion = crate::engine::agent::COMPANION_AGENT_ID;
+    if target_id == companion && !crate::server::resident::is_own_session(session_id) {
+        if !state.manager.get_config_snapshot().await.pet.enabled {
+            return Seat::Unavailable;
+        }
+        if super::presence::absent_in_session(&state.manager, session_id, target_id).await {
+            return Seat::Absent;
+        }
+        return Seat::Guest;
+    }
+    if target_id == req_agent || runs_session(state, session_id, target_id).await {
+        return Seat::Own;
+    }
+    Seat::Unavailable
+}
+
+/// Whether the session's one engine is (or will be) `agent_id`'s: the live
+/// engine's agent, else the session's pinned agent, else whoever has answered
+/// there. A session nobody has answered in yet is the first comer's.
+async fn runs_session(state: &Arc<ServerState>, session_id: &str, agent_id: &str) -> bool {
+    if let Some(live) = state.manager.live_session_agent(session_id).await {
+        return live == agent_id;
+    }
+    let store = &state.manager.global_sessions;
+    let pinned = store
+        .get_session_meta(session_id)
+        .ok()
+        .flatten()
+        .and_then(|m| m.agent_id);
+    let rows = store.get_chat_history(session_id).unwrap_or_default();
+    session_host(pinned.as_deref(), &rows, session_id).is_none_or(|host| host == agent_id)
+}
+
+/// The agent a session runs, from what it keeps: its pinned agent, else the
+/// newest agent that answered there in its own thread — never the companion
+/// seated as a guest at someone else's table.
+fn session_host(
+    pinned: Option<&str>,
+    rows: &[crate::state_fs::sessions::ChatMsg],
+    session_id: &str,
+) -> Option<String> {
+    if let Some(p) = pinned.map(str::trim).filter(|p| !p.is_empty()) {
+        return Some(p.to_lowercase());
+    }
+    let companion = crate::engine::agent::COMPANION_AGENT_ID;
+    let guest_here = !crate::server::resident::is_own_session(session_id);
+    rows.iter()
+        .rev()
+        .find(|r| r.from_id == r.agent_id && !(guest_here && r.agent_id == companion))
+        .map(|r| r.agent_id.clone())
+}
+
+/// Seat the companion at the session's table and answer the request.
+async fn answer_as_guest(
+    state: &Arc<ServerState>,
+    effective_session_id: &str,
+    req: &ChatRequest,
+    target_id: &str,
+    session_id: &Option<String>,
+) -> axum::response::Response {
+    crate::server::resident::answer_as_guest(
+        state.clone(),
+        effective_session_id.to_string(),
+        req.message.clone(),
+    )
+    .await;
+    Json(serde_json::json!({
+        "status": "started",
+        "session_id": session_id,
+        "agent_id": target_id,
+    }))
+    .into_response()
 }
 
 pub(crate) async fn start_turn(
@@ -1073,26 +1169,18 @@ pub(crate) async fn start_turn(
 
     let (target_id, clean_msg) = route_target(&state, &req, &root).await;
 
-    if companion_is_guest(&state, &target_id, &effective_session_id).await {
+    match seat_for(&state, &target_id, &req.agent_id, &effective_session_id).await {
+        Seat::Own => {}
         // Not there yet in this skill's world: no turn, nothing kept. The
         // page says its own line.
-        if super::presence::absent_in_session(&state.manager, &effective_session_id, &target_id)
-            .await
-        {
-            return absent_reply(session_id.as_deref(), &target_id);
+        Seat::Absent => return refused_reply("absent", session_id.as_deref(), &target_id),
+        Seat::Unavailable => {
+            return refused_reply("unavailable", session_id.as_deref(), &target_id)
         }
-        crate::server::resident::answer_as_guest(
-            state.clone(),
-            effective_session_id.clone(),
-            req.message.clone(),
-        )
-        .await;
-        return Json(serde_json::json!({
-            "status": "started",
-            "session_id": session_id,
-            "agent_id": target_id,
-        }))
-        .into_response();
+        Seat::Guest => {
+            return answer_as_guest(&state, &effective_session_id, &req, &target_id, &session_id)
+                .await
+        }
     }
 
     // A relayed message names its speaker (an agent id like "yinyue"); the
@@ -1319,8 +1407,8 @@ pub(crate) async fn start_turn(
 #[cfg(test)]
 mod tests {
     use super::{
-        auto_session_title, leading_mention, parse_explicit_target_prefix, take_aside,
-        trim_live_history, turn_creator,
+        auto_session_title, leading_mention, parse_explicit_target_prefix, session_host,
+        take_aside, trim_live_history, turn_creator,
     };
     use super::{busy_message, BusyMessage};
     use crate::engine::skill::QueueMode;
@@ -1460,6 +1548,57 @@ mod tests {
         assert_eq!(got("@src/main.rs explain"), None);
         assert_eq!(got("@银月"), None, "no words, no message");
         assert_eq!(got("hi @yinyue there"), None);
+    }
+
+    fn row(agent: &str, from: &str) -> crate::state_fs::sessions::ChatMsg {
+        crate::state_fs::sessions::ChatMsg {
+            agent_id: agent.into(),
+            from_id: from.into(),
+            to_id: "user".into(),
+            content: "x".into(),
+            timestamp: 0,
+            is_observation: false,
+        }
+    }
+
+    /// The agent a session runs is the one it answers with — its pin, else
+    /// its newest own reply — never the companion answering there as a
+    /// guest; in her own thread she is the host. Nobody yet: no host, the
+    /// first comer's.
+    #[test]
+    fn a_sessions_host_is_its_own_agent_never_a_guest() {
+        let app = "sess-1758700000-cfo";
+        let rows = vec![
+            row("ling", "user"),
+            row("ling", "ling"),
+            row("yinyue", "user"),
+            row("yinyue", "yinyue"),
+        ];
+        assert_eq!(session_host(None, &rows, app).as_deref(), Some("ling"));
+        assert_eq!(
+            session_host(Some(" Memory "), &rows, app).as_deref(),
+            Some("memory")
+        );
+        assert_eq!(session_host(None, &rows[..1], app), None);
+        assert_eq!(
+            session_host(None, &rows, "sess-yinyue-2026-09-25").as_deref(),
+            Some("yinyue")
+        );
+    }
+
+    /// No turn for a name the session can't seat touches an engine: the
+    /// seat is decided first, and only `Own` reaches the session's engine.
+    #[test]
+    fn the_seat_is_decided_before_any_engine_is_built() {
+        let src = include_str!("handler.rs");
+        let body = &src[src
+            .find(concat!("pub(crate) async fn ", "start_turn("))
+            .unwrap()..];
+        let seat = body.find(concat!("match seat_for", "(")).unwrap();
+        let engine = body
+            .find(concat!(".get_or_create_", "session_agent("))
+            .unwrap();
+        assert!(seat < engine);
     }
 
     #[test]

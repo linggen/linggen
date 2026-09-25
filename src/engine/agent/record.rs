@@ -39,18 +39,9 @@ pub struct AgentSpec {
 }
 
 impl AgentSpecFile {
-    /// Whether `name` (an `@name` at a message's start) addresses this agent:
-    /// its id or one of its declared aliases, case-insensitively.
-    /// An internal agent answers to no one.
-    pub fn answers_to(&self, name: &str) -> bool {
-        let name = name.trim().to_lowercase();
-        self.mention_names()
-            .iter()
-            .any(|n| n.to_lowercase() == name)
-    }
-
     /// Every name a leading `@` may address this agent by — its id, its
-    /// spec name and its aliases, trimmed. None for an internal agent.
+    /// spec name and its aliases, trimmed; matched case-insensitively by the
+    /// chat (`leading_mention`). An internal agent answers to no one.
     pub fn mention_names(&self) -> Vec<&str> {
         if self.spec.internal {
             return Vec::new();
@@ -101,20 +92,18 @@ mod tests {
 
     #[test]
     fn an_agent_answers_to_its_id_and_its_declared_aliases() {
-        let yinyue = spec("yinyue", &["银月"]);
-        assert!(yinyue.answers_to("Yinyue"));
-        assert!(yinyue.answers_to("银月"));
-        assert!(!yinyue.answers_to("ling"));
-        assert!(!yinyue.answers_to(""));
-        assert!(!spec("ling", &[]).answers_to("银月"));
+        let yinyue = spec("yinyue", &["银月", " "]);
+        let names = yinyue.mention_names();
+        assert!(names.contains(&"yinyue") && names.contains(&"银月"));
+        assert!(!names.contains(&"ling") && !names.contains(&""));
+        assert!(!spec("ling", &[]).mention_names().contains(&"银月"));
     }
 
     #[test]
     fn an_internal_agent_answers_to_no_one() {
         let mut memory = spec("memory", &["记忆"]);
         memory.spec.internal = true;
-        assert!(!memory.answers_to("memory"));
-        assert!(!memory.answers_to("记忆"));
+        assert!(memory.mention_names().is_empty());
     }
 
     #[test]
