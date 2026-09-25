@@ -91,7 +91,7 @@ When a session is created, it inherits configuration from its creator:
 
 1. **Agent tools** — base tool set from the agent spec (e.g., `ling` has `["*"]`)
 2. **Skill restriction** — if a skill is bound, `effective_tools = intersection(agent.tools, skill.allowed-tools)`
-3. **System prompt** — assembled from agent personality + agent body + skill body (if bound)
+3. **System prompt** — assembled from the agent's soul (personality + body) + voice + place (`## Where you are`) + skill body (if bound)
 4. **Model** — from the agent spec or mission config, falling back to the default routing chain
 
 ## Session state

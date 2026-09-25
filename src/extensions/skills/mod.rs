@@ -386,6 +386,10 @@ struct SkillFrontmatter {
     /// Phone facts → the skill's quests — see `doc/skill-spec.md` § Quests.
     #[serde(default)]
     quests: Option<crate::engine::skill::QuestsConfig>,
+    /// Where the skill's sessions stand for each agent, and whether an
+    /// agent is there yet — see `doc/skill-spec.md` § Place.
+    #[serde(default)]
+    place: Option<crate::engine::skill::record::Places>,
 }
 
 pub struct SkillLoader {
@@ -659,6 +663,7 @@ pub fn parse_skill_text(text: &str, source: SkillSource) -> Result<Skill> {
         closing_ask: frontmatter.closing_ask,
         queue: frontmatter.queue,
         quests: frontmatter.quests,
+        place: frontmatter.place,
         skill_dir: None,
     })
 }
@@ -959,6 +964,23 @@ Help commit."#;
         let plain =
             parse_skill_text("---\nname: zz\ndescription: d\n---\nB", SkillSource::Global).unwrap();
         assert!(plain.quests.is_none());
+    }
+
+    /// A skill says where its sessions stand for each agent, and may keep one
+    /// away until its own state says otherwise; none of it is required.
+    #[test]
+    fn a_skill_declares_its_place_per_agent() {
+        let text = "---\nname: zz\ndescription: d\nplace:\n  ling: The world and its storyteller.\n  yinyue:\n    text: At the player's side.\n    absent_until: {file: data/state.json, path: companion.joined}\n---\nBody.";
+        let skill = parse_skill_text(text, SkillSource::Global).unwrap();
+        let place = skill.place.expect("place parsed");
+        assert_eq!(
+            place.text_for("ling"),
+            Some("The world and its storyteller.")
+        );
+        assert_eq!(place.text_for("yinyue"), Some("At the player's side."));
+        let plain =
+            parse_skill_text("---\nname: zz\ndescription: d\n---\nB", SkillSource::Global).unwrap();
+        assert!(plain.place.is_none());
     }
 
     #[test]

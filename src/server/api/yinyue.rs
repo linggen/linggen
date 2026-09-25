@@ -117,6 +117,10 @@ pub(crate) async fn event_handler(
             return (StatusCode::BAD_REQUEST, "unknown session").into_response();
         }
     }
+    // An app whose world she hasn't entered yet tells her nothing there.
+    if absent_for_moment(&state, app, session.as_deref()).await {
+        return (StatusCode::CONFLICT, "absent").into_response();
+    }
     // Asked while the pet is off: nobody will answer — say so now, rather
     // than let the page wait on a silence.
     if req.asked && !state.manager.get_config_snapshot().await.pet.enabled {
@@ -134,6 +138,17 @@ pub(crate) async fn event_handler(
         session,
     });
     (StatusCode::OK, "ok").into_response()
+}
+
+/// Whether the app a moment comes from keeps her away right now — by the
+/// skill of the chat it names, else the skill named as the app.
+async fn absent_for_moment(state: &Arc<ServerState>, app: &str, session: Option<&str>) -> bool {
+    use crate::server::chat::presence;
+    let companion = crate::engine::agent::COMPANION_AGENT_ID;
+    match session {
+        Some(sid) => presence::absent_in_session(&state.manager, sid, companion).await,
+        None => presence::absent_in_skill(&state.manager, app, companion).await,
+    }
 }
 
 #[derive(Deserialize)]
@@ -192,6 +207,11 @@ async fn presenting_in_chat(state: &Arc<ServerState>) -> Option<String> {
         .global_sessions
         .get_session_meta(&sid)
         .ok()??;
+    // Not there yet in that app's world: she answers on her own thread.
+    let companion = crate::engine::agent::COMPANION_AGENT_ID;
+    if crate::server::chat::presence::absent_in_session(&state.manager, &meta.id, companion).await {
+        return None;
+    }
     Some(meta.id)
 }
 

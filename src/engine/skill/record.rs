@@ -140,6 +140,103 @@ pub struct QuestsConfig {
     pub facts: std::collections::BTreeMap<String, String>,
 }
 
+/// Where the skill's sessions stand for each agent: the text the engine puts
+/// under `## Where you are` when that agent speaks there, and whether the
+/// agent is there at all yet. Keyed by agent id. The engine names no app and
+/// no agent here: it reads whatever the skill declares for whoever speaks.
+/// See `doc/skill-spec.md` § Place.
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct Places(pub std::collections::BTreeMap<String, PlaceEntry>);
+
+/// One agent's place in a skill: plain text, or text with a presence gate.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum PlaceEntry {
+    Text(String),
+    Gated {
+        #[serde(default)]
+        text: Option<String>,
+        /// The agent is absent from the skill's sessions until this state
+        /// the skill keeps is set.
+        #[serde(default)]
+        absent_until: Option<StateFlag>,
+    },
+}
+
+/// A value the skill keeps in one of its own JSON files: `path` is a
+/// dot-separated key path inside `file` (relative to the skill folder).
+/// Set = present and not `null`, `false`, `0`, `""`, `[]` or `{}`.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct StateFlag {
+    pub file: String,
+    pub path: String,
+}
+
+impl Places {
+    /// The place text the skill declares for `agent`, if any.
+    pub fn text_for(&self, agent: &str) -> Option<&str> {
+        let text = match self.0.get(agent)? {
+            PlaceEntry::Text(t) => Some(t.as_str()),
+            PlaceEntry::Gated { text, .. } => text.as_deref(),
+        }?;
+        Some(text.trim()).filter(|t| !t.is_empty())
+    }
+
+    /// Whether `agent` is absent from this skill's sessions right now: it
+    /// declares `absent_until` and the flag in `skill_dir` is not set. A
+    /// file that can't be read or parsed leaves the flag unset.
+    pub fn is_absent(&self, agent: &str, skill_dir: &std::path::Path) -> bool {
+        self.gate_for(agent)
+            .is_some_and(|flag| !flag.is_set(skill_dir))
+    }
+
+    /// The state `agent` is absent until, when the skill declares one.
+    pub fn gate_for(&self, agent: &str) -> Option<&StateFlag> {
+        match self.0.get(agent)? {
+            PlaceEntry::Gated { absent_until, .. } => absent_until.as_ref(),
+            PlaceEntry::Text(_) => None,
+        }
+    }
+}
+
+impl StateFlag {
+    /// Read the flag from the skill's own folder. A file path that is
+    /// absolute or climbs out of the folder is never read.
+    pub fn is_set(&self, skill_dir: &std::path::Path) -> bool {
+        let rel = std::path::Path::new(&self.file);
+        let inside = rel
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)));
+        if !inside {
+            return false;
+        }
+        std::fs::read_to_string(skill_dir.join(rel))
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .is_some_and(|json| value_is_set(value_at(&json, &self.path)))
+    }
+}
+
+/// The value at a dot-separated key path.
+fn value_at<'a>(json: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
+    path.split('.')
+        .filter(|k| !k.is_empty())
+        .try_fold(json, |v, key| v.get(key))
+}
+
+fn value_is_set(value: Option<&serde_json::Value>) -> bool {
+    use serde_json::Value;
+    match value {
+        None | Some(Value::Null) | Some(Value::Bool(false)) => false,
+        Some(Value::Number(n)) => n.as_f64().is_some_and(|f| f != 0.0),
+        Some(Value::String(s)) => !s.is_empty(),
+        Some(Value::Array(a)) => !a.is_empty(),
+        Some(Value::Object(o)) => !o.is_empty(),
+        Some(Value::Bool(true)) => true,
+    }
+}
+
 /// How a message sent while the skill's session is mid-turn meets that turn.
 /// See `doc/skill-spec.md` § Queue.
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, Default, PartialEq, Eq)]
@@ -252,6 +349,9 @@ pub struct Skill {
     /// Which phone facts stamp which of the skill's quests, and how.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quests: Option<QuestsConfig>,
+    /// Where the skill's sessions stand for each agent — see [`Places`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub place: Option<Places>,
     /// Filesystem path to the skill directory (set at load time, not serialized to clients).
     #[serde(skip)]
     pub skill_dir: Option<PathBuf>,
@@ -259,4 +359,53 @@ pub struct Skill {
 
 fn default_user_invocable() -> bool {
     true
+}
+
+#[cfg(test)]
+mod place_tests {
+    use super::*;
+
+    fn places(yaml: &str) -> Places {
+        serde_norway::from_str(yaml).unwrap()
+    }
+
+    #[test]
+    fn a_place_is_plain_text_or_text_with_a_gate() {
+        let p = places(
+            "ling: \"You run the world here.\"\n\
+             yinyue:\n  text: \"Beside the player.\"\n  absent_until: {file: data/state.json, path: companion.joined}\n",
+        );
+        assert_eq!(p.text_for("ling"), Some("You run the world here."));
+        assert_eq!(p.text_for("yinyue"), Some("Beside the player."));
+        assert_eq!(p.text_for("memory"), None);
+    }
+
+    #[test]
+    fn absent_until_the_skill_sets_its_flag() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("data")).unwrap();
+        let p =
+            places("yinyue:\n  absent_until: {file: data/state.json, path: companion.joined}\n");
+        let write = |json: &str| std::fs::write(dir.path().join("data/state.json"), json).unwrap();
+
+        assert!(p.is_absent("yinyue", dir.path()), "no file yet: absent");
+        write(r#"{"companion": null}"#);
+        assert!(p.is_absent("yinyue", dir.path()));
+        write(r#"{"companion": {"joined": "2026-09-18"}}"#);
+        assert!(!p.is_absent("yinyue", dir.path()));
+        assert!(!p.is_absent("ling", dir.path()), "no gate: always present");
+        assert_eq!(p.text_for("yinyue"), None, "a gate alone carries no text");
+    }
+
+    #[test]
+    fn a_flag_never_reads_outside_the_skill_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        for file in ["../state.json", "/etc/hosts"] {
+            let flag = StateFlag {
+                file: file.into(),
+                path: "x".into(),
+            };
+            assert!(!flag.is_set(dir.path()), "{file}");
+        }
+    }
 }

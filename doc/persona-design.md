@@ -1,6 +1,19 @@
 # Ling and Yinyue — one soul, many places
 
-Status: design, agreed with Hanli 2026-09-25. Not built yet.
+Status: engine built, not deployed (2026-09-25). Souls rewritten; place files
+for the engine surfaces under `agents/places/`:
+
+| File | Agent | Surface |
+|---|---|---|
+| `mac-chat.md` | Ling | Mac main chat (own session, no app) |
+| `app.md` | Ling | running an app (generic; a skill's `place.ling` replaces it) |
+| `desktop-pet.md` | Yinyue | her own thread on the Mac — desktop body, moments, first meeting |
+| `app-guest.md` | Yinyue | a guest in an app's chat (generic; a skill's `place.yinyue` replaces it) |
+
+Order in the system prompt: soul (identity + body) → voice → `## Where you are`
+→ skills list → active skill. Missions, consumer frames and delegates get no
+place. `place:` and `absent_until` are in `skill-spec.md` § Place. Phone and
+Lingjing's `place:` are still to do (their lanes).
 
 ## The rule
 
@@ -78,10 +91,9 @@ The engine stays a general core: it knows devices and surfaces, never an app.
   turn for her in that session and the page shows its own line.
 - **Phone:** builds its place block the same way from the same soul file.
 
-An app session keeps the soul and adds the app as a place. Today it does the
-opposite: `engine/prompt/mod.rs` drops the agent body in an app skill session
-and uses SKILL.md alone, so inside an app Ling keeps only its `personality:`
-lines.
+An app session keeps the soul and adds the app as a place. (Until 2026-09-25
+`engine/prompt/mod.rs` dropped the agent body in an app skill session, so
+inside an app Ling kept only its `personality:` lines.)
 
 ## What moves (the migration)
 

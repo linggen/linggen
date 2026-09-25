@@ -825,6 +825,7 @@ async fn seat_at_table(engine: &mut crate::engine::AgentEngine, ctx: &ChatRunCtx
         return;
     };
     let _ = super::side_lines::take_for(sid, &ctx.agent_id);
+    engine.seat_places = super::presence::session_places(&ctx.manager, sid).await;
     let mut rows = super::table::read(&ctx.manager, &ctx.root, sid).await;
     if rows
         .last()
@@ -958,6 +959,17 @@ pub(crate) async fn kickoff_in_session(
     true
 }
 
+/// The reply to a message for an agent the session's skill keeps away
+/// (`place.<agent>.absent_until`): no turn ran and nothing was kept.
+fn absent_reply(session_id: Option<&str>, agent_id: &str) -> axum::response::Response {
+    Json(serde_json::json!({
+        "status": "absent",
+        "session_id": session_id,
+        "agent_id": agent_id,
+    }))
+    .into_response()
+}
+
 /// The companion was addressed in a session that isn't hers — an app's chat.
 /// She answers there as a guest (`resident::answer_as_guest`), when she is on.
 async fn companion_is_guest(state: &Arc<ServerState>, target_id: &str, session_id: &str) -> bool {
@@ -1014,6 +1026,13 @@ pub(crate) async fn start_turn(
     let (target_id, clean_msg) = route_target(&state, &req, &root).await;
 
     if companion_is_guest(&state, &target_id, &effective_session_id).await {
+        // Not there yet in this skill's world: no turn, nothing kept. The
+        // page says its own line.
+        if super::presence::absent_in_session(&state.manager, &effective_session_id, &target_id)
+            .await
+        {
+            return absent_reply(session_id.as_deref(), &target_id);
+        }
         crate::server::resident::answer_as_guest(
             state.clone(),
             effective_session_id.clone(),

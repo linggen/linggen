@@ -10,7 +10,11 @@
 //! `engine::skill` / `engine::agent` / `engine::mission`.
 
 pub mod core_block;
+pub mod place;
 pub mod profile;
+
+#[cfg(test)]
+mod persona_tests;
 
 /// Why a prompt is being built.
 ///
@@ -162,172 +166,220 @@ fn workspace_listing(ws_root: &std::path::Path) -> String {
     items.join("\n")
 }
 
-impl AgentEngine {
-    pub(crate) fn system_prompt(&self) -> String {
-        use crate::prompts::keys;
+/// An agent's soul as its spec file gives it: the `## Identity` block (the
+/// body's first short paragraph plus `personality:`) and the rest of the body.
+struct Soul {
+    identity: String,
+    body: String,
+    /// Whether the spec has any body at all.
+    has_text: bool,
+}
 
-        // Personality is injected first — it's the agent's voice regardless of context.
+impl Soul {
+    fn of(personality: &str, spec_body: &str) -> Self {
+        // Hoist the first paragraph ("You are X — …") into ## Identity, so the
+        // name survives where the body is left out (consumer sessions).
+        let (preface, rest) = match spec_body.split_once("\n\n") {
+            Some((head, tail)) if !head.trim().is_empty() && head.trim().len() <= 300 => {
+                (head.trim(), tail.trim_start())
+            }
+            None if !spec_body.is_empty() && spec_body.len() <= 300 => (spec_body, ""),
+            _ => ("", spec_body),
+        };
+        let identity = [preface, personality.trim()]
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        Self {
+            identity: if identity.is_empty() {
+                String::new()
+            } else {
+                format!("## Identity\n\n{identity}")
+            },
+            body: rest.to_string(),
+            has_text: !spec_body.is_empty(),
+        }
+    }
+}
+
+fn join_sections(parts: impl IntoIterator<Item = String>) -> String {
+    parts
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+/// Mission frame: identity leads, then the agent's full spec body, then the
+/// mission body layered on top. The spec body is the agent's doctrine — for a
+/// custom mission agent (e.g. `memory`, whose body carries the judgment rules
+/// and status-line format) stripping it leaves the mission pointing at
+/// instructions the model never sees (the 2026-07-06 dream run failure).
+fn mission_prompt(soul: Soul, mission: &ActiveMission) -> String {
+    let body = match &mission.mission_dir {
+        Some(dir) => mission.body.replace("$MISSION_DIR", &dir.to_string_lossy()),
+        None => mission.body.clone(),
+    };
+    join_sections([soul.identity, voice_section(), soul.body, body])
+}
+
+impl AgentEngine {
+    /// The persona prompt, in this order: soul (identity + body) → voice →
+    /// where the agent is → the skills it may take up → the active skill.
+    /// A mission frame keeps its own shape ([`Self::mission_prompt`]).
+    pub(crate) fn system_prompt(&self) -> String {
         let personality = self
             .spec
             .as_ref()
             .and_then(|s| s.personality.as_deref())
             .unwrap_or("");
-
-        // App skills override the agent body — the agent's coding/workflow instructions
-        // are irrelevant when the skill runs its own UI (e.g. lingjing).
-        // The agent's personality traits still carry through.
-        let is_app_skill = self.active_skill.as_ref().is_some_and(|s| s.app.is_some());
-
-        // Hoist the first paragraph of the spec body (typically "You are X — <short
-        // self-description>") into the ## Identity block. Keeps the agent's name
-        // alive in app-skill / consumer / mission sessions where the rest of the
-        // body is stripped, and labels personality traits with a section header
-        // for scan/debug clarity.
-        let spec_body_full = self
+        let spec_body = self
             .spec_system_prompt
             .as_deref()
             .map(str::trim)
             .unwrap_or("");
-        let (identity_preface, body_rest) = {
-            let (head, tail) = spec_body_full
-                .split_once("\n\n")
-                .unwrap_or((spec_body_full, ""));
-            let head_trim = head.trim();
-            if head_trim.is_empty() || head_trim.len() > 300 {
-                ("", spec_body_full)
-            } else {
-                (head_trim, tail.trim_start())
-            }
-        };
+        let soul = Soul::of(personality, spec_body);
 
-        let identity_block = match (identity_preface.is_empty(), personality.is_empty()) {
-            (true, true) => String::new(),
-            (false, true) => format!("## Identity\n\n{}", identity_preface),
-            (true, false) => format!("## Identity\n\n{}", personality.trim()),
-            (false, false) => format!(
-                "## Identity\n\n{}\n\n{}",
-                identity_preface,
-                personality.trim()
-            ),
-        };
-
-        // Mission frame: identity leads, then the agent's full spec body,
-        // then the mission body layered on top. The spec body is the
-        // agent's doctrine — for a custom mission agent (e.g. `memory`,
-        // whose body carries the judgment rules and status-line format)
-        // stripping it leaves the mission pointing at instructions the
-        // model never sees (the 2026-07-06 dream run failure).
         if let Some(mission) = &self.active_mission {
-            let resolved = if let Some(ref dir) = mission.mission_dir {
-                mission.body.replace("$MISSION_DIR", &dir.to_string_lossy())
-            } else {
-                mission.body.clone()
-            };
-            let parts: Vec<String> = [
-                identity_block,
-                voice_section(),
-                body_rest.to_string(),
-                resolved,
-            ]
-            .into_iter()
-            .filter(|s| !s.is_empty())
-            .collect();
-            return parts.join("\n\n");
+            return mission_prompt(soul, mission);
         }
 
-        let body = if is_app_skill || self.prompt_profile.consumer_frame {
-            // App skills: skill content becomes the primary prompt.
-            // Consumer sessions: agent spec body describes owner capabilities
-            // (coding, delegation, file editing) that consumers don't have.
-            // Skip it — the consumer frame in build_stable_system_content
-            // provides appropriate instructions.
-            String::new()
-        } else if body_rest.is_empty() && identity_preface.is_empty() {
-            self.prompt_store
-                .render_or_fallback(keys::SYSTEM_FALLBACK_IDENTITY, &[])
-        } else {
-            body_rest.to_string()
-        };
-
-        // Voice always rides between identity and body, in every branch —
-        // an app-skill or consumer session with an empty body still gets it.
-        let mut prompt = [identity_block, voice_section(), body]
-            .into_iter()
-            .filter(|s| !s.is_empty())
-            .collect::<Vec<_>>()
-            .join("\n\n");
-
-        // Don't list available skills for app skill sessions — the model
-        // should focus entirely on the active skill.
-        if !is_app_skill && !self.available_skills_metadata.is_empty() {
-            // Filter by consumer_allowed_skills when in consumer mode.
-            let skills: Vec<&(String, String, bool)> = match &self.cfg.consumer_allowed_skills {
-                Some(allowed) => self
-                    .available_skills_metadata
-                    .iter()
-                    .filter(|(name, _, _)| allowed.contains(name))
-                    .collect(),
-                None => self.available_skills_metadata.iter().collect(),
-            };
-            if !skills.is_empty() {
-                prompt.push_str(
-                    &self
-                        .prompt_store
-                        .render_or_fallback(keys::SYSTEM_SKILLS_HEADER, &[]),
-                );
-                for (name, description, is_app) in skills {
-                    // Mark app skills so an agent (Yinyue) knows which are routable
-                    // apps it can hand requests to via agent_chat's `app` target.
-                    let display = if *is_app {
-                        format!("{name} (app)")
-                    } else {
-                        name.clone()
-                    };
-                    prompt.push_str(&self.prompt_store.render_or_fallback(
-                        keys::SYSTEM_SKILL_ENTRY,
-                        &[
-                            ("name", display.as_str()),
-                            ("description", description.as_str()),
-                        ],
-                    ));
-                }
-            }
-        }
-
+        let mut prompt = join_sections([
+            soul.identity.clone(),
+            self.soul_body(&soul),
+            voice_section(),
+            self.place_section().unwrap_or_default(),
+        ]);
+        prompt.push_str(&self.skills_listing());
         if let Some(skill) = &self.active_skill {
-            // Replace $SKILL_DIR so the model sees the actual filesystem path.
-            let resolved_content = if let Some(ref dir) = skill.skill_dir {
-                skill.content.replace("$SKILL_DIR", &dir.to_string_lossy())
+            prompt.push_str(&self.active_skill_section(skill));
+        }
+        prompt
+    }
+
+    /// The soul's body for this session. Every session keeps it — an app
+    /// adds a place, it doesn't take the soul away — except a consumer's,
+    /// whose frame (`build_stable_system_content`) replaces the owner's
+    /// working guidance.
+    fn soul_body(&self, soul: &Soul) -> String {
+        if self.prompt_profile.consumer_frame {
+            return String::new();
+        }
+        if soul.has_text || self.is_app_session() {
+            return soul.body.clone();
+        }
+        self.prompt_store
+            .render_or_fallback(crate::prompts::keys::SYSTEM_FALLBACK_IDENTITY, &[])
+    }
+
+    fn is_app_session(&self) -> bool {
+        self.active_skill.as_ref().is_some_and(|s| s.app.is_some())
+    }
+
+    /// Where this engine speaks from, as far as the engine can tell. A
+    /// delegate works for another agent and has no place of its own.
+    pub(crate) fn surface(&self) -> Option<place::Surface> {
+        if self.is_guest_seat() {
+            return Some(place::Surface::Guest);
+        }
+        if self.parent_agent_id.is_some() {
+            return None;
+        }
+        if self.is_app_session() {
+            return Some(place::Surface::App);
+        }
+        Some(place::Surface::Home)
+    }
+
+    /// The places the skill in view declares: the table's skill for a guest,
+    /// else the active skill.
+    fn declared_places(&self) -> Option<&crate::engine::skill::record::Places> {
+        if self.is_guest_seat() {
+            return self.seat_places.as_ref();
+        }
+        self.active_skill.as_ref().and_then(|s| s.place.as_ref())
+    }
+
+    /// `## Where you are` for the speaking agent — none in a consumer frame
+    /// or for an agent no place speaks of.
+    pub(crate) fn place_section(&self) -> Option<String> {
+        if self.prompt_profile.consumer_frame {
+            return None;
+        }
+        let surface = self.surface()?;
+        let agent = self
+            .agent_id
+            .as_deref()
+            .or(self.spec.as_ref().map(|s| s.name.as_str()))?;
+        place::place_text(agent, surface, self.declared_places()).map(place::render)
+    }
+
+    /// The skills this agent may take up. None in an app session — the model
+    /// should focus entirely on the active skill.
+    fn skills_listing(&self) -> String {
+        use crate::prompts::keys;
+        if self.is_app_session() || self.available_skills_metadata.is_empty() {
+            return String::new();
+        }
+        // Filter by consumer_allowed_skills when in consumer mode.
+        let skills: Vec<&(String, String, bool)> = match &self.cfg.consumer_allowed_skills {
+            Some(allowed) => self
+                .available_skills_metadata
+                .iter()
+                .filter(|(name, _, _)| allowed.contains(name))
+                .collect(),
+            None => self.available_skills_metadata.iter().collect(),
+        };
+        if skills.is_empty() {
+            return String::new();
+        }
+        let mut out = self
+            .prompt_store
+            .render_or_fallback(keys::SYSTEM_SKILLS_HEADER, &[]);
+        for (name, description, is_app) in skills {
+            // Mark app skills so an agent (Yinyue) knows which are routable
+            // apps it can hand requests to via agent_chat's `app` target.
+            let display = if *is_app {
+                format!("{name} (app)")
             } else {
-                skill.content.clone()
+                name.clone()
             };
-            prompt.push_str(&self.prompt_store.render_or_fallback(
-                keys::SYSTEM_ACTIVE_SKILL_FRAME,
+            out.push_str(&self.prompt_store.render_or_fallback(
+                keys::SYSTEM_SKILL_ENTRY,
                 &[
-                    ("name", skill.name.as_str()),
-                    ("description", skill.description.as_str()),
-                    ("content", &resolved_content),
+                    ("name", display.as_str()),
+                    ("description", description.as_str()),
                 ],
             ));
-
-            // App-skills receive the built-in PageUpdate tool. Remind the
-            // model to call it whenever state the user should see has changed —
-            // unless the skill body already documents PageUpdate itself, in
-            // which case the generic hint is redundant duplication.
-            if skill.app.is_some() && !resolved_content.contains("PageUpdate") {
-                prompt.push_str(
-                    &self
-                        .prompt_store
-                        .render_or_fallback(keys::SYSTEM_APP_SKILL_DASHBOARD_HINT, &[]),
-                );
-            }
         }
+        out
+    }
 
-        // Note: the `active_mission` branch lives at the top of this
-        // function — when a mission is active, the body short-circuits
-        // the whole agent-persona path. We don't re-inject it here.
-
-        prompt
+    /// The active skill's frame: its content, with `$SKILL_DIR` resolved, and
+    /// the PageUpdate hint for an app that doesn't document it itself.
+    fn active_skill_section(&self, skill: &crate::engine::skill::Skill) -> String {
+        use crate::prompts::keys;
+        let content = match &skill.skill_dir {
+            Some(dir) => skill.content.replace("$SKILL_DIR", &dir.to_string_lossy()),
+            None => skill.content.clone(),
+        };
+        let mut out = self.prompt_store.render_or_fallback(
+            keys::SYSTEM_ACTIVE_SKILL_FRAME,
+            &[
+                ("name", skill.name.as_str()),
+                ("description", skill.description.as_str()),
+                ("content", &content),
+            ],
+        );
+        if skill.app.is_some() && !content.contains("PageUpdate") {
+            out.push_str(
+                &self
+                    .prompt_store
+                    .render_or_fallback(keys::SYSTEM_APP_SKILL_DASHBOARD_HINT, &[]),
+            );
+        }
+        out
     }
 
     /// Build the stable portion of the system prompt (agent spec + project context + memory)

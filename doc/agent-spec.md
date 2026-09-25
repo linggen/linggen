@@ -44,7 +44,10 @@ Runtime configuration (model, effective tools, bound skill) is set at the sessio
 robot tells. It is **injected by the engine into every system prompt**
 (embedded at compile time via `include_str!`), so user, skill, and mission
 sessions all carry it regardless of what any agent spec says. It rides
-between the identity block and the agent body in `AgentEngine::system_prompt`.
+after the soul (identity block + agent body) and before the place block
+(`## Where you are`, from `agents/places/` or a skill's `place:` — see
+`persona-design.md`) in `AgentEngine::system_prompt`. A mission keeps its
+own order: identity, voice, body, mission.
 Editing it takes a rebuild, like any embedded spec.
 
 `agents/shared/humanize.md` is the long-form companion: the full catalog of

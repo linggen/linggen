@@ -140,6 +140,7 @@ Three groups of fields. Standard fields work across tools; the others are extens
 | `closing-ask` | `true`: the skill's tools hand each turn its closing question; the engine asks it when the model doesn't (see "Closing question") |
 | `queue` | `steer` (default) or `after-turn`: whether a message sent mid-turn steers the turn or waits for it (see "Queue") |
 | `quests` | Which phone facts stamp which of the skill's quests, and the skill's own writer that stamps them (see "Quests") |
+| `place` | Where the skill's sessions stand for each agent, and whether an agent is there yet (see "Place") |
 | `requires` | External dependencies to resolve at install |
 | `renamed-from` | Slugs this skill used to be called (see "Renaming a skill") |
 
@@ -320,6 +321,25 @@ quests:
 - The engine runs `stamp` in the skill's working folder (edit tier, within the skill's grant, one call per skill at a time, 10 s timeout). It fills `{id}` (`[a-z0-9-]`) and `{at}` (`YYYY-MM-DDTHH:MM:SSZ`) as quoted words, only after checking both.
 - The writer must never move `done_at` back, and must exit 0 once the file holds the stamp or a later one. Any other exit is a failure, and the engine tries again when the phone next connects.
 - The engine names no app: a kind stamps whatever declares it.
+
+## Place
+
+An agent's soul is the same everywhere; a skill says where its sessions put it (`doc/persona-design.md`). Keyed by agent id:
+
+```yaml
+place:
+  ling: You are the world of this game and its storyteller.   # plain text
+  yinyue:
+    text: At the player's side, on the road with them.
+    absent_until: {file: data/state.json, path: companion.joined}
+```
+
+- **Text.** When that agent speaks in the skill's sessions — running the app, or a guest at its chat — the engine puts the text under `## Where you are`, after the soul and voice and before the skill's own content. It replaces the engine's generic block for that surface (`agents/places/app.md` for the app's operator, `app-guest.md` for a guest). An agent with no entry gets the generic block.
+- **`absent_until`** — the agent isn't in the skill's sessions until the value at `path` (dot-separated keys) in the skill's JSON `file` (relative to the skill folder) is set: present and not `null`, `false`, `0`, `""`, `[]` or `{}`. Read on every check; unreadable counts as unset. While absent:
+  - a message addressed to it in the skill's chat runs no turn and keeps nothing: `/api/chat` answers `{"status": "absent", "agent_id", "session_id"}`, and the embedded chat posts `linggen-skill-event` `agent_absent {agent, text}` to the page, which says its own line;
+  - an app moment for it naming the skill's chat (or the skill as `app`) is refused (`409 absent`) and never queued;
+  - the avatar's box, while a stage in that chat holds it, talks on its own thread instead.
+- The engine names no app and no agent: it matches the speaking agent's id against the keys.
 
 ## App skills
 

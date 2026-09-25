@@ -262,6 +262,14 @@ export function useChatActions(
         useChatStore.getState().removeLastUserMessage(userMessage, agentToUse);
         return;
       }
+      // The agent isn't in this app's world yet (the skill's `place`): no
+      // turn ran. The page says its own line.
+      if (data?.status === 'absent') {
+        const at = data.session_id || sid;
+        if (at) useServerStore.getState().setPendingSend(at, false);
+        postToParent({ type: 'linggen-skill-event', event: 'agent_absent', payload: { agent: data.agent_id, text: userMessage } });
+        return;
+      }
       if (sid) {
         useServerStore.getState().setAgentStatusText((prev) => ({ ...prev, [sid]: 'Model Loading' }));
       }

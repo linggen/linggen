@@ -25,6 +25,7 @@ mod cloud_gate;
 mod handler;
 pub(super) mod helpers;
 mod plan_flow;
+pub(crate) mod presence;
 mod runtime;
 pub(crate) mod side_lines;
 mod skill_dispatch;
