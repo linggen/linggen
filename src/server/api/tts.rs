@@ -195,14 +195,12 @@ impl KokoroProvider {
             return Ok(());
         }
         tokio::fs::create_dir_all(&dir).await?;
-        let url =
-            format!("https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/voices/{name}.pt");
         tracing::info!("[tts] fetching voice pack {name}");
-        let bytes = reqwest::get(&url)
-            .await?
-            .error_for_status()?
-            .bytes()
-            .await?;
+        // huggingface.co first, hf-mirror.com when it is unreachable.
+        let bytes = crate::hf_mirror::get_bytes(&format!(
+            "hexgrad/Kokoro-82M/resolve/main/voices/{name}.pt"
+        ))
+        .await?;
         // Write via a temp file and rename: a half-written .pt would be
         // indistinguishable from a good one on the next boot.
         let tmp = dir.join(format!(".{name}.pt.part"));
@@ -217,6 +215,9 @@ impl KokoroProvider {
     async fn model(&self) -> anyhow::Result<Arc<dyn TtsModel>> {
         self.model
             .get_or_try_init(|| async {
+                // Probe the Hub first: when it is unreachable this exports
+                // HF_ENDPOINT=hf-mirror.com, which any-tts' loader reads.
+                crate::hf_mirror::endpoint().await;
                 let model = tokio::task::spawn_blocking(|| -> anyhow::Result<Arc<dyn TtsModel>> {
                     // Keep all model state under ~/.linggen (project convention).
                     if std::env::var_os("HF_HUB_CACHE").is_none() {
@@ -225,7 +226,8 @@ impl KokoroProvider {
                         ));
                         std::env::set_var("HF_HUB_CACHE", cache);
                     }
-                    // No path set → any-tts downloads hexgrad/Kokoro-82M from HF.
+                    // No path set → any-tts downloads hexgrad/Kokoro-82M from HF
+                    // (or HF_ENDPOINT).
                     // Voices come from our own directory (see `voices_dir`).
                     let model = any_tts::load_model(
                         TtsConfig::new(ModelType::Kokoro).with_voices_dir(Self::voices_dir()),

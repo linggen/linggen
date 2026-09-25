@@ -575,8 +575,8 @@ async fn pip(env: &str, args: &[&str]) -> Result<String> {
 
 /// Warm the TTS model into the shared HF cache (the same one Kokoro uses),
 /// so the first spoken line never downloads. huggingface_hub resumes
-/// partial downloads on its own; `HF_ENDPOINT` is inherited so the China
-/// mirror keeps working.
+/// partial downloads on its own; `HF_ENDPOINT` is the user's, else
+/// hf-mirror.com when huggingface.co is unreachable (see `hf_mirror`).
 async fn ensure_tts_model() -> Result<()> {
     check_disk_headroom(&runtime_dir(), 6)?;
     let code = format!("from mlx_audio.tts.utils import load_model; load_model({TTS_MODEL:?})");
@@ -584,7 +584,8 @@ async fn ensure_tts_model() -> Result<()> {
         tokio::process::Command::new(env_bin("tts", "python3"))
             .arg("-c")
             .arg(&code)
-            .env("HF_HOME", hf_home()),
+            .env("HF_HOME", hf_home())
+            .env("HF_ENDPOINT", crate::hf_mirror::endpoint().await),
         "warm tts model",
     )
     .await
@@ -593,7 +594,7 @@ async fn ensure_tts_model() -> Result<()> {
 
 /// Warm the picture model into the same HF cache, then stamp it so
 /// [`pictures_ready`] is a file test. snapshot_download resumes partial
-/// pulls on its own; `HF_ENDPOINT` is inherited for the China mirror.
+/// pulls on its own; `HF_ENDPOINT` as in [`ensure_tts_model`].
 async fn ensure_picture_model() -> Result<()> {
     if stamp_matches(&picture_model_stamp(), PICTURE_MODEL) {
         return Ok(());
@@ -606,7 +607,8 @@ async fn ensure_picture_model() -> Result<()> {
         tokio::process::Command::new(env_bin("pictures", "python3"))
             .arg("-c")
             .arg(&code)
-            .env("HF_HOME", hf_home()),
+            .env("HF_HOME", hf_home())
+            .env("HF_ENDPOINT", crate::hf_mirror::endpoint().await),
         "warm picture model",
     )
     .await?;

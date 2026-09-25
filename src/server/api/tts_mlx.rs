@@ -82,6 +82,7 @@ impl MlxTtsProvider {
                 "HF_HOME",
                 crate::paths::linggen_home().join("models/hf-hub"),
             )
+            .env("HF_ENDPOINT", crate::hf_mirror::endpoint().await)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

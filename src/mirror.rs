@@ -137,6 +137,12 @@ pub async fn get_json<T: serde::de::DeserializeOwned>(
     Ok(serde_json::from_slice(&body)?)
 }
 
+/// GET the first of `urls` that answers, with the same fallback rule —
+/// for mirrors other than linggen.dev's (e.g. hf-mirror.com).
+pub async fn get_bytes_any(client: &reqwest::Client, urls: &[String]) -> Result<Vec<u8>> {
+    get_bytes_from(client, urls, &[]).await
+}
+
 async fn get_bytes_from(
     client: &reqwest::Client,
     urls: &[String],
