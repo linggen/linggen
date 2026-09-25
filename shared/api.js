@@ -105,3 +105,17 @@ export async function signIn() {
   }
   return false;
 }
+
+/// The engine's own UI (e.g. Yinyue's stage, `pet=1&stage=1`) as a URL a page
+/// can frame, wherever the page is served. Locally that is `/?…`. Remotely
+/// (linggen.dev) the page lives under /tunnel/<instance>/, where a bare `/` is
+/// the site's home — the UI is reached through the relay's connect page, the
+/// way the chat bridge frames the embed.
+///   engineUiUrl('pet=1&stage=1')
+export function engineUiUrl(query, doc = document) {
+  const instance = doc.querySelector('meta[name="linggen-instance"]')?.getAttribute('content');
+  const q = String(query || '').replace(/^\?/, '');
+  if (!instance) return `${location.origin}/?${q}`;
+  const relay = doc.querySelector('meta[name="linggen-relay-origin"]')?.getAttribute('content') || location.origin;
+  return `${new URL(relay, location.href).origin}/app/connect/${encodeURIComponent(instance)}?${q}`;
+}

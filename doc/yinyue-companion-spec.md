@@ -175,7 +175,14 @@ session from the page (`shared/chat-bridge.js` ⇄ the pet view, `linggen-app-ch
 messages) and sends it with `yinyue_subscribe`. While that stage holds her,
 `/api/yinyue/chat` (her pet box, the desktop pet) lands in that chat as the
 user's `@银月 …` line and she answers there as a guest. Otherwise → her own
-thread.
+thread. A page frames the stage at `engineUiUrl('pet=1&stage=1')`
+(`/shared/api.js`), which also resolves through linggen.dev.
+
+**The page hears its own agent.** A guest's turn is hers alone: it never ends
+the skill agent's run, question or spinner. The bridge hands `onStreamToken` /
+`onStreamEnd` the skill's own agent's stream only (`mount({ agentId })`);
+`guestStreams: true` adds hers, each call naming `info.agent`. A page's hidden
+reports always go to its own agent.
 
 ## `agent_chat` — general inter-agent messaging
 

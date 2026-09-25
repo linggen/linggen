@@ -7,6 +7,7 @@ import type { AgentStatusValue } from '../../stores/serverStore';
 import { agentTracker } from '../agentTracker';
 import { normalizeAgentStatus } from '../messageUtils';
 import { getSessionId, toolPrefixMap } from './_shared';
+import { otherAgentRunning } from '../agentTurns.mts';
 
 export function handleActivity(item: UiEventOf<'activity'>): void {
   const agentId = String(item.agent_id || '');
@@ -125,7 +126,12 @@ function applyTopLevelActivity(opts: {
   const agentStore = useServerStore.getState();
   const chatStore = useChatStore.getState();
 
-  if (statusRaw && sid && (phase !== 'done' || nextStatus === 'idle')) {
+  // One app chat holds more than one agent's turns: an agent going idle
+  // says nothing of another's still running here.
+  const goingIdle = nextStatus === 'idle' || phase === 'failed';
+  const othersRunning = goingIdle && !!sid && otherAgentRunning(agentStore.agentRuns, sid, agentId);
+
+  if (statusRaw && sid && (phase !== 'done' || nextStatus === 'idle') && !othersRunning) {
     agentStore.setAgentStatusText((prev) => ({
       ...prev,
       [sid]: resolveStatusText(nextStatus, statusText),
@@ -149,8 +155,8 @@ function applyTopLevelActivity(opts: {
     chatStore.setPlaceholder(agentId, placeholder);
   }
 
-  if (nextStatus === 'idle' || phase === 'failed') {
-    const { elapsed, contextTokens: ctxTokens } = sid ? agentTracker.clearRun(sid) : {};
+  if (goingIdle) {
+    const { elapsed, contextTokens: ctxTokens } = sid && !othersRunning ? agentTracker.clearRun(sid) : {};
     chatStore.finalizeOnIdle(agentId, elapsed, ctxTokens);
     useInteractionStore.getState().setActivePlan(null);
   }

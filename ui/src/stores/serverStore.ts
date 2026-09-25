@@ -53,7 +53,10 @@ interface ServerState {
    *  lost (e.g. session channel closed mid-turn) instead of spinning
    *  forever. Truthiness checks keep working. */
   pendingSends: Record<string, number>;
-  setPendingSend: (sessionId: string, pending: boolean) => void;
+  /** Who each pending send went to, keyed by session ID: one app chat holds
+   *  more than one agent's turns, and only that agent's TurnComplete ends it. */
+  pendingSendAgents: Record<string, string>;
+  setPendingSend: (sessionId: string, pending: boolean, agentId?: string) => void;
 
   /** Timestamp of the last send that never reached the server, keyed by
    *  session ID. Lets the spinner distinguish "turn finished" from "send
@@ -122,12 +125,16 @@ export const useServerStore = create<ServerState>((set, get) => ({
   agentContext: {},
   tokensPerSec: 0,
   pendingSends: {},
-  setPendingSend: (sessionId, pending) =>
+  pendingSendAgents: {},
+  setPendingSend: (sessionId, pending, agentId) =>
     set((s) => {
       const next = { ...s.pendingSends };
+      const agents = { ...s.pendingSendAgents };
       if (pending) next[sessionId] = Date.now();
       else delete next[sessionId];
-      return { pendingSends: next };
+      if (pending && agentId) agents[sessionId] = agentId;
+      else delete agents[sessionId];
+      return { pendingSends: next, pendingSendAgents: agents };
     }),
   sendFailedAt: {},
   markSendFailed: (sessionId) =>

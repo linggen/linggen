@@ -30,8 +30,9 @@ import { createSession, removeSkillSession } from '/shared/api.js';
  *   lazy?: boolean,
  *   deleteOnLeave?: boolean,
  *   onSessionCreated?: (sid: string) => void,
- *   onStreamToken?: (fullText: string) => void,
- *   onStreamEnd?: (text: string) => void,
+ *   onStreamToken?: (fullText: string, info: { agent: string, own: boolean }) => void,
+ *   onStreamEnd?: (text: string, info: { agent: string, own: boolean }) => void,
+ *   guestStreams?: boolean,
  *   onContentBlock?: (payload: { phase: string, tool?: string, args?: string, blockId?: string, output?: string }) => void,
  *   onActivity?: (payload: { sessionId: string, kind: 'turn_start' | 'thinking' | 'tool' }) => void,
  *   onSendFailed?: (payload: { text: string }) => void,
@@ -40,13 +41,18 @@ import { createSession, removeSkillSession } from '/shared/api.js';
  * }} options
  * @returns {Promise<ChatInstance>}
  */
+// One app chat holds the skill's own agent (`agentId`) and a guest addressed
+// by `@name` (Yinyue). onStreamToken / onStreamEnd hear the skill's own
+// agent's turns only — a guest's line never ends the page's turn. A page that
+// wants her lines too passes `guestStreams: true`; each call then says whose
+// (`info.agent`, `info.own`).
 export async function mount(el, options) {
   const { skillName, onSessionCreated, onStreamToken, onStreamEnd } = options;
   const lazy = !!options.lazy;
 
   let modelId = options.modelId || '';
   let sessionId = options.sessionId || null;
-  let streamBuffer = '';
+  const streamBuffers = new Map(); // agent → its turn's text so far
   let iframe = null;
   let mounting = null; // ensureMounted's promise — mount exactly once
   let embedAlive = false; // first inbound event from the embed = transport up
@@ -68,6 +74,7 @@ export async function mount(el, options) {
   function buildSrc(sid) {
     const p = new URLSearchParams({ skill: skillName, session: sid, hide_toolbar: '1' });
     if (modelId) p.set('model', modelId);
+    if (options.agentId) p.set('agent', options.agentId);
     if (instanceMeta) {
       // Remote: the relay's connect page establishes its own WebRTC.
       const instanceId = instanceMeta.getAttribute('content') || '';
@@ -124,15 +131,25 @@ export async function mount(el, options) {
     setTimeout(() => { if (!embedAlive) flushOutbox(); }, 4000);
   }
 
+  // An older embed names no agent: its stream is the page's own, as before.
+  function streamInfo(payload) {
+    return { agent: payload?.agent || '', own: payload?.own !== false };
+  }
+  function heard(info) { return info.own || !!options.guestStreams; }
+
   const handlers = {
     stream_token(payload) {
-      streamBuffer += payload?.text || '';
-      if (onStreamToken) onStreamToken(streamBuffer);
+      const info = streamInfo(payload);
+      const text = (streamBuffers.get(info.agent) || '') + (payload?.text || '');
+      streamBuffers.set(info.agent, text);
+      if (onStreamToken && heard(info)) onStreamToken(text, info);
     },
     stream_end(payload) {
+      const info = streamInfo(payload);
       // Prefer the raw tokens over payload.text (may be rendered/stripped).
-      if (onStreamEnd) onStreamEnd(streamBuffer || payload?.text || '');
-      streamBuffer = '';
+      const text = streamBuffers.get(info.agent) || payload?.text || '';
+      streamBuffers.delete(info.agent);
+      if (onStreamEnd && heard(info)) onStreamEnd(text, info);
     },
     content_block(payload) { options.onContentBlock?.(payload); },
     // The agent is working though nothing streams — at most one per ~5 s.
@@ -223,14 +240,14 @@ export async function mount(el, options) {
 
   /** Send a message to the chat (the embed submits it). */
   function send(text) {
-    streamBuffer = '';
+    streamBuffers.clear();
     ensureMounted();
     post({ type: 'linggen-skill', action: 'send', payload: { text } });
   }
 
   /** Send a message to the agent without showing it in the chat. */
   function sendHidden(text) {
-    streamBuffer = '';
+    streamBuffers.clear();
     ensureMounted();
     post({ type: 'linggen-skill', action: 'send_hidden', payload: { text } });
   }
@@ -281,7 +298,7 @@ export async function mount(el, options) {
       if (!sid || sid === sessionId) return;
       sessionId = sid;
       tellStages();
-      streamBuffer = '';
+      streamBuffers.clear();
       if (!iframe) return; // lazy and not yet mounted: the first send uses it
       embedAlive = false;
       const done = loaded();

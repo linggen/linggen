@@ -18,6 +18,8 @@ import { eventHandlers } from './eventHandlers';
 import { normalizeAgentStatus } from './messageUtils';
 import { agentTracker } from './agentTracker';
 import { postToParent } from './parentFrame';
+import { pageAgent } from './pageAgent';
+import { ownsStream, streamEndPayload, streamTokenPayload } from './agentTurns.mts';
 
 export { suppressPermissionSync } from './eventHandlers/_shared';
 export { handleAskUser } from './eventHandlers';
@@ -164,22 +166,27 @@ function relayToSkillIframe(item: UiEvent): void {
   if (relayGlobal(item)) return;
   relayActivity(item);
 
+  // Every stream names its agent: one app chat holds the skill's own agent
+  // and a guest (`@银月`). `own` marks the skill's own agent's stream — the
+  // one a page's turn handlers are for (the bridge delivers only it by default).
+  // A subagent's stream is its parent's tool call, never the page's turn
+  // (the chat skips it the same way).
+  const agent = String(item.agent_id || '');
+  const own = ownsStream(agent, pageAgent(), !!agentTracker.getParent(agent));
   if (item.kind === 'token' && item.text) {
     postToParent({
       type: 'linggen-skill-event',
       event: 'stream_token',
-      payload: { text: item.text, done: item.phase === 'done' },
+      payload: streamTokenPayload(agent, item.text, item.phase === 'done', own),
     });
     return;
   }
 
   if (item.kind === 'turn_complete') {
-    const msgs = useChatStore.getState().messages;
-    const lastMsg = [...msgs].reverse().find((m) => m.role === 'agent');
     postToParent({
       type: 'linggen-skill-event',
       event: 'stream_end',
-      payload: { text: lastMsg?.text || '' },
+      payload: streamEndPayload(agent, useChatStore.getState().messages, own),
     });
     return;
   }
@@ -194,6 +201,7 @@ function relayToSkillIframe(item: UiEvent): void {
         args: item.data?.args,
         blockId: item.data?.block_id,
         output: item.phase === 'update' ? item.data?.output : undefined,
+        agent,
       },
     });
   }

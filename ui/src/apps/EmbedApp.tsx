@@ -8,7 +8,7 @@
  *   project  — VS Code project root (auto-creates/resumes a "VS Code" session)
  *   hide_toolbar — 1 to hide the compact toolbar (when parent provides its own chrome)
  */
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Plus } from 'lucide-react';
 import { ChatWidget } from '../components/chat';
 import { ToastContainer } from '../components/ToastContainer';
@@ -22,11 +22,15 @@ import type { SessionInfo } from '../types';
 import { useChatActions } from '../hooks/useChatActions';
 import { useRunInfo } from '../hooks/useRunInfo';
 import { postToParent, fromParent } from '../lib/parentFrame';
+import { pageAgent, setPageAgent } from '../lib/pageAgent';
 
 const params = new URLSearchParams(window.location.search);
 const pinnedSession = params.get('session') || '';
 const pinnedSkill = params.get('skill') || '';
 const pinnedModel = params.get('model') || '';
+// The skill's own agent (the page's `mount({ agentId })`): its hidden reports
+// go to it, and its stream is the one the page's turn handlers hear.
+setPageAgent(params.get('agent') || '');
 const vscProject = params.get('project') || '';
 const hideToolbar = params.get('hide_toolbar') === '1';
 
@@ -56,6 +60,8 @@ export const EmbedApp: React.FC = () => {
   const sessions = useSessionStore((s) => s.sessions);
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
   const agents = useServerStore((s) => s.agents);
+  // A person picks only an agent a person may address.
+  const addressable = useMemo(() => agents.filter((a) => !a.internal), [agents]);
   const selectedAgent = useServerStore((s) => s.selectedAgent);
   const projectStore = useSessionStore.getState();
   const agentStore = useServerStore.getState();
@@ -178,7 +184,9 @@ export const EmbedApp: React.FC = () => {
         }
         case 'send_hidden': {
           const hiddenText = payload?.text || '';
-          if (hiddenText) sendChatMessageRef.current(`[HIDDEN] ${hiddenText}`);
+          // A page's report is for the skill's own agent — never whoever
+          // `@@name` last left the chat with.
+          if (hiddenText) sendChatMessageRef.current(`[HIDDEN] ${hiddenText}`, pageAgent() || undefined);
           break;
         }
         case 'add_message':
@@ -243,7 +251,7 @@ export const EmbedApp: React.FC = () => {
               onChange={(e) => agentStore.setSelectedAgent(e.target.value)}
               className="text-xs bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded px-1.5 py-0.5 text-slate-700 dark:text-slate-300 outline-none max-w-[5rem]"
             >
-              {agents.map((a) => <option key={a.name} value={a.name}>{a.name}</option>)}
+              {addressable.map((a) => <option key={a.name} value={a.name}>{a.name}</option>)}
             </select>
             <select
               value={activeSessionId || ''}

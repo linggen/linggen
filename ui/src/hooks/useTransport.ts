@@ -166,7 +166,7 @@ export function useTransport({ sessionId, onReconnect, onParseError }: UseTransp
         // no TurnComplete is coming, the spinner would tick forever).
         // Same for ghost generating bubbles.
         armInterruptCheck();
-        useServerStore.setState({ pendingSends: {} });
+        useServerStore.setState({ pendingSends: {}, pendingSendAgents: {} });
         useChatStore.getState().finalizeAllGenerating();
         if (onReconnectRef.current) {
           onReconnectRef.current();

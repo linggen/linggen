@@ -13,25 +13,40 @@ export interface MentionableAgent {
 }
 
 /** What may close an `@name` besides whitespace (matches the server). */
-const NAME_END = /[\s,:，：、]/;
+const NAME_END = /^[\s,:，：、]/;
+const NAME_ENDS = /^[\s,:，：、]+/;
 
-/** The agent a message opens by addressing, if any: its id, and whether the
- *  chat should stay with it (`@@`). A `@path` never matches — a path is not
- *  an agent's name. */
+/** Whether `rest` opens with `name` as a whole name: what follows is the end,
+ *  a closing mark, or — when either side of the seam is CJK — anything
+ *  (`@银月你好`). `@lingo` is never `@ling`. */
+function opensWithName(rest: string, name: string): boolean {
+  if (!name || rest.slice(0, name.length).toLowerCase() !== name.toLowerCase()) return false;
+  const next = rest.charAt(name.length);
+  if (!next || NAME_END.test(next)) return true;
+  return CJK.test(next) || CJK.test(name.charAt(name.length - 1));
+}
+
+/** The agent a message opens by addressing, if any: its id, whether the chat
+ *  should stay with it (`@@`), and the words after the name. The name ends
+ *  at the longest id or alias the text starts with — the server reads the
+ *  same rule. A `@path` never matches — a path is not an agent's name. */
 export function leadingAgentMention(
   text: string,
   agents: MentionableAgent[],
-): { agent: string; sticky: boolean } | undefined {
+): { agent: string; sticky: boolean; body: string } | undefined {
   const t = text.trim();
   if (!t.startsWith('@')) return undefined;
   const sticky = t.startsWith('@@');
   const rest = t.slice(sticky ? 2 : 1);
-  const end = rest.search(NAME_END);
-  if (end <= 0 || !rest.slice(end).replace(/^[\s,:，：、]+/, '')) return undefined;
-  const name = rest.slice(0, end).toLowerCase();
-  const hit = agents.find((a) =>
-    a.name.toLowerCase() === name || (a.aliases ?? []).some((al) => al.trim().toLowerCase() === name));
-  return hit ? { agent: hit.name.toLowerCase(), sticky } : undefined;
+  let best: { agent: string; len: number } | undefined;
+  for (const a of agents) {
+    for (const n of [a.name, ...(a.aliases ?? [])].map((x) => x.trim())) {
+      if (n.length > (best?.len ?? 0) && opensWithName(rest, n)) best = { agent: a.name.toLowerCase(), len: n.length };
+    }
+  }
+  if (!best) return undefined;
+  const body = rest.slice(best.len).replace(NAME_ENDS, '');
+  return body ? { agent: best.agent, sticky, body } : undefined;
 }
 
 /** The input with its trailing `@@partial` completed to `@@Agent `. */
@@ -73,7 +88,8 @@ export function agentMatches(agent: MentionableAgent, filter: string): boolean {
   return [agent.name, ...(agent.aliases ?? [])].some((n) => n.trim().toLowerCase().includes(f));
 }
 
-const CJK = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/;
+/** CJK script: a name in it needs no space before the words (`@银月你好`). */
+const CJK = /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uac00-\ud7af]/;
 
 /** The language the page speaks: the framing page's `<html lang>` (a skill
  *  page such as a zh game, served from our own origin), else the browser's.

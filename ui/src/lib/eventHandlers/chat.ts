@@ -12,6 +12,7 @@ import {
   shouldHideInternalChatMessage,
 } from '../messageUtils';
 import { getSessionId, formatToolStartLine } from './_shared';
+import { askEndsWithTurn, completeAgentRuns, otherAgentRunning, sendEndsWithTurn } from '../agentTurns.mts';
 
 // ---------------------------------------------------------------------------
 // Text segment
@@ -315,49 +316,50 @@ export function handleTurnComplete(item: UiEventOf<'turn_complete'>): void {
   const durationMs = typeof data?.duration_ms === 'number' ? data.duration_ms : undefined;
   const contextTokens = typeof data?.context_tokens === 'number' ? data.context_tokens : undefined;
 
+  // One app chat holds more than one agent's turns (a guest answering an
+  // `@name`): this turn's end is this agent's alone. Mark its runs done
+  // first, then ask whether anyone else is still at work.
   const sid = getSessionId(item);
-  const cleared = sid ? agentTracker.clearRun(sid) : {};
+  if (sid) {
+    const { agentRuns } = useServerStore.getState();
+    useServerStore.setState({ agentRuns: completeAgentRuns(agentRuns, sid, agentId, Date.now()) });
+  }
+  const othersRunning = !!sid && otherAgentRunning(useServerStore.getState().agentRuns, sid, agentId);
+
+  const cleared = sid && !othersRunning ? agentTracker.clearRun(sid) : {};
   const elapsed = durationMs || cleared.elapsed;
   const ctxTokens = contextTokens || cleared.contextTokens;
 
   useChatStore.getState().turnComplete(agentId, elapsed, ctxTokens);
-  useInteractionStore.getState().setPendingAskUser(null);
+  const interaction = useInteractionStore.getState();
+  if (askEndsWithTurn(interaction.pendingAskUser?.agentId, agentId, (id) => agentTracker.getParent(id))) {
+    interaction.setPendingAskUser(null);
+  }
 
-  // Ensure status transitions to idle — the subsequent AgentStatus(idle)
-  // event may arrive late or be missed, leaving the spinner stuck on "Thinking…".
   if (!sid) return;
   const agentStore = useServerStore.getState();
-  agentStore.setAgentStatusText((prev) => ({ ...prev, [sid]: 'Idle' }));
-  // Mark the matching top-level agent_run as completed in the local
-  // mirror. The spinner reads agentRuns directly (see ChatPanel), and
-  // page_state polling lag would otherwise keep `status === 'running'`
-  // for seconds after the turn actually finished — leaving the spinner
-  // animating with no real work in flight.
-  markRunsCompletedForSession(sid, { topLevelOnly: true });
-  // Clear the optimistic pendingSend flag — the turn's done.
-  agentStore.setPendingSend(sid, false);
+  // Ensure status transitions to idle — the subsequent AgentStatus(idle)
+  // event may arrive late or be missed, leaving the spinner stuck on
+  // "Thinking…". Not while another agent's turn runs here.
+  if (!othersRunning) agentStore.setAgentStatusText((prev) => ({ ...prev, [sid]: 'Idle' }));
+  // Clear the optimistic pendingSend flag — when the send was this agent's.
+  if (sendEndsWithTurn(agentStore.pendingSendAgents[sid], agentId)) agentStore.setPendingSend(sid, false);
 }
 
 /**
- * Flip matching `running` rows in the local `agentRuns` mirror to
- * `completed`. We don't know the exact run_id from a TurnComplete /
- * SubagentResult event in every code path, so we match by
- * (session_id, top-level-or-subagent) instead. The next page_state
- * push will replace this with the server-authoritative state.
+ * Flip a subagent's `running` row in the local `agentRuns` mirror to
+ * `completed` on its SubagentResult. The next page_state push will
+ * replace this with the server-authoritative state.
  */
 function markRunsCompletedForSession(
   sessionId: string,
-  opts: { topLevelOnly?: boolean; subagentRunId?: string } = {},
+  opts: { subagentRunId: string },
 ): void {
   const store = useServerStore.getState();
   const next = store.agentRuns.map((r) => {
     if (r.session_id !== sessionId) return r;
     if (r.status !== 'running') return r;
-    if (opts.subagentRunId) {
-      if (r.run_id !== opts.subagentRunId) return r;
-    } else if (opts.topLevelOnly && r.parent_run_id) {
-      return r;
-    }
+    if (r.run_id !== opts.subagentRunId) return r;
     return { ...r, status: 'completed' as const, ended_at: Date.now() };
   });
   useServerStore.setState({ agentRuns: next });

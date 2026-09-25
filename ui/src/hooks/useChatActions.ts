@@ -15,7 +15,8 @@ import type { AskUserAnswer, ChatMessage, ContentBlock } from '../types';
 import { appConfig, sessionApi, workspaceApi } from '../lib/endpoints';
 import { ApiError, apiErrorMessage } from '../lib/api';
 import { postToParent } from '../lib/parentFrame';
-import { leadingAgentMention } from '../lib/chatMentions';
+import { agentMentionLabel, leadingAgentMention, mentionLanguage } from '../lib/chatMentions.mts';
+import { turnlessReply } from '../lib/agentTurns.mts';
 
 /**
  * Resolve the effective project root: explicit override > selected project >
@@ -29,6 +30,17 @@ function getProjectRoot(override?: string | null): string {
   if (state.selectedProjectRoot) return state.selectedProjectRoot;
   const sess = state.allSessions.find((s) => s.id === state.activeSessionId);
   return sess?.project || sess?.cwd || '';
+}
+
+/** The plain line for an agent that can't answer in this chat. */
+function addUnavailableLine(agentId: string): void {
+  const agent = useServerStore.getState().agents.find((a) => a.name.toLowerCase() === agentId.toLowerCase());
+  const name = agent ? agentMentionLabel(agent, mentionLanguage()) : agentId;
+  const ts = new Date();
+  useChatStore.getState().addMessage({
+    role: 'agent', from: 'system', to: 'user', text: `${name} can't answer here.`,
+    timestamp: ts.toLocaleTimeString(), timestampMs: ts.getTime(), isGenerating: false,
+  });
 }
 
 export function useChatActions(
@@ -71,8 +83,10 @@ export function useChatActions(
     const agent = useServerStore.getState().selectedAgent;
     // A message that opens with `@name` goes to that agent — also when it came
     // from a page through the embed bridge, not the input (`@银月 …`).
+    // Only an agent a person may address: never an internal one.
+    const addressable = useServerStore.getState().agents.filter((a) => !a.internal);
     const agentToUse = targetAgent
-      || leadingAgentMention(userMessage, useServerStore.getState().agents)?.agent
+      || leadingAgentMention(userMessage, addressable)?.agent
       || agent;
     if (!agentToUse) return;
     const now = new Date();
@@ -236,7 +250,7 @@ export function useChatActions(
       // so ChatPanel renders the busy state before the server's first
       // page_state push lands. Cleared by handleTurnComplete. A new chat has
       // no session id yet — it's flagged once the server returns one.
-      if (sid) useServerStore.getState().setPendingSend(sid, true);
+      if (sid) useServerStore.getState().setPendingSend(sid, true, agentToUse);
       // The hint answered the turn before this one.
       if (sid) useSuggestionStore.getState().clearHint(sid);
       const { isMissionSession, activeMissionId, isSkillSession, activeSkillName } = useSessionStore.getState();
@@ -253,7 +267,7 @@ export function useChatActions(
         followups: true,
       });
       if (data?.session_id && !sid) {
-        if (data.status !== 'queued') useServerStore.getState().setPendingSend(data.session_id, true);
+        if (data.status !== 'queued' && !turnlessReply(data.status)) useServerStore.getState().setPendingSend(data.session_id, true, data.agent_id || agentToUse);
         useSessionStore.getState().setActiveSessionId(data.session_id);
         useSessionStore.getState().fetchSessions();
         postToParent({ type: 'linggen-skill-event', event: 'session_created', payload: { sessionId: data.session_id } });
@@ -262,12 +276,20 @@ export function useChatActions(
         useChatStore.getState().removeLastUserMessage(userMessage, agentToUse);
         return;
       }
-      // The agent isn't in this app's world yet (the skill's `place`): no
-      // turn ran. The page says its own line.
-      if (data?.status === 'absent') {
+      // No turn ran and nothing was kept, so the typed bubble goes. The agent
+      // isn't in this app's world yet (`absent`, the skill's `place`) — the
+      // page says its own line — or can't answer here (`unavailable`) — a
+      // plain status line says so.
+      if (data && turnlessReply(data.status)) {
         const at = data.session_id || sid;
         if (at) useServerStore.getState().setPendingSend(at, false);
-        postToParent({ type: 'linggen-skill-event', event: 'agent_absent', payload: { agent: data.agent_id, text: userMessage } });
+        const to = data.agent_id || agentToUse;
+        useChatStore.getState().removeLastUserMessage(userMessage, to);
+        if (data.status === 'absent') {
+          postToParent({ type: 'linggen-skill-event', event: 'agent_absent', payload: { agent: to, text: userMessage } });
+        } else {
+          addUnavailableLine(to);
+        }
         return;
       }
       if (sid) {
@@ -276,6 +298,7 @@ export function useChatActions(
       // The server says who took the turn: an `@name` it resolved may not be
       // the agent this surface sent to.
       const ranAs = typeof data?.agent_id === 'string' && data.agent_id ? data.agent_id : agentToUse;
+      if (sid && ranAs !== agentToUse) useServerStore.getState().setPendingSend(sid, true, ranAs);
       useChatStore.getState().upsertGenerating(ranAs, 'Model loading...', 'Model loading...');
     } catch (e) {
       console.error('Error in chat:', e);

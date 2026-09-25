@@ -27,7 +27,7 @@ import {
   leadingAgentMention,
   mentionLanguage,
   mentionInProgress,
-} from '../../lib/chatMentions';
+} from '../../lib/chatMentions.mts';
 
 export interface ChatInputProps {
   projectRoot?: string | null;
