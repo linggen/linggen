@@ -382,6 +382,18 @@ impl SessionStore {
         Ok(count)
     }
 
+    /// Rewrite a session's history from what it holds now, with appends held
+    /// off meanwhile: a row written while `edit` runs can't be lost.
+    pub fn edit_chat_history(
+        &self,
+        session_id: &str,
+        edit: impl FnOnce(Vec<ChatMsg>) -> Vec<ChatMsg>,
+    ) -> Result<()> {
+        let _guard = self.append_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let rows = self.get_chat_history(session_id)?;
+        self.rewrite_chat_history(session_id, &edit(rows))
+    }
+
     /// Replace the entire chat history for a session with the given messages.
     pub fn rewrite_chat_history(&self, session_id: &str, msgs: &[ChatMsg]) -> Result<()> {
         Self::validate_id(session_id)?;

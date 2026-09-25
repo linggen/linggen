@@ -272,17 +272,18 @@ mod tests {
         );
     }
 
-    /// A compaction summary kept in the chat (the older part, folded) is a
-    /// row like any other: it leads the dialogue, the full rows after it.
+    /// A compaction summary is the compacting agent's context, kept under
+    /// its own pseudo-sender (`compact_rows`): never a line of the dialogue
+    /// she reads. The rows after it follow in full.
     #[test]
-    fn a_folded_summary_leads_and_the_rows_after_it_follow_in_full() {
+    fn a_compaction_summary_is_not_dialogue() {
         let rows = vec![
-            row("user", "- Went to 临淄; took the 榜文", false),
+            row("compaction", "- Went to 临淄; took the 榜文", false),
             row("user", "去碣石", false),
             row("ling", "碣石到了。", false),
         ];
         let seen = dialogue(rows, &agents());
-        assert_eq!(seen.len(), 3);
-        assert!(seen[0].content.starts_with("- Went to"));
+        let got: Vec<&str> = seen.iter().map(|m| m.content.as_str()).collect();
+        assert_eq!(got, ["去碣石", "碣石到了。"]);
     }
 }

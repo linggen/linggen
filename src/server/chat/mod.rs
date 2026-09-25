@@ -22,6 +22,7 @@
 
 mod admin;
 mod cloud_gate;
+mod compact_rows;
 mod handler;
 pub(super) mod helpers;
 mod plan_flow;

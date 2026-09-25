@@ -226,6 +226,14 @@ pub(crate) async fn compact_chat_api(
                     .into_iter()
                     .map(|c| crate::message::ChatMessage::new("user", c)),
             );
+            // The file as it stands before the summary is written: what
+            // lands meanwhile (a guest's answer) is after this and kept.
+            let snapshot_len = state
+                .manager
+                .global_sessions
+                .get_chat_history(&session_id)
+                .map(|rows| rows.len())
+                .unwrap_or(0);
             let result = engine.force_compact(&mut messages, focus).await;
 
             let referenced_files: Vec<String> = messages
@@ -235,37 +243,24 @@ pub(crate) async fn compact_chat_api(
                 .into_iter()
                 .collect();
 
-            // Rewrite the persisted session file with the compacted messages.
-            if result.is_some() {
+            // Fold the agent's own span of the session file into the summary
+            // (`compact_rows`): other speakers' rows stay, and rows written
+            // since the snapshot are kept.
+            if let Some(summary) = result.as_deref() {
                 // Observation bodies are now folded into the summary held in
                 // chat_history; drop them so they aren't re-expanded.
                 engine.observations.clear();
-                let chat_msgs: Vec<crate::state_fs::sessions::ChatMsg> = messages
+                let own = engine.agent_id.clone().unwrap_or_else(|| agent_id.clone());
+                let tail = messages
                     .iter()
-                    .map(|m| {
-                        let is_user = m.role == "user" || m.role == "system";
-                        crate::state_fs::sessions::ChatMsg {
-                            agent_id: agent_id.clone(),
-                            from_id: if is_user {
-                                "user".to_string()
-                            } else {
-                                agent_id.clone()
-                            },
-                            to_id: if is_user {
-                                agent_id.clone()
-                            } else {
-                                "user".to_string()
-                            },
-                            content: m.content.clone(),
-                            timestamp: crate::util::now_ts_secs(),
-                            is_observation: m.role == "tool",
-                        }
-                    })
-                    .collect();
+                    .position(|m| m.content == summary)
+                    .map_or(&messages[..], |i| &messages[i + 1..]);
                 if let Err(e) = state
                     .manager
                     .global_sessions
-                    .rewrite_chat_history(&session_id, &chat_msgs)
+                    .edit_chat_history(&session_id, |rows| {
+                        super::compact_rows::compacted(rows, snapshot_len, &own, tail, summary)
+                    })
                 {
                     tracing::warn!("Failed to rewrite session after compact: {e}");
                 }

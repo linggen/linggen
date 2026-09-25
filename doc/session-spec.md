@@ -72,6 +72,8 @@ When estimated prompt tokens exceed `compact_threshold` × context window, the e
 1. **Evict** — replace old `tool_result` bodies with a placeholder in place (cheap, structure preserved).
 2. **Summarize** — if still over budget, replace everything between the system prompt and a recent verbatim tail with one model-written structured summary. `/compact` forces this tier regardless of budget.
 
+`/compact` also folds the session file: only the compacting agent's own span (its rows and system rows before the verbatim tail) becomes one summary row under the hidden pseudo-sender `compaction` — context for that agent, never a chat line, never read by another agent. Other speakers' rows (the companion's lines in an app chat, the user's lines to her) stay where they were, and rows written while the summary was made are kept.
+
 `compact_threshold` (fraction; per-session → `linggen.toml` → 0.95 default) and `compact_focus` (hint fed to the summary prompt) are per-session, set via `POST /api/chat/compact_config`, persisted in `session.yaml`, and re-read on every engine build — so they survive restart and apply to chat-only and mission sessions. `messages.jsonl` is the unbounded source of truth; there is no blunt history cap.
 
 ## Creators

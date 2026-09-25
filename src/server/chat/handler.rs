@@ -608,7 +608,10 @@ async fn restore_chat_history_if_empty(
                 }
             }
         };
-        let role = if m.from_id == "user" || is_relay {
+        // A compaction summary is context the agent was handed, as it was
+        // when it was made (`compact_rows`).
+        let is_summary = m.from_id == super::compact_rows::COMPACTION_SENDER;
+        let role = if m.from_id == "user" || is_relay || is_summary {
             "user"
         } else {
             "assistant"
