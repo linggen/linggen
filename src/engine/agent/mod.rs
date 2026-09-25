@@ -655,17 +655,28 @@ impl AgentManager {
         Ok(out)
     }
 
-    /// The agent a leading `@name` addresses — by id or declared alias.
-    pub async fn resolve_agent_mention(
-        &self,
-        project_root: &PathBuf,
-        name: &str,
-    ) -> Option<String> {
-        let specs = self.list_agent_specs(project_root).await.ok()?;
+    /// Every `(agent id, name)` a leading `@name` may address — ids, spec
+    /// names and declared aliases of the agents a person may address.
+    pub async fn mention_names(&self, project_root: &Path) -> Vec<(String, String)> {
+        let Ok(specs) = self.list_agent_specs(project_root).await else {
+            return Vec::new();
+        };
         specs
-            .into_iter()
-            .find(|s| s.answers_to(name))
-            .map(|s| s.agent_id)
+            .iter()
+            .flat_map(|s| {
+                s.mention_names()
+                    .into_iter()
+                    .map(|n| (s.agent_id.clone(), n.to_string()))
+            })
+            .collect()
+    }
+
+    /// The agent a session's live engine runs — `None` when no engine is
+    /// built yet, or it is mid-turn (its lock is held).
+    pub async fn live_session_agent(&self, session_id: &str) -> Option<String> {
+        let engine = self.session_engines.lock().await.get(session_id).cloned()?;
+        let guard = engine.try_lock().ok()?;
+        guard.agent_id.clone()
     }
 
     pub async fn agent_exists(&self, project_root: &Path, agent_id: &str) -> bool {

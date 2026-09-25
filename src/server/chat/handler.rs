@@ -35,6 +35,54 @@ pub(super) fn parse_explicit_target_prefix(message: &str) -> Option<(&str, &str)
 /// What may close an `@name` besides whitespace.
 const MENTION_ENDS: &[char] = &[',', ':', '\u{ff0c}', '\u{ff1a}', '\u{3001}'];
 
+/// The agent a message opens by addressing: `@name body` (or `@@name
+/// body`), where the name is the LONGEST id or alias of `names` — pairs of
+/// (agent id, name) — the text starts with, case-insensitively. The name is
+/// whole when what follows is the end, whitespace or a closing mark, or
+/// when either side of the seam is CJK (`@银月你好`): `@lingo` is never
+/// `@ling`. The chat input reads the same rule (`ui/src/lib/chatMentions.ts`).
+pub(super) fn leading_mention<'a>(
+    message: &'a str,
+    names: &[(String, String)],
+) -> Option<(String, &'a str)> {
+    let rest = message.trim().strip_prefix('@')?;
+    let rest = rest.strip_prefix('@').unwrap_or(rest);
+    let (agent, len) = names
+        .iter()
+        .filter(|(_, n)| opens_with_name(rest, n.trim()))
+        .map(|(agent, n)| (agent, n.trim().len()))
+        .max_by_key(|(_, len)| *len)?;
+    let body =
+        rest[len..].trim_start_matches(|c: char| c.is_whitespace() || MENTION_ENDS.contains(&c));
+    (!body.is_empty()).then(|| (agent.clone(), body))
+}
+
+/// Whether `rest` opens with `name` as a whole name (see [`leading_mention`]).
+fn opens_with_name(rest: &str, name: &str) -> bool {
+    let Some(head) = rest.get(..name.len()) else {
+        return false;
+    };
+    if name.is_empty() || head.to_lowercase() != name.to_lowercase() {
+        return false;
+    }
+    let Some(next) = rest[name.len()..].chars().next() else {
+        return true;
+    };
+    next.is_whitespace()
+        || MENTION_ENDS.contains(&next)
+        || is_cjk(next)
+        || name.chars().last().is_some_and(is_cjk)
+}
+
+/// CJK script: a name in it needs no space before the words.
+fn is_cjk(c: char) -> bool {
+    matches!(c,
+        '\u{3040}'..='\u{30ff}'
+        | '\u{3400}'..='\u{9fff}'
+        | '\u{f900}'..='\u{faff}'
+        | '\u{ac00}'..='\u{d7af}')
+}
+
 /// Lead-in filler the auto-titler strips before picking words. Matched
 /// case-insensitively at a word boundary so "hide" is never read as
 /// "hi" + "de". Longest match wins so "i want to" beats bare "i".
@@ -270,17 +318,17 @@ async fn maybe_auto_rename(state: &Arc<ServerState>, session_id: &str, message: 
 
 /// Resolve the effective `(target_agent_id, clean_message)` pair.
 ///
-/// Honors a leading `@name ` when it names an agent by id or declared alias
-/// (`@银月`); otherwise the request's `agent_id` and message stand as-is.
+/// Honors a leading `@name` when it names an agent by id or declared alias
+/// (`@银月`, [`leading_mention`]); otherwise the request's `agent_id` and
+/// message stand as-is.
 async fn route_target(
     state: &Arc<ServerState>,
     req: &ChatRequest,
-    root: &PathBuf,
+    root: &Path,
 ) -> (String, String) {
-    if let Some((candidate, body)) = parse_explicit_target_prefix(&req.message) {
-        if let Some(agent_id) = state.manager.resolve_agent_mention(root, candidate).await {
-            return (agent_id, body.to_string());
-        }
+    let names = state.manager.mention_names(root).await;
+    if let Some((agent_id, body)) = leading_mention(&req.message, &names) {
+        return (agent_id, body.to_string());
     }
     (req.agent_id.clone(), req.message.clone())
 }
@@ -1271,8 +1319,8 @@ pub(crate) async fn start_turn(
 #[cfg(test)]
 mod tests {
     use super::{
-        auto_session_title, parse_explicit_target_prefix, take_aside, trim_live_history,
-        turn_creator,
+        auto_session_title, leading_mention, parse_explicit_target_prefix, take_aside,
+        trim_live_history, turn_creator,
     };
     use super::{busy_message, BusyMessage};
     use crate::engine::skill::QueueMode;
@@ -1373,6 +1421,45 @@ mod tests {
         assert_eq!(parse_explicit_target_prefix("@src/main.rs explain"), None);
         assert_eq!(parse_explicit_target_prefix("@notes.md explain"), None);
         assert_eq!(parse_explicit_target_prefix("hi @yinyue there"), None);
+    }
+
+    fn names() -> Vec<(String, String)> {
+        [
+            ("ling", "ling"),
+            ("ling", "Ling"),
+            ("yinyue", "yinyue"),
+            ("yinyue", "Yinyue"),
+            ("yinyue", "银月"),
+            ("yinyue", "银月儿"),
+        ]
+        .into_iter()
+        .map(|(a, n)| (a.to_string(), n.to_string()))
+        .collect()
+    }
+
+    /// `@银月你好` reaches her: the name ends at the longest alias the text
+    /// opens with, and a CJK seam needs no space. A Latin name still needs
+    /// its end — `@lingo` is nobody — and a path is never a name.
+    #[test]
+    fn a_mention_ends_at_the_longest_name_and_a_cjk_seam_needs_no_space() {
+        let n = names();
+        let got = |m: &str| leading_mention(m, &n).map(|(a, b)| (a, b.to_string()));
+        let pair = |a: &str, b: &str| Some((a.to_string(), b.to_string()));
+        assert_eq!(got("@银月你好"), pair("yinyue", "你好"));
+        assert_eq!(got("@银月 你看这一局"), pair("yinyue", "你看这一局"));
+        assert_eq!(got("@银月，你看"), pair("yinyue", "你看"));
+        assert_eq!(
+            got("@银月儿在吗"),
+            pair("yinyue", "在吗"),
+            "the longest alias"
+        );
+        assert_eq!(got("@@Yinyue: hi"), pair("yinyue", "hi"));
+        assert_eq!(got("@ling hi"), pair("ling", "hi"));
+        assert_eq!(got("@LING, hi"), pair("ling", "hi"));
+        assert_eq!(got("@lingo hi"), None);
+        assert_eq!(got("@src/main.rs explain"), None);
+        assert_eq!(got("@银月"), None, "no words, no message");
+        assert_eq!(got("hi @yinyue there"), None);
     }
 
     #[test]

@@ -43,16 +43,24 @@ impl AgentSpecFile {
     /// its id or one of its declared aliases, case-insensitively.
     /// An internal agent answers to no one.
     pub fn answers_to(&self, name: &str) -> bool {
-        let name = name.trim();
-        !self.spec.internal
-            && !name.is_empty()
-            && (self.agent_id.eq_ignore_ascii_case(name)
-                || self.spec.name.eq_ignore_ascii_case(name)
-                || self
-                    .spec
-                    .aliases
-                    .iter()
-                    .any(|a| a.trim().to_lowercase() == name.to_lowercase()))
+        let name = name.trim().to_lowercase();
+        self.mention_names()
+            .iter()
+            .any(|n| n.to_lowercase() == name)
+    }
+
+    /// Every name a leading `@` may address this agent by — its id, its
+    /// spec name and its aliases, trimmed. None for an internal agent.
+    pub fn mention_names(&self) -> Vec<&str> {
+        if self.spec.internal {
+            return Vec::new();
+        }
+        [self.agent_id.as_str(), self.spec.name.as_str()]
+            .into_iter()
+            .chain(self.spec.aliases.iter().map(String::as_str))
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+            .collect()
     }
 }
 
