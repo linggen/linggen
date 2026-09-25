@@ -34,20 +34,6 @@ use std::time::Duration;
 use tokio::sync::{broadcast, Mutex};
 use tracing::debug;
 
-// ── Helpers ─────────────────────────────────────────────────────────────
-
-/// Check if a hostname falls in the RFC 1918 172.16.0.0/12 range (172.16.x.x – 172.31.x.x).
-fn is_rfc1918_172(host: &str) -> bool {
-    if let Some(rest) = host.strip_prefix("172.") {
-        if let Some(second_octet) = rest.split('.').next() {
-            if let Ok(n) = second_octet.parse::<u8>() {
-                return (16..=31).contains(&n);
-            }
-        }
-    }
-    false
-}
-
 // ── Public types ────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]

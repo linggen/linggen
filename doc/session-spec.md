@@ -164,7 +164,7 @@ Available tools depend on the session's effective mode for the current path:
 | Mode | Available tools |
 |:-----|:---------------|
 | chat | None |
-| read | Read, Glob, Grep, WebSearch, WebFetch, capture_screenshot, plan tools, AskUser, read-class Bash |
+| read | Read, Glob, Grep, WebSearch, WebFetch, plan tools, AskUser, read-class Bash |
 | edit | Everything in read + Write, Edit, write-class Bash |
 | admin | Everything in edit + admin-class Bash |
 

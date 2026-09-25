@@ -739,7 +739,7 @@ pub(super) fn is_under_temp(target: &Path) -> bool {
 ///
 /// Lookup order:
 /// 1. Built-in tools — `engine::tools::builtin_tier(name)`. Owns Read,
-///    Write, Edit, Bash, Glob, Grep, capture_screenshot, Task, Skill,
+///    Write, Edit, Bash, Glob, Grep, Task, Skill,
 ///    RunApp, lock_paths, unlock_paths, WebSearch, WebFetch, AskUser.
 /// 2. Plan-mode tools (`EnterPlanMode`, `ExitPlanMode`, `UpdatePlan`) —
 ///    routed through actions.rs, not Tools::execute, but still need a

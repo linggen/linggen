@@ -1,12 +1,11 @@
 use super::tool_helpers::{build_globset, expand_tilde, sanitize_rel_path, to_rel_string};
-use super::{is_rfc1918_172, ToolResult, Tools};
+use super::{ToolResult, Tools};
 use anyhow::Result;
 use ignore::WalkBuilder;
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Component, Path};
-use std::time::Duration;
 use tracing::info;
 
 /// Extract the longest non-wildcard directory prefix from an absolute glob pattern.
@@ -48,12 +47,6 @@ pub(super) struct ReadFileArgs {
     pub(super) line_range: Option<[usize; 2]>,
 }
 
-#[derive(Debug, Deserialize)]
-pub(super) struct CaptureScreenshotArgs {
-    pub(super) url: String,
-    pub(super) delay_ms: Option<u64>,
-}
-
 impl Tools {
     pub(super) async fn list_files(&self, args: ListFilesArgs) -> Result<ToolResult> {
         self.run_blocking("list_files", move |tools| tools.list_files_inner(args))
@@ -63,16 +56,6 @@ impl Tools {
     pub(super) async fn read_file(&self, args: ReadFileArgs) -> Result<ToolResult> {
         self.run_blocking("read_file", move |tools| tools.read_file_inner(args))
             .await
-    }
-
-    pub(super) async fn capture_screenshot(
-        &self,
-        args: CaptureScreenshotArgs,
-    ) -> Result<ToolResult> {
-        self.run_blocking("capture_screenshot", move |tools| {
-            tools.capture_screenshot_inner(args)
-        })
-        .await
     }
 
     fn list_files_inner(&self, args: ListFilesArgs) -> Result<ToolResult> {
@@ -404,57 +387,6 @@ impl Tools {
             }),
             other => Ok(other),
         }
-    }
-
-    fn capture_screenshot_inner(&self, args: CaptureScreenshotArgs) -> Result<ToolResult> {
-        use headless_chrome::Browser;
-
-        // Validate URL to prevent SSRF: only allow http/https and block private IPs.
-        let parsed_url: reqwest::Url = args
-            .url
-            .parse()
-            .map_err(|e| anyhow::anyhow!("Invalid URL: {}", e))?;
-        match parsed_url.scheme() {
-            "http" | "https" => {}
-            scheme => anyhow::bail!("Disallowed URL scheme: {}", scheme),
-        }
-        if let Some(host) = parsed_url.host_str() {
-            let is_private = host == "localhost"
-                || host == "127.0.0.1"
-                || host == "::1"
-                || host == "0.0.0.0"
-                || host.starts_with("10.")
-                || is_rfc1918_172(host)
-                || host.starts_with("192.168.")
-                || host.ends_with(".local");
-            if is_private {
-                anyhow::bail!("Disallowed URL host (private/internal address): {}", host);
-            }
-        }
-
-        let browser = Browser::default()?;
-        let tab = browser.new_tab()?;
-
-        tab.navigate_to(&args.url)?;
-        tab.wait_until_navigated()?;
-
-        // Wait a bit for dynamic content
-        std::thread::sleep(Duration::from_millis(args.delay_ms.unwrap_or(1000)));
-
-        let png_data = tab.capture_screenshot(
-            headless_chrome::protocol::cdp::Page::CaptureScreenshotFormatOption::Png,
-            None,
-            None,
-            true,
-        )?;
-
-        use base64::prelude::*;
-        let b64 = BASE64_STANDARD.encode(png_data);
-
-        Ok(ToolResult::Screenshot {
-            url: args.url,
-            base64: b64,
-        })
     }
 }
 

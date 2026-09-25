@@ -1,6 +1,5 @@
-//! Pictures: screenshots and generated images.
+//! Pictures: generated images.
 
-use super::super::file_tools::CaptureScreenshotArgs;
 use super::super::{ToolCall, ToolResult, Tools};
 use super::Tool;
 use crate::engine::permission::PermissionMode;
@@ -8,42 +7,6 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::time::Duration;
-
-pub struct CaptureScreenshotTool;
-#[async_trait]
-impl Tool for CaptureScreenshotTool {
-    fn name(&self) -> &'static str {
-        "capture_screenshot"
-    }
-    fn description(&self) -> &'static str {
-        "Capture a screenshot of a URL."
-    }
-    fn tier(&self) -> PermissionMode {
-        PermissionMode::Read
-    }
-    fn args_schema(&self) -> Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "url": {"type": "string", "description": "URL to capture"},
-                "delay_ms": {"type": "integer", "description": "Delay before capture in milliseconds"}
-            },
-            "required": ["url"]
-        })
-    }
-    fn legacy_schema_entry(&self) -> Value {
-        json!({
-            "name": "capture_screenshot",
-            "args": {"url": "string", "delay_ms": "number?"},
-            "returns": "{url,base64}"
-        })
-    }
-    async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
-        let args: CaptureScreenshotArgs = serde_json::from_value(call.args)
-            .map_err(|e| anyhow::anyhow!("invalid args for capture_screenshot: {}", e))?;
-        tools.capture_screenshot(args).await
-    }
-}
 
 /// One picture from a text prompt, drawn on this Mac by the local picture
 /// lane, saved in the active skill's own `data/pictures/` folder and

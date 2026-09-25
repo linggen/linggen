@@ -37,7 +37,6 @@ Built-in tools are the kernel API. Skills are userspace.
 | `Write` | `path, content` | Create/overwrite file |
 | `Edit` | `path, old_string, new_string, replace_all?` | String replacement in file |
 | `Bash` | `cmd, timeout_ms?` | Shell command execution |
-| `capture_screenshot` | `url, delay_ms?` | Web page screenshot |
 | `GenerateImage` | `prompt, name, shape?, reference?, seed?` | One picture from the local picture lane, saved as `<skill>/data/pictures/<name>.png`, returned as `/apps/<skill>/data/pictures/<name>.png` |
 | `lock_paths` | `globs, ttl_ms?` | Acquire file locks (multi-agent) |
 | `unlock_paths` | `tokens` | Release file locks |

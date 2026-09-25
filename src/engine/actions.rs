@@ -119,9 +119,9 @@ fn value_to_action(value: serde_json::Value) -> Option<ModelAction> {
     // Note: {"type":"tool","tool":"Read"} is already handled above (the "tool" key
     // check at line 102 fires first), so we don't need a "tool" arm here.
     let tool_name = match action_type {
-        "Read" | "Grep" | "Write" | "Edit" | "Glob" | "Bash" | "capture_screenshot"
-        | "lock_paths" | "unlock_paths" | "Task" | "delegate_to_agent" | "EnterPlanMode"
-        | "enter_plan_mode" | "UpdatePlan" | "update_plan" => {
+        "Read" | "Grep" | "Write" | "Edit" | "Glob" | "Bash" | "lock_paths" | "unlock_paths"
+        | "Task" | "delegate_to_agent" | "EnterPlanMode" | "enter_plan_mode" | "UpdatePlan"
+        | "update_plan" => {
             // Normalize legacy snake_case action types to PascalCase tool names.
             match action_type {
                 "enter_plan_mode" => "EnterPlanMode",

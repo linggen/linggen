@@ -38,7 +38,7 @@ Rationale: the user is the authority on their own machine. The permission system
 | Mode | What's available |
 |:-----|:-----------------|
 | **chat** | `Skill` only (navigation primitive — always allowed). Any other tool the agent attempts triggers an upgrade prompt offering to switch the folder to the needed tier. The user can Allow once, Switch persistently, or Deny. |
-| **read** | `Skill` + `Read`, `Glob`, `Grep`, `WebSearch`, `WebFetch`, `capture_screenshot`, plan tools, `AskUser`, read-class Bash |
+| **read** | `Skill` + `Read`, `Glob`, `Grep`, `WebSearch`, `WebFetch`, plan tools, `AskUser`, read-class Bash |
 | **edit** | Everything in read + `Write`, `Edit`, write-class Bash |
 | **admin** | Everything in edit + admin-class Bash |
 
@@ -84,7 +84,6 @@ What "target path" each tool gates on:
 | `AskUser`, plan tools | cwd | Conversational primitives; cwd-tier check applies. |
 | `Skill` | none — always allowed | Navigation primitive; the activated skill goes through its own permission flow. |
 | `mcp__memory__memory_*` | none | ling-mem's own tools over MCP. Every MCP tool's static tier is Admin; memory's server declares `gated: false`, so its tools reach a chat-tier session without a prompt. Nothing here touches the workspace, so no path check applies. |
-| `capture_screenshot` | cwd | Network op (URL → image), cwd-tier check applies. |
 
 ### Browser actions
 
