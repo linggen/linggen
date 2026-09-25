@@ -127,10 +127,10 @@ pub(crate) fn as_transcript(rows: &[ChatMsg]) -> String {
 /// A row as the model reads another speaker's line. Older relay rows carry
 /// their label in the text already.
 fn labeled(m: &ChatMsg) -> String {
-    if m.from_id == "user" || m.content.starts_with('[') {
+    if m.from_id == "user" {
         return m.content.clone();
     }
-    format!("[{}]: {}", super::sender_label(&m.from_id), m.content)
+    super::with_sender_label(&m.from_id, &m.content)
 }
 
 #[cfg(test)]
@@ -246,6 +246,30 @@ mod tests {
         assert_eq!(kept, vec![8, 9]);
         let one = within_budget(vec![7usize], |_| 1_000, 10);
         assert_eq!(one, vec![7]);
+    }
+
+    /// Only the speaker's own label counts as one: a line of Ling's that
+    /// opens with a bracket is still labeled, and a row already carrying
+    /// its label is not labeled twice.
+    #[test]
+    fn a_bracket_is_not_a_label_but_the_speakers_own_label_is() {
+        let rows = vec![
+            row("ling", "[scene] 临淄到了。", false),
+            row("yinyue", "[Yinyue]: 山里有溪。", false),
+            row("yinyue", "[Ling]: 不是我说的。", false),
+        ];
+        let got: Vec<String> = as_thread(&rows, "user-reader")
+            .into_iter()
+            .map(|m| m.content)
+            .collect();
+        assert_eq!(
+            got,
+            [
+                "[Ling]: [scene] 临淄到了。",
+                "[Yinyue]: 山里有溪。",
+                "[Yinyue]: [Ling]: 不是我说的。",
+            ]
+        );
     }
 
     /// A compaction summary kept in the chat (the older part, folded) is a

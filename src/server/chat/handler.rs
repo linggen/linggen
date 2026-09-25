@@ -593,8 +593,8 @@ async fn restore_chat_history_if_empty(
             "assistant"
         };
         // Older relay rows carry their label baked into the text already.
-        let content = if is_relay && !m.content.starts_with('[') {
-            format!("[{}]: {}", super::sender_label(&m.from_id), m.content)
+        let content = if is_relay {
+            super::with_sender_label(&m.from_id, &m.content)
         } else {
             m.content.clone()
         };

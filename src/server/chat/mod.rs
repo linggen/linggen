@@ -103,6 +103,18 @@ pub(crate) fn sender_label(id: &str) -> String {
     }
 }
 
+/// `content` with `from`'s label in front — "[Yinyue]: …" — unless it
+/// carries exactly that label already (older relay rows baked it into the
+/// text). Only the speaker's own label counts: a line that merely opens
+/// with `[` ("[scene] …", a markdown link) is still labeled.
+pub(crate) fn with_sender_label(from: &str, content: &str) -> String {
+    let label = format!("[{}]:", sender_label(from));
+    if content.starts_with(&label) {
+        return content.to_string();
+    }
+    format!("{label} {content}")
+}
+
 /// Open a URL in the system's default browser. Used by skill app launchers
 /// when the request originated from the local UI (no remote consumer).
 pub(super) fn open_in_browser(url: &str) -> std::io::Result<()> {
