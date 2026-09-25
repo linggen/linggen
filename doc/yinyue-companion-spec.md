@@ -139,7 +139,7 @@ voice, and may answer `SILENT`. Every `PetSpeak` stamps the cooldown
 the path. The engine names no app: it carries the app's
 words. Why a gate and not a wake per event: a model asked to respond always
 responds, and a companion told every event talks over the game — silence is
-decided here. `yinyue.md` § Beside them in what they play is how she answers.
+decided here. `agents/places/desktop-pet.md` § Beside them in what they play is how she answers.
 First user: Lingjing (fight outcomes, a 杀招 let go, 气血 at a quarter, too hurt
 to fight).
 
