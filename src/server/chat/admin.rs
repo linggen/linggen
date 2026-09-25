@@ -103,21 +103,39 @@ pub(crate) async fn get_system_prompt_api(
     // long enough for the control-channel RPC (30s) to time out and leave the
     // Copy-System-Prompt button silently unusable. A fresh engine yields the
     // same prompt without touching live state.
-    let mut engine = match state.manager.spawn_delegation_engine(&root, agent_id).await {
-        Ok(e) => e,
-        Err(_) => {
-            return (
-                StatusCode::NOT_FOUND,
-                format!("Agent '{}' not found", agent_id),
-            )
-                .into_response()
-        }
+    let not_found = || {
+        (
+            StatusCode::NOT_FOUND,
+            format!("Agent '{}' not found", agent_id),
+        )
+            .into_response()
     };
+    // The companion in a session that isn't hers is a guest there: export
+    // the seat a guest turn really gets — her folder, her tools, the
+    // table's place for her, no skill.
+    if is_guest_export(agent_id, sid, session_meta.is_some()) {
+        return match crate::server::resident::guest_engine_at(&state, sid).await {
+            Ok(engine) => export_prompt(engine),
+            Err(_) => not_found(),
+        };
+    }
+    let Ok(mut engine) = state.manager.spawn_delegation_engine(&root, agent_id).await else {
+        return not_found();
+    };
+    // A person's turn: the owner policy, as the chat path applies it.
+    crate::engine::session_policy::SessionPolicy::owner().apply(&mut engine);
 
     // Apply session-bound skill or mission so the exported prompt matches what
     // the model actually sees during a chat turn. Without this, the export
     // shows a "cold engine" view missing SKILL.md / mission body.
-    if let Ok(Some(meta)) = state.manager.global_sessions.get_session_meta(sid) {
+    if let Some(meta) = session_meta {
+        // The same creator rule a real turn follows: a skill's or a
+        // mission's session gets no core block and no memory protocol.
+        if super::handler::turn_creator(meta.mission_id.as_deref(), None, meta.skill.as_deref())
+            != "user"
+        {
+            engine.prompt_profile.include_memory = false;
+        }
         if let Some(ref skill_name) = meta.skill {
             if let Some(skill) = state.manager.skills.reload_one(skill_name).await {
                 engine.activate_skill(skill, ActivationMode::Export).await;
@@ -142,6 +160,19 @@ pub(crate) async fn get_system_prompt_api(
         }
     }
 
+    export_prompt(engine)
+}
+
+/// Whether exporting `agent_id` in `session_id` shows a guest seat: the
+/// companion, in an existing session that isn't one of hers.
+fn is_guest_export(agent_id: &str, session_id: &str, session_exists: bool) -> bool {
+    agent_id == crate::engine::agent::COMPANION_AGENT_ID
+        && session_exists
+        && !crate::server::resident::is_own_session(session_id)
+}
+
+/// The prompt and tools `engine` would send, as the export shows them.
+fn export_prompt(mut engine: crate::engine::AgentEngine) -> axum::response::Response {
     // Preview, not a turn: this export renders the prompt for a human to read,
     // and rendering the doorbell is what marks it read. Without this, clicking
     // "Copy System Prompt" makes the next real turn say "nothing new since you
@@ -464,4 +495,20 @@ pub(crate) async fn pending_ask_user_handler(
         })
         .collect();
     Json(serde_json::json!(items))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_guest_export;
+
+    /// Exporting the companion in an app's chat (or any session not hers)
+    /// shows her guest seat; in her own thread, or for anyone else, the
+    /// session's own engine.
+    #[test]
+    fn the_companion_exports_as_a_guest_at_anothers_table() {
+        assert!(is_guest_export("yinyue", "sess-1758700000-cfo", true));
+        assert!(!is_guest_export("yinyue", "sess-yinyue-2026-09-25", true));
+        assert!(!is_guest_export("yinyue", "sess-new", false));
+        assert!(!is_guest_export("ling", "sess-1758700000-cfo", true));
+    }
 }

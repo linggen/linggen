@@ -168,7 +168,8 @@ is) and her recall, read by her model and never left as a row on the table;
 her memory tools act for the table's session, so a skill with a
 `memory-context` holds her reads and writes to that context, and her writes
 are stamped with the session. Ling is not woken; what was said reaches him at the start
-of his next turn (`chat/side_lines.rs`). No mention → Ling, as always.
+of his next turn (`chat/side_lines.rs`). No mention → Ling, as always. The system-prompt export for her in such a
+session shows this guest seat, not the session's skill.
 
 **One conversation per app.** She reads the whole visible dialogue of an app's
 chat (`chat/table.rs`): the user's lines, Ling's replies, hers, other agents' —

@@ -39,6 +39,7 @@ use session_roll::*;
 use spoken::*;
 pub use triggers::yinyue_watch_loop;
 pub(crate) use triggers::{wake_for_moment, wake_herald};
+pub(crate) use turn::guest_engine_at;
 use turn::run_guest_turn;
 pub(crate) use turn::run_yinyue_turn;
 use turn::{run_moment_turn, Reach};

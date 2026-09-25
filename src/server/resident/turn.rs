@@ -149,9 +149,40 @@ async fn engine_for(
             .get_or_create_session_agent(&seat.session_id, &seat.root, YINYUE_AGENT)
             .await;
     }
+    let engine = guest_engine(state, &seat.root).await?;
+    Ok(Arc::new(tokio::sync::Mutex::new(engine)))
+}
+
+/// Her engine as a guest at `session_id`'s table, set up exactly as a guest
+/// turn is — for a preview of what that turn gets (the system-prompt
+/// export). Her folder, her tools, the table's places for her; no skill.
+pub(crate) async fn guest_engine_at(
+    state: &Arc<ServerState>,
+    session_id: &str,
+) -> anyhow::Result<crate::engine::AgentEngine> {
+    let seat = Seat {
+        session_id: session_id.to_string(),
+        root: her_root(),
+        guest: true,
+        reach: Reach::Sealed,
+        table: None,
+    };
+    let mut engine = guest_engine(state, &seat.root).await?;
+    let pet = state.manager.get_config_snapshot().await.pet;
+    ready_for_turn(&mut engine, &seat, &pet);
+    engine.seat_places =
+        crate::server::chat::presence::session_places(&state.manager, session_id).await;
+    Ok(engine)
+}
+
+/// A fresh engine of hers, seated: top level, with her own permissions.
+async fn guest_engine(
+    state: &Arc<ServerState>,
+    root: &std::path::PathBuf,
+) -> anyhow::Result<crate::engine::AgentEngine> {
     let mut engine = state
         .manager
-        .spawn_delegation_engine(&seat.root, YINYUE_AGENT)
+        .spawn_delegation_engine(root, YINYUE_AGENT)
         .await?;
     // Top level, not a delegate: her reply is persisted to the table.
     let max_depth = state
@@ -162,7 +193,7 @@ async fn engine_for(
         .max_delegation_depth;
     engine.set_delegation_depth(0, max_depth);
     engine.seat_permissions = Some(guest_permissions(&engine));
-    Ok(Arc::new(tokio::sync::Mutex::new(engine)))
+    Ok(engine)
 }
 
 /// What she may do as a guest: exactly what her own sessions start with — the

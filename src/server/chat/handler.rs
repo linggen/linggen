@@ -918,7 +918,7 @@ fn trim_live_history<T>(history: &mut Vec<T>, cap: usize) {
 /// `skill_name`, and reading the request alone ran their turns in a skill
 /// session as the user's — the core block and a full biography recall landed
 /// in the skill's context.
-fn turn_creator(
+pub(super) fn turn_creator(
     mission_id: Option<&str>,
     skill_name: Option<&str>,
     bound_skill: Option<&str>,
