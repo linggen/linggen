@@ -137,6 +137,8 @@ impl AgentEngine {
     /// Pre-execution phase: validate permissions, record context, check caches,
     /// and emit "start" events. Returns `Ready` with the prepared ToolCall
     /// and metadata, or `Blocked` if the call should not proceed.
+    ///
+    /// The gates run in a fixed order; the first to refuse ends the call.
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn pre_execute_tool(
         &mut self,
@@ -156,346 +158,34 @@ impl AgentEngine {
             .canonical_tool_name(&tool)
             .unwrap_or(tool.as_str())
             .to_string();
+        let t = ToolTurn {
+            tool: &tool,
+            canonical: &canonical_tool,
+            args: &args,
+            session_id,
+            tool_call_id: &tool_call_id,
+        };
 
-        // --- pet-scoping gate (defense-in-depth) ---
-        // Pet/companion tools (Express) drive the on-screen avatar and only run
-        // for an agent that lists them EXPLICITLY. The model-facing schema already
-        // hides them from `*` (wildcard) agents (tool_registry `is_allowed`), but
-        // the permission gate below is skipped when allowed_tools is None (`*`), so
-        // a hallucinated or legacy emission by a worker agent would otherwise
-        // execute. Mirror the schema rule here: only an explicit listing grants it.
-        if tools::is_pet_scoped(&canonical_tool)
-            && !matches!(allowed_tools, Some(set) if set.contains(canonical_tool.as_str()))
-        {
-            let rendered = format!(
-                "tool_not_allowed: tool={} reason=pet_scoped: only the pet agent may drive the avatar; ask Yinyue via agent_chat instead",
-                canonical_tool
-            );
-            self.upsert_observation("error", &canonical_tool, rendered.clone());
-            let _ = self
-                .persist_observation(&canonical_tool, &rendered, session_id)
-                .await;
-            messages.push(self.tool_result_msg_for(rendered, &tool_call_id, &canonical_tool));
-            return PreExecOutcome::Blocked(LoopControl::Continue);
+        if let Some(stop) = self.gate_pet_scoped(&t, allowed_tools, messages).await {
+            return stop;
+        }
+        if let Some(stop) = self.gate_allowed_list(&t, allowed_tools, messages).await {
+            return stop;
         }
 
-        // --- permission gate ---
-        if let Some(allowed) = allowed_tools {
-            if !self.is_tool_allowed(allowed, &tool) {
-                let mut allowed_list = allowed.iter().cloned().collect::<Vec<_>>();
-                allowed_list.sort();
-                let rendered = format!(
-                    "tool_not_allowed: tool={} canonical={} allowed={}",
-                    tool,
-                    canonical_tool,
-                    allowed_list.join(",")
-                );
-                self.upsert_observation("error", &canonical_tool, rendered.clone());
-                let _ = self
-                    .persist_observation(&canonical_tool, &rendered, session_id)
-                    .await;
-                messages.push(self.tool_result_msg_for(
-                    self.prompt_store.render_or_fallback(
-                        crate::prompts::keys::TOOL_NOT_ALLOWED,
-                        &[("tool", &tool), ("allowed_list", &allowed_list.join(", "))],
-                    ),
-                    &tool_call_id,
-                    &canonical_tool,
-                ));
-                return PreExecOutcome::Blocked(LoopControl::Continue);
-            }
-        }
-
-        let safe_args = sanitize_tool_args_for_display(&canonical_tool, &args);
-        self.upsert_context_record_by_type_name(
-            ContextType::ToolCall,
-            &canonical_tool,
-            self.agent_id.clone(),
-            Some(self.outbound_target()),
-            serde_json::to_string(&safe_args).unwrap_or_else(|_| "{}".to_string()),
-            serde_json::json!({ "args": safe_args.clone() }),
-        );
-        let log_run = self.run_id.clone().unwrap_or_else(|| "root".to_string());
-        info!("[{}] Tool: {} {}", log_run, canonical_tool, safe_args);
-        if canonical_tool == "Read" {
-            if let Some(path) = normalize_tool_path_arg(&self.tools.builtins.cwd(), &args) {
-                read_paths.insert(path);
-            }
-        }
+        let safe_args = self.record_tool_call(&t, read_paths);
 
         // Compute tool call signature early for denied-check and later redundancy tracking.
         let sig = tool_call_signature(&canonical_tool, &args);
 
-        // --- write-safety gate ---
-        if matches!(canonical_tool.as_str(), "Write" | "Edit") {
-            if let Some(path) = normalize_tool_path_arg(&self.tools.builtins.cwd(), &args) {
-                let existing = self.tools.builtins.cwd().join(&path).exists();
-                if existing && !read_paths.contains(&path) {
-                    let action = if canonical_tool == "Edit" {
-                        "Edit"
-                    } else {
-                        "Write"
-                    };
-                    match self.cfg.write_safety_mode {
-                        crate::config::WriteSafetyMode::Strict => {
-                            let rendered = format!(
-                                "tool_error: tool={} error=precondition_failed: must call Read on '{}' before {} for existing files",
-                                action, path, action
-                            );
-                            self.upsert_observation("error", action, rendered.clone());
-                            let _ = self
-                                .persist_observation(action, &rendered, session_id)
-                                .await;
-                            messages.push(self.tool_result_msg_for(
-                                self.prompt_store.render_or_fallback(
-                                    crate::prompts::keys::WRITE_SAFETY_BLOCKED,
-                                    &[("rendered", &rendered)],
-                                ),
-                                &tool_call_id,
-                                &canonical_tool,
-                            ));
-                            return PreExecOutcome::Blocked(LoopControl::Continue);
-                        }
-                        crate::config::WriteSafetyMode::Warn => {
-                            let rendered = format!(
-                                "tool_warning: tool={} warning=writing_existing_file_without_prior_read path='{}'",
-                                action, path
-                            );
-                            self.upsert_observation("warning", action, rendered.clone());
-                            let _ = self
-                                .persist_observation(action, &rendered, session_id)
-                                .await;
-                        }
-                        crate::config::WriteSafetyMode::Off => {}
-                    }
-                }
-            }
+        if let Some(stop) = self.gate_write_safety(&t, read_paths, messages).await {
+            return stop;
         }
-
-        // --- config-level tool restriction gate (defense-in-depth) ---
-        // Blocks tools not allowed by mission tiers or consumer room settings.
-        // The prompt already excludes these tools, but this catches hallucinations.
-        if !self.cfg.is_tool_allowed(&canonical_tool) {
-            let available = self
-                .cfg
-                .effective_tool_restrictions()
-                .map(|s| s.into_iter().collect::<Vec<_>>().join(", "))
-                .unwrap_or_default();
-            let msg = format!(
-                "Tool '{}' is not available. Allowed: {}",
-                canonical_tool, available
-            );
-            messages.push(self.tool_result_msg_for(msg, &tool_call_id, &canonical_tool));
-            return PreExecOutcome::Blocked(LoopControl::Continue);
+        if let Some(stop) = self.gate_restrictions(&t, messages) {
+            return stop;
         }
-
-        // --- withheld gate (defense-in-depth) ---
-        // A tool this turn's caller withheld is refused even if the model
-        // names it (it was never offered).
-        if self.is_withheld(&canonical_tool) {
-            let msg = format!(
-                "tool_not_allowed: tool={canonical_tool} reason=withheld: not available on this turn"
-            );
-            messages.push(self.tool_result_msg_for(msg, &tool_call_id, &canonical_tool));
-            return PreExecOutcome::Blocked(LoopControl::Continue);
-        }
-
-        // --- guest gate (defense-in-depth) ---
-        // A guest takes up no skill at a table that isn't its own, even when
-        // its list is `*` (no allowed set to check above) — the skill's
-        // habits would come with it.
-        if canonical_tool == "Skill" && self.is_guest_seat() {
-            let msg = "tool_not_allowed: tool=Skill reason=guest: a guest brings only its own tools to this session".to_string();
-            messages.push(self.tool_result_msg_for(msg, &tool_call_id, &canonical_tool));
-            return PreExecOutcome::Blocked(LoopControl::Continue);
-        }
-
-        // --- consumer skill restriction gate (defense-in-depth) ---
-        // When consumer_allowed_skills is set, block Skill invocations not in the list.
-        if canonical_tool == "Skill" {
-            if let Some(ref allowed_skills) = self.cfg.consumer_allowed_skills {
-                let skill_name = args
-                    .get("skill")
-                    .or_else(|| args.get("name"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                if !allowed_skills.contains(skill_name) {
-                    let msg = format!("Skill '{}' is not available to consumers.", skill_name);
-                    messages.push(self.tool_result_msg_for(msg, &tool_call_id, &canonical_tool));
-                    return PreExecOutcome::Blocked(LoopControl::Continue);
-                }
-            }
-        }
-
-        // --- new permission gate (permission-spec.md) ---
-
-        // Skill data tools (empty cmd, e.g. PageUpdate) pass their args
-        // straight through as a content block — they don't read files, run
-        // commands, or reach outside the process. Running them through the
-        // path/tier permission gate produces nonsense prompts like
-        // "PageUpdate /Users/<you> — switch to admin?" because the gate
-        // synthesizes cwd as the file_path_arg and classifies unknown tools
-        // as Admin tier. Skip the gate entirely for pure data tools.
-        let skip_permission_gate = self.tools.is_skill_data_tool(&canonical_tool);
-
-        // Extract bash command and file path for permission checking.
-        let bash_command = if canonical_tool == "Bash" {
-            args.get("cmd")
-                .or_else(|| args.get("command"))
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        } else {
-            None
-        };
-        let file_path_arg = if matches!(canonical_tool.as_str(), "Write" | "Edit" | "Read") {
-            normalize_tool_path_arg(&self.tools.builtins.cwd(), &args)
-        } else {
-            // For tools without an explicit file path (Glob, Grep, Task, etc.),
-            // use the agent's cwd so permission checks resolve against the
-            // session's path_mode grants for the workspace.
-            Some(self.tools.builtins.cwd().to_string_lossy().to_string())
-        };
-
-        // --- mission bash prefix restriction (legacy, kept for backward compat) ---
-        if canonical_tool == "Bash" {
-            if let Some(ref prefixes) = self.cfg.bash_allow_prefixes {
-                let cmd = bash_command.as_deref().unwrap_or("");
-                let cmd_trimmed = cmd.trim();
-                let allowed = prefixes
-                    .iter()
-                    .any(|prefix| cmd_trimmed.starts_with(prefix));
-                if !allowed {
-                    let msg = format!(
-                        "Bash command not allowed by this mission's permission tier. \
-                         Command: '{}'. Allowed prefixes: {}",
-                        cmd_trimmed,
-                        prefixes.join(", ")
-                    );
-                    messages.push(self.tool_result_msg_for(msg, &tool_call_id, &canonical_tool));
-                    return PreExecOutcome::Blocked(LoopControl::Continue);
-                }
-            }
-        }
-
-        // Skill-declared tier wins over the built-in table. For HTTP and
-        // shell skill tools that declare `tier: read|edit|admin` in their
-        // manifest, parse it into a PermissionMode and pass to
-        // check_permission as an override. Unknown / missing tier falls
-        // back to the built-in classification.
-        let skill_tier_override = self
-            .tools
-            .skill_tools
-            .get(canonical_tool.as_str())
-            .and_then(|def| def.tier.as_deref())
-            .and_then(permission::parse_skill_tier);
-
-        // Run the new permission check (skipped for skill data tools, which
-        // don't touch the filesystem or run anything).
-        let check_result = if skip_permission_gate {
-            permission::PermissionCheckResult::Allowed
-        } else {
-            permission::check_permission(
-                &canonical_tool,
-                bash_command.as_deref(),
-                file_path_arg.as_deref(),
-                &self.tools.builtins.cwd(),
-                &self.session_permissions,
-                skill_tier_override,
-            )
-        };
-
-        match check_result {
-            permission::PermissionCheckResult::Allowed => { /* proceed */ }
-            permission::PermissionCheckResult::Blocked(reason) => {
-                info!("Permission blocked: {} — {}", canonical_tool, reason);
-                let summary = permission::permission_target_summary(
-                    &canonical_tool,
-                    &args,
-                    &self.tools.builtins.cwd(),
-                );
-                let msg = self.prompt_store.render_or_fallback(
-                    crate::prompts::keys::PERMISSION_DENIED,
-                    &[("tool", &canonical_tool), ("summary", &summary)],
-                );
-                messages.push(self.tool_result_msg_for(msg, &tool_call_id, &canonical_tool));
-                return PreExecOutcome::Blocked(LoopControl::Continue);
-            }
-            permission::PermissionCheckResult::NeedsPrompt(prompt_kind) => {
-                let summary = permission::permission_target_summary(
-                    &canonical_tool,
-                    &args,
-                    &self.tools.builtins.cwd(),
-                );
-
-                // Non-interactive sessions (mission, proxy consumer) cannot prompt —
-                // return permission-needed immediately.
-                if !self.session_permissions.interactive {
-                    let msg = self.prompt_store.render_or_fallback(
-                        crate::prompts::keys::PERMISSION_DENIED,
-                        &[("tool", &canonical_tool), ("summary", &summary)],
-                    );
-                    messages.push(self.tool_result_msg_for(msg, &tool_call_id, &canonical_tool));
-                    return PreExecOutcome::Blocked(LoopControl::Continue);
-                }
-
-                let permission::PromptKind::ExceedsCeiling {
-                    target_mode,
-                    path,
-                    tool_summary,
-                } = prompt_kind;
-                let question =
-                    permission::build_exceeds_ceiling_question(&tool_summary, &target_mode, &path);
-                match self.ask_permission_raw(&canonical_tool, question).await {
-                    Some(permission::PermissionAction::AllowOnce) => { /* proceed */ }
-                    Some(permission::PermissionAction::AllowSession) => {
-                        // Switch mode — update path_modes and save.
-                        self.session_permissions.set_path_mode(&path, target_mode);
-                        if let Some(ref sdir) = self.session_dir {
-                            self.session_permissions.save(sdir);
-                        }
-                        // Notify UI so the mode badge updates.
-                        if let Some(manager) = self.tools.get_manager() {
-                            manager
-                                .send_event(
-                                    crate::engine::agent::AgentEvent::StateUpdated,
-                                    self.session_id.clone(),
-                                )
-                                .await;
-                        }
-                    }
-                    Some(permission::PermissionAction::Deny) => {
-                        let msg = self.prompt_store.render_or_fallback(
-                            crate::prompts::keys::PERMISSION_DENIED,
-                            &[("tool", &canonical_tool), ("summary", &summary)],
-                        );
-                        messages.push(self.tool_result_msg_for(
-                            msg,
-                            &tool_call_id,
-                            &canonical_tool,
-                        ));
-                        return PreExecOutcome::Blocked(LoopControl::Continue);
-                    }
-                    Some(permission::PermissionAction::DenyWithMessage(user_msg)) => {
-                        let msg = format!(
-                            "Permission denied by user for {} '{}'. User says: {}",
-                            canonical_tool, summary, user_msg
-                        );
-                        messages.push(self.tool_result_msg_for(
-                            msg,
-                            &tool_call_id,
-                            &canonical_tool,
-                        ));
-                        return PreExecOutcome::Blocked(LoopControl::Continue);
-                    }
-                    None => {
-                        let msg = self
-                            .prompt_store
-                            .render_or_fallback(crate::prompts::keys::PERMISSION_TIMEOUT, &[]);
-                        let _ = self.persist_assistant_message(&msg, session_id).await;
-                        return PreExecOutcome::Blocked(LoopControl::Return(AgentOutcome::None));
-                    }
-                }
-            }
+        if let Some(stop) = self.gate_permission(&t, messages).await {
+            return stop;
         }
 
         // Browser_* mutating actions are gated by the extension itself
@@ -504,67 +194,15 @@ impl AgentEngine {
         // caller (engine sessions and /mcp alike). A user deny surfaces here
         // as a normal `not_permitted` tool error.
 
-        // --- redundancy / cache gates ---
-        // Only pure workspace reads take part (`tool_cacheable`). Anything
-        // else runs every time and is never counted toward the redundant-loop
-        // nudge: repeating an action or a live read is legitimate, and the
-        // model sees each real result (a refusal, a changed page) rather than
-        // a replay. It also breaks a run of identical reads — the world may
-        // have changed in between.
-        let cacheable = tools::tool_cacheable(&canonical_tool);
-
-        if !cacheable {
-            *redundant_tool_streak = 0;
-            last_tool_sig.clear();
-        } else if sig == *last_tool_sig {
-            *redundant_tool_streak += 1;
-        } else {
-            *redundant_tool_streak = 0;
-            *last_tool_sig = sig.clone();
-        }
-
-        if cacheable && *redundant_tool_streak >= 3 {
-            let loop_breaker_prompt = self
-                .cfg
-                .prompt_loop_breaker
-                .as_deref()
-                .map(|template| Self::render_loop_breaker_prompt(template, &canonical_tool))
-                .unwrap_or_else(|| {
-                    self.prompt_store.render_or_fallback(
-                        crate::prompts::NUDGE_REDUNDANT_TOOL,
-                        &[("tool", &canonical_tool)],
-                    )
-                });
-            messages.push(self.tool_result_msg_for(
-                loop_breaker_prompt,
-                &tool_call_id,
-                &canonical_tool,
-            ));
-            self.push_context_record(
-                ContextType::Error,
-                Some("redundant_tool_loop".to_string()),
-                self.agent_id.clone(),
-                None,
-                format!(
-                    "Repeated tool call loop detected for '{}'; nudging model to change approach.",
-                    canonical_tool
-                ),
-                serde_json::json!({ "tool": canonical_tool, "streak": *redundant_tool_streak + 1 }),
-            );
-            *redundant_tool_streak = 0;
-            return PreExecOutcome::Blocked(LoopControl::Continue);
-        }
-
-        if cacheable {
-            if let Some(cached) = tool_cache.get(&sig) {
-                self.upsert_observation("tool", &canonical_tool, cached.model.clone());
-                messages.push(self.tool_result_msg_for(
-                    self.observation_text("tool", &canonical_tool, &cached.model),
-                    &tool_call_id,
-                    &canonical_tool,
-                ));
-                return PreExecOutcome::Blocked(LoopControl::Continue);
-            }
+        if let Some(stop) = self.gate_redundancy_and_cache(
+            &t,
+            &sig,
+            messages,
+            tool_cache,
+            last_tool_sig,
+            redundant_tool_streak,
+        ) {
+            return stop;
         }
 
         // --- status lines ---
@@ -579,60 +217,7 @@ impl AgentEngine {
             crate::engine::tool_render::ToolStatusPhase::Failed,
         );
 
-        // Tell the UI what tool we're about to use.
-        let block_id = uuid::Uuid::new_v4().to_string();
-        if let Some(manager) = self.tools.get_manager() {
-            let from = self
-                .agent_id
-                .clone()
-                .unwrap_or_else(|| "unknown".to_string());
-            let target = self.outbound_target();
-            // Emit structured ContentBlockStart for the Web UI.
-            let compact_args =
-                serde_json::to_string(&safe_args).unwrap_or_else(|_| "{}".to_string());
-            let _ = manager
-                .send_event(
-                    crate::engine::agent::AgentEvent::ContentBlockStart {
-                        agent_id: from.clone(),
-                        block_id: block_id.clone(),
-                        block_type: "tool_use".to_string(),
-                        tool: Some(canonical_tool.clone()),
-                        args: Some(compact_args),
-                        parent_id: self.parent_agent_id.clone(),
-                        run_id: self.run_id.clone(),
-                        parent_run_id: self.parent_run_id.clone(),
-                    },
-                    self.session_id.clone(),
-                )
-                .await;
-            // Persist tool call to session store as an observation (not loaded
-            // into chat history on reload — tool results are ephemeral context).
-            // Skip for subagents: they share the parent's session_id, so
-            // every subagent tool call would otherwise show up as a `system`
-            // observation in the parent's transcript on reload.
-            if self.tools.builtins.delegation_depth() == 0 {
-                let tool_msg = serde_json::json!({
-                    "type": "tool",
-                    "tool": canonical_tool.clone(),
-                    "args": safe_args
-                })
-                .to_string();
-                manager
-                    .add_chat_message(
-                        &self.tools.builtins.cwd(),
-                        session_id.unwrap_or("default"),
-                        &crate::state_fs::sessions::ChatMsg {
-                            agent_id: from.clone(),
-                            from_id: from,
-                            to_id: target,
-                            content: tool_msg,
-                            timestamp: crate::util::now_ts_secs(),
-                            is_observation: true,
-                        },
-                    )
-                    .await;
-            }
-        }
+        let block_id = self.announce_tool_start(&t, &safe_args).await;
 
         let call = ToolCall {
             tool: canonical_tool.clone(),
@@ -651,6 +236,509 @@ impl AgentEngine {
                 tool_call_id,
             },
         )
+    }
+
+    /// Answer the model's call with `msg` instead of running it, and go on.
+    fn refuse(
+        &self,
+        t: &ToolTurn<'_>,
+        messages: &mut Vec<ChatMessage>,
+        msg: String,
+    ) -> Option<PreExecOutcome> {
+        messages.push(self.tool_result_msg_for(msg, t.tool_call_id, t.canonical));
+        Some(PreExecOutcome::Blocked(LoopControl::Continue))
+    }
+
+    /// Pet-scoping gate (defense-in-depth).
+    ///
+    /// Pet/companion tools (Express) drive the on-screen avatar and only run
+    /// for an agent that lists them EXPLICITLY. The model-facing schema already
+    /// hides them from `*` (wildcard) agents (tool_registry `is_allowed`), but
+    /// the permission gate below is skipped when allowed_tools is None (`*`), so
+    /// a hallucinated or legacy emission by a worker agent would otherwise
+    /// execute. Mirror the schema rule here: only an explicit listing grants it.
+    async fn gate_pet_scoped(
+        &mut self,
+        t: &ToolTurn<'_>,
+        allowed_tools: &Option<HashSet<String>>,
+        messages: &mut Vec<ChatMessage>,
+    ) -> Option<PreExecOutcome> {
+        if tools::is_pet_scoped(t.canonical)
+            && !matches!(allowed_tools, Some(set) if set.contains(t.canonical))
+        {
+            let rendered = format!(
+                "tool_not_allowed: tool={} reason=pet_scoped: only the pet agent may drive the avatar; ask Yinyue via agent_chat instead",
+                t.canonical
+            );
+            self.upsert_observation("error", t.canonical, rendered.clone());
+            let _ = self
+                .persist_observation(t.canonical, &rendered, t.session_id)
+                .await;
+            return self.refuse(t, messages, rendered);
+        }
+        None
+    }
+
+    /// The agent's allowed-tools list, when it has one.
+    async fn gate_allowed_list(
+        &mut self,
+        t: &ToolTurn<'_>,
+        allowed_tools: &Option<HashSet<String>>,
+        messages: &mut Vec<ChatMessage>,
+    ) -> Option<PreExecOutcome> {
+        let allowed = allowed_tools.as_ref()?;
+        if self.is_tool_allowed(allowed, t.tool) {
+            return None;
+        }
+        let mut allowed_list = allowed.iter().cloned().collect::<Vec<_>>();
+        allowed_list.sort();
+        let rendered = format!(
+            "tool_not_allowed: tool={} canonical={} allowed={}",
+            t.tool,
+            t.canonical,
+            allowed_list.join(",")
+        );
+        self.upsert_observation("error", t.canonical, rendered.clone());
+        let _ = self
+            .persist_observation(t.canonical, &rendered, t.session_id)
+            .await;
+        let msg = self.prompt_store.render_or_fallback(
+            crate::prompts::keys::TOOL_NOT_ALLOWED,
+            &[("tool", t.tool), ("allowed_list", &allowed_list.join(", "))],
+        );
+        self.refuse(t, messages, msg)
+    }
+
+    /// Record the call in context and the log; remember a Read's path for
+    /// the write-safety gate. Returns the args as shown to people.
+    fn record_tool_call(
+        &mut self,
+        t: &ToolTurn<'_>,
+        read_paths: &mut HashSet<String>,
+    ) -> JsonValue {
+        let safe_args = sanitize_tool_args_for_display(t.canonical, t.args);
+        self.upsert_context_record_by_type_name(
+            ContextType::ToolCall,
+            t.canonical,
+            self.agent_id.clone(),
+            Some(self.outbound_target()),
+            serde_json::to_string(&safe_args).unwrap_or_else(|_| "{}".to_string()),
+            serde_json::json!({ "args": safe_args.clone() }),
+        );
+        let log_run = self.run_id.clone().unwrap_or_else(|| "root".to_string());
+        info!("[{}] Tool: {} {}", log_run, t.canonical, safe_args);
+        if t.canonical == "Read" {
+            if let Some(path) = normalize_tool_path_arg(&self.tools.builtins.cwd(), t.args) {
+                read_paths.insert(path);
+            }
+        }
+        safe_args
+    }
+
+    /// Write-safety gate: Write/Edit on an existing file not Read first.
+    async fn gate_write_safety(
+        &mut self,
+        t: &ToolTurn<'_>,
+        read_paths: &HashSet<String>,
+        messages: &mut Vec<ChatMessage>,
+    ) -> Option<PreExecOutcome> {
+        if !matches!(t.canonical, "Write" | "Edit") {
+            return None;
+        }
+        let path = normalize_tool_path_arg(&self.tools.builtins.cwd(), t.args)?;
+        let existing = self.tools.builtins.cwd().join(&path).exists();
+        if !existing || read_paths.contains(&path) {
+            return None;
+        }
+        let action = if t.canonical == "Edit" {
+            "Edit"
+        } else {
+            "Write"
+        };
+        match self.cfg.write_safety_mode {
+            crate::config::WriteSafetyMode::Strict => {
+                let rendered = format!(
+                    "tool_error: tool={} error=precondition_failed: must call Read on '{}' before {} for existing files",
+                    action, path, action
+                );
+                self.upsert_observation("error", action, rendered.clone());
+                let _ = self
+                    .persist_observation(action, &rendered, t.session_id)
+                    .await;
+                let msg = self.prompt_store.render_or_fallback(
+                    crate::prompts::keys::WRITE_SAFETY_BLOCKED,
+                    &[("rendered", &rendered)],
+                );
+                self.refuse(t, messages, msg)
+            }
+            crate::config::WriteSafetyMode::Warn => {
+                let rendered = format!(
+                    "tool_warning: tool={} warning=writing_existing_file_without_prior_read path='{}'",
+                    action, path
+                );
+                self.upsert_observation("warning", action, rendered.clone());
+                let _ = self
+                    .persist_observation(action, &rendered, t.session_id)
+                    .await;
+                None
+            }
+            crate::config::WriteSafetyMode::Off => None,
+        }
+    }
+
+    /// Restriction gates (defense-in-depth), in order: the config-level tool
+    /// set, tools withheld this turn, a guest's Skill, a consumer's skill
+    /// list, and a mission's bash prefixes.
+    fn gate_restrictions(
+        &self,
+        t: &ToolTurn<'_>,
+        messages: &mut Vec<ChatMessage>,
+    ) -> Option<PreExecOutcome> {
+        let msg = self
+            .config_restriction(t)
+            .or_else(|| self.withheld_restriction(t))
+            .or_else(|| self.guest_restriction(t))
+            .or_else(|| self.consumer_skill_restriction(t))
+            .or_else(|| self.bash_prefix_restriction(t))?;
+        self.refuse(t, messages, msg)
+    }
+
+    /// Blocks tools not allowed by mission tiers or consumer room settings.
+    /// The prompt already excludes these tools, but this catches hallucinations.
+    fn config_restriction(&self, t: &ToolTurn<'_>) -> Option<String> {
+        if self.cfg.is_tool_allowed(t.canonical) {
+            return None;
+        }
+        let available = self
+            .cfg
+            .effective_tool_restrictions()
+            .map(|s| s.into_iter().collect::<Vec<_>>().join(", "))
+            .unwrap_or_default();
+        Some(format!(
+            "Tool '{}' is not available. Allowed: {}",
+            t.canonical, available
+        ))
+    }
+
+    /// A tool this turn's caller withheld is refused even if the model
+    /// names it (it was never offered).
+    fn withheld_restriction(&self, t: &ToolTurn<'_>) -> Option<String> {
+        self.is_withheld(t.canonical).then(|| {
+            format!(
+                "tool_not_allowed: tool={} reason=withheld: not available on this turn",
+                t.canonical
+            )
+        })
+    }
+
+    /// A guest takes up no skill at a table that isn't its own, even when
+    /// its list is `*` (no allowed set to check above) — the skill's
+    /// habits would come with it.
+    fn guest_restriction(&self, t: &ToolTurn<'_>) -> Option<String> {
+        (t.canonical == "Skill" && self.is_guest_seat()).then(|| {
+            "tool_not_allowed: tool=Skill reason=guest: a guest brings only its own tools to this session".to_string()
+        })
+    }
+
+    /// When consumer_allowed_skills is set, block Skill invocations not in the list.
+    fn consumer_skill_restriction(&self, t: &ToolTurn<'_>) -> Option<String> {
+        if t.canonical != "Skill" {
+            return None;
+        }
+        let allowed_skills = self.cfg.consumer_allowed_skills.as_ref()?;
+        let skill_name = t
+            .args
+            .get("skill")
+            .or_else(|| t.args.get("name"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        (!allowed_skills.contains(skill_name))
+            .then(|| format!("Skill '{}' is not available to consumers.", skill_name))
+    }
+
+    /// Mission bash prefix restriction (legacy, kept for backward compat).
+    fn bash_prefix_restriction(&self, t: &ToolTurn<'_>) -> Option<String> {
+        if t.canonical != "Bash" {
+            return None;
+        }
+        let prefixes = self.cfg.bash_allow_prefixes.as_ref()?;
+        let cmd = bash_command_arg(t.args);
+        let cmd_trimmed = cmd.as_deref().unwrap_or("").trim();
+        let allowed = prefixes
+            .iter()
+            .any(|prefix| cmd_trimmed.starts_with(prefix));
+        (!allowed).then(|| {
+            format!(
+                "Bash command not allowed by this mission's permission tier. \
+                 Command: '{}'. Allowed prefixes: {}",
+                cmd_trimmed,
+                prefixes.join(", ")
+            )
+        })
+    }
+
+    /// The path/tier permission gate (permission-spec.md), asking the user
+    /// when the call exceeds the session's grant.
+    async fn gate_permission(
+        &mut self,
+        t: &ToolTurn<'_>,
+        messages: &mut Vec<ChatMessage>,
+    ) -> Option<PreExecOutcome> {
+        // Skill data tools (empty cmd, e.g. PageUpdate) pass their args
+        // straight through as a content block — they don't read files, run
+        // commands, or reach outside the process. Running them through the
+        // path/tier permission gate produces nonsense prompts like
+        // "PageUpdate /Users/<you> — switch to admin?" because the gate
+        // synthesizes cwd as the file_path_arg and classifies unknown tools
+        // as Admin tier. Skip the gate entirely for pure data tools.
+        if self.tools.is_skill_data_tool(t.canonical) {
+            return None;
+        }
+
+        // Extract bash command and file path for permission checking.
+        let bash_command = if t.canonical == "Bash" {
+            bash_command_arg(t.args)
+        } else {
+            None
+        };
+        let file_path_arg = if matches!(t.canonical, "Write" | "Edit" | "Read") {
+            normalize_tool_path_arg(&self.tools.builtins.cwd(), t.args)
+        } else {
+            // For tools without an explicit file path (Glob, Grep, Task, etc.),
+            // use the agent's cwd so permission checks resolve against the
+            // session's path_mode grants for the workspace.
+            Some(self.tools.builtins.cwd().to_string_lossy().to_string())
+        };
+
+        // Skill-declared tier wins over the built-in table. For HTTP and
+        // shell skill tools that declare `tier: read|edit|admin` in their
+        // manifest, parse it into a PermissionMode and pass to
+        // check_permission as an override. Unknown / missing tier falls
+        // back to the built-in classification.
+        let skill_tier_override = self
+            .tools
+            .skill_tools
+            .get(t.canonical)
+            .and_then(|def| def.tier.as_deref())
+            .and_then(permission::parse_skill_tier);
+
+        let check_result = permission::check_permission(
+            t.canonical,
+            bash_command.as_deref(),
+            file_path_arg.as_deref(),
+            &self.tools.builtins.cwd(),
+            &self.session_permissions,
+            skill_tier_override,
+        );
+
+        let prompt_kind = match check_result {
+            permission::PermissionCheckResult::Allowed => return None,
+            permission::PermissionCheckResult::Blocked(reason) => {
+                info!("Permission blocked: {} — {}", t.canonical, reason);
+                let msg = self.permission_denied_msg(t);
+                return self.refuse(t, messages, msg);
+            }
+            permission::PermissionCheckResult::NeedsPrompt(prompt_kind) => prompt_kind,
+        };
+
+        // Non-interactive sessions (mission, proxy consumer) cannot prompt —
+        // return permission-needed immediately.
+        if !self.session_permissions.interactive {
+            let msg = self.permission_denied_msg(t);
+            return self.refuse(t, messages, msg);
+        }
+
+        let permission::PromptKind::ExceedsCeiling {
+            target_mode,
+            path,
+            tool_summary,
+        } = prompt_kind;
+        let question =
+            permission::build_exceeds_ceiling_question(&tool_summary, &target_mode, &path);
+        match self.ask_permission_raw(t.canonical, question).await {
+            Some(permission::PermissionAction::AllowOnce) => None,
+            Some(permission::PermissionAction::AllowSession) => {
+                // Switch mode — update path_modes and save.
+                self.session_permissions.set_path_mode(&path, target_mode);
+                if let Some(ref sdir) = self.session_dir {
+                    self.session_permissions.save(sdir);
+                }
+                // Notify UI so the mode badge updates.
+                if let Some(manager) = self.tools.get_manager() {
+                    manager
+                        .send_event(
+                            crate::engine::agent::AgentEvent::StateUpdated,
+                            self.session_id.clone(),
+                        )
+                        .await;
+                }
+                None
+            }
+            Some(permission::PermissionAction::Deny) => {
+                let msg = self.permission_denied_msg(t);
+                self.refuse(t, messages, msg)
+            }
+            Some(permission::PermissionAction::DenyWithMessage(user_msg)) => {
+                let summary = self.permission_summary(t);
+                let msg = format!(
+                    "Permission denied by user for {} '{}'. User says: {}",
+                    t.canonical, summary, user_msg
+                );
+                self.refuse(t, messages, msg)
+            }
+            None => {
+                let msg = self
+                    .prompt_store
+                    .render_or_fallback(crate::prompts::keys::PERMISSION_TIMEOUT, &[]);
+                let _ = self.persist_assistant_message(&msg, t.session_id).await;
+                Some(PreExecOutcome::Blocked(LoopControl::Return(
+                    AgentOutcome::None,
+                )))
+            }
+        }
+    }
+
+    fn permission_summary(&self, t: &ToolTurn<'_>) -> String {
+        permission::permission_target_summary(t.canonical, t.args, &self.tools.builtins.cwd())
+    }
+
+    fn permission_denied_msg(&self, t: &ToolTurn<'_>) -> String {
+        let summary = self.permission_summary(t);
+        self.prompt_store.render_or_fallback(
+            crate::prompts::keys::PERMISSION_DENIED,
+            &[("tool", t.canonical), ("summary", &summary)],
+        )
+    }
+
+    /// Redundancy / cache gates.
+    ///
+    /// Only pure workspace reads take part (`tool_cacheable`). Anything
+    /// else runs every time and is never counted toward the redundant-loop
+    /// nudge: repeating an action or a live read is legitimate, and the
+    /// model sees each real result (a refusal, a changed page) rather than
+    /// a replay. It also breaks a run of identical reads — the world may
+    /// have changed in between.
+    fn gate_redundancy_and_cache(
+        &mut self,
+        t: &ToolTurn<'_>,
+        sig: &str,
+        messages: &mut Vec<ChatMessage>,
+        tool_cache: &HashMap<String, CachedToolObs>,
+        last_tool_sig: &mut String,
+        redundant_tool_streak: &mut usize,
+    ) -> Option<PreExecOutcome> {
+        let canonical_tool = t.canonical;
+        let cacheable = tools::tool_cacheable(canonical_tool);
+
+        if !cacheable {
+            *redundant_tool_streak = 0;
+            last_tool_sig.clear();
+        } else if sig == *last_tool_sig {
+            *redundant_tool_streak += 1;
+        } else {
+            *redundant_tool_streak = 0;
+            *last_tool_sig = sig.to_string();
+        }
+
+        if cacheable && *redundant_tool_streak >= 3 {
+            let loop_breaker_prompt = self
+                .cfg
+                .prompt_loop_breaker
+                .as_deref()
+                .map(|template| Self::render_loop_breaker_prompt(template, canonical_tool))
+                .unwrap_or_else(|| {
+                    self.prompt_store.render_or_fallback(
+                        crate::prompts::NUDGE_REDUNDANT_TOOL,
+                        &[("tool", canonical_tool)],
+                    )
+                });
+            messages.push(self.tool_result_msg_for(
+                loop_breaker_prompt,
+                t.tool_call_id,
+                canonical_tool,
+            ));
+            self.push_context_record(
+                ContextType::Error,
+                Some("redundant_tool_loop".to_string()),
+                self.agent_id.clone(),
+                None,
+                format!(
+                    "Repeated tool call loop detected for '{}'; nudging model to change approach.",
+                    canonical_tool
+                ),
+                serde_json::json!({ "tool": canonical_tool, "streak": *redundant_tool_streak + 1 }),
+            );
+            *redundant_tool_streak = 0;
+            return Some(PreExecOutcome::Blocked(LoopControl::Continue));
+        }
+
+        if cacheable {
+            if let Some(cached) = tool_cache.get(sig) {
+                self.upsert_observation("tool", canonical_tool, cached.model.clone());
+                let msg = self.observation_text("tool", canonical_tool, &cached.model);
+                return self.refuse(t, messages, msg);
+            }
+        }
+        None
+    }
+
+    /// Tell the UI what tool we're about to use, and keep it in the session
+    /// transcript. Returns the call's block id.
+    async fn announce_tool_start(&mut self, t: &ToolTurn<'_>, safe_args: &JsonValue) -> String {
+        let block_id = uuid::Uuid::new_v4().to_string();
+        let Some(manager) = self.tools.get_manager() else {
+            return block_id;
+        };
+        let from = self
+            .agent_id
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string());
+        let target = self.outbound_target();
+        // Emit structured ContentBlockStart for the Web UI.
+        let compact_args = serde_json::to_string(safe_args).unwrap_or_else(|_| "{}".to_string());
+        let _ = manager
+            .send_event(
+                crate::engine::agent::AgentEvent::ContentBlockStart {
+                    agent_id: from.clone(),
+                    block_id: block_id.clone(),
+                    block_type: "tool_use".to_string(),
+                    tool: Some(t.canonical.to_string()),
+                    args: Some(compact_args),
+                    parent_id: self.parent_agent_id.clone(),
+                    run_id: self.run_id.clone(),
+                    parent_run_id: self.parent_run_id.clone(),
+                },
+                self.session_id.clone(),
+            )
+            .await;
+        // Persist tool call to session store as an observation (not loaded
+        // into chat history on reload — tool results are ephemeral context).
+        // Skip for subagents: they share the parent's session_id, so
+        // every subagent tool call would otherwise show up as a `system`
+        // observation in the parent's transcript on reload.
+        if self.tools.builtins.delegation_depth() == 0 {
+            let tool_msg = serde_json::json!({
+                "type": "tool",
+                "tool": t.canonical,
+                "args": safe_args
+            })
+            .to_string();
+            manager
+                .add_chat_message(
+                    &self.tools.builtins.cwd(),
+                    t.session_id.unwrap_or("default"),
+                    &crate::state_fs::sessions::ChatMsg {
+                        agent_id: from.clone(),
+                        from_id: from,
+                        to_id: target,
+                        content: tool_msg,
+                        timestamp: crate::util::now_ts_secs(),
+                        is_observation: true,
+                    },
+                )
+                .await;
+        }
+        block_id
     }
 
     /// Post-execution phase: render and cache the result, emit "done"/"failed"
@@ -1206,6 +1294,24 @@ impl AgentEngine {
 /// What the model reads when a tool fails. `{:#}` keeps the cause chain: `{}`
 /// showed only the outer context ("MCP tools/call memory_add") and hid the
 /// timeout underneath, so a dream read a slow save as a refused one.
+/// What one call to a tool is, as every pre-execution gate sees it.
+struct ToolTurn<'a> {
+    /// The name as the model wrote it.
+    tool: &'a str,
+    canonical: &'a str,
+    args: &'a JsonValue,
+    session_id: Option<&'a str>,
+    tool_call_id: &'a Option<String>,
+}
+
+/// A Bash call's command, under either of its argument names.
+fn bash_command_arg(args: &JsonValue) -> Option<String> {
+    args.get("cmd")
+        .or_else(|| args.get("command"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
 fn tool_error_text(tool: &str, err: &anyhow::Error) -> String {
     format!("tool_error: tool={tool} error={err:#}")
 }
