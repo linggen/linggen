@@ -333,7 +333,7 @@ place:
     absent_until: {file: data/state.json, path: companion.joined}
 ```
 
-- **Text** (a plain string, or `text:`). When that agent sits at the skill's chat as a guest, the engine puts the text under `## Where you are`, after the soul and voice, in place of the engine's guest block (`agents/places/app-guest.md`). A guest with no entry gets the guest block. An entry for the skill's own agent is ignored — its place is the SKILL.md.
+- **Text** (a plain string, or `text:`). When that agent sits at the skill's chat as a guest, the engine puts the text under `## Where you are`, after the soul and voice, in place of the engine's guest block (`agents/places/guest.md`). A guest with no entry gets the guest block. An entry for the skill's own agent is ignored — its place is the SKILL.md.
 - **`absent_until`** — the agent isn't in the skill's sessions until the value at `path` (dot-separated keys) in the skill's JSON `file` (relative to the skill folder) is set: present and not `null`, `false`, `0`, `""`, `[]` or `{}`. Read on every check; unreadable counts as unset. While absent:
   - a message addressed to it in the skill's chat runs no turn and keeps nothing: `/api/chat` answers `{"status": "absent", "agent_id", "session_id"}`, and the embedded chat posts `linggen-skill-event` `agent_absent {agent, text}` to the page, which says its own line;
   - an app moment for it naming the skill's chat (or the skill as `app`) is refused (`409 absent`) and never queued;

@@ -1,6 +1,7 @@
 //! Prompt assembly per surface: one soul everywhere, a place per surface.
 
 use crate::engine::permission::{PermissionMode, SessionPermissions};
+use crate::engine::prompt::place;
 use crate::engine::skill::{Skill, SkillSource};
 use crate::engine::{AgentEngine, AgentRole, EngineConfig, InterfaceMode};
 
@@ -42,7 +43,7 @@ fn at(hay: &str, needle: &str) -> usize {
 
 const MAC_CHAT: &str = "Linggen's main chat";
 const DESKTOP: &str = "a body on the desktop";
-const GUEST: &str = "A guest in one of the user's apps' chats";
+const GUEST: &str = "A guest in someone else's chat";
 
 #[test]
 fn ling_at_home_gets_soul_then_voice_then_the_main_chat() {
@@ -80,6 +81,21 @@ fn yinyue_at_home_is_on_the_desktop_and_a_guest_at_an_app_table() {
     at(&p, GUEST);
     at(&p, "## How you talk");
     assert!(!p.contains(DESKTOP) && !p.contains("Express"));
+}
+
+/// The guest block holds at any table — an app's chat, the main chat, a
+/// mission's session — so it never says she is in an app, or that its
+/// agent runs one.
+#[test]
+fn the_guest_block_is_true_at_any_table() {
+    let block =
+        crate::engine::prompt::place::engine_place("yinyue", place::Surface::Guest).unwrap();
+    for app_only in ["apps' chats", "runs the app", "You don't run the app"] {
+        assert!(
+            !block.contains(app_only),
+            "{app_only:?} is not true at every table"
+        );
+    }
 }
 
 #[test]

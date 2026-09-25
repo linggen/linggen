@@ -9,7 +9,7 @@ surfaces under `agents/places/`:
 |---|---|---|
 | `mac-chat.md` | Ling | Mac main chat (own session, no app) |
 | `desktop-pet.md` | Yinyue | her own thread on the Mac — desktop body, moments, first meeting |
-| `app-guest.md` | Yinyue | a guest in an app's chat (generic; a skill's `place.yinyue` replaces it) |
+| `guest.md` | Yinyue | a guest at another's table — an app's chat, the main chat, a mission's session (generic; a skill's `place.yinyue` replaces it) |
 
 Order in the system prompt: soul (identity + body) → voice → `## Where you are`
 → skills list → active skill. Missions, consumer frames and delegates get no
