@@ -12,7 +12,15 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 use tokio::net::UdpSocket;
 
-const STUN_SERVERS: &[&str] = &["stun.l.google.com:19302", "stun.cloudflare.com:3478"];
+/// Cloudflare first (it answers from mainland China more often than
+/// Google, which is blocked there), Google second, then Xiaomi's public
+/// STUN — a mainland-hosted server for when neither foreign one answers
+/// (its reachability from China is well reported but not verified by us).
+const STUN_SERVERS: &[&str] = &[
+    "stun.cloudflare.com:3478",
+    "stun.l.google.com:19302",
+    "stun.miwifi.com:3478",
+];
 const MAGIC_COOKIE: u32 = 0x2112_A442;
 const BINDING_REQUEST: u16 = 0x0001;
 const BINDING_SUCCESS: u16 = 0x0101;
@@ -112,6 +120,13 @@ fn decode_address(value: &[u8], xored: bool) -> Option<SocketAddr> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cloudflare_leads_and_a_mainland_server_closes() {
+        assert_eq!(STUN_SERVERS.first(), Some(&"stun.cloudflare.com:3478"));
+        assert_eq!(STUN_SERVERS[1], "stun.l.google.com:19302");
+        assert_eq!(STUN_SERVERS.last(), Some(&"stun.miwifi.com:3478"));
+    }
 
     fn response(txid: &[u8; 12], attrs: &[u8]) -> Vec<u8> {
         let mut msg = Vec::new();
