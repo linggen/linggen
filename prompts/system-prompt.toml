@@ -59,19 +59,18 @@ description = "Closing delimiter for project context files"
 text = "\n\n--- END PROJECT INSTRUCTIONS ---"
 
 [core_memory_block]
-description = "Populated head of the always-on memory block: the `tier=core` rows from the store. The shared tail (save triggers, retrieval-visibility, usage rules) lives in `core_memory_shared`, appended after this by the engine."
+description = "Populated head of the always-on memory block: the `tier=core` rows and this project's standing rules, as ling-mem's session_start renders them. The shared tail (save triggers, retrieval-visibility, usage rules) lives in `core_memory_shared`, appended after this by the engine."
 vars = ["core_facts"]
 text = '''
 
 # Always-on memory
 
 Memory rows the engine pulls from the `ling-mem` store and injects into
-every owner-user session's system prompt. Trust as current truth unless
-contradicted by something the user just said in chat. Replaced (never
-appended to) each time the system prompt is rebuilt — content is always
-the current `tier=core` snapshot, never a running log.
-
-## Rows
+every owner-user session's system prompt: the `tier=core` rows and the
+standing rules (preferences) for this project and globally. Trust as
+current truth unless contradicted by something the user just said in chat.
+Replaced (never appended to) each time the system prompt is rebuilt —
+always the current snapshot, never a running log.
 
 {core_facts}'''
 

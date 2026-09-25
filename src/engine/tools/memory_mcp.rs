@@ -124,7 +124,7 @@ pub(crate) async fn augment(tools: &Tools, qualified: &str, mut args: Value) -> 
     if !foreign_row {
         if let Some(project) = project_cwd(tools) {
             for field in ["cwd", "cwd_scope"] {
-                if declares(&tool.input_schema, field) && !has(&args, field) {
+                if declares(&tool.input_schema, field) && wants_project(&args, field) {
                     set(&mut args, field, Value::String(project.clone()));
                 }
             }
@@ -161,6 +161,17 @@ pub(crate) fn is_project_dir(cwd: &std::path::Path) -> bool {
     !(cwd.starts_with(std::env::temp_dir())
         || cwd.starts_with("/tmp")
         || cwd.starts_with("/private/tmp"))
+}
+
+/// Does this call get the session's project stamped into `field`? Never over
+/// a value the caller set, and never `cwd` on a row the model marked
+/// `global: true` — a row about the person, not this project (the daemon
+/// drops any cwd sent with it anyway).
+fn wants_project(args: &Value, field: &str) -> bool {
+    if has(args, field) {
+        return false;
+    }
+    !(field == "cwd" && args.get("global").and_then(Value::as_bool) == Some(true))
 }
 
 /// Does the server accept this field for this tool?
@@ -314,6 +325,26 @@ mod tests {
         // Null is absence, not a value: models fill optional fields with it.
         assert!(!has(&json!({"source_session": null}), "source_session"));
         assert!(!has(&json!({}), "source_session"));
+    }
+
+    /// A row the model marked global is about the person: no project stamp,
+    /// though a search from the same session is still scoped.
+    #[test]
+    fn a_global_row_gets_no_project_stamp() {
+        assert!(wants_project(&json!({"content": "x"}), "cwd"));
+        assert!(!wants_project(
+            &json!({"content": "x", "global": true}),
+            "cwd"
+        ));
+        assert!(wants_project(
+            &json!({"content": "x", "global": false}),
+            "cwd"
+        ));
+        assert!(!wants_project(&json!({"cwd": "/elsewhere"}), "cwd"));
+        assert!(wants_project(
+            &json!({"query": "q", "global": true}),
+            "cwd_scope"
+        ));
     }
 
     /// Guarded writes are recognised by shape, so a renamed or added tool

@@ -1,5 +1,6 @@
-//! Built-in core memory — `tier=core` rows pulled from the user's
-//! memory store and injected into every owner session.
+//! Built-in core memory — `tier=core` rows and the standing rules that
+//! apply to the session's project, pulled from the user's memory store
+//! (`session_start`) and injected into every owner session.
 //!
 //! Per `doc/memory-spec.md` §1/§2 the core tier lives as rows in the
 //! `semantic` LanceDB table, not as files on disk. The engine queries
@@ -75,12 +76,52 @@ pub(crate) const RECONCILE_FOOTER: &str = "\n\nNote: If duplicates or conflictin
 /// routing live in `[memory_protocol]` (session start); this only nudges.
 pub(crate) const CAPTURE_REMINDER: &str = "Memory capture: before finishing this turn, recognize anything worth remembering and write it at the right tier per the memory protocol (core/semantic = search-first; episodic = incidental); anchor relative time to absolute dates (\"last month\" → \"2026-06\"). Nothing worth keeping? Skip silently.";
 
-/// Query `tier=core` rows from the daemon at `ling_mem_url` and render
-/// them as a bullet list. Returns `None` when there are no core rows
-/// (or the daemon is unreachable / errors out — the caller emits the
-/// empty-block prompt in that case so a fresh install still starts
-/// cleanly).
-pub(crate) fn load_core(ling_mem_url: &str) -> Option<CoreContent> {
+/// What a session loads at start, from the daemon at `ling_mem_url`: the
+/// core rows plus the standing rules (type=preference) that apply at
+/// `project` — global, or written at that path or a parent of it. One
+/// `session_start` call; the daemon picks the rules, applies the char
+/// budget and renders the block, so this engine injects the same text as
+/// every other host. `project` is `None` for a session in no project:
+/// global rules only.
+///
+/// Returns `None` when there is nothing to load (or the daemon is
+/// unreachable / errors out — the caller emits the empty-block prompt in
+/// that case so a fresh install still starts cleanly). A daemon older than
+/// `session_start` (ling-mem < 1.9) gets the core rows alone, as before.
+pub(crate) fn load_core(ling_mem_url: &str, project: Option<&str>) -> Option<CoreContent> {
+    let mut args = serde_json::json!({"verb": "session_start"});
+    if let Some(p) = project {
+        args["cwd"] = serde_json::json!(p);
+    }
+    match fetch(ling_mem_url, args, LOAD_CORE_TIMEOUT) {
+        Some(Ok(value)) => session_block(&value),
+        Some(Err(_)) => load_core_rows_only(ling_mem_url),
+        None => None,
+    }
+}
+
+/// The daemon's rendered block, with the reconcile footer when there is
+/// more than one row to reconcile.
+fn session_block(value: &serde_json::Value) -> Option<CoreContent> {
+    let block = value.get("block")?.as_str()?.trim();
+    if block.is_empty() {
+        return None;
+    }
+    let rows = ["core", "rules"]
+        .iter()
+        .filter_map(|k| value.get(*k).and_then(|v| v.as_array()))
+        .map(Vec::len)
+        .sum::<usize>();
+    let facts = if rows > 1 {
+        format!("{block}{RECONCILE_FOOTER}")
+    } else {
+        block.to_string()
+    };
+    Some(CoreContent { facts })
+}
+
+/// The pre-1.9 path: `tier=core` rows only, rendered here.
+fn load_core_rows_only(ling_mem_url: &str) -> Option<CoreContent> {
     let rows = fetch_core_rows(ling_mem_url, LOAD_CORE_TIMEOUT)?;
     if rows.is_empty() {
         return None;
@@ -163,7 +204,14 @@ fn render_row(r: &CoreRow) -> String {
     }
 }
 
-/// List `tier=core` rows over HTTP, bounded by `timeout`. Goes through
+/// List `tier=core` rows over HTTP, bounded by `timeout`.
+fn fetch_core_rows(ling_mem_url: &str, timeout: Duration) -> Option<Vec<CoreRow>> {
+    let args = serde_json::json!({"verb": "list", "tier": "core", "limit": CORE_LIMIT});
+    let value = fetch(ling_mem_url, args, timeout)?.ok()?;
+    parse_rows(&value)
+}
+
+/// One memory call over HTTP, bounded by `timeout`. Goes through
 /// `call_memory_http`, so the core block honors `agent.ling_mem_url` like
 /// every other memory surface (a non-default URL, e.g. an eval's
 /// throwaway store, reads the right daemon). The request runs on a side
@@ -171,34 +219,41 @@ fn render_row(r: &CoreRow) -> String {
 /// timeout the engine proceeds with no core injected this turn and the
 /// orphan request finishes in the background (including the dispatch
 /// layer's one autostart retry, which helps the next turn).
-fn fetch_core_rows(ling_mem_url: &str, timeout: Duration) -> Option<Vec<CoreRow>> {
+///
+/// `None` = no answer in time; `Some(Err)` = the daemon answered with an
+/// error (e.g. an older daemon without this verb).
+fn fetch(
+    ling_mem_url: &str,
+    args: serde_json::Value,
+    timeout: Duration,
+) -> Option<Result<serde_json::Value, String>> {
     let (tx, rx) = mpsc::channel();
     let url = ling_mem_url.to_string();
     thread::spawn(move || {
-        let result = (|| -> Option<Vec<CoreRow>> {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .ok()?;
-            let value = rt
-                .block_on(crate::engine::tools::memory_http::call_memory_http(
+        let result = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| e.to_string())
+            .and_then(|rt| {
+                rt.block_on(crate::engine::tools::memory_http::call_memory_http(
                     &url,
                     "core block",
-                    serde_json::json!({"verb": "list", "tier": "core", "limit": CORE_LIMIT}),
+                    args,
                 ))
-                .map_err(|e| tracing::debug!(error = %e, "core list over ling-mem HTTP failed; treating core as empty"))
-                .ok()?;
-            parse_rows(&value)
-        })();
+                .map_err(|e| e.to_string())
+            });
+        if let Err(e) = &result {
+            tracing::debug!(error = %e, "core block over ling-mem HTTP failed");
+        }
         let _ = tx.send(result);
     });
 
     match rx.recv_timeout(timeout) {
-        Ok(rows) => rows,
+        Ok(result) => Some(result),
         Err(_) => {
             tracing::warn!(
                 ?timeout,
-                "core list over ling-mem HTTP timed out; treating core as empty"
+                "core block over ling-mem HTTP timed out; treating core as empty"
             );
             None
         }
@@ -225,6 +280,27 @@ fn parse_rows(value: &serde_json::Value) -> Option<Vec<CoreRow>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_block_takes_the_daemons_block_and_adds_the_footer() {
+        let value = serde_json::json!({
+            "core": [{"id": "a", "content": "Alex"}],
+            "rules": [{"id": "b", "content": "Always test"}],
+            "block": "## Core memory — who the user is\n\n- Alex (id=a)\n\n## Standing rules — how to work (global)\n\n- Always test (id=b)",
+        });
+        let c = session_block(&value).unwrap();
+        assert!(c.facts.starts_with("## Core memory"));
+        assert!(c.facts.contains("- Always test (id=b)"));
+        assert!(c.facts.ends_with(RECONCILE_FOOTER));
+
+        // One row: nothing to reconcile against.
+        let one = serde_json::json!({"core": [{"id": "a"}], "rules": [], "block": "- Alex (id=a)"});
+        assert_eq!(session_block(&one).unwrap().facts, "- Alex (id=a)");
+
+        // An empty store injects nothing.
+        let empty = serde_json::json!({"core": [], "rules": [], "block": ""});
+        assert!(session_block(&empty).is_none());
+    }
 
     #[test]
     fn parses_list_payload() {

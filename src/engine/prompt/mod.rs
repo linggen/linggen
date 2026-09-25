@@ -482,7 +482,12 @@ impl AgentEngine {
             // Head differs by whether the store has `tier=core` rows; the
             // shared tail (save triggers, retrieval-visibility, usage rules)
             // is one fragment so the two heads can't drift apart.
-            match core_block::load_core(&self.cfg.ling_mem_url) {
+            // The session's project, when it is one: its standing rules load
+            // with core (global rules + ones written at it or a parent).
+            let cwd = self.tools.builtins.cwd();
+            let project = crate::engine::tools::is_project_dir(&cwd)
+                .then(|| cwd.to_string_lossy().to_string());
+            match core_block::load_core(&self.cfg.ling_mem_url, project.as_deref()) {
                 Some(c) => stable.push_str(
                     &self
                         .prompt_store
