@@ -143,7 +143,7 @@ pub(super) fn parse_mission_md(id: &str, content: &str) -> Result<Mission> {
         return parse_legacy(&id, yaml, body);
     }
 
-    let fm: MissionFrontmatter = serde_yml::from_str(yaml)
+    let fm: MissionFrontmatter = serde_norway::from_str(yaml)
         .map_err(|e| anyhow::anyhow!("Bad frontmatter in {}: {}", id, e))?;
 
     Ok(Mission {
@@ -198,7 +198,7 @@ fn default_mission(id: String, prompt: String) -> Mission {
 }
 
 fn parse_legacy(id: &str, yaml: &str, body: String) -> Result<Mission> {
-    let fm: LegacyFrontmatter = serde_yml::from_str(yaml)
+    let fm: LegacyFrontmatter = serde_norway::from_str(yaml)
         .map_err(|e| anyhow::anyhow!("Bad legacy frontmatter in {}: {}", id, e))?;
 
     if fm.mode.as_deref() == Some("app") {
@@ -276,7 +276,7 @@ pub(super) fn mission_to_md(mission: &Mission) -> String {
         project: mission.project.clone(),
         created_at: mission.created_at,
     };
-    let yaml = serde_yml::to_string(&fm).unwrap_or_default();
+    let yaml = serde_norway::to_string(&fm).unwrap_or_default();
     format!("---\n{}---\n\n{}\n", yaml, mission.prompt)
 }
 

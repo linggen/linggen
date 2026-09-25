@@ -195,7 +195,7 @@ pub(crate) async fn get_skill_file_api(Query(query): Query<SkillFileQuery>) -> i
     };
     let valid = content.starts_with("---")
         && content.splitn(3, "---").count() >= 3
-        && serde_yml::from_str::<serde_yml::Value>(content.split("---").nth(1).unwrap_or(""))
+        && serde_norway::from_str::<serde_norway::Value>(content.split("---").nth(1).unwrap_or(""))
             .is_ok();
     Json(SkillFileResponse {
         path: rel,

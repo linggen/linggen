@@ -257,7 +257,7 @@ fn enabled_in(md: &str) -> bool {
     let (Some(yaml), _) = crate::extensions::frontmatter::split(md) else {
         return false;
     };
-    serde_yml::from_str::<Defaults>(yaml).is_ok_and(|d| d.enabled)
+    serde_norway::from_str::<Defaults>(yaml).is_ok_and(|d| d.enabled)
 }
 
 /// Her voice is on and a surface holds her — she is being heard.

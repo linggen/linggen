@@ -30,7 +30,7 @@ pub fn parse_agent_markdown(content: &str) -> Result<(AgentSpec, String)> {
     if parts.len() < 3 {
         anyhow::bail!("Agent spec missing closing frontmatter delimiter (---)");
     }
-    let spec: AgentSpec = serde_yml::from_str(parts[1])?;
+    let spec: AgentSpec = serde_norway::from_str(parts[1])?;
     let system_prompt = parts[2].trim().to_string();
     Ok((spec, system_prompt))
 }

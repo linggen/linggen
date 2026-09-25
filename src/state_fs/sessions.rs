@@ -125,7 +125,7 @@ impl SessionStore {
         Self::validate_id(&meta.id)?;
         let dir = self.session_dir(&meta.id);
         fs::create_dir_all(&dir)?;
-        let yaml = serde_yml::to_string(meta)?;
+        let yaml = serde_norway::to_string(meta)?;
         fs::write(dir.join("session.yaml"), yaml)?;
         // Create empty messages file
         let msgs_path = dir.join("messages.jsonl");
@@ -141,7 +141,7 @@ impl SessionStore {
             return Ok(None);
         }
         let content = fs::read_to_string(&yaml_path)?;
-        let meta: SessionMeta = serde_yml::from_str(&content)?;
+        let meta: SessionMeta = serde_norway::from_str(&content)?;
         Ok(Some(meta))
     }
 
@@ -168,7 +168,7 @@ impl SessionStore {
             let yaml_path = entry.path().join("session.yaml");
             if yaml_path.exists() {
                 let content = fs::read_to_string(&yaml_path)?;
-                match serde_yml::from_str::<SessionMeta>(&content) {
+                match serde_norway::from_str::<SessionMeta>(&content) {
                     Ok(mut meta) => {
                         // Last activity = when the transcript last grew. A
                         // session touched today should surface as today's,
@@ -225,13 +225,13 @@ impl SessionStore {
             bail!("Session not found: {}", session_id);
         }
         let content = fs::read_to_string(&yaml_path)?;
-        let mut meta: SessionMeta = serde_yml::from_str(&content)?;
+        let mut meta: SessionMeta = serde_norway::from_str(&content)?;
         meta.title = new_title.to_string();
         // Any explicit rename — user via the API, or the chat auto-rename
         // hook — locks the title so the placeholder-overwrite path stays
         // silent afterwards.
         meta.title_locked = true;
-        let yaml = serde_yml::to_string(&meta)?;
+        let yaml = serde_norway::to_string(&meta)?;
         fs::write(yaml_path, yaml)?;
         Ok(())
     }
@@ -242,7 +242,7 @@ impl SessionStore {
         if !yaml_path.exists() {
             bail!("Session not found: {}", meta.id);
         }
-        let yaml = serde_yml::to_string(meta)?;
+        let yaml = serde_norway::to_string(meta)?;
         fs::write(yaml_path, yaml)?;
         Ok(())
     }
@@ -262,10 +262,10 @@ impl SessionStore {
             bail!("Session not found: {}", session_id);
         }
         let content = fs::read_to_string(&yaml_path)?;
-        let mut meta: SessionMeta = serde_yml::from_str(&content)?;
+        let mut meta: SessionMeta = serde_norway::from_str(&content)?;
         meta.compact_threshold = threshold;
         meta.compact_focus = focus;
-        let yaml = serde_yml::to_string(&meta)?;
+        let yaml = serde_norway::to_string(&meta)?;
         fs::write(yaml_path, yaml)?;
         Ok(())
     }

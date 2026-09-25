@@ -101,7 +101,7 @@ impl StateFs {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let yaml = serde_yml::to_string(state)?;
+        let yaml = serde_norway::to_string(state)?;
         let content = format!("---\n{}---\n\n{}", yaml, body);
         fs::write(path, content)?;
         Ok(())
@@ -137,7 +137,7 @@ impl StateFs {
         if parts.len() < 3 {
             anyhow::bail!("Markdown missing closing frontmatter delimiter (---)");
         }
-        let state: StateFile = serde_yml::from_str(parts[1])?;
+        let state: StateFile = serde_norway::from_str(parts[1])?;
         let body = parts[2].trim().to_string();
         Ok((state, body))
     }

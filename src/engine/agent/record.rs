@@ -112,11 +112,11 @@ mod tests {
     #[test]
     fn internal_is_read_from_frontmatter_and_defaults_off() {
         let on: AgentSpec =
-            serde_yml::from_str("name: memory\ndescription: d\ntools: []\ninternal: true\n")
+            serde_norway::from_str("name: memory\ndescription: d\ntools: []\ninternal: true\n")
                 .unwrap();
         assert!(on.internal);
         let off: AgentSpec =
-            serde_yml::from_str("name: ling\ndescription: d\ntools: []\n").unwrap();
+            serde_norway::from_str("name: ling\ndescription: d\ntools: []\n").unwrap();
         assert!(!off.internal);
     }
 }

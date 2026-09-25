@@ -42,7 +42,7 @@ pub fn parse_meta(text: &str) -> Option<(String, String)> {
         description: String,
     }
 
-    let meta: Meta = serde_yml::from_str(yaml).ok()?;
+    let meta: Meta = serde_norway::from_str(yaml).ok()?;
     Some((meta.name, meta.description))
 }
 

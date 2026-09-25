@@ -248,7 +248,7 @@ pub fn run_install_script(skill_dir: &Path) -> Result<Option<String>> {
         install: Option<String>,
     }
 
-    let meta: InstallMeta = match serde_yml::from_str(yaml) {
+    let meta: InstallMeta = match serde_norway::from_str(yaml) {
         Ok(m) => m,
         Err(_) => return Ok(None),
     };
@@ -627,7 +627,7 @@ pub fn parse_skill_text(text: &str, source: SkillSource) -> Result<Skill> {
         }
         None => anyhow::bail!("Skill must start with YAML frontmatter"),
     };
-    let frontmatter: SkillFrontmatter = serde_yml::from_str(yaml)?;
+    let frontmatter: SkillFrontmatter = serde_norway::from_str(yaml)?;
     let content = body.trim().to_string();
 
     // Skills with an `app` automatically receive the built-in PageUpdate
@@ -757,7 +757,7 @@ fn migrate_declared_renames(skills_dir: &Path) {
         let (Some(yaml), _) = crate::extensions::frontmatter::split(&text) else {
             continue;
         };
-        let Ok(fm) = serde_yml::from_str::<SkillFrontmatter>(yaml) else {
+        let Ok(fm) = serde_norway::from_str::<SkillFrontmatter>(yaml) else {
             continue;
         };
         for old in fm.renamed_from.into_iter().flatten() {
