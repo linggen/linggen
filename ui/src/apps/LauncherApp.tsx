@@ -27,9 +27,6 @@ const LABELS: Record<string, string> = {
   pulse: 'Pulse',
   dj: 'DJ',
   'shared-memory': 'Memory',
-  'game-table': 'Games',
-  'linggen-guide': 'Guide',
-  xbot: 'X',
 };
 const labelFor = (name: string) => LABELS[name] ?? name;
 

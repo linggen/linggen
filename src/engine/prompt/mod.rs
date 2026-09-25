@@ -174,7 +174,7 @@ impl AgentEngine {
             .unwrap_or("");
 
         // App skills override the agent body — the agent's coding/workflow instructions
-        // are irrelevant when the skill runs its own UI (e.g. game-table).
+        // are irrelevant when the skill runs its own UI (e.g. lingjing).
         // The agent's personality traits still carry through.
         let is_app_skill = self.active_skill.as_ref().is_some_and(|s| s.app.is_some());
 

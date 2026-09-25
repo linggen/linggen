@@ -9,23 +9,23 @@ guide: |
 
 # Skills
 
-A **skill** is the unit of extension in Linggen. Drop a folder under `~/.linggen/skills/` and your assistant gains a new capability — a memory store, a system diagnostic, a chess opponent, an X bot. No code changes, no SDK, no hosted plugin server.
+A **skill** is the unit of extension in Linggen. Drop a folder under `~/.linggen/skills/` and your assistant gains a new capability — a memory store, a system diagnostic, a chess opponent, a finance analyst. No code changes, no SDK, no hosted plugin server.
 
-This is what makes Linggen a platform, not a single product. The same agent loop that chats with you also powers Apple Shifu, ling-mem, and game-table — every "AI app" Linggen hosts is a skill on top of one shared runtime.
+This is what makes Linggen a platform, not a single product. The same agent loop that chats with you also powers Apple Shifu, ling-mem, and Lingjing — every "AI app" Linggen hosts is a skill on top of one shared runtime.
 
 ## What you can do with skills
 
-- **Install one** from the marketplace: `/skiller add weather` and your agent can answer weather questions.
+- **Install one** from the marketplace (Settings → Skills) and your agent can answer weather questions.
 - **Invoke one** in chat: type `/apple-shifu` to launch the system health dashboard, or just ask "scan my disk" and the agent finds and runs the skill on its own.
-- **Stack them** in a single conversation — the agent reads memory through `ling-mem`, scans disk through `apple-shifu`, and posts to X through `xbot`, all in the same chat. The skills don't know about each other; the agent loop composes them.
+- **Stack them** in a single conversation — the agent reads memory through `ling-mem`, scans disk through `apple-shifu`, and drafts posts through `pulse`, all in the same chat. The skills don't know about each other; the agent loop composes them.
 - **Make your own** by writing a `SKILL.md`. If you can write a markdown note, you can write a skill.
 
 ## Three flavors of skill
 
 | Flavor | What it does | Example |
 | :----- | :----------- | :------ |
-| **Instructions** | Gives the agent rules and context for a topic. The body shapes how the agent responds; tools stay the same. | `linggen-guide` (documentation Q&A) |
-| **App** | Has its own UI in an embedded panel. The agent drives the UI through `PageUpdate` data tools. | `apple-shifu`, `game-table`, `arcade-game` |
+| **Instructions** | Gives the agent rules and context for a topic. The body shapes how the agent responds; tools stay the same. | a house-style or review-checklist skill |
+| **App** | Has its own UI in an embedded panel. The agent drives the UI through `PageUpdate` data tools. | `apple-shifu`, `lingjing`, `arcade-game` |
 
 Most skills are the first kind. App skills are how you ship full AI apps with custom UI.
 
@@ -328,7 +328,7 @@ A skill with an `app:` section is a runnable app — invoking it opens a UI.
 | Kind | Model involvement | Example |
 | :--- | :---------------- | :------ |
 | **Standalone** | None — pure frontend | `arcade-game` (Snake, Pong, Tetris) |
-| **Interactive** | App UI talks to the agent via the session API | `game-table`, `apple-shifu` |
+| **Interactive** | App UI talks to the agent via the session API | `lingjing`, `apple-shifu` |
 
 Three launcher types: `web` (static files in an embedded panel), `bash` (run a script, stream output), `url` (external URL).
 
