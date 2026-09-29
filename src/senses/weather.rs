@@ -175,20 +175,34 @@ pub fn reading_of(city: &City, body: &serde_json::Value, at: u64) -> Option<Read
 
 async fn fetch(city: &City) -> Option<Reading> {
     let (lat, lon) = (city.latitude.to_string(), city.longitude.to_string());
-    let body: serde_json::Value = client()?
-        .get(FORECAST)
-        .query(&[
-            ("latitude", lat.as_str()),
-            ("longitude", lon.as_str()),
-            ("current", "temperature_2m,weather_code,is_day"),
-        ])
+    let query = [
+        ("latitude", lat.as_str()),
+        ("longitude", lon.as_str()),
+        ("current", "temperature_2m,weather_code,is_day"),
+    ];
+    match get_json(FORECAST, &query).await {
+        Ok(body) => reading_of(city, &body, now()),
+        Err(e) => {
+            tracing::info!("[weather] {}: {e}", city.name);
+            None
+        }
+    }
+}
+
+/// One GET, its JSON body, or why not.
+async fn get_json(url: &str, query: &[(&str, &str)]) -> Result<serde_json::Value, String> {
+    let client = client().ok_or("no http client")?;
+    let res = client
+        .get(url)
+        .query(query)
         .send()
         .await
-        .ok()?
-        .json()
-        .await
-        .ok()?;
-    reading_of(city, &body, now())
+        .map_err(|e| e.to_string())?;
+    let status = res.status();
+    if !status.is_success() {
+        return Err(format!("{status}"));
+    }
+    res.json().await.map_err(|e| e.to_string())
 }
 
 static REFRESHING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
