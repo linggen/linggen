@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
+use super::restored_tools::{self, ToolRow};
 use super::skill_dispatch::{run_skill_dispatch, run_trigger_dispatch};
 use super::structured::run_structured_loop;
 use super::types::ChatRequest;
@@ -540,8 +541,9 @@ async fn promote_mission_session_to_user(
 
 /// Repopulate `chat_history` from the session store when the engine was
 /// freshly created (e.g. after a model change invalidated the engine
-/// cache, or after `/clear` emptied it). System messages and observations
-/// are skipped — only user/assistant turns rejoin the in-memory history.
+/// cache, or after `/clear` emptied it). System messages are skipped; the
+/// agent's most recent tool calls rejoin in compact form (`restored_tools`),
+/// so a model taking over sees that this agent uses its tools.
 ///
 /// `current_user_msg` is the message about to enter the turn. The chat
 /// handler persists each incoming user message to the session store
@@ -584,8 +586,22 @@ async fn restore_chat_history_if_empty(
     // so the question was being asked of roughly half the history, one full
     // directory scan at a time, before the first token.
     let mut is_agent: std::collections::HashMap<&str, bool> = std::collections::HashMap::new();
-    for m in &msgs {
-        if m.is_observation || m.from_id == "system" {
+    let native = engine.model_manager.supports_tools(&engine.model_id);
+    let first_call = restored_tools::first_kept_call(&msgs, own_agent, restored_tools::KEEP_CALLS);
+    let mut replay = restored_tools::ToolReplay::new(native);
+    for (i, m) in msgs.iter().enumerate() {
+        if m.is_observation {
+            match restored_tools::tool_row(m, own_agent) {
+                Some(ToolRow::Call { name, args }) if i >= first_call => {
+                    replay.call(name, args, &mut engine.chat_history)
+                }
+                Some(ToolRow::Result { name, text }) => replay.result(&name, &text),
+                _ => {}
+            }
+            continue;
+        }
+        replay.flush(&mut engine.chat_history);
+        if m.from_id == "system" {
             continue;
         }
         // The session's own agent speaks as assistant. The user — and any
@@ -626,6 +642,7 @@ async fn restore_chat_history_if_empty(
             .chat_history
             .push(crate::message::ChatMessage::new(role, content));
     }
+    replay.flush(&mut engine.chat_history);
     if !engine.chat_history.is_empty() {
         tracing::info!(
             "Restored {} chat_history messages from session store",
@@ -830,6 +847,7 @@ pub(crate) async fn run_session_turn(
         // trim.
         if let Some(cap) = max_live_msgs {
             trim_live_history(&mut engine.chat_history, cap);
+            restored_tools::drop_leading_results(&mut engine.chat_history);
         }
         catch_up_side_lines(engine, ctx, restored);
         apply_session_bound_skill(engine, ctx).await;

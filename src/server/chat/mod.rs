@@ -27,6 +27,7 @@ mod handler;
 pub(super) mod helpers;
 mod plan_flow;
 pub(crate) mod presence;
+mod restored_tools;
 mod runtime;
 pub(crate) mod side_lines;
 mod skill_dispatch;
