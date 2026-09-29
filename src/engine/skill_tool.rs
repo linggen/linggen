@@ -118,6 +118,10 @@ pub struct SkillToolDef {
     /// Directory containing the skill file; set at load time.
     #[serde(skip)]
     pub skill_dir: Option<PathBuf>,
+    /// The senses the owning skill declares, stamped at load: each reaches
+    /// the command as env (`crate::senses::tool_env`).
+    #[serde(skip)]
+    pub senses: Vec<String>,
 }
 
 impl SkillToolDef {
@@ -241,6 +245,7 @@ impl SkillToolDef {
                 .current_dir(workspace_root)
                 .env("PATH", crate::util::shell_path())
                 .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+                .envs(crate::senses::tool_env(&self.senses))
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
             #[cfg(unix)]
@@ -469,6 +474,7 @@ mod tests {
             pet: false,
             skill_name: None,
             skill_dir: None,
+            senses: Vec::new(),
         }
     }
 
@@ -581,6 +587,7 @@ mod tests {
             pet: false,
             skill_name: None,
             skill_dir: None,
+            senses: Vec::new(),
         };
 
         let schema = tool.to_schema_json();

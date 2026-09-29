@@ -16,6 +16,7 @@ mod prompts;
 mod provider;
 mod reach;
 mod runtime;
+mod senses;
 mod server;
 mod state_fs;
 mod telemetry;

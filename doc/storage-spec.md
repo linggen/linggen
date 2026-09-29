@@ -75,6 +75,8 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 │       └── runs.jsonl                # Mission run history (JSONL)
 ├── quests/
 │   └── {app}.json                    # Real-life quests an app publishes; linggen.json = setup milestones
+├── senses/
+│   └── weather.json                  # The weather sense: the city set, the off switch, the last reading (skill-spec § Senses)
 ├── ling.pid                          # Daemon PID
 └── ling.log                          # Daemon stdout
 ```

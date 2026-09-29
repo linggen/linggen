@@ -172,6 +172,7 @@ fn stamp_tool(skill: &Skill, id: &str, at: &str) -> Result<SkillToolDef, Refusal
         pet: false,
         skill_name: Some(skill.name.clone()),
         skill_dir: skill.skill_dir.clone(),
+        senses: Vec::new(),
     })
 }
 

@@ -21,6 +21,12 @@ pub(super) fn routes() -> Routes {
             "/apps/{skill_name}/capability/{tool_name}",
             post(capability_dispatch),
         )
+        // A sense a skill declares (`crate::senses`): its page reads it, and
+        // sets the one thing the person gives it (the city).
+        .route(
+            "/api/senses/weather",
+            get(crate::senses::weather::get_api).put(crate::senses::weather::put_api),
+        )
         .route("/shared/{file}", get(shared_pages::serve))
         .route("/apps/{skill_name}/{*file_path}", get(serve_app_file))
 }

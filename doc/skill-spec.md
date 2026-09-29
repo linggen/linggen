@@ -141,6 +141,7 @@ Three groups of fields. Standard fields work across tools; the others are extens
 | `queue` | `steer` (default) or `after-turn`: whether a message sent mid-turn steers the turn or waits for it (see "Queue") |
 | `quests` | Which phone facts stamp which of the skill's quests, and the skill's own writer that stamps them (see "Quests") |
 | `place` | Where the skill's sessions stand for each agent, and whether an agent is there yet (see "Place") |
+| `senses` | Real-world facts the engine reads for the skill, e.g. `[weather]` (see "Senses") |
 | `requires` | External dependencies to resolve at install |
 | `renamed-from` | Slugs this skill used to be called (see "Renaming a skill") |
 
@@ -339,6 +340,19 @@ place:
   - an app moment for it naming the skill's chat (or the skill as `app`) is refused (`409 absent`) and never queued;
   - the avatar's box, while a stage in that chat holds it, talks on its own thread instead.
 - The engine names no app and no agent: it matches the speaking agent's id against the keys.
+
+## Senses
+
+A skill never goes online itself. What it may know of the person's real world, the engine reads for it — a **sense** the skill declares:
+
+```yaml
+senses: [weather]
+```
+
+- **`weather`** — the current weather at the city the person set, from Open-Meteo (keyless: geocoding + forecast), read at most every 30 minutes. Off until a city is set; off again when the person turns it off — nothing is fetched then. No location permission: the city is typed once.
+  - Every tool command of a declaring skill (the model's calls and its page's `/api/skills/{skill}/tools/{tool}` alike) gets `LINGGEN_WEATHER`: `{kind, code, temp_c, is_day, city, at}`, `kind` one of `clear · cloudy · fog · rain · snow · storm`. Absent while off, unset or not read yet. Never waits: a stale reading is handed over while a new one is fetched behind.
+  - `GET /api/senses/weather` → `{city, off, reading}`. `PUT /api/senses/weather` with `{city: "Harbin", lang?}` sets the city (404 `not-found` when no place has that name), `{city: null}` clears it, `{off: true|false}` switches it. Kept in `~/.linggen/senses/weather.json`.
+- An unknown sense is logged and ignored. The engine names no app: every sense is general, and any skill may declare it.
 
 ## App skills
 

@@ -352,6 +352,10 @@ pub struct Skill {
     /// Where the skill's sessions stand for each agent — see [`Places`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub place: Option<Places>,
+    /// The real-world facts the engine reads for this skill (`senses:
+    /// [weather]`) — see `crate::senses` and `doc/skill-spec.md` § Senses.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub senses: Vec<String>,
     /// Filesystem path to the skill directory (set at load time, not serialized to clients).
     #[serde(skip)]
     pub skill_dir: Option<PathBuf>,

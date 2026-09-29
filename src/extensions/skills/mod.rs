@@ -95,6 +95,7 @@ fn page_update_tool_def() -> SkillToolDef {
         pet: false,
         skill_name: None,
         skill_dir: None,
+        senses: Vec::new(),
     }
 }
 
@@ -381,6 +382,8 @@ struct SkillFrontmatter {
     /// agent is there yet — see `doc/skill-spec.md` § Place.
     #[serde(default)]
     place: Option<crate::engine::skill::record::Places>,
+    #[serde(default)]
+    senses: Vec<String>,
 }
 
 pub struct SkillLoader {
@@ -624,6 +627,10 @@ pub fn parse_skill_text(text: &str, source: SkillSource) -> Result<Skill> {
         tool_defs.push(page_update_tool_def());
     }
     let cloud = cloud_if_allowed(frontmatter.cloud, &frontmatter.name, &source);
+    let senses = known_senses(frontmatter.senses, &frontmatter.name);
+    for tool_def in &mut tool_defs {
+        tool_def.senses = senses.clone();
+    }
 
     Ok(Skill {
         name: frontmatter.name,
@@ -655,8 +662,24 @@ pub fn parse_skill_text(text: &str, source: SkillSource) -> Result<Skill> {
         queue: frontmatter.queue,
         quests: frontmatter.quests,
         place: frontmatter.place,
+        senses,
         skill_dir: None,
     })
+}
+
+/// The senses a skill declares that the engine knows; an unknown one is
+/// named in the log and left out.
+fn known_senses(declared: Vec<String>, name: &str) -> Vec<String> {
+    declared
+        .into_iter()
+        .filter(|s| {
+            let known = crate::senses::KNOWN.contains(&s.as_str());
+            if !known {
+                tracing::warn!("skill '{name}': unknown sense '{s}'; ignored");
+            }
+            known
+        })
+        .collect()
 }
 
 /// A skill's `cloud:` speaks for the account on linggen.dev under the
@@ -857,6 +880,20 @@ This is the skill content."#;
         assert_eq!(skill.description, "A test skill");
         assert_eq!(skill.content, "This is the skill content.");
         assert!(skill.user_invocable); // default true
+    }
+
+    #[test]
+    fn a_skill_declares_its_senses_and_each_tool_carries_them() {
+        let text = "---\nname: game\ndescription: Play\nsenses: [weather, smell]\ntools:\n  - name: Look\n    description: Look.\n    cmd: \"echo hi\"\n---\nBody";
+        let skill = parse_skill_text(text, SkillSource::Global).unwrap();
+        assert_eq!(
+            skill.senses,
+            vec!["weather".to_string()],
+            "an unknown sense is left out"
+        );
+        assert_eq!(skill.tool_defs[0].senses, vec!["weather".to_string()]);
+        let bare = parse_skill_text("---\nname: x\ndescription: y\n---\n", SkillSource::Global);
+        assert!(bare.unwrap().senses.is_empty());
     }
 
     #[test]
