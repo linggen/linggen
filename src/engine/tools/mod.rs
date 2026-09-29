@@ -445,7 +445,11 @@ impl Tools {
     /// person has sent in this session, the one being answered included. A
     /// script that keeps count of the person's turns (a game paying a tale
     /// by turns played) takes the number from here instead of trusting the
-    /// model to report each one. And `LINGGEN_RESTRICTED` — the
+    /// model to report each one. `LINGGEN_USER_WORDS` — the person's last
+    /// few messages as they typed them, a JSON array of strings, newest last
+    /// (hidden rows and tool observations left out, each cut at 500
+    /// characters), so a script that keeps a quote can check it was really
+    /// said instead of trusting the model's copy. And `LINGGEN_RESTRICTED` — the
     /// well-known services this machine cannot reach (`youtube,google`;
     /// empty when all answer; see `reach`). Names no app.
     pub fn tool_env(&self) -> Vec<(String, String)> {
@@ -459,6 +463,7 @@ impl Tools {
             if let Ok(history) = manager.global_sessions.get_chat_history(sid) {
                 let turns = history.iter().filter(|m| m.from_id == "user").count();
                 env.push(("LINGGEN_USER_TURNS".to_string(), turns.to_string()));
+                env.push(("LINGGEN_USER_WORDS".to_string(), user_words(&history)));
             }
         }
         env
@@ -622,9 +627,60 @@ impl Tools {
     }
 }
 
+/// How many of the person's recent messages `LINGGEN_USER_WORDS` carries, and
+/// how long each may be.
+const USER_WORDS_KEEP: usize = 8;
+const USER_WORDS_CHARS: usize = 500;
+
+/// The person's last messages as they typed them, a JSON array, newest last:
+/// no hidden rows (a page's report, a nudge), no observations.
+fn user_words(history: &[crate::state_fs::sessions::ChatMsg]) -> String {
+    let said: Vec<String> = history
+        .iter()
+        .filter(|m| m.from_id == "user" && !m.is_observation)
+        .filter(|m| !m.content.contains("[HIDDEN]") && !m.content.trim().is_empty())
+        .map(|m| m.content.chars().take(USER_WORDS_CHARS).collect())
+        .collect();
+    let recent = &said[said.len().saturating_sub(USER_WORDS_KEEP)..];
+    serde_json::to_string(recent).unwrap_or_else(|_| "[]".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn user_words_keeps_what_the_person_typed_newest_last() {
+        let msg = |from: &str, content: &str, obs: bool| crate::state_fs::sessions::ChatMsg {
+            agent_id: "a".into(),
+            from_id: from.into(),
+            to_id: "a".into(),
+            content: content.into(),
+            timestamp: 0,
+            is_observation: obs,
+        };
+        let mut history = vec![
+            msg("user", "[HIDDEN] [scene] opened", false),
+            msg("user", "hello", false),
+            msg("a", "hi there", false),
+            msg("user", "tool output", true),
+        ];
+        for i in 0..USER_WORDS_KEEP {
+            history.push(msg("user", &format!("line {i}"), false));
+        }
+        let words: Vec<String> = serde_json::from_str(&user_words(&history)).unwrap();
+        assert_eq!(words.len(), USER_WORDS_KEEP);
+        assert_eq!(
+            words.last().unwrap(),
+            &format!("line {}", USER_WORDS_KEEP - 1)
+        );
+        assert!(!words
+            .iter()
+            .any(|w| w.contains("HIDDEN") || w == "hello" || w == "tool output"));
+        let long = vec![msg("user", &"字".repeat(900), false)];
+        let cut: Vec<String> = serde_json::from_str(&user_words(&long)).unwrap();
+        assert_eq!(cut[0].chars().count(), USER_WORDS_CHARS);
+    }
 
     #[test]
     fn cap_stream_passes_short_output_through() {
