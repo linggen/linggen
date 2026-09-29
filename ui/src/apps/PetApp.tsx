@@ -18,6 +18,10 @@ import { fromParent, postToParent } from '../lib/parentFrame';
 
 /** `?pet=1&stage=1`: this surface is a stage (a scene that stands her in a place). */
 const isStage = new URLSearchParams(window.location.search).get('stage') === '1';
+/** `&body=0`: a voice-only stage — it holds her (so the corner steps aside) and
+ *  her voice plays here, but no body and no bubble are drawn: the page shows her
+ *  its own way (Lingjing, where she is the story's fox; Hanli, 2026-09-29). */
+const bodyless = isStage && new URLSearchParams(window.location.search).get('body') === '0';
 
 /** A stage learns its page's app chat session from the page (the chat bridge
  *  answers `which`, and tells again whenever the chat's session changes). */
@@ -57,9 +61,9 @@ export const PetApp: React.FC = () => {
 
   return (
     <div className="fixed inset-0 bg-transparent">
-      {showYinyue && <YinyueAvatar />}
+      {showYinyue && !bodyless && <YinyueAvatar />}
       {/* Her reply text — without this the pet window shows no response. */}
-      {showYinyue && <YinyueBubble variant="pet" />}
+      {showYinyue && !bodyless && <YinyueBubble variant="pet" />}
     </div>
   );
 };
