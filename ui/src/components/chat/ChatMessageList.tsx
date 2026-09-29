@@ -5,6 +5,7 @@ import React, { useCallback, useMemo } from 'react';
 import { cn } from '../../lib/cn';
 import { UNSPOKEN_SENDERS } from '../../lib/messageUtils';
 import { useUserStore } from '../../stores/userStore';
+import { useSessionStore } from '../../stores/sessionStore';
 import type { ChatMessage } from '../../types';
 import { getMessagePhase } from './MessagePhase';
 import { AgentMessage } from './AgentMessage';
@@ -139,6 +140,8 @@ export const ChatMessageList = React.memo<{
   // the real name is learned, the placeholder "Hanli" stands in (Yinyue's
   // persona explains it and asks for the real one).
   const coreName = useUserStore((s) => s.coreName);
+  // An app's chat is the app's agent (its skill persona), not "the main agent".
+  const skillChat = useSessionStore((s) => s.isSkillSession && !!s.activeSkillName);
   // One toggle for every row (keyed by the row's key), so a row's props
   // stay equal across renders and its memo holds.
   const toggleExpanded = useCallback((key: string) => {
@@ -154,10 +157,10 @@ export const ChatMessageList = React.memo<{
       {messages.length === 0 && (
         <div className="self-center mt-12 max-w-md text-center">
           <div className="text-sm font-semibold text-slate-600 dark:text-slate-300">
-            No messages for {selectedAgent}
+            {skillChat ? 'No messages yet' : `No messages for ${selectedAgent}`}
           </div>
           <div className="mt-2 text-xs text-slate-500">
-            Send a message to this main agent or switch tabs.
+            {skillChat ? 'Ask about this app, or tap a suggestion below.' : 'Send a message to this main agent or switch tabs.'}
           </div>
         </div>
       )}
