@@ -326,13 +326,14 @@ mod tests {
                 "deepseek-flash",
                 "gpt-5.6-terra",
                 "gpt-5.6-luna",
-                "gpt-5.6-sol"
+                "gpt-5.6-sol",
+                "gpt-6-sol"
             ]),
         );
         assert!(migrate_retired_models(&mut s));
         assert_eq!(
             s["models"],
-            serde_json::json!(["deepseek-flash", "gpt-6-luna", "gpt-6-sol"])
+            serde_json::json!(["deepseek-flash", "gpt-6-luna", "gpt-6.1-sol"])
         );
         assert!(!migrate_retired_models(&mut s));
     }

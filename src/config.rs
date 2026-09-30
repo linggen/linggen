@@ -970,9 +970,16 @@ mod tests {
         cfg.migrate_retired_chatgpt_builtins();
         assert_eq!(
             cfg.routing.default_models,
-            vec!["gpt-6-luna".to_string(), "gpt-6-sol".to_string()]
+            vec!["gpt-6-luna".to_string(), "gpt-6.1-sol".to_string()]
         );
         assert_eq!(cfg.pet.model, "gpt-6-luna");
+
+        let mut six = Config::default();
+        six.routing.default_models = vec!["gpt-6-sol".into()];
+        six.pet.model = "gpt-6-sol".into();
+        six.migrate_retired_chatgpt_builtins();
+        assert_eq!(six.routing.default_models, vec!["gpt-6.1-sol".to_string()]);
+        assert_eq!(six.pet.model, "gpt-6.1-sol");
 
         let mut own = valid_config();
         own.models[0].id = "gpt-5.6-sol".into();

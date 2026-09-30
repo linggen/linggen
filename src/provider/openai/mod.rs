@@ -149,11 +149,12 @@ impl OpenAiClient {
             // with no originator, gpt-5.6-luna resolved to a missing
             // internal engine and 404'd ("Model not found"), and a version
             // older than a model's launch refuses it ("not supported when
-            // using Codex with a ChatGPT account" — gpt-6-* under 0.144.1).
-            // Identify as a current Codex CLI (openai/codex#31967); bump
-            // the version with each built-in generation.
+            // using Codex with a ChatGPT account" — gpt-6-* under 0.144.1,
+            // gpt-6.1-sol under 0.159). Identify as a current Codex CLI
+            // (openai/codex#31967); bump the version with each built-in
+            // generation.
             rb = rb.header("originator", "codex_cli_rs");
-            rb = rb.header("version", "0.155.1");
+            rb = rb.header("version", "0.159.2");
         } else if self.linggen_account_live {
             if let Some((token, _)) = crate::account::resolve_token() {
                 rb = rb.header("Authorization", format!("Bearer {}", token));

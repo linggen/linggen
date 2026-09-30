@@ -59,23 +59,24 @@ pub(super) fn inject_linggen_cloud(configs: &mut Vec<ModelConfig>) {
 pub const CHATGPT_BUILTIN_MODEL_ID: &str = "gpt-6-luna";
 
 /// All built-in ChatGPT models — always present, using the user's own
-/// ChatGPT subscription via OAuth (no API key). The GPT-6 family: Sol
+/// ChatGPT subscription via OAuth (no API key). The GPT-6 family: Sol 6.1
 /// (flagship, paid plans) and Luna (fast, every plan). Unlike the
 /// Linggen Cloud built-in, these ALWAYS win: any user-configured entry
 /// with one of these ids is replaced, not deferred to, so it's never
 /// rendered as a raw editable duplicate — sign in and star one, nothing to
 /// configure. A user wanting a different/custom ChatGPT-backed model
 /// should give it a different id.
-pub const CHATGPT_BUILTIN_MODEL_IDS: &[&str] = &["gpt-6-sol", "gpt-6-luna"];
+pub const CHATGPT_BUILTIN_MODEL_IDS: &[&str] = &["gpt-6.1-sol", "gpt-6-luna"];
 
 /// Previous ChatGPT built-in ids, each with the built-in it moves to.
 /// Config::load and the paired-device list migrate these, so a bump never
 /// leaves a dangling default, pet pin, or orphaned editable card.
 pub const CHATGPT_RETIRED_MODEL_IDS: &[(&str, &str)] = &[
     ("gpt-5.5", CHATGPT_BUILTIN_MODEL_ID),
-    ("gpt-5.6-sol", "gpt-6-sol"),
+    ("gpt-5.6-sol", "gpt-6.1-sol"),
     ("gpt-5.6-terra", CHATGPT_BUILTIN_MODEL_ID),
     ("gpt-5.6-luna", "gpt-6-luna"),
+    ("gpt-6-sol", "gpt-6.1-sol"),
 ];
 
 /// The current built-in a retired ChatGPT id moves to, if it is retired.
