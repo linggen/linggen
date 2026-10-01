@@ -892,6 +892,9 @@ This is the skill content."#;
             "an unknown sense is left out"
         );
         assert_eq!(skill.tool_defs[0].senses, vec!["weather".to_string()]);
+        let words = "---\nname: diary\ndescription: Keep\nsenses: [user_words]\n---\nBody";
+        let words = parse_skill_text(words, SkillSource::Global).unwrap();
+        assert_eq!(words.senses, vec!["user_words".to_string()]);
         let bare = parse_skill_text("---\nname: x\ndescription: y\n---\n", SkillSource::Global);
         assert!(bare.unwrap().senses.is_empty());
     }

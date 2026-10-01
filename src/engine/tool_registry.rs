@@ -55,9 +55,11 @@ impl ToolRegistry {
                     self.dispatch_via_skill_http(&skill_tool.name, &call.args)
                         .await
                 }
-                _ => {
-                    skill_tool.execute(&call.args, &self.builtins.cwd(), &self.builtins.tool_env())
-                }
+                _ => skill_tool.execute(
+                    &call.args,
+                    &self.builtins.cwd(),
+                    &self.builtins.tool_env(&skill_tool.senses),
+                ),
             };
         }
 

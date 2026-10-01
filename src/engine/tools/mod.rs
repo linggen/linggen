@@ -445,14 +445,16 @@ impl Tools {
     /// person has sent in this session, the one being answered included. A
     /// script that keeps count of the person's turns (a game paying a tale
     /// by turns played) takes the number from here instead of trusting the
-    /// model to report each one. `LINGGEN_USER_WORDS` — the person's last
-    /// few messages as they typed them, a JSON array of strings, newest last
-    /// (hidden rows and tool observations left out, each cut at 500
-    /// characters), so a script that keeps a quote can check it was really
-    /// said instead of trusting the model's copy. And `LINGGEN_RESTRICTED` — the
-    /// well-known services this machine cannot reach (`youtube,google`;
-    /// empty when all answer; see `reach`). Names no app.
-    pub fn tool_env(&self) -> Vec<(String, String)> {
+    /// model to report each one. `LINGGEN_USER_WORDS` — only for a skill
+    /// that declares the `user_words` sense (`senses`, the owning skill's) —
+    /// the person's last few messages as they typed them, a JSON array of
+    /// strings, newest last (hidden rows and tool observations left out, each
+    /// cut at 500 characters), so a script that keeps a quote can check it was
+    /// really said instead of trusting the model's copy. And
+    /// `LINGGEN_RESTRICTED` — the well-known services this machine cannot
+    /// reach (`youtube,google`; empty when all answer; see `reach`). Names no
+    /// app.
+    pub fn tool_env(&self, senses: &[String]) -> Vec<(String, String)> {
         let restricted = crate::reach::tool_env();
         let Some(sid) = &self.session_id else {
             return restricted.into_iter().collect();
@@ -463,7 +465,9 @@ impl Tools {
             if let Ok(history) = manager.global_sessions.get_chat_history(sid) {
                 let turns = history.iter().filter(|m| m.from_id == "user").count();
                 env.push(("LINGGEN_USER_TURNS".to_string(), turns.to_string()));
-                env.push(("LINGGEN_USER_WORDS".to_string(), user_words(&history)));
+                if senses.iter().any(|s| s == crate::senses::USER_WORDS) {
+                    env.push(("LINGGEN_USER_WORDS".to_string(), user_words(&history)));
+                }
             }
         }
         env
