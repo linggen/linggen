@@ -770,7 +770,11 @@ async fn dispatch_mission_prompt(
     // Falls back to default when the configured id isn't registered.
     match mission.model.as_deref() {
         Some(mid) if engine.model_manager.has_model(mid) => {
-            engine.model_id = mid.to_string();
+            // A retired id (`model: gpt-6-sol`) runs on its successor.
+            engine.model_id = engine
+                .model_manager
+                .resolve_id(mid)
+                .unwrap_or_else(|| mid.to_string());
         }
         Some(mid) => {
             warn!(

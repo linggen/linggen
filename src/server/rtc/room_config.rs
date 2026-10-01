@@ -76,9 +76,30 @@ pub fn load_room_config() -> RoomConfig {
     if !path.exists() {
         return RoomConfig::default();
     }
-    match std::fs::read_to_string(&path) {
+    let cfg: RoomConfig = match std::fs::read_to_string(&path) {
         Ok(content) => toml::from_str(&content).unwrap_or_default(),
         Err(_) => RoomConfig::default(),
+    };
+    cfg.with_successors()
+}
+
+impl RoomConfig {
+    /// A share written against a retired model id also shares its current
+    /// id, so a generation bump never quietly un-shares a model. The old id
+    /// stays too — a user model reusing it is still theirs to share.
+    fn with_successors(mut self) -> Self {
+        let next: Vec<String> = self
+            .shared_models
+            .iter()
+            .map(|id| crate::provider::models::canonical_model_id(id).to_string())
+            .filter(|id| !self.shared_models.contains(id))
+            .collect();
+        for id in next {
+            if !self.shared_models.contains(&id) {
+                self.shared_models.push(id);
+            }
+        }
+        self
     }
 }
 
@@ -113,4 +134,22 @@ pub fn save_room_config(config: &RoomConfig) -> anyhow::Result<()> {
     let toml_str = toml::to_string_pretty(config)?;
     std::fs::write(&path, toml_str)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_retired_share_also_shares_its_successor() {
+        let cfg = RoomConfig {
+            shared_models: vec!["gpt-6-sol".into(), "gpt-6-luna".into()],
+            ..RoomConfig::default()
+        }
+        .with_successors();
+        assert_eq!(
+            cfg.shared_models,
+            vec!["gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]
+        );
+    }
 }

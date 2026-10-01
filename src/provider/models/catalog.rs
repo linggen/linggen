@@ -19,14 +19,17 @@ pub const LINGGEN_CLOUD_MODEL_ID: &str = "deepseek-flash";
 /// persisted defaults and pins to the current id.
 pub const LINGGEN_CLOUD_RETIRED_MODEL_IDS: &[&str] = &["deepseek-v4-flash"];
 
-/// The id a model lookup should use: retired Linggen Cloud ids map to the
-/// current one, everything else is itself.
+/// The id a model lookup should use: a retired Linggen Cloud id maps to the
+/// current one, a retired ChatGPT built-in to its successor, everything
+/// else is itself. A saved id (session, mission `model:`, agent override,
+/// room share) written against an old generation keeps resolving instead of
+/// falling silently into the default. Callers holding the configured models
+/// check an exact match first — a user model reusing an old id is theirs.
 pub fn canonical_model_id(id: &str) -> &str {
     if LINGGEN_CLOUD_RETIRED_MODEL_IDS.contains(&id) {
-        LINGGEN_CLOUD_MODEL_ID
-    } else {
-        id
+        return LINGGEN_CLOUD_MODEL_ID;
     }
+    chatgpt_successor(id).unwrap_or(id)
 }
 
 pub(super) fn inject_linggen_cloud(configs: &mut Vec<ModelConfig>) {

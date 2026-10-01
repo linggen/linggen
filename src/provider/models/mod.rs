@@ -212,7 +212,7 @@ impl ModelManager {
     ) -> Result<ChunkStream> {
         let instance = self
             .models
-            .get(canonical_model_id(model_id))
+            .get(self.key(model_id))
             .ok_or_else(|| anyhow::anyhow!("Model {} not found", model_id))?;
         self.chat_text_stream_with_keep_alive(
             model_id,
@@ -234,7 +234,7 @@ impl ModelManager {
     ) -> Result<ChunkStream> {
         let instance = self
             .models
-            .get(canonical_model_id(model_id))
+            .get(self.key(model_id))
             .ok_or_else(|| anyhow::anyhow!("Model {} not found", model_id))?;
 
         Self::check_provider_auth(&instance.config)?;
@@ -269,7 +269,7 @@ impl ModelManager {
     ) -> Result<ChunkStream> {
         let instance = self
             .models
-            .get(canonical_model_id(model_id))
+            .get(self.key(model_id))
             .ok_or_else(|| anyhow::anyhow!("Model {} not found", model_id))?;
 
         Self::check_provider_auth(&instance.config)?;
@@ -371,7 +371,7 @@ impl ModelManager {
     pub async fn context_window(&self, model_id: &str) -> Result<Option<usize>> {
         let instance = self
             .models
-            .get(canonical_model_id(model_id))
+            .get(self.key(model_id))
             .ok_or_else(|| anyhow::anyhow!("Model {} not found", model_id))?;
 
         // Config override takes priority (useful for cloud/remote models).
@@ -446,7 +446,7 @@ impl ModelManager {
     pub async fn has_vision(&self, model_id: &str) -> Result<bool> {
         let instance = self
             .models
-            .get(canonical_model_id(model_id))
+            .get(self.key(model_id))
             .ok_or_else(|| anyhow::anyhow!("Model {} not found", model_id))?;
 
         instance
@@ -491,7 +491,7 @@ impl ModelManager {
     /// Check if a model supports native tool calling.
     /// Uses explicit config if set, otherwise auto-detects based on provider.
     pub fn supports_tools(&self, model_id: &str) -> bool {
-        let Some(instance) = self.models.get(canonical_model_id(model_id)) else {
+        let Some(instance) = self.models.get(self.key(model_id)) else {
             tracing::warn!(
                 "supports_tools: model '{}' not found in configured models (have: {:?}), defaulting to true",
                 model_id,
@@ -504,9 +504,26 @@ impl ModelManager {
         result
     }
 
+    /// The registered key a lookup of [id] lands on: the id itself when a
+    /// model is configured under it, else its canonical (current) id.
+    fn key<'a>(&self, id: &'a str) -> &'a str {
+        if self.models.contains_key(id) {
+            id
+        } else {
+            canonical_model_id(id)
+        }
+    }
+
+    /// The registered id [model_id] resolves to — itself, or the current id
+    /// of a retired one — so a caller can store the live id.
+    pub fn resolve_id(&self, model_id: &str) -> Option<String> {
+        let key = self.key(model_id);
+        self.models.contains_key(key).then(|| key.to_string())
+    }
+
     /// Check if a model ID exists in the configured models.
     pub fn has_model(&self, model_id: &str) -> bool {
-        self.models.contains_key(canonical_model_id(model_id))
+        self.models.contains_key(self.key(model_id))
     }
 
     /// Whether [model_id]'s credentials are present right now — the same
@@ -515,7 +532,7 @@ impl ModelManager {
     /// instead of learning it from a failed turn.
     pub fn model_auth_ok(&self, model_id: &str) -> bool {
         self.models
-            .get(canonical_model_id(model_id))
+            .get(self.key(model_id))
             .is_some_and(|m| Self::check_provider_auth(&m.config).is_ok())
     }
 
@@ -526,7 +543,7 @@ impl ModelManager {
     /// system-prompt panel matches what gets sent on the wire.
     pub fn provider_kind(&self, model_id: &str) -> Option<&str> {
         self.models
-            .get(canonical_model_id(model_id))
+            .get(self.key(model_id))
             .map(|m| m.config.provider.as_str())
     }
 
@@ -539,6 +556,51 @@ impl ModelManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn byok(id: &str) -> ModelConfig {
+        ModelConfig {
+            id: id.to_string(),
+            provider: "openai".to_string(),
+            url: "http://localhost:1".to_string(),
+            model: id.to_string(),
+            api_key: None,
+            keep_alive: None,
+            context_window: None,
+            tags: vec![],
+            supports_tools: Some(true),
+            auth_mode: None,
+            reasoning_effort: None,
+            provided_by: None,
+            is_builtin: false,
+        }
+    }
+
+    #[test]
+    fn retired_ids_resolve_to_their_successor() {
+        let m = ModelManager::new_with_credentials(vec![], &Credentials::default());
+        // A session or mission still saying the old Sol id lands on 6.1.
+        assert!(m.has_model("gpt-6-sol"));
+        assert_eq!(m.resolve_id("gpt-6-sol").as_deref(), Some("gpt-6.1-sol"));
+        assert_eq!(m.provider_kind("gpt-6-sol"), Some("chatgpt"));
+        assert_eq!(
+            m.resolve_id("gpt-5.5").as_deref(),
+            Some(CHATGPT_BUILTIN_MODEL_ID)
+        );
+        assert_eq!(
+            m.resolve_id("deepseek-v4-flash").as_deref(),
+            Some(LINGGEN_CLOUD_MODEL_ID)
+        );
+        assert_eq!(m.resolve_id("gpt-6.1-sol").as_deref(), Some("gpt-6.1-sol"));
+        assert!(m.resolve_id("no-such-model").is_none());
+    }
+
+    #[test]
+    fn a_user_model_reusing_a_retired_id_stays_theirs() {
+        let m =
+            ModelManager::new_with_credentials(vec![byok("gpt-6-sol")], &Credentials::default());
+        assert_eq!(m.resolve_id("gpt-6-sol").as_deref(), Some("gpt-6-sol"));
+        assert_eq!(m.provider_kind("gpt-6-sol"), Some("openai"));
+    }
 
     #[test]
     fn vision_is_declared_or_guessed_by_family() {
