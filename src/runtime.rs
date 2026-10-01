@@ -729,7 +729,7 @@ async fn download_resumable(url: &str, part: &Path) -> Result<()> {
     Ok(())
 }
 
-fn file_sha256(path: &Path) -> Result<String> {
+pub(crate) fn file_sha256(path: &Path) -> Result<String> {
     let mut hasher = sha2::Sha256::new();
     let mut f = std::fs::File::open(path)?;
     std::io::copy(&mut f, &mut hasher)?;

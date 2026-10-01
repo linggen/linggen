@@ -14,6 +14,26 @@ struct ReleaseManifest {
 struct ReleaseAsset {
     name: String,
     url: String,
+    /// Hex SHA-256 of the tarball. Older manifests carry none.
+    #[serde(default)]
+    sha256: Option<String>,
+}
+
+/// Check the downloaded tarball against the manifest's digest — the bytes
+/// may have come from the mirror rather than GitHub. A manifest without a
+/// digest (an older release) passes with a warning; a mismatch fails.
+fn verify_tarball(path: &Path, expected: Option<&str>, binary_name: &str) -> Result<()> {
+    let Some(expected) = expected.map(str::trim).filter(|s| !s.is_empty()) else {
+        println!(
+            "[{binary_name}] Warning: release manifest has no sha256; skipping integrity check"
+        );
+        return Ok(());
+    };
+    let got = crate::runtime::file_sha256(path)?;
+    if !got.eq_ignore_ascii_case(expected) {
+        anyhow::bail!("[{binary_name}] Download failed its integrity check (sha256 {got}, expected {expected})");
+    }
+    Ok(())
 }
 
 /// Returns platform slug matching the release script convention, e.g. "macos-aarch64", "linux-x86_64".
@@ -140,6 +160,10 @@ async fn update_binary(
     let _ = std::fs::create_dir_all(&temp_dir);
     let tarball_path = temp_dir.join("download.tar.gz");
     std::fs::write(&tarball_path, &bytes).context("Failed to write temp tarball")?;
+    if let Err(e) = verify_tarball(&tarball_path, asset.sha256.as_deref(), binary_name) {
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        return Err(e);
+    }
 
     let output = std::process::Command::new("tar")
         .args([
@@ -195,4 +219,37 @@ async fn update_binary(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tarball(body: &[u8]) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("download.tar.gz");
+        std::fs::write(&path, body).unwrap();
+        (dir, path)
+    }
+
+    #[test]
+    fn a_matching_digest_passes_and_a_wrong_one_aborts() {
+        let (_d, path) = tarball(b"abc");
+        let abc = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        assert!(verify_tarball(&path, Some(abc), "ling").is_ok());
+        assert!(verify_tarball(&path, Some(&abc.to_uppercase()), "ling").is_ok());
+        assert!(verify_tarball(&path, Some(&"0".repeat(64)), "ling").is_err());
+    }
+
+    #[test]
+    fn an_old_manifest_without_a_digest_still_installs() {
+        let (_d, path) = tarball(b"abc");
+        assert!(verify_tarball(&path, None, "ling").is_ok());
+        assert!(verify_tarball(&path, Some(""), "ling").is_ok());
+        let m: ReleaseManifest = serde_json::from_str(
+            r#"{"version":"1.8.2","assets":[{"name":"ling-macos-aarch64","url":"u"}]}"#,
+        )
+        .unwrap();
+        assert!(m.assets[0].sha256.is_none());
+    }
 }

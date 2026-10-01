@@ -155,6 +155,8 @@ upload_artifacts() {
 # dist/. This makes split-host workflows additive: a mac run and a later linux
 # run keep both sets of entries instead of the second overwriting the first.
 # Rerun with --manifest-only once late assets (the cloud Linux build) land.
+# Each asset carries GitHub's own sha256 digest, so `ling update` can verify
+# a tarball that came through the linggen.dev mirror.
 generate_manifest() {
   local base_url="https://github.com/${REPO}/releases/download/${VERSION}"
   mkdir -p "$DIST_DIR"
@@ -165,7 +167,10 @@ generate_manifest() {
         '[.assets[]
            | select(.name | test("^ling-.*\\.tar\\.gz$"))
            | {name: (.name | sub("\\.tar\\.gz$"; "")),
-              url: ($base + "/" + .name)}]')
+              url: ($base + "/" + .name)}
+             + (if (.digest // "") | startswith("sha256:")
+                then {sha256: (.digest | sub("^sha256:"; ""))}
+                else {} end)]')
 
   jq -n \
     --arg version "${VERSION_NUM}" \
