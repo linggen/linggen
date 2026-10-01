@@ -34,7 +34,8 @@ pub fn mirror_url(url: &str) -> Option<String> {
     };
     let path = base.strip_prefix("https://")?;
     let segs: Vec<&str> = path.split('/').collect();
-    let inner = &segs[1..segs.len().saturating_sub(1)];
+    // A bare host (`https://github.com`) has no inner segments to check.
+    let inner = segs.get(1..segs.len() - 1)?;
     if segs.iter().any(|s| *s == "." || *s == "..") || inner.iter().any(|s| s.is_empty()) {
         return None;
     }
@@ -191,6 +192,13 @@ async fn get_bytes_from(
 mod tests {
     use super::*;
     use std::io::{Read, Write};
+
+    #[test]
+    fn a_bare_host_has_no_mirror() {
+        assert_eq!(mirror_url("https://github.com"), None);
+        assert_eq!(mirror_url("https://"), None);
+        assert_eq!(mirror_url("https://api.github.com?x=1"), None);
+    }
 
     /// A one-shot-per-connection HTTP server answering every request with
     /// `status` and `body`. Returns its base URL.
