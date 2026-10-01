@@ -172,7 +172,7 @@ fn stamp_tool(skill: &Skill, id: &str, at: &str) -> Result<SkillToolDef, Refusal
         pet: false,
         skill_name: Some(skill.name.clone()),
         skill_dir: skill.skill_dir.clone(),
-        senses: Vec::new(),
+        senses: skill.senses.clone(),
     })
 }
 
@@ -458,6 +458,15 @@ body
             stamp_quest(&no_at, "zz-quest", "2026-09-24T14:03:11Z").await,
             Err(Refusal::NotRunnable(_))
         ));
+    }
+
+    #[test]
+    fn a_quest_stamp_carries_the_skills_senses() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = stamper(dir.path(), "true {id} {at}");
+        s.senses = vec!["weather".into()];
+        let tool = stamp_tool(&s, "zz-quest", "2026-09-24T14:03:11Z").unwrap();
+        assert_eq!(tool.senses, s.senses);
     }
 
     #[test]
