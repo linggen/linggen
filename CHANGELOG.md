@@ -6,11 +6,15 @@
   names the Linggen Cloud product its turns bill to (`X-Linggen-App`). The
   engine's hard-coded list of app names is gone; a skill without one bills
   the shared bucket.
-- **ChatGPT built-ins are GPT-6 Sol and Luna** — the three GPT-5.6 models
-  (Sol, Terra, Luna) are retired; `gpt-6-luna` is the default. Saved
-  defaults, Yinyue's model and each paired phone's model list move on load
-  (5.6 Sol → 6 Sol, Terra and Luna → 6 Luna). The Codex backend refuses
-  GPT-6 under older clients, so requests now identify as Codex 0.155.1.
+- **ChatGPT built-ins are GPT-6.1 Sol and GPT-6 Luna** — the three GPT-5.6
+  models (Sol, Terra, Luna) and `gpt-6-sol` are retired; `gpt-6-luna` is the
+  default. Saved defaults, Yinyue's model and each paired phone's model list
+  move on load (5.6 Sol and 6 Sol → 6.1 Sol, Terra and Luna → 6 Luna), and
+  any other saved id — a session, a mission's `model:`, a room share —
+  resolves to its successor. The Codex backend refuses newer models under
+  older clients, so requests now identify as Codex 0.159.2.
+- **`ling update` verifies the download** — the release manifest carries
+  each asset's sha256; a mismatch aborts before the binary is replaced.
 
 ## [1.8.2] - 2026-09-10 — a person's turn reaches the model verbatim
 
