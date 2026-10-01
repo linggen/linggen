@@ -1291,9 +1291,6 @@ impl AgentEngine {
     }
 }
 
-/// What the model reads when a tool fails. `{:#}` keeps the cause chain: `{}`
-/// showed only the outer context ("MCP tools/call memory_add") and hid the
-/// timeout underneath, so a dream read a slow save as a refused one.
 /// What one call to a tool is, as every pre-execution gate sees it.
 struct ToolTurn<'a> {
     /// The name as the model wrote it.
@@ -1312,6 +1309,9 @@ fn bash_command_arg(args: &JsonValue) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+/// What the model reads when a tool fails. `{:#}` keeps the cause chain: `{}`
+/// showed only the outer context ("MCP tools/call memory_add") and hid the
+/// timeout underneath, so a dream read a slow save as a refused one.
 fn tool_error_text(tool: &str, err: &anyhow::Error) -> String {
     format!("tool_error: tool={tool} error={err:#}")
 }
