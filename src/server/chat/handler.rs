@@ -203,9 +203,15 @@ pub(super) fn resolve_request_root(req_root: &str) -> PathBuf {
     crate::util::resolve_path(&expanded)
 }
 
-/// Ensure a session exists for this request. Auto-creates a fresh `sess-…`
-/// id when none was sent; otherwise inserts the requested id into the
-/// session store if it isn't there yet so the Web UI can list it.
+/// A fresh session id, for a request that sent none.
+fn new_session_id() -> String {
+    let now = crate::util::now_ts_secs();
+    format!("sess-{}-{}", now, &uuid::Uuid::new_v4().to_string()[..8])
+}
+
+/// Ensure a session exists for this request. Creates `new_id` (from
+/// [`new_session_id`]) when none was sent; otherwise inserts the requested id
+/// into the session store if it isn't there yet so the Web UI can list it.
 /// Returns the resolved session id. `words` is the message without the
 /// `@name` that addressed it — what a title is made from.
 async fn ensure_session(
@@ -214,6 +220,7 @@ async fn ensure_session(
     project_root_str: &str,
     session_creator: &str,
     words: &str,
+    new_id: String,
 ) -> Option<String> {
     let global_sessions = &state.manager.global_sessions;
     let now = crate::util::now_ts_secs();
@@ -250,7 +257,6 @@ async fn ensure_session(
         return Some(sid);
     }
 
-    let new_id = format!("sess-{}-{}", now, &uuid::Uuid::new_v4().to_string()[..8]);
     let _ = global_sessions.add_session(&make_meta(new_id.clone()));
     let _ = state.events_tx.send(ServerEvent::SessionCreated {
         session_id: new_id.clone(),
@@ -1033,6 +1039,18 @@ enum Seat {
     Unavailable,
 }
 
+impl Seat {
+    /// The reply status of a seat no turn runs for (nothing is kept, not even
+    /// the session); `None` for a seat that answers.
+    fn refusal(&self) -> Option<&'static str> {
+        match self {
+            Seat::Absent => Some("absent"),
+            Seat::Unavailable => Some("unavailable"),
+            Seat::Own | Seat::Guest => None,
+        }
+    }
+}
+
 /// Where `target_id` sits for a message in `session_id`. The surface's own
 /// agent (`req_agent`) runs as always; another name — addressed with `@` —
 /// runs only as a guest, or when it is the agent the session already runs.
@@ -1041,21 +1059,33 @@ async fn seat_for(
     target_id: &str,
     req_agent: &str,
     session_id: &str,
+    user_type: &str,
 ) -> Seat {
     let companion = crate::engine::agent::COMPANION_AGENT_ID;
     if target_id == companion && !crate::server::resident::is_own_session(session_id) {
-        if !state.manager.get_config_snapshot().await.pet.enabled {
-            return Seat::Unavailable;
-        }
-        if super::presence::absent_in_session(&state.manager, session_id, target_id).await {
-            return Seat::Absent;
-        }
-        return Seat::Guest;
+        let owner = user_type == super::types::default_user_type();
+        let pet_on = state.manager.get_config_snapshot().await.pet.enabled;
+        let absent = owner
+            && pet_on
+            && super::presence::absent_in_session(&state.manager, session_id, target_id).await;
+        return guest_seat(owner, pet_on, absent);
     }
     if target_id == req_agent || runs_session(state, session_id, target_id).await {
         return Seat::Own;
     }
     Seat::Unavailable
+}
+
+/// The companion at another session's table. Her guest turn is the owner's
+/// companion — the owner's policy, memory and core block — so only the
+/// owner seats her: anyone else (a proxy-room consumer) finds her
+/// unavailable, or the owner's memory would answer into their session.
+fn guest_seat(owner: bool, pet_on: bool, absent: bool) -> Seat {
+    match (owner && pet_on, absent) {
+        (false, _) => Seat::Unavailable,
+        (true, true) => Seat::Absent,
+        (true, false) => Seat::Guest,
+    }
 }
 
 /// Whether the session's one engine is (or will be) `agent_id`'s: the live
@@ -1158,23 +1188,26 @@ pub(crate) async fn start_turn(
     );
 
     let (target_id, clean_msg) = route_target(&state, &req, &root).await;
-    let session_id =
-        ensure_session(&state, &req, &project_root_str, session_creator, &clean_msg).await;
+    let sid = req.session_id.clone().unwrap_or_else(new_session_id);
+    let seat = seat_for(&state, &target_id, &req.agent_id, &sid, &req.user_type).await;
+    // Not there yet in this skill's world, or not seatable here: no turn and
+    // nothing kept — no session made or retitled. The page says its own line.
+    if let Some(status) = seat.refusal() {
+        return refused_reply(status, req.session_id.as_deref(), &target_id);
+    }
+    let session_id = ensure_session(
+        &state,
+        &req,
+        &project_root_str,
+        session_creator,
+        &clean_msg,
+        sid,
+    )
+    .await;
     let effective_session_id = session_id.clone().unwrap_or_else(|| "default".to_string());
     let events_tx = state.events_tx.clone();
-
-    match seat_for(&state, &target_id, &req.agent_id, &effective_session_id).await {
-        Seat::Own => {}
-        // Not there yet in this skill's world: no turn, nothing kept. The
-        // page says its own line.
-        Seat::Absent => return refused_reply("absent", session_id.as_deref(), &target_id),
-        Seat::Unavailable => {
-            return refused_reply("unavailable", session_id.as_deref(), &target_id)
-        }
-        Seat::Guest => {
-            return answer_as_guest(&state, &effective_session_id, &req, &target_id, &session_id)
-                .await
-        }
+    if seat == Seat::Guest {
+        return answer_as_guest(&state, &effective_session_id, &req, &target_id, &session_id).await;
     }
 
     // A relayed message names its speaker (an agent id like "yinyue"); the
@@ -1401,8 +1434,8 @@ pub(crate) async fn start_turn(
 #[cfg(test)]
 mod tests {
     use super::{
-        auto_session_title, leading_mention, session_host, take_aside, trim_live_history,
-        turn_creator,
+        auto_session_title, guest_seat, leading_mention, session_host, take_aside,
+        trim_live_history, turn_creator, Seat,
     };
     use super::{busy_message, BusyMessage};
     use crate::engine::skill::QueueMode;
@@ -1575,11 +1608,29 @@ mod tests {
         let body = &src[src
             .find(concat!("pub(crate) async fn ", "start_turn("))
             .unwrap()..];
-        let seat = body.find(concat!("match seat_for", "(")).unwrap();
+        let seat = body.find(concat!("seat_for", "(&state")).unwrap();
         let engine = body
             .find(concat!(".get_or_create_", "session_agent("))
             .unwrap();
         assert!(seat < engine);
+        let session = body.find(concat!("ensure_session", "(")).unwrap();
+        assert!(
+            seat < session,
+            "a refused seat makes and retitles no session"
+        );
+    }
+
+    /// Her guest turn answers with the owner's memory, so only the owner
+    /// seats her at another table; a consumer never does.
+    #[test]
+    fn only_the_owner_seats_the_companion_as_a_guest() {
+        assert_eq!(guest_seat(true, true, false), Seat::Guest);
+        assert_eq!(guest_seat(true, true, true), Seat::Absent);
+        assert_eq!(guest_seat(true, false, false), Seat::Unavailable);
+        assert_eq!(guest_seat(false, true, false), Seat::Unavailable);
+        assert_eq!(guest_seat(false, true, true), Seat::Unavailable);
+        assert_eq!(Seat::Unavailable.refusal(), Some("unavailable"));
+        assert_eq!(Seat::Guest.refusal(), None);
     }
 
     #[test]
