@@ -4,19 +4,22 @@
 //! connect error, timeout or 5xx moves on, a 404 is final.
 //!
 //! A user-set `HF_ENDPOINT` always wins and is never overridden. Otherwise
-//! huggingface.co is probed once per process; when it is unreachable the
-//! engine exports `HF_ENDPOINT=https://hf-mirror.com`, so everything that
-//! inherits the environment — the Python runtime (mlx-audio, snapshot
-//! downloads), skill tools, the in-process `hf-hub`/`any-tts` loaders —
-//! goes through the mirror with no setup.
+//! huggingface.co is probed, and re-probed every [`PROBE_TTL`] so a VPN
+//! switched on or off is noticed. The engine never writes the variable into
+//! its own environment (`set_var` races every other thread reading it):
+//! each spawn of something that downloads from the Hub passes
+//! `.env("HF_ENDPOINT", endpoint().await)` itself.
 
 use anyhow::Result;
-use tokio::sync::OnceCell;
+use std::time::{Duration, Instant};
 
 pub const HF: &str = "https://huggingface.co";
 pub const HF_MIRROR: &str = "https://hf-mirror.com";
 
-/// What the probe settled for this process.
+/// How long a probe's answer stands.
+const PROBE_TTL: Duration = Duration::from_secs(10 * 60);
+
+/// What the probe settled.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Resolved {
     endpoint: String,
@@ -24,13 +27,20 @@ struct Resolved {
     user_set: bool,
 }
 
-static RESOLVED: OnceCell<Resolved> = OnceCell::const_new();
+static PROBED: std::sync::Mutex<Option<(Instant, Resolved)>> = std::sync::Mutex::new(None);
+static PROBING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+/// The user's `HF_ENDPOINT`, read once — the in-process voice loader may
+/// later set the variable for its own library, which is not the user's.
 fn user_endpoint() -> Option<String> {
-    std::env::var("HF_ENDPOINT")
-        .ok()
-        .map(|v| v.trim().trim_end_matches('/').to_string())
-        .filter(|v| !v.is_empty())
+    static USER: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    USER.get_or_init(|| {
+        std::env::var("HF_ENDPOINT")
+            .ok()
+            .map(|v| v.trim().trim_end_matches('/').to_string())
+            .filter(|v| !v.is_empty())
+    })
+    .clone()
 }
 
 fn choose(user: Option<String>, hf_reachable: bool) -> Resolved {
@@ -46,26 +56,46 @@ fn choose(user: Option<String>, hf_reachable: bool) -> Resolved {
     }
 }
 
-async fn resolved() -> &'static Resolved {
-    RESOLVED
-        .get_or_init(|| async {
-            let user = user_endpoint();
-            let hf_ok = user.is_some() || crate::reach::reachable(HF).await;
-            let r = choose(user, hf_ok);
-            if !r.user_set && r.endpoint == HF_MIRROR {
-                tracing::warn!("[hf] huggingface.co unreachable; using {HF_MIRROR}");
-                std::env::set_var("HF_ENDPOINT", HF_MIRROR);
-            }
-            r
-        })
-        .await
+fn fresh(at: Instant, r: &Resolved, now: Instant) -> Option<Resolved> {
+    (now.duration_since(at) < PROBE_TTL).then(|| r.clone())
 }
 
-/// The Hugging Face endpoint to use (probing once, and exporting
-/// `HF_ENDPOINT` when the mirror is chosen). Call before anything that
-/// downloads from the Hub or spawns a process that will.
-pub async fn endpoint() -> &'static str {
-    &resolved().await.endpoint
+fn cached() -> Option<Resolved> {
+    let guard = PROBED.lock().ok()?;
+    let (at, r) = guard.as_ref()?;
+    fresh(*at, r, Instant::now())
+}
+
+/// Probe huggingface.co (one prober at a time; the rest wait for its answer).
+async fn probe() -> Resolved {
+    let _probing = PROBING.lock().await;
+    if let Some(r) = cached() {
+        return r;
+    }
+    let r = choose(None, crate::reach::reachable(HF).await);
+    if r.endpoint == HF_MIRROR {
+        tracing::warn!("[hf] huggingface.co unreachable; using {HF_MIRROR}");
+    }
+    if let Ok(mut guard) = PROBED.lock() {
+        *guard = Some((Instant::now(), r.clone()));
+    }
+    r
+}
+
+async fn resolved() -> Resolved {
+    if let Some(user) = user_endpoint() {
+        return choose(Some(user), true);
+    }
+    match cached() {
+        Some(r) => r,
+        None => probe().await,
+    }
+}
+
+/// The Hugging Face endpoint to use. Pass it as `HF_ENDPOINT` to anything
+/// spawned that downloads from the Hub.
+pub async fn endpoint() -> String {
+    resolved().await.endpoint
 }
 
 /// Where to fetch `path` (e.g. `hexgrad/Kokoro-82M/resolve/main/x.pt`),
@@ -83,7 +113,7 @@ fn sources_for(r: &Resolved, path: &str) -> Vec<String> {
 /// GET a Hub file by its path, huggingface.co first and hf-mirror.com
 /// second (or the user's endpoint alone).
 pub async fn get_bytes(path: &str) -> Result<Vec<u8>> {
-    let urls = sources_for(resolved().await, path);
+    let urls = sources_for(&resolved().await, path);
     let client = reqwest::Client::builder()
         .connect_timeout(crate::mirror::CONNECT_TIMEOUT)
         .build()?;
@@ -111,6 +141,14 @@ mod tests {
                 "https://hf-mirror.com/o/r/resolve/main/v.pt",
             ]
         );
+    }
+
+    #[test]
+    fn a_probe_stands_for_ten_minutes_then_is_asked_again() {
+        let r = choose(None, false);
+        let at = Instant::now();
+        assert_eq!(fresh(at, &r, at + Duration::from_secs(60)), Some(r.clone()));
+        assert_eq!(fresh(at, &r, at + PROBE_TTL), None);
     }
 
     #[test]

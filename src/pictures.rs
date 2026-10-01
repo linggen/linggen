@@ -88,6 +88,7 @@ pub async fn render(req: Request) -> Result<Rendered> {
     let mut child = tokio::process::Command::new(crate::runtime::env_bin("pictures", "python3"))
         .arg(&script)
         .env("HF_HOME", crate::runtime::hf_home())
+        .env("HF_ENDPOINT", crate::hf_mirror::endpoint().await)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

@@ -215,26 +215,33 @@ impl KokoroProvider {
     async fn model(&self) -> anyhow::Result<Arc<dyn TtsModel>> {
         self.model
             .get_or_try_init(|| async {
-                // Probe the Hub first: when it is unreachable this exports
-                // HF_ENDPOINT=hf-mirror.com, which any-tts' loader reads.
-                crate::hf_mirror::endpoint().await;
-                let model = tokio::task::spawn_blocking(|| -> anyhow::Result<Arc<dyn TtsModel>> {
-                    // Keep all model state under ~/.linggen (project convention).
-                    if std::env::var_os("HF_HUB_CACHE").is_none() {
-                        let cache = crate::util::resolve_path(std::path::Path::new(
-                            "~/.linggen/models/hf-hub",
-                        ));
-                        std::env::set_var("HF_HUB_CACHE", cache);
-                    }
-                    // No path set → any-tts downloads hexgrad/Kokoro-82M from HF
-                    // (or HF_ENDPOINT).
-                    // Voices come from our own directory (see `voices_dir`).
-                    let model = any_tts::load_model(
-                        TtsConfig::new(ModelType::Kokoro).with_voices_dir(Self::voices_dir()),
-                    )?;
-                    Ok(Arc::from(model))
-                })
-                .await??;
+                // Probe the Hub first: any-tts' in-process loader reads only
+                // the process env, so the mirror is set here, where the
+                // cache dir already is — once, before the load that reads it.
+                let endpoint = crate::hf_mirror::endpoint().await;
+                let model =
+                    tokio::task::spawn_blocking(move || -> anyhow::Result<Arc<dyn TtsModel>> {
+                        if std::env::var_os("HF_ENDPOINT").is_none()
+                            && endpoint != crate::hf_mirror::HF
+                        {
+                            std::env::set_var("HF_ENDPOINT", &endpoint);
+                        }
+                        // Keep all model state under ~/.linggen (project convention).
+                        if std::env::var_os("HF_HUB_CACHE").is_none() {
+                            let cache = crate::util::resolve_path(std::path::Path::new(
+                                "~/.linggen/models/hf-hub",
+                            ));
+                            std::env::set_var("HF_HUB_CACHE", cache);
+                        }
+                        // No path set → any-tts downloads hexgrad/Kokoro-82M from HF
+                        // (or HF_ENDPOINT).
+                        // Voices come from our own directory (see `voices_dir`).
+                        let model = any_tts::load_model(
+                            TtsConfig::new(ModelType::Kokoro).with_voices_dir(Self::voices_dir()),
+                        )?;
+                        Ok(Arc::from(model))
+                    })
+                    .await??;
                 Ok::<_, anyhow::Error>(model)
             })
             .await
