@@ -349,7 +349,7 @@ A skill never goes online itself. What it may know of the person's real world, t
 senses: [weather]
 ```
 
-- **`weather`** — the current weather at the city the person set, from Open-Meteo (keyless: geocoding + forecast), read at most every 30 minutes. Off until a city is set; off again when the person turns it off — nothing is fetched then. No location permission: the city is typed once.
+- **`weather`** — the current weather at the city the person set, from Open-Meteo (keyless: geocoding + forecast), read at most every 30 minutes; a place is tried at most once per 5 minutes, a failed read included. A reading belongs to the place it was read at (by coordinates, not name). Off until a city is set; off again when the person turns it off — nothing is fetched then. No location permission: the city is typed once.
   - Every tool command of a declaring skill (the model's calls and its page's `/api/skills/{skill}/tools/{tool}` alike) gets `LINGGEN_WEATHER`: `{kind, code, temp_c, is_day, city, at}`, `kind` one of `clear · cloudy · fog · rain · snow · storm`. Absent while off, unset or not read yet. Never waits: a stale reading is handed over while a new one is fetched behind.
   - `GET /api/senses/weather` → `{city, off, reading}`. `PUT /api/senses/weather` with `{city: "Harbin", lang?}` sets the city (404 `not-found` when no place has that name), `{city: null}` clears it, `{off: true|false}` switches it. Kept in `~/.linggen/senses/weather.json`.
 - An unknown sense is logged and ignored. The engine names no app: every sense is general, and any skill may declare it.

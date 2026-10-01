@@ -6,7 +6,11 @@
 //! - Kept in `~/.linggen/senses/weather.json`: the city (as geocoded), the
 //!   off switch, and the last reading (so a restart has it at once).
 //! - A reading is fresh for [`TTL`]; a stale one is still handed over while a
-//!   refresh runs behind — a tool never waits on the network.
+//!   refresh runs behind — a tool never waits on the network. One fetch runs
+//!   at a time, and a place is tried at most once per [`RETRY`] (a failed
+//!   fetch included), so a dead network is not asked on every tool call.
+//! - A reading belongs to the place it was read at (its coordinates), so two
+//!   cities of one name never share one.
 //! - To a declaring skill's tool: `LINGGEN_WEATHER`, the reading as JSON
 //!   `{kind, code, temp_c, is_day, city, at}` — `kind` one of clear, cloudy,
 //!   fog, rain, snow, storm. Absent while off, unset or not yet read.
@@ -22,6 +26,8 @@ use std::time::Duration;
 
 /// How long a reading counts as the weather now.
 pub const TTL: Duration = Duration::from_secs(30 * 60);
+/// How soon the same place is tried again after a fetch, failed or not.
+pub const RETRY: Duration = Duration::from_secs(5 * 60);
 const TIMEOUT: Duration = Duration::from_secs(6);
 const GEOCODE: &str = "https://geocoding-api.open-meteo.com/v1/search";
 const FORECAST: &str = "https://api.open-meteo.com/v1/forecast";
@@ -58,6 +64,28 @@ pub struct Store {
     pub off: bool,
     #[serde(default)]
     pub last: Option<Reading>,
+    /// Where `last` was read, `[latitude, longitude]`. Absent in files kept
+    /// before it was: such a reading is matched by the city's name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_place: Option<[f64; 2]>,
+}
+
+impl City {
+    fn place(&self) -> [f64; 2] {
+        [self.latitude, self.longitude]
+    }
+}
+
+fn same_place(a: [f64; 2], b: [f64; 2]) -> bool {
+    (a[0] - b[0]).abs() < 1e-6 && (a[1] - b[1]).abs() < 1e-6
+}
+
+/// Whether the store's last reading was read at `city`.
+fn read_at(store: &Store, city: &City, reading: &Reading) -> bool {
+    match store.last_place {
+        Some(p) => same_place(p, city.place()),
+        None => reading.city == city.name,
+    }
 }
 
 fn file() -> PathBuf {
@@ -109,7 +137,7 @@ fn usable(store: &Store) -> Option<(&Reading, bool)> {
         return None;
     }
     let city = store.city.as_ref()?;
-    let last = store.last.as_ref().filter(|r| r.city == city.name)?;
+    let last = store.last.as_ref().filter(|r| read_at(store, city, r))?;
     Some((last, now().saturating_sub(last.at) < TTL.as_secs()))
 }
 
@@ -205,40 +233,91 @@ async fn get_json(url: &str, query: &[(&str, &str)]) -> Result<serde_json::Value
     res.json().await.map_err(|e| e.to_string())
 }
 
+/// Held for a whole refresh: one fetch at a time.
 static REFRESHING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+/// Held for each load-change-save of the file, so a refresh writing its
+/// reading and a PUT changing the city never undo each other.
+static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+/// The place last tried and when, unix seconds — failures included.
+static LAST_TRY: std::sync::Mutex<Option<([f64; 2], u64)>> = std::sync::Mutex::new(None);
+
+/// Load, change and save the store under [`WRITING`]; the store after.
+fn change(f: impl FnOnce(&mut Store)) -> std::io::Result<Store> {
+    let _w = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+    let mut store = load();
+    f(&mut store);
+    save(&store)?;
+    Ok(store)
+}
+
+/// Whether `city` was tried within [`RETRY`] of `now`.
+fn tried_lately(last: Option<([f64; 2], u64)>, city: &City, now: u64) -> bool {
+    last.is_some_and(|(p, at)| {
+        same_place(p, city.place()) && now.saturating_sub(at) < RETRY.as_secs()
+    })
+}
+
+fn tried_city_lately(city: &City) -> bool {
+    let last = *LAST_TRY.lock().unwrap_or_else(|e| e.into_inner());
+    tried_lately(last, city, now())
+}
+
+fn note_try(city: &City) {
+    *LAST_TRY.lock().unwrap_or_else(|e| e.into_inner()) = Some((city.place(), now()));
+}
+
+/// The city to read now: on, set, stale, and not tried lately.
+fn due(store: &Store) -> Option<City> {
+    if store.off || usable(store).is_some_and(|(_, fresh)| fresh) {
+        return None;
+    }
+    store.city.clone().filter(|c| !tried_city_lately(c))
+}
+
+/// Keep `reading` of `city` — only if the person has not turned the sense
+/// off or moved it to another place while it was fetched.
+fn keep(city: &City, reading: Reading) -> std::io::Result<Store> {
+    change(|store| {
+        let here = store
+            .city
+            .as_ref()
+            .is_some_and(|c| same_place(c.place(), city.place()));
+        if here && !store.off {
+            store.last = Some(reading);
+            store.last_place = Some(city.place());
+        }
+    })
+}
 
 /// Read the weather again when it is stale (one fetch at a time); the store
 /// as it stands after.
 pub async fn refresh() -> Store {
     let _one = REFRESHING.lock().await;
-    let mut store = load();
-    if store.off || usable(&store).is_some_and(|(_, fresh)| fresh) {
-        return store;
-    }
-    let Some(city) = store.city.clone() else {
+    let store = load();
+    let Some(city) = due(&store) else {
         return store;
     };
-    match fetch(&city).await {
-        Some(reading) => {
-            store.last = Some(reading);
-            if let Err(e) = save(&store) {
-                tracing::warn!("[weather] could not keep the reading: {e}");
-            }
-        }
-        None => tracing::info!("[weather] no reading for {}", city.name),
-    }
-    store
+    note_try(&city);
+    let Some(reading) = fetch(&city).await else {
+        tracing::info!("[weather] no reading for {}", city.name);
+        return load();
+    };
+    keep(&city, reading).unwrap_or_else(|e| {
+        tracing::warn!("[weather] could not keep the reading: {e}");
+        load()
+    })
 }
 
 /// `LINGGEN_WEATHER` for a declaring skill's tool: the last reading, stale or
-/// not, with a refresh started behind when it is stale. Never waits.
+/// not, with a refresh started behind when one is due and none is running.
+/// Never waits.
 pub fn tool_env() -> Option<(String, String)> {
     let store = load();
     let (reading, fresh) = match usable(&store) {
         Some(u) => (Some(u.0.clone()), u.1),
         None => (None, false),
     };
-    if !fresh && !store.off && store.city.is_some() {
+    if !fresh && due(&store).is_some() && REFRESHING.try_lock().is_ok() {
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.spawn(refresh());
         }
@@ -288,44 +367,76 @@ fn some_or_null<'de, D: serde::Deserializer<'de>>(
     Ok(Some(Option::<String>::deserialize(d)?))
 }
 
-/// `PUT /api/senses/weather`.
-pub async fn put_api(Json(body): Json<Put>) -> axum::response::Response {
-    let mut store = load();
-    if let Some(off) = body.off {
+/// What a PUT does to the city, once its name is looked up.
+enum CityChange {
+    Keep,
+    Clear,
+    Set(City),
+}
+
+/// The PUT's city, geocoded — or the answer that refuses it. Looked up before
+/// anything is kept, so a name with no place changes nothing (not even `off`).
+async fn city_change(body: &Put) -> Result<CityChange, axum::response::Response> {
+    let query = match body
+        .city
+        .as_ref()
+        .map(|c| c.as_deref().map(str::trim).filter(|s| !s.is_empty()))
+    {
+        None => return Ok(CityChange::Keep),
+        Some(None) => return Ok(CityChange::Clear),
+        Some(Some(q)) => q.to_string(),
+    };
+    if query.chars().count() > 80 {
+        return Err((StatusCode::BAD_REQUEST, "a city name is short").into_response());
+    }
+    let lang = body
+        .lang
+        .as_deref()
+        .filter(|l| l.len() <= 5 && l.chars().all(|c| c.is_ascii_alphabetic()))
+        .unwrap_or("zh");
+    match geocode(&query, lang).await {
+        Some(city) => Ok(CityChange::Set(city)),
+        None => Err((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "not-found", "city": query})),
+        )
+            .into_response()),
+    }
+}
+
+/// Apply a PUT to the store: the switch, then the city.
+fn apply(store: &mut Store, off: Option<bool>, change: CityChange) {
+    if let Some(off) = off {
         store.off = off;
     }
-    match body
-        .city
-        .map(|c| c.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
-    {
-        Some(Some(query)) => {
-            if query.chars().count() > 80 {
-                return (StatusCode::BAD_REQUEST, "a city name is short").into_response();
-            }
-            let lang = body
-                .lang
-                .as_deref()
-                .filter(|l| l.len() <= 5 && l.chars().all(|c| c.is_ascii_alphabetic()))
-                .unwrap_or("zh");
-            let Some(city) = geocode(&query, lang).await else {
-                return (
-                    StatusCode::NOT_FOUND,
-                    Json(serde_json::json!({"error": "not-found", "city": query})),
-                )
-                    .into_response();
-            };
-            if store.city.as_ref().map(|c| &c.name) != Some(&city.name) {
+    match change {
+        CityChange::Keep => {}
+        CityChange::Clear => {
+            store.city = None;
+            store.last = None;
+            store.last_place = None;
+        }
+        CityChange::Set(city) => {
+            let moved = store
+                .city
+                .as_ref()
+                .is_none_or(|c| !same_place(c.place(), city.place()));
+            if moved {
                 store.last = None;
+                store.last_place = None;
             }
             store.city = Some(city);
         }
-        Some(None) => {
-            store.city = None;
-            store.last = None;
-        }
-        None => {}
     }
-    if let Err(e) = save(&store) {
+}
+
+/// `PUT /api/senses/weather`.
+pub async fn put_api(Json(body): Json<Put>) -> axum::response::Response {
+    let change_city = match city_change(&body).await {
+        Ok(c) => c,
+        Err(refused) => return refused,
+    };
+    if let Err(e) = change(|store| apply(store, body.off, change_city)) {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("could not keep the city: {e}"),
@@ -394,6 +505,7 @@ mod tests {
             city: Some(city.clone()),
             off: false,
             last: Some(reading.clone()),
+            last_place: None,
         };
         assert!(usable(&on).is_some_and(|(_, fresh)| fresh));
         assert!(usable(&Store {
@@ -422,5 +534,89 @@ mod tests {
             ..on
         };
         assert!(usable(&old).is_some_and(|(_, fresh)| !fresh));
+    }
+
+    fn city(name: &str, lat: f64) -> City {
+        City {
+            query: name.into(),
+            name: name.into(),
+            country: String::new(),
+            latitude: lat,
+            longitude: 0.0,
+        }
+    }
+
+    #[test]
+    fn a_reading_belongs_to_its_place_not_its_name() {
+        let springfield = city("Springfield", 39.8);
+        let reading = Reading {
+            kind: "clear".into(),
+            code: 0,
+            temp_c: 20.0,
+            is_day: true,
+            city: "Springfield".into(),
+            at: now(),
+        };
+        let kept = Store {
+            city: Some(springfield.clone()),
+            off: false,
+            last: Some(reading),
+            last_place: Some(springfield.place()),
+        };
+        assert!(usable(&kept).is_some());
+        let other = Store {
+            city: Some(city("Springfield", 42.1)),
+            ..kept.clone()
+        };
+        assert!(usable(&other).is_none(), "same name, another place");
+        let old_file = Store {
+            last_place: None,
+            ..other
+        };
+        assert!(
+            usable(&old_file).is_some(),
+            "a reading kept before places matches by name"
+        );
+    }
+
+    #[test]
+    fn a_place_tried_lately_waits_failures_included() {
+        let a = city("A", 1.0);
+        let t = 10_000;
+        assert!(!tried_lately(None, &a, t));
+        assert!(tried_lately(Some((a.place(), t - 60)), &a, t));
+        assert!(!tried_lately(Some((a.place(), t - RETRY.as_secs())), &a, t));
+        assert!(
+            !tried_lately(Some((city("B", 2.0).place(), t)), &a, t),
+            "a new place is tried at once"
+        );
+    }
+
+    #[test]
+    fn a_put_switches_and_moves_and_only_a_move_drops_the_reading() {
+        let a = city("A", 1.0);
+        let reading = Reading {
+            kind: "rain".into(),
+            code: 61,
+            temp_c: 9.0,
+            is_day: true,
+            city: "A".into(),
+            at: now(),
+        };
+        let mut store = Store {
+            city: Some(a.clone()),
+            off: false,
+            last: Some(reading),
+            last_place: Some(a.place()),
+        };
+        apply(&mut store, Some(true), CityChange::Set(a.clone()));
+        assert!(
+            store.off && store.last.is_some(),
+            "the same place keeps its reading"
+        );
+        apply(&mut store, None, CityChange::Set(city("A", 5.0)));
+        assert!(store.off && store.last.is_none() && store.last_place.is_none());
+        apply(&mut store, Some(false), CityChange::Clear);
+        assert!(!store.off && store.city.is_none());
     }
 }
