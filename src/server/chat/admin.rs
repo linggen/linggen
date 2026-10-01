@@ -217,6 +217,23 @@ fn export_prompt(mut engine: crate::engine::AgentEngine) -> axum::response::Resp
     .into_response()
 }
 
+/// The senders in `rows` that are agents (not the user, the system or a
+/// pseudo-sender such as recalled memory).
+async fn speaking_agents(
+    manager: &crate::engine::agent::AgentManager,
+    root: &std::path::Path,
+    rows: &[crate::state_fs::sessions::ChatMsg],
+) -> std::collections::HashSet<String> {
+    let mut agents = std::collections::HashSet::new();
+    let mut seen = std::collections::HashSet::new();
+    for r in rows {
+        if seen.insert(r.from_id.as_str()) && manager.agent_exists(root, &r.from_id).await {
+            agents.insert(r.from_id.clone());
+        }
+    }
+    agents
+}
+
 pub(crate) async fn compact_chat_api(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<CompactChatRequest>,
@@ -259,12 +276,13 @@ pub(crate) async fn compact_chat_api(
             );
             // The file as it stands before the summary is written: what
             // lands meanwhile (a guest's answer) is after this and kept.
-            let snapshot_len = state
+            let snapshot = state
                 .manager
                 .global_sessions
                 .get_chat_history(&session_id)
-                .map(|rows| rows.len())
-                .unwrap_or(0);
+                .unwrap_or_default();
+            let snapshot_len = snapshot.len();
+            let agents = speaking_agents(&state.manager, &root, &snapshot).await;
             let result = engine.force_compact(&mut messages, focus).await;
 
             let referenced_files: Vec<String> = messages
@@ -286,12 +304,13 @@ pub(crate) async fn compact_chat_api(
                     .iter()
                     .position(|m| m.content == summary)
                     .map_or(&messages[..], |i| &messages[i + 1..]);
+                let fold = |rows| {
+                    super::compact_rows::compacted(rows, snapshot_len, &own, tail, summary, &agents)
+                };
                 if let Err(e) = state
                     .manager
                     .global_sessions
-                    .edit_chat_history(&session_id, |rows| {
-                        super::compact_rows::compacted(rows, snapshot_len, &own, tail, summary)
-                    })
+                    .edit_chat_history(&session_id, fold)
                 {
                     tracing::warn!("Failed to rewrite session after compact: {e}");
                 }

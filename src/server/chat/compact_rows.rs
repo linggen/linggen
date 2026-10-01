@@ -12,6 +12,7 @@
 
 use crate::message::ChatMessage;
 use crate::state_fs::sessions::ChatMsg;
+use std::collections::HashSet;
 
 /// The pseudo-sender a compaction summary is kept under: context for the
 /// agent that compacted, never a line of dialogue.
@@ -22,19 +23,22 @@ pub(crate) const COMPACTION_SENDER: &str = "compaction";
 /// `rows` is the file as it is now; the first `snapshot_len` of them were
 /// there when compaction began. `tail` is the agent's thread after the
 /// summary — kept verbatim — and tells where the summarized span ends: the
-/// span is the agent's own rows (and system rows) before the earliest row
-/// the tail still holds. The span's rows go; the summary takes the place of
-/// the first of them. Nothing on file to fold: the rows come back as they are.
+/// span is the agent's own conversation before the earliest row the tail
+/// still holds ([`own_row`]). The span's rows go; the summary takes the place
+/// of the first of them. Nothing on file to fold: the rows come back as they
+/// are. `agents` names the other agents that speak in the file: their lines,
+/// even relayed into this agent's thread, are theirs and stay.
 pub(crate) fn compacted(
     rows: Vec<ChatMsg>,
     snapshot_len: usize,
     agent: &str,
     tail: &[ChatMessage],
     summary: &str,
+    agents: &HashSet<String>,
 ) -> Vec<ChatMsg> {
     let snapshot_len = snapshot_len.min(rows.len());
     let cut = tail_start(&rows[..snapshot_len], agent, tail);
-    let in_span = |i: usize, r: &ChatMsg| i < cut && (r.agent_id == agent || r.from_id == "system");
+    let in_span = |i: usize, r: &ChatMsg| i < cut && own_row(r, agent, agents);
     let Some(first) = rows.iter().enumerate().position(|(i, r)| in_span(i, r)) else {
         return rows;
     };
@@ -56,6 +60,13 @@ pub(crate) fn compacted(
         }
     }
     out
+}
+
+/// A row of `agent`'s own conversation: in its thread, and not another
+/// agent's words — the user's lines, its replies, its system rows and
+/// observations, recall kept beside them.
+fn own_row(r: &ChatMsg, agent: &str, agents: &HashSet<String>) -> bool {
+    r.agent_id == agent && (r.from_id == agent || !agents.contains(&r.from_id))
 }
 
 /// Index of the earliest file row the kept tail still holds — matched from
@@ -110,6 +121,35 @@ mod tests {
         }
     }
 
+    fn agents() -> HashSet<String> {
+        ["ling", "yinyue"].into_iter().map(String::from).collect()
+    }
+
+    /// Another agent's words relayed into the thread, and another agent's
+    /// system rows, are not this agent's to fold.
+    #[test]
+    fn another_agents_rows_in_the_span_stay() {
+        let rows = vec![
+            row("ling", "user", "old"),
+            row("ling", "yinyue", "Ling, the pass is open."),
+            row("yinyue", "system", "Tool Look: hers"),
+            row("ling", "system", "Tool Look: his"),
+            row("ling", "ling", "old reply"),
+            row("ling", "user", "new"),
+        ];
+        let tail = vec![ChatMessage::new("user", "new")];
+        let out = compacted(rows, 6, "ling", &tail, "S", &agents());
+        assert_eq!(
+            shape(&out),
+            [
+                "ling/compaction:S",
+                "ling/yinyue:Ling, the pass is open.",
+                "yinyue/system:Tool Look: hers",
+                "ling/user:new",
+            ]
+        );
+    }
+
     fn shape(rows: &[ChatMsg]) -> Vec<String> {
         rows.iter()
             .map(|r| format!("{}/{}:{}", r.agent_id, r.from_id, r.content))
@@ -139,7 +179,7 @@ mod tests {
             ChatMessage::new("user", "去碣石"),
             ChatMessage::new("assistant", "碣石到了。"),
         ];
-        let out = compacted(rows, snapshot, "ling", &tail, "- went to 临淄");
+        let out = compacted(rows, snapshot, "ling", &tail, "- went to 临淄", &agents());
         assert_eq!(
             shape(&out),
             [
@@ -166,7 +206,7 @@ mod tests {
             ChatMessage::new("user", "[Yinyue]: Ling, the pass is open."),
             ChatMessage::new("assistant", "Then we go."),
         ];
-        let out = compacted(rows, 4, "ling", &tail, "S");
+        let out = compacted(rows, 4, "ling", &tail, "S", &agents());
         assert_eq!(
             shape(&out),
             [
@@ -183,7 +223,7 @@ mod tests {
     fn nothing_to_fold_leaves_the_file_alone() {
         let rows = vec![row("yinyue", "yinyue", "hi"), row("ling", "user", "q")];
         let tail = vec![ChatMessage::new("user", "q")];
-        let out = compacted(rows.clone(), 2, "ling", &tail, "S");
+        let out = compacted(rows.clone(), 2, "ling", &tail, "S", &agents());
         assert_eq!(shape(&out), shape(&rows));
     }
 }
