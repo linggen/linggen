@@ -178,16 +178,18 @@ fn error_event(val: &Value) -> anyhow::Error {
 /// `message` output items: a reasoning model's `phase: "commentary"`
 /// preamble ("let me check…") before its `phase: "final_answer"`. Only
 /// non-commentary items are the reply; each later item opens its own
-/// paragraph, and an item's text is spoken once (its deltas, or — when it
-/// sent none — its `output_text.done`).
+/// paragraph, and so does each later content part of an item. A part's
+/// text is spoken once (its deltas, or — when it sent none — its
+/// `output_text.done`).
 #[derive(Default)]
 pub(super) struct ResponsesStream {
     /// Output indexes of commentary message items.
     commentary: std::collections::HashSet<usize>,
-    /// Output indexes whose text has already reached the reply.
-    spoken: std::collections::HashSet<usize>,
-    /// The output index the reply's last text came from.
-    last_spoken: Option<usize>,
+    /// Parts — (output index, content index) — whose text already reached
+    /// the reply.
+    spoken: std::collections::HashSet<(usize, usize)>,
+    /// The part the reply's last text came from.
+    last_spoken: Option<(usize, usize)>,
 }
 
 impl ResponsesStream {
@@ -267,31 +269,38 @@ impl ResponsesStream {
         }
     }
 
-    /// An item's text for the reply: nothing for commentary, nothing for a
-    /// `done` whose item already streamed, a paragraph break before a new item.
+    /// A part's text for the reply: nothing for commentary, nothing for a
+    /// `done` whose part already streamed, a paragraph break before a new part.
     fn text(&mut self, val: &Value, key: &str, done: bool) -> Vec<Result<StreamChunk>> {
         let index = output_index(val);
+        let part = (index, content_index(val));
         let text = val.get(key).and_then(|v| v.as_str()).unwrap_or("");
         if text.is_empty() || self.commentary.contains(&index) {
             return vec![];
         }
-        if done && self.spoken.contains(&index) {
+        if done && self.spoken.contains(&part) {
             return vec![];
         }
-        let new_item = self.last_spoken.is_some_and(|last| last != index);
-        let text = if new_item {
+        let new_part = self.last_spoken.is_some_and(|last| last != part);
+        let text = if new_part {
             format!("\n\n{text}")
         } else {
             text.to_string()
         };
-        self.spoken.insert(index);
-        self.last_spoken = Some(index);
+        self.spoken.insert(part);
+        self.last_spoken = Some(part);
         vec![Ok(StreamChunk::Token(text))]
     }
 }
 
 fn event_type(val: &Value) -> &str {
     val.get("type").and_then(|v| v.as_str()).unwrap_or("")
+}
+
+fn content_index(val: &Value) -> usize {
+    val.get("content_index")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize
 }
 
 fn output_index(val: &Value) -> usize {
@@ -479,6 +488,21 @@ mod tests {
             text_done(0, "msg_a", "Whole."),
         ];
         assert_eq!(read(&done_only, false).0, "Whole.");
+    }
+
+    #[test]
+    fn a_second_content_part_sent_only_as_done_is_its_own_paragraph() {
+        let part_done = |content: u64, text: &str| {
+            json!({"type": "response.output_text.done", "output_index": 0,
+                   "item_id": "msg_a", "content_index": content, "text": text})
+        };
+        let events = [
+            message_added(0, "msg_a", None),
+            delta(0, "msg_a", "First."),
+            text_done(0, "msg_a", "First."),
+            part_done(1, "Second."),
+        ];
+        assert_eq!(read(&events, false).0, "First.\n\nSecond.");
     }
 
     #[test]
