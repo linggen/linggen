@@ -74,6 +74,9 @@ impl Turn {
 
 /// Put the user's message on the table and answer it in the background.
 pub(crate) async fn answer_as_guest(state: Arc<ServerState>, session_id: String, message: String) {
+    // In line first, before any await: the turns run in the order the
+    // messages arrived, not the order their rows were written.
+    let mut turn = Turn::join(&session_id);
     crate::server::chat::helpers::persist_and_emit_to_store(
         &state.manager.global_sessions,
         &state.events_tx,
@@ -86,7 +89,6 @@ pub(crate) async fn answer_as_guest(state: Arc<ServerState>, session_id: String,
     )
     .await;
     crate::server::chat::side_lines::note(&session_id, YINYUE_AGENT, message.clone());
-    let mut turn = Turn::join(&session_id);
     tokio::spawn(async move {
         turn.wait().await;
         let sid = Some(session_id.clone());
@@ -202,6 +204,19 @@ mod tests {
         let second = waiting.await.unwrap();
         assert!(second.finish(), "the last in line ends her turns here");
         assert!(!super::LINE.lock_ok().contains_key("sess-line-test"));
+    }
+
+    /// A message takes its place in line before anything is awaited, so two
+    /// quick ones are answered in the order they arrived.
+    #[test]
+    fn a_guest_message_joins_the_line_before_any_await() {
+        let src = include_str!("guest.rs");
+        let body = &src[src
+            .find(concat!("pub(crate) async fn ", "answer_as_guest("))
+            .unwrap()..];
+        let join = body.find(concat!("Turn::", "join(")).unwrap();
+        let first_await = body.find(concat!(".", "await")).unwrap();
+        assert!(join < first_await);
     }
 
     #[test]
