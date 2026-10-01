@@ -136,7 +136,10 @@ impl ProxyModelClient {
         match result {
             Ok(Some(val)) => {
                 if let Some(err) = val.get("error").and_then(|v| v.as_str()) {
-                    return Err(crate::provider::error::ProviderError::stream_event(format!("Proxy error: {err}")).into());
+                    return Err(crate::provider::error::ProviderError::stream_event(format!(
+                        "Proxy error: {err}"
+                    ))
+                    .into());
                 }
                 let models = val
                     .pointer("/data/models")
@@ -189,7 +192,12 @@ impl Stream for ProxyInferenceStream {
                 // Check for error
                 if let Some(err) = val.get("error").and_then(|v| v.as_str()) {
                     self.done = true;
-                    return Poll::Ready(Some(Err(crate::provider::error::ProviderError::stream_event(format!("Proxy error: {err}")).into())));
+                    return Poll::Ready(Some(Err(
+                        crate::provider::error::ProviderError::stream_event(format!(
+                            "Proxy error: {err}"
+                        ))
+                        .into(),
+                    )));
                 }
 
                 // Parse chunk

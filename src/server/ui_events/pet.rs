@@ -1,9 +1,9 @@
 //! The pet's cues: speak, express, voice on/off. Global — every surface.
 
+use super::data::{PetExpressData, PetSpeakData, PetVoiceData};
 use super::Ui;
 use crate::engine::agent::COMPANION_AGENT_ID;
 use crate::engine::events::{ServerEvent, UiEvent};
-use super::data::{PetExpressData, PetSpeakData, PetVoiceData};
 
 pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
     let seq = ui.seq;
@@ -19,7 +19,11 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
         } => Some(
             pet(format!("pet-speak-{seq}"), "pet_speak")
                 .text(text.clone())
-                .data(PetSpeakData { text, emotion, voice }),
+                .data(PetSpeakData {
+                    text,
+                    emotion,
+                    voice,
+                }),
         ),
         ServerEvent::PetExpress { emotion, action } => Some(
             pet(format!("pet-express-{seq}"), "pet_express")

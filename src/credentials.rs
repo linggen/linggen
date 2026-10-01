@@ -57,7 +57,9 @@ fn current_version() -> u32 {
 
 /// The endpoints section as a list, or as the `{ "<id>": {…} }` map an
 /// earlier version-2 build wrote (ids in sorted order).
-fn endpoints_list_or_map<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<EndpointKey>, D::Error> {
+fn endpoints_list_or_map<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Vec<EndpointKey>, D::Error> {
     #[derive(Deserialize)]
     #[serde(untagged)]
     enum Shape {
@@ -121,7 +123,10 @@ impl Credentials {
             let bak = file.with_extension("json.v1.bak");
             if !bak.exists() {
                 if let Err(e) = std::fs::copy(file, &bak) {
-                    warn!("credentials: could not keep the earlier copy at {}: {e}", bak.display());
+                    warn!(
+                        "credentials: could not keep the earlier copy at {}: {e}",
+                        bak.display()
+                    );
                 }
             }
             match creds.save(file) {
@@ -160,7 +165,10 @@ impl Credentials {
         };
         let version = value.get("version").and_then(|v| v.as_u64()).unwrap_or(1);
         if version >= 2 {
-            let map_shaped = value.get("endpoints").map(|e| e.is_object()).unwrap_or(false);
+            let map_shaped = value
+                .get("endpoints")
+                .map(|e| e.is_object())
+                .unwrap_or(false);
             return match serde_json::from_value::<Credentials>(value) {
                 Ok(c) => (c, map_shaped),
                 Err(e) => {
@@ -194,7 +202,8 @@ impl Credentials {
                 match out.endpoint_key(&m.provider, &m.url) {
                     None => out.set_endpoint_key(&m.provider, &m.url, Some(key)),
                     Some(k) if k != key => {
-                        out.models.insert(id.clone(), KeyEntry { api_key: Some(key) });
+                        out.models
+                            .insert(id.clone(), KeyEntry { api_key: Some(key) });
                     }
                     Some(_) => {}
                 }
@@ -213,7 +222,8 @@ impl Credentials {
                     }
                 }
                 _ => {
-                    out.services.insert(id.clone(), KeyEntry { api_key: Some(key) });
+                    out.services
+                        .insert(id.clone(), KeyEntry { api_key: Some(key) });
                 }
             }
         }
@@ -244,8 +254,13 @@ impl Credentials {
         self.endpoints
             .retain(|e| !same_endpoint(&e.provider, &e.url, provider, url));
         if let Some(key) = api_key.filter(|k| !k.is_empty()) {
-            self.endpoints.push(EndpointKey { provider: provider.trim().to_string(), url: url.trim().to_string(), api_key: Some(key) });
-            self.endpoints.sort_by(|a, b| (&a.provider, &a.url).cmp(&(&b.provider, &b.url)));
+            self.endpoints.push(EndpointKey {
+                provider: provider.trim().to_string(),
+                url: url.trim().to_string(),
+                api_key: Some(key),
+            });
+            self.endpoints
+                .sort_by(|a, b| (&a.provider, &a.url).cmp(&(&b.provider, &b.url)));
         }
     }
 
@@ -261,7 +276,8 @@ impl Credentials {
     pub fn set_model_override(&mut self, model_id: &str, api_key: Option<String>) {
         match api_key.filter(|k| !k.is_empty()) {
             Some(key) => {
-                self.models.insert(model_id.to_string(), KeyEntry { api_key: Some(key) });
+                self.models
+                    .insert(model_id.to_string(), KeyEntry { api_key: Some(key) });
             }
             None => {
                 self.models.remove(model_id);
@@ -280,7 +296,8 @@ impl Credentials {
     pub fn set_service_key(&mut self, name: &str, api_key: Option<String>) {
         match api_key.filter(|k| !k.is_empty()) {
             Some(key) => {
-                self.services.insert(name.to_string(), KeyEntry { api_key: Some(key) });
+                self.services
+                    .insert(name.to_string(), KeyEntry { api_key: Some(key) });
             }
             None => {
                 self.services.remove(name);
@@ -305,10 +322,36 @@ impl Credentials {
             endpoints: self
                 .endpoints
                 .iter()
-                .map(|e| EndpointKey { provider: e.provider.clone(), url: e.url.clone(), api_key: mask(&e.api_key) })
+                .map(|e| EndpointKey {
+                    provider: e.provider.clone(),
+                    url: e.url.clone(),
+                    api_key: mask(&e.api_key),
+                })
                 .collect(),
-            models: self.models.iter().map(|(id, e)| (id.clone(), KeyEntry { api_key: mask(&e.api_key) })).collect(),
-            services: self.services.iter().map(|(id, e)| (id.clone(), KeyEntry { api_key: mask(&e.api_key) })).collect(),
+            models: self
+                .models
+                .iter()
+                .map(|(id, e)| {
+                    (
+                        id.clone(),
+                        KeyEntry {
+                            api_key: mask(&e.api_key),
+                        },
+                    )
+                })
+                .collect(),
+            services: self
+                .services
+                .iter()
+                .map(|(id, e)| {
+                    (
+                        id.clone(),
+                        KeyEntry {
+                            api_key: mask(&e.api_key),
+                        },
+                    )
+                })
+                .collect(),
         }
     }
 }
@@ -319,17 +362,17 @@ pub fn credentials_file() -> PathBuf {
 }
 
 fn env_key(name: &str) -> Option<String> {
-    let var = format!("LINGGEN_API_KEY_{}", name.to_uppercase().replace(['-', '.', '/'], "_"));
+    let var = format!(
+        "LINGGEN_API_KEY_{}",
+        name.to_uppercase().replace(['-', '.', '/'], "_")
+    );
     std::env::var(var).ok().filter(|k| !k.is_empty())
 }
 
 /// Resolve the effective API key for a model.
 /// Priority: 1) TOML config api_key  2) the model's override  3) the
 /// endpoint's key  4) env LINGGEN_API_KEY_{MODEL_ID}  5) env LINGGEN_API_KEY_{PROVIDER}
-pub fn resolve_api_key(
-    model: &ModelConfig,
-    credentials: &Credentials,
-) -> Option<String> {
+pub fn resolve_api_key(model: &ModelConfig, credentials: &Credentials) -> Option<String> {
     if let Some(key) = model.api_key.as_deref().filter(|k| !k.is_empty()) {
         return Some(key.to_string());
     }
@@ -383,7 +426,10 @@ mod tests {
         assert_eq!(loaded.endpoint_key("Gemini", GEMINI), Some("AIza123"));
         assert_eq!(loaded.model_override("gemini-special"), Some("AIzaOther"));
         assert_eq!(loaded.service_key("tavily"), Some("tvly"));
-        assert_eq!(loaded.endpoint_key("groq", "https://api.groq.com/openai/v1"), None);
+        assert_eq!(
+            loaded.endpoint_key("groq", "https://api.groq.com/openai/v1"),
+            None
+        );
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -411,7 +457,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         let file = tmp.join("credentials.json");
-        std::fs::write(&file, format!(r#"{{
+        std::fs::write(
+            &file,
+            format!(
+                r#"{{
   "stall-test": {{ "api_key": "x" }},
   "tavily": {{ "api_key": "tvly" }},
   "gemini-old-1": {{ "api_key": "AIza-old" }},
@@ -420,7 +469,10 @@ mod tests {
   "gemini-gone": {{ "api_key": "AQ-new", "provider": "gemini", "url": "{GEMINI}" }},
   "deepseek-v4-pro": {{ "api_key": "sk-ds" }},
   "gemini-two": {{ "api_key": "AIza-two" }}
-}}"#)).unwrap();
+}}"#
+            ),
+        )
+        .unwrap();
         let configured = vec![
             model("gemini-live", "gemini", GEMINI),
             model("gemini-two", "gemini", GEMINI),
@@ -430,7 +482,10 @@ mod tests {
         // The configured model's key is the endpoint's; the stamped orphan
         // with a different key did not win.
         assert_eq!(creds.endpoint_key("gemini", GEMINI), Some("AIza-live"));
-        assert_eq!(creds.endpoint_key("deepseek", "https://api.deepseek.com/v1"), Some("sk-ds"));
+        assert_eq!(
+            creds.endpoint_key("deepseek", "https://api.deepseek.com/v1"),
+            Some("sk-ds")
+        );
         // A configured sibling with a different key keeps it as an override.
         assert_eq!(creds.model_override("gemini-two"), Some("AIza-two"));
         assert_eq!(creds.model_override("gemini-live"), None);
@@ -439,7 +494,8 @@ mod tests {
         assert_eq!(creds.service_key("gemini-old-1"), Some("AIza-old"));
         assert_eq!(creds.service_key("stall-test"), Some("x"));
         // Saved as v2, with the v1 copy kept.
-        let on_disk: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        let on_disk: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         assert_eq!(on_disk["version"], 2);
         assert!(file.with_extension("json.v1.bak").exists());
         // A stamped orphan alone still seeds its endpoint.
@@ -495,7 +551,8 @@ mod tests {
         std::fs::write(&file, format!(r#"{{ "version": 2, "endpoints": {{ "gemini|x": {{ "provider": "gemini", "url": "{GEMINI}", "api_key": "AIza" }} }}, "services": {{ "tavily": {{ "api_key": "t" }} }} }}"#)).unwrap();
         let creds = Credentials::load_for(&file, &[]);
         assert_eq!(creds.endpoint_key("gemini", GEMINI), Some("AIza"));
-        let on_disk: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        let on_disk: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         assert!(on_disk["endpoints"].is_array(), "written back as a list");
         assert_eq!(on_disk["endpoints"][0]["provider"], "gemini");
         assert_eq!(on_disk["services"]["tavily"]["api_key"], "t");

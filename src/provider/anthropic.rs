@@ -634,7 +634,10 @@ fn handle_event(event: SseEvent, state: &mut BlockState) -> Option<Result<Stream
                 .and_then(|e| e.get("message"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("anthropic returned an error event");
-            Some(Err(crate::provider::error::ProviderError::stream_event(msg.to_string()).into()))
+            Some(Err(crate::provider::error::ProviderError::stream_event(
+                msg.to_string(),
+            )
+            .into()))
         }
         _ => None,
     }

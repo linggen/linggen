@@ -6,7 +6,9 @@ use crate::engine::events::ServerEvent;
 use serde_json::json;
 
 fn data(event: ServerEvent) -> serde_json::Value {
-    map(event, 7).and_then(|e| e.data).expect("event carries data")
+    map(event, 7)
+        .and_then(|e| e.data)
+        .expect("event carries data")
 }
 
 #[test]

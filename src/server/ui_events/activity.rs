@@ -1,16 +1,16 @@
 //! What an agent is doing and how its run is going: status lines, the
 //! queue, context usage, subagents, plans, outcomes, resyncs.
 
+use super::data::{
+    ActivityData, ContextUsageData, OutcomeData, PlanUpdateData, QueueData, ResyncData,
+    SubagentResultData, SubagentSpawnedData,
+};
 use super::{
     Ui, UI_KIND_ACTIVITY, UI_KIND_QUEUE, UI_KIND_RUN, UI_PHASE_CONTEXT_USAGE, UI_PHASE_DOING,
     UI_PHASE_DONE, UI_PHASE_OUTCOME, UI_PHASE_PLAN_UPDATE, UI_PHASE_RESYNC,
     UI_PHASE_SUBAGENT_RESULT, UI_PHASE_SUBAGENT_SPAWNED, UI_PHASE_SYNC,
 };
 use crate::engine::events::{AgentStatusKind, ServerEvent, UiEvent};
-use super::data::{
-    ActivityData, ContextUsageData, OutcomeData, PlanUpdateData, QueueData, ResyncData,
-    SubagentResultData, SubagentSpawnedData,
-};
 
 fn default_status_text(status: AgentStatusKind) -> String {
     match status {

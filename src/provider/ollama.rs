@@ -100,18 +100,31 @@ impl OllamaClient {
             );
             if let Ok(body) = serde_json::to_string(&req) {
                 let truncated_body = if body.len() > 500 {
-                    format!("{}… ({} chars)", &body[..body.floor_char_boundary(500)], body.len())
+                    format!(
+                        "{}… ({} chars)",
+                        &body[..body.floor_char_boundary(500)],
+                        body.len()
+                    )
                 } else {
                     body
                 };
                 tracing::debug!("Ollama failed request body: {}", truncated_body);
             }
             let truncated_err = if text.len() > 500 {
-                format!("{}… ({} chars)", &text[..text.floor_char_boundary(500)], text.len())
+                format!(
+                    "{}… ({} chars)",
+                    &text[..text.floor_char_boundary(500)],
+                    text.len()
+                )
             } else {
                 text
             };
-            return Err(crate::provider::error::ProviderError::http(status, &truncated_err, format!("ollama error ({}): {}", status, truncated_err)).into());
+            return Err(crate::provider::error::ProviderError::http(
+                status,
+                &truncated_err,
+                format!("ollama error ({}): {}", status, truncated_err),
+            )
+            .into());
         }
 
         let payload: ChatResponse = resp.json().await?;
@@ -172,18 +185,31 @@ impl OllamaClient {
             );
             if let Ok(body) = serde_json::to_string(&req) {
                 let truncated_body = if body.len() > 500 {
-                    format!("{}… ({} chars)", &body[..body.floor_char_boundary(500)], body.len())
+                    format!(
+                        "{}… ({} chars)",
+                        &body[..body.floor_char_boundary(500)],
+                        body.len()
+                    )
                 } else {
                     body
                 };
                 tracing::debug!("Ollama failed request body: {}", truncated_body);
             }
             let truncated_err = if text.len() > 500 {
-                format!("{}… ({} chars)", &text[..text.floor_char_boundary(500)], text.len())
+                format!(
+                    "{}… ({} chars)",
+                    &text[..text.floor_char_boundary(500)],
+                    text.len()
+                )
             } else {
                 text
             };
-            return Err(crate::provider::error::ProviderError::http(status, &truncated_err, format!("ollama error ({}): {}", status, truncated_err)).into());
+            return Err(crate::provider::error::ProviderError::http(
+                status,
+                &truncated_err,
+                format!("ollama error ({}): {}", status, truncated_err),
+            )
+            .into());
         }
 
         let stream = resp
@@ -205,7 +231,11 @@ impl OllamaClient {
                 Ok(p) => p,
                 Err(e) => {
                     let truncated = if line.len() > 300 {
-                        format!("{}… ({} chars)", &line[..line.floor_char_boundary(300)], line.len())
+                        format!(
+                            "{}… ({} chars)",
+                            &line[..line.floor_char_boundary(300)],
+                            line.len()
+                        )
                     } else {
                         line.clone()
                     };
@@ -294,18 +324,31 @@ impl OllamaClient {
             );
             if let Ok(body) = serde_json::to_string(&req) {
                 let truncated_body = if body.len() > 500 {
-                    format!("{}… ({} chars)", &body[..body.floor_char_boundary(500)], body.len())
+                    format!(
+                        "{}… ({} chars)",
+                        &body[..body.floor_char_boundary(500)],
+                        body.len()
+                    )
                 } else {
                     body
                 };
                 tracing::debug!("Ollama failed request body: {}", truncated_body);
             }
             let truncated_err = if text.len() > 500 {
-                format!("{}… ({} chars)", &text[..text.floor_char_boundary(500)], text.len())
+                format!(
+                    "{}… ({} chars)",
+                    &text[..text.floor_char_boundary(500)],
+                    text.len()
+                )
             } else {
                 text
             };
-            return Err(crate::provider::error::ProviderError::http(status, &truncated_err, format!("ollama error ({}): {}", status, truncated_err)).into());
+            return Err(crate::provider::error::ProviderError::http(
+                status,
+                &truncated_err,
+                format!("ollama error ({}): {}", status, truncated_err),
+            )
+            .into());
         }
 
         let stream = resp
@@ -333,7 +376,11 @@ impl OllamaClient {
                     Ok(p) => p,
                     Err(e) => {
                         let truncated = if line.len() > 300 {
-                            format!("{}… ({} chars)", &line[..line.floor_char_boundary(300)], line.len())
+                            format!(
+                                "{}… ({} chars)",
+                                &line[..line.floor_char_boundary(300)],
+                                line.len()
+                            )
                         } else {
                             line.clone()
                         };
@@ -473,7 +520,12 @@ impl OllamaClient {
             } else {
                 text
             };
-            return Err(crate::provider::error::ProviderError::http(status, &truncated, format!("ollama error ({}): {}", status, truncated)).into());
+            return Err(crate::provider::error::ProviderError::http(
+                status,
+                &truncated,
+                format!("ollama error ({}): {}", status, truncated),
+            )
+            .into());
         }
 
         let payload: OllamaShowResponse = resp.json().await?;
@@ -548,7 +600,12 @@ impl OllamaClient {
             } else {
                 text
             };
-            return Err(crate::provider::error::ProviderError::http(status, &truncated, format!("ollama error ({}): {}", status, truncated)).into());
+            return Err(crate::provider::error::ProviderError::http(
+                status,
+                &truncated,
+                format!("ollama error ({}): {}", status, truncated),
+            )
+            .into());
         }
         let payload: OllamaShowResponse = resp.json().await?;
         Ok(payload.capabilities.iter().any(|c| c == "vision"))

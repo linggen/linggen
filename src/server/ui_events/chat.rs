@@ -1,16 +1,16 @@
 //! A conversation's own events: messages, streamed tokens, content blocks,
 //! questions and hints — everything drawn inside one session's chat.
 
-use super::{
-    Ui, UI_KIND_CONTENT_BLOCK, UI_KIND_MESSAGE, UI_KIND_TEXT_SEGMENT, UI_KIND_TOKEN,
-    UI_KIND_TURN_COMPLETE, UI_PHASE_DONE,
-};
-use crate::engine::events::{ServerEvent, UiEvent};
 use super::data::{
     AskUserData, ContentBlockStartData, ContentBlockUpdateData, FollowupsData, MessageData,
     ModelFallbackData, TextSegmentData, TokenData, ToolProgressData, TurnCompleteData,
     WidgetResolvedData,
 };
+use super::{
+    Ui, UI_KIND_CONTENT_BLOCK, UI_KIND_MESSAGE, UI_KIND_TEXT_SEGMENT, UI_KIND_TOKEN,
+    UI_KIND_TURN_COMPLETE, UI_PHASE_DONE,
+};
+use crate::engine::events::{ServerEvent, UiEvent};
 
 pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
     let seq = ui.seq;
