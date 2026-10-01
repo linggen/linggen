@@ -441,6 +441,23 @@ async fn dequeue_and_emit(
     true
 }
 
+/// The live id `mid` runs as (a retired id resolves to its successor), when
+/// this requester may use it: a consumer only a shared model, compared by
+/// live id on both sides.
+fn allowed_model(
+    models: &crate::provider::models::ModelManager,
+    is_consumer: bool,
+    shared_models: &[String],
+    mid: &str,
+) -> Option<String> {
+    let live = models.resolve_id(mid)?;
+    let shared = !is_consumer
+        || shared_models
+            .iter()
+            .any(|m| models.resolve_id(m).as_deref() == Some(live.as_str()));
+    shared.then_some(live)
+}
+
 /// Resolve and pin the engine's effective model for this turn.
 ///
 /// Consumers (proxy room) MUST be restricted to the room's `shared_models` —
@@ -457,8 +474,7 @@ async fn resolve_effective_model(
     let consumer_default = || -> Option<String> {
         shared_models
             .iter()
-            .find(|id| engine.model_manager.has_model(id))
-            .cloned()
+            .find_map(|id| engine.model_manager.resolve_id(id))
     };
     let pin_session_model = |meta: Option<crate::state_fs::sessions::SessionMeta>,
                              new_model: Option<String>| async move {
@@ -474,11 +490,9 @@ async fn resolve_effective_model(
         session_id.and_then(|sid| manager.global_sessions.get_session_meta(sid).ok().flatten());
 
     if let Some(mid) = req_model_id {
-        let ok = engine.model_manager.has_model(mid)
-            && (!is_consumer || shared_models.iter().any(|m| m == mid));
-        if ok {
-            engine.model_id = mid.to_string();
-            pin_session_model(session_meta, Some(mid.to_string())).await;
+        if let Some(live) = allowed_model(&engine.model_manager, is_consumer, shared_models, mid) {
+            engine.model_id = live.clone();
+            pin_session_model(session_meta, Some(live)).await;
             return;
         }
         // Requested model unavailable / not shared with this consumer.
@@ -1434,7 +1448,7 @@ pub(crate) async fn start_turn(
 #[cfg(test)]
 mod tests {
     use super::{
-        auto_session_title, guest_seat, leading_mention, session_host, take_aside,
+        allowed_model, auto_session_title, guest_seat, leading_mention, session_host, take_aside,
         trim_live_history, turn_creator, Seat,
     };
     use super::{busy_message, BusyMessage};
@@ -1684,5 +1698,18 @@ mod tests {
     #[test]
     fn auto_title_empty_returns_placeholder() {
         assert_eq!(auto_session_title("   "), "New Chat");
+    }
+
+    #[test]
+    fn a_retired_model_runs_and_pins_as_its_successor() {
+        use crate::credentials::Credentials;
+        use crate::provider::models::ModelManager;
+        let m = ModelManager::new_with_credentials(vec![], &Credentials::default());
+        let shared = vec!["gpt-6-sol".to_string()];
+        let live = Some("gpt-6.1-sol".to_string());
+        assert_eq!(allowed_model(&m, false, &[], "gpt-6-sol"), live);
+        assert_eq!(allowed_model(&m, true, &shared, "gpt-6.1-sol"), live);
+        assert_eq!(allowed_model(&m, true, &[], "gpt-6.1-sol"), None);
+        assert_eq!(allowed_model(&m, false, &[], "no-such-model"), None);
     }
 }
