@@ -146,7 +146,8 @@ pub struct QuestsConfig {
 /// no agent here: it reads whatever the skill declares for whoever speaks.
 /// See `doc/skill-spec.md` § Place.
 /// An entry that doesn't read (an unknown key, a wrong type) is logged and
-/// left out; the rest of the skill still loads.
+/// kept as [`PlaceEntry::Broken`]: that agent stays away, never let in
+/// ungated; the rest of the skill still loads.
 #[derive(Debug, Serialize, Clone, Default, PartialEq, Eq)]
 #[serde(transparent)]
 pub struct Places(pub std::collections::BTreeMap<String, PlaceEntry>);
@@ -162,15 +163,13 @@ impl<'de> Deserialize<'de> for Places {
     }
 }
 
-/// One `place.<agent>` entry, or none when it doesn't read.
+/// One `place.<agent>` entry; [`PlaceEntry::Broken`] when it doesn't read.
 fn place_entry(agent: String, value: serde_json::Value) -> Option<(String, PlaceEntry)> {
-    match serde_json::from_value(value) {
-        Ok(entry) => Some((agent, entry)),
-        Err(e) => {
-            tracing::warn!("skill place.{agent}: {e}; ignored");
-            None
-        }
-    }
+    let entry = serde_json::from_value(value).unwrap_or_else(|e| {
+        tracing::warn!("skill place.{agent}: {e}; that agent stays away");
+        PlaceEntry::Broken
+    });
+    Some((agent, entry))
 }
 
 /// One agent's place in a skill: plain text, or text with a presence gate.
@@ -179,6 +178,10 @@ fn place_entry(agent: String, value: serde_json::Value) -> Option<(String, Place
 pub enum PlaceEntry {
     Text(String),
     Gated(GatedPlace),
+    /// An entry that didn't read. A gate written wrong keeps its agent
+    /// away rather than letting it in early.
+    #[serde(skip_deserializing)]
+    Broken,
 }
 
 /// A place with a presence gate. Only these keys: a misspelt one is an
@@ -209,23 +212,33 @@ impl Places {
         let text = match self.0.get(agent)? {
             PlaceEntry::Text(t) => Some(t.as_str()),
             PlaceEntry::Gated(g) => g.text.as_deref(),
+            PlaceEntry::Broken => None,
         }?;
         Some(text.trim()).filter(|t| !t.is_empty())
     }
 
-    /// Whether `agent` is absent from this skill's sessions right now: it
-    /// declares `absent_until` and the flag in `skill_dir` is not set. A
-    /// file that can't be read or parsed leaves the flag unset.
+    /// Whether `agent` is absent from this skill's sessions right now: its
+    /// entry is broken, or it declares `absent_until` and the flag in
+    /// `skill_dir` is not set. A file that can't be read or parsed leaves
+    /// the flag unset.
     pub fn is_absent(&self, agent: &str, skill_dir: &std::path::Path) -> bool {
-        self.gate_for(agent)
-            .is_some_and(|flag| !flag.is_set(skill_dir))
+        match self.0.get(agent) {
+            Some(PlaceEntry::Broken) => true,
+            Some(PlaceEntry::Gated(g)) => g
+                .absent_until
+                .as_ref()
+                .is_some_and(|f| !f.is_set(skill_dir)),
+            _ => false,
+        }
     }
 
-    /// The state `agent` is absent until, when the skill declares one.
-    pub fn gate_for(&self, agent: &str) -> Option<&StateFlag> {
-        match self.0.get(agent)? {
-            PlaceEntry::Gated(g) => g.absent_until.as_ref(),
-            PlaceEntry::Text(_) => None,
+    /// Whether the skill gates `agent` at all: a declared `absent_until`,
+    /// or an entry too broken to read one from.
+    pub fn is_gated(&self, agent: &str) -> bool {
+        match self.0.get(agent) {
+            Some(PlaceEntry::Broken) => true,
+            Some(PlaceEntry::Gated(g)) => g.absent_until.is_some(),
+            _ => false,
         }
     }
 }
@@ -402,7 +415,7 @@ impl Skill {
         };
         match &self.skill_dir {
             Some(dir) => places.is_absent(agent, dir),
-            None => places.gate_for(agent).is_some(),
+            None => places.is_gated(agent),
         }
     }
 }
@@ -437,24 +450,23 @@ mod place_tests {
              yinyue:\n  absent_untl: {file: data/state.json, path: companion.joined}\n\
              memory:\n  text: [1, 2]\n",
         );
+        let dir = tempfile::tempdir().unwrap();
         assert_eq!(p.text_for("ling"), Some("Here."));
         assert!(
-            !p.0.contains_key("yinyue"),
-            "a misspelt key is not a gate-less place"
+            p.is_absent("yinyue", dir.path()),
+            "a misspelt gate keeps its agent away, never lets it in"
         );
         assert!(
-            !p.0.contains_key("memory"),
-            "a wrong type drops only its entry"
+            p.is_absent("memory", dir.path()),
+            "a wrong type keeps only its agent away"
         );
+        assert!(!p.is_absent("ling", dir.path()));
+        assert_eq!(p.text_for("yinyue"), None);
         let skill = "---\nname: x\ndescription: y\nplace:\n  ling: {text: 5}\n---\nbody";
         let parsed =
             crate::extensions::skills::parse_skill_text(skill, super::SkillSource::Project);
-        assert!(parsed
-            .expect("the skill still loads")
-            .place
-            .unwrap()
-            .0
-            .is_empty());
+        let place = parsed.expect("the skill still loads").place.unwrap();
+        assert_eq!(place.0.get("ling"), Some(&PlaceEntry::Broken));
     }
 
     #[test]

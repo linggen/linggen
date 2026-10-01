@@ -339,7 +339,7 @@ place:
   - a message addressed to it in the skill's chat runs no turn and keeps nothing: `/api/chat` answers `{"status": "absent", "agent_id", "session_id"}`, and the embedded chat posts `linggen-skill-event` `agent_absent {agent, text}` to the page, which says its own line;
   - an app moment for it naming the skill's chat (or the skill as `app`) is refused (`409 absent`) and never queued;
   - the avatar's box, while a stage in that chat holds it, talks on its own thread instead.
-- An entry with any other key, or a value of the wrong type, is logged and ignored (that agent then has no entry); the rest of the skill still loads.
+- An entry with any other key, or a value of the wrong type, is logged and keeps that agent away — a gate written wrong never lets its agent in early; the rest of the skill still loads.
 - The engine names no app and no agent: it matches the speaking agent's id against the keys.
 
 ## Senses
