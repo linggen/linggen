@@ -145,23 +145,53 @@ pub struct QuestsConfig {
 /// agent is there at all yet. Keyed by agent id. The engine names no app and
 /// no agent here: it reads whatever the skill declares for whoever speaks.
 /// See `doc/skill-spec.md` § Place.
-#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, Eq)]
+/// An entry that doesn't read (an unknown key, a wrong type) is logged and
+/// left out; the rest of the skill still loads.
+#[derive(Debug, Serialize, Clone, Default, PartialEq, Eq)]
 #[serde(transparent)]
 pub struct Places(pub std::collections::BTreeMap<String, PlaceEntry>);
+
+impl<'de> Deserialize<'de> for Places {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let raw = std::collections::BTreeMap::<String, serde_json::Value>::deserialize(d)?;
+        Ok(Places(
+            raw.into_iter()
+                .filter_map(|(agent, value)| place_entry(agent, value))
+                .collect(),
+        ))
+    }
+}
+
+/// One `place.<agent>` entry, or none when it doesn't read.
+fn place_entry(agent: String, value: serde_json::Value) -> Option<(String, PlaceEntry)> {
+    match serde_json::from_value(value) {
+        Ok(entry) => Some((agent, entry)),
+        Err(e) => {
+            tracing::warn!("skill place.{agent}: {e}; ignored");
+            None
+        }
+    }
+}
 
 /// One agent's place in a skill: plain text, or text with a presence gate.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum PlaceEntry {
     Text(String),
-    Gated {
-        #[serde(default)]
-        text: Option<String>,
-        /// The agent is absent from the skill's sessions until this state
-        /// the skill keeps is set.
-        #[serde(default)]
-        absent_until: Option<StateFlag>,
-    },
+    Gated(GatedPlace),
+}
+
+/// A place with a presence gate. Only these keys: a misspelt one is an
+/// error, never a gate silently missing.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct GatedPlace {
+    #[serde(default)]
+    pub text: Option<String>,
+    /// The agent is absent from the skill's sessions until this state
+    /// the skill keeps is set.
+    #[serde(default)]
+    pub absent_until: Option<StateFlag>,
 }
 
 /// A value the skill keeps in one of its own JSON files: `path` is a
@@ -178,7 +208,7 @@ impl Places {
     pub fn text_for(&self, agent: &str) -> Option<&str> {
         let text = match self.0.get(agent)? {
             PlaceEntry::Text(t) => Some(t.as_str()),
-            PlaceEntry::Gated { text, .. } => text.as_deref(),
+            PlaceEntry::Gated(g) => g.text.as_deref(),
         }?;
         Some(text.trim()).filter(|t| !t.is_empty())
     }
@@ -194,7 +224,7 @@ impl Places {
     /// The state `agent` is absent until, when the skill declares one.
     pub fn gate_for(&self, agent: &str) -> Option<&StateFlag> {
         match self.0.get(agent)? {
-            PlaceEntry::Gated { absent_until, .. } => absent_until.as_ref(),
+            PlaceEntry::Gated(g) => g.absent_until.as_ref(),
             PlaceEntry::Text(_) => None,
         }
     }
@@ -398,6 +428,33 @@ mod place_tests {
         assert_eq!(p.text_for("ling"), Some("You run the world here."));
         assert_eq!(p.text_for("yinyue"), Some("Beside the player."));
         assert_eq!(p.text_for("memory"), None);
+    }
+
+    #[test]
+    fn a_bad_place_entry_is_dropped_and_the_rest_reads() {
+        let p = places(
+            "ling: \"Here.\"\n\
+             yinyue:\n  absent_untl: {file: data/state.json, path: companion.joined}\n\
+             memory:\n  text: [1, 2]\n",
+        );
+        assert_eq!(p.text_for("ling"), Some("Here."));
+        assert!(
+            !p.0.contains_key("yinyue"),
+            "a misspelt key is not a gate-less place"
+        );
+        assert!(
+            !p.0.contains_key("memory"),
+            "a wrong type drops only its entry"
+        );
+        let skill = "---\nname: x\ndescription: y\nplace:\n  ling: {text: 5}\n---\nbody";
+        let parsed =
+            crate::extensions::skills::parse_skill_text(skill, super::SkillSource::Project);
+        assert!(parsed
+            .expect("the skill still loads")
+            .place
+            .unwrap()
+            .0
+            .is_empty());
     }
 
     #[test]
