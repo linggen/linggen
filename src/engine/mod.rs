@@ -30,7 +30,7 @@ pub mod web_search;
 // Re-export public API types
 pub use types::{
     ActiveMission, AgentEngine, AgentOutcome, AgentRole, ContextType, EngineConfig, InterfaceMode,
-    Plan, PlanStatus, ThinkingEvent,
+    Plan, PlanStatus, ThinkingEvent, ThreadMark,
 };
 
 pub use actions::{

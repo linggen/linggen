@@ -215,6 +215,14 @@ pub enum ContextType {
     Summary,
 }
 
+/// How far a member's cached thread had read the session's file: its row
+/// count and rewrite count then (`SessionStore::rows_since`, `rewrite_count`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ThreadMark {
+    pub rows: usize,
+    pub rewrites: u64,
+}
+
 #[derive(Debug, Clone)]
 pub struct ObservationRecord {
     pub observation_type: String,
@@ -258,8 +266,13 @@ pub struct AgentEngine {
     pub observations: Vec<ObservationRecord>,
     pub context_records: Vec<ContextRecord>,
     pub next_context_id: u64,
-    // Conversational history for chat.
+    // Conversational history for chat — a cache of the session's thread
+    // (`messages.jsonl` is the truth; `server::chat::thread` builds it).
     pub chat_history: Vec<ChatMessage>,
+    /// Where `chat_history` last caught up with the session's file: rows
+    /// after this mark written by another member, or a rewrite since, make
+    /// the cache stale and the thread is rebuilt from the file.
+    pub thread_mark: Option<ThreadMark>,
     // Active skill if any
     pub active_skill: Option<Skill>,
     // Active mission frame, set when the scheduler dispatches a mission.
@@ -552,6 +565,7 @@ impl AgentEngine {
             context_records: Vec::new(),
             next_context_id: 1,
             chat_history: Vec::new(),
+            thread_mark: None,
             active_skill: None,
             active_mission: None,
             available_skills_metadata: Vec::new(),

@@ -33,6 +33,7 @@ pub(crate) mod side_lines;
 mod skill_dispatch;
 mod structured;
 pub(crate) mod table;
+mod thread;
 mod types;
 
 pub(crate) use admin::{

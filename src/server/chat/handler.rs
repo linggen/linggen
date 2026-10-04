@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use super::restored_tools::{self, ToolRow};
+use super::restored_tools;
 use super::skill_dispatch::{run_skill_dispatch, run_trigger_dispatch};
 use super::structured::run_structured_loop;
 use super::types::ChatRequest;
@@ -559,119 +559,6 @@ async fn promote_mission_session_to_user(
     engine.cached_system_prompt = None;
 }
 
-/// Repopulate `chat_history` from the session store when the engine was
-/// freshly created (e.g. after a model change invalidated the engine
-/// cache, or after `/clear` emptied it). System messages are skipped; the
-/// agent's most recent tool calls rejoin in compact form (`restored_tools`),
-/// so a model taking over sees that this agent uses its tools.
-///
-/// `current_user_msg` is the message about to enter the turn. The chat
-/// handler persists each incoming user message to the session store
-/// **before** spawning the engine task (so other clients see it
-/// immediately via the event broadcast), so the same message shows up in
-/// `get_chat_history` here. `push_user_turn_with_recall` will then push
-/// it into `chat_history` again — leaving a duplicate. Trim the trailing
-/// entry when it's the current message so the post-push state is exactly
-/// one copy.
-async fn restore_chat_history_if_empty(
-    engine: &mut crate::engine::AgentEngine,
-    manager: &Arc<AgentManager>,
-    root: &Path,
-    session_id: Option<&str>,
-    own_agent: &str,
-    current_from: &str,
-    current_user_msg: &str,
-) -> bool {
-    if !engine.chat_history.is_empty() {
-        return false;
-    }
-    let sid = session_id.unwrap_or("default");
-    let Ok(mut msgs) = manager.global_sessions.get_chat_history(sid) else {
-        return false;
-    };
-    // Drop the trailing entry if it matches the just-persisted current
-    // user message; push_user_turn_with_recall will add it back exactly
-    // once. Only the very last entry can be the current message (the
-    // persist write was the most recent op).
-    if let Some(last) = msgs.last() {
-        if !last.is_observation && last.from_id == current_from && last.content == current_user_msg
-        {
-            msgs.pop();
-        }
-    }
-    let root_buf = root.to_path_buf();
-    // Asked once for the whole restore, not once per message. `agent_exists`
-    // re-reads and YAML-parses every agents/*.md on each call, and a
-    // memory-enabled session persists a `memory-recall` row per recalled turn —
-    // so the question was being asked of roughly half the history, one full
-    // directory scan at a time, before the first token.
-    let mut is_agent: std::collections::HashMap<&str, bool> = std::collections::HashMap::new();
-    let native = engine.model_manager.supports_tools(&engine.model_id);
-    let first_call = restored_tools::first_kept_call(&msgs, own_agent, restored_tools::KEEP_CALLS);
-    let mut replay = restored_tools::ToolReplay::new(native);
-    for (i, m) in msgs.iter().enumerate() {
-        if m.is_observation {
-            match restored_tools::tool_row(m, own_agent) {
-                Some(ToolRow::Call { name, args }) if i >= first_call => {
-                    replay.call(name, args, &mut engine.chat_history)
-                }
-                Some(ToolRow::Result { name, text }) => replay.result(&name, &text),
-                _ => {}
-            }
-            continue;
-        }
-        replay.flush(&mut engine.chat_history);
-        if m.from_id == "system" {
-            continue;
-        }
-        // The session's own agent speaks as assistant. The user — and any
-        // agent relayed in from another surface (Yinyue's ask from the
-        // phone) — is a user turn, the relay labeled so the model knows who
-        // was asking. Pseudo-senders that are context rather than speech
-        // (memory-recall, compaction) are not agents and stay assistant
-        // context, exactly as before.
-        // Own = this engine's agent spoke it. Another agent's reply in the
-        // same session (the companion answering in an app's chat) is a
-        // labeled relay, never words put in this agent's mouth.
-        let is_own = m.from_id == own_agent;
-        let is_relay = !is_own && m.from_id != "user" && {
-            match is_agent.get(m.from_id.as_str()) {
-                Some(known) => *known,
-                None => {
-                    let known = manager.agent_exists(&root_buf, &m.from_id).await;
-                    is_agent.insert(m.from_id.as_str(), known);
-                    known
-                }
-            }
-        };
-        // A compaction summary is context the agent was handed, as it was
-        // when it was made (`compact_rows`).
-        let is_summary = m.from_id == super::compact_rows::COMPACTION_SENDER;
-        let role = if m.from_id == "user" || is_relay || is_summary {
-            "user"
-        } else {
-            "assistant"
-        };
-        // Older relay rows carry their label baked into the text already.
-        let content = if is_relay {
-            super::with_sender_label(&m.from_id, &m.content)
-        } else {
-            m.content.clone()
-        };
-        engine
-            .chat_history
-            .push(crate::message::ChatMessage::new(role, content));
-    }
-    replay.flush(&mut engine.chat_history);
-    if !engine.chat_history.is_empty() {
-        tracing::info!(
-            "Restored {} chat_history messages from session store",
-            engine.chat_history.len()
-        );
-    }
-    true
-}
-
 /// Activate a session-bound skill (set on the session meta, e.g. for
 /// skill-embed sessions) so its SKILL.md context, allow-skills scope, and
 /// declared permission grants take effect for this turn.
@@ -854,16 +741,7 @@ pub(crate) async fn run_session_turn(
     if ctx.guest {
         seat_at_table(engine, ctx).await;
     } else {
-        let restored = restore_chat_history_if_empty(
-            engine,
-            manager,
-            &ctx.root,
-            ctx.session_id.as_deref(),
-            &ctx.agent_id,
-            ctx.from_id(),
-            &ctx.clean_msg,
-        )
-        .await;
+        let restored = super::thread::sync(engine, ctx).await;
         // After restore (and before this turn's user message + fresh recall
         // are pushed), the buffer holds only completed prior turns — safe to
         // trim.
@@ -878,6 +756,7 @@ pub(crate) async fn run_session_turn(
     push_aside(engine, ctx.aside.as_deref());
     dispatch_turn(ctx, engine, manager, &ctx.clean_msg).await;
     take_aside(&mut engine.chat_history, ctx.aside.as_deref());
+    super::thread::mark(engine, ctx);
 }
 
 /// A guest's thread: the session's visible dialogue (`table`), without the

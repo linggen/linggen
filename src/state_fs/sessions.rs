@@ -17,6 +17,10 @@ use std::sync::Mutex;
 pub struct SessionStore {
     sessions_dir: PathBuf,
     append_lock: Mutex<()>,
+    /// How many times each session's history was rewritten in place (a
+    /// compaction, a clear) through this store. A member's cached thread
+    /// from before a rewrite is stale (`chat::thread`).
+    rewrites: Mutex<std::collections::HashMap<String, u64>>,
 }
 
 fn default_creator() -> String {
@@ -114,6 +118,7 @@ impl SessionStore {
         Self {
             sessions_dir,
             append_lock: Mutex::new(()),
+            rewrites: Mutex::new(std::collections::HashMap::new()),
         }
     }
 
@@ -379,6 +384,7 @@ impl SessionStore {
             .count();
         // Truncate
         fs::write(&msgs_path, "")?;
+        self.note_rewrite(session_id);
         Ok(count)
     }
 
@@ -407,7 +413,48 @@ impl SessionStore {
             buf.push('\n');
         }
         fs::write(msgs_path, buf)?;
+        self.note_rewrite(session_id);
         Ok(())
+    }
+
+    fn note_rewrite(&self, session_id: &str) {
+        let mut all = self.rewrites.lock().unwrap_or_else(|e| e.into_inner());
+        *all.entry(session_id.to_string()).or_default() += 1;
+    }
+
+    /// How many times the session's history was rewritten in place through
+    /// this store.
+    pub fn rewrite_count(&self, session_id: &str) -> u64 {
+        let all = self.rewrites.lock().unwrap_or_else(|e| e.into_inner());
+        all.get(session_id).copied().unwrap_or(0)
+    }
+
+    /// The number of rows the session holds, and the rows from index `skip`
+    /// on — the earlier ones are counted, not parsed.
+    pub fn rows_since(&self, session_id: &str, skip: usize) -> Result<(usize, Vec<ChatMsg>)> {
+        Self::validate_id(session_id)?;
+        let msgs_path = self.session_dir(session_id).join("messages.jsonl");
+        if !msgs_path.exists() {
+            return Ok((0, Vec::new()));
+        }
+        let reader = BufReader::new(fs::File::open(msgs_path)?);
+        let mut total = 0;
+        let mut rows = Vec::new();
+        for line in reader.lines() {
+            let line = line?;
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if total >= skip {
+                match serde_json::from_str::<ChatMsg>(trimmed) {
+                    Ok(msg) => rows.push(msg),
+                    Err(e) => tracing::warn!("Skipping corrupt JSONL line: {}", e),
+                }
+            }
+            total += 1;
+        }
+        Ok((total, rows))
     }
 
     // ------------------------------------------------------------------
