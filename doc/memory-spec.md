@@ -65,7 +65,9 @@ never writes to project files.
   under the session root, at its parents, and about the person. A
   skill's own session stands in `~/.linggen/skills/<name>` and sees
   only its rows (`memory-context:` is now just the skill's opt-in to
-  memory). Home, `~/.linggen` and temp see only rows about the person.
+  memory). Home, `~/.linggen` and temp see rows about the person, plus at most two
+  strong matches filed under a directory (cosine ≥ the daemon's
+  `no_root_project_min_score`, 0.70; never preferences).
   Rows carried forward by the dream or a backfill keep their scope.
 - **Index** — standing rules carry a one-line `hook` and `indexed`:
   every session in their directory or below loads the hooks at start

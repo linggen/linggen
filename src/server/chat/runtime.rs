@@ -294,7 +294,8 @@ async fn auto_recall_memory(
     // already-wrong N). The daemon reads the path (`scope-index-spec.md`):
     // a project root sees rows under it, at its parents and about the
     // person; a skill's dir sees only its own rows; a session at `$HOME`,
-    // `~/.linggen` or a temp dir sees only rows about the person. Same
+    // `~/.linggen` or a temp dir sees rows about the person plus at most two
+    // strong non-preference matches filed under a directory. Same
     // contract as the plugin's recall.sh on Claude Code.
     let cwd_scope: Option<String> = match &app_dir {
         Some(dir) => Some(dir.to_string_lossy().to_string()),
