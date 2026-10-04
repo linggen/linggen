@@ -41,8 +41,11 @@ core at all. Both are what this spec replaced.
 
 - **About them** — the core tier: name, language, place, family, routines.
 - **App facts** — long-term rows, one block per app: `dj`, `cfo`, `photos`,
-  `health`, `shifu`, `yinyue`. This is the app tag on the row; the same field
-  the Mac's store already uses for scope, so nothing new is invented.
+  `health`, `shifu`, `yinyue`. On the Mac an app's rows are the ones filed
+  under its skill dir (`~/.linggen/skills/<app>`, the row's `cwd` — its
+  scope); the phone reads the app off that path, so nothing new is invented.
+  (Before the 2026-10-04 scope change this was a `contexts` tag; a Mac on the
+  older store still answers with the tag, and the phone reads both.)
 
 All rows ride in every prompt, About them first, then one block per app, so
 the DJ facts sit together when she is picking music. No search on the phone.
@@ -84,13 +87,15 @@ the Mac's row id, and the phone keeps it on its copy.
 
 **Down.** The pull returns everything the Mac holds for this account that this
 phone's apps can act on: the core tier, long-term facts and preferences
-tagged with a phone app, and the ids of rows still staged short-term. Only
+filed under a phone app's dir (`apps` on the list call), and the ids of rows
+still staged short-term. Only
 those two types come down: built, fixed, learned and decision rows are notes
-about work, and an app tag on them belongs to the project, not the person
+about work, and an app scope on them belongs to the project, not the person
 (settled 2026-09-09, when a developer's own phone filled with engineering
-notes tagged with the app names). This is why the app tag matters: "I like 90s Hong Kong songs" is a DJ fact, not a core one, and it
-must come back. The dream carries the tag through promotion, so a note tagged
-on the phone stays tagged on the Mac. The staged ids are what let the phone
+notes tagged with the app names). This is why the app scope matters: "I like 90s Hong Kong songs" is a DJ fact, not a core one, and it
+must come back. A note handed over carries its app's dir as `cwd`; the dream
+carries the scope through promotion, so a note filed by an app on the phone
+stays that app's on the Mac. The staged ids are what let the phone
 tell "not judged yet" from "dropped".
 
 **Who wins.** A phone row with a Mac id follows the Mac: the pull's version
