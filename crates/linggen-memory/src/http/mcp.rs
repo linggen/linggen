@@ -143,7 +143,6 @@ fn tool_defs() -> Vec<Value> {
                     "contexts": {"type": "array", "items": {"type": "string"}, "description": "Filter to these scope tags (AND). Omit to search globally."},
                     "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Restrict to one tier. Omit to span all."},
                     "cwd_scope": {"type": "string", "description": "HOST-FILLED — leave it out; the host stamps the session cwd to scope results to this project plus project-free rows."},
-                    "exclude_types": {"type": "array", "items": {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"]}, "description": "HOST-FILLED — leave it out; per-turn recall skips preference rows because session start already loaded them."},
                     "limit":    {"type": "integer", "description": "Max rows. Default 10."}
                 },
                 "required": ["query"]
@@ -177,12 +176,10 @@ fn tool_defs() -> Vec<Value> {
         }),
         json!({
             "name": "memory_session_start",
-            "description": "What a session loads at start: core rows (who the user is) + standing rules (type=preference; global, or written at this project or a parent of it), within a char budget. Returns {core, rules, block, chars, over_budget}; `block` is markdown ready to inject. Hosts call this; a model rarely needs to.",
+            "description": "What a session loads at start: the core rows (who the user is). Preferences are not loaded here; they surface through recall like any other row. Returns {core, block, chars}; `block` is markdown ready to inject. Hosts call this; a model rarely needs to.",
             "inputSchema": {
                 "type": "object",
-                "properties": {
-                    "cwd": {"type": "string", "description": "HOST-FILLED — the session's working directory. Absent or not a project ($HOME, ~/.linggen, a temp dir) = global rules only."}
-                }
+                "properties": {}
             }
         }),
         json!({
@@ -207,7 +204,7 @@ fn tool_defs() -> Vec<Value> {
                     "host":     {"type": "string", "description": "HOST-FILLED — leave it out; the host stamps the committing runtime."},
                     "source_session": {"type": "string", "description": "HOST-FILLED — leave it out; pass only when a promote pass carries the original row's session forward."},
                     "cwd":      {"type": "string", "description": "HOST-FILLED — leave it out; the host stamps the session's own cwd, which scopes recall."},
-                    "global":   {"type": "boolean", "description": "true = the row is about the person, not this project: stored with no cwd, loaded in every project. A preference about this project keeps the stamp (leave it out)."},
+                    "global":   {"type": "boolean", "description": "true = the row is about the person, not this project: stored with no cwd, recalled in every project. A preference about this project keeps the stamp (leave it out)."},
                     "replace_ids": {"type": "array", "items": {"type": "string"}, "description": "Row ids this row replaces — inserted and deleted atomically. For merges and resolved conflicts; never separate add + delete calls."},
                     "user_directed": {"type": "boolean", "description": "Assert the user directed this change (a settled command/declaration, or they just answered your ask). Required when replace_ids targets from=user rows — the daemon BLOCKS such writes otherwise. Hedged reflections don't qualify; see the server instructions."}
                 },

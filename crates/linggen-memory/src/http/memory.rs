@@ -300,8 +300,7 @@ pub struct FilterDTO {
     /// Narrow to any of these types (OR), alongside the singular `type`.
     #[serde(default)]
     pub types: Vec<MemoryType>,
-    /// Drop rows of these types. Per-turn recall passes `["preference"]`:
-    /// session start already loaded the standing rules.
+    /// Drop rows of these types.
     #[serde(default)]
     pub exclude_types: Vec<MemoryType>,
     /// Narrow to one tier (`core` or `semantic`). Within the semantic
@@ -403,7 +402,6 @@ impl FilterDTO {
             account: self.scope.scope(),
             types,
             exclude_types: self.exclude_types,
-            cwd_lineage: None,
             origin: self.from,
             outcome: self.outcome,
             since: self.since,

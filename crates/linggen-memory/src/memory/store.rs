@@ -115,16 +115,6 @@ pub struct Filters {
     /// project: identity, preferences, cross-project gotchas. Scoping those
     /// away would be worse than not scoping at all.
     pub cwd_scope: Option<String>,
-    /// The other direction of [`Self::cwd_scope`]: rows that belong to no
-    /// project, or to one of these paths — a session's cwd and every
-    /// ancestor of it (see [`cwd_lineage`]). A standing rule written in
-    /// `~/work/linggen` applies in `~/work/linggen/skills/x`; one written in
-    /// `~/work/sanji` does not, and neither does one written deeper down.
-    /// `Some(empty)` = rows with no cwd only (a session in no project).
-    ///
-    /// Like `cwd_scope` it matches every unscoped row, so it does not count
-    /// as a narrowing criterion for `forget`.
-    pub cwd_lineage: Option<Vec<String>>,
     /// Include archived rows (`expired_at IS NOT NULL`). Default `false`:
     /// live memory only — the archive exists for provenance and unpack,
     /// not for recall.
@@ -275,22 +265,6 @@ impl Filters {
         if let Some(p) = &self.cwd_scope {
             let p = escape_sql(p.trim_end_matches('/'));
             clauses.push(format!("(cwd IS NULL OR cwd = '{p}' OR cwd LIKE '{p}/%')"));
-        }
-
-        // The path itself or one above it, or nothing at all. Exact matches
-        // against the enumerated ancestors — no LIKE, so a sibling sharing a
-        // prefix (`…/linggen-mobile` vs `…/linggen`) can never match.
-        if let Some(lineage) = &self.cwd_lineage {
-            if lineage.is_empty() {
-                clauses.push("cwd IS NULL".to_string());
-            } else {
-                let list = lineage
-                    .iter()
-                    .map(|p| format!("'{}'", escape_sql(p)))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                clauses.push(format!("(cwd IS NULL OR cwd IN ({list}))"));
-            }
         }
 
         if clauses.is_empty() {
@@ -478,22 +452,6 @@ async fn check_schema_dim(table: &lancedb::Table, lancedb_dir: &Path) -> Result<
         ));
     }
     Ok(())
-}
-
-/// A path and every ancestor of it, deepest first, without trailing
-/// separators: `/a/b/c` → `["/a/b/c", "/a/b", "/a"]`. The root itself is left
-/// out — a row stamped `/` is nobody's project. Empty for an empty path.
-pub fn cwd_lineage(path: &str) -> Vec<String> {
-    let mut p = path.trim().trim_end_matches('/').to_string();
-    let mut out = Vec::new();
-    while !p.is_empty() {
-        out.push(p.clone());
-        match p.rfind('/') {
-            Some(i) => p.truncate(i),
-            None => break,
-        }
-    }
-    out
 }
 
 fn escape_sql(s: &str) -> String {
@@ -1679,7 +1637,6 @@ mod tests {
             contexts: vec!["code/linggen".into()],
             types: vec![MemoryType::Fixed],
             exclude_types: Vec::new(),
-            cwd_lineage: None,
             origin: Some(Origin::User),
             outcome: Some(Outcome::Positive),
             tier: Some(Tier::Core),
@@ -1733,89 +1690,6 @@ mod tests {
         let sql = f.to_sql().unwrap();
         assert!(sql.contains("cwd = '/Users/l/work/linggen'"), "{sql}");
         assert!(sql.contains("cwd LIKE '/Users/l/work/linggen/%'"), "{sql}");
-    }
-
-    #[test]
-    fn cwd_lineage_is_the_path_and_its_ancestors() {
-        assert_eq!(
-            cwd_lineage("/Users/l/work/linggen/skills/"),
-            [
-                "/Users/l/work/linggen/skills",
-                "/Users/l/work/linggen",
-                "/Users/l/work",
-                "/Users/l",
-                "/Users"
-            ]
-        );
-        assert!(cwd_lineage("").is_empty());
-        assert!(cwd_lineage("/").is_empty());
-    }
-
-    /// Rules scope upward: a rule written in a parent project applies in a
-    /// child session; a sibling project's rule, a deeper rule, and a prefix
-    /// twin (`linggen-mobile` vs `linggen`) do not. Run against a real table
-    /// so the rendered SQL is what LanceDB actually evaluates.
-    #[tokio::test]
-    async fn cwd_lineage_keeps_ancestors_and_globals_only() {
-        let (store, _dir) = fresh_store().await;
-        let at = |content: &str, cwd: Option<&str>| {
-            let mut m = make_fact(content, MemoryType::Preference);
-            m.cwd = cwd.map(str::to_string);
-            m
-        };
-        store
-            .insert(&[
-                at("global", None),
-                at("parent", Some("/u/w/linggen")),
-                at("self", Some("/u/w/linggen/skills/lingjing")),
-                at("deeper", Some("/u/w/linggen/skills/lingjing/art")),
-                at("sibling", Some("/u/w/sanji")),
-                at("prefix-twin", Some("/u/w/linggen-mobile")),
-            ])
-            .await
-            .unwrap();
-
-        let names = |rows: Vec<Memory>| {
-            let mut v: Vec<String> = rows.into_iter().map(|r| r.content).collect();
-            v.sort();
-            v
-        };
-        let lingjing = Filters {
-            cwd_lineage: Some(cwd_lineage("/u/w/linggen/skills/lingjing")),
-            ..Default::default()
-        };
-        let rows = store
-            .list(&lingjing, SortOrder::Newest, 50, 0)
-            .await
-            .unwrap();
-        assert_eq!(names(rows), ["global", "parent", "self"]);
-
-        // The other direction: a Sanji session sees none of Linggen's rules.
-        let sanji = Filters {
-            cwd_lineage: Some(cwd_lineage("/u/w/sanji")),
-            ..Default::default()
-        };
-        let rows = store.list(&sanji, SortOrder::Newest, 50, 0).await.unwrap();
-        assert_eq!(names(rows), ["global", "sibling"]);
-
-        // A parent session does not inherit its children's rules.
-        let parent = Filters {
-            cwd_lineage: Some(cwd_lineage("/u/w/linggen")),
-            ..Default::default()
-        };
-        let rows = store.list(&parent, SortOrder::Newest, 50, 0).await.unwrap();
-        assert_eq!(names(rows), ["global", "parent"]);
-
-        // No project: globals only.
-        let nowhere = Filters {
-            cwd_lineage: Some(Vec::new()),
-            ..Default::default()
-        };
-        let rows = store
-            .list(&nowhere, SortOrder::Newest, 50, 0)
-            .await
-            .unwrap();
-        assert_eq!(names(rows), ["global"]);
     }
 
     #[tokio::test]
