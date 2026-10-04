@@ -321,6 +321,8 @@ async fn run_approved_plan_task(
     agent_id: String,
     session_id: Option<String>,
 ) {
+    let sid_turn = session_id.as_deref().unwrap_or("default").to_string();
+    let _turn = state.manager.session_turn(&sid_turn).lock_owned().await;
     let mut engine = agent.lock().await;
     let manager = state.manager.clone();
     let events_tx = state.events_tx.clone();

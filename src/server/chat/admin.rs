@@ -255,6 +255,7 @@ pub(crate) async fn compact_chat_api(
         .await
     {
         Ok(agent_mutex) => {
+            let _turn = state.manager.session_turn(&session_id).lock_owned().await;
             let mut engine = agent_mutex.lock().await;
             // Compact the same effective context auto-compact sees: the
             // durable chat_history PLUS the live tool/observation outputs,

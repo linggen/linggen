@@ -234,6 +234,7 @@ async fn run_at(
     // "running" row per message — the stop button could pick the outer one,
     // which the engine never checks (seen 2026-09-24: yinyue01 + yinyue02).
     let spoken = {
+        let _turn = state.manager.session_turn(session_id).lock_owned().await;
         let mut engine = agent.lock().await;
         // Her own thread: persist the incoming message to the session store so
         // it survives reload and the turn-core's restore sees a complete

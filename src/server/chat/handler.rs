@@ -1124,7 +1124,10 @@ pub(crate) async fn start_turn(
         Err(_) => return StatusCode::NOT_FOUND.into_response(),
     };
 
-    let was_busy = agent.try_lock().is_err();
+    // One agent speaks at a time in a session: a turn already running
+    // there — anyone's — holds the session's turn lock.
+    let turn = state.manager.session_turn(&effective_session_id);
+    let was_busy = turn.try_lock().is_err();
     let queue = match bound_skill.as_deref() {
         _ if origin == TurnOrigin::Kickoff => QueueMode::AfterTurn,
         Some(name) if was_busy => state
@@ -1182,6 +1185,7 @@ pub(crate) async fn start_turn(
     let req_followups = req.followups;
 
     tokio::spawn(async move {
+        let _turn = turn.lock_owned().await;
         let mut engine = agent.lock().await;
 
         // Refresh the engine's model_manager from live state so it sees
@@ -1493,6 +1497,20 @@ mod tests {
             session_host(None, &rows, "sess-yinyue-2026-09-25").as_deref(),
             Some("yinyue")
         );
+    }
+
+    /// The turn holds the session's turn lock before its engine's, and a
+    /// message is busy whenever anyone's turn runs in the session.
+    #[test]
+    fn a_turn_takes_the_sessions_turn_lock_before_its_engine() {
+        let src = include_str!("handler.rs");
+        let body = &src[src
+            .find(concat!("pub(crate) async fn ", "start_turn("))
+            .unwrap()..];
+        assert!(body.contains(concat!("let was_busy = turn", ".try_lock().is_err();")));
+        let lock = body.find(concat!("turn.lock_owned", "().await")).unwrap();
+        let engine = body.find(concat!("agent.lock", "().await")).unwrap();
+        assert!(lock < engine);
     }
 
     /// No turn for a name the session can't seat touches an engine: the

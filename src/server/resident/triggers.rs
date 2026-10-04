@@ -462,6 +462,7 @@ pub(super) async fn deliver_to_chat_agent(
     .await;
 
     {
+        let _turn = state.manager.session_turn(&session_id).lock_owned().await;
         let mut engine = agent.lock().await;
         // Loop-break: this turn was reached via agent_chat → it can't agent_chat
         // onward. Mark/clear INSIDE the engine lock so the flag's lifetime matches

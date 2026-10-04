@@ -55,6 +55,9 @@ pub struct AgentManager {
     pub global_sessions: SessionStore,
     /// Per-session agent engines. Each session gets its own engine — no lock contention.
     pub session_engines: Mutex<HashMap<String, Arc<Mutex<AgentEngine>>>>,
+    /// Each session's turn lock: one agent speaks at a time in a session,
+    /// whoever it is. Held for the whole turn, taken before the engine's.
+    session_turns: std::sync::Mutex<HashMap<String, Arc<Mutex<()>>>>,
     working_places: Mutex<HashMap<String, HashMap<String, WorkingPlaceEntry>>>,
     cancelled_runs: Mutex<HashSet<String>>,
     /// Per-tool-block cancellation flags (block_id → AtomicBool).
@@ -358,6 +361,7 @@ impl AgentManager {
                     crate::paths::global_sessions_dir(),
                 ),
                 session_engines: Mutex::new(HashMap::new()),
+                session_turns: std::sync::Mutex::new(HashMap::new()),
                 run_id_counters: std::sync::Mutex::new(HashMap::new()),
                 presence: std::sync::Mutex::new(Presence::default()),
                 agent_chat_sessions: std::sync::Mutex::new(HashSet::new()),
@@ -566,6 +570,17 @@ impl AgentManager {
     /// Remove a session's engine when the session is deleted.
     pub async fn remove_session_engine(&self, session_id: &str) {
         self.session_engines.lock().await.remove(session_id);
+        self.session_turns.lock_ok().remove(session_id);
+    }
+
+    /// The session's turn lock. A turn — any member's, from any path —
+    /// holds it from start to end, so two never run at once in a session.
+    pub fn session_turn(&self, session_id: &str) -> Arc<Mutex<()>> {
+        self.session_turns
+            .lock_ok()
+            .entry(session_id.to_string())
+            .or_default()
+            .clone()
     }
 
     /// Fraction of its soft context limit a session's **live** engine is using,
@@ -1026,6 +1041,63 @@ mod tests {
 #[cfg(test)]
 mod pet_voice_tests {
     use super::*;
+
+    fn manager() -> Arc<AgentManager> {
+        AgentManager::new(
+            Config::default(),
+            None,
+            Arc::new(crate::engine::test_registries::Empty),
+            Arc::new(crate::engine::test_registries::Empty),
+            Arc::new(crate::engine::test_registries::Empty),
+            InterfaceMode::Web,
+        )
+        .0
+    }
+
+    /// One agent speaks at a time in a session: two turns there — whoever
+    /// runs them — serialize; another session's turn runs beside them.
+    #[tokio::test]
+    async fn two_turns_in_one_session_serialize_and_another_session_runs_beside() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let manager = manager();
+        let in_s1 = Arc::new(AtomicUsize::new(0));
+        let most_in_s1 = Arc::new(AtomicUsize::new(0));
+        let both = Arc::new(AtomicUsize::new(0));
+        let most_both = Arc::new(AtomicUsize::new(0));
+        let mut tasks = Vec::new();
+        for sid in ["s1", "s1", "s2"] {
+            let turn = manager.session_turn(sid);
+            let (in_s1, most_in_s1) = (in_s1.clone(), most_in_s1.clone());
+            let (both, most_both) = (both.clone(), most_both.clone());
+            tasks.push(tokio::spawn(async move {
+                let _held = turn.lock_owned().await;
+                let now = both.fetch_add(1, Ordering::SeqCst) + 1;
+                most_both.fetch_max(now, Ordering::SeqCst);
+                if sid == "s1" {
+                    let now = in_s1.fetch_add(1, Ordering::SeqCst) + 1;
+                    most_in_s1.fetch_max(now, Ordering::SeqCst);
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+                if sid == "s1" {
+                    in_s1.fetch_sub(1, Ordering::SeqCst);
+                }
+                both.fetch_sub(1, Ordering::SeqCst);
+            }));
+        }
+        for t in tasks {
+            t.await.unwrap();
+        }
+        assert_eq!(
+            most_in_s1.load(Ordering::SeqCst),
+            1,
+            "never two at once in s1"
+        );
+        assert_eq!(most_both.load(Ordering::SeqCst), 2, "s2 ran beside s1");
+        assert!(Arc::ptr_eq(
+            &manager.session_turn("s1"),
+            &manager.session_turn("s1")
+        ));
+    }
 
     #[tokio::test]
     async fn muting_is_saved_announced_and_read_without_the_config_lock() {

@@ -661,6 +661,7 @@ async fn dispatch_mission_prompt(
         }
     };
 
+    let _turn = state.manager.session_turn(sid).lock_owned().await;
     let mut engine = agent.lock().await;
 
     let manager = state.manager.clone();
