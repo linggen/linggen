@@ -10,8 +10,9 @@
 //!   mislabel their rows.
 //! - **which session authored a row** (`source_session`) — what makes the
 //!   scan pass's skip-by-session idempotency real.
-//! - **where the session stands** (`cwd`, `root`, `cwd_scope`) — the paths
-//!   the daemon turns into a row's scope and a search's recall scope
+//! - **where the session stands** (`cwd`, `root`, `scope_root`) — request-only
+//!   paths the daemon turns into a row's stored `scope` and a search's recall
+//!   scope
 //!   (`linggen-memory/doc/scope-index-spec.md`). A session bound to a skill
 //!   stands in that skill's dir (`~/.linggen/skills/<name>`), which is what
 //!   keeps a focused app like CFO to its own rows: app isolation is keyed by
@@ -91,9 +92,10 @@ pub(crate) async fn augment(tools: &Tools, qualified: &str, mut args: Value) -> 
 
     // Where the work is happening: the session cwd (`cwd`, a row's default
     // scope), its root (`root`, what a model's `scope` resolves against) and,
-    // on a search, the recall scope (`cwd_scope` = root). The daemon owns the
-    // rules — which dirs can be a scope, what a root sees — so this only
-    // hands it the paths.
+    // on a search, the recall scope (`scope_root` = root; `cwd_scope` on a
+    // pre-v2 daemon — only the field the server declares is filled). The
+    // daemon owns the rules — which dirs can be a scope, what a root sees —
+    // so this only hands it the paths.
     //
     // The model is never asked for these. They are facts about the session,
     // not judgments, and a field the model has to copy by hand is a field that
@@ -102,7 +104,7 @@ pub(crate) async fn augment(tools: &Tools, qualified: &str, mut args: Value) -> 
     // Two refusals guard the stamp. A call that names ANOTHER session's row
     // (`source_session` ≠ this session — checked after the fill above, which
     // only ever inserts our own id) is the dream's promote or the scan's
-    // backfill carrying the original row's origin: its cwd, when it had one,
+    // backfill carrying the original row's origin: its scope, when it had one,
     // rides in the same call, and this session's paths stamped over the gap
     // would rescope someone else's memory to wherever the dream happened to
     // run. And a session that stands in no project (see [`memory_place`]) is
@@ -117,6 +119,7 @@ pub(crate) async fn augment(tools: &Tools, qualified: &str, mut args: Value) -> 
             let stamps = [
                 ("cwd", &place.cwd),
                 ("root", &place.root),
+                ("scope_root", &place.root),
                 ("cwd_scope", &place.root),
             ];
             for (field, value) in stamps {
@@ -262,7 +265,7 @@ async fn bound_skill_dir(tools: &Tools) -> Option<std::path::PathBuf> {
 ///
 /// Which writes are guarded is read off the **shape of the request**, not the
 /// tool's name: `replace_ids` retires rows, and new `content` on an existing
-/// `id` rewrites one. A metadata-only edit (tier, hook, indexed) changes
+/// `id` rewrites one. A metadata-only edit (tier, scope, summary, indexed) changes
 /// nothing the row says and stays unguarded.
 async fn guard_user_voice(tools: &Tools, server: &str, args: &mut Value) -> Result<()> {
     let Some(obj) = args.as_object_mut() else {
@@ -346,10 +349,10 @@ mod tests {
         assert!(declares(&add, "source_session"));
 
         // memory_update declares neither — an edit does not re-author a row.
-        let update = json!({"properties": {"id": {}, "content": {}, "hook": {}}});
+        let update = json!({"properties": {"id": {}, "content": {}, "summary": {}}});
         assert!(!declares(&update, "host"));
         assert!(!declares(&update, "source_session"));
-        assert!(declares(&update, "hook"));
+        assert!(declares(&update, "summary"));
 
         // A tool with no properties at all, and a malformed schema, both say no
         // rather than panicking — a third-party server's schema is not ours.
@@ -383,7 +386,7 @@ mod tests {
         assert!(!wants_project(&json!({"cwd": "/elsewhere"}), "cwd"));
         assert!(wants_project(
             &json!({"query": "q", "global": true}),
-            "cwd_scope"
+            "scope_root"
         ));
     }
 

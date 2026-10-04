@@ -89,18 +89,17 @@ request):
 4. **Judge each cluster** — exactly one of:
    - **Promote** (durable: user biography, cross-project preference,
      decision-with-reasoning, re-hit gotcha, state change like a
-     shipped milestone, run learning): `memory_add {"content":"<verbatim row content>","type":"<row.type>","from":"<row.from>","tier":"semantic","occurred_at":"<row.occurred_at, else row.created_at>","source_session":"<row.source_session, if present>","cwd":"<row.cwd, if present>","hook":"<one line, preference/decision only>"}`.
+     shipped milestone, run learning): `memory_add {"content":"<verbatim row content>","type":"<row.type>","from":"<row.from>","tier":"semantic","occurred_at":"<row.occurred_at, else row.created_at>","source_session":"<row.source_session, if present>","cwd":"<row.scope, if present>","summary":"<row.summary, if present>"}`.
      Always pass `"tier":"semantic"` — an add with no tier lands in
      episodic staging; pass `"tier":"core"` only for a narrow universal
-     about the person (core rows carry no `cwd`). Carry `occurred_at`
-     forward — it dates the row's day and its TTL. Carry `cwd` forward
-     too, and only from the row: it is the directory the memory is
-     ABOUT (its scope), and it is what keeps the promoted row findable
-     from there. A row with no `cwd` gets none — never this session's
-     own directory. Carry the row's `hook` when it has one; a
-     `preference` or `decision` without one gets one you write: one
-     line, ≤ 80 chars, saying what the row is for. Never set `indexed`
-     yourself — propose it (the index/scope lane below). Do NOT pass
+     about the person (core rows carry no scope). Carry `occurred_at`
+     forward — it dates the row's day and its TTL. Carry the row's
+     stored `scope` forward as the request's `cwd`, and only from the
+     row: it is the directory the memory is ABOUT, and it is what keeps
+     the promoted row findable from there. A row with no `scope` gets
+     none — never this session's own directory. Carry the row's
+     `summary` when it has one. Whether the promoted row joins the
+     index is the scope and index lane's call (below). Do NOT pass
      `id`.
      **The promote bar — state + lessons, never events.** Test: strip
      the date and the commit hash — still useful in three months?
@@ -199,8 +198,8 @@ than deleting it — every merge is reversible. Drafting rules:
   `derived`; `"tier":"semantic"`; `occurred_at` = the newest member's
   (else its `created_at`); omit `cwd` and `scope` — with `replace_ids`
   the daemon files the survivor under the members' common directory
-  (none when any member has none), never this session's own; a `hook`
-  when the type is preference or decision.
+  (none when any member has none), never this session's own; when a
+  member was indexed, `"indexed":true` and a `summary`.
 - **`replace_ids` may list only rows that are `from=derived,
   tier=semantic`.** Never a user-voice row, never a core row, never an
   episodic id — if one appears in a cluster, skip the whole cluster
@@ -265,21 +264,32 @@ covers. Per cluster, exactly one of:
   around a neighboring seed. One `QUEUE` line. The user rules on it
   in solve; keep-separate becomes a permanent exclusion.
 
-Then the **index/scope lane** — proposals only, never writes. While
-judging (the day's promotions, the audit's candidates), note:
+Then the **scope and index lane** — fixes you apply yourself, never
+queue. A row's scope, index flag and summary say where it is filed and
+how the index shows it, not what it says: change them on any row,
+`from=user` included, with `memory_update` — and never touch its
+`content` here. While judging (the day's promotions, the audit's
+candidates), fix:
 
-- a `from=user` preference or decision that reads as a standing rule
-  ("always…", "never…", "from now on…", "以后都…") and is not
-  `indexed`, or an indexed row whose rule no longer holds →
-  `memory_issue_add {"kind":"index","row_ids":[<id>],"note":"put in / take out of the index of <dir>: \"<proposed hook>\" — <why>"}`;
-- a row filed under the wrong directory (a 《九鼎录》 writing rule at
-  the `skills` root rather than `skills/lingjing`, a cross-project dev
-  rule inside one repo) →
-  `memory_issue_add {"kind":"scope","row_ids":[<id>],"note":"move from <cwd> to <dir>: <why>"}`.
+- **scope** — a row filed under the wrong directory (a 《九鼎录》
+  writing rule at the `skills` root rather than `skills/lingjing`, a
+  cross-project dev rule inside one repo) →
+  `memory_update {"id":"<id>","scope":"<absolute dir>"}`; a row about
+  the person filed under a project → `{"id":"<id>","global":true}`;
+- **index in** — a `from=user` preference or decision that reads as a
+  standing rule ("always…", "never…", "from now on…", "以后都…") and
+  is not indexed → `{"id":"<id>","indexed":true,"summary":"<one line,
+  ≤ 80 chars, what the row is for>"}`;
+- **index out** — an indexed row that is no standing rule, or whose
+  rule no longer holds → `{"id":"<id>","indexed":false}`;
+- **summary** — an indexed row with no summary, or one that misreads
+  the row → `{"id":"<id>","summary":"<one line>"}`. A summary matters
+  only on indexed rows (the index shows it; without one it shows the
+  row's opening) — leave other rows' summaries alone.
 
-At most 5 such items per run; one `QUEUE` line each. The person
-confirms them in solve or the console — the index loads into every
-session under its directory, so it is never yours to change alone.
+Change a row only when you are sure; when unsure, leave it as it is —
+nothing is queued. At most 10 such changes per run, one `FIX` line
+each: the run log is the record of what changed.
 
 `issue_add` is idempotent per `(kind, row_ids)` — a `"deduped":true`
 response means the item was already queued; that is success. One
@@ -323,6 +333,7 @@ so an approval never leaves you unsure which rows to collapse.
 - Sweep: `SWEEP removed=<n>`
 - Finish-up stage done: `CONDENSE merged=<k>` · `MARKERS merged=<k> queued=<q>`
 - Queued a review item (audit): `QUEUE <issue-id> [<kind>] "<gist, ≤60 chars>"`
+- Scope/index/summary fix: `FIX <id> <field>=<new value> (was <old>) "<why, ≤60 chars>"`
 - Rejected marker candidate (condense): `SKIP <id> unrelated`
 - User declined a merge (attended review): `SKIP <id> declined`
 - Review skipped (AskUser timeout/error): `REVIEW skipped`

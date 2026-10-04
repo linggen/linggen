@@ -288,7 +288,7 @@ async fn auto_recall_memory(
     // `--idle-shutdown-secs`, so an absent daemon is an ordinary condition
     // and not an exception.
 
-    // The session's recall scope, sent to the daemon as `cwd_scope` so it
+    // The session's recall scope, sent to the daemon as `scope_root` so it
     // shapes the RANKING (rows from elsewhere can't crowd the wanted ones out
     // of the top N; a filter applied to the returned list can only shrink an
     // already-wrong N). The daemon reads the path (`scope-index-spec.md`):
@@ -297,7 +297,7 @@ async fn auto_recall_memory(
     // `~/.linggen` or a temp dir sees rows about the person plus at most two
     // strong non-preference matches filed under a directory. Same
     // contract as the plugin's recall.sh on Claude Code.
-    let cwd_scope: Option<String> = match &app_dir {
+    let scope_root: Option<String> = match &app_dir {
         Some(dir) => Some(dir.to_string_lossy().to_string()),
         None => session_id
             .and_then(|sid| {
@@ -335,16 +335,16 @@ async fn auto_recall_memory(
         // program, not a model.
         args["min_score"] = serde_json::json!(s);
     }
-    if let Some(scope) = &cwd_scope {
-        args["cwd_scope"] = serde_json::json!(scope);
+    if let Some(scope) = &scope_root {
+        args["scope_root"] = serde_json::json!(scope);
     }
 
     tracing::debug!(
-        "auto-recall: min_score={:?} top_k={} app_dir={:?} cwd_scope={:?}",
+        "auto-recall: min_score={:?} top_k={} app_dir={:?} scope_root={:?}",
         min_score,
         top_k,
         app_dir,
-        cwd_scope
+        scope_root
     );
     let rows = match app_dir {
         Some(_) => search_app_rows(&args, RECALL_BUDGET).await?,

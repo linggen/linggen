@@ -151,7 +151,7 @@ client like everything else:
 ```
 1. engine takes the user's prompt
 2. its MCP client → tools/call memory_search
-     { query: <prompt>, cwd_scope: <root or skill dir>, limit: K }
+     { query: <prompt>, scope_root: <root or skill dir>, limit: K }
 3. → the memory server in [mcp_servers]
 4. filter by min_score, inject top-K
 5. model runs
@@ -159,7 +159,7 @@ client like everything else:
 
 Local and remote are the same code with a different URL. Two details:
 
-- **`cwd_scope`** carries the recall scope: an owner session's root, or a
+- **`scope_root`** (`cwd_scope` on a pre-v2 daemon) carries the recall scope: an owner session's root, or a
   memory-using skill's own dir (`~/.linggen/skills/<name>`), which is what
   keeps CFO to its own rows. (`contexts` scoping retired 2026-10-04.)
 - **`min_score` does not.** Either add it to the schema or filter client-side
@@ -260,7 +260,8 @@ program-side REST calls go. Not a knob without a consumer — a knob with two.
 
 Four things a raw pass-through would have lost, and where they went: the
 calling host's name, the authoring session id, where the session stands
-(`cwd`, `root`, `cwd_scope` — a memory-using skill stands in its own dir), and
+(`cwd`, `root`, `scope_root` — or `cwd_scope` on a pre-v2 daemon; a
+memory-using skill stands in its own dir), and
 the AskUser unlock on the user-voice guard. All four are filled in
 client-side by `engine/tools/memory_mcp.rs`, each field only where the
 server's own advertised schema declares it. That is argument shaping, not the

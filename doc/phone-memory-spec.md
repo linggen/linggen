@@ -42,8 +42,8 @@ core at all. Both are what this spec replaced.
 - **About them** — the core tier: name, language, place, family, routines.
 - **App facts** — long-term rows, one block per app: `dj`, `cfo`, `photos`,
   `health`, `shifu`, `yinyue`. On the Mac an app's rows are the ones filed
-  under its skill dir (`~/.linggen/skills/<app>`, the row's `cwd` — its
-  scope); the phone reads the app off that path, so nothing new is invented.
+  under its skill dir (`~/.linggen/skills/<app>`, the row's `scope`; a
+  pre-v2 Mac sends it as `cwd`); the phone reads the app off that path, so nothing new is invented.
   (Before the 2026-10-04 scope change this was a `contexts` tag; a Mac on the
   older store still answers with the tag, and the phone reads both.)
 
@@ -93,7 +93,8 @@ those two types come down: built, fixed, learned and decision rows are notes
 about work, and an app scope on them belongs to the project, not the person
 (settled 2026-09-09, when a developer's own phone filled with engineering
 notes tagged with the app names). This is why the app scope matters: "I like 90s Hong Kong songs" is a DJ fact, not a core one, and it
-must come back. A note handed over carries its app's dir as `cwd`; the dream
+must come back. A note handed over carries its app's dir as `cwd` (stored as its
+`scope`); the dream
 carries the scope through promotion, so a note filed by an app on the phone
 stays that app's on the Mac. The staged ids are what let the phone
 tell "not judged yet" from "dropped".

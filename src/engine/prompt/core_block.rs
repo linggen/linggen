@@ -1,7 +1,7 @@
 //! Built-in core memory — `tier=core` rows, pulled from the user's memory
 //! store (`session_start`) and injected into every owner session, with —
 //! for a session that stands in a project — the scope candidates line and
-//! the index (hooks of `indexed` rows filed at the session dir or a parent;
+//! the index (summaries of `indexed` rows filed at the session dir or a parent;
 //! `linggen-memory/doc/scope-index-spec.md`). Everything else surfaces by
 //! subject through per-turn recall.
 //!

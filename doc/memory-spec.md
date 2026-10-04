@@ -57,9 +57,9 @@ never writes to project files.
 - **Recall** — relevant memories surface at the start of each turn;
   facts used in a reply are cited ("From memory: …"). The identity
   set is always present.
-- **Scope** — a row's `cwd` is the directory it is *about*
+- **Scope** — a row's `scope` is the directory it is *about*
   (ling-mem `doc/scope-index-spec.md`); none = about the person. The
-  host stamps the session's `cwd` and `root`; at session start it shows
+  host stamps the session's `cwd` (the default scope) and `root`; at session start it shows
   "Memory scopes here: …" and the model picks another one as `scope`
   when the row is about it (the daemon validates). Recall sees rows
   under the session root, at its parents, and about the person. A
@@ -69,12 +69,14 @@ never writes to project files.
   strong matches filed under a directory (cosine ≥ the daemon's
   `no_root_project_min_score`, 0.70; never preferences).
   Rows carried forward by the dream or a backfill keep their scope.
-- **Index** — standing rules carry a one-line `hook` and `indexed`:
-  every session in their directory or below loads the hooks at start
-  (nearest first, 3000 chars), and reads a row in full when its hook
-  bears on the task. The dream only proposes index and scope changes
-  (review items `index` / `scope`); the person confirms. The engine
-  reloads the index when the session's cwd changes.
+- **Index** — standing rules carry `indexed` and a one-line `summary`:
+  every session in their directory or below loads the summaries at
+  start (nearest first, 3000 chars; no summary → the content's opening),
+  and reads a row in full when its summary bears on the task. The dream
+  fixes scope, index and summary itself when sure (`memory_update`, ≤ 10
+  per run, a `FIX` line each; never content); unsure → left alone. No
+  one reviews scope by hand. The engine reloads the index when the
+  session's cwd changes.
 - **Dedup** — exact duplicates collapse automatically at write time.
   Anything fuzzier is judgment, not mechanics.
 - **Reconcile** — authority follows voice: the agent freely merges
@@ -163,9 +165,11 @@ a real engine against a throwaway store and judges the end state.
 - Scope on Codex is read-side only: its hook runner cannot rewrite
   tool input yet, so recall is scoped but the model's own writes go
   unstamped there (no `source_session` either).
-- Rows from before scoping: the scope migration review proposes
-  scopes, hooks and index flags; nothing changes until the person
-  accepts.
+- Schema v2 (contexts/tags dropped; `hook` → `summary`, `cwd` →
+  `scope`, values carried) runs only on `ling-mem apply-schema --yes`,
+  after a backup to `~/.linggen/memory/backups/schema-v2-<ts>/`. Until
+  then v1 stores keep working; the engine sends `scope_root` or
+  `cwd_scope`, whichever the server declares.
 
 ## Future
 

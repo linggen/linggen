@@ -59,7 +59,7 @@ description = "Closing delimiter for project context files"
 text = "\n\n--- END PROJECT INSTRUCTIONS ---"
 
 [core_memory_block]
-description = "Populated head of the always-on memory block, as ling-mem's session_start renders it: the `tier=core` rows, and — for a session that stands in a project — the scope candidates line and the index (hooks of `indexed` rows filed at this directory or a parent). The shared tail (save triggers, retrieval-visibility, usage rules) lives in `core_memory_shared`, appended after this by the engine."
+description = "Populated head of the always-on memory block, as ling-mem's session_start renders it: the `tier=core` rows, and — for a session that stands in a project — the scope candidates line and the index (summaries of `indexed` rows filed at this directory or a parent). The shared tail (save triggers, retrieval-visibility, usage rules) lives in `core_memory_shared`, appended after this by the engine."
 vars = ["core_facts"]
 text = '''
 
@@ -68,7 +68,7 @@ text = '''
 Memory the engine pulls from the `ling-mem` store and injects into every
 owner-user session's system prompt: the `tier=core` rows (who the user
 is) and, when this session stands in a project, the directories a new row
-may be filed under and the index — one-line hooks of the standing rows
+may be filed under and the index — one-line summaries of the standing rows
 filed for this directory and its parents. Trust as current truth unless
 contradicted by something the user just said in chat. Replaced (never
 appended to) each time the system prompt is rebuilt — always the current
@@ -104,7 +104,7 @@ text = '''
   so the bar is *stable universal*, not "useful sometimes". Scoped and
   on-demand facts live in the rest of the store (`memory_search` /
   `memory_add` without `tier: "core"`).
-- An index line is a pointer, not the rule: when a hook bears on the
+- An index line is a pointer, not the rule: when a summary bears on the
   task, read that row in full with `memory_get` before acting on it.
 --- END ALWAYS-ON MEMORY ---'''
 

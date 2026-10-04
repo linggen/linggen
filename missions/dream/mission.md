@@ -59,7 +59,9 @@ kickoff-then:
       `memory_chains({"kind":"subject","limit":5,"derived_only":true})`
       fetch; digest each cluster you are confident is one subject (a
       `MERGE` line), queue the doubtful ones listing ALL member ids (a
-      `QUEUE` line). Then reply exactly: DONE.
+      `QUEUE` line). Then the scope and index lane per your system
+      prompt: apply the sure scope / index / summary fixes yourself (a
+      `FIX` line each, at most 10). Then reply exactly: DONE.
 kickoff:
   - >-
     You are in the dream mission. Introduce it in one short line, then
@@ -239,9 +241,10 @@ agent). This mission adds only the nightly run protocol:
   — the digest stage: collapse each quiet cluster you are confident
   shares one subject into a single digest row (a `MERGE` line each);
   queue doubtful clusters as `subject` issues listing ALL member ids
-  (a `QUEUE` line each); then the index/scope lane — at most 5
-  `index` / `scope` proposals as review items (a `QUEUE` line each;
-  never set `indexed` or move a row's directory yourself); reply `DONE`. The capped fetches are the
+  (a `QUEUE` line each); then the scope and index lane — apply up to
+  10 sure scope / index / summary fixes yourself via `memory_update`
+  (a `FIX` line each; never the row's content, nothing queued); reply
+  `DONE`. The capped fetches are the
   nightly budget; leftovers wait for tomorrow. Every audit merge
   archives its losers (recoverable) — nothing in the audit deletes.
 - **A failed save doesn't end the day.** A `tool_error` on a write may
