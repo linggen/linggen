@@ -21,6 +21,7 @@ mod health;
 pub(crate) mod issues;
 mod mcp;
 mod memory;
+mod migration;
 pub(crate) mod session;
 pub mod state;
 mod stats;
@@ -58,6 +59,7 @@ pub fn build_router(state: SharedState, telemetry: Telemetry) -> Router {
         )
         .merge(mcp::router())
         .merge(config::router())
+        .merge(migration::router())
         .merge(ui::router())
         // Outermost, so it runs before any handler: a caller off this machine
         // must be a paired device. Loopback — the CLI, the engine, the local

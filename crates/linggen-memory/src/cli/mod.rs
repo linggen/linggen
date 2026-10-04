@@ -162,6 +162,13 @@ pub enum Command {
     /// it. Requires the daemon.
     IssueResolve(IssueResolveArgs),
 
+    /// The scope migration, as a review (`doc/scope-index-spec.md`):
+    /// `review` backs up the store and proposes scopes, hooks and index
+    /// flags; nothing changes until `accept` / `accept-all`; `apply-schema`
+    /// (a separate accept) drops the old contexts/tags columns. The console's
+    /// Scope review page is the same thing with a UI. Requires the daemon.
+    ScopeMigration(ScopeMigrationArgs),
+
     // Session-scanning utilities (`collect` + `extract`) used to live here.
     // They moved to `skills/memory/scripts/` as bash helpers — the daemon is
     // a pure data service; reading session files isn't its concern.
@@ -272,6 +279,29 @@ pub enum Command {
 }
 
 // ── Argument structs ────────────────────────────────────────────────────────
+
+#[derive(Debug, Args)]
+pub struct ScopeMigrationArgs {
+    #[arg(value_enum)]
+    pub action: ScopeMigrationAction,
+    /// Row ids for `accept` / `skip`.
+    pub ids: Vec<String>,
+    /// With `review`: recompute (and back up again) even if a review exists.
+    #[arg(long)]
+    pub refresh: bool,
+    /// Confirm `apply-schema` (drops the contexts and tags columns).
+    #[arg(long)]
+    pub yes: bool,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ScopeMigrationAction {
+    Review,
+    Accept,
+    AcceptAll,
+    Skip,
+    ApplySchema,
+}
 
 #[derive(Debug, Args, Default)]
 pub struct SessionStartArgs {
@@ -991,6 +1021,9 @@ pub async fn run(cli: Cli) -> Result<()> {
                 Command::Issues(args) => client::issues(&base_url, args, format).await,
                 Command::IssueAdd(args) => client::issue_add(&base_url, args, format).await,
                 Command::IssueResolve(args) => client::issue_resolve(&base_url, args, format).await,
+                Command::ScopeMigration(args) => {
+                    client::scope_migration(&base_url, args, format).await
+                }
                 Command::Serve { .. }
                 | Command::Start { .. }
                 | Command::Stop
@@ -1037,7 +1070,8 @@ pub async fn run(cli: Cli) -> Result<()> {
         | Command::Chains(_)
         | Command::Issues(_)
         | Command::IssueAdd(_)
-        | Command::IssueResolve(_) => Err(anyhow!(
+        | Command::IssueResolve(_)
+        | Command::ScopeMigration(_) => Err(anyhow!(
             "this command requires the daemon — start it with `ling-mem start`"
         )),
         Command::Serve { .. }

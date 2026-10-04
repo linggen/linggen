@@ -723,6 +723,52 @@ pub(crate) async fn stats(base: &str, format: OutputFormat) -> Result<()> {
     }
 }
 
+/// `ling-mem scope-migration <action>` — the daemon's
+/// `/api/migration/scope/*`. Text output is a one-screen summary; the
+/// console's Scope review page shows every proposal.
+pub(crate) async fn scope_migration(
+    base: &str,
+    args: crate::cli::ScopeMigrationArgs,
+    format: OutputFormat,
+) -> Result<()> {
+    use crate::cli::ScopeMigrationAction as A;
+    let (path, body) = match args.action {
+        A::Review => ("review", json!({"refresh": args.refresh})),
+        A::Accept => (
+            "accept",
+            json!({"items": args.ids.iter().map(|id| json!({"id": id})).collect::<Vec<_>>()}),
+        ),
+        A::AcceptAll => ("accept", json!({"all": true})),
+        A::Skip => ("skip", json!({"ids": args.ids})),
+        A::ApplySchema => ("apply_schema", json!({"confirm": args.yes})),
+    };
+    let data = post(base, &format!("/api/migration/scope/{path}"), &body).await?;
+    match format {
+        OutputFormat::Json => writeln_ndjson(&data),
+        OutputFormat::Text => {
+            if let Some(c) = data.get("counts") {
+                println!(
+                    "{} proposals: {} pending · {} accepted · {} skipped ({} scope moves, {} hooks, {} index)",
+                    c["total"], c["pending"], c["accepted"], c["skipped"],
+                    c["scope_moves"], c["hooks"], c["index"]
+                );
+                println!("backup: {}", data["backup_dir"].as_str().unwrap_or("none"));
+                println!(
+                    "schema step: {}",
+                    if data["schema_pending"].as_bool() == Some(true) {
+                        "pending (ling-mem scope-migration apply-schema --yes)"
+                    } else {
+                        "applied"
+                    }
+                );
+            } else {
+                println!("{}", serde_json::to_string_pretty(&data)?);
+            }
+            Ok(())
+        }
+    }
+}
+
 // ── Body builders ───────────────────────────────────────────────────────────
 
 /// The `add` body. Every flag that names something rides the wire; an
