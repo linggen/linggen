@@ -1,5 +1,6 @@
-//! One turn of hers, through the shared turn-core, on her rolling session
-//! and her model.
+//! One turn of hers, through the shared turn-core, on her model: on her own
+//! rolling thread, or — woken by an app moment — at the app chat's table as
+//! one of its members.
 
 use super::*;
 
@@ -18,21 +19,24 @@ pub(crate) async fn run_yinyue_turn(
     task: String,
     trigger_source: &str,
 ) -> Option<String> {
-    run_home(state, (task, None, None), trigger_source, Reach::Open).await
+    run_home(state, task, trigger_source, Reach::Open).await
 }
 
-/// Her turn on her own thread, woken by an app moment: her line is all she
-/// gives — spoken, and landed in the app's chat by the moment path — or
-/// SILENT. She reaches no other agent from it ([`Reach::Sealed`]).
-/// `aside` is what she reads for this turn only — the app chat's dialogue —
-/// and never kept on her thread. `table`: the app chat her line lands in;
-/// she speaks from there, as its guest (`AgentEngine::speaks_at_table`).
+/// Her turn woken by an app moment: her line is all she gives — spoken — or
+/// SILENT. She reaches no other agent from it ([`Reach::Sealed`]). `table`:
+/// the app chat the moment names — her turn runs there, a member at its
+/// table, reading its whole thread, and her line is a row of it (a moment is
+/// a turn like any other, `doc/shared-session-spec.md`). `None`: on her own
+/// thread.
 pub(crate) async fn run_moment_turn(
     state: &Arc<ServerState>,
-    (task, aside, table): (String, Option<String>, Option<String>),
+    (task, table): (String, Option<String>),
     trigger_source: &str,
 ) -> Option<String> {
-    run_home(state, (task, aside, table), trigger_source, Reach::Sealed).await
+    match table {
+        Some(session_id) => run_at_table(state, session_id, task, trigger_source).await,
+        None => run_home(state, task, trigger_source, Reach::Sealed).await,
+    }
 }
 
 /// What a turn of hers may reach past her own line.
@@ -40,11 +44,11 @@ pub(crate) async fn run_moment_turn(
 pub(super) enum Reach {
     /// Her ordinary turns: she may message another agent (`agent_chat`).
     Open,
-    /// An app moment or a guest seat: she speaks, or is SILENT. The one
-    /// exchange with an app's agent is the moment's `converse` path, never
-    /// hers to start — a message from her lands in the app's chat and wakes
-    /// that agent (2026-09-24: an idle moment's turn relayed its kickoff to
-    /// Ling, which started her loop in the Lingjing chat).
+    /// An app moment: she speaks, or is SILENT. The one exchange with an
+    /// app's agent is the moment's `converse` path, never hers to start — a
+    /// message from her lands in the app's chat and wakes that agent
+    /// (2026-09-24: an idle moment's turn relayed its kickoff to Ling, which
+    /// started her loop in the Lingjing chat).
     Sealed,
 }
 
@@ -62,7 +66,7 @@ pub(super) fn withheld_for(reach: Reach) -> std::collections::HashSet<String> {
 /// Her turn on her own rolling thread, with the given reach.
 async fn run_home(
     state: &Arc<ServerState>,
-    (task, aside, table): (String, Option<String>, Option<String>),
+    task: String,
     trigger_source: &str,
     reach: Reach,
 ) -> Option<String> {
@@ -81,39 +85,47 @@ async fn run_home(
     // Engine-authored kickoffs (heralds, agent_chat, asked) carry the
     // spoken-line contract; a person's own words are never appended to.
     let task = with_contract(task, trigger_source);
-    let seat = Seat {
+    let turn = Turn {
         session_id,
         root,
-        guest: false,
         reach,
-        table,
+        home: true,
     };
-    run_at(state, &seat, &pet, (task, aside), trigger_source).await
+    run_at(state, &turn, &pet, task, trigger_source).await
 }
 
-/// Run her turn as a guest in another session — an app's chat where the user
-/// addressed her (`@银月 …`). The message is already in that session; she
-/// reads its transcript, answers there in her own voice, with her own tools:
-/// the session's skill is not hers to take up (`ChatRunCtx::guest`).
-pub(crate) async fn run_guest_turn(
+/// Her moment turn at an app chat's table: seated there (for good, as an
+/// addressed member is), woken by a hidden kickoff that is hers alone —
+/// another member never reads it (`chat::thread`).
+async fn run_at_table(
     state: &Arc<ServerState>,
     session_id: String,
-    message: String,
+    task: String,
+    trigger_source: &str,
 ) -> Option<String> {
     let pet = state.manager.get_config_snapshot().await.pet;
     if !pet.enabled {
         return None;
     }
-    // She works from her own folder at any table — the session's cwd and its
-    // grants are its agent's, not hers (`seat_permissions`).
-    let seat = Seat {
+    let meta = state
+        .manager
+        .global_sessions
+        .get_session_meta(&session_id)
+        .ok()??;
+    crate::server::chat::members::seat(&state.manager, &session_id, YINYUE_AGENT).await;
+    let root = meta
+        .cwd
+        .or(meta.project)
+        .map(|c| crate::util::resolve_path(std::path::Path::new(&c)))
+        .unwrap_or_else(her_root);
+    let task = format!("[HIDDEN] {}", with_contract(task, trigger_source));
+    let turn = Turn {
         session_id,
-        root: her_root(),
-        guest: true,
+        root,
         reach: Reach::Sealed,
-        table: None,
+        home: false,
     };
-    run_at(state, &seat, &pet, (message, None), "user").await
+    run_at(state, &turn, &pet, task, trigger_source).await
 }
 
 /// Her own folder: where her turns run, and what her permissions cover.
@@ -121,94 +133,33 @@ fn her_root() -> std::path::PathBuf {
     crate::util::resolve_path(std::path::Path::new("~/.linggen"))
 }
 
-/// Where one of her turns runs: her own rolling thread, or a guest seat at
-/// another session's table.
-struct Seat {
+/// Where one of her turns runs.
+struct Turn {
     session_id: String,
     root: std::path::PathBuf,
-    guest: bool,
     reach: Reach,
-    /// Another session's chat her words land in from her own thread (an app
-    /// moment): she speaks from that table. `None` for a guest — seated
-    /// there, the table is `session_id`.
-    table: Option<String>,
+    /// Her own rolling thread (kept short, seeded across a roll) — else an
+    /// app chat's table.
+    home: bool,
 }
 
-/// Her engine for a seat. Her own thread is her session's engine. A guest
-/// seat gets a fresh engine of hers: a session holds ONE engine, built for
-/// the agent that runs it — asking it for hers in an app's chat hands back
-/// Ling's, with her prompt and the app's tools (seen 2026-09-24). A fresh one
-/// costs nothing a guest keeps: her thread there is rebuilt each turn.
-async fn engine_for(
-    state: &Arc<ServerState>,
-    seat: &Seat,
-) -> anyhow::Result<Arc<tokio::sync::Mutex<crate::engine::AgentEngine>>> {
-    if !seat.guest {
-        return state
-            .manager
-            .get_or_create_session_agent(&seat.session_id, &seat.root, YINYUE_AGENT)
-            .await;
-    }
-    let engine = guest_engine(state, &seat.root).await?;
-    Ok(Arc::new(tokio::sync::Mutex::new(engine)))
-}
-
-/// Her engine as a guest at `session_id`'s table, set up exactly as a guest
-/// turn is — for a preview of what that turn gets (the system-prompt
-/// export). Her folder, her tools, the table's places for her; no skill.
-pub(crate) async fn guest_engine_at(
-    state: &Arc<ServerState>,
-    session_id: &str,
-) -> anyhow::Result<crate::engine::AgentEngine> {
-    let seat = Seat {
-        session_id: session_id.to_string(),
-        root: her_root(),
-        guest: true,
-        reach: Reach::Sealed,
-        table: None,
-    };
-    let mut engine = guest_engine(state, &seat.root).await?;
-    let pet = state.manager.get_config_snapshot().await.pet;
-    ready_for_turn(&mut engine, &seat, &pet);
-    engine.seat_places =
-        crate::server::chat::presence::session_places(&state.manager, session_id).await;
-    Ok(engine)
-}
-
-/// A fresh engine of hers, seated: top level, with her own permissions.
-async fn guest_engine(
-    state: &Arc<ServerState>,
-    root: &std::path::PathBuf,
-) -> anyhow::Result<crate::engine::AgentEngine> {
-    let mut engine = state
-        .manager
-        .spawn_delegation_engine(root, YINYUE_AGENT)
-        .await?;
-    // Top level, not a delegate: her reply is persisted to the table.
-    let max_depth = state
-        .manager
-        .get_config_snapshot()
-        .await
-        .agent
-        .max_delegation_depth;
-    engine.set_delegation_depth(0, max_depth);
-    Ok(engine)
-}
-
-/// One turn of hers at `seat`, through the shared turn-core, on her model:
-/// the task, and an aside read for this turn only. Returns her final text,
-/// trimmed; `None` when she produced none.
+/// One turn of hers, through the shared turn-core, on her model. Returns
+/// her final text, trimmed; `None` when she produced none.
 async fn run_at(
     state: &Arc<ServerState>,
-    seat: &Seat,
+    turn: &Turn,
     pet: &crate::config::PetConfig,
-    (task, aside): (String, Option<String>),
+    task: String,
     trigger_source: &str,
 ) -> Option<String> {
-    let Seat {
+    let Turn {
         session_id, root, ..
-    } = seat;
-    let agent = match engine_for(state, seat).await {
+    } = turn;
+    let agent = match state
+        .manager
+        .get_or_create_session_agent(session_id, root, YINYUE_AGENT)
+        .await
+    {
         Ok(a) => a,
         Err(e) => {
             tracing::warn!("[yinyue] could not create Yinyue agent: {e}");
@@ -221,26 +172,23 @@ async fn run_at(
     // "running" row per message — the stop button could pick the outer one,
     // which the engine never checks (seen 2026-09-24: yinyue01 + yinyue02).
     let spoken = {
-        let _turn = state.manager.session_turn(session_id).lock_owned().await;
+        let _held = state.manager.session_turn(session_id).lock_owned().await;
         let mut engine = agent.lock().await;
-        // Her own thread: persist the incoming message to the session store so
-        // it survives reload and the turn-core's restore sees a complete
-        // thread. (The turn core only mirrors it into in-memory history.)
-        // Inside the lock: two wakes racing for her engine keep each kickoff
-        // next to its own turn. A guest's message is already on the table.
-        if !seat.guest {
-            crate::server::chat::helpers::persist_message_only(
-                &state.manager,
-                root,
-                YINYUE_AGENT,
-                "user",
-                YINYUE_AGENT,
-                &task,
-                Some(session_id),
-                false,
-            )
-            .await;
-        }
+        // Persist the incoming message to the session store so it survives
+        // reload and every member's thread holds it. (The turn core only
+        // mirrors it into in-memory history.) Inside the lock: two wakes
+        // racing keep each kickoff next to its own turn.
+        crate::server::chat::helpers::persist_message_only(
+            &state.manager,
+            root,
+            YINYUE_AGENT,
+            "user",
+            YINYUE_AGENT,
+            &task,
+            Some(session_id),
+            false,
+        )
+        .await;
         // Loop-break: if this turn was woken by an agent_chat, mark the session so
         // the agent_chat tool refuses to relay onward (one hop; user re-arms).
         // Mark/clear INSIDE the lock so the flag's lifetime matches exactly the
@@ -249,21 +197,19 @@ async fn run_at(
         if trigger_source == "agent_chat" {
             state.manager.mark_agent_chat_session(session_id);
         }
-        let policy = ready_for_turn(&mut engine, seat, pet);
-        // A guest's places are read as she sits down (`seat_at_table`); a
-        // line landing in an app chat from her own thread reads them here.
-        if !seat.guest {
-            engine.seat_places = match &seat.table {
-                Some(t) => crate::server::chat::presence::session_places(&state.manager, t).await,
-                None => None,
-            };
+        let policy = ready_for_turn(&mut engine, turn, pet);
+        apply_her_model(state, &mut engine, session_id, pet).await;
+        // At an app's table the session's recall policy is the app's: no
+        // biography, no core block (`handler::turn_creator`).
+        if !turn.home && table_is_not_a_persons(state, session_id) {
+            engine.prompt_profile.include_memory = false;
         }
 
         // First turn of a freshly rolled session: bridge the day/size roll with
         // a one-line "Previously" note so a thread mid-flight doesn't snap.
         // Deeper continuity rides shared memory (auto-recall + core), injected
         // by the turn core.
-        if !seat.guest {
+        if turn.home {
             seed_previously_if_fresh(state, &mut engine, session_id);
         }
 
@@ -278,17 +224,11 @@ async fn run_at(
             images: Vec::new(),
             policy,
             sender: None,
-            guest: seat.guest,
-            silence_ok: false,
-            aside,
+            // At a table, silence is an answer and leaves no row there.
+            silence_ok: !turn.home && trigger_source != "asked",
         };
-        crate::server::chat::run_session_turn(
-            &ctx,
-            &mut engine,
-            &state.manager,
-            Some(YINYUE_MAX_LIVE_MSGS),
-        )
-        .await;
+        let cap = turn.home.then_some(YINYUE_MAX_LIVE_MSGS);
+        crate::server::chat::run_session_turn(&ctx, &mut engine, &state.manager, cap).await;
 
         if trigger_source == "agent_chat" {
             state.manager.clear_agent_chat_session(session_id);
@@ -303,17 +243,55 @@ async fn run_at(
         .filter(|s| !s.is_empty())
 }
 
-/// Set her engine up for one turn at `seat`. Idempotent — her rolling
-/// engine outlives the turn, and this picks up live settings edits. Returns
-/// the policy the turn runs under.
+/// Whether the session at this table belongs to a skill or a mission — not a
+/// person's own chat.
+fn table_is_not_a_persons(state: &Arc<ServerState>, session_id: &str) -> bool {
+    state
+        .manager
+        .global_sessions
+        .get_session_meta(session_id)
+        .ok()
+        .flatten()
+        .is_some_and(|m| m.skill.is_some() || m.mission_id.is_some())
+}
+
+/// Her model in this session: the one the session keeps for her, else her
+/// Pet setting (`pet.model`), else whatever she is on — each only when this
+/// machine has it.
+async fn apply_her_model(
+    state: &Arc<ServerState>,
+    engine: &mut crate::engine::AgentEngine,
+    session_id: &str,
+    pet: &crate::config::PetConfig,
+) {
+    let members = crate::server::chat::members::of_session(&state.manager, session_id).await;
+    let kept = members
+        .iter()
+        .find(|m| m.id == YINYUE_AGENT)
+        .and_then(|m| m.model.clone());
+    let wanted = kept.or_else(|| resolve_pet_model(&pet.model));
+    let Some(m) = wanted else {
+        return;
+    };
+    match engine.model_manager.resolve_id(&m) {
+        Some(live) => engine.model_id = live,
+        None => tracing::warn!(
+            "[yinyue] model '{m}' unavailable; using {}",
+            engine.model_id
+        ),
+    }
+}
+
+/// Set her engine up for one turn. Idempotent — her engine outlives the
+/// turn, and this picks up live settings edits. Returns the policy the turn
+/// runs under.
 fn ready_for_turn(
     engine: &mut crate::engine::AgentEngine,
-    seat: &Seat,
+    turn: &Turn,
     pet: &crate::config::PetConfig,
 ) -> crate::engine::session_policy::SessionPolicy {
     engine.set_parent_agent(None);
-    engine.withheld_tools = withheld_for(seat.reach);
-    engine.speaks_at_table = !seat.guest && seat.table.is_some();
+    engine.withheld_tools = withheld_for(turn.reach);
     // Clear so we read THIS turn's final line — the engine is reused across
     // turns and would otherwise hold the prior one.
     engine.last_assistant_text = None;
@@ -321,9 +299,6 @@ fn ready_for_turn(
     // Her turn is a person's session, not a task: the owner policy's
     // profile, applied to the engine (a fresh engine's default profile
     // frames the turn as an autonomous task — a second "Task:" message).
-    // Her own memory with it, at every seat: her core block (who the user
-    // is), her recall — which a guest's turn reads but never leaves as a
-    // row on someone else's table (`ChatRunCtx::guest`).
     let policy = crate::engine::session_policy::SessionPolicy::owner();
     policy.apply(engine);
 
@@ -334,23 +309,8 @@ fn ready_for_turn(
     engine
         .tools
         .builtins
-        .set_session_id(Some(seat.session_id.clone()));
-
+        .set_session_id(Some(turn.session_id.clone()));
     tune_companion(engine, pet);
-
-    // Pick her brain per the Pet model setting (tier-aware default: the
-    // metered Linggen Cloud model for signed-in users, the engine default
-    // for BYOK). An unavailable id falls back to whatever she's already on.
-    if let Some(m) = resolve_pet_model(&pet.model) {
-        if engine.model_manager.has_model(&m) {
-            engine.model_id = m;
-        } else {
-            tracing::warn!(
-                "[yinyue] model '{m}' unavailable; using {}",
-                engine.model_id
-            );
-        }
-    }
     policy
 }
 
@@ -385,7 +345,7 @@ pub(crate) fn resolve_pet_model(setting: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    /// A moment or guest turn cannot reach another agent; her own turns can.
+    /// A moment turn cannot reach another agent; her own turns can.
     #[test]
     fn a_sealed_turn_withholds_agent_chat_and_an_open_one_nothing() {
         assert!(withheld_for(Reach::Sealed).contains("agent_chat"));
@@ -418,13 +378,12 @@ mod tests {
         engine
     }
 
-    fn seat(guest: bool) -> Seat {
-        Seat {
+    fn turn(home: bool) -> Turn {
+        Turn {
             session_id: "sess-1758700000-cfo".to_string(),
             root: std::env::temp_dir(),
-            guest,
             reach: Reach::Sealed,
-            table: None,
+            home,
         }
     }
 
@@ -439,7 +398,7 @@ mod tests {
             engine.prompt_profile.task_bootstrap,
             "a fresh engine frames a task"
         );
-        ready_for_turn(&mut engine, &seat(true), &Default::default());
+        ready_for_turn(&mut engine, &turn(false), &Default::default());
         engine
             .chat_history
             .push(crate::message::ChatMessage::new("user", "[User]: 你好"));
@@ -458,45 +417,26 @@ mod tests {
             .any(|m| m.content.contains("Autonomous agent loop")));
     }
 
-    /// A moment whose line lands in an app chat runs on her own thread but
-    /// speaks from that table: the guest place, not her desktop's. The next
-    /// turn at home is at home again.
+    /// At a table her memory tools act for that session — its skill's
+    /// memory context holds them and her writes are stamped with it — and
+    /// a moment there reaches no other agent.
     #[test]
-    fn a_moment_landing_in_an_app_chat_speaks_from_its_table() {
+    fn at_a_table_her_tools_act_for_that_session() {
         let mut engine = her_engine();
-        let mut moment = seat(false);
-        moment.table = Some("sess-1758700000-lingjing".to_string());
-        ready_for_turn(&mut engine, &moment, &Default::default());
-        assert_eq!(
-            engine.surface(),
-            Some(crate::engine::prompt::place::Surface::Member)
-        );
-        ready_for_turn(&mut engine, &seat(false), &Default::default());
-        assert_eq!(
-            engine.surface(),
-            Some(crate::engine::prompt::place::Surface::Home)
-        );
-    }
-
-    /// At another's table she keeps her own memory — her core block (who
-    /// the user is) — and her memory tools act for that table's session, so
-    /// its skill's memory context holds them and her writes are stamped
-    /// with it.
-    #[test]
-    fn a_guest_keeps_her_memory_and_her_tools_act_for_the_table() {
-        let mut engine = her_engine();
-        ready_for_turn(&mut engine, &seat(true), &Default::default());
-        assert!(engine.prompt_profile.include_memory, "her core block stays");
+        ready_for_turn(&mut engine, &turn(false), &Default::default());
         assert_eq!(
             engine.tools.builtins.session_id.as_deref(),
             Some("sess-1758700000-cfo")
         );
         assert!(engine.withheld_tools.contains("agent_chat"));
+    }
 
-        // Her recall reaches her model only: a guest leaves no recall row.
+    /// Her recall is persisted as a row wherever she speaks: every member
+    /// reads it as a note (no guest exemption any more).
+    #[test]
+    fn her_recall_is_a_row_of_the_session_wherever_she_speaks() {
         let runtime = include_str!("../chat/runtime.rs");
-        let guard = runtime.find(concat!("if !ctx", ".guest {")).unwrap();
-        let row = runtime.find(concat!("\"memory", "-recall\",")).unwrap();
-        assert!(guard < row);
+        assert!(!runtime.contains(concat!("ctx", ".guest")));
+        assert!(runtime.contains(concat!("\"memory", "-recall\",")));
     }
 }

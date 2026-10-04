@@ -150,21 +150,6 @@ fn a_member_reads_the_skills_place_for_her_never_its_rules() {
     at(&ling.system_prompt(), "THE APP'S OWN RULES.");
 }
 
-/// Her line landing in an app chat from her own thread: she speaks from
-/// that table — the table's declaration for her, else the member block.
-#[test]
-fn a_line_landing_at_a_table_speaks_from_it() {
-    let table = skill("place:\n  yinyue: AT THE PLAYER'S SIDE.\n");
-    let mut engine = engine_as("yinyue", YINYUE);
-    engine.speaks_at_table = true;
-    let p = engine.system_prompt();
-    at(&p, MEMBER);
-    assert!(!p.contains(DESKTOP));
-    engine.seat_places = table.place.clone();
-    let p = engine.system_prompt();
-    at(&p, "AT THE PLAYER'S SIDE.");
-}
-
 #[test]
 fn a_consumer_frame_and_a_delegate_have_no_place() {
     let mut consumer = engine_as("ling", LING);

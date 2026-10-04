@@ -3,6 +3,13 @@
 
 use super::*;
 
+/// Whether `session_id` is one of her own rolling sessions.
+pub(crate) fn is_own_session(session_id: &str) -> bool {
+    session_id
+        .strip_prefix(&yinyue_session_prefix())
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('-'))
+}
+
 /// Pick Yinyue's current rolling session id: one per calendar day, rolling to an
 /// extra segment when the active day's live engine nears its context limit. A
 /// fresh day (or an unloaded session) always has headroom; continuity across
@@ -120,4 +127,33 @@ pub(super) fn last_spoken_line(state: &Arc<ServerState>, current_sid: &str) -> O
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_own_session;
+
+    #[test]
+    fn her_rolling_sessions_are_hers_and_an_apps_chat_is_not() {
+        assert!(is_own_session("sess-yinyue-2026-09-24"));
+        assert!(is_own_session("sess-yinyue-2026-09-24-2"));
+        assert!(!is_own_session("sess-lingjing-1758700000"));
+        assert!(!is_own_session("sess-yinyuex-1"));
+    }
+
+    /// One message, one run. The turn core begins and finishes the run it
+    /// executes (`run_loop_with_tracking`); a caller that also began one
+    /// wrapped it in a second "running" row (yinyue01 + yinyue02 for one
+    /// `@银月 你好`, 2026-09-24), and the chat's stop could cancel the outer
+    /// one, which the engine never checks.
+    #[test]
+    fn her_turns_leave_the_run_to_the_turn_core() {
+        for (file, src) in [
+            ("turn.rs", include_str!("turn.rs")),
+            ("triggers.rs", include_str!("triggers.rs")),
+        ] {
+            let calls = src.matches(concat!(".begin_agent_run", "(")).count();
+            assert_eq!(calls, 0, "{file} begins a run around the turn core");
+        }
+    }
 }

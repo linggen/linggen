@@ -15,11 +15,13 @@
 //! game. Silence is decided here, in code (the lesson Intra's lunch scene
 //! taught — six NPCs, six monologues a turn).
 //!
-//! A moment that names the app's chat `session` has her line land there too,
-//! as a message from her — in the chat, and in the context of the session's
-//! agent (Ling) — without waking her. A `converse` moment then gives her ONE
-//! hidden kickoff to answer her in a line, or SILENT; never back to her, and
-//! at most once per [`CONVERSE_GAP_SECS`] per session.
+//! A moment that names the app's chat `session` wakes her AT that chat's
+//! table, a member of it: she reads its whole thread, and her line is a row
+//! of it, read by its lead (Ling) on his next turn
+//! (`doc/shared-session-spec.md` — a moment is a turn like any other). A
+//! `converse` moment then gives the lead ONE hidden kickoff to answer her in a
+//! line, or SILENT; never back to her, and at most once per
+//! [`CONVERSE_GAP_SECS`] per session.
 //!
 //! Her moment turn itself reaches no one: it cannot `agent_chat` (the tool is
 //! withheld — a message from her would land in the app's chat and wake its
@@ -289,45 +291,9 @@ fn landings(moments: &[Moment], spoke: bool) -> Vec<(&str, bool)> {
     out
 }
 
-/// The app chats the moments name, each once, in order, with its app.
-fn chats_named(moments: &[Moment]) -> Vec<(&str, &str)> {
-    let mut out: Vec<(&str, &str)> = Vec::new();
-    for m in moments {
-        let Some(sid) = m.session.as_deref() else {
-            continue;
-        };
-        if !out.iter().any(|(_, s)| *s == sid) {
-            out.push((m.app.as_str(), sid));
-        }
-    }
-    out
-}
-
-/// One app chat's dialogue, as she reads it beside the moment.
-fn aside_for(app: &str, transcript: &str) -> String {
-    format!(
-        "The chat in {app} so far, oldest first — everything the user sees there, you \
-         included:\n{transcript}"
-    )
-}
-
-/// What she reads beside the moments: the visible dialogue of each app chat
-/// they name (`chat::table`). One conversation per app — the user, the
-/// app's agent and her — so her line fits where it lands. Read for the turn
-/// only, never kept on her thread. `None` when no chat is named or said.
-async fn aside(state: &Arc<ServerState>, moments: &[Moment]) -> Option<String> {
-    let root = crate::util::resolve_path(std::path::Path::new("~/.linggen"));
-    let mut parts = Vec::new();
-    for (app, sid) in chats_named(moments) {
-        let rows = crate::server::chat::table::read(&state.manager, &root, sid).await;
-        if !rows.is_empty() {
-            parts.push(aside_for(
-                app,
-                &crate::server::chat::table::as_transcript(&rows),
-            ));
-        }
-    }
-    (!parts.is_empty()).then(|| parts.join("\n\n"))
+/// The app chat the moments name first — where her turn runs.
+fn table_of(moments: &[Moment]) -> Option<String> {
+    moments.iter().find_map(|m| m.session.clone())
 }
 
 /// When each session last had a conversational exchange.
@@ -352,13 +318,11 @@ fn claim_converse(session_id: &str, now: u64) -> bool {
     true
 }
 
-/// The agent who answers in a session: the one whose own replies are there,
-/// newest first — never the companion.
-fn answering_agent(rows: &[crate::state_fs::sessions::ChatMsg]) -> Option<String> {
-    rows.iter()
-        .rev()
-        .find(|r| r.from_id == r.agent_id && r.agent_id != crate::engine::agent::COMPANION_AGENT_ID)
-        .map(|r| r.agent_id.clone())
+/// The agent who answers her in a session: its lead — never the companion.
+async fn answering_agent(state: &Arc<ServerState>, session_id: &str) -> Option<String> {
+    let members = crate::server::chat::members::of_session(&state.manager, session_id).await;
+    let lead = crate::server::chat::members::lead(&members);
+    (lead != crate::engine::agent::COMPANION_AGENT_ID).then_some(lead)
 }
 
 /// The hidden kickoff the session's agent gets after her line. Her words are
@@ -371,10 +335,15 @@ pub(crate) fn converse_kickoff() -> String {
         .to_string()
 }
 
-/// Her spoken line, landed in each app chat the moments named: a message from
-/// her (the session's agent reads it on his next turn), then — for a
-/// `converse` moment, when the session is due — one kickoff for that agent.
-async fn land_in_chats(state: &Arc<ServerState>, moments: &[Moment], line: Option<&str>) {
+/// Her spoken line in each app chat the moments named: a row there already
+/// where her turn ran (`table`); a message from her in any other. Then — for
+/// a `converse` moment, when the session is due — one kickoff for its lead.
+async fn land_in_chats(
+    state: &Arc<ServerState>,
+    moments: &[Moment],
+    line: Option<&str>,
+    table: Option<&str>,
+) {
     let companion = crate::engine::agent::COMPANION_AGENT_ID;
     for (sid, wants_reply) in landings(moments, line.is_some()) {
         let Some(line) = line else { break };
@@ -387,32 +356,24 @@ async fn land_in_chats(state: &Arc<ServerState>, moments: &[Moment], line: Optio
         if crate::server::chat::presence::absent_in_session(&state.manager, sid, companion).await {
             continue;
         }
-        crate::server::chat::helpers::persist_and_emit_to_store(
-            &state.manager.global_sessions,
-            &state.events_tx,
-            companion,
-            companion,
-            "user",
-            line,
-            Some(sid),
-            false,
-        )
-        .await;
-        crate::server::chat::side_lines::note(
-            sid,
-            companion,
-            format!("[{}]: {line}", crate::server::chat::sender_label(companion)),
-        );
+        if Some(sid) != table {
+            crate::server::chat::helpers::persist_and_emit_to_store(
+                &state.manager.global_sessions,
+                &state.events_tx,
+                companion,
+                companion,
+                "user",
+                line,
+                Some(sid),
+                false,
+            )
+            .await;
+        }
         if !wants_reply || !claim_converse(sid, crate::util::now_ts_secs()) {
             continue;
         }
-        let rows = state
-            .manager
-            .global_sessions
-            .get_chat_history(sid)
-            .unwrap_or_default();
-        let Some(agent) = answering_agent(&rows) else {
-            continue; // nobody has answered in this chat yet
+        let Some(agent) = answering_agent(state, sid).await else {
+            continue;
         };
         tracing::info!("[yinyue-moments] one exchange: {agent} answers her in {sid}");
         crate::server::chat::kickoff_in_session(state.clone(), sid, &agent, &converse_kickoff())
@@ -471,17 +432,16 @@ pub async fn yinyue_moment_loop(state: Arc<ServerState>) {
             } else {
                 kickoff(&taken)
             };
-            let aside = aside(&state, &taken).await;
-            let table = chats_named(&taken).first().map(|(_, sid)| sid.to_string());
+            let table = table_of(&taken);
             let line = super::resident::wake_for_moment(
                 state.clone(),
-                (words, aside, table),
+                (words, table.clone()),
                 &emotion,
                 asked,
             )
             .await;
             IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner()).clear();
-            land_in_chats(&state, &taken, line.as_deref()).await;
+            land_in_chats(&state, &taken, line.as_deref(), table.as_deref()).await;
         });
     }
 }
@@ -767,22 +727,19 @@ mod tests {
         );
     }
 
+    /// Her moment turn runs at the first chat the moments name.
     #[test]
-    fn a_moment_turn_reads_each_named_chat_once_with_its_app() {
-        let mut a = in_chat(Some("s1"), false);
-        a.app = "lingjing".into();
-        let mut b = in_chat(Some("s1"), true);
-        b.app = "lingjing".into();
+    fn a_moment_turn_runs_at_the_first_chat_named() {
         let none = in_chat(None, false);
-        let mut c = in_chat(Some("s2"), false);
-        c.app = "dj".into();
         assert_eq!(
-            chats_named(&[a, none.clone(), b, c]),
-            [("lingjing", "s1"), ("dj", "s2")]
+            table_of(&[
+                none.clone(),
+                in_chat(Some("s1"), false),
+                in_chat(Some("s2"), true)
+            ]),
+            Some("s1".to_string())
         );
-        assert!(chats_named(&[none]).is_empty(), "no chat, nothing to read");
-        let text = aside_for("lingjing", "[User]: 去临淄\n[Ling]: 到了。");
-        assert!(text.contains("lingjing") && text.ends_with("[Ling]: 到了。"));
+        assert_eq!(table_of(&[none]), None, "no chat: her own thread");
     }
 
     #[test]
@@ -800,23 +757,7 @@ mod tests {
     }
 
     #[test]
-    fn the_answering_agent_is_whoever_answers_there_never_her() {
-        let row = |agent: &str, from: &str| crate::state_fs::sessions::ChatMsg {
-            agent_id: agent.into(),
-            from_id: from.into(),
-            to_id: "user".into(),
-            content: "…".into(),
-            timestamp: 0,
-            is_observation: false,
-        };
-        let rows = [
-            row("ling", "user"),
-            row("ling", "ling"),
-            row("yinyue", "user"),
-            row("yinyue", "yinyue"),
-        ];
-        assert_eq!(answering_agent(&rows).as_deref(), Some("ling"));
-        assert_eq!(answering_agent(&rows[2..]), None);
+    fn the_converse_kickoff_asks_one_line_or_silence() {
         let k = converse_kickoff();
         assert!(k.contains("SILENT") && k.contains("ONE line"));
     }

@@ -281,16 +281,10 @@ impl AgentEngine {
             .is_none_or(|lead| Some(lead) == self.agent_id.as_deref())
     }
 
-    /// Whether this turn speaks at another's table: a member who isn't the
-    /// lead, or a line landing in an app's chat from the agent's own thread.
-    fn speaks_as_member(&self) -> bool {
-        !self.is_lead() || self.speaks_at_table
-    }
-
     /// Where this engine speaks from, as far as the engine can tell. A
     /// delegate works for another agent and has no place of its own.
     pub(crate) fn surface(&self) -> Option<place::Surface> {
-        if self.speaks_as_member() {
+        if !self.is_lead() {
             return Some(place::Surface::Member);
         }
         if self.parent_agent_id.is_some() {
@@ -302,12 +296,8 @@ impl AgentEngine {
         Some(place::Surface::Home)
     }
 
-    /// The places the skill in view declares: the app chat's skill for a
-    /// line landing there, else the active skill.
+    /// The places the session's skill declares.
     fn declared_places(&self) -> Option<&crate::engine::skill::record::Places> {
-        if self.speaks_at_table {
-            return self.seat_places.as_ref();
-        }
         self.active_skill.as_ref().and_then(|s| s.place.as_ref())
     }
 

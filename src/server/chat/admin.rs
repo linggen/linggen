@@ -65,11 +65,8 @@ pub(crate) async fn get_system_prompt_api(
         .get_session_meta(sid)
         .ok()
         .flatten();
+    // An existing session's own cwd first: where its turns stand.
     let mut candidates: Vec<String> = Vec::new();
-    let q_root = query.project_root.trim();
-    if !q_root.is_empty() {
-        candidates.push(q_root.to_string());
-    }
     if let Some(ref m) = session_meta {
         if let Some(cwd) = m.cwd.as_deref().filter(|s| !s.is_empty()) {
             candidates.push(cwd.to_string());
@@ -78,19 +75,32 @@ pub(crate) async fn get_system_prompt_api(
             candidates.push(proj.to_string());
         }
     }
+    let q_root = query.project_root.trim();
+    if !q_root.is_empty() {
+        candidates.push(q_root.to_string());
+    }
     candidates.push("/".to_string());
     let root = candidates
         .iter()
         .find_map(|p| PathBuf::from(p).canonicalize().ok())
         .unwrap_or_else(|| PathBuf::from("/"));
 
-    // Skill-embed sessions render the chat sidebar with no project selection,
-    // so the frontend's selectedAgent is undefined and the query may carry
-    // `agent_id=` or `agent_id=undefined`. Default to the canonical "ling"
-    // agent — there's only one agent in the registry; this avoids a 404 on
-    // the Copy button regardless of how the frontend serialized "no agent".
+    // `agent_id=` selects the member whose prompt to preview. None named
+    // (or a frontend that serialized "no agent"): the session's default
+    // responder, the one a message naming nobody reaches.
+    let members = match &session_meta {
+        Some(meta) => {
+            let skill = match meta.skill.as_deref() {
+                Some(name) => state.manager.skills.get_skill(name).await,
+                None => None,
+            };
+            super::members::effective(meta, skill.as_ref())
+        }
+        None => super::members::default_members(None),
+    };
+    let default = super::members::default_responder(&members);
     let agent_id = match query.agent_id.trim() {
-        "" | "undefined" | "null" => "ling",
+        "" | "undefined" | "null" => default.as_str(),
         other => other,
     };
 
@@ -106,20 +116,13 @@ pub(crate) async fn get_system_prompt_api(
         )
             .into_response()
     };
-    // The companion in a session that isn't hers is a guest there: export
-    // the seat a guest turn really gets — her folder, her tools, the
-    // table's place for her, no skill.
-    if is_guest_export(agent_id, sid, session_meta.is_some()) {
-        return match crate::server::resident::guest_engine_at(&state, sid).await {
-            Ok(engine) => export_prompt(engine),
-            Err(_) => not_found(),
-        };
-    }
     let Ok(mut engine) = state.manager.spawn_delegation_engine(&root, agent_id).await else {
         return not_found();
     };
     // A person's turn: the owner policy, as the chat path applies it.
     crate::engine::session_policy::SessionPolicy::owner().apply(&mut engine);
+    // Seated as the member it is, on the model it runs on there.
+    seat_for_export(&state, &mut engine, &root, &members, agent_id).await;
 
     // Apply session-bound skill or mission so the exported prompt matches what
     // the model actually sees during a chat turn. Without this, the export
@@ -159,12 +162,40 @@ pub(crate) async fn get_system_prompt_api(
     export_prompt(engine)
 }
 
-/// Whether exporting `agent_id` in `session_id` shows a guest seat: the
-/// companion, in an existing session that isn't one of hers.
-fn is_guest_export(agent_id: &str, session_id: &str, session_exists: bool) -> bool {
-    agent_id == crate::engine::agent::COMPANION_AGENT_ID
-        && session_exists
-        && !crate::server::resident::is_own_session(session_id)
+/// Seat the export's engine as its turn is seated (`handler::seat_member`):
+/// another member at the lead's table uses the lead's tools; the companion
+/// gets her Pet tuning; each runs on the model it has in the session.
+async fn seat_for_export(
+    state: &Arc<ServerState>,
+    engine: &mut crate::engine::AgentEngine,
+    root: &std::path::Path,
+    members: &[crate::state_fs::sessions::SessionMember],
+    agent_id: &str,
+) {
+    let lead = super::members::lead(members);
+    if lead != agent_id {
+        engine.session_tools = state
+            .manager
+            .agents
+            .find(root, &lead)
+            .await
+            .ok()
+            .flatten()
+            .map(|spec| spec.spec.tools);
+        engine.session_lead = Some(lead);
+    }
+    if super::members::is_companion(agent_id) {
+        let pet = state.manager.get_config_snapshot().await.pet;
+        crate::server::resident::tune_companion(engine, &pet);
+    }
+    let member = members
+        .iter()
+        .find(|m| m.id == agent_id)
+        .cloned()
+        .unwrap_or_else(|| crate::state_fs::sessions::SessionMember::new(agent_id));
+    if let Some(model) = super::members::model_of(&state.manager, root, &member).await {
+        engine.model_id = model;
+    }
 }
 
 /// The prompt and tools `engine` would send, as the export shows them.
@@ -447,20 +478,4 @@ pub(crate) async fn pending_ask_user_handler(
         })
         .collect();
     Json(serde_json::json!(items))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::is_guest_export;
-
-    /// Exporting the companion in an app's chat (or any session not hers)
-    /// shows her guest seat; in her own thread, or for anyone else, the
-    /// session's own engine.
-    #[test]
-    fn the_companion_exports_as_a_guest_at_anothers_table() {
-        assert!(is_guest_export("yinyue", "sess-1758700000-cfo", true));
-        assert!(!is_guest_export("yinyue", "sess-yinyue-2026-09-25", true));
-        assert!(!is_guest_export("yinyue", "sess-new", false));
-        assert!(!is_guest_export("ling", "sess-1758700000-cfo", true));
-    }
 }

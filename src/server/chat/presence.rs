@@ -2,12 +2,11 @@
 //!
 //! A skill may keep an agent away until its own state says otherwise
 //! (`place.<agent>.absent_until` — `doc/skill-spec.md` § Place). While the
-//! agent is absent, nothing runs for it in that skill's sessions: a guest
-//! turn is refused before any model call and no app moment reaches it. The
+//! agent is absent, nothing runs for it in that skill's sessions: a message
+//! to it is refused before any model call and no app moment reaches it. The
 //! engine names no app and no agent — it reads what the skill declares.
 
 use crate::engine::agent::AgentManager;
-use crate::engine::skill::record::Places;
 use crate::engine::skill::Skill;
 
 /// The skill a session is bound to.
@@ -17,11 +16,6 @@ async fn session_skill(manager: &AgentManager, session_id: &str) -> Option<Skill
         .get_session_meta(session_id)
         .ok()??;
     manager.skills.get_skill(&meta.skill?).await
-}
-
-/// The places the skill of `session_id` declares.
-pub(crate) async fn session_places(manager: &AgentManager, session_id: &str) -> Option<Places> {
-    session_skill(manager, session_id).await?.place
 }
 
 /// Whether `agent` is absent from `skill` right now (`Skill::keeps_away`).

@@ -787,37 +787,30 @@ pub(crate) async fn run_session_turn(
     manager: &Arc<AgentManager>,
     max_live_msgs: Option<usize>,
 ) {
-    // A guest reads the table as it stands now: its thread is the session's
-    // visible dialogue, rebuilt each turn, never a stale copy of its last
-    // visit — and all of it, within the table's budget, not a live cap.
-    if ctx.guest {
-        seat_at_table(engine, ctx).await;
-    } else {
-        seat_member(engine, ctx).await;
-        let restored = super::thread::sync(engine, ctx).await;
-        // After restore (and before this turn's user message + fresh recall
-        // are pushed), the buffer holds only completed prior turns — safe to
-        // trim.
-        if let Some(cap) = max_live_msgs {
-            trim_live_history(&mut engine.chat_history, cap);
-            restored_tools::drop_leading_results(&mut engine.chat_history);
-        }
-        catch_up_side_lines(engine, ctx, restored);
-        apply_session_bound_skill(engine, ctx).await;
-        apply_session_bound_mission(engine, ctx).await;
-        // The thread outgrew the smallest member's window: one summary
-        // for every member, then this member's thread from it on.
-        if super::compact_rows::compact_if_due(engine, ctx).await {
-            if let Some(cap) = max_live_msgs {
-                trim_live_history(&mut engine.chat_history, cap);
-                restored_tools::drop_leading_results(&mut engine.chat_history);
-            }
-        }
+    seat_member(engine, ctx).await;
+    super::thread::sync(engine, ctx).await;
+    // After the sync (and before this turn's user message + fresh recall
+    // are pushed), the buffer holds only completed prior turns — safe to
+    // trim.
+    trim_capped(engine, max_live_msgs);
+    apply_session_bound_skill(engine, ctx).await;
+    apply_session_bound_mission(engine, ctx).await;
+    // The thread outgrew the smallest member's window: one summary for
+    // every member, then this member's thread from it on.
+    if super::compact_rows::compact_if_due(engine, ctx).await {
+        trim_capped(engine, max_live_msgs);
     }
-    push_aside(engine, ctx.aside.as_deref());
     dispatch_turn(ctx, engine, manager, &ctx.clean_msg).await;
-    take_aside(&mut engine.chat_history, ctx.aside.as_deref());
     super::thread::mark(engine, ctx);
+}
+
+/// Keep a capped session's live thread near its cap (`trim_live_history`),
+/// never opening on a tool result whose call was cut away.
+fn trim_capped(engine: &mut crate::engine::AgentEngine, cap: Option<usize>) {
+    if let Some(cap) = cap {
+        trim_live_history(&mut engine.chat_history, cap);
+        restored_tools::drop_leading_results(&mut engine.chat_history);
+    }
 }
 
 /// Where this member sits this turn: the session's lead when that is
@@ -842,66 +835,6 @@ async fn seat_member(engine: &mut crate::engine::AgentEngine, ctx: &ChatRunCtx) 
         .flatten()
         .map(|spec| spec.spec.tools);
     engine.session_lead = Some(lead);
-}
-
-/// A guest's thread: the session's visible dialogue (`table`), without the
-/// message this turn answers — already on the table, it comes back as the
-/// turn's own message. What others said meanwhile is in it already.
-async fn seat_at_table(engine: &mut crate::engine::AgentEngine, ctx: &ChatRunCtx) {
-    engine.chat_history.clear();
-    let Some(sid) = ctx.session_id.as_deref() else {
-        return;
-    };
-    let _ = super::side_lines::take_for(sid, &ctx.agent_id);
-    engine.seat_places = super::presence::session_places(&ctx.manager, sid).await;
-    let mut rows = super::table::read(&ctx.manager, &ctx.root, sid).await;
-    if rows
-        .last()
-        .is_some_and(|m| m.from_id == ctx.from_id() && m.content == ctx.clean_msg)
-    {
-        rows.pop();
-    }
-    engine.chat_history = super::table::as_thread(&rows, &ctx.agent_id);
-}
-
-/// Put the turn's aside in the thread, just before its message.
-fn push_aside(engine: &mut crate::engine::AgentEngine, aside: Option<&str>) {
-    if let Some(text) = aside {
-        engine
-            .chat_history
-            .push(crate::message::ChatMessage::new("user", text.to_string()));
-    }
-}
-
-/// Take the aside out again: it was for that turn only. Found by its text,
-/// newest first — wherever the turn left it.
-fn take_aside(history: &mut Vec<crate::message::ChatMessage>, aside: Option<&str>) {
-    let Some(text) = aside else {
-        return;
-    };
-    let found = history
-        .iter()
-        .rposition(|m| m.role == "user" && m.content == text);
-    if let Some(i) = found {
-        history.remove(i);
-    }
-}
-
-/// Hand the agent what others said in its session since its last turn (see
-/// `side_lines`). A thread just rebuilt from disk already holds them.
-fn catch_up_side_lines(engine: &mut crate::engine::AgentEngine, ctx: &ChatRunCtx, restored: bool) {
-    let Some(sid) = ctx.session_id.as_deref() else {
-        return;
-    };
-    let lines = super::side_lines::take_for(sid, &ctx.agent_id);
-    if restored || ctx.guest {
-        return;
-    }
-    if let Some(text) = super::side_lines::as_message(&lines) {
-        engine
-            .chat_history
-            .push(crate::message::ChatMessage::new("user", text));
-    }
 }
 
 /// Keep a capped session's live history near `cap` messages — in chunks.
@@ -966,13 +899,44 @@ pub(crate) async fn kickoff_in_session(
     agent_id: &str,
     text: &str,
 ) -> bool {
+    let message = format!("[HIDDEN] {text}");
+    turn_in_session(state, session_id, agent_id, message, TurnOrigin::Kickoff).await
+}
+
+/// The person's words to `agent_id` in an existing session, said somewhere
+/// else (to her avatar while an app chat holds her): a message there like
+/// one typed into that chat. False when the session is unknown.
+pub(crate) async fn say_in_session(
+    state: Arc<ServerState>,
+    session_id: &str,
+    agent_id: &str,
+    text: &str,
+) -> bool {
+    turn_in_session(
+        state,
+        session_id,
+        agent_id,
+        text.to_string(),
+        TurnOrigin::Person,
+    )
+    .await
+}
+
+/// A turn for `agent_id` in an existing session, through the chat pipeline.
+async fn turn_in_session(
+    state: Arc<ServerState>,
+    session_id: &str,
+    agent_id: &str,
+    message: String,
+    origin: TurnOrigin,
+) -> bool {
     let Ok(Some(meta)) = state.manager.global_sessions.get_session_meta(session_id) else {
         return false;
     };
     let req = ChatRequest {
         project_root: meta.cwd.or(meta.project).unwrap_or_default(),
         agent_id: agent_id.to_string(),
-        message: format!("[HIDDEN] {text}"),
+        message,
         session_id: Some(session_id.to_string()),
         user_type: super::types::default_user_type(),
         mission_id: None,
@@ -983,7 +947,7 @@ pub(crate) async fn kickoff_in_session(
         sender: None,
         followups: false,
     };
-    start_turn(state, req, TurnOrigin::Kickoff).await;
+    start_turn(state, req, origin).await;
     true
 }
 
@@ -1295,9 +1259,7 @@ pub(crate) async fn start_turn(
             images: req_images,
             policy,
             sender,
-            guest: false,
             silence_ok: origin == TurnOrigin::Kickoff,
-            aside: None,
         };
 
         run_session_turn(&ctx, &mut engine, &manager, None).await;
@@ -1349,8 +1311,8 @@ pub(crate) async fn start_turn(
 #[cfg(test)]
 mod tests {
     use super::{
-        allowed_model, auto_session_title, leading_mention, take_aside, trim_live_history,
-        turn_creator, turn_model, TurnModel,
+        allowed_model, auto_session_title, leading_mention, trim_live_history, turn_creator,
+        turn_model, TurnModel,
     };
     use super::{busy_message, BusyMessage};
     use crate::engine::skill::QueueMode;
@@ -1403,24 +1365,6 @@ mod tests {
         // phone carries no skill_name — it is still the skill's turn.
         assert_eq!(turn_creator(None, None, Some("game")), "skill");
         assert_eq!(turn_creator(Some("dream"), None, Some("game")), "mission");
-    }
-
-    /// A moment's aside (an app chat's dialogue) is read for its turn only:
-    /// afterwards her thread holds the turn, never the aside — even when
-    /// the thread shifted under it.
-    #[test]
-    fn an_aside_is_read_for_its_turn_and_never_kept() {
-        use crate::message::ChatMessage;
-        let mut h = vec![ChatMessage::new("user", "earlier")];
-        h.push(ChatMessage::new("user", "[User]: 去临淄"));
-        h.push(ChatMessage::new("user", "kickoff"));
-        h.push(ChatMessage::new("assistant", "一路小心。"));
-        take_aside(&mut h, Some("[User]: 去临淄"));
-        let left: Vec<&str> = h.iter().map(|m| m.content.as_str()).collect();
-        assert_eq!(left, ["earlier", "kickoff", "一路小心。"]);
-        take_aside(&mut h, None);
-        take_aside(&mut h, Some("[User]: 去临淄"));
-        assert_eq!(h.len(), 3, "nothing else is taken");
     }
 
     fn names() -> Vec<(String, String)> {
