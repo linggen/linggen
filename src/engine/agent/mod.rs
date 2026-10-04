@@ -693,6 +693,16 @@ impl AgentManager {
             .collect()
     }
 
+    /// The model `agent_id` runs on by its own chain (config override,
+    /// frontmatter, routing default) — what a fresh engine of it gets.
+    pub async fn agent_model_id(&self, project_root: &Path, agent_id: &str) -> Option<String> {
+        let normalized = Self::normalize_agent_id(agent_id);
+        let spec = self.agents.find(project_root, &normalized).await.ok()??;
+        let config = self.config.read().await.clone();
+        let models = self.models.read().await.clone();
+        Self::resolve_model_id(&config, &models, &normalized, spec.spec.model.clone()).ok()
+    }
+
     pub async fn agent_exists(&self, project_root: &Path, agent_id: &str) -> bool {
         matches!(self.agents.find(project_root, agent_id).await, Ok(Some(_)))
     }

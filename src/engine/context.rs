@@ -609,25 +609,6 @@ impl AgentEngine {
         Some(summary)
     }
 
-    /// Force-compact regardless of token budget. Backs the `/compact`
-    /// command. Thin wrapper over the Tier-2 path; `focus` overrides the
-    /// per-session `compact_focus` for this one call only.
-    pub(crate) async fn force_compact(
-        &mut self,
-        messages: &mut Vec<ChatMessage>,
-        focus: Option<&str>,
-    ) -> Option<String> {
-        let effective_focus = focus
-            .filter(|f| !f.is_empty())
-            .map(str::to_string)
-            .or_else(|| self.compact_focus.clone());
-        let result = self.compact_once(messages, "force", effective_focus).await;
-        if result.is_some() {
-            self.accumulated_token_estimate = Self::estimate_tokens_for_messages(messages);
-        }
-        result
-    }
-
     /// Summarize a span of messages into a structured working-state summary
     /// via the model. Returns None if the model call fails or yields nothing
     /// — the caller then leaves the transcript uncompacted rather than
@@ -673,63 +654,73 @@ impl AgentEngine {
             transcript
         );
 
-        let summarize_msgs = vec![
-            ChatMessage::new(
-                "system",
-                "You are a context compaction assistant. Produce a concise summary.",
-            ),
-            ChatMessage::new("user", prompt),
-        ];
+        let summary = summarize_text(
+            &self.model_manager,
+            &self.model_id,
+            (self.reasoning_effort.as_deref(), self.app_product()),
+            prompt,
+        )
+        .await;
+        let (result, usage) = summary?;
+        self.run_usage.add(&self.model_id, usage.as_ref());
+        Some(format!(
+            "[Context compacted — {} messages summarized]\n\n{}",
+            dropped.len(),
+            result
+        ))
+    }
+}
 
-        match self
-            .model_manager
-            .chat_text_stream(
-                &self.model_id,
-                &summarize_msgs,
-                self.reasoning_effort.as_deref(),
-                self.app_product(),
-            )
-            .await
-        {
-            Ok(mut stream) => {
-                let mut result = String::new();
-                let mut usage: Option<crate::provider::models::TokenUsage> = None;
-                while let Some(chunk) = stream.next().await {
-                    match chunk {
-                        Ok(crate::provider::models::StreamChunk::Token(t)) => result.push_str(&t),
-                        Ok(crate::provider::models::StreamChunk::Usage(u)) => {
-                            usage = Some(match usage {
-                                Some(earlier) => earlier.merged(u),
-                                None => u,
-                            });
-                        }
-                        Ok(_) => {}
-                        Err(e) => {
-                            tracing::warn!(
-                                "[compact] summary stream error, skipping compaction: {e}"
-                            );
-                            return None;
-                        }
-                    }
-                }
-                self.run_usage.add(&self.model_id, usage.as_ref());
-                let result = result.trim();
-                if result.is_empty() {
-                    tracing::warn!("[compact] summary model returned empty, skipping compaction");
-                    return None;
-                }
-                Some(format!(
-                    "[Context compacted — {} messages summarized]\n\n{}",
-                    dropped.len(),
-                    result
-                ))
+/// One summary of `prompt` by `model_id`, and what it spent. `None` when the
+/// model call fails or yields nothing — the caller then keeps the transcript
+/// as it was rather than degrading it silently.
+pub(crate) async fn summarize_text(
+    models: &crate::provider::models::ModelManager,
+    model_id: &str,
+    (effort, app): (Option<&str>, Option<&str>),
+    prompt: String,
+) -> Option<(String, Option<crate::provider::models::TokenUsage>)> {
+    let summarize_msgs = vec![
+        ChatMessage::new(
+            "system",
+            "You are a context compaction assistant. Produce a concise summary.",
+        ),
+        ChatMessage::new("user", prompt),
+    ];
+    let mut stream = match models
+        .chat_text_stream(model_id, &summarize_msgs, effort, app)
+        .await
+    {
+        Ok(stream) => stream,
+        Err(e) => {
+            tracing::warn!("[compact] summary model call failed, skipping compaction: {e}");
+            return None;
+        }
+    };
+    let mut result = String::new();
+    let mut usage: Option<crate::provider::models::TokenUsage> = None;
+    while let Some(chunk) = stream.next().await {
+        match chunk {
+            Ok(crate::provider::models::StreamChunk::Token(t)) => result.push_str(&t),
+            Ok(crate::provider::models::StreamChunk::Usage(u)) => {
+                usage = Some(match usage {
+                    Some(earlier) => earlier.merged(u),
+                    None => u,
+                });
             }
+            Ok(_) => {}
             Err(e) => {
-                tracing::warn!("[compact] summary model call failed, skipping compaction: {e}");
-                None
+                tracing::warn!("[compact] summary stream error, skipping compaction: {e}");
+                return None;
             }
         }
     }
+    let result = result.trim();
+    if result.is_empty() {
+        tracing::warn!("[compact] summary model returned empty, skipping compaction");
+        return None;
+    }
+    Some((result.to_string(), usage))
 }
 
 /// The whole reply is the silence marker (`SILENT`, any case, bare

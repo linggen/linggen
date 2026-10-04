@@ -804,6 +804,14 @@ pub(crate) async fn run_session_turn(
         catch_up_side_lines(engine, ctx, restored);
         apply_session_bound_skill(engine, ctx).await;
         apply_session_bound_mission(engine, ctx).await;
+        // The thread outgrew the smallest member's window: one summary
+        // for every member, then this member's thread from it on.
+        if super::compact_rows::compact_if_due(engine, ctx).await {
+            if let Some(cap) = max_live_msgs {
+                trim_live_history(&mut engine.chat_history, cap);
+                restored_tools::drop_leading_results(&mut engine.chat_history);
+            }
+        }
     }
     push_aside(engine, ctx.aside.as_deref());
     dispatch_turn(ctx, engine, manager, &ctx.clean_msg).await;

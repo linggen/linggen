@@ -361,8 +361,11 @@ pub struct AgentEngine {
     /// Whether to automatically try fallback models on transient errors.
     pub auto_fallback: bool,
     /// Cached context window size (in tokens) for the active model.
-    /// Queried once at loop start and used to adapt compaction thresholds.
+    /// Queried at loop start and used to adapt compaction thresholds.
     pub context_window_tokens: Option<usize>,
+    /// The model `context_window_tokens` was read for: a member whose model
+    /// changes between turns reads its window again.
+    pub context_window_model: Option<String>,
     /// Per-session override of the auto-compact trigger fraction of
     /// `context_window_tokens`. None = use default (0.95). Set runtime-only
     /// via POST /api/chat/compact_config. Skills replay on iframe load.
@@ -598,6 +601,7 @@ impl AgentEngine {
             default_models: Vec::new(),
             auto_fallback: true,
             context_window_tokens: None,
+            context_window_model: None,
             compact_threshold: None,
             compact_focus: None,
             last_token_usage: None,

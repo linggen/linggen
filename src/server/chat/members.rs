@@ -125,6 +125,33 @@ pub(crate) async fn set_model(
     meta.set_member_model(id, model) && store.update_session_meta(&meta).is_ok()
 }
 
+/// The model `member` runs on in its session: the model the session keeps
+/// for it, else (the companion) her pet setting, else its own chain — each
+/// only when this machine has it.
+pub(crate) async fn model_of(
+    manager: &AgentManager,
+    root: &std::path::Path,
+    member: &SessionMember,
+) -> Option<String> {
+    let models = manager.models.read().await.clone();
+    let pet = is_companion(&member.id).then(|| async {
+        crate::server::resident::resolve_pet_model(&manager.get_config_snapshot().await.pet.model)
+    });
+    let pet = match pet {
+        Some(f) => f.await,
+        None => None,
+    };
+    let chosen = member
+        .model
+        .iter()
+        .chain(pet.iter())
+        .find_map(|m| models.resolve_id(m));
+    match chosen {
+        Some(m) => Some(m),
+        None => manager.agent_model_id(root, &member.id).await,
+    }
+}
+
 /// Whether `id` is the companion.
 pub(crate) fn is_companion(id: &str) -> bool {
     id == COMPANION_AGENT_ID

@@ -67,7 +67,6 @@ pub(crate) struct ClearChatRequest {
 pub(crate) struct CompactChatRequest {
     pub(super) project_root: String,
     pub(super) session_id: Option<String>,
-    pub(super) agent_id: Option<String>,
     pub(super) focus: Option<String>,
 }
 

@@ -213,23 +213,8 @@ fn export_prompt(mut engine: crate::engine::AgentEngine) -> axum::response::Resp
     .into_response()
 }
 
-/// The senders in `rows` that are agents (not the user, the system or a
-/// pseudo-sender such as recalled memory).
-async fn speaking_agents(
-    manager: &crate::engine::agent::AgentManager,
-    root: &std::path::Path,
-    rows: &[crate::state_fs::sessions::ChatMsg],
-) -> std::collections::HashSet<String> {
-    let mut agents = std::collections::HashSet::new();
-    let mut seen = std::collections::HashSet::new();
-    for r in rows {
-        if seen.insert(r.from_id.as_str()) && manager.agent_exists(root, &r.from_id).await {
-            agents.insert(r.from_id.clone());
-        }
-    }
-    agents
-}
-
+/// `/compact`: the session's one summary, now (`compact_rows`). Every
+/// member's cached thread starts over from it on its next turn.
 pub(crate) async fn compact_chat_api(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<CompactChatRequest>,
@@ -238,101 +223,64 @@ pub(crate) async fn compact_chat_api(
         .session_id
         .clone()
         .unwrap_or_else(|| "default".to_string());
-    let agent_id = req.agent_id.clone().unwrap_or_else(|| "ling".to_string());
     let root = match PathBuf::from(&req.project_root).canonicalize() {
         Ok(r) => r,
         Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
     };
-    let focus = req.focus.as_deref();
+    let _turn = state.manager.session_turn(&session_id).lock_owned().await;
+    let members = super::members::of_session(&state.manager, &session_id).await;
+    let Some(models) = super::compact_rows::session_models(&state.manager, &root, &members).await
+    else {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "no model to summarize with",
+        )
+            .into_response();
+    };
+    let focus = req.focus.clone().filter(|f| !f.is_empty()).or_else(|| {
+        state
+            .manager
+            .global_sessions
+            .get_session_meta(&session_id)
+            .ok()
+            .flatten()
+            .and_then(|m| m.compact_focus)
+    });
+    let result = super::compact_rows::compact_session(
+        &state.manager,
+        &session_id,
+        &models,
+        focus.as_deref(),
+    )
+    .await;
+    if result.is_some() {
+        for engine in state.manager.session_engines_of(&session_id).await {
+            let mut engine = engine.lock().await;
+            engine.chat_history.clear();
+            engine.observations.clear();
+        }
+    }
+    let _ = state.events_tx.send(ServerEvent::StateUpdated);
 
-    match state
-        .manager
-        .get_or_create_session_agent(&session_id, &root, &agent_id)
-        .await
-    {
-        Ok(agent_mutex) => {
-            let _turn = state.manager.session_turn(&session_id).lock_owned().await;
-            let mut engine = agent_mutex.lock().await;
-            // Compact the same effective context auto-compact sees: the
-            // durable chat_history PLUS the live tool/observation outputs,
-            // where the bulk (e.g. fetched Reddit trees) actually lives.
-            // /compact runs outside the agent loop, so a finished run's
-            // observations are still resident — auto-compact reaches the
-            // same content via prepare_loop_messages. Without this, /compact
-            // on a tool-heavy session is a no-op ("nothing to compact").
-            let mut messages = std::mem::take(&mut engine.chat_history);
-            let obs_rendered: Vec<String> = engine
-                .observations
-                .iter()
-                .map(|o| engine.observation_for_model(o))
-                .collect();
-            messages.extend(
-                obs_rendered
-                    .into_iter()
-                    .map(|c| crate::message::ChatMessage::new("user", c)),
-            );
-            // The file as it stands before the summary is written: what
-            // lands meanwhile (a guest's answer) is after this and kept.
-            let snapshot = state
-                .manager
-                .global_sessions
-                .get_chat_history(&session_id)
-                .unwrap_or_default();
-            let snapshot_len = snapshot.len();
-            let agents = speaking_agents(&state.manager, &root, &snapshot).await;
-            let result = engine.force_compact(&mut messages, focus).await;
-
-            let referenced_files: Vec<String> = messages
-                .iter()
-                .flat_map(|m| extract_file_references(&m.content))
+    match result {
+        Some(summary) => {
+            let referenced_files: Vec<String> = extract_file_references(&summary)
+                .into_iter()
                 .collect::<std::collections::BTreeSet<_>>()
                 .into_iter()
                 .collect();
-
-            // Fold the agent's own span of the session file into the summary
-            // (`compact_rows`): other speakers' rows stay, and rows written
-            // since the snapshot are kept.
-            if let Some(summary) = result.as_deref() {
-                // Observation bodies are now folded into the summary held in
-                // chat_history; drop them so they aren't re-expanded.
-                engine.observations.clear();
-                let own = engine.agent_id.clone().unwrap_or_else(|| agent_id.clone());
-                let tail = messages
-                    .iter()
-                    .position(|m| m.content == summary)
-                    .map_or(&messages[..], |i| &messages[i + 1..]);
-                let fold = |rows| {
-                    super::compact_rows::compacted(rows, snapshot_len, &own, tail, summary, &agents)
-                };
-                if let Err(e) = state
-                    .manager
-                    .global_sessions
-                    .edit_chat_history(&session_id, fold)
-                {
-                    tracing::warn!("Failed to rewrite session after compact: {e}");
-                }
-            }
-
-            engine.chat_history = messages;
-            drop(engine);
-
-            let _ = state.events_tx.send(ServerEvent::StateUpdated);
-
-            match result {
-                Some(summary) => Json(serde_json::json!({
-                    "compacted": true,
-                    "summary": summary,
-                    "referenced_files": referenced_files,
-                }))
-                .into_response(),
-                None => Json(serde_json::json!({
-                    "compacted": false,
-                    "summary": "Nothing to compact — context is too small.",
-                }))
-                .into_response(),
-            }
+            Json(serde_json::json!({
+                "compacted": true,
+                "summary": summary,
+                "referenced_files": referenced_files,
+            }))
+            .into_response()
         }
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        None => Json(serde_json::json!({
+            "compacted": false,
+            "summary": "Nothing to compact — context is too small.",
+        }))
+        .into_response(),
     }
 }
 

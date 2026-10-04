@@ -59,7 +59,14 @@ pub(super) async fn sync(engine: &mut AgentEngine, ctx: &ChatRunCtx) -> bool {
             return false;
         }
     }
-    let Ok(mut rows) = store.get_chat_history(sid) else {
+    rebuild(engine, ctx).await
+}
+
+/// Rebuild the engine's thread from the session's file, without the
+/// message this turn answers. False when the file can't be read.
+pub(super) async fn rebuild(engine: &mut AgentEngine, ctx: &ChatRunCtx) -> bool {
+    let sid = ctx.session_id.as_deref().unwrap_or("default");
+    let Ok(mut rows) = ctx.manager.global_sessions.get_chat_history(sid) else {
         return false;
     };
     if rows.last().is_some_and(|m| {

@@ -40,6 +40,8 @@ pub use actions::{
 
 pub use skill_activation::{ActivationMode, ActivationOutcome};
 
+pub(crate) use context::summarize_text;
+
 // Internal imports used by run_agent_loop
 use closing_ask::ClosingAsk;
 use streaming::{can_parallel_tool, has_write_path_conflicts};
@@ -327,14 +329,18 @@ impl AgentEngine {
             }
         }
 
-        // Query and cache the model's context window for adaptive thresholds.
-        if self.context_window_tokens.is_none() {
+        // Query and cache the model's context window for adaptive thresholds
+        // — again whenever the model is not the one it was read for.
+        if self.context_window_tokens.is_none()
+            || self.context_window_model.as_deref() != Some(self.model_id.as_str())
+        {
             self.context_window_tokens = self
                 .model_manager
                 .context_window(&self.model_id)
                 .await
                 .ok()
                 .flatten();
+            self.context_window_model = Some(self.model_id.clone());
             if let Some(cw) = self.context_window_tokens {
                 debug!(
                     "Context window: {}t, soft_limit={}, tail_budget={}t",
