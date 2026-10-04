@@ -264,7 +264,7 @@ async fn auto_recall_memory(
     session_id: Option<&str>,
     min_score: Option<f32>,
     top_k: usize,
-    contexts: Option<Vec<String>>,
+    app_dir: Option<std::path::PathBuf>,
 ) -> Option<Vec<RecallRow>> {
     use std::time::Duration;
     const RECALL_BUDGET: Duration = Duration::from_secs(3);
@@ -285,23 +285,33 @@ async fn auto_recall_memory(
     // `--idle-shutdown-secs`, so an absent daemon is an ordinary condition
     // and not an exception.
 
-    // The session's working directory, when it is a real project — sent to
-    // the daemon as `cwd_scope` so the scope shapes the RANKING (rows from
-    // other projects can't crowd the wanted ones out of the top N; a filter
-    // applied to the returned list can only shrink an already-wrong N).
-    // Unscoped rows — identity, preferences, cross-project gotchas — always
-    // pass; the same contract as the plugin's recall.sh on Claude Code.
-    let cwd_scope: Option<String> = session_id
-        .and_then(|sid| {
-            state
-                .manager
-                .global_sessions
-                .get_session_meta(sid)
-                .ok()
-                .flatten()
-        })
-        .and_then(|m| m.cwd.or(m.project))
-        .filter(|p| crate::engine::tools::is_project_dir(std::path::Path::new(p)));
+    // The session's recall scope, sent to the daemon as `cwd_scope` so it
+    // shapes the RANKING (rows from elsewhere can't crowd the wanted ones out
+    // of the top N; a filter applied to the returned list can only shrink an
+    // already-wrong N). The daemon reads the path (`scope-index-spec.md`):
+    // a project root sees rows under it, at its parents and about the
+    // person; a skill's dir sees only its own rows; a session at `$HOME`,
+    // `~/.linggen` or a temp dir sees only rows about the person. Same
+    // contract as the plugin's recall.sh on Claude Code.
+    let cwd_scope: Option<String> = match &app_dir {
+        Some(dir) => Some(dir.to_string_lossy().to_string()),
+        None => session_id
+            .and_then(|sid| {
+                state
+                    .manager
+                    .global_sessions
+                    .get_session_meta(sid)
+                    .ok()
+                    .flatten()
+            })
+            .and_then(|m| m.cwd.or(m.project))
+            .map(|cwd| {
+                let p = std::path::PathBuf::from(&cwd);
+                crate::engine::tools::memory_root(&p)
+                    .map(|r| r.to_string_lossy().to_string())
+                    .unwrap_or(cwd)
+            }),
+    };
 
     // `min_score` is the per-row relevance floor (Settings → General → Memory
     // Inject Score), applied by the daemon to the HYBRID score — cosine plus
@@ -321,26 +331,18 @@ async fn auto_recall_memory(
         // program, not a model.
         args["min_score"] = serde_json::json!(s);
     }
-    // Scoped per-app recall: restrict the search to this namespace on the
-    // daemon side, so a focused app (CFO ↔ "cfo") only ever pulls its own rows.
-    // The project scope stays out of this branch — an app's namespace is its
-    // isolation, and its rows are written from wherever the app happens to run.
-    if let Some(ctx) = &contexts {
-        args["contexts"] = serde_json::json!(ctx);
-    } else if let Some(scope) = &cwd_scope {
-        // Preferences ride recall like any other row: session start loads
-        // core only.
+    if let Some(scope) = &cwd_scope {
         args["cwd_scope"] = serde_json::json!(scope);
     }
 
     tracing::debug!(
-        "auto-recall: min_score={:?} top_k={} contexts={:?} cwd_scope={:?}",
+        "auto-recall: min_score={:?} top_k={} app_dir={:?} cwd_scope={:?}",
         min_score,
         top_k,
-        contexts,
+        app_dir,
         cwd_scope
     );
-    let rows = match contexts {
+    let rows = match app_dir {
         Some(_) => search_app_rows(&args, RECALL_BUDGET).await?,
         None => search_rows(args, RECALL_BUDGET).await?,
     };
@@ -504,9 +506,9 @@ pub(super) async fn push_user_turn_with_recall(
             None,
         )
         .await
-    } else if let Some(ctx_tag) = engine.prompt_profile.memory_context.clone() {
-        // Scoped per-app recall — ONLY this app's namespace and only the
-        // person's facts and preferences, at the app's own threshold/count.
+    } else if let Some(app_dir) = engine.prompt_profile.memory_app_dir.clone() {
+        // Scoped per-app recall — ONLY the rows under this app's dir and only
+        // the person's facts and preferences, at the app's own threshold/count.
         // No core block, no capture nudge (include_memory is off) → lean,
         // isolated, no cross-app pollution.
         auto_recall_memory(
@@ -518,7 +520,7 @@ pub(super) async fn push_user_turn_with_recall(
                 .memory_recall_min_score
                 .or(engine.cfg.memory_inject_min_score),
             engine.prompt_profile.memory_recall_count.unwrap_or(3),
-            Some(vec![ctx_tag]),
+            Some(app_dir),
         )
         .await
     } else {

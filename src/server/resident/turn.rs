@@ -340,9 +340,9 @@ fn ready_for_turn(
     policy.apply(engine);
 
     // Her memory tools act for the session she speaks in: a write is stamped
-    // with it (`source_session`), and a table whose skill keeps a memory
-    // context holds her reads and writes to that context, as it holds its
-    // own agent's (`memory_mcp::skill_scope`).
+    // with it (`source_session`), and a table whose skill keeps memory holds
+    // her reads and writes to that skill's dir, as it holds its own agent's
+    // (`memory_mcp::memory_place`).
     engine
         .tools
         .builtins

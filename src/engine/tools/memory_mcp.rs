@@ -10,10 +10,12 @@
 //!   mislabel their rows.
 //! - **which session authored a row** (`source_session`) — what makes the
 //!   scan pass's skip-by-session idempotency real.
-//! - **which slice of the store this session may see** (`contexts`), when it
-//!   is bound to a skill that declares `memory_context`. This one is not a
-//!   nicety: without it a focused app like CFO reads and writes the whole
-//!   cross-app store.
+//! - **where the session stands** (`cwd`, `root`, `cwd_scope`) — the paths
+//!   the daemon turns into a row's scope and a search's recall scope
+//!   (`linggen-memory/doc/scope-index-spec.md`). A session bound to a skill
+//!   stands in that skill's dir (`~/.linggen/skills/<name>`), which is what
+//!   keeps a focused app like CFO to its own rows: app isolation is keyed by
+//!   path now, not by a forced `contexts` tag.
 //! - **whether a write may overwrite the user's own words.** The daemon
 //!   enforces the same floor for every frontend, but it cannot see the one
 //!   case the merge law prescribes — that the user just answered an AskUser.
@@ -73,19 +75,6 @@ pub(crate) async fn augment(tools: &Tools, qualified: &str, mut args: Value) -> 
         return Ok(args);
     };
 
-    // Per-skill memory isolation. FORCED, not defaulted: a session bound to a
-    // skill that declares `memory_context` only ever sees and writes its own
-    // namespace, whatever `contexts` the model passed.
-    if declares(&tool.input_schema, "contexts") {
-        if let Some(scope) = skill_scope(tools).await {
-            set(
-                &mut args,
-                "contexts",
-                Value::Array(vec![Value::String(scope)]),
-            );
-        }
-    }
-
     // The writing session, so a later scan knows this content is already
     // stored. Only when the model didn't supply one — the dream's promote path
     // carries the ORIGINAL row's session forward, and that must win.
@@ -100,32 +89,39 @@ pub(crate) async fn augment(tools: &Tools, qualified: &str, mut args: Value) -> 
         set(&mut args, "host", Value::String(HOST.to_string()));
     }
 
-    // Where the work is happening — stamped on the way in (`cwd`) and asked
-    // for on the way out (`cwd_scope`), so a row can only be found from the
-    // project it was written in, or from a parent of it.
+    // Where the work is happening: the session cwd (`cwd`, a row's default
+    // scope), its root (`root`, what a model's `scope` resolves against) and,
+    // on a search, the recall scope (`cwd_scope` = root). The daemon owns the
+    // rules — which dirs can be a scope, what a root sees — so this only
+    // hands it the paths.
     //
-    // The model is never asked for either. It is a fact about the session, not
-    // a judgment, and a field the model has to copy by hand is a field that
+    // The model is never asked for these. They are facts about the session,
+    // not judgments, and a field the model has to copy by hand is a field that
     // ends up empty — which is the whole store bleeding into every question.
     //
     // Two refusals guard the stamp. A call that names ANOTHER session's row
     // (`source_session` ≠ this session — checked after the fill above, which
     // only ever inserts our own id) is the dream's promote or the scan's
     // backfill carrying the original row's origin: its cwd, when it had one,
-    // rides in the same call, and this session's cwd stamped over the gap
+    // rides in the same call, and this session's paths stamped over the gap
     // would rescope someone else's memory to wherever the dream happened to
-    // run. And a cwd that is not a project (see [`project_cwd`]) must never
-    // become one — the dream mission runs at `~/.linggen`, and a row stamped
-    // there is hidden from every project-scoped search.
+    // run. And a session that stands in no project (see [`memory_place`]) is
+    // stamped nothing — the dream mission runs at `~/.linggen`, and its own
+    // searches must see the whole store.
     let foreign_row = args
         .get("source_session")
         .and_then(Value::as_str)
         .is_some_and(|s| tools.session_id.as_deref() != Some(s));
     if !foreign_row {
-        if let Some(project) = project_cwd(tools) {
-            for field in ["cwd", "cwd_scope"] {
+        if let Some(place) = memory_place(tools).await {
+            let stamps = [
+                ("cwd", &place.cwd),
+                ("root", &place.root),
+                ("cwd_scope", &place.root),
+            ];
+            for (field, value) in stamps {
                 if declares(&tool.input_schema, field) && wants_project(&args, field) {
-                    set(&mut args, field, Value::String(project.clone()));
+                    set(&mut args, field, Value::String(value.clone()));
                 }
             }
         }
@@ -135,24 +131,63 @@ pub(crate) async fn augment(tools: &Tools, qualified: &str, mut args: Value) -> 
     Ok(args)
 }
 
-/// This session's cwd, if it is a place recall scoping should know about.
-///
-/// `None` for the dirs a session sits in when it is not in any project: the
-/// home dir ("no particular work" — a scope there would claim every repo
-/// underneath), the engine's own `~/.linggen` (where every mission runs),
-/// and temp dirs. Stamping one of those onto a write hides the row from
-/// every project search, and scoping a read to one hides every project row
-/// from the reader — a scope that is not a project is worse than no scope.
-/// Same rule the plugin's stamp-cwd.sh / recall.sh apply for Claude Code.
-pub(crate) fn project_cwd(tools: &Tools) -> Option<String> {
-    let cwd = tools.cwd();
-    is_project_dir(&cwd).then(|| cwd.to_string_lossy().to_string())
+/// Where a session's memory stands: its cwd (a row's default scope) and its
+/// root (git root, a skill's dir, or the cwd itself).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MemoryPlace {
+    pub cwd: String,
+    pub root: String,
 }
 
-/// Is this path a project, as far as memory scoping is concerned?
-/// Also used by the chat runtime's per-turn auto-recall on the session's
-/// own cwd — one predicate, both directions.
+/// This session's place: a skill-bound session stands in its skill's dir
+/// (`~/.linggen/skills/<name>`) wherever its process cwd is; any other
+/// session at its cwd when that is a project. `None` when it stands in no
+/// project (`$HOME`, `~/.linggen`, temp).
+pub(crate) async fn memory_place(tools: &Tools) -> Option<MemoryPlace> {
+    if let Some(dir) = bound_skill_dir(tools).await {
+        return place_of(&dir);
+    }
+    place_of(&tools.cwd())
+}
+
+/// The place for a cwd, if it is a project.
+pub(crate) fn place_of(cwd: &std::path::Path) -> Option<MemoryPlace> {
+    let root = memory_root(cwd)?;
+    Some(MemoryPlace {
+        cwd: cwd.to_string_lossy().to_string(),
+        root: root.to_string_lossy().to_string(),
+    })
+}
+
+/// A project's root for memory: a skill's own dir for anything inside it,
+/// else the git root, else the dir itself. `None` when `cwd` is no project.
+pub(crate) fn memory_root(cwd: &std::path::Path) -> Option<std::path::PathBuf> {
+    if !is_project_dir(cwd) {
+        return None;
+    }
+    if let Some(skill) = skill_dir_of(cwd) {
+        return Some(skill);
+    }
+    Some(super::search_exec::find_git_root(cwd).unwrap_or_else(|| cwd.to_path_buf()))
+}
+
+/// `~/.linggen/skills/<name>` when `p` is that dir or inside it.
+fn skill_dir_of(p: &std::path::Path) -> Option<std::path::PathBuf> {
+    let skills = crate::paths::global_skills_dir();
+    let first = p.strip_prefix(&skills).ok()?.components().next()?;
+    Some(skills.join(first.as_os_str()))
+}
+
+/// Is this path a project, as far as memory scoping is concerned? Not the
+/// home dir ("no particular work" — a scope there would claim every repo
+/// underneath), not the engine's own `~/.linggen` (where every mission runs),
+/// not a temp dir. A skill's own dir (`~/.linggen/skills/<name>`) is one: an
+/// app's rows live there. Same rule the daemon applies
+/// (`memory::scope::is_scope_dir`) and the plugin's hooks rely on.
 pub(crate) fn is_project_dir(cwd: &std::path::Path) -> bool {
+    if skill_dir_of(cwd).is_some() {
+        return true;
+    }
     if let Some(home) = dirs::home_dir() {
         if cwd == home || cwd.starts_with(home.join(".linggen")) {
             return false;
@@ -160,7 +195,8 @@ pub(crate) fn is_project_dir(cwd: &std::path::Path) -> bool {
     }
     !(cwd.starts_with(std::env::temp_dir())
         || cwd.starts_with("/tmp")
-        || cwd.starts_with("/private/tmp"))
+        || cwd.starts_with("/private/tmp")
+        || cwd.starts_with("/private/var/folders"))
 }
 
 /// Does this call get the session's project stamped into `field`? Never over
@@ -192,9 +228,10 @@ fn set(args: &mut Value, field: &str, value: Value) {
     }
 }
 
-/// The `memory_context` of the skill this session is bound to, if any.
-/// Skills without one (e.g. Pulse) keep full-store access.
-async fn skill_scope(tools: &Tools) -> Option<String> {
+/// The dir of the skill this session is bound to, when that skill uses
+/// memory (declares `memory-context`). Skills that don't (e.g. Pulse) stand
+/// at their session cwd like any other session.
+async fn bound_skill_dir(tools: &Tools) -> Option<std::path::PathBuf> {
     let manager = tools.get_manager()?;
     let sid = tools.session_id.clone()?;
     let meta = manager
@@ -204,7 +241,10 @@ async fn skill_scope(tools: &Tools) -> Option<String> {
         .flatten()?;
     let skill_name = meta.skill?;
     let skill = manager.skills.reload_one(&skill_name).await?;
-    skill.memory_context.filter(|c| !c.trim().is_empty())
+    skill
+        .memory_context
+        .filter(|c| !c.trim().is_empty())
+        .map(|_| crate::paths::global_skills_dir().join(&skill_name))
 }
 
 /// Mechanical enforcement of the merge law's user-voice floor: a write that
@@ -222,7 +262,7 @@ async fn skill_scope(tools: &Tools) -> Option<String> {
 ///
 /// Which writes are guarded is read off the **shape of the request**, not the
 /// tool's name: `replace_ids` retires rows, and new `content` on an existing
-/// `id` rewrites one. A metadata-only edit (tier, contexts, tags) changes
+/// `id` rewrites one. A metadata-only edit (tier, hook, indexed) changes
 /// nothing the row says and stays unguarded.
 async fn guard_user_voice(tools: &Tools, server: &str, args: &mut Value) -> Result<()> {
     let Some(obj) = args.as_object_mut() else {
@@ -306,10 +346,10 @@ mod tests {
         assert!(declares(&add, "source_session"));
 
         // memory_update declares neither — an edit does not re-author a row.
-        let update = json!({"properties": {"id": {}, "content": {}, "contexts": {}}});
+        let update = json!({"properties": {"id": {}, "content": {}, "hook": {}}});
         assert!(!declares(&update, "host"));
         assert!(!declares(&update, "source_session"));
-        assert!(declares(&update, "contexts"));
+        assert!(declares(&update, "hook"));
 
         // A tool with no properties at all, and a malformed schema, both say no
         // rather than panicking — a third-party server's schema is not ours.
@@ -379,24 +419,32 @@ mod tests {
     /// The dirs a session sits in when it is not in any project must never
     /// become a scope — a row stamped with one is hidden from every
     /// project-scoped search (the dream mission runs at `~/.linggen`).
-    #[test]
-    fn a_cwd_that_is_not_a_project_never_becomes_a_scope() {
+    #[tokio::test]
+    async fn a_cwd_that_is_not_a_project_never_becomes_a_scope() {
         for non_project in [
             std::env::temp_dir(),
             dirs::home_dir().unwrap(),
             dirs::home_dir().unwrap().join(".linggen"),
             dirs::home_dir().unwrap().join(".linggen/missions"),
+            crate::paths::global_skills_dir(),
         ] {
-            let tools = Tools::new(non_project.clone()).unwrap();
             assert!(
-                project_cwd(&tools).is_none(),
+                place_of(&non_project).is_none(),
                 "{non_project:?} is not a project"
             );
         }
 
-        // A real repo checkout is one.
-        let tools = Tools::new(std::env::current_dir().unwrap()).unwrap();
-        assert!(project_cwd(&tools).is_some());
+        // A real repo checkout is one, rooted at its git root.
+        let here = std::env::current_dir().unwrap();
+        let tools = Tools::new(here.join("src")).unwrap();
+        let place = memory_place(&tools).await.unwrap();
+        assert!(place.cwd.ends_with("/src"));
+        assert!(here.starts_with(&place.root));
+
+        // A skill's own dir is one, and is its own root.
+        let cfo = crate::paths::global_skills_dir().join("cfo");
+        let place = place_of(&cfo.join("data")).unwrap();
+        assert_eq!(place.root, cfo.to_string_lossy());
     }
 
     /// The model's own assertion never reaches the daemon unexamined.

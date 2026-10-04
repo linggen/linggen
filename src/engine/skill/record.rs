@@ -331,15 +331,19 @@ pub struct Skill {
     pub model: Option<String>,
     #[serde(default)]
     pub context: Option<String>,
-    /// Memory namespace for this skill. When set, the engine FORCES every
-    /// memory call from a session bound to this skill to be scoped to this
-    /// `contexts` tag (`engine/tools/memory_mcp.rs`) — so a focused app (e.g. CFO ↔ "cfo")
-    /// only ever sees/writes its own memory, never the shared cross-app store.
-    /// Omitted → the skill's memory (if it has the tools) is unscoped.
+    /// The skill uses memory. When set, a session bound to this skill stands
+    /// in its own dir (`~/.linggen/skills/<name>`) for every memory call
+    /// (`engine/tools/memory_mcp.rs::memory_place`): its writes are filed
+    /// there and its recall sees only rows under it — so a focused app (e.g.
+    /// CFO) only ever sees/writes its own memory, never the shared store.
+    /// The value itself is no longer a namespace (the store dropped
+    /// `contexts`, 2026-10-04); any non-empty value opts in.
+    /// Omitted → the skill's memory (if it has the tools) stands at its
+    /// session cwd like any other session.
     #[serde(default)]
     pub memory_context: Option<String>,
-    /// When `memory_context` is set, the engine also auto-recalls that
-    /// namespace into each turn. These tune that scoped recall (per-app):
+    /// When `memory_context` is set, the engine also auto-recalls the
+    /// skill's dir into each turn. These tune that scoped recall (per-app):
     /// cosine floor and how many rows to inject. Omitted → engine defaults
     /// (0.6 floor, 3 rows). Ignored when `memory_context` is absent.
     #[serde(default)]

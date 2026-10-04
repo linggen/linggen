@@ -89,14 +89,19 @@ request):
 4. **Judge each cluster** — exactly one of:
    - **Promote** (durable: user biography, cross-project preference,
      decision-with-reasoning, re-hit gotcha, state change like a
-     shipped milestone, run learning): `memory_add {"content":"<verbatim row content>","type":"<row.type>","from":"<row.from>","contexts":<row.contexts>,"occurred_at":"<row.occurred_at, else row.created_at>","source_session":"<row.source_session, if present>","cwd":"<row.cwd, if present>"}`.
-     Carry `occurred_at` forward — recall sorting relies on it. Carry
-     `cwd` forward too, and only from the row: it is WHERE the memory
-     came from, and it is what keeps the promoted row findable from
-     that project. A row with no `cwd` gets none — never this
-     session's own directory. Do NOT pass `id`. Omit `tier` (defaults
-     to semantic); pass `"tier":"core"` only for a narrow universal
-     about the person.
+     shipped milestone, run learning): `memory_add {"content":"<verbatim row content>","type":"<row.type>","from":"<row.from>","tier":"semantic","occurred_at":"<row.occurred_at, else row.created_at>","source_session":"<row.source_session, if present>","cwd":"<row.cwd, if present>","hook":"<one line, preference/decision only>"}`.
+     Always pass `"tier":"semantic"` — an add with no tier lands in
+     episodic staging; pass `"tier":"core"` only for a narrow universal
+     about the person (core rows carry no `cwd`). Carry `occurred_at`
+     forward — it dates the row's day and its TTL. Carry `cwd` forward
+     too, and only from the row: it is the directory the memory is
+     ABOUT (its scope), and it is what keeps the promoted row findable
+     from there. A row with no `cwd` gets none — never this session's
+     own directory. Carry the row's `hook` when it has one; a
+     `preference` or `decision` without one gets one you write: one
+     line, ≤ 80 chars, saying what the row is for. Never set `indexed`
+     yourself — propose it (the index/scope lane below). Do NOT pass
+     `id`.
      **The promote bar — state + lessons, never events.** Test: strip
      the date and the commit hash — still useful in three months?
      Per-event rows ("committed X", "pushed Y", "closed the session")
@@ -164,8 +169,9 @@ archived with lineage, never deleted). Anything the judge doubts is
 - **`subject`** (digests) — same-subject vector clusters, 3+ rows,
   served only when QUIET (newest member >30 days old — a live subject
   keeps its detail). These are parallel notes on one subject, not a
-  newest-wins chain: write one focused per-subject **digest** row,
-  tagged `digest`. Vector neighbors include boundary noise — find the
+  newest-wins chain: write one focused per-subject **digest** row
+  (a digest is known by the rows whose `superseded_by` points at it —
+  no tag). Vector neighbors include boundary noise — find the
   largest subset that genuinely shares one subject, digest that
   subset (`replace_ids` only its ids), and leave outliers untouched.
   Never one mega state row: if a cluster spans a whole project,
@@ -190,11 +196,11 @@ than deleting it — every merge is reversible. Drafting rules:
   live memory (archived with `superseded_by` lineage, not deleted), so
   an id in prose adds nothing and confuses the next reader.
 - Fields: `type` = the most current member's type; `from` stays
-  `derived`; omit `tier` (semantic); `contexts` = union of the
-  members'; `occurred_at` = the newest member's (else its
-  `created_at`); `cwd` = the members' shared value when they agree
-  (omit when they differ or none carries one — never this session's
-  own directory).
+  `derived`; `"tier":"semantic"`; `occurred_at` = the newest member's
+  (else its `created_at`); omit `cwd` and `scope` — with `replace_ids`
+  the daemon files the survivor under the members' common directory
+  (none when any member has none), never this session's own; a `hook`
+  when the type is preference or decision.
 - **`replace_ids` may list only rows that are `from=derived,
   tier=semantic`.** Never a user-voice row, never a core row, never an
   episodic id — if one appears in a cluster, skip the whole cluster
@@ -248,7 +254,7 @@ covers. Per cluster, exactly one of:
 - **DIGEST** — you are confident the members (or a coherent 3+
   subset) genuinely share ONE subject: collapse per the condense
   drafting rules into a single digest row — `memory_add` with
-  `"tags":["digest"]` and `replace_ids` listing the coherent
+  `replace_ids` listing the coherent
   subset's ids only; outliers stay untouched. One `MERGE` line. The
   members are archived, not deleted — a wrong digest is
   recoverable, which is why this runs unattended.
@@ -258,6 +264,22 @@ covers. Per cluster, exactly one of:
   Listing every member id is what stops the cluster re-forming
   around a neighboring seed. One `QUEUE` line. The user rules on it
   in solve; keep-separate becomes a permanent exclusion.
+
+Then the **index/scope lane** — proposals only, never writes. While
+judging (the day's promotions, the audit's candidates), note:
+
+- a `from=user` preference or decision that reads as a standing rule
+  ("always…", "never…", "from now on…", "以后都…") and is not
+  `indexed`, or an indexed row whose rule no longer holds →
+  `memory_issue_add {"kind":"index","row_ids":[<id>],"note":"put in / take out of the index of <dir>: \"<proposed hook>\" — <why>"}`;
+- a row filed under the wrong directory (a 《九鼎录》 writing rule at
+  the `skills` root rather than `skills/lingjing`, a cross-project dev
+  rule inside one repo) →
+  `memory_issue_add {"kind":"scope","row_ids":[<id>],"note":"move from <cwd> to <dir>: <why>"}`.
+
+At most 5 such items per run; one `QUEUE` line each. The person
+confirms them in solve or the console — the index loads into every
+session under its directory, so it is never yours to change alone.
 
 `issue_add` is idempotent per `(kind, row_ids)` — a `"deduped":true`
 response means the item was already queued; that is success. One

@@ -1,7 +1,9 @@
 //! Built-in core memory — `tier=core` rows, pulled from the user's memory
-//! store (`session_start`) and injected into every owner session.
-//! Preferences are not loaded here: they surface by subject through
-//! per-turn recall, like any other long-term row.
+//! store (`session_start`) and injected into every owner session, with —
+//! for a session that stands in a project — the scope candidates line and
+//! the index (hooks of `indexed` rows filed at the session dir or a parent;
+//! `linggen-memory/doc/scope-index-spec.md`). Everything else surfaces by
+//! subject through per-turn recall.
 //!
 //! Per `doc/memory-spec.md` §1/§2 the core tier lives as rows in the
 //! `semantic` LanceDB table, not as files on disk. The engine queries
@@ -78,19 +80,30 @@ pub(crate) const RECONCILE_FOOTER: &str = "\n\nNote: If duplicates or conflictin
 pub(crate) const CAPTURE_REMINDER: &str = "Memory capture: before finishing this turn, recognize anything worth remembering and write it at the right tier per the memory protocol (core/semantic = search-first; episodic = incidental); anchor relative time to absolute dates (\"last month\" → \"2026-06\"). Nothing worth keeping? Skip silently.";
 
 /// What a session loads at start, from the daemon at `ling_mem_url`: the
-/// core rows. One `session_start` call; the daemon renders the block, so
-/// this engine injects the same text as every other host.
+/// core rows and, given a `place`, its scope candidates and index. One
+/// `session_start` call; the daemon renders the block, so this engine
+/// injects the same text as every other host. `core: false` asks for the
+/// place's part alone — a skill's own session, whose prompt carries no
+/// biography.
 ///
 /// Returns `None` when there is nothing to load (or the daemon is
 /// unreachable / errors out — the caller emits the empty-block prompt in
 /// that case so a fresh install still starts cleanly). A daemon older than
 /// `session_start` (ling-mem < 1.9) gets the core rows alone, as before.
-pub(crate) fn load_core(ling_mem_url: &str) -> Option<CoreContent> {
-    let args = serde_json::json!({"verb": "session_start"});
+pub(crate) fn load_session_start(
+    ling_mem_url: &str,
+    place: Option<&crate::engine::tools::MemoryPlace>,
+    core: bool,
+) -> Option<CoreContent> {
+    let mut args = serde_json::json!({"verb": "session_start", "core": core});
+    if let Some(p) = place {
+        args["cwd"] = serde_json::json!(p.cwd);
+        args["root"] = serde_json::json!(p.root);
+    }
     match fetch(ling_mem_url, args, LOAD_CORE_TIMEOUT) {
         Some(Ok(value)) => session_block(&value),
-        Some(Err(_)) => load_core_rows_only(ling_mem_url),
-        None => None,
+        Some(Err(_)) if core => load_core_rows_only(ling_mem_url),
+        _ => None,
     }
 }
 

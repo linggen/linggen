@@ -10,7 +10,7 @@ mod file_tools;
 pub(crate) mod json_schema;
 pub(crate) mod memory_http;
 mod memory_mcp;
-pub(crate) use memory_mcp::is_project_dir;
+pub(crate) use memory_mcp::{memory_root, place_of, MemoryPlace};
 mod delegation;
 mod search_exec;
 mod tool_helpers;

@@ -29,7 +29,7 @@ export const truncateDetail = (detail: string, maxLen: number): string => {
  *
  * What the chip shows is what the MODEL emitted. ling-mem's MCP layer may strip
  * hallucinated `type`/`from`/`outcome` before the store sees them, and the
- * engine fills in `host`/`source_session`/`contexts` on the way out; both are in
+ * engine fills in `host`/`source_session`/`cwd`/`root` on the way out; both are in
  * the logs, neither is pretended here.
  */
 const MEMORY_PREFIX = 'mcp__memory__memory_';
@@ -51,9 +51,8 @@ const memorySummary = (tool: string, args: Record<string, unknown>): string => {
   if (args.dry_run === true) parts.push('dry_run');
   if (args.derived_only === true) parts.push('derived_only');
   if (args.undreamed_only === true) parts.push('undreamed_only');
-  if (Array.isArray(args.contexts) && args.contexts.length > 0) {
-    parts.push(`contexts=[${(args.contexts as string[]).join(',')}]`);
-  }
+  if (typeof args.scope === 'string' && args.scope) parts.push(`scope=${args.scope}`);
+  if (args.indexed === true) parts.push('indexed');
   if (typeof args.from === 'string' && args.from) parts.push(`from=${args.from}`);
   if (typeof args.outcome === 'string' && args.outcome) parts.push(`outcome=${args.outcome}`);
   if (Array.isArray(args.replace_ids) && args.replace_ids.length > 0) {

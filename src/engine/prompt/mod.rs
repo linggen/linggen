@@ -478,8 +478,11 @@ impl AgentEngine {
         if self.prompt_profile.include_memory {
             // Head differs by whether the store has `tier=core` rows; the
             // shared tail (save triggers, retrieval-visibility, usage rules)
-            // is one fragment so the two heads can't drift apart.
-            match core_block::load_core(&self.cfg.ling_mem_url) {
+            // is one fragment so the two heads can't drift apart. Where the
+            // session stands (its cwd, read fresh each build, so a cd reloads
+            // the index) adds the scope candidates and the index.
+            let place = crate::engine::tools::place_of(&self.tools.builtins.cwd());
+            match core_block::load_session_start(&self.cfg.ling_mem_url, place.as_ref(), true) {
                 Some(c) => stable.push_str(
                     &self
                         .prompt_store
@@ -500,6 +503,21 @@ impl AgentEngine {
             // server ships it as MCP `initialize.instructions`, injected in
             // `prepare_loop_messages` alongside every other connected
             // server's instructions — one doctrine source for every host.
+        }
+
+        // --- An app's own memory index (skill sessions with memory) ---
+        // No biography: the index of the app's own dir alone, so its standing
+        // rules ride every session of it.
+        if !self.prompt_profile.include_memory {
+            if let Some(dir) = &self.prompt_profile.memory_app_dir {
+                let place = crate::engine::tools::place_of(dir);
+                if let Some(c) =
+                    core_block::load_session_start(&self.cfg.ling_mem_url, place.as_ref(), false)
+                {
+                    stable.push_str("\n\n");
+                    stable.push_str(&c.facts);
+                }
+            }
         }
 
         // --- Consumer frame (consumer only) ---

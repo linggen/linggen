@@ -239,7 +239,9 @@ agent). This mission adds only the nightly run protocol:
   — the digest stage: collapse each quiet cluster you are confident
   shares one subject into a single digest row (a `MERGE` line each);
   queue doubtful clusters as `subject` issues listing ALL member ids
-  (a `QUEUE` line each); reply `DONE`. The capped fetches are the
+  (a `QUEUE` line each); then the index/scope lane — at most 5
+  `index` / `scope` proposals as review items (a `QUEUE` line each;
+  never set `indexed` or move a row's directory yourself); reply `DONE`. The capped fetches are the
   nightly budget; leftovers wait for tomorrow. Every audit merge
   archives its losers (recoverable) — nothing in the audit deletes.
 - **A failed save doesn't end the day.** A `tool_error` on a write may

@@ -112,8 +112,8 @@ pub async fn call_memory_http(ling_mem_url: &str, caller: &str, mut args: Value)
     // arbitrary defaults (`type=fact, from=derived, outcome=neutral`),
     // which over-constrains the query to 0 rows. The dream is a
     // bulk-eviction sweep — it wants every past-TTL episodic row
-    // regardless of type/origin/outcome. Keep `contexts` intact for
-    // callers that legitimately scope by tag.
+    // regardless of type/origin/outcome. Scope fields (`cwd_scope`) stay
+    // intact for callers that legitimately scope by path.
     if let Some(obj) = args.as_object_mut() {
         let is_ttl_sweep = obj
             .get("past_ttl")

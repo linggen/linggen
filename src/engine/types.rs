@@ -378,6 +378,9 @@ pub struct AgentEngine {
     pub(crate) suggestion_fork: Option<tokio::task::AbortHandle>,
     /// Cached stable portion of the system prompt.
     pub(crate) cached_system_prompt: Option<CachedSystemPrompt>,
+    /// The cwd the memory index was last loaded for; a change rebuilds the
+    /// prompt (see `check_working_folder_change`).
+    pub(crate) memory_cwd: Option<std::path::PathBuf>,
     /// Running token estimate accumulated incrementally during the loop.
     /// Reset after compaction. Avoids re-scanning all messages each iteration.
     pub(crate) accumulated_token_estimate: usize,
@@ -589,6 +592,7 @@ impl AgentEngine {
             last_call: None,
             suggestion_fork: None,
             cached_system_prompt: None,
+            memory_cwd: None,
             accumulated_token_estimate: 0,
             last_assistant_text: None,
             native_tool_mode: false,
@@ -596,12 +600,21 @@ impl AgentEngine {
     }
 
     /// Check if the agent's cwd has entered/left a git project and update
-    /// ws_root + invalidate the cached system prompt accordingly.
+    /// ws_root + invalidate the cached system prompt accordingly. Any cd —
+    /// even inside one repo — also reloads the memory index, which is keyed
+    /// on the directory the session stands in.
     pub fn check_working_folder_change(&mut self) {
         use crate::engine::tools::search_exec_find_git_root;
         let cwd = self.tools.builtins.cwd();
         // Canonicalize to resolve symlinks (e.g. /tmp → /private/tmp on macOS)
         let cwd = cwd.canonicalize().unwrap_or(cwd);
+        if self.memory_cwd.as_ref() != Some(&cwd) {
+            if self.memory_cwd.is_some() {
+                tracing::info!("Memory index: cwd now {}", cwd.display());
+                self.cached_system_prompt = None;
+            }
+            self.memory_cwd = Some(cwd.clone());
+        }
         let git_root = search_exec_find_git_root(&cwd);
         // If inside a git repo, use the git root. Otherwise use the cwd itself
         // so Read/Glob/Grep resolve relative paths from where the agent actually is.
