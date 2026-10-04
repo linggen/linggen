@@ -162,12 +162,10 @@ pub enum Command {
     /// it. Requires the daemon.
     IssueResolve(IssueResolveArgs),
 
-    /// The scope migration, as a review (`doc/scope-index-spec.md`):
-    /// `review` backs up the store and proposes scopes, hooks and index
-    /// flags; nothing changes until `accept` / `accept-all`; `apply-schema`
-    /// (a separate accept) drops the old contexts/tags columns. The console's
-    /// Scope review page is the same thing with a UI. Requires the daemon.
-    ScopeMigration(ScopeMigrationArgs),
+    /// Run the store's gated schema step (v1 → v2, `doc/schema-versioning.md`):
+    /// back the store up, then drop `contexts`/`tags` and rename `hook` →
+    /// `summary`, `cwd` → `scope`. Pass `--yes`. Requires the daemon.
+    ApplySchema(ApplySchemaArgs),
 
     // Session-scanning utilities (`collect` + `extract`) used to live here.
     // They moved to `skills/memory/scripts/` as bash helpers — the daemon is
@@ -281,26 +279,10 @@ pub enum Command {
 // ── Argument structs ────────────────────────────────────────────────────────
 
 #[derive(Debug, Args)]
-pub struct ScopeMigrationArgs {
-    #[arg(value_enum)]
-    pub action: ScopeMigrationAction,
-    /// Row ids for `accept` / `skip`.
-    pub ids: Vec<String>,
-    /// With `review`: recompute (and back up again) even if a review exists.
-    #[arg(long)]
-    pub refresh: bool,
-    /// Confirm `apply-schema` (drops the contexts and tags columns).
+pub struct ApplySchemaArgs {
+    /// Confirm the step (it drops the contexts and tags columns).
     #[arg(long)]
     pub yes: bool,
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum ScopeMigrationAction {
-    Review,
-    Accept,
-    AcceptAll,
-    Skip,
-    ApplySchema,
 }
 
 #[derive(Debug, Args, Default)]
@@ -340,9 +322,9 @@ pub struct AddArgs {
     pub root: Option<String>,
 
     /// One line (≤ 80 chars) saying what the row is for — what the index
-    /// shows. Expected on preference and decision rows.
+    /// shows for an indexed row.
     #[arg(long)]
-    pub hook: Option<String>,
+    pub summary: Option<String>,
 
     /// Put the row in its directory's index.
     #[arg(long)]
@@ -532,8 +514,14 @@ pub struct FilterArgs {
     /// (`~/.linggen/skills/<name>`) sees only its own rows; `$HOME` only
     /// rows with no scope. `forget` ignores this on its own — it matches
     /// unscoped rows by design and would take most of the store.
-    #[arg(long = "cwd-scope", visible_alias = "project", value_name = "PATH")]
-    pub cwd_scope: Option<String>,
+    /// `--cwd-scope` is the pre-v2 name, accepted for one release.
+    #[arg(
+        long = "scope-root",
+        visible_alias = "project",
+        alias = "cwd-scope",
+        value_name = "PATH"
+    )]
+    pub scope_root: Option<String>,
 
     /// Include archived rows — losers a `replace_ids` merge or digest
     /// expired out of live memory. Off by default: the archive is for
@@ -652,13 +640,13 @@ pub struct UpdateArgs {
     #[arg(long)]
     pub content: Option<String>,
 
-    /// New one-line hook (≤ 80 chars).
+    /// New one-line summary (≤ 80 chars).
     #[arg(long)]
-    pub hook: Option<String>,
+    pub summary: Option<String>,
 
-    /// Remove the hook.
+    /// Remove the summary.
     #[arg(long)]
-    pub clear_hook: bool,
+    pub clear_summary: bool,
 
     /// Put the row in (`true`) or take it out of (`false`) its dir's index.
     #[arg(long, value_name = "BOOL")]
@@ -684,11 +672,14 @@ pub struct UpdateArgs {
     #[arg(long)]
     pub clear_outcome: bool,
 
-    #[arg(long)]
-    pub cwd: Option<String>,
+    /// The stored scope: the absolute directory the row is about.
+    /// `--cwd` is its pre-v2 name, accepted for one release.
+    #[arg(long, alias = "cwd")]
+    pub scope: Option<String>,
 
-    #[arg(long)]
-    pub clear_cwd: bool,
+    /// Clear the scope: the row is about the person.
+    #[arg(long, alias = "clear-cwd")]
+    pub clear_scope: bool,
 
     /// Assert the user directed this change (their current message
     /// states it as settled, or they just answered an ask). Required
@@ -835,7 +826,7 @@ impl FilterArgs {
             until,
             tier: self.tier.map(Into::into),
             source_session: self.source_session,
-            cwd_scope: self.cwd_scope,
+            scope_root: self.scope_root,
             include_expired: self.include_expired,
             superseded_by: self.superseded_by,
             // The CLI runs on the owner's machine; owner scope is the default
@@ -1021,9 +1012,7 @@ pub async fn run(cli: Cli) -> Result<()> {
                 Command::Issues(args) => client::issues(&base_url, args, format).await,
                 Command::IssueAdd(args) => client::issue_add(&base_url, args, format).await,
                 Command::IssueResolve(args) => client::issue_resolve(&base_url, args, format).await,
-                Command::ScopeMigration(args) => {
-                    client::scope_migration(&base_url, args, format).await
-                }
+                Command::ApplySchema(args) => client::apply_schema(&base_url, args, format).await,
                 Command::Serve { .. }
                 | Command::Start { .. }
                 | Command::Stop
@@ -1071,7 +1060,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         | Command::Issues(_)
         | Command::IssueAdd(_)
         | Command::IssueResolve(_)
-        | Command::ScopeMigration(_) => Err(anyhow!(
+        | Command::ApplySchema(_) => Err(anyhow!(
             "this command requires the daemon — start it with `ling-mem start`"
         )),
         Command::Serve { .. }
@@ -1170,12 +1159,12 @@ async fn cmd_add(
         args.tier.map(Into::into).unwrap_or(Tier::Semantic)
     };
     fact.outcome = args.outcome.map(Into::into);
-    fact.cwd = if args.global || fact.tier == Tier::Core {
+    fact.scope = if args.global || fact.tier == Tier::Core {
         None
     } else {
         args.scope.clone().or(args.cwd)
     };
-    fact.hook = args.hook;
+    fact.summary = args.summary;
     fact.indexed = args.indexed;
     fact.occurred_at = args.occurred_at;
     fact.source_session = args.source_session;
@@ -1364,26 +1353,26 @@ async fn cmd_update(store: &MemoryStore, args: UpdateArgs, format: OutputFormat)
         (None, true) => Some(None),
         (None, false) => None,
     };
-    let cwd_patch = match (args.cwd, args.clear_cwd) {
+    let scope_patch = match (args.scope, args.clear_scope) {
         (Some(v), _) => Some(Some(v)),
         (None, true) => Some(None),
         (None, false) => None,
     };
 
-    let hook_patch = match (args.hook, args.clear_hook) {
+    let summary_patch = match (args.summary, args.clear_summary) {
         (Some(h), _) => Some(Some(h)),
         (None, true) => Some(None),
         (None, false) => None,
     };
     let patch = MemoryPatch {
         content: args.content,
-        hook: hook_patch,
+        summary: summary_patch,
         indexed: args.indexed,
         r#type: args.r#type.map(Into::into),
         tier: args.tier.map(Into::into),
         origin: args.from.map(Into::into),
         outcome: outcome_patch,
-        cwd: cwd_patch,
+        scope: scope_patch,
         ..Default::default()
     };
 
@@ -1609,11 +1598,11 @@ fn emit_fact(fact: &crate::memory::Memory, format: OutputFormat) -> Result<()> {
             if let Some(o) = fact.outcome {
                 println!("outcome:    {o}");
             }
-            if let Some(cwd) = &fact.cwd {
-                println!("scope:      {cwd}");
+            if let Some(scope) = &fact.scope {
+                println!("scope:      {scope}");
             }
-            if let Some(hook) = &fact.hook {
-                println!("hook:       {hook}");
+            if let Some(summary) = &fact.summary {
+                println!("summary:    {summary}");
             }
             if fact.indexed {
                 println!("indexed:    yes");
@@ -1695,7 +1684,7 @@ mod tests {
             until: None,
             older_than: None,
             day: None,
-            cwd_scope: None,
+            scope_root: None,
             include_expired: false,
             superseded_by: None,
         };

@@ -4,7 +4,7 @@
 //! - **core** — who the user is (`tier = core`). Every session.
 //! - **candidates** — given a `cwd`, the scopes a row written here may take
 //!   (see `memory::scope`), as one line the model reads once.
-//! - **index** — given a `cwd`, the hooks of `indexed` rows filed at that
+//! - **index** — given a `cwd`, the summaries of `indexed` rows filed at that
 //!   directory or a parent, nearest first, within [`INDEX_BUDGET_CHARS`].
 //!   One line each; the agent reads a row in full with `memory_get`.
 //!
@@ -98,7 +98,7 @@ async fn session_start(
     if let Some(p) = &place {
         let filters = Filters {
             indexed: Some(true),
-            cwd_in: p
+            scope_in: p
                 .chain
                 .iter()
                 .map(|d| d.to_string_lossy().to_string())
@@ -157,9 +157,9 @@ fn line(row: &Memory) -> String {
     format!("- {} (id={})", row.content.trim(), row.id)
 }
 
-/// One index line: the hook, or the content's opening when a row has none.
+/// One index line: the summary, or the content's opening when a row has none.
 fn index_line(row: &Memory) -> String {
-    let text = row.hook.clone().unwrap_or_else(|| {
+    let text = row.summary.clone().unwrap_or_else(|| {
         let flat = row.content.split_whitespace().collect::<Vec<_>>().join(" ");
         if flat.chars().count() <= 80 {
             flat
@@ -260,7 +260,7 @@ fn render(core: &[Memory]) -> String {
 /// rows the budget skipped.
 fn render_index(mut rows: Vec<Memory>, place: &Place) -> (Vec<Memory>, String, usize) {
     let depth = |r: &Memory| {
-        r.cwd
+        r.scope
             .as_deref()
             .and_then(|c| place.chain.iter().position(|d| d.to_string_lossy() == c))
             .unwrap_or(usize::MAX)
@@ -278,7 +278,7 @@ fn render_index(mut rows: Vec<Memory>, place: &Place) -> (Vec<Memory>, String, u
     let mut current: Option<String> = None;
     let mut skipped = 0usize;
     for row in rows {
-        let dir = row.cwd.clone().unwrap_or_default();
+        let dir = row.scope.clone().unwrap_or_default();
         let heading = (current.as_deref() != Some(dir.as_str()))
             .then(|| format!("## Index — {}\n", place.display(Path::new(&dir))));
         let entry = format!("{}\n", index_line(&row));
@@ -301,7 +301,7 @@ fn render_index(mut rows: Vec<Memory>, place: &Place) -> (Vec<Memory>, String, u
     if shown.is_empty() {
         return (shown, String::new(), skipped);
     }
-    out.push_str("\nThese are standing rows filed for this directory: read one in full with memory_get(id) when its hook bears on the task.");
+    out.push_str("\nThese are standing rows filed for this directory: read one in full with memory_get(id) when its summary bears on the task.");
     if skipped > 0 {
         out.push_str(&format!(
             "\n({skipped} more indexed row(s) over the {INDEX_BUDGET_CHARS}-char budget — memory_search reaches them.)"
@@ -352,10 +352,10 @@ mod tests {
         }
     }
 
-    fn indexed(content: &str, cwd: &str, hook: Option<&str>) -> Memory {
+    fn indexed(content: &str, cwd: &str, summary: Option<&str>) -> Memory {
         let mut m = Memory::new(content, MemoryType::Preference, Origin::User);
-        m.cwd = Some(cwd.into());
-        m.hook = hook.map(str::to_string);
+        m.scope = Some(cwd.into());
+        m.summary = summary.map(str::to_string);
         m.indexed = true;
         m
     }

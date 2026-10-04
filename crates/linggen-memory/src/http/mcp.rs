@@ -61,8 +61,8 @@ const INSTRUCTIONS: &str = r#"ling-mem is this user's memory, shared by Claude C
 - What the user said is from=user. A replacement keeps the loser's tier and scope. A new status (shipped/fixed/dropped) replaces the old status row.
 - "remember / forget / update X", in any language: search, act, user_directed:true.
 - Anchor relative time to dates ("last month" → "2026-08"). occurred_at dates days and TTL; it never ranks.
-- A row is about a directory: pass scope (one of "Memory scopes here") when it isn't where you stand; global:true when it is about the person.
-- preference/decision rows carry a hook: one line ≤ 80 chars, what the row is for. A standing rule the user states ("always…", "以后都…") also gets indexed:true — its hook loads at session start under its scope.
+- A row's scope is the directory it is about (default: the host's cwd). Pass scope (one of "Memory scopes here") when it isn't where you stand; global:true when it is about the person.
+- A standing rule the user states ("always…", "以后都…") gets indexed:true and a summary (one line ≤ 80 chars) — the index loads it at session start under its scope.
 - Never save secrets or file bodies you can re-read. Project internals stay episodic.
 
 # Recall
@@ -141,7 +141,7 @@ fn tool_defs() -> Vec<Value> {
                 "properties": {
                     "query":    {"type": "string", "description": "Natural-language description of what to find."},
                     "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Restrict to one tier. Omit to span all."},
-                    "cwd_scope": {"type": "string", "description": "HOST-FILLED — leave it out; the host stamps the session root, which scopes results to rows under it, at its parents, and about the person."},
+                    "scope_root": {"type": "string", "description": "HOST-FILLED — leave it out; the host stamps the session root, which narrows results to rows whose stored scope is under it or at its parents, and rows about the person (no scope)."},
                     "limit":    {"type": "integer", "description": "Max rows. Default 10."}
                 },
                 "required": ["query"]
@@ -162,7 +162,7 @@ fn tool_defs() -> Vec<Value> {
                 "properties": {
                     "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"]},
                     "types":    {"type": "array", "items": {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"]}, "description": "Only rows of these types."},
-                    "cwd_scope": {"type": "string", "description": "A session root: rows under it, at its parents, and about the person."},
+                    "scope_root": {"type": "string", "description": "A session root: rows whose stored scope is under it or at its parents, and rows about the person (no scope)."},
                     "indexed":  {"type": "boolean", "description": "Only indexed rows (true) or only the rest (false)."},
                     "past_ttl": {"type": "boolean", "description": "Return only rows past the configured episodic TTL. Implies tier=episodic."},
                     "day":      {"type": "string", "description": "One local calendar day, YYYY-MM-DD — the remember stage lists a single day's worklist with this."},
@@ -175,7 +175,7 @@ fn tool_defs() -> Vec<Value> {
         }),
         json!({
             "name": "memory_session_start",
-            "description": "What a session loads at start: the core rows (who the user is), and — for a cwd — the scope candidates line and the index (hooks of indexed rows filed at that directory or a parent). Returns {core, index, candidates, block, chars}; `block` is markdown ready to inject. Hosts call this; a model rarely needs to.",
+            "description": "What a session loads at start: the core rows (who the user is), and — for a cwd — the scope candidates line and the index (summaries of indexed rows filed at that directory or a parent). Returns {core, index, candidates, block, chars}; `block` is markdown ready to inject. Hosts call this; a model rarely needs to.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -203,12 +203,12 @@ fn tool_defs() -> Vec<Value> {
                     "type":     {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"]},
                     "from":     {"type": "string", "enum": ["user", "agent", "derived"], "description": "Whose words: user = the user stated it (a preference, a decision, a fact about them); agent = you did or observed it; derived (default) = your inference."},
                     "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Destination tier: episodic = per-turn staging (the default when omitted, no search-first); semantic = curated durable facts (search-first); core = tiny always-injected universals (search-first). Doctrine in the server instructions."},
-                    "scope":    {"type": "string", "description": "The directory this row is about, when it is not where you stand: one of the session's \"Memory scopes here\" candidates (e.g. skills/lingjing, ~/workspace). Omit for the session's own directory."},
-                    "hook":     {"type": "string", "description": "One line, ≤ 80 chars: what this row is for — what the index shows in its place. Expected on preference and decision rows."},
-                    "indexed":  {"type": "boolean", "description": "true = put the row in its scope's index: its hook loads at every session start in that directory or below. For standing rules the user states (\"always…\", \"from now on…\")."},
+                    "scope":    {"type": "string", "description": "The directory this row is about, when it is not where you stand: one of the session's \"Memory scopes here\" candidates (e.g. skills/lingjing, ~/workspace). Omit for the session's own directory. Stored as the row's `scope` (absolute path; none = about the person)."},
+                    "summary":  {"type": "string", "description": "One line, ≤ 80 chars: what this row is for — what the index shows in its place. Matters on indexed rows; without one the index shows the row's opening."},
+                    "indexed":  {"type": "boolean", "description": "true = put the row in its scope's index: its summary loads at every session start in that directory or below. For standing rules the user states (\"always…\", \"from now on…\")."},
                     "host":     {"type": "string", "description": "HOST-FILLED — leave it out; the host stamps the committing runtime."},
                     "source_session": {"type": "string", "description": "HOST-FILLED — leave it out; the host stamps this session. Only a promote pass carrying an original row's session forward passes it."},
-                    "cwd":      {"type": "string", "description": "HOST-FILLED — leave it out; the host stamps the session cwd (the default scope)."},
+                    "cwd":      {"type": "string", "description": "HOST-FILLED, request only — leave it out; the host stamps the session's working directory: the stored scope when you name none, and the base a named one is checked against. Never stored under this name."},
                     "root":     {"type": "string", "description": "HOST-FILLED — leave it out; the host stamps the session root that `scope` resolves against."},
                     "global":   {"type": "boolean", "description": "true = the row is about the person, not a directory: stored with no scope, recalled everywhere."},
                     "replace_ids": {"type": "array", "items": {"type": "string"}, "description": "Row ids this row replaces — inserted and deleted atomically. For merges and resolved conflicts; never separate add + delete calls."},
@@ -228,7 +228,7 @@ fn tool_defs() -> Vec<Value> {
         }),
         json!({
             "name": "memory_update",
-            "description": "Edit one row in place by id (content, type, tier, hook, indexed). A tier change moves the row across tables (episodic ↔ semantic/core) keeping its id. Rewriting content on a from=user row requires user_directed (same floor as memory_add's replace_ids). For merging MULTIPLE rows prefer memory_add with replace_ids.",
+            "description": "Edit one row in place by id (content, type, tier, scope, summary, indexed). A tier change moves the row across tables (episodic ↔ semantic/core) keeping its id. Rewriting content on a from=user row requires user_directed (same floor as memory_add's replace_ids). For merging MULTIPLE rows prefer memory_add with replace_ids.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -236,9 +236,10 @@ fn tool_defs() -> Vec<Value> {
                     "content":  {"type": "string", "description": "Replacement fact text."},
                     "type":     {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"]},
                     "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Moving tier relocates the row across tables, id preserved."},
-                    "hook":     {"type": "string", "description": "New one-line hook (≤ 80 chars)."},
+                    "scope":    {"type": "string", "description": "Move the row: its stored scope, the absolute directory it is about (~/… allowed)."},
+                    "summary":  {"type": "string", "description": "New one-line summary (≤ 80 chars) — what the index shows for an indexed row."},
                     "indexed":  {"type": "boolean", "description": "Put the row in (true) or take it out of (false) its scope's index."},
-                    "global":   {"type": "boolean", "description": "true = clear the row's scope (cwd) so it applies everywhere."},
+                    "global":   {"type": "boolean", "description": "true = clear the row's stored scope so it applies everywhere."},
                     "user_directed": {"type": "boolean", "description": "Required when rewriting content on a from=user row — see memory_add.user_directed."}
                 },
                 "required": ["id"]
@@ -307,7 +308,7 @@ fn tool_defs() -> Vec<Value> {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "kind":    {"type": "string", "enum": ["chain", "stale-status", "contradiction", "subject", "index", "scope"], "description": "What you saw: `chain` = uncertain merge candidate; `stale-status` = a status claim likely overtaken by the world (verify against git/files at solve time); `contradiction` = conflicting rows needing the user's pick; `subject` = digest cluster of doubtful subject coherence (list ALL member ids); `index` = a row to put in (a standing rule the user stated) or take out of its directory's index — say which and the proposed hook; `scope` = a row filed under the wrong directory — name the proposed one."},
+                    "kind":    {"type": "string", "enum": ["chain", "stale-status", "contradiction", "subject"], "description": "What you saw: `chain` = uncertain merge candidate; `stale-status` = a status claim likely overtaken by the world (verify against git/files at solve time); `contradiction` = conflicting rows needing the user's pick; `subject` = digest cluster of doubtful subject coherence (list ALL member ids). Scope, index and summary fixes are not queued — the dream applies them itself."},
                     "row_ids": {"type": "array", "items": {"type": "string"}, "description": "The memory row ids this item is about."},
                     "note":    {"type": "string", "description": "What you saw and what a solver should check — the item's whole context, since the solver starts from this line alone. Write it in plain words; it may become the user's question."}
                 },
@@ -590,14 +591,14 @@ mod tests {
             "type": "fact",
             "from": "user",
             "outcome": "positive",
-            "cwd_scope": "/keep/me"
+            "scope_root": "/keep/me"
         });
         apply_dispatch_fixes(&mut args);
         assert!(args.get("type").is_none());
         assert!(args.get("from").is_none());
         assert!(args.get("outcome").is_none());
         // A caller legitimately scoping by path keeps it.
-        assert_eq!(args["cwd_scope"], json!("/keep/me"));
+        assert_eq!(args["scope_root"], json!("/keep/me"));
 
         // Not gated on the verb: the same shape on the wrong one is stripped.
         let mut wrong_verb = json!({"past_ttl": true, "type": "fact"});
@@ -702,7 +703,7 @@ mod tests {
     /// `from` was missing from the add schema, so every row a model wrote
     /// defaulted to derived — the user's own words included.
     #[test]
-    fn add_takes_from_scope_hook_and_indexed() {
+    fn add_takes_from_scope_summary_and_indexed() {
         let def = tool_defs()
             .into_iter()
             .find(|t| t["name"] == json!("memory_add"))
@@ -711,7 +712,7 @@ mod tests {
         for f in [
             "from",
             "scope",
-            "hook",
+            "summary",
             "indexed",
             "cwd",
             "root",
@@ -727,6 +728,7 @@ mod tests {
             "a tool still advertises contexts"
         );
         assert!(!all.contains("\"tags\""), "a tool still advertises tags");
+        assert!(!all.contains("\"hook\""), "a tool still advertises hook");
     }
 
     /// The routing rule whose loss started this: a role reaches core.

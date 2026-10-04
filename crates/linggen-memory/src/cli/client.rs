@@ -249,7 +249,7 @@ pub(crate) async fn get(base: &str, id: &str, format: OutputFormat) -> Result<()
 
 pub(crate) async fn search(base: &str, args: SearchArgs, format: OutputFormat) -> Result<()> {
     let mut body = filter_body(&args.filters);
-    push_cwd_scope(&mut body, &args.filters);
+    push_scope_root(&mut body, &args.filters);
     body["query"] = Value::String(args.query);
     body["limit"] = json!(args.limit);
     if let Some(s) = args.min_score {
@@ -273,7 +273,7 @@ pub(crate) async fn list(base: &str, args: ListArgs, format: OutputFormat) -> Re
     if args.unjudged {
         body["unjudged"] = json!(true);
     }
-    push_cwd_scope(&mut body, &args.filters);
+    push_scope_root(&mut body, &args.filters);
     let data = post(base, "/api/memory/list", &body).await?;
     emit_fact_array(&data, format)
 }
@@ -283,11 +283,11 @@ pub(crate) async fn update(base: &str, args: UpdateArgs, format: OutputFormat) -
     if let Some(content) = args.content {
         body["content"] = Value::String(content);
     }
-    if let Some(hook) = args.hook {
-        body["hook"] = Value::String(hook);
+    if let Some(summary) = args.summary {
+        body["summary"] = Value::String(summary);
     }
-    if args.clear_hook {
-        body["clear_hook"] = Value::Bool(true);
+    if args.clear_summary {
+        body["clear_summary"] = Value::Bool(true);
     }
     if let Some(flag) = args.indexed {
         body["indexed"] = Value::Bool(flag);
@@ -310,11 +310,11 @@ pub(crate) async fn update(base: &str, args: UpdateArgs, format: OutputFormat) -
     if args.user_directed {
         body["user_directed"] = Value::Bool(true);
     }
-    if let Some(cwd) = args.cwd {
-        body["cwd"] = Value::String(cwd);
+    if let Some(scope) = args.scope {
+        body["scope"] = Value::String(scope);
     }
-    if args.clear_cwd {
-        body["clear_cwd"] = Value::Bool(true);
+    if args.clear_scope {
+        body["clear_scope"] = Value::Bool(true);
     }
     let data = post(base, "/api/memory/update", &body).await?;
     emit_fact_value(&data, format)
@@ -723,47 +723,21 @@ pub(crate) async fn stats(base: &str, format: OutputFormat) -> Result<()> {
     }
 }
 
-/// `ling-mem scope-migration <action>` — the daemon's
-/// `/api/migration/scope/*`. Text output is a one-screen summary; the
-/// console's Scope review page shows every proposal.
-pub(crate) async fn scope_migration(
+/// `ling-mem apply-schema --yes` — the daemon's `/api/schema/apply`.
+pub(crate) async fn apply_schema(
     base: &str,
-    args: crate::cli::ScopeMigrationArgs,
+    args: crate::cli::ApplySchemaArgs,
     format: OutputFormat,
 ) -> Result<()> {
-    use crate::cli::ScopeMigrationAction as A;
-    let (path, body) = match args.action {
-        A::Review => ("review", json!({"refresh": args.refresh})),
-        A::Accept => (
-            "accept",
-            json!({"items": args.ids.iter().map(|id| json!({"id": id})).collect::<Vec<_>>()}),
-        ),
-        A::AcceptAll => ("accept", json!({"all": true})),
-        A::Skip => ("skip", json!({"ids": args.ids})),
-        A::ApplySchema => ("apply_schema", json!({"confirm": args.yes})),
-    };
-    let data = post(base, &format!("/api/migration/scope/{path}"), &body).await?;
+    let data = post(base, "/api/schema/apply", &json!({"confirm": args.yes})).await?;
     match format {
         OutputFormat::Json => writeln_ndjson(&data),
         OutputFormat::Text => {
-            if let Some(c) = data.get("counts") {
-                println!(
-                    "{} proposals: {} pending · {} accepted · {} skipped ({} scope moves, {} hooks, {} index)",
-                    c["total"], c["pending"], c["accepted"], c["skipped"],
-                    c["scope_moves"], c["hooks"], c["index"]
-                );
-                println!("backup: {}", data["backup_dir"].as_str().unwrap_or("none"));
-                println!(
-                    "schema step: {}",
-                    if data["schema_pending"].as_bool() == Some(true) {
-                        "pending (ling-mem scope-migration apply-schema --yes)"
-                    } else {
-                        "applied"
-                    }
-                );
-            } else {
-                println!("{}", serde_json::to_string_pretty(&data)?);
-            }
+            println!(
+                "store schema v{} · backup: {}",
+                data["schema_version"],
+                data["backup_dir"].as_str().unwrap_or("none")
+            );
             Ok(())
         }
     }
@@ -791,7 +765,7 @@ fn build_add_body(args: &AddArgs, content: String, host: Option<String>) -> Valu
         ("cwd", &args.cwd),
         ("scope", &args.scope),
         ("root", &args.root),
-        ("hook", &args.hook),
+        ("summary", &args.summary),
         ("source_session", &args.source_session),
     ];
     for (key, value) in strings {
@@ -814,15 +788,15 @@ fn build_add_body(args: &AddArgs, content: String, host: Option<String>) -> Valu
     body
 }
 
-/// Forward `--cwd-scope` on the wire. NOT part of [`filter_body`], which
+/// Forward `--scope-root` on the wire. NOT part of [`filter_body`], which
 /// `forget` also uses: the scope matches every unscoped row by design, so a
 /// bulk delete must never inherit it — only the read verbs (search, list)
 /// ask for it explicitly. This was silently dropped on the daemon path for
 /// its first release (direct-store mode honoured it; `filter_body` didn't
 /// know the field) — the same shipper-omission that once ate `tier` below.
-fn push_cwd_scope(body: &mut Value, filters: &FilterArgs) {
-    if let Some(scope) = &filters.cwd_scope {
-        body["cwd_scope"] = Value::String(scope.clone());
+fn push_scope_root(body: &mut Value, filters: &FilterArgs) {
+    if let Some(scope) = &filters.scope_root {
+        body["scope_root"] = Value::String(scope.clone());
     }
 }
 
@@ -1041,26 +1015,26 @@ mod tests {
     use super::*;
     use crate::cli::FilterArgs;
 
-    /// `--cwd-scope` reaches the wire on read verbs, and only through the
+    /// `--scope-root` reaches the wire on read verbs, and only through the
     /// explicit push — `filter_body` itself stays scope-free so `forget`
     /// (which shares it) can never inherit a filter that matches every
     /// unscoped row.
     #[test]
-    fn cwd_scope_is_pushed_explicitly_and_never_by_filter_body() {
+    fn scope_root_is_pushed_explicitly_and_never_by_filter_body() {
         let mut filters = FilterArgs::default();
-        filters.cwd_scope = Some("/home/u/work/repo".into());
+        filters.scope_root = Some("/home/u/work/repo".into());
 
         let mut body = filter_body(&filters);
         assert!(
-            body.get("cwd_scope").is_none(),
+            body.get("scope_root").is_none(),
             "filter_body must not carry it"
         );
 
-        push_cwd_scope(&mut body, &filters);
-        assert_eq!(body["cwd_scope"], json!("/home/u/work/repo"));
+        push_scope_root(&mut body, &filters);
+        assert_eq!(body["scope_root"], json!("/home/u/work/repo"));
 
         let mut empty = filter_body(&FilterArgs::default());
-        push_cwd_scope(&mut empty, &FilterArgs::default());
-        assert!(empty.get("cwd_scope").is_none());
+        push_scope_root(&mut empty, &FilterArgs::default());
+        assert!(empty.get("scope_root").is_none());
     }
 }

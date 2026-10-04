@@ -166,27 +166,29 @@ pub struct AddRequest {
     pub from: Option<Origin>,
     #[serde(default, deserialize_with = "deserialize_optional_lenient")]
     pub outcome: Option<Outcome>,
-    /// HOST-FILLED: the session's cwd — the row's scope when the model names
-    /// none. A legacy host's only scope signal.
+    /// HOST-FILLED, request only: the session's cwd — the row's stored
+    /// `scope` when the model names none, and the base the named one is
+    /// checked against. Never stored under this name.
     pub cwd: Option<String>,
     /// The model's choice of scope: one of the candidates the host showed
     /// (`skills/lingjing`, `~/workspace`, …), resolved against `root`. Must
     /// be an existing directory inside root or a parent of root below
-    /// `$HOME`; anything else falls back to `cwd`.
+    /// `$HOME`; anything else falls back to `cwd`. In `add_batch` (import)
+    /// it is the stored, absolute `scope` and is taken as given.
     #[serde(default)]
     pub scope: Option<String>,
     /// HOST-FILLED: the session's root (git root, or where it started).
     #[serde(default)]
     pub root: Option<String>,
-    /// One line (≤ 80 chars) saying what the row is for. Expected on
-    /// `preference` and `decision` rows.
+    /// One line (≤ 80 chars) saying what the row is for — what the index
+    /// shows for an indexed row.
     #[serde(default)]
-    pub hook: Option<String>,
+    pub summary: Option<String>,
     /// Put the row in its directory's index.
     #[serde(default)]
     pub indexed: bool,
     /// The row is about the person, not the project: store it with no
-    /// `cwd`, whatever a host stamped. Wins over `cwd` — the stamp hooks
+    /// `scope`, whatever a host stamped. Wins over `cwd` — the stamp hooks
     /// fill `cwd` mechanically, and this is the model saying the stamp is
     /// wrong for this row.
     #[serde(default)]
@@ -355,15 +357,16 @@ pub struct FilterDTO {
     #[serde(default)]
     pub source_session: Option<String>,
     /// The session's recall scope, given as its root (see
-    /// `Filters::cwd_scope`): an owner root sees its subtree, its parents and
+    /// `Filters::scope_root`): an owner root sees its subtree, its parents and
     /// person rows; a skill's dir only its own rows; `$HOME`/`~/.linggen`/temp
     /// person rows plus at most two strong non-preference project rows.
     ///
     /// Deliberately NOT accepted by `forget` as a standalone filter: it matches
     /// every unscoped row by design, so a delete carrying only this would take
     /// most of the store. The empty-filter guard below does not list it.
-    #[serde(default)]
-    pub cwd_scope: Option<String>,
+    /// `cwd_scope` is its pre-v2 name, accepted for one release.
+    #[serde(default, alias = "cwd_scope")]
+    pub scope_root: Option<String>,
     /// `true` = apply the daemon's configured `episodic_ttl_days` as an
     /// upper bound on `occurred_at` (i.e. "rows that are past their
     /// TTL"). Resolved at handler entry and folded into `until`. The
@@ -427,9 +430,10 @@ impl FilterDTO {
         Ok(Filters {
             apps,
             indexed: self.indexed,
-            cwd_in: Vec::new(),
+            scope_in: Vec::new(),
             scoped_only: false,
             legacy_contexts: false,
+            legacy_cwd: false,
             account: self.scope.scope(),
             types,
             exclude_types: self.exclude_types,
@@ -440,7 +444,7 @@ impl FilterDTO {
             created_since: None,
             tier: self.tier,
             source_session: self.source_session,
-            cwd_scope: self.cwd_scope,
+            scope_root: self.scope_root,
             include_expired: self.include_expired,
             superseded_by: self.superseded_by,
         })
@@ -550,17 +554,17 @@ pub struct CountRequest {
 }
 
 /// Update semantics mirror the CLI: explicit set-vs-clear via twin
-/// fields (`outcome` / `clear_outcome`, `cwd` / `clear_cwd`). Absent
+/// fields (`outcome` / `clear_outcome`, `scope` / `clear_scope`). Absent
 /// fields mean "leave unchanged." Set wins over clear if both are given.
 #[derive(Debug, Deserialize)]
 pub struct UpdateRequest {
     pub id: String,
     pub content: Option<String>,
-    /// New one-line hook; `clear_hook` removes it.
+    /// New one-line summary; `clear_summary` removes it.
     #[serde(default)]
-    pub hook: Option<String>,
+    pub summary: Option<String>,
     #[serde(default)]
-    pub clear_hook: bool,
+    pub clear_summary: bool,
     /// Put the row in (true) or take it out of (false) its dir's index.
     #[serde(default)]
     pub indexed: Option<bool>,
@@ -578,11 +582,14 @@ pub struct UpdateRequest {
     pub outcome: Option<Outcome>,
     #[serde(default)]
     pub clear_outcome: bool,
-    pub cwd: Option<String>,
-    #[serde(default)]
-    pub clear_cwd: bool,
-    /// Make the row global: clear its `cwd`, so it applies in every
-    /// project. Same effect as `clear_cwd`; the name the model is given.
+    /// The stored scope: the absolute directory the row is about. `cwd` is
+    /// its pre-v2 name, accepted for one release.
+    #[serde(default, rename = "scope", alias = "cwd")]
+    pub scope_dir: Option<String>,
+    #[serde(default, alias = "clear_cwd")]
+    pub clear_scope: bool,
+    /// Make the row global: clear its `scope`, so it applies in every
+    /// project. Same effect as `clear_scope`; the name the model is given.
     #[serde(default)]
     pub global: bool,
     pub host: Option<String>,
@@ -603,7 +610,7 @@ pub struct UpdateRequest {
     pub episodic: Option<bool>,
     /// See [`AddRequest::user_directed`]. Required when this update
     /// rewrites `content` on a `from=user` row; metadata-only patches
-    /// (tier, cwd, hook, indexed) stay unguarded.
+    /// (tier, scope, summary, indexed) stay unguarded.
     #[serde(default)]
     pub user_directed: bool,
     #[serde(flatten)]
@@ -689,7 +696,7 @@ async fn add(
     let losers = locate_rows(&state, &replace_ids).await?;
     let tier = resolve_tier(req.tier, req.episodic, &losers, req.indexed);
     let episodic = tier == Tier::Episodic;
-    let cwd = resolve_cwd(&req, &losers, tier);
+    let scope = resolve_scope(&req, &losers, tier);
     let mut fact = Memory::new(
         req.content,
         req.r#type.unwrap_or(MemoryType::Fact),
@@ -697,15 +704,14 @@ async fn add(
     );
     fact.tier = tier;
     fact.outcome = req.outcome;
-    fact.cwd = cwd;
-    fact.hook = clean_hook(req.hook);
+    fact.scope = scope;
+    fact.summary = clean_summary(req.summary);
     fact.indexed = req.indexed && tier != Tier::Core;
     fact.occurred_at = req.occurred_at;
     fact.source_session = req.source_session;
     fact.host = req.host;
     fact.account_id = req.account_id.filter(|a| !a.trim().is_empty());
     fact.account_name = req.account_name.filter(|a| !a.trim().is_empty());
-    let note = hook_note(&fact);
 
     // Embed the content so the row is immediately searchable. Serialized +
     // off the async workers so concurrent adds can't stack forward passes.
@@ -720,13 +726,10 @@ async fn add(
     let store = pick_store(&state, episodic);
     if skip_dedup {
         store.insert(std::slice::from_ref(&fact)).await?;
-        let body = with_note(
-            json!({
-                "action": "added",
-                "fact": fact_public(&fact),
-            }),
-            note,
-        );
+        let body = json!({
+            "action": "added",
+            "fact": fact_public(&fact),
+        });
         return Ok(ok(
             apply_replace_ids(&state, &replace_ids, &fact.id, body).await
         ));
@@ -778,13 +781,7 @@ async fn add(
         crate::memory::InsertOutcome::Added(f) => f.id.clone(),
         crate::memory::InsertOutcome::Merged { fact, .. } => fact.id.clone(),
     };
-    let body = apply_replace_ids(
-        &state,
-        &replace_ids,
-        &survivor,
-        with_note(outcome_public(&outcome), note),
-    )
-    .await;
+    let body = apply_replace_ids(&state, &replace_ids, &survivor, outcome_public(&outcome)).await;
     Ok(ok(body))
 }
 
@@ -826,7 +823,7 @@ fn resolve_tier(asked: Option<Tier>, episodic: bool, losers: &[Memory], indexed:
 /// none. A `scope` the model named wins when it resolves to a valid dir for
 /// this session; a replacement with no named scope takes its losers' common
 /// scope; otherwise the host's stamped session cwd, if it can be a scope.
-fn resolve_cwd(req: &AddRequest, losers: &[Memory], tier: Tier) -> Option<String> {
+fn resolve_scope(req: &AddRequest, losers: &[Memory], tier: Tier) -> Option<String> {
     if req.global || tier == Tier::Core {
         return None;
     }
@@ -854,59 +851,42 @@ fn resolve_cwd(req: &AddRequest, losers: &[Memory], tier: Tier) -> Option<String
             return Some(dir.to_string_lossy().to_string());
         }
     } else if !losers.is_empty() {
-        let cwds: Vec<Option<String>> = losers.iter().map(|l| l.cwd.clone()).collect();
-        return crate::memory::scope::common(&cwds, &home);
+        let scopes: Vec<Option<String>> = losers.iter().map(|l| l.scope.clone()).collect();
+        return crate::memory::scope::common(&scopes, &home);
     }
     session.map(|s| s.to_string_lossy().to_string())
 }
 
-/// The longest a hook may be, in characters.
-const HOOK_MAX_CHARS: usize = 80;
+/// The longest a summary may be, in characters.
+const SUMMARY_MAX_CHARS: usize = 80;
 
-/// One line, trimmed, at most [`HOOK_MAX_CHARS`] — cut with `…` beyond.
-fn clean_hook(raw: Option<String>) -> Option<String> {
+/// One line, trimmed, at most [`SUMMARY_MAX_CHARS`] — cut with `…` beyond.
+fn clean_summary(raw: Option<String>) -> Option<String> {
     let line = raw?.split_whitespace().collect::<Vec<_>>().join(" ");
     if line.is_empty() {
         return None;
     }
-    if line.chars().count() <= HOOK_MAX_CHARS {
+    if line.chars().count() <= SUMMARY_MAX_CHARS {
         return Some(line);
     }
-    let cut: String = line.chars().take(HOOK_MAX_CHARS - 1).collect();
+    let cut: String = line.chars().take(SUMMARY_MAX_CHARS - 1).collect();
     Some(format!("{}…", cut.trim_end()))
 }
 
-/// A gentle note when a long-term preference or decision lands without a
-/// hook — the write still succeeds; the index needs one to show it.
-fn hook_note(fact: &Memory) -> Option<&'static str> {
-    let wants = matches!(fact.r#type, MemoryType::Preference | MemoryType::Decision)
-        && fact.tier != Tier::Episodic;
-    (wants && fact.hook.is_none()).then_some(
-        "preference and decision rows want a hook (one line, ≤ 80 chars): memory_update it",
-    )
-}
-
-fn with_note(mut body: Value, note: Option<&str>) -> Value {
-    if let (Some(n), Some(obj)) = (note, body.as_object_mut()) {
-        obj.insert("note".into(), json!(n));
-    }
-    body
-}
-
-/// The `cwd` a batch-imported row is stored with: `global` wins, an empty
+/// The `scope` a batch-imported row is stored with: `global` wins, an empty
 /// string is no scope.
-fn written_cwd(cwd: Option<String>, global: bool) -> Option<String> {
+fn written_scope(scope: Option<String>, global: bool) -> Option<String> {
     if global {
         None
     } else {
-        cwd.filter(|c| !c.trim().is_empty())
+        scope.filter(|c| !c.trim().is_empty())
     }
 }
 
-/// An update's `cwd` change. `global` clears it and wins over a new value;
+/// An update's `scope` change. `global` clears it and wins over a new value;
 /// otherwise set wins over clear, and nothing given leaves it alone.
-fn cwd_patch(cwd: Option<String>, clear: bool, global: bool) -> Option<Option<String>> {
-    match (cwd, clear) {
+fn scope_patch(scope: Option<String>, clear: bool, global: bool) -> Option<Option<String>> {
+    match (scope, clear) {
         _ if global => Some(None),
         (Some(v), _) => Some(Some(v)),
         (None, true) => Some(None),
@@ -937,8 +917,8 @@ async fn add_batch(
         );
         fact.tier = tier;
         fact.outcome = r.outcome;
-        fact.cwd = written_cwd(r.cwd, r.global || tier == Tier::Core);
-        fact.hook = clean_hook(r.hook);
+        fact.scope = written_scope(r.scope.or(r.cwd), r.global || tier == Tier::Core);
+        fact.summary = clean_summary(r.summary);
         fact.indexed = r.indexed && tier != Tier::Core;
         fact.occurred_at = r.occurred_at;
         fact.source_session = r.source_session;
@@ -1081,7 +1061,7 @@ fn tier_rank(tier: crate::memory::Tier) -> u8 {
 /// Same merge logic as `store::merge_fact` but at the HTTP layer so we
 /// can compose it with a cross-store update. Takes the longer content and
 /// fills missing optional fields from the candidate. The surviving row's
-/// scope (`cwd`) and hook stay unless empty: a fact re-said from elsewhere
+/// `scope` and summary stay unless empty: a fact re-said from elsewhere
 /// must not leave the directory it is about.
 fn merge_with_existing(
     existing: &crate::memory::Memory,
@@ -1095,11 +1075,11 @@ fn merge_with_existing(
     if candidate.outcome.is_some() {
         merged.outcome = candidate.outcome;
     }
-    if merged.cwd.is_none() && merged.tier != crate::memory::Tier::Core {
-        merged.cwd = candidate.cwd.clone();
+    if merged.scope.is_none() && merged.tier != crate::memory::Tier::Core {
+        merged.scope = candidate.scope.clone();
     }
-    if merged.hook.is_none() {
-        merged.hook = candidate.hook.clone();
+    if merged.summary.is_none() {
+        merged.summary = candidate.summary.clone();
     }
     merged.indexed |= candidate.indexed;
     if candidate.occurred_at.is_some() {
@@ -1240,7 +1220,7 @@ async fn scored(
 
 /// Is this search a no-root session's (`$HOME`, `~/.linggen`, temp)?
 fn is_no_root(filters: &Filters) -> bool {
-    filters.cwd_scope.as_deref().is_some_and(|p| {
+    filters.scope_root.as_deref().is_some_and(|p| {
         crate::memory::RecallScope::of(p, &crate::memory::scope::home())
             == crate::memory::RecallScope::NoRoot
     })
@@ -1261,7 +1241,7 @@ async fn no_root_project_rows(
         .await
         .no_root_project_min_score;
     let mut wide = filters.clone();
-    wide.cwd_scope = None;
+    wide.scope_root = None;
     wide.scoped_only = true;
     if !wide.exclude_types.contains(&MemoryType::Preference) {
         wide.exclude_types.push(MemoryType::Preference);
@@ -1412,7 +1392,21 @@ async fn update(
         (None, true) => Some(None),
         (None, false) => None,
     };
-    let cwd_patch = cwd_patch(req.cwd, req.clear_cwd, req.global);
+    // `~/…` expands; a relative path is no directory and is refused.
+    let scope_dir = match req.scope_dir.filter(|d| !d.trim().is_empty()) {
+        Some(d) => Some(
+            crate::memory::scope::expand(&d, &crate::memory::scope::home())
+                .ok_or_else(|| {
+                    ApiError::bad_request(format!(
+                        "scope {d:?} is not an absolute directory (or ~/…)"
+                    ))
+                })?
+                .to_string_lossy()
+                .to_string(),
+        ),
+        None => None,
+    };
+    let scope_patch = scope_patch(scope_dir, req.clear_scope, req.global);
     let host_patch = match (req.host, req.clear_host) {
         (Some(v), _) => Some(Some(v)),
         (None, true) => Some(None),
@@ -1424,20 +1418,20 @@ async fn update(
         (None, false) => None,
     };
 
-    let hook_patch = match (clean_hook(req.hook), req.clear_hook) {
+    let summary_patch = match (clean_summary(req.summary), req.clear_summary) {
         (Some(h), _) => Some(Some(h)),
         (None, true) => Some(None),
         (None, false) => None,
     };
     let mut patch = MemoryPatch {
         content: req.content,
-        hook: hook_patch,
+        summary: summary_patch,
         indexed: req.indexed,
         r#type: req.r#type,
         tier: req.tier,
         origin: req.from,
         outcome: outcome_patch,
-        cwd: cwd_patch,
+        scope: scope_patch,
         host: host_patch,
         occurred_at: occurred_patch,
         ..Default::default()
@@ -1464,7 +1458,7 @@ async fn update(
     let target_tier = patch.tier.unwrap_or(existing.tier);
     // Core is who the person is: no scope, no index — ever.
     if target_tier == Tier::Core {
-        patch.cwd = Some(None);
+        patch.scope = Some(None);
         patch.indexed = Some(false);
     }
     let target_is_episodic = matches!(target_tier, Tier::Episodic);
@@ -1593,20 +1587,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn global_wins_over_a_stamped_cwd() {
-        assert_eq!(written_cwd(Some("/u/w/p".into()), true), None);
+    fn global_wins_over_a_stamped_scope() {
+        assert_eq!(written_scope(Some("/u/w/p".into()), true), None);
         assert_eq!(
-            written_cwd(Some("/u/w/p".into()), false).as_deref(),
+            written_scope(Some("/u/w/p".into()), false).as_deref(),
             Some("/u/w/p")
         );
         // An explicit empty cwd is no project, not a project named "".
-        assert_eq!(written_cwd(Some("".into()), false), None);
+        assert_eq!(written_scope(Some("".into()), false), None);
     }
 
     fn row(tier: Tier, cwd: Option<&str>) -> Memory {
         let mut m = Memory::new("x", MemoryType::Fact, Origin::Derived);
         m.tier = tier;
-        m.cwd = cwd.map(str::to_string);
+        m.scope = cwd.map(str::to_string);
         m
     }
 
@@ -1645,13 +1639,13 @@ mod tests {
         // The model's scope wins when it is a dir inside root.
         let r = add_req(json!({"content": "x", "cwd": root, "root": root, "scope": src}));
         assert_eq!(
-            resolve_cwd(&r, &[], Tier::Semantic).as_deref(),
+            resolve_scope(&r, &[], Tier::Semantic).as_deref(),
             Some(src.as_str())
         );
         // A scope outside root falls back to the session cwd.
         let r = add_req(json!({"content": "x", "cwd": root, "root": root, "scope": "/etc"}));
         assert_eq!(
-            resolve_cwd(&r, &[], Tier::Semantic).as_deref(),
+            resolve_scope(&r, &[], Tier::Semantic).as_deref(),
             Some(root.as_str())
         );
         // A parent of root is fine.
@@ -1659,30 +1653,30 @@ mod tests {
         let r = add_req(json!({"content": "x", "cwd": root, "root": root, "scope": parent}));
         if here.parent().unwrap() != home {
             assert_eq!(
-                resolve_cwd(&r, &[], Tier::Semantic).as_deref(),
+                resolve_scope(&r, &[], Tier::Semantic).as_deref(),
                 Some(parent.as_str())
             );
         }
         // Home itself is never a scope.
         let h = home.to_string_lossy().to_string();
         let r = add_req(json!({"content": "x", "cwd": h}));
-        assert_eq!(resolve_cwd(&r, &[], Tier::Episodic), None);
+        assert_eq!(resolve_scope(&r, &[], Tier::Episodic), None);
         // Core and global rows have none.
         let r = add_req(json!({"content": "x", "cwd": root}));
-        assert_eq!(resolve_cwd(&r, &[], Tier::Core), None);
+        assert_eq!(resolve_scope(&r, &[], Tier::Core), None);
         let r = add_req(json!({"content": "x", "cwd": root, "global": true}));
-        assert_eq!(resolve_cwd(&r, &[], Tier::Semantic), None);
+        assert_eq!(resolve_scope(&r, &[], Tier::Semantic), None);
         // A merge takes its losers' common scope, not the session's.
         let r = add_req(json!({"content": "x", "cwd": root}));
         let a = home.join("w/a/x").to_string_lossy().to_string();
         let b = home.join("w/a/y").to_string_lossy().to_string();
         let losers = [row(Tier::Semantic, Some(&a)), row(Tier::Semantic, Some(&b))];
         assert_eq!(
-            resolve_cwd(&r, &losers, Tier::Semantic),
+            resolve_scope(&r, &losers, Tier::Semantic),
             Some(home.join("w/a").to_string_lossy().to_string())
         );
         let losers = [row(Tier::Semantic, Some(&a)), row(Tier::Semantic, None)];
-        assert_eq!(resolve_cwd(&r, &losers, Tier::Semantic), None);
+        assert_eq!(resolve_scope(&r, &losers, Tier::Semantic), None);
     }
 
     #[test]
@@ -1693,12 +1687,12 @@ mod tests {
         let names: Vec<&str> = results.iter().map(|r| r.0.content.as_str()).collect();
         assert_eq!(names, ["p1", "p2", "x1"]);
         let f = Filters {
-            cwd_scope: Some(crate::memory::scope::home().to_string_lossy().to_string()),
+            scope_root: Some(crate::memory::scope::home().to_string_lossy().to_string()),
             ..Default::default()
         };
         assert!(is_no_root(&f));
         let f = Filters {
-            cwd_scope: Some("/w/repo".into()),
+            scope_root: Some("/w/repo".into()),
             ..Default::default()
         };
         assert!(!is_no_root(&f));
@@ -1706,9 +1700,12 @@ mod tests {
 
     #[test]
     fn hooks_are_one_short_line() {
-        assert_eq!(clean_hook(Some("  a\n b  ".into())).as_deref(), Some("a b"));
-        assert_eq!(clean_hook(Some("   ".into())), None);
-        let long = clean_hook(Some("x".repeat(200))).unwrap();
+        assert_eq!(
+            clean_summary(Some("  a\n b  ".into())).as_deref(),
+            Some("a b")
+        );
+        assert_eq!(clean_summary(Some("   ".into())), None);
+        let long = clean_summary(Some("x".repeat(200))).unwrap();
         assert_eq!(long.chars().count(), 80);
         assert!(long.ends_with('…'));
     }
@@ -1723,15 +1720,15 @@ mod tests {
     }
 
     #[test]
-    fn global_on_update_clears_the_cwd() {
-        assert_eq!(cwd_patch(None, false, true), Some(None));
-        assert_eq!(cwd_patch(Some("/x".into()), false, true), Some(None));
+    fn global_on_update_clears_the_scope() {
+        assert_eq!(scope_patch(None, false, true), Some(None));
+        assert_eq!(scope_patch(Some("/x".into()), false, true), Some(None));
         assert_eq!(
-            cwd_patch(Some("/x".into()), true, false),
+            scope_patch(Some("/x".into()), true, false),
             Some(Some("/x".into()))
         );
-        assert_eq!(cwd_patch(None, true, false), Some(None));
-        assert_eq!(cwd_patch(None, false, false), None);
+        assert_eq!(scope_patch(None, true, false), Some(None));
+        assert_eq!(scope_patch(None, false, false), None);
     }
 
     #[test]
@@ -1753,7 +1750,24 @@ mod tests {
             ]
         );
         assert_eq!(f.exclude_types, [MemoryType::Built]);
-        assert_eq!(f.cwd_scope.as_deref(), Some("/u/w/p"));
+        // `cwd_scope` is the pre-v2 name, still accepted.
+        assert_eq!(f.scope_root.as_deref(), Some("/u/w/p"));
+        let req: ListRequest = serde_json::from_value(json!({"scope_root": "/u/w/q"})).unwrap();
+        let f = req.filters.into_filters().unwrap();
+        assert_eq!(f.scope_root.as_deref(), Some("/u/w/q"));
+    }
+
+    #[test]
+    fn update_takes_scope_and_its_old_name() {
+        let r: UpdateRequest =
+            serde_json::from_value(json!({"id": "x", "scope": "/w/a", "clear_scope": true}))
+                .unwrap();
+        assert_eq!(r.scope_dir.as_deref(), Some("/w/a"));
+        assert!(r.clear_scope);
+        let r: UpdateRequest =
+            serde_json::from_value(json!({"id": "x", "cwd": "/w/b", "clear_cwd": true})).unwrap();
+        assert_eq!(r.scope_dir.as_deref(), Some("/w/b"));
+        assert!(r.clear_scope);
     }
 
     #[test]

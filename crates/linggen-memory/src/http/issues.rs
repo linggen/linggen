@@ -42,14 +42,9 @@ pub fn router() -> Router<SharedState> {
 
 // ── Issues sidecar ──────────────────────────────────────────────────────────
 
-const KINDS: &[&str] = &[
-    "chain",
-    "stale-status",
-    "contradiction",
-    "subject",
-    "index",
-    "scope",
-];
+/// Scope, index and summary fixes are not queued: the dream applies them
+/// itself (they are not the row's words) and logs what it changed.
+const KINDS: &[&str] = &["chain", "stale-status", "contradiction", "subject"];
 const OUTCOMES: &[&str] = &["resolved", "dismissed"];
 
 /// One queued review item.
@@ -58,10 +53,9 @@ pub struct IssueRecord {
     pub id: String,
     /// What the audit saw: `chain` (uncertain merge candidate),
     /// `stale-status` (a status claim older than the world),
-    /// `contradiction` (conflicting rows needing the user's pick),
-    /// `subject` (digest cluster of doubtful subject coherence), `index`
-    /// (a row to put in or take out of its dir's index) or `scope` (a row
-    /// filed under the wrong directory — the note names the proposed one).
+    /// `contradiction` (conflicting rows needing the user's pick), or
+    /// `subject` (digest cluster of doubtful subject coherence). Items of the
+    /// retired `index`/`scope` kinds still load and resolve.
     pub kind: String,
     /// The memory row ids this item is about.
     #[serde(default)]

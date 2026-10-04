@@ -66,18 +66,19 @@ pub struct Memory {
 
     /// The row's **scope**: the directory it is about (the model picks one of
     /// the host's candidates; default = the session cwd). Null = about the
-    /// person, visible everywhere. Core rows never carry one.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub cwd: Option<String>,
+    /// person, visible everywhere. Core rows never carry one. Read as `cwd`
+    /// too, the v1 name, so an older export still imports.
+    #[serde(skip_serializing_if = "Option::is_none", default, alias = "cwd")]
+    pub scope: Option<String>,
 
     /// One line (≤ 80 chars) saying what the row is for — what the index
-    /// shows in place of the row. Written by the model; expected on
-    /// `preference` and `decision` rows. See `doc/scope-index-spec.md`.
+    /// shows in place of an indexed row (without one it shows the content's
+    /// opening). Written by the model. See `doc/scope-index-spec.md`.
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub hook: Option<String>,
+    pub summary: Option<String>,
 
-    /// Puts the row in its directory's index: every session at `cwd` or
-    /// below loads its hook at start.
+    /// Puts the row in its directory's index: every session at `scope` or
+    /// below loads its summary at start.
     #[serde(skip_serializing_if = "is_false", default)]
     pub indexed: bool,
 
@@ -161,8 +162,8 @@ impl Memory {
             tier: Tier::default(),
             outcome: None,
             origin,
-            cwd: None,
-            hook: None,
+            scope: None,
+            summary: None,
             indexed: false,
             created_at: Utc::now().trunc_subsecs(6),
             updated_at: None,
@@ -505,10 +506,10 @@ mod tests {
         assert_eq!(f.origin, Origin::User);
         assert_eq!(f.tier, Tier::Semantic);
         assert!(f.vector.is_none());
-        assert!(f.hook.is_none());
+        assert!(f.summary.is_none());
         assert!(!f.indexed);
         assert!(f.outcome.is_none());
-        assert!(f.cwd.is_none());
+        assert!(f.scope.is_none());
         assert!(f.updated_at.is_none());
         assert!(f.occurred_at.is_none());
         assert!(f.source_session.is_none());
@@ -529,7 +530,7 @@ mod tests {
     #[test]
     fn json_roundtrip_preserves_from_rename() {
         let mut f = Memory::new("x", MemoryType::Fact, Origin::User);
-        f.hook = Some("why linggen".into());
+        f.summary = Some("why linggen".into());
         f.indexed = true;
 
         let json = serde_json::to_string(&f).unwrap();
@@ -546,7 +547,7 @@ mod tests {
         let json = serde_json::to_string(&f).unwrap();
         assert!(!json.contains("\"vector\""));
         assert!(!json.contains("\"outcome\""));
-        assert!(!json.contains("\"cwd\""));
+        assert!(!json.contains("\"scope\""));
         assert!(!json.contains("\"updated_at\""));
         assert!(!json.contains("\"occurred_at\""));
         assert!(!json.contains("\"source_session\""));

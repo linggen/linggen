@@ -55,7 +55,9 @@ pub fn build_schema() -> Arc<Schema> {
         Field::new("outcome", DataType::Utf8, true),
         Field::new("from", DataType::Utf8, false),
         Field::new("tier", DataType::Utf8, false),
-        Field::new("cwd", DataType::Utf8, true),
+        // The directory the row is about; null = about the person. A v1
+        // store names it `cwd` (see [`LEGACY_RENAMES`]).
+        Field::new("scope", DataType::Utf8, true),
         Field::new(
             "created_at",
             DataType::Timestamp(TimeUnit::Microsecond, Some(TZ_UTC.into())),
@@ -86,8 +88,9 @@ pub fn build_schema() -> Arc<Schema> {
         Field::new("account_id", DataType::Utf8, true),
         Field::new("account_name", DataType::Utf8, true),
         // Scope pair (2026-10-04, doc/scope-index-spec.md): the one-line
-        // hook the index shows, and whether the row is in its dir's index.
-        Field::new("hook", DataType::Utf8, true),
+        // summary the index shows, and whether the row is in its dir's index.
+        // A v1 store names the first one `hook` (see [`LEGACY_RENAMES`]).
+        Field::new("summary", DataType::Utf8, true),
         Field::new("indexed", DataType::Boolean, true),
     ]))
 }
@@ -96,6 +99,29 @@ pub fn build_schema() -> Arc<Schema> {
 /// owner accepts the scope migration (`schema_version` step 1→2); until
 /// then every write fills them with empty lists via [`conform_to`].
 pub const LEGACY_LIST_COLUMNS: [&str; 2] = ["contexts", "tags"];
+
+/// Columns v2 renamed, as `(v1 name, v2 name)`. A v1 store keeps the old
+/// names until the 1→2 step renames them (values carried); until then reads
+/// take either name and writes fill the table's own.
+pub const LEGACY_RENAMES: [(&str, &str); 2] = [("hook", "summary"), ("cwd", "scope")];
+
+/// The v2 name of a v1 column, if v2 renamed it.
+fn renamed_to(legacy: &str) -> Option<&'static str> {
+    LEGACY_RENAMES
+        .iter()
+        .find(|(old, _)| *old == legacy)
+        .map(|(_, new)| *new)
+}
+
+/// A column by its v2 name, or by its v1 name on a table not yet renamed.
+fn column_either<'a>(batch: &'a RecordBatch, name: &str) -> Option<&'a Arc<dyn Array>> {
+    batch.column_by_name(name).or_else(|| {
+        LEGACY_RENAMES
+            .iter()
+            .find(|(_, new)| *new == name)
+            .and_then(|(old, _)| batch.column_by_name(old))
+    })
+}
 
 /// Reshape a batch built against [`build_schema`] to an on-disk table's own
 /// schema: same column order, and every column the batch lacks filled —
@@ -121,6 +147,11 @@ pub fn conform_keeping(
     let mut cols: Vec<Arc<dyn Array>> = Vec::with_capacity(table.fields().len());
     for field in table.fields() {
         if let Some(col) = batch.column_by_name(field.name()) {
+            cols.push(col.clone());
+            continue;
+        }
+        // A v1 table's `hook`/`cwd` are this build's `summary`/`scope`.
+        if let Some(col) = renamed_to(field.name()).and_then(|n| batch.column_by_name(n)) {
             cols.push(col.clone());
             continue;
         }
@@ -151,12 +182,6 @@ pub fn conform_keeping(
     RecordBatch::try_new(Arc::new(table.clone()), cols).context("conforming batch to table schema")
 }
 
-/// `(id, contexts)` for every row of a v1-layout batch that carries any —
-/// read once by the scope migration, which proposes app scopes from them.
-pub fn legacy_contexts(batch: &RecordBatch) -> Result<Vec<(String, Vec<String>)>> {
-    legacy_list(batch, "contexts")
-}
-
 /// `(id, values)` of one legacy list column, rows with any values only.
 pub fn legacy_list(batch: &RecordBatch, column: &str) -> Result<Vec<(String, Vec<String>)>> {
     if batch.column_by_name(column).is_none() {
@@ -183,12 +208,12 @@ pub fn memories_to_record_batch(facts: &[Memory]) -> Result<RecordBatch> {
     let tiers = StringArray::from_iter_values(facts.iter().map(|f| f.tier.as_str()));
 
     let outcomes = StringArray::from_iter(facts.iter().map(|f| f.outcome.map(|o| o.as_str())));
-    let cwds = StringArray::from_iter(facts.iter().map(|f| f.cwd.clone()));
+    let scopes = StringArray::from_iter(facts.iter().map(|f| f.scope.clone()));
     let source_sessions = StringArray::from_iter(facts.iter().map(|f| f.source_session.clone()));
     let hosts = StringArray::from_iter(facts.iter().map(|f| f.host.clone()));
 
     let vectors = build_vector_column(facts)?;
-    let hooks = StringArray::from_iter(facts.iter().map(|f| f.hook.clone()));
+    let summaries = StringArray::from_iter(facts.iter().map(|f| f.summary.clone()));
     let indexed = BooleanArray::from_iter(facts.iter().map(|f| Some(f.indexed)));
 
     let created_at = TimestampMicrosecondArray::from_iter_values(
@@ -230,7 +255,7 @@ pub fn memories_to_record_batch(facts: &[Memory]) -> Result<RecordBatch> {
             Arc::new(outcomes),
             Arc::new(froms),
             Arc::new(tiers),
-            Arc::new(cwds),
+            Arc::new(scopes),
             Arc::new(created_at),
             Arc::new(updated_at),
             Arc::new(occurred_at),
@@ -240,7 +265,7 @@ pub fn memories_to_record_batch(facts: &[Memory]) -> Result<RecordBatch> {
             Arc::new(superseded_bys),
             Arc::new(account_ids),
             Arc::new(account_names),
-            Arc::new(hooks),
+            Arc::new(summaries),
             Arc::new(indexed),
         ],
     )
@@ -257,7 +282,7 @@ pub fn record_batch_to_memories(batch: &RecordBatch) -> Result<Vec<Memory>> {
     let froms = col_utf8(batch, "from")?;
     let tiers = col_utf8(batch, "tier")?;
     let outcomes = col_utf8_opt(batch, "outcome")?;
-    let cwds = col_utf8_opt(batch, "cwd")?;
+    let scopes = col_utf8_opt_either(batch, "scope")?;
     let source_sessions = col_utf8_opt(batch, "source_session")?;
     // `host` was added after the initial schema. Older tables on disk
     // may not carry the column yet — treat its absence as "all rows
@@ -274,8 +299,16 @@ pub fn record_batch_to_memories(batch: &RecordBatch) -> Result<Vec<Memory>> {
     // Account pair — added 2026-09-08; same leniency.
     let account_ids = col_utf8_opt_missing_ok(batch, "account_id");
     let account_names = col_utf8_opt_missing_ok(batch, "account_name");
-    // Scope pair — added 2026-10-04; same leniency.
-    let hooks = col_utf8_opt_missing_ok(batch, "hook");
+    // Scope pair — added 2026-10-04; same leniency. A v1 table names the
+    // summary `hook` until the 1→2 step renames it.
+    let summaries = column_either(batch, "summary")
+        .and_then(|c| c.as_any().downcast_ref::<StringArray>())
+        .map(|a| {
+            (0..a.len())
+                .map(|i| (!a.is_null(i)).then(|| a.value(i).to_string()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(|| vec![None; n]);
     let indexed = col_bool_missing_ok(batch, "indexed");
 
     let mut out = Vec::with_capacity(n);
@@ -306,8 +339,8 @@ pub fn record_batch_to_memories(batch: &RecordBatch) -> Result<Vec<Memory>> {
             tier,
             outcome,
             origin,
-            cwd: cwds.get(i).copied().flatten().map(str::to_string),
-            hook: hooks.get(i).cloned().flatten(),
+            scope: scopes.get(i).copied().flatten().map(str::to_string),
+            summary: summaries.get(i).cloned().flatten(),
             indexed: indexed.get(i).copied().unwrap_or(false),
             created_at: created_at[i],
             updated_at: updated_at.get(i).copied().flatten(),
@@ -430,6 +463,18 @@ fn col_utf8_opt<'a>(batch: &'a RecordBatch, name: &str) -> Result<Vec<Option<&'a
         .collect())
 }
 
+/// [`col_utf8_opt`] by v2 name, or by v1 name on a table not yet renamed.
+fn col_utf8_opt_either<'a>(batch: &'a RecordBatch, name: &str) -> Result<Vec<Option<&'a str>>> {
+    let arr = column_either(batch, name)
+        .with_context(|| format!("missing column `{name}`"))?
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .with_context(|| format!("column `{name}` is not Utf8"))?;
+    Ok((0..arr.len())
+        .map(|i| (!arr.is_null(i)).then(|| arr.value(i)))
+        .collect())
+}
+
 fn col_string_list(batch: &RecordBatch, name: &str) -> Result<Vec<Vec<String>>> {
     let arr = batch
         .column_by_name(name)
@@ -542,7 +587,7 @@ mod tests {
             MemoryType::Preference,
             Origin::User,
         );
-        f1.hook = Some("reply style".into());
+        f1.summary = Some("reply style".into());
         f1.indexed = true;
 
         let mut f2 = Memory::new(
@@ -552,7 +597,7 @@ mod tests {
         );
         f2.outcome = Some(Outcome::Positive);
         f2.vector = Some(vec![0.1; VECTOR_DIM as usize]);
-        f2.cwd = Some("/home/u/workspace/linggen".into());
+        f2.scope = Some("/home/u/workspace/linggen".into());
         f2.updated_at = Some(f2.created_at + Duration::minutes(20));
         f2.occurred_at = Some(f2.created_at - Duration::hours(3));
         f2.source_session = Some("sess-abc".into());
@@ -585,7 +630,7 @@ mod tests {
                 "outcome",
                 "from",
                 "tier",
-                "cwd",
+                "scope",
                 "created_at",
                 "updated_at",
                 "occurred_at",
@@ -595,7 +640,7 @@ mod tests {
                 "superseded_by",
                 "account_id",
                 "account_name",
-                "hook",
+                "summary",
                 "indexed",
             ]
         );
@@ -697,7 +742,33 @@ mod tests {
         // Decoding the v1 batch ignores the legacy columns.
         let decoded = record_batch_to_memories(&shaped).unwrap();
         assert_eq!(decoded, facts);
-        assert!(legacy_contexts(&shaped).unwrap().is_empty());
+        assert!(legacy_list(&shaped, "contexts").unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_v1_table_keeps_its_old_column_names() {
+        // A v1 store calls `summary` `hook` and `scope` `cwd`; writes fill
+        // the old names and reads take them back.
+        let fields: Vec<Field> = build_schema()
+            .fields()
+            .iter()
+            .map(
+                |f| match LEGACY_RENAMES.iter().find(|(_, new)| new == f.name()) {
+                    Some((old, _)) => Field::new(*old, DataType::Utf8, true),
+                    None => f.as_ref().clone(),
+                },
+            )
+            .collect();
+        let v1 = Schema::new(fields);
+        let facts = sample_facts();
+        assert!(facts.iter().any(|f| f.summary.is_some()));
+        assert!(facts.iter().any(|f| f.scope.is_some()));
+        let shaped = conform_to(memories_to_record_batch(&facts).unwrap(), &v1).unwrap();
+        assert_eq!(shaped.schema().as_ref(), &v1);
+        assert!(shaped.column_by_name("summary").is_none());
+        assert!(shaped.column_by_name("scope").is_none());
+        assert!(shaped.column_by_name("cwd").is_some());
+        assert_eq!(record_batch_to_memories(&shaped).unwrap(), facts);
     }
 
     #[test]
@@ -720,9 +791,9 @@ mod tests {
         let batch = memories_to_record_batch(&facts).unwrap();
         let schema = batch.schema();
         let keep: Vec<usize> = (0..schema.fields().len())
-            .filter(|&i| !matches!(schema.field(i).name().as_str(), "hook" | "indexed"))
+            .filter(|&i| !matches!(schema.field(i).name().as_str(), "summary" | "indexed"))
             .collect();
         let decoded = record_batch_to_memories(&batch.project(&keep).unwrap()).unwrap();
-        assert!(decoded.iter().all(|m| m.hook.is_none() && !m.indexed));
+        assert!(decoded.iter().all(|m| m.summary.is_none() && !m.indexed));
     }
 }

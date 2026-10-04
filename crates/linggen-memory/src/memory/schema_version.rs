@@ -35,15 +35,17 @@ use std::path::{Path, PathBuf};
 /// crossing an incompatible store.
 ///
 /// v2 (2026-10-04, `doc/scope-index-spec.md`): `contexts` and `tags` dropped,
-/// `hook` + `indexed` added. The drop is the one step that waits for the
-/// owner — see [`run_migrations`].
+/// `cwd` renamed `scope`, `summary` + `indexed` added (a v1 store that took
+/// the additive pair names the first `hook`; v2 renames it `summary`). The
+/// step waits for an explicit `ling-mem apply-schema` — see [`run_migrations`].
 pub const STORE_SCHEMA_VERSION: u32 = 2;
 
 /// Oldest on-disk version this binary can open / migrate up from. A store
 /// older than this is refused with export→reset→import guidance.
 pub const MIN_READABLE_SCHEMA: u32 = 1;
 
-/// The layout of a store that still carries v1's `contexts`/`tags` columns.
+/// The layout of a store that still carries v1's `contexts`/`tags` columns
+/// or a column under its v1 name (`cwd`, `hook`).
 pub const LEGACY_LAYOUT: u32 = 1;
 
 const SIDECAR: &str = "SCHEMA_VERSION";
@@ -112,13 +114,15 @@ pub fn classify(data_dir: &Path) -> Compat {
 /// binary never migrated.
 ///
 /// Registered steps:
-/// - **1 → 2** (drop `contexts`/`tags`): **gated**. It runs only when the
-///   owner accepts the scope migration (`/api/migration/scope/apply_schema`,
-///   after a backup), never at open. Until then this binary reads and writes
-///   the v1 layout as-is ([`super::schema::conform_to`] fills the legacy
-///   columns empty) and the sidecar stays `1`, so an older binary still
-///   opens the store. Additive columns (`hook`, `indexed`) ride
-///   `ensure_late_schema_additions` like every nullable add before them.
+/// - **1 → 2** (drop `contexts`/`tags`, rename `hook` → `summary` and
+///   `cwd` → `scope` with their values): **gated**. It runs only on
+///   `ling-mem apply-schema --yes` (`/api/schema/apply`, after a backup),
+///   never at open. Until then this binary reads and writes the v1 layout
+///   as-is ([`super::schema::conform_to`] keeps the legacy lists and writes
+///   `summary`/`scope` under their v1 names) and the sidecar stays `1`, so an
+///   older binary still opens the store. Additive columns (`summary`,
+///   `indexed`) ride `ensure_late_schema_additions` like every nullable add
+///   before them — under the v1 name `hook` on a store that already has it.
 pub fn run_migrations(from: u32) -> Result<()> {
     for v in from..STORE_SCHEMA_VERSION {
         match v {
