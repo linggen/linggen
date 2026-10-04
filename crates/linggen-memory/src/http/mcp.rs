@@ -357,6 +357,7 @@ async fn handle_tools_call(state: &SharedState, params: Value) -> Result<Value, 
     let verb = tool_name_to_verb(&name)
         .ok_or_else(|| rpc_error(-32602, format!("unknown tool: {name}")))?;
 
+    coerce_to_schema(&name, &mut args);
     apply_dispatch_fixes(&mut args);
 
     match loopback(state, verb, args).await {
@@ -386,6 +387,62 @@ fn tool_name_to_verb(name: &str) -> Option<&'static str> {
         "memory_issues" => Some("issues"),
         "memory_issue_add" => Some("issue_add"),
         "memory_issue_resolve" => Some("issue_resolve"),
+        _ => None,
+    }
+}
+
+/// Bring scalar values to the types the tool's own schema declares.
+///
+/// Models do not always honour a schema's types: a Claude Code session sent
+/// `memory_add` `{"indexed": "false"}` (2026-10-04). The daemon's REST DTOs
+/// are typed, so axum refused the body with a plain-text 422 and the call
+/// died as "error decoding response body". The schema is the contract the
+/// model was shown, so it is the right key for repair: `"true"`/`"false"`
+/// on a boolean field become booleans, a numeric string on a number field
+/// becomes a number, and a lone string on an array field becomes a
+/// one-element array. Anything that does not convert cleanly is left as it
+/// came, and the daemon's error names it.
+fn coerce_to_schema(tool: &str, args: &mut Value) {
+    let Some(obj) = args.as_object_mut() else {
+        return;
+    };
+    let defs = tool_defs();
+    let Some(props) = defs
+        .iter()
+        .find(|t| t["name"] == json!(tool))
+        .and_then(|t| t["inputSchema"]["properties"].as_object())
+    else {
+        return;
+    };
+    for (key, value) in obj.iter_mut() {
+        let Some(kind) = props.get(key).and_then(|p| p["type"].as_str()) else {
+            continue;
+        };
+        if let Some(fixed) = coerce_value(kind, value) {
+            *value = fixed;
+        }
+    }
+}
+
+fn coerce_value(kind: &str, value: &Value) -> Option<Value> {
+    let s = value.as_str()?.trim();
+    match kind {
+        "boolean" => match s.to_ascii_lowercase().as_str() {
+            "true" => Some(Value::Bool(true)),
+            "false" => Some(Value::Bool(false)),
+            _ => None,
+        },
+        "integer" => s.parse::<i64>().ok().map(Value::from),
+        "number" => s
+            .parse::<f64>()
+            .ok()
+            .and_then(serde_json::Number::from_f64)
+            .map(Value::Number),
+        "array" => match serde_json::from_str::<Value>(s) {
+            Ok(v @ Value::Array(_)) => Some(v),
+            _ if s.is_empty() => None,
+            _ => Some(json!([s])),
+        },
         _ => None,
     }
 }
@@ -495,7 +552,11 @@ fn loopback_error(verb: &str, err: reqwest::Error) -> ApiError {
 }
 
 async fn loopback(state: &SharedState, verb: &str, body: Value) -> Result<Value, ApiError> {
-    let url = format!("http://127.0.0.1:{}/api/memory/{}", state.port, verb);
+    loopback_url(&format!("http://127.0.0.1:{}", state.port), verb, body).await
+}
+
+async fn loopback_url(base: &str, verb: &str, body: Value) -> Result<Value, ApiError> {
+    let url = format!("{base}/api/memory/{verb}");
     let client = reqwest::Client::builder()
         .timeout(LOOPBACK_TIMEOUT)
         .build()
@@ -506,10 +567,21 @@ async fn loopback(state: &SharedState, verb: &str, body: Value) -> Result<Value,
         .send()
         .await
         .map_err(|e| loopback_error(verb, e))?;
-    let value: Value = resp
-        .json()
+    let status = resp.status();
+    let body = resp
+        .text()
         .await
         .map_err(|e| ApiError::internal(anyhow::Error::from(e)))?;
+    // A body the REST layer refused before its handler ran (axum's 422 for
+    // a field of the wrong type) is plain text. Say what it said — "error
+    // decoding response body" told nobody which field was wrong.
+    let value: Value = serde_json::from_str(&body).map_err(|_| {
+        ApiError::internal(anyhow::anyhow!(
+            "{verb}: HTTP {}: {}",
+            status.as_u16(),
+            body.trim()
+        ))
+    })?;
     if value.get("ok").and_then(|v| v.as_bool()) == Some(true) {
         Ok(value.get("data").cloned().unwrap_or(Value::Null))
     } else {
@@ -548,6 +620,68 @@ mod tests {
         let message = loopback_error("add", err).message;
         assert!(message.starts_with("add timed out after 25s"), "{message}");
         assert!(message.contains("may still have landed"), "{message}");
+    }
+
+    /// The 2026-10-04 Claude Code call: string-typed booleans, numbers and
+    /// a lone id must reach the daemon as the schema's types.
+    #[test]
+    fn string_typed_args_take_the_schemas_types() {
+        let mut args = json!({
+            "content": "x",
+            "scope": "~/workspace/linggen/linggen",
+            "summary": "s",
+            "indexed": "false",
+            "global": "TRUE",
+            "replace_ids": "abc123",
+            "user_directed": "maybe"
+        });
+        coerce_to_schema("memory_add", &mut args);
+        assert_eq!(args["indexed"], json!(false));
+        assert_eq!(args["global"], json!(true));
+        assert_eq!(args["replace_ids"], json!(["abc123"]));
+        assert_eq!(args["scope"], json!("~/workspace/linggen/linggen"));
+        assert_eq!(args["summary"], json!("s"));
+        // Not a boolean in any spelling: left for the daemon to name.
+        assert_eq!(args["user_directed"], json!("maybe"));
+
+        let mut search = json!({"query": "q", "limit": "5"});
+        coerce_to_schema("memory_search", &mut search);
+        assert_eq!(search["limit"], json!(5));
+        let mut list = json!({"indexed": "true", "offset": "10"});
+        coerce_to_schema("memory_list", &mut list);
+        assert_eq!(list["indexed"], json!(true));
+        assert_eq!(list["offset"], json!(10));
+
+        let mut ids = json!({"replace_ids": "[\"a\",\"b\"]"});
+        coerce_to_schema("memory_add", &mut ids);
+        assert_eq!(ids["replace_ids"], json!(["a", "b"]));
+    }
+
+    /// A plain-text refusal from the REST layer reaches the caller verbatim.
+    #[tokio::test]
+    async fn a_plain_text_refusal_is_reported_as_said() {
+        use axum::routing::post as axum_post;
+        let app = Router::new().route(
+            "/api/memory/add",
+            axum_post(|| async {
+                (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "Failed to deserialize the JSON body: indexed: invalid type",
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let err = loopback_url(&format!("http://127.0.0.1:{port}"), "add", json!({}))
+            .await
+            .unwrap_err();
+        assert!(err.message.contains("HTTP 422"), "{}", err.message);
+        assert!(
+            err.message.contains("indexed: invalid type"),
+            "{}",
+            err.message
+        );
     }
 
     /// `until: ""` used to reach the RFC-3339 parser and crash it; empty

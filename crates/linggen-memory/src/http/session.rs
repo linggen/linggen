@@ -272,6 +272,10 @@ fn render_index(mut rows: Vec<Memory>, place: &Place) -> (Vec<Memory>, String, u
             .then(b.activity_timestamp().cmp(&a.activity_timestamp()))
     });
     rows.dedup_by(|a, b| a.id == b.id);
+    // The footer and the skipped note are part of the block, so the budget
+    // pays for them first (the note sized for the most rows it could count).
+    let reserve = INDEX_FOOTER.chars().count() + skipped_note(rows.len()).chars().count();
+    let budget = INDEX_BUDGET_CHARS.saturating_sub(reserve);
     let mut shown: Vec<Memory> = Vec::new();
     let mut out = String::new();
     let mut used = 0usize;
@@ -283,7 +287,7 @@ fn render_index(mut rows: Vec<Memory>, place: &Place) -> (Vec<Memory>, String, u
             .then(|| format!("## Index — {}\n", place.display(Path::new(&dir))));
         let entry = format!("{}\n", index_line(&row));
         let cost = heading.as_ref().map_or(0, |h| h.chars().count() + 1) + entry.chars().count();
-        if used + cost > INDEX_BUDGET_CHARS {
+        if used + cost > budget {
             skipped += 1;
             continue;
         }
@@ -301,13 +305,19 @@ fn render_index(mut rows: Vec<Memory>, place: &Place) -> (Vec<Memory>, String, u
     if shown.is_empty() {
         return (shown, String::new(), skipped);
     }
-    out.push_str("\nThese are standing rows filed for this directory: read one in full with memory_get(id) when its summary bears on the task.");
+    out.push_str(INDEX_FOOTER);
     if skipped > 0 {
-        out.push_str(&format!(
-            "\n({skipped} more indexed row(s) over the {INDEX_BUDGET_CHARS}-char budget — memory_search reaches them.)"
-        ));
+        out.push_str(&skipped_note(skipped));
     }
     (shown, out, skipped)
+}
+
+const INDEX_FOOTER: &str = "\nThese are standing rows filed for this directory: read one in full with memory_get(id) when its summary bears on the task.";
+
+fn skipped_note(skipped: usize) -> String {
+    format!(
+        "\n({skipped} more indexed row(s) over the {INDEX_BUDGET_CHARS}-char budget — memory_search reaches them.)"
+    )
 }
 
 #[cfg(test)]
@@ -400,6 +410,12 @@ mod tests {
         assert!(skipped > 0);
         assert_eq!(shown.len() + skipped, 200);
         assert!(block.contains("more indexed row(s)"));
+        // The whole block, footer and note included, stays within budget.
+        assert!(
+            block.chars().count() <= INDEX_BUDGET_CHARS,
+            "{}",
+            block.chars().count()
+        );
     }
 
     #[test]

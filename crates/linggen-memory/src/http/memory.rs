@@ -843,10 +843,17 @@ fn resolve_scope(req: &AddRequest, losers: &[Memory], tier: Tier) -> Option<Stri
                 .map(|s| crate::memory::scope::find_root(s, &home))
         });
     if let Some(named) = req.scope.as_deref().filter(|s| !s.trim().is_empty()) {
-        let chosen = root.as_deref().and_then(|r| {
-            crate::memory::scope::resolve(named, Some(r), &home)
-                .filter(|d| crate::memory::scope::is_valid_for(d, r, &home))
-        });
+        let chosen = match root.as_deref() {
+            Some(r) => crate::memory::scope::resolve(named, Some(r), &home)
+                .filter(|d| crate::memory::scope::is_valid_for(d, r, &home)),
+            // No host stamp (Codex cannot rewrite tool input): nothing to
+            // check the choice against, and falling back would store the row
+            // with no scope — "about the person", recalled everywhere — the
+            // opposite of what naming a directory says. An absolute (or ~/)
+            // existing directory that can hold rows is taken as named.
+            None => crate::memory::scope::resolve(named, None, &home)
+                .filter(|d| d.is_dir() && crate::memory::scope::is_scope_dir(d, &home)),
+        };
         if let Some(dir) = chosen {
             return Some(dir.to_string_lossy().to_string());
         }
@@ -1677,6 +1684,20 @@ mod tests {
         );
         let losers = [row(Tier::Semantic, Some(&a)), row(Tier::Semantic, None)];
         assert_eq!(resolve_scope(&r, &losers, Tier::Semantic), None);
+    }
+
+    /// An unstamped add (Codex) that names an existing directory keeps it;
+    /// one naming nothing real stays unscoped.
+    #[test]
+    fn an_unstamped_add_keeps_a_named_directory() {
+        let dir = std::env::current_dir().unwrap();
+        let named = dir.to_string_lossy().to_string();
+        let r = add_req(json!({"content": "x", "scope": named}));
+        assert_eq!(resolve_scope(&r, &[], Tier::Semantic), Some(named));
+        let r = add_req(json!({"content": "x", "scope": "/no/such/dir/anywhere"}));
+        assert_eq!(resolve_scope(&r, &[], Tier::Semantic), None);
+        let r = add_req(json!({"content": "x", "scope": "relative/dir"}));
+        assert_eq!(resolve_scope(&r, &[], Tier::Semantic), None);
     }
 
     #[test]
