@@ -165,9 +165,9 @@ engine and tools (never the session's skill, its tools or prompt), the thread
 rebuilt from the chat's visible dialogue, her reply persisted as hers and
 spoken (`PetSpeak`). Her memory stays hers: her core block (who the user
 is) and her recall, read by her model and never left as a row on the table;
-her memory tools act for the table's session, so a skill with a
-`memory-context` holds her reads and writes to that context, and her writes
-are stamped with the session. Ling is not woken; what was said reaches him at the start
+her memory tools act for the table's session, so a skill that uses memory
+(`memory-context`) holds her reads and writes to its own dir
+(`~/.linggen/skills/<name>`), and her writes are stamped with the session. Ling is not woken; what was said reaches him at the start
 of his next turn (`chat/side_lines.rs`). No mention → Ling, as always. The system-prompt export for her in such a
 session shows this guest seat, not the session's skill.
 

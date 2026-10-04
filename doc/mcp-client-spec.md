@@ -151,7 +151,7 @@ client like everything else:
 ```
 1. engine takes the user's prompt
 2. its MCP client → tools/call memory_search
-     { query: <prompt>, contexts: [...], limit: K }
+     { query: <prompt>, cwd_scope: <root or skill dir>, limit: K }
 3. → the memory server in [mcp_servers]
 4. filter by min_score, inject top-K
 5. model runs
@@ -159,8 +159,9 @@ client like everything else:
 
 Local and remote are the same code with a different URL. Two details:
 
-- **`contexts` already exists** in ling-mem's `memory_search` schema, so
-  per-skill scoping (`memory-context`, which CFO relies on) survives intact.
+- **`cwd_scope`** carries the recall scope: an owner session's root, or a
+  memory-using skill's own dir (`~/.linggen/skills/<name>`), which is what
+  keeps CFO to its own rows. (`contexts` scoping retired 2026-10-04.)
 - **`min_score` does not.** Either add it to the schema or filter client-side
   on the `hybrid_score` rows already carry.
 
@@ -184,8 +185,8 @@ curl -s "$LINGGEN_MEMORY_URL" -H 'content-type: application/json' \
   | jq -r '.result.content[0].text'
 ```
 
-`recall.sh` already depends on `jq`, and rows carry `hybrid_score`, `score`
-and `contexts`, so the missing `min_score` is a client-side filter it is
+`recall.sh` already depends on `jq`, and rows carry `hybrid_score` and `score`,
+so the missing `min_score` is a client-side filter it is
 already shaped to do.
 
 **Why this matters more than tidiness: a remote host then needs no `ling-mem`
@@ -258,8 +259,9 @@ memory server's endpoint comes from (`+ /mcp`), and where the engine's
 program-side REST calls go. Not a knob without a consumer — a knob with two.
 
 Four things a raw pass-through would have lost, and where they went: the
-calling host's name, the authoring session id, a skill's `memory_context`
-scope, and the AskUser unlock on the user-voice guard. All four are filled in
+calling host's name, the authoring session id, where the session stands
+(`cwd`, `root`, `cwd_scope` — a memory-using skill stands in its own dir), and
+the AskUser unlock on the user-voice guard. All four are filled in
 client-side by `engine/tools/memory_mcp.rs`, each field only where the
 server's own advertised schema declares it. That is argument shaping, not the
 proxy above — nothing republishes ling-mem's tools.

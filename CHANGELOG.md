@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+- **Memory scope and index** (ling-mem `doc/scope-index-spec.md`). Memory calls
+  carry where the session stands — `cwd`, `root`, and on a search
+  `cwd_scope` = root; a skill that uses memory stands in its own dir
+  (`~/.linggen/skills/<name>`), replacing the forced `contexts` tag
+  (`memory-context:` is now just the opt-in). The always-on block adds the
+  "Memory scopes here" line and the index of standing rows for the session's
+  directory, reloaded on cd; app sessions get their dir's index. A home chat's
+  recall sees only rows about the person. Recall lines carry `from=`. The dream
+  promotes with `tier=semantic` explicitly, carries hooks, and proposes index
+  and scope changes as review items.
 - **A skill declares its billing product** — `product: cfo` in SKILL.md
   names the Linggen Cloud product its turns bill to (`X-Linggen-App`). The
   engine's hard-coded list of app names is gone; a skill without one bills

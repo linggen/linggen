@@ -374,10 +374,11 @@ the resolver targets today's session and the first turn's
 restart resumes the same thread. Old daily sessions stay browsable; prune after N
 days.
 
-**Memory.** Full-store, like an owner session — `include_memory = true`, unscoped
-(`contexts = None`). She auto-recalls the user's whole biography each turn (she
-shares Ling's memory — no `yinyue` namespace) and still has the memory
-server's `memory_*` tools for targeted lookups and saves. Core block always loaded; per-turn
+**Memory.** An owner session — `include_memory = true` (she shares Ling's
+memory, no namespace of her own). Her session stands at `~/.linggen`, which is
+no project, so her per-turn recall sees the rows about the person (no `cwd`,
+2026-10-04 scope model); her own `memory_*` calls stay whole-store for
+targeted lookups and saves. Core block always loaded; per-turn
 capture writes episodic.
 
 **Companion latency tuning.** A companion does many small turns, so each must stay

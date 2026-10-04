@@ -40,7 +40,8 @@ never writes to project files.
 ## Tiers
 
 - **Core** — a handful of high-confidence universals about the person
-  (name, role, hard work rules), present in every session.
+  (name, role, location, family), present in every session. Never
+  scoped, never a work rule.
 - **Long-term** — everything else durable, retrieved on demand. Holds
   *state and lessons, never events*: would the row still matter in
   three months?
@@ -56,14 +57,22 @@ never writes to project files.
 - **Recall** — relevant memories surface at the start of each turn;
   facts used in a reply are cited ("From memory: …"). The identity
   set is always present.
-- **Scope** — every row records the project directory it came from,
-  and recall is scoped to the project the question is asked in (plus
-  every row that belongs to no project — identity, preferences,
-  cross-project gotchas are about the person). The host stamps both
-  sides mechanically; the model is never asked to copy either. A
-  directory that is not a project (home, the engine's own state dir,
-  temp) never becomes a scope, and rows carried forward by the dream
-  or a backfill keep the scope they were born with.
+- **Scope** — a row's `cwd` is the directory it is *about*
+  (ling-mem `doc/scope-index-spec.md`); none = about the person. The
+  host stamps the session's `cwd` and `root`; at session start it shows
+  "Memory scopes here: …" and the model picks another one as `scope`
+  when the row is about it (the daemon validates). Recall sees rows
+  under the session root, at its parents, and about the person. A
+  skill's own session stands in `~/.linggen/skills/<name>` and sees
+  only its rows (`memory-context:` is now just the skill's opt-in to
+  memory). Home, `~/.linggen` and temp see only rows about the person.
+  Rows carried forward by the dream or a backfill keep their scope.
+- **Index** — standing rules carry a one-line `hook` and `indexed`:
+  every session in their directory or below loads the hooks at start
+  (nearest first, 3000 chars), and reads a row in full when its hook
+  bears on the task. The dream only proposes index and scope changes
+  (review items `index` / `scope`); the person confirms. The engine
+  reloads the index when the session's cwd changes.
 - **Dedup** — exact duplicates collapse automatically at write time.
   Anything fuzzier is judgment, not mechanics.
 - **Reconcile** — authority follows voice: the agent freely merges
@@ -107,7 +116,8 @@ never writes to project files.
   serves only QUIET clusters (newest member >30 days — a live
   subject keeps its detail) and skips rows a `subject`-kind ruling
   covers. The judge digests clusters it is confident share one
-  subject (one digest row, tagged `digest`, ≤5 per night) and queues
+  subject (one digest row, ≤5 per night — a digest is known by the
+  rows whose `superseded_by` points at it) and queues
   doubtful ones as open `subject` review items — listing ALL member
   ids, so a ruled cluster can never re-form. In solve, the user's
   keep-separate answer becomes the permanent (dismissed) ruling.
@@ -150,10 +160,10 @@ a real engine against a throwaway store and judges the end state.
 
 - Scope on Codex is read-side only: its hook runner cannot rewrite
   tool input yet, so recall is scoped but the model's own writes go
-  unstamped there.
-- Rows from before scoping whose session logs are gone still carry no
-  project and surface everywhere; stamping them by content is
-  inference on the user's memory — their call, not the agent's.
+  unstamped there (no `source_session` either).
+- Rows from before scoping: the scope migration review proposes
+  scopes, hooks and index flags; nothing changes until the person
+  accepts.
 
 ## Future
 
