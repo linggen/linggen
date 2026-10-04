@@ -197,6 +197,9 @@ pub(super) async fn persist_and_emit_last_assistant_text(
 pub(super) struct RecallRow {
     pub id: String,
     pub r#type: String,
+    /// Whose words: `user`, `agent` or `derived` — a recalled preference in
+    /// the user's own voice is not the agent's guess.
+    pub from: String,
     pub host: String,
     pub date: String,
     pub content: String,
@@ -210,8 +213,8 @@ impl RecallRow {
     /// and the model can use it to gauge confidence.
     fn to_line(&self) -> String {
         format!(
-            "From memory ({}, {}, {}, score={:.2}, id={}): {}",
-            self.r#type, self.host, self.date, self.score, self.id, self.content
+            "From memory ({}, from={}, {}, {}, score={:.2}, id={}): {}",
+            self.r#type, self.from, self.host, self.date, self.score, self.id, self.content
         )
     }
 }
@@ -372,6 +375,11 @@ async fn auto_recall_memory(
             .and_then(|v| v.as_str())
             .unwrap_or("fact")
             .to_string();
+        let from = row
+            .get("from")
+            .and_then(|v| v.as_str())
+            .unwrap_or("derived")
+            .to_string();
         let host = row
             .get("host")
             .and_then(|v| v.as_str())
@@ -396,6 +404,7 @@ async fn auto_recall_memory(
         hits.push(RecallRow {
             id,
             r#type: typ,
+            from,
             host,
             date,
             content,
@@ -645,6 +654,7 @@ mod tests {
         let row = RecallRow {
             id: "abc12345-aaaa-bbbb-cccc-deadbeef0000".into(),
             r#type: "fact".into(),
+            from: "user".into(),
             host: "linggen".into(),
             date: "2026-05-20".into(),
             content: "User prefers ~150-word replies.".into(),
@@ -652,7 +662,7 @@ mod tests {
         };
         assert_eq!(
             row.to_line(),
-            "From memory (fact, linggen, 2026-05-20, score=0.72, id=abc12345-aaaa-bbbb-cccc-deadbeef0000): User prefers ~150-word replies."
+            "From memory (fact, from=user, linggen, 2026-05-20, score=0.72, id=abc12345-aaaa-bbbb-cccc-deadbeef0000): User prefers ~150-word replies."
         );
     }
 }

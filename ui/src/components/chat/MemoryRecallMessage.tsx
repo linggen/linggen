@@ -7,7 +7,7 @@
  * can see exactly what context the model received that turn.
  *
  * Content shape (one row per line, format mirrors CC's `recall.sh`):
- *   From memory (<type>, <host>, <YYYY-MM-DD>, score=0.NN, id=<uuid>): <content>
+ *   From memory (<type>, from=<who>, <host>, <YYYY-MM-DD>, score=0.NN, id=<uuid>): <content>
  *   ...
  *   Note: ... (optional reconcile footer when ≥2 rows)
  *
@@ -21,6 +21,7 @@ import { Brain, ChevronDown, ChevronRight } from 'lucide-react';
 
 interface ParsedRow {
   type: string;
+  from: string | null;
   host: string;
   date: string;
   score: number | null;
@@ -33,9 +34,9 @@ interface ParsedRecall {
   trailer: string;
 }
 
-// `score=0.NN` is optional so old persisted messages from before the score
-// field was added still parse. New backend output always includes it.
-const ROW_RE = /^From memory \(([^,]+), ([^,]+), ([^,]+)(?:, score=([0-9.]+))?, id=([^)]+)\): (.+)$/;
+// `from=` and `score=` are optional so old persisted messages from before
+// those fields were added still parse. New backend output carries both.
+const ROW_RE = /^From memory \(([^,]+), (?:from=([^,]+), )?([^,]+), ([^,]+)(?:, score=([0-9.]+))?, id=([^)]+)\): (.+)$/;
 
 function parseRecallText(text: string): ParsedRecall {
   const rows: ParsedRow[] = [];
@@ -45,14 +46,15 @@ function parseRecallText(text: string): ParsedRecall {
     if (!trimmed) continue;
     const m = trimmed.match(ROW_RE);
     if (m) {
-      const score = m[4] != null ? Number.parseFloat(m[4]) : null;
+      const score = m[5] != null ? Number.parseFloat(m[5]) : null;
       rows.push({
         type: m[1],
-        host: m[2],
-        date: m[3],
+        from: m[2] ?? null,
+        host: m[3],
+        date: m[4],
         score: Number.isFinite(score) ? score : null,
-        id: m[5],
-        content: m[6],
+        id: m[6],
+        content: m[7],
       });
     } else {
       trailerLines.push(trimmed);
