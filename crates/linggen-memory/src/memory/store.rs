@@ -89,6 +89,9 @@ pub struct Filters {
     pub indexed: Option<bool>,
     /// Only rows whose `cwd` is exactly one of these — the index query.
     pub cwd_in: Vec<String>,
+    /// Only rows filed under some directory (`cwd IS NOT NULL`) — the
+    /// project half of a no-root session's recall.
+    pub scoped_only: bool,
     /// Set by the store, never by callers: the table still carries the v1
     /// `contexts` column (migration not yet accepted), so app and skill
     /// scopes also match rows tagged with the app's name there.
@@ -141,6 +144,7 @@ impl Filters {
         self.apps.is_empty()
             && self.indexed.is_none()
             && self.cwd_in.is_empty()
+            && !self.scoped_only
             && self.types.is_empty()
             && self.origin.is_none()
             && self.outcome.is_none()
@@ -190,6 +194,10 @@ impl Filters {
             } else {
                 "(indexed IS NULL OR indexed = false)".to_string()
             });
+        }
+
+        if self.scoped_only {
+            clauses.push("cwd IS NOT NULL".to_string());
         }
 
         if !self.cwd_in.is_empty() {
@@ -1853,6 +1861,7 @@ mod tests {
             apps: Vec::new(),
             indexed: Some(true),
             cwd_in: vec!["/w/a".into()],
+            scoped_only: true,
             legacy_contexts: false,
             types: vec![MemoryType::Fixed],
             exclude_types: Vec::new(),
@@ -1871,6 +1880,7 @@ mod tests {
         let sql = f.to_sql().unwrap();
         assert!(sql.contains("indexed = true"), "{sql}");
         assert!(sql.contains("cwd IN ('/w/a')"), "{sql}");
+        assert!(sql.contains("cwd IS NOT NULL"), "{sql}");
         assert!(sql.contains("type = 'fixed'"));
         // origin/from is intentionally NOT in the SQL — applied post-fetch
         // because LanceDB returns 0 rows for `"from" = 'user'` even though

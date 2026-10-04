@@ -69,7 +69,9 @@ pub enum RecallScope {
     /// A skill's own session (`~/.linggen/skills/<name>`): rows under that
     /// directory only — no person rows. App isolation, keyed by path.
     Skill { dir: String, name: String },
-    /// No root (`$HOME`, `~/.linggen`, temp dirs): rows with no cwd only.
+    /// No root (`$HOME`, `~/.linggen`, temp dirs): rows with no cwd. (The
+    /// search path adds at most two strong non-preference matches filed under
+    /// a directory — `http::memory::no_root_project_rows`.)
     NoRoot,
 }
 

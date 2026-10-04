@@ -36,6 +36,21 @@ pub struct Config {
     /// the daemon owns and clients defer to.
     #[serde(default = "default_recall_min_score")]
     pub recall_min_score: f32,
+
+    /// A session with no root (`$HOME`, `~/.linggen` — Yinyue, a plain chat)
+    /// recalls rows about the person, plus at most
+    /// [`NO_ROOT_PROJECT_ROWS`](crate::http::memory::NO_ROOT_PROJECT_ROWS)
+    /// rows filed under a directory (never `preference`) whose COSINE to the
+    /// question reaches this. Cosine, not the hybrid score: the keyword boost
+    /// lifts greetings ("how are you" → 0.98 hybrid on the persona notes).
+    /// Chosen 2026-10-04 from the live store: small talk peaked at 0.678,
+    /// on-topic project questions reached 0.71–0.79.
+    #[serde(default = "default_no_root_project_min_score")]
+    pub no_root_project_min_score: f32,
+}
+
+fn default_no_root_project_min_score() -> f32 {
+    0.70
 }
 
 fn default_episodic_ttl_days() -> u32 {
@@ -51,6 +66,7 @@ impl Default for Config {
         Self {
             episodic_ttl_days: default_episodic_ttl_days(),
             recall_min_score: default_recall_min_score(),
+            no_root_project_min_score: default_no_root_project_min_score(),
         }
     }
 }
@@ -104,6 +120,11 @@ async fn put_config(
     if cfg.episodic_ttl_days > 3650 {
         return Err(ApiError::bad_request(
             "episodic_ttl_days must be <= 3650 (10 years)",
+        ));
+    }
+    if !(0.0..=1.0).contains(&cfg.no_root_project_min_score) {
+        return Err(ApiError::bad_request(
+            "no_root_project_min_score must be between 0.0 and 1.0",
         ));
     }
     if !(0.0..=1.0).contains(&cfg.recall_min_score) {
