@@ -327,13 +327,10 @@ async fn auto_recall_memory(
     // isolation, and its rows are written from wherever the app happens to run.
     if let Some(ctx) = &contexts {
         args["contexts"] = serde_json::json!(ctx);
-    } else {
-        if let Some(scope) = &cwd_scope {
-            args["cwd_scope"] = serde_json::json!(scope);
-        }
-        // Standing rules (type=preference) were loaded with core at session
-        // start; a rule re-surfacing here would only take a recall slot.
-        args["exclude_types"] = serde_json::json!(["preference"]);
+    } else if let Some(scope) = &cwd_scope {
+        // Preferences ride recall like any other row: session start loads
+        // core only.
+        args["cwd_scope"] = serde_json::json!(scope);
     }
 
     tracing::debug!(

@@ -38,19 +38,6 @@ use crate::message::ChatMessage;
 use std::collections::HashSet;
 use std::sync::OnceLock;
 
-/// The platform voice layer: how every agent writes, on every surface.
-/// Embedded at compile time so it is present in *every* system prompt —
-/// user, skill, and mission sessions alike — independent of what a given
-/// agent spec does or doesn't include. Source of truth is
-/// `agents/shared/voice.md`; agent bodies may also `{{#include}}` it, but
-/// this injection is what makes it universal.
-const VOICE_LAYER: &str = include_str!("../../../agents/shared/voice.md");
-
-/// The voice section, trimmed, ready to slot into the persona prompt.
-fn voice_section() -> String {
-    VOICE_LAYER.trim().to_string()
-}
-
 fn get_os_version() -> String {
     static OS_VERSION: OnceLock<String> = OnceLock::new();
     OS_VERSION
@@ -221,12 +208,12 @@ fn mission_prompt(soul: Soul, mission: &ActiveMission) -> String {
         Some(dir) => mission.body.replace("$MISSION_DIR", &dir.to_string_lossy()),
         None => mission.body.clone(),
     };
-    join_sections([soul.identity, voice_section(), soul.body, body])
+    join_sections([soul.identity, soul.body, body])
 }
 
 impl AgentEngine {
-    /// The persona prompt, in this order: soul (identity + body) → voice →
-    /// where the agent is → the skills it may take up → the active skill.
+    /// The persona prompt, in this order: soul (identity + body) → where
+    /// the agent is → the skills it may take up → the active skill.
     /// A mission frame keeps its own shape ([`Self::mission_prompt`]).
     pub(crate) fn system_prompt(&self) -> String {
         let personality = self
@@ -248,7 +235,6 @@ impl AgentEngine {
         let mut prompt = join_sections([
             soul.identity.clone(),
             self.soul_body(&soul),
-            voice_section(),
             self.place_section().unwrap_or_default(),
         ]);
         prompt.push_str(&self.skills_listing());
@@ -493,12 +479,7 @@ impl AgentEngine {
             // Head differs by whether the store has `tier=core` rows; the
             // shared tail (save triggers, retrieval-visibility, usage rules)
             // is one fragment so the two heads can't drift apart.
-            // The session's project, when it is one: its standing rules load
-            // with core (global rules + ones written at it or a parent).
-            let cwd = self.tools.builtins.cwd();
-            let project = crate::engine::tools::is_project_dir(&cwd)
-                .then(|| cwd.to_string_lossy().to_string());
-            match core_block::load_core(&self.cfg.ling_mem_url, project.as_deref()) {
+            match core_block::load_core(&self.cfg.ling_mem_url) {
                 Some(c) => stable.push_str(
                     &self
                         .prompt_store
@@ -1159,19 +1140,6 @@ mod right_now_tests {
         assert_eq!(humanize_secs(740), "12m");
         assert_eq!(humanize_secs(3600), "1h");
         assert_eq!(humanize_secs(7380), "2h 3m");
-    }
-
-    #[test]
-    fn voice_layer_is_embedded_and_nonempty() {
-        // include_str! fails the build if the file is missing; this guards
-        // against it becoming empty and against the header drifting.
-        let v = voice_section();
-        assert!(!v.is_empty(), "voice layer must not be empty");
-        assert!(v.contains("Voice"), "voice layer lost its header: {v}");
-        assert!(
-            v.to_lowercase().contains("plain prose") || v.contains("like a person"),
-            "voice layer lost its core directive"
-        );
     }
 }
 

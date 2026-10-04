@@ -38,17 +38,13 @@ Agents are discovered dynamically from `agents/*.md` markdown files. No hardcode
 
 Runtime configuration (model, effective tools, bound skill) is set at the session level. See `session-spec.md`.
 
-### Platform voice layer
+### Voice: opt-in, not universal
 
-`agents/shared/voice.md` defines how every agent writes — plain, human, no
-robot tells. It is **injected by the engine into every system prompt**
-(embedded at compile time via `include_str!`), so user, skill, and mission
-sessions all carry it regardless of what any agent spec says. It rides
-after the soul (identity block + agent body) and before the place block
-(`## Where you are`, from `agents/places/` or a skill's `place:` — see
-`persona-design.md`) in `AgentEngine::system_prompt`. A mission keeps its
-own order: identity, voice, body, mission.
-Editing it takes a rebuild, like any embedded spec.
+A plain user session answers in the model's own default style; the engine
+injects no voice text (2026-10-04). `agents/shared/voice.md` — plain, human,
+no robot tells — stays as a fragment an agent, skill or app opts into with
+`{{#include shared/voice.md}}` when it wants that style. An agent with a
+deliberate voice (Yinyue) writes it in its own spec.
 
 `agents/shared/humanize.md` is the long-form companion: the full catalog of
 AI-writing tells with before/after fixes. Not injected — skills that draft
@@ -63,9 +59,8 @@ load with that file's content, resolved relative to the including file.
 Includes nest, cycles are errors, and a missing file fails the spec loudly.
 Shared fragments live in `agents/shared/` — subdirectories are not scanned
 for agents, and the installer re-syncs them on every daemon start. This is a
-general facility; the built-in agents do **not** include `voice.md` this way
-(the engine already injects it universally), but a user agent could include
-any shared fragment.
+general facility; the built-in agents do not include `voice.md`, but any
+agent can include any shared fragment.
 
 ### Ling: the general-purpose agent
 

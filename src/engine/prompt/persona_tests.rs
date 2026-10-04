@@ -46,14 +46,16 @@ const DESKTOP: &str = "a body on the desktop";
 const GUEST: &str = "A guest in someone else's chat";
 
 #[test]
-fn ling_at_home_gets_soul_then_voice_then_the_main_chat() {
+fn ling_at_home_gets_soul_then_the_main_chat() {
     let p = engine_as("ling", LING).system_prompt();
     let identity = at(&p, "## Identity");
     let body = at(&p, "## How you work");
-    let voice = at(&p, "## Voice");
     let place = at(&p, "## Where you are");
-    assert!(identity < body && body < voice && voice < place);
+    assert!(identity < body && body < place);
     at(&p, MAC_CHAT);
+    // No platform voice layer: a plain session answers in the model's own
+    // style; an agent, skill or app opts into a voice by including one.
+    assert!(!p.contains("## Voice"), "voice layer leaked back in:\n{p}");
 }
 
 #[test]

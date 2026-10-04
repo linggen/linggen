@@ -1,6 +1,7 @@
-//! Built-in core memory — `tier=core` rows and the standing rules that
-//! apply to the session's project, pulled from the user's memory store
-//! (`session_start`) and injected into every owner session.
+//! Built-in core memory — `tier=core` rows, pulled from the user's memory
+//! store (`session_start`) and injected into every owner session.
+//! Preferences are not loaded here: they surface by subject through
+//! per-turn recall, like any other long-term row.
 //!
 //! Per `doc/memory-spec.md` §1/§2 the core tier lives as rows in the
 //! `semantic` LanceDB table, not as files on disk. The engine queries
@@ -77,22 +78,15 @@ pub(crate) const RECONCILE_FOOTER: &str = "\n\nNote: If duplicates or conflictin
 pub(crate) const CAPTURE_REMINDER: &str = "Memory capture: before finishing this turn, recognize anything worth remembering and write it at the right tier per the memory protocol (core/semantic = search-first; episodic = incidental); anchor relative time to absolute dates (\"last month\" → \"2026-06\"). Nothing worth keeping? Skip silently.";
 
 /// What a session loads at start, from the daemon at `ling_mem_url`: the
-/// core rows plus the standing rules (type=preference) that apply at
-/// `project` — global, or written at that path or a parent of it. One
-/// `session_start` call; the daemon picks the rules, applies the char
-/// budget and renders the block, so this engine injects the same text as
-/// every other host. `project` is `None` for a session in no project:
-/// global rules only.
+/// core rows. One `session_start` call; the daemon renders the block, so
+/// this engine injects the same text as every other host.
 ///
 /// Returns `None` when there is nothing to load (or the daemon is
 /// unreachable / errors out — the caller emits the empty-block prompt in
 /// that case so a fresh install still starts cleanly). A daemon older than
 /// `session_start` (ling-mem < 1.9) gets the core rows alone, as before.
-pub(crate) fn load_core(ling_mem_url: &str, project: Option<&str>) -> Option<CoreContent> {
-    let mut args = serde_json::json!({"verb": "session_start"});
-    if let Some(p) = project {
-        args["cwd"] = serde_json::json!(p);
-    }
+pub(crate) fn load_core(ling_mem_url: &str) -> Option<CoreContent> {
+    let args = serde_json::json!({"verb": "session_start"});
     match fetch(ling_mem_url, args, LOAD_CORE_TIMEOUT) {
         Some(Ok(value)) => session_block(&value),
         Some(Err(_)) => load_core_rows_only(ling_mem_url),
@@ -107,11 +101,10 @@ fn session_block(value: &serde_json::Value) -> Option<CoreContent> {
     if block.is_empty() {
         return None;
     }
-    let rows = ["core", "rules"]
-        .iter()
-        .filter_map(|k| value.get(*k).and_then(|v| v.as_array()))
-        .map(Vec::len)
-        .sum::<usize>();
+    let rows = value
+        .get("core")
+        .and_then(|v| v.as_array())
+        .map_or(0, Vec::len);
     let facts = if rows > 1 {
         format!("{block}{RECONCILE_FOOTER}")
     } else {
@@ -284,21 +277,20 @@ mod tests {
     #[test]
     fn session_block_takes_the_daemons_block_and_adds_the_footer() {
         let value = serde_json::json!({
-            "core": [{"id": "a", "content": "Alex"}],
-            "rules": [{"id": "b", "content": "Always test"}],
-            "block": "## Core memory — who the user is\n\n- Alex (id=a)\n\n## Standing rules — how to work (global)\n\n- Always test (id=b)",
+            "core": [{"id": "a", "content": "Alex"}, {"id": "b", "content": "Lives in Toronto"}],
+            "block": "## Core memory — who the user is\n\n- Alex (id=a)\n- Lives in Toronto (id=b)",
         });
         let c = session_block(&value).unwrap();
         assert!(c.facts.starts_with("## Core memory"));
-        assert!(c.facts.contains("- Always test (id=b)"));
+        assert!(c.facts.contains("- Lives in Toronto (id=b)"));
         assert!(c.facts.ends_with(RECONCILE_FOOTER));
 
         // One row: nothing to reconcile against.
-        let one = serde_json::json!({"core": [{"id": "a"}], "rules": [], "block": "- Alex (id=a)"});
+        let one = serde_json::json!({"core": [{"id": "a"}], "block": "- Alex (id=a)"});
         assert_eq!(session_block(&one).unwrap().facts, "- Alex (id=a)");
 
         // An empty store injects nothing.
-        let empty = serde_json::json!({"core": [], "rules": [], "block": ""});
+        let empty = serde_json::json!({"core": [], "block": ""});
         assert!(session_block(&empty).is_none());
     }
 
