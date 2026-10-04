@@ -296,13 +296,18 @@ fn rule_matches(rule: &Rule, row: &Memory, contexts: &[String], home: &Path) -> 
 /// chars. A model rewrites these through `hooks`; the person edits either.
 pub fn draft_hook(content: &str) -> String {
     let flat = content.split_whitespace().collect::<Vec<_>>().join(" ");
-    let cut = [". ", "。", "; ", "；", " — ", ": "]
+    // Drop a leading label ("Hanli, 2026-09-15: …", "Workflow rule (…): …").
+    let body = match flat.find(": ") {
+        Some(i) if i <= 60 => flat[i + 2..].to_string(),
+        _ => flat.clone(),
+    };
+    let cut = [". ", "。", "; ", "；", " — "]
         .iter()
-        .filter_map(|sep| flat.find(sep))
+        .filter_map(|sep| body.find(sep))
         .filter(|&i| i >= 12)
         .min()
-        .unwrap_or(flat.len());
-    let head = flat[..cut].trim_end_matches(['.', '。']).to_string();
+        .unwrap_or(body.len());
+    let head = body[..cut].trim_end_matches(['.', '。']).to_string();
     if head.chars().count() <= 80 {
         return head;
     }
@@ -768,6 +773,10 @@ mod tests {
         assert_eq!(
             draft_hook("Always commit straight to main. Never branch; peers share the checkout."),
             "Always commit straight to main"
+        );
+        assert_eq!(
+            draft_hook("Hanli, 2026-09-15: keep testing on the live 9527. He declined a port."),
+            "keep testing on the live 9527"
         );
         let long = draft_hook(&"word ".repeat(40));
         assert!(long.chars().count() <= 80);
