@@ -387,8 +387,8 @@ impl AgentEngine {
     }
 
     /// Restriction gates (defense-in-depth), in order: the config-level tool
-    /// set, tools withheld this turn, a guest's Skill, a consumer's skill
-    /// list, and a mission's bash prefixes.
+    /// set, tools withheld this turn, a consumer's skill list, and a
+    /// mission's bash prefixes.
     fn gate_restrictions(
         &self,
         t: &ToolTurn<'_>,
@@ -397,7 +397,6 @@ impl AgentEngine {
         let msg = self
             .config_restriction(t)
             .or_else(|| self.withheld_restriction(t))
-            .or_else(|| self.guest_restriction(t))
             .or_else(|| self.consumer_skill_restriction(t))
             .or_else(|| self.bash_prefix_restriction(t))?;
         self.refuse(t, messages, msg)
@@ -428,15 +427,6 @@ impl AgentEngine {
                 "tool_not_allowed: tool={} reason=withheld: not available on this turn",
                 t.canonical
             )
-        })
-    }
-
-    /// A guest takes up no skill at a table that isn't its own, even when
-    /// its list is `*` (no allowed set to check above) — the skill's
-    /// habits would come with it.
-    fn guest_restriction(&self, t: &ToolTurn<'_>) -> Option<String> {
-        (t.canonical == "Skill" && self.is_guest_seat()).then(|| {
-            "tool_not_allowed: tool=Skill reason=guest: a guest brings only its own tools to this session".to_string()
         })
     }
 

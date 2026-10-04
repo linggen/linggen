@@ -332,10 +332,14 @@ pub struct AgentEngine {
     pub(crate) last_ask_answered: bool,
     /// Session-scoped permissions (path modes, allows, denied sigs). See permission-spec.md.
     pub session_permissions: permission::SessionPermissions,
-    /// The permissions this engine brings to a session that isn't its own (a
-    /// guest seat). When set, every loop runs under these instead of the
-    /// session's `permission.json`, and never writes that file.
-    pub seat_permissions: Option<permission::SessionPermissions>,
+    /// The session's lead member, when it isn't this engine's agent: then
+    /// this agent is another member at the lead's table — the session's
+    /// tools are the lead's, a bound skill's SKILL.md is the lead's place,
+    /// and this agent's place is a member's. Set per turn.
+    pub session_lead: Option<String>,
+    /// The lead's declared tool list, used by another member in a session
+    /// with no skill (the session's tool set). Set per turn with the lead.
+    pub session_tools: Option<Vec<String>>,
     /// A guest seat's place: what the skill of the session it sits at
     /// declares (`place:`). A guest takes up nothing else of that skill.
     pub seat_places: Option<crate::engine::skill::record::Places>,
@@ -591,7 +595,8 @@ impl AgentEngine {
             closing_ask: None,
             last_ask_answered: false,
             session_permissions: permission::SessionPermissions::default(),
-            seat_permissions: None,
+            session_lead: None,
+            session_tools: None,
             seat_places: None,
             speaks_at_table: false,
             skill_bound: false,

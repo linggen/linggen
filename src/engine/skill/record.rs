@@ -195,6 +195,11 @@ pub struct GatedPlace {
     /// the skill keeps is set.
     #[serde(default)]
     pub absent_until: Option<StateFlag>,
+    /// The tools this agent uses at the skill's table when it is not the
+    /// lead — in place of the skill's own set (a companion reads the game,
+    /// she never makes its moves). Absent: the skill's set.
+    #[serde(default)]
+    pub tools: Option<Vec<String>>,
 }
 
 /// A value the skill keeps in one of its own JSON files: `path` is a
@@ -215,6 +220,14 @@ impl Places {
             PlaceEntry::Broken => None,
         }?;
         Some(text.trim()).filter(|t| !t.is_empty())
+    }
+
+    /// The tools the skill names for `agent` at its table, if it names any.
+    pub fn tools_for(&self, agent: &str) -> Option<&[String]> {
+        match self.0.get(agent)? {
+            PlaceEntry::Gated(g) => g.tools.as_deref(),
+            _ => None,
+        }
     }
 
     /// Whether `agent` is absent from this skill's sessions right now: its

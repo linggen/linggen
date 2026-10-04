@@ -238,7 +238,9 @@ impl AgentEngine {
             self.place_section().unwrap_or_default(),
         ]);
         prompt.push_str(&self.skills_listing());
-        if let Some(skill) = &self.active_skill {
+        // The skill's SKILL.md is its lead's place and rules; another member
+        // at the table has its own place instead.
+        if let Some(skill) = self.active_skill.as_ref().filter(|_| self.is_lead()) {
             prompt.push_str(&self.active_skill_section(skill));
         }
         prompt
@@ -263,22 +265,33 @@ impl AgentEngine {
     /// session is bound to — its SKILL.md says where the agent is, and the
     /// agent takes up no other skill there.
     fn is_app_session(&self) -> bool {
-        self.active_skill
-            .as_ref()
-            .is_some_and(|s| s.app.is_some() || self.skill_bound)
+        self.is_lead()
+            && self
+                .active_skill
+                .as_ref()
+                .is_some_and(|s| s.app.is_some() || self.skill_bound)
     }
 
-    /// Whether this turn speaks from another session's table: seated there
-    /// as a guest, or landing its line there from its own thread.
-    fn speaks_as_guest(&self) -> bool {
-        self.is_guest_seat() || self.speaks_at_table
+    /// Whether this engine's agent leads its session (or the session names
+    /// no other lead): its tools are the session's, a bound skill is its
+    /// place. Another member sits at the lead's table.
+    pub(crate) fn is_lead(&self) -> bool {
+        self.session_lead
+            .as_deref()
+            .is_none_or(|lead| Some(lead) == self.agent_id.as_deref())
+    }
+
+    /// Whether this turn speaks at another's table: a member who isn't the
+    /// lead, or a line landing in an app's chat from the agent's own thread.
+    fn speaks_as_member(&self) -> bool {
+        !self.is_lead() || self.speaks_at_table
     }
 
     /// Where this engine speaks from, as far as the engine can tell. A
     /// delegate works for another agent and has no place of its own.
     pub(crate) fn surface(&self) -> Option<place::Surface> {
-        if self.speaks_as_guest() {
-            return Some(place::Surface::Guest);
+        if self.speaks_as_member() {
+            return Some(place::Surface::Member);
         }
         if self.parent_agent_id.is_some() {
             return None;
@@ -289,13 +302,23 @@ impl AgentEngine {
         Some(place::Surface::Home)
     }
 
-    /// The places the skill in view declares: the table's skill for a guest,
-    /// else the active skill.
+    /// The places the skill in view declares: the app chat's skill for a
+    /// line landing there, else the active skill.
     fn declared_places(&self) -> Option<&crate::engine::skill::record::Places> {
-        if self.speaks_as_guest() {
+        if self.speaks_at_table {
             return self.seat_places.as_ref();
         }
         self.active_skill.as_ref().and_then(|s| s.place.as_ref())
+    }
+
+    /// The tools the active skill names for this agent as a member who isn't
+    /// its lead (`place.<agent>.tools`), if it names any.
+    pub(crate) fn member_tools(&self) -> Option<&[String]> {
+        if self.is_lead() {
+            return None;
+        }
+        let agent = self.agent_id.as_deref()?;
+        self.active_skill.as_ref()?.place.as_ref()?.tools_for(agent)
     }
 
     /// `## Where you are` for the speaking agent — none in a consumer frame
@@ -316,7 +339,8 @@ impl AgentEngine {
     /// should focus entirely on the active skill.
     fn skills_listing(&self) -> String {
         use crate::prompts::keys;
-        if self.is_app_session() || self.available_skills_metadata.is_empty() {
+        let at_skill_table = self.active_skill.is_some() && !self.is_lead();
+        if self.is_app_session() || at_skill_table || self.available_skills_metadata.is_empty() {
             return String::new();
         }
         // Filter by consumer_allowed_skills when in consumer mode.
@@ -984,6 +1008,16 @@ impl AgentEngine {
     // -----------------------------------------------------------------------
 
     pub(crate) fn allowed_tool_names(&self) -> Option<HashSet<String>> {
+        // A member who isn't the skill's lead uses what the skill names for
+        // it, when it names any — and nothing else of the skill's.
+        if let Some(named) = self.member_tools() {
+            let mut allowed: HashSet<String> = named
+                .iter()
+                .flat_map(|tool| self.resolve_declared_tool(tool))
+                .collect();
+            allowed.insert("Voice".to_string());
+            return Some(allowed);
+        }
         // When a skill is active and declares allowed-tools, those take
         // precedence — the agent can only use the tools the skill permits.
         if let Some(skill) = &self.active_skill {
@@ -1015,26 +1049,25 @@ impl AgentEngine {
             }
         }
 
-        let spec = self.spec.as_ref()?;
-        if spec.tools.is_empty() {
+        // The session's tool set: its lead's declared list — a member who
+        // joined later uses it too (`session_tools`).
+        let declared = match &self.session_tools {
+            Some(lead_tools) => lead_tools.as_slice(),
+            None => self.spec.as_ref()?.tools.as_slice(),
+        };
+        if declared.is_empty() {
             return None;
         }
-        // Wildcard means unrestricted tool access for this agent.
-        if spec.tools.iter().any(|tool| tool.trim() == "*") {
+        // Wildcard means unrestricted tool access.
+        if declared.iter().any(|tool| tool.trim() == "*") {
             return None;
         }
 
-        let mut allowed = spec
-            .tools
+        let mut allowed = declared
             .iter()
             .flat_map(|tool| self.resolve_declared_tool(tool))
             .collect::<HashSet<String>>();
-        // A guest at another session's table brings exactly its own list: the
-        // extras below reach past it (`Skill` takes up a skill — and its
-        // habits — at a table that isn't the guest's; seen 2026-09-23).
-        if !self.is_guest_seat() {
-            self.add_owner_extras(&mut allowed);
-        }
+        self.add_owner_extras(&mut allowed);
         Some(allowed)
     }
 
@@ -1053,16 +1086,11 @@ impl AgentEngine {
         self.withheld_tools.contains(name)
     }
 
-    /// Whether this engine sits as a guest in a session that isn't its own —
-    /// the seat it brought its permissions to (`seat_permissions`).
-    pub(crate) fn is_guest_seat(&self) -> bool {
-        self.seat_permissions.is_some()
-    }
-
-    /// What every agent in its own session gets beyond its declared list.
+    /// What a declared (narrow) tool list gets beyond itself. Not `Skill`:
+    /// a narrow set takes up no skill and its habits (2026-09-23: Yinyue
+    /// loaded lingjing and copied Ling's AskUser) — it is in an unrestricted
+    /// set already.
     fn add_owner_extras(&self, allowed: &mut HashSet<String>) {
-        // Skill tool is always allowed so the model can discover/invoke skills.
-        allowed.insert("Skill".to_string());
         // A person can ask anyone to mute Yinyue.
         allowed.insert("Voice".to_string());
         self.inject_memory_tools(allowed);

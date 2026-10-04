@@ -34,20 +34,6 @@ impl Default for SessionPermissions {
 }
 
 impl SessionPermissions {
-    /// An agent's own policy carried to a session that isn't its own (a
-    /// guest seat): `mode` on its own folder, and nothing to ask — that
-    /// session's surface is not the guest's, so a call past the grant is
-    /// refused with a tool error instead of waiting on an answer nobody can
-    /// give (the companion's `Express` hung a guest turn on 2026-09-24).
-    pub fn seat(own_folder: &str, mode: PermissionMode) -> Self {
-        let mut perms = Self {
-            path_modes: Vec::new(),
-            interactive: false,
-        };
-        perms.set_path_mode(own_folder, mode);
-        perms
-    }
-
     /// Load from `{session_dir}/permission.json`. Returns default if missing.
     /// Tolerates legacy fields (`policy`, `locked`, `allows`, `denied_sigs`)
     /// — they're ignored, which is the migration.

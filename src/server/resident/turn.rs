@@ -192,20 +192,7 @@ async fn guest_engine(
         .agent
         .max_delegation_depth;
     engine.set_delegation_depth(0, max_depth);
-    engine.seat_permissions = Some(guest_permissions(&engine));
     Ok(engine)
-}
-
-/// What she may do as a guest: exactly what her own sessions start with — the
-/// configured default mode on her own folder — and never a prompt, since the
-/// table's surface is not hers to ask on.
-fn guest_permissions(
-    engine: &crate::engine::AgentEngine,
-) -> crate::engine::permission::SessionPermissions {
-    crate::engine::permission::SessionPermissions::seat(
-        &engine.tools.builtins.cwd().to_string_lossy(),
-        engine.cfg.permission_mode,
-    )
 }
 
 /// One turn of hers at `seat`, through the shared turn-core, on her model:
@@ -482,7 +469,7 @@ mod tests {
         ready_for_turn(&mut engine, &moment, &Default::default());
         assert_eq!(
             engine.surface(),
-            Some(crate::engine::prompt::place::Surface::Guest)
+            Some(crate::engine::prompt::place::Surface::Member)
         );
         ready_for_turn(&mut engine, &seat(false), &Default::default());
         assert_eq!(

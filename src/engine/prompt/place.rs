@@ -5,14 +5,14 @@
 //! what it can do. See `doc/persona-design.md`.
 //!
 //! Two sources, one block:
-//! - **Engine surfaces** — the agent's own session, or a guest seat at
-//!   someone else's table. An app's own agent has no engine block: the app's
+//! - **Engine surfaces** — the agent's own session, or a member's seat at a
+//!   table another agent leads. An app's own agent has no engine block: the app's
 //!   SKILL.md is its place. Their text is a readable file under
 //!   `agents/places/`, embedded at build time; its frontmatter names the
 //!   agent and the surface it is for.
 //! - **Skills** — a skill declares `place:` per agent in its SKILL.md for
-//!   the agents that come to its chat as guests; the declared text replaces
-//!   the engine's guest block. The engine names no app and no agent: it
+//!   the members at its table besides its lead; the declared text replaces
+//!   the engine's member block. The engine names no app and no agent: it
 //!   matches ids.
 
 use crate::engine::skill::record::Places;
@@ -32,8 +32,9 @@ pub(crate) enum Surface {
     Home,
     /// The agent runs an app skill in its own session.
     App,
-    /// A guest at another session's table.
-    Guest,
+    /// A member at a table another agent leads: another's session, or an
+    /// app chat its line lands in.
+    Member,
 }
 
 impl Surface {
@@ -41,7 +42,7 @@ impl Surface {
         match self {
             Surface::Home => "home",
             Surface::App => "app",
-            Surface::Guest => "guest",
+            Surface::Member => "member",
         }
     }
 }
@@ -82,8 +83,8 @@ pub(crate) fn engine_place(agent: &str, surface: Surface) -> Option<&'static str
         .map(|p| p.body.as_str())
 }
 
-/// The place text for `agent`. A guest takes the table's declaration when
-/// the skill wrote one for it, else the engine's guest block; an app's own
+/// The place text for `agent`. A member takes the table's declaration when
+/// the skill wrote one for it, else the engine's member block; an app's own
 /// agent has its SKILL.md for a place and gets none here.
 pub(crate) fn place_text<'a>(
     agent: &str,
@@ -91,7 +92,7 @@ pub(crate) fn place_text<'a>(
     declared: Option<&'a Places>,
 ) -> Option<&'a str> {
     let skill_says = match surface {
-        Surface::Guest => declared.and_then(|p| p.text_for(agent)),
+        Surface::Member => declared.and_then(|p| p.text_for(agent)),
         Surface::Home | Surface::App => None,
     };
     skill_says.or_else(|| engine_place(agent, surface))
@@ -122,7 +123,7 @@ mod tests {
         for (agent, surface) in [
             ("ling", Surface::Home),
             ("yinyue", Surface::Home),
-            ("yinyue", Surface::Guest),
+            ("yinyue", Surface::Member),
         ] {
             assert!(
                 engine_place(agent, surface).is_some(),
@@ -137,7 +138,7 @@ mod tests {
     }
 
     #[test]
-    fn a_skill_declaration_speaks_to_its_guests_only() {
+    fn a_skill_declaration_speaks_to_its_members_only() {
         let declared: Places =
             serde_norway::from_str("ling: The world of the game.\nyinyue: At the player's side.")
                 .unwrap();
@@ -147,14 +148,14 @@ mod tests {
             "the app's own agent reads its SKILL.md, not a place"
         );
         assert_eq!(
-            place_text("yinyue", Surface::Guest, Some(&declared)),
+            place_text("yinyue", Surface::Member, Some(&declared)),
             Some("At the player's side.")
         );
         let none: Places = serde_norway::from_str("ling: The world of the game.").unwrap();
         assert_eq!(
-            place_text("yinyue", Surface::Guest, Some(&none)),
-            engine_place("yinyue", Surface::Guest),
-            "no declaration for her: the engine's guest block"
+            place_text("yinyue", Surface::Member, Some(&none)),
+            engine_place("yinyue", Surface::Member),
+            "no declaration for her: the engine's member block"
         );
     }
 }

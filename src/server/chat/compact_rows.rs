@@ -230,8 +230,14 @@ pub(super) async fn compact_if_due(engine: &mut AgentEngine, ctx: &ChatRunCtx) -
         .or(engine.cfg.compact_threshold_default)
         .unwrap_or(DEFAULT_THRESHOLD);
     let limit = trigger_tokens(&models.windows, threshold);
+    // The system prompt as last built (rebuilding it here would fetch the
+    // core block again); a first turn counts the thread alone.
+    let system = engine
+        .cached_system_prompt
+        .as_ref()
+        .map_or(0, |c| AgentEngine::estimate_tokens_for_text(&c.content));
     let used = AgentEngine::estimate_tokens_for_messages(&engine.chat_history)
-        + AgentEngine::estimate_tokens_for_text(&engine.build_stable_system_content().0)
+        + system
         + AgentEngine::estimate_tokens_for_text(&ctx.clean_msg);
     if used <= limit {
         return false;

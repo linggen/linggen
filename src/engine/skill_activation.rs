@@ -80,6 +80,7 @@ impl AgentEngine {
         if matches!(mode, ActivationMode::Export) {
             apply_skill_app_scope(self, &skill);
             apply_skill_tool_scope(self, &skill);
+            apply_member_tool_scope(self, &skill);
             self.active_skill = Some(skill);
             return ActivationOutcome::Activated {
                 grants_changed: false,
@@ -119,6 +120,7 @@ impl AgentEngine {
         register_skill_tools(self, &skill);
         apply_skill_app_scope(self, &skill);
         apply_skill_tool_scope(self, &skill);
+        apply_member_tool_scope(self, &skill);
         seed_session_cwd_from_skill(self, &skill);
         self.tools
             .set_active_skill(skill.name.clone(), skill.skill_dir.clone());
@@ -262,6 +264,24 @@ fn apply_skill_tool_scope(engine: &mut AgentEngine, skill: &Skill) {
         set.insert("Voice".to_string());
     }
     engine.cfg.skill_allowed_tools = scope;
+}
+
+/// A member who isn't the skill's lead, and for whom the skill names tools
+/// (`place.<agent>.tools`), is scoped to exactly those — the skill's own
+/// set is its lead's.
+fn apply_member_tool_scope(engine: &mut AgentEngine, skill: &Skill) {
+    if engine.is_lead() {
+        return;
+    }
+    let Some(agent) = engine.agent_id.clone() else {
+        return;
+    };
+    let Some(named) = skill.place.as_ref().and_then(|p| p.tools_for(&agent)) else {
+        return;
+    };
+    let mut scope = crate::engine::tool_scope::compute_tool_scope(named).unwrap_or_default();
+    scope.insert("Voice".to_string());
+    engine.cfg.skill_allowed_tools = Some(scope);
 }
 
 /// Stamp a skill's declared `permission.paths` grants into the engine's

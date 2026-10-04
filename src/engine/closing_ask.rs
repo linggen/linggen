@@ -96,10 +96,13 @@ impl AgentEngine {
             self.last_ask_answered = answered(result);
             return;
         }
-        let declared = self
-            .active_skill
-            .as_ref()
-            .is_some_and(|s| s.closing_ask && s.tool_defs.iter().any(|t| t.name == tool));
+        // The skill's question is its lead's to ask: another member at the
+        // table reads the game, it never moves it.
+        let declared = self.is_lead()
+            && self
+                .active_skill
+                .as_ref()
+                .is_some_and(|s| s.closing_ask && s.tool_defs.iter().any(|t| t.name == tool));
         if !declared {
             return;
         }

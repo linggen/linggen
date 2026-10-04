@@ -1,6 +1,5 @@
 //! Prompt assembly per surface: one soul everywhere, a place per surface.
 
-use crate::engine::permission::{PermissionMode, SessionPermissions};
 use crate::engine::prompt::place;
 use crate::engine::skill::{Skill, SkillSource};
 use crate::engine::{AgentEngine, AgentRole, EngineConfig, InterfaceMode};
@@ -31,8 +30,9 @@ fn skill(frontmatter_extra: &str) -> Skill {
     crate::extensions::skills::parse_skill_text(&text, SkillSource::Global).unwrap()
 }
 
-fn seat_as_guest(engine: &mut AgentEngine) {
-    engine.seat_permissions = Some(SessionPermissions::seat("/tmp", PermissionMode::Read));
+/// Seat the engine's agent as a member at a table `lead` leads.
+fn seat_at(engine: &mut AgentEngine, lead: &str) {
+    engine.session_lead = Some(lead.to_string());
 }
 
 /// Where `needle` sits in `hay`; fails the test when it isn't there.
@@ -43,7 +43,7 @@ fn at(hay: &str, needle: &str) -> usize {
 
 const MAC_CHAT: &str = "Linggen's main chat";
 const DESKTOP: &str = "a body on the desktop";
-const GUEST: &str = "A guest in someone else's chat";
+const MEMBER: &str = "At a table someone else leads";
 
 #[test]
 fn ling_at_home_gets_soul_then_the_main_chat() {
@@ -91,27 +91,31 @@ fn a_skill_bound_session_has_its_skill_for_a_place_even_without_an_app() {
 }
 
 #[test]
-fn yinyue_at_home_is_on_the_desktop_and_a_guest_at_an_app_table() {
+fn yinyue_at_home_is_on_the_desktop_and_a_member_at_anothers_table() {
     let home = engine_as("yinyue", YINYUE).system_prompt();
     at(&home, DESKTOP);
     at(&home, "## How you talk");
-    assert!(!home.contains(GUEST));
+    assert!(!home.contains(MEMBER));
 
-    let mut guest = engine_as("yinyue", YINYUE);
-    seat_as_guest(&mut guest);
-    let p = guest.system_prompt();
-    at(&p, GUEST);
+    let mut member = engine_as("yinyue", YINYUE);
+    seat_at(&mut member, "ling");
+    let p = member.system_prompt();
+    at(&p, MEMBER);
     at(&p, "## How you talk");
     assert!(!p.contains(DESKTOP) && !p.contains("Express"));
+
+    // Her own thread, where she leads: home again.
+    seat_at(&mut member, "yinyue");
+    at(&member.system_prompt(), DESKTOP);
 }
 
-/// The guest block holds at any table — an app's chat, the main chat, a
+/// The member block holds at any table — an app's chat, the main chat, a
 /// mission's session — so it never says she is in an app, or that its
 /// agent runs one.
 #[test]
-fn the_guest_block_is_true_at_any_table() {
+fn the_member_block_is_true_at_any_table() {
     let block =
-        crate::engine::prompt::place::engine_place("yinyue", place::Surface::Guest).unwrap();
+        crate::engine::prompt::place::engine_place("yinyue", place::Surface::Member).unwrap();
     for app_only in ["apps' chats", "runs the app", "You don't run the app"] {
         assert!(
             !block.contains(app_only),
@@ -120,38 +124,45 @@ fn the_guest_block_is_true_at_any_table() {
     }
 }
 
+/// At a skill's table she leads nothing: the skill's place for her, never
+/// its SKILL.md (the lead's rules), no list of skills to take up.
 #[test]
-fn a_guest_reads_the_tables_skill_for_her_own_place_only() {
+fn a_member_reads_the_skills_place_for_her_never_its_rules() {
     let table = skill(
         "place:\n  ling: HIS WORLD.\n  yinyue:\n    text: AT THE PLAYER'S SIDE.\n    absent_until: {file: s.json, path: a}\n",
     );
     let mut engine = engine_as("yinyue", YINYUE);
-    seat_as_guest(&mut engine);
-    engine.seat_places = table.place.clone();
+    seat_at(&mut engine, "ling");
+    engine.available_skills_metadata = vec![("other".into(), "OTHER SKILL.".into(), true)];
+    engine.active_skill = Some(table.clone());
+    engine.skill_bound = true;
     let p = engine.system_prompt();
     at(&p, "AT THE PLAYER'S SIDE.");
-    assert!(!p.contains("HIS WORLD.") && !p.contains(GUEST));
-    assert!(
-        !p.contains("THE APP'S OWN RULES."),
-        "a guest takes up no skill"
-    );
+    assert!(!p.contains("HIS WORLD.") && !p.contains(MEMBER));
+    assert!(!p.contains("THE APP'S OWN RULES."), "the lead's rules");
+    assert!(!p.contains("OTHER SKILL."));
+
+    // The same skill, Ling leading: its SKILL.md is his place.
+    let mut ling = engine_as("ling", LING);
+    seat_at(&mut ling, "ling");
+    ling.active_skill = Some(table);
+    ling.skill_bound = true;
+    at(&ling.system_prompt(), "THE APP'S OWN RULES.");
 }
 
 /// Her line landing in an app chat from her own thread: she speaks from
-/// that table — the table's declaration for her, else the guest block —
-/// with her own tools (no guest seat).
+/// that table — the table's declaration for her, else the member block.
 #[test]
 fn a_line_landing_at_a_table_speaks_from_it() {
     let table = skill("place:\n  yinyue: AT THE PLAYER'S SIDE.\n");
     let mut engine = engine_as("yinyue", YINYUE);
     engine.speaks_at_table = true;
     let p = engine.system_prompt();
-    at(&p, GUEST);
+    at(&p, MEMBER);
     assert!(!p.contains(DESKTOP));
     engine.seat_places = table.place.clone();
     let p = engine.system_prompt();
     at(&p, "AT THE PLAYER'S SIDE.");
-    assert!(!engine.is_guest_seat());
 }
 
 #[test]

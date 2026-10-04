@@ -171,17 +171,11 @@ impl AgentEngine {
         }
     }
 
-    /// The permissions this loop runs under. A guest seat brings its own
-    /// (`seat_permissions`); everyone else reads the session's
-    /// permission.json, initializing it with the configured default mode on
-    /// the starting cwd for a new user session.
+    /// The permissions this loop runs under: the session's permission.json —
+    /// every member's alike — initialized with the configured default mode
+    /// on the starting cwd for a new user session.
     fn load_session_permissions(&mut self, sid: &str) {
         let sdir = crate::paths::global_sessions_dir().join(sid);
-        if let Some(seat) = &self.seat_permissions {
-            self.session_permissions = seat.clone();
-            self.session_dir = Some(sdir);
-            return;
-        }
         self.session_permissions = permission::SessionPermissions::load(&sdir);
 
         // Mission and proxy-consumer sessions are non-interactive — they
@@ -1252,10 +1246,8 @@ mod tests {
 }
 
 #[cfg(test)]
-mod seat_tests {
-    use super::permission::{
-        check_permission, PermissionCheckResult, PermissionMode, SessionPermissions,
-    };
+mod member_tests {
+    use super::permission::{PermissionMode, SessionPermissions};
     use super::{AgentEngine, AgentRole, EngineConfig, InterfaceMode};
 
     fn engine_at(root: &std::path::Path) -> AgentEngine {
@@ -1272,102 +1264,100 @@ mod seat_tests {
         AgentEngine::new(cfg, models, "m".to_string(), AgentRole::Lead).unwrap()
     }
 
-    /// A guest seat runs under the permissions it brought, never the table's
-    /// permission.json — and leaves that file alone. On 2026-09-24 the
-    /// companion's guest turn read the app session's grants (edit on the
-    /// app's folder), found her own folder uncovered, and waited forever on a
-    /// prompt for `Express` that no surface showed.
-    #[test]
-    fn a_seat_brings_its_own_permissions_and_writes_none() {
-        // Her folder outside the OS temp dir, which is always-allowed scratch.
-        let her = dirs::home_dir().unwrap().join(".linggen");
+    fn spec_engine(agent: &str, md: &str) -> AgentEngine {
         let root = tempfile::tempdir().unwrap();
         let mut engine = engine_at(root.path());
-        let folder = her.to_string_lossy().to_string();
-        engine.seat_permissions = Some(SessionPermissions::seat(&folder, PermissionMode::Read));
-        let sid = format!("sess-seat-test-{}", uuid::Uuid::new_v4());
-
-        engine.load_session_permissions(&sid);
-
-        assert!(
-            !engine.session_permissions.interactive,
-            "a guest never prompts"
-        );
-        assert_eq!(engine.session_permissions.path_modes.len(), 1);
-        assert!(
-            !crate::paths::global_sessions_dir().join(&sid).exists(),
-            "the table's permission.json is not the guest's to write"
-        );
-        assert!(
-            matches!(
-                check_permission(
-                    "Express",
-                    None,
-                    None,
-                    &her,
-                    &engine.session_permissions,
-                    None,
-                ),
-                PermissionCheckResult::Allowed
-            ),
-            "her own read tools run as they do in her own sessions"
-        );
-        // Past her grant: tool_exec refuses a non-interactive session with a
-        // tool error instead of asking.
-        assert!(matches!(
-            check_permission(
-                "Write",
-                None,
-                Some(&format!("{folder}/x.txt")),
-                &her,
-                &engine.session_permissions,
-                None,
-            ),
-            PermissionCheckResult::NeedsPrompt(_)
-        ));
-    }
-
-    /// Her real spec, on an engine — seated as a guest or at home.
-    fn yinyue_engine(guest: bool) -> AgentEngine {
-        let root = tempfile::tempdir().unwrap();
-        let mut engine = engine_at(root.path());
-        let (spec, _) =
-            crate::extensions::agents::parse_agent_markdown(include_str!("../../agents/yinyue.md"))
-                .unwrap();
-        engine.spec = Some(spec);
-        if guest {
-            let her = dirs::home_dir().unwrap().join(".linggen");
-            engine.seat_permissions = Some(SessionPermissions::seat(
-                &her.to_string_lossy(),
-                PermissionMode::Read,
-            ));
-        }
+        let (spec, body) = crate::extensions::agents::parse_agent_markdown(md).unwrap();
+        engine.set_spec(agent.to_string(), spec, body);
         engine
     }
 
-    /// A guest is offered exactly her spec's list: no `Skill` to take up the
-    /// table's skill (2026-09-23: she loaded lingjing and copied Ling's
-    /// AskUser habit). At home the owner extras still apply.
-    #[test]
-    fn a_guest_is_offered_only_her_own_list() {
-        let guest = yinyue_engine(true).allowed_tool_names().unwrap();
-        assert!(!guest.contains("Skill"), "{guest:?}");
-        assert!(guest.contains("WebSearch") && guest.contains("Express"));
-        let home = yinyue_engine(false).allowed_tool_names().unwrap();
-        assert!(home.contains("Skill"));
+    /// Her real spec, on an engine — leading her own thread.
+    fn yinyue_engine() -> AgentEngine {
+        spec_engine("yinyue", include_str!("../../agents/yinyue.md"))
     }
 
-    /// Execute time holds the line too — even with no allowed set to check
-    /// (a `*` guest), a guest's `Skill` call is refused, never run.
+    fn ling_spec() -> Vec<String> {
+        let (spec, _) =
+            crate::extensions::agents::parse_agent_markdown(include_str!("../../agents/ling.md"))
+                .unwrap();
+        spec.tools
+    }
+
+    /// Her daily thread is hers: its tool set is her own narrow list — no
+    /// Bash, no Write, no Skill to take up a skill and its habits
+    /// (2026-09-23: she loaded lingjing and copied Ling's AskUser).
+    #[test]
+    fn her_daily_thread_lacks_bash_write_and_skill() {
+        let set = yinyue_engine().allowed_tool_names().unwrap();
+        for absent in ["Bash", "Write", "Edit", "Skill", "AskUser", "Task"] {
+            assert!(!set.contains(absent), "{absent} in {set:?}");
+        }
+        assert!(set.contains("WebSearch") && set.contains("Express") && set.contains("Voice"));
+    }
+
+    /// The tool set is the session's, set by its lead: at Ling's table she
+    /// uses his (unrestricted) set; at hers, he uses her narrow one.
+    #[test]
+    fn a_member_uses_the_sessions_tool_set_its_lead_set() {
+        let mut her = yinyue_engine();
+        her.session_lead = Some("ling".into());
+        her.session_tools = Some(ling_spec());
+        assert_eq!(her.allowed_tool_names(), None, "Ling's set: everything");
+
+        let mut ling = spec_engine("ling", include_str!("../../agents/ling.md"));
+        assert_eq!(ling.allowed_tool_names(), None);
+        let (her_spec, _) =
+            crate::extensions::agents::parse_agent_markdown(include_str!("../../agents/yinyue.md"))
+                .unwrap();
+        ling.session_lead = Some("yinyue".into());
+        ling.session_tools = Some(her_spec.tools);
+        let set = ling.allowed_tool_names().unwrap();
+        assert!(!set.contains("Bash") && set.contains("WebSearch"));
+    }
+
+    fn lingjing_like() -> crate::engine::skill::Skill {
+        let text = "---\nname: game\ndescription: d\nallowed-tools: [AskUser]\nmembers: [ling, yinyue]\nplace:\n  yinyue:\n    text: At the player's side.\n    tools: [AppTool, Story]\ntools:\n  - name: Story\n    description: read\n    cmd: \"echo story\"\n    tier: read\n  - name: Resolve\n    description: move\n    cmd: \"echo move\"\n    tier: edit\n---\nTHE GAME'S RULES.";
+        crate::extensions::skills::parse_skill_text(text, crate::engine::skill::SkillSource::Global)
+            .unwrap()
+    }
+
+    /// At a skill's table she leads nothing: she uses what the skill names
+    /// for her — never its moves or its question widget — and Ling keeps
+    /// the skill's whole set.
     #[tokio::test]
-    async fn a_guest_skill_call_is_refused_at_execute_time() {
-        let mut engine = yinyue_engine(true);
+    async fn at_a_skills_table_a_member_uses_only_what_the_skill_names_for_her() {
+        let mut her = yinyue_engine();
+        her.session_lead = Some("ling".into());
+        her.activate_skill(lingjing_like(), crate::engine::ActivationMode::Export)
+            .await;
+        let set = her.allowed_tool_names().unwrap();
+        for absent in ["Resolve", "AskUser", "Skill", "Bash"] {
+            assert!(!set.contains(absent), "{absent} in {set:?}");
+        }
+        assert!(set.contains("AppTool"));
+        assert!(her.cfg.is_tool_allowed("AppTool") && !her.cfg.is_tool_allowed("Resolve"));
+
+        let mut ling = spec_engine("ling", include_str!("../../agents/ling.md"));
+        ling.activate_skill(lingjing_like(), crate::engine::ActivationMode::Export)
+            .await;
+        assert!(ling.cfg.is_tool_allowed("Resolve") && ling.cfg.is_tool_allowed("AskUser"));
+    }
+
+    /// A move the model names anyway is refused at execute time.
+    #[tokio::test]
+    async fn a_members_move_is_refused_at_execute_time() {
+        let mut her = yinyue_engine();
+        her.session_lead = Some("ling".into());
+        her.activate_skill(lingjing_like(), crate::engine::ActivationMode::Export)
+            .await;
+        let allowed = her.allowed_tool_names();
         let mut messages = Vec::new();
-        let outcome = engine
+        let outcome = her
             .pre_execute_tool(
-                "Skill".to_string(),
-                serde_json::json!({"skill": "lingjing"}),
-                &None,
+                "AskUser".to_string(),
+                serde_json::json!({"questions": []}),
+                &allowed,
                 &mut messages,
                 &mut std::collections::HashMap::new(),
                 &mut std::collections::HashSet::new(),
@@ -1378,9 +1368,38 @@ mod seat_tests {
             )
             .await;
         assert!(matches!(outcome, super::types::PreExecOutcome::Blocked(_)));
-        assert!(messages
-            .iter()
-            .any(|m| m.content.contains("tool_not_allowed: tool=Skill")));
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.content.contains("AskUser") && m.content.contains("not allowed")),
+            "{messages:?}"
+        );
+    }
+
+    /// Permissions are the session's: every member's loop reads the same
+    /// permission.json — a grant made on his turn holds on hers.
+    #[test]
+    fn every_member_runs_under_the_sessions_permissions() {
+        let her_root = dirs::home_dir().unwrap().join(".linggen");
+        let sid = format!("sess-perm-test-{}", uuid::Uuid::new_v4());
+        let sdir = crate::paths::global_sessions_dir().join(&sid);
+        let mut perms = SessionPermissions::default();
+        perms.set_path_mode("~/Projects/x", PermissionMode::Edit);
+        perms.save(&sdir);
+
+        let mut ling = engine_at(&her_root);
+        let mut her = yinyue_engine();
+        her.session_lead = Some("ling".into());
+        ling.load_session_permissions(&sid);
+        her.load_session_permissions(&sid);
+        let modes = |e: &AgentEngine| format!("{:?}", e.session_permissions.path_modes);
+        assert_eq!(modes(&ling), modes(&her));
+        assert!(modes(&her).contains("Projects/x"));
+        assert!(
+            her.session_permissions.interactive,
+            "her turn asks the person"
+        );
+        let _ = std::fs::remove_dir_all(&sdir);
     }
 
     /// A withheld tool is not offered on the turn — her moment wake must not
@@ -1388,7 +1407,7 @@ mod seat_tests {
     /// messaged him and started his autonomous loop in the app's chat).
     #[test]
     fn a_withheld_tool_is_not_offered() {
-        let mut engine = yinyue_engine(false);
+        let mut engine = yinyue_engine();
         let (_, offered, _) =
             engine.prepare_loop_messages("hi", true, crate::engine::prompt::PromptPurpose::Turn);
         assert!(offered.unwrap().contains("agent_chat"));
@@ -1403,7 +1422,7 @@ mod seat_tests {
     /// And a withheld call the model makes anyway is refused, never run.
     #[tokio::test]
     async fn a_withheld_call_is_refused_at_execute_time() {
-        let mut engine = yinyue_engine(false);
+        let mut engine = yinyue_engine();
         engine.withheld_tools = ["agent_chat".to_string()].into();
         let mut messages = Vec::new();
         let outcome = engine

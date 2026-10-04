@@ -793,6 +793,7 @@ pub(crate) async fn run_session_turn(
     if ctx.guest {
         seat_at_table(engine, ctx).await;
     } else {
+        seat_member(engine, ctx).await;
         let restored = super::thread::sync(engine, ctx).await;
         // After restore (and before this turn's user message + fresh recall
         // are pushed), the buffer holds only completed prior turns — safe to
@@ -817,6 +818,30 @@ pub(crate) async fn run_session_turn(
     dispatch_turn(ctx, engine, manager, &ctx.clean_msg).await;
     take_aside(&mut engine.chat_history, ctx.aside.as_deref());
     super::thread::mark(engine, ctx);
+}
+
+/// Where this member sits this turn: the session's lead when that is
+/// someone else — its tools are the session's set — or the lead itself.
+async fn seat_member(engine: &mut crate::engine::AgentEngine, ctx: &ChatRunCtx) {
+    let Some(sid) = ctx.session_id.as_deref() else {
+        return;
+    };
+    let members = super::members::of_session(&ctx.manager, sid).await;
+    let lead = super::members::lead(&members);
+    if lead == ctx.agent_id {
+        engine.session_lead = None;
+        engine.session_tools = None;
+        return;
+    }
+    engine.session_tools = ctx
+        .manager
+        .agents
+        .find(&ctx.root, &lead)
+        .await
+        .ok()
+        .flatten()
+        .map(|spec| spec.spec.tools);
+    engine.session_lead = Some(lead);
 }
 
 /// A guest's thread: the session's visible dialogue (`table`), without the
