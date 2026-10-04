@@ -15,6 +15,7 @@ use super::schema::{
     build_schema, memories_to_record_batch, record_batch_to_memories, EPISODIC_TABLE_NAME,
     SEMANTIC_TABLE_NAME,
 };
+use super::scope::RecallScope;
 use super::types::{Memory, MemoryType, Origin, Outcome, Tier};
 use anyhow::{anyhow, Context, Result};
 use arrow_array::{RecordBatch, RecordBatchIterator, RecordBatchReader};
@@ -77,16 +78,21 @@ impl AccountScope {
 
 /// Filter criteria shared by [`MemoryStore::search`] and [`MemoryStore::list`].
 ///
-/// All filter fields combine with AND. Within `contexts`, every entry must
-/// appear in the fact's `contexts` array (AND semantics); within
-/// `contexts_any`, one is enough (OR). Within `types`, any one entry matches
-/// (OR). An empty filter matches every row of the owner's.
+/// All filter fields combine with AND. Within `types` and `apps`, any one
+/// entry matches (OR). An empty filter matches every row of the owner's.
 #[derive(Debug, Clone, Default)]
 pub struct Filters {
-    pub contexts: Vec<String>,
-    /// At least one of these must appear in the fact's `contexts`. The
-    /// phone's pull uses it: "the rows tagged with any app I run".
-    pub contexts_any: Vec<String>,
+    /// Rows scoped to any of these skills' dirs (`~/.linggen/skills/<name>`
+    /// and below). The phone's pull: "the rows of any app I run".
+    pub apps: Vec<String>,
+    /// Only rows with this `indexed` flag.
+    pub indexed: Option<bool>,
+    /// Only rows whose `cwd` is exactly one of these — the index query.
+    pub cwd_in: Vec<String>,
+    /// Set by the store, never by callers: the table still carries the v1
+    /// `contexts` column (migration not yet accepted), so app and skill
+    /// scopes also match rows tagged with the app's name there.
+    pub(crate) legacy_contexts: bool,
     /// Whose rows. Defaults to the owner's; see [`AccountScope`].
     pub account: AccountScope,
     pub types: Vec<MemoryType>,
@@ -106,14 +112,11 @@ pub struct Filters {
     /// deep-links (`?session=<sid>`) to show only rows the agent wrote
     /// during one engine session.
     pub source_session: Option<String>,
-    /// Scope to the work this path belongs to: rows written under it, plus
-    /// every row that belongs to no project at all.
-    ///
-    /// Not an equality filter, for two reasons. Paths **nest** — a row from
-    /// `~/work/linggen/mobile` is part of the work at `~/work/linggen`, and a
-    /// tag could never say so — and rows with no `cwd` are the person, not the
-    /// project: identity, preferences, cross-project gotchas. Scoping those
-    /// away would be worse than not scoping at all.
+    /// The session's recall scope, given as its root (or cwd): see
+    /// [`RecallScope`]. An owner root sees rows under it, rows at its parents
+    /// and rows with no cwd; a skill's dir sees only rows under it; `$HOME`,
+    /// `~/.linggen` and temp dirs see only rows with no cwd. Applied in SQL,
+    /// before ranking.
     pub cwd_scope: Option<String>,
     /// Include archived rows (`expired_at IS NOT NULL`). Default `false`:
     /// live memory only — the archive exists for provenance and unpack,
@@ -135,8 +138,9 @@ impl Filters {
         // `account` deliberately doesn't count: it narrows to a person, and
         // "forget everyone this person is" must be a by-id decision, not a
         // filter that reads like a scope.
-        self.contexts.is_empty()
-            && self.contexts_any.is_empty()
+        self.apps.is_empty()
+            && self.indexed.is_none()
+            && self.cwd_in.is_empty()
             && self.types.is_empty()
             && self.origin.is_none()
             && self.outcome.is_none()
@@ -165,19 +169,37 @@ impl Filters {
     /// `since` / `until` match whichever timestamp the fact actually carries.
     fn to_sql(&self) -> Option<String> {
         let mut clauses: Vec<String> = Vec::new();
+        let home = super::scope::home();
 
-        for ctx in &self.contexts {
-            clauses.push(format!("array_has(contexts, '{}')", escape_sql(ctx)));
-        }
-
-        if !self.contexts_any.is_empty() {
+        if !self.apps.is_empty() {
             let or = self
-                .contexts_any
+                .apps
                 .iter()
-                .map(|c| format!("array_has(contexts, '{}')", escape_sql(c)))
+                .map(|name| {
+                    let dir = home.join(super::scope::SKILLS_REL).join(name);
+                    self.skill_sql(&dir.to_string_lossy(), name)
+                })
                 .collect::<Vec<_>>()
                 .join(" OR ");
             clauses.push(format!("({or})"));
+        }
+
+        if let Some(flag) = self.indexed {
+            clauses.push(if flag {
+                "indexed = true".to_string()
+            } else {
+                "(indexed IS NULL OR indexed = false)".to_string()
+            });
+        }
+
+        if !self.cwd_in.is_empty() {
+            let list = self
+                .cwd_in
+                .iter()
+                .map(|c| format!("'{}'", escape_sql(c)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            clauses.push(format!("cwd IN ({list})"));
         }
 
         match &self.account {
@@ -259,18 +281,52 @@ impl Filters {
             clauses.push("expired_at IS NULL".to_string());
         }
 
-        // The path itself, anything nested under it, or nothing at all. The
-        // trailing separator on the LIKE keeps `…/linggen` from claiming
-        // `…/linggen-mobile`, which is a different project sharing a prefix.
         if let Some(p) = &self.cwd_scope {
-            let p = escape_sql(p.trim_end_matches('/'));
-            clauses.push(format!("(cwd IS NULL OR cwd = '{p}' OR cwd LIKE '{p}/%')"));
+            clauses.push(self.recall_sql(&RecallScope::of(p, &home)));
         }
 
         if clauses.is_empty() {
             None
         } else {
             Some(clauses.join(" AND "))
+        }
+    }
+}
+
+impl Filters {
+    /// A directory and everything under it. The trailing separator on the
+    /// LIKE keeps `…/linggen` from claiming `…/linggen-mobile`.
+    fn subtree_sql(dir: &str) -> String {
+        let p = escape_sql(dir.trim_end_matches('/'));
+        format!("cwd = '{p}' OR cwd LIKE '{p}/%'")
+    }
+
+    /// One skill's rows: under its dir — and, while the v1 `contexts`
+    /// column survives, rows tagged with its name (the old namespace).
+    fn skill_sql(&self, dir: &str, name: &str) -> String {
+        let mut or = Self::subtree_sql(dir);
+        if self.legacy_contexts {
+            or.push_str(&format!(" OR array_has(contexts, '{}')", escape_sql(name)));
+        }
+        format!("({or})")
+    }
+
+    fn recall_sql(&self, scope: &RecallScope) -> String {
+        match scope {
+            RecallScope::Owner { root, ancestors } => {
+                let mut or = format!("cwd IS NULL OR {}", Self::subtree_sql(root));
+                if !ancestors.is_empty() {
+                    let list = ancestors
+                        .iter()
+                        .map(|a| format!("'{}'", escape_sql(a)))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    or.push_str(&format!(" OR cwd IN ({list})"));
+                }
+                format!("({or})")
+            }
+            RecallScope::Skill { dir, name } => self.skill_sql(dir, name),
+            RecallScope::NoRoot => "cwd IS NULL".to_string(),
         }
     }
 }
@@ -305,8 +361,8 @@ pub enum SortOrder {
 #[derive(Debug, Clone, Default)]
 pub struct MemoryPatch {
     pub content: Option<String>,
-    pub contexts: Option<Vec<String>>,
-    pub tags: Option<Vec<String>>,
+    pub hook: Option<Option<String>>,
+    pub indexed: Option<bool>,
     pub r#type: Option<MemoryType>,
     pub tier: Option<Tier>,
     pub origin: Option<Origin>,
@@ -327,11 +383,11 @@ impl MemoryPatch {
         if let Some(v) = &self.content {
             f.content = v.clone();
         }
-        if let Some(v) = &self.contexts {
-            f.contexts = v.clone();
+        if let Some(v) = &self.hook {
+            f.hook = v.clone();
         }
-        if let Some(v) = &self.tags {
-            f.tags = v.clone();
+        if let Some(v) = self.indexed {
+            f.indexed = v;
         }
         if let Some(v) = &self.r#type {
             f.r#type = *v;
@@ -386,7 +442,7 @@ async fn ensure_late_schema_additions(table: &lancedb::Table) -> Result<()> {
         .context("reading existing memory table schema")?;
     // Every column added after the initial schema, in add order:
     // `host` (2026-05-20), the archive pair (2026-08-17), the account pair
-    // (2026-09-08).
+    // (2026-09-08), the scope pair (2026-10-04).
     let late: &[(&str, DataType)] = &[
         ("host", DataType::Utf8),
         (
@@ -396,6 +452,8 @@ async fn ensure_late_schema_additions(table: &lancedb::Table) -> Result<()> {
         ("superseded_by", DataType::Utf8),
         ("account_id", DataType::Utf8),
         ("account_name", DataType::Utf8),
+        ("hook", DataType::Utf8),
+        ("indexed", DataType::Boolean),
     ];
     let missing: Vec<Field> = late
         .iter()
@@ -454,6 +512,30 @@ async fn check_schema_dim(table: &lancedb::Table, lancedb_dir: &Path) -> Result<
     Ok(())
 }
 
+/// Does this table still carry the v1 `contexts`/`tags` columns?
+async fn has_legacy_columns(table: &lancedb::Table) -> Result<bool> {
+    let schema = table.schema().await.context("reading table schema")?;
+    Ok(super::schema::LEGACY_LIST_COLUMNS
+        .iter()
+        .any(|c| schema.field_with_name(c).is_ok()))
+}
+
+/// Does any *other* table in this store still carry the legacy columns?
+/// The sidecar describes the whole store, so one legacy table keeps it v1.
+async fn any_table_legacy(conn: &Connection, names: &[String], skip: &str) -> Result<bool> {
+    for name in names.iter().filter(|n| n.as_str() != skip) {
+        let t = conn
+            .open_table(name)
+            .execute()
+            .await
+            .with_context(|| format!("opening `{name}` table"))?;
+        if has_legacy_columns(&t).await? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn escape_sql(s: &str) -> String {
     s.replace('\'', "''")
 }
@@ -478,7 +560,7 @@ pub enum InsertOutcome {
     /// No existing row had the same exact content; inserted fresh.
     Added(Memory),
     /// An existing row (same type) had byte-identical content; the
-    /// candidate's contexts/tags were unioned into it and its id kept.
+    /// candidate's missing-on-existing fields filled it and its id kept.
     Merged {
         /// The post-merge fact (same id as the existing row).
         fact: Memory,
@@ -507,8 +589,8 @@ pub(crate) fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 }
 
 /// Merge a near-duplicate `candidate` into an `existing` row. Keeps the
-/// existing id, created_at, and origin (original authorship); unions
-/// contexts and tags; prefers the longer content (more signal). Scalar
+/// existing id, created_at, and origin (original authorship); prefers the
+/// longer content (more signal). Scalar
 /// optional fields on the candidate overwrite the existing value only
 /// when the candidate actually carries a value — a `None` never clears.
 ///
@@ -525,23 +607,16 @@ fn merge_fact(existing: &Memory, candidate: &Memory) -> Memory {
         merged.vector = candidate.vector.clone();
     }
 
-    for c in &candidate.contexts {
-        if !merged.contexts.contains(c) {
-            merged.contexts.push(c.clone());
-        }
-    }
-    for t in &candidate.tags {
-        if !merged.tags.contains(t) {
-            merged.tags.push(t.clone());
-        }
-    }
-
     if candidate.outcome.is_some() {
         merged.outcome = candidate.outcome;
     }
     if merged.cwd.is_none() {
         merged.cwd = candidate.cwd.clone();
     }
+    if merged.hook.is_none() {
+        merged.hook = candidate.hook.clone();
+    }
+    merged.indexed |= candidate.indexed;
     if candidate.occurred_at.is_some() {
         merged.occurred_at = candidate.occurred_at;
     }
@@ -568,6 +643,10 @@ pub struct MemoryStore {
     /// the semantic and episodic stores hold independent locks, so a
     /// cross-tier write touching both never self-deadlocks.
     write_lock: tokio::sync::Mutex<()>,
+    /// The table still carries the v1 `contexts`/`tags` columns — its owner
+    /// has not accepted the scope migration yet. Writes fill them empty;
+    /// app/skill scopes also match the old `contexts` namespace.
+    legacy: std::sync::atomic::AtomicBool,
 }
 
 impl MemoryStore {
@@ -659,24 +738,133 @@ impl MemoryStore {
                 .with_context(|| format!("creating `{table_name}` table"))?
         };
 
-        // A store from an older (still-readable) schema generation must run
-        // its registered migrations before being stamped current — stamping
-        // without migrating would mark an unmigrated store as up to date.
+        // A store from an older (still-readable) schema generation runs its
+        // registered migrations. The v1→v2 step (dropping `contexts`/`tags`)
+        // is gated on the owner's accept, so it does not run here.
         if let super::schema_version::Compat::Migrate { from } = compat {
             super::schema_version::run_migrations(from)?;
         }
 
-        // Record the store schema version that opened this store. Idempotent —
-        // writes only when the sidecar differs (so patch/minor binaries sharing
-        // a STORE_SCHEMA_VERSION never churn it). For an adopted legacy store,
-        // the per-table additive migrations above have already run.
-        super::schema_version::stamp_current(data_dir)?;
+        // Record the layout this store actually has: v1 while any table still
+        // carries the legacy columns, v2 once none does. Idempotent.
+        let legacy = has_legacy_columns(&table).await?;
+        let any_legacy = legacy || any_table_legacy(&conn, &names, table_name).await?;
+        super::schema_version::stamp_layout(data_dir, any_legacy)?;
 
         Ok(Self {
             _conn: conn,
             table,
             write_lock: tokio::sync::Mutex::new(()),
+            legacy: std::sync::atomic::AtomicBool::new(legacy),
         })
+    }
+
+    /// Does this table still carry the v1 `contexts`/`tags` columns?
+    pub fn is_legacy(&self) -> bool {
+        self.legacy.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// The gated v1→v2 step: drop `contexts` and `tags`. Run only from the
+    /// scope migration's accept (`schema_version::apply_gated`), after a
+    /// backup. Idempotent.
+    pub async fn drop_legacy_columns(&self) -> Result<()> {
+        let _guard = self.write_lock.lock().await;
+        let schema = self.table.schema().await.context("reading table schema")?;
+        let present: Vec<&str> = super::schema::LEGACY_LIST_COLUMNS
+            .iter()
+            .copied()
+            .filter(|c| schema.field_with_name(c).is_ok())
+            .collect();
+        if !present.is_empty() {
+            self.table
+                .drop_columns(&present)
+                .await
+                .with_context(|| format!("dropping {present:?}"))?;
+        }
+        self.legacy
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// `id → contexts` for every row (archived included) that carries any —
+    /// empty once the legacy columns are gone. The scope migration's input.
+    pub async fn legacy_contexts(&self) -> Result<std::collections::HashMap<String, Vec<String>>> {
+        let mut out = std::collections::HashMap::new();
+        if !self.is_legacy() {
+            return Ok(out);
+        }
+        let mut stream = self
+            .table
+            .query()
+            .execute()
+            .await
+            .context("reading legacy contexts")?;
+        while let Some(batch) = stream.try_next().await.context("reading batch")? {
+            for (id, ctx) in super::schema::legacy_contexts(&batch)? {
+                out.insert(id, ctx);
+            }
+        }
+        Ok(out)
+    }
+
+    /// The filter's SQL for this table — knows whether the v1 `contexts`
+    /// column still exists.
+    fn sql(&self, filters: &Filters) -> Option<String> {
+        if self.is_legacy() == filters.legacy_contexts {
+            return filters.to_sql();
+        }
+        let mut f = filters.clone();
+        f.legacy_contexts = self.is_legacy();
+        f.to_sql()
+    }
+
+    /// A batch shaped to this table's on-disk schema (see
+    /// [`super::schema::conform_keeping`]). On a v1 table, rows that already
+    /// exist keep their `contexts`/`tags` — the scope migration reads them.
+    async fn batch_for_table(&self, facts: &[Memory]) -> Result<RecordBatch> {
+        let batch = memories_to_record_batch(facts)?;
+        let schema = self.table.schema().await.context("reading table schema")?;
+        let keep = if self.is_legacy() {
+            self.legacy_lists_of(facts).await?
+        } else {
+            std::collections::HashMap::new()
+        };
+        super::schema::conform_keeping(batch, &schema, &keep)
+    }
+
+    /// `column → id → values` of the legacy list columns for these rows'
+    /// ids, where any are stored.
+    async fn legacy_lists_of(
+        &self,
+        facts: &[Memory],
+    ) -> Result<std::collections::HashMap<String, std::collections::HashMap<String, Vec<String>>>>
+    {
+        let mut out = std::collections::HashMap::new();
+        if facts.is_empty() {
+            return Ok(out);
+        }
+        let ids = facts
+            .iter()
+            .map(|f| format!("'{}'", escape_sql(&f.id)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut stream = self
+            .table
+            .query()
+            .only_if(format!("id IN ({ids})"))
+            .execute()
+            .await
+            .context("reading legacy lists")?;
+        while let Some(batch) = stream.try_next().await.context("reading batch")? {
+            for column in super::schema::LEGACY_LIST_COLUMNS {
+                let entry: &mut std::collections::HashMap<String, Vec<String>> =
+                    out.entry(column.to_string()).or_default();
+                for (id, values) in super::schema::legacy_list(&batch, column)? {
+                    entry.insert(id, values);
+                }
+            }
+        }
+        Ok(out)
     }
 
     /// Atomic upsert keyed on `id`: replace the row with a matching id if one
@@ -688,7 +876,7 @@ impl MemoryStore {
     /// `update_full_public`) preserve the existing id, so the id-keyed merge
     /// updates the row in place rather than duplicating it.
     async fn upsert(&self, fact: &Memory) -> Result<()> {
-        let batch = memories_to_record_batch(std::slice::from_ref(fact))?;
+        let batch = self.batch_for_table(std::slice::from_ref(fact)).await?;
         let schema = batch.schema();
         let batches: Box<dyn RecordBatchReader + Send> =
             Box::new(RecordBatchIterator::new(std::iter::once(Ok(batch)), schema));
@@ -713,7 +901,7 @@ impl MemoryStore {
             return Ok(0);
         }
 
-        let batch = memories_to_record_batch(facts)?;
+        let batch = self.batch_for_table(facts).await?;
         let schema = batch.schema();
         let batches: Box<dyn RecordBatchReader + Send> =
             Box::new(RecordBatchIterator::new(std::iter::once(Ok(batch)), schema));
@@ -792,7 +980,7 @@ impl MemoryStore {
             ..Filters::default()
         };
         let mut q = self.table.query();
-        if let Some(sql) = filters.to_sql() {
+        if let Some(sql) = self.sql(&filters) {
             q = q.only_if(sql);
         }
         let rows = self.collect_query(q).await?;
@@ -914,7 +1102,7 @@ impl MemoryStore {
     /// callers that need an exact origin-scoped count still have to fall
     /// back to `list` + post-filter.
     pub async fn count_filtered(&self, filters: &Filters) -> Result<usize> {
-        let predicate = filters.to_sql();
+        let predicate = self.sql(filters);
         self.table
             .count_rows(predicate)
             .await
@@ -980,7 +1168,7 @@ impl MemoryStore {
             .distance_type(DistanceType::Cosine)
             .limit(limit);
 
-        if let Some(sql) = filters.to_sql() {
+        if let Some(sql) = self.sql(&filters) {
             q = q.only_if(sql);
         }
 
@@ -1030,7 +1218,7 @@ impl MemoryStore {
         }
 
         let mut q = self.table.query();
-        if let Some(sql) = filters.to_sql() {
+        if let Some(sql) = self.sql(&filters) {
             q = q.only_if(sql);
         }
         let mut facts = self.collect_query(q).await?;
@@ -1100,7 +1288,7 @@ impl MemoryStore {
         // origin filter is applied post-fetch (`apply_origin_filter`) due to
         // a LanceDB keyword bug.
         let mut q = self.table.query();
-        if let Some(sql) = filters.to_sql() {
+        if let Some(sql) = self.sql(&filters) {
             q = q.only_if(sql);
         }
 
@@ -1149,6 +1337,19 @@ impl MemoryStore {
         existing.updated_at = Some(Utc::now().trunc_subsecs(6));
         // `existing.id == id`, so the id-keyed upsert replaces in place —
         // atomic, no delete-then-insert window.
+        self.upsert(&existing).await?;
+        Ok(Some(existing))
+    }
+
+    /// [`Self::update`] without touching `updated_at` — for bookkeeping
+    /// that changes where a row belongs, not what it says (the scope
+    /// migration's accepts). The row keeps its place in newest-first lists.
+    pub async fn update_quiet(&self, id: &str, patch: &MemoryPatch) -> Result<Option<Memory>> {
+        let _guard = self.write_lock.lock().await;
+        let Some(mut existing) = self.get(id).await? else {
+            return Ok(None);
+        };
+        patch.apply(&mut existing);
         self.upsert(&existing).await?;
         Ok(Some(existing))
     }
@@ -1212,7 +1413,7 @@ impl MemoryStore {
                 "refusing to forget with empty filter — provide at least one criterion"
             ));
         }
-        let predicate = filters.to_sql();
+        let predicate = self.sql(filters);
 
         if filters.origin.is_some() {
             // Origin filter active → list rows that match, delete each by id.
@@ -1234,10 +1435,11 @@ impl MemoryStore {
             .context("deleting memories by filter")
     }
 
-    /// Evict rows whose decay clock has fallen before `cutoff`. Deletes
-    /// every row where `COALESCE(updated_at, created_at) < cutoff` — i.e.
-    /// an `update` resets a row's age (the touch-resets-clock semantics).
-    /// Returns the number of rows removed.
+    /// Evict rows whose TTL clock has fallen before `cutoff`. Deletes every
+    /// row where `COALESCE(occurred_at, created_at) < cutoff` — the one TTL
+    /// clock, shared with `list past_ttl` and the days rollup (a row's age is
+    /// when the thing happened, not when it was last edited). Returns the
+    /// number of rows removed.
     ///
     /// Used against the episodic store: the consolidation pass calls this
     /// with `cutoff = now − Settings.EPISODIC_TTL` to drop staged rows that
@@ -1246,7 +1448,7 @@ impl MemoryStore {
     /// resolved cutoff instant.
     pub async fn evict_expired(&self, cutoff: DateTime<Utc>) -> Result<usize> {
         let predicate = format!(
-            "COALESCE(updated_at, created_at) < TIMESTAMP '{}'",
+            "COALESCE(occurred_at, created_at) < TIMESTAMP '{}'",
             cutoff.format("%Y-%m-%d %H:%M:%S%.6f")
         );
         self.delete_where(&predicate)
@@ -1343,7 +1545,7 @@ impl MemoryStore {
             ..Filters::default()
         };
         let mut q = self.table.query();
-        if let Some(sql) = filters.to_sql() {
+        if let Some(sql) = self.sql(&filters) {
             q = q.only_if(sql);
         }
         let mut facts = self.collect_query(q).await?;
@@ -1521,8 +1723,9 @@ mod tests {
     async fn get_finds_inserted_fact() {
         let (store, _dir) = fresh_store().await;
         let mut f = make_fact("find me", MemoryType::Learned);
-        f.contexts = vec!["env/macos".into()];
-        f.tags = vec!["topic:dates".into()];
+        f.hook = Some("dates on macos".into());
+        f.indexed = true;
+        f.cwd = Some("/w/p".into());
         f.outcome = Some(Outcome::Positive);
         let id = f.id.clone();
         store.insert(&[f.clone()]).await.unwrap();
@@ -1602,14 +1805,23 @@ mod tests {
         // Scope alone is not a filter: forget must not take a person by scope.
         assert!(mine.is_empty());
         let any = Filters {
-            contexts_any: vec!["dj".into(), "cfo".into()],
+            apps: vec!["dj".into(), "cfo".into()],
             ..Filters::default()
         };
         assert!(!any.is_empty());
-        assert!(any
+        let sql = any.to_sql().unwrap();
+        assert!(sql.contains("/.linggen/skills/dj'"), "{sql}");
+        assert!(sql.contains("/.linggen/skills/cfo/%'"), "{sql}");
+        assert!(!sql.contains("array_has"), "{sql}");
+        // While the v1 column survives, the old namespace still answers.
+        let legacy = Filters {
+            legacy_contexts: true,
+            ..any.clone()
+        };
+        assert!(legacy
             .to_sql()
             .unwrap()
-            .contains("(array_has(contexts, 'dj') OR array_has(contexts, 'cfo'))"));
+            .contains("array_has(contexts, 'dj')"));
 
         let mut owner_row = Memory::new("x", MemoryType::Fact, Origin::User);
         let mut theirs = owner_row.clone();
@@ -1634,7 +1846,10 @@ mod tests {
     #[tokio::test]
     async fn filters_sql_builds_single_clauses() {
         let f = Filters {
-            contexts: vec!["code/linggen".into()],
+            apps: Vec::new(),
+            indexed: Some(true),
+            cwd_in: vec!["/w/a".into()],
+            legacy_contexts: false,
             types: vec![MemoryType::Fixed],
             exclude_types: Vec::new(),
             origin: Some(Origin::User),
@@ -1647,11 +1862,11 @@ mod tests {
             cwd_scope: None,
             include_expired: false,
             superseded_by: None,
-            contexts_any: Vec::new(),
             account: AccountScope::Owner,
         };
         let sql = f.to_sql().unwrap();
-        assert!(sql.contains("array_has(contexts, 'code/linggen')"));
+        assert!(sql.contains("indexed = true"), "{sql}");
+        assert!(sql.contains("cwd IN ('/w/a')"), "{sql}");
         assert!(sql.contains("type = 'fixed'"));
         // origin/from is intentionally NOT in the SQL — applied post-fetch
         // because LanceDB returns 0 rows for `"from" = 'user'` even though
@@ -1679,6 +1894,97 @@ mod tests {
         // A sibling sharing the prefix is a DIFFERENT project: the trailing
         // separator is what keeps `linggen-mobile` out of `linggen`.
         assert!(!sql.contains("LIKE '/Users/l/work/linggen%'"), "{sql}");
+    }
+
+    #[tokio::test]
+    async fn recall_scope_is_root_subtree_parents_and_person_rows() {
+        let home = crate::memory::scope::home();
+        let root = home.join("w/linggen/skills");
+        let f = Filters {
+            cwd_scope: Some(root.to_string_lossy().to_string()),
+            ..Default::default()
+        };
+        let sql = f.to_sql().unwrap();
+        let w = home.join("w").to_string_lossy().to_string();
+        assert!(sql.contains(&format!("'{w}'")), "a parent of root: {sql}");
+        assert!(sql.contains("cwd IS NULL"), "{sql}");
+        assert!(
+            !sql.contains(&format!("'{}'", home.to_string_lossy())),
+            "home is never a scope: {sql}"
+        );
+
+        // A skill's own session: its dir only, no person rows.
+        let skill = Filters {
+            cwd_scope: Some(
+                home.join(".linggen/skills/cfo")
+                    .to_string_lossy()
+                    .to_string(),
+            ),
+            ..Default::default()
+        };
+        let sql = skill.to_sql().unwrap();
+        assert!(!sql.contains("cwd IS NULL"), "{sql}");
+        assert!(sql.contains("/.linggen/skills/cfo/%'"), "{sql}");
+
+        // No root: person rows only.
+        for nowhere in [home.clone(), home.join(".linggen")] {
+            let f = Filters {
+                cwd_scope: Some(nowhere.to_string_lossy().to_string()),
+                ..Default::default()
+            };
+            let sql = f.to_sql().unwrap();
+            assert!(
+                sql.contains("cwd IS NULL") && !sql.contains("LIKE"),
+                "{sql}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn recall_scope_on_the_table() {
+        let (store, _dir) = fresh_store().await;
+        let home = crate::memory::scope::home();
+        let at = |p: &str| Some(home.join(p).to_string_lossy().to_string());
+        let mut lingjing = make_fact("lingjing rule", MemoryType::Preference);
+        lingjing.cwd = at("w/linggen/skills/lingjing");
+        let mut sanji = make_fact("sanji rule", MemoryType::Preference);
+        sanji.cwd = at("w/rust/sanji");
+        let mut workspace = make_fact("commit on main", MemoryType::Preference);
+        workspace.cwd = at("w");
+        let person = make_fact("likes tea", MemoryType::Preference);
+        let mut cfo = make_fact("budget in CAD", MemoryType::Preference);
+        cfo.cwd = at(".linggen/skills/cfo");
+        store
+            .insert(&[lingjing, sanji, workspace, person, cfo])
+            .await
+            .unwrap();
+        let seen = |scope: &str| {
+            let f = Filters {
+                cwd_scope: Some(scope.to_string()),
+                ..Default::default()
+            };
+            let store = &store;
+            async move {
+                let mut v: Vec<String> = store
+                    .list(&f, SortOrder::Newest, 50, 0)
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .map(|m| m.content)
+                    .collect();
+                v.sort();
+                v
+            }
+        };
+        assert_eq!(
+            seen(&at("w/linggen/skills").unwrap()).await,
+            ["commit on main", "likes tea", "lingjing rule"]
+        );
+        assert_eq!(
+            seen(&at(".linggen/skills/cfo").unwrap()).await,
+            ["budget in CAD"]
+        );
+        assert_eq!(seen(&home.to_string_lossy()).await, ["likes tea"]);
     }
 
     #[tokio::test]
@@ -1849,22 +2155,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_filters_by_type_and_context() {
+    async fn list_filters_by_type_and_index() {
         let (store, _dir) = fresh_store().await;
 
-        let mut a = make_fact("a", MemoryType::Preference);
-        a.contexts = vec!["global".into()];
+        let a = make_fact("a", MemoryType::Preference);
         let mut b = make_fact("b", MemoryType::Fixed);
-        b.contexts = vec!["code/linggen".into()];
+        b.indexed = true;
+        b.cwd = Some("/w/linggen".into());
         let mut c = make_fact("c", MemoryType::Fixed);
-        c.contexts = vec!["code/sanji".into()];
+        c.cwd = Some("/w/linggen".into());
 
         store.insert(&[a, b, c]).await.unwrap();
 
         let only_fixed_in_linggen = store
             .list(
                 &Filters {
-                    contexts: vec!["code/linggen".into()],
+                    indexed: Some(true),
+                    cwd_in: vec!["/w/linggen".into()],
                     types: vec![MemoryType::Fixed],
                     ..Default::default()
                 },
@@ -2010,12 +2317,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn search_with_context_filter() {
+    async fn search_with_app_filter() {
         let (store, _dir) = fresh_store().await;
+        let home = crate::memory::scope::home();
         let mut in_ctx = with_vector(make_fact("in-ctx", MemoryType::Fact), 0.3);
-        in_ctx.contexts = vec!["music/piano".into()];
+        in_ctx.cwd = Some(
+            home.join(".linggen/skills/dj")
+                .to_string_lossy()
+                .to_string(),
+        );
         let mut other = with_vector(make_fact("other", MemoryType::Fact), 0.3);
-        other.contexts = vec!["code/linggen".into()];
+        other.cwd = Some("/w/linggen".into());
         store.insert(&[in_ctx, other]).await.unwrap();
 
         let query = vec![0.3; VECTOR_DIM as usize];
@@ -2023,7 +2335,7 @@ mod tests {
             .search(
                 &query,
                 &Filters {
-                    contexts: vec!["music/piano".into()],
+                    apps: vec!["dj".into()],
                     ..Default::default()
                 },
                 10,
@@ -2129,21 +2441,22 @@ mod tests {
     #[tokio::test]
     async fn update_applies_patch() {
         let (store, _dir) = fresh_store().await;
-        let mut f = make_fact("original", MemoryType::Fact);
-        f.contexts = vec!["a".into()];
+        let f = make_fact("original", MemoryType::Fact);
         let id = f.id.clone();
         store.insert(&[f]).await.unwrap();
 
         let patch = MemoryPatch {
             content: Some("edited".into()),
-            contexts: Some(vec!["b".into(), "c".into()]),
+            hook: Some(Some("what it is for".into())),
+            indexed: Some(true),
             outcome: Some(Some(Outcome::Positive)),
             ..Default::default()
         };
 
         let updated = store.update(&id, &patch).await.unwrap().unwrap();
         assert_eq!(updated.content, "edited");
-        assert_eq!(updated.contexts, vec!["b".to_string(), "c".into()]);
+        assert_eq!(updated.hook.as_deref(), Some("what it is for"));
+        assert!(updated.indexed);
         assert_eq!(updated.outcome, Some(Outcome::Positive));
 
         // Persisted.
@@ -2204,17 +2517,14 @@ mod tests {
     #[tokio::test]
     async fn forget_bulk_deletes_matching() {
         let (store, _dir) = fresh_store().await;
-        let mut sanji1 = make_fact("s1", MemoryType::Fact);
-        sanji1.contexts = vec!["code/sanji".into()];
-        let mut sanji2 = make_fact("s2", MemoryType::Fact);
-        sanji2.contexts = vec!["code/sanji".into()];
-        let mut ling = make_fact("l1", MemoryType::Fact);
-        ling.contexts = vec!["code/linggen".into()];
-        store.insert(&[sanji1, sanji2, ling]).await.unwrap();
+        let s1 = make_fact("s1", MemoryType::Fact);
+        let s2 = make_fact("s2", MemoryType::Fact);
+        let ling = make_fact("l1", MemoryType::Learned);
+        store.insert(&[s1, s2, ling]).await.unwrap();
 
         let removed = store
             .forget(&Filters {
-                contexts: vec!["code/sanji".into()],
+                types: vec![MemoryType::Fact],
                 ..Default::default()
             })
             .await
@@ -2236,6 +2546,128 @@ mod tests {
         assert_eq!(store.count().await.unwrap(), 1);
     }
 
+    // ── v1 layout (contexts/tags) awaiting the gated drop ─────────────────
+
+    /// Build a v1 store on disk: the v2 columns minus the scope pair, plus
+    /// `contexts`/`tags`, one row tagged `dj`.
+    async fn v1_store(dir: &Path) -> String {
+        use arrow_schema::{DataType, Field, Schema};
+        let lancedb_dir = dir.join("memory").join("memory.lancedb");
+        std::fs::create_dir_all(&lancedb_dir).unwrap();
+        crate::memory::schema_version::write_version(dir, 1).unwrap();
+        let mut row = make_fact("dj likes city pop", MemoryType::Preference);
+        row.vector = Some(unit_vec_at(1));
+        let id = row.id.clone();
+        let batch = memories_to_record_batch(&[row]).unwrap();
+        let utf8_item = Arc::new(Field::new("item", DataType::Utf8, true));
+        let mut fields: Vec<Field> = batch
+            .schema()
+            .fields()
+            .iter()
+            .filter(|f| !matches!(f.name().as_str(), "hook" | "indexed"))
+            .map(|f| f.as_ref().clone())
+            .collect();
+        fields.insert(
+            3,
+            Field::new("contexts", DataType::List(utf8_item.clone()), false),
+        );
+        fields.insert(4, Field::new("tags", DataType::List(utf8_item), false));
+        let v1 = Schema::new(fields);
+        let mut shaped = crate::memory::schema::conform_to(batch, &v1).unwrap();
+        // Tag the row `dj` in the legacy column.
+        let mut b =
+            arrow_array::builder::ListBuilder::new(arrow_array::builder::StringBuilder::new());
+        b.values().append_value("dj");
+        b.append(true);
+        let ctx_idx = v1.index_of("contexts").unwrap();
+        let mut cols: Vec<Arc<dyn arrow_array::Array>> = shaped.columns().to_vec();
+        cols[ctx_idx] = Arc::new(b.finish());
+        shaped = RecordBatch::try_new(Arc::new(v1.clone()), cols).unwrap();
+        let conn = connect(lancedb_dir.to_str().unwrap())
+            .execute()
+            .await
+            .unwrap();
+        let reader: Box<dyn RecordBatchReader + Send> = Box::new(RecordBatchIterator::new(
+            std::iter::once(Ok(shaped)),
+            Arc::new(v1),
+        ));
+        conn.create_table(SEMANTIC_TABLE_NAME, reader)
+            .execute()
+            .await
+            .unwrap();
+        id
+    }
+
+    #[tokio::test]
+    async fn a_v1_store_works_until_its_drop_is_accepted() {
+        let dir = TempDir::new().unwrap();
+        let tagged = v1_store(dir.path()).await;
+        let store = MemoryStore::open_semantic(dir.path()).await.unwrap();
+        assert!(store.is_legacy());
+        // The sidecar stays v1: an older binary still opens this store.
+        assert_eq!(
+            crate::memory::schema_version::read_version(dir.path()),
+            Some(1)
+        );
+        // Reads decode; the old namespace is readable for the migration.
+        let ctx = store.legacy_contexts().await.unwrap();
+        assert_eq!(ctx.get(&tagged), Some(&vec!["dj".to_string()]));
+        // The app scope still answers through the old namespace.
+        let apps = Filters {
+            apps: vec!["dj".into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            store
+                .list(&apps, SortOrder::Newest, 10, 0)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        // Writes fit the v1 layout: plain insert and the id-keyed upsert.
+        let mut fresh = make_fact("new row", MemoryType::Fact);
+        fresh.hook = Some("a hook".into());
+        fresh.indexed = true;
+        store.insert(std::slice::from_ref(&fresh)).await.unwrap();
+        let patch = MemoryPatch {
+            hook: Some(Some("edited hook".into())),
+            ..Default::default()
+        };
+        let got = store.update(&fresh.id, &patch).await.unwrap().unwrap();
+        assert_eq!(got.hook.as_deref(), Some("edited hook"));
+        assert!(got.indexed);
+        // A tag survives an update of its row.
+        store
+            .update_quiet(
+                &tagged,
+                &MemoryPatch {
+                    indexed: Some(true),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            store.legacy_contexts().await.unwrap().get(&tagged),
+            Some(&vec!["dj".to_string()]),
+            "an update keeps the row's old namespace — the migration still reads it"
+        );
+
+        // The gated drop.
+        store.drop_legacy_columns().await.unwrap();
+        assert!(!store.is_legacy());
+        assert_eq!(store.count().await.unwrap(), 2);
+        drop(store);
+        let reopened = MemoryStore::open_semantic(dir.path()).await.unwrap();
+        assert!(!reopened.is_legacy());
+        assert_eq!(
+            crate::memory::schema_version::read_version(dir.path()),
+            Some(crate::memory::schema_version::STORE_SCHEMA_VERSION)
+        );
+        assert_eq!(reopened.count().await.unwrap(), 2);
+    }
+
     // ── evict_expired + core_facts tests ───────────────────────────────────
 
     #[tokio::test]
@@ -2252,24 +2684,29 @@ mod tests {
         let fresh = make_fact("recent", MemoryType::Learned);
         let fresh_id = fresh.id.clone();
 
-        // Touched: created 10 days ago BUT updated 1 hour ago → decay clock
-        // = updated_at, which is recent → must survive (touch resets age).
-        let mut touched = make_fact("revived", MemoryType::Learned);
+        // Touched: created 10 days ago, edited 1 hour ago. An edit is not
+        // the thing happening again — the one TTL clock is
+        // `occurred_at ?? created_at`, so it goes too.
+        let mut touched = make_fact("edited", MemoryType::Learned);
         touched.created_at = (now - Duration::days(10)).trunc_subsecs(6);
         touched.updated_at = Some((now - Duration::hours(1)).trunc_subsecs(6));
         let touched_id = touched.id.clone();
 
-        store.insert(&[old, fresh, touched]).await.unwrap();
+        // Late-staged: written 10 days ago about something that happened
+        // an hour ago — its clock is occurred_at, which is recent.
+        let mut late = make_fact("late", MemoryType::Learned);
+        late.created_at = (now - Duration::days(10)).trunc_subsecs(6);
+        late.occurred_at = Some((now - Duration::hours(1)).trunc_subsecs(6));
+        let late_id = late.id.clone();
 
-        // Cutoff one day ago: only `old` is older by COALESCE clock.
+        store.insert(&[old, fresh, touched, late]).await.unwrap();
+
         let removed = store.evict_expired(now - Duration::days(1)).await.unwrap();
-        assert_eq!(removed, 1);
+        assert_eq!(removed, 2);
         assert!(store.get(&old_id).await.unwrap().is_none());
+        assert!(store.get(&touched_id).await.unwrap().is_none());
         assert!(store.get(&fresh_id).await.unwrap().is_some());
-        assert!(
-            store.get(&touched_id).await.unwrap().is_some(),
-            "row with recent updated_at must survive even though created_at is old"
-        );
+        assert!(store.get(&late_id).await.unwrap().is_some());
     }
 
     #[tokio::test]
@@ -2318,16 +2755,16 @@ mod tests {
 
         let mut existing = make_fact("original phrasing", MemoryType::Fact);
         existing.vector = Some(unit_vec_at(0));
-        existing.contexts = vec!["code/linggen".into()];
-        existing.tags = vec!["topic:setup".into()];
+        existing.cwd = Some("/w/linggen".into());
         let existing_id = existing.id.clone();
         store.insert(&[existing.clone()]).await.unwrap();
 
-        // Candidate: byte-identical content (same type), new context + tag.
+        // Candidate: byte-identical content (same type), a hook + index flag.
         let mut candidate = make_fact("original phrasing", MemoryType::Fact);
         candidate.vector = Some(unit_vec_at(0));
-        candidate.contexts = vec!["code/linggen".into(), "team/core".into()];
-        candidate.tags = vec!["topic:setup".into(), "intent:learn".into()];
+        candidate.cwd = Some("/w/other".into());
+        candidate.hook = Some("setup".into());
+        candidate.indexed = true;
 
         let outcome = store.insert_with_dedup(candidate).await.unwrap();
         let (merged, similarity, previous_id) = match outcome {
@@ -2346,14 +2783,9 @@ mod tests {
             "exact-content match reports similarity 1.0"
         );
         assert_eq!(merged.content, "original phrasing");
-        assert_eq!(
-            merged.contexts,
-            vec!["code/linggen".to_string(), "team/core".to_string()]
-        );
-        assert_eq!(
-            merged.tags,
-            vec!["topic:setup".to_string(), "intent:learn".to_string()]
-        );
+        assert_eq!(merged.cwd.as_deref(), Some("/w/linggen"), "scope stays");
+        assert_eq!(merged.hook.as_deref(), Some("setup"), "an empty hook fills");
+        assert!(merged.indexed);
         assert_eq!(store.count().await.unwrap(), 1);
     }
 

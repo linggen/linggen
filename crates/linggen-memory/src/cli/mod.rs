@@ -74,10 +74,11 @@ pub enum Command {
     /// Non-semantic browse — metadata filters only.
     List(ListArgs),
 
-    /// What a session loads at start: the core rows. Text prints the block
-    /// a host injects; `--format json` prints the whole payload. Requires
-    /// the daemon.
-    SessionStart,
+    /// What a session loads at start: the core rows, plus — given `--cwd` —
+    /// the scope candidates and the index for that directory. Text prints
+    /// the block a host injects; `--format json` prints the whole payload.
+    /// Requires the daemon.
+    SessionStart(SessionStartArgs),
 
     /// Modify fields of an existing fact. Aliased as `update` for back-
     /// compat with pre-rename scripts; new callers should prefer `edit`,
@@ -272,6 +273,16 @@ pub enum Command {
 
 // ── Argument structs ────────────────────────────────────────────────────────
 
+#[derive(Debug, Args, Default)]
+pub struct SessionStartArgs {
+    /// The session's working directory.
+    #[arg(long)]
+    pub cwd: Option<String>,
+    /// The session's root (git root by default).
+    #[arg(long)]
+    pub root: Option<String>,
+}
+
 #[derive(Debug, Args)]
 pub struct AddArgs {
     /// The fact text. Omit when using `--stdin`.
@@ -280,16 +291,36 @@ pub struct AddArgs {
     #[arg(long, value_enum, default_value_t = CliMemoryType::Fact)]
     pub r#type: CliMemoryType,
 
-    /// Storage tier. `core` is the small always-loaded identity/preference
-    /// set; `semantic` is the broader RAG-retrieved pool.
-    #[arg(long, value_enum, default_value_t = CliTier::Semantic)]
-    pub tier: CliTier,
+    /// Storage tier. `core` is the small always-loaded identity set;
+    /// `semantic` the long-term pool; `episodic` the staging tier. Omitted:
+    /// the daemon decides — episodic, unless `--replace` (the losers' tier)
+    /// or `--indexed` (semantic).
+    #[arg(long, value_enum)]
+    pub tier: Option<CliTier>,
 
-    #[arg(long = "context", value_name = "CONTEXT")]
-    pub contexts: Vec<String>,
+    /// The directory the row is about — a candidate the session showed
+    /// (`skills/lingjing`, `~/workspace`) or an absolute path. Must be an
+    /// existing dir inside the session root or a parent of it; otherwise
+    /// the row takes `--cwd`.
+    #[arg(long)]
+    pub scope: Option<String>,
 
-    #[arg(long = "tag", value_name = "TAG")]
-    pub tags: Vec<String>,
+    /// The session root `--scope` resolves against (git root by default).
+    #[arg(long)]
+    pub root: Option<String>,
+
+    /// One line (≤ 80 chars) saying what the row is for — what the index
+    /// shows. Expected on preference and decision rows.
+    #[arg(long)]
+    pub hook: Option<String>,
+
+    /// Put the row in its directory's index.
+    #[arg(long)]
+    pub indexed: bool,
+
+    /// Store the row with no scope: it is about the person.
+    #[arg(long)]
+    pub global: bool,
 
     #[arg(long, value_enum, default_value_t = CliOrigin::Derived)]
     pub from: CliOrigin,
@@ -417,8 +448,18 @@ fn parse_duration_to_cutoff(s: &str) -> Result<DateTime<Utc>, String> {
 
 #[derive(Debug, Args, Default, Clone)]
 pub struct FilterArgs {
-    #[arg(long = "context", value_name = "CONTEXT")]
-    pub contexts: Vec<String>,
+    /// Rows of this skill (`~/.linggen/skills/<name>` and below). Repeat
+    /// for several (OR).
+    #[arg(long = "app", value_name = "NAME")]
+    pub apps: Vec<String>,
+
+    /// Only indexed rows (`--indexed true`) or only the rest (`false`).
+    #[arg(long, value_name = "BOOL")]
+    pub indexed: Option<bool>,
+
+    /// Only rows written by this session.
+    #[arg(long = "source-session", value_name = "ID")]
+    pub source_session: Option<String>,
 
     #[arg(long = "type", value_enum, value_name = "TYPE")]
     pub types: Vec<CliMemoryType>,
@@ -456,10 +497,11 @@ pub struct FilterArgs {
     #[arg(long, value_name = "YYYY-MM-DD")]
     pub day: Option<String>,
 
-    /// Scope to the work at this path: rows written under it, plus every
-    /// row that belongs to no project. Paths nest, so a parent directory
-    /// covers the repos inside it. `forget` ignores this on its own — it
-    /// matches unscoped rows by design and would take most of the store.
+    /// Recall scope, given as the session root: rows under it, rows at its
+    /// parents, and rows with no scope. A skill's dir
+    /// (`~/.linggen/skills/<name>`) sees only its own rows; `$HOME` only
+    /// rows with no scope. `forget` ignores this on its own — it matches
+    /// unscoped rows by design and would take most of the store.
     #[arg(long = "cwd-scope", visible_alias = "project", value_name = "PATH")]
     pub cwd_scope: Option<String>,
 
@@ -580,11 +622,17 @@ pub struct UpdateArgs {
     #[arg(long)]
     pub content: Option<String>,
 
-    #[arg(long = "context", value_name = "CONTEXT")]
-    pub contexts: Option<Vec<String>>,
+    /// New one-line hook (≤ 80 chars).
+    #[arg(long)]
+    pub hook: Option<String>,
 
-    #[arg(long = "tag", value_name = "TAG")]
-    pub tags: Option<Vec<String>>,
+    /// Remove the hook.
+    #[arg(long)]
+    pub clear_hook: bool,
+
+    /// Put the row in (`true`) or take it out of (`false`) its dir's index.
+    #[arg(long, value_name = "BOOL")]
+    pub indexed: Option<bool>,
 
     #[arg(long, value_enum)]
     pub r#type: Option<CliMemoryType>,
@@ -748,14 +796,15 @@ impl FilterArgs {
             until = until.or(Some(end));
         }
         Ok(Filters {
-            contexts: self.contexts,
+            apps: self.apps,
+            indexed: self.indexed,
             types: self.types.into_iter().map(Into::into).collect(),
             origin: self.from.map(Into::into),
             outcome: self.outcome.map(Into::into),
             since,
             until,
             tier: self.tier.map(Into::into),
-            source_session: None,
+            source_session: self.source_session,
             cwd_scope: self.cwd_scope,
             include_expired: self.include_expired,
             superseded_by: self.superseded_by,
@@ -929,7 +978,7 @@ pub async fn run(cli: Cli) -> Result<()> {
                 Command::Get { id } => client::get(&base_url, &id, format).await,
                 Command::Search(args) => client::search(&base_url, args, format).await,
                 Command::List(args) => client::list(&base_url, args, format).await,
-                Command::SessionStart => client::session_start(&base_url, format).await,
+                Command::SessionStart(args) => client::session_start(&base_url, args, format).await,
                 Command::Edit(args) => client::update(&base_url, args, format).await,
                 Command::Delete { id, yes } => client::delete(&base_url, &id, yes, format).await,
                 Command::Forget(args) => client::forget(&base_url, args, format).await,
@@ -980,7 +1029,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         // there is deliberately no direct-store fallback — two writers to
         // the sidecar would race.
         Command::Days(_)
-        | Command::SessionStart
+        | Command::SessionStart(_)
         | Command::RememberDay(_)
         | Command::HarvestDay { .. }
         | Command::Sweep { .. }
@@ -1055,10 +1104,11 @@ async fn cmd_add(
         // Episodic-store writes force `tier=Episodic` regardless — the row's
         // table is the source of truth and `tier` must agree.
         let (mut facts, tier_absent) = read_stdin_facts()?;
+        // Direct mode writes one table: a row's tier must match it.
         let default_tier: Tier = if episodic {
             Tier::Episodic
         } else {
-            args.tier.into()
+            args.tier.map(Into::into).unwrap_or(Tier::Semantic)
         };
         for (i, f) in facts.iter_mut().enumerate() {
             if tier_absent[i] || episodic {
@@ -1076,18 +1126,23 @@ async fn cmd_add(
         .ok_or_else(|| anyhow!("add: provide content or use --stdin"))?;
 
     let mut fact = crate::memory::Memory::new(content, args.r#type.into(), args.from.into());
-    fact.contexts = args.contexts;
-    fact.tags = args.tags;
-    // Episodic-store writes pin `tier=Episodic` regardless of `--tier`
-    // (the row's table is the source of truth — mirrors the HTTP add
-    // path so the dashboard can derive its badge from `tier` alone).
+    // Direct mode (no daemon) writes the one table it opened, so the row's
+    // tier follows it: `--episodic` pins episodic, else the semantic table's
+    // `--tier` (semantic when omitted). The daemon path resolves an omitted
+    // tier to episodic.
     fact.tier = if episodic {
         Tier::Episodic
     } else {
-        args.tier.into()
+        args.tier.map(Into::into).unwrap_or(Tier::Semantic)
     };
     fact.outcome = args.outcome.map(Into::into);
-    fact.cwd = args.cwd;
+    fact.cwd = if args.global || fact.tier == Tier::Core {
+        None
+    } else {
+        args.scope.clone().or(args.cwd)
+    };
+    fact.hook = args.hook;
+    fact.indexed = args.indexed;
     fact.occurred_at = args.occurred_at;
     fact.source_session = args.source_session;
     fact.host = args.host.or_else(detect_host);
@@ -1281,10 +1336,15 @@ async fn cmd_update(store: &MemoryStore, args: UpdateArgs, format: OutputFormat)
         (None, false) => None,
     };
 
+    let hook_patch = match (args.hook, args.clear_hook) {
+        (Some(h), _) => Some(Some(h)),
+        (None, true) => Some(None),
+        (None, false) => None,
+    };
     let patch = MemoryPatch {
         content: args.content,
-        contexts: args.contexts,
-        tags: args.tags,
+        hook: hook_patch,
+        indexed: args.indexed,
         r#type: args.r#type.map(Into::into),
         tier: args.tier.map(Into::into),
         origin: args.from.map(Into::into),
@@ -1511,17 +1571,18 @@ fn emit_fact(fact: &crate::memory::Memory, format: OutputFormat) -> Result<()> {
             println!("id:         {}", fact.id);
             println!("type:       {}", fact.r#type);
             println!("from:       {}", fact.origin);
-            if !fact.contexts.is_empty() {
-                println!("contexts:   {}", fact.contexts.join(", "));
-            }
-            if !fact.tags.is_empty() {
-                println!("tags:       {}", fact.tags.join(", "));
-            }
+            println!("tier:       {}", fact.tier);
             if let Some(o) = fact.outcome {
                 println!("outcome:    {o}");
             }
             if let Some(cwd) = &fact.cwd {
-                println!("cwd:        {cwd}");
+                println!("scope:      {cwd}");
+            }
+            if let Some(hook) = &fact.hook {
+                println!("hook:       {hook}");
+            }
+            if fact.indexed {
+                println!("indexed:    yes");
             }
             println!("created_at: {}", fact.created_at.to_rfc3339());
             if let Some(t) = fact.occurred_at {
@@ -1589,7 +1650,9 @@ mod tests {
     #[test]
     fn filter_args_into_filters_preserves_fields() {
         let fa = FilterArgs {
-            contexts: vec!["code/linggen".into()],
+            apps: vec!["dj".into()],
+            indexed: Some(true),
+            source_session: Some("sess-1".into()),
             types: vec![CliMemoryType::Fixed, CliMemoryType::Tried],
             tier: Some(CliTier::Core),
             from: Some(CliOrigin::User),
@@ -1603,7 +1666,9 @@ mod tests {
             superseded_by: None,
         };
         let filters = fa.into_filters().unwrap();
-        assert_eq!(filters.contexts, vec!["code/linggen".to_string()]);
+        assert_eq!(filters.apps, vec!["dj".to_string()]);
+        assert_eq!(filters.indexed, Some(true));
+        assert_eq!(filters.source_session.as_deref(), Some("sess-1"));
         assert_eq!(filters.types.len(), 2);
         assert_eq!(filters.tier, Some(Tier::Core));
         assert_eq!(filters.origin, Some(Origin::User));

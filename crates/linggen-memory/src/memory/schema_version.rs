@@ -33,11 +33,18 @@ use std::path::{Path, PathBuf};
 /// layout change (new required column, rename, type/dim change), which is by
 /// policy a MAJOR binary release — keeping `^1` auto-update from ever
 /// crossing an incompatible store.
-pub const STORE_SCHEMA_VERSION: u32 = 1;
+///
+/// v2 (2026-10-04, `doc/scope-index-spec.md`): `contexts` and `tags` dropped,
+/// `hook` + `indexed` added. The drop is the one step that waits for the
+/// owner — see [`run_migrations`].
+pub const STORE_SCHEMA_VERSION: u32 = 2;
 
 /// Oldest on-disk version this binary can open / migrate up from. A store
 /// older than this is refused with export→reset→import guidance.
 pub const MIN_READABLE_SCHEMA: u32 = 1;
+
+/// The layout of a store that still carries v1's `contexts`/`tags` columns.
+pub const LEGACY_LAYOUT: u32 = 1;
 
 const SIDECAR: &str = "SCHEMA_VERSION";
 
@@ -98,20 +105,50 @@ pub fn classify(data_dir: &Path) -> Compat {
     }
 }
 
-/// Run the registered migrations from `from` up to [`STORE_SCHEMA_VERSION`].
+/// Run the open-time migrations from `from` up to [`STORE_SCHEMA_VERSION`].
 ///
-/// The registry is empty at the v1 baseline (fine-grained additive column
-/// changes live in `ensure_late_schema_additions`, which runs on every open).
-/// When `STORE_SCHEMA_VERSION` bumps, the step migrating the previous version
-/// must be registered here — reaching this function without one is a release
-/// bug, and erroring beats stamping a store the binary never migrated.
+/// Every step from a readable version must be registered here — reaching an
+/// unregistered one is a release bug, and erroring beats stamping a store the
+/// binary never migrated.
+///
+/// Registered steps:
+/// - **1 → 2** (drop `contexts`/`tags`): **gated**. It runs only when the
+///   owner accepts the scope migration (`/api/migration/scope/apply_schema`,
+///   after a backup), never at open. Until then this binary reads and writes
+///   the v1 layout as-is ([`super::schema::conform_to`] fills the legacy
+///   columns empty) and the sidecar stays `1`, so an older binary still
+///   opens the store. Additive columns (`hook`, `indexed`) ride
+///   `ensure_late_schema_additions` like every nullable add before them.
 pub fn run_migrations(from: u32) -> Result<()> {
-    Err(anyhow::anyhow!(
-        "store schema v{from} needs migration to v{STORE_SCHEMA_VERSION}, but this \
-         build registers no migration step for it — this is a ling-mem release bug. \
-         Escape hatch: `ling-mem export memory.jsonl`, reset the store, then \
-         `ling-mem import memory.jsonl`."
-    ))
+    for v in from..STORE_SCHEMA_VERSION {
+        match v {
+            1 => {} // gated: see above
+            other => {
+                return Err(anyhow::anyhow!(
+                    "store schema v{other} needs migration to v{STORE_SCHEMA_VERSION}, but this \
+                     build registers no migration step for it — this is a ling-mem release bug. \
+                     Escape hatch: `ling-mem export memory.jsonl`, reset the store, then \
+                     `ling-mem import memory.jsonl`."
+                ))
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Stamp the layout the store actually has: [`LEGACY_LAYOUT`] while any
+/// table still carries the v1 columns, [`STORE_SCHEMA_VERSION`] once none
+/// does. Idempotent — writes only when the value differs.
+pub fn stamp_layout(data_dir: &Path, legacy: bool) -> Result<()> {
+    let v = if legacy {
+        LEGACY_LAYOUT
+    } else {
+        STORE_SCHEMA_VERSION
+    };
+    if read_version(data_dir) != Some(v) {
+        write_version(data_dir, v)?;
+    }
+    Ok(())
 }
 
 /// For a refuse case ([`Compat::TooNew`] / [`Compat::TooOld`]), the actionable
@@ -177,6 +214,18 @@ mod tests {
         // second call is a no-op (no panic, value unchanged)
         stamp_current(d.path()).unwrap();
         assert_eq!(read_version(d.path()), Some(STORE_SCHEMA_VERSION));
+    }
+
+    #[test]
+    fn a_v1_store_opens_and_waits_for_its_gated_step() {
+        let d = tempdir().unwrap();
+        write_version(d.path(), 1).unwrap();
+        assert_eq!(classify(d.path()), Compat::Migrate { from: 1 });
+        run_migrations(1).unwrap();
+        stamp_layout(d.path(), true).unwrap();
+        assert_eq!(read_version(d.path()), Some(1));
+        stamp_layout(d.path(), false).unwrap();
+        assert_eq!(read_version(d.path()), Some(2));
     }
 
     #[test]

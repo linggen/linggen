@@ -51,24 +51,24 @@ const INSTRUCTIONS: &str = r#"ling-mem is this user's memory, shared by Claude C
 
 # Tiers
 - core — who they are, always loaded: name, role/job, location, timezone, languages, family/pets. One short fact per row.
-- semantic — durable, recalled on demand: goals, preferences ("always X / never Y" → semantic, type=preference, from=user; never core), decisions with their why, cross-project gotchas. State, not events: still useful in 3 months without the date?
-- episodic — the default per-turn capture: milestones, events, project decisions, run learnings. No search first. The nightly dream promotes what lasts.
+- semantic — durable, recalled on demand: goals, preferences ("always X / never Y" → type=preference, from=user; never core), decisions with their why, gotchas.
+- episodic — the default capture (omit tier): events, milestones, run learnings. No search first; the nightly dream promotes what lasts.
 
 # Saving
-- Before any core/semantic add, memory_search the subject. Same subject or same kind of claim in other words = conflict; when unsure, treat it as one.
-- Your own rows (from=derived): merge into one current-truth row with memory_add + replace_ids. Never add then delete.
-- The user's rows (from=user): ask first, showing each row's full text and date; then replace_ids + user_directed:true. Never set that flag from your own inference.
-- A replacement keeps the loser's tier. A new status (shipped/fixed/dropped) replaces the old status row.
+- Before a core/semantic add, memory_search the subject. Same subject or claim in other words = conflict; when unsure, treat it as one.
+- Your own rows (from=derived): merge into one current-truth row via memory_add + replace_ids, never add then delete.
+- The user's rows (from=user): ask first, showing each row's full text and date; then replace_ids + user_directed:true. Never from your own inference.
+- What the user said is from=user. A replacement keeps the loser's tier and scope. A new status (shipped/fixed/dropped) replaces the old status row.
 - "remember / forget / update X", in any language: search, act, user_directed:true.
-- Anchor relative time to dates ("last month" → "2026-08").
-- A preference about the person is global (memory_add global:true); one about this project keeps the host's cwd stamp.
+- Anchor relative time to dates ("last month" → "2026-08"). occurred_at dates days and TTL; it never ranks.
+- A row is about a directory: pass scope (one of "Memory scopes here") when it isn't where you stand; global:true when it is about the person.
+- preference/decision rows carry a hook: one line ≤ 80 chars, what the row is for. A standing rule the user states ("always…", "以后都…") also gets indexed:true — its hook loads at session start under its scope.
 - Never save secrets or file bodies you can re-read. Project internals stay episodic.
-- Garbage you come across in your own rows, fix on sight.
 
 # Recall
 Search when the question may touch past preferences, decisions or gotchas. Show each fact you use: "From memory (3 months ago): …". Never pass type, from or outcome to memory_search unless asked.
 
-Full rules and examples: the memory skill (linggen / shared-memory)."#;
+Full rules and examples: the memory skill."#;
 
 pub fn router() -> Router<SharedState> {
     Router::new().route("/mcp", post(handler))
@@ -140,9 +140,8 @@ fn tool_defs() -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "query":    {"type": "string", "description": "Natural-language description of what to find."},
-                    "contexts": {"type": "array", "items": {"type": "string"}, "description": "Filter to these scope tags (AND). Omit to search globally."},
                     "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Restrict to one tier. Omit to span all."},
-                    "cwd_scope": {"type": "string", "description": "HOST-FILLED — leave it out; the host stamps the session cwd to scope results to this project plus project-free rows."},
+                    "cwd_scope": {"type": "string", "description": "HOST-FILLED — leave it out; the host stamps the session root, which scopes results to rows under it, at its parents, and about the person."},
                     "limit":    {"type": "integer", "description": "Max rows. Default 10."}
                 },
                 "required": ["query"]
@@ -161,10 +160,10 @@ fn tool_defs() -> Vec<Value> {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "contexts": {"type": "array", "items": {"type": "string"}},
                     "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"]},
                     "types":    {"type": "array", "items": {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"]}, "description": "Only rows of these types."},
-                    "cwd_scope": {"type": "string", "description": "Only rows written under this path, plus project-free rows."},
+                    "cwd_scope": {"type": "string", "description": "A session root: rows under it, at its parents, and about the person."},
+                    "indexed":  {"type": "boolean", "description": "Only indexed rows (true) or only the rest (false)."},
                     "past_ttl": {"type": "boolean", "description": "Return only rows past the configured episodic TTL. Implies tier=episodic."},
                     "day":      {"type": "string", "description": "One local calendar day, YYYY-MM-DD — the remember stage lists a single day's worklist with this."},
                     "unjudged": {"type": "boolean", "description": "With day: only the rows no remember pass has judged yet — a re-opened day's new rows, not the whole day."},
@@ -176,10 +175,13 @@ fn tool_defs() -> Vec<Value> {
         }),
         json!({
             "name": "memory_session_start",
-            "description": "What a session loads at start: the core rows (who the user is). Preferences are not loaded here; they surface through recall like any other row. Returns {core, block, chars}; `block` is markdown ready to inject. Hosts call this; a model rarely needs to.",
+            "description": "What a session loads at start: the core rows (who the user is), and — for a cwd — the scope candidates line and the index (hooks of indexed rows filed at that directory or a parent). Returns {core, index, candidates, block, chars}; `block` is markdown ready to inject. Hosts call this; a model rarely needs to.",
             "inputSchema": {
                 "type": "object",
-                "properties": {}
+                "properties": {
+                    "cwd":  {"type": "string", "description": "HOST-FILLED — the session's working directory."},
+                    "root": {"type": "string", "description": "HOST-FILLED — the session's root (git root, or where it started)."}
+                }
             }
         }),
         json!({
@@ -199,12 +201,16 @@ fn tool_defs() -> Vec<Value> {
                 "properties": {
                     "content":  {"type": "string", "description": "The fact text the model will see when this row is recalled."},
                     "type":     {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"]},
-                    "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Destination tier: episodic = per-turn staging (default, no search-first); semantic = curated durable facts (search-first); core = tiny always-injected universals (search-first). Doctrine in the server instructions."},
-                    "contexts": {"type": "array", "items": {"type": "string"}},
+                    "from":     {"type": "string", "enum": ["user", "agent", "derived"], "description": "Whose words: user = the user stated it (a preference, a decision, a fact about them); agent = you did or observed it; derived (default) = your inference."},
+                    "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Destination tier: episodic = per-turn staging (the default when omitted, no search-first); semantic = curated durable facts (search-first); core = tiny always-injected universals (search-first). Doctrine in the server instructions."},
+                    "scope":    {"type": "string", "description": "The directory this row is about, when it is not where you stand: one of the session's \"Memory scopes here\" candidates (e.g. skills/lingjing, ~/workspace). Omit for the session's own directory."},
+                    "hook":     {"type": "string", "description": "One line, ≤ 80 chars: what this row is for — what the index shows in its place. Expected on preference and decision rows."},
+                    "indexed":  {"type": "boolean", "description": "true = put the row in its scope's index: its hook loads at every session start in that directory or below. For standing rules the user states (\"always…\", \"from now on…\")."},
                     "host":     {"type": "string", "description": "HOST-FILLED — leave it out; the host stamps the committing runtime."},
-                    "source_session": {"type": "string", "description": "HOST-FILLED — leave it out; pass only when a promote pass carries the original row's session forward."},
-                    "cwd":      {"type": "string", "description": "HOST-FILLED — leave it out; the host stamps the session's own cwd, which scopes recall."},
-                    "global":   {"type": "boolean", "description": "true = the row is about the person, not this project: stored with no cwd, recalled in every project. A preference about this project keeps the stamp (leave it out)."},
+                    "source_session": {"type": "string", "description": "HOST-FILLED — leave it out; the host stamps this session. Only a promote pass carrying an original row's session forward passes it."},
+                    "cwd":      {"type": "string", "description": "HOST-FILLED — leave it out; the host stamps the session cwd (the default scope)."},
+                    "root":     {"type": "string", "description": "HOST-FILLED — leave it out; the host stamps the session root that `scope` resolves against."},
+                    "global":   {"type": "boolean", "description": "true = the row is about the person, not a directory: stored with no scope, recalled everywhere."},
                     "replace_ids": {"type": "array", "items": {"type": "string"}, "description": "Row ids this row replaces — inserted and deleted atomically. For merges and resolved conflicts; never separate add + delete calls."},
                     "user_directed": {"type": "boolean", "description": "Assert the user directed this change (a settled command/declaration, or they just answered your ask). Required when replace_ids targets from=user rows — the daemon BLOCKS such writes otherwise. Hedged reflections don't qualify; see the server instructions."}
                 },
@@ -222,7 +228,7 @@ fn tool_defs() -> Vec<Value> {
         }),
         json!({
             "name": "memory_update",
-            "description": "Edit one row in place by id (content, type, tier, contexts, tags). A tier change moves the row across tables (episodic ↔ semantic/core) keeping its id. Rewriting content on a from=user row requires user_directed (same floor as memory_add's replace_ids). For merging MULTIPLE rows prefer memory_add with replace_ids.",
+            "description": "Edit one row in place by id (content, type, tier, hook, indexed). A tier change moves the row across tables (episodic ↔ semantic/core) keeping its id. Rewriting content on a from=user row requires user_directed (same floor as memory_add's replace_ids). For merging MULTIPLE rows prefer memory_add with replace_ids.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -230,9 +236,9 @@ fn tool_defs() -> Vec<Value> {
                     "content":  {"type": "string", "description": "Replacement fact text."},
                     "type":     {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"]},
                     "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Moving tier relocates the row across tables, id preserved."},
-                    "contexts": {"type": "array", "items": {"type": "string"}},
-                    "tags":     {"type": "array", "items": {"type": "string"}},
-                    "global":   {"type": "boolean", "description": "true = clear the row's project (cwd) so it applies in every project."},
+                    "hook":     {"type": "string", "description": "New one-line hook (≤ 80 chars)."},
+                    "indexed":  {"type": "boolean", "description": "Put the row in (true) or take it out of (false) its scope's index."},
+                    "global":   {"type": "boolean", "description": "true = clear the row's scope (cwd) so it applies everywhere."},
                     "user_directed": {"type": "boolean", "description": "Required when rewriting content on a from=user row — see memory_add.user_directed."}
                 },
                 "required": ["id"]
@@ -350,7 +356,7 @@ async fn handle_tools_call(state: &SharedState, params: Value) -> Result<Value, 
     let verb = tool_name_to_verb(&name)
         .ok_or_else(|| rpc_error(-32602, format!("unknown tool: {name}")))?;
 
-    apply_dispatch_fixes(verb, &mut args);
+    apply_dispatch_fixes(&mut args);
 
     match loopback(state, verb, args).await {
         Ok(mut data) => {
@@ -386,7 +392,7 @@ fn tool_name_to_verb(name: &str) -> Option<&'static str> {
 /// Dispatch-boundary fixes ported from `linggen/src/engine/tools/memory_tool.rs`.
 /// These compensate for shapes models commonly produce that the daemon
 /// can't or shouldn't interpret as-is.
-fn apply_dispatch_fixes(verb: &str, args: &mut Value) {
+fn apply_dispatch_fixes(args: &mut Value) {
     let Some(obj) = args.as_object_mut() else {
         return;
     };
@@ -550,11 +556,11 @@ mod tests {
         let mut args = json!({
             "query": "real",
             "until": "",
-            "contexts": [],
+            "types": [],
             "tier": null,
             "limit": 5
         });
-        apply_dispatch_fixes("search", &mut args);
+        apply_dispatch_fixes(&mut args);
         let obj = args.as_object().unwrap();
         assert_eq!(obj.keys().collect::<Vec<_>>(), ["limit", "query"]);
     }
@@ -564,13 +570,13 @@ mod tests {
     #[test]
     fn episodic_tier_becomes_a_routing_flag() {
         let mut args = json!({"content": "x", "tier": "episodic"});
-        apply_dispatch_fixes("add", &mut args);
+        apply_dispatch_fixes(&mut args);
         assert_eq!(args["episodic"], json!(true));
         assert!(args.get("tier").is_none());
 
         // Any other tier stays a filter within the semantic store.
         let mut semantic = json!({"content": "x", "tier": "core"});
-        apply_dispatch_fixes("add", &mut semantic);
+        apply_dispatch_fixes(&mut semantic);
         assert_eq!(semantic["tier"], json!("core"));
         assert!(semantic.get("episodic").is_none());
     }
@@ -584,18 +590,18 @@ mod tests {
             "type": "fact",
             "from": "user",
             "outcome": "positive",
-            "contexts": ["keep-me"]
+            "cwd_scope": "/keep/me"
         });
-        apply_dispatch_fixes("list", &mut args);
+        apply_dispatch_fixes(&mut args);
         assert!(args.get("type").is_none());
         assert!(args.get("from").is_none());
         assert!(args.get("outcome").is_none());
-        // A caller legitimately scoping by tag keeps it.
-        assert_eq!(args["contexts"], json!(["keep-me"]));
+        // A caller legitimately scoping by path keeps it.
+        assert_eq!(args["cwd_scope"], json!("/keep/me"));
 
         // Not gated on the verb: the same shape on the wrong one is stripped.
         let mut wrong_verb = json!({"past_ttl": true, "type": "fact"});
-        apply_dispatch_fixes("search", &mut wrong_verb);
+        apply_dispatch_fixes(&mut wrong_verb);
         assert!(wrong_verb.get("type").is_none());
     }
 
@@ -691,6 +697,36 @@ mod tests {
             n <= 2048,
             "instructions are {n} characters; Claude Code keeps 2048"
         );
+    }
+
+    /// `from` was missing from the add schema, so every row a model wrote
+    /// defaulted to derived — the user's own words included.
+    #[test]
+    fn add_takes_from_scope_hook_and_indexed() {
+        let def = tool_defs()
+            .into_iter()
+            .find(|t| t["name"] == json!("memory_add"))
+            .unwrap();
+        let props = def["inputSchema"]["properties"].as_object().unwrap();
+        for f in [
+            "from",
+            "scope",
+            "hook",
+            "indexed",
+            "cwd",
+            "root",
+            "source_session",
+            "host",
+        ] {
+            assert!(props.contains_key(f), "memory_add lacks {f}");
+        }
+        assert!(!props.contains_key("contexts"));
+        let all = serde_json::to_string(&tool_defs()).unwrap();
+        assert!(
+            !all.contains("\"contexts\""),
+            "a tool still advertises contexts"
+        );
+        assert!(!all.contains("\"tags\""), "a tool still advertises tags");
     }
 
     /// The routing rule whose loss started this: a role reaches core.

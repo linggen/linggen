@@ -22,7 +22,6 @@ use crate::daemon::lifecycle::LifecycleOutcome;
 use crate::daemon::pidfile;
 use crate::memory::Memory;
 use anyhow::{anyhow, Context, Result};
-use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 use std::io::Write;
 use std::path::Path;
@@ -174,24 +173,11 @@ pub(crate) async fn add(base: &str, args: AddArgs, format: OutputFormat) -> Resu
     }
     let content = args
         .content
+        .clone()
         .ok_or_else(|| anyhow!("add: provide content or use --stdin"))?;
 
-    let host = args.host.or_else(super::detect_host);
-    let body = build_add_body(
-        content,
-        args.r#type,
-        args.tier,
-        args.contexts,
-        args.tags,
-        args.from,
-        args.outcome,
-        args.cwd,
-        args.occurred_at,
-        args.source_session,
-        args.skip_dedup,
-        host,
-    );
-    let mut body = body;
+    let host = args.host.clone().or_else(super::detect_host);
+    let mut body = build_add_body(&args, content, host);
     if !args.replace_ids.is_empty() {
         body["replace_ids"] = serde_json::json!(args.replace_ids);
     }
@@ -297,11 +283,14 @@ pub(crate) async fn update(base: &str, args: UpdateArgs, format: OutputFormat) -
     if let Some(content) = args.content {
         body["content"] = Value::String(content);
     }
-    if let Some(contexts) = args.contexts {
-        body["contexts"] = json!(contexts);
+    if let Some(hook) = args.hook {
+        body["hook"] = Value::String(hook);
     }
-    if let Some(tags) = args.tags {
-        body["tags"] = json!(tags);
+    if args.clear_hook {
+        body["clear_hook"] = Value::Bool(true);
+    }
+    if let Some(flag) = args.indexed {
+        body["indexed"] = Value::Bool(flag);
     }
     if let Some(t) = args.r#type {
         body["type"] = Value::String(cli_memory_type_str(t).to_string());
@@ -668,8 +657,19 @@ pub(crate) async fn harvest_day(base: &str, date: &str, format: OutputFormat) ->
     }
 }
 
-pub(crate) async fn session_start(base: &str, format: OutputFormat) -> Result<()> {
-    let data = post(base, "/api/memory/session_start", &json!({})).await?;
+pub(crate) async fn session_start(
+    base: &str,
+    args: crate::cli::SessionStartArgs,
+    format: OutputFormat,
+) -> Result<()> {
+    let mut body = json!({});
+    if let Some(cwd) = args.cwd {
+        body["cwd"] = Value::String(cwd);
+    }
+    if let Some(root) = args.root {
+        body["root"] = Value::String(root);
+    }
+    let data = post(base, "/api/memory/session_start", &body).await?;
     match format {
         OutputFormat::Json => writeln_ndjson(&data),
         OutputFormat::Text => {
@@ -725,51 +725,45 @@ pub(crate) async fn stats(base: &str, format: OutputFormat) -> Result<()> {
 
 // ── Body builders ───────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_arguments)]
-fn build_add_body(
-    content: String,
-    r#type: CliMemoryType,
-    tier: crate::cli::CliTier,
-    contexts: Vec<String>,
-    tags: Vec<String>,
-    from: CliOrigin,
-    outcome: Option<CliOutcome>,
-    cwd: Option<String>,
-    occurred_at: Option<DateTime<Utc>>,
-    source_session: Option<String>,
-    skip_dedup: bool,
-    host: Option<String>,
-) -> Value {
-    // `tier` was silently dropped on this path before the AddRequest
-    // gained the field — `ling-mem add --tier core` with the daemon up
-    // wrote a semantic row.
+/// The `add` body. Every flag that names something rides the wire; an
+/// omitted `--tier` stays omitted so the daemon applies its default
+/// (episodic, or the replaced rows' tier).
+fn build_add_body(args: &AddArgs, content: String, host: Option<String>) -> Value {
     let mut body = json!({
         "content": content,
-        "type": cli_memory_type_str(r#type),
-        "tier": cli_tier_str(tier),
-        "from": cli_origin_str(from),
-        "skip_dedup": skip_dedup,
+        "type": cli_memory_type_str(args.r#type),
+        "from": cli_origin_str(args.from),
+        "skip_dedup": args.skip_dedup,
     });
-    if !contexts.is_empty() {
-        body["contexts"] = json!(contexts);
+    if let Some(t) = args.tier {
+        body["tier"] = Value::String(cli_tier_str(t).to_string());
     }
-    if !tags.is_empty() {
-        body["tags"] = json!(tags);
-    }
-    if let Some(o) = outcome {
+    if let Some(o) = args.outcome {
         body["outcome"] = Value::String(cli_outcome_str(o).to_string());
     }
-    if let Some(c) = cwd {
-        body["cwd"] = Value::String(c);
+    let strings = [
+        ("cwd", &args.cwd),
+        ("scope", &args.scope),
+        ("root", &args.root),
+        ("hook", &args.hook),
+        ("source_session", &args.source_session),
+    ];
+    for (key, value) in strings {
+        if let Some(v) = value {
+            body[key] = Value::String(v.clone());
+        }
     }
-    if let Some(t) = occurred_at {
+    if let Some(t) = args.occurred_at {
         body["occurred_at"] = Value::String(t.to_rfc3339());
-    }
-    if let Some(s) = source_session {
-        body["source_session"] = Value::String(s);
     }
     if let Some(h) = host {
         body["host"] = Value::String(h);
+    }
+    if args.indexed {
+        body["indexed"] = Value::Bool(true);
+    }
+    if args.global {
+        body["global"] = Value::Bool(true);
     }
     body
 }
@@ -788,14 +782,30 @@ fn push_cwd_scope(body: &mut Value, filters: &FilterArgs) {
 
 fn filter_body(filters: &FilterArgs) -> Value {
     let mut body = json!({});
-    if !filters.contexts.is_empty() {
-        body["contexts"] = json!(filters.contexts);
+    if !filters.apps.is_empty() {
+        body["apps"] = json!(filters.apps);
     }
-    // Daemon's FilterDTO accepts a single `type`. Multiple-type CLI flags
-    // collapse to the first value (matches what direct mode does today;
-    // server-side filters are inclusive on type).
-    if let Some(t) = filters.types.first().copied() {
-        body["type"] = Value::String(cli_memory_type_str(t).to_string());
+    // Every `--type` (OR) — the daemon's `types` list. Collapsing to the
+    // first one silently narrowed `--type fixed --type tried`.
+    if !filters.types.is_empty() {
+        let types: Vec<&str> = filters
+            .types
+            .iter()
+            .map(|t| cli_memory_type_str(*t))
+            .collect();
+        body["types"] = json!(types);
+    }
+    if let Some(flag) = filters.indexed {
+        body["indexed"] = Value::Bool(flag);
+    }
+    if let Some(sid) = &filters.source_session {
+        body["source_session"] = Value::String(sid.clone());
+    }
+    if filters.include_expired {
+        body["include_expired"] = Value::Bool(true);
+    }
+    if let Some(succ) = &filters.superseded_by {
+        body["superseded_by"] = Value::String(succ.clone());
     }
     if let Some(o) = filters.from {
         body["from"] = Value::String(cli_origin_str(o).to_string());

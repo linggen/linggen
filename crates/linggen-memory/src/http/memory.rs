@@ -154,10 +154,6 @@ pub fn router() -> Router<SharedState> {
 #[derive(Debug, Deserialize)]
 pub struct AddRequest {
     pub content: String,
-    #[serde(default)]
-    pub contexts: Vec<String>,
-    #[serde(default)]
-    pub tags: Vec<String>,
     #[serde(default, deserialize_with = "deserialize_optional_lenient")]
     pub r#type: Option<MemoryType>,
     /// Origin. Canonical name is `from` (matches the `Memory` field);
@@ -170,7 +166,25 @@ pub struct AddRequest {
     pub from: Option<Origin>,
     #[serde(default, deserialize_with = "deserialize_optional_lenient")]
     pub outcome: Option<Outcome>,
+    /// HOST-FILLED: the session's cwd — the row's scope when the model names
+    /// none. A legacy host's only scope signal.
     pub cwd: Option<String>,
+    /// The model's choice of scope: one of the candidates the host showed
+    /// (`skills/lingjing`, `~/workspace`, …), resolved against `root`. Must
+    /// be an existing directory inside root or a parent of root below
+    /// `$HOME`; anything else falls back to `cwd`.
+    #[serde(default)]
+    pub scope: Option<String>,
+    /// HOST-FILLED: the session's root (git root, or where it started).
+    #[serde(default)]
+    pub root: Option<String>,
+    /// One line (≤ 80 chars) saying what the row is for. Expected on
+    /// `preference` and `decision` rows.
+    #[serde(default)]
+    pub hook: Option<String>,
+    /// Put the row in its directory's index.
+    #[serde(default)]
+    pub indexed: bool,
     /// The row is about the person, not the project: store it with no
     /// `cwd`, whatever a host stamped. Wins over `cwd` — the stamp hooks
     /// fill `cwd` mechanically, and this is the model saying the stamp is
@@ -283,12 +297,18 @@ impl AccountScopeDTO {
 /// accepts the lowercase variant name (`"fact"`, `"positive"`, …).
 #[derive(Debug, Default, Deserialize)]
 pub struct FilterDTO {
+    /// Rows of any of these skills (`~/.linggen/skills/<name>` and below).
+    /// The phone's pull: "rows of an app I run".
     #[serde(default)]
-    pub contexts: Vec<String>,
-    /// Match rows carrying ANY of these contexts (OR), alongside the AND
-    /// of `contexts`. The phone's pull: "rows tagged with an app I run".
+    pub apps: Vec<String>,
+    /// Deprecated spelling of `apps` (phones built before 2026-10-04 send
+    /// it). Read as app names, so an old phone is never answered with the
+    /// whole store.
     #[serde(default)]
     pub contexts_any: Vec<String>,
+    /// Only rows with this `indexed` flag.
+    #[serde(default)]
+    pub indexed: Option<bool>,
     /// Whose rows. Absent = the store owner's; an account id = that
     /// person's; `all_accounts: true` = everyone's (maintenance only).
     #[serde(flatten)]
@@ -334,8 +354,10 @@ pub struct FilterDTO {
     /// wrote during one engine session.
     #[serde(default)]
     pub source_session: Option<String>,
-    /// Scope recall to the work being done at this path — rows written under
-    /// it, plus every row that belongs to no project (see `Filters::cwd_scope`).
+    /// The session's recall scope, given as its root (see
+    /// `Filters::cwd_scope`): an owner root sees its subtree, its parents and
+    /// person rows; a skill's dir only its own rows; `$HOME`/`~/.linggen`/temp
+    /// only person rows.
     ///
     /// Deliberately NOT accepted by `forget` as a standalone filter: it matches
     /// every unscoped row by design, so a delete carrying only this would take
@@ -396,9 +418,17 @@ impl FilterDTO {
                 types.push(t);
             }
         }
+        let mut apps = self.apps;
+        for a in self.contexts_any {
+            if !apps.contains(&a) {
+                apps.push(a);
+            }
+        }
         Ok(Filters {
-            contexts: self.contexts,
-            contexts_any: self.contexts_any,
+            apps,
+            indexed: self.indexed,
+            cwd_in: Vec::new(),
+            legacy_contexts: false,
             account: self.scope.scope(),
             types,
             exclude_types: self.exclude_types,
@@ -525,8 +555,14 @@ pub struct CountRequest {
 pub struct UpdateRequest {
     pub id: String,
     pub content: Option<String>,
-    pub contexts: Option<Vec<String>>,
-    pub tags: Option<Vec<String>>,
+    /// New one-line hook; `clear_hook` removes it.
+    #[serde(default)]
+    pub hook: Option<String>,
+    #[serde(default)]
+    pub clear_hook: bool,
+    /// Put the row in (true) or take it out of (false) its dir's index.
+    #[serde(default)]
+    pub indexed: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_optional_lenient")]
     pub r#type: Option<MemoryType>,
     #[serde(default, deserialize_with = "deserialize_optional_lenient")]
@@ -566,7 +602,7 @@ pub struct UpdateRequest {
     pub episodic: Option<bool>,
     /// See [`AddRequest::user_directed`]. Required when this update
     /// rewrites `content` on a `from=user` row; metadata-only patches
-    /// (tier, contexts, tags) stay unguarded.
+    /// (tier, cwd, hook, indexed) stay unguarded.
     #[serde(default)]
     pub user_directed: bool,
     #[serde(flatten)]
@@ -647,33 +683,28 @@ async fn add(
     guard_user_voice(&state, &req.replace_ids, req.user_directed).await?;
 
     let skip_dedup = req.skip_dedup;
-    // `tier=episodic` in the body is equivalent to `episodic: true` —
-    // both route to the staging table.
-    let episodic = req.episodic || req.tier == Some(crate::memory::Tier::Episodic);
     let replace_ids = req.replace_ids.clone();
+    // The rows this one replaces: their tier and scope carry over.
+    let losers = locate_rows(&state, &replace_ids).await?;
+    let tier = resolve_tier(req.tier, req.episodic, &losers, req.indexed);
+    let episodic = tier == Tier::Episodic;
+    let cwd = resolve_cwd(&req, &losers, tier);
     let mut fact = Memory::new(
         req.content,
         req.r#type.unwrap_or(MemoryType::Fact),
         req.from.unwrap_or_default(),
     );
-    fact.contexts = req.contexts;
-    fact.tags = req.tags;
+    fact.tier = tier;
     fact.outcome = req.outcome;
-    fact.cwd = written_cwd(req.cwd, req.global);
+    fact.cwd = cwd;
+    fact.hook = clean_hook(req.hook);
+    fact.indexed = req.indexed && tier != Tier::Core;
     fact.occurred_at = req.occurred_at;
     fact.source_session = req.source_session;
     fact.host = req.host;
     fact.account_id = req.account_id.filter(|a| !a.trim().is_empty());
     fact.account_name = req.account_name.filter(|a| !a.trim().is_empty());
-    if episodic {
-        // The row's table marks it as episodic; keep `tier` in sync so
-        // callers filtering by tier alone don't see lies. Overrides any
-        // stale Core / Semantic carried in from a generic Memory::new().
-        fact.tier = crate::memory::Tier::Episodic;
-    } else if let Some(tier) = req.tier {
-        // Core vs semantic within the semantic table.
-        fact.tier = tier;
-    }
+    let note = hook_note(&fact);
 
     // Embed the content so the row is immediately searchable. Serialized +
     // off the async workers so concurrent adds can't stack forward passes.
@@ -688,10 +719,13 @@ async fn add(
     let store = pick_store(&state, episodic);
     if skip_dedup {
         store.insert(std::slice::from_ref(&fact)).await?;
-        let body = json!({
-            "action": "added",
-            "fact": fact_public(&fact),
-        });
+        let body = with_note(
+            json!({
+                "action": "added",
+                "fact": fact_public(&fact),
+            }),
+            note,
+        );
         return Ok(ok(
             apply_replace_ids(&state, &replace_ids, &fact.id, body).await
         ));
@@ -715,9 +749,8 @@ async fn add(
         let new_rank = tier_rank(fact.tier);
         let existing_rank = tier_rank(existing.tier);
         if existing_rank >= new_rank {
-            // Existing row is at the same or higher tier — keep it.
-            // Merge contexts/tags so the new write's metadata isn't lost,
-            // then return as if dedup'd.
+            // Existing row is at the same or higher tier — keep it. Fill
+            // what it lacks from the new write, then return as if dedup'd.
             let merged = merge_with_existing(&existing, &fact);
             other.update_full_public(&existing.id, &merged).await?;
             let body = json!({
@@ -744,13 +777,123 @@ async fn add(
         crate::memory::InsertOutcome::Added(f) => f.id.clone(),
         crate::memory::InsertOutcome::Merged { fact, .. } => fact.id.clone(),
     };
-    let body = apply_replace_ids(&state, &replace_ids, &survivor, outcome_public(&outcome)).await;
+    let body = apply_replace_ids(
+        &state,
+        &replace_ids,
+        &survivor,
+        with_note(outcome_public(&outcome), note),
+    )
+    .await;
     Ok(ok(body))
 }
 
-/// The `cwd` a new row is stored with. `global` wins over any stamp: the
-/// hooks fill `cwd` mechanically, `global` is the model saying the row is
-/// about the person, not the project.
+/// The rows `replace_ids` names, wherever they live (missing ids skipped).
+async fn locate_rows(state: &SharedState, ids: &[String]) -> Result<Vec<Memory>, ApiError> {
+    let mut found = Vec::new();
+    for id in ids {
+        for store in stores_for_read(state, None) {
+            if let Some(row) = store.get(id).await? {
+                found.push(row);
+                break;
+            }
+        }
+    }
+    Ok(found)
+}
+
+/// The tier a write lands in. Asked-for wins (`episodic: true` or `tier`);
+/// a replacement keeps its losers' highest tier; an indexed row is
+/// long-term by nature; anything else is episodic — the protocol's default
+/// per-turn capture, which the nightly dream promotes from.
+fn resolve_tier(asked: Option<Tier>, episodic: bool, losers: &[Memory], indexed: bool) -> Tier {
+    if episodic {
+        return Tier::Episodic;
+    }
+    if let Some(t) = asked {
+        return t;
+    }
+    if let Some(t) = losers.iter().map(|l| l.tier).max_by_key(|t| tier_rank(*t)) {
+        return t;
+    }
+    if indexed {
+        return Tier::Semantic;
+    }
+    Tier::Episodic
+}
+
+/// The scope a new row is stored with. Core rows and `global` rows have
+/// none. A `scope` the model named wins when it resolves to a valid dir for
+/// this session; a replacement with no named scope takes its losers' common
+/// scope; otherwise the host's stamped session cwd, if it can be a scope.
+fn resolve_cwd(req: &AddRequest, losers: &[Memory], tier: Tier) -> Option<String> {
+    if req.global || tier == Tier::Core {
+        return None;
+    }
+    let home = crate::memory::scope::home();
+    let session = req
+        .cwd
+        .as_deref()
+        .and_then(|c| crate::memory::scope::expand(c, &home))
+        .filter(|c| crate::memory::scope::is_scope_dir(c, &home));
+    let root = req
+        .root
+        .as_deref()
+        .and_then(|r| crate::memory::scope::expand(r, &home))
+        .or_else(|| {
+            session
+                .as_deref()
+                .map(|s| crate::memory::scope::find_root(s, &home))
+        });
+    if let Some(named) = req.scope.as_deref().filter(|s| !s.trim().is_empty()) {
+        let chosen = root.as_deref().and_then(|r| {
+            crate::memory::scope::resolve(named, Some(r), &home)
+                .filter(|d| crate::memory::scope::is_valid_for(d, r, &home))
+        });
+        if let Some(dir) = chosen {
+            return Some(dir.to_string_lossy().to_string());
+        }
+    } else if !losers.is_empty() {
+        let cwds: Vec<Option<String>> = losers.iter().map(|l| l.cwd.clone()).collect();
+        return crate::memory::scope::common(&cwds, &home);
+    }
+    session.map(|s| s.to_string_lossy().to_string())
+}
+
+/// The longest a hook may be, in characters.
+const HOOK_MAX_CHARS: usize = 80;
+
+/// One line, trimmed, at most [`HOOK_MAX_CHARS`] — cut with `…` beyond.
+fn clean_hook(raw: Option<String>) -> Option<String> {
+    let line = raw?.split_whitespace().collect::<Vec<_>>().join(" ");
+    if line.is_empty() {
+        return None;
+    }
+    if line.chars().count() <= HOOK_MAX_CHARS {
+        return Some(line);
+    }
+    let cut: String = line.chars().take(HOOK_MAX_CHARS - 1).collect();
+    Some(format!("{}…", cut.trim_end()))
+}
+
+/// A gentle note when a long-term preference or decision lands without a
+/// hook — the write still succeeds; the index needs one to show it.
+fn hook_note(fact: &Memory) -> Option<&'static str> {
+    let wants = matches!(fact.r#type, MemoryType::Preference | MemoryType::Decision)
+        && fact.tier != Tier::Episodic;
+    (wants && fact.hook.is_none()).then_some(
+        "preference and decision rows want a hook (one line, ≤ 80 chars): memory_update it",
+    )
+}
+
+fn with_note(mut body: Value, note: Option<&str>) -> Value {
+    if let (Some(n), Some(obj)) = (note, body.as_object_mut()) {
+        obj.insert("note".into(), json!(n));
+    }
+    body
+}
+
+/// The `cwd` a batch-imported row is stored with: `global` wins, an empty
+/// string is no scope.
 fn written_cwd(cwd: Option<String>, global: bool) -> Option<String> {
     if global {
         None
@@ -785,20 +928,21 @@ async fn add_batch(
         if r.content.trim().is_empty() {
             continue; // skip blanks; don't abort the whole import for one
         }
+        let tier = resolve_tier(r.tier, r.episodic, &[], r.indexed);
         let mut fact = Memory::new(
             r.content,
             r.r#type.unwrap_or(MemoryType::Fact),
             r.from.unwrap_or_default(),
         );
-        fact.contexts = r.contexts;
-        fact.tags = r.tags;
+        fact.tier = tier;
         fact.outcome = r.outcome;
-        fact.cwd = written_cwd(r.cwd, r.global);
+        fact.cwd = written_cwd(r.cwd, r.global || tier == Tier::Core);
+        fact.hook = clean_hook(r.hook);
+        fact.indexed = r.indexed && tier != Tier::Core;
         fact.occurred_at = r.occurred_at;
         fact.source_session = r.source_session;
         fact.host = r.host;
-        if r.episodic {
-            fact.tier = Tier::Episodic;
+        if tier == Tier::Episodic {
             episodic.push(fact);
         } else {
             semantic.push(fact);
@@ -934,9 +1078,10 @@ fn tier_rank(tier: crate::memory::Tier) -> u8 {
 }
 
 /// Same merge logic as `store::merge_fact` but at the HTTP layer so we
-/// can compose it with a cross-store update. Unions contexts + tags into
-/// the existing row, takes the longer content, fills missing optional
-/// fields from the candidate.
+/// can compose it with a cross-store update. Takes the longer content and
+/// fills missing optional fields from the candidate. The surviving row's
+/// scope (`cwd`) and hook stay unless empty: a fact re-said from elsewhere
+/// must not leave the directory it is about.
 fn merge_with_existing(
     existing: &crate::memory::Memory,
     candidate: &crate::memory::Memory,
@@ -946,22 +1091,16 @@ fn merge_with_existing(
         merged.content = candidate.content.clone();
         merged.vector = candidate.vector.clone();
     }
-    for c in &candidate.contexts {
-        if !merged.contexts.contains(c) {
-            merged.contexts.push(c.clone());
-        }
-    }
-    for t in &candidate.tags {
-        if !merged.tags.contains(t) {
-            merged.tags.push(t.clone());
-        }
-    }
     if candidate.outcome.is_some() {
         merged.outcome = candidate.outcome;
     }
-    if candidate.cwd.is_some() {
+    if merged.cwd.is_none() && merged.tier != crate::memory::Tier::Core {
         merged.cwd = candidate.cwd.clone();
     }
+    if merged.hook.is_none() {
+        merged.hook = candidate.hook.clone();
+    }
+    merged.indexed |= candidate.indexed;
     if candidate.occurred_at.is_some() {
         merged.occurred_at = candidate.occurred_at;
     }
@@ -1212,10 +1351,15 @@ async fn update(
         (None, false) => None,
     };
 
-    let patch = MemoryPatch {
+    let hook_patch = match (clean_hook(req.hook), req.clear_hook) {
+        (Some(h), _) => Some(Some(h)),
+        (None, true) => Some(None),
+        (None, false) => None,
+    };
+    let mut patch = MemoryPatch {
         content: req.content,
-        contexts: req.contexts,
-        tags: req.tags,
+        hook: hook_patch,
+        indexed: req.indexed,
         r#type: req.r#type,
         tier: req.tier,
         origin: req.from,
@@ -1245,6 +1389,11 @@ async fn update(
     }
 
     let target_tier = patch.tier.unwrap_or(existing.tier);
+    // Core is who the person is: no scope, no index — ever.
+    if target_tier == Tier::Core {
+        patch.cwd = Some(None);
+        patch.indexed = Some(false);
+    }
     let target_is_episodic = matches!(target_tier, Tier::Episodic);
     let current_is_episodic = Arc::ptr_eq(&current_store, &state.episodic);
 
@@ -1347,7 +1496,7 @@ async fn forget(
     let filters = req.filters.into_filters()?;
     // Refuse empty filters — bulk delete must be intentional. Matches the
     // CLI's refusal when no filter flags are passed.
-    if filters.contexts.is_empty()
+    if filters.apps.is_empty()
         && filters.types.is_empty()
         && filters.origin.is_none()
         && filters.outcome.is_none()
@@ -1358,7 +1507,7 @@ async fn forget(
     {
         return Err(ApiError::bad_request(
             "forget refuses an empty filter — supply at least one of \
-             contexts, type, tier, from, outcome, since, until, source_session",
+             apps, type, tier, from, outcome, since, until, source_session",
         ));
     }
     let store = pick_store(&state, req.episodic);
@@ -1379,6 +1528,106 @@ mod tests {
         );
         // An explicit empty cwd is no project, not a project named "".
         assert_eq!(written_cwd(Some("".into()), false), None);
+    }
+
+    fn row(tier: Tier, cwd: Option<&str>) -> Memory {
+        let mut m = Memory::new("x", MemoryType::Fact, Origin::Derived);
+        m.tier = tier;
+        m.cwd = cwd.map(str::to_string);
+        m
+    }
+
+    #[test]
+    fn an_omitted_tier_is_episodic_unless_something_says_otherwise() {
+        assert_eq!(resolve_tier(None, false, &[], false), Tier::Episodic);
+        assert_eq!(
+            resolve_tier(Some(Tier::Core), false, &[], false),
+            Tier::Core
+        );
+        assert_eq!(
+            resolve_tier(Some(Tier::Core), true, &[], false),
+            Tier::Episodic
+        );
+        // A replacement keeps its losers' highest tier.
+        let losers = [row(Tier::Semantic, None), row(Tier::Core, None)];
+        assert_eq!(resolve_tier(None, false, &losers, false), Tier::Core);
+        // An indexed row is long-term.
+        assert_eq!(resolve_tier(None, false, &[], true), Tier::Semantic);
+    }
+
+    fn add_req(v: Value) -> AddRequest {
+        serde_json::from_value(v).unwrap()
+    }
+
+    #[test]
+    fn scope_resolution_on_add() {
+        let home = crate::memory::scope::home();
+        // A real dir under home: this crate's checkout is one.
+        let here = std::env::current_dir().unwrap();
+        if !here.starts_with(&home) {
+            return; // CI outside home: the rules are covered in memory::scope
+        }
+        let root = here.to_string_lossy().to_string();
+        let src = here.join("src").to_string_lossy().to_string();
+        // The model's scope wins when it is a dir inside root.
+        let r = add_req(json!({"content": "x", "cwd": root, "root": root, "scope": src}));
+        assert_eq!(
+            resolve_cwd(&r, &[], Tier::Semantic).as_deref(),
+            Some(src.as_str())
+        );
+        // A scope outside root falls back to the session cwd.
+        let r = add_req(json!({"content": "x", "cwd": root, "root": root, "scope": "/etc"}));
+        assert_eq!(
+            resolve_cwd(&r, &[], Tier::Semantic).as_deref(),
+            Some(root.as_str())
+        );
+        // A parent of root is fine.
+        let parent = here.parent().unwrap().to_string_lossy().to_string();
+        let r = add_req(json!({"content": "x", "cwd": root, "root": root, "scope": parent}));
+        if here.parent().unwrap() != home {
+            assert_eq!(
+                resolve_cwd(&r, &[], Tier::Semantic).as_deref(),
+                Some(parent.as_str())
+            );
+        }
+        // Home itself is never a scope.
+        let h = home.to_string_lossy().to_string();
+        let r = add_req(json!({"content": "x", "cwd": h}));
+        assert_eq!(resolve_cwd(&r, &[], Tier::Episodic), None);
+        // Core and global rows have none.
+        let r = add_req(json!({"content": "x", "cwd": root}));
+        assert_eq!(resolve_cwd(&r, &[], Tier::Core), None);
+        let r = add_req(json!({"content": "x", "cwd": root, "global": true}));
+        assert_eq!(resolve_cwd(&r, &[], Tier::Semantic), None);
+        // A merge takes its losers' common scope, not the session's.
+        let r = add_req(json!({"content": "x", "cwd": root}));
+        let a = home.join("w/a/x").to_string_lossy().to_string();
+        let b = home.join("w/a/y").to_string_lossy().to_string();
+        let losers = [row(Tier::Semantic, Some(&a)), row(Tier::Semantic, Some(&b))];
+        assert_eq!(
+            resolve_cwd(&r, &losers, Tier::Semantic),
+            Some(home.join("w/a").to_string_lossy().to_string())
+        );
+        let losers = [row(Tier::Semantic, Some(&a)), row(Tier::Semantic, None)];
+        assert_eq!(resolve_cwd(&r, &losers, Tier::Semantic), None);
+    }
+
+    #[test]
+    fn hooks_are_one_short_line() {
+        assert_eq!(clean_hook(Some("  a\n b  ".into())).as_deref(), Some("a b"));
+        assert_eq!(clean_hook(Some("   ".into())), None);
+        let long = clean_hook(Some("x".repeat(200))).unwrap();
+        assert_eq!(long.chars().count(), 80);
+        assert!(long.ends_with('…'));
+    }
+
+    #[test]
+    fn an_old_phone_naming_contexts_any_gets_its_apps() {
+        let req: ListRequest =
+            serde_json::from_value(json!({"contexts_any": ["dj", "cfo"], "contexts": ["x"]}))
+                .unwrap();
+        let f = req.filters.into_filters().unwrap();
+        assert_eq!(f.apps, ["dj", "cfo"]);
     }
 
     #[test]

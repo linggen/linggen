@@ -34,8 +34,7 @@ pub fn short_id() -> String {
 
 /// A single memory — one row in a LanceDB memory table.
 ///
-/// Fields mapping to nullable columns are `Option<T>`. `contexts` and `tags`
-/// may be empty but are never null.
+/// Fields mapping to nullable columns are `Option<T>`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Memory {
     pub id: String,
@@ -45,19 +44,6 @@ pub struct Memory {
     /// passes in batch pipelines; search filters ignore rows without a vector.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub vector: Option<Vec<f32>>,
-
-    /// Scope tags — usually hierarchical path-like: `code/linggen`,
-    /// `music/piano`. Shorter-on-average than `tags`; the primary filter
-    /// dimension.
-    #[serde(default)]
-    pub contexts: Vec<String>,
-
-    /// Secondary metadata — topic, intent, people, mood. Free-form labels
-    /// with prefix convention for pseudo-structure: `intent:learn`,
-    /// `topic:coding`, `person:bob`. Promote a prefix to a first-class field
-    /// only if it becomes heavily filtered in practice.
-    #[serde(default)]
-    pub tags: Vec<String>,
 
     pub r#type: MemoryType,
 
@@ -78,11 +64,22 @@ pub struct Memory {
     #[serde(rename = "from")]
     pub origin: Origin,
 
-    /// Working directory captured at extraction time. Nullable — manual adds
-    /// have none. Useful for filtering by project area and as an auto-tag
-    /// hint during extraction.
+    /// The row's **scope**: the directory it is about (the model picks one of
+    /// the host's candidates; default = the session cwd). Null = about the
+    /// person, visible everywhere. Core rows never carry one.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub cwd: Option<String>,
+
+    /// One line (≤ 80 chars) saying what the row is for — what the index
+    /// shows in place of the row. Written by the model; expected on
+    /// `preference` and `decision` rows. See `doc/scope-index-spec.md`.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub hook: Option<String>,
+
+    /// Puts the row in its directory's index: every session at `cwd` or
+    /// below loads its hook at start.
+    #[serde(skip_serializing_if = "is_false", default)]
+    pub indexed: bool,
 
     /// When the fact entered memory.
     pub created_at: DateTime<Utc>,
@@ -160,13 +157,13 @@ impl Memory {
             id: short_id(),
             content: content.into(),
             vector: None,
-            contexts: Vec::new(),
-            tags: Vec::new(),
             r#type,
             tier: Tier::default(),
             outcome: None,
             origin,
             cwd: None,
+            hook: None,
+            indexed: false,
             created_at: Utc::now().trunc_subsecs(6),
             updated_at: None,
             occurred_at: None,
@@ -196,6 +193,10 @@ impl Memory {
     pub fn activity_timestamp(&self) -> DateTime<Utc> {
         self.updated_at.unwrap_or(self.created_at)
     }
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 // ── MemoryType ────────────────────────────────────────────────────────────────
@@ -391,8 +392,9 @@ impl FromStr for Origin {
 ///   clamps `tier` to this on every episodic insert; episodic writes
 ///   never carry `Core` or `Semantic` as `tier`.
 ///
-/// Default is `Semantic` — the safe choice for ingested facts that
-/// haven't been explicitly promoted to core or routed to episodic.
+/// The serde default is `Semantic`, for JSON written before the field
+/// existed (those rows came from the semantic table). A *write* with no
+/// tier is episodic — see `http::memory::resolve_tier`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Tier {
@@ -503,8 +505,8 @@ mod tests {
         assert_eq!(f.origin, Origin::User);
         assert_eq!(f.tier, Tier::Semantic);
         assert!(f.vector.is_none());
-        assert!(f.contexts.is_empty());
-        assert!(f.tags.is_empty());
+        assert!(f.hook.is_none());
+        assert!(!f.indexed);
         assert!(f.outcome.is_none());
         assert!(f.cwd.is_none());
         assert!(f.updated_at.is_none());
@@ -527,8 +529,8 @@ mod tests {
     #[test]
     fn json_roundtrip_preserves_from_rename() {
         let mut f = Memory::new("x", MemoryType::Fact, Origin::User);
-        f.contexts = vec!["code/linggen".into()];
-        f.tags = vec!["intent:learn".into()];
+        f.hook = Some("why linggen".into());
+        f.indexed = true;
 
         let json = serde_json::to_string(&f).unwrap();
         assert!(json.contains("\"from\":\"user\""));

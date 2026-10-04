@@ -235,7 +235,9 @@ async fn days(
         if !judged {
             bucket.unjudged += 1;
         }
-        if row.activity_timestamp() < ttl_cutoff {
+        // The one TTL clock — `COALESCE(occurred_at, created_at)`, the same
+        // as `list past_ttl` and the sweep.
+        if row.effective_timestamp() < ttl_cutoff {
             bucket.past_ttl += 1;
         }
     }
@@ -418,12 +420,13 @@ async fn sweep(
     let cfg = crate::http::config::load(&state.data_dir).await;
     let ttl_cutoff = Utc::now() - chrono::Duration::days(cfg.episodic_ttl_days as i64);
 
-    // A row is evictable iff it is past TTL (row age, activity clock),
-    // its day was remembered, AND it was created before the stamp (i.e.
-    // a remember pass judged it). Nothing is ever deleted un-judged.
+    // A row is evictable iff it is past TTL (the one TTL clock,
+    // `occurred_at ?? created_at` — the same as `list past_ttl` and the days
+    // rollup), its day was remembered, AND it was created before the stamp
+    // (i.e. a remember pass judged it). Nothing is ever deleted un-judged.
     let mut victims: Vec<(String, String)> = Vec::new(); // (id, day)
     for row in all_episodic(&state).await? {
-        if row.activity_timestamp() >= ttl_cutoff {
+        if row.effective_timestamp() >= ttl_cutoff {
             continue;
         }
         let day = local_day(row.effective_timestamp());

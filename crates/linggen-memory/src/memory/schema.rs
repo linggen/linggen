@@ -14,7 +14,8 @@ use super::types::{Memory, MemoryType, Origin, Outcome, Tier};
 use anyhow::{anyhow, Context, Result};
 use arrow_array::{
     builder::{FixedSizeListBuilder, Float32Builder, ListBuilder, StringBuilder},
-    Array, FixedSizeListArray, ListArray, RecordBatch, StringArray, TimestampMicrosecondArray,
+    Array, BooleanArray, FixedSizeListArray, ListArray, RecordBatch, StringArray,
+    TimestampMicrosecondArray,
 };
 use arrow_schema::{DataType, Field, Schema, TimeUnit};
 use chrono::{DateTime, TimeZone, Utc};
@@ -40,7 +41,6 @@ const TZ_UTC: &str = "UTC";
 
 /// Build the Arrow schema for a memory table.
 pub fn build_schema() -> Arc<Schema> {
-    let utf8_item = Arc::new(Field::new("item", DataType::Utf8, true));
     let float_item = Arc::new(Field::new("item", DataType::Float32, true));
 
     Arc::new(Schema::new(vec![
@@ -51,8 +51,6 @@ pub fn build_schema() -> Arc<Schema> {
             DataType::FixedSizeList(float_item, VECTOR_DIM),
             true,
         ),
-        Field::new("contexts", DataType::List(utf8_item.clone()), false),
-        Field::new("tags", DataType::List(utf8_item), false),
         Field::new("type", DataType::Utf8, false),
         Field::new("outcome", DataType::Utf8, true),
         Field::new("from", DataType::Utf8, false),
@@ -87,7 +85,89 @@ pub fn build_schema() -> Arc<Schema> {
         // store owner's; set only on rows from another person's phone.
         Field::new("account_id", DataType::Utf8, true),
         Field::new("account_name", DataType::Utf8, true),
+        // Scope pair (2026-10-04, doc/scope-index-spec.md): the one-line
+        // hook the index shows, and whether the row is in its dir's index.
+        Field::new("hook", DataType::Utf8, true),
+        Field::new("indexed", DataType::Boolean, true),
     ]))
+}
+
+/// Columns of the v1 layout that v2 dropped. A store keeps them until its
+/// owner accepts the scope migration (`schema_version` step 1→2); until
+/// then every write fills them with empty lists via [`conform_to`].
+pub const LEGACY_LIST_COLUMNS: [&str; 2] = ["contexts", "tags"];
+
+/// Reshape a batch built against [`build_schema`] to an on-disk table's own
+/// schema: same column order, and every column the batch lacks filled —
+/// an empty list for a list column (the v1 `contexts`/`tags`, which are
+/// non-null), nulls otherwise. Lets one binary write into both a v1 store
+/// awaiting its migration and a v2 one.
+pub fn conform_to(batch: RecordBatch, table: &Schema) -> Result<RecordBatch> {
+    conform_keeping(batch, table, &std::collections::HashMap::new())
+}
+
+/// [`conform_to`], carrying each row's existing legacy list values (keyed by
+/// column, then row id) instead of empty lists — an update of a v1 row must
+/// not wipe the `contexts` the scope migration still reads.
+pub fn conform_keeping(
+    batch: RecordBatch,
+    table: &Schema,
+    keep: &std::collections::HashMap<String, std::collections::HashMap<String, Vec<String>>>,
+) -> Result<RecordBatch> {
+    if batch.schema().as_ref() == table {
+        return Ok(batch);
+    }
+    let n = batch.num_rows();
+    let mut cols: Vec<Arc<dyn Array>> = Vec::with_capacity(table.fields().len());
+    for field in table.fields() {
+        if let Some(col) = batch.column_by_name(field.name()) {
+            cols.push(col.clone());
+            continue;
+        }
+        match field.data_type() {
+            DataType::List(_) => {
+                let ids = col_utf8(&batch, "id")?;
+                let kept = keep.get(field.name());
+                let mut b = ListBuilder::new(StringBuilder::new());
+                for i in 0..n {
+                    if let Some(values) = kept.and_then(|k| k.get(ids.value(i))) {
+                        for v in values {
+                            b.values().append_value(v);
+                        }
+                    }
+                    b.append(true);
+                }
+                cols.push(Arc::new(b.finish()));
+            }
+            dt if field.is_nullable() => cols.push(arrow_array::new_null_array(dt, n)),
+            dt => {
+                return Err(anyhow!(
+                    "table column `{}` ({dt:?}) is required and this build has no value for it",
+                    field.name()
+                ))
+            }
+        }
+    }
+    RecordBatch::try_new(Arc::new(table.clone()), cols).context("conforming batch to table schema")
+}
+
+/// `(id, contexts)` for every row of a v1-layout batch that carries any —
+/// read once by the scope migration, which proposes app scopes from them.
+pub fn legacy_contexts(batch: &RecordBatch) -> Result<Vec<(String, Vec<String>)>> {
+    legacy_list(batch, "contexts")
+}
+
+/// `(id, values)` of one legacy list column, rows with any values only.
+pub fn legacy_list(batch: &RecordBatch, column: &str) -> Result<Vec<(String, Vec<String>)>> {
+    if batch.column_by_name(column).is_none() {
+        return Ok(Vec::new());
+    }
+    let ids = col_utf8(batch, "id")?;
+    let values = col_string_list(batch, column)?;
+    Ok((0..batch.num_rows())
+        .filter(|&i| !values[i].is_empty())
+        .map(|i| (ids.value(i).to_string(), values[i].clone()))
+        .collect())
 }
 
 /// Encode a slice of facts as a single Arrow `RecordBatch` matching
@@ -108,8 +188,8 @@ pub fn memories_to_record_batch(facts: &[Memory]) -> Result<RecordBatch> {
     let hosts = StringArray::from_iter(facts.iter().map(|f| f.host.clone()));
 
     let vectors = build_vector_column(facts)?;
-    let contexts = build_string_list_column(facts.iter().map(|f| &f.contexts));
-    let tags = build_string_list_column(facts.iter().map(|f| &f.tags));
+    let hooks = StringArray::from_iter(facts.iter().map(|f| f.hook.clone()));
+    let indexed = BooleanArray::from_iter(facts.iter().map(|f| Some(f.indexed)));
 
     let created_at = TimestampMicrosecondArray::from_iter_values(
         facts.iter().map(|f| f.created_at.timestamp_micros()),
@@ -146,8 +226,6 @@ pub fn memories_to_record_batch(facts: &[Memory]) -> Result<RecordBatch> {
             Arc::new(ids),
             Arc::new(contents),
             Arc::new(vectors),
-            Arc::new(contexts),
-            Arc::new(tags),
             Arc::new(types),
             Arc::new(outcomes),
             Arc::new(froms),
@@ -162,6 +240,8 @@ pub fn memories_to_record_batch(facts: &[Memory]) -> Result<RecordBatch> {
             Arc::new(superseded_bys),
             Arc::new(account_ids),
             Arc::new(account_names),
+            Arc::new(hooks),
+            Arc::new(indexed),
         ],
     )
     .context("building facts RecordBatch")
@@ -183,8 +263,6 @@ pub fn record_batch_to_memories(batch: &RecordBatch) -> Result<Vec<Memory>> {
     // may not carry the column yet — treat its absence as "all rows
     // have host=null" rather than failing the whole batch decode.
     let hosts = col_utf8_opt_missing_ok(batch, "host");
-    let contexts = col_string_list(batch, "contexts")?;
-    let tags = col_string_list(batch, "tags")?;
     let vectors = col_vector(batch, "vector")?;
     let created_at = col_timestamp(batch, "created_at")?;
     let updated_at = col_timestamp_opt(batch, "updated_at")?;
@@ -196,6 +274,9 @@ pub fn record_batch_to_memories(batch: &RecordBatch) -> Result<Vec<Memory>> {
     // Account pair — added 2026-09-08; same leniency.
     let account_ids = col_utf8_opt_missing_ok(batch, "account_id");
     let account_names = col_utf8_opt_missing_ok(batch, "account_name");
+    // Scope pair — added 2026-10-04; same leniency.
+    let hooks = col_utf8_opt_missing_ok(batch, "hook");
+    let indexed = col_bool_missing_ok(batch, "indexed");
 
     let mut out = Vec::with_capacity(n);
     for i in 0..n {
@@ -221,13 +302,13 @@ pub fn record_batch_to_memories(batch: &RecordBatch) -> Result<Vec<Memory>> {
             id,
             content: contents.value(i).to_string(),
             vector: vectors.get(i).cloned().flatten(),
-            contexts: contexts[i].clone(),
-            tags: tags[i].clone(),
             r#type,
             tier,
             outcome,
             origin,
             cwd: cwds.get(i).copied().flatten().map(str::to_string),
+            hook: hooks.get(i).cloned().flatten(),
+            indexed: indexed.get(i).copied().unwrap_or(false),
             created_at: created_at[i],
             updated_at: updated_at.get(i).copied().flatten(),
             occurred_at: occurred_at.get(i).copied().flatten(),
@@ -247,20 +328,6 @@ pub fn record_batch_to_memories(batch: &RecordBatch) -> Result<Vec<Memory>> {
 }
 
 // ── column builders ─────────────────────────────────────────────────────────
-
-fn build_string_list_column<'a, I>(iter: I) -> ListArray
-where
-    I: IntoIterator<Item = &'a Vec<String>>,
-{
-    let mut builder = ListBuilder::new(StringBuilder::new());
-    for row in iter {
-        for s in row {
-            builder.values().append_value(s);
-        }
-        builder.append(true);
-    }
-    builder.finish()
-}
 
 fn build_vector_column(facts: &[Memory]) -> Result<FixedSizeListArray> {
     let mut builder = FixedSizeListBuilder::new(Float32Builder::new(), VECTOR_DIM);
@@ -320,6 +387,20 @@ fn col_utf8_opt_missing_ok(batch: &RecordBatch, name: &str) -> Vec<Option<String
                 Some(arr.value(i).to_string())
             }
         })
+        .collect()
+}
+
+/// A nullable Boolean column, all-false when absent (a v1 table before
+/// `ensure_late_schema_additions` ran) — null reads as false.
+fn col_bool_missing_ok(batch: &RecordBatch, name: &str) -> Vec<bool> {
+    let Some(arr) = batch
+        .column_by_name(name)
+        .and_then(|c| c.as_any().downcast_ref::<BooleanArray>())
+    else {
+        return vec![false; batch.num_rows()];
+    };
+    (0..arr.len())
+        .map(|i| !arr.is_null(i) && arr.value(i))
         .collect()
 }
 
@@ -461,16 +542,14 @@ mod tests {
             MemoryType::Preference,
             Origin::User,
         );
-        f1.contexts = vec!["global".into()];
-        f1.tags = vec!["intent:style".into()];
+        f1.hook = Some("reply style".into());
+        f1.indexed = true;
 
         let mut f2 = Memory::new(
             "webrtc dc closes after 30s idle",
             MemoryType::Fixed,
             Origin::Agent,
         );
-        f2.contexts = vec!["code/linggen".into(), "webrtc".into()];
-        f2.tags = vec!["topic:networking".into()];
         f2.outcome = Some(Outcome::Positive);
         f2.vector = Some(vec![0.1; VECTOR_DIM as usize]);
         f2.cwd = Some("/home/u/workspace/linggen".into());
@@ -488,6 +567,8 @@ mod tests {
     fn schema_has_nineteen_fields() {
         let schema = build_schema();
         assert_eq!(schema.fields().len(), 19);
+        assert!(schema.field_with_name("contexts").is_err());
+        assert!(schema.field_with_name("tags").is_err());
     }
 
     #[test]
@@ -500,8 +581,6 @@ mod tests {
                 "id",
                 "content",
                 "vector",
-                "contexts",
-                "tags",
                 "type",
                 "outcome",
                 "from",
@@ -516,6 +595,8 @@ mod tests {
                 "superseded_by",
                 "account_id",
                 "account_name",
+                "hook",
+                "indexed",
             ]
         );
     }
@@ -586,12 +667,26 @@ mod tests {
     }
 
     #[test]
-    fn list_columns_never_null() {
-        // Even empty contexts / tags produce a present-but-empty list,
-        // not a null. This keeps list-contains filters simple.
-        let f = Memory::new("x", MemoryType::Fact, Origin::Derived);
-        let batch = memories_to_record_batch(&[f]).unwrap();
-        let contexts = batch
+    fn a_v1_table_gets_empty_legacy_lists() {
+        // A v1 store keeps `contexts`/`tags` (non-null lists) until its
+        // owner accepts the migration; writes must still fit it.
+        let mut fields: Vec<Field> = build_schema()
+            .fields()
+            .iter()
+            .map(|f| f.as_ref().clone())
+            .collect();
+        let utf8_item = Arc::new(Field::new("item", DataType::Utf8, true));
+        fields.insert(
+            3,
+            Field::new("contexts", DataType::List(utf8_item.clone()), false),
+        );
+        fields.insert(4, Field::new("tags", DataType::List(utf8_item), false));
+        let v1 = Schema::new(fields);
+        let facts = sample_facts();
+        let batch = memories_to_record_batch(&facts).unwrap();
+        let shaped = conform_to(batch, &v1).unwrap();
+        assert_eq!(shaped.schema().as_ref(), &v1);
+        let contexts = shaped
             .column_by_name("contexts")
             .unwrap()
             .as_any()
@@ -599,24 +694,35 @@ mod tests {
             .unwrap();
         assert!(!contexts.is_null(0));
         assert_eq!(contexts.value(0).len(), 0);
+        // Decoding the v1 batch ignores the legacy columns.
+        let decoded = record_batch_to_memories(&shaped).unwrap();
+        assert_eq!(decoded, facts);
+        assert!(legacy_contexts(&shaped).unwrap().is_empty());
     }
 
     #[test]
     fn record_batch_reports_missing_column() {
-        // Build a batch missing the `tags` column to ensure the decoder
-        // surfaces a clear error.
         let mut facts = sample_facts();
         facts.truncate(1);
         let batch = memories_to_record_batch(&facts).unwrap();
-
-        // Drop a column by re-projecting.
         let schema = batch.schema();
         let keep: Vec<usize> = (0..schema.fields().len())
-            .filter(|&i| schema.field(i).name() != "tags")
+            .filter(|&i| schema.field(i).name() != "tier")
             .collect();
         let pruned = batch.project(&keep).unwrap();
-
         let err = record_batch_to_memories(&pruned).unwrap_err();
-        assert!(err.to_string().contains("tags"));
+        assert!(err.to_string().contains("tier"));
+    }
+
+    #[test]
+    fn a_table_without_the_scope_pair_still_decodes() {
+        let facts = sample_facts();
+        let batch = memories_to_record_batch(&facts).unwrap();
+        let schema = batch.schema();
+        let keep: Vec<usize> = (0..schema.fields().len())
+            .filter(|&i| !matches!(schema.field(i).name().as_str(), "hook" | "indexed"))
+            .collect();
+        let decoded = record_batch_to_memories(&batch.project(&keep).unwrap()).unwrap();
+        assert!(decoded.iter().all(|m| m.hook.is_none() && !m.indexed));
     }
 }

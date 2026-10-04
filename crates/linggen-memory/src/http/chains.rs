@@ -526,7 +526,8 @@ fn public_row(row: &Memory) -> Value {
         "type": row.r#type.as_str(),
         "from": row.origin.as_str(),
         "tier": row.tier.as_str(),
-        "contexts": row.contexts,
+        "cwd": row.cwd,
+        "hook": row.hook,
         "created_at": row.created_at,
         "occurred_at": row.occurred_at,
     })

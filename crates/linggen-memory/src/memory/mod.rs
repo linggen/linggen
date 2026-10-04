@@ -13,6 +13,7 @@ pub mod maintenance;
 pub mod recall;
 pub mod schema;
 pub mod schema_version;
+pub mod scope;
 pub mod store;
 pub mod types;
 
@@ -22,6 +23,7 @@ pub use schema::{
     build_schema, memories_to_record_batch, record_batch_to_memories, SEMANTIC_TABLE_NAME,
     VECTOR_DIM,
 };
+pub use scope::RecallScope;
 pub use store::{
     AccountScope, Filters, InsertOutcome, MemoryPatch, MemoryStore, SortOrder,
     DEDUP_SIMILARITY_THRESHOLD,
