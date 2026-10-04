@@ -313,6 +313,8 @@ If the peer connection drops:
 4. If reconnection succeeds, session data channels are recreated and message history is re-synced from the server.
 5. If reconnection fails after a threshold, show guidance (check network, check that linggen is running).
 
+That is the web UI. The phone retries one door 3 times (1 s, 2 s, 4 s), then re-resolves LAN vs relay; it drops a link after 35 s with no reply to its heartbeat, and a manual sync dials at once instead of waiting out the backoff — see `linggen-mobile/doc/tech-spec.md` § Transport.
+
 ### Concurrent connections
 
 A linggen instance can serve multiple WebRTC peer connections simultaneously (e.g., phone and laptop). Each peer connection has its own set of data channels. Session isolation is maintained — two clients can view different sessions, or observe the same session.
