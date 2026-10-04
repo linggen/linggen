@@ -112,6 +112,14 @@ async fn run_at_table(
         .global_sessions
         .get_session_meta(&session_id)
         .ok()??;
+    // Not there (any more) in that app's world: no turn at its table — the
+    // gate is read again as the wake comes, not only when the moment was
+    // posted.
+    if crate::server::chat::presence::absent_in_session(&state.manager, &session_id, YINYUE_AGENT)
+        .await
+    {
+        return None;
+    }
     crate::server::chat::members::seat(&state.manager, &session_id, YINYUE_AGENT).await;
     let root = meta
         .cwd
