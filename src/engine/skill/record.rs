@@ -399,6 +399,10 @@ pub struct Skill {
     /// Where the skill's sessions stand for each agent — see [`Places`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub place: Option<Places>,
+    /// The agents at the skill's sessions' table, the lead first
+    /// (`members: [ling, yinyue]`). Empty: the lead agent alone.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub members: Vec<String>,
     /// The real-world facts the engine reads for this skill (`senses:
     /// [weather]`) — see `crate::senses` and `doc/skill-spec.md` § Senses.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

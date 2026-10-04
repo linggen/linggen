@@ -7,6 +7,9 @@ pub(super) fn default_user_type() -> String {
 #[derive(Deserialize)]
 pub(crate) struct ChatRequest {
     pub(super) project_root: String,
+    /// The member this message is for. Empty: whoever the session's
+    /// default responder is (`chat::members`) — or the `@name` it opens with.
+    #[serde(default)]
     pub(super) agent_id: String,
     pub(super) message: String,
     pub(super) session_id: Option<String>,

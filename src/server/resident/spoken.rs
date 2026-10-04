@@ -69,6 +69,13 @@ pub(crate) fn spoken_line(reply: &str) -> Option<String> {
     Some(line)
 }
 
+/// Say her reply aloud: its spoken line, when it has one (not SILENT).
+pub(crate) fn speak_reply(state: &std::sync::Arc<crate::server::ServerState>, reply: &str) {
+    if let Some(line) = spoken_line(reply) {
+        crate::server::api::yinyue::emit_speak(state, line, None);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{spoken_line, with_contract};

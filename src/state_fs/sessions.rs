@@ -43,9 +43,16 @@ pub struct SessionMeta {
     /// Who created this session: "user", "skill", "mission", "agent"
     #[serde(default = "default_creator")]
     pub creator: String,
-    /// Session-level model override. Persisted so it survives reload/session switch.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model_id: Option<String>,
+    /// The agents at this session's table, the lead (the one whose tools
+    /// an ordinary session uses) first. Each keeps its own model override.
+    /// See `doc/shared-session-spec.md`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agents: Vec<SessionMember>,
+    /// What a session recorded before `agents` existed — read once, moved
+    /// into `agents` ([`SessionMeta::migrate_members`]), never written.
+    #[serde(flatten, skip_serializing)]
+    #[cfg_attr(test, ts(skip))]
+    pub legacy: LegacyMember,
     /// Current working directory of the agent in this session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
@@ -58,13 +65,6 @@ pub struct SessionMeta {
     /// Originating mission ID (when creator is "mission").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mission_id: Option<String>,
-    /// Agent this session is pinned to (e.g. a mission's `agent:`
-    /// frontmatter). Engine creation resolves this before any
-    /// caller-supplied agent id, so whichever code path touches the
-    /// session first still builds the right engine — the UI routes
-    /// into a fresh mission session before the scheduler dispatches.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_id: Option<String>,
     /// User ID of the session creator (owner or consumer's linggen.dev user_id).
     /// Used to isolate sessions by user in proxy rooms.
     #[serde(
@@ -100,6 +100,96 @@ pub struct SessionMeta {
 
 fn default_true() -> bool {
     true
+}
+
+/// One agent at a session's table.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct SessionMember {
+    pub id: String,
+    /// This member's model in this session. None: the agent's own chain
+    /// (agent config, routing default; the companion's `pet.model`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
+impl SessionMember {
+    pub fn new(id: &str) -> Self {
+        Self {
+            id: id.to_string(),
+            model: None,
+        }
+    }
+}
+
+/// The one agent and model a session pinned before it had members.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct LegacyMember {
+    #[serde(default)]
+    pub agent_id: Option<String>,
+    #[serde(default)]
+    pub model_id: Option<String>,
+}
+
+impl SessionMeta {
+    /// Move what the session recorded before it had members into `agents`:
+    /// its pinned agent and model become a one-member list; a session that
+    /// pinned neither seats the agents that answered there (`answered`, in
+    /// the order they first spoke). True when anything moved.
+    pub fn migrate_members(&mut self, answered: impl FnOnce() -> Vec<String>) -> bool {
+        if !self.agents.is_empty() {
+            return false;
+        }
+        let legacy = std::mem::take(&mut self.legacy);
+        if legacy.agent_id.is_none() && legacy.model_id.is_none() {
+            self.agents = answered().iter().map(|id| SessionMember::new(id)).collect();
+            return !self.agents.is_empty();
+        }
+        let id = legacy
+            .agent_id
+            .or_else(|| answered().into_iter().next())
+            .unwrap_or_else(|| crate::engine::agent::LEAD_AGENT_ID.to_string());
+        self.agents = vec![SessionMember {
+            id,
+            model: legacy.model_id,
+        }];
+        true
+    }
+
+    /// The member `id`, if seated.
+    pub fn member(&self, id: &str) -> Option<&SessionMember> {
+        self.agents.iter().find(|m| m.id == id)
+    }
+
+    /// Keep `model` as member `id`'s model, seating it if it isn't yet.
+    /// True when anything changed.
+    pub fn set_member_model(&mut self, id: &str, model: Option<String>) -> bool {
+        match self.agents.iter_mut().find(|m| m.id == id) {
+            Some(m) if m.model == model => false,
+            Some(m) => {
+                m.model = model;
+                true
+            }
+            None => {
+                self.agents.push(SessionMember {
+                    id: id.to_string(),
+                    model,
+                });
+                true
+            }
+        }
+    }
+}
+
+/// The agents that answered in `rows`, in the order they first spoke.
+pub fn answering_agents(rows: &[ChatMsg]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for r in rows {
+        if r.from_id == r.agent_id && !r.is_observation && !out.contains(&r.agent_id) {
+            out.push(r.agent_id.clone());
+        }
+    }
+    out
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -146,7 +236,16 @@ impl SessionStore {
             return Ok(None);
         }
         let content = fs::read_to_string(&yaml_path)?;
-        let meta: SessionMeta = serde_norway::from_str(&content)?;
+        let mut meta: SessionMeta = serde_norway::from_str(&content)?;
+        let answered = || {
+            self.get_chat_history(session_id)
+                .map(|rows| answering_agents(&rows))
+                .unwrap_or_default()
+        };
+        if meta.migrate_members(answered) {
+            // Once: the moved fields are never written back.
+            let _ = fs::write(&yaml_path, serde_norway::to_string(&meta)?);
+        }
         Ok(Some(meta))
     }
 
@@ -175,6 +274,9 @@ impl SessionStore {
                 let content = fs::read_to_string(&yaml_path)?;
                 match serde_norway::from_str::<SessionMeta>(&content) {
                     Ok(mut meta) => {
+                        // A listing reads no transcripts: only a pinned
+                        // agent or model moves here (see get_session_meta).
+                        meta.migrate_members(Vec::new);
                         // Last activity = when the transcript last grew. A
                         // session touched today should surface as today's,
                         // however old its creation date.
@@ -500,8 +602,8 @@ mod tests {
             project: None,
             project_name: None,
             mission_id: None,
-            agent_id: None,
-            model_id: None,
+            agents: Vec::new(),
+            legacy: Default::default(),
             user_id: None,
             compact_threshold: None,
             compact_focus: None,
@@ -547,8 +649,8 @@ mod tests {
                     project: None,
                     project_name: None,
                     mission_id: None,
-                    agent_id: None,
-                    model_id: None,
+                    agents: Vec::new(),
+                    legacy: Default::default(),
                     user_id: None,
                     compact_threshold: None,
                     compact_focus: None,
@@ -575,8 +677,8 @@ mod tests {
             project: None,
             project_name: None,
             mission_id: None,
-            agent_id: None,
-            model_id: None,
+            agents: Vec::new(),
+            legacy: Default::default(),
             user_id: None,
             compact_threshold: None,
             compact_focus: None,
@@ -624,8 +726,8 @@ mod tests {
                 project: None,
                 project_name: None,
                 mission_id: None,
-                agent_id: None,
-                model_id: None,
+                agents: Vec::new(),
+                legacy: Default::default(),
                 user_id: None,
                 compact_threshold: None,
                 compact_focus: None,
@@ -682,8 +784,8 @@ mod tests {
                 project: None,
                 project_name: None,
                 mission_id: None,
-                agent_id: None,
-                model_id: None,
+                agents: Vec::new(),
+                legacy: Default::default(),
                 user_id: None,
                 compact_threshold: None,
                 compact_focus: None,
@@ -724,8 +826,8 @@ mod tests {
                 project: None,
                 project_name: None,
                 mission_id: None,
-                agent_id: None,
-                model_id: None,
+                agents: Vec::new(),
+                legacy: Default::default(),
                 user_id: None,
                 compact_threshold: None,
                 compact_focus: None,
@@ -766,8 +868,8 @@ mod tests {
                 project: None,
                 project_name: None,
                 mission_id: None,
-                agent_id: None,
-                model_id: None,
+                agents: Vec::new(),
+                legacy: Default::default(),
                 user_id: None,
                 compact_threshold: None,
                 compact_focus: None,
@@ -786,8 +888,8 @@ mod tests {
                 project: None,
                 project_name: None,
                 mission_id: None,
-                agent_id: None,
-                model_id: None,
+                agents: Vec::new(),
+                legacy: Default::default(),
                 user_id: None,
                 compact_threshold: None,
                 compact_focus: None,
@@ -806,8 +908,8 @@ mod tests {
                 project: None,
                 project_name: None,
                 mission_id: None,
-                agent_id: None,
-                model_id: None,
+                agents: Vec::new(),
+                legacy: Default::default(),
                 user_id: None,
                 compact_threshold: None,
                 compact_focus: None,

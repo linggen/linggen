@@ -38,14 +38,11 @@ pub(crate) async fn create_session(
     // iframe's project_root, otherwise the configured home_path. Mirrors how
     // mission frontmatter sets cwd; lets ling-mem boot at ~/.linggen instead
     // of the user's home dir.
-    let mut cwd_str: Option<String> = None;
-    if let Some(ref skill_name) = req.skill {
-        if let Some(skill) = state.manager.skills.get_skill(skill_name).await {
-            if let Some(ref c) = skill.cwd {
-                cwd_str = Some(c.clone());
-            }
-        }
-    }
+    let skill = match req.skill.as_deref() {
+        Some(name) => state.manager.skills.get_skill(name).await,
+        None => None,
+    };
+    let cwd_str: Option<String> = skill.as_ref().and_then(|s| s.cwd.clone());
     let cwd_str = cwd_str.or_else(|| req.project_root.clone());
     let cwd = cwd_str
         .as_deref()
@@ -66,8 +63,8 @@ pub(crate) async fn create_session(
         project: None,
         project_name: None,
         mission_id: None,
-        agent_id: None,
-        model_id: None,
+        agents: crate::server::chat::members::default_members(skill.as_ref()),
+        legacy: Default::default(),
         user_id: req.user_id,
         compact_threshold: None,
         compact_focus: None,
@@ -111,11 +108,12 @@ pub(crate) async fn list_skill_sessions(
                         "skill": s.skill,
                         "creator": s.creator,
                         // A skill embed has no other way to learn its session's
-                        // model: page_state omits all_sessions for embed views,
-                        // and no GET returns a single session's meta. The embed
-                        // reads this to echo the model on every send — without
-                        // it the engine falls to the global default.
-                        "model_id": s.model_id,
+                        // members and their models: page_state omits
+                        // all_sessions for embed views, and no GET returns a
+                        // single session's meta. The embed reads this to echo
+                        // the model on every send — without it the engine
+                        // falls to the global default.
+                        "agents": s.agents,
                     })
                 })
                 .collect();
@@ -212,6 +210,10 @@ pub(crate) struct RenameSessionRequest {
     title: Option<String>,
     #[serde(default)]
     model_id: Option<String>,
+    /// The member whose model `model_id` sets; absent: the member the Mac
+    /// answers with by default (the one the model picker shows).
+    #[serde(default)]
+    agent_id: Option<String>,
 }
 
 pub(crate) async fn rename_session_api(
@@ -239,8 +241,15 @@ pub(crate) async fn rename_session_api(
             } else {
                 Some(model_id.clone())
             };
-            if meta.model_id != new_val {
-                meta.model_id = new_val.clone();
+            let members =
+                crate::server::chat::members::of_session(&state.manager, &req.session_id).await;
+            let member = req
+                .agent_id
+                .clone()
+                .filter(|a| !a.trim().is_empty())
+                .unwrap_or_else(|| crate::server::chat::members::default_responder(&members));
+            meta.agents = members;
+            if meta.set_member_model(&member, new_val.clone()) {
                 let _ = state.manager.global_sessions.update_session_meta(&meta);
             }
             // On a mission session the model picker is the only model control

@@ -25,6 +25,7 @@ mod cloud_gate;
 mod compact_rows;
 mod handler;
 pub(super) mod helpers;
+pub(crate) mod members;
 mod plan_flow;
 pub(crate) mod presence;
 mod restored_tools;

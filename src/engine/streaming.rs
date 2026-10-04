@@ -506,8 +506,8 @@ impl AgentEngine {
             })
     }
 
-    /// Record the model actually in use on this session, so the picker shows
-    /// it and the next turn starts there instead of walking the same failing
+    /// Record the model actually in use as this member's in the session, so
+    /// the picker shows it and its next turn starts there instead of walking the same failing
     /// chain again.
     async fn pin_session_model(&self, model_id: &str) {
         let (Some(manager), Some(session_id)) = (self.tools.get_manager(), &self.session_id) else {
@@ -516,11 +516,12 @@ impl AgentEngine {
         let Ok(Some(mut meta)) = manager.global_sessions.get_session_meta(session_id) else {
             return;
         };
-        if meta.model_id.as_deref() == Some(model_id) {
+        let Some(agent) = self.agent_id.as_deref() else {
             return;
+        };
+        if meta.set_member_model(agent, Some(model_id.to_string())) {
+            let _ = manager.global_sessions.update_session_meta(&meta);
         }
-        meta.model_id = Some(model_id.to_string());
-        let _ = manager.global_sessions.update_session_meta(&meta);
     }
 
     /// Emit a ModelFallback event via the agent manager.

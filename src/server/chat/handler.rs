@@ -218,7 +218,7 @@ async fn ensure_session(
     state: &Arc<ServerState>,
     req: &ChatRequest,
     project_root_str: &str,
-    session_creator: &str,
+    (session_creator, members): (&str, &[crate::state_fs::sessions::SessionMember]),
     words: &str,
     new_id: String,
 ) -> Option<String> {
@@ -237,8 +237,8 @@ async fn ensure_session(
         project: None,
         project_name: None,
         mission_id: req.mission_id.clone(),
-        agent_id: None,
-        model_id: req.model_id.clone(),
+        agents: members.to_vec(),
+        legacy: Default::default(),
         user_id: req.user_id.clone(),
         compact_threshold: None,
         compact_focus: None,
@@ -296,21 +296,29 @@ async fn maybe_auto_rename(state: &Arc<ServerState>, session_id: &str, words: &s
     }
 }
 
-/// Resolve the effective `(target_agent_id, clean_message)` pair.
-///
-/// Honors a leading `@name` when it names an agent by id or declared alias
-/// (`@银月`, [`leading_mention`]); otherwise the request's `agent_id` and
-/// message stand as-is.
+/// Who a message goes to, and its words: a leading `@name` naming an agent
+/// by id or declared alias (`@银月`, [`leading_mention`]); else the agent
+/// the request names; else the session's default responder. The bool says
+/// the message addressed its agent — one not seated yet joins for good.
 async fn route_target(
     state: &Arc<ServerState>,
     req: &ChatRequest,
     root: &Path,
-) -> (String, String) {
+    members: &[crate::state_fs::sessions::SessionMember],
+) -> (String, String, bool) {
     let names = state.manager.mention_names(root).await;
     if let Some((agent_id, body)) = leading_mention(&req.message, &names) {
-        return (agent_id, body.to_string());
+        return (agent_id, body.to_string(), true);
     }
-    (req.agent_id.clone(), req.message.clone())
+    let named = req.agent_id.trim().to_lowercase();
+    if !named.is_empty() {
+        return (named, req.message.clone(), true);
+    }
+    (
+        super::members::default_responder(members),
+        req.message.clone(),
+        false,
+    )
 }
 
 /// How a message sent while the agent is busy meets the running turn.
@@ -458,6 +466,58 @@ fn allowed_model(
     shared.then_some(live)
 }
 
+/// Where the model a turn asks for comes from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TurnModel {
+    /// The surface's picker — kept as the member's model once it runs.
+    Request(String),
+    /// The model the session keeps for the member.
+    Member(String),
+    /// The companion's own setting (`pet.model`).
+    Pet(String),
+    /// Nothing asked: the agent's own default.
+    Default,
+}
+
+impl TurnModel {
+    fn id(&self) -> Option<&str> {
+        match self {
+            TurnModel::Request(m) | TurnModel::Member(m) | TurnModel::Pet(m) => Some(m),
+            TurnModel::Default => None,
+        }
+    }
+}
+
+/// The model `target`'s turn asks for. The request's model is the picker's,
+/// which shows the member the surface answers with by default — a message
+/// addressed to another member runs on that member's own model.
+fn turn_model(
+    req_model: Option<&str>,
+    target: &str,
+    members: &[crate::state_fs::sessions::SessionMember],
+    pet_model: Option<String>,
+) -> TurnModel {
+    let req_model = req_model.map(str::trim).filter(|m| !m.is_empty());
+    if let Some(m) = req_model {
+        if target == super::members::default_responder(members) {
+            return TurnModel::Request(m.to_string());
+        }
+    }
+    if let Some(m) = members
+        .iter()
+        .find(|m| m.id == target)
+        .and_then(|m| m.model.clone())
+    {
+        return TurnModel::Member(m);
+    }
+    if super::members::is_companion(target) {
+        if let Some(m) = pet_model {
+            return TurnModel::Pet(m);
+        }
+    }
+    TurnModel::Default
+}
+
 /// Resolve and pin the engine's effective model for this turn.
 ///
 /// Consumers (proxy room) MUST be restricted to the room's `shared_models` —
@@ -465,10 +525,9 @@ fn allowed_model(
 /// model the consumer isn't allowed to use.
 async fn resolve_effective_model(
     engine: &mut crate::engine::AgentEngine,
-    is_consumer: bool,
-    shared_models: &[String],
-    req_model_id: Option<&str>,
-    session_id: Option<&str>,
+    (is_consumer, shared_models): (bool, &[String]),
+    asked: &TurnModel,
+    (session_id, member): (Option<&str>, &str),
     manager: &Arc<AgentManager>,
 ) {
     let consumer_default = || -> Option<String> {
@@ -476,43 +535,35 @@ async fn resolve_effective_model(
             .iter()
             .find_map(|id| engine.model_manager.resolve_id(id))
     };
-    let pin_session_model = |meta: Option<crate::state_fs::sessions::SessionMeta>,
-                             new_model: Option<String>| async move {
-        let Some(mut meta) = meta else { return };
-        if meta.model_id.as_deref() == new_model.as_deref() {
-            return;
-        }
-        meta.model_id = new_model;
-        let _ = manager.global_sessions.update_session_meta(&meta);
-    };
 
-    let session_meta =
-        session_id.and_then(|sid| manager.global_sessions.get_session_meta(sid).ok().flatten());
-
-    if let Some(mid) = req_model_id {
+    if let Some(mid) = asked.id() {
         if let Some(live) = allowed_model(&engine.model_manager, is_consumer, shared_models, mid) {
             engine.model_id = live.clone();
-            pin_session_model(session_meta, Some(live)).await;
+            if let (TurnModel::Request(_), Some(sid)) = (asked, session_id) {
+                super::members::set_model(manager, sid, member, Some(live)).await;
+            }
             return;
         }
         // Requested model unavailable / not shared with this consumer.
         // Fall back to a shared model (consumer) or the configured default
-        // (owner), and clear stale pinning so the session stops requesting
-        // the dead id.
+        // (owner), and clear a stale pin so the member stops asking for the
+        // dead id.
         let fallback = if is_consumer {
             consumer_default().unwrap_or_else(|| engine.default_model_id.clone())
         } else {
             engine.default_model_id.clone()
         };
         tracing::warn!(
-            "Session '{}' requested model '{}' which is unavailable for {} — falling back to '{}'",
+            "Session '{}' asked model '{}' for {member}, unavailable for {} — falling back to '{}'",
             session_id.unwrap_or("?"),
             mid,
             if is_consumer { "consumer" } else { "owner" },
             fallback
         );
         engine.model_id = fallback;
-        pin_session_model(session_meta, None).await;
+        if let (TurnModel::Request(_) | TurnModel::Member(_), Some(sid)) = (asked, session_id) {
+            super::members::set_model(manager, sid, member, None).await;
+        }
         return;
     }
 
@@ -522,12 +573,13 @@ async fn resolve_effective_model(
         return;
     }
 
-    // Owner with no explicit model → the engine-wide default. An app's default
+    // Owner with no explicit model → the agent's default. An app's default
     // model (e.g. deepseek-v4-flash) is NOT applied here: branded apps pin it
-    // as req_model_id (their skill page sends ?model= only in app_mode, which
-    // wins above), while the SAME skill run in the core app uses the user's
-    // configured global default. The SKILL.md `model:` field is intentionally
-    // not consulted — that would force the app model on core sessions too.
+    // as the request's model (their skill page sends ?model= only in
+    // app_mode, which wins above), while the SAME skill run in the core app
+    // uses the user's configured global default. The SKILL.md `model:` field
+    // is intentionally not consulted — that would force the app model on
+    // core sessions too.
     engine.model_id = engine.default_model_id.clone();
 }
 
@@ -892,7 +944,7 @@ pub(crate) async fn kickoff_in_session(
         user_type: super::types::default_user_type(),
         mission_id: None,
         skill_name: None,
-        model_id: meta.model_id,
+        model_id: None,
         user_id: None,
         images: Vec::new(),
         sender: None,
@@ -918,127 +970,27 @@ fn refused_reply(
     .into_response()
 }
 
-/// Who takes a message in a session, decided before any engine is touched.
-#[derive(Debug, PartialEq, Eq)]
-enum Seat {
-    /// The session's own agent: its engine, its skill.
-    Own,
-    /// The companion at another session's table (`resident::answer_as_guest`).
-    Guest,
-    /// Kept away by the session's skill for now.
-    Absent,
-    /// Neither the session's agent nor a guest it can seat — the pet is off,
-    /// or the name is another agent's. The session holds ONE engine, built
-    /// for its own agent: a turn for anyone else would run on it (that
-    /// agent's prompt, tools and memory) under the wrong name.
-    Unavailable,
-}
-
-impl Seat {
-    /// The reply status of a seat no turn runs for (nothing is kept, not even
-    /// the session); `None` for a seat that answers.
-    fn refusal(&self) -> Option<&'static str> {
-        match self {
-            Seat::Absent => Some("absent"),
-            Seat::Unavailable => Some("unavailable"),
-            Seat::Own | Seat::Guest => None,
-        }
-    }
-}
-
-/// Where `target_id` sits for a message in `session_id`. The surface's own
-/// agent (`req_agent`) runs as always; another name — addressed with `@` —
-/// runs only as a guest, or when it is the agent the session already runs.
-async fn seat_for(
+/// Why no turn runs for a message to `target` in `session_id`: the
+/// companion can't come (a proxy-room consumer's session — her turn would
+/// answer with the owner's memory — or the pet is off), or the session's
+/// skill keeps the agent away for now (`absent`). `None`: the turn runs.
+async fn refusal(
     state: &Arc<ServerState>,
-    target_id: &str,
-    req_agent: &str,
+    target: &str,
     session_id: &str,
     user_type: &str,
-) -> Seat {
-    let companion = crate::engine::agent::COMPANION_AGENT_ID;
-    if target_id == companion && !crate::server::resident::is_own_session(session_id) {
+) -> Option<&'static str> {
+    if super::members::is_companion(target) && !crate::server::resident::is_own_session(session_id)
+    {
         let owner = user_type == super::types::default_user_type();
         let pet_on = state.manager.get_config_snapshot().await.pet.enabled;
-        let absent = owner
-            && pet_on
-            && super::presence::absent_in_session(&state.manager, session_id, target_id).await;
-        return guest_seat(owner, pet_on, absent);
+        if !(owner && pet_on) {
+            return Some("unavailable");
+        }
     }
-    if target_id == req_agent || runs_session(state, session_id, target_id).await {
-        return Seat::Own;
-    }
-    Seat::Unavailable
-}
-
-/// The companion at another session's table. Her guest turn is the owner's
-/// companion — the owner's policy, memory and core block — so only the
-/// owner seats her: anyone else (a proxy-room consumer) finds her
-/// unavailable, or the owner's memory would answer into their session.
-fn guest_seat(owner: bool, pet_on: bool, absent: bool) -> Seat {
-    match (owner && pet_on, absent) {
-        (false, _) => Seat::Unavailable,
-        (true, true) => Seat::Absent,
-        (true, false) => Seat::Guest,
-    }
-}
-
-/// Whether the session's one engine is (or will be) `agent_id`'s: the live
-/// engine's agent, else the session's pinned agent, else whoever has answered
-/// there. A session nobody has answered in yet is the first comer's.
-async fn runs_session(state: &Arc<ServerState>, session_id: &str, agent_id: &str) -> bool {
-    if let Some(live) = state.manager.live_session_agent(session_id).await {
-        return live == agent_id;
-    }
-    let store = &state.manager.global_sessions;
-    let pinned = store
-        .get_session_meta(session_id)
-        .ok()
-        .flatten()
-        .and_then(|m| m.agent_id);
-    let rows = store.get_chat_history(session_id).unwrap_or_default();
-    session_host(pinned.as_deref(), &rows, session_id).is_none_or(|host| host == agent_id)
-}
-
-/// The agent a session runs, from what it keeps: its pinned agent, else the
-/// newest agent that answered there in its own thread — never the companion
-/// seated as a guest at someone else's table.
-fn session_host(
-    pinned: Option<&str>,
-    rows: &[crate::state_fs::sessions::ChatMsg],
-    session_id: &str,
-) -> Option<String> {
-    if let Some(p) = pinned.map(str::trim).filter(|p| !p.is_empty()) {
-        return Some(p.to_lowercase());
-    }
-    let companion = crate::engine::agent::COMPANION_AGENT_ID;
-    let guest_here = !crate::server::resident::is_own_session(session_id);
-    rows.iter()
-        .rev()
-        .find(|r| r.from_id == r.agent_id && !(guest_here && r.agent_id == companion))
-        .map(|r| r.agent_id.clone())
-}
-
-/// Seat the companion at the session's table and answer the request.
-async fn answer_as_guest(
-    state: &Arc<ServerState>,
-    effective_session_id: &str,
-    req: &ChatRequest,
-    target_id: &str,
-    session_id: &Option<String>,
-) -> axum::response::Response {
-    crate::server::resident::answer_as_guest(
-        state.clone(),
-        effective_session_id.to_string(),
-        req.message.clone(),
-    )
-    .await;
-    Json(serde_json::json!({
-        "status": "started",
-        "session_id": session_id,
-        "agent_id": target_id,
-    }))
-    .into_response()
+    super::presence::absent_in_session(&state.manager, session_id, target)
+        .await
+        .then_some("absent")
 }
 
 pub(crate) async fn start_turn(
@@ -1064,45 +1016,55 @@ pub(crate) async fn start_turn(
         state.manager.mark_user_turn_presence();
     }
 
-    let bound_skill = req
-        .session_id
-        .as_deref()
-        .and_then(|sid| {
-            state
-                .manager
-                .global_sessions
-                .get_session_meta(sid)
-                .ok()
-                .flatten()
-        })
-        .and_then(|meta| meta.skill);
+    let meta = req.session_id.as_deref().and_then(|sid| {
+        state
+            .manager
+            .global_sessions
+            .get_session_meta(sid)
+            .ok()
+            .flatten()
+    });
+    let bound_skill = meta.as_ref().and_then(|m| m.skill.clone());
     let session_creator = turn_creator(
         req.mission_id.as_deref(),
         req.skill_name.as_deref(),
         bound_skill.as_deref(),
     );
+    let skill = match req.skill_name.as_deref().or(bound_skill.as_deref()) {
+        Some(name) => state.manager.skills.get_skill(name).await,
+        None => None,
+    };
+    let members = match &meta {
+        Some(m) => super::members::effective(m, skill.as_ref()),
+        None => super::members::default_members(skill.as_ref()),
+    };
 
-    let (target_id, clean_msg) = route_target(&state, &req, &root).await;
+    let (target_id, clean_msg, addressed) = route_target(&state, &req, &root, &members).await;
     let sid = req.session_id.clone().unwrap_or_else(new_session_id);
-    let seat = seat_for(&state, &target_id, &req.agent_id, &sid, &req.user_type).await;
-    // Not there yet in this skill's world, or not seatable here: no turn and
-    // nothing kept — no session made or retitled. The page says its own line.
-    if let Some(status) = seat.refusal() {
+    // Not there yet in this skill's world, or not one who can come here: no
+    // turn and nothing kept — no session made or retitled. The page says its
+    // own line.
+    if let Some(status) = refusal(&state, &target_id, &sid, &req.user_type).await {
         return refused_reply(status, req.session_id.as_deref(), &target_id);
     }
+    if !state.manager.agent_exists(&root, &target_id).await {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let members = super::members::seated(&members, &target_id).unwrap_or(members);
     let session_id = ensure_session(
         &state,
         &req,
         &project_root_str,
-        session_creator,
+        (session_creator, &members),
         &clean_msg,
         sid,
     )
     .await;
     let effective_session_id = session_id.clone().unwrap_or_else(|| "default".to_string());
     let events_tx = state.events_tx.clone();
-    if seat == Seat::Guest {
-        return answer_as_guest(&state, &effective_session_id, &req, &target_id, &session_id).await;
+    // Addressed and not seated yet: a member for good from now on.
+    if addressed && super::members::seat(&state.manager, &effective_session_id, &target_id).await {
+        let _ = events_tx.send(ServerEvent::StateUpdated);
     }
 
     // A relayed message names its speaker (an agent id like "yinyue"); the
@@ -1217,15 +1179,28 @@ pub(crate) async fn start_turn(
         } else {
             Vec::new()
         };
+        let pet = state.manager.get_config_snapshot().await.pet;
+        let members = super::members::of_session(&state.manager, &session_id_for_queue).await;
+        let asked = turn_model(
+            req_model_id.as_deref(),
+            &target_id_clone,
+            &members,
+            crate::server::resident::resolve_pet_model(&pet.model),
+        );
         resolve_effective_model(
             &mut engine,
-            is_consumer,
-            &shared_models,
-            req_model_id.as_deref(),
-            session_id.as_deref(),
+            (is_consumer, &shared_models),
+            &asked,
+            (session_id.as_deref(), &target_id_clone),
             &state.manager,
         )
         .await;
+        if super::members::is_companion(&target_id_clone) {
+            crate::server::resident::tune_companion(&mut engine, &pet);
+        }
+        // Set per turn by whoever drives it; a chat turn withholds nothing.
+        engine.withheld_tools.clear();
+        engine.last_assistant_text = None;
 
         engine.tools.builtins.set_session_id(session_id.clone());
 
@@ -1296,6 +1271,14 @@ pub(crate) async fn start_turn(
         // The ask was this turn's: the next turn on this engine may be an
         // event turn or a delivery, which shows no hint.
         engine.suggest_followups = false;
+        // Her words at a table that isn't her own thread are heard, too.
+        if super::members::is_companion(&target_id_clone)
+            && !crate::server::resident::is_own_session(&session_id_for_queue)
+        {
+            if let Some(reply) = engine.last_assistant_text.clone() {
+                crate::server::resident::speak_reply(&state_clone, &reply);
+            }
+        }
 
         // Emit TurnComplete so the Web UI has a single finalizer.
         let _ = state_clone.events_tx.send(ServerEvent::TurnComplete {
@@ -1333,11 +1316,12 @@ pub(crate) async fn start_turn(
 #[cfg(test)]
 mod tests {
     use super::{
-        allowed_model, auto_session_title, guest_seat, leading_mention, session_host, take_aside,
-        trim_live_history, turn_creator, Seat,
+        allowed_model, auto_session_title, leading_mention, take_aside, trim_live_history,
+        turn_creator, turn_model, TurnModel,
     };
     use super::{busy_message, BusyMessage};
     use crate::engine::skill::QueueMode;
+    use crate::state_fs::sessions::SessionMember;
 
     #[test]
     fn a_busy_message_steers_unless_a_question_is_open_or_the_skill_waits() {
@@ -1463,39 +1447,36 @@ mod tests {
         );
     }
 
-    fn row(agent: &str, from: &str) -> crate::state_fs::sessions::ChatMsg {
-        crate::state_fs::sessions::ChatMsg {
-            agent_id: agent.into(),
-            from_id: from.into(),
-            to_id: "user".into(),
-            content: "x".into(),
-            timestamp: 0,
-            is_observation: false,
-        }
-    }
-
-    /// The agent a session runs is the one it answers with — its pin, else
-    /// its newest own reply — never the companion answering there as a
-    /// guest; in her own thread she is the host. Nobody yet: no host, the
-    /// first comer's.
+    /// The picker's model is the default responder's: a message to Ling
+    /// in a session where he answers runs on it; one addressed to her runs
+    /// on her session model, else her pet setting, never the picker's.
     #[test]
-    fn a_sessions_host_is_its_own_agent_never_a_guest() {
-        let app = "sess-1758700000-cfo";
-        let rows = vec![
-            row("ling", "user"),
-            row("ling", "ling"),
-            row("yinyue", "user"),
-            row("yinyue", "yinyue"),
+    fn each_member_runs_on_its_own_model() {
+        let members = vec![
+            SessionMember::new("ling"),
+            SessionMember {
+                id: "yinyue".into(),
+                model: Some("luna".into()),
+            },
         ];
-        assert_eq!(session_host(None, &rows, app).as_deref(), Some("ling"));
+        let pet = || Some("pet-model".to_string());
         assert_eq!(
-            session_host(Some(" Memory "), &rows, app).as_deref(),
-            Some("memory")
+            turn_model(Some("sol"), "ling", &members, pet()),
+            TurnModel::Request("sol".into())
         );
-        assert_eq!(session_host(None, &rows[..1], app), None);
         assert_eq!(
-            session_host(None, &rows, "sess-yinyue-2026-09-25").as_deref(),
-            Some("yinyue")
+            turn_model(Some("sol"), "yinyue", &members, pet()),
+            TurnModel::Member("luna".into())
+        );
+        let plain = vec![SessionMember::new("ling"), SessionMember::new("yinyue")];
+        assert_eq!(
+            turn_model(Some("sol"), "yinyue", &plain, pet()),
+            TurnModel::Pet("pet-model".into())
+        );
+        assert_eq!(turn_model(None, "ling", &plain, pet()), TurnModel::Default);
+        assert_eq!(
+            turn_model(Some("  "), "yinyue", &plain, None),
+            TurnModel::Default
         );
     }
 
@@ -1513,37 +1494,20 @@ mod tests {
         assert!(lock < engine);
     }
 
-    /// No turn for a name the session can't seat touches an engine: the
-    /// seat is decided first, and only `Own` reaches the session's engine.
+    /// A refused message touches no engine and makes no session: who
+    /// answers is decided, then refused or not, before either.
     #[test]
-    fn the_seat_is_decided_before_any_engine_is_built() {
+    fn the_refusal_is_decided_before_any_session_or_engine() {
         let src = include_str!("handler.rs");
         let body = &src[src
             .find(concat!("pub(crate) async fn ", "start_turn("))
             .unwrap()..];
-        let seat = body.find(concat!("seat_for", "(&state")).unwrap();
+        let refusal = body.find(concat!("refusal", "(&state")).unwrap();
         let engine = body
             .find(concat!(".get_or_create_", "session_agent("))
             .unwrap();
-        assert!(seat < engine);
         let session = body.find(concat!("ensure_session", "(")).unwrap();
-        assert!(
-            seat < session,
-            "a refused seat makes and retitles no session"
-        );
-    }
-
-    /// Her guest turn answers with the owner's memory, so only the owner
-    /// seats her at another table; a consumer never does.
-    #[test]
-    fn only_the_owner_seats_the_companion_as_a_guest() {
-        assert_eq!(guest_seat(true, true, false), Seat::Guest);
-        assert_eq!(guest_seat(true, true, true), Seat::Absent);
-        assert_eq!(guest_seat(true, false, false), Seat::Unavailable);
-        assert_eq!(guest_seat(false, true, false), Seat::Unavailable);
-        assert_eq!(guest_seat(false, true, true), Seat::Unavailable);
-        assert_eq!(Seat::Unavailable.refusal(), Some("unavailable"));
-        assert_eq!(Seat::Guest.refusal(), None);
+        assert!(refusal < engine && refusal < session);
     }
 
     #[test]

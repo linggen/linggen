@@ -13,6 +13,9 @@ use crate::util::LockExt;
 /// Everything the engine does specially for her (heralds, the presenter
 /// registry, relaying another agent's prompt) keys on this one id.
 pub const COMPANION_AGENT_ID: &str = "yinyue";
+/// The agent an ordinary session seats, and the one that answers on the Mac
+/// when a message names nobody (`doc/shared-session-spec.md` § Who answers).
+pub const LEAD_AGENT_ID: &str = "ling";
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -53,8 +56,8 @@ pub struct AgentManager {
     pub agents: Arc<dyn AgentRegistry>,
     /// Global flat session store at `~/.linggen/sessions/`.
     pub global_sessions: SessionStore,
-    /// Per-session agent engines. Each session gets its own engine — no lock contention.
-    pub session_engines: Mutex<HashMap<String, Arc<Mutex<AgentEngine>>>>,
+    /// Live engines, one per (session, member agent).
+    pub session_engines: Mutex<HashMap<(String, String), Arc<Mutex<AgentEngine>>>>,
     /// Each session's turn lock: one agent speaks at a time in a session,
     /// whoever it is. Held for the whole turn, taken before the engine's.
     session_turns: std::sync::Mutex<HashMap<String, Arc<Mutex<()>>>>,
@@ -502,46 +505,36 @@ impl AgentManager {
         Ok(ctx)
     }
 
-    /// Get or create an agent engine for a specific session.
-    /// Each session gets its own engine instance — no lock contention between sessions.
+    /// Get or create `agent_id`'s engine in a session — one per member.
+    /// The session's turn lock (`session_turn`) keeps two from running at
+    /// once; each member keeps its own cached thread, prompt and model.
     pub async fn get_or_create_session_agent(
         self: &Arc<Self>,
         session_id: &str,
         project_root: &PathBuf,
         agent_id: &str,
     ) -> Result<Arc<Mutex<AgentEngine>>> {
-        // Check if this session already has an engine
-        {
-            let engines = self.session_engines.lock().await;
-            if let Some(engine) = engines.get(session_id) {
-                return Ok(engine.clone());
-            }
+        let normalized_id = Self::normalize_agent_id(agent_id);
+        let key = (session_id.to_string(), normalized_id.clone());
+        if let Some(engine) = self.session_engines.lock().await.get(&key) {
+            return Ok(engine.clone());
         }
 
-        // A session pinned to an agent/cwd (session.yaml, e.g. mission
-        // sessions) wins over the caller's guess: the UI routes into a
-        // fresh mission session before the scheduler dispatches, and
-        // whoever touches the session first builds the engine everyone
-        // else reuses. Without the pin, that engine could carry the
-        // wrong agent spec and workspace root for the session's life.
+        // A session pinned to a workspace (a mission's, an agent run's)
+        // wins over the caller's guess: the UI routes into a fresh mission
+        // session before the scheduler dispatches, and the engine must
+        // stand where the mission does.
         let meta = self
             .global_sessions
             .get_session_meta(session_id)
             .ok()
             .flatten();
-        let pinned_agent = meta
-            .as_ref()
-            .and_then(|m| m.agent_id.as_deref())
-            .filter(|s| !s.trim().is_empty());
-        let normalized_id = Self::normalize_agent_id(pinned_agent.unwrap_or(agent_id));
         let pinned_root = meta
             .as_ref()
-            .filter(|m| m.agent_id.is_some())
+            .filter(|m| matches!(m.creator.as_str(), "mission" | "agent"))
             .and_then(|m| m.cwd.as_deref())
             .filter(|s| !s.trim().is_empty())
             .map(|cwd| crate::util::resolve_path(std::path::Path::new(cwd)));
-
-        // Create a new engine for this session (reuse existing creation logic)
         let project_root =
             pinned_root.unwrap_or_else(|| Self::canonical_project_root(project_root));
         let mut engine = self
@@ -560,16 +553,30 @@ impl AgentManager {
         // Re-check under lock to handle concurrent creation race.
         // If another task created the engine while we were building ours, use theirs.
         let mut engines = self.session_engines.lock().await;
-        if let Some(existing) = engines.get(session_id) {
+        if let Some(existing) = engines.get(&key) {
             return Ok(existing.clone());
         }
-        engines.insert(session_id.to_string(), agent.clone());
+        engines.insert(key, agent.clone());
         Ok(agent)
     }
 
-    /// Remove a session's engine when the session is deleted.
+    /// Every member's live engine in a session.
+    pub async fn session_engines_of(&self, session_id: &str) -> Vec<Arc<Mutex<AgentEngine>>> {
+        self.session_engines
+            .lock()
+            .await
+            .iter()
+            .filter(|((sid, _), _)| sid == session_id)
+            .map(|(_, e)| e.clone())
+            .collect()
+    }
+
+    /// Remove a session's engines when the session is deleted.
     pub async fn remove_session_engine(&self, session_id: &str) {
-        self.session_engines.lock().await.remove(session_id);
+        self.session_engines
+            .lock()
+            .await
+            .retain(|(sid, _), _| sid != session_id);
         self.session_turns.lock_ok().remove(session_id);
     }
 
@@ -583,21 +590,25 @@ impl AgentManager {
             .clone()
     }
 
-    /// Fraction of its soft context limit a session's **live** engine is using,
-    /// or `None` when the session has no cached engine or is mid-turn (locked).
-    /// Yinyue's rolling-session resolver reads this to decide when to roll to a
+    /// Fraction of its soft context limit a session's **live** thread is
+    /// using — the fullest member's — or `None` when no member has a cached
+    /// engine idle enough to read (mid-turn engines are locked). Yinyue's
+    /// rolling-session resolver reads this to decide when to roll to a
     /// fresh segment instead of compacting a long companion thread.
     pub async fn session_context_fraction(&self, session_id: &str) -> Option<f32> {
-        let engine_arc = {
-            let engines = self.session_engines.lock().await;
-            engines.get(session_id).cloned()?
-        };
-        let engine = engine_arc.try_lock().ok()?;
-        let limit = engine.context_soft_token_limit();
-        if limit == 0 {
-            return None;
+        let mut most: Option<f32> = None;
+        for engine_arc in self.session_engines_of(session_id).await {
+            let Ok(engine) = engine_arc.try_lock() else {
+                continue;
+            };
+            let limit = engine.context_soft_token_limit();
+            if limit == 0 {
+                continue;
+            }
+            let f = engine.accumulated_token_estimate as f32 / limit as f32;
+            most = Some(most.map_or(f, |m| m.max(f)));
         }
-        Some(engine.accumulated_token_estimate as f32 / limit as f32)
+        most
     }
 
     /// Apply a runtime path-mode grant to the live engine for a session.
@@ -614,16 +625,12 @@ impl AgentManager {
         path: &str,
         mode: crate::engine::permission::PermissionMode,
     ) -> bool {
-        let engine_arc = {
-            let engines = self.session_engines.lock().await;
-            engines.get(session_id).cloned()
-        };
-        let Some(engine_arc) = engine_arc else {
-            return false;
-        };
-        let mut engine = engine_arc.lock().await;
-        engine.session_permissions.set_path_mode(path, mode);
-        true
+        let engines = self.session_engines_of(session_id).await;
+        for engine_arc in &engines {
+            let mut engine = engine_arc.lock().await;
+            engine.session_permissions.set_path_mode(path, mode);
+        }
+        !engines.is_empty()
     }
 
     /// Create a fresh, uncached `AgentEngine` for a single delegation call.
@@ -684,14 +691,6 @@ impl AgentManager {
                     .map(|n| (s.agent_id.clone(), n.to_string()))
             })
             .collect()
-    }
-
-    /// The agent a session's live engine runs — `None` when no engine is
-    /// built yet, or it is mid-turn (its lock is held).
-    pub async fn live_session_agent(&self, session_id: &str) -> Option<String> {
-        let engine = self.session_engines.lock().await.get(session_id).cloned()?;
-        let guard = engine.try_lock().ok()?;
-        guard.agent_id.clone()
     }
 
     pub async fn agent_exists(&self, project_root: &Path, agent_id: &str) -> bool {

@@ -34,11 +34,7 @@ pub(crate) async fn clear_chat_history_api(
             // Clone the engine out and drop the map guard before waiting on
             // it: the engine lock is held for a whole turn, and holding the
             // map meanwhile would stall every other session's lookup.
-            let engine_arc = {
-                let engines = state.manager.session_engines.lock().await;
-                engines.get(&session_id).cloned()
-            };
-            if let Some(engine_mutex) = engine_arc {
+            for engine_mutex in state.manager.session_engines_of(&session_id).await {
                 let mut engine = engine_mutex.lock().await;
                 engine.chat_history.clear();
                 engine.observations.clear();
@@ -368,29 +364,17 @@ pub(crate) async fn compact_config_api(
     // out-of-band call could pin the session to the wrong workspace. Update
     // the live engine when one exists; otherwise merge against the persisted
     // session.yaml values — engine creation re-applies them (agent/mod.rs).
-    let engine_arc = {
-        let engines = state.manager.session_engines.lock().await;
-        engines.get(&session_id).cloned()
-    };
-
-    let (mut threshold, mut focus) = match &engine_arc {
-        Some(arc) => {
-            let engine = arc.lock().await;
-            (engine.compact_threshold, engine.compact_focus.clone())
-        }
-        None => {
-            let meta = state
-                .manager
-                .global_sessions
-                .get_session_meta(&session_id)
-                .ok()
-                .flatten();
-            (
-                meta.as_ref().and_then(|m| m.compact_threshold),
-                meta.and_then(|m| m.compact_focus),
-            )
-        }
-    };
+    let engines = state.manager.session_engines_of(&session_id).await;
+    let meta = state
+        .manager
+        .global_sessions
+        .get_session_meta(&session_id)
+        .ok()
+        .flatten();
+    let (mut threshold, mut focus) = (
+        meta.as_ref().and_then(|m| m.compact_threshold),
+        meta.and_then(|m| m.compact_focus),
+    );
     if let Some(t) = req.threshold {
         threshold = Some(t.clamp(0.1, 0.99));
     }
@@ -398,7 +382,7 @@ pub(crate) async fn compact_config_api(
         focus = if f.is_empty() { None } else { Some(f) };
     }
 
-    if let Some(arc) = engine_arc {
+    for arc in engines {
         let mut engine = arc.lock().await;
         engine.compact_threshold = threshold;
         engine.compact_focus = focus.clone();

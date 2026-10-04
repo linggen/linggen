@@ -349,11 +349,7 @@ fn ready_for_turn(
         .builtins
         .set_session_id(Some(seat.session_id.clone()));
 
-    // Tune her memory injection from the Pet settings (default: one
-    // high-relevance record at ≥0.8). Set on her own engine's cfg (a
-    // per-session clone), so Ling's full-store recall is untouched.
-    engine.cfg.memory_recall_count = pet.recall_count.max(1);
-    engine.cfg.memory_inject_min_score = Some(pet.recall_min_score);
+    tune_companion(engine, pet);
 
     // Pick her brain per the Pet model setting (tier-aware default: the
     // metered Linggen Cloud model for signed-in users, the engine default
@@ -371,11 +367,22 @@ fn ready_for_turn(
     policy
 }
 
+/// Her recall, tuned from the Pet settings (default: one high-relevance
+/// record at ≥0.8) — on her engine's own cfg, in any session she speaks in,
+/// so Ling's full-store recall is untouched.
+pub(crate) fn tune_companion(
+    engine: &mut crate::engine::AgentEngine,
+    pet: &crate::config::PetConfig,
+) {
+    engine.cfg.memory_recall_count = pet.recall_count.max(1);
+    engine.cfg.memory_inject_min_score = Some(pet.recall_min_score);
+}
+
 /// Resolve Yinyue's model from the `pet.model` setting. An explicit id wins;
 /// "auto" uses the metered Linggen Cloud model for signed-in (paid/free) users
 /// and leaves the engine default for BYOK users (who pick their own). Returns
 /// `None` to mean "keep the engine's current model".
-pub(super) fn resolve_pet_model(setting: &str) -> Option<String> {
+pub(crate) fn resolve_pet_model(setting: &str) -> Option<String> {
     let s = setting.trim();
     if !s.is_empty() && !s.eq_ignore_ascii_case("auto") {
         return Some(s.to_string());

@@ -383,15 +383,14 @@ pub fn create_mission_session(mission: &Mission) -> Option<String> {
                 .map(|n| n.to_string_lossy().to_string())
         }),
         mission_id: Some(mission.id.clone()),
-        // Pin the mission's agent so engine creation resolves to it no
-        // matter which code path (UI routing vs scheduler dispatch)
-        // touches the session first.
-        agent_id: Some(mission.agent_id.clone()),
-        // Pin the mission's configured model onto the session so the UI header
-        // shows the right model and follow-up chat turns (which go through
-        // chat_api with the session's model_id) don't reset back to the global
-        // default.
-        model_id: mission.model.clone(),
+        // The mission's agent is the session's one member, on the mission's
+        // model: the UI header shows it, and a follow-up chat turn runs on
+        // it rather than the global default.
+        agents: vec![crate::state_fs::sessions::SessionMember {
+            id: mission.agent_id.clone(),
+            model: mission.model.clone(),
+        }],
+        legacy: Default::default(),
         user_id: None,
         compact_threshold: None,
         compact_focus: None,

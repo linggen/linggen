@@ -382,6 +382,10 @@ struct SkillFrontmatter {
     /// agent is there yet — see `doc/skill-spec.md` § Place.
     #[serde(default)]
     place: Option<crate::engine::skill::record::Places>,
+    /// The agents at the skill's sessions' table, the lead first — see
+    /// `doc/shared-session-spec.md`.
+    #[serde(default)]
+    members: Vec<String>,
     #[serde(default)]
     senses: Vec<String>,
 }
@@ -662,6 +666,12 @@ pub fn parse_skill_text(text: &str, source: SkillSource) -> Result<Skill> {
         queue: frontmatter.queue,
         quests: frontmatter.quests,
         place: frontmatter.place,
+        members: frontmatter
+            .members
+            .iter()
+            .map(|m| m.trim().to_lowercase())
+            .filter(|m| !m.is_empty())
+            .collect(),
         senses,
         skill_dir: None,
     })

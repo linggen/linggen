@@ -418,7 +418,7 @@ pub(super) async fn deliver_to_chat_agent(
     // the recipient runs with that app's tools. Otherwise prefer the session the
     // user is viewing; else the agent's latest.
     let resolved = match app.as_deref() {
-        Some(skill) => session_for_skill(&state, skill),
+        Some(skill) => session_for_skill(&state, skill).await,
         None => focused_session(&state).or_else(|| latest_session_for_agent(&state, &to)),
     };
     let Some((session_id, root)) = resolved else {
@@ -441,6 +441,8 @@ pub(super) async fn deliver_to_chat_agent(
             return;
         }
     };
+    // A message addressed to an agent seats it where it lands.
+    crate::server::chat::members::seat(&state.manager, &session_id, &to).await;
     // No run is begun here: the turn core tracks its own; one around it was
     // a second "running" row per message, and the stop button's pick could
     // be the one the engine never checks.
@@ -521,7 +523,7 @@ pub(super) fn latest_session_for_agent(
 /// Resolve the session bound to an app/skill — the latest existing one (so it
 /// lands in the open app tab when there is one), else a freshly minted
 /// skill-bound session so the request still runs with that app's tools.
-pub(super) fn session_for_skill(
+pub(super) async fn session_for_skill(
     state: &Arc<ServerState>,
     skill: &str,
 ) -> Option<(String, std::path::PathBuf)> {
@@ -543,6 +545,13 @@ pub(super) fn session_for_skill(
     // None yet — mint a skill-bound session so "tell Yinyue → app" works first time.
     let now = crate::util::now_ts_secs();
     let sid = format!("sess-{skill}-{now}");
+    let declared = state
+        .manager
+        .skills
+        .get_skill(skill)
+        .await
+        .map(|s| crate::server::chat::members::default_members(Some(&s)))
+        .unwrap_or_else(|| crate::server::chat::members::default_members(None));
     let meta = crate::state_fs::sessions::SessionMeta {
         id: sid.clone(),
         title: skill.to_string(),
@@ -552,6 +561,7 @@ pub(super) fn session_for_skill(
         creator: "agent".to_string(),
         cwd: Some(home.to_string_lossy().to_string()),
         title_locked: true,
+        agents: declared,
         ..Default::default()
     };
     if let Err(e) = state.manager.global_sessions.add_session(&meta) {
