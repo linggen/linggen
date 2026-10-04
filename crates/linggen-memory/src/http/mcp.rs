@@ -307,7 +307,7 @@ fn tool_defs() -> Vec<Value> {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "kind":    {"type": "string", "enum": ["chain", "stale-status", "contradiction", "subject"], "description": "What you saw: `chain` = uncertain merge candidate; `stale-status` = a status claim likely overtaken by the world (verify against git/files at solve time); `contradiction` = conflicting rows needing the user's pick; `subject` = digest cluster of doubtful subject coherence (list ALL member ids)."},
+                    "kind":    {"type": "string", "enum": ["chain", "stale-status", "contradiction", "subject", "index", "scope"], "description": "What you saw: `chain` = uncertain merge candidate; `stale-status` = a status claim likely overtaken by the world (verify against git/files at solve time); `contradiction` = conflicting rows needing the user's pick; `subject` = digest cluster of doubtful subject coherence (list ALL member ids); `index` = a row to put in (a standing rule the user stated) or take out of its directory's index — say which and the proposed hook; `scope` = a row filed under the wrong directory — name the proposed one."},
                     "row_ids": {"type": "array", "items": {"type": "string"}, "description": "The memory row ids this item is about."},
                     "note":    {"type": "string", "description": "What you saw and what a solver should check — the item's whole context, since the solver starts from this line alone. Write it in plain words; it may become the user's question."}
                 },
