@@ -30,7 +30,13 @@ const MARKERS: [&str; 5] = [
 ];
 
 /// Directories never worth offering as a scope.
-const SKIP_DIRS: [&str; 9] = [
+const SKIP_DIRS: [&str; 15] = [
+    "scripts",
+    "test",
+    "tests",
+    "doc",
+    "docs",
+    "examples",
     "node_modules",
     "target",
     "build",

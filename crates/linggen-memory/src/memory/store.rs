@@ -325,7 +325,11 @@ impl Filters {
                 }
                 format!("({or})")
             }
-            RecallScope::Skill { dir, name } => self.skill_sql(dir, name),
+            // A skill's own session sees its dir only — never the old tag,
+            // which coding sessions also wrote on their notes about the app.
+            // (The phone's `apps` pull keeps the tag until the drop, see
+            // `skill_sql`; its rows are filtered to the person's types.)
+            RecallScope::Skill { dir, .. } => format!("({})", Self::subtree_sql(dir)),
             RecallScope::NoRoot => "cwd IS NULL".to_string(),
         }
     }
