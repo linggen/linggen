@@ -3,6 +3,7 @@ import { Send, Square, X, FolderOpen, FileText } from 'lucide-react';
 import { cn } from '../../lib/cn';
 import { useInteractionStore } from '../../stores/interactionStore';
 import { useSessionStore } from '../../stores/sessionStore';
+import { useServerStore } from '../../stores/serverStore';
 import { MarkdownContent } from './MarkdownContent';
 import { TodoPanel } from './TodoPanel';
 import { SuggestionRow } from './SuggestionRow';
@@ -160,9 +161,13 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     const mentionAgent = mention?.agent;
     if (mention?.sticky) setSelectedAgent(mention.agent);
 
-    const targetAgent = mentionAgent || selectedAgent;
+    // Who the message is for, as this chat shows it — but only an agent the
+    // person named or picked goes to the server; otherwise the session's
+    // default responder answers there.
+    const shownAgent = mentionAgent || selectedAgent;
+    const targetAgent = mentionAgent || useServerStore.getState().selectedAgent || undefined;
     if (openQuestion && onAnswerQuestion && userMessage && !imagesToSend && !mentionAgent
-        && normalizeAgentKey(openQuestion.agentId) === normalizeAgentKey(targetAgent)) {
+        && normalizeAgentKey(openQuestion.agentId) === normalizeAgentKey(shownAgent)) {
       onAnswerQuestion(openQuestion.questionId, openQuestion.questions.map((_, i) => ({
         question_index: i, selected: [], custom_text: i === 0 ? userMessage : null,
       })));
@@ -387,12 +392,19 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                   const store = useSessionStore.getState();
                   const selectedProjectRoot = projectRoot || store.selectedProjectRoot;
                   const activeSessionId = sessionId || store.activeSessionId;
-                  if (!selectedProjectRoot || !activeSessionId || !selectedAgent) return;
+                  if (!selectedProjectRoot || !activeSessionId) return;
+                  // Each member queues its own messages: clear every one's.
+                  const queuedFor = new Set(
+                    useInteractionStore.getState().queuedMessages.map((q) => q.agent_id).filter(Boolean),
+                  );
+                  if (queuedFor.size === 0 && selectedAgent) queuedFor.add(selectedAgent);
                   useInteractionStore.getState().setQueuedMessages([]);
-                  try {
-                    await sessionApi.clearQueue(selectedProjectRoot, activeSessionId, selectedAgent);
-                  } catch {
-                    // Best-effort clear; UI already reflects the empty queue.
+                  for (const agent of queuedFor) {
+                    try {
+                      await sessionApi.clearQueue(selectedProjectRoot, activeSessionId, agent);
+                    } catch {
+                      // Best-effort clear; UI already reflects the empty queue.
+                    }
                   }
                 }}
                 className="text-[11px] px-1.5 py-0.5 rounded bg-amber-200/50 dark:bg-amber-500/20 hover:bg-amber-300/60 dark:hover:bg-amber-500/30 transition-colors"

@@ -95,7 +95,6 @@ interface ServerState {
   fetchSessionTokens: () => Promise<void>;
 }
 
-const SELECTED_AGENT_STORAGE_KEY = 'linggen:selected-agent';
 
 export const useServerStore = create<ServerState>((set, get) => ({
   agents: [],
@@ -111,9 +110,9 @@ export const useServerStore = create<ServerState>((set, get) => ({
       set({ runtimeModels: Array.isArray(ms) ? ms : [] });
     } catch { /* keep the last list */ }
   },
-  selectedAgent: typeof window !== 'undefined'
-    ? window.localStorage.getItem(SELECTED_AGENT_STORAGE_KEY) || ''
-    : '',
+  // The member the person picked to speak with in this chat; '' = whoever
+  // the session answers with by default (`lib/sessionMembers`).
+  selectedAgent: '',
   sessionTokens: { prompt: 0, completion: 0 },
   cancellingRunIds: {},
   reloadingSkills: false,
@@ -156,10 +155,7 @@ export const useServerStore = create<ServerState>((set, get) => ({
       return { runInterruptedAt: next };
     }),
 
-  setSelectedAgent: (agent) => {
-    window.localStorage.setItem(SELECTED_AGENT_STORAGE_KEY, agent);
-    set({ selectedAgent: agent });
-  },
+  setSelectedAgent: (agent) => set({ selectedAgent: agent }),
   setBusySessions: (busy) => set({ busySessions: busy }),
   setAgentStatusText: (updater) => set((s) => ({
     agentStatusText: typeof updater === 'function' ? updater(s.agentStatusText) : updater,

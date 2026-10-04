@@ -1,5 +1,5 @@
-// One app chat holds more than one agent's turns: the skill's own agent and a
-// guest addressed by `@name` (Yinyue). A turn's end belongs to the agent that
+// One app chat holds more than one agent's turns: the skill's own agent (its
+// lead) and another member at its table (Yinyue). A turn's end belongs to the agent that
 // ran it — these pure rules keep one agent's TurnComplete from ending another's
 // running turn, question or spinner. Pure, so node tests can hold them.
 
@@ -58,13 +58,13 @@ export interface RelayRow {
 }
 
 /** Whether a stream is the page's own turn: the skill's own agent's (any
- *  agent's when none is known), never a guest's and never a subagent's —
+ *  agent's when none is known), never another member's and never a subagent's —
  *  a subagent's stream is its parent's tool call. */
 export function ownsStream(agent: string, ownAgent: string, subagent = false): boolean {
   return !subagent && (!ownAgent || same(agent, ownAgent));
 }
 
-/** A token for the page; a guest's carries `own: false` so the bridge can
+/** A token for the page; another member's carries `own: false` so the bridge can
  *  keep it from the page's turn handlers. */
 export function streamTokenPayload(agent: string, text: string, done: boolean, own: boolean) {
   return { text, done, agent, own };

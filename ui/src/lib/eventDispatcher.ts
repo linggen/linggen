@@ -167,7 +167,7 @@ function relayToSkillIframe(item: UiEvent): void {
   relayActivity(item);
 
   // Every stream names its agent: one app chat holds the skill's own agent
-  // and a guest (`@银月`). `own` marks the skill's own agent's stream — the
+  // and another member (`@银月`). `own` marks the skill's own agent's stream — the
   // one a page's turn handlers are for (the bridge delivers only it by default).
   // A subagent's stream is its parent's tool call, never the page's turn
   // (the chat skips it the same way).
@@ -193,7 +193,7 @@ function relayToSkillIframe(item: UiEvent): void {
 
   if (item.kind === 'content_block') {
     // A tool block belongs to the page when its own agent (or a subagent it
-    // started) runs it; a guest's blocks (`@银月`) carry `own: false`.
+    // started) runs it; another member's blocks (`@银月`) carry `own: false`.
     const ownBlock = ownsStream(agent, pageAgent()) || !!agentTracker.getParent(agent);
     postToParent({
       type: 'linggen-skill-event',

@@ -1,10 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { chatAgentOf } from '../../lib/sessionMembers.mts';
 import { Sparkles, ArrowDown, Copy, FileText, Eraser, Plus } from 'lucide-react';
 import 'highlight.js/styles/github.css';
 import { cn } from '../../lib/cn';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useServerStore } from '../../stores/serverStore';
 import { useUserStore } from '../../stores/userStore';
+import { useUiStore } from '../../stores/uiStore';
 import { AskUserCard } from '../AskUserCard';
 import { ToolPermissionCard } from '../ToolPermissionCard';
 import type {
@@ -50,7 +52,8 @@ const ChatDebugActions: React.FC<{ projectRoot?: string | null; sessionId?: stri
 
   const handleCopySystemPrompt = useCallback(async () => {
     const root = projectRoot || useSessionStore.getState().selectedProjectRoot || '';
-    const agentId = useServerStore.getState().selectedAgent;
+    // The member this chat speaks with (`agent_id=` selects whose prompt).
+    const agentId = chatAgentOf(useServerStore.getState().selectedAgent, useUiStore.getState().sessionMembers);
     const sid = sessionId || useSessionStore.getState().activeSessionId;
     try {
       const payload = await sessionApi.systemPrompt(root, agentId, sid);
@@ -153,6 +156,8 @@ export const ChatPanel: React.FC<{
   projectRoot?: string | null;
   sessionId?: string | null;
   selectedAgent: string;
+  /** The session's members — every one of them is this chat's, not a subagent. */
+  memberIds: string[];
   setSelectedAgent: (value: string) => void;
   skills: SkillInfo[];
   agents: AgentInfo[];
@@ -198,6 +203,7 @@ export const ChatPanel: React.FC<{
   projectRoot,
   sessionId,
   selectedAgent,
+  memberIds,
   setSelectedAgent,
   skills,
   agents,
@@ -277,7 +283,7 @@ export const ChatPanel: React.FC<{
   } = useChatFilters({ chatMessages, queuedMessages, selectedAgent, mainAgentIds, subagents, openSubagentId, subagentMessageFilter });
   const floatingUserMsg = useFloatingUserMessage(chatScrollRef, userMsgRefs, filteredMainMessages, sessionId);
   const { from: windowFrom, loadEarlier } = useMessageWindow(historicalMessages.length, sessionId, chatScrollRef);
-  const { askUserBelongsToSubagent, paneVisible, closePane } = useSubagentPane(filteredMainMessages, pendingAskUser, selectedAgent);
+  const { askUserBelongsToSubagent, paneVisible, closePane } = useSubagentPane(filteredMainMessages, pendingAskUser, selectedAgent, memberIds);
 
   // What "stop" acts on. The selected agent's run when there is one, else
   // whatever is running in this session: the two disagree whenever the run

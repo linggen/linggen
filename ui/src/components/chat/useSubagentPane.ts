@@ -8,11 +8,13 @@ import { normalizeAgentKey } from '../../lib/messageUtils';
 const COLLAPSE_AFTER_MS = 600_000;
 
 /** Is the pending AskUser for a subagent (the pane owns the widget) or for
- *  the main chat? */
-function askIsForSubagent(ask: PendingAskUser | null | undefined, entries: SubagentTreeEntry[], mainAgent: string): boolean {
+ *  the main chat? Any member of the session asks in the main chat — a
+ *  permission prompt raised on Yinyue's turn is the person's to see there. */
+function askIsForSubagent(ask: PendingAskUser | null | undefined, entries: SubagentTreeEntry[], mainAgent: string, members: readonly string[]): boolean {
   if (!ask) return false;
   const id = normalizeAgentKey(ask.agentId);
   if (!id) return false;
+  if (members.some((m) => normalizeAgentKey(m) === id)) return false;
   // A tree match works once SubagentSpawned has filled the parent's tree.
   if (entries.some((e) => normalizeAgentKey(e.subagentId) === id || normalizeAgentKey(e.agentName) === id)) return true;
   // Otherwise any agent but the session's main one is a subagent (the
@@ -20,12 +22,12 @@ function askIsForSubagent(ask: PendingAskUser | null | undefined, entries: Subag
   return id !== normalizeAgentKey(mainAgent);
 }
 
-export function useSubagentPane(messages: ChatMessage[], pendingAskUser: PendingAskUser | null | undefined, selectedAgent: string) {
+export function useSubagentPane(messages: ChatMessage[], pendingAskUser: PendingAskUser | null | undefined, selectedAgent: string, members: readonly string[] = []) {
   const entries = useMemo(() => messages.flatMap((m) => m.subagentTree ?? []), [messages]);
   const anyRunning = entries.some((e) => e.status === 'running');
   const askUserBelongsToSubagent = useMemo(
-    () => askIsForSubagent(pendingAskUser, entries, selectedAgent),
-    [pendingAskUser, entries, selectedAgent],
+    () => askIsForSubagent(pendingAskUser, entries, selectedAgent, members),
+    [pendingAskUser, entries, selectedAgent, members],
   );
   const [paneVisible, setPaneVisible] = useState(false);
   useEffect(() => {

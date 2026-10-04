@@ -216,7 +216,7 @@ It waits for the run to end instead when a question is open (a message never can
 
 ## Addressing an agent
 
-A message that opens with `@name` (or `@@name`) goes to that agent: the name is the longest id or alias the text starts with, case-insensitive, and a CJK name needs no space after it (`@银月你好`). A session holds one engine, its own agent's. Another name is answered only as a guest (the companion at another's table, `yinyue-companion-spec.md`); otherwise the reply is `{status: "unavailable"}` — or `"absent"` when the session's skill keeps that agent away — and no turn runs. The session's title comes from the words after the name.
+A message that opens with `@name` (or `@@name`) goes to that agent: the name is the longest id or alias the text starts with, case-insensitive, and a CJK name needs no space after it (`@银月你好`). The agent joins the session as a member if it wasn't one (`shared-session-spec.md`) and answers there, reading the session's whole thread. A message naming nobody (no `@name`, no `agent_id`) goes to the session's default responder — Ling on the Mac when seated, else the first member. The reply is `{status: "absent"}` when the session's skill keeps that agent away, and `{status: "unavailable"}` when the companion can't come (a proxy-room consumer, or the pet is off); no turn runs then. One agent speaks at a time: a message while anyone's turn runs is queued. The session's title comes from the words after the name.
 
 ## Suggestions
 

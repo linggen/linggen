@@ -316,8 +316,8 @@ export function handleTurnComplete(item: UiEventOf<'turn_complete'>): void {
   const durationMs = typeof data?.duration_ms === 'number' ? data.duration_ms : undefined;
   const contextTokens = typeof data?.context_tokens === 'number' ? data.context_tokens : undefined;
 
-  // One app chat holds more than one agent's turns (a guest answering an
-  // `@name`): this turn's end is this agent's alone. Mark its runs done
+  // One app chat holds more than one agent's turns (another member
+  // answering an `@name`): this turn's end is this agent's alone. Mark its runs done
   // first, then ask whether anyone else is still at work.
   const sid = getSessionId(item);
   if (sid) {

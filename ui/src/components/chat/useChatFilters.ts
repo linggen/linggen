@@ -1,24 +1,24 @@
-// Which messages the panel shows: the selected agent's conversation (split
-// into a stable finished part and the streaming row), its queue, and the
-// open subagent drawer's messages.
+// Which messages the panel shows: the session's thread — every member's
+// conversation (split into a stable finished part and the streaming row) —
+// its queue, and the open subagent drawer's messages.
 import { useMemo } from 'react';
 import type { ChatMessage, QueuedChatItem, SubagentInfo } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useStableArray } from '../../hooks/useStableArray';
 import { normalizeAgentKey, sortMessagesByTime, collapseProgressMessages } from '../../lib/messageUtils';
 
-/** A main-chat row for `selected`: its own traffic, the user's to it,
- *  unrouted notices (system, compaction, skill-page `assistant` rows), and a
- *  guest's exchange with the user — another main agent addressed in this
- *  chat (`@银月 …`) answers here, so the user's line to it and its reply to
- *  the user belong to the chat too. */
-export function isForAgent(msg: ChatMessage, selected: string, mainAgentIds: readonly string[] = []): boolean {
+/** A main-chat row: every member's — the session's thread is one table
+ *  (doc/shared-session-spec.md) — so any main agent's traffic, the user's
+ *  lines to any of them, and unrouted notices (system, compaction, skill-page
+ *  `assistant` rows). `selected` is the agent the chat speaks with; its rows
+ *  count even when it isn't listed among the main agents yet. */
+export function isMainChatRow(msg: ChatMessage, selected: string, mainAgentIds: readonly string[] = []): boolean {
   const from = normalizeAgentKey(msg.from || msg.role);
   const to = normalizeAgentKey(msg.to || '');
   if (from === 'system' || from === 'compaction' || from === 'assistant') return true;
   if (from === selected || to === selected) return true;
-  if (msg.role === 'user' || from === 'user') return !to || mainAgentIds.includes(to);
-  return to === 'user' && mainAgentIds.includes(from);
+  if (mainAgentIds.includes(from) || mainAgentIds.includes(to)) return true;
+  return (msg.role === 'user' || from === 'user') && !to;
 }
 
 const involves = (msg: ChatMessage, id: string) =>
@@ -47,7 +47,7 @@ export function useChatFilters(opts: {
 
   // Mission sessions show all messages — no agent filtering.
   const filteredMainMessages = useMemo(() => {
-    const visible = isMissionSession ? chatMessages : chatMessages.filter((m) => isForAgent(m, selected, mainAgentIds));
+    const visible = isMissionSession ? chatMessages : chatMessages.filter((m) => isMainChatRow(m, selected, mainAgentIds));
     return collapseProgressMessages(sortMessagesByTime(visible));
   }, [chatMessages, selected, mainAgentIds, isMissionSession]);
 
@@ -63,9 +63,13 @@ export function useChatFilters(opts: {
   }, [filteredMainMessages]);
   const historicalMessages = useStableArray(rawHistorical);
 
+  // Every member's queued messages: the session's turns run one at a time.
   const visibleQueued = useMemo(
-    () => queuedMessages.filter((item) => normalizeAgentKey(item.agent_id) === selected),
-    [queuedMessages, selected],
+    () => queuedMessages.filter((item) => {
+      const agent = normalizeAgentKey(item.agent_id);
+      return agent === selected || mainAgentIds.includes(agent);
+    }),
+    [queuedMessages, selected, mainAgentIds],
   );
 
   const selectedSubagent = useMemo(

@@ -1,5 +1,5 @@
-// The agent a skill page's chat belongs to — the skill's own agent. A guest
-// (`@银月`) answers in the same chat, but the page's hidden reports and its
+// The agent a skill page's chat belongs to — the skill's own agent, its lead.
+// Another member (`@银月`) answers in the same chat, but the page's hidden reports and its
 // turn handlers are for this agent alone.
 import { useServerStore } from '../stores/serverStore';
 import { pageAgentOf } from './agentTurns.mts';

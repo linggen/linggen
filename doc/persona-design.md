@@ -2,14 +2,15 @@
 
 Status: engine built and live (deployed 2026-09-25); simplified the same day —
 an app's own agent has no place block (its SKILL.md is its place), and a
-skill's `place:` speaks only to guests. Place files for the engine's own
+skill's `place:` speaks only to its other members (since 2026-10-04 shared
+sessions, `shared-session-spec.md`, replace guest seats). Place files for the engine's own
 surfaces under `agents/places/`:
 
 | File | Agent | Surface |
 |---|---|---|
 | `mac-chat.md` | Ling | Mac main chat (own session, no app) |
 | `desktop-pet.md` | Yinyue | her own thread on the Mac — desktop body, moments, first meeting |
-| `guest.md` | Yinyue | a guest at another's table — an app's chat, the main chat, a mission's session (generic; a skill's `place.yinyue` replaces it) |
+| `member.md` | Yinyue | a member at a table another agent leads — an app's chat, the main chat, a mission's session (generic; a skill's `place.yinyue` replaces it) |
 
 Order in the system prompt: soul (identity + body) → voice → `## Where you are`
 → skills list → active skill. Missions, consumer frames and delegates get no
@@ -60,7 +61,7 @@ Shared by both souls:
 |---|---|---|
 | **Mac — main chat** | Linggen speaking directly. Runs the apps, does the work. Speaks first on the very first launch. | Present on the desktop with a body (Express). |
 | **Phone** | Not here. Reachable through the Mac when paired. | At home: the phone's chat, Health, notices. |
-| **An app's chat (CFO, Shifu, DJ…)** | That app's operator, under its SKILL.md rules. | A guest when the user writes `@银月`; she reads the visible dialogue, not Ling's tools. |
+| **An app's chat (CFO, Shifu, DJ…)** | That app's operator (its lead), under its SKILL.md rules. | A member when the user writes `@银月` (or the skill seats her): she reads the whole thread, Ling's tool use as notes; the tools the skill names for her. |
 | **Lingjing, before 结丹** | The world and its storyteller. | **Absent.** The player has not found her in this world yet (see below). |
 | **Lingjing, after 结丹** | The world and its storyteller. | The companion at the player's side. Her past comes back one cauldron at a time (`companion.recalled`). |
 
@@ -72,7 +73,7 @@ She does not exist in that world yet, and nothing breaks the fiction:
 - If the player types `@银月` anyway, **no model turn runs.** The page answers
   with one plain line in the world's voice, in the manner of 查无此人 (no such
   person here), and nothing else.
-- She never speaks in that chat — no moments, no greetings, no guest turns —
+- She never speaks in that chat — no moments, no greetings, no turns —
   until Look carries `companion`.
 
 Outside Lingjing she is with the user from the first day, as always. The game
@@ -82,14 +83,14 @@ is the one place where she has to be found.
 
 The engine stays a general core: it knows devices and surfaces, never an app.
 
-- **Engine surfaces** (Mac main chat, desktop pet, guest in an app chat): the
-  engine writes the block itself.
+- **Engine surfaces** (Mac main chat, desktop pet, a member at another's
+  table): the engine writes the block itself.
 - **Apps:** for the app's own agent, the SKILL.md body is the place — no
   separate block, no list of other skills. The same holds for any session
   bound to a skill, with or without `app:`; a skill taken up mid-chat leaves
-  the agent in its own place. For a guest, a skill may declare `place: {yinyue: "..."}`;
-  the engine injects it in place of the guest block. An app that declares
-  nothing for Yinyue gets the plain guest block.
+  the agent in its own place. For another member, a skill may declare `place: {yinyue: "..."}`;
+  the engine injects it in place of the member block. An app that declares
+  nothing for Yinyue gets the plain member block.
 - **Live state** (e.g. before or after 结丹): the skill says it — Lingjing's
   Look already carries `companion`. A declared place may mark an agent
   `absent_until` a state the skill reports; while absent, the engine refuses a

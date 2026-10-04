@@ -9,6 +9,7 @@
  *   hide_toolbar — 1 to hide the compact toolbar (when parent provides its own chrome)
  */
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+import { chatAgentOf, defaultResponder, memberModel, type SessionMember } from '../lib/sessionMembers.mts';
 import { Plus } from 'lucide-react';
 import { ChatWidget } from '../components/chat';
 import { ToastContainer } from '../components/ToastContainer';
@@ -62,6 +63,13 @@ export const EmbedApp: React.FC = () => {
   const agents = useServerStore((s) => s.agents);
   // A person picks only an agent a person may address.
   const addressable = useMemo(() => agents.filter((a) => !a.internal), [agents]);
+  // The picker lists the session's members; before they are known, the
+  // agents a person may address (any of them joins when picked).
+  const sessionMembers = useUiStore((s) => s.sessionMembers);
+  const memberList: SessionMember[] = useMemo(
+    () => (sessionMembers.length > 0 ? sessionMembers : addressable.map((a) => ({ id: a.name.toLowerCase() }))),
+    [sessionMembers, addressable],
+  );
   const selectedAgent = useServerStore((s) => s.selectedAgent);
   const projectStore = useSessionStore.getState();
   const agentStore = useServerStore.getState();
@@ -94,21 +102,19 @@ export const EmbedApp: React.FC = () => {
       const cs = useChatStore.getState();
       cs.setActiveSession(pinnedSession);
       cs.fetchSessionState();
-      // Echo the session's persisted model on every send. Given no model_id,
-      // the engine uses the global default — it does NOT fall back to the
-      // session's stored model — so a skill embed that never sets sessionModel
-      // silently runs every turn on the default, and when that default is
-      // rate-limited it thrashes through fallbacks. MainApp keeps sessionModel
-      // synced from page_state's all_sessions, but page_state omits that list
-      // for embed views, so read the model from the skill-sessions endpoint
-      // instead (the one list that reaches an embed and now carries model_id).
-      // A host-pinned ?model= still wins.
-      if (pinnedSkill && !pinnedModel) {
+      // The session's members, and the model it keeps for the one this chat
+      // speaks with. page_state omits all_sessions for embed views, so read
+      // them from the skill-sessions endpoint (the one list that reaches an
+      // embed). A host-pinned ?model= still wins.
+      if (pinnedSkill) {
         fetch(`/api/skill-sessions?skill=${encodeURIComponent(pinnedSkill)}`)
           .then((r) => r.json())
           .then((d) => {
-            const sess = (d?.sessions ?? []).find((s: { id: string; model_id?: string }) => s.id === pinnedSession);
-            if (sess?.model_id) useUiStore.getState().setSessionModel(sess.model_id);
+            const sess = (d?.sessions ?? []).find((s: { id: string; agents?: SessionMember[] }) => s.id === pinnedSession);
+            const members: SessionMember[] = sess?.agents ?? [];
+            useUiStore.getState().setSessionMembers(members);
+            const model = memberModel(members, chatAgentOf(useServerStore.getState().selectedAgent, members));
+            if (model && !pinnedModel) useUiStore.getState().setSessionModel(model);
           })
           .catch(() => {});
       }
@@ -249,9 +255,11 @@ export const EmbedApp: React.FC = () => {
             <select
               value={selectedAgent}
               onChange={(e) => agentStore.setSelectedAgent(e.target.value)}
+              title="Who this chat speaks with — the session's members"
               className="text-xs bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded px-1.5 py-0.5 text-slate-700 dark:text-slate-300 outline-none max-w-[5rem]"
             >
-              {addressable.map((a) => <option key={a.name} value={a.name}>{a.name}</option>)}
+              <option value="">{defaultResponder(memberList)}</option>
+              {memberList.map((m) => <option key={m.id} value={m.id}>{m.id}</option>)}
             </select>
             <select
               value={activeSessionId || ''}

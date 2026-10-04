@@ -1,3 +1,4 @@
+import type { SessionMember } from '../lib/sessionMembers.mts';
 /**
  * UI navigation, overlays, and transient chrome state.
  */
@@ -64,8 +65,11 @@ interface UiState {
   selectedFileContent: string | null;
   selectedFilePath: string | null;
 
-  // Session-level model override (not persisted — resets on session change)
+  // The model the session keeps for the member this chat speaks with (not
+  // persisted — resets on session change)
   sessionModel: string | null;
+  // The active session's members (`agents`), the lead first
+  sessionMembers: SessionMember[];
 
   // Session permission mode (chat/read/edit/admin — pushed by server page_state)
   sessionMode: string | null;
@@ -112,6 +116,7 @@ interface UiState {
   setOverlay: (overlay: string | null) => void;
   setModelPickerOpen: (open: boolean) => void;
   setSessionModel: (model: string | null) => void;
+  setSessionMembers: (members: SessionMember[]) => void;
   setSessionMode: (mode: string | null) => void;
   setShowAgentSpecEditor: (show: boolean) => void;
   setOpenApp: (app: AppPanelState | null) => void;
@@ -134,6 +139,7 @@ export const useUiStore = create<UiState>((set) => ({
   overlay: null,
   modelPickerOpen: false,
   sessionModel: null,
+  sessionMembers: [],
   sessionMode: null,
   showAgentSpecEditor: false,
   openApp: null,
@@ -225,6 +231,7 @@ export const useUiStore = create<UiState>((set) => ({
   setOverlay: (overlay) => set({ overlay }),
   setModelPickerOpen: (open) => set({ modelPickerOpen: open }),
   setSessionModel: (model) => set({ sessionModel: model }),
+  setSessionMembers: (members) => set({ sessionMembers: members }),
   setSessionMode: (mode: string | null) => set({ sessionMode: mode }),
   setShowAgentSpecEditor: (show) => set({ showAgentSpecEditor: show }),
   setOpenApp: (app) => set({ openApp: app }),

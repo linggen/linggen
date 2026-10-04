@@ -3,12 +3,14 @@
  * Extracted from ChatPanel.tsx.
  */
 import React from 'react';
+import { chatAgentOf, withMemberModel } from '../../lib/sessionMembers.mts';
 import { useServerStore } from '../../stores/serverStore';
 import { useUiStore } from '../../stores/uiStore';
 import { useUserStore } from '../../stores/userStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { suppressPermissionSync } from '../../lib/eventDispatcher';
 import { sessionApi } from '../../lib/endpoints';
+import type { SessionInfo } from '../../types';
 
 const fmt = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 
@@ -49,19 +51,23 @@ export const SessionModelSelector: React.FC = () => {
     ? (models[0]?.id ?? 'shared')
     : (defaultModels.length > 0 ? defaultModels[0] : 'default');
 
+  // The picker is the model of the member this chat speaks with; each
+  // member keeps its own.
   const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const value = e.target.value || null;
     setSessionModel(value);
     if (sessionId) {
+      const ui = useUiStore.getState();
+      const agent = chatAgentOf(useServerStore.getState().selectedAgent, ui.sessionMembers);
+      const members = withMemberModel(ui.sessionMembers, agent, value);
+      ui.setSessionMembers(members);
       const ps = useSessionStore.getState();
-      const updated = ps.allSessions.map((s) =>
-        s.id === sessionId ? { ...s, model_id: value } : s
-      );
-      const updatedSessions = ps.sessions.map((s) =>
-        s.id === sessionId ? { ...s, model_id: value } : s
-      );
-      useSessionStore.setState({ allSessions: updated, sessions: updatedSessions });
-      sessionApi.setModel(selectedProjectRoot || '', sessionId, value ?? '').catch(() => {});
+      const withMembers = (s: SessionInfo) => (s.id === sessionId ? { ...s, agents: members } : s);
+      useSessionStore.setState({
+        allSessions: ps.allSessions.map(withMembers),
+        sessions: ps.sessions.map(withMembers),
+      });
+      sessionApi.setModel(selectedProjectRoot || '', sessionId, value ?? '', agent).catch(() => {});
     }
   };
 

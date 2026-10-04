@@ -1,3 +1,4 @@
+import type { SessionMember } from './lib/sessionMembers.mts';
 // Wire types generated from the Rust structs (scripts/gen-types.sh).
 export type { UiEvent, UiEventOf, UiEventByKind, RunEvent, RunEventOf, ContentBlockEvent, PageState } from './types/uiEvents';
 export type { QueuedChatItem } from './types/generated/QueuedChatItem';
@@ -251,7 +252,7 @@ export interface SessionInfo {
   skill?: string | null;    // bound skill name
   mission_id?: string | null; // set when the session is bound to a mission (creator "mission", or a user-opened attended session)
   cwd?: string;             // current working directory
-  model_id?: string | null; // session-level model override
+  agents?: SessionMember[]; // the agents at the session's table, the lead first
   permission_mode?: string | null; // effective permission mode (read/edit/admin)
 }
 

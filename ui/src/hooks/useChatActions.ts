@@ -17,6 +17,7 @@ import { ApiError, apiErrorMessage } from '../lib/api';
 import { postToParent } from '../lib/parentFrame';
 import { agentMentionLabel, leadingAgentMention, mentionLanguage } from '../lib/chatMentions.mts';
 import { turnlessReply } from '../lib/agentTurns.mts';
+import { chatAgentOf } from '../lib/sessionMembers.mts';
 
 /**
  * Resolve the effective project root: explicit override > selected project >
@@ -57,7 +58,7 @@ export function useChatActions(
     const root = getProjectRoot(projectRootRef.current);
     const { activeSessionId: sid } = useSessionStore.getState();
 
-    const selectedAgent = useServerStore.getState().selectedAgent;
+    const selectedAgent = chatAgentOf(useServerStore.getState().selectedAgent, useUiStore.getState().sessionMembers);
     const runId = runningMainRunIds[selectedAgent];
     if (runId) {
       useServerStore.getState().cancelAgentRun(runId);
@@ -80,15 +81,19 @@ export function useChatActions(
     if (!userMessage.trim() && !(images && images.length > 0)) return;
     const root = getProjectRoot(projectRootRef.current);
     const { activeSessionId: sid } = useSessionStore.getState();
-    const agent = useServerStore.getState().selectedAgent;
+    const picked = useServerStore.getState().selectedAgent;
     // A message that opens with `@name` goes to that agent — also when it came
     // from a page through the embed bridge, not the input (`@银月 …`).
     // Only an agent a person may address: never an internal one.
     const addressable = useServerStore.getState().agents.filter((a) => !a.internal);
-    const agentToUse = targetAgent
+    // Only an agent the person named or picked is sent; with none, the
+    // session's default responder answers (the server decides — this shows
+    // who that is).
+    const addressed = targetAgent
       || leadingAgentMention(userMessage, addressable)?.agent
-      || agent;
-    if (!agentToUse) return;
+      || picked
+      || '';
+    const agentToUse = addressed || chatAgentOf('', useUiStore.getState().sessionMembers);
     const now = new Date();
     const trimmed = userMessage.trim();
     const ui = useUiStore.getState();
@@ -146,7 +151,7 @@ export function useChatActions(
         const completionTok = data.session_completion_tokens || 0;
         const lines = [
           `**Version:** v${data.version || '?'}`, `**Session:** \`${sid || '(none)'}\``,
-          `**Workspace:** \`${root}\``, `**Agent:** ${agent}`,
+          `**Workspace:** \`${root}\``, `**Agent:** ${agentToUse}`,
           `**Model:** \`${data.default_model || '(none)'}\``,
         ];
         if (promptTok > 0 || completionTok > 0) lines.push(`**Tokens:** ↑ ${fmt(promptTok)}  ↓ ${fmt(completionTok)}  (total: ${fmt(promptTok + completionTok)})`);
@@ -257,7 +262,7 @@ export function useChatActions(
       const sessionModel = useUiStore.getState().sessionModel;
       const data = await getTransport().sendChat({
         project_root: root,
-        agent_id: agentToUse,
+        agent_id: addressed,
         message: userMessage,
         session_id: sid,
         ...(isMissionSession && activeMissionId ? { mission_id: activeMissionId } : {}),
@@ -424,11 +429,14 @@ export function useChatActions(
     try {
       const root = getProjectRoot(projectRootRef.current);
       const { activeSessionId: sid } = useSessionStore.getState();
-      const agent = useServerStore.getState().selectedAgent;
+      const members = useUiStore.getState().sessionMembers;
+      const agent = members.length > 0
+        ? members.map((m) => m.id).join(', ')
+        : chatAgentOf(useServerStore.getState().selectedAgent, members);
       const msgs = useChatStore.getState().displayMessages;
       const headerLines = [
         'Linggen Agent Chat Export', `Project: ${root || '(none)'}`,
-        `Session: ${sid || 'default'}`, `Agent: ${agent}`,
+        `Session: ${sid || 'default'}`, `Agents: ${agent}`,
         `ExportedAt: ${new Date().toISOString()}`, '',
       ];
       const body = msgs.map((m) => {

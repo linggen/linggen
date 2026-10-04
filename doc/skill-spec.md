@@ -325,16 +325,19 @@ quests:
 
 ## Place
 
-An agent's soul is the same everywhere (`doc/persona-design.md`). For the skill's own agent, the SKILL.md body already is its place. `place:` is for the agents that come to the skill's chat as **guests**, keyed by agent id:
+An agent's soul is the same everywhere (`doc/persona-design.md`). A skill's sessions seat the agents it declares (`members: [ling, yinyue]`, the lead first; absent → the lead agent alone — `doc/shared-session-spec.md`). For the lead, the SKILL.md body already is its place. `place:` is for the other members at the skill's table, keyed by agent id:
 
 ```yaml
+members: [ling, yinyue]
 place:
   yinyue:
     text: At the player's side, on the road with them.
+    tools: [AppTool, Story]
     absent_until: {file: data/state.json, path: companion.joined}
 ```
 
-- **Text** (a plain string, or `text:`). When that agent sits at the skill's chat as a guest, the engine puts the text under `## Where you are`, after the soul and voice, in place of the engine's guest block (`agents/places/guest.md`). A guest with no entry gets the guest block. An entry for the skill's own agent is ignored — its place is the SKILL.md.
+- **Text** (a plain string, or `text:`). When that agent sits at the skill's table as a member who isn't its lead, the engine puts the text under `## Where you are`, after the soul and voice, in place of the engine's member block (`agents/places/member.md`) — and the SKILL.md body is the lead's, never hers. A member with no entry gets the member block. An entry for the lead is ignored — its place is the SKILL.md.
+- **`tools`** — what that member uses at the table, in place of the skill's `allowed-tools` (a companion reads the game, she never makes its moves). Absent: the skill's set.
 - **`absent_until`** — the agent isn't in the skill's sessions until the value at `path` (dot-separated keys) in the skill's JSON `file` (relative to the skill folder) is set: present and not `null`, `false`, `0`, `""`, `[]` or `{}`. Read on every check; unreadable counts as unset. While absent:
   - a message addressed to it in the skill's chat runs no turn and keeps nothing: `/api/chat` answers `{"status": "absent", "agent_id", "session_id"}`, and the embedded chat posts `linggen-skill-event` `agent_absent {agent, text}` to the page, which says its own line;
   - an app moment for it naming the skill's chat (or the skill as `app`) is refused (`409 absent`) and never queued;
@@ -373,10 +376,11 @@ Interactive apps are **session-bound** — every message in the session activate
 
 **Addressing someone else in the app's chat.** A message that opens `@name`
 (an agent's id or a declared alias — `@银月 …`) goes to that agent in the same
-session; with no mention it goes to the session's agent. The companion answers
-there as a guest, with none of the skill's tools. A page's own ask box sends
-its text into the chat as `@银月 …` through the chat bridge. An app moment for
-her can carry `session` (and `converse`) so her line lands in this chat —
+session, a member of its table; with no mention it goes to the session's
+default responder. A member who isn't the lead uses the tools the skill names
+for it (`place.<agent>.tools`). A page's own ask box sends its text into the
+chat as `@银月 …` through the chat bridge. An app moment for her can carry
+`session` (and `converse`) so her turn runs at this table —
 `doc/yinyue-companion-spec.md` § App moments.
 
 Every app skill receives a built-in `PageUpdate` data tool — the agent calls it whenever state the user should see changes, and the iframe re-renders. Each app defines its own page layout schema in its SKILL.md.

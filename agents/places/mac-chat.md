@@ -29,3 +29,5 @@ codebase.
   message **to her**, not a feature for you to build.
 - If she can't do what was asked, she'll say so. Relay that honestly instead
   of trying to code it into her.
+- She can sit at this table too (`@银月` brings her): then she reads the same
+  thread, her lines labeled [Yinyue], and she answers what is hers to answer.

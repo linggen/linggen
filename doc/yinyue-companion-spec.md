@@ -144,52 +144,49 @@ First user: Lingjing (fight outcomes, a 杀招 let go, 气血 at a quarter, too 
 to fight).
 
 **In the app's chat.** `session` (the app's chat session id; unknown → 400)
-has her spoken line also land there as a message from her — `[Yinyue]` in the
-embed chat, and in Ling's context on his next turn — without starting a Ling
-run. SILENT lands nothing, and nothing lands in a chat whose skill keeps her
-away when the line is ready (`absent_until` is read again then). The turn
-runs on her own thread but speaks from that chat: the guest place (or the
-skill's `place.yinyue`), not her desktop's. `converse: true` (with `session`, for big moments)
-then gives the session's agent **one** hidden kickoff to answer her in a line,
-in-world, or `SILENT` (nothing shown, nothing kept). It waits behind a running
-turn, never interrupts, never wakes her back, and a session gets at most one
-exchange per **2 min**.
+wakes her **at that chat's table**, a member of it (`doc/shared-session-spec.md`):
+her turn runs in that session on a `[HIDDEN]` kickoff only she reads, she
+reads its whole thread, and her line is a row there — `[Yinyue]` in the embed
+chat, and in Ling's thread on his next turn — without starting a Ling run.
+SILENT leaves nothing, and nothing runs in a chat whose skill keeps her away
+(`absent_until` is read again when the wake comes). Her place there is the
+skill's `place.yinyue` (else the member place), her tools what the skill names
+for her (`place.yinyue.tools`). A moment with no `session` runs on her own
+thread. `converse: true` (with `session`, for big moments) then gives the
+session's lead **one** hidden kickoff to answer her in a line, in-world, or
+`SILENT` (nothing shown, nothing kept). It waits behind a running turn, never
+interrupts, never wakes her back, and a session gets at most one exchange per
+**2 min**.
 
-**Her line is all she gives.** A moment turn and a guest turn are *sealed*:
-`agent_chat` is withheld (not offered, refused if called — `engine.withheld_tools`),
-so she can't message Ling into the app's chat; `converse` is the only exchange.
+**Her line is all she gives.** A moment turn is *sealed*: `agent_chat` is
+withheld (not offered, refused if called — `engine.withheld_tools`), so she
+can't message Ling into the app's chat; `converse` is the only exchange.
 
-**Addressed in an app's chat.** A message opening `@Yinyue` / `@银月` (id or a
-spec `aliases:` name) goes to her, in the same session, as a **guest**: her own
-engine and tools (never the session's skill, its tools or prompt), the thread
-rebuilt from the chat's visible dialogue, her reply persisted as hers and
-spoken (`PetSpeak`). Her memory stays hers: her core block (who the user
-is) and her recall, read by her model and never left as a row on the table;
-her memory tools act for the table's session, so a skill that uses memory
-(`memory-context`) holds her reads and writes to its own dir
-(`~/.linggen/skills/<name>`), and her writes are stamped with the session. Ling is not woken; what was said reaches him at the start
-of his next turn (`chat/side_lines.rs`). No mention → Ling, as always. The system-prompt export for her in such a
-session shows this guest seat, not the session's skill.
-
-**One conversation per app.** She reads the whole visible dialogue of an app's
-chat (`chat/table.rs`): the user's lines, Ling's replies, hers, other agents' —
-never a system prompt, tool call or result, `[HIDDEN]` kickoff or recall row.
-Cut from the front to ~24k tokens in 32-row chunks (a stable prefix for the
-cache). A guest turn's thread is it; a moment turn naming a `session` reads it
-beside the kickoff for that turn only (never kept on her thread).
+**Addressed in a chat.** A message opening `@Yinyue` / `@银月` (id or a spec
+`aliases:` name) goes to her, in the same session, as a **member** — seated for
+good if she wasn't (`doc/shared-session-spec.md`). One thread: she reads all
+of it — the user's lines, Ling's replies and his tool use (as notes, `[Ling
+used Look → …]`), recall and compaction notes. The session's tool set and
+`permission.json` are hers there too (a write on her turn asks the person in
+that chat); a skill session's are what the skill names for her. Her reply is a
+row of the session, spoken (`PetSpeak`); her recall row is kept like any
+member's. One agent speaks at a time (the session's turn lock); Ling reads
+what she said when his turn comes. The system-prompt export takes
+`agent_id=yinyue` for her seat in that session.
 
 **Spoken to on a stage.** A stage on an app page with a chat learns the chat's
 session from the page (`shared/chat-bridge.js` ⇄ the pet view, `linggen-app-chat`
 messages) and sends it with `yinyue_subscribe`. While that stage holds her,
 `/api/yinyue/chat` (her pet box, the desktop pet) lands in that chat as the
-user's `@银月 …` line and she answers there as a guest. Otherwise → her own
+user's line to her, and she answers there as a member. Otherwise → her own
 thread. A page frames the stage at `engineUiUrl('pet=1&stage=1')`
 (`/shared/api.js`), which also resolves through linggen.dev.
 
-**The page hears its own agent.** A guest's turn is hers alone: it never ends
-the skill agent's run, question or spinner. The bridge hands `onStreamToken` /
-`onStreamEnd` the skill's own agent's stream only (`mount({ agentId })`);
-`guestStreams: true` adds hers, each call naming `info.agent`. A page's hidden
+**The page hears its own agent.** Another member's turn is hers alone: it never
+ends the skill agent's run, question or spinner. The bridge hands `onStreamToken` /
+`onStreamEnd` the skill's own agent's (the lead's) stream only
+(`mount({ agentId })`); `guestStreams: true` (the page API keeps its name) adds
+the other members', each call naming `info.agent`. A page's hidden
 reports always go to its own agent.
 
 ## `agent_chat` — general inter-agent messaging

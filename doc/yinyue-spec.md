@@ -337,19 +337,25 @@ upgrading, the irreversible. Headless, she never blocks on a question.
 
 ## Session & memory
 
-**Principle.** Yinyue is an ordinary Linggen session running the `yinyue` agent —
-same engine build, persistence, memory, and compaction as Ling. Only four things
-differ: rolling session ids, her entry triggers (event / avatar tap), her output
-sink (spoken, not a chat panel), and her narrow tool list (from `yinyue.md`).
+**Principle.** Yinyue's daily thread is an ordinary Linggen session with her as
+its one member and lead — same engine build, persistence, memory, and compaction
+as Ling. Only four things differ: rolling session ids, her entry triggers
+(event / avatar tap), her output sink (spoken, not a chat panel), and the
+session's tool set — hers, the narrow list in `yinyue.md` (no Bash, Write or
+Skill). Ling is not there unless addressed (`@Ling`), and then he uses her set.
+Elsewhere she is a member at another's table (`shared-session-spec.md`): she
+reads that session's whole thread and works with its tools and permissions.
 
 **Shared turn-core.** The middle of Ling's chat turn carries no chat-panel
 assumptions and is extracted into one function both callers use:
 
 ```
 run_session_turn(ctx, engine, message)
-  = restore_chat_history_if_empty   // reload messages.jsonl after a restart
+  = seat the member                 // the session's lead, its tool set
+  → sync the thread                 // rebuild from messages.jsonl when stale
+  → compact if due                  // the session's one summary row
   → push_user_turn_with_recall      // auto-recall "From memory…" + capture nudge
-  → run_agent_loop                  // system prompt + tools + maybe_compact + persist
+  → run_agent_loop                  // system prompt + tools + persist
 ```
 
 `chat_handler` (Ling) and `run_yinyue_turn` (Yinyue) both call it. Yinyue's
@@ -370,8 +376,8 @@ current one on every wake:
 **Persistence / reload.** Each rolling session persists like any session —
 `~/.linggen/sessions/<id>/messages.jsonl` (append-only) + meta. On daemon start
 the resolver targets today's session and the first turn's
-`restore_chat_history_if_empty` rehydrates the engine from disk, so a mid-day
-restart resumes the same thread. Old daily sessions stay browsable; prune after N
+thread sync rehydrates the engine from disk, so a mid-day restart resumes the
+same thread. Old daily sessions stay browsable; prune after N
 days.
 
 **Memory.** An owner session — `include_memory = true` (she shares Ling's

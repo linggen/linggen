@@ -4,6 +4,7 @@
  * reads from stores and renders.
  */
 import React, { useCallback, useMemo } from 'react';
+import { chatAgentOf } from '../../lib/sessionMembers.mts';
 import { ChatPanel } from './ChatPanel';
 import { useChatActions } from '../../hooks/useChatActions';
 import { useRunInfo } from '../../hooks/useRunInfo';
@@ -34,7 +35,12 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
   const agents = useServerStore((s) => s.agents);
   const models = useServerStore((s) => s.models);
   const skills = useServerStore((s) => s.skills);
-  const selectedAgent = useServerStore((s) => s.selectedAgent);
+  const picked = useServerStore((s) => s.selectedAgent);
+  const sessionMembers = useUiStore((s) => s.sessionMembers);
+  // The member this chat speaks with: the person's pick, else the session's
+  // default responder.
+  const selectedAgent = chatAgentOf(picked, sessionMembers);
+  const memberIds = useMemo(() => sessionMembers.map((m) => m.id), [sessionMembers]);
   const agentContext = useServerStore((s) => s.agentContext);
   const defaultModels = useServerStore((s) => s.defaultModels);
   const cancellingRunIds = useServerStore((s) => s.cancellingRunIds);
@@ -105,6 +111,7 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
       projectRoot={effectiveRoot}
       sessionId={effectiveSessionId}
       selectedAgent={selectedAgent}
+      memberIds={memberIds}
       setSelectedAgent={useServerStore.getState().setSelectedAgent}
       skills={skills}
       agents={agents}

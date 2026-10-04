@@ -3,6 +3,7 @@
  * Uses responsive CSS for mobile (<768px) — no separate mobile entry.
  */
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { chatAgentOf, memberModel } from '../lib/sessionMembers.mts';
 import { X } from 'lucide-react';
 import type { SessionInfo, SkillInfo } from '../types';
 import { SessionList } from '../components/SessionList';
@@ -198,11 +199,20 @@ export const MainApp: React.FC = () => {
   // silently reverting any model override the user just picked. `allSessions`
   // contains every session the user can see, so the lookup succeeds
   // regardless of which project the active session lives in.
+  // The session's members ride along: the picker shows the model the session
+  // keeps for the member this chat speaks with.
   useEffect(() => {
     const sess = allSessions.find((s) => s.id === activeSessionId)
       ?? sessions.find((s) => s.id === activeSessionId);
-    useUiStore.getState().setSessionModel(sess?.model_id ?? null);
-  }, [activeSessionId, allSessions, sessions]);
+    const members = sess?.agents ?? [];
+    useUiStore.getState().setSessionMembers(members);
+    useUiStore.getState().setSessionModel(memberModel(members, chatAgentOf(selectedAgent, members)));
+  }, [activeSessionId, allSessions, sessions, selectedAgent]);
+
+  // A pick is for one chat: another session speaks with its own default.
+  useEffect(() => {
+    useServerStore.getState().setSelectedAgent('');
+  }, [activeSessionId]);
 
   // Mission session messages arrive via the same paths as user-chat sessions:
   //   - one fetch when activeSessionId changes (existing useEffect),
@@ -210,12 +220,11 @@ export const MainApp: React.FC = () => {
   //   - StateUpdated → fetchSessionState in handleRunOutcome.
   // No 5s polling — that flooded the control channel for no real benefit.
 
-  // --- Auto-select agent ---
+  // --- A pick of an agent that no longer exists falls back to the default ---
   useEffect(() => {
-    if (mainAgentIds.length === 0) return;
+    if (mainAgentIds.length === 0 || !selectedAgent) return;
     if (!mainAgentIds.includes(selectedAgent.toLowerCase())) {
-      const preferred = mainAgentIds.includes('ling') ? 'ling' : mainAgentIds[0];
-      useServerStore.getState().setSelectedAgent(preferred);
+      useServerStore.getState().setSelectedAgent('');
     }
   }, [mainAgentIds, selectedAgent]);
 

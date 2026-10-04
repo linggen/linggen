@@ -107,8 +107,10 @@ export const providerAuth = {
 // ── Sessions, chat, workspace ───────────────────────────────────────────
 
 export const sessionApi = {
-  setModel: (projectRoot: string, sessionId: string, modelId: string) =>
-    apiPatch<void>('/api/sessions', { project_root: projectRoot, session_id: sessionId, model_id: modelId }),
+  /** Set `agentId`'s model in the session (default: the member the Mac
+   *  answers with by default). */
+  setModel: (projectRoot: string, sessionId: string, modelId: string, agentId?: string) =>
+    apiPatch<void>('/api/sessions', { project_root: projectRoot, session_id: sessionId, model_id: modelId, ...(agentId ? { agent_id: agentId } : {}) }),
   setPermission: (sessionId: string, path: string, mode: string) =>
     apiPatch<void>('/api/sessions/permission', { session_id: sessionId, path, mode }),
   pendingAskUser: () =>

@@ -9,7 +9,7 @@ guide: |
 
 # Session & Context
 
-A session is the fundamental unit of interaction. Each session holds one context — an isolated conversation with its own tools, system prompt, and message history.
+A session is the fundamental unit of interaction. Each session holds one context — an isolated conversation with its own tools, permissions and message history — and one or more agents at its table, each with its own persona and model (`shared-session-spec.md`).
 
 ## Related docs
 
@@ -17,6 +17,7 @@ A session is the fundamental unit of interaction. Each session holds one context
 - `agent-spec.md`: agent definitions, delegation.
 - `skill-spec.md`: skill format, activation.
 - `agentic-loop.md`: how the engine runs inside a context.
+- `shared-session-spec.md`: several agents at one table — members, the thread, who answers.
 
 ## Core concept
 
@@ -67,12 +68,12 @@ When a git root is detected for the first time, the project is automatically reg
 
 ### Context compaction
 
-When estimated prompt tokens exceed `compact_threshold` × context window, the engine compacts in two tiers (aligned with Claude Code):
+The thread is the session's, and so is its compaction: one summary row (pseudo-sender `compaction`), written into `messages.jsonl` where the verbatim tail begins and read by every member as a system note. The rows before it stay in the file for scrollback; no member's thread reaches past the newest summary. It runs before a turn when the thread outgrows the **smallest** member's context window × `compact_threshold`, and on `/compact`; the session's default member's model writes it. A member's window is read again when its model changes.
+
+Inside one long turn the engine still compacts its working messages in two tiers (aligned with Claude Code), for that turn only:
 
 1. **Evict** — replace old `tool_result` bodies with a placeholder in place (cheap, structure preserved).
-2. **Summarize** — if still over budget, replace everything between the system prompt and a recent verbatim tail with one model-written structured summary. `/compact` forces this tier regardless of budget.
-
-`/compact` also folds the session file: only the compacting agent's own span (its rows and system rows before the verbatim tail) becomes one summary row under the hidden pseudo-sender `compaction` — context for that agent, never a chat line, never read by another agent. Other speakers' rows (the companion's lines in an app chat, the user's lines to her) stay where they were, and rows written while the summary was made are kept.
+2. **Summarize** — if still over budget, replace everything between the system prompt and a recent verbatim tail with one model-written structured summary.
 
 `compact_threshold` (fraction; per-session → `linggen.toml` → 0.95 default) and `compact_focus` (hint fed to the summary prompt) are per-session, set via `POST /api/chat/compact_config`, persisted in `session.yaml`, and re-read on every engine build — so they survive restart and apply to chat-only and mission sessions. `messages.jsonl` is the unbounded source of truth; there is no blunt history cap.
 
@@ -91,10 +92,10 @@ Every session has a creator that determines how it was born and what capabilitie
 
 When a session is created, it inherits configuration from its creator:
 
-1. **Agent tools** — base tool set from the agent spec (e.g., `ling` has `["*"]`)
-2. **Skill restriction** — if a skill is bound, `effective_tools = intersection(agent.tools, skill.allowed-tools)`
-3. **System prompt** — assembled from the agent's soul (personality + body) + voice + place (`## Where you are`) + skill body (if bound)
-4. **Model** — from the agent spec or mission config, falling back to the default routing chain
+1. **Members** — an ordinary chat seats `ling`; Yinyue's daily thread seats her; a skill seats its declared `members:`; a mission its agent. The first member is the **lead**.
+2. **Tools** — the session's, set by its lead: the lead agent's tool list (e.g., `ling` has `["*"]`), or a bound skill's `allowed-tools`. A member who joins later uses that set; a skill may name a member's own (`place.<agent>.tools`).
+3. **System prompt** — per member: its soul (personality + body) + voice + place (`## Where you are`) + skill body (the lead's, when bound)
+4. **Model** — per member: the session's override for it, else its agent config / spec (the companion's `pet.model`), else the default routing chain
 
 ## Session state
 
@@ -108,8 +109,7 @@ Each session carries:
 | `creator` | creation | promotion only | Who owns this session: `user`, `skill`, `agent`, `mission`. Changes from `mission` → `user` on promotion. |
 | `skill` | creation | no | Bound skill name (if any) — active for the session's lifetime |
 | `mission_id` | creation | no | Originating mission (if creator is `mission`) |
-| `agent_id` | creation | yes | Which agent runs in this session |
-| `model` | creation | yes | Model override for this session |
+| `agents` | creation | grows | The members `[{id, model}]`, the lead first; `@name` seats one for good. Old sessions' `agent_id`/`model_id` migrate to a one-member list. |
 | `cwd` | creation | yes | Current working folder. Starts at home path. Updated on `cd`. |
 | `project` | runtime | yes | Detected git root path (if any). `null` in home mode. |
 | `project_name` | runtime | yes | Display name — last segment of git root (e.g. `linggen`). `null` in home mode. |
@@ -117,8 +117,8 @@ Each session carries:
 
 ### What's dynamic (can change during chat)
 
-- **Model** — user can switch models mid-conversation via `/model`
-- **Agent** — user can switch agents mid-conversation via `/agent` (tools change accordingly)
+- **Model** — per member; the picker sets the model of the member the chat speaks with
+- **Members** — `@name` addresses an agent and seats it if absent
 - **System prompt** — rebuilt each turn from current agent + skill + environment + project instructions
 - **Title** — can be renamed
 - **Working folder** — changes when agent or user runs `cd`. Triggers project detection.

@@ -108,14 +108,6 @@ function applyQueued(ps: PageState): void {
 function applyScopedState(ps: PageState): void {
   if (ps.agents) {
     useServerStore.setState({ agents: ps.agents });
-    // Auto-select the first agent on a fresh client where no agent has
-    // been picked yet (empty localStorage). Without this, chat send bails
-    // silently because useChatActions.sendChatMessage early-returns when
-    // selectedAgent is "" — and the user-message bubble never even appears.
-    const store = useServerStore.getState();
-    if (!store.selectedAgent && Array.isArray(ps.agents) && ps.agents.length > 0) {
-      store.setSelectedAgent(ps.agents[0].name);
-    }
   }
   if (ps.agent_runs) {
     // Skip update if runs haven't changed (prevents re-render loops)

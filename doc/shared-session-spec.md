@@ -1,7 +1,7 @@
 ---
 type: spec
 reader: Coding agent and users
-status: draft 2026-10-04, awaiting go
+status: built 2026-10-04
 guide: |
   Product specification — what the system should do and why. Brief; guides
   design and implementation, not a code walk-through.
@@ -88,6 +88,9 @@ agent's context is built from it:
 - The tool set belongs to the session, set by what created it: an ordinary
   chat gets Ling's set; Yinyue's daily thread gets hers; a skill session gets
   its `allowed-tools`. A member who joins later uses the session's set.
+- A skill may name what a member who isn't its lead uses at its table
+  (`place.<agent>.tools`, `skill-spec.md` § Place) — Lingjing names her read
+  of the game, never its moves or its question widget.
 - Permissions are the session's: read by default; writes and Bash ask the
   person, whichever member asks. Guest seat permissions go away.
 - Style stays in the persona: `yinyue.md` says code and file work is Ling's,
