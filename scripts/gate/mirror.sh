@@ -64,12 +64,12 @@ mirror_local() {
   MEM_SHA="$(pack_binary "$mem" ling-mem "$good/$MEM_REPO/ling-mem-macos-aarch64.tar.gz")"
   MEM_VERSION="$ver"
   (cd "$good/$MEM_REPO" && shasum -a 256 ling-mem-macos-aarch64.tar.gz >ling-mem-macos-aarch64.tar.gz.sha256)
+  pack_plugin "$good"
   write_release_json "$good/$MEM_REPO" "v$ver"
   record INFO "mirror: ling-mem" "local $ver, $mem, built $(stat -f %Sm -t '%F %R' "$mem"), $(signer "$mem")"
 
   mkdir -p "$good/$APP_REPO"
   if [ -d "$app" ]; then
-  pack_plugin "$good"
     local stage asset
     ver="$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist")"
     asset="linggen-$ver-darwin-arm64.tar.gz"
@@ -88,11 +88,6 @@ mirror_local() {
   fi
 }
 
-latest_tag() { gh release view --repo "$1" --json tagName --jq .tagName; }
-
-draft_repo() { # good repo tag patterns…
-  local good="$1" repo="$2" tag="$3"; shift 3
-  local args=() p
 # The plugin marketplace bundle install-plugin.sh installs from (linggen-
 # memory's release asset), packed from the working tree.
 pack_plugin() { # good
@@ -100,6 +95,11 @@ pack_plugin() { # good
     || die "mirror: plugin bundle" "linggen-memory/scripts/package-plugin.sh failed"
 }
 
+latest_tag() { gh release view --repo "$1" --json tagName --jq .tagName; }
+
+draft_repo() { # good repo tag patterns…
+  local good="$1" repo="$2" tag="$3"; shift 3
+  local args=() p
   for p in "$@"; do args+=(--pattern "$p"); done
   mkdir -p "$good/$repo"
   gh release download "$tag" --repo "$repo" --dir "$good/$repo" --clobber "${args[@]}" \
@@ -135,17 +135,17 @@ mirror_draft() { # good specs
 
   draft_repo "$good" $MEM_REPO "$mem" 'ling-mem-macos-aarch64.tar.gz*'
   MEM_VERSION="${mem#v}"
-  MEM_SHA="$(tar_member_sha "$good/$MEM_REPO/ling-mem-macos-aarch64.tar.gz" ling-mem)"
-  record INFO "mirror: ling-mem" "release $mem"
-
-  draft_repo "$good" $APP_REPO "$app" 'linggen-*-darwin-arm64.tar.gz*'
-  APP_VERSION="${app#linggen-v}"
   if gh release download "$mem" --repo $MEM_REPO --dir "$good/$MEM_REPO" --clobber --pattern 'linggen-plugin.tar.gz*' 2>/dev/null; then
     record INFO "mirror: plugin bundle" "release $mem"
   else
     pack_plugin "$good"
     record GAP "mirror: plugin bundle" "release $mem has no linggen-plugin.tar.gz — packed from the working tree"
   fi
+  MEM_SHA="$(tar_member_sha "$good/$MEM_REPO/ling-mem-macos-aarch64.tar.gz" ling-mem)"
+  record INFO "mirror: ling-mem" "release $mem"
+
+  draft_repo "$good" $APP_REPO "$app" 'linggen-*-darwin-arm64.tar.gz*'
+  APP_VERSION="${app#linggen-v}"
   record INFO "mirror: app" "release $app"
 }
 
