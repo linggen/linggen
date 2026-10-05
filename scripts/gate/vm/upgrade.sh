@@ -6,6 +6,20 @@
 . ./expect.env
 
 LING="$(ling_bin)"; MEM="$(mem_bin)"
+
+# A swap restarted the engine: a new process on 9527 answering health, at the
+# version the swapped-in binary carries.
+engine_restarted() { # label old-pid want-version [log]
+  local new v
+  engine_health 60
+  new="$(listener_pid 9527)"
+  v="$(curl -fsS -m 3 http://127.0.0.1:9527/api/health 2>/dev/null | jq -r '.version // .data.version // empty')"
+  if [ -n "$2" ] && [ -n "$new" ] && [ "$new" != "$2" ] && [ "$v" = "$3" ]; then
+    pass "$1" "pid $2 → $new, v$v"
+  else
+    fail "$1" "pid ${2:-none} → ${new:-none}, 9527 answers v${v:-none} (want v$3)${4:+ — $(tail -2 "$4" 2>/dev/null)}"
+  fi
+}
 PREV_LING="$(ver_of "$LING")"; PREV_MEM="$(ver_of "$MEM")"; PREV_APP="$(app_version)"
 info "upgrade: from" "ling $PREV_LING, ling-mem $PREV_MEM, app ${PREV_APP:-none}"
 
@@ -20,6 +34,8 @@ tcc_watch_start
 
 # ── Engine ─────────────────────────────────────────────────────────────────
 engine_pid="$(listener_pid 9527)"; mem_pid="$(listener_pid 9528)"
+OLD_RESTARTS=false
+"$LING" update --help 2>/dev/null | grep -qi 'restart' && OLD_RESTARTS=true
 if "$LING" update --help 2>/dev/null | grep -q -- '--rollback'; then
   LINGGEN_RELEASE_BASE="$GOOD" "$LING" update >"$OUT/ling-update.log" 2>&1
   check "ling update (from $PREV_LING)" $? "$(tail -3 "$OUT/ling-update.log")"
@@ -33,14 +49,13 @@ fi
 check_installed "upgrade: ling is the release" "$LING" "$LING_VERSION" "$LING_SHA"
 
 # The engine that was serving must now run the new binary: a new process on
-# 9527, started after the swap, answering health.
-new_pid="$(listener_pid 9527)"
-if [ -n "$engine_pid" ] && [ -n "$new_pid" ] && [ "$new_pid" != "$engine_pid" ] && engine_health 30; then
-  pass "upgrade: 9527 restarted on the new ling" "pid $engine_pid → $new_pid"
-elif [ "$VIA_INSTALL_SH" = 1 ]; then
-  fail "upgrade: 9527 restarted on the new ling" "pid ${engine_pid:-none} → ${new_pid:-none} after install.sh"
+# 9527, started after the swap, answering health. The updater that ran is the
+# OLD binary; one from before `ling update` restarted the engine says so in
+# its --help — the release's own `ling update` is checked under § Restart.
+if [ "$VIA_INSTALL_SH" = 1 ] || $OLD_RESTARTS; then
+  engine_restarted "upgrade: 9527 restarted on the new ling" "$engine_pid" "$LING_VERSION"
 else
-  warn "upgrade: 9527 restarted on the new ling" "\`ling update\` leaves the running engine on the old binary (pid ${engine_pid:-none} → ${new_pid:-none})"
+  gap "upgrade: 9527 restarted on the new ling" "ling $PREV_LING's \`ling update\` predates the engine restart — the release's own is checked under § Restart"
 fi
 
 # ── ling-mem ───────────────────────────────────────────────────────────────
@@ -118,18 +133,36 @@ rc=$?
 [ "$rc" != 0 ] && [ "$(sha "$MEM")" = "$before" ] && "$MEM" --version >/dev/null 2>&1 && mem_health 20
 check "ling-mem upgrade: a wrong sha256 is refused, old binary runs" $? "exit $rc — $(tail -2 "$OUT/mem-upgrade-bad.log")"
 
-# ── Rollback ───────────────────────────────────────────────────────────────
+# ── Rollback (the engine running: the release's swap restarts it) ─────────
 if [ ! -f "$LING.prev" ]; then # install.sh path: give `ling update` one real swap first
   LINGGEN_RELEASE_BASE="$RELABEL" "$LING" update >"$OUT/ling-update-relabel.log" 2>&1
   check "ling update: installs and keeps ling.prev" $? "$(tail -2 "$OUT/ling-update-relabel.log")"
 fi
-a="$(sha "$LING")"; p="$(sha "$LING.prev")"
+start_engine 90 || fail "rollback: engine runs before the swap" "no health"
+engine_pid="$(listener_pid 9527)"
+a="$(sha "$LING")"; p="$(sha "$LING.prev")"; prev_restarts=false
+"$LING.prev" update --help 2>/dev/null | grep -qi 'restart' && prev_restarts=true
 "$LING" update --rollback >"$OUT/ling-rollback.log" 2>&1
 rc=$?
 [ "$rc" = 0 ] && [ "$(sha "$LING")" = "$p" ] && [ "$(sha "$LING.prev")" = "$a" ]
 check "ling update --rollback swaps to ling.prev" $? "exit $rc — $(tail -2 "$OUT/ling-rollback.log")" "now $(ver_of "$LING")"
+engine_restarted "ling update --rollback: 9527 restarted on ling.prev" "$engine_pid" "$(ver_of "$LING")" "$OUT/ling-rollback.log"
+engine_pid="$(listener_pid 9527)"
 "$LING" update --rollback >>"$OUT/ling-rollback.log" 2>&1
 [ "$(sha "$LING")" = "$a" ]; check "ling update --rollback again returns" $? "sha ${a:0:12} not back"
+if $prev_restarts; then
+  engine_restarted "ling update --rollback again: 9527 back on the release" "$engine_pid" "$LING_VERSION" "$OUT/ling-rollback.log"
+else
+  info "ling update --rollback again: 9527 back on the release" "ling $(ver_of "$LING.prev")'s rollback predates the engine restart"
+fi
+
+# ── Restart: the release's own `ling update` over a running engine ────────
+stop_engine; start_engine 90 || fail "restart: engine runs before the update" "no health"
+engine_pid="$(listener_pid 9527)"
+LINGGEN_RELEASE_BASE="$RELABEL" "$LING" update >"$OUT/ling-update-restart.log" 2>&1
+check "restart: ling update (the release, to ${LING_VERSION}-gate)" $? "$(tail -3 "$OUT/ling-update-restart.log")"
+engine_restarted "restart: ling update restarts 9527 on the new ling" "$engine_pid" "$LING_VERSION" "$OUT/ling-update-restart.log"
+stop_engine
 
 if [ ! -f "$MEM.prev" ]; then
   mem_pid="$(listener_pid 9528)"

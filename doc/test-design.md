@@ -156,7 +156,9 @@ sessions, config, saves, a memory store in the old schema, both plugins):
    over a live `ling` (killed on launch; fixed: fresh inode + rename). After
    the swap 9527 and 9528 must be new processes, 9528 on the new version
    (`install.sh` restarts the engine, `install-bin.sh` and `ling-mem upgrade`
-   the daemon); `ling update` does not restart the engine yet (a WARN).
+   the daemon, `ling update` the engine). An old `ling update` from before
+   the engine restart is a GAP; the release's own `ling update` and
+   `--rollback` are then checked over a running engine (PASS/FAIL).
    The in-app updater asks through a native dialog and is not driven.
 2. Pass when: the store opens with every row (and `apply-schema --yes` keeps
    them); old sessions, config and a chat turn on the old config work;

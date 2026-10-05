@@ -82,7 +82,7 @@ enum Command {
     Init,
     /// Install/update the ling binary to latest
     Install,
-    /// Update the ling binary to latest (keeps the previous as ling.prev)
+    /// Update the ling binary to latest and restart a running engine on it (keeps the previous as ling.prev)
     Update {
         /// Swap back to the previous binary (ling.prev)
         #[arg(long)]
@@ -201,10 +201,12 @@ async fn main() -> Result<()> {
             return cli::init::run(true, None).await;
         }
         Some(Command::Install) => {
-            return cli::self_update::run(false).await;
+            let engine = (config.server.host(), config.server.port());
+            return cli::self_update::run(false, engine).await;
         }
         Some(Command::Update { rollback }) => {
-            return cli::self_update::run(*rollback).await;
+            let engine = (config.server.host(), config.server.port());
+            return cli::self_update::run(*rollback, engine).await;
         }
         Some(Command::Account { action }) => {
             return match action {

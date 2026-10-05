@@ -33,7 +33,7 @@ ling auth logout                  # Clear ChatGPT tokens
 ling auth status                  # Check auth status
 
 ling install                      # Install/update ling
-ling update                       # Update ling (keeps the previous as ling.prev)
+ling update                       # Update ling, restart a running engine (keeps ling.prev)
 ling update --rollback            # Swap back to ling.prev
 ling init                         # Bootstrap skills
 ling skills add/remove/list/search
@@ -168,6 +168,12 @@ ling update --rollback
   is touched.
 - `--rollback` swaps `ling` and `ling.prev` (run it again to return), and
   refuses when `ling.prev` is missing or doesn't start.
+- After either swap, an engine running from this `ling` (a `ling --web`
+  process at this path) is stopped and started again with its own arguments
+  and working directory — no browser — so the swapped-in version serves. If
+  it gives no `/api/health` within 60 s, `ling.prev` is swapped back and the
+  engine started on that. An engine from another path (Linggen.app's own
+  `ling`) is left alone and named in the output. `install.sh` does the same.
 
 ## Release override
 

@@ -15,6 +15,8 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use super::engine_restart;
+
 /// Env var naming a release mirror that replaces GitHub for every
 /// installer and updater (see doc/cli.md § Release override).
 pub const RELEASE_BASE_ENV: &str = "LINGGEN_RELEASE_BASE";
@@ -151,15 +153,31 @@ fn exe_dir() -> Result<PathBuf> {
         .to_path_buf())
 }
 
-/// Install/update the ling binary, or put the previous one back.
-pub async fn run(rollback: bool) -> Result<()> {
-    if rollback {
-        let (from, to) = rollback_binary(&exe_dir()?, "ling", START_TIMEOUT)?;
+/// Install/update the ling binary, or put the previous one back. Either
+/// way, an engine running from the swapped binary is restarted on the one
+/// now in place (`engine_restart`); `engine` gives the configured
+/// host/port for an engine started without `--host`/`--port`.
+pub async fn run(rollback: bool, engine: (String, u16)) -> Result<()> {
+    let dir = exe_dir()?;
+    let found = engine_restart::find(&dir.join("ling"), "ling");
+    let swapped = if rollback {
+        let (from, to) = rollback_binary(&dir, "ling", START_TIMEOUT)?;
         println!("[ling] Rolled back v{from} -> v{to}");
         println!("  Run `ling update --rollback` again to return to v{from}.");
+        true
+    } else {
+        update().await?
+    };
+    engine_restart::report_others(&found);
+    if !swapped {
         return Ok(());
     }
+    let opts = engine_restart::Opts::new(engine.0, engine.1);
+    engine_restart::restart(&dir, "ling", &found.ours, &opts).await
+}
 
+/// Fetch and swap in the latest release; Ok(true) when the binary changed.
+async fn update() -> Result<bool> {
     let current_version = env!("CARGO_PKG_VERSION");
 
     let client = reqwest::Client::builder()
@@ -186,12 +204,12 @@ pub async fn run(rollback: bool) -> Result<()> {
 
 /// A fetch problem: the default path reports it and exits cleanly (as it
 /// always has); an override is a test run, so it fails loudly.
-fn soft_fail(source: &ReleaseSource, msg: String) -> Result<()> {
+fn soft_fail(source: &ReleaseSource, msg: String) -> Result<bool> {
     if source.is_override() {
         anyhow::bail!(msg);
     }
     println!("{msg}");
-    Ok(())
+    Ok(false)
 }
 
 async fn update_binary(
@@ -200,7 +218,7 @@ async fn update_binary(
     binary_name: &str,
     current_version: Option<&str>,
     install_dir: Option<&Path>,
-) -> Result<()> {
+) -> Result<bool> {
     let manifest_url = source.manifest_url();
     let manifest = match source.get(client, &manifest_url).await {
         Ok(body) => match serde_json::from_slice::<ReleaseManifest>(&body) {
@@ -223,7 +241,7 @@ async fn update_binary(
     if let Some(cv) = current_version {
         if manifest.version == cv {
             println!("[{}] Already up to date (v{}).", binary_name, cv);
-            return Ok(());
+            return Ok(false);
         }
     }
 
@@ -281,7 +299,7 @@ async fn update_binary(
         }
     }
 
-    Ok(())
+    Ok(true)
 }
 
 struct Verify<'a> {
@@ -400,7 +418,7 @@ fn commit_with_probe(
 
 /// Run `<path> --version`; Ok(version) when it exits 0 within `timeout`
 /// and prints `<binary_name> <version>`.
-fn probe_version(path: &Path, binary_name: &str, timeout: Duration) -> Result<String> {
+pub(crate) fn probe_version(path: &Path, binary_name: &str, timeout: Duration) -> Result<String> {
     let mut child = std::process::Command::new(path)
         .arg("--version")
         .stdin(std::process::Stdio::null())
@@ -438,7 +456,11 @@ fn probe_version(path: &Path, binary_name: &str, timeout: Duration) -> Result<St
 /// Swap `<dir>/<name>` with `<dir>/<name>.prev`, so a second rollback
 /// returns. Keeps the swap only if the restored binary answers `--version`.
 /// Returns (from, to) versions.
-fn rollback_binary(dir: &Path, binary_name: &str, timeout: Duration) -> Result<(String, String)> {
+pub(crate) fn rollback_binary(
+    dir: &Path,
+    binary_name: &str,
+    timeout: Duration,
+) -> Result<(String, String)> {
     let target = dir.join(binary_name);
     let prev = prev_path(dir, binary_name);
     if !prev.is_file() {
@@ -627,7 +649,9 @@ mod tests {
 
     async fn update(source: &ReleaseSource, dir: &Path) -> Result<()> {
         let client = reqwest::Client::new();
-        update_binary(&client, source, "ling", Some("1.0.0"), Some(dir)).await
+        update_binary(&client, source, "ling", Some("1.0.0"), Some(dir))
+            .await
+            .map(|_| ())
     }
 
     #[tokio::test]
