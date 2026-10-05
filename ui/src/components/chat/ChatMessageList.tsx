@@ -11,6 +11,7 @@ import { getMessagePhase } from './MessagePhase';
 import { AgentMessage } from './AgentMessage';
 import { MemoryRecallMessage } from './MemoryRecallMessage';
 import { CompactionMessage } from './CompactionMessage';
+import { showsInterruptedNote } from '../../lib/interruptedRun.mts';
 
 /** Plumbing rows — context, not a speaker, so never labelled. */
 const UNSPOKEN = UNSPOKEN_SENDERS;
@@ -44,6 +45,8 @@ export const ChatMessageRow = React.memo<{
   onToggle?: (msgKey: string) => void;
   userMsgIndex?: number;
   userMsgRefs?: React.RefObject<Map<number, HTMLDivElement>>;
+  /** An interrupted run whose stop no later row already states. */
+  showInterrupted?: boolean;
   planProps: {
     pendingPlanAgentId?: string | null;
     agentContext?: Record<string, { tokens: number; messages: number; tokenLimit?: number }>;
@@ -53,7 +56,7 @@ export const ChatMessageRow = React.memo<{
     onResend?: (failed: ChatMessage) => void;
     inputRef: React.RefObject<HTMLTextAreaElement | null>;
   };
-}>(({ msg, msgKey, isUser, senderTag, isExpanded, onToggle, userMsgIndex, userMsgRefs, planProps }) => {
+}>(({ msg, msgKey, isUser, senderTag, isExpanded, onToggle, userMsgIndex, userMsgRefs, showInterrupted, planProps }) => {
   const toggle = useCallback(() => onToggle?.(msgKey), [onToggle, msgKey]);
   const registerRef = useCallback((el: HTMLDivElement | null) => {
     if (userMsgIndex == null || !userMsgRefs?.current) return;
@@ -109,7 +112,7 @@ export const ChatMessageRow = React.memo<{
             )}
           </>
         ) : (
-          <AgentMessage msg={msg} isExpanded={isExpanded} onToggle={toggle} planProps={planProps} />
+          <AgentMessage msg={msg} isExpanded={isExpanded} onToggle={toggle} planProps={planProps} showInterrupted={showInterrupted} />
         )}
       </div>
     </div>
@@ -198,6 +201,7 @@ export const ChatMessageList = React.memo<{
             onToggle={toggleExpanded}
             userMsgIndex={userMsgIndex}
             userMsgRefs={userMsgRefs}
+            showInterrupted={showsInterruptedNote(msg, messages[i + 1])}
             planProps={planProps}
           />
         );

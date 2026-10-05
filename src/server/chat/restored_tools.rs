@@ -189,7 +189,7 @@ fn cut(text: &str, max: usize) -> String {
     s
 }
 
-fn cut_args(v: Value) -> Value {
+pub(super) fn cut_args(v: Value) -> Value {
     match v {
         Value::String(s) => Value::String(cut(&s, ARG_CHARS)),
         Value::Array(xs) => Value::Array(xs.into_iter().map(cut_args).collect()),

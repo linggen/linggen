@@ -11,6 +11,7 @@ import { BudgetEmptyBlock } from './BudgetEmptyBlock';
 import { parseBudgetEmpty } from '../../lib/budgetEmpty';
 import { getMessagePhase, isTransientStatus, isToolStatusText } from './MessagePhase';
 import { visibleMessageText } from './MessageHelpers';
+import { INTERRUPTED_RUN_TEXT } from '../../lib/interruptedRun.mts';
 import { stripEmbeddedStructuredJson, isPlanMessage, normalizeMessageTextForDedup } from '../../lib/messageUtils';
 
 /** Render the inline sign-in CTA when a turn fails on an expired OAuth session.
@@ -76,7 +77,9 @@ export const AgentMessage: React.FC<{
   isExpanded: boolean;
   onToggle: () => void;
   planProps: SpecialBlockProps;
-}> = React.memo(({ msg, isExpanded, onToggle, planProps }) => {
+  /** The run stopped before it replied: a short note under its tool calls. */
+  showInterrupted?: boolean;
+}> = React.memo(({ msg, isExpanded, onToggle, planProps, showInterrupted }) => {
   const phase = getMessagePhase(msg);
   const contentBlocks = msg.content || [];
   const hasToolBlocks = contentBlocks.some(b => b.type === 'tool_use');
@@ -199,6 +202,13 @@ export const AgentMessage: React.FC<{
           </>
         );
       })()}
+
+      {showInterrupted && (
+        <div className="mt-1 flex items-center gap-1.5 text-[12px] text-slate-500 dark:text-slate-400 select-none">
+          <span className="text-slate-300 dark:text-slate-600" aria-hidden>⎿</span>
+          {INTERRUPTED_RUN_TEXT}
+        </div>
+      )}
 
       <TurnSummaryFooter msg={msg} />
 

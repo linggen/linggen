@@ -1,4 +1,5 @@
 use crate::engine::tool_render::sanitize_message_for_ui;
+use crate::server::chat::unanswered_run;
 use crate::server::ServerState;
 use axum::{
     extract::{Query, State},
@@ -240,7 +241,7 @@ struct WorkspaceStateResponse {
     active_task: Option<(crate::state_fs::StateFile, String)>,
     user_stories: Option<(crate::state_fs::StateFile, String)>,
     tasks: Vec<(crate::state_fs::StateFile, String)>,
-    messages: Vec<(crate::state_fs::StateFile, String)>,
+    messages: Vec<(serde_json::Value, String)>,
 }
 
 #[derive(Deserialize)]
@@ -272,32 +273,36 @@ pub(crate) async fn get_workspace_state(
         (None, None, Vec::new())
     };
 
-    let messages = match query.session_id.as_deref() {
-        Some(sid) if !sid.is_empty() => state
+    let sid = query.session_id.as_deref().unwrap_or_default();
+    let messages = match sid {
+        "" => Vec::new(),
+        sid => state
             .manager
             .global_sessions
             .get_chat_history(sid)
             .unwrap_or_default(),
-        _ => Vec::new(),
     };
+    let running = !sid.is_empty() && unanswered_run::session_running(&state.manager, sid).await;
 
-    let mapped_messages: Vec<(crate::state_fs::StateFile, String)> = messages
-        .into_iter()
-        .filter(|m| !m.content.contains("[HIDDEN]"))
-        .filter_map(|m| {
+    let mapped_messages = unanswered_run::with_unanswered_runs(
+        messages,
+        running,
+        |m| {
+            if m.content.contains("[HIDDEN]") {
+                return None;
+            }
             let cleaned = sanitize_message_for_ui(&m.from_id, &m.content)?;
-            Some((
-                crate::state_fs::StateFile::Message {
-                    id: format!("msg-{}", m.timestamp),
-                    from: m.from_id,
-                    to: m.to_id,
-                    ts: m.timestamp,
-                    task_id: None,
-                },
-                cleaned,
-            ))
-        })
-        .collect();
+            let meta = crate::state_fs::StateFile::Message {
+                id: format!("msg-{}", m.timestamp),
+                from: m.from_id,
+                to: m.to_id,
+                ts: m.timestamp,
+                task_id: None,
+            };
+            Some((serde_json::to_value(meta).ok()?, cleaned))
+        },
+        |run| (run.meta(), String::new()),
+    );
 
     Json(WorkspaceStateResponse {
         active_task,

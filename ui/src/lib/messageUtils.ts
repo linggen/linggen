@@ -7,6 +7,7 @@ import type {
   ContentBlock,
   SubagentTreeEntry,
 } from '../types';
+import { liveBubbleOfRun } from './interruptedRun.mts';
 import { dedupeActivityEntries, isProgressLineText, summarizeCollapsedActivity } from '../components/chat/utils/activity';
 
 // Re-export agent tree utilities (extracted to agentTreeUtils.ts)
@@ -563,6 +564,14 @@ export const mergeChatMessages = (persisted: ChatMessage[], live: ChatMessage[])
 
   // Pass 1: exact text match (existing logic).
   const persistedWithActivity = persisted.map((msg) => {
+    // A run that stopped before it replied: the live bubble this client
+    // still holds for it is that run — keep it, marked interrupted.
+    if (msg.interrupted) {
+      const liveIdx = liveBubbleOfRun(msg, live, mergedLiveIndices);
+      if (liveIdx < 0) return msg;
+      mergedLiveIndices.add(liveIdx);
+      return transferRichContent(msg, live[liveIdx]);
+    }
     const matchIdx = live.findIndex(
       (candidate, idx) =>
         !mergedLiveIndices.has(idx) &&
@@ -594,6 +603,7 @@ export const mergeChatMessages = (persisted: ChatMessage[], live: ChatMessage[])
       (candidate, idx) =>
         !mergedLiveIndices.has(idx) &&
         !candidate.isGenerating &&
+        !candidate.interrupted &&
         normalizeFrom(msg.from || msg.role) === normalizeFrom(candidate.from || candidate.role) &&
         Math.abs((msg.timestampMs ?? 0) - (candidate.timestampMs ?? 0)) <= 120_000 &&
         hasRichContent(candidate) &&
@@ -711,6 +721,8 @@ export const mergeChatMessages = (persisted: ChatMessage[], live: ChatMessage[])
   const deduped: typeof merged = [];
   const seenContent = new Set<string>();
   for (const msg of merged) {
+    // Interrupted runs have no words; each is its own run.
+    if (msg.interrupted) { deduped.push(msg); continue; }
     const key = `${normalizeFrom(msg.from || msg.role)}|${msg.to || ''}|${normalizeMessageTextForDedup(msg.text)}`;
     if (seenContent.has(key) && !msg.isGenerating) continue;
     seenContent.add(key);

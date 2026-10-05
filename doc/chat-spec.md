@@ -163,6 +163,13 @@ A session is a single conversation thread scoped to a project. Each session has 
   segments, so the UI's merge drops a saved row whose words are on screen that
   way. (Until 2026-09-11 only the final reply was saved, and a long tool-using
   turn — a Lingjing game day — reloaded as an empty chat.)
+- **A run cut off before its reply** (engine restart, cancel): the history
+  views (`/api/workspace/state`, `/api/missions/sessions/state`,
+  `/api/skill-sessions/state`) add one row after the run's last row —
+  `run: "interrupted"` with its calls in `tools` — and the UI shows those calls
+  plus a small "Interrupted" note. Answered runs, a session's still-running
+  run, and `[HIDDEN]` kickoffs (which may end in silence) get none
+  (`server/chat/unanswered_run.rs`).
 
 ### Multi-session architecture
 

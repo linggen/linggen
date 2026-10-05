@@ -1,4 +1,5 @@
 use crate::extensions::missions::{self, MissionDraft, MissionPermission};
+use crate::server::chat::unanswered_run;
 use crate::server::{ServerEvent, ServerState};
 use axum::{
     extract::{Path, Query, State},
@@ -564,10 +565,14 @@ pub(crate) async fn get_mission_session_state(
         .get_chat_history(&session_id)
         .unwrap_or_default();
 
-    let mapped: Vec<serde_json::Value> = messages
-        .into_iter()
-        .filter(|m| !m.is_observation)
-        .filter_map(|m| {
+    let running = unanswered_run::session_running(&state.manager, &session_id).await;
+    let mapped = unanswered_run::with_unanswered_runs(
+        messages,
+        running,
+        |m| {
+            if m.is_observation {
+                return None;
+            }
             let cleaned =
                 crate::engine::tool_render::sanitize_message_for_ui(&m.from_id, &m.content)?;
             Some(serde_json::json!([
@@ -580,8 +585,9 @@ pub(crate) async fn get_mission_session_state(
                 },
                 cleaned
             ]))
-        })
-        .collect();
+        },
+        |run| serde_json::json!([run.meta(), ""]),
+    );
 
     Json(serde_json::json!({
         "active_task": null,

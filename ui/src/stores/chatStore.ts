@@ -25,6 +25,7 @@ import {
   reconstructContentFromText,
 } from '../lib/messageUtils';
 import { cacheImages, restoreImages, clearImageCache } from '../lib/imageCache';
+import { interruptedRunMessage, isInterruptedRunMeta, type RunMeta } from '../lib/interruptedRun.mts';
 import { agentTracker } from '../lib/agentTracker';
 import { computeDisplay, mutate, mutateLast } from './chatMutationHelpers';
 import { useSessionStore } from './sessionStore';
@@ -647,6 +648,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
           .filter(([meta, body]) => !shouldHideInternalChatMessage(meta.from, body))
           .filter(([_meta, body]) => !isPersistedToolOnlyMessage(String(body || '')))
           .flatMap(([meta, body]) => {
+            // A run that stopped before it replied: its calls, marked interrupted.
+            if (isInterruptedRunMeta(meta as RunMeta)) return [interruptedRunMessage(meta as RunMeta)];
             const isUser = meta.from === 'user' || meta.from === 'system';
             let bodyStr = String(body || '');
 

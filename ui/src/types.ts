@@ -98,6 +98,10 @@ export interface ChatMessage {
   isError?: boolean;
   /** On a "Message failed to send" line: what was sent, so a tap can resend it. */
   resend?: { text: string; agentId: string; images?: string[]; persisted?: boolean };
+  /** A run that ended without a reply: its tool calls, then a short note. */
+  interrupted?: boolean;
+  /** When an interrupted run's last row was written (ms). */
+  runEndedMs?: number;
 }
 
 
