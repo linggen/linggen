@@ -4,8 +4,16 @@
 #   ./scripts/check.sh rust     cargo test + generated TS types current + clippy count
 #   ./scripts/check.sh ui       typecheck + lint
 #   ./scripts/check.sh js       node tests for the shared page helpers
+#   ./scripts/check.sh live [flags]
+#                               the live regression suite against the running
+#                               engine on 9527 (scripts/live-check.sh; --no-model
+#                               keeps it to the cases that call no model)
 set -uo pipefail
 cd "$(dirname "$0")/.."
+if [ "${1:-}" = "live" ]; then
+  shift
+  exec ./scripts/live-check.sh "$@"
+fi
 
 what=${1:-all}
 fail=0
