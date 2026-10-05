@@ -5,6 +5,10 @@ allowed-tools: [AskUser]
 user-invocable: true
 cwd: ~/.linggen/skills/dice
 members: [ling, yinyue]
+# A web page at /apps/dice/ (tests/e2e loads it).
+app:
+  launcher: web
+  entry: index.html
 place:
   yinyue:
     tools: [Peek]

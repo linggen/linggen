@@ -1,0 +1,14 @@
+# A new install (tests/e2e onboarding): what the engine's own defaults give a
+# first run (`Config::default`) — no models of the person's, Linggen Cloud as
+# the default, signed out — plus only what keeps it hermetic: the test's own
+# port and ling-mem.
+
+[server]
+url = "127.0.0.1:{{ENGINE_PORT}}"
+
+[agent]
+max_iters = 200
+ling_mem_url = "{{MEM_URL}}"
+
+[routing]
+default_models = ["deepseek-flash"]

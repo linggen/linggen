@@ -1,0 +1,12 @@
+{
+  "name": "linggen-e2e",
+  "private": true,
+  "description": "Playwright tests for the web UI on hermetic worlds (doc/test-design.md § 2)",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^25.2.0"
+  }
+}

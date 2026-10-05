@@ -6,6 +6,10 @@
 #                               nextest; needs a ling-mem binary — LING_MEM_BIN,
 #                               ../linggen-memory's release build, or PATH)
 #   ./scripts/check.sh ui       typecheck + lint
+#   ./scripts/check.sh e2e      Playwright on the web UI (tests/e2e), each test
+#                               on its own hermetic world; builds ui/dist and
+#                               the debug engine first. Not part of `all`
+#                               (~1 min with builds; needs Chromium + ling-mem)
 #   ./scripts/check.sh js       node tests for the shared page helpers
 #   ./scripts/check.sh live [flags]
 #                               the live regression suite against the running
@@ -54,6 +58,13 @@ if [ "$what" = all ] || [ "$what" = ui ]; then
   step bash -c 'cd ui && npx tsc --noEmit'
   step bash -c 'cd ui && npm run lint'
   step bash -c 'cd ui && node --test tests/*.test.mts'
+fi
+
+if [ "$what" = e2e ]; then
+  [ -d ui/node_modules ] || (cd ui && npm ci)
+  [ -d tests/e2e/node_modules ] || (cd tests/e2e && npm ci)
+  step bash -c 'cd tests/e2e && npx playwright install chromium'
+  step bash -c 'cd tests/e2e && npx playwright test'
 fi
 
 if [ "$what" = all ] || [ "$what" = js ]; then

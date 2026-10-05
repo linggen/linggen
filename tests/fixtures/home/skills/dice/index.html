@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Dice</title>
+</head>
+<body>
+  <!-- The dice table's page (tests/e2e: an app skill's page loads at
+       /apps/dice/). It reads its own data the way an app page does. -->
+  <h1>Dice table</h1>
+  <p id="table">…</p>
+  <script>
+    fetch('data/table.json')
+      .then((r) => r.json())
+      .then((t) => {
+        document.getElementById('table').textContent =
+          `${t.table.name}: ${t.player.name} rolled ${t.last_roll.value}`;
+      });
+  </script>
+</body>
+</html>

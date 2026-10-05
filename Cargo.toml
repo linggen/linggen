@@ -84,6 +84,13 @@ any-tts = { version = "0.1.2", optional = true, default-features = false, featur
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 any-tts = { version = "0.1.2", optional = true, default-features = false, features = ["kokoro", "download"] }
 
+# One hermetic world as its own process, for the web UI tests (tests/e2e):
+# the same world-builder as tests/system, run as a plain program.
+[[test]]
+name = "world"
+path = "tests/world/main.rs"
+harness = false
+
 [dev-dependencies]
 # TypeScript bindings for the wire types the UI reads — emitted by
 # `cargo test export_bindings` into ui/src/types/generated/ (scripts/gen-types.sh).

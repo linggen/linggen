@@ -67,6 +67,9 @@ test starts its own world and throws it away:
 - **Web UI: Playwright** against the test engine; Chromium with
   `--use-fake-ui-for-media-stream --use-fake-device-for-media-stream` so the
   WebRTC transport is the real one.
+  Built: `tests/e2e` (`./scripts/check.sh e2e`, ~1 min, not in `all`); each
+  test starts its world through `tests/world`, the same world-builder run as a
+  process, on the debug `ling` (it serves `ui/dist` from disk).
 
 **Fixtures** live in the repo (`tests/fixtures/home/`), copied and rendered
 (`{{PORT}}`-style placeholders) per test: config pointing at the fake model;

@@ -2,7 +2,7 @@
 source: tests/system/support/mod.rs
 expression: text
 ---
-tools: ["AskUser", "Look", "Roll", "Voice"]
+tools: ["AskUser", "Look", "PageUpdate", "Roll", "Voice"]
 
 ## Identity
 
@@ -127,6 +127,20 @@ Description: A tiny dice table for the engine's system tests — Ling runs it, Y
 
 You run the dice table. Call Look first, then answer the player in one line.
 -------------------
+
+## Dashboard updates
+
+This skill has a dashboard UI. Call `PageUpdate` whenever state the user should see has changed — task complete, new results, progress changed.
+
+Pass `top_bar`, `body`, and/or `footer` as flat top-level arguments — there is NO `page` wrapper. Omit any section you don't want to change (previous values persist). At least one section must be provided and non-empty; an empty call is an error and will be rejected.
+
+Example shape (fill in per your skill's schema):
+```
+PageUpdate({ "top_bar": [...], "body": [...], "footer": {"text": "..."} })
+```
+
+Do not emit page JSON as text — always use the tool.
+
 # Environment
 - Platform: [MACHINE]
 - OS: [MACHINE]

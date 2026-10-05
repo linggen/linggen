@@ -41,6 +41,9 @@ pub struct Setup {
     /// Seed this `tests/fixtures/memory/` file before the engine starts
     /// (needs `embedder`).
     pub memory_rows: Option<&'static str>,
+    /// The `tests/fixtures/<dir>` the home is copied from; `home` when unset
+    /// (`fresh` is a new install: no models, no sessions, no skills).
+    pub fixture: Option<&'static str>,
 }
 
 impl Setup {
@@ -68,7 +71,7 @@ impl World {
         vars.insert("ENGINE_PORT", port.to_string());
         vars.insert("MEM_URL", memory.url.clone());
         vars.insert("MODEL_URL", model.url());
-        home.install_fixtures(&vars);
+        home.install_fixtures(setup.fixture.unwrap_or("home"), &vars);
         guard::config_text(&std::fs::read_to_string(home.config_path()).expect("config"));
         if let Some(file) = setup.memory_rows {
             memory.seed(file, &vars).await;

@@ -78,10 +78,12 @@ impl Home {
         vars
     }
 
-    /// Copy `tests/fixtures/home/` into `LINGGEN_HOME`, rendering every
+    /// Copy `tests/fixtures/<dir>/` into `LINGGEN_HOME`, rendering every
     /// text file's placeholders.
-    pub fn install_fixtures(&self, vars: &Vars) {
-        let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/home");
+    pub fn install_fixtures(&self, dir: &str, vars: &Vars) {
+        let src = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(dir);
         copy_rendered(&src, &self.linggen_home(), vars);
     }
 }
