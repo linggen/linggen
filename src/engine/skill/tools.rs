@@ -169,6 +169,7 @@ fn stamp_tool(skill: &Skill, id: &str, at: &str) -> Result<SkillToolDef, Refusal
         timeout_ms: STAMP_TIMEOUT_MS,
         max_output_bytes: 4096,
         page_only: true,
+        others_read: Vec::new(),
         pet: false,
         skill_name: Some(skill.name.clone()),
         skill_dir: skill.skill_dir.clone(),

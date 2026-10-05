@@ -212,6 +212,10 @@ A skill's page runs the skill's declared shell tools through `POST /api/skills/{
 
 `pet: true` offers a tool to the companion (Yinyue), who calls it through her `AppTool` — `AppTool` with no `tool` lists what the installed apps offer her. The engine runs it through the same door as a page (lock, grant, cloud gate) and refuses any tool not marked `pet: true` or whose `tier` is above `read`: she reads an app's state, never changes it.
 
+### What others read
+
+At a shared table (`shared-session-spec.md`) another member reads a tool's call as labelled text, with the head of its result. A tool whose JSON result opens with words for its caller — instructions, a guide — names the facts others read instead: `others_read: [scene.place, scene.setup, scene.people.name]`. Each entry is a dotted path (through a list, each item's); the reader gets `{"scene.place": …}` with the paths present, in order. Output with none of them (a refusal) falls back to the head.
+
 ### Output budget
 
 `max_output_bytes` caps each of stdout and stderr at 64 KB by default. Past

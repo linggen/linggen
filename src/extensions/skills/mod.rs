@@ -92,6 +92,7 @@ fn page_update_tool_def() -> SkillToolDef {
         timeout_ms: 1000,
         max_output_bytes: crate::engine::tools::DEFAULT_MAX_TOOL_OUTPUT_BYTES,
         page_only: false,
+        others_read: Vec::new(),
         pet: false,
         skill_name: None,
         skill_dir: None,
@@ -907,6 +908,14 @@ This is the skill content."#;
         assert_eq!(words.senses, vec!["user_words".to_string()]);
         let bare = parse_skill_text("---\nname: x\ndescription: y\n---\n", SkillSource::Global);
         assert!(bare.unwrap().senses.is_empty());
+    }
+
+    #[test]
+    fn a_tool_declares_what_others_read_of_its_result() {
+        let text = "---\nname: game\ndescription: Play\ntools:\n  - name: Look\n    description: Look.\n    cmd: \"echo hi\"\n    others_read: [scene.place, page_did]\n  - name: Bag\n    description: Bag.\n    cmd: \"echo hi\"\n---\nBody";
+        let skill = parse_skill_text(text, SkillSource::Global).unwrap();
+        assert_eq!(skill.tool_defs[0].others_read, ["scene.place", "page_did"]);
+        assert!(skill.tool_defs[1].others_read.is_empty());
     }
 
     #[test]

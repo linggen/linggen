@@ -10,7 +10,9 @@
 //! - its own tool calls come back as native call/result pairs (or the text
 //!   form for a model without native tools — `restored_tools`); another
 //!   member's come back as labeled text (`[Ling used Look → …]`), never as
-//!   pairs — a provider rejects or mishandles calls it did not make;
+//!   pairs — a provider rejects or mishandles calls it did not make. Of
+//!   that result the reader gets what the tool declares for others
+//!   (`others_read`), else the output's head;
 //! - recall and compaction rows are system notes, for every member;
 //! - another member's hidden kickoff (`[HIDDEN] …`) is that member's alone.
 //!
@@ -23,13 +25,16 @@ use super::ChatRunCtx;
 use crate::engine::{AgentEngine, ThreadMark};
 use crate::message::ChatMessage;
 use crate::state_fs::sessions::ChatMsg;
-use serde_json::Value;
-use std::collections::HashSet;
+use serde_json::{Map, Value};
+use std::collections::{HashMap, HashSet};
 
 /// Another member's tool calls a reader sees, newest last; older ones drop.
 const OTHERS_KEEP_CALLS: usize = 8;
 /// How much of another member's tool result a reader sees.
 const OTHERS_RESULT_CHARS: usize = 1200;
+/// How much of the fields a tool declares for others (`others_read`) a
+/// reader sees: chosen facts, so more of them than of a raw head.
+const OTHERS_DECLARED_CHARS: usize = 2000;
 /// How much of another member's call arguments a reader sees.
 const OTHERS_ARG_CHARS: usize = 160;
 
@@ -41,6 +46,9 @@ pub(crate) struct Reader<'a> {
     pub agents: &'a HashSet<String>,
     /// The reader's model calls tools natively.
     pub native: bool,
+    /// The session skill's tools that declare what others read of their
+    /// result (`others_read`), by name.
+    pub others_read: &'a HashMap<String, Vec<String>>,
 }
 
 /// Bring the engine's thread up to the session's before a turn. The cached
@@ -75,10 +83,12 @@ pub(super) async fn rebuild(engine: &mut AgentEngine, ctx: &ChatRunCtx) -> bool 
         rows.pop();
     }
     let agents = speaking_agents(ctx, &rows).await;
+    let others_read = declared_for_others(ctx, sid).await;
     let reader = Reader {
         id: &ctx.agent_id,
         agents: &agents,
         native: engine.model_manager.supports_tools(&engine.model_id),
+        others_read: &others_read,
     };
     engine.chat_history = build(&rows, &reader);
     tracing::info!(
@@ -140,6 +150,30 @@ async fn speaking_agents(ctx: &ChatRunCtx, rows: &[ChatMsg]) -> HashSet<String> 
         }
     }
     agents
+}
+
+/// The session skill's tools that declare `others_read`: name → paths.
+/// Empty for a session without a skill.
+async fn declared_for_others(ctx: &ChatRunCtx, sid: &str) -> HashMap<String, Vec<String>> {
+    let skill_name = ctx
+        .manager
+        .global_sessions
+        .get_session_meta(sid)
+        .ok()
+        .flatten()
+        .and_then(|m| m.skill);
+    let Some(skill) = (match skill_name {
+        Some(name) => ctx.manager.skills.get_skill(&name).await,
+        None => None,
+    }) else {
+        return HashMap::new();
+    };
+    skill
+        .tool_defs
+        .into_iter()
+        .filter(|t| !t.others_read.is_empty())
+        .map(|t| (t.name, t.others_read))
+        .collect()
 }
 
 /// The rows from the newest compaction summary on (all of them when none).
@@ -205,7 +239,10 @@ fn read_tool_row(
         Some((agent, ToolRow::Call { name, args })) if i >= others_first => {
             others.call(agent, name, args)
         }
-        Some((agent, ToolRow::Result { name, text })) => others.result(&agent, &name, &text),
+        Some((agent, ToolRow::Result { name, text })) => {
+            let seen = for_others(&text, reader.others_read.get(&name));
+            others.result(&agent, &name, seen)
+        }
         _ => {}
     }
 }
@@ -300,13 +337,13 @@ impl OthersTools {
     }
 
     /// A result answers the first call of that member and name still waiting.
-    fn result(&mut self, agent: &str, name: &str, text: &str) {
+    fn result(&mut self, agent: &str, name: &str, seen: String) {
         if let Some(c) = self
             .calls
             .iter_mut()
             .find(|c| c.agent == agent && c.name == name && c.result.is_none())
         {
-            c.result = Some(cut(text, OTHERS_RESULT_CHARS));
+            c.result = Some(seen);
         }
     }
 
@@ -337,6 +374,68 @@ impl OtherCall {
             super::sender_label(&self.agent),
             self.name
         )
+    }
+}
+
+/// What another member reads of a tool result: the fields the tool
+/// declares for others when its output is JSON that has any of them, else
+/// the head of its output. A command's frame (`Bash output …/STDOUT:`) is
+/// dropped when it succeeded — the reader wants what it said.
+fn for_others(text: &str, declared: Option<&Vec<String>>) -> String {
+    let body = command_stdout(text).unwrap_or(text);
+    match declared.and_then(|paths| declared_fields(body, paths)) {
+        Some(fields) => cut(&fields, OTHERS_DECLARED_CHARS),
+        None => cut(body, OTHERS_RESULT_CHARS),
+    }
+}
+
+/// A successful command's stdout, out of its rendered frame.
+fn command_stdout(text: &str) -> Option<&str> {
+    let rest = text.strip_prefix("Bash output (exit_code: Some(0)):\nSTDOUT:\n")?;
+    let (stdout, _) = rest.rsplit_once("\nSTDERR:\n")?;
+    Some(stdout.trim_end())
+}
+
+/// `{"scene.place": …, …}` — the declared paths `body` has, in declared
+/// order; `None` when it isn't a JSON object or has none of them.
+fn declared_fields(body: &str, paths: &[String]) -> Option<String> {
+    let v: Value = serde_json::from_str(body).ok()?;
+    if !v.is_object() {
+        return None;
+    }
+    let fields: Map<String, Value> = paths
+        .iter()
+        .filter_map(|p| {
+            let keys: Vec<&str> = p.split('.').collect();
+            pick(&v, &keys).map(|found| (p.clone(), found))
+        })
+        .collect();
+    (!fields.is_empty()).then(|| Value::Object(fields).to_string())
+}
+
+/// The value at `keys` under `v`; through a list, each item's. Null and
+/// empty values count as absent.
+fn pick(v: &Value, keys: &[&str]) -> Option<Value> {
+    let Some((key, rest)) = keys.split_first() else {
+        return is_present(v).then(|| v.clone());
+    };
+    match v {
+        Value::Object(m) => pick(m.get(*key)?, rest),
+        Value::Array(items) => {
+            let found: Vec<Value> = items.iter().filter_map(|i| pick(i, keys)).collect();
+            (!found.is_empty()).then_some(Value::Array(found))
+        }
+        _ => None,
+    }
+}
+
+fn is_present(v: &Value) -> bool {
+    match v {
+        Value::Null => false,
+        Value::String(s) => !s.is_empty(),
+        Value::Array(a) => !a.is_empty(),
+        Value::Object(m) => !m.is_empty(),
+        _ => true,
     }
 }
 
@@ -439,6 +538,7 @@ mod tests {
             id: "yinyue",
             agents: &agents,
             native: true,
+            others_read: &HashMap::new(),
         };
         let got = shape(&build(&table(), &reader));
         let want: Vec<(String, String)> = [
@@ -470,6 +570,7 @@ mod tests {
             id: "ling",
             agents: &agents,
             native: true,
+            others_read: &HashMap::new(),
         };
         let got = shape(&build(&table(), &reader));
         let want: Vec<(String, String)> = [
@@ -505,6 +606,7 @@ mod tests {
                 id,
                 agents: &agents,
                 native: true,
+                others_read: &HashMap::new(),
             };
             let thread = build(&rows, &reader);
             assert_eq!(thread[0].role, "system", "{id}");
@@ -534,6 +636,7 @@ mod tests {
             id: "ling",
             agents: &agents,
             native: true,
+            others_read: &HashMap::new(),
         };
         let got: Vec<String> = build(&rows, &ling).into_iter().map(|m| m.content).collect();
         assert_eq!(got, ["[Yinyue]: 别怕。", "[HIDDEN] answer her once"]);
@@ -574,6 +677,7 @@ mod tests {
             id: "yinyue",
             agents: &agents,
             native: false,
+            others_read: &HashMap::new(),
         };
         let thread = build(&rows, &reader);
         let note = &thread[1].content;
@@ -582,5 +686,100 @@ mod tests {
         assert!(note
             .lines()
             .all(|l| l.chars().count() < OTHERS_RESULT_CHARS + 120));
+    }
+
+    /// A command result as the engine renders it.
+    fn framed(stdout: &str) -> String {
+        format!("Bash output (exit_code: Some(0)):\nSTDOUT:\n{stdout}\n\nSTDERR:\n")
+    }
+
+    /// A long Look: instructions to its caller first, the facts deep inside.
+    fn long_look() -> String {
+        serde_json::json!({
+            "then": "Tell the scene first. ".repeat(80),
+            "ask": null,
+            "chapter": {"id": "h04", "title": "第三回"},
+            "scene": {
+                "place": "沉鼎观 · 山门 · 石壁",
+                "setup": "一面石壁，刻着九个空格。",
+                "people": [{"id": "qulao", "name": "瞿老"}, {"id": "a", "name": "阿禾"}],
+                "lines": []
+            },
+            "guide": {"look": "x".repeat(9000)}
+        })
+        .to_string()
+    }
+
+    fn her_read_of(rows: &[ChatMsg], declared: &HashMap<String, Vec<String>>) -> String {
+        let agents = agents();
+        let reader = Reader {
+            id: "yinyue",
+            agents: &agents,
+            native: true,
+            others_read: declared,
+        };
+        build(rows, &reader)[1].content.clone()
+    }
+
+    fn look_rows(text: &str) -> Vec<ChatMsg> {
+        vec![
+            row("ling", "user", "ling", "go", false),
+            call("ling", "Look"),
+            result("ling", "Look", text),
+            row("ling", "ling", "user", "到了山门。", false),
+        ]
+    }
+
+    /// What a tool declares for others is what she reads of it — the
+    /// place and scene, not its caller's instructions — in declared order,
+    /// through lists, with absent and empty fields left out.
+    #[test]
+    fn she_reads_the_fields_a_tool_declares_for_others() {
+        let paths = [
+            "scene.place",
+            "scene.setup",
+            "scene.people.name",
+            "scene.lines",
+            "page_did",
+        ];
+        let declared = HashMap::from([(
+            "Look".to_string(),
+            paths.iter().map(|p| p.to_string()).collect(),
+        )]);
+        let note = her_read_of(&look_rows(&framed(&long_look())), &declared);
+        assert_eq!(
+            note,
+            r#"[Ling used Look {"said":"去临淄"} → {"scene.place":"沉鼎观 · 山门 · 石壁","scene.setup":"一面石壁，刻着九个空格。","scene.people.name":["瞿老","阿禾"]}]"#
+        );
+    }
+
+    /// Without a declaration she reads the head of what the command said,
+    /// out of its frame; so too when the output has none of the fields (a
+    /// refusal) or isn't JSON.
+    #[test]
+    fn undeclared_or_unmatched_results_read_as_the_outputs_head() {
+        let none = HashMap::new();
+        let note = her_read_of(&look_rows(&framed(&long_look())), &none);
+        assert!(
+            note.contains(r#"→ {"then":"Tell the scene first."#),
+            "{note}"
+        );
+        assert!(!note.contains("Bash output"));
+        assert!(!note.contains("沉鼎观"), "the head only");
+
+        let declared = HashMap::from([("Look".to_string(), vec!["scene.place".to_string()])]);
+        let refusal = framed(r#"{"ok":false,"why":"no-such-exit"}"#);
+        let note = her_read_of(&look_rows(&refusal), &declared);
+        assert!(
+            note.ends_with(r#"→ {"ok":false,"why":"no-such-exit"}]"#),
+            "{note}"
+        );
+
+        let failed = "Bash output (exit_code: Some(1)):\nSTDOUT:\n\nSTDERR:\nboom\n";
+        let note = her_read_of(&look_rows(failed), &declared);
+        assert!(
+            note.contains("exit_code: Some(1)") && note.contains("boom"),
+            "{note}"
+        );
     }
 }

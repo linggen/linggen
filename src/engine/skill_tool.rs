@@ -105,6 +105,14 @@ pub struct SkillToolDef {
     /// model. A page's door to the same scripts the model's tools run.
     #[serde(default)]
     pub page_only: bool,
+    /// `others_read: [scene.place, …]` — what another member at a shared
+    /// table reads of this tool's JSON result (`doc/shared-session-spec.md`
+    /// § The thread): the named fields, as dotted paths (through a list,
+    /// each item's), instead of the head of the whole output. The rest —
+    /// instructions to the caller, data for its own next move — stays the
+    /// caller's. Absent: the head of the output.
+    #[serde(default)]
+    pub others_read: Vec<String>,
     /// `pet: true` — the companion may call it through `AppTool` to read the
     /// skill's state. Only a read-tier shell tool qualifies; the engine
     /// refuses anything else whatever the flag says.
@@ -471,6 +479,7 @@ mod tests {
             timeout_ms: 30000,
             max_output_bytes,
             page_only: false,
+            others_read: Vec::new(),
             pet: false,
             skill_name: None,
             skill_dir: None,
@@ -584,6 +593,7 @@ mod tests {
             timeout_ms: 30000,
             max_output_bytes: default_max_output_bytes(),
             page_only: false,
+            others_read: Vec::new(),
             pet: false,
             skill_name: None,
             skill_dir: None,

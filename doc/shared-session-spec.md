@@ -70,6 +70,10 @@ agent's context is built from it:
   calls → labelled text** (`[Ling used Look → …]`), never native pairs —
   providers reject or mis-handle calls they did not make (Anthropic with no
   tools defined, Gemini thought signatures).
+  Of the result the reader gets the fields the tool declares for others
+  (`others_read`, `skill-spec.md` § What others read) — the facts, not the
+  caller's instructions — else the head of the command's output, out of its
+  `Bash output … STDOUT:` frame. Only the newest 8 such calls come through.
 - Recall → persisted rows, shown to every member as system notes. Whose
   recall policy applies: the session's (owner chat, skill scope).
 - Moments and heralds land as rows in the session, not side channels.
