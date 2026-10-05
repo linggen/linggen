@@ -298,6 +298,7 @@ pub(crate) async fn get_workspace_state(
                 to: m.to_id,
                 ts: m.timestamp,
                 task_id: None,
+                client_id: m.client_id,
             };
             Some((serde_json::to_value(meta).ok()?, cleaned))
         },

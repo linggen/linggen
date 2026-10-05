@@ -193,6 +193,7 @@ mod tests {
             content: content.into(),
             timestamp: ts,
             is_observation: obs,
+            client_id: None,
         }
     }
     fn user(text: &str, ts: u64) -> ChatMsg {

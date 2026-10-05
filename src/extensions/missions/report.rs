@@ -196,6 +196,7 @@ mod tests {
             content: content.into(),
             timestamp: 0,
             is_observation: true,
+            client_id: None,
         }
     }
 

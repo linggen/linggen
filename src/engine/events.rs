@@ -137,6 +137,11 @@ pub enum ServerEvent {
         run_id: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         parent_agent_id: Option<String>,
+        /// The person's message: the id its surface gave it (`ChatMsg::
+        /// client_id`), echoed so that surface swaps its own bubble for
+        /// what was kept instead of showing both.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        client_id: Option<String>,
     },
     SubagentSpawned {
         parent_id: String,
@@ -393,6 +398,7 @@ impl ServerEvent {
                 session_id,
                 run_id,
                 parent_agent_id: parent_id,
+                client_id: None,
             }),
             AgentEvent::SubagentSpawned {
                 parent_id,

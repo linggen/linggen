@@ -225,6 +225,8 @@ It waits for the run to end instead when a question is open (a message never can
 
 A message that opens with `@name` (or `@@name`) goes to that agent: the name is the longest id or alias the text starts with, case-insensitive, and a CJK name needs no space after it (`@银月你好`). The agent joins the session as a member if it wasn't one (`shared-session-spec.md`) and answers there, reading the session's whole thread. A message naming nobody (no `@name`, no `agent_id`) goes to the session's default responder — Ling on the Mac when seated, else the first member. The reply is `{status: "absent"}` when the session's skill keeps that agent away, and `{status: "unavailable"}` when the companion can't come (a proxy-room consumer, or the pet is off); no turn runs then. One agent speaks at a time: a message while anyone's turn runs is queued. The session's title comes from the words after the name.
 
+The saved row keeps the words after the name (`to` says whom it was for; other members read it as `[User → Yinyue]: …`). The surface that sent it gives its bubble an id and sends it as `client_id`; the row keeps it and its `message` event echoes it, so the bubble takes the kept words — matched by id, not by text — and shows once, live and after a reload.
+
 ## Suggestions
 
 A row of short buttons above the chat input, and a grey hint inside it, so a person can talk to an agent without composing a message. A tap sends a button's words as their own message; Tab puts the hint in the input and Enter sends it. Both hide while they type and while a turn runs; at most four buttons.

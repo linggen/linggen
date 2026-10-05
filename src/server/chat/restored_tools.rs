@@ -210,6 +210,7 @@ mod tests {
             content: content.into(),
             timestamp: 0,
             is_observation: obs,
+            client_id: None,
         }
     }
     fn call(name: &str) -> ChatMsg {

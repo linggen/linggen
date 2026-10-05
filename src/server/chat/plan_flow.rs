@@ -180,6 +180,7 @@ pub(super) async fn run_plan_execution(ctx: &ChatRunCtx, engine: &mut crate::eng
                             session_id: ctx.session_id.clone(),
                             run_id: None,
                             parent_agent_id: None,
+                            client_id: None,
                         });
                     }
                 }
@@ -424,6 +425,7 @@ async fn persist_plan_message(
         content: plan_json.to_string(),
         timestamp: crate::util::now_ts_secs(),
         is_observation: false,
+        client_id: None,
     };
     if !manager.update_last_plan_message(session_id, &msg).await {
         manager.add_chat_message(root, session_id, &msg).await;

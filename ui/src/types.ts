@@ -97,11 +97,14 @@ export interface ChatMessage {
   /** True when the message represents an error (agent loop failure, etc.). */
   isError?: boolean;
   /** On a "Message failed to send" line: what was sent, so a tap can resend it. */
-  resend?: { text: string; agentId: string; images?: string[]; persisted?: boolean };
+  resend?: { text: string; agentId: string; images?: string[]; persisted?: boolean; clientId?: string };
   /** A run that ended without a reply: its tool calls, then a short note. */
   interrupted?: boolean;
   /** When an interrupted run's last row was written (ms). */
   runEndedMs?: number;
+  /** A person's message: the id this surface gave its bubble, sent with it
+   *  and kept on the saved row — the bubble and its row match by it. */
+  clientId?: string;
 }
 
 
@@ -117,6 +120,8 @@ export interface PersistedMeta {
   from: string;
   to?: string;
   ts: number;
+  /** A person's message: the sending surface's id for its bubble. */
+  client_id?: string | null;
   [key: string]: unknown;
 }
 

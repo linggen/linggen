@@ -206,6 +206,11 @@ pub struct ChatMsg {
     pub content: String,
     pub timestamp: u64,
     pub is_observation: bool,
+    /// A person's message: the id the surface that sent it gave its own
+    /// bubble, so that surface can match the two (the row may hold other
+    /// words than were typed — an `@name` is not kept). None otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
 }
 
 impl SessionStore {
@@ -702,6 +707,7 @@ mod tests {
             content: "Hello".into(),
             timestamp: 1000,
             is_observation: false,
+            client_id: None,
         };
         let msg2 = ChatMsg {
             agent_id: "ling".into(),
@@ -710,6 +716,7 @@ mod tests {
             content: "Hi there".into(),
             timestamp: 1001,
             is_observation: false,
+            client_id: None,
         };
         store.add_chat_message("s1", &msg1).unwrap();
         store.add_chat_message("s1", &msg2).unwrap();
@@ -718,6 +725,31 @@ mod tests {
         assert_eq!(history.len(), 2);
         assert_eq!(history[0].content, "Hello");
         assert_eq!(history[1].content, "Hi there");
+    }
+
+    /// A person's row keeps the id its surface sent it with; a row without
+    /// one writes no key, and an older row (no key) reads as None.
+    #[test]
+    fn a_rows_client_id_round_trips_and_is_optional() {
+        let row = |client_id: Option<&str>| ChatMsg {
+            agent_id: "yinyue".into(),
+            from_id: "user".into(),
+            to_id: "yinyue".into(),
+            content: "wish me luck".into(),
+            timestamp: 1000,
+            is_observation: false,
+            client_id: client_id.map(str::to_string),
+        };
+        let kept = serde_json::to_string(&row(Some("c-1-ab"))).unwrap();
+        let back: ChatMsg = serde_json::from_str(&kept).unwrap();
+        assert_eq!(back.client_id.as_deref(), Some("c-1-ab"));
+        let plain = serde_json::to_string(&row(None)).unwrap();
+        assert!(!plain.contains("client_id"));
+        let old = r#"{"agent_id":"ling","from_id":"user","to_id":"ling","content":"hi","timestamp":1,"is_observation":false}"#;
+        assert_eq!(
+            serde_json::from_str::<ChatMsg>(old).unwrap().client_id,
+            None
+        );
     }
 
     #[test]
@@ -755,6 +787,7 @@ mod tests {
                     content: "for ling".into(),
                     timestamp: 1000,
                     is_observation: false,
+                    client_id: None,
                 },
             )
             .unwrap();
@@ -768,6 +801,7 @@ mod tests {
                     content: "for coder".into(),
                     timestamp: 1001,
                     is_observation: false,
+                    client_id: None,
                 },
             )
             .unwrap();
@@ -813,6 +847,7 @@ mod tests {
                     content: "hello".into(),
                     timestamp: 1000,
                     is_observation: false,
+                    client_id: None,
                 },
             )
             .unwrap();
@@ -856,6 +891,7 @@ mod tests {
                     content: "hello".into(),
                     timestamp: 1000,
                     is_observation: false,
+                    client_id: None,
                 },
             )
             .unwrap();
@@ -947,6 +983,7 @@ mod tests {
                     content: "hello".into(),
                     timestamp: 1000,
                     is_observation: false,
+                    client_id: None,
                 },
             )
             .unwrap();

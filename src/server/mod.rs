@@ -329,6 +329,7 @@ mod tests {
                 session_id: None,
                 run_id: None,
                 parent_agent_id: None,
+                client_id: None,
             },
             ServerEvent::SubagentSpawned {
                 parent_id: "ling".into(),

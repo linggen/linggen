@@ -20,11 +20,26 @@ fn a_message_names_its_role_and_keeps_null_routing_keys() {
         session_id: Some("s".into()),
         run_id: None,
         parent_agent_id: None,
+        client_id: None,
     });
     assert_eq!(
         d,
         json!({"from": "user", "to": "ling", "role": "user", "run_id": null, "parent_agent_id": null})
     );
+}
+
+#[test]
+fn a_persons_message_echoes_its_client_id() {
+    let d = data(ServerEvent::Message {
+        from: "user".into(),
+        to: "yinyue".into(),
+        content: "wish me luck".into(),
+        session_id: Some("s".into()),
+        run_id: None,
+        parent_agent_id: None,
+        client_id: Some("c-1-ab".into()),
+    });
+    assert_eq!(d["client_id"], json!("c-1-ab"));
 }
 
 #[test]

@@ -185,6 +185,7 @@ pub async fn run(
             content: prompt.to_string(),
             timestamp: crate::util::now_ts_secs(),
             is_observation: false,
+            client_id: None,
         },
     );
 

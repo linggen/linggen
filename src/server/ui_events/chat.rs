@@ -22,6 +22,7 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
             session_id,
             run_id,
             parent_agent_id,
+            client_id,
         } => {
             let cleaned = crate::engine::tool_render::sanitize_message_for_ui(&from, &content)?;
             Some(
@@ -40,6 +41,7 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
                         // was leaking "ENCODED encoded=0" into chat).
                         run_id,
                         parent_agent_id,
+                        client_id,
                     }),
             )
         }

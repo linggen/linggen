@@ -18,6 +18,7 @@ import { postToParent } from '../lib/parentFrame';
 import { agentMentionLabel, leadingAgentMention, mentionLanguage } from '../lib/chatMentions.mts';
 import { turnlessReply } from '../lib/agentTurns.mts';
 import { chatAgentOf } from '../lib/sessionMembers.mts';
+import { newClientId } from '../lib/sentMessage.mts';
 
 /**
  * Resolve the effective project root: explicit override > selected project >
@@ -77,7 +78,7 @@ export function useChatActions(
     } catch (e) { console.error('Error clearing chat:', e); }
   }, [runningMainRunIds]);
 
-  const sendChatMessage = useCallback(async (userMessage: string, targetAgent?: string, images?: string[], opts?: { resend?: boolean }) => {
+  const sendChatMessage = useCallback(async (userMessage: string, targetAgent?: string, images?: string[], opts?: { resend?: boolean; clientId?: string }) => {
     if (!userMessage.trim() && !(images && images.length > 0)) return;
     const root = getProjectRoot(projectRootRef.current);
     const { activeSessionId: sid } = useSessionStore.getState();
@@ -96,13 +97,17 @@ export function useChatActions(
     const agentToUse = addressed || chatAgentOf('', useUiStore.getState().sessionMembers);
     const now = new Date();
     const trimmed = userMessage.trim();
+    // The bubble's id, sent with the message: the saved row and its event
+    // carry it back, so the bubble is matched to them by id — not by words,
+    // which differ once the server drops a leading `@name`.
+    const clientId = opts?.clientId || newClientId();
     const ui = useUiStore.getState();
     const chat = useChatStore.getState();
 
     // A resend's bubble is already on screen from the first try.
     if (!opts?.resend && trimmed !== '/help' && trimmed !== '/status' && trimmed !== '/clear' && trimmed !== '/compact' && !trimmed.startsWith('/compact ') && !trimmed.startsWith('/model') && !trimmed.startsWith('!')) {
       chat.addMessage({
-        role: 'user', from: 'user', to: agentToUse, text: userMessage,
+        role: 'user', from: 'user', to: agentToUse, text: userMessage, clientId,
         timestamp: now.toLocaleTimeString(), timestampMs: now.getTime(), isGenerating: false,
         ...(images && images.length > 0 ? { images, imageCount: images.length } : {}),
       });
@@ -270,6 +275,7 @@ export function useChatActions(
         ...(sessionModel ? { model_id: sessionModel } : {}),
         ...(images && images.length > 0 ? { images } : {}),
         followups: true,
+        client_id: clientId,
       });
       if (data?.session_id && !sid) {
         if (data.status !== 'queued' && !turnlessReply(data.status)) useServerStore.getState().setPendingSend(data.session_id, true, data.agent_id || agentToUse);
@@ -337,7 +343,7 @@ export function useChatActions(
           role: 'agent', from: 'system', to: 'user',
           text, isError: true,
           timestamp: ts.toLocaleTimeString(), timestampMs: ts.getTime(), isGenerating: false,
-          resend: { text: userMessage, agentId: agentToUse, ...(images && images.length > 0 ? { images } : {}) },
+          resend: { text: userMessage, agentId: agentToUse, clientId, ...(images && images.length > 0 ? { images } : {}) },
         });
       }
     }
@@ -347,9 +353,10 @@ export function useChatActions(
   const resendMessage = useCallback((failed: ChatMessage) => {
     if (!failed.resend) return;
     useChatStore.getState().removeMessage(failed);
-    const { text, agentId, images, persisted } = failed.resend;
-    // A send that never landed already has its bubble; a persisted one gets a new one.
-    sendChatMessage(text, agentId, images, { resend: !persisted });
+    const { text, agentId, images, persisted, clientId } = failed.resend;
+    // A send that never landed already has its bubble (and keeps its id); a
+    // persisted one gets a new one.
+    sendChatMessage(text, agentId, images, persisted ? undefined : { resend: true, clientId });
   }, [sendChatMessage]);
 
   const respondToAskUser = useCallback(async (questionId: string, answers: AskUserAnswer[]) => {

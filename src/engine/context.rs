@@ -79,6 +79,7 @@ impl AgentEngine {
                         content: format!("Tool {}: {}", tool, rendered),
                         timestamp: crate::util::now_ts_secs(),
                         is_observation: true,
+                        client_id: None,
                     },
                 )
                 .await;
@@ -143,6 +144,7 @@ impl AgentEngine {
                     content: text,
                     timestamp: crate::util::now_ts_secs(),
                     is_observation: false,
+                    client_id: None,
                 },
             )
             .await;
@@ -214,6 +216,7 @@ impl AgentEngine {
                             content: content.to_string(),
                             timestamp: crate::util::now_ts_secs(),
                             is_observation: false,
+                            client_id: None,
                         },
                     )
                     .await;

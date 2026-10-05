@@ -35,6 +35,9 @@ pub enum StateFile {
         ts: u64,
         #[serde(default)]
         task_id: Option<String>,
+        /// The sending surface's id for a person's message (`ChatMsg::client_id`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        client_id: Option<String>,
     },
 }
 

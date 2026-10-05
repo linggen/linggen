@@ -27,6 +27,7 @@ import {
 import { cacheImages, restoreImages, clearImageCache } from '../lib/imageCache';
 import { interruptedRunMessage, isInterruptedRunMeta, type RunMeta } from '../lib/interruptedRun.mts';
 import { agentTracker } from '../lib/agentTracker';
+import { confirmSent } from '../lib/sentMessage.mts';
 import { computeDisplay, mutate, mutateLast } from './chatMutationHelpers';
 import { useSessionStore } from './sessionStore';
 import { useUserStore } from './userStore';
@@ -66,6 +67,9 @@ interface ChatState {
   updateSubagentTree: (parentId: string, subagentId: string, updater: (entry: SubagentTreeEntry) => SubagentTreeEntry) => void;
   addSubagentToTree: (parentId: string, entry: SubagentTreeEntry) => void;
   finalizeMessage: (agentId: string, content: string, to: string, tsMs: number, elapsed?: number, ctxTokens?: number, isError?: boolean) => void;
+  /** The engine kept a message this surface sent (its bubble's `clientId`):
+   *  the bubble takes the kept words. False when no bubble has that id. */
+  confirmSent: (clientId: string, text: string, to: string) => boolean;
   finalizeOnIdle: (agentId: string, elapsed?: number, ctxTokens?: number) => void;
   contentBlockStart: (agentId: string, block: ContentBlock) => void;
   contentBlockUpdate: (agentId: string, blockId: string, status?: ContentBlock['status'], summary?: string, isError?: boolean, diffData?: ContentBlock['diffData'], bashOutput?: string[]) => void;
@@ -374,6 +378,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
       isError,
     }];
   })),
+
+  confirmSent: (clientId, text, to) => {
+    let found = false;
+    set(mutate((msgs) => {
+      const next = confirmSent(msgs, clientId, text, to);
+      found = next !== null;
+      return next ?? msgs;
+    }));
+    return found;
+  },
 
   finalizeOnIdle: (agentId, elapsed, ctxTokens) => set(mutate((state) => {
     const idx = findLastGeneratingMessageIndex(state, agentId);
@@ -687,6 +701,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               timestampMs: Number(meta.ts || 0) * 1000,
               ...(restored ? { content: restored.content, toolCount: restored.toolCount } : {}),
               ...(isError ? { isError: true } : {}),
+              ...(meta.client_id ? { clientId: String(meta.client_id) } : {}),
             }];
           });
         state.syncPersisted(msgs);

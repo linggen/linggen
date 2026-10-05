@@ -41,6 +41,12 @@ pub(crate) struct ChatRequest {
     /// The surface shows follow-up buttons — ask the model for them this turn.
     #[serde(default)]
     pub(super) followups: bool,
+    /// The id the surface gave its bubble for this message. Kept on the
+    /// saved row and echoed on its `message` event, so the surface matches
+    /// its bubble to the row by id — the row keeps the words after an
+    /// `@name`, which differ from what was typed.
+    #[serde(default)]
+    pub(super) client_id: Option<String>,
 }
 
 #[derive(Deserialize)]

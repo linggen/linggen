@@ -66,20 +66,10 @@ pub(super) async fn run_loop_with_tracking(
                 let _ = manager
                     .finish_agent_run(&run_id, status, Some(msg.clone()))
                     .await;
-                // AUTH_REQUIRED errors render as a structured block in chat so
-                // the UI can show an inline "Sign in with ChatGPT" button —
-                // no need to navigate to Settings → Models to re-authenticate.
-                // Sent as the system's line, not the agent's: the agent
-                // never said it, and no surface should label it so.
-                let display = crate::server::chat::helpers::format_turn_error(&msg);
-                let _ = events_tx.send(ServerEvent::Message {
-                    from: "system".to_string(),
-                    to: "user".to_string(),
-                    content: display,
-                    session_id: session_id.map(|s| s.to_string()),
-                    run_id: None,
-                    parent_agent_id: None,
-                });
+                // The chat's line for the failure (`format_turn_error`, the
+                // inline sign-in for AUTH_REQUIRED) is the caller's: it saves
+                // it and sends it once. Sending it here too drew it twice
+                // live — this copy was never saved, so a reload showed one.
                 // Reset agent status so the UI's "Model Loading…" spinner stops.
                 let _ = events_tx.send(ServerEvent::AgentStatus {
                     agent_id: agent_id.to_string(),
@@ -565,6 +555,7 @@ pub(super) async fn push_user_turn_with_recall(
             &model_text,
             ctx.session_id.as_deref(),
             false,
+            None,
         )
         .await;
     }

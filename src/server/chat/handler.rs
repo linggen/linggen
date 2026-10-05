@@ -297,6 +297,18 @@ async fn maybe_auto_rename(state: &Arc<ServerState>, session_id: &str, words: &s
     }
 }
 
+/// A surface's id for its message bubble, as kept on the saved row: a short
+/// token (letters, digits, `-`, `_`), or nothing.
+fn client_id_of(raw: &str) -> Option<String> {
+    let id = raw.trim();
+    let ok = !id.is_empty()
+        && id.len() <= 64
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    ok.then(|| id.to_string())
+}
+
 /// Who a message goes to, and its words: a leading `@name` naming an agent
 /// by id or declared alias (`@银月`, [`leading_mention`]); else the agent
 /// the request names; else the session's default responder. The bool says
@@ -445,6 +457,7 @@ async fn dequeue_and_emit(
         clean_msg,
         response_session_id,
         false,
+        None,
     )
     .await;
     true
@@ -708,6 +721,7 @@ async fn dispatch_turn(
             session_id: ctx.session_id.clone(),
             run_id: None,
             parent_agent_id: None,
+            client_id: None,
         });
         return;
     }
@@ -948,6 +962,7 @@ async fn turn_in_session(
         images: Vec::new(),
         sender: None,
         followups: false,
+        client_id: None,
     };
     start_turn(state, req, origin).await;
     true
@@ -1075,6 +1090,7 @@ pub(crate) async fn start_turn(
         .map(|s| s.trim().to_lowercase())
         .filter(|s| !s.is_empty() && s != "user" && *s != target_id);
     let from_id = sender.clone().unwrap_or_else(|| "user".to_string());
+    let client_id = req.client_id.as_deref().and_then(client_id_of);
 
     let agent = match state
         .manager
@@ -1123,6 +1139,7 @@ pub(crate) async fn start_turn(
             &clean_msg,
             session_id.as_deref(),
             false,
+            client_id.as_deref(),
         )
         .await;
     }
@@ -1312,6 +1329,20 @@ pub(crate) async fn start_turn(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_client_id_is_kept_only_as_a_short_token() {
+        use super::client_id_of;
+        assert_eq!(
+            client_id_of("c-1791213322-ab12"),
+            Some("c-1791213322-ab12".into())
+        );
+        assert_eq!(client_id_of("  c_1  "), Some("c_1".into()));
+        assert_eq!(client_id_of(""), None);
+        assert_eq!(client_id_of("has space"), None);
+        assert_eq!(client_id_of("<script>"), None);
+        assert_eq!(client_id_of(&"x".repeat(65)), None);
+    }
+
     use super::{
         allowed_model, auto_session_title, leading_mention, trim_live_history, turn_creator,
         turn_model, TurnModel,

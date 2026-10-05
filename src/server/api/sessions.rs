@@ -170,7 +170,8 @@ pub(crate) async fn get_skill_session_state(
                     "from": m.from_id,
                     "to": m.to_id,
                     "ts": m.timestamp,
-                    "task_id": null
+                    "task_id": null,
+                    "client_id": m.client_id
                 },
                 cleaned
             ]))

@@ -36,6 +36,8 @@ export interface ChatRequest {
   images?: string[];
   /** This surface shows the next-prompt hint — fork a suggestion after the turn. */
   followups?: boolean;
+  /** The id of this message's bubble — kept on its row, echoed on its event. */
+  client_id?: string;
 }
 
 /** A request to respond to an AskUser prompt. */

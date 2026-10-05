@@ -88,6 +88,7 @@ pub(crate) async fn persist_and_emit_message(
         session_id: session_id.map(|s| s.to_string()),
         run_id: None,
         parent_agent_id: None,
+        client_id: None,
     });
     persist_message_only(
         manager,
@@ -103,7 +104,9 @@ pub(crate) async fn persist_and_emit_message(
 }
 
 /// Emit a `ServerEvent::Message` and persist directly to a `SessionStore`.
-/// Used for mission sessions that live outside any project.
+/// Used for mission sessions that live outside any project. `client_id`:
+/// a person's message — the sending surface's id for it, kept and echoed.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn persist_and_emit_to_store(
     store: &crate::state_fs::SessionStore,
     events_tx: &broadcast::Sender<ServerEvent>,
@@ -113,7 +116,9 @@ pub(crate) async fn persist_and_emit_to_store(
     content: &str,
     session_id: Option<&str>,
     is_observation: bool,
+    client_id: Option<&str>,
 ) {
+    let client_id = client_id.map(str::to_string);
     let _ = events_tx.send(ServerEvent::Message {
         from: from.to_string(),
         to: to.to_string(),
@@ -121,6 +126,7 @@ pub(crate) async fn persist_and_emit_to_store(
         session_id: session_id.map(|s| s.to_string()),
         run_id: None,
         parent_agent_id: None,
+        client_id: client_id.clone(),
     });
     let sid = session_id.unwrap_or("default");
     let msg = crate::state_fs::sessions::ChatMsg {
@@ -130,6 +136,7 @@ pub(crate) async fn persist_and_emit_to_store(
         content: content.to_string(),
         timestamp: crate::util::now_ts_secs(),
         is_observation,
+        client_id,
     };
     if let Err(e) = store.add_chat_message(sid, &msg) {
         tracing::warn!("Failed to persist chat message to mission store: {}", e);
@@ -155,6 +162,7 @@ pub(crate) async fn persist_message_only(
         content: content.to_string(),
         timestamp: crate::util::now_ts_secs(),
         is_observation,
+        client_id: None,
     };
     if let Err(e) = manager.global_sessions.add_chat_message(sid, &msg) {
         tracing::warn!("Failed to persist chat message: {}", e);
@@ -229,6 +237,7 @@ pub(crate) fn emit_outcome_event(
                 session_id: sid.clone(),
                 run_id: None,
                 parent_agent_id: None,
+                client_id: None,
             });
         }
         AgentOutcome::PlanApproved(plan) => {
@@ -243,6 +252,7 @@ pub(crate) fn emit_outcome_event(
                 session_id: sid.clone(),
                 run_id: None,
                 parent_agent_id: None,
+                client_id: None,
             });
             let _ = events_tx.send(ServerEvent::PlanUpdate {
                 agent_id: from_id.to_string(),

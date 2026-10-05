@@ -33,13 +33,10 @@ test.describe('a shared table', () => {
     await expectScriptedCalls(world, ['yinyue']);
   });
 
-  // KNOWN BUG (found by this suite, 2026-10-05): the server keeps an
-  // addressed message without its @name ("wish me luck"), the optimistic
-  // bubble keeps it ("@银月 wish me luck"); mergeChatMessages matches user
-  // rows by exact text, so both show until a reload. Remove `test.fail`
-  // once fixed.
+  // Found by this suite (2026-10-05): the server keeps an addressed message
+  // without its @name, the bubble held what was typed, and the two showed
+  // until a reload. The bubble now matches its row by the id it was sent with.
   test('an @mention message shows once', async ({ page, world, httpRequests }) => {
-    test.fail();
     await page.goto(`${world.url}/?session=${SHARED}`);
     await expectWebRtc(page, httpRequests);
     await send(page, '@银月 wish me luck');

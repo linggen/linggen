@@ -32,11 +32,10 @@ test('a new install shows an empty chat and asks to sign in on the first message
   await expect(signIn(page)).toHaveCount(1);
 });
 
-// KNOWN BUG (found by this suite, 2026-10-05): live, the AUTH_REQUIRED reply
-// renders twice (two sign-in prompts) — the streamed error and its persisted
-// row are not merged; a reload shows one. Remove `test.fail` once fixed.
+// Found by this suite (2026-10-05): a failed turn's line was sent twice live
+// (once unsaved by the run wrapper, once saved by the turn) — two sign-in
+// prompts until a reload. One owner sends it now.
 test('the first sign-in prompt shows once', async ({ page, world, httpRequests }) => {
-  test.fail();
   await page.goto(world.url);
   await expectWebRtc(page, httpRequests);
   await send(page, 'Hello?');

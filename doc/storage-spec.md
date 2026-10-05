@@ -144,6 +144,8 @@ One JSON object per line, append-only.
 { "agent_id": "ling", "from_id": "user", "to_id": "ling", "content": "...", "timestamp": 1700000000, "is_observation": false }
 ```
 
+A person's row may carry `client_id` — the id the sending surface gave its bubble (see `chat-spec.md` § Addressing an agent).
+
 ### Agent run records (in-memory)
 
 Agent run records (`AgentRunRecord`) are held in-memory only — they track live and recent runs for cancel/status operations. Lost on server restart by design (no cleanup needed). Not persisted to disk.

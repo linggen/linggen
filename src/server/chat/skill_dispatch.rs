@@ -103,7 +103,7 @@ pub(super) async fn run_skill_dispatch(ctx: &ChatRunCtx, engine: &mut crate::eng
 
     if let Err(e) = outcome {
         tracing::warn!("Skill loop failed: {}", e);
-        let err_msg = format!("Error: {}", e);
+        let err_msg = super::helpers::format_turn_error(&e.to_string());
         persist_and_emit_message(
             &ctx.manager,
             &ctx.events_tx,
@@ -422,7 +422,7 @@ pub(super) async fn run_trigger_dispatch(
 
     if let Err(e) = outcome {
         tracing::warn!("Trigger skill loop failed: {}", e);
-        let err_msg = format!("Error: {}", e);
+        let err_msg = super::helpers::format_turn_error(&e.to_string());
         persist_and_emit_message(
             &ctx.manager,
             &ctx.events_tx,

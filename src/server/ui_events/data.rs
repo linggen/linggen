@@ -22,6 +22,10 @@ pub(super) struct MessageData {
     pub role: String,
     pub run_id: Option<String>,
     pub parent_agent_id: Option<String>,
+    /// A person's message: the sending surface's id for its bubble.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub client_id: Option<String>,
 }
 
 /// `token` carrying a reasoning token.

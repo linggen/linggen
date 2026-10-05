@@ -149,6 +149,10 @@ export function handleMessage(item: UiEventOf<'message'>): void {
   }
 
   const chatStore = useChatStore.getState();
+  // A message this surface sent, as the engine kept it: its own bubble takes
+  // the kept words (matched by the id it was sent with), no second row.
+  const clientId = from === 'user' ? item.data?.client_id : undefined;
+  if (clientId && chatStore.confirmSent(clientId, content, to)) return;
   if (from !== 'user' && isStatusLineText(content)) {
     chatStore.appendActivity(from, content);
     return;

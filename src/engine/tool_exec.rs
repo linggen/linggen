@@ -758,6 +758,7 @@ impl AgentEngine {
                         content: tool_msg,
                         timestamp: crate::util::now_ts_secs(),
                         is_observation: true,
+                        client_id: None,
                     },
                 )
                 .await;

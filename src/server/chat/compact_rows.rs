@@ -198,6 +198,7 @@ pub(crate) async fn compact_session(
         content: summary.clone(),
         timestamp: rows[cut].timestamp,
         is_observation: false,
+        client_id: None,
     };
     // The prefix up to `cut` is the snapshot's — rows written meanwhile
     // only append after it — so the summary goes in at the same place.
@@ -267,6 +268,7 @@ mod tests {
             content: content.into(),
             timestamp: 0,
             is_observation: false,
+            client_id: None,
         }
     }
 

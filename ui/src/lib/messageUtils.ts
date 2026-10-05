@@ -8,6 +8,7 @@ import type {
   SubagentTreeEntry,
 } from '../types';
 import { liveBubbleOfRun } from './interruptedRun.mts';
+import { sameSentMessage } from './sentMessage.mts';
 import { dedupeActivityEntries, isProgressLineText, summarizeCollapsedActivity } from '../components/chat/utils/activity';
 
 // Re-export agent tree utilities (extracted to agentTreeUtils.ts)
@@ -576,7 +577,7 @@ export const mergeChatMessages = (persisted: ChatMessage[], live: ChatMessage[])
       (candidate, idx) =>
         !mergedLiveIndices.has(idx) &&
         !candidate.isGenerating &&
-        likelySameMessage(msg, candidate) &&
+        (sameSentMessage(msg, candidate) || likelySameMessage(msg, candidate)) &&
         hasRichContent(candidate)
     );
     if (matchIdx >= 0) {
@@ -700,7 +701,9 @@ export const mergeChatMessages = (persisted: ChatMessage[], live: ChatMessage[])
       // likelySameMessage requires identical text within 2 minutes, so a
       // half-streamed prefix can't false-match an older identical reply.
       if (m.isGenerating) return !unshown.some((p) => likelySameMessage(p, m));
-      if (unshown.some((p) => likelySameMessage(p, m))) return false;
+      // A person's bubble whose saved row is here, matched by the id it was
+      // sent with: the row may hold other words (a leading `@name` is not kept).
+      if (unshown.some((p) => sameSentMessage(p, m) || likelySameMessage(p, m))) return false;
       if (m.role === 'user' || m.from === 'user') return true;
       // Keep client-side-only messages (e.g. `! bash` results) — they are never
       // persisted on the server, so dropping them loses them permanently.

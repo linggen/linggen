@@ -477,6 +477,7 @@ pub(crate) async fn trigger_mission_core(
                     content: first.clone(),
                     timestamp: crate::util::now_ts_secs(),
                     is_observation: false,
+                    client_id: None,
                 },
             );
         }
@@ -581,7 +582,8 @@ pub(crate) async fn get_mission_session_state(
                     "from": m.from_id,
                     "to": m.to_id,
                     "ts": m.timestamp,
-                    "task_id": null
+                    "task_id": null,
+                    "client_id": m.client_id
                 },
                 cleaned
             ]))

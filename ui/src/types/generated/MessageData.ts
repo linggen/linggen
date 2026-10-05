@@ -3,4 +3,8 @@
 /**
  * `message`: one chat line.
  */
-export type MessageData = { from: string, to: string, role: string, run_id: string | null, parent_agent_id: string | null, };
+export type MessageData = { from: string, to: string, role: string, run_id: string | null, parent_agent_id: string | null, 
+/**
+ * A person's message: the sending surface's id for its bubble.
+ */
+client_id?: string, };
