@@ -15,7 +15,7 @@ for r in linggen/linggen linggen/linggen-memory linggen/linggen-releases; do
   gh release view <tag-of-r> --repo $r --json tagName,assets \
     --jq '{tag_name: .tagName, assets: [.assets[] | {name}]}' > mirror/$r/release.json
 done
-cp linggen-memory/plugins/linggen/scripts/install-bin.sh mirror/
+cp linggen-memory/plugins/linggen/scripts/install-bin.sh linggensite/public/install-plugin.sh mirror/
 python3 -m http.server --directory mirror <port>
 ```
 
@@ -61,7 +61,8 @@ Repo `linggen/linggen-memory`, tag `vX.Y.Z`.
    binary aside, `ling-mem serve --port 9528`.
 5. After the release gate passes:
    `gh release edit vX.Y.Z --draft=false --latest --repo linggen/linggen-memory`
-   — six assets. Publishing is the distribution: every host resolves `^1`.
+   — eight assets (the six binaries + `linggen-plugin.tar.gz` and its
+   `.sha256`, which `install-plugin.sh` needs). Publishing is the distribution: every host resolves `^1`.
 
 Plugin bundles bump only when hooks or `SKILL.md` changed, independent of the
 binary: `plugins/linggen/.claude-plugin/plugin.json`,

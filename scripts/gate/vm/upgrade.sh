@@ -19,15 +19,29 @@ info "upgrade: old state" "$rows_before memory rows, $sessions_before sessions"
 tcc_watch_start
 
 # ── Engine ─────────────────────────────────────────────────────────────────
+engine_pid="$(listener_pid 9527)"; mem_pid="$(listener_pid 9528)"
 if "$LING" update --help 2>/dev/null | grep -q -- '--rollback'; then
   LINGGEN_RELEASE_BASE="$GOOD" "$LING" update >"$OUT/ling-update.log" 2>&1
   check "ling update (from $PREV_LING)" $? "$(tail -3 "$OUT/ling-update.log")"
+  VIA_INSTALL_SH=0
 else
   gap "ling update (from $PREV_LING)" "the old binary predates LINGGEN_RELEASE_BASE — upgraded by re-running install.sh instead"
   curl -fsSL "$GOOD/install.sh" | LINGGEN_RELEASE_BASE="$GOOD" bash >"$OUT/install.log" 2>&1
   check "install.sh over a running install" $? "$(tail -3 "$OUT/install.log")"
+  VIA_INSTALL_SH=1
 fi
 check_installed "upgrade: ling is the release" "$LING" "$LING_VERSION" "$LING_SHA"
+
+# The engine that was serving must now run the new binary: a new process on
+# 9527, started after the swap, answering health.
+new_pid="$(listener_pid 9527)"
+if [ -n "$engine_pid" ] && [ -n "$new_pid" ] && [ "$new_pid" != "$engine_pid" ] && engine_health 30; then
+  pass "upgrade: 9527 restarted on the new ling" "pid $engine_pid → $new_pid"
+elif [ "$VIA_INSTALL_SH" = 1 ]; then
+  fail "upgrade: 9527 restarted on the new ling" "pid ${engine_pid:-none} → ${new_pid:-none} after install.sh"
+else
+  warn "upgrade: 9527 restarted on the new ling" "\`ling update\` leaves the running engine on the old binary (pid ${engine_pid:-none} → ${new_pid:-none})"
+fi
 
 # ── ling-mem ───────────────────────────────────────────────────────────────
 if [ "$(ver_of "$MEM")" != "$MEM_VERSION" ] || [ "$(sha "$MEM")" != "$MEM_SHA" ]; then
@@ -45,9 +59,11 @@ fi
 check_installed "upgrade: ling-mem is the release" "$MEM" "$MEM_VERSION" "$MEM_SHA"
 
 # ── The upgraded engine on the old home ────────────────────────────────────
-v="$(mem_version)"
-[ "$v" = "$MEM_VERSION" ] && pass "ling-mem daemon runs the new binary" "v$v" \
-  || warn "ling-mem daemon runs the new binary" "9528 still answers v${v:-none} after the binary swap — restarting it by hand"
+v="$(mem_version)"; new_pid="$(listener_pid 9528)"
+[ "$v" = "$MEM_VERSION" ] && [ -n "$new_pid" ] && [ "$new_pid" != "$mem_pid" ]
+check "upgrade: 9528 restarted on the new ling-mem" $? \
+  "9528 answers v${v:-none} (pid ${mem_pid:-none} → ${new_pid:-none}) after the binary swap — restarting it by hand" \
+  "v$PREV_MEM → v$v, pid $mem_pid → $new_pid"
 stop_engine
 [ "$v" = "$MEM_VERSION" ] || { stop_mem; start_mem 60; }
 start_engine 90
@@ -116,8 +132,12 @@ check "ling update --rollback swaps to ling.prev" $? "exit $rc — $(tail -2 "$O
 [ "$(sha "$LING")" = "$a" ]; check "ling update --rollback again returns" $? "sha ${a:0:12} not back"
 
 if [ ! -f "$MEM.prev" ]; then
+  mem_pid="$(listener_pid 9528)"
   LINGGEN_RELEASE_BASE="$GOOD" "$MEM" upgrade --yes --force >"$OUT/mem-upgrade-force.log" 2>&1
   check "ling-mem upgrade --force keeps ling-mem.prev" $? "$(tail -2 "$OUT/mem-upgrade-force.log")"
+  new_pid="$(listener_pid 9528)"; v="$(mem_version)"
+  [ -n "$mem_pid" ] && [ -n "$new_pid" ] && [ "$new_pid" != "$mem_pid" ] && [ "$v" = "$MEM_VERSION" ]
+  check "ling-mem upgrade: 9528 restarted on the new binary" $? "pid ${mem_pid:-none} → ${new_pid:-none}, v${v:-none}" "pid $mem_pid → $new_pid, v$v"
 fi
 a="$(sha "$MEM")"; p="$(sha "$MEM.prev")"
 "$MEM" upgrade --rollback >"$OUT/mem-rollback.log" 2>&1
@@ -142,15 +162,11 @@ fi
 
 tcc_watch_stop "upgrade"
 
-# ── Plugins: the old published plugin → this release's bundle ──────────────
+# ── Plugins: the old plugin → this release's bundle, via install-plugin.sh ─
 if command -v claude >/dev/null; then
-  { claude plugin marketplace remove linggen-memory && claude plugin marketplace add "$OUT/marketplace" \
-      && claude plugin update linggen@linggen-memory; } >"$OUT/claude-plugin.log" 2>&1 \
-    || claude plugin install linggen@linggen-memory >>"$OUT/claude-plugin.log" 2>&1
-  check "claude: plugin updates" $? "$(tail -3 "$OUT/claude-plugin.log")"
-  hooks="$(ls -td "$HOME"/.claude/plugins/cache/linggen-memory/linggen/*/hooks 2>/dev/null | head -1)"
-  [ -n "$hooks" ] && diff -rq "$hooks" "$OUT/marketplace/plugins/linggen/hooks" >/dev/null
-  check "claude: plugin cache carries the new hooks" $? "cache hooks '${hooks:-none}' differ from the release's"
+  clt_dialog_close
+  install_plugin "$OUT/install-plugin.log"
+  check_plugins "upgrade" $? "$OUT/install-plugin.log"
 else
   gap "claude: plugin updates" "no claude CLI in linggen-prev"
 fi

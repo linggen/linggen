@@ -131,6 +131,48 @@ tcc_watch_stop() { # label
   else pass "$1: no TCC prompt" "$(wc -l <"$log" | tr -d ' ') tccd lines; Linggen's requests all silent (preflight or policy)"; fi
 }
 
+# The Command Line Tools install dialog: what running the /usr/bin/git stub
+# (or any other CLT shim) opens on a Mac without developer tools.
+CLT_DIALOG='Install Command Line Developer Tools|CommandLineTools\.installondemand'
+clt_dialog_up() { pgrep -f "$CLT_DIALOG" >/dev/null 2>&1; }
+clt_dialog_close() { pkill -f "$CLT_DIALOG" 2>/dev/null || true; sleep 1; }
+
+listener_pid() { lsof -nP -ti "tcp:$1" -sTCP:LISTEN 2>/dev/null | head -1; }
+
+# install-plugin.sh from the mirror, which installs from the release bundle.
+install_plugin() { # log
+  curl -fsSL "$GOOD/install-plugin.sh" | LINGGEN_RELEASE_BASE="$GOOD" bash >"$1" 2>&1
+}
+
+# The folder Claude Code loads the linggen plugin from: "Read from:" for a
+# folder marketplace, else its cache copy.
+claude_plugin_root() {
+  local root
+  root="$(claude plugin list 2>/dev/null | awk '/linggen@linggen-memory/{f=1} f && /Read from:/{print $NF; exit}')"
+  [ -n "$root" ] || root="$(ls -td "$HOME"/.claude/plugins/cache/linggen-memory/linggen/*/ 2>/dev/null | head -1)"
+  printf '%s' "${root%/}"
+}
+
+# The plugin checks after install-plugin.sh, shared by both phases.
+check_plugins() { # label rc log
+  local root
+  check "$1: install-plugin.sh exits 0" "$2" "$(tail -3 "$3")"
+  sleep 3
+  clt_dialog_up; [ $? != 0 ]
+  check "$1: no Command Line Tools dialog" $? "the CLT install dialog is up after install-plugin.sh"
+  if command -v claude >/dev/null; then
+    root="$(claude_plugin_root)"
+    claude plugin list 2>/dev/null | grep -A5 'linggen@linggen-memory' | grep -q enabled
+    check "$1: claude has linggen enabled" $? "$(claude plugin list 2>&1 | tr '\n' ' ' | cut -c1-200)" "$root"
+    [ -n "$root" ] && diff -rq "$root/hooks" "$OUT/marketplace/plugins/linggen/hooks" >/dev/null
+    check "$1: claude loads this release's hooks" $? "hooks at '${root:-none}' differ from the release's"
+  fi
+  if command -v codex >/dev/null; then
+    codex plugin list 2>/dev/null | grep -q 'linggen@linggen-memory.*enabled'
+    check "$1: codex has linggen enabled" $? "$(codex plugin list 2>&1 | tail -2 | tr '\n' ' ' | cut -c1-200)"
+  fi
+}
+
 app_version() { plutil -extract CFBundleShortVersionString raw /Applications/Linggen.app/Contents/Info.plist 2>/dev/null; }
 
 # pkill, not osascript: an Apple Event from sshd would itself be a TCC ask.

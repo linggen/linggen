@@ -64,6 +64,7 @@ mirror_local() {
 
   mkdir -p "$good/$APP_REPO"
   if [ -d "$app" ]; then
+  pack_plugin "$good"
     local stage asset
     ver="$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist")"
     asset="linggen-$ver-darwin-arm64.tar.gz"
@@ -87,6 +88,13 @@ latest_tag() { gh release view --repo "$1" --json tagName --jq .tagName; }
 draft_repo() { # good repo tag patterns…
   local good="$1" repo="$2" tag="$3"; shift 3
   local args=() p
+# The plugin marketplace bundle install-plugin.sh installs from (linggen-
+# memory's release asset), packed from the working tree.
+pack_plugin() { # good
+  "$WS/linggen-memory/scripts/package-plugin.sh" "$1/$MEM_REPO/linggen-plugin.tar.gz" >/dev/null \
+    || die "mirror: plugin bundle" "linggen-memory/scripts/package-plugin.sh failed"
+}
+
   for p in "$@"; do args+=(--pattern "$p"); done
   mkdir -p "$good/$repo"
   gh release download "$tag" --repo "$repo" --dir "$good/$repo" --clobber "${args[@]}" \
@@ -127,6 +135,12 @@ mirror_draft() { # good specs
 
   draft_repo "$good" $APP_REPO "$app" 'linggen-*-darwin-arm64.tar.gz*'
   APP_VERSION="${app#linggen-v}"
+  if gh release download "$mem" --repo $MEM_REPO --dir "$good/$MEM_REPO" --clobber --pattern 'linggen-plugin.tar.gz*' 2>/dev/null; then
+    record INFO "mirror: plugin bundle" "release $mem"
+  else
+    pack_plugin "$good"
+    record GAP "mirror: plugin bundle" "release $mem has no linggen-plugin.tar.gz — packed from the working tree"
+  fi
   record INFO "mirror: app" "release $app"
 }
 
@@ -160,7 +174,7 @@ build_mirror() { # local | draft "<specs>"
     draft) mirror_draft "$good" "$2" ;;
   esac
   local pub="$WS/linggensite/public" f
-  for f in install.sh install-app.sh install-shared-memory.sh; do
+  for f in install.sh install-app.sh install-shared-memory.sh install-plugin.sh; do
     [ -f "$pub/$f" ] || die "mirror: installers" "missing $pub/$f"
     cp "$pub/$f" "$good/$f"
   done

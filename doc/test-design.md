@@ -121,9 +121,11 @@ tunnels, so nothing on the host listens beyond loopback.
 **First install** (fresh VM, no `~/.linggen`):
 1. The real public paths: `install.sh`, `install-app.sh`,
    `install-shared-memory.sh` (retired: says so, exits 0), the Claude Code and
-   Codex plugin installs — pointed at the draft assets. The plugins install
-   from the gate's copy of the bundle: the public GitHub marketplace needs
-   git, which a clean Mac has only as the Command Line Tools stub (a WARN).
+   Codex plugin installs — pointed at the draft assets. A clean Mac's git is
+   the Command Line Tools stub, so the plugins go through
+   `install-plugin.sh`: it must see no git and install linggen-memory's
+   `linggen-plugin.tar.gz` into both hosts with no CLT dialog (FAIL if the
+   dialog is up). The GitHub marketplace form is still tried and reported.
    Codex has no unattended installer without node; the host's CLI is copied in.
 2. Also one browser-style download with `com.apple.quarantine` set
    (`install-app.sh` strips it, so curl alone hides Gatekeeper). The vanilla
@@ -145,12 +147,14 @@ sessions, config, saves, a memory store in the old schema, both plugins):
    updates. Releases up to engine 1.8.2 / ling-mem 1.8.2 / app 0.3.3 predate
    `LINGGEN_RELEASE_BASE`, so from them the gate re-runs `install.sh` (a GAP
    row) over the running install — its first run caught `install.sh` copying
-   over a live `ling` (killed on launch; fixed: fresh inode + rename), and
-   still WARNs that the old ling-mem daemon keeps serving until restarted.
+   over a live `ling` (killed on launch; fixed: fresh inode + rename). After
+   the swap 9527 and 9528 must be new processes, 9528 on the new version
+   (`install.sh` restarts the engine, `install-bin.sh` and `ling-mem upgrade`
+   the daemon); `ling update` does not restart the engine yet (a WARN).
    The in-app updater asks through a native dialog and is not driven.
 2. Pass when: the store opens with every row (and `apply-schema --yes` keeps
-   them); old sessions, config and a chat turn on the old config work; plugin
-   caches carry the new hooks. Built-in missions are install-once
+   them); old sessions, config and a chat turn on the old config work;
+   `install-plugin.sh` moves both plugins to the new bundle's hooks. Built-in missions are install-once
    (`cli/init.rs`), so an old copy is reported, not failed.
 3. Rollback: a release with a wrong sha256 is refused and the old binary
    still runs; `ling update --rollback` and `ling-mem upgrade --rollback`

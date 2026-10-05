@@ -62,13 +62,12 @@ say "Mirror ($SOURCE)"
 build_mirror "$SOURCE" "$SPECS"
 VMFILES="$RUN/vmfiles"
 stage_vmfiles() {
-  local mp="$WS/linggen-memory" f
-  mkdir -p "$VMFILES/marketplace/.claude-plugin" "$VMFILES/marketplace/.agents/plugins" "$VMFILES/marketplace/plugins"
+  local f
+  mkdir -p "$VMFILES/marketplace"
   cp "$GATE_SRC"/vm/*.sh "$GATE_SRC/vm/gate.runtime.toml" "$RUN/mirror/expect.env" "$VMFILES/"
-  # The plugin bundle of this release, as a local marketplace.
-  rsync -a --exclude evals-isolated "$mp/plugins/linggen" "$VMFILES/marketplace/plugins/"
-  jq '.plugins[0].source = "./plugins/linggen"' "$mp/.claude-plugin/marketplace.json" >"$VMFILES/marketplace/.claude-plugin/marketplace.json"
-  cp "$mp/.agents/plugins/marketplace.json" "$VMFILES/marketplace/.agents/plugins/marketplace.json"
+  # The plugin bundle of this release (what install-plugin.sh installs), to
+  # compare against and as linggen-prev's local marketplace.
+  tar -xzf "$RUN/mirror/good/linggen/linggen-memory/linggen-plugin.tar.gz" -C "$VMFILES/marketplace"
   # Codex has no unattended installer without node; hand in this Mac's CLI.
   f="$(realpath "$(command -v codex 2>/dev/null)" 2>/dev/null || true)"
   [ -n "$f" ] && file "$f" | grep -q 'Mach-O.*arm64' && cp "$f" "$VMFILES/codex"

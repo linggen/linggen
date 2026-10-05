@@ -96,33 +96,49 @@ if [ -n "$APP_VERSION" ]; then
   fi
 fi
 
-# ── Claude Code + Codex plugins, from the gate's marketplace copy ──────────
+# ── Claude Code + Codex plugins: install-plugin.sh on a Mac with no git ────
+# A fresh Mac's git is the Command Line Tools stub — running it opens the CLT
+# install dialog. install-plugin.sh must see that and install from the
+# release bundle, with no dialog.
+if [ -x "$OUT/codex" ]; then
+  # Codex has no unattended installer without node; the host's CLI is copied in.
+  mkdir -p "$HOME/.local/bin" && cp "$OUT/codex" "$HOME/.local/bin/codex"
+else
+  gap "codex: CLI in the VM" "no codex binary handed in"
+fi
 if curl -fsSL https://claude.ai/install.sh | bash >"$OUT/claude-install.log" 2>&1 && command -v claude >/dev/null; then
   pass "claude: CLI installs unattended" "$(claude --version 2>/dev/null)"
-  # The public path: `/plugin marketplace add linggen/linggen-memory` clones
-  # from GitHub with git — on a clean Mac that is the Command Line Tools stub.
-  if claude plugin marketplace add linggen/linggen-memory >"$OUT/claude-public.log" 2>&1; then
-    pass "claude: public marketplace add (GitHub)" ""
-    claude plugin marketplace remove linggen-memory >/dev/null 2>&1
-  else
-    warn "claude: public marketplace add (GitHub)" "needs git; a clean Mac has only the CLT stub, so it opens the Command Line Tools install dialog — $(grep -m1 -iE 'xcode|git|error' "$OUT/claude-public.log" | cut -c1-120)"
-  fi
-  claude plugin marketplace add "$OUT/marketplace" >"$OUT/claude-plugin.log" 2>&1 \
-    && claude plugin install linggen@linggen-memory >>"$OUT/claude-plugin.log" 2>&1
-  check "claude: linggen plugin installs" $? "$(tail -3 "$OUT/claude-plugin.log")"
-  hooks="$(ls -d "$HOME"/.claude/plugins/cache/linggen-memory/linggen/*/hooks 2>/dev/null | head -1)"
-  [ -n "$hooks" ] && diff -rq "$hooks" "$OUT/marketplace/plugins/linggen/hooks" >/dev/null
-  check "claude: plugin cache carries this release's hooks" $? "cache hooks '${hooks:-none}' differ from the release's"
 else
   gap "claude: CLI installs unattended" "$(tail -2 "$OUT/claude-install.log")"
 fi
 
-if [ -x "$OUT/codex" ]; then
-  mkdir -p "$HOME/.local/bin" && cp "$OUT/codex" "$HOME/.local/bin/codex"
-  codex plugin marketplace add "$OUT/marketplace" >"$OUT/codex-plugin.log" 2>&1 \
-    && codex plugin add linggen@linggen-memory >>"$OUT/codex-plugin.log" 2>&1
-  check "codex: linggen plugin installs" $? "$(tail -3 "$OUT/codex-plugin.log")"
-else
-  gap "codex: CLI in the VM" "no codex binary handed in"
+dev="$(xcode-select -p 2>/dev/null)"
+info "git on this Mac" "${dev:+developer dir $dev}${dev:-none — /usr/bin/git is the CLT stub}"
+clt_dialog_close
+curl -fsSL "$GOOD/install-plugin.sh" -o "$OUT/install-plugin.sh"
+bash -c ". <(sed -n '/^has_git() {/,/^}/p' '$OUT/install-plugin.sh'); has_git"
+seen=$?
+if [ -z "$dev" ]; then
+  [ "$seen" != 0 ]; check "install-plugin.sh: sees no git (the stub is not git)" $? "has_git said yes with no developer tools"
+fi
+install_plugin "$OUT/install-plugin.log"
+check_plugins "first install" $? "$OUT/install-plugin.log"
+
+# The manual GitHub form still clones with git: on this Mac it opens the
+# dialog. Reported, not failed — install-plugin.sh is the no-git path. Run
+# after it: the dialog this opens was still up after a pkill in the first
+# gate run, so before it would mask the check above.
+if command -v claude >/dev/null; then
+  claude plugin marketplace remove linggen-memory >/dev/null 2>&1
+  if claude plugin marketplace add linggen/linggen-memory >"$OUT/claude-public.log" 2>&1; then
+    info "claude: GitHub marketplace add" "works here (git present)"
+  else
+    sleep 2
+    clt_dialog_up && d="CLT dialog opened" || d="no dialog seen"
+    info "claude: GitHub marketplace add needs git" "$d — $(grep -m1 -iE 'xcode|git|error' "$OUT/claude-public.log" | cut -c1-100)"
+    clt_dialog_close
+    clt_dialog_up && info "CLT dialog after pkill" "still up: $(pgrep -lf "$CLT_DIALOG" | tr '\n' ' ' | cut -c1-160)"
+  fi
+  install_plugin "$OUT/install-plugin-again.log" # back to the bundle
 fi
 exit 0
