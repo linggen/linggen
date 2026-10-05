@@ -88,7 +88,8 @@ pub(crate) const CAPTURE_REMINDER: &str = "Memory capture: before finishing this
 ///
 /// Returns `None` when there is nothing to load (or the daemon is
 /// unreachable / errors out — the caller emits the empty-block prompt in
-/// that case so a fresh install still starts cleanly). A daemon older than
+/// that case so a fresh install still starts cleanly). A daemon that is up
+/// but too slow gets [`CORE_NOT_LOADED`] instead, never the empty block. A daemon older than
 /// `session_start` (ling-mem < 1.9) gets the core rows alone, as before.
 pub(crate) fn load_session_start(
     ling_mem_url: &str,
@@ -100,9 +101,32 @@ pub(crate) fn load_session_start(
         args["cwd"] = serde_json::json!(p.cwd);
         args["root"] = serde_json::json!(p.root);
     }
-    match fetch(ling_mem_url, args, LOAD_CORE_TIMEOUT) {
+    resolve_session_start(fetch(ling_mem_url, args, LOAD_CORE_TIMEOUT), core, || {
+        load_core_rows_only(ling_mem_url)
+    })
+}
+
+/// Said in place of core when the daemon answered too late. A timeout is
+/// not an empty store: rendering the empty-store bootstrap would tell the
+/// model core has no rows and to start saving them. The prompt is rebuilt
+/// every turn, so the next turn carries the real block.
+pub(crate) const CORE_NOT_LOADED: &str = "Core memory did not load in time for this turn (the memory store was busy or still starting). It is not empty — it loads again next turn. Do not add core rows to fill the gap.";
+
+/// What a `session_start` answer becomes. `None` = no answer in time: a
+/// session that asked for core says so ([`CORE_NOT_LOADED`]); one that
+/// asked for its index alone loads nothing. An error answer is an older
+/// daemon: core falls back to the row list.
+fn resolve_session_start(
+    fetched: Option<Result<serde_json::Value, String>>,
+    core: bool,
+    rows_only: impl FnOnce() -> Option<CoreContent>,
+) -> Option<CoreContent> {
+    match fetched {
         Some(Ok(value)) => session_block(&value),
-        Some(Err(_)) if core => load_core_rows_only(ling_mem_url),
+        Some(Err(_)) if core => rows_only(),
+        None if core => Some(CoreContent {
+            facts: CORE_NOT_LOADED.to_string(),
+        }),
         _ => None,
     }
 }
@@ -259,7 +283,7 @@ fn fetch(
         Err(_) => {
             tracing::warn!(
                 ?timeout,
-                "core block over ling-mem HTTP timed out; treating core as empty"
+                "core block over ling-mem HTTP timed out; core not loaded this turn"
             );
             None
         }
@@ -305,6 +329,28 @@ mod tests {
         // An empty store injects nothing.
         let empty = serde_json::json!({"core": [], "block": ""});
         assert!(session_block(&empty).is_none());
+    }
+
+    /// A daemon too slow to answer is not an empty store: the session that
+    /// asked for core is told it did not load, never the empty-store
+    /// bootstrap; an index-only session loads nothing.
+    #[test]
+    fn a_timeout_is_not_an_empty_store() {
+        let c = resolve_session_start(None, true, || panic!("no fallback on a timeout")).unwrap();
+        assert_eq!(c.facts, CORE_NOT_LOADED);
+        assert!(resolve_session_start(None, false, || None).is_none());
+
+        // An answer renders as before; an error (older daemon) falls back.
+        let value = serde_json::json!({"core": [{"id": "a"}], "block": "- Alex (id=a)"});
+        let c = resolve_session_start(Some(Ok(value)), true, || None).unwrap();
+        assert_eq!(c.facts, "- Alex (id=a)");
+        let fell_back = resolve_session_start(Some(Err("404".into())), true, || {
+            Some(CoreContent {
+                facts: "rows".into(),
+            })
+        });
+        assert_eq!(fell_back.unwrap().facts, "rows");
+        assert!(resolve_session_start(Some(Err("404".into())), false, || None).is_none());
     }
 
     #[test]
