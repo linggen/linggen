@@ -182,3 +182,101 @@ export async function send(page: Page, text: string) {
 export function shown(page: Page, text: string | RegExp) {
   return chat(page).getByText(text).filter({ visible: true });
 }
+
+/** A request the page asks over the data channel, by method and path. */
+export type Asked = { method: string; path: string };
+
+/** What to hold: replies to the requests `asked` names, and with `events`
+ *  everything a session's own channel (`sess-<id>`) pushes. */
+export type Hold = { asked?: Asked[]; events?: boolean };
+
+/** Holds replies and pushed events (see `Hold`) until the test releases
+ *  them — so a test can make one land after another, or after the page
+ *  moved on (an old session's load after New chat), or read a turn's events
+ *  in the order they came. Install with `page.addInitScript(holdReplies,
+ *  hold)`; drive with `held`, `heldEvents` and `release`. */
+export function holdReplies({ asked = [], events = false }: Hold) {
+  const urls = new Map<string, string>(); // request_id → url
+  const held: HeldItem[] = [];
+  const hold = { on: true, held, urls };
+  (window as unknown as { __hold: typeof hold }).__hold = hold;
+  const matches = (msg: { type?: string; method?: string; url?: string }) =>
+    msg.type === 'http_request'
+    && asked.some((a) => a.method === msg.method && (msg.url ?? '').split('?')[0] === a.path);
+
+  const send = RTCDataChannel.prototype.send;
+  RTCDataChannel.prototype.send = function (this: RTCDataChannel, data: string | Blob | ArrayBuffer | ArrayBufferView) {
+    if (hold.on && typeof data === 'string' && data.includes('http_request')) {
+      try {
+        const msg = JSON.parse(data);
+        if (matches(msg) && msg.request_id != null) urls.set(String(msg.request_id), msg.url);
+      } catch { /* a split payload — not one we hold */ }
+    }
+    return send.call(this, data as string);
+  } as typeof RTCDataChannel.prototype.send;
+
+  const prop = Object.getOwnPropertyDescriptor(RTCDataChannel.prototype, 'onmessage')!;
+  Object.defineProperty(RTCDataChannel.prototype, 'onmessage', {
+    configurable: true,
+    get() { return prop.get!.call(this); },
+    set(fn) {
+      if (typeof fn !== 'function') return prop.set!.call(this, fn);
+      prop.set!.call(this, function (this: RTCDataChannel, ev: MessageEvent) {
+        if (events && hold.on && this.label.startsWith('sess-')) {
+          const url = `channel:${this.label}`;
+          urls.set(url, url);
+          held.push({ url, data: String(ev.data), deliver: () => fn.call(this, ev) });
+          return;
+        }
+        if (typeof ev.data === 'string' && urls.size > 0) {
+          const id = /"request_id"\s*:\s*"?([^",}]+)/.exec(ev.data)?.[1];
+          const url = id && urls.get(id);
+          if (url) { held.push({ url, data: ev.data, deliver: () => fn.call(this, ev) }); return; }
+        }
+        return fn.call(this, ev);
+      });
+    },
+  });
+}
+
+/** What is held, in the order it was asked: a request's session_id, else
+ *  its url; a session channel's events as `channel:<label>`. */
+export async function held(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const hold = (window as unknown as { __hold: { urls: Map<string, string> } }).__hold;
+    return [...hold.urls.values()].map((u) => new URL(u, location.origin).searchParams.get('session_id') ?? u);
+  });
+}
+
+type HeldItem = { url: string; data: string; deliver: () => void };
+
+/** Stops holding and delivers what is held — those `first` names (as `held`
+ *  lists them) in that order, then the rest; each one's messages in the
+ *  order they came — then gives the page a moment to handle them, so a test
+ *  can check what did NOT land. */
+export async function release(page: Page, first: string[] = []) {
+  await page.evaluate(async (order) => {
+    const hold = (window as unknown as { __hold: { on: boolean; urls: Map<string, string>; held: HeldItem[] } }).__hold;
+    hold.on = false;
+    const key = (u: string) => new URL(u, location.origin).searchParams.get('session_id') ?? u;
+    for (const k of order) {
+      for (const h of hold.held.filter((h) => key(h.url) === k)) h.deliver();
+    }
+    for (const h of hold.held.filter((h) => !order.includes(key(h.url)))) h.deliver();
+    hold.held.length = 0;
+    hold.urls.clear();
+    await new Promise((r) => setTimeout(r, 500));
+  }, first);
+}
+
+/** The held events' kinds, in the order they came: `kind`, and the text
+ *  for a `message` (`message:<text>`). */
+export async function heldEvents(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const hold = (window as unknown as { __hold: { held: HeldItem[] } }).__hold;
+    return hold.held.filter((h) => h.url.startsWith('channel:')).map((h) => {
+      const ev = JSON.parse(h.data);
+      return ev.kind === 'message' ? `message:${ev.text}` : String(ev.kind);
+    });
+  });
+}

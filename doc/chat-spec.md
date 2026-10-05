@@ -246,7 +246,7 @@ Only the Mac chat asks in v1 — the main UI and app embeds. Missions, delegated
 5. Tool completes — content block update marks it done/failed.
 6. Agent continues thinking or calls more tools (repeat 3-5).
 7. Agent produces a text response — tokens stream as Markdown.
-8. Turn completes — summary footer appears with stats.
+8. Turn completes — summary footer appears with stats. `turn_complete` and the idle status ride the same queue as the run's events, so they always follow its last block and message.
 
 ## API surface
 
@@ -259,6 +259,7 @@ All Web UI communication goes through WebRTC data channels:
 - **Chat messages, plan actions, AskUser responses**: sent via the control channel RPC (request/response pattern).
 - **Events (tokens, activity, content blocks)**: received on per-session data channels (`sess-{id}`).
 - **Other API calls** (config, status, files, sessions, etc.): transparently proxied through the control channel's `http_request` message type via a global fetch proxy.
+- **Answers keep their session**: a session load (or a send's reply) that comes back after the person switched chats is dropped, never written into the chat on screen; a message sent while New chat is still being made waits for it and goes to the new chat.
 - **WHIP signaling**: `POST /api/rtc/whip` — the only direct HTTP call, used to establish the WebRTC connection.
 
 ### REST endpoints

@@ -19,6 +19,22 @@ import { agentMentionLabel, leadingAgentMention, mentionLanguage } from '../lib/
 import { turnlessReply } from '../lib/agentTurns.mts';
 import { chatAgentOf } from '../lib/sessionMembers.mts';
 import { newClientId } from '../lib/sentMessage.mts';
+import { stillOn } from '../lib/sessionLoad.mts';
+
+/** An answer that came back after an await writes only while its session is
+ *  still the one on screen — never into a chat the person moved to. */
+function onSession(sid: string | null | undefined): boolean {
+  return stillOn(sid, useSessionStore.getState().activeSessionId);
+}
+
+/** A message sent while New chat is still being made is that chat's first:
+ *  wait for it, and show its (empty) thread before the bubble goes in. */
+async function newChatMade(): Promise<void> {
+  const making = useSessionStore.getState().newChat;
+  if (!making) return;
+  const made = await making;
+  if (made && useChatStore.getState()._activeSessionId !== made) useChatStore.getState().setActiveSession(made);
+}
 
 /**
  * Resolve the effective project root: explicit override > selected project >
@@ -74,12 +90,13 @@ export function useChatActions(
     interaction.setPendingAskUser(null);
     try {
       await getTransport().sendClear(root, sid);
-      useChatStore.getState().clear();
+      if (onSession(sid)) useChatStore.getState().clear();
     } catch (e) { console.error('Error clearing chat:', e); }
   }, [runningMainRunIds]);
 
   const sendChatMessage = useCallback(async (userMessage: string, targetAgent?: string, images?: string[], opts?: { resend?: boolean; clientId?: string }) => {
     if (!userMessage.trim() && !(images && images.length > 0)) return;
+    await newChatMade();
     const root = getProjectRoot(projectRootRef.current);
     const { activeSessionId: sid } = useSessionStore.getState();
     const picked = useServerStore.getState().selectedAgent;
@@ -185,6 +202,7 @@ export function useChatActions(
       scrollToBottom();
       try {
         const data = await workspaceApi.bash(root, cmd, sid);
+        if (!onSession(sid)) return;
         const resultTs = new Date();
         const output = [data.stdout, data.stderr].filter(Boolean).join('\n').trim();
         const exitInfo = data.exit_code !== 0 ? `\n\n(exit code ${data.exit_code})` : '';
@@ -196,6 +214,7 @@ export function useChatActions(
         scrollToBottom();
       } catch (e) {
         console.error('Bash error:', e);
+        if (!onSession(sid)) return;
         const errTs = new Date();
         chat.addMessage({
           role: 'agent', from: 'system', to: 'user',
@@ -220,9 +239,11 @@ export function useChatActions(
           setAgentStatusText((s) => { const n = { ...s }; delete n[sid]; return n; });
         };
         clearStatus();
+        if (!onSession(sid)) return;
         if (data.compacted) {
           useChatStore.getState().clear(false);
           await useChatStore.getState().fetchSessionState();
+          if (!onSession(sid)) return;
           const refs = (data.referenced_files || []) as string[];
           const refsText = refs.length > 0
             ? '\n\n' + refs.map((f: string) => `Referenced file ${f}`).join('\n')
@@ -283,8 +304,10 @@ export function useChatActions(
         useSessionStore.getState().fetchSessions();
         postToParent({ type: 'linggen-skill-event', event: 'session_created', payload: { sessionId: data.session_id } });
       }
+      // A new chat's session is the one the server just made.
+      const asked = sid || data?.session_id || null;
       if (data?.status === 'queued') {
-        useChatStore.getState().removeLastUserMessage(userMessage, agentToUse);
+        if (onSession(asked)) useChatStore.getState().removeLastUserMessage(userMessage, agentToUse);
         return;
       }
       // No turn ran and nothing was kept, so the typed bubble goes. The agent
@@ -295,7 +318,7 @@ export function useChatActions(
         const at = data.session_id || sid;
         if (at) useServerStore.getState().setPendingSend(at, false);
         const to = data.agent_id || agentToUse;
-        useChatStore.getState().removeLastUserMessage(userMessage, to);
+        if (onSession(asked)) useChatStore.getState().removeLastUserMessage(userMessage, to);
         if (data.status === 'absent') {
           postToParent({ type: 'linggen-skill-event', event: 'agent_absent', payload: { agent: to, text: userMessage } });
         } else {
@@ -310,7 +333,7 @@ export function useChatActions(
       // the agent this surface sent to.
       const ranAs = typeof data?.agent_id === 'string' && data.agent_id ? data.agent_id : agentToUse;
       if (sid && ranAs !== agentToUse) useServerStore.getState().setPendingSend(sid, true, ranAs);
-      useChatStore.getState().upsertGenerating(ranAs, 'Model loading...', 'Model loading...');
+      if (onSession(asked)) useChatStore.getState().upsertGenerating(ranAs, 'Model loading...', 'Model loading...');
     } catch (e) {
       console.error('Error in chat:', e);
       // The send never reached the server (transport rejected: channel
@@ -324,8 +347,9 @@ export function useChatActions(
       // its own protocol messages (e.g. a boot prompt that raced a
       // daemon restart). Mirrors the session_created bridge event.
       postToParent({ type: 'linggen-skill-event', event: 'send_failed', payload: { text: userMessage } });
-      // Hidden boot prompts fail silently; user-typed messages get told.
-      if (!trimmed.startsWith('[HIDDEN]')) {
+      // Hidden boot prompts fail silently; user-typed messages get told —
+      // in the chat they were sent from.
+      if (!trimmed.startsWith('[HIDDEN]') && onSession(sid)) {
         const ts = new Date();
         // Say which failure this was. "Connection interrupted" used to be
         // printed for every cause, including an attachment the transport

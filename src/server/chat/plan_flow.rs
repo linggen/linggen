@@ -17,7 +17,6 @@ use super::runtime::{
 };
 use super::types::{EditPlanRequest, PlanActionRequest};
 use super::ChatRunCtx;
-use crate::server::AgentStatusKind;
 
 /// Dispatch plan mode: agent researches codebase and produces a structured plan (read-only).
 pub(super) async fn run_plan_dispatch(ctx: &ChatRunCtx, engine: &mut crate::engine::AgentEngine) {
@@ -386,24 +385,7 @@ async fn run_approved_plan_task(
         }
     }
 
-    let _ = events_tx.send(ServerEvent::TurnComplete {
-        agent_id: agent_id.clone(),
-        duration_ms: None,
-        context_tokens: None,
-        parent_id: None,
-        session_id: session_id.clone(),
-        run_id: None,
-        parent_run_id: None,
-    });
-    state
-        .send_agent_status(
-            agent_id,
-            AgentStatusKind::Idle,
-            Some("Idle".to_string()),
-            None,
-            session_id,
-        )
-        .await;
+    super::runtime::close_turn(&state, agent_id, session_id).await;
 }
 
 /// Persist a plan as the latest `{type:"plan", plan:...}` message in the

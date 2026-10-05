@@ -1,3 +1,4 @@
+use crate::engine::agent::AgentEvent;
 use crate::server::chat::helpers::persist_and_emit_message;
 use crate::server::{AgentStatusKind, ServerEvent, ServerState};
 use std::path::PathBuf;
@@ -614,6 +615,41 @@ pub(super) async fn send_thinking_status(ctx: &ChatRunCtx, detail: impl Into<Str
             Some(detail.into()),
             None,
             ctx.session_id.clone(),
+        )
+        .await;
+}
+
+/// Ends a turn for the UI: TurnComplete, then Idle. Both ride the agent-event
+/// queue, behind the run's own events (its last text block, its message) —
+/// sent straight to the UI they could overtake them, and the UI finalized the
+/// reply before its last block came: the block opened a second bubble and
+/// the message filled it (tests/e2e, 2026-10-05).
+pub(super) async fn close_turn(state: &ServerState, agent_id: String, session_id: Option<String>) {
+    let manager = &state.manager;
+    manager
+        .send_event(
+            AgentEvent::TurnComplete {
+                agent_id: agent_id.clone(),
+                duration_ms: None,
+                context_tokens: None,
+                parent_id: None,
+                run_id: None,
+                parent_run_id: None,
+            },
+            session_id.clone(),
+        )
+        .await;
+    manager
+        .send_event(
+            AgentEvent::AgentStatus {
+                agent_id,
+                status: "idle".to_string(),
+                detail: Some("Idle".to_string()),
+                parent_id: None,
+                run_id: None,
+                parent_run_id: None,
+            },
+            session_id,
         )
         .await;
 }

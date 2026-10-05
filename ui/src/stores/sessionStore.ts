@@ -35,6 +35,9 @@ interface SessionState {
   fetchAllSessions: () => Promise<void>;
 
   createSession: () => Promise<void>;
+  /** A New chat being made: a message sent meanwhile waits for it — it
+   *  belongs to the new chat, not the one on screen before the click. */
+  newChat: Promise<string | null> | null;
   removeSession: (id: string) => Promise<void>;
   removeSessions: (ids: string[]) => Promise<void>;
   renameSession: (id: string, title: string) => Promise<void>;
@@ -79,20 +82,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   fetchSessions: async () => {},
   fetchAllSessions: async () => {},
 
+  newChat: null,
+
   createSession: async () => {
-    const now = new Date();
-    const title = `Chat ${now.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, ${now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
-    try {
-      const data = await sessionsApi.create({ title });
-      const newSession = { id: data.id, repo_path: '', title, created_at: Math.floor(Date.now() / 1000) };
-      set((s) => ({
-        activeSessionId: data.id,
-        allSessions: [newSession, ...s.allSessions],
-      }));
-      window.localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, data.id);
-    } catch (e) {
-      console.error('Error creating session:', e);
-    }
+    const making = makeSession(set);
+    set({ newChat: making });
+    await making;
+    if (get().newChat === making) set({ newChat: null });
   },
 
   removeSession: async (id) => {
@@ -172,6 +168,25 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
 }));
+
+/** Makes a new chat session and opens it; its id, or null when it failed. */
+async function makeSession(set: (fn: (s: SessionState) => Partial<SessionState>) => void): Promise<string | null> {
+  const now = new Date();
+  const title = `Chat ${now.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, ${now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+  try {
+    const data = await sessionsApi.create({ title });
+    const newSession = { id: data.id, repo_path: '', title, created_at: Math.floor(Date.now() / 1000) };
+    set((s) => ({
+      activeSessionId: data.id,
+      allSessions: [newSession, ...s.allSessions],
+    }));
+    window.localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, data.id);
+    return data.id;
+  } catch (e) {
+    console.error('Error creating session:', e);
+    return null;
+  }
+}
 
 // An AskUser raised while its session wasn't on screen is dropped by the
 // live event filter (eventHandlers/interactive.ts) — so entering a session

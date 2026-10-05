@@ -109,8 +109,8 @@ const ChatDebugActions: React.FC<{ projectRoot?: string | null; sessionId?: stri
     const title = skill
       ? `${skill} session`
       : `Chat ${now.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, ${now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
-    try {
-      const data = await sessionsApi.create({ title, ...(skill ? { skill } : {}) });
+    // A message sent before the session exists waits for it (newChat).
+    const making = sessionsApi.create({ title, ...(skill ? { skill } : {}) }).then((data) => {
       const created = { id: data.id, repo_path: '', title, created_at: Math.floor(Date.now() / 1000), ...(skill ? { skill } : {}) };
       useSessionStore.setState((s) => ({ activeSessionId: data.id, allSessions: [created, ...s.allSessions] }));
       const cs = useChatStore.getState();
@@ -118,10 +118,15 @@ const ChatDebugActions: React.FC<{ projectRoot?: string | null; sessionId?: stri
       cs.fetchSessionState();
       postToParent({ type: 'linggen-skill-event', event: 'session_created', payload: { sessionId: data.id } });
       setNewStatus('copied');
-    } catch (err) {
+      return data.id;
+    }, (err) => {
       console.error('[new-chat] failed:', err);
       setNewStatus('error');
-    }
+      return null;
+    });
+    useSessionStore.setState({ newChat: making });
+    await making;
+    if (useSessionStore.getState().newChat === making) useSessionStore.setState({ newChat: null });
     setTimeout(() => setNewStatus('idle'), 1500);
   }, []);
 

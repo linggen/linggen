@@ -28,6 +28,7 @@ import { cacheImages, restoreImages, clearImageCache } from '../lib/imageCache';
 import { interruptedRunMessage, isInterruptedRunMeta, type RunMeta } from '../lib/interruptedRun.mts';
 import { agentTracker } from '../lib/agentTracker';
 import { confirmSent } from '../lib/sentMessage.mts';
+import { loadOutcome, type LoadSnapshot } from '../lib/sessionLoad.mts';
 import { computeDisplay, mutate, mutateLast } from './chatMutationHelpers';
 import { useSessionStore } from './sessionStore';
 import { useUserStore } from './userStore';
@@ -36,6 +37,8 @@ import { useInteractionStore } from './interactionStore';
 interface ChatState {
   messages: ChatMessage[];
   sessionState: SessionState | null;
+  /** The session `sessionState` was loaded for, and what it held. */
+  _sessionStateLoad: LoadSnapshot | null;
 
   // Per-session message storage — avoids clear/refetch race on session switch
   _messagesBySession: Record<string, ChatMessage[]>;
@@ -84,9 +87,19 @@ interface ChatState {
   isInClearCooldown: () => boolean;
 }
 
+function loadSnapshot(sessionId: string, data: SessionState): LoadSnapshot {
+  return {
+    sessionId,
+    messageCount: data?.messages?.length ?? 0,
+    agentStatus: data?.agent_status,
+    planStatus: data?.plan_status,
+  };
+}
+
 export const useChatStore = create<ChatState>((set, get) => ({
   messages: [],
   sessionState: null,
+  _sessionStateLoad: null,
   _messagesBySession: {},
   _activeSessionId: null,
   _chatClearTs: 0,
@@ -647,14 +660,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       const resp = await dedupFetch(url.toString());
       const data: SessionState = await resp.json();
-      // Skip update if workspace state hasn't meaningfully changed (prevents re-render loops)
-      const prev = get().sessionState;
-      const prevMsgCount = prev?.messages?.length ?? 0;
-      const newMsgCount = data?.messages?.length ?? 0;
-      const prevStatus = prev?.agent_status;
-      const newStatus = data?.agent_status;
-      if (prevMsgCount === newMsgCount && prevStatus === newStatus && prev?.plan_status === data?.plan_status) return;
-      set({ sessionState: data });
+      // The load answers the session it asked for: dropped when the person
+      // moved on meanwhile, skipped when nothing changed (re-render loops).
+      const loaded = loadSnapshot(activeSessionId, data);
+      const outcome = loadOutcome(loaded, useSessionStore.getState().activeSessionId, get()._sessionStateLoad);
+      if (outcome !== 'apply') return;
+      set({ sessionState: data, _sessionStateLoad: loaded });
 
       const state = get();
       if (data.messages && !state.isInClearCooldown()) {

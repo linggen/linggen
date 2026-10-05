@@ -12,6 +12,7 @@ import { useInteractionStore } from '../../stores/interactionStore';
 import { useChatStore } from '../../stores/chatStore';
 import { UNSPOKEN_SENDERS } from '../messageUtils';
 import { interruptedResend, INTERRUPTED_TEXT } from '../interruptedTurn.mts';
+import { stillOn } from '../sessionLoad.mts';
 import { isPermissionSuppressed } from './_shared';
 
 
@@ -213,6 +214,8 @@ async function markInterruptedIfUnanswered(sessionId: string): Promise<void> {
   try {
     await useChatStore.getState().fetchSessionState({ sessionId });
   } catch { /* best-effort — judge from what we have */ }
+  // The chat on screen is another one now: its rows are not this session's.
+  if (!stillOn(sessionId, useSessionStore.getState().activeSessionId)) return;
   // The last row that SPEAKS. A memory recall is persisted right after the
   // user's message, before any reply — counting it as an answer hid every
   // interrupted turn once auto-recall landed.

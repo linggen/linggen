@@ -2,6 +2,7 @@ import type { UiEvent, UiEventOf, ContentBlock, ContentBlockEvent, SubagentToolS
 import type { ContentBlockStartData } from '../../types/generated/ContentBlockStartData';
 import type { ContentBlockUpdateData } from '../../types/generated/ContentBlockUpdateData';
 import { useChatStore } from '../../stores/chatStore';
+import { useSessionStore } from '../../stores/sessionStore';
 import { useServerStore } from '../../stores/serverStore';
 import { useInteractionStore } from '../../stores/interactionStore';
 import { useSuggestionStore } from '../../stores/suggestionStore';
@@ -13,6 +14,7 @@ import {
 } from '../messageUtils';
 import { getSessionId, formatToolStartLine } from './_shared';
 import { askEndsWithTurn, completeAgentRuns, otherAgentRunning, sendEndsWithTurn } from '../agentTurns.mts';
+import { stillOn } from '../sessionLoad.mts';
 
 // ---------------------------------------------------------------------------
 // Text segment
@@ -53,15 +55,19 @@ export function sessionMovedOn(sid: string, runId: string | null): boolean {
 // Token — batched to rAF to avoid "Maximum update depth exceeded"
 // ---------------------------------------------------------------------------
 
-const _tokenBuffer: Map<string, { text: string; isThinking: boolean }> = new Map();
+/** Buffered per agent; each entry keeps the session its tokens came for, and
+ *  a flush that lands after a switch drops them rather than stream them into
+ *  the chat now on screen. */
+const _tokenBuffer: Map<string, { text: string; isThinking: boolean; sid: string | null }> = new Map();
 let _tokenFlushScheduled = false;
 
 function flushTokenBuffer(): void {
   _tokenFlushScheduled = false;
   if (_tokenBuffer.size === 0) return;
   const chatStore = useChatStore.getState();
-  for (const [agentId, { text, isThinking }] of _tokenBuffer) {
-    if (text) chatStore.appendToken(agentId, text, isThinking);
+  const open = useSessionStore.getState().activeSessionId;
+  for (const [agentId, { text, isThinking, sid }] of _tokenBuffer) {
+    if (text && stillOn(sid, open)) chatStore.appendToken(agentId, text, isThinking);
   }
   _tokenBuffer.clear();
   useServerStore.getState().recomputeTokenRate();
@@ -88,13 +94,14 @@ export function handleToken(item: UiEventOf<'token'>): void {
     useServerStore.getState().recordTokenEvent();
   }
 
+  const sid = useSessionStore.getState().activeSessionId;
   const existing = _tokenBuffer.get(agentId);
-  if (existing && existing.isThinking === isThinking) {
+  if (existing && existing.isThinking === isThinking && existing.sid === sid) {
     existing.text += tokenText;
   } else {
-    // Flush if thinking state changed for this agent
+    // Flush if thinking state (or the session on screen) changed for this agent
     if (existing) flushTokenBuffer();
-    _tokenBuffer.set(agentId, { text: tokenText, isThinking });
+    _tokenBuffer.set(agentId, { text: tokenText, isThinking, sid });
   }
 
   if (!_tokenFlushScheduled) {

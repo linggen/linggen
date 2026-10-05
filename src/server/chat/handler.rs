@@ -1294,26 +1294,8 @@ pub(crate) async fn start_turn(
             }
         }
 
-        // Emit TurnComplete so the Web UI has a single finalizer.
-        let _ = state_clone.events_tx.send(ServerEvent::TurnComplete {
-            agent_id: target_id_clone.clone(),
-            duration_ms: None,
-            context_tokens: None,
-            parent_id: None,
-            session_id: session_id.clone(),
-            run_id: None,
-            parent_run_id: None,
-        });
-
-        state_clone
-            .send_agent_status(
-                target_id_clone,
-                AgentStatusKind::Idle,
-                Some("Idle".to_string()),
-                None,
-                session_id.clone(),
-            )
-            .await;
+        // TurnComplete gives the Web UI a single finalizer.
+        super::runtime::close_turn(&state_clone, target_id_clone, session_id.clone()).await;
     });
 
     let status = if was_busy { "queued" } else { "started" };
