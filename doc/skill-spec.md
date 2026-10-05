@@ -210,7 +210,7 @@ A skill's page runs the skill's declared shell tools through `POST /api/skills/{
 
 ### Pet tools
 
-`pet: true` offers a tool to the companion (Yinyue), who calls it through her `AppTool` — `AppTool` with no `tool` lists what the installed apps offer her. The engine runs it through the same door as a page (lock, grant, cloud gate) and refuses any tool not marked `pet: true` or whose `tier` is above `read`: she reads an app's state, never changes it.
+`pet: true` offers a tool to the companion (Yinyue), who calls it through her `AppTool` — `AppTool` with no `tool` lists what the installed apps offer her. The engine runs it through the same door as a page (lock, grant, cloud gate) and refuses any tool not marked `pet: true` or whose `tier` is above `read`: she reads an app's state, never changes it. A pet tool is hers alone: no other member's model is offered it (the skill's lead included); at a shared table she has it where `place.yinyue.tools` names it.
 
 ### What others read
 

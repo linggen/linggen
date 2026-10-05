@@ -181,7 +181,7 @@ impl AgentEngine {
         if let Some(stop) = self.gate_write_safety(&t, read_paths, messages).await {
             return stop;
         }
-        if let Some(stop) = self.gate_restrictions(&t, messages) {
+        if let Some(stop) = self.gate_restrictions(&t, messages).await {
             return stop;
         }
         if let Some(stop) = self.gate_permission(&t, messages).await {
@@ -238,6 +238,49 @@ impl AgentEngine {
         )
     }
 
+    /// Refuse the model's call with `msg` and go on — saved like any other
+    /// call: its call row and the refusal as its result, shown live as a
+    /// failed tool block, so the thread and the history hold what the model
+    /// read (a withheld or denied call left no row until 2026-10-05).
+    async fn refuse_saved(
+        &mut self,
+        t: &ToolTurn<'_>,
+        messages: &mut Vec<ChatMessage>,
+        msg: String,
+    ) -> Option<PreExecOutcome> {
+        let safe_args = sanitize_tool_args_for_display(t.canonical, t.args);
+        let block_id = self.announce_tool_start(t, &safe_args).await;
+        let _ = self
+            .persist_observation(t.canonical, &msg, t.session_id)
+            .await;
+        self.announce_tool_refused(&block_id, &msg).await;
+        self.refuse(t, messages, msg)
+    }
+
+    /// The live tool block of a refused call, marked failed.
+    async fn announce_tool_refused(&self, block_id: &str, msg: &str) {
+        let Some(manager) = self.tools.get_manager() else {
+            return;
+        };
+        let agent_id = self.agent_id.clone().unwrap_or_else(|| "unknown".into());
+        manager
+            .send_event(
+                crate::engine::agent::AgentEvent::ContentBlockUpdate {
+                    agent_id,
+                    block_id: block_id.to_string(),
+                    status: Some("failed".to_string()),
+                    summary: Some(msg.to_string()),
+                    is_error: Some(true),
+                    parent_id: self.parent_agent_id.clone(),
+                    extra: None,
+                    run_id: self.run_id.clone(),
+                    parent_run_id: self.parent_run_id.clone(),
+                },
+                self.session_id.clone(),
+            )
+            .await;
+    }
+
     /// Answer the model's call with `msg` instead of running it, and go on.
     fn refuse(
         &self,
@@ -271,10 +314,7 @@ impl AgentEngine {
                 t.canonical
             );
             self.upsert_observation("error", t.canonical, rendered.clone());
-            let _ = self
-                .persist_observation(t.canonical, &rendered, t.session_id)
-                .await;
-            return self.refuse(t, messages, rendered);
+            return self.refuse_saved(t, messages, rendered).await;
         }
         None
     }
@@ -298,15 +338,12 @@ impl AgentEngine {
             t.canonical,
             allowed_list.join(",")
         );
-        self.upsert_observation("error", t.canonical, rendered.clone());
-        let _ = self
-            .persist_observation(t.canonical, &rendered, t.session_id)
-            .await;
+        self.upsert_observation("error", t.canonical, rendered);
         let msg = self.prompt_store.render_or_fallback(
             crate::prompts::keys::TOOL_NOT_ALLOWED,
             &[("tool", t.tool), ("allowed_list", &allowed_list.join(", "))],
         );
-        self.refuse(t, messages, msg)
+        self.refuse_saved(t, messages, msg).await
     }
 
     /// Record the call in context and the log; remember a Read's path for
@@ -362,14 +399,11 @@ impl AgentEngine {
                     action, path, action
                 );
                 self.upsert_observation("error", action, rendered.clone());
-                let _ = self
-                    .persist_observation(action, &rendered, t.session_id)
-                    .await;
                 let msg = self.prompt_store.render_or_fallback(
                     crate::prompts::keys::WRITE_SAFETY_BLOCKED,
                     &[("rendered", &rendered)],
                 );
-                self.refuse(t, messages, msg)
+                self.refuse_saved(t, messages, msg).await
             }
             crate::config::WriteSafetyMode::Warn => {
                 let rendered = format!(
@@ -389,8 +423,8 @@ impl AgentEngine {
     /// Restriction gates (defense-in-depth), in order: the config-level tool
     /// set, tools withheld this turn, a consumer's skill list, and a
     /// mission's bash prefixes.
-    fn gate_restrictions(
-        &self,
+    async fn gate_restrictions(
+        &mut self,
         t: &ToolTurn<'_>,
         messages: &mut Vec<ChatMessage>,
     ) -> Option<PreExecOutcome> {
@@ -399,7 +433,7 @@ impl AgentEngine {
             .or_else(|| self.withheld_restriction(t))
             .or_else(|| self.consumer_skill_restriction(t))
             .or_else(|| self.bash_prefix_restriction(t))?;
-        self.refuse(t, messages, msg)
+        self.refuse_saved(t, messages, msg).await
     }
 
     /// Blocks tools not allowed by mission tiers or consumer room settings.
@@ -526,7 +560,7 @@ impl AgentEngine {
             permission::PermissionCheckResult::Blocked(reason) => {
                 info!("Permission blocked: {} — {}", t.canonical, reason);
                 let msg = self.permission_denied_msg(t);
-                return self.refuse(t, messages, msg);
+                return self.refuse_saved(t, messages, msg).await;
             }
             permission::PermissionCheckResult::NeedsPrompt(prompt_kind) => prompt_kind,
         };
@@ -535,7 +569,7 @@ impl AgentEngine {
         // return permission-needed immediately.
         if !self.session_permissions.interactive {
             let msg = self.permission_denied_msg(t);
-            return self.refuse(t, messages, msg);
+            return self.refuse_saved(t, messages, msg).await;
         }
 
         let permission::PromptKind::ExceedsCeiling {
@@ -566,7 +600,7 @@ impl AgentEngine {
             }
             Some(permission::PermissionAction::Deny) => {
                 let msg = self.permission_denied_msg(t);
-                self.refuse(t, messages, msg)
+                self.refuse_saved(t, messages, msg).await
             }
             Some(permission::PermissionAction::DenyWithMessage(user_msg)) => {
                 let summary = self.permission_summary(t);
@@ -574,7 +608,7 @@ impl AgentEngine {
                     "Permission denied by user for {} '{}'. User says: {}",
                     t.canonical, summary, user_msg
                 );
-                self.refuse(t, messages, msg)
+                self.refuse_saved(t, messages, msg).await
             }
             None => {
                 let msg = self

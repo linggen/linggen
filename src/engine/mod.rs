@@ -1370,6 +1370,40 @@ mod member_tests {
         );
     }
 
+    /// A `pet: true` tool is the companion's: the lead never gets it, she
+    /// does where her place names it.
+    #[tokio::test]
+    async fn a_pet_tool_reaches_only_the_companion() {
+        let text = "---\nname: game\ndescription: d\nallowed-tools: [AskUser]\nmembers: [ling, yinyue]\nplace:\n  yinyue:\n    tools: [Peek]\ntools:\n  - name: Look\n    description: read\n    cmd: \"echo look\"\n    tier: read\n  - name: Peek\n    description: hers\n    cmd: \"echo peek\"\n    tier: read\n    pet: true\n---\nRULES.";
+        let skill = || {
+            crate::extensions::skills::parse_skill_text(
+                text,
+                crate::engine::skill::SkillSource::Global,
+            )
+            .unwrap()
+        };
+        let names = |e: &AgentEngine| -> Vec<String> {
+            e.tools
+                .oai_tool_definitions(e.allowed_tool_names().as_ref())
+                .iter()
+                .filter_map(|t| t["function"]["name"].as_str().map(String::from))
+                .collect()
+        };
+        let mut ling = spec_engine("ling", include_str!("../../agents/ling.md"));
+        ling.activate_skill(skill(), crate::engine::ActivationMode::Export)
+            .await;
+        let his = names(&ling);
+        assert!(his.contains(&"Look".to_string()), "{his:?}");
+        assert!(!his.contains(&"Peek".to_string()), "{his:?}");
+        assert!(!ling.cfg.is_tool_allowed("Peek"));
+
+        let mut her = yinyue_engine();
+        her.session_lead = Some("ling".into());
+        her.activate_skill(skill(), crate::engine::ActivationMode::Export)
+            .await;
+        assert!(names(&her).contains(&"Peek".to_string()));
+    }
+
     /// A move the model names anyway is refused at execute time.
     #[tokio::test]
     async fn a_members_move_is_refused_at_execute_time() {

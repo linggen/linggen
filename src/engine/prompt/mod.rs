@@ -73,18 +73,42 @@ fn get_os_version() -> String {
 fn local_timezone() -> String {
     static TZ: OnceLock<String> = OnceLock::new();
     TZ.get_or_init(|| {
-        if let Ok(target) = std::fs::read_link("/etc/localtime") {
-            let s = target.to_string_lossy();
-            if let Some(idx) = s.find("zoneinfo/") {
-                let tz = s[idx + "zoneinfo/".len()..].trim_matches('/');
-                if !tz.is_empty() {
-                    return tz.to_string();
-                }
-            }
-        }
-        "unknown".into()
+        let zoneinfo = std::path::Path::new("/usr/share/zoneinfo");
+        let from_env = std::env::var("TZ").ok();
+        tz_env_zone(from_env.as_deref(), zoneinfo)
+            .or_else(system_timezone)
+            .unwrap_or_else(|| "unknown".into())
     })
     .clone()
+}
+
+/// The zone `TZ` names, when it names one this machine knows: `UTC`,
+/// `Europe/Lisbon`, `:Europe/Lisbon`, or a path into a zoneinfo tree.
+/// Unset, empty or unknown → `None` (the system zone, as libc falls back).
+fn tz_env_zone(tz: Option<&str>, zoneinfo: &std::path::Path) -> Option<String> {
+    let raw = tz?.trim().trim_start_matches(':');
+    let (name, file) = if std::path::Path::new(raw).is_absolute() {
+        (zone_name_of(raw)?, std::path::PathBuf::from(raw))
+    } else {
+        (raw, zoneinfo.join(raw))
+    };
+    let known = !name.is_empty() && !name.contains("..") && file.is_file();
+    known.then(|| name.to_string())
+}
+
+/// `…/zoneinfo/Europe/Lisbon` → `Europe/Lisbon`.
+fn zone_name_of(path: &str) -> Option<&str> {
+    let idx = path.find("zoneinfo/")?;
+    Some(path[idx + "zoneinfo/".len()..].trim_matches('/'))
+}
+
+/// The system zone, from where `/etc/localtime` points.
+fn system_timezone() -> Option<String> {
+    let target = std::fs::read_link("/etc/localtime").ok()?;
+    let target = target.to_string_lossy();
+    zone_name_of(&target)
+        .filter(|tz| !tz.is_empty())
+        .map(str::to_string)
 }
 
 /// Best-effort BCP-47-ish locale (e.g. "en-CA") from the environment.
@@ -429,8 +453,9 @@ impl AgentEngine {
                 std::collections::HashSet::new();
             let mut sections: Vec<(String, String)> = Vec::new();
 
-            let mut dir: Option<&std::path::Path> = Some(self.cfg.ws_root.as_path());
-            while let Some(current) = dir {
+            // From the workspace up, never above $HOME (Claude Code walks to
+            // `/`; a tree above the person's home is not theirs to read).
+            for current in crate::engine::tools::project_ancestors(&self.cfg.ws_root) {
                 for filename in &context_filenames {
                     let filepath = current.join(filename);
                     if let Ok(canonical) = filepath.canonicalize() {
@@ -451,7 +476,6 @@ impl AgentEngine {
                         }
                     }
                 }
-                dir = current.parent();
             }
             sections.reverse();
             if !sections.is_empty() {
@@ -1218,6 +1242,28 @@ mod right_now_tests {
 #[cfg(test)]
 mod tests {
     use super::insert_before_turn;
+
+    /// `TZ` names the zone when it names a known one; otherwise the system
+    /// zone stands (`None` here).
+    #[test]
+    fn tz_names_the_zone_when_it_is_known() {
+        let dir = tempfile::tempdir().unwrap();
+        let zi = dir.path().join("zoneinfo");
+        std::fs::create_dir_all(zi.join("Europe")).unwrap();
+        std::fs::write(zi.join("Europe/Lisbon"), "TZif").unwrap();
+        std::fs::write(zi.join("UTC"), "TZif").unwrap();
+        let zone = |tz: Option<&str>| super::tz_env_zone(tz, &zi);
+        assert_eq!(zone(Some("UTC")).as_deref(), Some("UTC"));
+        assert_eq!(
+            zone(Some(":Europe/Lisbon")).as_deref(),
+            Some("Europe/Lisbon")
+        );
+        let path = zi.join("Europe/Lisbon").display().to_string();
+        assert_eq!(zone(Some(&path)).as_deref(), Some("Europe/Lisbon"));
+        for none in [None, Some(""), Some("Mars/Olympus"), Some("../UTC")] {
+            assert_eq!(zone(none), None, "{none:?}");
+        }
+    }
     use crate::message::ChatMessage;
 
     fn roles(messages: &[ChatMessage]) -> Vec<&str> {

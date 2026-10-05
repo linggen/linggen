@@ -14,22 +14,50 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::warn;
 
-/// Walk up from `path` looking for a `.git` directory or file (worktrees).
+/// Walk up from `path` looking for a `.git` directory or file (worktrees),
+/// never above `$HOME` (see [`project_ancestors`]). Home itself is never a
+/// project root (a dotfiles repo there would claim everything below).
 pub fn find_git_root(path: &Path) -> Option<PathBuf> {
-    let mut dir = Some(path);
-    while let Some(d) = dir {
-        if d.join(".git").exists() {
-            // Skip if git root is the user's home directory (dotfiles repo)
-            if let Some(home) = dirs::home_dir() {
-                if d == home {
-                    return None;
-                }
-            }
-            return Some(d.to_path_buf());
+    let home = dirs::home_dir();
+    git_root_within(path, home.as_deref())
+}
+
+fn git_root_within(path: &Path, home: Option<&Path>) -> Option<PathBuf> {
+    let found = project_ancestors_within(path, home)
+        .into_iter()
+        .find(|d| d.join(".git").exists())?;
+    let is_home = home.is_some_and(|h| home_forms(h).iter().any(|f| f == found));
+    (!is_home).then(|| found.to_path_buf())
+}
+
+/// The directories a project walk from `path` may read: `path` and its
+/// ancestors, ending at `$HOME` when `path` is under it — nothing above the
+/// person's home is ever read (a repo or a CLAUDE.md there belongs to
+/// someone else's tree). A path outside home walks to the filesystem root.
+pub fn project_ancestors(path: &Path) -> Vec<&Path> {
+    let home = dirs::home_dir();
+    project_ancestors_within(path, home.as_deref())
+}
+
+fn project_ancestors_within<'a>(path: &'a Path, home: Option<&Path>) -> Vec<&'a Path> {
+    let all = path.ancestors();
+    let Some(home) = home.and_then(|h| home_forms(h).into_iter().find(|f| path.starts_with(f)))
+    else {
+        return all.collect();
+    };
+    all.take_while(|d| d.starts_with(&home)).collect()
+}
+
+/// Home as given and canonicalized (`/var` → `/private/var` on macOS): a
+/// canonical session root must still find the home it sits under.
+fn home_forms(home: &Path) -> Vec<PathBuf> {
+    let mut forms = vec![home.to_path_buf()];
+    if let Ok(real) = home.canonicalize() {
+        if real != home {
+            forms.push(real);
         }
-        dir = d.parent();
     }
-    None
+    forms
 }
 
 #[derive(Debug, Deserialize)]
@@ -358,5 +386,41 @@ impl Tools {
             &stderr,
             super::DEFAULT_MAX_TOOL_OUTPUT_BYTES,
         ))
+    }
+}
+
+#[cfg(test)]
+mod project_walk_tests {
+    use super::*;
+
+    /// A repo above `$HOME` is someone else's tree: a walk from inside home
+    /// stops at home and never finds it.
+    #[test]
+    fn the_walk_stops_at_home() {
+        let dir = tempfile::tempdir().unwrap();
+        let outer = dir.path().canonicalize().unwrap();
+        std::fs::create_dir(outer.join(".git")).unwrap();
+        let home = outer.join("home");
+        let chat = home.join("work/chat");
+        std::fs::create_dir_all(&chat).unwrap();
+        assert_eq!(git_root_within(&chat, Some(&home)), None);
+        let walked = project_ancestors_within(&chat, Some(&home));
+        assert_eq!(walked.last().copied(), Some(home.as_path()));
+
+        let repo = home.join("work/harbor");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        assert_eq!(git_root_within(&repo.join("src"), Some(&home)), Some(repo));
+
+        std::fs::create_dir(home.join(".git")).unwrap();
+        assert_eq!(
+            git_root_within(&chat, Some(&home)),
+            None,
+            "home is never a root"
+        );
+        // Outside home the walk goes on up, as before.
+        let elsewhere = outer.join("elsewhere");
+        std::fs::create_dir(&elsewhere).unwrap();
+        assert_eq!(git_root_within(&elsewhere, Some(&home)), Some(outer));
     }
 }

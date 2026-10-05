@@ -19,6 +19,7 @@ mod write_tools;
 pub(crate) use delegation::{run_delegation, TaskArgs};
 pub use search_exec::find_git_root as search_exec_find_git_root;
 pub(crate) use search_exec::kill_process_group;
+pub use search_exec::project_ancestors;
 pub use tool_helpers::canonical_tool_name;
 pub(crate) use tool_helpers::full_tool_schema_entries;
 pub(crate) use tool_helpers::{normalize_tool_args, summarize_tool_args};

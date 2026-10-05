@@ -138,6 +138,17 @@ async fn b_her_write_asks_and_deny_writes_nothing() {
     w.finish_run(&sid, Agent::Yinyue, mark).await;
 
     assert!(!folder.join(probe).exists(), "Deny still wrote the file");
+    // The denied call is saved like any other: its row and the refusal.
+    let rows = w.rows(&sid);
+    assert!(
+        calls_by(&rows, "yinyue").contains(&"Write".to_string()),
+        "the denied Write left no call row: {rows:?}"
+    );
+    assert!(
+        rows.iter()
+            .any(|r| r.is_observation && r.content.starts_with("Tool Write: ")),
+        "the denial left no result row: {rows:?}"
+    );
     assert_eq!(
         members(&w, &sid),
         ["ling", "yinyue"],

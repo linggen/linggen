@@ -39,7 +39,7 @@ The **home path** is the default working folder for new sessions. Defaults to `~
 
 1. **New chat** — starts at the home path. No project picker — just click `+` and go.
 2. **Agent or user runs `cd`** — after any bash command, the backend checks the new cwd.
-3. **Git detection** — if `.git/` exists in the cwd or any parent, the session enters **project mode** for that git root. The engine loads the project's `CLAUDE.md`, agents, permissions, and git context.
+3. **Git detection** — if `.git/` exists in the cwd or any parent up to `$HOME` (never above it; home itself is never a project), the session enters **project mode** for that git root. The engine loads the project's `CLAUDE.md`, agents, permissions, and git context.
 4. **Leaving a project** — if the agent `cd`s to a directory outside any git repo, the session returns to **home mode**.
 
 ### Home mode vs project mode
@@ -47,7 +47,7 @@ The **home path** is the default working folder for new sessions. Defaults to `~
 | Aspect | Home mode | Project mode |
 |:-------|:----------|:-------------|
 | cwd | home path (default `~`) | anywhere within the git repo |
-| CLAUDE.md | not loaded from home path | loaded from git root + parents |
+| CLAUDE.md | not loaded from home path | loaded from git root + parents, up to `$HOME` |
 | agents/ | global only (`~/.linggen/agents/`) | global + project (`{git_root}/agents/`) |
 | Permissions | session `permission.json` path grants | session `permission.json` path grants |
 | Git context | none | branch, status, recent commits |

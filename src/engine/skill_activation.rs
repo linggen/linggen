@@ -159,8 +159,10 @@ fn register_skill_tools(engine: &mut AgentEngine, skill: &Skill) {
     if skill.disable_model_invocation {
         return;
     }
-    // A page-only tool is the skill page's door, never the model's.
-    for tool_def in skill.tool_defs.iter().filter(|t| !t.page_only) {
+    // A page-only tool is the skill page's door, never the model's; a pet
+    // tool is the companion's, never another member's.
+    let companion = is_companion(engine);
+    for tool_def in skill.tool_defs.iter().filter(|t| offered(t, companion)) {
         if let Some(existing) = engine.tools.skill_tools.get(&tool_def.name) {
             let prev_owner = existing.skill_name.as_deref().unwrap_or("<unknown>");
             if prev_owner != skill.name {
@@ -179,6 +181,16 @@ fn register_skill_tools(engine: &mut AgentEngine, skill: &Skill) {
         }
         engine.tools.register_skill_tool(def);
     }
+}
+
+/// Whether a skill tool reaches this engine's model: never a page-only one,
+/// and a `pet: true` one only for the companion (skill-spec.md § Pet tools).
+fn offered(tool: &crate::engine::skill_tool::SkillToolDef, companion: bool) -> bool {
+    !tool.page_only && (!tool.pet || companion)
+}
+
+fn is_companion(engine: &AgentEngine) -> bool {
+    engine.agent_id.as_deref() == Some(crate::engine::agent::COMPANION_AGENT_ID)
 }
 
 /// Seed the engine's per-session cwd to the skill's declared `cwd:` when
@@ -257,8 +269,9 @@ fn apply_skill_tool_scope(engine: &mut AgentEngine, skill: &Skill) {
     let mut scope = crate::engine::tool_scope::compute_tool_scope(
         skill.allowed_tools.as_deref().unwrap_or(&[]),
     );
+    let companion = is_companion(engine);
     if let Some(set) = scope.as_mut() {
-        for td in &skill.tool_defs {
+        for td in skill.tool_defs.iter().filter(|t| offered(t, companion)) {
             set.insert(td.name.clone());
         }
         // A person can ask anyone to mute Yinyue — in an app's chat too.

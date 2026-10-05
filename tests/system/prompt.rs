@@ -3,6 +3,7 @@
 
 use crate::support::memory::embedder_available;
 use crate::support::model::Agent;
+use crate::support::rows::calls_by;
 use crate::support::{snap_text, text, tool, Setup, World};
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
@@ -57,6 +58,8 @@ async fn export_per_member_at_a_skill_table() {
         has(&his, "Look") && has(&his, "Roll"),
         "Ling's export lacks the skill's tools: {his:?}"
     );
+    // `pet: true` is hers alone, the lead's set included.
+    assert!(!has(&his, "Peek"), "Ling is offered her pet tool: {his:?}");
     let hers = tool_names(&w.api.export(&sid, "yinyue", "").await);
     assert!(has(&hers, "Peek"), "her place's tool is missing: {hers:?}");
     for not in ["Look", "Roll", "AskUser"] {
@@ -131,6 +134,23 @@ async fn session_withheld_tools_reach_no_member() {
     let (role, refusal) = after.thread().pop().expect("the call's result");
     assert_eq!(role, "tool");
     snap_text("withheld_call_result", &w, &refusal);
+    // Saved like any other call: its call row and the refusal as its result,
+    // so the thread and the history show what the model read.
+    let rows = w.rows(&sid);
+    assert!(
+        calls_by(&rows, "ling").contains(&"mcp__memory__memory_add".to_string()),
+        "the withheld call left no call row: {rows:?}"
+    );
+    assert!(
+        rows.iter()
+            .any(|r| r.is_observation && r.content.contains("reason=withheld")),
+        "the refusal left no result row: {rows:?}"
+    );
+    let history = w.api.history(&sid, &root).await.to_string();
+    assert!(
+        history.contains("mcp__memory__memory_add"),
+        "the history does not show the withheld call"
+    );
     let stored = w.memory.call("list", json!({"limit": 10})).await;
     assert_eq!(
         stored.as_array().map_or(0, Vec::len),
@@ -216,4 +236,63 @@ async fn memory_core_candidates_and_index_in_the_prompt() {
 async fn export_prompt(w: &World, sid: &str, root: &str) -> String {
     let e = w.api.export(sid, "ling", root).await;
     e["system_prompt"].as_str().unwrap_or("").to_string()
+}
+
+/// A project walk never reads above `$HOME`: a repo and a CLAUDE.md in the
+/// folder that holds the home stay out of every prompt (export and live
+/// turn); a repo under home still brings its own.
+#[tokio::test]
+async fn the_project_walk_stops_at_home() {
+    let w = World::start(Setup::default().script(Agent::Ling, vec![text("Here.")])).await;
+    // Made after the world's outside-git guard: the tree that holds HOME.
+    let above = &w.home.root;
+    std::fs::create_dir_all(above.join(".git")).expect("a repo above home");
+    std::fs::write(above.join("CLAUDE.md"), "ABOVE-HOME rules.").expect("its CLAUDE.md");
+    let harbor = w.home.work().join("harbor");
+    std::fs::create_dir_all(harbor.join(".git")).expect("harbor repo");
+    std::fs::write(harbor.join("CLAUDE.md"), "Harbor: tabs only.").expect("harbor CLAUDE.md");
+    let chat = w.home.work().join("chat");
+    std::fs::create_dir_all(&chat).expect("chat folder");
+    let (harbor, chat) = (harbor.display().to_string(), chat.display().to_string());
+
+    let in_chat = w
+        .api
+        .create_session(json!({"title": "chat", "project_root": chat}))
+        .await;
+    let prompt = export_prompt(&w, &in_chat, &chat).await;
+    assert!(!prompt.contains("ABOVE-HOME"), "read above home:\n{prompt}");
+
+    let in_harbor = w
+        .api
+        .create_session(json!({"title": "harbor", "project_root": harbor}))
+        .await;
+    let prompt = export_prompt(&w, &in_harbor, &harbor).await;
+    assert!(
+        prompt.contains("Harbor: tabs only."),
+        "the repo's CLAUDE.md is missing"
+    );
+    assert!(!prompt.contains("ABOVE-HOME"), "read above home:\n{prompt}");
+
+    w.turn(&in_chat, &chat, "Where are we?", Agent::Ling).await;
+    let call = w.model.calls_of(Agent::Ling).pop().expect("his call");
+    assert!(
+        !call.text().contains("ABOVE-HOME"),
+        "a live turn read above home"
+    );
+    w.assert_all_scripted();
+}
+
+/// The Environment block names the zone `TZ` sets (the world runs on
+/// `TZ=UTC`), not the machine's own.
+#[tokio::test]
+async fn the_environment_block_honours_tz() {
+    let w = World::start(Setup::default()).await;
+    let root = w.work();
+    let sid = w
+        .api
+        .create_session(json!({"title": "chat", "project_root": root}))
+        .await;
+    let prompt = export_prompt(&w, &sid, &root).await;
+    let line = prompt.lines().find(|l| l.starts_with("- Timezone: "));
+    assert_eq!(line, Some("- Timezone: UTC"), "{prompt}");
 }
