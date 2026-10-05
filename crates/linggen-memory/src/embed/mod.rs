@@ -22,10 +22,14 @@
 //!
 //! ## Daemon lifecycle
 //!
-//! The daemon (`ling-mem serve`) constructs one [`Embedder`] at startup and
-//! shares it across requests — model load (~1–2 s) happens once.
+//! The daemon (`ling-mem serve`) holds one [`Embedder`] in a [`LoadOnce`],
+//! loaded in the background at startup and shared across requests — model
+//! load (~1–2 s warm, more on a cold disk) happens once, and never in front
+//! of a request that does not embed (`session_start`, `list`, `get`).
 
+mod load_once;
 mod model_fetch;
+pub use load_once::LoadOnce;
 pub use model_fetch::ensure_model_cached;
 
 use std::sync::Arc;

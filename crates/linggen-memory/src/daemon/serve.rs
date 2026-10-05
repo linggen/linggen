@@ -9,7 +9,7 @@
 //! that rule and why the second machine on the LAN is the case it exists for.
 
 use crate::daemon::pidfile::{self, PidInfo};
-use crate::embed::Embedder;
+use crate::embed::{Embedder, LoadOnce};
 use crate::http;
 use crate::http::state::AppState;
 use crate::memory::{MemoryStore, Recall};
@@ -89,8 +89,8 @@ pub async fn run(data_dir: &Path, skill_dir: &Path, port: u16, host: IpAddr) -> 
     let telemetry = crate::telemetry::Telemetry::new("ling-mem", data_dir);
     telemetry.launch();
 
-    // Shared resources: MemoryStore + Embedder are expensive to initialize
-    // (LanceDB connection, ONNX model load). Build once, share across
+    // Shared resources: the stores (LanceDB connections) open here, before
+    // serving — nearly every request reads them. Built once, shared across
     // every request via Arc<AppState>.
     let semantic = Arc::new(
         MemoryStore::open_semantic(data_dir)
@@ -107,12 +107,16 @@ pub async fn run(data_dir: &Path, skill_dir: &Path, port: u16, host: IpAddr) -> 
     // handle is reused for write routing in `http::memory::add` when the
     // caller sets `episodic: true` — same single connection per table.
     let recall = Arc::new(Recall::new(Arc::clone(&semantic), Arc::clone(&episodic)));
-    let embedder = Embedder::new().context("initializing embedder")?;
+    // The embedding model loads in the background, not here: until
+    // `axum::serve` runs, the bound listener only queues connections, and
+    // a cold-disk model load (several seconds) held every early request —
+    // `session_start` included, which never embeds — past its host's cap.
+    let embedder = Arc::new(LoadOnce::new(Embedder::new));
     let state = Arc::new(AppState::new(
         semantic,
         episodic,
         recall,
-        Arc::new(embedder),
+        Arc::clone(&embedder),
         data_dir.to_path_buf(),
         bound_port,
     ));
@@ -121,6 +125,7 @@ pub async fn run(data_dir: &Path, skill_dir: &Path, port: u16, host: IpAddr) -> 
     // measured condition, in idle windows. Silent by design — see
     // `daemon::maintenance`.
     crate::daemon::maintenance::spawn(Arc::clone(&state));
+    warm_embedder(embedder);
 
     let router = http::build_router(state, telemetry);
     // Connect info, because the gate's first question is where the caller is:
@@ -145,6 +150,27 @@ pub async fn run(data_dir: &Path, skill_dir: &Path, port: u16, host: IpAddr) -> 
     }
     tracing::info!("ling-mem daemon stopped");
     result
+}
+
+/// Load the embedding model and run one forward pass (the first pass on
+/// Metal compiles its kernels), so the first search or add after a start
+/// does not pay for either. Requests that embed meanwhile await the same
+/// load; a failure is logged and the next such request tries again.
+fn warm_embedder(embedder: Arc<LoadOnce<Embedder>>) {
+    tokio::spawn(async move {
+        let started = std::time::Instant::now();
+        let warmed = match embedder.get().await {
+            Ok(e) => e
+                .embed_query_serialized("warm up".to_string())
+                .await
+                .map(|_| ()),
+            Err(e) => Err(e),
+        };
+        match warmed {
+            Ok(()) => tracing::info!("embedder: warm in {:?}", started.elapsed()),
+            Err(e) => tracing::warn!("embedder: background load failed: {e:#}"),
+        }
+    });
 }
 
 /// Resolve on SIGTERM (or SIGINT / Ctrl-C). Completes the future on any.

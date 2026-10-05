@@ -716,8 +716,8 @@ async fn add(
     // Embed the content so the row is immediately searchable. Serialized +
     // off the async workers so concurrent adds can't stack forward passes.
     let vector = state
-        .embedder
-        .clone()
+        .embedder()
+        .await?
         .embed_passage(fact.content.clone())
         .await
         .map_err(ApiError::internal)?;
@@ -747,7 +747,7 @@ async fn add(
         Arc::clone(&state.episodic)
     };
     if let Some(existing) = other
-        .find_exact_content_public(&fact.content, fact.r#type)
+        .find_exact_content_public(&fact.content, fact.r#type, &replace_ids)
         .await?
     {
         let new_rank = tier_rank(fact.tier);
@@ -776,7 +776,8 @@ async fn add(
         let _ = other.delete(&existing.id).await?;
     }
 
-    let outcome = store.insert_with_dedup(fact).await?;
+    // Never into a row this call replaces: that row is about to be retired.
+    let outcome = store.insert_with_dedup_except(fact, &replace_ids).await?;
     let survivor = match &outcome {
         crate::memory::InsertOutcome::Added(f) => f.id.clone(),
         crate::memory::InsertOutcome::Merged { fact, .. } => fact.id.clone(),
@@ -946,8 +947,8 @@ async fn add_batch(
         // embedder's MAX_EMBED_BATCH internally), then one commit.
         let texts: Vec<String> = rows.iter().map(|f| f.content.clone()).collect();
         let vectors = state
-            .embedder
-            .clone()
+            .embedder()
+            .await?
             .embed_passages(texts)
             .await
             .map_err(ApiError::internal)?;
@@ -1037,6 +1038,10 @@ async fn apply_replace_ids(
     let mut replaced = Vec::new();
     let mut replaced_failed = Vec::new();
     for id in replace_ids {
+        // The row this write landed in is never its own loser.
+        if id == successor {
+            continue;
+        }
         let retired = state.store.expire(id, successor).await.unwrap_or(false)
             || state.episodic.delete(id).await.unwrap_or(false);
         if retired {
@@ -1148,8 +1153,8 @@ async fn search(
     }
 
     let vector = state
-        .embedder
-        .clone()
+        .embedder()
+        .await?
         .embed_query_serialized(req.query.clone())
         .await
         .map_err(ApiError::internal)?;
@@ -1725,7 +1730,10 @@ mod tests {
         // The pre-fix stamp (root = the shell cwd's git root) dropped the
         // candidate: the hook, not the daemon, must send the session's root.
         let v = json!({"content": "x", "cwd": s(&cfo), "root": s(&ws.join("skills")), "scope": "linggen/linggen"});
-        assert_eq!(resolve_scope(&add_req(v), &[], Tier::Episodic), Some(s(&cfo)));
+        assert_eq!(
+            resolve_scope(&add_req(v), &[], Tier::Episodic),
+            Some(s(&cfo))
+        );
         let _ = std::fs::remove_dir_all(ws.parent().unwrap());
     }
 
@@ -1845,5 +1853,84 @@ mod tests {
         assert_eq!(f.exclude_types, [MemoryType::Preference]);
         let sql = f.to_sql_for_test();
         assert!(sql.contains("type NOT IN ('preference')"), "{sql}");
+    }
+
+    /// A state over fresh stores, with an embedder that is never loaded.
+    async fn scratch_state(dir: &std::path::Path) -> SharedState {
+        let semantic = Arc::new(MemoryStore::open_semantic(dir).await.unwrap());
+        let episodic = Arc::new(MemoryStore::open_episodic(dir).await.unwrap());
+        let recall = Arc::new(crate::memory::Recall::new(
+            Arc::clone(&semantic),
+            Arc::clone(&episodic),
+        ));
+        fn no_model() -> anyhow::Result<crate::embed::Embedder> {
+            anyhow::bail!("no model in unit tests")
+        }
+        Arc::new(super::super::state::AppState::new(
+            semantic,
+            episodic,
+            recall,
+            Arc::new(crate::embed::LoadOnce::new(no_model)),
+            dir.to_path_buf(),
+            0,
+        ))
+    }
+
+    /// The 2026-10-05 loss: `memory_add` merged into the row it was told to
+    /// replace, then retired that same row — nothing live was left. The row
+    /// a write lands in is never one of its losers; the others still retire.
+    #[tokio::test]
+    async fn a_replacement_never_retires_the_row_it_wrote_into() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let state = scratch_state(dir.path()).await;
+        let kept = Memory::new("kept", MemoryType::Fact, Origin::Derived);
+        let other = Memory::new("other", MemoryType::Fact, Origin::Derived);
+        state
+            .store
+            .insert(&[kept.clone(), other.clone()])
+            .await
+            .unwrap();
+
+        let ids = vec![kept.id.clone(), other.id.clone()];
+        let body = apply_replace_ids(&state, &ids, &kept.id, json!({})).await;
+        assert_eq!(body["replaced"], json!([other.id]));
+        assert!(body.get("replaced_failed").is_none(), "{body}");
+
+        let live = state.store.get(&kept.id).await.unwrap().unwrap();
+        assert!(live.expired_at.is_none(), "the survivor stays live");
+        let gone = state.store.get(&other.id).await.unwrap().unwrap();
+        assert!(gone.expired_at.is_some());
+        assert_eq!(gone.superseded_by.as_deref(), Some(kept.id.as_str()));
+    }
+
+    /// Reading rows never waits on the embedding model: with a model that
+    /// cannot load, `session_start` still answers with core.
+    #[tokio::test]
+    async fn session_start_needs_no_embedder() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let state = scratch_state(dir.path()).await;
+        let mut core = Memory::new("Alex lives in Lisbon", MemoryType::Fact, Origin::User);
+        core.tier = Tier::Core;
+        state.store.insert(&[core]).await.unwrap();
+
+        let app = super::super::session::router().with_state(Arc::clone(&state));
+        let res = tower::ServiceExt::oneshot(
+            app,
+            axum::http::Request::post("/api/memory/session_start")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(res.status(), 200);
+        let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        let v: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(v["data"]["core"].as_array().map(Vec::len), Some(1), "{v}");
+        assert!(!state.embedder.is_ready(), "nothing asked for the model");
+        // A call that embeds reports the load failure instead of hanging.
+        assert!(state.embedder().await.is_err());
     }
 }

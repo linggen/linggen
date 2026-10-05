@@ -4,7 +4,8 @@
 //! the Embedder caches the ONNX model in memory, so reusing them across
 //! requests avoids per-call setup cost.
 
-use crate::embed::Embedder;
+use super::envelope::ApiError;
+use crate::embed::{Embedder, LoadOnce};
 use crate::memory::{MemoryStore, Recall};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -21,7 +22,10 @@ pub struct AppState {
     /// Dual-table read path (`semantic` + `episodic`) for recall/search.
     /// Shares both handles above.
     pub recall: Arc<Recall>,
-    pub embedder: Arc<Embedder>,
+    /// Loaded in the background at startup ([`LoadOnce`]); a handler that
+    /// embeds awaits it through [`AppState::embedder`], one that only reads
+    /// rows never waits on it.
+    pub embedder: Arc<LoadOnce<Embedder>>,
     /// Data directory root (typically `~/.linggen/`). User-tunable knobs
     /// (`.config.json` — episodic TTL etc.) live under
     /// `<data_dir>/memory/.config.json`.
@@ -51,7 +55,7 @@ impl AppState {
         store: Arc<MemoryStore>,
         episodic: Arc<MemoryStore>,
         recall: Arc<Recall>,
-        embedder: Arc<Embedder>,
+        embedder: Arc<LoadOnce<Embedder>>,
         data_dir: PathBuf,
         port: u16,
     ) -> Self {
@@ -65,6 +69,14 @@ impl AppState {
             started: Instant::now(),
             last_request_ms: AtomicU64::new(0),
         }
+    }
+
+    /// The embedder, waiting for its load if it is still under way.
+    pub async fn embedder(&self) -> Result<Arc<Embedder>, ApiError> {
+        self.embedder
+            .get()
+            .await
+            .map_err(|e| ApiError::internal(e.context("loading the embedding model")))
     }
 
     /// Record that a request just arrived. Called from middleware on every

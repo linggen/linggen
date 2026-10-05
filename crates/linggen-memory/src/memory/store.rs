@@ -1007,12 +1007,27 @@ impl MemoryStore {
     /// is pure SQL, and an exact match has equal-length content, so
     /// [`merge_fact`] never replaces the existing row's vector with `None`.
     pub async fn insert_with_dedup(&self, fact: Memory) -> Result<InsertOutcome> {
+        self.insert_with_dedup_except(fact, &[]).await
+    }
+
+    /// [`Self::insert_with_dedup`], never merging into a row in `except` —
+    /// the rows a replacement retires. Merging into one of them handed the
+    /// new content to a row the same call then archived, so the add left
+    /// nothing live behind it.
+    pub async fn insert_with_dedup_except(
+        &self,
+        fact: Memory,
+        except: &[String],
+    ) -> Result<InsertOutcome> {
         // Serialize the find→merge→write sequence. Without the lock, two
         // concurrent adds of the same (content, type) could both miss the
         // existing row and each insert a fresh copy.
         let _guard = self.write_lock.lock().await;
 
-        if let Some(existing) = self.find_exact_content(&fact.content, fact.r#type).await? {
+        if let Some(existing) = self
+            .find_exact_content(&fact.content, fact.r#type, except)
+            .await?
+        {
             let previous_id = existing.id.clone();
             let merged = merge_fact(&existing, &fact);
             // `merged` keeps `existing.id`, so the id-keyed upsert replaces the
@@ -1036,8 +1051,9 @@ impl MemoryStore {
         &self,
         content: &str,
         ty: MemoryType,
+        except: &[String],
     ) -> Result<Option<Memory>> {
-        self.find_exact_content(content, ty).await
+        self.find_exact_content(content, ty, except).await
     }
 
     /// Move every row stamped `from` (live or archived) to `to` — `None`
@@ -1119,12 +1135,28 @@ impl MemoryStore {
     /// [`Self::insert_with_dedup`] for why cosine is never a sameness
     /// decision. `content` is a normal column (not a SQL keyword); `type`
     /// equality mirrors [`Filters::to_sql`].
-    async fn find_exact_content(&self, content: &str, ty: MemoryType) -> Result<Option<Memory>> {
-        let filter = format!(
-            "content = '{}' AND type = '{}'",
+    ///
+    /// Live rows only: an archived (superseded) row is history, and merging
+    /// a new write into it left the write invisible. Rows in `except` are
+    /// never a match.
+    async fn find_exact_content(
+        &self,
+        content: &str,
+        ty: MemoryType,
+        except: &[String],
+    ) -> Result<Option<Memory>> {
+        let mut filter = format!(
+            "content = '{}' AND type = '{}' AND expired_at IS NULL",
             escape_sql(content),
             ty.as_str()
         );
+        if !except.is_empty() {
+            let ids: Vec<String> = except
+                .iter()
+                .map(|id| format!("'{}'", escape_sql(id)))
+                .collect();
+            filter.push_str(&format!(" AND id NOT IN ({})", ids.join(", ")));
+        }
         let q = self.table.query().only_if(filter).limit(1);
         let mut hits = self.collect_query(q).await?;
         Ok(hits.pop())
@@ -3075,6 +3107,50 @@ mod tests {
         assert_eq!(fact.id, existing_id);
         assert!(fact.vector.is_some());
         assert_eq!(store.count().await.unwrap(), 1);
+    }
+
+    /// The 2026-10-05 loss: a replacement whose content equals the row it
+    /// replaces must not merge into that row (the same call then archives
+    /// it). It lands as its own row.
+    #[tokio::test]
+    async fn dedup_never_merges_into_an_excepted_row() {
+        let (store, _dir) = fresh_store().await;
+        let mut loser = make_fact("same words", MemoryType::Fact);
+        loser.vector = Some(unit_vec_at(0));
+        let loser_id = loser.id.clone();
+        store.insert(&[loser]).await.unwrap();
+
+        let mut candidate = make_fact("same words", MemoryType::Fact);
+        candidate.vector = Some(unit_vec_at(0));
+        let outcome = store
+            .insert_with_dedup_except(candidate.clone(), &[loser_id.clone()])
+            .await
+            .unwrap();
+        let InsertOutcome::Added(got) = outcome else {
+            panic!("expected Added, got {outcome:?}");
+        };
+        assert_eq!(got.id, candidate.id);
+        assert_ne!(got.id, loser_id);
+        assert_eq!(store.count().await.unwrap(), 2);
+    }
+
+    /// An archived row is history: a re-add of its words is a new live row,
+    /// never a merge into the archive (which left the add invisible).
+    #[tokio::test]
+    async fn dedup_skips_archived_rows() {
+        let (store, _dir) = fresh_store().await;
+        let mut old = make_fact("archived words", MemoryType::Fact);
+        old.vector = Some(unit_vec_at(0));
+        let old_id = old.id.clone();
+        store.insert(&[old]).await.unwrap();
+        assert!(store.expire(&old_id, "someone").await.unwrap());
+
+        let mut candidate = make_fact("archived words", MemoryType::Fact);
+        candidate.vector = Some(unit_vec_at(0));
+        let outcome = store.insert_with_dedup(candidate.clone()).await.unwrap();
+        assert!(matches!(outcome, InsertOutcome::Added(_)), "{outcome:?}");
+        let live = store.get(&candidate.id).await.unwrap().unwrap();
+        assert!(live.expired_at.is_none());
     }
 
     // ── physical maintenance ───────────────────────────────────────────────

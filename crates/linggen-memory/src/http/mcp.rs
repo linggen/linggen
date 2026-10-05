@@ -402,6 +402,12 @@ fn tool_name_to_verb(name: &str) -> Option<&'static str> {
 /// becomes a number, and a lone string on an array field becomes a
 /// one-element array. Anything that does not convert cleanly is left as it
 /// came, and the daemon's error names it.
+///
+/// A key the schema does not advertise (the REST DTO takes more than the
+/// model is shown — `skip_dedup`, `force`, …) has no declared type to go
+/// by; there a `"true"`/`"false"` string becomes a boolean, the one shape
+/// that is never a meaningful string. `memory_add {"skip_dedup": "true"}`
+/// was a 422 before.
 fn coerce_to_schema(tool: &str, args: &mut Value) {
     let Some(obj) = args.as_object_mut() else {
         return;
@@ -415,8 +421,12 @@ fn coerce_to_schema(tool: &str, args: &mut Value) {
         return;
     };
     for (key, value) in obj.iter_mut() {
-        let Some(kind) = props.get(key).and_then(|p| p["type"].as_str()) else {
-            continue;
+        let kind = match props.get(key) {
+            Some(p) => match p["type"].as_str() {
+                Some(kind) => kind,
+                None => continue,
+            },
+            None => "boolean",
         };
         if let Some(fixed) = coerce_value(kind, value) {
             *value = fixed;
@@ -655,6 +665,31 @@ mod tests {
         let mut ids = json!({"replace_ids": "[\"a\",\"b\"]"});
         coerce_to_schema("memory_add", &mut ids);
         assert_eq!(ids["replace_ids"], json!(["a", "b"]));
+    }
+
+    /// Params the REST DTO takes but the schema does not show (2026-10-05:
+    /// `skip_dedup: "true"` was a 422): a boolean spelled as a string is
+    /// a boolean; any other string stays as sent.
+    #[test]
+    fn unadvertised_string_booleans_become_booleans() {
+        let mut args = json!({
+            "content": "true",
+            "skip_dedup": "true",
+            "force": "FALSE",
+            "host": "codex",
+            "source_session": "abc"
+        });
+        coerce_to_schema("memory_add", &mut args);
+        assert_eq!(args["skip_dedup"], json!(true));
+        assert_eq!(args["force"], json!(false));
+        // Advertised strings keep their type, whatever they spell.
+        assert_eq!(args["content"], json!("true"));
+        assert_eq!(args["host"], json!("codex"));
+        assert_eq!(args["source_session"], json!("abc"));
+        let mut sent = json!({"content": "x", "skip_dedup": "true"});
+        coerce_to_schema("memory_add", &mut sent);
+        let req: crate::http::memory::AddRequest = serde_json::from_value(sent).unwrap();
+        assert!(req.skip_dedup);
     }
 
     /// A plain-text refusal from the REST layer reaches the caller verbatim.
