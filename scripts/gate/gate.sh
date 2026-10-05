@@ -50,7 +50,9 @@ done
 free_gb="$(df -g "$HOME" | awk 'NR==2{print $4}')"
 [ "$free_gb" -ge 8 ] && record PASS "preflight: disk" "${free_gb} GB free" \
   || record WARN "preflight: disk" "only ${free_gb} GB free — a VM run writes 2-4 GB"
-if ! tart list --source oci --format json | jq -e --arg i "$VANILLA_IMAGE" '.[] | select(.Name == $i)' >/dev/null; then
+# GATE_IMAGE may name a local VM (e.g. one switched by hand to "App Store &
+# Known Developers", so quarantined Developer ID builds really launch).
+if ! tart list --format json | jq -e --arg i "$VANILLA_IMAGE" '.[] | select(.Name == $i)' >/dev/null; then
   say "Pulling $VANILLA_IMAGE (~25 GB, once)"
   tart pull "$VANILLA_IMAGE" || die "preflight: image" "tart pull $VANILLA_IMAGE failed"
 fi
