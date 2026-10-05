@@ -1686,6 +1686,49 @@ mod tests {
         assert_eq!(resolve_scope(&r, &losers, Tier::Semantic), None);
     }
 
+    /// The 2026-10-05 session: started in a non-git workspace holding two
+    /// repos, shell cd'd into one of them. With the session's root stamped,
+    /// a candidate as the line shows it, an absolute dir under root, no scope
+    /// and a dir outside root each land where the spec says.
+    #[test]
+    fn scope_from_a_nested_repo_resolves_against_the_session_root() {
+        use std::path::{Path, PathBuf};
+        let home = crate::memory::scope::home();
+        let ws = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join(format!("scope-nested-{}", std::process::id()))
+            .join("linggen");
+        if !ws.starts_with(&home) {
+            return; // CI outside home: the rules are covered in memory::scope
+        }
+        let engine = ws.join("linggen");
+        let cfo = ws.join("skills").join("cfo");
+        std::fs::create_dir_all(engine.join(".git")).unwrap();
+        std::fs::create_dir_all(ws.join("skills").join(".git")).unwrap();
+        std::fs::create_dir_all(&cfo).unwrap();
+        let s = |p: &Path| p.to_string_lossy().to_string();
+        let at = |cwd: &Path, scope: Option<String>| {
+            let mut v = json!({"content": "x", "cwd": s(cwd), "root": s(&ws)});
+            if let Some(sc) = scope {
+                v["scope"] = json!(sc);
+            }
+            resolve_scope(&add_req(v), &[], Tier::Episodic)
+        };
+        // Relative candidate (shown relative to root's parent), from skills/cfo.
+        assert_eq!(at(&cfo, Some("linggen/linggen".into())), Some(s(&engine)));
+        // Absolute dir under root, from the other repo.
+        assert_eq!(at(&engine, Some(s(&cfo))), Some(s(&cfo)));
+        // No scope: the session cwd.
+        assert_eq!(at(&cfo, None), Some(s(&cfo)));
+        // Outside root: falls back to the session cwd.
+        assert_eq!(at(&engine, Some("/etc".into())), Some(s(&engine)));
+        // The pre-fix stamp (root = the shell cwd's git root) dropped the
+        // candidate: the hook, not the daemon, must send the session's root.
+        let v = json!({"content": "x", "cwd": s(&cfo), "root": s(&ws.join("skills")), "scope": "linggen/linggen"});
+        assert_eq!(resolve_scope(&add_req(v), &[], Tier::Episodic), Some(s(&cfo)));
+        let _ = std::fs::remove_dir_all(ws.parent().unwrap());
+    }
+
     /// An unstamped add (Codex) that names an existing directory keeps it;
     /// one naming nothing real stays unscoped.
     #[test]
