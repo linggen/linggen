@@ -69,11 +69,26 @@ presence per surface, session `withheld_tools`, memory in the prompt.
 ## 3. Plugin evals — `claude plugin eval`
 
 Claude Code's own harness tests the linggen plugin (memory hooks, the
-ling-mem MCP server, the shared-memory skill) in a throwaway workspace with
-only the plugin loaded, graded by `tool_used` / `tool_order` / `regex` /
-`file_exists` / `llm`, gated with `--threshold`. It calls a real model, so it
-runs before a release, not on every change. `scripts/plugin-check.sh` stays
+`linggen` skill, `/linggen:status`) in a throwaway workspace with only the
+plugin loaded, graded by `tool_used` / `tool_order` / `regex`, gated with
+`--threshold`. It calls a real model on the signed-in account (a subscription
+works, no API key), so it runs before a release, not on every change:
+`./scripts/check.sh eval` in linggen-memory. `scripts/plugin-check.sh` stays
 for parity of the installed copies and the hook proxy runs.
+
+Built (2026-10-05) differently from the plan in three ways:
+- **ling-mem MCP is mocked, not real.** A run passes only an allowlisted
+  environment, so `.mcp.json` can't be pointed off 9528. The hooks go to a
+  scratch daemon with invented rows instead, via the run's
+  `~/.linggen/client.json`. The suite lives in
+  `plugins/linggen/evals-isolated/`, so a bare `claude plugin eval .` finds
+  nothing.
+- **No Bash in runs.** The eval sandbox refuses Bash on this Mac (a symlink in
+  `~/.docker`), so cases use only Skill and the mocked tools.
+- **Stamps are graded through the mock.** The `memory_add` mock echoes what
+  it received after `stamp-cwd.sh`. The 89325e8 session-root fix can't be
+  reproduced here (eval workspaces are temp dirs) and stays in
+  `plugin-check.sh`.
 
 ## 4. Release gate — clean Mac, Tart
 
