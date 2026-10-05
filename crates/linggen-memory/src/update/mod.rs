@@ -30,6 +30,14 @@
 //!    explicitly invoking the new binary path so the running (old) process
 //!    doesn't relaunch its own inode.
 //!
+//! `LINGGEN_RELEASE_BASE=<url>` replaces GitHub (the release gate's copy of
+//! a draft): the release comes from `<url>/linggen/linggen-memory/release.json`
+//! (`{"tag_name", "assets": [{"name"}]}`), assets from the same directory,
+//! never cached. The SHA256 check is unchanged.
+//!
+//! A swap whose new binary fails to answer `--version` or to start the
+//! daemon puts `ling-mem.prev` back; [`rollback`] swaps the two by hand.
+//!
 //! Network errors during `--check` are swallowed when used from `start`
 //! (`check_quiet`) — `start` should never fail just because GitHub is down.
 
@@ -47,6 +55,33 @@ const USER_AGENT: &str = concat!("ling-mem/", env!("CARGO_PKG_VERSION"));
 const CACHE_TTL_SECS: u64 = 24 * 60 * 60;
 const NETWORK_TIMEOUT: Duration = Duration::from_secs(10);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(120);
+/// How long a swapped-in binary has to answer `--version`.
+const START_TIMEOUT: Duration = Duration::from_secs(10);
+const RELEASE_BASE_ENV: &str = "LINGGEN_RELEASE_BASE";
+
+/// The release mirror that replaces GitHub, when `LINGGEN_RELEASE_BASE` is set.
+fn release_base() -> Option<String> {
+    base_from(std::env::var(RELEASE_BASE_ENV).ok().as_deref())
+}
+
+fn base_from(value: Option<&str>) -> Option<String> {
+    let base = value?.trim().trim_end_matches('/');
+    (!base.is_empty()).then(|| base.to_string())
+}
+
+fn latest_url(base: Option<&str>) -> String {
+    match base {
+        Some(b) => format!("{b}/{REPO}/release.json"),
+        None => RELEASES_LATEST_URL.to_string(),
+    }
+}
+
+fn asset_url(base: Option<&str>, tag: &str, asset: &str) -> String {
+    match base {
+        Some(b) => format!("{b}/{REPO}/{asset}"),
+        None => format!("https://github.com/{REPO}/releases/download/{tag}/{asset}"),
+    }
+}
 
 /// Result of an update probe — what `--check` prints, and what `start`
 /// embeds in its lifecycle JSON.
@@ -152,14 +187,19 @@ pub async fn check(data_dir: &Path, bypass_cache: bool) -> Result<UpdateInfo> {
         )));
     };
 
-    if !bypass_cache {
+    let base = release_base();
+    if !bypass_cache && base.is_none() {
         if let Some(cached) = read_cache(data_dir) {
             return Ok(cached);
         }
     }
 
-    let info = fetch_latest(slug).await.context("update check failed")?;
-    write_cache(data_dir, &info);
+    let info = fetch_latest(slug, base.as_deref())
+        .await
+        .context("update check failed")?;
+    if base.is_none() {
+        write_cache(data_dir, &info);
+    }
     Ok(info)
 }
 
@@ -200,7 +240,8 @@ pub fn cache_fetched_at(data_dir: &Path) -> Option<u64> {
 #[derive(Debug, Deserialize)]
 struct Release {
     tag_name: String,
-    html_url: String,
+    #[serde(default)]
+    html_url: Option<String>,
     body: Option<String>,
     assets: Vec<ReleaseAsset>,
 }
@@ -210,14 +251,15 @@ struct ReleaseAsset {
     name: String,
 }
 
-async fn fetch_latest(slug: &str) -> Result<UpdateInfo> {
+async fn fetch_latest(slug: &str, base: Option<&str>) -> Result<UpdateInfo> {
     let client = reqwest::Client::builder()
         .timeout(NETWORK_TIMEOUT)
         .user_agent(USER_AGENT)
         .build()?;
 
-    let mut req = client.get(RELEASES_LATEST_URL);
-    if let Ok(token) = std::env::var("GITHUB_TOKEN") {
+    let mut req = client.get(latest_url(base));
+    // The token is GitHub's; a mirror never sees it.
+    if let (None, Ok(token)) = (base, std::env::var("GITHUB_TOKEN")) {
         if !token.is_empty() {
             req = req.bearer_auth(token);
         }
@@ -245,7 +287,7 @@ async fn fetch_latest(slug: &str) -> Result<UpdateInfo> {
         available,
         current: current.to_string(),
         latest: Some(latest_ver),
-        url: Some(release.html_url),
+        url: release.html_url,
         notes_summary,
         unsupported: if asset_match {
             None
@@ -377,8 +419,9 @@ pub async fn apply(opts: ApplyOptions<'_>) -> Result<UpdateOutcome> {
 
     let tag = format!("v{latest}");
     let asset = asset_name(slug);
-    let download_url = format!("https://github.com/{REPO}/releases/download/{tag}/{asset}");
-    let sha_url = format!("{download_url}.sha256");
+    let base = release_base();
+    let download_url = asset_url(base.as_deref(), &tag, &asset);
+    let sha_url = asset_url(base.as_deref(), &tag, &format!("{asset}.sha256"));
 
     let staging = StagingDir::create_under(&bin_dir)?;
     let tarball_path = staging.path().join(&asset);
@@ -400,15 +443,17 @@ pub async fn apply(opts: ApplyOptions<'_>) -> Result<UpdateOutcome> {
     let new_canonical = bin_dir.join("ling-mem");
     swap_binary(&extracted, &new_canonical, &bin_dir)?;
 
-    let restarted = if was_running {
-        // Spawn the *new* binary explicitly. Using `current_exe()` here is
-        // unsafe: on Linux `/proc/self/exe` follows the inode, which is now
-        // at `ling-mem.prev`, so we'd relaunch the old version.
-        spawn_new_daemon(&new_canonical, opts.data_dir, opts.port)?;
-        true
-    } else {
-        false
-    };
+    // Spawn the *new* binary explicitly. Using `current_exe()` here is
+    // unsafe: on Linux `/proc/self/exe` follows the inode, which is now at
+    // `ling-mem.prev`, so we'd relaunch the old version.
+    if let Err(e) = start_swapped(&new_canonical, was_running, opts.data_dir, opts.port) {
+        restore_previous(&new_canonical, &bin_dir)?;
+        if was_running {
+            let _ = spawn_new_daemon(&new_canonical, opts.data_dir, opts.port);
+        }
+        return Err(e.context("the new binary failed to start; the previous one is restored"));
+    }
+    let restarted = was_running;
 
     // Best-effort cache invalidation so future `--check` calls reflect reality.
     let _ = fs::remove_file(cache_path(opts.data_dir));
@@ -524,24 +569,124 @@ fn extract_binary(tarball: &Path, into: &Path) -> Result<PathBuf> {
         fs::set_permissions(&new_path, perm)?;
     }
 
-    let probe = std::process::Command::new(&new_path)
+    probe_version(&new_path, START_TIMEOUT).context("extracted binary")?;
+    Ok(new_path)
+}
+
+/// Run `<bin> --version`; Ok(version) when it exits 0 within `timeout` and
+/// prints `ling-mem <version>`.
+fn probe_version(bin: &Path, timeout: Duration) -> Result<String> {
+    let mut child = std::process::Command::new(bin)
         .arg("--version")
-        .output()
-        .with_context(|| format!("running {} --version", new_path.display()))?;
-    if !probe.status.success() {
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .with_context(|| format!("running {} --version", bin.display()))?;
+    let deadline = std::time::Instant::now() + timeout;
+    while child.try_wait()?.is_none() {
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(anyhow!("--version gave no answer within {timeout:?}"));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let out = child.wait_with_output()?;
+    if !out.status.success() {
+        return Err(anyhow!("--version exited with {}", out.status));
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    stdout
+        .trim()
+        .strip_prefix("ling-mem ")
+        .map(|v| v.trim().to_string())
+        .ok_or_else(|| anyhow!("--version unexpected output: {stdout:?}"))
+}
+
+/// The swapped-in binary must answer `--version` at its real path and,
+/// when the daemon was running, start it again.
+fn start_swapped(bin: &Path, was_running: bool, data_dir: &Path, port: u16) -> Result<()> {
+    probe_version(bin, START_TIMEOUT)?;
+    if was_running {
+        spawn_new_daemon(bin, data_dir, port)?;
+    }
+    Ok(())
+}
+
+/// Put `ling-mem.prev` back at the canonical path, dropping the new binary.
+fn restore_previous(canonical: &Path, bin_dir: &Path) -> Result<()> {
+    let prev = bin_dir.join("ling-mem.prev");
+    if !prev.is_file() {
         return Err(anyhow!(
-            "extracted binary --version exited with {}",
-            probe.status
+            "no previous binary at {} to restore",
+            prev.display()
         ));
     }
-    let stdout = String::from_utf8_lossy(&probe.stdout);
-    if !stdout.starts_with("ling-mem ") {
+    let _ = fs::remove_file(canonical);
+    fs::rename(&prev, canonical)
+        .with_context(|| format!("restoring {} → {}", prev.display(), canonical.display()))
+}
+
+/// Swap `ling-mem` and `ling-mem.prev` in `bin_dir`, keeping the swap only
+/// if the restored binary answers `--version`. Returns (from, to).
+fn swap_with_prev(bin_dir: &Path, timeout: Duration) -> Result<(String, String)> {
+    let canonical = bin_dir.join("ling-mem");
+    let prev = bin_dir.join("ling-mem.prev");
+    if !prev.is_file() {
         return Err(anyhow!(
-            "extracted binary --version unexpected output: {stdout:?}"
+            "no previous binary kept at {} — nothing to roll back to",
+            prev.display()
+        ));
+    }
+    let from = probe_version(&canonical, timeout).unwrap_or_else(|_| "?".into());
+    let to = probe_version(&prev, timeout).context("the previous binary does not start")?;
+    let aside = bin_dir.join(format!(".ling-mem.rollback-{}", std::process::id()));
+    fs::rename(&canonical, &aside).context("moving the current binary aside")?;
+    if let Err(e) = fs::rename(&prev, &canonical) {
+        let _ = fs::rename(&aside, &canonical);
+        return Err(anyhow!("restoring the previous binary: {e}"));
+    }
+    fs::rename(&aside, &prev).context("keeping the replaced binary as ling-mem.prev")?;
+    Ok((from, to))
+}
+
+/// `ling-mem upgrade --rollback`: swap back to `ling-mem.prev` (a second
+/// rollback returns), restarting the daemon on the restored binary.
+pub async fn rollback(opts: ApplyOptions<'_>) -> Result<UpdateOutcome> {
+    let exe = std::env::current_exe().context("resolving current executable path")?;
+    let bin_dir = exe
+        .parent()
+        .ok_or_else(|| anyhow!("binary has no parent directory"))?
+        .to_path_buf();
+    refuse_managed_path(&bin_dir)?;
+    if !bin_dir.join("ling-mem.prev").is_file() {
+        return Err(anyhow!(
+            "no previous binary kept in {} — nothing to roll back to",
+            bin_dir.display()
         ));
     }
 
-    Ok(new_path)
+    let was_running = stop_daemon_if_running(opts.skill_dir).await?;
+    let (from, to) = swap_with_prev(&bin_dir, START_TIMEOUT)?;
+    let canonical = bin_dir.join("ling-mem");
+    if was_running {
+        if let Err(e) = spawn_new_daemon(&canonical, opts.data_dir, opts.port) {
+            swap_with_prev(&bin_dir, START_TIMEOUT)?;
+            let _ = spawn_new_daemon(&canonical, opts.data_dir, opts.port);
+            return Err(
+                e.context("the previous binary failed to start the daemon; kept the current one")
+            );
+        }
+    }
+    let _ = fs::remove_file(cache_path(opts.data_dir));
+    Ok(UpdateOutcome {
+        updated: true,
+        from,
+        to,
+        restarted: was_running,
+        note: Some("rolled back; run `ling-mem upgrade --rollback` again to return".into()),
+    })
 }
 
 async fn stop_daemon_if_running(skill_dir: &Path) -> Result<bool> {
@@ -665,6 +810,117 @@ mod tests {
         assert_eq!(headline(""), "");
         assert_eq!(headline("\n\n  ## Highlights\nbody\n"), "Highlights");
         assert_eq!(headline("First line.\nSecond."), "First line.");
+    }
+
+    #[test]
+    fn the_override_replaces_github_and_never_carries_the_tag() {
+        assert_eq!(base_from(None), None);
+        assert_eq!(base_from(Some(" ")), None);
+        assert_eq!(latest_url(None), RELEASES_LATEST_URL);
+        assert_eq!(
+            asset_url(None, "v1.9.0", "ling-mem-macos-aarch64.tar.gz"),
+            "https://github.com/linggen/linggen-memory/releases/download/v1.9.0/ling-mem-macos-aarch64.tar.gz"
+        );
+        let base = base_from(Some("http://10.0.0.2:8765/"));
+        assert_eq!(base.as_deref(), Some("http://10.0.0.2:8765"));
+        assert_eq!(
+            latest_url(base.as_deref()),
+            "http://10.0.0.2:8765/linggen/linggen-memory/release.json"
+        );
+        assert_eq!(
+            asset_url(
+                base.as_deref(),
+                "v1.9.0",
+                "ling-mem-macos-aarch64.tar.gz.sha256"
+            ),
+            "http://10.0.0.2:8765/linggen/linggen-memory/ling-mem-macos-aarch64.tar.gz.sha256"
+        );
+        let r: Release =
+            serde_json::from_str(r#"{"tag_name":"v1.9.0","assets":[{"name":"x"}]}"#).unwrap();
+        assert!(r.html_url.is_none());
+    }
+
+    /// A fake `ling-mem` whose `--version` runs `body`.
+    fn script(path: &Path, body: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        fs::write(path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    const T: Duration = Duration::from_secs(10);
+
+    #[test]
+    fn a_wrong_sha256_is_refused() {
+        let d = tempfile::tempdir().unwrap();
+        let tar = d.path().join("t.tar.gz");
+        let sha = d.path().join("t.tar.gz.sha256");
+        fs::write(&tar, b"abc").unwrap();
+        fs::write(&sha, format!("{}  t.tar.gz\n", "0".repeat(64))).unwrap();
+        assert!(verify_sha256(&tar, &sha).is_err());
+        fs::write(
+            &sha,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad  t.tar.gz\n",
+        )
+        .unwrap();
+        assert!(verify_sha256(&tar, &sha).is_ok());
+    }
+
+    #[test]
+    fn a_binary_that_fails_or_hangs_does_not_pass_the_probe() {
+        let d = tempfile::tempdir().unwrap();
+        let bin = d.path().join("ling-mem");
+        script(&bin, "echo 'ling-mem 1.2.3'");
+        assert_eq!(probe_version(&bin, T).unwrap(), "1.2.3");
+        script(&bin, "exit 1");
+        assert!(probe_version(&bin, T).is_err());
+        script(&bin, "sleep 30");
+        assert!(probe_version(&bin, Duration::from_millis(300)).is_err());
+    }
+
+    #[test]
+    fn a_failed_start_restores_the_previous_binary() {
+        let d = tempfile::tempdir().unwrap();
+        let canonical = d.path().join("ling-mem");
+        script(&canonical, "echo 'ling-mem 1.0.0'");
+        let new = d.path().join("ling-mem.new");
+        script(&new, "exit 1");
+        swap_binary(&new, &canonical, d.path()).unwrap();
+        assert!(start_swapped(&canonical, false, d.path(), 0).is_err());
+        restore_previous(&canonical, d.path()).unwrap();
+        assert_eq!(probe_version(&canonical, T).unwrap(), "1.0.0");
+    }
+
+    #[test]
+    fn rollback_swaps_back_and_forth() {
+        let d = tempfile::tempdir().unwrap();
+        assert!(swap_with_prev(d.path(), T).is_err());
+        script(&d.path().join("ling-mem"), "echo 'ling-mem 2.0.0'");
+        script(&d.path().join("ling-mem.prev"), "echo 'ling-mem 1.0.0'");
+        assert_eq!(
+            swap_with_prev(d.path(), T).unwrap(),
+            ("2.0.0".into(), "1.0.0".into())
+        );
+        assert_eq!(
+            probe_version(&d.path().join("ling-mem.prev"), T).unwrap(),
+            "2.0.0"
+        );
+        swap_with_prev(d.path(), T).unwrap();
+        assert_eq!(
+            probe_version(&d.path().join("ling-mem"), T).unwrap(),
+            "2.0.0"
+        );
+    }
+
+    #[test]
+    fn a_broken_previous_binary_is_not_rolled_back_to() {
+        let d = tempfile::tempdir().unwrap();
+        script(&d.path().join("ling-mem"), "echo 'ling-mem 2.0.0'");
+        script(&d.path().join("ling-mem.prev"), "exit 1");
+        assert!(swap_with_prev(d.path(), T).is_err());
+        assert_eq!(
+            probe_version(&d.path().join("ling-mem"), T).unwrap(),
+            "2.0.0"
+        );
     }
 
     #[test]

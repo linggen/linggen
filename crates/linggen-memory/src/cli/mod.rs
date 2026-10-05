@@ -254,6 +254,10 @@ pub enum Command {
         /// Daemon port to use when restarting after the swap.
         #[arg(long, default_value_t = crate::daemon::DEFAULT_PORT)]
         port: u16,
+
+        /// Swap back to the binary the last upgrade kept (`ling-mem.prev`).
+        #[arg(long, conflicts_with_all = ["check", "force"])]
+        rollback: bool,
     },
 
     /// Dump every fact as newline-delimited JSON (one object per line),
@@ -958,7 +962,11 @@ pub async fn run(cli: Cli) -> Result<()> {
             force,
             yes,
             port,
+            rollback,
         } => {
+            if rollback {
+                return cmd_rollback(&data_dir, &skill_dir, port).await;
+            }
             return cmd_upgrade(&data_dir, &skill_dir, check, force, yes, port).await;
         }
         _ => {}
@@ -1457,6 +1465,22 @@ async fn cmd_upgrade(
         skill_dir,
         port,
         force,
+    })
+    .await?;
+    println!("{}", serde_json::to_string_pretty(&outcome)?);
+    Ok(())
+}
+
+async fn cmd_rollback(
+    data_dir: &std::path::Path,
+    skill_dir: &std::path::Path,
+    port: u16,
+) -> Result<()> {
+    let outcome = crate::update::rollback(crate::update::ApplyOptions {
+        data_dir,
+        skill_dir,
+        port,
+        force: false,
     })
     .await?;
     println!("{}", serde_json::to_string_pretty(&outcome)?);
