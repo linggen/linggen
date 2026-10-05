@@ -198,6 +198,19 @@ dispatch_linux_ci() {
   echo "   When it lands: $0 ${VERSION} --manifest-only"
 }
 
+# A mac release ships Developer ID signed + notarized (scripts/sign-mac.sh),
+# or a browser download is refused as "damaged". LINGGEN_ADHOC_RELEASE=1
+# lets an ad-hoc build through on purpose.
+require_developer_id() {
+  [ "$PLATFORM" = "mac" ] || return 0
+  [ "${LINGGEN_ADHOC_RELEASE:-0}" = 1 ] && { echo "⚠️  LINGGEN_ADHOC_RELEASE=1 — shipping ad-hoc"; return 0; }
+  local sig; sig="$(codesign -dvv "$ROOT_DIR/target/release/ling" 2>&1)"
+  if ! grep -q '^Authority=Developer ID Application' <<<"$sig"; then
+    echo "Error: target/release/ling is not Developer ID signed — see scripts/sign-mac.sh" >&2
+    exit 1
+  fi
+}
+
 finalize() {
   if [ "$KEEP_DRAFT" = "true" ]; then
     echo "⚠️  Draft release ${VERSION} created."
@@ -222,6 +235,7 @@ esac
 # Step 1: Build everything
 echo "📦 Step 1: Building all artifacts..."
 "$ROOT_DIR/scripts/build.sh" "$VERSION" ${PASS_ARGS[@]+"${PASS_ARGS[@]}"}
+require_developer_id
 
 # Step 2: Commit the version stamp the build just wrote
 echo ""

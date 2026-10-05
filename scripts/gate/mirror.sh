@@ -27,10 +27,15 @@ write_release_json() { # dir tag
   jq -n --arg t "$2" --argjson a "$names" '{tag_name: $t, assets: $a}' >"$1/release.json"
 }
 
-pack_binary() { # src name dest-tarball — ad-hoc signed like build-mac.sh
+# A Developer ID signature (scripts/sign-mac.sh) is kept as built; anything
+# else is ad-hoc signed, as a dev build is.
+signer() { developer_id "$1" && echo "Developer ID" || echo "ad-hoc"; }
+developer_id() { local d; d="$(codesign -dvv "$1" 2>&1)"; grep -q '^Authority=Developer ID Application' <<<"$d"; }
+
+pack_binary() { # src name dest-tarball
   local stage; stage="$(mktemp -d "$RUN/pack.XXXX")"
   cp "$1" "$stage/$2"
-  codesign --force --sign - "$stage/$2" 2>/dev/null
+  developer_id "$stage/$2" || codesign --force --sign - "$stage/$2" 2>/dev/null
   tar -C "$stage" -czf "$3" "$2"
   echo "$(sha "$stage/$2")"
   rm -rf "$stage"
@@ -52,7 +57,7 @@ mirror_local() {
     '{version: $v, assets: [{name: "ling-macos-aarch64",
       url: ("https://github.com/linggen/linggen/releases/download/" + $v + "/ling-macos-aarch64.tar.gz"),
       sha256: $s}]}' >"$good/$ENGINE_REPO/manifest.json"
-  record INFO "mirror: engine" "local $ver, $ling, built $(stat -f %Sm -t '%F %R' "$ling")"
+  record INFO "mirror: engine" "local $ver, $ling, built $(stat -f %Sm -t '%F %R' "$ling"), $(signer "$ling")"
 
   ver="$("$mem" --version | awk '{print $2}')"
   mkdir -p "$good/$MEM_REPO"
@@ -60,7 +65,7 @@ mirror_local() {
   MEM_VERSION="$ver"
   (cd "$good/$MEM_REPO" && shasum -a 256 ling-mem-macos-aarch64.tar.gz >ling-mem-macos-aarch64.tar.gz.sha256)
   write_release_json "$good/$MEM_REPO" "v$ver"
-  record INFO "mirror: ling-mem" "local $ver, $mem, built $(stat -f %Sm -t '%F %R' "$mem")"
+  record INFO "mirror: ling-mem" "local $ver, $mem, built $(stat -f %Sm -t '%F %R' "$mem"), $(signer "$mem")"
 
   mkdir -p "$good/$APP_REPO"
   if [ -d "$app" ]; then
@@ -70,13 +75,13 @@ mirror_local() {
     asset="linggen-$ver-darwin-arm64.tar.gz"
     stage="$(mktemp -d "$RUN/pack.XXXX")"
     ditto "$app" "$stage/Linggen.app"
-    codesign --force --deep --sign - "$stage/Linggen.app" 2>/dev/null
+    developer_id "$stage/Linggen.app" || codesign --force --deep --sign - "$stage/Linggen.app" 2>/dev/null
     tar -C "$stage" -czf "$good/$APP_REPO/$asset" Linggen.app
     rm -rf "$stage"
     (cd "$good/$APP_REPO" && shasum -a 256 "$asset" >"$asset.sha256")
     write_release_json "$good/$APP_REPO" "linggen-v$ver"
     APP_VERSION="$ver"
-    record INFO "mirror: app" "local $ver, built $(stat -f %Sm -t '%F %R' "$app"), bundled engine $("$app/Contents/MacOS/ling" --version | awk '{print $2}')"
+    record INFO "mirror: app" "local $ver, built $(stat -f %Sm -t '%F %R' "$app"), bundled engine $("$app/Contents/MacOS/ling" --version | awk '{print $2}'), $(signer "$app")"
   else
     APP_VERSION=""
     record GAP "mirror: app" "no local build at $app (linggen-app: ./scripts/build.sh linggen)"

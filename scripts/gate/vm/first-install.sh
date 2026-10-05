@@ -72,28 +72,96 @@ fi
 tcc_watch_stop "first run"
 
 # ── A browser-style download: quarantine set, as Safari/Chrome would ───────
-if [ -n "$APP_VERSION" ]; then
-  q="$HOME/Downloads/gate-quarantine"
-  rm -rf "$q"; mkdir -p "$q"
-  asset="linggen-$APP_VERSION-darwin-arm64.tar.gz"
-  curl -fsSL "$GOOD/linggen/linggen-releases/$asset" -o "$q/$asset"
-  xattr -w com.apple.quarantine "0083;$(printf '%x' "$(date +%s)");Safari;" "$q/$asset"
-  tar -xzf "$q/$asset" -C "$q"
+# Every release asset a person can download — the app and both CLIs — must
+# pass Gatekeeper quarantined: Developer ID + notarized, or the "damaged" /
+# "cannot be verified" dialog. An ad-hoc draft FAILs; an ad-hoc local build WARNs.
+QSTAMP="0083;$(printf '%x' "$(date +%s)");Safari;"
+q="$HOME/Downloads/gate-quarantine"
+rm -rf "$q"; mkdir -p "$q"
+# The vanilla image ships with Gatekeeper off; a person's Mac has it on.
+sudo -n spctl --global-enable >/dev/null 2>&1 || sudo -n spctl --master-enable >/dev/null 2>&1
+GK_STATUS="$(spctl --status --verbose 2>&1 | tr '\n' ' ')"
+GK_ON=1; grep -q 'assessments enabled' <<<"$GK_STATUS" || GK_ON=0
+# Re-enabled, the image allows the App Store only ("developer id disabled"),
+# so even a notarized Developer ID app is refused (OpenAI's codex is too).
+# macOS 15+ cannot switch that from a shell; then the verdict's source rule
+# is the evidence, and the launch waits for an image set by hand to
+# "App Store & Known Developers".
+DEVID_ON=1; grep -q 'developer id disabled' <<<"$GK_STATUS" && DEVID_ON=0
+
+download_quarantined() { # url → path of the unpacked tree in $q
+  local f="$q/$(basename "$1")"
+  curl -fsSL "$1" -o "$f" || return 1
+  xattr -w com.apple.quarantine "$QSTAMP" "$f"
+  tar -xzf "$f" -C "$q" || return 1
+}
+
+gatekeeper_check() { # label path [run…] — spctl verdict, then a quarantined run
+  local label="$1" path="$2" verdict authority; shift 2
   # Archive Utility carries the archive's quarantine onto what it unpacks.
-  xattr -rw com.apple.quarantine "0083;$(printf '%x' "$(date +%s)");Safari;" "$q/Linggen.app"
-  # The vanilla image ships with Gatekeeper off; a person's Mac has it on.
-  sudo -n spctl --global-enable >/dev/null 2>&1 || sudo -n spctl --master-enable >/dev/null 2>&1
-  verdict="$(spctl -a -vv -t exec "$q/Linggen.app" 2>&1 | tr '\n' ' ')"
-  authority="$(codesign -dvv "$q/Linggen.app" 2>&1 | grep -m1 '^Authority=' || echo 'Authority=ad-hoc')"
-  if grep -q 'security disabled' <<<"$verdict"; then
-    gap "quarantined download: Gatekeeper verdict" "Gatekeeper is off in the VM and could not be enabled: $verdict"
+  xattr -rw com.apple.quarantine "$QSTAMP" "$path"
+  verdict="$(spctl -a -vv -t exec "$path" 2>&1 | tr '\n' ' ')"
+  authority="$(codesign -dvv "$path" 2>&1)"
+  authority="$(grep -m1 '^Authority=' <<<"$authority" || echo 'Authority=ad-hoc')"
+  if [ "$GK_ON" = 0 ]; then
+    gap "quarantined $label: Gatekeeper verdict" "Gatekeeper is off in the VM and could not be enabled: $verdict"
   elif grep -q 'accepted' <<<"$verdict"; then
-    pass "quarantined download: Gatekeeper accepts" "$verdict"
+    pass "quarantined $label: Gatekeeper accepts" "$verdict"
+  elif [ "$DEVID_ON" = 0 ] && grep -q 'source=Notarized Developer ID' <<<"$verdict"; then
+    pass "quarantined $label: Gatekeeper sees a notarized Developer ID build" "$verdict (VM policy: App Store only)"
   elif grep -q 'Developer ID' <<<"$authority"; then
-    fail "quarantined download: Gatekeeper accepts" "signed ($authority) yet $verdict"
+    fail "quarantined $label: Gatekeeper accepts" "signed ($authority) yet $verdict"
+  elif [ "${GATE_SOURCE:-local}" = draft ]; then
+    fail "quarantined $label: Gatekeeper accepts" "a release asset is not Developer ID signed ($authority); $verdict"
   else
-    warn "quarantined download: Gatekeeper blocks the unsigned app" "$authority; $verdict — a browser download shows the 'damaged/unverified' dialog; install-app.sh strips quarantine"
+    warn "quarantined $label: Gatekeeper blocks the unsigned build" "$authority; $verdict — a browser download shows the 'damaged/unverified' dialog"
   fi
+  [ "$GK_ON" = 1 ] && [ $# -gt 0 ] && grep -q 'Developer ID' <<<"$authority" || return 0
+  if [ "$DEVID_ON" = 0 ]; then
+    gap "quarantined $label: opens with Gatekeeper on" "the VM allows the App Store only — run with GATE_IMAGE set to an image switched to 'App Store & Known Developers'"
+    return 0
+  fi
+  "$@"
+  check "quarantined $label: opens with Gatekeeper on" $? "$QRUN_DETAIL" "$QRUN_DETAIL"
+}
+
+run_cli() { # bin — exec it quarantined; Gatekeeper kills a refused one
+  local out; out="$(perl -e 'alarm 30; exec @ARGV' "$1" --version 2>&1)"
+  QRUN_DETAIL="$(printf '%s' "$out" | head -1)"
+  grep -qE '^ling(-mem)? [0-9]' <<<"$out"
+}
+
+QAPP='gate-quarantine/Linggen.app/Contents/MacOS/linggen-shell|AppTranslocation/.*/Linggen.app/Contents/MacOS/linggen-shell'
+run_app() { # app — LaunchServices launch, as a double-click is
+  local i
+  QRUN_DETAIL="no Linggen process 60 s after open (Gatekeeper dialog?)"
+  open "$1" 2>/dev/null || { QRUN_DETAIL="open refused"; return 1; }
+  for ((i = 0; i < 60; i++)); do
+    # Still up 5 s later: a refused launch can leave a process for a moment.
+    if pgrep -f "$QAPP" >/dev/null && sleep 5 && pgrep -f "$QAPP" >/dev/null; then
+      QRUN_DETAIL="running after $i s"; quit_app; return 0
+    fi
+    sleep 1
+  done
+  quit_app; return 1
+}
+
+if download_quarantined "$GOOD/linggen/linggen/ling-macos-aarch64.tar.gz"; then
+  gatekeeper_check "ling" "$q/ling" run_cli "$q/ling"
+else gap "quarantined ling" "download from the mirror failed"; fi
+if download_quarantined "$GOOD/linggen/linggen-memory/ling-mem-macos-aarch64.tar.gz"; then
+  gatekeeper_check "ling-mem" "$q/ling-mem" run_cli "$q/ling-mem"
+else gap "quarantined ling-mem" "download from the mirror failed"; fi
+if [ -n "$APP_VERSION" ]; then
+  if download_quarantined "$GOOD/linggen/linggen-releases/linggen-$APP_VERSION-darwin-arm64.tar.gz"; then
+    gatekeeper_check "Linggen.app" "$q/Linggen.app" run_app "$q/Linggen.app"
+    # The stapled ticket lives in Contents/CodeResources (no xcrun on a clean
+    # Mac); an ad-hoc re-sign leaves the file behind, so ask for both.
+    sig="$(codesign -dvv "$q/Linggen.app" 2>&1)"
+    [ -f "$q/Linggen.app/Contents/CodeResources" ] && grep -q '^Authority=Developer ID' <<<"$sig" \
+      && info "quarantined Linggen.app: notarization ticket stapled" "opens offline too" \
+      || info "quarantined Linggen.app: no stapled ticket" "Gatekeeper needs the network on first open"
+  else gap "quarantined Linggen.app" "download from the mirror failed"; fi
 fi
 
 # ── Claude Code + Codex plugins: install-plugin.sh on a Mac with no git ────

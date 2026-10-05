@@ -127,10 +127,16 @@ tunnels, so nothing on the host listens beyond loopback.
    `linggen-plugin.tar.gz` into both hosts with no CLT dialog (FAIL if the
    dialog is up). The GitHub marketplace form is still tried and reported.
    Codex has no unattended installer without node; the host's CLI is copied in.
-2. Also one browser-style download with `com.apple.quarantine` set
-   (`install-app.sh` strips it, so curl alone hides Gatekeeper). The vanilla
-   image ships with Gatekeeper off; the gate turns it on first. An unsigned
-   app is rejected there — a WARN until the app is notarized.
+2. Also a browser-style download of each asset — the app, `ling`,
+   `ling-mem` — with `com.apple.quarantine` set (curl and `install-app.sh`
+   leave none, so they alone hide Gatekeeper). The vanilla image ships with
+   Gatekeeper off; the gate turns it on first, but only as "App Store" —
+   macOS 15+ cannot switch to "App Store & Known Developers" from a shell, so
+   every Developer ID app is refused there. Pass: `spctl` names the source
+   `Notarized Developer ID` (or accepts); the quarantined run (the app
+   through `open`, the CLIs `--version`) is a GAP until `GATE_IMAGE` names an
+   image switched by hand. An asset that is not Developer ID signed FAILs a
+   `--draft` run and WARNs a `--local` one.
 3. Pass when: 9527 health; the UI loads (Chromium from `tests/e2e`'s
    Playwright over an SSH tunnel); ling-mem `session_start` answers (ling-mem
    starts on first use, so the gate starts it); one chat turn completes on

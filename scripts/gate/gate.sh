@@ -84,7 +84,7 @@ stage_vmfiles
 start_mirror "$RUN/mirror"
 start_model
 record PASS "servers" "mirror 127.0.0.1:$MIRROR_PORT, llmposter 127.0.0.1:$MODEL_PORT (VM: $VM_MIRROR, $VM_MODEL)"
-VMENV=(MIRROR="$VM_MIRROR" MODEL="$VM_MODEL" DREAM_SHA="$(shasum -a 256 "$REPO/missions/dream/mission.md" | awk '{print $1}')")
+VMENV=(MIRROR="$VM_MIRROR" MODEL="$VM_MODEL" GATE_SOURCE="$SOURCE" DREAM_SHA="$(shasum -a 256 "$REPO/missions/dream/mission.md" | awk '{print $1}')")
 
 # The UI in a real browser over the tunnel (Playwright from tests/e2e).
 ui_check() { # vm label

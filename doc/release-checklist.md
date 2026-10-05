@@ -36,6 +36,19 @@ Rollback check: corrupt one tarball in the mirror → the update is refused
 and the old binary still runs; `ling update --rollback` /
 `ling-mem upgrade --rollback` return to the kept `.prev`.
 
+## Signing — every Mac asset
+
+A browser download carries the quarantine flag, and Gatekeeper refuses an
+ad-hoc build as "damaged". So `ling`, `ling-mem` and Linggen.app ship
+Developer ID signed with the hardened runtime and notarized (the app is
+also stapled; a bare binary cannot be, and Gatekeeper checks it online).
+Credentials: `linggen-app/secrets/signing.env` (identity + App Store
+Connect API key), which `scripts/sign-mac.sh` in the engine and ling-mem
+repos also sources. Without the identity those builds fall back to ad-hoc,
+and `release.sh` refuses to upload them (`LINGGEN_ADHOC_RELEASE=1` forces
+it). Local deploys stay ad-hoc (`codesign -f -s -`). The gate's quarantine
+checks FAIL a draft whose asset is not Developer ID signed.
+
 ## 0. Preflight — every repo in the train
 
 - `git status` clean and `HEAD == origin/main`. Tags are created at the
@@ -102,9 +115,12 @@ Only check: everything is pushed.
 Repo `linggen-app`; releases on `linggen/linggen-releases` as `linggen-vX.Y.Z`.
 
 1. `apps/linggen/app.toml` version; commit.
-2. `./scripts/release.sh linggen --tarball` — refreshes `vendor/ling`
+2. `./scripts/release.sh linggen --draft` — refreshes `vendor/ling`
    (`download-ling.sh`, latest engine release) and `vendor/skills` (`main`),
-   builds, uploads a draft.
+   builds signed (Developer ID, hardened runtime,
+   `scripts/entitlements.plist`), notarizes + staples, uploads DMG + tarball
+   + `.sha256` to a draft. Never `--tarball` for a release: it ships unsigned,
+   and a browser download is refused as "damaged".
 3. Verify in the bundle: `Contents/MacOS/ling --version` is the engine just
    cut; the skills are present.
 4. After the release gate passes:

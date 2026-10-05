@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Hardened-runtime entitlements for the released `ling` (scripts/sign-mac.sh).
+     Only what the runtime blocks and ling uses: skills drive other apps through
+     osascript (Finder delete, Photos), which under the hardened runtime needs
+     the Apple Events entitlement on the responsible process. No JIT, no
+     unsigned memory, no dylib loading — ling links only system frameworks. -->
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
+</dict>
+</plist>
