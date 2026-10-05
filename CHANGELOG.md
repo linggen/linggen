@@ -1,7 +1,41 @@
 # Changelog
 
-## [Unreleased]
+## [1.9.0] - 2026-10-05 — shared sessions
 
+- **Shared sessions** (`doc/shared-session-spec.md`). Several agents sit in
+  one session: each member gets its own engine and its own thread built
+  from the session file, one turn lock per session, one saved compaction,
+  and the session's tool set and permissions apply to every member. `@name`
+  routes a message to a member (longest name, CJK-aware). Guest mode is gone.
+- **`ling update` keeps `ling.prev`** and puts it back when the new binary
+  won't start; `ling update --rollback` swaps to it and back. After a swap
+  the running engine restarts on the new binary. `LINGGEN_RELEASE_BASE=<url>`
+  points every installer and updater at another release mirror
+  (`doc/cli.md` § Release override) — for the release gate.
+- **The mac `ling` ships Developer ID signed and notarized**, so a browser
+  download opens; `release.sh` refuses an ad-hoc upload.
+- **Senses a skill may declare** — `weather` (Open-Meteo at the city the
+  person set, off until set) and `user_words` (the person's recent messages
+  as typed); `reach` tells every skill which well-known services this
+  machine cannot reach.
+- **Reachable from China** — Qwen, Kimi, GLM and SiliconFlow presets;
+  self-update, runtime, skills and Hugging Face fall back to mirrors; pip
+  retries through mainland PyPI mirrors; STUN has a third server.
+- **Skills ship missions, the engine runs them**; cron weekdays count from
+  Monday (1-5 no longer ran Sunday to Thursday); a catch-up fills the missed
+  slot.
+- **Pictures** — `GenerateImage` on a local FLUX lane, installed on first
+  use and only on a Mac with the memory and disk for it.
+- **Chat** — suggestion buttons above the input, the next-prompt hint (Tab
+  takes it), Resend on a failed send or an interrupted run, long chats
+  render their last 100 messages, a run cut off before its reply shows its
+  tool calls.
+- **Hardening** — loopback callers must name a loopback Host and a trusted
+  Origin; skill pages are framed and messaged only by their own origin; the
+  media channel checks the peer's rights; file endpoints serve only known
+  roots.
+- **Removed** — `ling eval`, `capture_screenshot`/headless Chrome, routing
+  policies that never ran, uncalled HTTP routes.
 - **Memory scope and index** (ling-mem `doc/scope-index-spec.md`). Memory calls
   carry where the session stands — `cwd`, `root`, and on a search
   `cwd_scope` = root; a skill that uses memory stands in its own dir
