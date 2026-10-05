@@ -29,7 +29,9 @@ jobs:
       - name: cargo test
         run: |
           mkdir -p ui/dist
-          cargo test
+          # tests/system needs a ling-mem binary; it runs locally
+          # (./scripts/check.sh system) until CI fetches one.
+          cargo test --bins --test rtc_link_bench
       - name: Generated TS types are current
         run: ./scripts/gen-types.sh --check
       - name: clippy (reported, not enforced)

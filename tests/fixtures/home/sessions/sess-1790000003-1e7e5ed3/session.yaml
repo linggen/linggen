@@ -1,0 +1,8 @@
+id: sess-1790000003-1e7e5ed3
+title: Cut-off run
+created_at: 1790000000
+creator: user
+agents:
+- id: ling
+cwd: {{WORK}}
+title_locked: true

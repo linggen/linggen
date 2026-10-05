@@ -1,0 +1,10 @@
+id: sess-1790000001-5a1ed001
+title: Harbor table
+created_at: 1790000000
+skill: dice
+creator: skill
+agents:
+- id: ling
+- id: yinyue
+cwd: {{LINGGEN_HOME}}/skills/dice
+title_locked: true

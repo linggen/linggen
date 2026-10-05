@@ -1,7 +1,7 @@
 ---
 type: design
 reader: Coding agent and Hanli
-status: designed 2026-10-05, not built
+status: designed 2026-10-05; § 2 engine harness built (tests/system)
 guide: |
   How Linggen is tested before and after a release — layers, tools, data.
   Brief; the scripts are the truth once built, this page is the shape.
@@ -37,34 +37,48 @@ isolated.
 
 ## 2. System tests — hermetic, on fixtures
 
-Each test starts its own world and throws it away:
+`tests/system` (`./scripts/check.sh system`, i.e. `cargo nextest run --test
+system`; part of `all`, ~10 s; not in CI until CI fetches a ling-mem). Each
+test starts its own world and throws it away:
 
-- **Engine** on a random port, `LINGGEN_HOME` in a temp dir, env cleared
-  (`env -i` + an allow-list). Never `~/.linggen`, never 9527/9528.
-- **ling-mem** as a scratch daemon with its own HOME and a seeded store —
-  the pattern `linggen-memory/scripts/live-check.sh` already uses. Most tests
-  use a stub embedder or a pre-built store; the real 1.2 GB model only in a
-  few.
-- **Fake model: llmposter** (CLI, test-only; AGPL is fine for a tool we never
-  ship). It speaks OpenAI Chat + Responses, Anthropic and Gemini with SSE,
-  tool calls and scripted multi-turn sequences, so a test says "turn 1 calls
-  Look, turn 2 answers X" and gets exactly that. A small wiremock stub covers
-  Ollama.
+- **Engine**: the built `ling --web` as its own process on a random port,
+  `HOME`/`LINGGEN_HOME`/`TMPDIR`/`XDG_*` in the test's root, env cleared
+  (`env -i` + an allow-list), outbound HTTP sent to a closed proxy. A guard
+  panics before anything starts if a world would reach `~/.linggen` or
+  9527/9528. Roots live in `/var/tmp/linggen-system-tests`: never `/tmp` or
+  `$TMPDIR` (always-writable scratch to the engine, so a write would never
+  ask), never the OS temp dir (never a project), never inside a git repo.
+- **ling-mem** as a scratch daemon over the world's home, the same `serve`.
+  It has no stub embedder: by default its model load is refused offline, so
+  `session_start`, `list` and MCP work and an add or search fails fast. The
+  one test that needs rows loads the real model through a link to the
+  person's Hugging Face cache and seeds invented rows (~2 s warm, ~16 s
+  cold; skipped when the model is absent).
+- **Fake model: llmposter** as a dev-dependency running inside the test
+  process (AGPL is fine for a tool we never ship; it never reaches the
+  shipped binary). In-process rather than its CLI: each test gets its own
+  server, scenario state and the captured requests — what each member was
+  actually sent. A member is told apart by its system prompt, so a test says
+  "Ling: call Look, then say X; Yinyue: say Y" and gets exactly that; the
+  Responses API path runs on fake ChatGPT tokens. An Ollama stub is not built
+  yet.
 - **Snapshots: insta** — system-prompt exports per member, each member's
   built thread, history API output. A change shows as a diff to review.
 - **Web UI: Playwright** against the test engine; Chromium with
   `--use-fake-ui-for-media-stream --use-fake-device-for-media-stream` so the
   WebRTC transport is the real one.
 
-**Fixtures** live in the repo (`tests/fixtures/home/`), copied per test:
-config pointing at the fake model; small test skills (never a real app like
-Lingjing — it changes and has its own owner); prewritten sessions (shared,
-compacted, interrupted run); one mission; invented memory rows (a person
-called Alex, a few made-up projects). Real data never enters this layer.
+**Fixtures** live in the repo (`tests/fixtures/home/`), copied and rendered
+(`{{PORT}}`-style placeholders) per test: config pointing at the fake model;
+small test skills (`dice`, `quiet` — never a real app like Lingjing, it
+changes and has its own owner); prewritten sessions (shared, compacted,
+interrupted run); one mission; invented memory rows (`tests/fixtures/memory/`:
+a person called Alex, made-up projects). Real data never enters this layer.
 
-First cases to port: the shared-session scenarios now in
-`scripts/live-check.sh` (a, b, d, e, f), the interrupted-run display,
-presence per surface, session `withheld_tools`, memory in the prompt.
+Ported first: the shared-session scenarios of `scripts/live-check.sh`
+(a, b, d, e, f), the interrupted-run display, presence per surface, session
+`withheld_tools`, memory in the prompt, the export's tools per member. The
+live script stays for the real-data smoke (§ 5).
 
 ## 3. Plugin evals — `claude plugin eval`
 

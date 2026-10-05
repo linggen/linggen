@@ -1,0 +1,16 @@
+---
+source: tests/system/support/mod.rs
+expression: text
+---
+── system
+[Context compacted — 2 messages summarized]
+
+SUMMARY: Alex asked about the Cacilhas ferry; it leaves every twenty minutes.
+── user
+And on Sundays?
+── assistant
+Every thirty minutes on Sundays.
+── system
+Memory capture: before finishing this turn, recognize anything worth remembering and write it at the right tier per the memory protocol (core/semantic = search-first; episodic = incidental); anchor relative time to absolute dates ("last month" → "2026-06"). Nothing worth keeping? Skip silently.
+── user
+Still every thirty on Sundays?

@@ -1,0 +1,5 @@
+---
+source: tests/system/support/mod.rs
+expression: text
+---
+tool_not_allowed: tool=mcp__memory__memory_add reason=withheld: not available on this turn

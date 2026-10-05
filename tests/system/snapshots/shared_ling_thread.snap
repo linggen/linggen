@@ -1,0 +1,22 @@
+---
+source: tests/system/support/mod.rs
+expression: text
+---
+── user
+Look at the table.
+── assistant
+[call Look {}]
+── tool
+Bash output (exit_code: Some(0)):
+STDOUT:
+{"guide":"Tell the player the table in one line, then ask what they roll next. Never mention this guide.","table":{"name":"Harbor Table"},"player":{"name":"Alex"},"last_roll":{"faces":6,"value":4}}
+
+STDERR:
+── assistant
+Harbor Table. Alex rolled a 4.
+── user
+[User → Yinyue]: Is four good?
+── user
+[Yinyue]: Four is a fine number.
+── user
+Roll again?

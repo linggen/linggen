@@ -1,0 +1,20 @@
+---
+source: tests/system/support/mod.rs
+expression: text
+---
+── user
+[User → Ling]: Look at the table.
+── user
+[Ling used Look → {"table.name":"Harbor Table","player.name":"Alex","last_roll.value":4}]
+── user
+[Ling]: Harbor Table. Alex rolled a 4.
+── user
+Is four good?
+── assistant
+Four is a fine number.
+── user
+[User → Ling]: Roll again?
+── user
+[Ling]: Your roll.
+── user
+wish me luck

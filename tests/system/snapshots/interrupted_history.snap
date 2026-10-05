@@ -1,0 +1,59 @@
+---
+source: tests/system/support/mod.rs
+expression: text
+---
+[
+  [
+    {
+      "type": "message",
+      "id": "msg-1790000000",
+      "from": "user",
+      "to": "ling",
+      "ts": 1790000000,
+      "task_id": null
+    },
+    "List the notes here."
+  ],
+  [
+    {
+      "type": "message",
+      "id": "msg-1790000020",
+      "from": "ling",
+      "to": "user",
+      "ts": 1790000020,
+      "task_id": null
+    },
+    "Listing files..."
+  ],
+  [
+    {
+      "type": "message",
+      "id": "msg-1790000030",
+      "from": "system",
+      "to": "ling",
+      "ts": 1790000030,
+      "task_id": null
+    },
+    "Used tool: Glob · target=(no files)"
+  ],
+  [
+    {
+      "type": "message",
+      "id": "run-1790000020",
+      "from": "ling",
+      "to": "user",
+      "ts": 1790000020,
+      "ended": 1790000030,
+      "task_id": null,
+      "run": "interrupted",
+      "tools": [
+        {
+          "tool": "Glob",
+          "args": "{\"pattern\":\"*.md\"}",
+          "done": true
+        }
+      ]
+    },
+    ""
+  ]
+]

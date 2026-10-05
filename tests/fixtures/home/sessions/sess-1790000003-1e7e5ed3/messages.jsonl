@@ -1,0 +1,4 @@
+{"agent_id": "ling", "from_id": "user", "to_id": "ling", "content": "List the notes here.", "timestamp": 1790000000, "is_observation": false}
+{"agent_id": "ling", "from_id": "system", "to_id": "ling", "content": "Starting autonomous loop for task: List the notes here.", "timestamp": 1790000010, "is_observation": true}
+{"agent_id": "ling", "from_id": "ling", "to_id": "user", "content": "{\"type\": \"tool\", \"tool\": \"Glob\", \"args\": {\"pattern\": \"*.md\"}}", "timestamp": 1790000020, "is_observation": true}
+{"agent_id": "ling", "from_id": "system", "to_id": "ling", "content": "Tool Glob: notes.md", "timestamp": 1790000030, "is_observation": true}

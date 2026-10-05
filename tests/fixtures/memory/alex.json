@@ -1,0 +1,11 @@
+{
+  "facts": [
+    {"content": "Alex lives in Lisbon and works as a ferry pilot.", "tier": "core", "type": "fact", "from": "user"},
+    {"content": "Alex's partner is Sam; they share a cat called Pico.", "tier": "core", "type": "fact", "from": "user"},
+    {"content": "Alex prefers short answers in plain English.", "tier": "semantic", "type": "preference", "from": "user"},
+    {"content": "Commit straight to main and never open a branch in any workspace repo.", "tier": "semantic", "type": "preference", "from": "user", "scope": "{{WORK}}", "indexed": true, "summary": "Commit to main, never branch"},
+    {"content": "The Harbor app draws its tide chart on a canvas.", "tier": "semantic", "type": "decision", "from": "derived", "scope": "{{WORK}}/harbor"},
+    {"content": "Harbor code always uses tabs for indentation.", "tier": "semantic", "type": "preference", "from": "user", "scope": "{{WORK}}/harbor", "indexed": true, "summary": "Harbor: tabs, not spaces"},
+    {"content": "Lantern release notes are written in the past tense.", "tier": "semantic", "type": "preference", "from": "user", "scope": "{{WORK}}/lantern", "indexed": true, "summary": "Lantern: notes in past tense"}
+  ]
+}
