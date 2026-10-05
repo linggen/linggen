@@ -133,10 +133,13 @@ tunnels, so nothing on the host listens beyond loopback.
    Gatekeeper off; the gate turns it on first, but only as "App Store" —
    macOS 15+ cannot switch to "App Store & Known Developers" from a shell, so
    every Developer ID app is refused there. Pass: `spctl` names the source
-   `Notarized Developer ID` (or accepts); the quarantined run (the app
-   through `open`, the CLIs `--version`) is a GAP until `GATE_IMAGE` names an
-   image switched by hand. An asset that is not Developer ID signed FAILs a
-   `--draft` run and WARNs a `--local` one.
+   `Notarized Developer ID` (or accepts; a bare CLI, "not an app" to
+   `-t exec`, is asked with `-t install`); the quarantined run (the app
+   through `open`, the CLIs `--version`) decides, and is a GAP until
+   `GATE_IMAGE` names an image switched by hand. An asset that is not
+   Developer ID signed FAILs a `--draft` run and WARNs a `--local` one; a
+   `--draft` with no `app=` serves the published app, not this train's, so
+   its verdict is a GAP.
 3. Pass when: 9527 health; the UI loads (Chromium from `tests/e2e`'s
    Playwright over an SSH tunnel); ling-mem `session_start` answers (ling-mem
    starts on first use, so the gate starts it); one chat turn completes on

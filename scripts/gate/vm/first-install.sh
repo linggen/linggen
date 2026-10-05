@@ -109,6 +109,14 @@ gatekeeper_check() { # label path [run…] — spctl verdict, then a quarantined
     pass "quarantined $label: Gatekeeper accepts" "$verdict"
   elif [ "$DEVID_ON" = 0 ] && grep -q 'source=Notarized Developer ID' <<<"$verdict"; then
     pass "quarantined $label: Gatekeeper sees a notarized Developer ID build" "$verdict (VM policy: App Store only)"
+  elif grep -q 'does not seem to be an app' <<<"$verdict" && grep -q 'Developer ID' <<<"$authority"; then
+    # A bare CLI is no app to `-t exec`; `-t install` asks for its notarization.
+    local notary; notary="$(spctl -a -vvv -t install "$path" 2>&1 | tr '\n' ' ')"
+    grep -q 'source=Notarized Developer ID' <<<"$notary" \
+      && pass "quarantined $label: Gatekeeper sees a notarized Developer ID CLI" "$notary" \
+      || fail "quarantined $label: Gatekeeper sees a notarized Developer ID CLI" "signed ($authority) but not notarized: $notary"
+  elif [ "${GK_OUT_OF_TRAIN:-0}" = 1 ]; then
+    gap "quarantined $label: Gatekeeper verdict" "not in this train — the published app $APP_VERSION is $authority ($verdict); gated when it is cut"
   elif grep -q 'Developer ID' <<<"$authority"; then
     fail "quarantined $label: Gatekeeper accepts" "signed ($authority) yet $verdict"
   elif [ "${GATE_SOURCE:-local}" = draft ]; then
@@ -154,7 +162,11 @@ if download_quarantined "$GOOD/linggen/linggen-memory/ling-mem-macos-aarch64.tar
 else gap "quarantined ling-mem" "download from the mirror failed"; fi
 if [ -n "$APP_VERSION" ]; then
   if download_quarantined "$GOOD/linggen/linggen-releases/linggen-$APP_VERSION-darwin-arm64.tar.gz"; then
+    # A --draft run without app= serves the published app: not this train's.
+    GK_OUT_OF_TRAIN=0
+    [ "${GATE_SOURCE:-local}" = draft ] && [ "${APP_IN_TRAIN:-1}" = 0 ] && GK_OUT_OF_TRAIN=1
     gatekeeper_check "Linggen.app" "$q/Linggen.app" run_app "$q/Linggen.app"
+    GK_OUT_OF_TRAIN=0
     # The stapled ticket lives in Contents/CodeResources (no xcrun on a clean
     # Mac); an ad-hoc re-sign leaves the file behind, so ask for both.
     sig="$(codesign -dvv "$q/Linggen.app" 2>&1)"

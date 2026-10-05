@@ -80,7 +80,7 @@ mirror_local() {
     rm -rf "$stage"
     (cd "$good/$APP_REPO" && shasum -a 256 "$asset" >"$asset.sha256")
     write_release_json "$good/$APP_REPO" "linggen-v$ver"
-    APP_VERSION="$ver"
+    APP_VERSION="$ver"; APP_IN_TRAIN=1
     record INFO "mirror: app" "local $ver, built $(stat -f %Sm -t '%F %R' "$app"), bundled engine $("$app/Contents/MacOS/ling" --version | awk '{print $2}'), $(signer "$app")"
   else
     APP_VERSION=""
@@ -126,6 +126,9 @@ mirror_draft() { # good specs
   done
   engine="${engine:-$(latest_tag $ENGINE_REPO)}"
   mem="${mem:-$(latest_tag $MEM_REPO)}"
+  # No app= draft: the app is cut after the engine ships, so the mirror
+  # serves the published app — not this train's, and not gated as one.
+  APP_IN_TRAIN=1; [ -n "$app" ] || APP_IN_TRAIN=0
   app="${app:-$(latest_tag $APP_REPO)}"
 
   draft_repo "$good" $ENGINE_REPO "$engine" manifest.json 'ling-macos-aarch64.tar.gz'
@@ -146,7 +149,7 @@ mirror_draft() { # good specs
 
   draft_repo "$good" $APP_REPO "$app" 'linggen-*-darwin-arm64.tar.gz*'
   APP_VERSION="${app#linggen-v}"
-  record INFO "mirror: app" "release $app"
+  record INFO "mirror: app" "release $app$([ "$APP_IN_TRAIN" = 1 ] || echo ' (published; not in this train)')"
 }
 
 # relabel/ and bad/: copies of the small files, links to the tarballs.
@@ -192,6 +195,7 @@ LING_SHA=$LING_SHA
 MEM_VERSION=$MEM_VERSION
 MEM_SHA=$MEM_SHA
 APP_VERSION=$APP_VERSION
+APP_IN_TRAIN=${APP_IN_TRAIN:-1}
 EOF
   record PASS "mirror built" "ling $LING_VERSION, ling-mem $MEM_VERSION, app ${APP_VERSION:-none}"
 }
