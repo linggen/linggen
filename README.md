@@ -179,6 +179,8 @@ claude plugin marketplace add linggen/linggen-memory
 claude plugin install linggen@linggen-memory
 ```
 
+Without git (a fresh Mac): `curl -fsSL https://linggen.dev/install-plugin.sh | bash`.
+
 Any other MCP client just points at the endpoint. Details in
 [`doc/mcp-spec.md`](doc/mcp-spec.md).
 
