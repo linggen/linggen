@@ -67,8 +67,16 @@ cache.
 
 The web UI watches `keydown` / `pointermove` / `focus` / `visibilitychange`
 (debounced) and POSTs **only recency + focus + typing** to `/api/presence` —
-**never keystroke content**. The server stores a small `Presence` in
-`AgentManager`; the `sense` tool reads it.
+**never keystroke content**. Skill pages beat the same way through
+`shared/chat-bridge.js`, adding the `app` they show. Each beat carries a
+`surface` id minted once per page load, and the engine keeps **one reading per
+surface** (`engine/agent/presence.rs`): the person's state is the most present
+live surface — present if ANY surface beating within 60s shows recent activity,
+away only when none does. A surface silent 5 minutes is forgotten. A turn typed
+anywhere (the phone included — it does not beat) stamps its own `user-turn`
+surface. Beats without a `surface` (old clients, `scripts/live-check.sh`) share
+one slot per app, where a blurred beat cannot clear a focused one under 10s old.
+The `sense` tool and the herald watch read the aggregate.
 
 ## Herald — watch the bus, don't call-site-inject
 

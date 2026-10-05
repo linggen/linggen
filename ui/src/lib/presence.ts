@@ -14,8 +14,11 @@ const TYPING_WINDOW_MS = 1500; // counts as "typing" if a key landed this recent
 
 let lastInputAt = Date.now();
 let lastKeyAt = 0;
+// This page's own id: the engine keeps one reading per surface, so a tab
+// beside this one (focused but idle, or blurred) never overwrites it.
+const SURFACE = `ui-${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`;
 
-function snapshot(): { focused: boolean; typing: boolean; idle_ms: number } {
+function snapshot(): { surface: string; focused: boolean; typing: boolean; idle_ms: number } {
   const now = Date.now();
   // "Active in Linggen" means Linggen is the focused surface — keystrokes in
   // another app never reach this page, and a blurred/hidden tab reads as away.
@@ -23,6 +26,7 @@ function snapshot(): { focused: boolean; typing: boolean; idle_ms: number } {
   // is off in another window.
   const focused = document.hasFocus() && document.visibilityState === 'visible';
   return {
+    surface: SURFACE,
     focused,
     typing: focused && now - lastKeyAt < TYPING_WINDOW_MS,
     idle_ms: now - lastInputAt,

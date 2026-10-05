@@ -270,6 +270,10 @@ pub(crate) struct PresenceBeat {
     /// moments wait until that app is the one in front.
     #[serde(default)]
     pub app: Option<String>,
+    /// This surface's own id, minted once per page load — the engine keeps
+    /// one reading per surface. Old clients send none.
+    #[serde(default)]
+    pub surface: Option<String>,
 }
 
 /// POST /api/presence — a throttled liveness beat from a client surface. Carries
@@ -281,12 +285,14 @@ pub(crate) async fn presence_handler(
     State(state): State<Arc<ServerState>>,
     Json(beat): Json<PresenceBeat>,
 ) -> impl IntoResponse {
-    state.manager.update_presence(
-        beat.focused,
-        beat.typing,
-        beat.idle_ms,
-        beat.app.filter(|a| !a.is_empty() && a.len() <= 40),
-    );
+    let short = |v: &String| !v.is_empty() && v.len() <= 64;
+    state.manager.update_presence(crate::engine::agent::Beat {
+        surface: beat.surface.filter(short),
+        focused: beat.focused,
+        typing: beat.typing,
+        idle_ms: beat.idle_ms,
+        app: beat.app.filter(|a| !a.is_empty() && a.len() <= 40),
+    });
     (StatusCode::OK, "ok").into_response()
 }
 

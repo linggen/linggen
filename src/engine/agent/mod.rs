@@ -28,12 +28,14 @@ use tracing::{info, warn};
 
 pub mod event;
 pub mod locks;
+pub mod presence;
 pub mod record;
 pub mod registry;
 pub mod runs;
 pub mod runs_api;
 
 pub use event::AgentEvent;
+pub use presence::{Beat, Presence, PresenceBoard};
 pub use runs::{AgentRunRecord, AgentRunStatus, RunStore};
 
 pub struct ProjectContext {
@@ -79,8 +81,8 @@ pub struct AgentManager {
     run_id_counters: std::sync::Mutex<HashMap<String, u64>>,
     /// Live user-presence signal, fed by a throttled client beat
     /// (`POST /api/presence`) — only recency, focus, and a typing flag, never
-    /// keystroke content. Read by the `sense` tool.
-    presence: std::sync::Mutex<Presence>,
+    /// keystroke content — one reading per surface. Read by the `sense` tool.
+    presence: std::sync::Mutex<PresenceBoard>,
     /// Sessions whose current turn was woken by an `agent_chat` — that turn may
     /// not emit another `agent_chat` (the one-hop loop-break; a fresh user
     /// message re-arms it). Turns serialize per session, so a session key is
@@ -102,54 +104,6 @@ pub struct WorkingPlaceEntry {
     pub agent_id: String,
     pub run_id: Option<String>,
     pub last_modified: u64,
-}
-
-/// Live user-presence signal fed by the web UI's throttled beat. Only recency,
-/// focus, and a typing flag — never keystroke content. The `sense` tool reads it
-/// so Yinyue can tell whether the user is here, reading, or away.
-#[derive(Debug, Clone, Default)]
-pub struct Presence {
-    /// Unix secs of the user's last input (key/pointer). 0 = never reported.
-    pub last_input_at: u64,
-    /// Tab/window focused at the last beat.
-    pub focused: bool,
-    /// User was actively typing at the last beat.
-    pub typing: bool,
-    /// Unix secs of the last beat — a stale value means no live client.
-    pub updated_at: u64,
-    /// The app (skill) the focused surface shows, when its beat names one.
-    /// None: a surface that says nothing about which app is in front.
-    pub app: Option<String>,
-}
-
-/// How long a focused beat outranks an unfocused one from another surface.
-const FOCUS_HOLDS_SECS: u64 = 10;
-
-impl Presence {
-    /// Derive the three-state read at `now` (unix secs): `"typing"` /
-    /// `"present_reading"` / `"away"`. The single source of this logic — both the
-    /// `sense` tool and Yinyue's herald watch read through it.
-    /// Whether a beat saying "not focused" must be ignored: another surface
-    /// said it WAS focused a moment ago. Every reporter beats on a 4s cadence,
-    /// so a focused reading older than [`FOCUS_HOLDS_SECS`] belongs to a
-    /// surface that has gone rather than one still in front of the user.
-    pub fn holds_focus(&self, now: u64) -> bool {
-        self.focused && now.saturating_sub(self.updated_at) < FOCUS_HOLDS_SECS
-    }
-
-    pub fn state(&self, now: u64) -> &'static str {
-        let beat_age = now.saturating_sub(self.updated_at);
-        let idle = now.saturating_sub(self.last_input_at);
-        if self.updated_at == 0 || beat_age > 60 || !self.focused {
-            "away" // no live client, or tab hidden/blurred
-        } else if self.typing || idle < 5 {
-            "typing"
-        } else if idle < 120 {
-            "present_reading"
-        } else {
-            "away" // focused tab, but long idle — stepped away
-        }
-    }
 }
 
 impl AgentManager {
@@ -366,7 +320,7 @@ impl AgentManager {
                 session_engines: Mutex::new(HashMap::new()),
                 session_turns: std::sync::Mutex::new(HashMap::new()),
                 run_id_counters: std::sync::Mutex::new(HashMap::new()),
-                presence: std::sync::Mutex::new(Presence::default()),
+                presence: std::sync::Mutex::new(PresenceBoard::default()),
                 agent_chat_sessions: std::sync::Mutex::new(HashSet::new()),
                 latest_session_by_agent: std::sync::Mutex::new(HashMap::new()),
                 pet_muted,
@@ -411,27 +365,12 @@ impl AgentManager {
         self.tool_cancel_flags.lock_ok().remove(block_id);
     }
 
-    /// Record a presence beat from a client surface. `idle_ms` is how long since
-    /// the user's last input (key/pointer), measured client-side. Carries no
-    /// keystroke content — only recency, focus, and a typing flag.
-    pub fn update_presence(&self, focused: bool, typing: bool, idle_ms: u64, app: Option<String>) {
+    /// Record a presence beat from a client surface. Carries no keystroke
+    /// content — only recency, focus, and a typing flag. Each surface keeps its
+    /// own reading (`presence.rs`), so one surface never overwrites another.
+    pub fn update_presence(&self, beat: Beat) {
         let now = crate::util::now_ts_secs();
-        let mut p = self.presence.lock_ok();
-        // Presence is one reading for the whole machine, and several surfaces
-        // report into it — the Linggen UI, every skill page, the app shell. Last
-        // writer wins would let a BLURRED tab erase the focused one beside it:
-        // with the Linggen tab open behind the DJ tab, the two would alternate
-        // every four seconds and the user would flicker between here and away.
-        // So a beat that says "not focused" never clears a fresh one that says
-        // otherwise; when that surface really goes, its reading ages out.
-        if !focused && p.holds_focus(now) {
-            return;
-        }
-        p.last_input_at = now.saturating_sub(idle_ms / 1000);
-        p.focused = focused;
-        p.typing = typing;
-        p.updated_at = now;
-        p.app = app;
+        self.presence.lock_ok().record(beat, now);
     }
 
     /// A person who just typed to an agent is present, wherever they typed it.
@@ -440,15 +379,23 @@ impl AgentManager {
     /// page, the phone, or any client that never beats used to read as "away" —
     /// and Yinyue heralded "their reply is ready" at someone watching it arrive
     /// (2026-09-10, chatting with Ling on the DJ page). A message is the least
-    /// deniable presence signal there is: they typed it a moment ago.
+    /// deniable presence signal there is: they typed it a moment ago. It is a
+    /// surface of its own, aging out like any other.
     pub fn mark_user_turn_presence(&self) {
         let app = self.presence_snapshot().app;
-        self.update_presence(true, true, 0, app);
+        self.update_presence(Beat {
+            surface: Some("user-turn".to_string()),
+            focused: true,
+            typing: true,
+            idle_ms: 0,
+            app,
+        });
     }
 
-    /// Current presence snapshot, for the `sense` tool.
+    /// The person's presence now — the most present live surface — for the
+    /// `sense` tool and the herald watch.
     pub fn presence_snapshot(&self) -> Presence {
-        self.presence.lock_ok().clone()
+        self.presence.lock_ok().snapshot(crate::util::now_ts_secs())
     }
 
     /// Mark a session's current turn as woken by an `agent_chat` (loop-break).
@@ -983,51 +930,7 @@ impl AgentManager {
 
 #[cfg(test)]
 mod tests {
-    use super::{AgentManager, Presence};
-
-    fn beat(focused: bool, typing: bool, idle: u64, at: u64) -> Presence {
-        Presence {
-            last_input_at: at.saturating_sub(idle),
-            focused,
-            typing,
-            updated_at: at,
-            app: None,
-        }
-    }
-
-    /// Several surfaces report into one reading — the Linggen UI, every skill
-    /// page, the app shell — and last-writer-wins let a blurred tab erase the
-    /// focused one beside it, four seconds at a time.
-    #[test]
-    fn a_blurred_surface_does_not_clear_a_fresh_focused_one() {
-        let now = 1_000;
-        assert!(beat(true, false, 0, now).holds_focus(now));
-        assert!(beat(true, false, 0, now - 9).holds_focus(now));
-        assert!(
-            !beat(true, false, 0, now - 11).holds_focus(now),
-            "a focused reading nobody has refreshed is a surface that has gone"
-        );
-        assert!(!beat(false, false, 0, now).holds_focus(now));
-    }
-
-    #[test]
-    fn presence_reads_typing_then_reading_then_away() {
-        let now = 1_000;
-        assert_eq!(beat(true, true, 0, now).state(now), "typing");
-        assert_eq!(beat(true, false, 2, now).state(now), "typing");
-        assert_eq!(beat(true, false, 30, now).state(now), "present_reading");
-        assert_eq!(beat(true, false, 300, now).state(now), "away");
-        assert_eq!(
-            beat(false, false, 0, now).state(now),
-            "away",
-            "a hidden or blurred surface is not somewhere they are"
-        );
-        assert_eq!(
-            beat(true, false, 0, now - 120).state(now),
-            "away",
-            "no beat for two minutes is no live surface at all"
-        );
-    }
+    use super::AgentManager;
 
     #[test]
     fn normalize_model_choice_treats_inherit_as_none() {

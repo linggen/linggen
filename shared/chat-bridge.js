@@ -320,13 +320,15 @@ window.LinggenUI = { mount };
 // ── Presence beat ───────────────────────────────────────────────────────────
 // Somebody reading an app page is present. Same beat as the main UI's
 // presence.ts — recency, focus and a typing flag, never a keystroke — plus
-// which app is in front. The engine keeps the most present of the live
-// surfaces, so a blurred tab beside this one cannot erase it.
+// which app is in front, and this page's own surface id. The engine keeps one
+// reading per surface and reads the most present live one, so a tab beside
+// this one (blurred, or focused but idle) cannot erase it.
 (function () {
   const BEAT_MS = 4000;
   const TYPING_WINDOW_MS = 1500;
   // Remotely the page lives at /tunnel/<instance>/apps/<skill>/… (linggen.dev).
   const APP = (location.pathname.match(/^(?:\/tunnel\/[^/]+)?\/apps\/([a-z0-9-]+)\//) || [])[1] || null;
+  const SURFACE = `app-${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`;
   let lastInputAt = Date.now();
   let lastKeyAt = 0;
 
@@ -340,6 +342,7 @@ window.LinggenUI = { mount };
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ...(APP ? { app: APP } : {}),
+        surface: SURFACE,
         focused,
         typing: focused && now - lastKeyAt < TYPING_WINDOW_MS,
         idle_ms: now - lastInputAt,
