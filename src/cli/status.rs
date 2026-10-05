@@ -304,7 +304,7 @@ async fn fetch_latest_version() -> Option<String> {
         .ok()?;
 
     let resp = client
-        .get("https://github.com/linggen/linggen/releases/latest/download/manifest.json")
+        .get(super::self_update::ReleaseSource::from_env().manifest_url())
         .send()
         .await
         .ok()?;

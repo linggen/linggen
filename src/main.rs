@@ -82,8 +82,12 @@ enum Command {
     Init,
     /// Install/update the ling binary to latest
     Install,
-    /// Update the ling binary to latest
-    Update,
+    /// Update the ling binary to latest (keeps the previous as ling.prev)
+    Update {
+        /// Swap back to the previous binary (ling.prev)
+        #[arg(long)]
+        rollback: bool,
+    },
     /// Manage skills
     Skills {
         #[command(subcommand)]
@@ -196,8 +200,11 @@ async fn main() -> Result<()> {
         Some(Command::Init) => {
             return cli::init::run(true, None).await;
         }
-        Some(Command::Install) | Some(Command::Update) => {
-            return cli::self_update::run().await;
+        Some(Command::Install) => {
+            return cli::self_update::run(false).await;
+        }
+        Some(Command::Update { rollback }) => {
+            return cli::self_update::run(*rollback).await;
         }
         Some(Command::Account { action }) => {
             return match action {
@@ -445,7 +452,7 @@ async fn main() -> Result<()> {
         | Some(Command::Status)
         | Some(Command::Init)
         | Some(Command::Install)
-        | Some(Command::Update)
+        | Some(Command::Update { .. })
         | Some(Command::Skills { .. })
         | Some(Command::Auth { .. })
         | Some(Command::Account { .. }) => unreachable!(),

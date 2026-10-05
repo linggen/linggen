@@ -3,6 +3,29 @@
 One train, in order: ling-mem → engine → Mac app. Each step names the script
 that does it; the script is the truth, this page is the order.
 
+## Release gate — between each draft and its publish
+
+The gate (`doc/test-design.md` § 4) installs and upgrades from the drafts
+through `LINGGEN_RELEASE_BASE` (`doc/cli.md` § Release override). It builds
+a mirror of every draft in the train and serves it to the VM:
+
+```
+for r in linggen/linggen linggen/linggen-memory linggen/linggen-releases; do
+  gh release download <tag-of-r> --repo $r --dir mirror/$r
+  gh release view <tag-of-r> --repo $r --json tagName,assets \
+    --jq '{tag_name: .tagName, assets: [.assets[] | {name}]}' > mirror/$r/release.json
+done
+cp linggen-memory/plugins/linggen/scripts/install-bin.sh mirror/
+python3 -m http.server --directory mirror <port>
+```
+
+In the VM: `LINGGEN_RELEASE_BASE=http://<host>:<port>` for `install.sh`,
+`install-app.sh`, `ling update`, `ling-mem upgrade --yes`;
+`launchctl setenv LINGGEN_RELEASE_BASE …` before launching Linggen.app.
+Rollback check: corrupt one tarball in the mirror → the update is refused
+and the old binary still runs; `ling update --rollback` /
+`ling-mem upgrade --rollback` return to the kept `.prev`.
+
 ## 0. Preflight — every repo in the train
 
 - `git status` clean and `HEAD == origin/main`. Tags are created at the

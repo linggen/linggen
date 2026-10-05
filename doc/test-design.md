@@ -107,9 +107,11 @@ sessions, config, saves, a memory store in the old schema, both plugins):
 4. A green gate saves its VM as the next `linggen-prev`, so the old-user
    baseline rolls forward each release.
 
-Needs from the engine first: a release-URL override so the gate can install
-from a draft, and a kept previous binary in `ling update` (today
-`cli/self_update.rs` renames over it — no rollback exists).
+Needs from the engine first — built 2026-10-05: `LINGGEN_RELEASE_BASE`
+points every installer and updater at the gate's mirror of the drafts
+(`cli.md` § Release override); `ling update` and `ling-mem upgrade` keep
+`.prev`, restore it when the new binary doesn't start, and take
+`--rollback`; the app's updater keeps and restores the previous bundle.
 
 ## 5. Smoke on real data
 
@@ -138,6 +140,6 @@ Metal TTS and embedding speed, phone ↔ Mac over a real network, live sites
 1. Engine harness + fixtures + llmposter; port the live-check scenarios.
 2. Playwright on the harness.
 3. `claude plugin eval` suite for the linggen plugin.
-4. Engine: release-URL override, rollback in `ling update`.
+4. Engine: release-URL override, rollback in `ling update`. (built)
 5. Tart release gate: first install, then upgrade; `just release-gate`.
 6. Wire the gate into `release-checklist.md` between draft and publish.

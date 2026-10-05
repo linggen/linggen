@@ -33,7 +33,8 @@ ling auth logout                  # Clear ChatGPT tokens
 ling auth status                  # Check auth status
 
 ling install                      # Install/update ling
-ling update                       # Update ling
+ling update                       # Update ling (keeps the previous as ling.prev)
+ling update --rollback            # Swap back to ling.prev
 ling init                         # Bootstrap skills
 ling skills add/remove/list/search
 ```
@@ -48,7 +49,7 @@ ling skills add/remove/list/search
 | `doctor` | Diagnose installation health | No |
 | `init` | Bulk-install skills from `linggen/skills` | No |
 | `install` | Install/update the ling binary | No |
-| `update` | Update the ling binary | No |
+| `update` | Update the ling binary; `--rollback` swaps back | No |
 | `login` | Set up remote access via linggen.dev | No |
 | `auth login` | Sign in with ChatGPT subscription | No |
 | `auth logout` | Clear ChatGPT OAuth tokens | No |
@@ -146,7 +147,9 @@ Install or update the `ling` binary.
 ling install
 ```
 
-Fetches `manifest.json` from the latest GitHub releases. Downloads the platform-specific binary and installs it.
+Fetches `manifest.json` from the latest GitHub release (linggen.dev `/dl`
+when GitHub is unreachable), downloads the platform tarball, checks its
+sha256 against the manifest, and installs it the same way as `update`.
 
 ## update
 
@@ -154,9 +157,37 @@ Update the `ling` binary to latest.
 
 ```
 ling update
+ling update --rollback
 ```
 
-Compares versions and skips if already up to date.
+- Skips when already up to date.
+- Keeps the replaced binary as `ling.prev` beside `ling`; the new one goes in
+  by rename (a fresh inode, never a copy over a live file).
+- Keeps the new binary only if `ling --version` answers within 10 s; else
+  puts `ling.prev` back and fails. A sha256 mismatch fails before anything
+  is touched.
+- `--rollback` swaps `ling` and `ling.prev` (run it again to return), and
+  refuses when `ling.prev` is missing or doesn't start.
+
+## Release override
+
+`LINGGEN_RELEASE_BASE=<url>` replaces GitHub and the linggen.dev mirror for
+every installer and updater: `ling install`/`update`, `ling status`'s
+latest-version line, `install.sh`, `install-app.sh`, `install-bin.sh`,
+`ling-mem upgrade`, and Linggen.app's updater. It is how the release gate
+installs and upgrades from a draft before it is published.
+
+The base serves one release per repo, as `gh release download` writes it:
+
+```
+<url>/install-bin.sh                      optional; install.sh prefers it
+<url>/<owner>/<repo>/<asset>              manifest.json, *.tar.gz, *.sha256
+<url>/<owner>/<repo>/release.json         {"tag_name", "assets": [{"name"}]}
+                                          (linggen-memory, linggen-releases)
+```
+
+The sha256 check stays and becomes mandatory (a manifest without one is
+refused); a failed fetch is an error, never a fallback to GitHub.
 
 ---
 
