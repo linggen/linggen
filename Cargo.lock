@@ -2784,7 +2784,7 @@ dependencies = [
 
 [[package]]
 name = "linggen"
-version = "1.8.2"
+version = "1.9.0"
 dependencies = [
  "any-tts",
  "anyhow",
