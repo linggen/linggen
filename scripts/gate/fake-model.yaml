@@ -1,0 +1,12 @@
+# Release gate fake model (llmposter --fixtures). The gate's chat turn sends
+# "gate-ping" and waits for GATE-PONG-7731 in the session's messages; every
+# other call (titles, Yinyue, summaries) gets a fixed line.
+fixtures:
+  - match:
+      user_message: "gate-ping"
+    response:
+      content: "GATE-PONG-7731"
+    priority: 10
+  - response:
+      content: "(gate fake model)"
+    catch_all: true

@@ -113,31 +113,51 @@ Tart clones a vanilla macOS image copy-on-write in about a second and is
 driven over SSH. Apple's licence allows two macOS VMs per Mac — enough for
 one fresh VM and one old-user VM. GitHub's macOS runners are not clean (brew,
 node, python preinstalled) and cannot run Tart, so the gate runs on Hanli's
-Mac: `just release-gate <versions>`.
+Mac: `just release-gate --draft "engine=… mem=… app=…"` (or `--local` for
+local builds) — `scripts/gate/`. Image: `macos-tahoe-vanilla` (~27 GB, pulled
+once). The VM reaches the host's mirror and llmposter through SSH reverse
+tunnels, so nothing on the host listens beyond loopback.
 
 **First install** (fresh VM, no `~/.linggen`):
 1. The real public paths: `install.sh`, `install-app.sh`,
-   `install-shared-memory.sh`, the Claude Code and Codex plugin installs —
-   pointed at the draft assets.
+   `install-shared-memory.sh` (retired: says so, exits 0), the Claude Code and
+   Codex plugin installs — pointed at the draft assets. The plugins install
+   from the gate's copy of the bundle: the public GitHub marketplace needs
+   git, which a clean Mac has only as the Command Line Tools stub (a WARN).
+   Codex has no unattended installer without node; the host's CLI is copied in.
 2. Also one browser-style download with `com.apple.quarantine` set
-   (`install-app.sh` strips it, so curl alone hides Gatekeeper).
-3. Pass when: 9527 health; the UI and first-run onboarding load
-   (Playwright over an SSH tunnel); ling-mem `session_start` answers; one
-   chat turn completes on the fake model.
-4. Fail when: any TCC prompt or Gatekeeper dialog appears on the first-run
-   path (watched via `log stream` / a screenshot), or the pair dialog fires.
-5. One real Linggen Cloud turn as information, not a blocker.
+   (`install-app.sh` strips it, so curl alone hides Gatekeeper). The vanilla
+   image ships with Gatekeeper off; the gate turns it on first. An unsigned
+   app is rejected there — a WARN until the app is notarized.
+3. Pass when: 9527 health; the UI loads (Chromium from `tests/e2e`'s
+   Playwright over an SSH tunnel); ling-mem `session_start` answers (ling-mem
+   starts on first use, so the gate starts it); one chat turn completes on
+   the fake model.
+4. Fail when: a TCC prompt appears on the first-run path — `log stream` of
+   tccd; a Linggen request with `preflight=no` that a person answered, timed
+   out or never answered is a prompt.
+5. Not yet checked: the pair dialog, the Local Network prompt (not tccd),
+   one real Linggen Cloud turn.
 
 **Upgrade** (old-user VM `linggen-prev`: previous release + fixtures home with
 sessions, config, saves, a memory store in the old schema, both plugins):
-1. `ling update`, the in-app updater, `ling-mem upgrade --yes`, plugin
-   updates.
-2. Pass when: the store migrates; built-in missions refresh; old sessions,
-   config and saves load; plugin caches carry the new hooks.
+1. `ling update`, `ling-mem upgrade --yes`, `install-app.sh`, plugin
+   updates. Releases up to engine 1.8.2 / ling-mem 1.8.2 / app 0.3.3 predate
+   `LINGGEN_RELEASE_BASE`, so from them the gate re-runs `install.sh` (a GAP
+   row) over the running install — its first run caught `install.sh` copying
+   over a live `ling` (killed on launch; fixed: fresh inode + rename), and
+   still WARNs that the old ling-mem daemon keeps serving until restarted.
+   The in-app updater asks through a native dialog and is not driven.
+2. Pass when: the store opens with every row (and `apply-schema --yes` keeps
+   them); old sessions, config and a chat turn on the old config work; plugin
+   caches carry the new hooks. Built-in missions are install-once
+   (`cli/init.rs`), so an old copy is reported, not failed.
 3. Rollback: a release with a wrong sha256 is refused and the old binary
-   still runs.
-4. A green gate saves its VM as the next `linggen-prev`, so the old-user
-   baseline rolls forward each release.
+   still runs; `ling update --rollback` and `ling-mem upgrade --rollback`
+   swap to `.prev` and back.
+4. A green `--draft` gate saves its VM as the next `linggen-prev`, so the
+   old-user baseline rolls forward each release; `--local` keeps it unless
+   `--save-prev`. `linggen-prev` is built once from the published releases.
 
 Needs from the engine first — built 2026-10-05: `LINGGEN_RELEASE_BASE`
 points every installer and updater at the gate's mirror of the drafts
@@ -173,5 +193,5 @@ Metal TTS and embedding speed, phone ↔ Mac over a real network, live sites
 2. Playwright on the harness.
 3. `claude plugin eval` suite for the linggen plugin.
 4. Engine: release-URL override, rollback in `ling update`. (built)
-5. Tart release gate: first install, then upgrade; `just release-gate`.
-6. Wire the gate into `release-checklist.md` between draft and publish.
+5. Tart release gate: first install, then upgrade; `just release-gate`. (built)
+6. Wire the gate into `release-checklist.md` between draft and publish. (done)

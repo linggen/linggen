@@ -19,6 +19,16 @@ cp linggen-memory/plugins/linggen/scripts/install-bin.sh mirror/
 python3 -m http.server --directory mirror <port>
 ```
 
+`just release-gate --draft "engine=X.Y.Z mem=vX.Y.Z app=linggen-vX.Y.Z"`
+(engine repo, `scripts/gate/`) does all of it: builds that mirror (a repo
+left out serves its latest published release), boots a fresh Tart VM and a
+clone of `linggen-prev`, runs the checks, prints a table, exits non-zero on
+any FAIL. `--local` gates local builds instead of drafts. Exit 0 is the go to
+publish; a green `--draft` run saves its upgraded VM as the next
+`linggen-prev`. The app's draft bundles the latest *published* engine
+(`download-ling.sh`), so a train with a new engine gates engine + ling-mem,
+publishes them, then cuts and gates the app.
+
 In the VM: `LINGGEN_RELEASE_BASE=http://<host>:<port>` for `install.sh`,
 `install-app.sh`, `ling update`, `ling-mem upgrade --yes`;
 `launchctl setenv LINGGEN_RELEASE_BASE …` before launching Linggen.app.
@@ -49,7 +59,8 @@ Repo `linggen/linggen-memory`, tag `vX.Y.Z`.
 4. Local swap: kill the 9528 daemon; `rm` + `cp` into `~/.local/bin/ling-mem`
    (fresh inode, never overwrite in place), `codesign -f -s -`, keep the old
    binary aside, `ling-mem serve --port 9528`.
-5. `gh release edit vX.Y.Z --draft=false --latest --repo linggen/linggen-memory`
+5. After the release gate passes:
+   `gh release edit vX.Y.Z --draft=false --latest --repo linggen/linggen-memory`
    — six assets. Publishing is the distribution: every host resolves `^1`.
 
 Plugin bundles bump only when hooks or `SKILL.md` changed, independent of the
@@ -75,7 +86,8 @@ and `ui/package.json` are stamped by the script — do not bump by hand.
    too); `rm` + `cp` + `codesign -f -s -` into `/usr/local/bin/ling` AND
    `/Applications/Linggen.app/Contents/MacOS/ling` (the bundle is TCC-blocked:
    stage in /tmp, Finder-mediated copy); restart `ling --web`.
-6. `gh release edit X.Y.Z --draft=false --latest --repo linggen/linggen`.
+6. After the release gate passes:
+   `gh release edit X.Y.Z --draft=false --latest --repo linggen/linggen`.
 7. Verify from outside: `curl -fsSL https://linggen.dev/install.sh | bash`
    in a scratch dir → `ling --version`.
 
@@ -94,7 +106,8 @@ Repo `linggen-app`; releases on `linggen/linggen-releases` as `linggen-vX.Y.Z`.
    builds, uploads a draft.
 3. Verify in the bundle: `Contents/MacOS/ling --version` is the engine just
    cut; the skills are present.
-4. `gh release edit linggen-vX.Y.Z --draft=false --latest --repo linggen/linggen-releases`.
+4. After the release gate passes:
+   `gh release edit linggen-vX.Y.Z --draft=false --latest --repo linggen/linggen-releases`.
 
 Version lines are independent — Linggen 0.x, CFO, Mac Shifu, engine 1.x.
 Do not align them.

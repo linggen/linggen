@@ -1,0 +1,27 @@
+# Release gate (scripts/gate): the VM engine's only model is the gate's fake
+# one — llmposter on the host, tunnelled to {{MODEL_URL}} — so a chat turn is
+# deterministic and never reaches a provider.
+
+[server]
+url = "127.0.0.1:9527"
+
+[agent]
+max_iters = 6
+suggest_followups = false
+
+[routing]
+default_models = ["gate-fake"]
+auto_fallback = false
+
+[pet]
+model = "gate-fake"
+muted = true
+
+[[models]]
+id = "gate-fake"
+provider = "openai"
+url = "{{MODEL_URL}}/v1"
+model = "gate-fake-1"
+api_key = "gate-not-a-key"
+context_window = 32000
+supports_tools = true
