@@ -334,12 +334,16 @@ check "session delete removes it" $? "$LG/sessions/$SID_D still there"
 
 section "Memory in the prompt"
 # The engine's session_start call to ling-mem has a 2s cap; a cold daemon can
-# miss it once (core then reads empty). Warm it, and give an export a retry.
+# miss it once. Warm it, and give an export a retry when core did not load:
+# an older engine renders that as the empty-core text, a newer one (6531552,
+# prompt/core_block.rs) as a timeout note. Either is a retry, never a pass —
+# the checks below still demand the core heading.
 WARM="$(export_prompt "$SID_C" ling)"
-memory_export() { # sid agent root → the export, retried once if core read empty
+CORE_MISSED='has no `tier=core` rows yet|Core memory did not load in time for this turn'
+memory_export() { # sid agent root → the export, retried once if core did not load
   local e
   e="$(export_prompt "$@")"
-  if grep -q 'has no `tier=core` rows yet' <<<"$(printf '%s' "$e" | jq -r '.system_prompt // empty')"; then
+  if grep -qE "$CORE_MISSED" <<<"$(printf '%s' "$e" | jq -r '.system_prompt // empty')"; then
     sleep 2; e="$(export_prompt "$@")"
   fi
   printf '%s' "$e"
@@ -490,31 +494,66 @@ else
   fi
 
   # ── (b) ──────────────────────────────────────────────────────────────────
+  # Her model sometimes answers a write request with Glob/Read and no Write, so
+  # no ask appears. The message names the exact tool and arguments; a turn with
+  # no Write gets one firmer retry; still none → SKIP (nothing was proved). A
+  # Write that ran without an ask, or a file after Deny, is always a FAIL.
   section "${MODEL_CASES[1]}"
   mkdir -p "$CHAT_DIR"
   SID_B="$(new_session "$(jq -nc --arg r "$CHAT_DIR" --argjson w "$NO_MEMORY" '{title:"live-check chat", project_root:$r} + $w')")"
   PROBE="$CHAT_DIR/lc-probe.txt"
-  R0="$(row_count "$SID_B")"; M="$(log_mark)"
-  R="$(chat "$SID_B" "$CHAT_DIR" "@银月 请直接用 Write 工具在当前目录写一个文件 lc-probe.txt，内容是 hello。不要先问我。${NOTE}")"
-  expect "(b) @银月 → yinyue" "$R" '.agent_id == "yinyue"' "routed elsewhere"
-  wait_run "$SID_B" yinyue "$M"; RC=$?
-  if [ "$RC" = 2 ]; then
-    QID="$(printf '%s' "$ASK" | jq -r .question_id)"
-    DENY="$(printf '%s' "$ASK" | jq -r '[.questions[0].options[]?.label | select(test("deny"; "i"))][0] // "Deny"')"
-    pass "(b) her Write asks permission" "$(printf '%s' "$ASK" | jq -r '.questions[0].question' | head -c 70)"
-    post /api/ask-user-response "$(jq -nc --arg q "$QID" --arg d "$DENY" '{question_id:$q, answers:[{question_index:0, selected:[$d], custom_text:null}]}')" >/dev/null
-    # She may try again after a Deny: each new prompt is denied too (at most 3).
-    for _ in 1 2 3; do
-      wait_run "$SID_B" yinyue "$M"; RC=$?
-      [ "$RC" = 2 ] || break
-      QID="$(printf '%s' "$ASK" | jq -r .question_id)"
-      post /api/ask-user-response "$(jq -nc --arg q "$QID" --arg d "$DENY" '{question_id:$q, answers:[{question_index:0, selected:[$d], custom_text:null}]}')" >/dev/null
+  # Write calls by her runs in SID_B since MARK (the log line is written when
+  # the call starts, before its permission check).
+  her_writes() { # mark → count
+    local txt rid n=0
+    txt="$(log_since "$1")"
+    for rid in $(runs_since "$1" "$SID_B" yinyue); do
+      n=$((n + $(grep -cF "[$rid] Tool: Write " <<<"$txt")))
     done
+    printf '%s' "$n"
+  }
+  deny_ask() { # $ASK → answered with its Deny option
+    post /api/ask-user-response "$(jq -nc --arg q "$(printf '%s' "$ASK" | jq -r .question_id)" --arg d "$DENY" \
+      '{question_id:$q, answers:[{question_index:0, selected:[$d], custom_text:null}]}')" >/dev/null
+  }
+  B_MSGS=("@银月 这是权限测试：请立刻调用 Write 工具，参数 path=\"lc-probe.txt\"，content=\"hello\"。只调用 Write 这一个工具，不要调用 Glob、Read 或别的工具，不要先问我。${NOTE}"
+    "@银月 你上一轮没有调用 Write。现在第一步、也是唯一一步：调用 Write 工具，path 为 \"lc-probe.txt\"，content 为 \"hello\"。不要检查文件是否存在，不要调用其他工具，不要回复文字后再停下。${NOTE}")
+  B_DONE=""   # asked | noask | timeout | nowrite
+  for B_TRY in 0 1; do
+    R0="$(row_count "$SID_B")"; M="$(log_mark)"
+    R="$(chat "$SID_B" "$CHAT_DIR" "${B_MSGS[$B_TRY]}")"
+    [ "$B_TRY" = 0 ] && expect "(b) @银月 → yinyue" "$R" '.agent_id == "yinyue"' "routed elsewhere"
+    wait_run "$SID_B" yinyue "$M"; RC=$?
+    sleep 1
+    W="$(her_writes "$M")"
+    if [ "$RC" = 2 ] && [ "$W" -gt 0 ]; then B_DONE=asked; break; fi
+    # An ask with no Write before it is her own question, not a permission ask.
+    [ "$RC" = 2 ] && { dismiss_asks "$SID_B" yinyue; wait_run "$SID_B" yinyue "$M" 120; RC=$?; W="$(her_writes "$M")"; }
+    if [ "$W" -gt 0 ]; then B_DONE=noask; break; fi
+    [ "$RC" = 1 ] && { B_DONE=timeout; break; }
     [ "$RC" = 2 ] && dismiss_asks "$SID_B" yinyue
-    [ "$RC" = 0 ]; check "(b) her turn finishes after Deny" $? "rc=$RC (1 timeout, 2 still asking)"
-  else
-    fail "(b) her Write asks permission" "no permission prompt (rc=$RC; calls $(rows_py calls "$SID_B" "$R0" yinyue))"
-  fi
+    B_DONE=nowrite
+  done
+  case "$B_DONE" in
+    asked)
+      DENY="$(printf '%s' "$ASK" | jq -r '[.questions[0].options[]?.label | select(test("deny"; "i"))][0] // "Deny"')"
+      pass "(b) her Write asks permission" "try $((B_TRY + 1)): $(printf '%s' "$ASK" | jq -r '.questions[0].question' | head -c 60)"
+      deny_ask
+      # She may try again after a Deny: each new prompt is denied too (at most 3).
+      for _ in 1 2 3; do
+        wait_run "$SID_B" yinyue "$M"; RC=$?
+        [ "$RC" = 2 ] || break
+        deny_ask
+      done
+      [ "$RC" = 2 ] && dismiss_asks "$SID_B" yinyue
+      [ "$RC" = 0 ]; check "(b) her turn finishes after Deny" $? "rc=$RC (1 timeout, 2 still asking)" ;;
+    noask)
+      fail "(b) her Write asks permission" "Write ran with no permission prompt (try $((B_TRY + 1)), rc=$RC)" ;;
+    timeout)
+      fail "(b) her Write asks permission" "her turn timed out with no prompt (try $((B_TRY + 1)); calls $(rows_py calls "$SID_B" "$R0" yinyue))" ;;
+    *)
+      skip "(b) her Write asks permission" "her model called no Write in 2 tries (last calls $(rows_py calls "$SID_B" "$R0" yinyue)) — nothing to ask about" ;;
+  esac
   [ ! -e "$PROBE" ]; check "(b) Deny → no file written" $? "$PROBE exists"
   expect "(b) she stays in session.yaml agents" "$(meta_agents "$SID_B")" 'index("yinyue") != null' "not a member"
 
