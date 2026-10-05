@@ -62,4 +62,11 @@ compact_focus?: string | null,
  * sessions also create with `true` because their titles are
  * canonical (skill name / mission name) and shouldn't be rewritten.
  */
-title_locked: boolean, };
+title_locked: boolean, 
+/**
+ * Tools no member of this session is offered or may call — a tool's
+ * name or a whole MCP server (`mcp__memory`). Set when the session is
+ * made (`POST /api/sessions`): a scratch session that must not write
+ * the real memory store withholds the memory server.
+ */
+withheld_tools?: Array<string>, };

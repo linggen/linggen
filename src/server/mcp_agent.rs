@@ -143,6 +143,7 @@ pub async fn run(
         compact_threshold: None,
         compact_focus: None,
         title_locked: true,
+        withheld_tools: Vec::new(),
     };
     if let Err(e) = store.add_session(&meta) {
         return Err(format!("failed to create session: {e}"));

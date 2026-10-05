@@ -94,6 +94,7 @@ When a session is created, it inherits configuration from its creator:
 
 1. **Members** — an ordinary chat seats `ling`; Yinyue's daily thread seats her; a skill seats its declared `members:`; a mission its agent. The first member is the **lead**.
 2. **Tools** — the session's, set by its lead: the lead agent's tool list (e.g., `ling` has `["*"]`), or a bound skill's `allowed-tools`. A member who joins later uses that set; a skill may name a member's own (`place.<agent>.tools`).
+   A session may also **withhold** tools from every member, whatever the set: `withheld_tools` in `POST /api/sessions` (kept in `session.yaml`) — a tool name or a whole MCP server (`mcp__memory`). Withheld tools are never offered, are refused if called, and stay withheld in a run delegated from the session. The engine's live suite makes its scratch sessions with `[mcp__memory]`, so a test turn cannot write the real memory store.
 3. **System prompt** — per member: its soul (personality + body) + voice + place (`## Where you are`) + skill body (the lead's, when bound)
 4. **Model** — per member: the session's override for it, else its agent config / spec (the companion's `pet.model`), else the default routing chain
 

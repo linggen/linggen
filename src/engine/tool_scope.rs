@@ -50,6 +50,21 @@ pub fn expand_declaration(entry: &str) -> Vec<String> {
     }
 }
 
+/// Whether a declaration entry names `tool`: the tool itself, or the whole
+/// MCP server it comes from (`mcp__memory` covers `mcp__memory__memory_add`).
+/// Read live, so a server that connects later is still covered.
+pub fn entry_covers(entry: &str, tool: &str) -> bool {
+    if entry == tool {
+        return true;
+    }
+    let Some(server) = server_wildcard(entry) else {
+        return false;
+    };
+    tool.strip_prefix("mcp__")
+        .and_then(|rest| rest.strip_prefix(server))
+        .is_some_and(|rest| rest.starts_with("__"))
+}
+
 /// The server named by a whole-server entry, if this is one. `mcp__memory` and
 /// `mcp__memory__*` both name `memory`; `mcp__memory__memory_add` names no
 /// server, it names a tool.
@@ -81,6 +96,19 @@ fn expand_server(server: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_entry_covers_its_tool_or_every_tool_of_its_server() {
+        assert!(entry_covers("Write", "Write"));
+        assert!(entry_covers("mcp__memory", "mcp__memory__memory_add"));
+        assert!(entry_covers("mcp__memory__*", "mcp__memory__memory_search"));
+        assert!(!entry_covers("mcp__memory", "mcp__memory2__x"));
+        assert!(!entry_covers(
+            "mcp__memory__memory_add",
+            "mcp__memory__memory_search"
+        ));
+        assert!(!entry_covers("mcp__memory", "Write"));
+    }
 
     #[test]
     fn an_empty_list_is_no_restriction_at_all() {

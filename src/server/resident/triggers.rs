@@ -558,6 +558,7 @@ pub(super) async fn session_for_skill(
         creator: "agent".to_string(),
         cwd: Some(home.to_string_lossy().to_string()),
         title_locked: true,
+        withheld_tools: Vec::new(),
         agents: declared,
         ..Default::default()
     };

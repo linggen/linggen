@@ -128,6 +128,7 @@ pub(crate) async fn get_system_prompt_api(
     // the model actually sees during a chat turn. Without this, the export
     // shows a "cold engine" view missing SKILL.md / mission body.
     if let Some(meta) = session_meta {
+        engine.withheld_tools.extend(meta.withheld_tools.clone());
         // The same creator rule a real turn follows: a skill's or a
         // mission's session gets no core block and no memory protocol.
         if super::handler::turn_creator(meta.mission_id.as_deref(), None, meta.skill.as_deref())
@@ -221,7 +222,7 @@ fn export_prompt(mut engine: crate::engine::AgentEngine) -> axum::response::Resp
     // uses on the live request path. Single source of truth — the export
     // shape matches the wire shape exactly. Falls back to the canonical
     // OpenAI-nested form if the model_id isn't registered (rare).
-    let canonical_tools = engine.tools.oai_tool_definitions(allowed_tools.as_ref());
+    let canonical_tools = engine.offered_tool_definitions(allowed_tools.as_ref());
     let provider = engine
         .model_manager
         .provider_kind(&engine.model_id)

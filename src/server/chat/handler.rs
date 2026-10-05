@@ -245,6 +245,7 @@ async fn ensure_session(
         // The title here is already derived from the user message via
         // `auto_session_title`, so it's a real title — lock it.
         title_locked: true,
+        withheld_tools: Vec::new(),
     };
 
     if let Some(sid) = req.session_id.clone() {
@@ -788,6 +789,7 @@ pub(crate) async fn run_session_turn(
     max_live_msgs: Option<usize>,
 ) {
     seat_member(engine, ctx).await;
+    engine.withhold_session_tools(&manager.global_sessions, ctx.session_id.as_deref());
     super::thread::sync(engine, ctx).await;
     // After the sync (and before this turn's user message + fresh recall
     // are pushed), the buffer holds only completed prior turns — safe to

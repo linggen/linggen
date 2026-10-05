@@ -449,10 +449,7 @@ impl AgentEngine {
 
             // Determine whether to use native tool calling for this model.
             let native_tools = if self.model_manager.supports_tools(&self.model_id) {
-                Some(
-                    self.tools
-                        .oai_tool_definitions(state.allowed_tools.as_ref()),
-                )
+                Some(self.offered_tool_definitions(state.allowed_tools.as_ref()))
             } else {
                 None
             };
@@ -1446,6 +1443,43 @@ mod member_tests {
         let offered = offered.unwrap();
         assert!(!offered.contains("agent_chat"), "{offered:?}");
         assert!(offered.contains("Express"));
+    }
+
+    /// A session withholds tools from every member: what it declares joins
+    /// the turn's withheld set, a whole MCP server covers each of its tools,
+    /// and an unrestricted set (Ling's `*`) is offered without them too.
+    #[test]
+    fn a_sessions_withheld_tools_are_neither_offered_nor_callable() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = crate::state_fs::sessions::SessionStore::with_sessions_dir(dir.path().into());
+        store
+            .add_session(&crate::state_fs::sessions::SessionMeta {
+                id: "sess-1-scratch".into(),
+                withheld_tools: vec!["mcp__memory".into(), "Write".into()],
+                ..Default::default()
+            })
+            .unwrap();
+        let mut ling = spec_engine("ling", include_str!("../../agents/ling.md"));
+        assert!(
+            ling.allowed_tool_names().is_none(),
+            "his set is unrestricted"
+        );
+        ling.withhold_session_tools(&store, Some("sess-1-scratch"));
+        assert!(ling.is_withheld("mcp__memory__memory_add"));
+        assert!(ling.is_withheld("mcp__memory__memory_search"));
+        assert!(!ling.is_withheld("mcp__memory2__x"));
+        let offered: Vec<String> = ling
+            .offered_tool_definitions(None)
+            .iter()
+            .filter_map(|t| t["function"]["name"].as_str().map(String::from))
+            .collect();
+        assert!(!offered.contains(&"Write".to_string()), "{offered:?}");
+        assert!(offered.contains(&"Read".to_string()));
+
+        let mut plain = spec_engine("ling", include_str!("../../agents/ling.md"));
+        plain.withhold_session_tools(&store, Some("sess-unknown"));
+        plain.withhold_session_tools(&store, None);
+        assert!(plain.withheld_tools.is_empty());
     }
 
     /// And a withheld call the model makes anyway is refused, never run.

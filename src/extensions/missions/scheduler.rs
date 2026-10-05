@@ -396,6 +396,7 @@ pub fn create_mission_session(mission: &Mission) -> Option<String> {
         compact_focus: None,
         // Mission sessions carry the mission name as canonical title.
         title_locked: true,
+        withheld_tools: Vec::new(),
     };
     match store.add_session(&meta) {
         Ok(_) => Some(session_id),

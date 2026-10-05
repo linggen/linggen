@@ -131,18 +131,23 @@ impl ToolRegistry {
     /// Merge built-in and skill tool schemas, filtered by the allowed
     /// set. MCP-discovered schemas join them in `json_schema`, which is how
     /// memory's tools reach the model.
-    pub fn tool_schema_json(&self, allowed_tools: Option<&HashSet<String>>) -> String {
+    /// `withheld` names what this turn may not offer, whatever the set.
+    pub fn tool_schema_json(
+        &self,
+        allowed_tools: Option<&HashSet<String>>,
+        withheld: impl Fn(&str) -> bool,
+    ) -> String {
         let mut tools_arr = tools::full_tool_schema_entries();
         tools_arr.retain(|entry| {
             entry
                 .get("name")
                 .and_then(|v| v.as_str())
-                .map(|name| Self::is_allowed(allowed_tools, name))
+                .map(|name| Self::is_allowed(allowed_tools, name) && !withheld(name))
                 .unwrap_or(false)
         });
 
         for (name, def) in &self.skill_tools {
-            if !Self::is_allowed(allowed_tools, name) {
+            if !Self::is_allowed(allowed_tools, name) || withheld(name) {
                 continue;
             }
             tools_arr.push(def.to_schema_json());

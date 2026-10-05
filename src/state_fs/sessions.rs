@@ -96,6 +96,12 @@ pub struct SessionMeta {
     /// canonical (skill name / mission name) and shouldn't be rewritten.
     #[serde(default = "default_true")]
     pub title_locked: bool,
+    /// Tools no member of this session is offered or may call — a tool's
+    /// name or a whole MCP server (`mcp__memory`). Set when the session is
+    /// made (`POST /api/sessions`): a scratch session that must not write
+    /// the real memory store withholds the memory server.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub withheld_tools: Vec<String>,
 }
 
 fn default_true() -> bool {
@@ -608,6 +614,7 @@ mod tests {
             compact_threshold: None,
             compact_focus: None,
             title_locked: false,
+            withheld_tools: Vec::new(),
         };
         store.add_session(&meta).unwrap();
 
@@ -655,6 +662,7 @@ mod tests {
                     compact_threshold: None,
                     compact_focus: None,
                     title_locked: false,
+                    withheld_tools: Vec::new(),
                 })
                 .unwrap();
         }
@@ -683,6 +691,7 @@ mod tests {
             compact_threshold: None,
             compact_focus: None,
             title_locked: false,
+            withheld_tools: Vec::new(),
         };
         store.add_session(&meta).unwrap();
 
@@ -732,6 +741,7 @@ mod tests {
                 compact_threshold: None,
                 compact_focus: None,
                 title_locked: false,
+                withheld_tools: Vec::new(),
             })
             .unwrap();
 
@@ -790,6 +800,7 @@ mod tests {
                 compact_threshold: None,
                 compact_focus: None,
                 title_locked: false,
+                withheld_tools: Vec::new(),
             })
             .unwrap();
         store
@@ -832,6 +843,7 @@ mod tests {
                 compact_threshold: None,
                 compact_focus: None,
                 title_locked: false,
+                withheld_tools: Vec::new(),
             })
             .unwrap();
         store
@@ -874,6 +886,7 @@ mod tests {
                 compact_threshold: None,
                 compact_focus: None,
                 title_locked: false,
+                withheld_tools: Vec::new(),
             })
             .is_err());
         assert!(store
@@ -894,6 +907,7 @@ mod tests {
                 compact_threshold: None,
                 compact_focus: None,
                 title_locked: false,
+                withheld_tools: Vec::new(),
             })
             .is_err());
         assert!(store
@@ -914,6 +928,7 @@ mod tests {
                 compact_threshold: None,
                 compact_focus: None,
                 title_locked: false,
+                withheld_tools: Vec::new(),
             })
             .is_err());
     }

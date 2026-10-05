@@ -709,7 +709,9 @@ impl AgentEngine {
                 }
             } else {
                 // Legacy mode: inject JSON action format + inline tool schemas.
-                let tools_json = self.tools.tool_schema_json(allowed_tools.as_ref());
+                let tools_json = self
+                    .tools
+                    .tool_schema_json(allowed_tools.as_ref(), |t| self.is_withheld(t));
                 if let Some(rendered) = self
                     .prompt_store
                     .render(crate::prompts::RESPONSE_FORMAT, &[("tools", &tools_json)])
@@ -1066,14 +1068,48 @@ impl AgentEngine {
     /// (`tool_exec`) still refuses a withheld call.
     pub(crate) fn drop_withheld(&self, allowed: &mut Option<HashSet<String>>) {
         if let Some(set) = allowed.as_mut() {
-            set.retain(|t| !self.withheld_tools.contains(t));
+            set.retain(|t| !self.is_withheld(t));
         }
     }
 
-    /// Whether `tool` — under any of its names — is withheld from this turn.
+    /// The session's own withheld tools (`SessionMeta::withheld_tools`) join
+    /// what this turn's driver withheld: no member of the session is offered
+    /// them, nor a run delegated from one.
+    pub(crate) fn withhold_session_tools(
+        &mut self,
+        sessions: &crate::state_fs::sessions::SessionStore,
+        session_id: Option<&str>,
+    ) {
+        let Some(sid) = session_id else {
+            return;
+        };
+        if let Ok(Some(meta)) = sessions.get_session_meta(sid) {
+            self.withheld_tools.extend(meta.withheld_tools);
+        }
+    }
+
+    /// Whether `tool` — under any of its names, or as one of a withheld MCP
+    /// server's (`mcp__memory`) — is withheld from this turn.
     pub(crate) fn is_withheld(&self, tool: &str) -> bool {
         let name = crate::engine::tools::canonical_tool_name(tool).unwrap_or(tool);
-        self.withheld_tools.contains(name)
+        self.withheld_tools
+            .iter()
+            .any(|entry| crate::engine::tool_scope::entry_covers(entry, name))
+    }
+
+    /// The native tool definitions offered this turn: the allowed set's,
+    /// less what is withheld — an unrestricted set (`None`) included.
+    pub(crate) fn offered_tool_definitions(
+        &self,
+        allowed: Option<&HashSet<String>>,
+    ) -> Vec<serde_json::Value> {
+        let mut defs = self.tools.oai_tool_definitions(allowed);
+        defs.retain(|d| {
+            d.pointer("/function/name")
+                .and_then(|n| n.as_str())
+                .is_none_or(|n| !self.is_withheld(n))
+        });
+        defs
     }
 
     /// What a declared (narrow) tool list gets beyond itself. Not `Skill`:

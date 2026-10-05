@@ -23,6 +23,9 @@ pub(crate) struct CreateSessionRequest {
     /// User ID of the session creator (injected by peer.rs).
     #[serde(default)]
     user_id: Option<String>,
+    /// Tools no member may use here (`SessionMeta::withheld_tools`).
+    #[serde(default)]
+    withheld_tools: Vec<String>,
 }
 
 pub(crate) async fn create_session(
@@ -73,6 +76,7 @@ pub(crate) async fn create_session(
         // 22, 3:20 PM") that should be overwritten by the auto-rename hook
         // once the user's first message lands.
         title_locked: is_skill,
+        withheld_tools: req.withheld_tools,
     };
 
     match state.manager.global_sessions.add_session(&meta) {

@@ -7,6 +7,8 @@
 #   ./scripts/check.sh live [flags]        the same, from the check entry point
 #
 # Flags: --url URL (engine; default http://127.0.0.1:9527, env LIVE_URL),
+#        --mem URL (the engine's ling-mem, read only; default
+#          http://127.0.0.1:9528, env LIVE_MEM_URL),
 #        --home DIR (the engine's state dir; default ~/.linggen, env LIVE_LINGGEN_HOME),
 #        --alt-model ID (Yinyue's model in the two-models case; default
 #          deepseek-flash, env LIVE_ALT_MODEL),
@@ -17,7 +19,10 @@
 #
 # What it never touches: Lingjing's real save (data/state.json — its md5 is
 # checked before and after), Yinyue's real daily thread (read and exported,
-# never posted into), any session it did not create. Everything scratch — the
+# never posted into), the real memory store (every scratch session that runs a
+# model withholds the memory server — session `withheld_tools: [mcp__memory]`
+# — so no member can write it; after the run, no row may name a scratch
+# session as its source), any session it did not create. Everything scratch — the
 # sessions (by exact id), the Lingjing copy under skills/, the chat folder
 # under target/live-check — is removed on exit, failure included.
 #
@@ -34,6 +39,7 @@ set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 API="${LIVE_URL:-http://127.0.0.1:9527}"
+MEM="${LIVE_MEM_URL:-http://127.0.0.1:9528}"
 LG="${LIVE_LINGGEN_HOME:-$HOME/.linggen}"
 ALT_MODEL="${LIVE_ALT_MODEL:-deepseek-flash}"
 SOURCE_SKILL="${LIVE_SOURCE_SKILL:-lingjing}"
@@ -46,13 +52,14 @@ RUN_TIMEOUT="${LIVE_RUN_TIMEOUT:-300}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --url) API="$2"; shift ;;
+    --mem) MEM="$2"; shift ;;
     --home) LG="$2"; shift ;;
     --alt-model) ALT_MODEL="$2"; shift ;;
     --no-model) MODEL=0 ;;
     --speak) SPEAK=1 ;;
     --no-presence) PRESENCE=0 ;;
     --keep) KEEP=1 ;;
-    -h|--help) sed -n '2,31p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,37p' "$0"; exit 0 ;;
     *) echo "live-check: unknown flag $1" >&2; exit 2 ;;
   esac
   shift
@@ -137,6 +144,9 @@ trap 'exit 130' INT TERM
 
 get() { curl -sS -m60 "$API$1" 2>&1; }
 post() { curl -sS -m60 -X POST -H 'content-type: application/json' -d "$2" "$API$1" 2>&1; }
+# A scratch session that runs a model: no member may write the real memory
+# store (SessionMeta::withheld_tools — the whole memory server).
+NO_MEMORY='{"withheld_tools":["mcp__memory"]}'
 new_session() { # JSON → id (registered for cleanup)
   local id
   id="$(post /api/sessions "$1" | jq -r '.id // empty' 2>/dev/null)"
@@ -262,8 +272,9 @@ elif cmd == "look_place":     # place and people names from Ling's latest Look r
             ps = [(j.get("place") or {}).get("name") or "", scene.get("place") or ""]
             names = {p.strip() for s in ps for p in s.split("·") if len(p.strip()) >= 2}
             names |= {p.get("name", "") for p in scene.get("people") or [] if len(p.get("name", "")) >= 2}
-            # She reads another member's result cut to its head (thread.rs
-            # OTHERS_RESULT_CHARS): `name` sits there, the place does not.
+            # She reads what Look declares for others (`others_read`: the
+            # player's `name`, the place, the scene); an engine before that
+            # read the head of the output, where only `name` sat.
             if len(j.get("name") or "") >= 2:
                 names.add(j["name"])
             names = sorted(names)
@@ -355,6 +366,20 @@ for who in ling yinyue; do
     "export incomplete" "$(printf '%s' "$E" | jq -r '"\(.provider)/\(.model_id), \(.tools | length) tools"' 2>/dev/null)"
 done
 
+section "Scratch sessions withhold the memory server"
+mem_tools() { jq -c '[.[] | select(startswith("mcp__memory__"))]' 2>/dev/null; }
+SID_W="$(new_session "$(jq -nc --arg r "$HOME" --argjson w "$NO_MEMORY" '{title:"live-check withheld", project_root:$r} + $w')")"
+if ! grep -q '^withheld_tools:' "$LG/sessions/$SID_W/session.yaml" 2>/dev/null; then
+  skip "scratch session: no member is offered a memory tool" "this engine predates session withheld_tools (redeploy) — the store check below still guards"
+else
+  CONTROL="$(export_prompt "$SID_C" ling | tool_names | mem_tools)"
+  for who in ling yinyue; do
+    MT="$(export_prompt "$SID_W" "$who" | tool_names | mem_tools)"
+    expect "scratch session: $who is offered no memory tool" "$MT" 'length == 0' \
+      "offered $MT" "an ordinary session offers $(printf '%s' "$CONTROL" | jq 'length' 2>/dev/null || echo ?)"
+  done
+fi
+
 section "Yinyue's daily thread ($YINYUE_SID, read-only)"
 if [ -f "$LG/sessions/$YINYUE_SID/session.yaml" ]; then
   AG="$(meta_agents "$YINYUE_SID")"
@@ -404,7 +429,7 @@ PY
 SID_A=""
 if make_skill_copy; then
   pass "scratch skill copy + reload" "$SCRATCH_SKILL_DIR"
-  SID_A="$(new_session "$(jq -nc --arg k "$SCRATCH_SKILL" '{title:"live-check table", skill:$k}')")"
+  SID_A="$(new_session "$(jq -nc --arg k "$SCRATCH_SKILL" --argjson w "$NO_MEMORY" '{title:"live-check table", skill:$k} + $w')")"
   AG="$(meta_agents "$SID_A")"
   expect "skill session: members ling + yinyue" "$AG" 'index("ling") != null and index("yinyue") != null' "members differ"
   E="$(export_prompt "$SID_A" ling)"; TN="$(printf '%s' "$E" | tool_names)"
@@ -467,7 +492,7 @@ else
   # ── (b) ──────────────────────────────────────────────────────────────────
   section "${MODEL_CASES[1]}"
   mkdir -p "$CHAT_DIR"
-  SID_B="$(new_session "$(jq -nc --arg r "$CHAT_DIR" '{title:"live-check chat", project_root:$r}')")"
+  SID_B="$(new_session "$(jq -nc --arg r "$CHAT_DIR" --argjson w "$NO_MEMORY" '{title:"live-check chat", project_root:$r} + $w')")"
   PROBE="$CHAT_DIR/lc-probe.txt"
   R0="$(row_count "$SID_B")"; M="$(log_mark)"
   R="$(chat "$SID_B" "$CHAT_DIR" "@银月 请直接用 Write 工具在当前目录写一个文件 lc-probe.txt，内容是 hello。不要先问我。${NOTE}")"
@@ -598,6 +623,24 @@ print(sum(1 for r in rows if "while the user was away" in r.get("content", "") o
 PY
 )"
   [ "$NEWY" = 0 ]; check "no herald into her daily thread" $? "$NEWY herald kickoff(s) landed in $YINYUE_SID"
+
+  # The real memory store, read only: no row may name a scratch session as
+  # its source (the engine stamps source_session on every memory_add).
+  if curl -s -m10 "$MEM/api/health" | jq -e '.ok == true' >/dev/null 2>&1; then
+    WROTE=0 SEEN=""
+    while read -r sid <&3; do
+      [ -n "$sid" ] || continue
+      N="$(curl -s -m60 -X POST -H 'content-type: application/json' \
+        -d "$(jq -nc --arg s "$sid" '{source_session:$s, include_expired:true, limit:50}')" \
+        "$MEM/api/memory/list" | jq '.data | length' 2>/dev/null)"
+      [ -n "$N" ] || { WROTE=-1; SEEN="$SEEN $sid:unreadable"; continue; }
+      [ "$N" = 0 ] || { WROTE=$((WROTE + N)); SEEN="$SEEN $sid:$N"; }
+    done 3<"$SESSIONS_FILE"
+    [ "$WROTE" = 0 ]; check "no memory row written by a scratch session" $? \
+      "rows by source_session:$SEEN — remove them by id from $MEM" "$(wc -l <"$SESSIONS_FILE" | tr -d ' ') sessions checked"
+  else
+    skip "no memory row written by a scratch session" "ling-mem at $MEM unreachable (nor could a turn write it)"
+  fi
 fi
 
 # The real save: never ours to write. A change is attributed, never restored.

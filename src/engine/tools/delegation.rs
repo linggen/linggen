@@ -332,6 +332,7 @@ pub(crate) async fn run_delegation(
     engine.set_run_id(Some(run_id.clone()));
     engine.set_task(task);
     engine.tools.builtins.set_session_id(session_id.clone());
+    engine.withhold_session_tools(&manager.global_sessions, session_id.as_deref());
 
     // Inherit consumer restrictions from parent — subagents can only tighten, never widen.
     if let Some(ref policy) = parent_policy {
