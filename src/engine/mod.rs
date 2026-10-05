@@ -1344,6 +1344,35 @@ mod member_tests {
         assert!(ling.cfg.is_tool_allowed("Resolve") && ling.cfg.is_tool_allowed("AskUser"));
     }
 
+    /// The export lists the tools each member's turn sends: the skill's own
+    /// with them — hers what the skill names for her, his its whole set.
+    #[tokio::test]
+    async fn an_export_lists_the_skills_own_tools_each_member_sends() {
+        let names = |e: &AgentEngine| -> Vec<String> {
+            e.tools
+                .oai_tool_definitions(e.allowed_tool_names().as_ref())
+                .iter()
+                .filter_map(|t| t["function"]["name"].as_str().map(String::from))
+                .collect()
+        };
+        let mut her = yinyue_engine();
+        her.session_lead = Some("ling".into());
+        her.activate_skill(lingjing_like(), crate::engine::ActivationMode::Export)
+            .await;
+        let hers = names(&her);
+        assert!(hers.contains(&"Story".to_string()), "{hers:?}");
+        assert!(!hers.contains(&"Resolve".to_string()), "{hers:?}");
+
+        let mut ling = spec_engine("ling", include_str!("../../agents/ling.md"));
+        ling.activate_skill(lingjing_like(), crate::engine::ActivationMode::Export)
+            .await;
+        let his = names(&ling);
+        assert!(
+            his.contains(&"Story".to_string()) && his.contains(&"Resolve".to_string()),
+            "{his:?}"
+        );
+    }
+
     /// A move the model names anyway is refused at execute time.
     #[tokio::test]
     async fn a_members_move_is_refused_at_execute_time() {
