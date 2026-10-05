@@ -9,7 +9,7 @@
 tcc_watch_start
 
 # ── install.sh — the linggen.dev one-liner, pointed at the mirror ──────────
-curl -fsSL "$GOOD/install.sh" | LINGGEN_RELEASE_BASE="$GOOD" bash >"$OUT/install.log" 2>&1
+curl -fsSL "$SITE/install.sh" | env $RB bash >"$OUT/install.log" 2>&1
 check "install.sh exits 0" $? "exit $? — $(tail -3 "$OUT/install.log")"
 check_installed "install.sh: ling is the release" "$(ling_bin)" "$LING_VERSION" "$LING_SHA"
 check_installed "install.sh: ling-mem is the release" "$(mem_bin)" "$MEM_VERSION" "$MEM_SHA"
@@ -17,7 +17,7 @@ grep -q 'Verified SHA-256' "$OUT/install.log"
 check "install.sh: verifies ling's sha256" $? "no 'Verified SHA-256' line"
 
 # ── install-shared-memory.sh — retired: says so and exits 0 ────────────────
-curl -fsSL "$GOOD/install-shared-memory.sh" | bash >"$OUT/install-shared-memory.log" 2>&1
+curl -fsSL "$SITE/install-shared-memory.sh" | bash >"$OUT/install-shared-memory.log" 2>&1
 rc=$?
 grep -q 'retired' "$OUT/install-shared-memory.log"
 check "install-shared-memory.sh: retired notice, exit 0" $(( rc + $? )) "exit $rc — $(tail -2 "$OUT/install-shared-memory.log")"
@@ -49,14 +49,14 @@ stop_engine
 
 # ── install-app.sh — Linggen.app from the mirror ───────────────────────────
 if [ -n "$APP_VERSION" ]; then
-  curl -fsSL "$GOOD/install-app.sh" | LINGGEN_RELEASE_BASE="$GOOD" bash -s -- --no-launch >"$OUT/install-app.log" 2>&1
+  curl -fsSL "$SITE/install-app.sh" | env $RB bash -s -- --no-launch >"$OUT/install-app.log" 2>&1
   check "install-app.sh exits 0" $? "$(tail -3 "$OUT/install-app.log")"
   [ "$(app_version)" = "$APP_VERSION" ]
   check "install-app.sh: Linggen.app is the release" $? "got '$(app_version)', want $APP_VERSION" "$APP_VERSION"
   xattr -r /Applications/Linggen.app 2>/dev/null | grep -q com.apple.quarantine
   [ $? != 0 ]; check "install-app.sh: no quarantine on the app" $? "com.apple.quarantine present"
 
-  launchctl setenv LINGGEN_RELEASE_BASE "$GOOD"
+  [ -n "$RB" ] && launchctl setenv LINGGEN_RELEASE_BASE "$GOOD"
   open /Applications/Linggen.app
   engine_health 120
   check "app: first launch brings up 9527" $? "no health 120 s after open"
@@ -119,7 +119,7 @@ gatekeeper_check() { # label path [run…] — spctl verdict, then a quarantined
     gap "quarantined $label: Gatekeeper verdict" "not in this train — the published app $APP_VERSION is $authority ($verdict); gated when it is cut"
   elif grep -q 'Developer ID' <<<"$authority"; then
     fail "quarantined $label: Gatekeeper accepts" "signed ($authority) yet $verdict"
-  elif [ "${GATE_SOURCE:-local}" = draft ]; then
+  elif [ "${GATE_SOURCE:-local}" != local ]; then
     fail "quarantined $label: Gatekeeper accepts" "a release asset is not Developer ID signed ($authority); $verdict"
   else
     warn "quarantined $label: Gatekeeper blocks the unsigned build" "$authority; $verdict — a browser download shows the 'damaged/unverified' dialog"
@@ -154,17 +154,17 @@ run_app() { # app — LaunchServices launch, as a double-click is
   quit_app; return 1
 }
 
-if download_quarantined "$GOOD/linggen/linggen/ling-macos-aarch64.tar.gz"; then
+if download_quarantined "$(asset_url linggen/linggen ling-macos-aarch64.tar.gz)"; then
   gatekeeper_check "ling" "$q/ling" run_cli "$q/ling"
 else gap "quarantined ling" "download from the mirror failed"; fi
-if download_quarantined "$GOOD/linggen/linggen-memory/ling-mem-macos-aarch64.tar.gz"; then
+if download_quarantined "$(asset_url linggen/linggen-memory ling-mem-macos-aarch64.tar.gz)"; then
   gatekeeper_check "ling-mem" "$q/ling-mem" run_cli "$q/ling-mem"
 else gap "quarantined ling-mem" "download from the mirror failed"; fi
 if [ -n "$APP_VERSION" ]; then
-  if download_quarantined "$GOOD/linggen/linggen-releases/linggen-$APP_VERSION-darwin-arm64.tar.gz"; then
+  if download_quarantined "$(asset_url linggen/linggen-releases "linggen-$APP_VERSION-darwin-arm64.tar.gz")"; then
     # A --draft run without app= serves the published app: not this train's.
     GK_OUT_OF_TRAIN=0
-    [ "${GATE_SOURCE:-local}" = draft ] && [ "${APP_IN_TRAIN:-1}" = 0 ] && GK_OUT_OF_TRAIN=1
+    [ "${GATE_SOURCE:-local}" != local ] && [ "${APP_IN_TRAIN:-1}" = 0 ] && GK_OUT_OF_TRAIN=1
     gatekeeper_check "Linggen.app" "$q/Linggen.app" run_app "$q/Linggen.app"
     GK_OUT_OF_TRAIN=0
     # The stapled ticket lives in Contents/CodeResources (no xcrun on a clean
@@ -195,7 +195,7 @@ fi
 dev="$(xcode-select -p 2>/dev/null)"
 info "git on this Mac" "${dev:+developer dir $dev}${dev:-none — /usr/bin/git is the CLT stub}"
 clt_dialog_close
-curl -fsSL "$GOOD/install-plugin.sh" -o "$OUT/install-plugin.sh"
+curl -fsSL "$SITE/install-plugin.sh" -o "$OUT/install-plugin.sh"
 bash -c ". <(sed -n '/^has_git() {/,/^}/p' '$OUT/install-plugin.sh'); has_git"
 seen=$?
 if [ -z "$dev" ]; then

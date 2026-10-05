@@ -180,6 +180,9 @@ build_mirror() { # local | draft "<specs>"
   case "$1" in
     local) mirror_local "$good" ;;
     draft) mirror_draft "$good" "$2" ;;
+    # The published Latest releases: what to expect; the VM itself installs
+    # from linggen.dev + GitHub (vm/common.sh SITE, asset_url).
+    public) mirror_draft "$good" "" ;;
   esac
   local pub="$WS/linggensite/public" f
   for f in install.sh install-app.sh install-shared-memory.sh install-plugin.sh; do

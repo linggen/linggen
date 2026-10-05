@@ -13,6 +13,16 @@ BAD="$MIRROR/bad"
 LG="$HOME/.linggen"
 OUT="$HOME/gate"
 
+# --public: the real linggen.dev and GitHub Latest, no LINGGEN_RELEASE_BASE —
+# a person's install. Otherwise the mirror. RB is `env`'s argument.
+if [ "${GATE_SOURCE:-}" = public ]; then
+  SITE=https://linggen.dev RB=""
+  asset_url() { echo "https://github.com/$1/releases/latest/download/$2"; }
+else
+  SITE="$GOOD" RB="LINGGEN_RELEASE_BASE=$GOOD"
+  asset_url() { echo "$GOOD/$1/$2"; }
+fi
+
 r() { printf 'RESULT\t%s\t%s\t%s\n' "$1" "$2" "$(printf '%s' "${3:-}" | tr '\t\n' '  ' | cut -c1-300)"; }
 pass() { r PASS "$@"; }
 fail() { r FAIL "$@"; }
@@ -139,9 +149,9 @@ clt_dialog_close() { pkill -f "$CLT_DIALOG" 2>/dev/null || true; sleep 1; }
 
 listener_pid() { lsof -nP -ti "tcp:$1" -sTCP:LISTEN 2>/dev/null | head -1; }
 
-# install-plugin.sh from the mirror, which installs from the release bundle.
+# install-plugin.sh from the mirror (or linggen.dev), which installs from the release bundle.
 install_plugin() { # log
-  curl -fsSL "$GOOD/install-plugin.sh" | LINGGEN_RELEASE_BASE="$GOOD" bash >"$1" 2>&1
+  curl -fsSL "$SITE/install-plugin.sh" | env $RB bash >"$1" 2>&1
 }
 
 # The folder Claude Code loads the linggen plugin from: "Read from:" for a

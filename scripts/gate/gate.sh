@@ -4,6 +4,9 @@
 #
 #   just release-gate --local                       local builds (target/release)
 #   just release-gate --draft "engine=1.8.3 mem=v1.9.0 app=linggen-v0.3.4"
+#   just release-gate --public                      after publishing: the VM installs
+#                                                   from linggen.dev + GitHub Latest,
+#                                                   no mirror (first install only)
 #
 #   --first-only / --upgrade-only   run one half
 #   --rebuild-prev                  remake linggen-prev from the published releases
@@ -23,12 +26,13 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --local) SOURCE=local; shift ;;
     --draft) SOURCE=draft; SPECS="${2:-}"; shift 2 ;;
+    --public) SOURCE=public; UPGRADE=0; shift ;;
     --first-only) UPGRADE=0; shift ;;
     --upgrade-only) FIRST=0; shift ;;
     --rebuild-prev) REBUILD_PREV=1; shift ;;
     --save-prev) SAVE_PREV=1; shift ;;
     --keep) KEEP=1; shift ;;
-    -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
     *) echo "release-gate: unknown flag $1" >&2; exit 2 ;;
   esac
 done
@@ -46,7 +50,7 @@ say "Preflight ($RUN)"
 for tool in tart jq curl python3 ssh scp; do
   command -v "$tool" >/dev/null || die "preflight: $tool" "not installed"
 done
-[ "$SOURCE" = draft ] && { command -v gh >/dev/null || die "preflight: gh" "not installed"; }
+[ "$SOURCE" != local ] && { command -v gh >/dev/null || die "preflight: gh" "not installed"; }
 free_gb="$(df -g "$HOME" | awk 'NR==2{print $4}')"
 [ "$free_gb" -ge 8 ] && record PASS "preflight: disk" "${free_gb} GB free" \
   || record WARN "preflight: disk" "only ${free_gb} GB free — a VM run writes 2-4 GB"
