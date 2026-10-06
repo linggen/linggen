@@ -10,6 +10,9 @@ pub struct Row {
     pub content: String,
     #[serde(default)]
     pub is_observation: bool,
+    /// A result row: its call failed.
+    #[serde(default)]
+    pub failed: bool,
 }
 
 /// A session's rows; the thread must be on disk (a missing file fails the

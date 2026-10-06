@@ -15,6 +15,7 @@ import {
 import { getSessionId, formatToolStartLine } from './_shared';
 import { askEndsWithTurn, completeAgentRuns, otherAgentRunning, sendEndsWithTurn } from '../agentTurns.mts';
 import { stillOn } from '../sessionLoad.mts';
+import { toolStatus } from '../toolStatus.mts';
 
 // ---------------------------------------------------------------------------
 // Text segment
@@ -302,7 +303,7 @@ function applyContentBlockUpdate(agentId: string, update: ContentBlockUpdateData
   chatStore.contentBlockUpdate(
     agentId,
     String(data.block_id || ''),
-    (data.status as 'running' | 'done' | 'failed' | undefined) || undefined,
+    toolStatus(data.status),
     data.summary || undefined,
     data.is_error ?? undefined,
     diffData,

@@ -1,5 +1,5 @@
 use crate::engine::tool_render::sanitize_message_for_ui;
-use crate::server::chat::unanswered_run;
+use crate::server::chat::run_calls;
 use crate::server::ServerState;
 use axum::{
     extract::{Query, State},
@@ -282,12 +282,12 @@ pub(crate) async fn get_workspace_state(
             .get_chat_history(sid)
             .unwrap_or_default(),
     };
-    let running = !sid.is_empty() && unanswered_run::session_running(&state.manager, sid).await;
+    let running = !sid.is_empty() && run_calls::session_running(&state.manager, sid).await;
 
-    let mapped_messages = unanswered_run::with_unanswered_runs(
+    let mapped_messages = run_calls::with_run_calls(
         messages,
         running,
-        |m| {
+        |m, calls| {
             if m.content.contains("[HIDDEN]") {
                 return None;
             }
@@ -300,7 +300,8 @@ pub(crate) async fn get_workspace_state(
                 task_id: None,
                 client_id: m.client_id,
             };
-            Some((serde_json::to_value(meta).ok()?, cleaned))
+            let meta = serde_json::to_value(meta).ok()?;
+            Some((run_calls::with_tools(meta, calls), cleaned))
         },
         |run| (run.meta(), String::new()),
     );

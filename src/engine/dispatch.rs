@@ -209,7 +209,7 @@ impl AgentEngine {
                 Ok(tool_result) => {
                     let rendered = render_tool_result(&tool_result);
                     let _ = self
-                        .persist_observation("Task", &rendered, session_id)
+                        .persist_observation("Task", &rendered, false, session_id)
                         .await;
                     messages.push(tool_msg(
                         self,
@@ -221,7 +221,7 @@ impl AgentEngine {
                 Err(e) => {
                     let rendered = format!("tool_error: tool=Task target={} error={}", target, e);
                     let _ = self
-                        .persist_observation("Task", &rendered, session_id)
+                        .persist_observation("Task", &rendered, true, session_id)
                         .await;
                     messages.push(tool_msg(
                         self,
@@ -682,7 +682,7 @@ impl AgentEngine {
         // Push acknowledgement to model messages so it sees the feedback.
         messages.push(self.tool_result_msg_for(ack.clone(), tc_id, "UpdatePlan"));
         let _ = self
-            .persist_observation("UpdatePlan", &ack, session_id)
+            .persist_observation("UpdatePlan", &ack, false, session_id)
             .await;
     }
 }

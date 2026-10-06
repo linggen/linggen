@@ -47,10 +47,13 @@ impl AgentEngine {
 
     // Persistence + event helpers (writes to session files + emits UI events)
 
+    /// A tool's result, saved: `failed` when the call did not succeed (an
+    /// error, a cancel, a refusal) — the status a reload shows for it.
     pub async fn persist_observation(
         &self,
         tool: &str,
         rendered: &str,
+        failed: bool,
         session_id: Option<&str>,
     ) -> anyhow::Result<()> {
         if let Some(manager) = self.tools.get_manager() {
@@ -80,6 +83,7 @@ impl AgentEngine {
                         timestamp: crate::util::now_ts_secs(),
                         is_observation: true,
                         client_id: None,
+                        failed,
                     },
                 )
                 .await;
@@ -145,6 +149,7 @@ impl AgentEngine {
                     timestamp: crate::util::now_ts_secs(),
                     is_observation: false,
                     client_id: None,
+                    failed: false,
                 },
             )
             .await;
@@ -217,6 +222,7 @@ impl AgentEngine {
                             timestamp: crate::util::now_ts_secs(),
                             is_observation: false,
                             client_id: None,
+                            failed: false,
                         },
                     )
                     .await;

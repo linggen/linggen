@@ -4,7 +4,6 @@
  */
 import type {
   ChatMessage,
-  ContentBlock,
   SubagentTreeEntry,
 } from '../types';
 import { liveBubbleOfRun } from './interruptedRun.mts';
@@ -753,87 +752,6 @@ export const shouldHideInternalChatMessage = (_from?: string, text?: string): bo
  *  NOT used for live streaming messages (those drive spinner/activity). */
 export const isPersistedToolOnlyMessage = (text: string): boolean =>
   /^(Reading file|Writing file|Editing file|Running command|Searching|Listing files|Fetching URL|Searching web|Delegating to subagent|Calling tool)[:.]/i.test(text);
-
-// ---------------------------------------------------------------------------
-// Reconstruct content blocks from persisted text
-// ---------------------------------------------------------------------------
-
-/** Tool start-phase patterns produced by sanitize_message_for_ui / tool_status_line(Start). */
-const TOOL_START_PATTERNS: [RegExp, string][] = [
-  [/^Reading file[:.]\s*(.*)/i, 'Read'],
-  [/^Writing file[:.]\s*(.*)/i, 'Write'],
-  [/^Editing file[:.]\s*(.*)/i, 'Edit'],
-  [/^Running command[:.]\s*(.*)/i, 'Bash'],
-  [/^Searching web[:.]\s*(.*)/i, 'WebSearch'],
-  [/^Searching[:.]\s*(.*)/i, 'Grep'],
-  [/^Listing files[:.]\s*(.*)/i, 'Glob'],
-  [/^Fetching URL[:.]\s*(.*)/i, 'WebFetch'],
-  [/^Delegating to subagent[:.]\s*(.*)/i, 'Task'],
-  [/^Calling tool[:.]\s*(.*)/i, 'Tool'],
-];
-
-/** Result-phase lines to skip (redundant with start-phase lines). */
-const isToolResultLine = (line: string): boolean =>
-  /^Used tool:\s*\w+/i.test(line) ||
-  /^Tool \w+:/i.test(line) ||
-  /^Delegated task:/i.test(line);
-
-/**
- * Parse persisted message text to reconstruct ContentBlock[] for tool activity.
- * After server restart, messages lose ephemeral tool blocks. This recovers
- * them from the "Reading file:", "Running command:", etc. status lines that
- * sanitize_message_for_ui embeds in the persisted text.
- */
-export const reconstructContentFromText = (text: string): {
-  content: ContentBlock[];
-  toolCount: number;
-} | null => {
-  const lines = text.split('\n');
-  const content: ContentBlock[] = [];
-  let textBuffer: string[] = [];
-  let toolCount = 0;
-  let idCounter = 0;
-
-  const flushText = () => {
-    const t = textBuffer.join('\n').trim();
-    if (t) content.push({ type: 'text', text: t });
-    textBuffer = [];
-  };
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-
-    // Match start-phase tool lines → create tool_use blocks
-    let matched = false;
-    for (const [re, toolName] of TOOL_START_PATTERNS) {
-      const m = trimmed.match(re);
-      if (m) {
-        flushText();
-        content.push({
-          type: 'tool_use',
-          id: `restored-${idCounter++}`,
-          tool: toolName,
-          args: m[1]?.trim() || '',
-          status: 'done',
-        });
-        toolCount++;
-        matched = true;
-        break;
-      }
-    }
-    if (matched) continue;
-
-    // Skip redundant result lines
-    if (isToolResultLine(trimmed)) continue;
-
-    textBuffer.push(line);
-  }
-
-  flushText();
-
-  if (toolCount === 0) return null;
-  return { content, toolCount };
-};
 
 // ---------------------------------------------------------------------------
 // Chat view helpers: agent keys, ordering, display sanitizing, progress rows

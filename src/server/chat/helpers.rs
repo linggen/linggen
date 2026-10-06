@@ -137,6 +137,7 @@ pub(crate) async fn persist_and_emit_to_store(
         timestamp: crate::util::now_ts_secs(),
         is_observation,
         client_id,
+        failed: false,
     };
     if let Err(e) = store.add_chat_message(sid, &msg) {
         tracing::warn!("Failed to persist chat message to mission store: {}", e);
@@ -163,6 +164,7 @@ pub(crate) async fn persist_message_only(
         timestamp: crate::util::now_ts_secs(),
         is_observation,
         client_id: None,
+        failed: false,
     };
     if let Err(e) = manager.global_sessions.add_chat_message(sid, &msg) {
         tracing::warn!("Failed to persist chat message: {}", e);

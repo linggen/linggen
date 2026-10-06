@@ -1,18 +1,12 @@
 /**
  * A run that ended without a reply, as the history brings it back: the
  * engine sends one row per such run (`run: "interrupted"`, its calls in
- * `tools`) — see src/server/chat/unanswered_run.rs. Here it becomes the
+ * `tools`) — see src/server/chat/run_calls.rs. Here it becomes the
  * agent's row with the run's tool calls, marked interrupted. Pure, so node
  * tests can hold it.
  */
-import type { ChatMessage, ContentBlock } from '../types.ts';
-
-/** One call of the run, as the engine sends it (`args` is JSON text). */
-export interface RunTool {
-  tool: string;
-  args?: string;
-  done?: boolean;
-}
+import type { ChatMessage } from '../types.ts';
+import { savedToolBlocks, type SavedTool } from './toolStatus.mts';
 
 /** The fields of a history row's header this reads. */
 export interface RunMeta {
@@ -21,7 +15,8 @@ export interface RunMeta {
   ts: number;
   ended?: number;
   run?: string;
-  tools?: RunTool[];
+  /** The calls made before this row (a spoken row), or the run's (its own row). */
+  tools?: SavedTool[];
   [key: string]: unknown;
 }
 
@@ -34,13 +29,7 @@ export const isInterruptedRunMeta = (meta: RunMeta): boolean => meta.run === 'in
  *  empty — tool calls are work, not a reply (see interruptedTurn.mts). */
 export function interruptedRunMessage(meta: RunMeta): ChatMessage {
   const startMs = Number(meta.ts || 0) * 1000;
-  const content: ContentBlock[] = (meta.tools || []).map((t, i) => ({
-    type: 'tool_use',
-    id: `run-${meta.ts}-${i}`,
-    tool: t.tool,
-    args: t.args || '',
-    status: t.done ? 'done' : 'failed',
-  }));
+  const content = savedToolBlocks(meta.tools, `run-${meta.ts}`);
   return {
     role: 'agent',
     from: meta.from,

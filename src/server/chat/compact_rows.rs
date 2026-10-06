@@ -199,6 +199,7 @@ pub(crate) async fn compact_session(
         timestamp: rows[cut].timestamp,
         is_observation: false,
         client_id: None,
+        failed: false,
     };
     // The prefix up to `cut` is the snapshot's — rows written meanwhile
     // only append after it — so the summary goes in at the same place.
@@ -269,6 +270,7 @@ mod tests {
             timestamp: 0,
             is_observation: false,
             client_id: None,
+            failed: false,
         }
     }
 

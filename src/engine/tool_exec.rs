@@ -4,6 +4,7 @@ use crate::engine::render::{
     normalize_tool_path_arg, render_tool_result, render_tool_result_public,
     sanitize_tool_args_for_display, tool_call_signature,
 };
+use crate::engine::tool_render::tool_call_status;
 use crate::engine::tools::{self, ToolCall};
 use crate::message::ChatMessage;
 use serde_json::Value as JsonValue;
@@ -251,7 +252,7 @@ impl AgentEngine {
         let safe_args = sanitize_tool_args_for_display(t.canonical, t.args);
         let block_id = self.announce_tool_start(t, &safe_args).await;
         let _ = self
-            .persist_observation(t.canonical, &msg, t.session_id)
+            .persist_observation(t.canonical, &msg, true, t.session_id)
             .await;
         self.announce_tool_refused(&block_id, &msg).await;
         self.refuse(t, messages, msg)
@@ -268,7 +269,7 @@ impl AgentEngine {
                 crate::engine::agent::AgentEvent::ContentBlockUpdate {
                     agent_id,
                     block_id: block_id.to_string(),
-                    status: Some("failed".to_string()),
+                    status: Some(tool_call_status(true).to_string()),
                     summary: Some(msg.to_string()),
                     is_error: Some(true),
                     parent_id: self.parent_agent_id.clone(),
@@ -412,7 +413,7 @@ impl AgentEngine {
                 );
                 self.upsert_observation("warning", action, rendered.clone());
                 let _ = self
-                    .persist_observation(action, &rendered, t.session_id)
+                    .persist_observation(action, &rendered, false, t.session_id)
                     .await;
                 None
             }
@@ -759,6 +760,7 @@ impl AgentEngine {
                         timestamp: crate::util::now_ts_secs(),
                         is_observation: true,
                         client_id: None,
+                        failed: false,
                     },
                 )
                 .await;
@@ -811,7 +813,7 @@ impl AgentEngine {
                 self.upsert_observation("tool", &canonical_tool, rendered_model.clone());
 
                 let _ = self
-                    .persist_observation(&canonical_tool, &rendered_public, session_id)
+                    .persist_observation(&canonical_tool, &rendered_public, false, session_id)
                     .await;
                 if let Some(manager) = self.tools.get_manager() {
                     let agent_id = self
@@ -851,7 +853,7 @@ impl AgentEngine {
                             crate::engine::agent::AgentEvent::ContentBlockUpdate {
                                 agent_id: agent_id.clone(),
                                 block_id: block_id.clone(),
-                                status: Some("done".to_string()),
+                                status: Some(tool_call_status(false).to_string()),
                                 summary: Some(tool_done_status.clone()),
                                 is_error: Some(false),
                                 parent_id: self.parent_agent_id.clone(),
@@ -1005,7 +1007,7 @@ impl AgentEngine {
                 }
                 self.upsert_observation("error", &canonical_tool, rendered.clone());
                 let _ = self
-                    .persist_observation(&canonical_tool, &rendered, session_id)
+                    .persist_observation(&canonical_tool, &rendered, true, session_id)
                     .await;
                 if let Some(manager) = self.tools.get_manager() {
                     let agent_id = self
@@ -1019,7 +1021,7 @@ impl AgentEngine {
                             crate::engine::agent::AgentEvent::ContentBlockUpdate {
                                 agent_id: agent_id.clone(),
                                 block_id: block_id.clone(),
-                                status: Some("failed".to_string()),
+                                status: Some(tool_call_status(true).to_string()),
                                 summary: Some(err_summary),
                                 is_error: Some(true),
                                 parent_id: self.parent_agent_id.clone(),

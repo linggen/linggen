@@ -146,6 +146,8 @@ One JSON object per line, append-only.
 
 A person's row may carry `client_id` — the id the sending surface gave its bubble (see `chat-spec.md` § Addressing an agent).
 
+A tool's result row (`Tool <name>: …`, an observation) carries `"failed": true` when the call did not succeed — an error, a cancel, a refusal; absent otherwise. Rows written before 2026-10-06 have none: their status is read from the engine's `tool_error:` / `tool_not_allowed:` text.
+
 ### Agent run records (in-memory)
 
 Agent run records (`AgentRunRecord`) are held in-memory only — they track live and recent runs for cancel/status operations. Lost on server restart by design (no cleanup needed). Not persisted to disk.

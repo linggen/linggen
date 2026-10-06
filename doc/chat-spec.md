@@ -163,13 +163,17 @@ A session is a single conversation thread scoped to a project. Each session has 
   segments, so the UI's merge drops a saved row whose words are on screen that
   way. (Until 2026-09-11 only the final reply was saved, and a long tool-using
   turn — a Lingjing game day — reloaded as an empty chat.)
-- **A run cut off before its reply** (engine restart, cancel): the history
-  views (`/api/workspace/state`, `/api/missions/sessions/state`,
-  `/api/skill-sessions/state`) add one row after the run's last row —
-  `run: "interrupted"` with its calls in `tools` — and the UI shows those calls
-  plus a small "Interrupted" note. Answered runs, a session's still-running
-  run, and `[HIDDEN]` kickoffs (which may end in silence) get none
-  (`server/chat/unanswered_run.rs`).
+- **Tool calls on reload**: the history views (`/api/workspace/state`,
+  `/api/missions/sessions/state`, `/api/skill-sessions/state`) bring a run's
+  calls back as `tools: [{tool, args, status}]`, `status` being `done` or
+  `failed` — the word the live block's update used (`tool_call_status`), read
+  from the call's result row (`failed`, see storage-spec). An agent's spoken
+  row carries the calls made since its previous words. A run cut off before
+  its reply (engine restart, cancel) gets one row of its own after its last
+  row — `run: "interrupted"` with its calls in `tools` — shown with a small
+  "Interrupted" note; a session's still-running run and `[HIDDEN]` kickoffs
+  (which may end in silence) get none (`server/chat/run_calls.rs`). A call
+  whose result never came back is `failed`.
 
 ### Multi-session architecture
 

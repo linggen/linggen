@@ -1,7 +1,7 @@
 //! Session CRUD: list/create/resolve/remove/rename, plus skill-session
 //! variants and the unified session list/delete endpoints.
 
-use crate::server::chat::unanswered_run;
+use crate::server::chat::run_calls;
 use crate::server::ServerState;
 use axum::{
     extract::{Json, Query, State},
@@ -154,25 +154,26 @@ pub(crate) async fn get_skill_session_state(
         .get_chat_history(&session_id)
         .unwrap_or_default();
 
-    let running = unanswered_run::session_running(&state.manager, &session_id).await;
-    let mapped = unanswered_run::with_unanswered_runs(
+    let running = run_calls::session_running(&state.manager, &session_id).await;
+    let mapped = run_calls::with_run_calls(
         messages,
         running,
-        |m| {
+        |m, calls| {
             if m.is_observation || m.content.contains("[HIDDEN]") {
                 return None;
             }
             let cleaned =
                 crate::engine::tool_render::sanitize_message_for_ui(&m.from_id, &m.content)?;
+            let meta = serde_json::json!({
+                "id": format!("msg-{}", m.timestamp),
+                "from": m.from_id,
+                "to": m.to_id,
+                "ts": m.timestamp,
+                "task_id": null,
+                "client_id": m.client_id
+            });
             Some(serde_json::json!([
-                {
-                    "id": format!("msg-{}", m.timestamp),
-                    "from": m.from_id,
-                    "to": m.to_id,
-                    "ts": m.timestamp,
-                    "task_id": null,
-                    "client_id": m.client_id
-                },
+                run_calls::with_tools(meta, calls),
                 cleaned
             ]))
         },

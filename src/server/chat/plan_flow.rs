@@ -408,6 +408,7 @@ async fn persist_plan_message(
         timestamp: crate::util::now_ts_secs(),
         is_observation: false,
         client_id: None,
+        failed: false,
     };
     if !manager.update_last_plan_message(session_id, &msg).await {
         manager.add_chat_message(root, session_id, &msg).await;

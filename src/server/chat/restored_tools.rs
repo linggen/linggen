@@ -211,6 +211,7 @@ mod tests {
             timestamp: 0,
             is_observation: obs,
             client_id: None,
+            failed: false,
         }
     }
     fn call(name: &str) -> ChatMsg {

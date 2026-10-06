@@ -154,5 +154,12 @@ test.describe('a live run', () => {
     const c = chat(page);
     await expect(c.locator('[data-testid="tool-call"][data-tool="Bash"]')).not.toHaveAttribute('data-status', 'running', { timeout: 5_000 });
     await expect(shown(page, '[Ling]')).toHaveCount(1, { timeout: 5_000 });
+    await expect(c.locator('[data-testid="tool-call"][data-tool="Bash"]')).toHaveAttribute('data-status', 'failed');
+
+    // The saved call says it failed, as the live one did.
+    await page.reload();
+    await expectWebRtc(page, httpRequests);
+    await expect(c.locator('[data-testid="tool-call"][data-tool="Bash"]')).toHaveAttribute('data-status', 'failed');
+    await expect(shown(page, '[Ling]')).toHaveCount(1);
   });
 });

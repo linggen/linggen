@@ -733,6 +733,7 @@ async fn dispatch_mission_prompt(
                     timestamp: crate::util::now_ts_secs(),
                     is_observation: false,
                     client_id: None,
+                    failed: false,
                 },
             );
         }
@@ -948,6 +949,7 @@ async fn dispatch_mission_prompt(
                             timestamp: crate::util::now_ts_secs(),
                             is_observation: false,
                             client_id: None,
+                            failed: false,
                         },
                     );
                     // Ping the UI so it reloads persisted messages immediately
@@ -1041,6 +1043,7 @@ async fn append_run_report(state: &Arc<SchedulerHost>, agent_id: &str, session_i
             timestamp: crate::util::now_ts_secs(),
             is_observation: false,
             client_id: None,
+            failed: false,
         },
     );
     let _ = state.events_tx.send(ServerEvent::StateUpdated);

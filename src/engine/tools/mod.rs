@@ -664,6 +664,7 @@ mod tests {
             timestamp: 0,
             is_observation: obs,
             client_id: None,
+            failed: false,
         };
         let mut history = vec![
             msg("user", "[HIDDEN] [scene] opened", false),

@@ -146,9 +146,19 @@ async fn b_her_write_asks_and_deny_writes_nothing() {
     );
     assert!(
         rows.iter()
-            .any(|r| r.is_observation && r.content.starts_with("Tool Write: ")),
-        "the denial left no result row: {rows:?}"
+            .any(|r| r.is_observation && r.failed && r.content.starts_with("Tool Write: ")),
+        "the denial left no result row marked failed: {rows:?}"
     );
+    // The history shows the call on her reply, failed — as it showed live.
+    let history = w.api.history(&sid, &root).await;
+    let reply = history["messages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|r| r[1] == "Left it.")
+        .unwrap_or_else(|| panic!("no reply in {history:#}"));
+    assert_eq!(reply[0]["tools"][0]["tool"], "Write", "{reply}");
+    assert_eq!(reply[0]["tools"][0]["status"], "failed", "{reply}");
     assert_eq!(
         members(&w, &sid),
         ["ling", "yinyue"],

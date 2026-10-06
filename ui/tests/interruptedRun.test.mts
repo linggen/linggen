@@ -12,9 +12,9 @@ import type { ChatMessage } from '../src/types.ts';
 const runMeta: RunMeta = {
   from: 'ling', to: 'user', ts: 100, ended: 160, run: 'interrupted',
   tools: [
-    { tool: 'WeeklyScan', args: '{}', done: true },
-    { tool: 'WebSearch', args: '{"query":"TSX week"}', done: true },
-    { tool: 'SaveWeekly', args: '{"sections":"[…"}', done: false },
+    { tool: 'WeeklyScan', args: '{}', status: 'done' },
+    { tool: 'WebSearch', args: '{"query":"TSX week"}', status: 'done' },
+    { tool: 'SaveWeekly', args: '{"sections":"[…"}', status: 'failed' },
   ],
 };
 

@@ -22,10 +22,10 @@ import {
   mergeChatMessages,
   shouldHideInternalChatMessage,
   isPersistedToolOnlyMessage,
-  reconstructContentFromText,
 } from '../lib/messageUtils';
 import { cacheImages, restoreImages, clearImageCache } from '../lib/imageCache';
 import { interruptedRunMessage, isInterruptedRunMeta, type RunMeta } from '../lib/interruptedRun.mts';
+import { savedToolBlocks } from '../lib/toolStatus.mts';
 import { agentTracker } from '../lib/agentTracker';
 import { confirmSent } from '../lib/sentMessage.mts';
 import { loadOutcome, type LoadSnapshot } from '../lib/sessionLoad.mts';
@@ -680,7 +680,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const msgs: ChatMessage[] = data.messages
           .filter(([meta, body]) => !shouldHideInternalChatMessage(meta.from, body))
           .filter(([_meta, body]) => !isPersistedToolOnlyMessage(String(body || '')))
-          .flatMap(([meta, body]) => {
+          .flatMap(([meta, body], idx) => {
             // A run that stopped before it replied: its calls, marked interrupted.
             if (isInterruptedRunMeta(meta as RunMeta)) return [interruptedRunMessage(meta as RunMeta)];
             const isUser = meta.from === 'user' || meta.from === 'system';
@@ -708,8 +708,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
             if (!isUser) {
               bodyStr = stripEmbeddedStructuredJson(bodyStr);
             }
-            if (!isUser && !bodyStr) return [];
-            const restored = !isUser ? reconstructContentFromText(bodyStr) : null;
+            // The calls made before these words, with the status each ended in.
+            const tools = !isUser ? savedToolBlocks((meta as RunMeta).tools, `${meta.ts}-${idx}`) : [];
+            if (!isUser && !bodyStr && !tools.length) return [];
             const isError = !isUser && bodyStr.startsWith('Error:');
             return [{
               role: meta.from === 'user' ? 'user' : 'agent',
@@ -718,7 +719,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               text: bodyStr,
               timestamp: new Date(meta.ts * 1000).toLocaleTimeString(),
               timestampMs: Number(meta.ts || 0) * 1000,
-              ...(restored ? { content: restored.content, toolCount: restored.toolCount } : {}),
+              ...(tools.length ? { content: tools, toolCount: tools.length } : {}),
               ...(isError ? { isError: true } : {}),
               ...(meta.client_id ? { clientId: String(meta.client_id) } : {}),
             }];

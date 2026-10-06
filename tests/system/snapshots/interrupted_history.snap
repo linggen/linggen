@@ -50,7 +50,7 @@ expression: text
         {
           "tool": "Glob",
           "args": "{\"pattern\":\"*.md\"}",
-          "done": true
+          "status": "done"
         }
       ]
     },

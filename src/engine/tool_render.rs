@@ -134,6 +134,16 @@ pub(crate) enum ToolStatusPhase {
     Failed,
 }
 
+/// A finished tool call's status, as the chat shows it: live (the block's
+/// update) and saved (the calls on a history row) alike.
+pub(crate) fn tool_call_status(failed: bool) -> &'static str {
+    if failed {
+        "failed"
+    } else {
+        "done"
+    }
+}
+
 pub(crate) fn tool_status_line(
     tool: &str,
     args: Option<&serde_json::Value>,

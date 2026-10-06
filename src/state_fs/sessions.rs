@@ -211,6 +211,11 @@ pub struct ChatMsg {
     /// words than were typed — an `@name` is not kept). None otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
+    /// A tool's result row: the call failed (an error, a cancel, a refusal).
+    /// The history views read each saved call's status from it. Rows written
+    /// before 2026-10-06 have none (`call_failed` reads their text).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub failed: bool,
 }
 
 impl SessionStore {
@@ -708,6 +713,7 @@ mod tests {
             timestamp: 1000,
             is_observation: false,
             client_id: None,
+            failed: false,
         };
         let msg2 = ChatMsg {
             agent_id: "ling".into(),
@@ -717,6 +723,7 @@ mod tests {
             timestamp: 1001,
             is_observation: false,
             client_id: None,
+            failed: false,
         };
         store.add_chat_message("s1", &msg1).unwrap();
         store.add_chat_message("s1", &msg2).unwrap();
@@ -739,6 +746,7 @@ mod tests {
             timestamp: 1000,
             is_observation: false,
             client_id: client_id.map(str::to_string),
+            failed: false,
         };
         let kept = serde_json::to_string(&row(Some("c-1-ab"))).unwrap();
         let back: ChatMsg = serde_json::from_str(&kept).unwrap();
@@ -788,6 +796,7 @@ mod tests {
                     timestamp: 1000,
                     is_observation: false,
                     client_id: None,
+                    failed: false,
                 },
             )
             .unwrap();
@@ -802,6 +811,7 @@ mod tests {
                     timestamp: 1001,
                     is_observation: false,
                     client_id: None,
+                    failed: false,
                 },
             )
             .unwrap();
@@ -848,6 +858,7 @@ mod tests {
                     timestamp: 1000,
                     is_observation: false,
                     client_id: None,
+                    failed: false,
                 },
             )
             .unwrap();
@@ -892,6 +903,7 @@ mod tests {
                     timestamp: 1000,
                     is_observation: false,
                     client_id: None,
+                    failed: false,
                 },
             )
             .unwrap();
@@ -984,6 +996,7 @@ mod tests {
                     timestamp: 1000,
                     is_observation: false,
                     client_id: None,
+                    failed: false,
                 },
             )
             .unwrap();

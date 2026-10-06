@@ -197,6 +197,7 @@ mod tests {
             timestamp: 0,
             is_observation: true,
             client_id: None,
+            failed: false,
         }
     }
 

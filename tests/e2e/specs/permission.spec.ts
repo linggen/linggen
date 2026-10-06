@@ -35,6 +35,12 @@ test.describe('Deny', () => {
     await expect(card(page)).toHaveCount(0);
     expect(existsSync(path.join(world.work, 'probe.txt'))).toBe(false);
     await expectScriptedCalls(world, ['ling', 'ling']);
+
+    // A reload shows the saved call failed too.
+    await page.reload();
+    await expectWebRtc(page, httpRequests);
+    await expect(shown(page, 'Left it.')).toHaveCount(1);
+    await expect(call).toHaveAttribute('data-status', 'failed');
   });
 });
 
