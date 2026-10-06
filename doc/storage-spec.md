@@ -146,7 +146,7 @@ One JSON object per line, append-only.
 
 A person's row may carry `client_id` — the id the sending surface gave its bubble (see `chat-spec.md` § Addressing an agent).
 
-A tool's result row (`Tool <name>: …`, an observation) carries `"failed": true` when the call did not succeed — an error, a cancel, a refusal; absent otherwise. Rows written before 2026-10-06 have none: their status is read from the engine's `tool_error:` / `tool_not_allowed:` text.
+A tool's result row (`Tool <name>: …`, an observation) carries `"failed": true` when the call did not succeed — an error, a cancel, a refusal; absent otherwise. Rows written before 2026-10-06 have none: their status is read from the text — the engine's error forms and each refusal it saved (`run_calls.rs` `LEGACY_FAILED_OPENINGS`).
 
 ### Agent run records (in-memory)
 

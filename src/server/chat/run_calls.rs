@@ -66,10 +66,40 @@ pub(crate) fn with_tools(mut meta: Value, calls: &[RunCall]) -> Value {
     meta
 }
 
+/// How a result row saved before the `failed` flag (2026-10-06) opens when
+/// the call failed or was refused: the engine's error forms, then each
+/// refusal `refuse_saved` wrote (prompts/system-reminder.toml and the
+/// restriction gates in engine/tool_exec.rs).
+const LEGACY_FAILED_OPENINGS: &[&str] = &[
+    "tool_error:",
+    "tool_not_allowed:",
+    "Tool execution failed for tool=",
+    "Tool execution blocked for safety:",
+    "Permission denied by user",
+    "Permission prompt timed out.",
+    "Bash command not allowed by this mission's permission tier.",
+];
+
+/// Refusals whose opening names the tool or skill: `Tool 'X' is not …`,
+/// `Skill 'X' is not available to consumers.`
+fn legacy_named_refusal(text: &str) -> bool {
+    let named = |prefix: &str, rest: &[&str]| {
+        text.strip_prefix(prefix)
+            .and_then(|t| t.split_once("' "))
+            .is_some_and(|(_, tail)| rest.iter().any(|r| tail.starts_with(r)))
+    };
+    named(
+        "Tool '",
+        &["is not allowed for this agent.", "is not available."],
+    ) || named("Skill '", &["is not available to consumers."])
+}
+
 /// Did the call this result row answers fail? The row's flag; on a row saved
 /// before the flag, its text in the engine's error or refusal form.
 fn result_failed(m: &ChatMsg, text: &str) -> bool {
-    m.failed || text.starts_with("tool_error:") || text.starts_with("tool_not_allowed:")
+    m.failed
+        || LEGACY_FAILED_OPENINGS.iter().any(|o| text.starts_with(o))
+        || legacy_named_refusal(text)
 }
 
 /// A run's calls with no reply after them.
@@ -395,7 +425,17 @@ mod tests {
         for (text, status) in [
             ("tool_error: tool=Bash error=run cancelled", "failed"),
             ("tool_not_allowed: tool=Bash reason=pet_scoped", "failed"),
+            ("Tool execution failed for tool='Bash'. Error: boom.", "failed"),
+            ("Tool execution blocked for safety: tool_error: tool=Bash error=precondition_failed", "failed"),
+            ("Permission denied by user: Bash on 'rm -rf x'.\nThe user has denied this action.", "failed"),
+            ("Permission denied by user for Bash 'ls'. User says: no", "failed"),
+            ("Permission prompt timed out. Stopping.", "failed"),
+            ("Bash command not allowed by this mission's permission tier. Allowed: git", "failed"),
+            ("Tool 'Bash' is not allowed for this agent. Use one of [Read].", "failed"),
+            ("Tool 'Bash' is not available. Allowed: Read", "failed"),
+            ("Skill 'cfo' is not available to consumers.", "failed"),
             ("Bash output (exit_code: Some(0)):", "done"),
+            ("Tool 'Bash' answered: fine", "done"),
         ] {
             let h = vec![user("q", 1), call("Bash", 2), old(text)];
             let runs = unanswered_runs(&h, false);
