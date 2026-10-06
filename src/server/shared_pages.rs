@@ -1,7 +1,8 @@
-//! `/shared/*` — page helpers every skill app uses (the chat bridge, the API
-//! client, app-mode), served from the engine so skills stop carrying copies
-//! that drift apart. Embedded at build time from the crate's `shared/` dir:
-//! one version per engine, matching the embed chat it talks to.
+//! `/shared/*` — page helpers every skill app uses (the data channel, the
+//! chat bridge, the API client, app-mode), served from the engine so skills
+//! stop carrying copies that drift apart. Embedded at build time from the
+//! crate's `shared/` dir: one version per engine, matching the embed chat it
+//! talks to.
 
 use axum::{extract::Path, http::StatusCode, response::Response};
 use rust_embed::RustEmbed;
@@ -38,7 +39,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_helpers_are_served_as_javascript() {
-        for file in ["chat-bridge.js", "api.js", "app-mode.js"] {
+        for file in ["chat-bridge.js", "api.js", "app-mode.js", "channel.js"] {
             let res = serve(Path(file.to_string())).await;
             assert_eq!(res.status(), StatusCode::OK, "{file}");
             let ct = res.headers()["content-type"].to_str().unwrap().to_string();

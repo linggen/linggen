@@ -16,6 +16,7 @@
 // by their resolved path, so '/shared/api.js' and '/shared/./api.js' would be
 // bundled twice and clash.
 import { createSession, removeSkillSession } from '/shared/api.js';
+import '/shared/channel.js'; // the page's data channel (api.js loads it too)
 
 /**
  * Mount a chat iframe into the given element.
@@ -337,9 +338,11 @@ window.LinggenUI = { mount };
     // Focus is what makes it Linggen the person is in: keystrokes in another
     // window never reach this page, so a blurred or hidden tab is away.
     const focused = document.hasFocus() && document.visibilityState === 'visible';
-    fetch('/api/presence', {
+    // A reading, over the data channel: skipped while it is down, never queued.
+    window.LinggenChannel.request({
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      path: '/api/presence',
+      contentType: 'application/json',
       body: JSON.stringify({
         ...(APP ? { app: APP } : {}),
         surface: SURFACE,
@@ -347,8 +350,8 @@ window.LinggenUI = { mount };
         typing: focused && now - lastKeyAt < TYPING_WINDOW_MS,
         idle_ms: now - lastInputAt,
       }),
-      keepalive: true,
-    }).catch(() => { /* offline, or no daemon — nothing to do about it here */ });
+      wait: false,
+    }).catch(() => { /* no channel yet, or no daemon — the next beat tries again */ });
   };
 
   window.addEventListener('keydown', () => { lastInputAt = lastKeyAt = Date.now(); }, { passive: true });

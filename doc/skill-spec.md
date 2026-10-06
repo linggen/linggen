@@ -376,7 +376,22 @@ Three launcher types: `web` (static files in an embedded panel), `bash` (run a s
 
 `list: false` keeps a `web` app out of the launcher's tab bar while leaving it installed and runnable — what a skill that isn't finished declares about itself. Defaults to true.
 
-Interactive apps are **session-bound** — every message in the session activates the skill (tool restrictions, prompt injection). The app talks to the agent through the same HTTP/WebRTC surface as the main UI; no custom endpoints needed.
+Interactive apps are **session-bound** — every message in the session activates the skill (tool restrictions, prompt injection). The app talks to the agent through the same WebRTC surface as the main UI; no custom endpoints needed.
+
+### Page helpers (`/shared/*`)
+
+The engine serves the helpers every skill page uses, one copy per engine:
+
+| Helper | What it is |
+| :--- | :--- |
+| `/shared/channel.js` | The page's data path. Every engine call — `/api/*`, a `POST` to `/apps/<skill>/capability/*` — rides a WebRTC data channel; plain HTTP carries only the page's own files. Loading it routes the page's `fetch` for those paths, so `fetch('/api/…')` in skill code works unchanged. |
+| `/shared/api.js` | Sessions, models, skill cloud, sign-in (`fetchModels`, `createSession`, `listSkillSessions`, …) over that channel. |
+| `/shared/chat-bridge.js` | Mounts the chat panel (`/embed` iframe) and beats presence (over the channel; skipped while it is down). |
+| `/shared/app-mode.js` | App-shell chrome (§ App-mode). |
+
+`api.js` and `chat-bridge.js` load `channel.js` themselves. A page that loads neither, but calls the engine, loads it first — as a classic script in `<head>` when an inline script calls the API while the page parses: `<script src="/shared/channel.js"></script>`.
+
+Which channel a page uses, nearest first: remotely (linggen.dev) the connect page's tunnel worker, which already answers every request over its channel; framed by the engine's UI (the launcher) or by a skill page (its settings overlay), the frame above's channel; standing alone, its own — a hidden `/?channel=1` frame that opens one peer. A call made before the channel is open waits for it (20 s, then `NotConnectedError`); nothing falls back to HTTP. Byte replies (audio, images) arrive whole. A request body is text or JSON — the channel carries no `Blob` or `FormData`. `doc/webrtc-spec.md` § Skill pages.
 
 **Addressing someone else in the app's chat.** A message that opens `@name`
 (an agent's id or a declared alias — `@银月 …`) goes to that agent in the same

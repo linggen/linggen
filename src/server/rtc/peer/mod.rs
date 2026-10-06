@@ -1030,6 +1030,9 @@ impl PeerLoop {
     }
 
     fn forward_server_event(&mut self, event: &crate::server::ServerEvent) {
+        if !self.view_ctx.wants_pushes() {
+            return;
+        }
         let mut filter = EventFilter {
             session_ids: &mut self.user_session_ids,
             user_id: &self.user_ctx.user_id,
@@ -1058,6 +1061,9 @@ impl PeerLoop {
     /// A view-context change pushes page state at once (debounced 200 ms)
     /// instead of waiting for the 2 s tick.
     fn push_forced_page_state(&mut self) {
+        if !self.view_ctx.wants_pushes() {
+            return;
+        }
         let Some(cid) = self.control_channel_id.filter(|_| self.force_page_state) else {
             return;
         };
@@ -1074,6 +1080,9 @@ impl PeerLoop {
 
     /// The 2 s heartbeat: push aggregated page state when dirty.
     fn push_page_state_heartbeat(&mut self) {
+        if !self.view_ctx.wants_pushes() {
+            return;
+        }
         let should_send =
             (self.dirty_flags != 0 || self.force_page_state) && self.control_channel_id.is_some();
         if !should_send {

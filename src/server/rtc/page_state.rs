@@ -15,9 +15,17 @@ use std::sync::Arc;
 pub struct ViewContext {
     pub session_id: Option<String>,
     pub project_root: Option<String>,
-    /// Which UI entry is connected: "main" | "embed" | "consumer".
-    /// None means the client hasn't reported yet — treat as "main".
+    /// Which UI entry is connected: "main" | "embed" | "consumer" |
+    /// "channel". None means the client hasn't reported yet — treat as "main".
     pub view: Option<String>,
+}
+
+impl ViewContext {
+    /// A `channel` peer is a skill page's data path (shared/channel.js): it
+    /// only asks, and renders nothing — no page state, no events.
+    pub fn wants_pushes(&self) -> bool {
+        self.view.as_deref() != Some("channel")
+    }
 }
 
 /// Aggregated page state pushed to the frontend.
@@ -465,6 +473,18 @@ mod tests {
             session_id: session.into(),
             preview: "hello".into(),
             timestamp: 0,
+        }
+    }
+
+    #[test]
+    fn a_channel_peer_is_pushed_nothing() {
+        let view = |v: Option<&str>| ViewContext {
+            view: v.map(String::from),
+            ..Default::default()
+        };
+        assert!(!view(Some("channel")).wants_pushes());
+        for v in [None, Some("main"), Some("embed"), Some("consumer")] {
+            assert!(view(v).wants_pushes(), "{v:?}");
         }
     }
 

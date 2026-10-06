@@ -12,6 +12,10 @@ import { createGate, type ProxyReply } from './channelFetch.mts';
  *  before there is a channel to send it on (channelFetch.mts). */
 export const connection = createGate();
 
+/** Which surface a peer is: the engine scopes its pushes by it — an `embed`
+ *  is pinned to one session, a `channel` (a skill page's data path) gets none. */
+export type ViewName = 'main' | 'embed' | 'consumer' | 'channel';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -116,7 +120,7 @@ export interface Transport {
 
   /** Tell the server which session/project the frontend has active.
    *  The server uses this to scope its page_state push. */
-  sendViewContext(ctx: { sessionId: string | null; projectRoot: string | null; view: 'main' | 'embed' | 'consumer' }): void;
+  sendViewContext(ctx: { sessionId: string | null; projectRoot: string | null; view: ViewName }): void;
 
   /** Send a room chat message (fire-and-forget). */
   sendRoomChat?(text: string, senderName: string): void;

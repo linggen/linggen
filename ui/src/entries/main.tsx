@@ -1,6 +1,9 @@
 /**
  * Single UI entry. Two layers of dispatch:
  *
+ * 0. `?channel=1` → no UI at all: a standalone skill page's data channel
+ *    (lib/channelHost.ts).
+ *
  * 1. View (top-level user-type discriminator):
  *      URL path /embed | ?mode=compact | ?entry=embed → EmbedApp
  *      currentPage === 'consumer' (from user_info) → ConsumerApp
@@ -31,8 +34,11 @@ import { useSessionStore } from '../stores/sessionStore';
 import { useTransport, sendViewContext } from '../hooks/useTransport';
 import '../index.css';
 import { installFetchProxy } from '../lib/fetchProxy';
+import { installChannelHost, startChannelView } from '../lib/channelHost';
 
 installFetchProxy();
+// The skill pages this page frames ride its data channel (channelHost.ts).
+installChannelHost();
 
 // Code-split: surfaces most loads never reach (the pet window, the desktop
 // launcher, settings, the mission editor) load on demand, so the chat shell
@@ -125,12 +131,18 @@ const Root: React.FC = () => {
 
 const BARE_PATHS: ReadonlySet<string> = new Set(['/chat', '/sessions', '/info-panel']);
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <ErrorBoundary>
-      <BrowserRouter>
-        <Root />
-      </BrowserRouter>
-    </ErrorBoundary>
-  </React.StrictMode>
-);
+// A standalone skill page's hidden channel frame (`?channel=1`): one peer
+// for its calls, nothing rendered.
+if (urlParams.get('channel') === '1') {
+  startChannelView();
+} else {
+  ReactDOM.createRoot(document.getElementById('root')!).render(
+    <React.StrictMode>
+      <ErrorBoundary>
+        <BrowserRouter>
+          <Root />
+        </BrowserRouter>
+      </ErrorBoundary>
+    </React.StrictMode>
+  );
+}

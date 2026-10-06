@@ -6,7 +6,17 @@
 // exactly what happened on 2026-09-18.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pickResumable } from '../../shared/api.js';
+import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+// api.js imports '/shared/channel.js' by its served path; point it at the file.
+const shared = new URL('../../shared/', import.meta.url);
+const dir = mkdtempSync(join(tmpdir(), 'api-'));
+writeFileSync(join(dir, 'api.mjs'), readFileSync(new URL('api.js', shared), 'utf8')
+  .replace("import '/shared/channel.js'", `import '${new URL('channel.js', shared).href}'`));
+const { pickResumable } = await import(pathToFileURL(join(dir, 'api.mjs')).href);
 
 const NOW = 1789700000;
 const hoursAgo = h => NOW - h * 3600;

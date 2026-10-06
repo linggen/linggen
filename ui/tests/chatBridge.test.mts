@@ -36,14 +36,24 @@ g.document = {
 };
 g.window = { ...g, addEventListener: (t: string, fn: Listener) => { if (t === 'message') windowListeners.push(fn); }, removeEventListener() {} };
 g.fetch = async () => ({ ok: true, json: async () => ({ id: 'sess-1' }) });
+// The page's data channel (/shared/channel.js) stands in as a plain fetch:
+// what rides it is tested in tests/shared/channel.test.mjs.
+(g.window as Record<string, unknown>).LinggenChannel = {
+  fetch: g.fetch,
+  request: async () => ({ status: 200, body: '{}' }),
+  isOpen: () => true,
+};
 g.setInterval = () => 0;
 
-// The bridge imports '/shared/api.js' by its served path; point it at the file.
+// The bridge imports '/shared/api.js' and '/shared/channel.js' by their served
+// paths; point them at the files.
 const shared = new URL('../../shared/', import.meta.url);
 const dir = mkdtempSync(join(tmpdir(), 'bridge-'));
-const src = readFileSync(new URL('chat-bridge.js', shared), 'utf8')
-  .replace("from '/shared/api.js'", `from '${new URL('api.js', shared).href}'`);
-writeFileSync(join(dir, 'chat-bridge.mjs'), src);
+const servedAt = (src: string) => src
+  .replace("from '/shared/api.js'", `from '${pathToFileURL(join(dir, 'api.mjs')).href}'`)
+  .replace("import '/shared/channel.js'", `import '${new URL('channel.js', shared).href}'`);
+writeFileSync(join(dir, 'api.mjs'), servedAt(readFileSync(new URL('api.js', shared), 'utf8')));
+writeFileSync(join(dir, 'chat-bridge.mjs'), servedAt(readFileSync(new URL('chat-bridge.js', shared), 'utf8')));
 const { mount } = await import(pathToFileURL(join(dir, 'chat-bridge.mjs')).href);
 
 async function mountWith(opts: Record<string, unknown>) {

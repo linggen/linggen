@@ -6,7 +6,7 @@
 // Every test also checks, when it ends, that the page sent nothing over
 // plain HTTP beyond what loads the page and signals WebRTC (`HTTP_ALLOWED`):
 // the UI's data rides the data channel.
-import { test as base, expect, type Page } from '@playwright/test';
+import { test as base, expect, type Frame, type Page, type Request } from '@playwright/test';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { readFileSync } from 'node:fs';
@@ -174,12 +174,17 @@ export const test = base.extend<Fixtures>({
     await page.addInitScript(watchPeerConnections);
     if (throttleFrames) await page.addInitScript(throttleAnimationFrames);
     const all: string[] = [];
-    page.on('request', (req) => {
-      if (req.isNavigationRequest() && req.frame() === page.mainFrame()) httpRequests.length = 0;
-      const r = describe(req.method(), req.url(), page.url());
+    const record = (from: Page) => (req: Request) => {
+      if (from === page && req.isNavigationRequest() && req.frame() === page.mainFrame()) httpRequests.length = 0;
+      const r = describe(req.method(), req.url(), from.url());
       httpRequests.push(r);
       all.push(r);
-    });
+    };
+    // Every frame of the page (a skill page's own channel frame, an app tab
+    // in the launcher) and every page it opens (an app skill's page) is held
+    // to the same rule.
+    page.on('request', record(page));
+    page.context().on('page', (opened) => opened.on('request', record(opened)));
     await use(page);
     expectNoHttpData(all);
   },
@@ -218,6 +223,8 @@ const HTTP_ALLOWED: RegExp[] = [
   /^GET \/assets\//, // its scripts, styles, lazy chunks
   /^GET \/(yinyue\.vrm|logo\.svg|favicon\.ico)$/, // static files from ui/public
   /^GET \/anim\//, // Yinyue's animations
+  /^GET \/apps\/[^/]+\/(?!capability\/)/, // a skill page's own files
+  /^GET \/shared\/[a-z-]+\.js$/, // the page helpers skill pages load
   /^(GET|POST|PATCH|DELETE) \/api\/rtc\//, // signaling
   /^GET (blob|data):$/, // in-page URLs: no request leaves the page
 ];
@@ -379,7 +386,8 @@ export function watchAsked() {
   } as typeof RTCDataChannel.prototype.send;
 }
 
-/** What the page asked over the data channel so far (see `watchAsked`). */
-export async function asked(page: Page): Promise<string[]> {
-  return page.evaluate(() => (window as unknown as { __asked: string[] }).__asked);
+/** What the page (or one of its frames) asked over the data channel so far
+ *  (see `watchAsked`). */
+export async function asked(page: Page | Frame): Promise<string[]> {
+  return page.evaluate(() => (window as unknown as { __asked?: string[] }).__asked ?? []);
 }

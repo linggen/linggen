@@ -6,9 +6,12 @@
 </head>
 <body>
   <!-- The dice table's page (tests/e2e: an app skill's page loads at
-       /apps/dice/). It reads its own data the way an app page does. -->
+       /apps/dice/). It reads its own data the way an app page does: its
+       files over HTTP, the engine over the data channel. -->
   <h1>Dice table</h1>
   <p id="table">…</p>
+  <p id="models">…</p>
+  <p id="chats">…</p>
   <script>
     fetch('data/table.json')
       .then((r) => r.json())
@@ -16,6 +19,16 @@
         document.getElementById('table').textContent =
           `${t.table.name}: ${t.player.name} rolled ${t.last_roll.value}`;
       });
+  </script>
+  <script type="module">
+    // Its engine calls, both ways an app page makes them: through the shared
+    // helpers, and with a fetch('/api/…') of its own.
+    import { fetchModels } from '/shared/api.js';
+    const show = (id, text) => { document.getElementById(id).textContent = text; };
+    fetchModels().then((models) => show('models', `Models: ${models.length}`));
+    fetch('/api/skill-sessions?skill=dice')
+      .then((r) => r.json())
+      .then((d) => show('chats', `Chats: ${(d.sessions || []).length}`));
   </script>
 </body>
 </html>

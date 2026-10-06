@@ -84,7 +84,8 @@ request, and making one needs a program, not a model.
 
 The engine still speaks REST to `ling-mem` where it is a program rather than an
 agent — the dream rollup, the mission scheduler's stats, the core block,
-`/apps/<skill>/capability/*` for a skill webpage's own clicks, and the phone's
+`/apps/<skill>/capability/*` for a skill webpage's own clicks (which reach
+`ling` over the page's data channel), and the phone's
 `POST /api/memory/<verb>` passthrough.
 
 **The phone reaches memory through `ling`, and must** (2026-07-30). Yinyue is
@@ -135,9 +136,10 @@ cannot point it elsewhere.
 | Claude Code / Codex plugin | HTTP MCP, JSON-RPC | `/mcp` — browser, x, agents, dream |
 | Linggen.app shell | HTTP | `/api/health`, every 60s while a window is open |
 | Shell, Web UI, phone on LAN | WebRTC | `/api/rtc/token` → `/api/rtc/whip`; then every `/api/*` call as `http_request` on the channel — the web UI has no HTTP data path (webrtc-spec.md) |
+| Skill pages (`/apps/<skill>/…`) | WebRTC | the same, through `/shared/channel.js`: the launcher's channel when it frames them, else a hidden `/?channel=1` frame's own peer; only their files are HTTP (webrtc-spec.md § Skill pages) |
 | Phone off LAN | WebRTC over relay | `linggen.dev` signalling → `/api/signaling/<nonce>/answer` |
 | linggen-browser extension | WebSocket, extension dials in | `/api/bridge/socket` |
-| Skills reaching the browser | HTTP | `POST /api/bridge/call` |
+| Skill scripts reaching the browser | HTTP | `POST /api/bridge/call` (a skill page's own call rides its channel) |
 | Phone, for Yinyue's memory | HTTP in the tunnel | `POST /api/memory/<verb>` → `ling-mem` |
 
 **Into `ling-mem` (`:9528`)**

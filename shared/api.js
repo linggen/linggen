@@ -3,19 +3,26 @@
 // carrying drifting copies; a skill keeps its own module only for calls that
 // are its alone, importing these from here.
 //
-// Same-origin by design: a page served at /apps/<skill>/… reaches the engine
-// that served it (loopback, or the tunnel that proxied it).
+// Every call rides the WebRTC data channel (/shared/channel.js): the engine
+// that served the page, locally or through the linggen.dev tunnel — never
+// plain HTTP. A call made before the channel is open waits for it.
 
-const API_BASE = '';
+// Absolute, like the pages' own imports: one spelling, one module.
+import '/shared/channel.js';
+
+/** `fetch` over the page's data channel. */
+function overChannel(url, init) {
+  return (typeof window !== 'undefined' ? window : globalThis).LinggenChannel.fetch(url, init);
+}
 
 export async function fetchModels() {
-  const res = await fetch(`${API_BASE}/api/models`);
+  const res = await overChannel(`/api/models`);
   if (!res.ok) throw new Error('Failed to fetch models');
   return res.json();
 }
 
 export async function fetchDefaultModel() {
-  const res = await fetch(`${API_BASE}/api/config`);
+  const res = await overChannel(`/api/config`);
   if (!res.ok) return null;
   const config = await res.json();
   const defaults = config.routing?.default_models;
@@ -23,7 +30,7 @@ export async function fetchDefaultModel() {
 }
 
 export async function createSession(title, skill) {
-  const res = await fetch(`${API_BASE}/api/sessions`, {
+  const res = await overChannel(`/api/sessions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ title, skill }),
@@ -33,7 +40,7 @@ export async function createSession(title, skill) {
 }
 
 export async function listSkillSessions(skill) {
-  const res = await fetch(`${API_BASE}/api/skill-sessions?skill=${encodeURIComponent(skill)}`);
+  const res = await overChannel(`/api/skill-sessions?skill=${encodeURIComponent(skill)}`);
   if (!res.ok) return [];
   const data = await res.json();
   return data.sessions || [];
@@ -52,9 +59,12 @@ export function pickResumable(sessions, nowSec = Date.now() / 1000, maxAgeHours 
   return (nowSec - (newest.created_at || 0)) / 3600 < maxAgeHours ? newest.id : null;
 }
 
-/// `keepalive` lets a pagehide cleanup finish after the page is gone.
+/// `keepalive`: a pagehide cleanup. It leaves on the channel before the
+/// handler returns; a frame above the page (the launcher) outlives the page
+/// and finishes it, the page's own channel frame goes with the page (best
+/// effort).
 export async function removeSkillSession(skill, sessionId, { keepalive = false } = {}) {
-  const res = await fetch(`${API_BASE}/api/skill-sessions`, {
+  const res = await overChannel(`/api/skill-sessions`, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ skill, session_id: sessionId }),
@@ -65,7 +75,7 @@ export async function removeSkillSession(skill, sessionId, { keepalive = false }
 
 export async function fetchSessionMessages(skill, sessionId) {
   const params = new URLSearchParams({ skill, session_id: sessionId });
-  const res = await fetch(`${API_BASE}/api/skill-sessions/state?${params}`);
+  const res = await overChannel(`/api/skill-sessions/state?${params}`);
   if (!res.ok) return [];
   const data = await res.json();
   return data.messages || [];
@@ -75,7 +85,7 @@ export async function fetchSessionMessages(skill, sessionId) {
 /// meter is the window's last reading (`size, used, left, refill_at`) or
 /// null when signed out. null when the skill declares no cloud.
 export async function fetchCloud(skill) {
-  const res = await fetch(`${API_BASE}/api/skill-cloud/${encodeURIComponent(skill)}`);
+  const res = await overChannel(`/api/skill-cloud/${encodeURIComponent(skill)}`);
   // An engine without the route answers the web app's index page, 200.
   if (!res.ok || !(res.headers.get('content-type') || '').includes('json')) return null;
   return res.json();
@@ -84,7 +94,7 @@ export async function fetchCloud(skill) {
 /// Bring the save into step with the account's copy. Answers
 /// `{done, version}`; null when signed out or the site is out of reach.
 export async function syncCloud(skill) {
-  const res = await fetch(`${API_BASE}/api/skill-cloud/${encodeURIComponent(skill)}/sync`, { method: 'POST' });
+  const res = await overChannel(`/api/skill-cloud/${encodeURIComponent(skill)}/sync`, { method: 'POST' });
   if (!res.ok) return null;
   return res.json();
 }
@@ -92,14 +102,14 @@ export async function syncCloud(skill) {
 /// Sign in to linggen.dev: the daemon opens the browser; resolves once the
 /// account reports signed in, or false when the login window closes.
 export async function signIn() {
-  const res = await fetch(`${API_BASE}/api/account/login`, { method: 'POST' });
+  const res = await overChannel(`/api/account/login`, { method: 'POST' });
   const out = await res.json().catch(() => ({}));
   if (out && out.opened === false && out.url) window.open(out.url, '_blank', 'noopener');
   const until = Date.now() + 300_000;
   while (Date.now() < until) {
     await new Promise((r) => setTimeout(r, 2000));
     try {
-      const acc = await (await fetch(`${API_BASE}/api/account`)).json();
+      const acc = await (await overChannel(`/api/account`)).json();
       if (acc?.signed_in) return true;
     } catch { /* keep waiting */ }
   }

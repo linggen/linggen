@@ -11,7 +11,7 @@ guide: |
 
 The transport for linggen. WebRTC data channels carry all chat events bidirectionally between the linggen server and browser clients. Works for both local and remote access using the same code path.
 
-**The web UI has no HTTP data path.** Plain HTTP carries only the page, its static files (`/assets/*`, `ui/public`) and the `/api/rtc/*` signaling that brings the channel up. Every other call — boot reads, chat, presence, Yinyue's chat and voice — rides the data channel. A call made before the channel is connected (boot, a reconnect) waits for it and fails with a clear error if it does not open within 20 s; nothing falls back to HTTP. The e2e suite fails any data call over plain HTTP.
+**The web UI has no HTTP data path** — nor does a skill page (§ Skill pages). Plain HTTP carries only the page, its static files (`/assets/*`, `ui/public`, a skill's `/apps/<skill>/…` files, `/shared/*`) and the `/api/rtc/*` signaling that brings the channel up. Every other call — boot reads, chat, presence, Yinyue's chat and voice — rides the data channel. A call made before the channel is connected (boot, a reconnect) waits for it and fails with a clear error if it does not open within 20 s; nothing falls back to HTTP. The e2e suite fails any data call over plain HTTP.
 
 ## Related docs
 
@@ -210,8 +210,9 @@ Linggen ships three UI entries, each a separate HTML + JS bundle:
 | `main` | `/` (index.html) | Owner's full UI | Sidebar, chat, info panel, settings, missions |
 | `embed` | `/embed` | Skill-iframe chat widget (memory, game-table, apple-shifu) and VS Code extension | Just `<ChatWidget>`, pinned to one session |
 | `consumer` | `/consumer` | Remote consumer joining a proxy room | Consumer chat with shared-skills panel |
+| `channel` | `/?channel=1` | A standalone skill page's hidden data-channel frame (§ Skill pages) | Nothing — one peer for the page's calls |
 
-On connect, the client sends a `set_view_context` control message including a `view` field (`"main" | "embed" | "consumer"`). The server uses this to scope pushes so an embed peer never observes cross-session state.
+On connect, the client sends a `set_view_context` control message including a `view` field (`"main" | "embed" | "consumer" | "channel"`). The server uses this to scope pushes so an embed peer never observes cross-session state; a `channel` peer only asks, and is pushed nothing (no page state, no events).
 
 ### Catch-up on channel open
 
@@ -231,9 +232,21 @@ Embed peers are pinned to a single session. The server enforces:
 
 A skill iframe therefore only receives events for its own session plus truly global notifications (room_chat, global notifications) — the user's other sessions running in the main page cannot leak into the iframe.
 
+### Skill pages
+
+A skill page (`/apps/<skill>/…`) has no HTTP data path either. Its files load over HTTP like the UI's; every engine call it makes — `/api/*`, a `POST` to `/apps/<skill>/capability/*` — rides a data channel through `/shared/channel.js`, which the page helpers (`api.js`, `chat-bridge.js`) load and which routes the page's own `fetch` for those paths (skill-spec.md § Page helpers). One API for skill code: `fetch` and the helpers, wherever the page runs. The channel it rides, nearest first:
+
+| Where the page runs | Channel |
+|:--|:--|
+| Remote — the linggen.dev connect page frames it at `/tunnel/<id>/…` | The connect page's: its tunnel worker answers every request of the page over the connect page's data channels, `fetch` as is |
+| Framed by a same-origin page that holds a channel — the launcher's app tabs (`/?launcher=1`), a skill page around its settings overlay | The frame above's: the page finds `window.__linggenChannel` on it and asks it directly — no second peer |
+| Standing alone — a tab, an app shell's webview | Its own: a hidden `/?channel=1` frame (the UI bundle, `channel` view) opens one peer, the way the chat embed opens its own, and carries the calls |
+
+The host face is the same everywhere — `__linggenChannel.request({ method, path, body, contentType, wait })` → the engine's `http_request` reply as it came (a byte body still base64; the asking page decodes it), and `isOpen()`. A skill page offers its own channel to its frames the same way. The rules are the UI's: a call made before the channel is open waits for it (20 s, then `NotConnectedError`), nothing falls back to HTTP, and a reading (the presence beat) passes `wait: false` — skipped while the channel is down, never queued. A pagehide cleanup (`keepalive`) is handed to the channel before the handler returns; a frame above finishes it, a page's own channel frame goes with the page. The e2e suite holds skill pages — their frames and the pages the UI opens — to the same no-HTTP-data rule.
+
 ### Remote asset loading
 
-In remote mode, all assets (main UI and skill pages) are fetched from the linggen server through the data channel's HTTP proxy. This covers `/index.html`, `/assets/*` (JS/CSS chunks), and `/apps/*` (skill files). Skill iframes are loaded via blob URLs and communicate with the main UI via `postMessage`. No files need to be hosted on `linggen.dev`.
+In remote mode, all assets (main UI and skill pages) are fetched from the linggen server through the data channel's HTTP proxy. This covers `/index.html`, `/assets/*` (JS/CSS chunks), `/apps/*` (skill files) and `/shared/*` (page helpers). A skill page runs in the connect page's iframe at `/tunnel/<id>/…`, every request of it answered by the tunnel worker over the connect page's channels. No files need to be hosted on `linggen.dev`.
 
 ### Media tracks (future)
 
