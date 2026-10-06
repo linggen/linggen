@@ -1,7 +1,7 @@
 ---
 type: design
 reader: Coding agent and Hanli
-status: designed 2026-10-05; § 2 engine harness built (tests/system)
+status: built 2026-10-05; hardened after review 2026-10-06
 guide: |
   How Linggen is tested before and after a release — layers, tools, data.
   Brief; the scripts are the truth once built, this page is the shape.
@@ -38,22 +38,31 @@ isolated.
 ## 2. System tests — hermetic, on fixtures
 
 `tests/system` (`./scripts/check.sh system`, i.e. `cargo nextest run --test
-system`; part of `all`, ~10 s; not in CI until CI fetches a ling-mem). Each
-test starts its own world and throws it away:
+system`; part of `all`; ~7 s of tests; in CI as the `system` job on the
+latest released ling-mem, without the embedding model). Each test starts its
+own world and throws it away:
 
 - **Engine**: the built `ling --web` as its own process on a random port,
   `HOME`/`LINGGEN_HOME`/`TMPDIR`/`XDG_*` in the test's root, env cleared
   (`env -i` + an allow-list), outbound HTTP sent to a closed proxy. A guard
   panics before anything starts if a world would reach `~/.linggen` or
-  9527/9528. Roots live in `/var/tmp/linggen-system-tests`: never `/tmp` or
+  9527/9528 (env, every file of the rendered home, the config's
+  `ling_mem_url`); after a passing test the engine log and every model request
+  must never name 9527/9528. Each child leads its own process group: a stop is
+  TERM to the group, KILL after 5 s, also when the test process dies. A server
+  counts as up only when it answers health and is alone on its port (the
+  listener is the child's); a taken port moves to a fresh one. Roots live in `/var/tmp/linggen-system-tests`: never `/tmp` or
   `$TMPDIR` (always-writable scratch to the engine, so a write would never
-  ask), never the OS temp dir (never a project), never inside a git repo.
+  ask), never the OS temp dir (never a project), never inside a git repo. A
+  failed test keeps its root; roots older than 3 days are swept.
 - **ling-mem** as a scratch daemon over the world's home, the same `serve`.
   It has no stub embedder: by default its model load is refused offline, so
   `session_start`, `list` and MCP work and an add or search fails fast. The
-  one test that needs rows loads the real model through a link to the
-  person's Hugging Face cache and seeds invented rows (~2 s warm, ~16 s
-  cold; skipped when the model is absent).
+  one test that needs rows clones the model from the person's Hugging Face
+  cache (copy-on-write, never a link — the real cache is never written) and
+  seeds invented rows (~2 s). It is `#[ignore]`d: `check.sh system` runs it
+  when the model is present; `LINGGEN_SYSTEM_REQUIRE_EMBED=1` fails without
+  it. The suite prints the ling-mem path and version it runs.
 - **Fake model: llmposter** as a dev-dependency running inside the test
   process (AGPL is fine for a tool we never ship; it never reaches the
   shipped binary). In-process rather than its CLI: each test gets its own
@@ -69,14 +78,25 @@ test starts its own world and throws it away:
   WebRTC transport is the real one.
   Built: `tests/e2e` (`./scripts/check.sh e2e`, ~1 min, not in `all`); each
   test starts its world through `tests/world`, the same world-builder run as a
-  process, on the debug `ling` (it serves `ui/dist` from disk).
+  process, on the debug `ling` (it serves `ui/dist` from disk). Every test
+  checks the page's plain-HTTP requests against an allow-list (the page,
+  `/assets`, `ui/public` files, `/api/rtc/*` signaling); the UI's remaining
+  HTTP senders (presence, TTS, `/api/*` before the transport connects) are
+  named in `tests/e2e/support/world.ts` until they move to the data channel.
+  Counts wait for a definite turn end (the chat box's `data-busy="false"`),
+  never a sleep; selectors are `data-testid`/roles. A bug found but not fixed
+  stays a `test.fail` with a dated note. The first-run world is
+  `tests/fixtures/fresh` (default config + the test's ports): a home with no
+  config at all would dial the real ling-mem on 9528 until the engine takes a
+  ling-mem address from the environment.
 
 **Fixtures** live in the repo (`tests/fixtures/home/`), copied and rendered
 (`{{PORT}}`-style placeholders) per test: config pointing at the fake model;
 small test skills (`dice`, `quiet` — never a real app like Lingjing, it
 changes and has its own owner); prewritten sessions (shared, compacted,
 interrupted run); one mission; invented memory rows (`tests/fixtures/memory/`:
-a person called Alex, made-up projects). Real data never enters this layer.
+a person called Alex, made-up projects); a fresh first-run home
+(`tests/fixtures/fresh`). Real data never enters this layer.
 
 Ported first: the shared-session scenarios of `scripts/live-check.sh`
 (a, b, d, e, f), the interrupted-run display, presence per surface, session
@@ -114,8 +134,15 @@ driven over SSH. Apple's licence allows two macOS VMs per Mac — enough for
 one fresh VM and one old-user VM. GitHub's macOS runners are not clean (brew,
 node, python preinstalled) and cannot run Tart, so the gate runs on Hanli's
 Mac: `just release-gate --draft "engine=… mem=… app=…"` (or `--local` for
-local builds) — `scripts/gate/`. Image: `macos-tahoe-vanilla` (~27 GB, pulled
-once). The VM reaches the host's mirror and llmposter through SSH reverse
+local builds) — `scripts/gate/`. Image: `linggen-gate-base` when it exists —
+`macos-tahoe-vanilla` switched by hand to "App Store & Known Developers"
+(`release-checklist.md`) — else `macos-tahoe-vanilla` (~27 GB, pulled once);
+`GATE_IMAGE` overrides. Before any VM boots the gate runs `check.sh all` and
+`check.sh e2e` on the engine HEAD it records (red stops it;
+`--skip-host-checks` is a GAP), and for `--draft` compares HEAD to the commit
+the engine draft is cut from: a sha target that differs FAILs, a moved branch
+WARNs. Every VM script ends with an exit line; one that dies early or exits
+nonzero FAILs ("ran to the end"). The VM reaches the host's mirror and llmposter through SSH reverse
 tunnels, so nothing on the host listens beyond loopback.
 
 **First install** (fresh VM, no `~/.linggen`):
@@ -127,6 +154,8 @@ tunnels, so nothing on the host listens beyond loopback.
    `linggen-plugin.tar.gz` into both hosts with no CLT dialog (FAIL if the
    dialog is up). The GitHub marketplace form is still tried and reported.
    Codex has no unattended installer without node; the host's CLI is copied in.
+   Claude Code comes from the live claude.ai/install.sh: its version is INFO,
+   its failure a GAP.
 2. Also a browser-style download of each asset — the app, `ling`,
    `ling-mem` — with `com.apple.quarantine` set (curl and `install-app.sh`
    leave none, so they alone hide Gatekeeper). The vanilla image ships with
@@ -135,8 +164,8 @@ tunnels, so nothing on the host listens beyond loopback.
    every Developer ID app is refused there. Pass: `spctl` names the source
    `Notarized Developer ID` (or accepts; a bare CLI, "not an app" to
    `-t exec`, is asked with `-t install`); the quarantined run (the app
-   through `open`, the CLIs `--version`) decides, and is a GAP until
-   `GATE_IMAGE` names an image switched by hand. An asset that is not
+   through `open`, the CLIs `--version`) decides, and is a GAP on the vanilla
+   image (no `linggen-gate-base`). An asset that is not
    Developer ID signed FAILs a `--draft` run and WARNs a `--local` one; a
    `--draft` with no `app=` serves the published app, not this train's, so
    its verdict is a GAP.
@@ -169,10 +198,16 @@ sessions, config, saves, a memory store in the old schema, both plugins):
    (`cli/init.rs`), so an old copy is reported, not failed.
 3. Rollback: a release with a wrong sha256 is refused and the old binary
    still runs; `ling update --rollback` and `ling-mem upgrade --rollback`
-   swap to `.prev` and back.
+   swap to `.prev` — the pre-upgrade version (the gate keeps the old binary
+   aside and puts it there when the update kept none or kept the release's own
+   bytes) — and back. With nothing older to return to (the baseline already
+   runs the release) the rollback and restart checks are GAPs, not passes.
 4. A green `--draft` gate saves its VM as the next `linggen-prev`, so the
    old-user baseline rolls forward each release; `--local` keeps it unless
    `--save-prev`. `linggen-prev` is built once from the published releases.
+   That rolling baseline tests N-1 → N only; `--prev <vm>` (or
+   `GATE_PREV_VMS`) also upgrades frozen older snapshots (`tart clone
+   linggen-prev linggen-prev-1.8`) in the same run, never saved over.
 
 Needs from the engine first — built 2026-10-05: `LINGGEN_RELEASE_BASE`
 points every installer and updater at the gate's mirror of the drafts
