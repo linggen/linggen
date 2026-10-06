@@ -93,7 +93,7 @@ impl Memory {
         if with_embedder {
             clone_model(home);
         }
-        let env = hermetic_env(home);
+        let env = hermetic_env(home, None);
         let spawn = |port: u16| {
             let mut cmd = Command::new(ling_mem_bin());
             cmd.arg("--data-dir").arg(home.linggen_home()).args([

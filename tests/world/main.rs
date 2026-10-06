@@ -12,6 +12,9 @@
 //!    "scripts": {"ling":   [{"text": "Hi."}],
 //!                "yinyue": [{"tool": "Write", "args": {...}}, {"text": "…"}]}}
 //!
+//! `{"noConfig": true}` starts a true first install instead: no fixture, no
+//! config at all (`Setup::no_config`).
+//!
 //! Once up it prints one JSON line — `{"url", "root", "work", "linggen_home"}`
 //! — and then reads commands on stdin, one per line:
 //!   `calls`  → one JSON line: every model call (agent, matched, model)
@@ -44,6 +47,7 @@ fn main() {
 fn setup(scenario: &Value) -> Setup {
     let mut setup = Setup {
         fixture: scenario["fixture"].as_str().map(leak),
+        no_config: scenario["noConfig"].as_bool().unwrap_or(false),
         ..Setup::default()
     };
     let scripts = scenario["scripts"].as_object().cloned().unwrap_or_default();
@@ -63,7 +67,9 @@ fn reply(v: &Value) -> Reply {
     if let Some(t) = v["text"].as_str() {
         return support::text(t);
     }
-    let name = v["tool"].as_str().expect("a reply is {text} or {tool, args}");
+    let name = v["tool"]
+        .as_str()
+        .expect("a reply is {text} or {tool, args}");
     support::tool(name, v["args"].clone())
 }
 

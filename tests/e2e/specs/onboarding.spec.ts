@@ -1,20 +1,22 @@
-// First run: a fresh home (tests/fixtures/fresh — the engine's own defaults:
-// no models of the person's, Linggen Cloud the default, signed out). What a
-// new user sees. Never click a sign-in button here: the daemon would open the
+// First run: a real first install — no config folder at all (`noConfig`), so
+// the engine runs on its own defaults: no models of the person's, Linggen
+// Cloud the default, signed out. What a new user sees. The world stays
+// hermetic without a config: its port comes from `--port` and its ling-mem
+// from `LING_MEM_URL` (the engine's default memory address when no config
+// names one). Never click a sign-in button here: the daemon would open the
 // system browser.
-// A real first install has no config/ at all; that world can't be hermetic
-// yet — with no config the engine dials ling-mem at 127.0.0.1:9528 (the
-// person's own) and has no other way to be told — so `fresh` is the default
-// config plus only the test's ports.
 import type { Page } from '@playwright/test';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
 import { test, expect, expectWebRtc, expectTurnOver, chat, send } from '../support/world';
 
-test.use({ scenario: { fixture: 'fresh' } });
+test.use({ scenario: { noConfig: true } });
 
 /** The chat's inline sign-in prompt (a turn that needs linggen.dev). */
 const signInPrompt = (page: Page) => chat(page).getByTestId('auth-required');
 
 test('a new install shows an empty chat and asks to sign in on the first message', async ({ page, world, httpRequests }) => {
+  expect(existsSync(path.join(world.linggenHome, 'config')), 'a first install has no config folder').toBe(false);
   await page.goto(world.url);
   await expectWebRtc(page, httpRequests);
   await expect(page.getByTestId('session-list-empty')).toBeVisible();

@@ -246,8 +246,8 @@ ignored, and how the 9898 stray daemon was launched.
 |:--|:--|:--|
 | plugin hooks | `~/.linggen/client.json` | env > file > default, via `hooks/mcp.sh` |
 | plugin `.mcp.json` | `${LINGGEN_HOST/PORT}`, `${LING_MEM_HOST/PORT}` | CC expands at startup, **before** any hook — so it can only take env; `config.sh` mirrors `client.json` into `settings.json` `env` |
-| `ling` → `ling-mem` | `[agent].ling_mem_url` | full URL, so it can already point off-machine |
-| `ling` `cli/status.rs` | `DEFAULT_LING_MEM_PORT` const | **no** — ignores the above |
+| `ling` → `ling-mem` | `[agent].ling_mem_url` > `$LING_MEM_URL` > `:9528` | full URL, so it can already point off-machine; autostart starts ling-mem on its port, loopback only |
+| `ling` `cli/status.rs` | the resolved `[agent].ling_mem_url` | yes |
 | `ling` permission check | hardcoded `127.0.0.1:9528` | **no** |
 | `ling-mem` CLI | `daemon.json` | discovery; local only by construction |
 | `linggen-vscode` | its own `linggen.dashboard.port` | yes |
@@ -261,13 +261,11 @@ relay instance and split the phone's traffic.
 
 ## Open
 
-**The last restatement.** `cli/status.rs:106` still probes
-`DEFAULT_LING_MEM_PORT` instead of reading `[agent].ling_mem_url`, so `ling
-status` reports on a daemon the engine may not be using. (The permission check
-was listed here too and shouldn't have been — it carries no ling-mem address at
-all; every other `9528` in `src/` is a test literal or a doc comment.) And
-`ling` still publishes no discovery file the way `ling-mem` does — which is what
-a client would read to find a *running* daemon rather than a configured one.
+**Discovery.** `ling` still publishes no discovery file the way `ling-mem`
+does — which is what a client would read to find a *running* daemon rather
+than a configured one. (`ling status` and autostart now read the resolved
+`[agent].ling_mem_url`; every other `9528` in `src/` is the default, a test
+literal or a doc comment.)
 
 **A second machine, end to end.** Every piece is built — the plugin's two
 server entries, hooks over curl, `autostart.sh` skipping the binary on a remote

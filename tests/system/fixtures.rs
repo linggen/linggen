@@ -4,7 +4,7 @@
 use crate::support::home::Home;
 use crate::support::memory::Memory;
 use crate::support::{guard, Setup, World};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::path::Path;
 
 fn ids(list: &Value, key: &str) -> Vec<String> {
@@ -37,6 +37,48 @@ async fn the_fixture_home_loads() {
         "a built-in mission was seeded into the fixture home"
     );
     w.assert_all_scripted();
+}
+
+/// A true first install — no config folder at all — boots on the engine's
+/// own defaults, and its memory goes to the world's ling-mem (named only by
+/// `LING_MEM_URL`), not the real one on 9528.
+#[tokio::test]
+async fn a_first_install_with_no_config_reaches_its_own_memory() {
+    let w = World::start(Setup {
+        no_config: true,
+        ..Setup::default()
+    })
+    .await;
+    let config = w.api.get("/api/config").await;
+    assert_eq!(config["agent"]["ling_mem_url"], w.memory.url, "{config}");
+
+    // A memory call through the engine lands in the world's own store.
+    let note = format!("no-config world {}", w.home.root.display());
+    let added = w
+        .api
+        .post(
+            "/api/memory/issue_add",
+            json!({"kind": "subject", "row_ids": ["r-no-config"], "note": note}),
+        )
+        .await;
+    assert_eq!(added["ok"], json!(true), "{added}");
+    let issues = w.memory.call("issues", json!({})).await.to_string();
+    assert!(
+        issues.contains(&note),
+        "not in the world's ling-mem: {issues}"
+    );
+
+    assert!(
+        !w.home.linggen_home().join("config").exists(),
+        "booting wrote a config"
+    );
+    w.assert_all_scripted();
+}
+
+#[test]
+#[should_panic(expected = "HERMETIC GUARD")]
+fn guard_refuses_the_real_memory_url_in_env() {
+    guard::mem_url("http://127.0.0.1:9528");
 }
 
 #[test]

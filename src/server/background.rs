@@ -73,8 +73,9 @@ fn watch_skill_sync(state: &Arc<ServerState>) {
 /// No-op for daemons with no memory-using skill; on failure the per-call
 /// autostart still covers it.
 fn prewarm_memory(state: &Arc<ServerState>) {
-    let skills = state.skills.clone();
+    let state = state.clone();
     tokio::spawn(async move {
+        let skills = state.skills.clone();
         let uses_memory = skills.list_skills().await.iter().any(|s| {
             s.memory_context
                 .as_deref()
@@ -82,7 +83,8 @@ fn prewarm_memory(state: &Arc<ServerState>) {
                 .unwrap_or(false)
         });
         if uses_memory {
-            match crate::engine::tools::memory_http::autostart().await {
+            let url = state.manager.get_config_snapshot().await.agent.ling_mem_url;
+            match crate::engine::tools::memory_http::autostart(&url).await {
                 Ok(()) => info!("ling-mem pre-warmed (a skill uses scoped memory)"),
                 Err(e) => {
                     info!("ling-mem pre-warm deferred to first use: {e}")

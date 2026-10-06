@@ -307,10 +307,11 @@ pub struct AgentConfig {
     /// from it: the built-in memory MCP server's endpoint (`<url>/mcp`,
     /// which is how a model reaches memory), and the engine's own program-
     /// side calls — the `dream` mission reads `episodic_ttl_days` from
-    /// `<url>/api/config`. Default
-    /// is the daemon's own default port — change only if you ran `ling-mem
-    /// start` against a different `--port`, or pointed it at a remote
-    /// host. Trailing slash optional; no path segment.
+    /// `<url>/api/config`. Unset, it is `$LING_MEM_URL` when that is set,
+    /// else the daemon's own default port (see [`default_ling_mem_url`]) —
+    /// change only if you ran `ling-mem start` against a different
+    /// `--port`, or pointed it at a remote host. Trailing slash optional;
+    /// no path segment.
     #[serde(default = "default_ling_mem_url")]
     pub ling_mem_url: String,
     /// Ask the model for follow-up buttons on the turns of a chat that shows
@@ -333,11 +334,56 @@ fn default_memory_recall_count() -> usize {
 }
 
 /// ling-mem daemon's default port. Must match `linggen-memory`'s
-/// `daemon::DEFAULT_PORT`; overridable per install via `[agent].ling_mem_url`.
+/// `daemon::DEFAULT_PORT`; overridable per install via `[agent].ling_mem_url`
+/// or, as the default, `$LING_MEM_URL`.
 pub const DEFAULT_LING_MEM_PORT: u16 = 9528;
 
-fn default_ling_mem_url() -> String {
-    format!("http://127.0.0.1:{DEFAULT_LING_MEM_PORT}")
+/// The environment variable that sets the DEFAULT ling-mem URL — the one used
+/// when the config does not set `[agent].ling_mem_url` (no config file at
+/// all, on a first run). A URL the config names still wins.
+pub const LING_MEM_URL_ENV: &str = "LING_MEM_URL";
+
+/// `[agent].ling_mem_url` when the config leaves it out:
+/// `$LING_MEM_URL`, else `http://127.0.0.1:9528`.
+pub fn default_ling_mem_url() -> String {
+    ling_mem_url_default_from(std::env::var(LING_MEM_URL_ENV).ok().as_deref())
+}
+
+/// The default given the env value: a usable `http(s)://` URL (trailing
+/// slashes dropped), else the daemon's own port. An unusable value is
+/// ignored, with a warning — it would otherwise fail config validation.
+fn ling_mem_url_default_from(env: Option<&str>) -> String {
+    match env.map(str::trim).filter(|v| !v.is_empty()) {
+        Some(v) if v.starts_with("http://") || v.starts_with("https://") => {
+            v.trim_end_matches('/').to_string()
+        }
+        Some(v) => {
+            tracing::warn!("{LING_MEM_URL_ENV}={v:?} ignored: not an http(s) URL");
+            format!("http://127.0.0.1:{DEFAULT_LING_MEM_PORT}")
+        }
+        None => format!("http://127.0.0.1:{DEFAULT_LING_MEM_PORT}"),
+    }
+}
+
+/// A config's saved text, minus a `ling_mem_url` that only came from
+/// `$LING_MEM_URL` (`value` is the config's, `env` the variable's): the env
+/// sets a default, it is never written into the file — where it would then
+/// win over the env for good.
+fn drop_env_ling_mem_url(text: String, value: &str, env: Option<&str>) -> String {
+    let Some(env) = env.map(str::trim).filter(|v| !v.is_empty()) else {
+        return text;
+    };
+    if value != ling_mem_url_default_from(Some(env)) {
+        return text;
+    }
+    let line = format!("ling_mem_url = {}", toml::Value::String(value.to_string()));
+    let mut out: String = text
+        .lines()
+        .filter(|l| l.trim() != line)
+        .collect::<Vec<_>>()
+        .join("\n");
+    out.push('\n');
+    out
 }
 
 impl AgentConfig {
@@ -500,7 +546,11 @@ impl Config {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let content = toml::to_string_pretty(self)?;
+        let content = drop_env_ling_mem_url(
+            toml::to_string_pretty(self)?,
+            &self.agent.ling_mem_url,
+            std::env::var(LING_MEM_URL_ENV).ok().as_deref(),
+        );
         fs::write(&path, content)?;
         Ok(path)
     }
@@ -1067,5 +1117,64 @@ mod tests {
         assert_eq!(parsed.models.len(), cfg.models.len());
         assert_eq!(parsed.server.addr(), cfg.server.addr());
         assert_eq!(parsed.agent.max_iters, cfg.agent.max_iters);
+    }
+
+    // ── ling_mem_url precedence: config > $LING_MEM_URL > 9528 ──
+
+    #[test]
+    fn ling_mem_url_env_sets_the_default() {
+        assert_eq!(
+            ling_mem_url_default_from(Some("http://127.0.0.1:4100/")),
+            "http://127.0.0.1:4100"
+        );
+        assert_eq!(
+            ling_mem_url_default_from(Some(" https://mem.lan:9528 ")),
+            "https://mem.lan:9528"
+        );
+    }
+
+    #[test]
+    fn ling_mem_url_without_env_is_the_daemon_port() {
+        let builtin = format!("http://127.0.0.1:{DEFAULT_LING_MEM_PORT}");
+        assert_eq!(ling_mem_url_default_from(None), builtin);
+        assert_eq!(ling_mem_url_default_from(Some("  ")), builtin);
+        // Not a URL: ignored rather than failing validation at startup.
+        assert_eq!(ling_mem_url_default_from(Some("127.0.0.1:4100")), builtin);
+    }
+
+    /// A URL the config names wins over the env; one it leaves out is the
+    /// default (env-resolved), as with no config file at all.
+    #[test]
+    fn ling_mem_url_in_the_config_wins_over_the_default() {
+        let set: AgentConfig =
+            toml::from_str("max_iters = 5\nling_mem_url = \"http://10.0.0.2:7000\"").unwrap();
+        assert_eq!(set.ling_mem_url, "http://10.0.0.2:7000");
+        let unset: AgentConfig = toml::from_str("max_iters = 5").unwrap();
+        assert_eq!(unset.ling_mem_url, default_ling_mem_url());
+        assert_eq!(Config::default().agent.ling_mem_url, default_ling_mem_url());
+    }
+
+    /// The env's value is never saved into the file (it would then outrank
+    /// the env for good); any other value is.
+    #[test]
+    fn ling_mem_url_from_env_is_not_saved() {
+        let mut cfg = Config::default();
+        cfg.agent.ling_mem_url = "http://127.0.0.1:4100".into();
+        let text = toml::to_string_pretty(&cfg).unwrap();
+        assert!(text.contains("ling_mem_url = \"http://127.0.0.1:4100\""));
+
+        let saved = drop_env_ling_mem_url(
+            text.clone(),
+            &cfg.agent.ling_mem_url,
+            Some("http://127.0.0.1:4100/"),
+        );
+        assert!(!saved.contains("ling_mem_url"), "{saved}");
+        let back: Config = toml::from_str(&saved).unwrap();
+        assert_eq!(back.agent.max_iters, cfg.agent.max_iters);
+
+        for env in [None, Some("http://127.0.0.1:5000")] {
+            let kept = drop_env_ling_mem_url(text.clone(), &cfg.agent.ling_mem_url, env);
+            assert_eq!(kept, text, "env {env:?}");
+        }
     }
 }

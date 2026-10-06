@@ -43,10 +43,11 @@ memory_recall_count: number,
  * from it: the built-in memory MCP server's endpoint (`<url>/mcp`,
  * which is how a model reaches memory), and the engine's own program-
  * side calls — the `dream` mission reads `episodic_ttl_days` from
- * `<url>/api/config`. Default
- * is the daemon's own default port — change only if you ran `ling-mem
- * start` against a different `--port`, or pointed it at a remote
- * host. Trailing slash optional; no path segment.
+ * `<url>/api/config`. Unset, it is `$LING_MEM_URL` when that is set,
+ * else the daemon's own default port (see [`default_ling_mem_url`]) —
+ * change only if you ran `ling-mem start` against a different
+ * `--port`, or pointed it at a remote host. Trailing slash optional;
+ * no path segment.
  */
 ling_mem_url: string, 
 /**

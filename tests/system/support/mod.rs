@@ -41,9 +41,12 @@ pub struct Setup {
     /// Seed this `tests/fixtures/memory/` file before the engine starts
     /// (needs `embedder`).
     pub memory_rows: Option<&'static str>,
-    /// The `tests/fixtures/<dir>` the home is copied from; `home` when unset
-    /// (`fresh` is a new install: no models, no sessions, no skills).
+    /// The `tests/fixtures/<dir>` the home is copied from; `home` when unset.
     pub fixture: Option<&'static str>,
+    /// A true first install: no fixture and no config at all — the engine
+    /// runs on its own defaults, its port from `--port` and its ling-mem
+    /// from `LING_MEM_URL`. (`fixture` is ignored.)
+    pub no_config: bool,
 }
 
 impl Setup {
@@ -71,15 +74,19 @@ impl World {
         vars.insert("ENGINE_PORT", port.to_string());
         vars.insert("MEM_URL", memory.url.clone());
         vars.insert("MODEL_URL", model.url());
-        home.install_fixtures(setup.fixture.unwrap_or("home"), &vars);
-        let config = std::fs::read_to_string(home.config_path()).expect("config");
-        guard::config_text(&config);
-        guard::config_mem_url(&config, &memory.url);
+        if setup.no_config {
+            guard::no_config(&home);
+        } else {
+            home.install_fixtures(setup.fixture.unwrap_or("home"), &vars);
+            let config = std::fs::read_to_string(home.config_path()).expect("config");
+            guard::config_text(&config);
+            guard::config_mem_url(&config, &memory.url);
+        }
         guard::home_files(&home.home(), &home.model_cache());
         if let Some(file) = setup.memory_rows {
             memory.seed(file, &vars).await;
         }
-        let engine = Engine::start(&home, port).await;
+        let engine = Engine::start(&home, port, &memory.url, !setup.no_config).await;
         let api = Api::new(engine.base_url());
         Self {
             api,

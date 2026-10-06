@@ -225,7 +225,7 @@ pub async fn post_memory_verb(
     match post_raw(&url, body).await {
         Ok(v) => Ok(v),
         Err(DispatchError::NoDaemon) => {
-            autostart().await.with_context(|| {
+            autostart(ling_mem_url).await.with_context(|| {
                 format!("autostarting ling-mem after first attempt to {url} failed")
             })?;
             post_raw(&url, body).await.map_err(anyhow::Error::from)
@@ -515,9 +515,14 @@ async fn prune_backups(dir: &std::path::Path) {
     }
 }
 
-/// Ensure the binary exists (installing it if missing) and run `<bin> start`.
-/// Idempotent — `start` while the daemon is already up exits 0.
-pub(crate) async fn autostart() -> Result<()> {
+/// Ensure the binary exists (installing it if missing) and run
+/// `<bin> start --port <port>` for the daemon at `ling_mem_url` — the
+/// resolved `[agent].ling_mem_url`, so a daemon is started where the engine
+/// will look for it. Idempotent — `start` while the daemon is already up
+/// exits 0. A URL on another machine is never started here: a local daemon
+/// on that port would answer from a different store.
+pub(crate) async fn autostart(ling_mem_url: &str) -> Result<()> {
+    let port = local_port(ling_mem_url)?;
     let bin = match resolve_ling_mem() {
         Some(p) => p,
         None => {
@@ -533,6 +538,7 @@ pub(crate) async fn autostart() -> Result<()> {
         AUTOSTART_TIMEOUT,
         tokio::process::Command::new(&bin)
             .arg("start")
+            .args(["--port", &port.to_string()])
             .env("LINGGEN_DATA_DIR", crate::paths::linggen_home())
             .kill_on_drop(true)
             .output(),
@@ -562,4 +568,41 @@ pub(crate) async fn autostart() -> Result<()> {
         ));
     }
     Ok(())
+}
+
+/// The port of a ling-mem URL on this machine, or why it is not one to start.
+fn local_port(ling_mem_url: &str) -> Result<u16> {
+    let url = url::Url::parse(ling_mem_url)
+        .with_context(|| format!("ling-mem URL {ling_mem_url:?} does not parse"))?;
+    let local = match url.host() {
+        Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    };
+    if !local {
+        return Err(anyhow!(
+            "ling-mem at {ling_mem_url} is not on this machine — not starting a local daemon"
+        ));
+    }
+    url.port_or_known_default()
+        .ok_or_else(|| anyhow!("ling-mem URL {ling_mem_url:?} names no port"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::local_port;
+
+    /// Autostart starts the daemon on the resolved URL's port, never 9528 by
+    /// assumption — and never for a daemon on another machine.
+    #[test]
+    fn autostart_port_comes_from_the_url() {
+        assert_eq!(local_port("http://127.0.0.1:4100").unwrap(), 4100);
+        assert_eq!(local_port("http://localhost:4101/").unwrap(), 4101);
+        assert_eq!(local_port("http://[::1]:4102").unwrap(), 4102);
+        assert_eq!(local_port("http://127.0.0.1").unwrap(), 80);
+        assert!(local_port("http://192.168.1.5:9528").is_err());
+        assert!(local_port("http://mem.lan:9528").is_err());
+        assert!(local_port("not a url").is_err());
+    }
 }

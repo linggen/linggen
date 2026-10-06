@@ -15,8 +15,11 @@ import path from 'node:path';
 /** What the fake model answers, call by call, per member. */
 export type Reply = { text: string } | { tool: string; args: Record<string, unknown> };
 export type Scenario = {
-  /** tests/fixtures/<fixture>; `home` when unset, `fresh` = a new install. */
+  /** tests/fixtures/<fixture>; `home` when unset. */
   fixture?: string;
+  /** A true first install: no fixture, no config folder at all (the engine's
+   *  own defaults; its ling-mem named only by `LING_MEM_URL`). */
+  noConfig?: boolean;
   scripts?: { ling?: Reply[]; yinyue?: Reply[] };
 };
 

@@ -102,7 +102,7 @@ Show agent server status.
 ling status
 ```
 
-Prints: version, config path, agent server port + running state, workspace root, model count, agent count.
+Prints: version, config path, agent server port + running state, workspace root, model count, agent count, and the ling-mem daemon at the resolved `[agent].ling_mem_url` (see Environment).
 
 ## doctor
 
@@ -274,6 +274,18 @@ These flags can be used with any command:
 |:-----|:-----------|
 | `--root <PATH>` | Workspace root (default: walk up to find `.git`) |
 | `--port <PORT>` | Server port (default: from config) |
+
+---
+
+## Environment
+
+| Variable | Description |
+|:-----|:-----------|
+| `LINGGEN_CONFIG` | Config file to load first (see `doc/storage-spec.md`) |
+| `LINGGEN_PORT` | Server port, as `--port` |
+| `LING_MEM_URL` | Default ling-mem URL (`http(s)://host:port`) |
+
+`LING_MEM_URL` precedence: `[agent].ling_mem_url` in the config > `$LING_MEM_URL` > `http://127.0.0.1:9528`. It is a default, so it covers a first run with no config file; it is never written into the config when the engine saves one. Every ling-mem path reads the resolved value — memory calls, the built-in memory MCP server, autostart (`ling-mem start --port <its port>`, only for a loopback URL) and `ling status`.
 
 ---
 

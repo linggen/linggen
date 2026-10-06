@@ -80,17 +80,18 @@ pub async fn run(config: &Config, config_path: Option<&Path>) -> Result<()> {
 
     // 9. ling-mem (memory backend)
     println!();
-    check_ling_mem().await;
+    check_ling_mem(&config.agent.ling_mem_url).await;
 
     println!();
     Ok(())
 }
 
 /// Memory backend (`ling-mem`) health. Reports the binary location +
-/// version, the daemon's `/api/health` response on :9528, the on-disk
+/// version, the daemon's `/api/health` response at `ling_mem_url` (the
+/// resolved `[agent].ling_mem_url` — the daemon the engine uses), the on-disk
 /// store, and the canonical skill bundle. Each independent — a missing
 /// daemon doesn't mask a present binary, etc.
-async fn check_ling_mem() {
+async fn check_ling_mem(ling_mem_url: &str) {
     println!("  Memory (ling-mem):");
 
     // Binary on PATH.
@@ -106,22 +107,14 @@ async fn check_ling_mem() {
         ),
     }
 
-    // Daemon on the default port. Check the standard port; users running
-    // a non-default port will see a Skip and can rely on `ling-mem status`.
-    let port: u16 = crate::config::DEFAULT_LING_MEM_PORT;
-    if is_port_listening(port).await {
-        match fetch_ling_mem_health(port).await {
-            Some(v) => ok("Daemon    ", &format!(":{port} healthy (v{v})")),
-            None => fail(
-                "Daemon    ",
-                &format!(":{port} listening but /api/health did not respond"),
-            ),
-        }
-    } else {
-        info(
+    // The daemon the engine uses: the resolved `[agent].ling_mem_url`.
+    let url = ling_mem_url.trim_end_matches('/');
+    match fetch_ling_mem_health(url).await {
+        Some(v) => ok("Daemon    ", &format!("{url} healthy (v{v})")),
+        None => info(
             "Daemon    ",
-            &format!(":{port} not running (start with `ling-mem start`)"),
-        );
+            &format!("{url} not answering (it starts on the first memory call)"),
+        ),
     }
 
     // Store. Memory rows live under ~/.linggen/memory/memory.lancedb/
@@ -180,7 +173,7 @@ fn ling_mem_version(bin: &Path) -> Option<String> {
     s.split_whitespace().nth(1).map(|v| v.to_string())
 }
 
-async fn fetch_ling_mem_health(port: u16) -> Option<String> {
+async fn fetch_ling_mem_health(url: &str) -> Option<String> {
     #[derive(serde::Deserialize)]
     struct Envelope {
         ok: bool,
@@ -197,11 +190,7 @@ async fn fetch_ling_mem_health(port: u16) -> Option<String> {
         .timeout(Duration::from_secs(2))
         .build()
         .ok()?;
-    let resp = client
-        .get(format!("http://127.0.0.1:{port}/api/health"))
-        .send()
-        .await
-        .ok()?;
+    let resp = client.get(format!("{url}/api/health")).send().await.ok()?;
     if !resp.status().is_success() {
         return None;
     }

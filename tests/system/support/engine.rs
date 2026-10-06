@@ -31,10 +31,15 @@ pub struct Mark(usize);
 impl Engine {
     /// Start `ling --web` on `port` (the one the config names; a fresh one
     /// if it was taken meanwhile, and the config rewritten to name it).
-    pub async fn start(home: &Home, port: u16) -> Self {
-        let env = hermetic_env(home);
+    /// `mem_url` is the world's ling-mem (`LING_MEM_URL`). With no config
+    /// (`has_config` false) the flag alone names the port, and the env alone
+    /// names ling-mem — a first install.
+    pub async fn start(home: &Home, port: u16, mem_url: &str, has_config: bool) -> Self {
+        let env = hermetic_env(home, Some(mem_url));
         let spawn = |port: u16| {
-            set_config_port(home, port);
+            if has_config {
+                set_config_port(home, port);
+            }
             let mut cmd = Command::new(env!("CARGO_BIN_EXE_ling"));
             cmd.args(["--web", "--port", &port.to_string(), "--root"])
                 .arg(home.work());
@@ -43,7 +48,10 @@ impl Engine {
         let server = start_server(Some(port), "/api/health", spawn)
             .await
             .unwrap_or_else(|e| panic!("engine: {e}"));
-        guard::engine_banner(&server.proc.log_text(), &home.root);
+        guard::engine_banner(&server.proc.log_text(), &home.root, has_config);
+        if !has_config {
+            guard::no_config(home);
+        }
         Self {
             port: server.port,
             proc: server.proc,
