@@ -1,7 +1,11 @@
 // A test's own world: tests/world started as a child process (the same
 // world-builder the Rust system tests use), stopped when the test ends.
 // A failed test keeps the world's root (the engine and ling-mem logs) and
-// attaches the engine log.
+// attaches the engine log and the world's own stderr.
+//
+// Every test also checks, when it ends, that the page sent nothing over
+// plain HTTP beyond what loads the page and signals WebRTC (`HTTP_ALLOWED`):
+// the UI's data rides the data channel.
 import { test as base, expect, type Page } from '@playwright/test';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
@@ -39,19 +43,37 @@ function guard(hello: { url: string; root: string }) {
   if (!root.startsWith(ROOT_BASE)) throw new Error(`HERMETIC GUARD: world root ${hello.root}`);
 }
 
-async function startWorld(scenario: Scenario): Promise<{ world: World; child: ChildProcessWithoutNullStreams }> {
+type Running = {
+  world: World;
+  child: ChildProcessWithoutNullStreams;
+  /** Settles when the world process is gone (at once if it already is). */
+  exited: Promise<void>;
+  stderr(): string;
+};
+
+async function startWorld(scenario: Scenario): Promise<Running> {
   const bin = process.env.LINGGEN_WORLD_BIN;
   if (!bin) throw new Error('LINGGEN_WORLD_BIN unset — run through playwright (global setup builds it)');
   const child = spawn(bin, [JSON.stringify(scenario)], { stdio: ['pipe', 'pipe', 'pipe'] });
   let stderr = '';
   child.stderr.on('data', (d) => (stderr += d));
+  // One exit listener for the world's whole life: it fails every line still
+  // awaited, and any asked for later.
+  const waiting: { resolve: (line: string) => void; reject: (e: Error) => void }[] = [];
+  let gone: Error | null = null;
+  const exited = new Promise<void>((resolve) => {
+    child.once('exit', (code, signal) => {
+      gone = new Error(`world exited (${code ?? signal}):\n${stderr}`);
+      for (const w of waiting.splice(0)) w.reject(gone);
+      resolve();
+    });
+  });
   const lines = createInterface({ input: child.stdout });
-  const waiting: ((line: string) => void)[] = [];
-  lines.on('line', (line) => waiting.shift()?.(line));
+  lines.on('line', (line) => waiting.shift()?.resolve(line));
   const nextLine = () =>
     new Promise<string>((resolve, reject) => {
-      waiting.push(resolve);
-      child.once('exit', (code) => reject(new Error(`world exited (${code}):\n${stderr}`)));
+      if (gone) return reject(gone);
+      waiting.push({ resolve, reject });
     });
 
   const hello = JSON.parse(await nextLine());
@@ -74,7 +96,19 @@ async function startWorld(scenario: Scenario): Promise<{ world: World; child: Ch
       }
     },
   };
-  return { world, child };
+  return { world, child, exited, stderr: () => stderr };
+}
+
+/** How long a world gets to stop (every process, its root removed) before
+ *  it is killed — its own watchdogs then stop the engine and ling-mem. */
+const STOP_GRACE_MS = 20_000;
+
+async function stopWorld({ child, exited }: Running) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  child.stdin.end();
+  const timer = setTimeout(() => child.kill('SIGKILL'), STOP_GRACE_MS);
+  await exited;
+  clearTimeout(timer);
 }
 
 /** Wraps RTCPeerConnection so a test can read the transport's real state. */
@@ -90,10 +124,27 @@ function watchPeerConnections() {
   } as typeof RTCPeerConnection;
 }
 
-/** Caps animation frames at 10 a second. Yinyue's avatar renders WebGL in
- *  software in headless Chromium at 60 fps — on a busy machine that starves
- *  the page's main thread (a fill took 28 s). Nothing a test reads depends
- *  on frame rate. */
+/** Reports each `fetch` the page sends over plain HTTP while no peer
+ *  connection is up yet (to `__earlyFetch`): the UI's fetch proxy sends
+ *  `/api/*` that way until its data channel is connected. */
+function watchEarlyFetches() {
+  const fetch = window.fetch.bind(window);
+  const report = (r: string) => (window as unknown as { __earlyFetch?: (r: string) => void }).__earlyFetch?.(r);
+  window.fetch = (input, init) => {
+    const pcs = (window as unknown as { __pcs?: RTCPeerConnection[] }).__pcs ?? [];
+    if (!pcs.some((pc) => pc.connectionState === 'connected')) {
+      const url = new URL(input instanceof Request ? input.url : String(input), location.href);
+      const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
+      if (url.origin === location.origin) report(`${method} ${url.pathname}`);
+    }
+    return fetch(input, init);
+  };
+}
+
+/** Caps animation frames at 10 a second (opt in: `throttleFrames`).
+ *  Yinyue's avatar renders WebGL in software in headless Chromium at 60 fps
+ *  — on a busy machine that starves the page's main thread (a fill took
+ *  28 s). Nothing a test reads depends on frame rate. */
 function throttleAnimationFrames() {
   window.requestAnimationFrame = (cb) =>
     window.setTimeout(() => cb(performance.now()), 100) as unknown as number;
@@ -102,36 +153,52 @@ function throttleAnimationFrames() {
 
 type Fixtures = {
   scenario: Scenario;
+  /** Cap the page's animation frames (see `throttleAnimationFrames`). */
+  throttleFrames: boolean;
   world: World;
-  /** Paths of the requests the page sent over plain HTTP (not the data channel). */
+  /** The requests the page sent over plain HTTP (not the data channel) since
+   *  its last load, as `METHOD /path` — a reload starts the list again. */
   httpRequests: string[];
 };
 
 export const test = base.extend<Fixtures>({
   scenario: [{}, { option: true }],
+  throttleFrames: [false, { option: true }],
 
   world: async ({ scenario }, use, testInfo) => {
-    const { world, child } = await startWorld(scenario);
+    const running = await startWorld(scenario);
+    const { world, child } = running;
     await use(world);
     const failed = testInfo.status !== testInfo.expectedStatus;
-    if (failed) {
+    const alive = child.exitCode === null && child.signalCode === null;
+    if (failed || !alive) {
       await testInfo.attach('engine.log', { body: world.engineLog(), contentType: 'text/plain' });
-      child.stdin.write('keep\n');
+      await testInfo.attach('world.stderr', { body: running.stderr(), contentType: 'text/plain' });
     }
-    const exited = new Promise((r) => child.once('exit', r));
-    child.stdin.end();
-    await exited;
+    if (failed && alive) child.stdin.write('keep\n');
+    await stopWorld(running);
+    if (!alive) throw new Error(`the world stopped during the test:\n${running.stderr()}`);
   },
 
   httpRequests: async ({}, use) => {
     await use([]);
   },
 
-  page: async ({ page, httpRequests }, use) => {
+  page: async ({ page, httpRequests, throttleFrames }, use) => {
+    const early = new Set<string>();
+    await page.exposeFunction('__earlyFetch', (r: string) => early.add(r));
     await page.addInitScript(watchPeerConnections);
-    await page.addInitScript(throttleAnimationFrames);
-    page.on('request', (req) => httpRequests.push(`${req.method()} ${new URL(req.url()).pathname}`));
+    await page.addInitScript(watchEarlyFetches);
+    if (throttleFrames) await page.addInitScript(throttleAnimationFrames);
+    const all: string[] = [];
+    page.on('request', (req) => {
+      if (req.isNavigationRequest() && req.frame() === page.mainFrame()) httpRequests.length = 0;
+      const r = describe(req.method(), req.url(), page.url());
+      httpRequests.push(r);
+      all.push(r);
+    });
     await use(page);
+    expectNoHttpData(all, early);
   },
 });
 
@@ -152,9 +219,55 @@ export async function expectWebRtc(page: Page, httpRequests: string[]) {
   expect(httpRequests.some((r) => r.includes('/api/rtc/'))).toBe(true);
 }
 
-/** No chat request went over plain HTTP — it rode the data channel. */
-export function expectNoHttpChat(httpRequests: string[]) {
-  expect(httpRequests.filter((r) => /\/api\/chat\b/.test(r))).toEqual([]);
+/** `METHOD /path` for the page's own origin; `METHOD <url>` elsewhere —
+ *  another host, or a `blob:`/`data:` URL (in-page, never on the wire). */
+function describe(method: string, url: string, pageUrl: string): string {
+  const u = new URL(url);
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return `${method} ${u.protocol}`;
+  const origin = new URL(pageUrl).origin; // 'null' before the first load
+  return u.origin === origin || origin === 'null' ? `${method} ${u.pathname}` : `${method} ${u.href}`;
+}
+
+/** What may go over plain HTTP: the page and its static files, and the
+ *  WebRTC signaling that brings the data channel up. */
+const HTTP_ALLOWED: RegExp[] = [
+  /^GET \/$/, // the page (`/?session=…` too)
+  /^GET \/assets\//, // its scripts, styles, lazy chunks
+  /^GET \/(yinyue\.vrm|logo\.svg|favicon\.ico)$/, // static files from ui/public
+  /^GET \/anim\//, // Yinyue's animations
+  /^(GET|POST|PATCH|DELETE) \/api\/rtc\//, // signaling
+  /^GET (blob|data):$/, // in-page URLs: no request leaves the page
+];
+
+/** Data the UI still sends over plain HTTP — each breaks the all-WebRTC
+ *  rule and is named here so a new one fails. Remove one when its sender
+ *  moves to the data channel:
+ *   - presence.ts beats `POST /api/presence` with `_originalFetch`, always;
+ *   - eventHandlers/yinyue.ts posts each line Yinyue speaks to `/api/tts`
+ *     with `_originalFetch` (when she is not muted: the fresh home);
+ *   - fetchProxy.ts sends `/api/*` straight over HTTP until the transport is
+ *     connected (which ones go before it depends on timing, so these are
+ *     told apart by when they were sent: `watchEarlyFetches`). */
+const HTTP_KNOWN_VIOLATIONS: string[] = ['POST /api/presence', 'POST /api/tts'];
+const sentBeforeDataChannel = (r: string, early: Set<string>) => r.includes(' /api/') && early.has(r);
+
+/** Nothing went over plain HTTP but `HTTP_ALLOWED` (and the known
+ *  violations) — the UI's data rode the data channel. Checked for every
+ *  test when it ends. */
+export function expectNoHttpData(requests: string[], early = new Set<string>()) {
+  const stray = requests.filter(
+    (r) => !HTTP_ALLOWED.some((re) => re.test(r))
+      && !HTTP_KNOWN_VIOLATIONS.includes(r)
+      && !sentBeforeDataChannel(r, early),
+  );
+  expect([...new Set(stray)], 'requests sent over plain HTTP').toEqual([]);
+}
+
+/** The session's turn is over: the chat box no longer shows it busy (the
+ *  engine's Idle, and nothing left pending). A count taken after this sees
+ *  every row the turn will ever show. */
+export async function expectTurnOver(page: Page) {
+  await expect(chat(page).getByTestId('chat-input')).toHaveAttribute('data-busy', 'false');
 }
 
 /** Every model call so far was one a test scripted (none fell to the
@@ -252,10 +365,10 @@ type HeldItem = { url: string; data: string; deliver: () => void };
 
 /** Stops holding and delivers what is held — those `first` names (as `held`
  *  lists them) in that order, then the rest; each one's messages in the
- *  order they came — then gives the page a moment to handle them, so a test
- *  can check what did NOT land. */
+ *  order they came. A test that checks what did NOT land waits for a later
+ *  definite point first (`expectTurnOver` after its next turn). */
 export async function release(page: Page, first: string[] = []) {
-  await page.evaluate(async (order) => {
+  await page.evaluate((order) => {
     const hold = (window as unknown as { __hold: { on: boolean; urls: Map<string, string>; held: HeldItem[] } }).__hold;
     hold.on = false;
     const key = (u: string) => new URL(u, location.origin).searchParams.get('session_id') ?? u;
@@ -265,7 +378,6 @@ export async function release(page: Page, first: string[] = []) {
     for (const h of hold.held.filter((h) => !order.includes(key(h.url)))) h.deliver();
     hold.held.length = 0;
     hold.urls.clear();
-    await new Promise((r) => setTimeout(r, 500));
   }, first);
 }
 

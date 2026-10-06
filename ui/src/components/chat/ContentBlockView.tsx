@@ -233,7 +233,8 @@ export const ContentBlockView: React.FC<{
   };
 
   return (
-    <div className={cn('font-mono', lineOpacity)}>
+    <div className={cn('font-mono', lineOpacity)} data-testid="tool-call" data-tool={block.tool}
+      data-status={isRunning ? 'running' : isFailed ? 'failed' : 'done'}>
       <div
         className={cn('flex items-start gap-1.5 cursor-pointer select-none')}
         onClick={handleClick}

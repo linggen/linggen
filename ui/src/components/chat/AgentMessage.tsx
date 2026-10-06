@@ -204,7 +204,7 @@ export const AgentMessage: React.FC<{
       })()}
 
       {showInterrupted && (
-        <div className="mt-1 flex items-center gap-1.5 text-[12px] text-slate-500 dark:text-slate-400 select-none">
+        <div data-testid="interrupted-marker" className="mt-1 flex items-center gap-1.5 text-[12px] text-slate-500 dark:text-slate-400 select-none">
           <span className="text-slate-300 dark:text-slate-600" aria-hidden>⎿</span>
           {INTERRUPTED_RUN_TEXT}
         </div>

@@ -75,7 +75,7 @@ export const AuthRequiredBlock: React.FC<{
   };
 
   return (
-    <div className="rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
+    <div data-testid="auth-required" data-provider={provider} className="rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
       <div className="flex items-start gap-2">
         <span className="mt-0.5 shrink-0 text-amber-500 dark:text-amber-400">&#x26A0;</span>
         <div className="space-y-2">

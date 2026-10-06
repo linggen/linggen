@@ -76,6 +76,7 @@ export const AccountAvatar: React.FC<{
         disabled={signingIn}
         className="p-1 hover:text-blue-500 text-slate-500 transition-colors disabled:opacity-50"
         title="Sign in to linggen.dev"
+        data-testid="account-sign-in"
       >
         <LogIn size={14} className={signingIn ? 'animate-pulse' : undefined} />
       </button>

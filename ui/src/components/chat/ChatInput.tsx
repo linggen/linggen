@@ -483,7 +483,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           hinted={!mobile}
           onPick={(text) => onSendMessage(text)}
         />
-        <div className="flex gap-2 bg-white dark:bg-black/20 p-1.5 rounded-xl border border-slate-300/80 dark:border-white/10 relative items-end">
+        <div data-testid="chat-input" data-busy={isRunning ? 'true' : 'false'}
+          className="flex gap-2 bg-white dark:bg-black/20 p-1.5 rounded-xl border border-slate-300/80 dark:border-white/10 relative items-end">
           {showSkillDropdown && (
             <div className="absolute bottom-full left-0 right-0 mb-2 bg-white dark:bg-[#141414] border border-slate-200 dark:border-white/10 rounded-lg shadow-xl max-h-52 overflow-y-auto z-[70]">
               <div className="px-3 py-2 text-[11px] text-slate-500 border-b border-slate-200 dark:border-white/10">

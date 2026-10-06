@@ -1,9 +1,10 @@
 // A new chat: the message goes over the data channel, the fake model's
 // scripted reply renders.
 import {
-  test, expect, expectWebRtc, expectNoHttpChat, expectScriptedCalls, send, shown,
+  test, expect, expectWebRtc, expectScriptedCalls, expectTurnOver, chat, send, shown,
   holdReplies, held, heldEvents, release,
 } from '../support/world';
+import type { Page } from '@playwright/test';
 
 test.use({ scenario: { scripts: { ling: [{ text: 'Hello from the fake model.' }] } } });
 
@@ -13,12 +14,13 @@ test('a sent message gets the scripted reply', async ({ page, world, httpRequest
   await page.getByRole('button', { name: 'New chat', exact: true }).click();
   await send(page, 'Say hello.');
 
+  await expect(shown(page, 'Hello from the fake model.')).toHaveCount(1);
+  await expectTurnOver(page);
   await expect(shown(page, 'Say hello.')).toHaveCount(1);
   await expect(shown(page, 'Hello from the fake model.')).toHaveCount(1);
   await expect(shown(page, '[Ling]')).toHaveCount(1);
   // The new session is listed under its first message.
-  await expect(page.getByText('Say hello.').first()).toBeVisible();
-  expectNoHttpChat(httpRequests);
+  await expect(page.getByTestId('session-row').filter({ hasText: 'Say hello.' })).toHaveCount(1);
   await expectScriptedCalls(world, ['ling']);
 });
 
@@ -39,13 +41,16 @@ test('a late load of the previous session never lands in a new chat', async ({ p
   await expect.poll(async () => (await held(page)).some((s) => s !== previous)).toBe(true);
   const fresh = (await held(page)).find((s) => s !== previous)!;
   await release(page, [fresh, previous]);
-  // The previous session's rows (tests/fixtures/home/sessions) stay there.
-  await expect(shown(page, 'Harbor Table. Alex rolled a 4.')).toHaveCount(0);
 
   await send(page, 'Say hello.');
   await expect(shown(page, 'Hello from the fake model.')).toHaveCount(1);
+  // The late load was handled long before this turn ended: had its rows
+  // (tests/fixtures/home/sessions) landed, they would show now.
+  await expectTurnOver(page);
+  await expect(shown(page, 'Hello from the fake model.')).toHaveCount(1);
   await expect(shown(page, '[Ling]')).toHaveCount(1);
   await expect(shown(page, 'Say hello.')).toHaveCount(1);
+  await expect(shown(page, 'Harbor Table. Alex rolled a 4.')).toHaveCount(0);
   await expect(shown(page, 'Four is a fine number.')).toHaveCount(0);
 });
 
@@ -63,6 +68,8 @@ test('a message sent while New chat is being made goes to the new chat', async (
   await send(page, 'Say hello.');
   await release(page);
 
+  await expect(shown(page, 'Hello from the fake model.')).toHaveCount(1);
+  await expectTurnOver(page);
   await expect(shown(page, 'Hello from the fake model.')).toHaveCount(1);
   await expect(shown(page, 'Say hello.')).toHaveCount(1);
   await expect(shown(page, '[Ling]')).toHaveCount(1);
@@ -92,6 +99,60 @@ test('a turn ends after its reply', async ({ page, world, httpRequests }) => {
 
   await release(page);
   await expect(shown(page, 'Hello from the fake model.')).toHaveCount(1);
+  await expectTurnOver(page);
+  await expect(shown(page, 'Hello from the fake model.')).toHaveCount(1);
   await expect(shown(page, 'Say hello.')).toHaveCount(1);
   await expect(shown(page, '[Ling]')).toHaveCount(1);
+});
+
+test.describe('a live run', () => {
+  test.use({
+    scenario: {
+      scripts: {
+        ling: [{ tool: 'Bash', args: { cmd: 'sleep 120', timeout_ms: 180_000 } }, { text: 'Back again.' }],
+      },
+    },
+  });
+
+  /** A new chat whose run sits in a two-minute Bash, stopped from the box. */
+  async function stopLiveRun(page: Page) {
+    await page.getByRole('button', { name: 'New chat', exact: true }).click();
+    await send(page, 'Wait a while.');
+    const c = chat(page);
+    await c.getByTestId('permission-card').getByRole('button', { name: /^Allow once/ }).click();
+    await expect(c.locator('[data-testid="tool-call"][data-tool="Bash"]')).toHaveAttribute('data-status', 'running');
+    await expect(c.getByTestId('chat-input')).toHaveAttribute('data-busy', 'true');
+    await c.getByRole('button', { name: 'Stop agent' }).click();
+    await expectTurnOver(page);
+  }
+
+  test('Stop ends it, marks it interrupted, and the chat goes on', async ({ page, world, httpRequests }) => {
+    await page.goto(world.url);
+    await expectWebRtc(page, httpRequests);
+    await stopLiveRun(page);
+
+    const c = chat(page);
+    await expect(c.getByTestId('interrupted-marker')).toHaveCount(1);
+    await expect(c.getByRole('button', { name: 'Stop agent' })).toHaveCount(0);
+    // The box takes the next message, and it runs.
+    await send(page, 'Still there?');
+    await expect(shown(page, 'Back again.')).toHaveCount(1);
+    await expectTurnOver(page);
+    await expectScriptedCalls(world, ['ling', 'ling']);
+  });
+
+  // Found by this suite (2026-10-06), not fixed yet: live, the stopped Bash
+  // still shows running and a second, empty [Ling] bubble opens; a reload
+  // shows one bubble and the call finished. Expected to fail until the live
+  // view matches — then drop `test.fail`.
+  test('a stopped run shows live as after a reload', async ({ page, world, httpRequests }) => {
+    test.fail();
+    await page.goto(world.url);
+    await expectWebRtc(page, httpRequests);
+    await stopLiveRun(page);
+
+    const c = chat(page);
+    await expect(c.locator('[data-testid="tool-call"][data-tool="Bash"]')).not.toHaveAttribute('data-status', 'running', { timeout: 5_000 });
+    await expect(shown(page, '[Ling]')).toHaveCount(1, { timeout: 5_000 });
+  });
 });

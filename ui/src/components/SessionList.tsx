@@ -477,9 +477,9 @@ export const SessionList: React.FC<{
       )}
 
       {/* Session list (scrollable) */}
-      <div className="flex-1 overflow-y-auto min-h-0">
+      <div className="flex-1 overflow-y-auto min-h-0" data-testid="session-list">
         {groups.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-12 text-slate-400">
+          <div className="flex flex-col items-center justify-center py-12 text-slate-400" data-testid="session-list-empty">
             <MessageSquare size={24} className="mb-2 opacity-30" />
             <p className="text-xs">No sessions yet</p>
             <button onClick={onCreateSession} className="mt-2 text-xs text-blue-500 hover:underline">
@@ -524,6 +524,7 @@ export const SessionList: React.FC<{
               };
               return (
                 <div key={session.id} onClick={handleRowClick} role="button" tabIndex={0}
+                  data-testid="session-row" data-session-id={session.id}
                   onKeyDown={(e) => { if (e.key === 'Enter') handleRowClick(); }}
                   className={cn(
                     'w-full flex items-start gap-2 px-3 py-2 text-left transition-all duration-150 group cursor-pointer',

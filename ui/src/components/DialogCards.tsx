@@ -28,7 +28,7 @@ export const ConfirmCard: React.FC<{ message: string; onDone: (ok: boolean) => v
   }, [onDone]);
   return (
     <div className={overlayCls} onClick={() => onDone(false)}>
-      <div className={cardCls} onClick={(e) => e.stopPropagation()}>
+      <div className={cardCls} role="alertdialog" aria-modal="true" aria-label={message} onClick={(e) => e.stopPropagation()}>
         <p className={msgCls}>{message}</p>
         <div className={rowCls}>
           <button className={cancelCls} onClick={() => onDone(false)}>Cancel</button>
