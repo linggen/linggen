@@ -72,7 +72,10 @@ impl World {
         vars.insert("MEM_URL", memory.url.clone());
         vars.insert("MODEL_URL", model.url());
         home.install_fixtures(setup.fixture.unwrap_or("home"), &vars);
-        guard::config_text(&std::fs::read_to_string(home.config_path()).expect("config"));
+        let config = std::fs::read_to_string(home.config_path()).expect("config");
+        guard::config_text(&config);
+        guard::config_mem_url(&config, &memory.url);
+        guard::home_files(&home.home(), &home.model_cache());
         if let Some(file) = setup.memory_rows {
             memory.seed(file, &vars).await;
         }
@@ -144,9 +147,14 @@ impl World {
         resp
     }
 
-    /// The rows of a session's thread on disk.
+    /// The rows of a session's thread on disk (it must be there).
     pub fn rows(&self, sid: &str) -> Vec<rows::Row> {
         rows::read(&self.home.linggen_home(), sid)
+    }
+
+    /// A session's rows, or `None` when it has no thread on disk.
+    pub fn rows_opt(&self, sid: &str) -> Option<Vec<rows::Row>> {
+        rows::read_opt(&self.home.linggen_home(), sid)
     }
 
     /// Fail when any model call went unscripted (it would make a test pass
@@ -172,6 +180,21 @@ impl World {
             stray.len(),
             what.join("\n")
         );
+    }
+}
+
+impl Drop for World {
+    /// Whatever the test did, the engine and the model never heard of the
+    /// real engine or ling-mem (checked on a passing test; a failing one
+    /// already says why).
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            return;
+        }
+        guard::after_run("the engine log", &self.engine.log());
+        for call in self.model.calls() {
+            guard::after_run(&format!("a model call to {}", call.path), &call.text());
+        }
     }
 }
 

@@ -1,7 +1,7 @@
 //! A session's thread on disk (`sessions/<id>/messages.jsonl`), read back.
 
 use serde::Deserialize;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Row {
@@ -12,16 +12,29 @@ pub struct Row {
     pub is_observation: bool,
 }
 
+/// A session's rows; the thread must be on disk (a missing file fails the
+/// test rather than reading as "no rows").
 pub fn read(linggen_home: &Path, sid: &str) -> Vec<Row> {
-    let path = linggen_home
-        .join("sessions")
-        .join(sid)
-        .join("messages.jsonl");
-    let text = std::fs::read_to_string(path).unwrap_or_default();
-    text.lines()
+    let path = thread_path(linggen_home, sid);
+    read_opt(linggen_home, sid).unwrap_or_else(|| panic!("no thread on disk at {}", path.display()))
+}
+
+/// A session's rows, or `None` when it has no thread on disk (yet).
+pub fn read_opt(linggen_home: &Path, sid: &str) -> Option<Vec<Row>> {
+    let text = std::fs::read_to_string(thread_path(linggen_home, sid)).ok()?;
+    let rows = text
+        .lines()
         .filter(|l| !l.trim().is_empty())
         .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("bad row {l}: {e}")))
-        .collect()
+        .collect();
+    Some(rows)
+}
+
+fn thread_path(linggen_home: &Path, sid: &str) -> PathBuf {
+    linggen_home
+        .join("sessions")
+        .join(sid)
+        .join("messages.jsonl")
 }
 
 impl Row {

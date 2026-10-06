@@ -87,4 +87,5 @@ async fn interrupted_run_has_a_display_row() {
     );
     let pretty = serde_json::to_string_pretty(&history["messages"]).expect("json");
     snap_text("interrupted_history", &w, &pretty);
+    w.assert_all_scripted();
 }

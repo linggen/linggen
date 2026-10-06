@@ -352,7 +352,7 @@ async fn f_app_moment_lands_in_the_named_session() {
         "a hidden kickoff held by another member: {hidden:?}"
     );
     assert!(
-        w.rows(&other).is_empty(),
+        w.rows_opt(&other).unwrap_or_default().is_empty(),
         "the moment leaked into another table"
     );
     w.assert_all_scripted();

@@ -1,6 +1,8 @@
 # cargo-nextest (doc/test-design.md): each test in its own process, so the
 # system tests' engines, ling-mems and fake models never share one.
 [profile.default]
-# A system test takes seconds; one past two minutes is hung — stop it (its
-# children go with it, see tests/system/support/process.rs).
+# A system test takes seconds; one past two minutes is hung — stop it. Its
+# children go with it: each runs under a watchdog leading its own process
+# group, which TERMs then KILLs the group once the test process is gone
+# (tests/system/support/process.rs).
 slow-timeout = { period = "30s", terminate-after = 4 }

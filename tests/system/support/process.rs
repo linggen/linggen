@@ -62,20 +62,32 @@ pub fn free_port() -> u16 {
     }
 }
 
-/// Runs the real child and stops it when told to (TERM) or when the test
-/// process is gone — a test killed without unwinding (a nextest timeout)
-/// must not leave an engine or a ling-mem running.
+/// Runs the real child and stops it when the test process is gone — a test
+/// killed without unwinding (a nextest timeout) must not leave an engine or a
+/// ling-mem running. The watchdog leads its own process group (see
+/// [`Owned::spawn`]), so the child and anything it starts share it: a stop
+/// is TERM to the group, then KILL to whatever is left after [`STOP_GRACE`].
 const WATCHDOG: &str = r#"
 owner=$1; shift
 "$@" & child=$!
+# A stop TERMs the whole group: the child got it too; wait for it to go.
 # (`sleep & wait`: a trapped TERM interrupts the wait, not after a full sleep.)
-trap 'kill $child 2>/dev/null; wait $child; exit 0' TERM INT
+trap 'wait $child; exit 0' TERM INT
 while kill -0 $child 2>/dev/null; do
-  kill -0 $owner 2>/dev/null || { kill $child 2>/dev/null; break; }
+  if ! kill -0 $owner 2>/dev/null; then
+    trap '' TERM INT
+    kill -TERM 0
+    (sleep 5; kill -KILL 0) &
+    wait $child
+    kill -KILL 0
+  fi
   sleep 1 & wait $!
 done
 wait $child
 "#;
+
+/// How long a stopped child gets to exit on TERM before the group is killed.
+const STOP_GRACE: Duration = Duration::from_secs(5);
 
 /// A child that is stopped when the test is done with it.
 pub struct Owned {
@@ -88,6 +100,8 @@ impl Owned {
         let out = std::fs::File::create(&log).expect("create a child log");
         let err = out.try_clone().expect("clone the child log");
         let mut cmd = Command::new("/bin/sh");
+        // Its own group, so a stop reaches the child and its children.
+        std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
         cmd.args(["-c", WATCHDOG, "watchdog", &std::process::id().to_string()])
             .arg(real.get_program())
             .args(real.get_args());
@@ -102,7 +116,25 @@ impl Owned {
     }
 
     pub fn log_text(&self) -> String {
-        strip_ansi(&std::fs::read_to_string(&self.log).unwrap_or_default())
+        self.log_from(0)
+    }
+
+    /// The log's length in bytes — a mark [`Owned::log_from`] reads after.
+    pub fn log_len(&self) -> usize {
+        self.log_bytes().len()
+    }
+
+    /// The log written after byte `from`. Read as bytes and decoded lossily:
+    /// a character the child is halfway through writing shows as U+FFFD,
+    /// never a panic or a reset mark.
+    pub fn log_from(&self, from: usize) -> String {
+        let bytes = self.log_bytes();
+        let tail = bytes.get(from..).unwrap_or_default();
+        strip_ansi(&String::from_utf8_lossy(tail))
+    }
+
+    fn log_bytes(&self) -> Vec<u8> {
+        std::fs::read(&self.log).unwrap_or_default()
     }
 
     pub fn exited(&mut self) -> bool {
@@ -119,10 +151,37 @@ impl Owned {
 
 impl Drop for Owned {
     fn drop(&mut self) {
-        // TERM to the watchdog, which stops the real child and waits for it.
-        unsafe { libc::kill(self.child.id() as libc::pid_t, libc::SIGTERM) };
+        self.stop();
+    }
+}
+
+impl Owned {
+    /// TERM the child's whole group; KILL whatever is left after
+    /// [`STOP_GRACE`]. No grandchild outlives it.
+    fn stop(&mut self) {
+        let group = -(self.child.id() as libc::pid_t);
+        signal(group, libc::SIGTERM);
+        let start = Instant::now();
+        while group_alive(group) && start.elapsed() < STOP_GRACE {
+            // Reap the watchdog as soon as it exits, so its zombie does not
+            // keep the group looking alive.
+            let _ = self.child.try_wait();
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        if group_alive(group) {
+            signal(group, libc::SIGKILL);
+        }
         let _ = self.child.wait();
     }
+}
+
+fn signal(target: libc::pid_t, sig: libc::c_int) {
+    unsafe { libc::kill(target, sig) };
+}
+
+/// Whether any process of the group `-pgid` still exists.
+fn group_alive(group: libc::pid_t) -> bool {
+    unsafe { libc::kill(group, 0) == 0 }
 }
 
 /// A server child up and answering on its port.
@@ -132,8 +191,9 @@ pub struct Server {
 }
 
 /// Start a server on `port` (else a free one) and wait for `health` to
-/// answer. A port taken in the moment between choosing and binding it gets
-/// two more tries on fresh ports.
+/// answer — from our child, not whoever else holds the port. A port taken
+/// in the moment between choosing and binding it gets two more tries on
+/// fresh ports.
 pub async fn start_server(
     port: Option<u16>,
     health: &str,
@@ -146,13 +206,41 @@ pub async fn start_server(
         let mut proc = spawn(port);
         let url = format!("http://127.0.0.1:{port}{health}");
         match wait_healthy(&mut proc, &url, Duration::from_secs(60)).await {
-            Ok(()) => return Ok(Server { proc, port }),
+            Ok(()) if owns_port(&mut proc, port) => return Ok(Server { proc, port }),
+            Ok(()) => last = format!("port {port} answered, but not from our child"),
             Err(e) if e.contains("in use") => last = e,
             Err(e) => return Err(e),
         }
         port = free_port();
     }
     Err(last)
+}
+
+/// Whether `proc` is still running and alone on `port`: every listener there
+/// belongs to its process group (the child under the watchdog) — a stranger
+/// on the same port could be the one that answered.
+fn owns_port(proc: &mut Owned, port: u16) -> bool {
+    if proc.exited() {
+        return false;
+    }
+    let group = proc.child.id() as libc::pid_t;
+    let pids = listeners(port);
+    !pids.is_empty()
+        && pids
+            .iter()
+            .all(|&pid| unsafe { libc::getpgid(pid) } == group)
+}
+
+/// The pids listening on loopback TCP `port`.
+fn listeners(port: u16) -> Vec<libc::pid_t> {
+    let out = Command::new("lsof")
+        .args(["-nP", "-t", &format!("-iTCP:{port}"), "-sTCP:LISTEN"])
+        .output()
+        .unwrap_or_else(|e| panic!("lsof (to see who listens on {port}): {e}"));
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| l.trim().parse().ok())
+        .collect()
 }
 
 /// Poll `url` until it answers 2xx, the child dies, or `timeout` passes.

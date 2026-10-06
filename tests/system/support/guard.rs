@@ -94,3 +94,86 @@ pub fn engine_banner(log: &str, root: &Path) {
     let path = line.split("Config File: ").nth(1).unwrap_or("").trim();
     path_in_root(Path::new(path), root, "the engine's config file");
 }
+
+/// The rendered config sends memory to the world's own ling-mem — the one
+/// address every memory path in the engine reads (`[agent].ling_mem_url`;
+/// unset, it would default to 9528).
+pub fn config_mem_url(text: &str, mem_url: &str) {
+    if !text.contains(&format!("ling_mem_url = \"{mem_url}\"")) {
+        refuse(format!(
+            "the rendered config does not send memory to the test's ling-mem {mem_url}"
+        ));
+    }
+}
+
+/// Every file of a rendered home: no real port, no path into the real
+/// `~/.linggen`. `skip` is a subtree not to read (the linked model cache).
+pub fn home_files(home: &Path, skip: &Path) {
+    let real = real_linggen_home().map(|p| p.display().to_string());
+    for file in files_under(home, skip) {
+        let bytes = std::fs::read(&file).unwrap_or_default();
+        let text = String::from_utf8_lossy(&bytes);
+        if let Some(why) = real_reference(&text, real.as_deref()) {
+            refuse(format!("{} names {why}", file.display()));
+        }
+    }
+}
+
+/// After a world ran: what the engine logged and what the model was sent
+/// never named the real engine or ling-mem.
+pub fn after_run(what: &str, text: &str) {
+    for p in REAL_PORTS {
+        for host in ["127.0.0.1", "localhost"] {
+            if text.contains(&format!("{host}:{p}")) {
+                refuse(format!("{what} names {host}:{p}, a real Linggen port"));
+            }
+        }
+    }
+}
+
+fn real_reference(text: &str, real_home: Option<&str>) -> Option<String> {
+    if let Some(p) = REAL_PORTS.iter().find(|p| text.contains(&format!(":{p}"))) {
+        return Some(format!("port {p}"));
+    }
+    real_home
+        .filter(|real| text.contains(real))
+        .map(|real| format!("the real {real}"))
+}
+
+fn files_under(dir: &Path, skip: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return out;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if path.starts_with(skip) {
+            continue;
+        }
+        if kind.is_dir() {
+            out.extend(files_under(&path, skip));
+        } else if kind.is_file() {
+            out.push(path);
+        } else if kind.is_symlink() {
+            link_stays_out(&path);
+        }
+    }
+    out
+}
+
+/// A link in a world never leads into the real `~/.linggen`.
+fn link_stays_out(link: &Path) {
+    let (Some(real), Ok(to)) = (real_linggen_home(), std::fs::read_link(link)) else {
+        return;
+    };
+    if to.starts_with(&real) {
+        refuse(format!(
+            "{} links into the real {}",
+            link.display(),
+            real.display()
+        ));
+    }
+}

@@ -39,12 +39,13 @@ async fn active_and_idle_focused_surfaces_read_present() {
     let alone = her_right_now(&w).await;
     assert!(alone.starts_with("- Them: away"), "{alone}");
 
-    // The person works in the main UI; the idle tab beats after it.
-    beat(&w, "main-ui", 0).await;
+    // The person reads in the main UI (input 30 s ago: reading, never typing
+    // however slow the run); the idle tab beats after it.
+    beat(&w, "main-ui", 30_000).await;
     beat(&w, "skill-page", 600_000).await;
     let both = her_right_now(&w).await;
     assert!(
-        !both.starts_with("- Them: away"),
+        both.starts_with("- Them: present_reading"),
         "the idle tab's beat hid the active one: {both}"
     );
     w.assert_all_scripted();

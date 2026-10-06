@@ -28,6 +28,7 @@ impl Home {
     pub fn new() -> Self {
         let base = base_dir();
         std::fs::create_dir_all(&base).expect("create the system-test base dir");
+        sweep_old_roots(&base);
         let dir = tempfile::Builder::new()
             .prefix("w-")
             .tempdir_in(&base)
@@ -60,6 +61,11 @@ impl Home {
 
     pub fn work(&self) -> PathBuf {
         self.home().join("work")
+    }
+
+    /// Where a world that embeds finds the model (see `memory.rs`).
+    pub fn model_cache(&self) -> PathBuf {
+        self.home().join(".cache/huggingface")
     }
 
     pub fn config_path(&self) -> PathBuf {
@@ -104,6 +110,28 @@ impl Drop for Home {
 /// (no project memory).
 fn base_dir() -> PathBuf {
     PathBuf::from("/var/tmp/linggen-system-tests")
+}
+
+/// Kept roots (failed tests, `LINGGEN_SYSTEM_KEEP`) older than this are
+/// removed by the next world.
+const KEEP_DAYS: u64 = 3;
+
+fn sweep_old_roots(base: &Path) {
+    let max_age = std::time::Duration::from_secs(KEEP_DAYS * 24 * 3600);
+    let Ok(entries) = std::fs::read_dir(base) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let is_root = entry.file_name().to_string_lossy().starts_with("w-");
+        let age = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok());
+        if is_root && age.is_some_and(|a| a > max_age) {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
 }
 
 fn copy_rendered(src: &Path, dst: &Path, vars: &Vars) {

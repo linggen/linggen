@@ -23,17 +23,18 @@ pub enum RunEnd {
     Asked(Value),
 }
 
-/// Where the engine log stood before an action; lines after it are the
-/// action's.
+/// Where the engine log stood before an action (its length in bytes); lines
+/// after it are the action's.
 #[derive(Clone, Copy, Debug)]
 pub struct Mark(usize);
 
 impl Engine {
     /// Start `ling --web` on `port` (the one the config names; a fresh one
-    /// if it was taken meanwhile — the flag wins over the config).
+    /// if it was taken meanwhile, and the config rewritten to name it).
     pub async fn start(home: &Home, port: u16) -> Self {
         let env = hermetic_env(home);
         let spawn = |port: u16| {
+            set_config_port(home, port);
             let mut cmd = Command::new(env!("CARGO_BIN_EXE_ling"));
             cmd.args(["--web", "--port", &port.to_string(), "--root"])
                 .arg(home.work());
@@ -62,13 +63,12 @@ impl Engine {
     }
 
     pub fn mark(&self) -> Mark {
-        Mark(self.log().len())
+        Mark(self.proc.log_len())
     }
 
     /// The log written since `mark`.
     pub fn log_since(&self, mark: Mark) -> String {
-        let log = self.log();
-        log.get(mark.0..).unwrap_or("").to_string()
+        self.proc.log_from(mark.0)
     }
 
     /// Wait for `agent`'s run in `sid` (begun after `mark`) to finish, or to
@@ -105,6 +105,21 @@ impl Engine {
             tail(&self.log_since(mark), 40)
         );
     }
+}
+
+/// Point the rendered config's `[server] url` at `port`, the one the engine
+/// is about to bind — the config and the flag never disagree.
+fn set_config_port(home: &Home, port: u16) {
+    let path = home.config_path();
+    let text = std::fs::read_to_string(&path).expect("read the rendered config");
+    let server_url = regex::Regex::new(r#"(?m)^url = "127\.0\.0\.1:\d+"$"#).expect("regex");
+    assert!(
+        server_url.find_iter(&text).count() == 1,
+        "the rendered config has no single [server] url line"
+    );
+    let text = server_url.replace(&text, format!("url = \"127.0.0.1:{port}\""));
+    guard::config_text(&text);
+    std::fs::write(&path, text.as_ref()).expect("write the rendered config");
 }
 
 /// Whether a tracing line carries `key=value` (quoted or not).

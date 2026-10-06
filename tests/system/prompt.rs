@@ -65,6 +65,7 @@ async fn export_per_member_at_a_skill_table() {
     for not in ["Look", "Roll", "AskUser"] {
         assert!(!has(&hers, not), "she is offered {not}: {hers:?}");
     }
+    w.assert_all_scripted();
 }
 
 /// An ordinary chat's export once the memory server's tools are in (the MCP
@@ -163,10 +164,21 @@ async fn session_withheld_tools_reach_no_member() {
 /// Memory in the prompt, on a seeded store (the real embedding model): a
 /// `$HOME` session gets core rows only; a project session gets the
 /// candidates line and the index, never a sibling project's rows.
+///
+/// Ignored by default (nextest lists it as skipped): it needs the model in
+/// `~/.cache/huggingface`. `./scripts/check.sh system` runs it when the model
+/// is there, or when `LINGGEN_SYSTEM_REQUIRE_EMBED=1` — then a missing model
+/// fails it instead of passing on nothing.
 #[tokio::test]
+#[ignore = "needs the embedding model (Qwen3-Embedding-0.6B in ~/.cache/huggingface)"]
 async fn memory_core_candidates_and_index_in_the_prompt() {
     if !embedder_available() {
-        eprintln!("SKIP: no embedding model in ~/.cache/huggingface (Qwen3-Embedding-0.6B)");
+        let required = std::env::var_os("LINGGEN_SYSTEM_REQUIRE_EMBED").is_some_and(|v| v == "1");
+        assert!(
+            !required,
+            "LINGGEN_SYSTEM_REQUIRE_EMBED=1 but no embedding model in ~/.cache/huggingface"
+        );
+        eprintln!("SKIPPED (passes on nothing): no embedding model in ~/.cache/huggingface");
         return;
     }
     let started = Instant::now();
@@ -230,6 +242,7 @@ async fn memory_core_candidates_and_index_in_the_prompt() {
         !prompt.contains("Lantern"),
         "a sibling project's row leaked in"
     );
+    w.assert_all_scripted();
     eprintln!("memory test total: {:?}", started.elapsed());
 }
 
@@ -295,4 +308,5 @@ async fn the_environment_block_honours_tz() {
     let prompt = export_prompt(&w, &sid, &root).await;
     let line = prompt.lines().find(|l| l.starts_with("- Timezone: "));
     assert_eq!(line, Some("- Timezone: UTC"), "{prompt}");
+    w.assert_all_scripted();
 }
