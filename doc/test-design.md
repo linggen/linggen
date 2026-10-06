@@ -85,18 +85,17 @@ own world and throws it away:
   named in `tests/e2e/support/world.ts` until they move to the data channel.
   Counts wait for a definite turn end (the chat box's `data-busy="false"`),
   never a sleep; selectors are `data-testid`/roles. A bug found but not fixed
-  stays a `test.fail` with a dated note. The first-run world is
-  `tests/fixtures/fresh` (default config + the test's ports): a home with no
-  config at all would dial the real ling-mem on 9528 until the engine takes a
-  ling-mem address from the environment.
+  stays a `test.fail` with a dated note. The first-run world has no
+  config at all (`Setup::no_config`, scenario `noConfig`): the engine on its
+  defaults, its port from `--port`, its ling-mem from `LING_MEM_URL` (guarded
+  like a config).
 
 **Fixtures** live in the repo (`tests/fixtures/home/`), copied and rendered
 (`{{PORT}}`-style placeholders) per test: config pointing at the fake model;
 small test skills (`dice`, `quiet` — never a real app like Lingjing, it
 changes and has its own owner); prewritten sessions (shared, compacted,
 interrupted run); one mission; invented memory rows (`tests/fixtures/memory/`:
-a person called Alex, made-up projects); a fresh first-run home
-(`tests/fixtures/fresh`). Real data never enters this layer.
+a person called Alex, made-up projects). Real data never enters this layer.
 
 Ported first: the shared-session scenarios of `scripts/live-check.sh`
 (a, b, d, e, f), the interrupted-run display, presence per surface, session
