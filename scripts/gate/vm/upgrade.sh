@@ -21,6 +21,33 @@ engine_restarted() { # label old-pid want-version [log]
   fi
 }
 PREV_LING="$(ver_of "$LING")"; PREV_MEM="$(ver_of "$MEM")"; PREV_APP="$(app_version)"
+# The old binaries, for the rollback checks: install.sh keeps no .prev and a
+# relabel swap keeps the release's own bytes, so a swap to it proves nothing.
+cp "$LING" "$OUT/ling.old"; cp "$MEM" "$OUT/ling-mem.old"
+
+# Make <bin>.prev an older binary than <bin>: the update's own, else the
+# pre-upgrade copy. 1 = nothing older to roll back to (GAP).
+real_prev() { # label bin old-copy
+  local how="kept by the update"
+  if [ ! -f "$2.prev" ] || [ "$(sha "$2.prev")" = "$(sha "$2")" ]; then
+    if [ ! -f "$3" ] || [ "$(sha "$3")" = "$(sha "$2")" ]; then
+      gap "$1: rollback reaches an older binary" "$(basename "$2").prev and the pre-upgrade binary are both the release's bytes"
+      return 1
+    fi
+    how="the pre-upgrade binary, put there by the gate; the update kept $([ -f "$2.prev" ] && echo "the release's own bytes" || echo none)"
+    rm -f "$2.prev"; cp "$3" "$2.prev"
+  fi
+  if [ "$(ver_of "$2.prev")" = "$(ver_of "$2")" ]; then
+    gap "$1: rollback reaches an older version" "$(basename "$2").prev is v$(ver_of "$2") too ($how) — the swap is checked by bytes only"
+  else
+    info "$1: $(basename "$2").prev" "v$(ver_of "$2.prev"), $how"
+  fi
+}
+
+# The rolled-back binary may predate --rollback: then the gate swaps back.
+swap_back() { # bin
+  mv "$1" "$1.gate" && mv "$1.prev" "$1" && mv "$1.gate" "$1.prev"
+}
 info "upgrade: from" "ling $PREV_LING, ling-mem $PREV_MEM, app ${PREV_APP:-none}"
 
 # The old user, running: engine (fixtures config → the fake model) + ling-mem.
@@ -52,7 +79,9 @@ check_installed "upgrade: ling is the release" "$LING" "$LING_VERSION" "$LING_SH
 # 9527, started after the swap, answering health. The updater that ran is the
 # OLD binary; one from before `ling update` restarted the engine says so in
 # its --help — the release's own `ling update` is checked under § Restart.
-if [ "$VIA_INSTALL_SH" = 1 ] || $OLD_RESTARTS; then
+if [ "$(sha "$OUT/ling.old")" = "$LING_SHA" ]; then
+  gap "upgrade: 9527 restarted on the new ling" "the baseline already runs these bytes (v$PREV_LING) — nothing to swap"
+elif [ "$VIA_INSTALL_SH" = 1 ] || $OLD_RESTARTS; then
   engine_restarted "upgrade: 9527 restarted on the new ling" "$engine_pid" "$LING_VERSION"
 else
   gap "upgrade: 9527 restarted on the new ling" "ling $PREV_LING's \`ling update\` predates the engine restart — the release's own is checked under § Restart"
@@ -75,10 +104,14 @@ check_installed "upgrade: ling-mem is the release" "$MEM" "$MEM_VERSION" "$MEM_S
 
 # ── The upgraded engine on the old home ────────────────────────────────────
 v="$(mem_version)"; new_pid="$(listener_pid 9528)"
-[ "$v" = "$MEM_VERSION" ] && [ -n "$new_pid" ] && [ "$new_pid" != "$mem_pid" ]
-check "upgrade: 9528 restarted on the new ling-mem" $? \
-  "9528 answers v${v:-none} (pid ${mem_pid:-none} → ${new_pid:-none}) after the binary swap — restarting it by hand" \
-  "v$PREV_MEM → v$v, pid $mem_pid → $new_pid"
+if [ "$(sha "$OUT/ling-mem.old")" = "$MEM_SHA" ]; then
+  gap "upgrade: 9528 restarted on the new ling-mem" "the baseline already runs these bytes (v$PREV_MEM) — nothing to swap"
+else
+  [ "$v" = "$MEM_VERSION" ] && [ -n "$new_pid" ] && [ "$new_pid" != "$mem_pid" ]
+  check "upgrade: 9528 restarted on the new ling-mem" $? \
+    "9528 answers v${v:-none} (pid ${mem_pid:-none} → ${new_pid:-none}) after the binary swap — restarting it by hand" \
+    "v$PREV_MEM → v$v, pid $mem_pid → $new_pid"
+fi
 stop_engine
 [ "$v" = "$MEM_VERSION" ] || { stop_mem; start_mem 60; }
 start_engine 90
@@ -138,22 +171,29 @@ if [ ! -f "$LING.prev" ]; then # install.sh path: give `ling update` one real sw
   LINGGEN_RELEASE_BASE="$RELABEL" "$LING" update >"$OUT/ling-update-relabel.log" 2>&1
   check "ling update: installs and keeps ling.prev" $? "$(tail -2 "$OUT/ling-update-relabel.log")"
 fi
-start_engine 90 || fail "rollback: engine runs before the swap" "no health"
-engine_pid="$(listener_pid 9527)"
-a="$(sha "$LING")"; p="$(sha "$LING.prev")"; prev_restarts=false
-"$LING.prev" update --help 2>/dev/null | grep -qi 'restart' && prev_restarts=true
-"$LING" update --rollback >"$OUT/ling-rollback.log" 2>&1
-rc=$?
-[ "$rc" = 0 ] && [ "$(sha "$LING")" = "$p" ] && [ "$(sha "$LING.prev")" = "$a" ]
-check "ling update --rollback swaps to ling.prev" $? "exit $rc — $(tail -2 "$OUT/ling-rollback.log")" "now $(ver_of "$LING")"
-engine_restarted "ling update --rollback: 9527 restarted on ling.prev" "$engine_pid" "$(ver_of "$LING")" "$OUT/ling-rollback.log"
-engine_pid="$(listener_pid 9527)"
-"$LING" update --rollback >>"$OUT/ling-rollback.log" 2>&1
-[ "$(sha "$LING")" = "$a" ]; check "ling update --rollback again returns" $? "sha ${a:0:12} not back"
-if $prev_restarts; then
-  engine_restarted "ling update --rollback again: 9527 back on the release" "$engine_pid" "$LING_VERSION" "$OUT/ling-rollback.log"
-else
-  info "ling update --rollback again: 9527 back on the release" "ling $(ver_of "$LING.prev")'s rollback predates the engine restart"
+if real_prev "ling" "$LING" "$OUT/ling.old"; then
+  start_engine 90 || fail "rollback: engine runs before the swap" "no health"
+  engine_pid="$(listener_pid 9527)"
+  a="$(sha "$LING")"; p="$(sha "$LING.prev")"; pv="$(ver_of "$LING.prev")"; prev_restarts=false
+  "$LING.prev" update --help 2>/dev/null | grep -qi 'restart' && prev_restarts=true
+  "$LING" update --rollback >"$OUT/ling-rollback.log" 2>&1
+  rc=$?
+  [ "$rc" = 0 ] && [ "$(sha "$LING")" = "$p" ] && [ "$(sha "$LING.prev")" = "$a" ] && [ "$(ver_of "$LING")" = "$pv" ]
+  check "ling update --rollback swaps to ling.prev" $? "exit $rc, now v$(ver_of "$LING") (want v$pv) — $(tail -2 "$OUT/ling-rollback.log")" "v$LING_VERSION → v$pv"
+  engine_restarted "ling update --rollback: 9527 restarted on ling.prev" "$engine_pid" "$pv" "$OUT/ling-rollback.log"
+  engine_pid="$(listener_pid 9527)"
+  if "$LING" update --help 2>/dev/null | grep -q -- '--rollback'; then
+    "$LING" update --rollback >>"$OUT/ling-rollback.log" 2>&1
+    [ "$(sha "$LING")" = "$a" ]; check "ling update --rollback again returns" $? "sha ${a:0:12} not back"
+    if $prev_restarts; then
+      engine_restarted "ling update --rollback again: 9527 back on the release" "$engine_pid" "$LING_VERSION" "$OUT/ling-rollback.log"
+    else
+      info "ling update --rollback again: 9527 back on the release" "ling $pv's rollback predates the engine restart"
+    fi
+  else
+    gap "ling update --rollback again returns" "ling $pv has no --rollback — the gate swaps the release back"
+    stop_engine; swap_back "$LING"
+  fi
 fi
 
 # ── Restart: the release's own `ling update` over a running engine ────────
@@ -172,13 +212,20 @@ if [ ! -f "$MEM.prev" ]; then
   [ -n "$mem_pid" ] && [ -n "$new_pid" ] && [ "$new_pid" != "$mem_pid" ] && [ "$v" = "$MEM_VERSION" ]
   check "ling-mem upgrade: 9528 restarted on the new binary" $? "pid ${mem_pid:-none} → ${new_pid:-none}, v${v:-none}" "pid $mem_pid → $new_pid, v$v"
 fi
-a="$(sha "$MEM")"; p="$(sha "$MEM.prev")"
-"$MEM" upgrade --rollback >"$OUT/mem-rollback.log" 2>&1
-rc=$?
-[ "$rc" = 0 ] && [ "$(sha "$MEM")" = "$p" ] && mem_health 30
-check "ling-mem upgrade --rollback swaps to ling-mem.prev" $? "exit $rc — $(tail -2 "$OUT/mem-rollback.log")" "now $(ver_of "$MEM")"
-"$MEM" upgrade --rollback >>"$OUT/mem-rollback.log" 2>&1
-[ "$(sha "$MEM")" = "$a" ] && mem_health 30; check "ling-mem upgrade --rollback again returns" $? "sha ${a:0:12} not back"
+if real_prev "ling-mem" "$MEM" "$OUT/ling-mem.old"; then
+  a="$(sha "$MEM")"; p="$(sha "$MEM.prev")"; pv="$(ver_of "$MEM.prev")"
+  "$MEM" upgrade --rollback >"$OUT/mem-rollback.log" 2>&1
+  rc=$?
+  [ "$rc" = 0 ] && [ "$(sha "$MEM")" = "$p" ] && [ "$(ver_of "$MEM")" = "$pv" ] && mem_health 30
+  check "ling-mem upgrade --rollback swaps to ling-mem.prev" $? "exit $rc, now v$(ver_of "$MEM") (want v$pv) — $(tail -2 "$OUT/mem-rollback.log")" "v$MEM_VERSION → v$pv"
+  if "$MEM" upgrade --help 2>/dev/null | grep -q -- '--rollback'; then
+    "$MEM" upgrade --rollback >>"$OUT/mem-rollback.log" 2>&1
+    [ "$(sha "$MEM")" = "$a" ] && mem_health 30; check "ling-mem upgrade --rollback again returns" $? "sha ${a:0:12} not back"
+  else
+    gap "ling-mem upgrade --rollback again returns" "ling-mem $pv has no --rollback — the gate swaps the release back"
+    stop_mem; swap_back "$MEM"; start_mem 60
+  fi
+fi
 
 # ── App ────────────────────────────────────────────────────────────────────
 if [ -n "$APP_VERSION" ]; then

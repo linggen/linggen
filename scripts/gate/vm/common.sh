@@ -5,6 +5,9 @@
 # would raise the Command Line Tools dialog), so nothing here uses it.
 
 set -uo pipefail
+# The last line out, whatever the exit: the host FAILs a run without it
+# (lib.sh vm_run), so a set -u abort or a crash can't leave the gate green.
+trap 'printf "GATE_EXIT\t%s\n" "$?"' EXIT
 export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
 
 GOOD="$MIRROR/good"

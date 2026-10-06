@@ -29,12 +29,33 @@ publish; a green `--draft` run saves its upgraded VM as the next
 (`download-ling.sh`), so a train with a new engine gates engine + ling-mem,
 publishes them, then cuts and gates the app.
 
+Before any VM boots, the gate runs `./scripts/check.sh all` and
+`./scripts/check.sh e2e` on the engine HEAD it records (a red suite stops it;
+`--skip-host-checks` makes that a GAP), and for `--draft` compares HEAD to
+the commit the engine draft is cut from (a sha target that differs FAILs; a
+branch target — `main`, cut at publish — that has moved WARNs).
+
+One-time setup, by hand:
+- **Gate image** `linggen-gate-base` — without it a quarantined Developer ID
+  launch is a GAP (the vanilla image allows App Store apps only, and macOS
+  15+ can't switch that from a shell). `tart clone
+  ghcr.io/cirruslabs/macos-tahoe-vanilla:latest linggen-gate-base`, `tart run
+  linggen-gate-base`, log in (admin/admin), `sudo spctl --global-enable`,
+  then System Settings → Privacy & Security → Allow applications from "App
+  Store & Known Developers"; shut down. The gate uses it whenever it exists
+  (`GATE_IMAGE` overrides).
+- **A frozen older baseline** — `linggen-prev` rolls forward, so it only
+  tests N-1 → N. Before a green `--draft` replaces it, freeze a copy:
+  `tart clone linggen-prev linggen-prev-1.8`; then `--prev linggen-prev-1.8`
+  (or `GATE_PREV_VMS`) upgrades it too in the same run, never saved over.
+
 In the VM: `LINGGEN_RELEASE_BASE=http://<host>:<port>` for `install.sh`,
 `install-app.sh`, `ling update`, `ling-mem upgrade --yes`;
 `launchctl setenv LINGGEN_RELEASE_BASE …` before launching Linggen.app.
 Rollback check: corrupt one tarball in the mirror → the update is refused
 and the old binary still runs; `ling update --rollback` /
-`ling-mem upgrade --rollback` return to the kept `.prev`.
+`ling-mem upgrade --rollback` return to the kept `.prev` — the pre-upgrade
+version (the gate puts that binary there when the update kept none), and back.
 
 ## Signing — every Mac asset
 

@@ -10,7 +10,14 @@ REPO="$(cd "$GATE_SRC/../.." && pwd)"
 WS="$(cd "$REPO/.." && pwd)"
 
 GATE_HOME="${LINGGEN_GATE_HOME:-$HOME/.cache/linggen-gate}"
-VANILLA_IMAGE="${GATE_IMAGE:-ghcr.io/cirruslabs/macos-tahoe-vanilla:latest}"
+VANILLA_IMAGE=ghcr.io/cirruslabs/macos-tahoe-vanilla:latest
+# The VM image: GATE_IMAGE, else the local linggen-gate-base (vanilla switched
+# by hand to "App Store & Known Developers", doc/release-checklist.md), else
+# vanilla — where a quarantined Developer ID launch is a GAP.
+GATE_BASE=linggen-gate-base
+if [ -n "${GATE_IMAGE:-}" ]; then BASE_IMAGE="$GATE_IMAGE"
+elif tart list --format json 2>/dev/null | jq -e --arg n "$GATE_BASE" '.[] | select(.Name == $n)' >/dev/null 2>&1; then BASE_IMAGE="$GATE_BASE"
+else BASE_IMAGE="$VANILLA_IMAGE"; fi
 PREV_VM="${GATE_PREV_VM:-linggen-prev}"
 SSH_KEY="$GATE_HOME/id_ed25519"
 LLMPOSTER="${LLMPOSTER:-$GATE_HOME/bin/llmposter}"
@@ -163,9 +170,13 @@ vm_clone() { # src dst — scratch VM, deleted on exit
 
 # Run a VM-side script (scripts/gate/vm/<name>.sh, staged with the rest of
 # what the VM gets in $VMFILES) with env; its RESULT lines
-# become records, the rest goes to the run log.
+# become records, the rest goes to the run log. common.sh's EXIT trap prints
+# GATE_EXIT<TAB>rc last: no such line (ssh dropped, VM died) or rc != 0
+# (set -u abort, a crash) means checks after that point never ran.
 vm_run() { # vm script [VAR=value…]
-  local vm="$1" script="$2" line status check detail; shift 2
+  local vm="$1" script="$2" line status check detail ssh_rc done_file; shift 2
+  done_file="$RUN/vm-$vm.$script.exit"
+  rm -f "$done_file"
   vm_ssh "$vm" "rm -rf ~/gate && mkdir -p ~/gate" || die "copy scripts" "ssh failed"
   vm_scp "$vm" "$VMFILES/." "~/gate/" || die "copy scripts" "scp failed"
   vm_ssh "$vm" "cd ~/gate && env $* bash ./$script" 2>&1 | tee -a "$RUN/vm-$vm.log" | \
@@ -174,8 +185,18 @@ vm_run() { # vm script [VAR=value…]
       RESULT$'\t'*)
         IFS=$'\t' read -r _ status check detail <<<"$line"
         record "$status" "$check" "$detail" ;;
+      GATE_EXIT$'\t'*) printf '%s\n' "${line##*$'\t'}" >"$done_file" ;;
     esac
   done
+  ssh_rc="${PIPESTATUS[0]}"
+  local rc; rc="$(cat "$done_file" 2>/dev/null)"
+  if [ -z "$rc" ]; then
+    record FAIL "$script ran to the end" "no exit line — ssh exited $ssh_rc mid-run (see $RUN/vm-$vm.log)"
+  elif [ "$rc" != 0 ] || [ "$ssh_rc" != 0 ]; then
+    record FAIL "$script ran to the end" "exited $rc (ssh $ssh_rc) — checks after the last row never ran (see $RUN/vm-$vm.log)"
+  else
+    record PASS "$script ran to the end" "exit 0"
+  fi
   # Bring the VM's logs home for a look after the VM is gone.
   mkdir -p "$RUN/vm-$vm"
   vm_ssh "$vm" "bash -c 'cd ~ && tar -czf - gate/*.log gate/*.json gate/*.txt .linggen/ling.log .linggen/logs .linggen/config 2>/dev/null'" \

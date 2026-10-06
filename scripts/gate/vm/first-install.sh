@@ -186,10 +186,12 @@ if [ -x "$OUT/codex" ]; then
 else
   gap "codex: CLI in the VM" "no codex binary handed in"
 fi
+# Claude Code comes from the live claude.ai/install.sh, not this train: its
+# version is noted, and its failure is a GAP, never a FAIL.
 if curl -fsSL https://claude.ai/install.sh | bash >"$OUT/claude-install.log" 2>&1 && command -v claude >/dev/null; then
-  pass "claude: CLI installs unattended" "$(claude --version 2>/dev/null)"
+  info "claude: CLI installs unattended" "Claude Code $(claude --version 2>/dev/null | head -1) (live claude.ai/install.sh)"
 else
-  gap "claude: CLI installs unattended" "$(tail -2 "$OUT/claude-install.log")"
+  gap "claude: CLI installs unattended" "the live claude.ai/install.sh failed — $(tail -2 "$OUT/claude-install.log")"
 fi
 
 dev="$(xcode-select -p 2>/dev/null)"
