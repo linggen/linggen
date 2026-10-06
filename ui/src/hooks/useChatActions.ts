@@ -3,7 +3,7 @@
  * All state is read via getState() — only scrollToBottom and projectRoot are injected.
  */
 import { useCallback, useEffect, useRef } from 'react';
-import { useSessionStore } from '../stores/sessionStore';
+import { useSessionStore, effectiveProjectRoot } from '../stores/sessionStore';
 import { useServerStore } from '../stores/serverStore';
 import { useChatStore } from '../stores/chatStore';
 import { useUiStore } from '../stores/uiStore';
@@ -36,20 +36,6 @@ async function newChatMade(): Promise<void> {
   if (made && useChatStore.getState()._activeSessionId !== made) useChatStore.getState().setActiveSession(made);
 }
 
-/**
- * Resolve the effective project root: explicit override > selected project >
- * the active session's own project/cwd. The last step matters — a session
- * opened from the list without a project selected would otherwise send an
- * empty root, which the server resolves to the home directory.
- */
-function getProjectRoot(override?: string | null): string {
-  if (override) return override;
-  const state = useSessionStore.getState();
-  if (state.selectedProjectRoot) return state.selectedProjectRoot;
-  const sess = state.allSessions.find((s) => s.id === state.activeSessionId);
-  return sess?.project || sess?.cwd || '';
-}
-
 /** The plain line for an agent that can't answer in this chat. */
 function addUnavailableLine(agentId: string): void {
   const agent = useServerStore.getState().agents.find((a) => a.name.toLowerCase() === agentId.toLowerCase());
@@ -72,7 +58,7 @@ export function useChatActions(
   useEffect(() => { projectRootRef.current = projectRootOverride; }, [projectRootOverride]);
 
   const clearChat = useCallback(async () => {
-    const root = getProjectRoot(projectRootRef.current);
+    const root = effectiveProjectRoot(projectRootRef.current);
     const { activeSessionId: sid } = useSessionStore.getState();
 
     const selectedAgent = chatAgentOf(useServerStore.getState().selectedAgent, useUiStore.getState().sessionMembers);
@@ -97,7 +83,7 @@ export function useChatActions(
   const sendChatMessage = useCallback(async (userMessage: string, targetAgent?: string, images?: string[], opts?: { resend?: boolean; clientId?: string }) => {
     if (!userMessage.trim() && !(images && images.length > 0)) return;
     await newChatMade();
-    const root = getProjectRoot(projectRootRef.current);
+    const root = effectiveProjectRoot(projectRootRef.current);
     const { activeSessionId: sid } = useSessionStore.getState();
     const picked = useServerStore.getState().selectedAgent;
     // A message that opens with `@name` goes to that agent — also when it came
@@ -417,7 +403,7 @@ export function useChatActions(
     extra?: { edited_plan?: string },
   ): Promise<boolean> => {
     const { pendingPlanAgentId: planAgent } = useInteractionStore.getState();
-    const root = getProjectRoot(projectRootRef.current);
+    const root = effectiveProjectRoot(projectRootRef.current);
     const { activeSessionId: sid } = useSessionStore.getState();
     if (!planAgent) {
       useUiStore.getState().addToast({ message: 'No plan is waiting for a decision.', variant: 'error' });
@@ -458,7 +444,7 @@ export function useChatActions(
 
   const copyChat = useCallback(async () => {
     try {
-      const root = getProjectRoot(projectRootRef.current);
+      const root = effectiveProjectRoot(projectRootRef.current);
       const { activeSessionId: sid } = useSessionStore.getState();
       const members = useUiStore.getState().sessionMembers;
       const agent = members.length > 0

@@ -153,11 +153,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     });
   },
 
+  // Sessions are global: the id names one, no project root is needed.
   renameSession: async (id, title) => {
-    const { selectedProjectRoot } = get();
-    if (!selectedProjectRoot) return;
     try {
-      await sessionsApi.rename({ project_root: selectedProjectRoot, session_id: id, title });
+      await sessionsApi.rename({ session_id: id, title });
       set((s) => ({
         allSessions: s.allSessions.map(sess => sess.id === id ? { ...sess, title } : sess),
         sessions: s.sessions.map(sess => sess.id === id ? { ...sess, title } : sess),
@@ -168,6 +167,21 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
 }));
+
+/**
+ * The project root a call about the open session works in: `override` >
+ * the selected project > the open session's own project/cwd. The selected
+ * project is set only when a session is picked from the list — one opened
+ * by a link, the last-used restore or New chat leaves it '' (or another
+ * session's), so the session's own folder is the fallback.
+ */
+export function effectiveProjectRoot(override?: string | null): string {
+  if (override) return override;
+  const state = useSessionStore.getState();
+  if (state.selectedProjectRoot) return state.selectedProjectRoot;
+  const sess = state.allSessions.find((s) => s.id === state.activeSessionId);
+  return sess?.project || sess?.cwd || '';
+}
 
 /** Makes a new chat session and opens it; its id, or null when it failed. */
 async function makeSession(set: (fn: (s: SessionState) => Partial<SessionState>) => void): Promise<string | null> {

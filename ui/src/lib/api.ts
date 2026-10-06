@@ -94,7 +94,6 @@ interface SessionDeleteRequest {
   skill: string | null;
 }
 interface SessionRenameRequest {
-  project_root: string;
   session_id: string;
   title: string;
 }

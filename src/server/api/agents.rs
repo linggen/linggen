@@ -1,6 +1,6 @@
 use crate::extensions::agents::parse_agent_markdown;
 use crate::server::chat::helpers::{emit_queue_updated, queue_key};
-use crate::server::{AgentStatusKind, ServerEvent, ServerState};
+use crate::server::{ServerEvent, ServerState};
 use crate::state_fs::StateFile;
 use axum::{
     extract::{Query, State},
@@ -111,32 +111,19 @@ pub(crate) async fn cancel_agent_run(
                 }
             }
 
-            for run in &runs {
-                // Statuses are keyed `session_id|agent_id`; an Idle without the
-                // session misses the keyed Busy entry and the chat's thinking
-                // ticker stays on screen after the cancel.
-                let session_id = Some(run.session_id.clone()).filter(|s| !s.is_empty());
-                state
-                    .send_agent_status_with_ids(
-                        run.agent_id.clone(),
-                        AgentStatusKind::Idle,
-                        Some("Cancelled".to_string()),
-                        None,
-                        session_id,
-                        Some(run.run_id.clone()),
-                        run.parent_run_id.clone(),
-                    )
-                    .await;
-
-                // Queued messages deliberately SURVIVE a cancel (CC-style
-                // interrupt): each queued send has a task parked on the engine
-                // lock, and cancellation now terminates the run promptly, so
-                // the parked task acquires the lock and delivers its message
-                // as the next turn. The old drain here was a symptom patch for
-                // cancels that never actually ended the run. Dropping the
-                // queue remains a separate, explicit verb: the queue banner's
-                // dismiss (`/api/queue/clear`).
-            }
+            // No Idle from here: a cancel only flags the runs, and each one
+            // still unwinds — its tool's failed update, its turn's end — and
+            // says Idle itself when it is over (`finish_agent_run`). An Idle
+            // sent now closed the page's turn early, so those last events
+            // landed after it: the tool stayed "running" and a second, empty
+            // bubble opened, unlike the saved session.
+            //
+            // Queued messages deliberately SURVIVE a cancel (CC-style
+            // interrupt): each queued send has a task parked on the engine
+            // lock, and cancellation terminates the run promptly, so the
+            // parked task acquires the lock and delivers its message as the
+            // next turn. Dropping the queue is a separate, explicit verb: the
+            // queue banner's dismiss (`/api/queue/clear`).
             let _ = state.events_tx.send(ServerEvent::StateUpdated);
             Json(CancelRunResponse {
                 status: "ok".to_string(),

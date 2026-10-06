@@ -96,6 +96,17 @@ function loadSnapshot(sessionId: string, data: SessionState): LoadSnapshot {
   };
 }
 
+/** A finished turn's tool count: its tool calls, else (no blocks — an
+ *  older event stream) its non-transient activity lines. Activity lines
+ *  hold each call's start AND its result summary, so they are not a count
+ *  when blocks exist. */
+function toolCountOf(msg: ChatMessage): number {
+  const blocks = (msg.content || []).filter((b) => b.type === 'tool_use').length;
+  if (blocks > 0) return blocks;
+  const entries = Array.isArray(msg.activityEntries) ? msg.activityEntries : [];
+  return entries.filter((e: string) => !isTransientStatus(e)).length || msg.toolCount || 0;
+}
+
 export const useChatStore = create<ChatState>((set, get) => ({
   messages: [],
   sessionState: null,
@@ -410,7 +421,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const next = [...state];
     const msg = next[idx];
     const entries = Array.isArray(msg.activityEntries) ? msg.activityEntries : [];
-    const nonTransient = entries.filter((e: string) => !isTransientStatus(e));
     const finalText = msg.text || msg.liveText || '';
     next[idx] = {
       ...msg,
@@ -419,7 +429,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       isThinking: false,
       liveText: undefined,
       activitySummary: summarizeActivityEntries(entries, false) || msg.activitySummary,
-      toolCount: nonTransient.length || msg.toolCount,
+      toolCount: toolCountOf(msg),
       durationMs: elapsed || msg.durationMs,
       contextTokens: ctxTokens || msg.contextTokens,
     };
@@ -597,9 +607,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
 
     const entries = Array.isArray(msg.activityEntries) ? msg.activityEntries : [];
-    const nonTransient = entries.filter((e: string) => !isTransientStatus(e));
-    const toolBlocks = (msg.content || []).filter((b) => b.type === 'tool_use');
-    const totalTools = toolBlocks.length || nonTransient.length || msg.toolCount || 0;
+    const totalTools = toolCountOf(msg);
     const textIsPlaceholder = isStatusLineText(msg.text || '');
     // Recover final text from multiple sources:
     // 1. liveText (token-accumulated streaming text)

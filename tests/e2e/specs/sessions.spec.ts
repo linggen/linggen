@@ -38,13 +38,11 @@ test('switching sessions shows each one its own rows', async ({ page, world, htt
   await expect(shown(page, 'List the notes here.')).toHaveCount(0);
 });
 
-// Found by this suite (2026-10-06), not fixed yet: Rename in the list is a
-// silent no-op — sessionStore.renameSession returns before its PATCH while
-// the store's selectedProjectRoot is '' (as here, on a fresh browser), and
-// the row falls back to its old name. Expected to fail until it is fixed —
-// then drop `test.fail`.
+// Found by this suite (2026-10-06): Rename in the list was a silent no-op —
+// sessionStore.renameSession returned before its PATCH while the store's
+// selectedProjectRoot was '' (a session opened by link, not picked from the
+// list), a root the server never needed.
 test('a session renamed in the list keeps its name after a reload', async ({ page, world, httpRequests }) => {
-  test.fail();
   await page.goto(`${world.url}/?session=${FERRY}`);
   await expectWebRtc(page, httpRequests);
   await expect(row(page, FERRY)).toContainText('Ferry notes');

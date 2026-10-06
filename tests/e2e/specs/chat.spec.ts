@@ -141,12 +141,12 @@ test.describe('a live run', () => {
     await expectScriptedCalls(world, ['ling', 'ling']);
   });
 
-  // Found by this suite (2026-10-06), not fixed yet: live, the stopped Bash
-  // still shows running and a second, empty [Ling] bubble opens; a reload
-  // shows one bubble and the call finished. Expected to fail until the live
-  // view matches — then drop `test.fail`.
+  // Found by this suite (2026-10-06): live, the stopped Bash still showed
+  // running and a second, empty [Ling] bubble opened; a reload showed one
+  // bubble and the call finished. The Stop request said Idle before the run
+  // had ended, so the run's own last events landed after the page closed
+  // the turn; now only the run's own end says Idle.
   test('a stopped run shows live as after a reload', async ({ page, world, httpRequests }) => {
-    test.fail();
     await page.goto(world.url);
     await expectWebRtc(page, httpRequests);
     await stopLiveRun(page);

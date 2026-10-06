@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Send, Square, X, FolderOpen, FileText } from 'lucide-react';
 import { cn } from '../../lib/cn';
 import { useInteractionStore } from '../../stores/interactionStore';
-import { useSessionStore } from '../../stores/sessionStore';
+import { useSessionStore, effectiveProjectRoot } from '../../stores/sessionStore';
 import { useServerStore } from '../../stores/serverStore';
 import { MarkdownContent } from './MarkdownContent';
 import { TodoPanel } from './TodoPanel';
@@ -389,10 +389,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                   // Guard before the optimistic clear — if any required id is
                   // missing we skip both calls instead of clearing the local
                   // store while leaving the server queue intact.
-                  const store = useSessionStore.getState();
-                  const selectedProjectRoot = projectRoot || store.selectedProjectRoot;
-                  const activeSessionId = sessionId || store.activeSessionId;
-                  if (!selectedProjectRoot || !activeSessionId) return;
+                  // The root the queued sends used (useChatActions): the server
+                  // keys its queue by it.
+                  const root = effectiveProjectRoot(projectRoot);
+                  const activeSessionId = sessionId || useSessionStore.getState().activeSessionId;
+                  if (!activeSessionId) return;
                   // Each member queues its own messages: clear every one's.
                   const queuedFor = new Set(
                     useInteractionStore.getState().queuedMessages.map((q) => q.agent_id).filter(Boolean),
@@ -401,7 +402,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                   useInteractionStore.getState().setQueuedMessages([]);
                   for (const agent of queuedFor) {
                     try {
-                      await sessionApi.clearQueue(selectedProjectRoot, activeSessionId, agent);
+                      await sessionApi.clearQueue(root, activeSessionId, agent);
                     } catch {
                       // Best-effort clear; UI already reflects the empty queue.
                     }
