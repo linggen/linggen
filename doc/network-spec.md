@@ -134,7 +134,7 @@ cannot point it elsewhere.
 |:--|:--|:--|
 | Claude Code / Codex plugin | HTTP MCP, JSON-RPC | `/mcp` — browser, x, agents, dream |
 | Linggen.app shell | HTTP | `/api/health`, every 60s while a window is open |
-| Shell, Web UI, phone on LAN | WebRTC | `/api/rtc/token` → `/api/rtc/whip` |
+| Shell, Web UI, phone on LAN | WebRTC | `/api/rtc/token` → `/api/rtc/whip`; then every `/api/*` call as `http_request` on the channel — the web UI has no HTTP data path (webrtc-spec.md) |
 | Phone off LAN | WebRTC over relay | `linggen.dev` signalling → `/api/signaling/<nonce>/answer` |
 | linggen-browser extension | WebSocket, extension dials in | `/api/bridge/socket` |
 | Skills reaching the browser | HTTP | `POST /api/bridge/call` |

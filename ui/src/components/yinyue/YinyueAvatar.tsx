@@ -20,7 +20,6 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { PetStage, EmotionName, ActionName, SeqStep } from './PetStage';
 import { loadIntents, pickClip } from './petActions';
 import { getMouthOpening } from '../../lib/eventHandlers/yinyue';
-import { _originalFetch } from '../../lib/fetchProxy';
 import { useUiStore } from '../../stores/uiStore';
 import { postToParent } from '../../lib/parentFrame';
 
@@ -167,11 +166,12 @@ export const YinyueAvatar: React.FC = () => {
     window.clearTimeout(thinkTimer.current);
     thinkTimer.current = window.setTimeout(() => setPetThinking(false), 30000); // safety net
     try {
-      await _originalFetch('/api/yinyue/chat', {
+      const resp = await fetch('/api/yinyue/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text }),
       });
+      if (!resp.ok) throw new Error(`yinyue chat ${resp.status}`);
       // Her reply arrives over the event spine → handlePetSpeak clears thinking.
     } catch (e) {
       console.error('[yinyue] chat failed', e);

@@ -13,6 +13,7 @@ pub mod memory;
 pub mod model;
 pub mod process;
 pub mod rows;
+pub mod voice;
 
 use api::Api;
 use engine::{Engine, Mark, RunEnd};

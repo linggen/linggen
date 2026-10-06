@@ -5,6 +5,12 @@
  * WebRTC data channels. The UI sends requests and receives events through this interface.
  */
 import type { AskUserAnswer, UiEvent } from '../types';
+import { createGate, type ProxyReply } from './channelFetch.mts';
+
+/** Open while the data channel is connected. Every call over it waits here
+ *  first — at boot and while a dropped link reconnects — so nothing is sent
+ *  before there is a channel to send it on (channelFetch.mts). */
+export const connection = createGate();
 
 // ---------------------------------------------------------------------------
 // Types
@@ -104,9 +110,9 @@ export interface Transport {
   /** Compact chat context for a session. */
   sendCompact(projectRoot: string, sessionId: string | null, agentId: string, focus?: string): Promise<{ compacted?: boolean; referenced_files?: string[] }>;
 
-  /** Proxy an HTTP request through the transport (for remote mode).
-   *  Returns { status, body } where body is the raw response text. */
-  httpProxy(method: string, url: string, body?: unknown): Promise<{ status: number; body: string }>;
+  /** Send one `/api/*` request over the data channel. The reply carries its
+   *  status, content type and body (base64 when the body is bytes). */
+  httpProxy(method: string, url: string, body?: unknown): Promise<ProxyReply>;
 
   /** Tell the server which session/project the frontend has active.
    *  The server uses this to scope its page_state push. */

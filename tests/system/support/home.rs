@@ -5,6 +5,7 @@
 //! <root>/home/.linggen   LINGGEN_HOME — a rendered copy of tests/fixtures/home
 //! <root>/home/work       a plain folder for chats (outside every temp dir,
 //!                        so a write there asks, as it does on a real Mac)
+//! <root>/bin             first on PATH: a stand-in `say` (voice.rs)
 //! <root>/tmp             TMPDIR
 //! <root>/xdg/…           XDG_CONFIG_HOME / DATA / CACHE / STATE
 //! ```
@@ -45,6 +46,7 @@ impl Home {
         ] {
             std::fs::create_dir_all(root.join(sub)).expect("create a test dir");
         }
+        super::voice::install(&root);
         Self {
             dir: Some(dir),
             root,

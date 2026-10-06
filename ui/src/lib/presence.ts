@@ -3,11 +3,14 @@
  * the user is here (typing), present but reading, or away.
  *
  * Sends ONLY recency + focus + a typing flag to `POST /api/presence` — never
- * keystroke content. Input listeners just stamp timestamps (cheap); the network
+ * keystroke content — over the data channel, like every call the UI makes.
+ * A beat is a reading, not an action: while the channel is down it is skipped
+ * rather than queued (the next one says the same, fresher), and the engine
+ * ages out a surface that stops beating, so a closed tab needs no last word. Input listeners just stamp timestamps (cheap); the network
  * beat is throttled to a steady cadence plus an immediate beat on focus/visibility
  * change. The server derives the three-state read in the `sense` tool.
  */
-import { _originalFetch } from './fetchProxy';
+import { connection } from './transport';
 
 const BEAT_MS = 4000; // steady cadence
 const TYPING_WINDOW_MS = 1500; // counts as "typing" if a key landed this recently
@@ -34,11 +37,11 @@ function snapshot(): { surface: string; focused: boolean; typing: boolean; idle_
 }
 
 function beat(): void {
-  _originalFetch('/api/presence', {
+  if (!connection.isOpen()) return;
+  fetch('/api/presence', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(snapshot()),
-    keepalive: true,
   }).catch(() => {
     /* no surface connected / offline — nothing to do */
   });

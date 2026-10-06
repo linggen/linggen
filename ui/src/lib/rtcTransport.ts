@@ -16,6 +16,8 @@ import type {
   AskUserResponse,
   PlanAction,
 } from './transport';
+import { connection } from './transport';
+import type { ProxyReply } from './channelFetch.mts';
 import { WhipSignaling, type SignalingStrategy } from './signaling';
 
 /** Configuration for the WebRTC transport. */
@@ -96,22 +98,19 @@ export class RtcTransport implements Transport {
   }>();
   private requestIdCounter = 0;
   private transferIdCounter = 0;
-  // In-progress gzip chunked transfers (keyed by request_id)
-  private gzipTransfers = new Map<string, { chunks: string[]; status: number; expectedChunks: number }>();
+  // In-progress gzip chunked transfers (keyed by request_id). `meta` is the
+  // reply's fields other than its body (status, content type, encoding).
+  private gzipTransfers = new Map<string, { chunks: string[]; meta: Omit<ProxyReply, 'body'> }>();
   // In-flight reassembly for an unsolicited chunked push (e.g. large page_state).
   private pushGzip: { chunks: string[]; expectedChunks: number } | null = null;
   // Sessions requested before connection was ready — replayed on connect
   private pendingSubscriptions = new Set<string>();
   // Abort controller for in-flight signaling (cancelled on cleanup/disconnect)
   private signalingAbort: AbortController | null = null;
-  // Resolves when control channel opens — lets controlRequest wait instead of rejecting
-  private readyPromise: Promise<void>;
-  private readyResolve: (() => void) | null = null;
 
   constructor(callbacks: TransportCallbacks, config: RtcTransportConfig = {}) {
     this.callbacks = callbacks;
     this.config = config;
-    this.readyPromise = new Promise((resolve) => { this.readyResolve = resolve; });
   }
 
   // --- Transport interface ---
@@ -177,8 +176,8 @@ export class RtcTransport implements Transport {
     return this.controlRequest<{ compacted?: boolean; referenced_files?: string[] }>({ type: 'compact', project_root: projectRoot, session_id: sessionId, agent_id: agentId, focus });
   }
 
-  async httpProxy(method: string, url: string, body?: unknown): Promise<{ status: number; body: string }> {
-    return this.controlRequest<{ status: number; body: string }>({ type: 'http_request', method, url, body });
+  async httpProxy(method: string, url: string, body?: unknown): Promise<ProxyReply> {
+    return this.controlRequest<ProxyReply>({ type: 'http_request', method, url, body });
   }
 
   // Sticky — re-sent on every (re)connect, like the Yinyue subscription.
@@ -330,13 +329,10 @@ export class RtcTransport implements Transport {
       // channel may not be open yet at that point.
       //
       // IMPORTANT: setStatus('connected') MUST come before onReconnect.
-      // onReconnect triggers resyncState() which fetches /api/* endpoints.
-      // The fetchProxy only routes through WebRTC when status === 'connected',
-      // so if we call onReconnect first, all fetches get empty stub responses.
+      // Connected opens the gate (`connection`), releasing every call that
+      // waited for the channel — so status first, then onReconnect's resync.
       this.reconnectAttempt = 0;
       this.setStatus('connected');
-      // Resolve the ready promise so pending controlRequest calls proceed.
-      if (this.readyResolve) { this.readyResolve(); this.readyResolve = null; }
       this.flushPendingViewContext();
       // Re-assert Yinyue presenter candidacy after a (re)connect.
       if (this.yinyueSubscribed) {
@@ -356,10 +352,10 @@ export class RtcTransport implements Transport {
 
         // Handle gzip chunked transfer (large responses like /api/skills)
         if (msg.request_id && msg.gzip_start) {
+          const { status, content_type, body_encoding } = msg.gzip_start;
           this.gzipTransfers.set(msg.request_id, {
             chunks: [],
-            status: msg.gzip_start.status || 200,
-            expectedChunks: msg.gzip_start.chunks || 0,
+            meta: { status: status || 200, content_type, body_encoding },
           });
           return;
         }
@@ -380,7 +376,7 @@ export class RtcTransport implements Transport {
             for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
             new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip')))
               .text()
-              .then(body => pending.resolve({ status: transfer.status, body }))
+              .then(body => pending.resolve({ ...transfer.meta, body }))
               .catch(err => pending.reject(new Error(`Decompress failed: ${err.message}`)));
           }
           return;
@@ -469,15 +465,11 @@ export class RtcTransport implements Transport {
 
   // --- Internal: control channel RPC ---
 
-  /** One request/response over the control channel. `T` is the reply's shape. */
+  /** One request/response over the control channel. `T` is the reply's shape.
+   *  A request made before the channel is open (boot, a reconnect) waits for
+   *  it, and fails if it does not open in time. */
   private async controlRequest<T = void>(msg: Record<string, unknown>): Promise<T> {
-    // Wait for the control channel to open (handles calls during WHIP exchange)
-    if (!this.controlChannel || this.controlChannel.readyState !== 'open') {
-      await Promise.race([
-        this.readyPromise,
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Control channel connection timeout')), 15000)),
-      ]);
-    }
+    await connection.whenOpen(String(msg.type));
     return new Promise((resolve, reject) => {
       if (!this.controlChannel || this.controlChannel.readyState !== 'open') {
         reject(new Error('Control channel not open'));
@@ -582,9 +574,6 @@ export class RtcTransport implements Transport {
   private cleanup(): void {
     this.stopHeartbeat();
 
-    // Reset ready promise for next connection attempt
-    this.readyPromise = new Promise((resolve) => { this.readyResolve = resolve; });
-
     // Abort any in-flight signaling (e.g. relay polling)
     if (this.signalingAbort) {
       this.signalingAbort.abort();
@@ -630,6 +619,7 @@ export class RtcTransport implements Transport {
 
   private setStatus(status: TransportStatus): void {
     this._status = status;
+    connection.set(status === 'connected');
     this.callbacks.onStatusChange(status);
   }
 }

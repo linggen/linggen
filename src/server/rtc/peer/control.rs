@@ -294,6 +294,56 @@ fn wrap_endpoint_response(status: u16, body: serde_json::Value) -> serde_json::V
     serde_json::json!({ "error": reason })
 }
 
+/// A loopback reply as the `data` of an `http_request` answer: its status,
+/// content type and body. A text body rides as is; bytes (Yinyue's WAV, an
+/// image) ride as base64 with `body_encoding: "base64"` — read as UTF-8 they
+/// arrived mangled, which is what once kept her voice off the channel.
+async fn proxied_reply(r: reqwest::Response) -> serde_json::Value {
+    let status = r.status().as_u16();
+    let content_type = r
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let bytes = r.bytes().await.unwrap_or_default();
+    reply_data(status, &content_type, &bytes)
+}
+
+/// `{ status, content_type, body[, body_encoding] }` for one reply.
+fn reply_data(status: u16, content_type: &str, bytes: &[u8]) -> serde_json::Value {
+    if is_text(content_type) {
+        let body = String::from_utf8_lossy(bytes);
+        return serde_json::json!({ "status": status, "content_type": content_type, "body": body });
+    }
+    use base64::Engine;
+    let body = base64::engine::general_purpose::STANDARD.encode(bytes);
+    serde_json::json!({
+        "status": status,
+        "content_type": content_type,
+        "body": body,
+        "body_encoding": "base64",
+    })
+}
+
+/// Whether a content type is text, safe to carry as a UTF-8 string. No type
+/// at all is an engine handler answering a bare string — text too.
+fn is_text(content_type: &str) -> bool {
+    let mime = content_type
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    mime.is_empty()
+        || mime.starts_with("text/")
+        || mime.ends_with("json")
+        || mime.ends_with("+xml")
+        || mime.ends_with("/xml")
+        || mime.ends_with("javascript")
+        || mime == "image/svg+xml"
+}
+
 /// One loopback request to this engine's own HTTP API. GET carries no body;
 /// every other method sends `body` as JSON. `actor_device` names the paired
 /// device asking, for handlers that keep per-device state.
@@ -388,11 +438,7 @@ pub(super) async fn process_control_request_async(
             // delete queue, needs to be correct with more than one phone.
             let actor_device = actor.lock_ok().as_ref().map(|a| a.device.clone());
             match loopback(client, method, &url, &body_val, actor_device.as_deref()).await {
-                Ok(r) => {
-                    let status = r.status().as_u16();
-                    let body = r.text().await.unwrap_or_default();
-                    serde_json::json!({ "data": { "status": status, "body": body } })
-                }
+                Ok(r) => serde_json::json!({ "data": proxied_reply(r).await }),
                 Err(e) => serde_json::json!({ "error": format!("{e}") }),
             }
         }
@@ -435,8 +481,44 @@ pub(super) async fn process_control_request_async(
 
 #[cfg(test)]
 mod tests {
-    use super::wrap_endpoint_response;
+    use super::{is_text, reply_data, wrap_endpoint_response};
     use serde_json::json;
+
+    #[test]
+    fn text_replies_ride_as_text() {
+        for ct in [
+            "application/json",
+            "text/plain; charset=utf-8",
+            "application/javascript",
+            "image/svg+xml",
+            "application/problem+json",
+            "",
+        ] {
+            assert!(is_text(ct), "{ct}");
+        }
+        let out = reply_data(200, "application/json", br#"{"ok":true}"#);
+        assert_eq!(
+            out,
+            json!({ "status": 200, "content_type": "application/json", "body": "{\"ok\":true}" })
+        );
+    }
+
+    #[test]
+    fn byte_replies_ride_as_base64_intact() {
+        for ct in ["audio/wav", "image/png", "application/octet-stream"] {
+            assert!(!is_text(ct), "{ct}");
+        }
+        // Not valid UTF-8: a lossy text read would have mangled these.
+        let wav = [0x52, 0x49, 0x46, 0x46, 0xff, 0xfe, 0x00, 0x80];
+        let out = reply_data(200, "audio/wav", &wav);
+        assert_eq!(out["body_encoding"], "base64");
+        assert_eq!(out["content_type"], "audio/wav");
+        use base64::Engine;
+        let back = base64::engine::general_purpose::STANDARD
+            .decode(out["body"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(back, wav);
+    }
 
     #[test]
     fn success_body_rides_as_data() {

@@ -25,7 +25,10 @@ pub fn hermetic_env(home: &Home, mem_url: Option<&str>) -> Vec<(String, String)>
         ("XDG_DATA_HOME", path("xdg/data")),
         ("XDG_CACHE_HOME", path("xdg/cache")),
         ("XDG_STATE_HOME", path("xdg/state")),
-        ("PATH", "/usr/bin:/bin:/usr/sbin:/sbin".to_string()),
+        (
+            "PATH",
+            format!("{}:/usr/bin:/bin:/usr/sbin:/sbin", path("bin")),
+        ),
         ("LANG", "en_US.UTF-8".to_string()),
         ("TZ", "UTC".to_string()),
         ("SHELL", "/bin/sh".to_string()),

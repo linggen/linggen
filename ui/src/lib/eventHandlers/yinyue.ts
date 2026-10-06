@@ -8,7 +8,6 @@
  * avatar can lip-sync in step with the audio it doesn't own.
  */
 import type { UiEventOf } from '../../types';
-import { _originalFetch } from '../fetchProxy';
 import { useUiStore } from '../../stores/uiStore';
 
 // One shared AudioContext, created lazily on first cue.
@@ -186,8 +185,8 @@ async function play(text: string, emotion: string): Promise<void> {
   };
 
   try {
-    // Direct HTTP (not the proxied window.fetch, which mangles binary over WebRTC).
-    const resp = await _originalFetch('/api/tts', {
+    // Over the data channel: the WAV comes back as bytes (base64 on the wire).
+    const resp = await fetch('/api/tts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text }),

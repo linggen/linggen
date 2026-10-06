@@ -2,8 +2,10 @@
 //! compacted chat, a run cut off before its reply — read back the way the
 //! engine and the chat page read them.
 
+use crate::support::engine::RunEnd;
 use crate::support::model::Agent;
-use crate::support::{snap, snap_text, text, Setup, World};
+use crate::support::{snap, snap_text, text, tool, Setup, World};
+use serde_json::json;
 
 const SHARED: &str = "sess-1790000001-5a1ed001";
 const COMPACTED: &str = "sess-1790000002-c0ac7ed2";
@@ -87,5 +89,38 @@ async fn interrupted_run_has_a_display_row() {
     );
     let pretty = serde_json::to_string_pretty(&history["messages"]).expect("json");
     snap_text("interrupted_history", &w, &pretty);
+    w.assert_all_scripted();
+}
+
+/// A message sent with no folder (a page still connecting has no session
+/// list to read it from) runs in the session's own folder, not in `~`: the
+/// Write lands in the session's cwd.
+#[tokio::test]
+async fn a_message_without_a_folder_runs_in_the_sessions_own() {
+    let w = World::start(Setup::default().script(
+        Agent::Ling,
+        vec![
+            tool("Write", json!({"path": "probe.txt", "content": "hello"})),
+            text("Wrote it."),
+        ],
+    ))
+    .await;
+    let mark = w.mark();
+    w.api
+        .chat(COMPACTED, "", "Write probe.txt saying hello.")
+        .await;
+    let RunEnd::Asked(ask) = w.wait_run(COMPACTED, Agent::Ling, mark).await else {
+        panic!("the Write ran without a permission prompt");
+    };
+    w.api.answer(&ask, "allow once").await;
+    w.finish_run(COMPACTED, Agent::Ling, mark).await;
+
+    let written = std::fs::read_to_string(w.home.work().join("probe.txt"));
+    assert_eq!(
+        written.ok().as_deref(),
+        Some("hello"),
+        "not written in the session's folder"
+    );
+    assert!(!w.home.home().join("probe.txt").exists(), "written in ~");
     w.assert_all_scripted();
 }

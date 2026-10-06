@@ -11,6 +11,8 @@ guide: |
 
 The transport for linggen. WebRTC data channels carry all chat events bidirectionally between the linggen server and browser clients. Works for both local and remote access using the same code path.
 
+**The web UI has no HTTP data path.** Plain HTTP carries only the page, its static files (`/assets/*`, `ui/public`) and the `/api/rtc/*` signaling that brings the channel up. Every other call — boot reads, chat, presence, Yinyue's chat and voice — rides the data channel. A call made before the channel is connected (boot, a reconnect) waits for it and fails with a clear error if it does not open within 20 s; nothing falls back to HTTP. The e2e suite fails any data call over plain HTTP.
+
 ## Related docs
 
 - `chat-spec.md`: event model, message types, rendering.
@@ -181,7 +183,7 @@ Messages on the control channel:
 | Client → Server | `session_list` | List sessions for a project |
 | Server → Client | `session_list_result` | Session list response |
 | Client → Server | `http_request` | Proxied HTTP request (for API calls, skill files) |
-| Server → Client | `http_response` | Proxied HTTP response |
+| Server → Client | `http_response` | Proxied HTTP response: status, content type, body. A byte body (audio, images) rides as base64, marked `body_encoding: "base64"`; a large body is gzip-chunked, its header keeping the type and encoding |
 | Bidirectional | `heartbeat` | Keep-alive, detect disconnection |
 | Server → Client | `notification` | Global notifications (mission complete, etc.) |
 
@@ -391,7 +393,7 @@ Extracted `Transport` interface on the frontend. Introduced `useTransport` hook.
 
 ### Phase 2: Local WebRTC with WHIP ✅
 
-Added WHIP endpoint (`POST /api/rtc/whip`). Integrated str0m (Rust WebRTC library, ICE-lite mode) for peer connection and data channels. Implemented `RtcTransport` on the frontend. All Web UI communication (chat, plan actions, AskUser responses, and all `/api/*` calls via fetch proxy) goes through WebRTC when active. Per-session data channels provide natural message isolation. Event buffering handles the session channel creation race. Async HTTP proxying avoids blocking str0m's event loop.
+Added WHIP endpoint (`POST /api/rtc/whip`). Integrated str0m (Rust WebRTC library, ICE-lite mode) for peer connection and data channels. Implemented `RtcTransport` on the frontend. All Web UI communication (chat, plan actions, AskUser responses, and all `/api/*` calls via fetch proxy) goes through WebRTC — before it connects too: a call waits for the channel rather than going over HTTP. Per-session data channels provide natural message isolation. Event buffering handles the session channel creation race. Async HTTP proxying avoids blocking str0m's event loop.
 
 ### Phase 3: linggen.dev + user accounts
 

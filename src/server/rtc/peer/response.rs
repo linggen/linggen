@@ -104,11 +104,7 @@ pub(super) fn enqueue_response(
                 return;
             }
 
-            // Header
-            let header = serde_json::json!({
-                "request_id": request_id,
-                "gzip_start": { "total_bytes": compressed.len(), "chunks": num_chunks, "status": status }
-            });
+            let header = gzip_header(request_id, &result, status, compressed.len(), num_chunks);
             queue.push_back(DcWrite::text(cid, header.to_string()));
 
             // Base64-encoded chunks
@@ -135,6 +131,29 @@ pub(super) fn enqueue_response(
     let mut resp = result;
     resp["request_id"] = serde_json::Value::String(request_id.to_string());
     queue.push_back(DcWrite::text(cid, resp.to_string()));
+}
+
+/// The `gzip_start` frame of a chunked reply. The reply's other fields ride
+/// here, so a chunked body keeps its content type and its encoding (base64
+/// bytes, e.g. Yinyue's voice).
+fn gzip_header(
+    request_id: &str,
+    result: &serde_json::Value,
+    status: u64,
+    total_bytes: usize,
+    chunks: usize,
+) -> serde_json::Value {
+    let field = |k: &str| result.get("data").and_then(|d| d.get(k)).cloned();
+    serde_json::json!({
+        "request_id": request_id,
+        "gzip_start": {
+            "total_bytes": total_bytes,
+            "chunks": chunks,
+            "status": status,
+            "content_type": field("content_type"),
+            "body_encoding": field("body_encoding"),
+        }
+    })
 }
 
 /// Enqueue an unsolicited push (no request_id), e.g. `page_state`.
@@ -202,4 +221,25 @@ pub(super) fn enqueue_push(
 
     let footer = serde_json::json!({ "push_gzip_end": true });
     queue.push_back(DcWrite::text(cid, footer.to_string()));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::gzip_header;
+    use serde_json::json;
+
+    #[test]
+    fn a_chunked_reply_keeps_its_content_type_and_encoding() {
+        let reply = json!({ "data": {
+            "status": 200, "content_type": "audio/wav", "body": "UklG", "body_encoding": "base64",
+        }});
+        let header = gzip_header("req-7", &reply, 200, 1234, 3);
+        assert_eq!(
+            header,
+            json!({ "request_id": "req-7", "gzip_start": {
+                "total_bytes": 1234, "chunks": 3, "status": 200,
+                "content_type": "audio/wav", "body_encoding": "base64",
+            }})
+        );
+    }
 }

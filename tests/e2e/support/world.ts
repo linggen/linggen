@@ -127,23 +127,6 @@ function watchPeerConnections() {
   } as typeof RTCPeerConnection;
 }
 
-/** Reports each `fetch` the page sends over plain HTTP while no peer
- *  connection is up yet (to `__earlyFetch`): the UI's fetch proxy sends
- *  `/api/*` that way until its data channel is connected. */
-function watchEarlyFetches() {
-  const fetch = window.fetch.bind(window);
-  const report = (r: string) => (window as unknown as { __earlyFetch?: (r: string) => void }).__earlyFetch?.(r);
-  window.fetch = (input, init) => {
-    const pcs = (window as unknown as { __pcs?: RTCPeerConnection[] }).__pcs ?? [];
-    if (!pcs.some((pc) => pc.connectionState === 'connected')) {
-      const url = new URL(input instanceof Request ? input.url : String(input), location.href);
-      const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
-      if (url.origin === location.origin) report(`${method} ${url.pathname}`);
-    }
-    return fetch(input, init);
-  };
-}
-
 /** Caps animation frames at 10 a second (opt in: `throttleFrames`).
  *  Yinyue's avatar renders WebGL in software in headless Chromium at 60 fps
  *  — on a busy machine that starves the page's main thread (a fill took
@@ -188,10 +171,7 @@ export const test = base.extend<Fixtures>({
   },
 
   page: async ({ page, httpRequests, throttleFrames }, use) => {
-    const early = new Set<string>();
-    await page.exposeFunction('__earlyFetch', (r: string) => early.add(r));
     await page.addInitScript(watchPeerConnections);
-    await page.addInitScript(watchEarlyFetches);
     if (throttleFrames) await page.addInitScript(throttleAnimationFrames);
     const all: string[] = [];
     page.on('request', (req) => {
@@ -201,7 +181,7 @@ export const test = base.extend<Fixtures>({
       all.push(r);
     });
     await use(page);
-    expectNoHttpData(all, early);
+    expectNoHttpData(all);
   },
 });
 
@@ -242,27 +222,12 @@ const HTTP_ALLOWED: RegExp[] = [
   /^GET (blob|data):$/, // in-page URLs: no request leaves the page
 ];
 
-/** Data the UI still sends over plain HTTP — each breaks the all-WebRTC
- *  rule and is named here so a new one fails. Remove one when its sender
- *  moves to the data channel:
- *   - presence.ts beats `POST /api/presence` with `_originalFetch`, always;
- *   - eventHandlers/yinyue.ts posts each line Yinyue speaks to `/api/tts`
- *     with `_originalFetch` (when she is not muted: the fresh home);
- *   - fetchProxy.ts sends `/api/*` straight over HTTP until the transport is
- *     connected (which ones go before it depends on timing, so these are
- *     told apart by when they were sent: `watchEarlyFetches`). */
-const HTTP_KNOWN_VIOLATIONS: string[] = ['POST /api/presence', 'POST /api/tts'];
-const sentBeforeDataChannel = (r: string, early: Set<string>) => r.includes(' /api/') && early.has(r);
-
-/** Nothing went over plain HTTP but `HTTP_ALLOWED` (and the known
- *  violations) — the UI's data rode the data channel. Checked for every
- *  test when it ends. */
-export function expectNoHttpData(requests: string[], early = new Set<string>()) {
-  const stray = requests.filter(
-    (r) => !HTTP_ALLOWED.some((re) => re.test(r))
-      && !HTTP_KNOWN_VIOLATIONS.includes(r)
-      && !sentBeforeDataChannel(r, early),
-  );
+/** Nothing went over plain HTTP but `HTTP_ALLOWED` — the UI's data rode
+ *  the data channel, before it connected too (a call waits for it). No
+ *  exceptions: a data call over HTTP fails the test. Checked for every test
+ *  when it ends. */
+export function expectNoHttpData(requests: string[]) {
+  const stray = requests.filter((r) => !HTTP_ALLOWED.some((re) => re.test(r)));
   expect([...new Set(stray)], 'requests sent over plain HTTP').toEqual([]);
 }
 
@@ -394,4 +359,27 @@ export async function heldEvents(page: Page): Promise<string[]> {
       return ev.kind === 'message' ? `message:${ev.text}` : String(ev.kind);
     });
   });
+}
+
+/** Records what the page asks over the data channel — each `http_request`
+ *  as `METHOD /path` — in `__asked`. Install with
+ *  `page.addInitScript(watchAsked)`; read with `asked`. */
+export function watchAsked() {
+  const log: string[] = [];
+  (window as unknown as { __asked: string[] }).__asked = log;
+  const send = RTCDataChannel.prototype.send;
+  RTCDataChannel.prototype.send = function (this: RTCDataChannel, data: string | Blob | ArrayBuffer | ArrayBufferView) {
+    if (typeof data === 'string' && data.includes('"http_request"')) {
+      try {
+        const msg = JSON.parse(data);
+        log.push(`${msg.method} ${String(msg.url).split('?')[0]}`);
+      } catch { /* a split payload — not a request line */ }
+    }
+    return send.call(this, data as string);
+  } as typeof RTCDataChannel.prototype.send;
+}
+
+/** What the page asked over the data channel so far (see `watchAsked`). */
+export async function asked(page: Page): Promise<string[]> {
+  return page.evaluate(() => (window as unknown as { __asked: string[] }).__asked);
 }
