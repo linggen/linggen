@@ -13,56 +13,70 @@ pub fn now_ts_ms() -> u64 {
 }
 
 /// Bin directories a user's shell has but launchd's stock
-/// `PATH=/usr/bin:/bin:/usr/sbin:/sbin` does not.
-const EXTRA_BIN_DIRS: [&str; 5] = [
+/// `PATH=/usr/bin:/bin:/usr/sbin:/sbin` does not: package managers,
+/// per-user installers, language toolchains. Only the ones that exist are
+/// used. The Flutter SDK has no standard home, so its usual spots are listed.
+const EXTRA_BIN_DIRS: [&str; 9] = [
     "~/.local/bin",
     "/usr/local/bin",
     "/usr/local/sbin",
     "/opt/homebrew/bin",
     "/opt/homebrew/sbin",
+    "~/.cargo/bin",
+    "~/dev/flutter/bin",
+    "~/flutter/bin",
+    "~/development/flutter/bin",
 ];
 
 /// `$PATH` for shell children, with the user bin dirs above appended.
 ///
 /// A GUI-launched daemon (Linggen.app → launchd) inherits launchd's stock
 /// PATH and hands it to every `sh -c` child, so tools the usual installers
-/// drop — `ling-mem` in `~/.local/bin`, anything from Homebrew — are simply
-/// not found. A daemon started from a terminal inherits the full interactive
-/// PATH and works, which is what makes the failure look intermittent.
+/// drop — `ling-mem` in `~/.local/bin`, anything from Homebrew, `cargo` in
+/// `~/.cargo/bin` — are simply not found. A daemon started from a terminal
+/// inherits the full interactive PATH and works, which is what makes the
+/// failure look intermittent.
 ///
-/// Appended, never prepended: system binaries keep the precedence they
-/// already have, so this only resolves commands that would otherwise fail.
+/// Appended, never prepended: the inherited PATH keeps the precedence it
+/// already has, so this only resolves commands that would otherwise fail.
 /// Computed once — the directory set doesn't change while the daemon runs.
 pub fn shell_path() -> &'static str {
     static PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     PATH.get_or_init(|| {
         let inherited = std::env::var("PATH").unwrap_or_default();
-        let mut dirs: Vec<String> = inherited
-            .split(':')
-            .filter(|p| !p.is_empty())
-            .map(str::to_string)
+        let extras: Vec<std::path::PathBuf> = EXTRA_BIN_DIRS
+            .iter()
+            .map(|d| resolve_path(std::path::Path::new(d)))
             .collect();
-        for extra in EXTRA_BIN_DIRS {
-            let resolved = resolve_path(std::path::Path::new(extra));
-            if !resolved.is_dir() {
-                continue;
-            }
-            let dir = resolved.to_string_lossy().to_string();
-            if !dirs.contains(&dir) {
-                dirs.push(dir);
-            }
-        }
         // Managed-runtime bins go last, and unconditionally: the prewarm
         // task creates them while the daemon runs, so an is_dir() gate here
         // would leave a first boot without them until restart.
-        for dir in crate::runtime::path_dirs() {
-            let dir = dir.to_string_lossy().to_string();
-            if !dirs.contains(&dir) {
-                dirs.push(dir);
-            }
-        }
-        dirs.join(":")
+        join_path(&inherited, &extras, &crate::runtime::path_dirs())
     })
+}
+
+/// `inherited`, then each of `extras` that is a directory, then every one of
+/// `always` — each dir once, first occurrence wins.
+fn join_path(
+    inherited: &str,
+    extras: &[std::path::PathBuf],
+    always: &[std::path::PathBuf],
+) -> String {
+    let mut dirs: Vec<String> = Vec::new();
+    let mut add = |dir: String| {
+        if !dir.is_empty() && !dirs.contains(&dir) {
+            dirs.push(dir);
+        }
+    };
+    inherited.split(':').for_each(|d| add(d.to_string()));
+    extras
+        .iter()
+        .filter(|d| d.is_dir())
+        .for_each(|d| add(d.to_string_lossy().to_string()));
+    always
+        .iter()
+        .for_each(|d| add(d.to_string_lossy().to_string()));
+    dirs.join(":")
 }
 
 /// Marks where a wrapped command's output ends and its final `pwd` begins.
@@ -236,5 +250,46 @@ mod panic_tests {
             assert_eq!(code, 0, "{command:?} failed: {out}");
             assert!(out.contains(CWD_SENTINEL), "{command:?} lost the sentinel");
         }
+    }
+}
+
+#[cfg(test)]
+mod shell_path_tests {
+    use super::*;
+
+    #[test]
+    fn extras_are_appended_only_when_present_and_never_twice() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cargo = tmp.path().join("cargo/bin");
+        let flutter = tmp.path().join("flutter/bin");
+        let missing = tmp.path().join("nowhere/bin");
+        std::fs::create_dir_all(&cargo).unwrap();
+        std::fs::create_dir_all(&flutter).unwrap();
+        let cargo_s = cargo.to_string_lossy().to_string();
+        let flutter_s = flutter.to_string_lossy().to_string();
+
+        // The user already has flutter on PATH: it keeps its place up front.
+        let inherited = format!("{flutter_s}:/usr/bin::/bin:/usr/bin");
+        let runtime = tmp.path().join("runtime/bin"); // not created yet
+        let got = join_path(
+            &inherited,
+            &[cargo.clone(), missing, flutter.clone(), cargo.clone()],
+            &[runtime.clone()],
+        );
+        let want = [
+            flutter_s.as_str(),
+            "/usr/bin",
+            "/bin",
+            cargo_s.as_str(),
+            &runtime.to_string_lossy(),
+        ]
+        .join(":");
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn the_cargo_and_flutter_homes_are_listed() {
+        assert!(EXTRA_BIN_DIRS.contains(&"~/.cargo/bin"));
+        assert!(EXTRA_BIN_DIRS.iter().any(|d| d.ends_with("flutter/bin")));
     }
 }

@@ -22,7 +22,9 @@ pub fn sync_command(
     env: &[(&str, &OsStr)],
 ) -> std::process::Command {
     let mut cmd = std::process::Command::new("bash");
-    cmd.current_dir(cwd);
+    // Same PATH every other shell child gets — under launchd the inherited
+    // one lacks the user's tool dirs. A caller's own PATH in `env` still wins.
+    cmd.current_dir(cwd).env("PATH", crate::util::shell_path());
     for (k, v) in env {
         cmd.env(*k, *v);
     }
