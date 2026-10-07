@@ -7,7 +7,8 @@
 #
 # Protocol, JSON lines on stdio:
 #   startup  ->  {"ready": true}                  (after the model loads)
-#   request  <-  {"text": "...", "voice": "..."}
+#   request  <-  {"text": "...", "voice": "...", "lang": "english"}
+#                (lang: auto | chinese | english; absent = auto)
 #   reply    ->  {"ok": true, "wav_b64": "...", "sr": 24000}
 #            ->  {"ok": false, "error": "..."}    (the loop keeps serving)
 #
@@ -73,6 +74,7 @@ def main():
             for res in model.generate(
                 text=req["text"],
                 voice=req["voice"],
+                lang_code=req.get("lang", "auto"),
                 stream=True,
                 streaming_interval=0.5,
                 max_tokens=max_tokens,

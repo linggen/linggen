@@ -48,6 +48,32 @@ fn synth_timeout(text: &str) -> std::time::Duration {
     std::time::Duration::from_secs((12 + chars / 3).clamp(15, 60))
 }
 
+/// The `lang_code` for this line. Left on "auto", Qwen3-TTS reads English
+/// with a Chinese accent in the default voice, so name the language: Han
+/// characters against Latin words, ties to Chinese. A zh sentence naming a
+/// meeting stays zh; an en reply with a stray 字 stays en.
+fn language_for(text: &str) -> &'static str {
+    let han = text
+        .chars()
+        .filter(|&c| {
+            matches!(c as u32,
+                0x4E00..=0x9FFF   // CJK Unified Ideographs
+                | 0x3400..=0x4DBF // Extension A
+                | 0xF900..=0xFAFF // Compatibility Ideographs
+            )
+        })
+        .count();
+    let latin_words = text
+        .split(|c: char| !c.is_ascii_alphabetic())
+        .filter(|w| w.len() >= 2)
+        .count();
+    match (han, latin_words) {
+        (0, 0) => "auto",
+        (h, w) if h >= w => "chinese",
+        _ => "english",
+    }
+}
+
 struct Sidecar {
     child: tokio::process::Child,
     stdin: tokio::process::ChildStdin,
@@ -135,7 +161,11 @@ impl MlxTtsProvider {
         let sidecar = guard.as_mut().expect("just spawned");
 
         let result = tokio::time::timeout(synth_timeout(text), async {
-            let req = serde_json::json!({ "text": text, "voice": voice });
+            let req = serde_json::json!({
+                "text": text,
+                "voice": voice,
+                "lang": language_for(text),
+            });
             sidecar
                 .stdin
                 .write_all(format!("{req}\n").as_bytes())
@@ -246,5 +276,36 @@ impl TtsProvider for MlxTtsProvider {
 
     fn prewarm_on_boot(&self) -> bool {
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pure_lines_name_their_language() {
+        assert_eq!(language_for("师父，我在这里。"), "chinese");
+        assert_eq!(language_for("Master, I am here."), "english");
+    }
+
+    #[test]
+    fn a_few_english_words_keep_a_chinese_line_chinese() {
+        assert_eq!(language_for("你今天十点和 Alex 有个 meeting"), "chinese");
+    }
+
+    #[test]
+    fn a_stray_han_char_keeps_an_english_line_english() {
+        assert_eq!(
+            language_for("That character is 字, meaning word."),
+            "english"
+        );
+    }
+
+    #[test]
+    fn nothing_to_judge_leaves_it_to_the_model() {
+        assert_eq!(language_for(""), "auto");
+        assert_eq!(language_for("🎉 123 !"), "auto");
+        assert_eq!(language_for("a 1"), "auto");
     }
 }
