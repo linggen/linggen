@@ -8,7 +8,7 @@
 # Protocol, JSON lines on stdio:
 #   startup  ->  {"ready": true}                  (after the model loads)
 #   request  <-  {"text": "...", "voice": "...", "lang": "english"}
-#                (lang: auto | chinese | english; absent = auto)
+#                (lang: auto | english; absent = auto)
 #   reply    ->  {"ok": true, "wav_b64": "...", "sr": 24000}
 #            ->  {"ok": false, "error": "..."}    (the loop keeps serving)
 #

@@ -48,29 +48,25 @@ fn synth_timeout(text: &str) -> std::time::Duration {
     std::time::Duration::from_secs((12 + chars / 3).clamp(15, 60))
 }
 
-/// The `lang_code` for this line. Left on "auto", Qwen3-TTS reads English
-/// with a Chinese accent in the default voice, so name the language: Han
-/// characters against Latin words, ties to Chinese. A zh sentence naming a
-/// meeting stays zh; an en reply with a stray 字 stays en.
+/// The `lang_code` for this line. "auto" reads Chinese and mixed zh/en
+/// lines well, but pure English comes out with a Chinese accent in the
+/// default voice — so only a line with Latin words and no Han at all is
+/// named "english"; everything else stays "auto".
 fn language_for(text: &str) -> &'static str {
-    let han = text
-        .chars()
-        .filter(|&c| {
-            matches!(c as u32,
-                0x4E00..=0x9FFF   // CJK Unified Ideographs
-                | 0x3400..=0x4DBF // Extension A
-                | 0xF900..=0xFAFF // Compatibility Ideographs
-            )
-        })
-        .count();
-    let latin_words = text
+    let has_han = text.chars().any(|c| {
+        matches!(c as u32,
+            0x4E00..=0x9FFF   // CJK Unified Ideographs
+            | 0x3400..=0x4DBF // Extension A
+            | 0xF900..=0xFAFF // Compatibility Ideographs
+        )
+    });
+    let has_latin_word = text
         .split(|c: char| !c.is_ascii_alphabetic())
-        .filter(|w| w.len() >= 2)
-        .count();
-    match (han, latin_words) {
-        (0, 0) => "auto",
-        (h, w) if h >= w => "chinese",
-        _ => "english",
+        .any(|w| w.len() >= 2);
+    if !has_han && has_latin_word {
+        "english"
+    } else {
+        "auto"
     }
 }
 
@@ -284,26 +280,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pure_lines_name_their_language() {
-        assert_eq!(language_for("师父，我在这里。"), "chinese");
+    fn pure_english_is_named_english() {
+        assert_eq!(language_for("Good morning, see you at ten"), "english");
         assert_eq!(language_for("Master, I am here."), "english");
     }
 
     #[test]
-    fn a_few_english_words_keep_a_chinese_line_chinese() {
-        assert_eq!(language_for("你今天十点和 Alex 有个 meeting"), "chinese");
+    fn any_han_leaves_it_to_auto() {
+        assert_eq!(language_for("师父，我在这里。"), "auto");
+        assert_eq!(language_for("你今天十点和 Alex 有个 meeting"), "auto");
+        assert_eq!(language_for("Hello 你好"), "auto");
+        assert_eq!(language_for("That character is 字, meaning word."), "auto");
     }
 
     #[test]
-    fn a_stray_han_char_keeps_an_english_line_english() {
-        assert_eq!(
-            language_for("That character is 字, meaning word."),
-            "english"
-        );
-    }
-
-    #[test]
-    fn nothing_to_judge_leaves_it_to_the_model() {
+    fn nothing_to_judge_leaves_it_to_auto() {
         assert_eq!(language_for(""), "auto");
         assert_eq!(language_for("🎉 123 !"), "auto");
         assert_eq!(language_for("a 1"), "auto");
