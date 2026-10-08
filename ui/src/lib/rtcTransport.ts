@@ -273,7 +273,12 @@ export class RtcTransport implements Transport {
         const state = this.pc?.iceConnectionState;
         console.log(`[WebRTC] iceConnectionState: ${state}`);
         if (state === 'failed') {
+          this.clearIceGrace();
           this.handleDisconnect();
+        } else if (state === 'disconnected') {
+          this.armIceGrace();
+        } else {
+          this.clearIceGrace();
         }
       };
 
@@ -484,6 +489,10 @@ export class RtcTransport implements Transport {
         if (this.pendingRequests.has(requestId)) {
           this.pendingRequests.delete(requestId);
           reject(new Error('Control channel request timeout'));
+          // A control request unanswered for 30 s means the channel is dead
+          // even if the browser still reports it open — reconnect now
+          // instead of waiting for ICE to reach 'failed'.
+          this.handleDisconnect();
         }
       }, 30000);
 
@@ -556,6 +565,28 @@ export class RtcTransport implements Transport {
 
   // --- Internal: reconnection ---
 
+  private iceGraceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** ICE 'disconnected' can sit ~30 s before 'failed' while the server has
+   *  already dropped the peer (it exits after 30 s disconnected). The channel
+   *  still reads 'open', so sends hang. Give a blip a few seconds to recover,
+   *  then reconnect. */
+  private armIceGrace(): void {
+    if (this.iceGraceTimer) return;
+    this.iceGraceTimer = setTimeout(() => {
+      this.iceGraceTimer = null;
+      const st = this.pc?.iceConnectionState;
+      if (st === 'disconnected' || st === 'failed') this.handleDisconnect();
+    }, 6000);
+  }
+
+  private clearIceGrace(): void {
+    if (this.iceGraceTimer) {
+      clearTimeout(this.iceGraceTimer);
+      this.iceGraceTimer = null;
+    }
+  }
+
   private handleDisconnect(): void {
     if (this.intentionalDisconnect) return;
     if (this._status === 'reconnecting') return; // already handling
@@ -574,6 +605,7 @@ export class RtcTransport implements Transport {
 
   private cleanup(): void {
     this.stopHeartbeat();
+    this.clearIceGrace();
 
     // Abort any in-flight signaling (e.g. relay polling)
     if (this.signalingAbort) {
