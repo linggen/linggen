@@ -471,6 +471,7 @@ pub(crate) async fn trigger_mission_core(
             let _ = state.manager.global_sessions.add_chat_message(
                 sid,
                 &crate::state_fs::sessions::ChatMsg {
+                    via: None,
                     agent_id: mission.agent_id.clone(),
                     from_id: "user".to_string(),
                     to_id: mission.agent_id.clone(),

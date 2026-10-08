@@ -22,6 +22,15 @@ const UNSPOKEN = UNSPOKEN_SENDERS;
  * via agent_chat. Derived from the message's from_id (one fact, every
  * surface); null only for rows nobody spoke.
  */
+const DEVICE_NAMES: Record<string, string> = { iphone: 'iPhone', ipad: 'iPad', android: 'Android' };
+
+/** "Ling · from iPhone" — a hand-off row: the panel's own agent continuing the user's task. */
+function handOffLabel(msg: ChatMessage, panelAgent: string): string | null {
+  if (!msg.via) return null;
+  const name = panelAgent.charAt(0).toUpperCase() + panelAgent.slice(1);
+  return `${name} · from ${DEVICE_NAMES[msg.via] ?? msg.via}`;
+}
+
 function agentLabel(msg: ChatMessage, panelAgent: string): string | null {
   const from = (msg.from || '').toLowerCase();
   if (from === 'user' || UNSPOKEN.has(from) || from.startsWith('run-')) return null;
@@ -193,9 +202,10 @@ export const ChatMessageList = React.memo<{
             msgKey={key}
             isUser={isUser}
             senderTag={
-              isUser && (!msg.from || msg.from === 'user')
+              handOffLabel(msg, selectedAgent) ??
+              (isUser && (!msg.from || msg.from === 'user')
                 ? (coreName ?? 'Hanli')
-                : agentLabel(msg, selectedAgent)
+                : agentLabel(msg, selectedAgent))
             }
             isExpanded={isExpanded}
             onToggle={toggleExpanded}

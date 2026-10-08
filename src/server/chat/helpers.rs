@@ -117,6 +117,7 @@ pub(crate) async fn persist_and_emit_to_store(
     session_id: Option<&str>,
     is_observation: bool,
     client_id: Option<&str>,
+    via: Option<&str>,
 ) {
     let client_id = client_id.map(str::to_string);
     let _ = events_tx.send(ServerEvent::Message {
@@ -138,6 +139,7 @@ pub(crate) async fn persist_and_emit_to_store(
         is_observation,
         client_id,
         failed: false,
+        via: via.map(str::to_string),
     };
     if let Err(e) = store.add_chat_message(sid, &msg) {
         tracing::warn!("Failed to persist chat message to mission store: {}", e);
@@ -157,6 +159,7 @@ pub(crate) async fn persist_message_only(
 ) {
     let sid = session_id.unwrap_or("default");
     let msg = crate::state_fs::sessions::ChatMsg {
+        via: None,
         agent_id: agent_id.to_string(),
         from_id: from.to_string(),
         to_id: to.to_string(),

@@ -722,6 +722,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               ...(tools.length ? { content: tools, toolCount: tools.length } : {}),
               ...(isError ? { isError: true } : {}),
               ...(meta.client_id ? { clientId: String(meta.client_id) } : {}),
+              ...(meta.via ? { via: String(meta.via) } : {}),
             }];
           });
         state.syncPersisted(msgs);

@@ -753,6 +753,7 @@ impl AgentEngine {
                     &self.tools.builtins.cwd(),
                     t.session_id.unwrap_or("default"),
                     &crate::state_fs::sessions::ChatMsg {
+                        via: None,
                         agent_id: from.clone(),
                         from_id: from,
                         to_id: target,

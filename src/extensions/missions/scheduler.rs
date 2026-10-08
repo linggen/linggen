@@ -726,6 +726,7 @@ async fn dispatch_mission_prompt(
             let _ = global_store.add_chat_message(
                 sid,
                 &crate::state_fs::sessions::ChatMsg {
+                    via: None,
                     agent_id: agent_id.to_string(),
                     from_id: "user".to_string(),
                     to_id: agent_id.to_string(),
@@ -942,6 +943,7 @@ async fn dispatch_mission_prompt(
                     let _ = state.manager.global_sessions.add_chat_message(
                         sid,
                         &crate::state_fs::sessions::ChatMsg {
+                            via: None,
                             agent_id: agent_id.to_string(),
                             from_id: agent_id.to_string(),
                             to_id: "user".to_string(),
@@ -1036,6 +1038,7 @@ async fn append_run_report(state: &Arc<SchedulerHost>, agent_id: &str, session_i
     let _ = state.manager.global_sessions.add_chat_message(
         sid,
         &crate::state_fs::sessions::ChatMsg {
+            via: None,
             agent_id: agent_id.to_string(),
             from_id: agent_id.to_string(),
             to_id: "user".to_string(),

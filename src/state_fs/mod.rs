@@ -38,6 +38,9 @@ pub enum StateFile {
         /// The sending surface's id for a person's message (`ChatMsg::client_id`).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         client_id: Option<String>,
+        /// Device the session's agent continues the user's task from (`ChatMsg::via`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        via: Option<String>,
     },
 }
 

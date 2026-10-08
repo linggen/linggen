@@ -222,6 +222,7 @@ async fn run_at(
         }
 
         let ctx = crate::server::chat::ChatRunCtx {
+            via: None,
             state: state.clone(),
             manager: state.manager.clone(),
             events_tx: state.events_tx.clone(),

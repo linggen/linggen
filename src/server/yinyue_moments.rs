@@ -367,6 +367,7 @@ async fn land_in_chats(
                 Some(sid),
                 false,
                 None,
+                None,
             )
             .await;
         }

@@ -38,6 +38,11 @@ pub(crate) struct ChatRequest {
     /// handed to the model as "[Yinyue]: …". Absent or "user" = the user.
     #[serde(default)]
     pub(super) sender: Option<String>,
+    /// The device the session's own agent is continuing the user's task from
+    /// ("iphone"). Not another speaker: the row stays the user's request,
+    /// read by the model and labeled on surfaces as a hand-off.
+    #[serde(default)]
+    pub(super) via: Option<String>,
     /// The surface shows follow-up buttons — ask the model for them this turn.
     #[serde(default)]
     pub(super) followups: bool,

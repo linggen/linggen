@@ -66,6 +66,8 @@ pub(super) struct ChatRunCtx {
     /// this themselves. One fact, two renderings: persisted as the message's
     /// from_id for the chat surfaces, prefixed as "[Yinyue]: …" for the model.
     pub(super) sender: Option<String>,
+    /// Device this agent continues the user's task from (see `ChatRequest::via`).
+    pub(super) via: Option<String>,
     /// The kickoff offers silence: a reply that is exactly `SILENT` is
     /// neither streamed, shown nor kept.
     pub(super) silence_ok: bool,
@@ -80,11 +82,24 @@ impl ChatRunCtx {
     /// What the model reads for this turn: a relayed message carries its
     /// speaker inline, so the model knows who is asking.
     pub(super) fn labeled_msg(&self) -> String {
+        if let Some(device) = self.via.as_deref() {
+            return via_line(device, &self.clean_msg);
+        }
         match self.sender.as_deref() {
             Some(s) => format!("[{}]: {}", sender_label(s), self.clean_msg),
             None => self.clean_msg.clone(),
         }
     }
+}
+
+/// A hand-off as the model reads it: the user's own request, which this
+/// agent is now acting on — neither its past words nor another agent's.
+pub(crate) fn via_line(device: &str, text: &str) -> String {
+    let place = match device {
+        "iphone" => "the phone",
+        d => d,
+    };
+    format!("(Continuing your own task from {place} \u{2014} the user asked:) {text}")
 }
 
 /// "yinyue" → "Yinyue" — the display form of an agent id, shared by every
@@ -127,4 +142,17 @@ pub(super) fn open_in_browser(url: &str) -> std::io::Result<()> {
             .spawn()?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod via_tests {
+    use super::via_line;
+
+    #[test]
+    fn a_hand_off_is_the_users_request_not_another_agent() {
+        let l = via_line("iphone", "how many songs?");
+        assert!(l.starts_with("(Continuing your own task from the phone"));
+        assert!(l.ends_with("how many songs?"));
+        assert!(!l.starts_with('['));
+    }
 }

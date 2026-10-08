@@ -481,6 +481,7 @@ async fn dequeue_and_emit(
         response_session_id,
         false,
         None,
+        None,
     )
     .await;
     true
@@ -984,6 +985,7 @@ async fn turn_in_session(
         user_id: None,
         images: Vec::new(),
         sender: None,
+        via: None,
         followups: false,
         client_id: None,
     };
@@ -1107,11 +1109,17 @@ pub(crate) async fn start_turn(
     // A relayed message names its speaker (an agent id like "yinyue"); the
     // user's own messages carry no sender. Persisted as from_id so every chat
     // surface labels the bubble from the same fact.
+    let via = req
+        .via
+        .as_deref()
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty() && s.len() <= 32);
+    // A hand-off is the user's request, not another speaker's.
     let sender = req
         .sender
         .as_deref()
         .map(|s| s.trim().to_lowercase())
-        .filter(|s| !s.is_empty() && s != "user" && *s != target_id);
+        .filter(|s| via.is_none() && !s.is_empty() && s != "user" && *s != target_id);
     let from_id = sender.clone().unwrap_or_else(|| "user".to_string());
     let client_id = req.client_id.as_deref().and_then(client_id_of);
 
@@ -1163,6 +1171,7 @@ pub(crate) async fn start_turn(
             session_id.as_deref(),
             false,
             client_id.as_deref(),
+            via.as_deref(),
         )
         .await;
     }
@@ -1301,6 +1310,7 @@ pub(crate) async fn start_turn(
             images: req_images,
             policy,
             sender,
+            via: via.clone(),
             silence_ok: origin == TurnOrigin::Kickoff,
         };
 

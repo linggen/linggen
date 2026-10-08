@@ -473,6 +473,7 @@ pub(super) async fn deliver_to_chat_agent(
         engine.set_parent_agent(None);
         engine.last_assistant_text = None;
         let ctx = crate::server::chat::ChatRunCtx {
+            via: None,
             state: state.clone(),
             manager: state.manager.clone(),
             events_tx: state.events_tx.clone(),

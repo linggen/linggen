@@ -557,6 +557,7 @@ pub(super) async fn push_user_turn_with_recall(
             ctx.session_id.as_deref(),
             false,
             None,
+            None,
         )
         .await;
     }

@@ -291,6 +291,7 @@ mod tests {
 
     fn row(from: &str, to: &str, content: &str, obs: bool, ts: u64) -> ChatMsg {
         ChatMsg {
+            via: None,
             agent_id: "ling".into(),
             from_id: from.into(),
             to_id: to.into(),

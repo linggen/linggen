@@ -179,6 +179,7 @@ pub async fn run(
     let _ = store.add_chat_message(
         &session_id,
         &crate::state_fs::sessions::ChatMsg {
+            via: None,
             agent_id: agent_id.clone(),
             from_id: "user".to_string(),
             to_id: agent_id.clone(),

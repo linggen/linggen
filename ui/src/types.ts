@@ -105,6 +105,9 @@ export interface ChatMessage {
   /** A person's message: the id this surface gave its bubble, sent with it
    *  and kept on the saved row — the bubble and its row match by it. */
   clientId?: string;
+  /** The session's own agent continuing the user's task from another device
+   *  ("iphone"): a hand-off, shown as "<Agent> · from iPhone". */
+  via?: string;
 }
 
 
@@ -122,6 +125,8 @@ export interface PersistedMeta {
   ts: number;
   /** A person's message: the sending surface's id for its bubble. */
   client_id?: string | null;
+  /** Device the session's agent continues the user's task from. */
+  via?: string | null;
   [key: string]: unknown;
 }
 

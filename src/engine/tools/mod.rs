@@ -657,6 +657,7 @@ mod tests {
     #[test]
     fn user_words_keeps_what_the_person_typed_newest_last() {
         let msg = |from: &str, content: &str, obs: bool| crate::state_fs::sessions::ChatMsg {
+            via: None,
             agent_id: "a".into(),
             from_id: from.into(),
             to_id: "a".into(),

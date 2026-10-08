@@ -257,6 +257,12 @@ fn spoken(m: &ChatMsg, reader: &Reader) -> Option<ChatMessage> {
     if m.content.contains("[HIDDEN]") && m.agent_id != reader.id {
         return None;
     }
+    if let (Some(device), "user") = (m.via.as_deref(), m.from_id.as_str()) {
+        return Some(ChatMessage::new(
+            "user",
+            super::via_line(device, &m.content),
+        ));
+    }
     if m.from_id == reader.id {
         return Some(ChatMessage::new("assistant", m.content.clone()));
     }
@@ -454,6 +460,7 @@ mod tests {
 
     fn row(agent: &str, from: &str, to: &str, content: &str, obs: bool) -> ChatMsg {
         ChatMsg {
+            via: None,
             agent_id: agent.into(),
             from_id: from.into(),
             to_id: to.into(),
@@ -463,6 +470,39 @@ mod tests {
             client_id: None,
             failed: false,
         }
+    }
+
+    fn row_for_test(
+        m: &ChatMsg,
+        id: &str,
+        agents: &std::collections::HashSet<String>,
+    ) -> ChatMessage {
+        let others = HashMap::new();
+        let reader = Reader {
+            id,
+            agents,
+            native: true,
+            others_read: &others,
+        };
+        spoken(m, &reader).unwrap()
+    }
+
+    #[test]
+    fn a_hand_off_row_reads_as_the_users_request_and_others_are_unaffected() {
+        let mut m = row("ling", "user", "ling", "how many songs?", false);
+        m.via = Some("iphone".into());
+        let agents = std::collections::HashSet::from(["ling".to_string()]);
+        let got = row_for_test(&m, "ling", &agents);
+        assert_eq!(got.role, "user");
+        assert!(got
+            .content
+            .contains("Continuing your own task from the phone"));
+        assert!(got.content.ends_with("how many songs?"));
+        // Same row without via, and an agent-to-agent sender == reader row.
+        m.via = None;
+        assert_eq!(row_for_test(&m, "ling", &agents).content, "how many songs?");
+        let own = row("ling", "ling", "user", "hi", false);
+        assert_eq!(row_for_test(&own, "ling", &agents).role, "assistant");
     }
 
     fn call(agent: &str, name: &str) -> ChatMsg {

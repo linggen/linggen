@@ -216,6 +216,10 @@ pub struct ChatMsg {
     /// before 2026-10-06 have none (`call_failed` reads their text).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub failed: bool,
+    /// A person's message the session's own agent is continuing from another
+    /// device ("iphone"): stored as the user's, shown and read as a hand-off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub via: Option<String>,
 }
 
 impl SessionStore {
@@ -706,6 +710,7 @@ mod tests {
         store.add_session(&meta).unwrap();
 
         let msg1 = ChatMsg {
+            via: None,
             agent_id: "ling".into(),
             from_id: "user".into(),
             to_id: "ling".into(),
@@ -716,6 +721,7 @@ mod tests {
             failed: false,
         };
         let msg2 = ChatMsg {
+            via: None,
             agent_id: "ling".into(),
             from_id: "ling".into(),
             to_id: "user".into(),
@@ -739,6 +745,7 @@ mod tests {
     #[test]
     fn a_rows_client_id_round_trips_and_is_optional() {
         let row = |client_id: Option<&str>| ChatMsg {
+            via: None,
             agent_id: "yinyue".into(),
             from_id: "user".into(),
             to_id: "yinyue".into(),
@@ -789,6 +796,7 @@ mod tests {
             .add_chat_message(
                 "s1",
                 &ChatMsg {
+                    via: None,
                     agent_id: "ling".into(),
                     from_id: "user".into(),
                     to_id: "ling".into(),
@@ -804,6 +812,7 @@ mod tests {
             .add_chat_message(
                 "s1",
                 &ChatMsg {
+                    via: None,
                     agent_id: "coder".into(),
                     from_id: "user".into(),
                     to_id: "coder".into(),
@@ -851,6 +860,7 @@ mod tests {
             .add_chat_message(
                 "s1",
                 &ChatMsg {
+                    via: None,
                     agent_id: "ling".into(),
                     from_id: "user".into(),
                     to_id: "ling".into(),
@@ -896,6 +906,7 @@ mod tests {
             .add_chat_message(
                 "s1",
                 &ChatMsg {
+                    via: None,
                     agent_id: "ling".into(),
                     from_id: "user".into(),
                     to_id: "ling".into(),
@@ -989,6 +1000,7 @@ mod tests {
             .add_chat_message(
                 "auto-created",
                 &ChatMsg {
+                    via: None,
                     agent_id: "ling".into(),
                     from_id: "user".into(),
                     to_id: "ling".into(),

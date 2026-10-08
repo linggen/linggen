@@ -362,6 +362,7 @@ async fn run_approved_plan_task(
         images: Vec::new(),
         policy: crate::engine::session_policy::SessionPolicy::default(),
         sender: None,
+        via: None,
         silence_ok: false,
     };
     run_plan_execution(&ctx, &mut engine).await;
@@ -401,6 +402,7 @@ async fn persist_plan_message(
 ) {
     let plan_json = serde_json::json!({ "type": "plan", "plan": plan });
     let msg = crate::state_fs::sessions::ChatMsg {
+        via: None,
         agent_id: agent_id.to_string(),
         from_id: agent_id.to_string(),
         to_id: "user".to_string(),

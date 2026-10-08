@@ -170,7 +170,8 @@ pub(crate) async fn get_skill_session_state(
                 "to": m.to_id,
                 "ts": m.timestamp,
                 "task_id": null,
-                "client_id": m.client_id
+                "client_id": m.client_id,
+                "via": m.via
             });
             Some(serde_json::json!([
                 run_calls::with_tools(meta, calls),
