@@ -115,6 +115,12 @@ become typed tool calls with no second turn at all.
   `cfo_read`, `photos_find`. Underscore, not dot — model function names and
   retained-topic ops reject dots; chips may show `dj.play`. Mac tools reaching
   the phone (`mac/tools`) follow the same rule.
+- **One tool per verb across devices** (Hanli 2026-10-08). When a Mac tool is
+  the same verb as a phone tool of that app (an explicit per-app table, never
+  a name guess), the phone offers one tool with `where: "phone" | "mac"` —
+  phone = this phone's own copy, mac = the Mac's — and `where` appears only
+  while the Mac is reachable. A Mac tool never replaces a phone tool; Mac
+  tools with no phone counterpart are their own entries in the app's pack.
 - **Packs stay the isolation.** Each turn carries only the active apps' tools,
   plus Ling's own and `common` ones; `open_toolbox` is the index (one line per
   tool of an app) and loads a pack on demand. No session switching.
