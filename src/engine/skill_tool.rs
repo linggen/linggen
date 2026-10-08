@@ -307,6 +307,26 @@ impl SkillToolDef {
     }
 
     /// Convert this skill tool definition to an OpenAI-compatible tool schema.
+    /// `{{name}}` placeholders in `cmd` that `args` doesn't declare. The
+    /// engine never fills one — it reaches the script literally, and the
+    /// model is never offered the arg — so the loader names each in the log.
+    pub fn undeclared_placeholders(&self) -> Vec<String> {
+        let mut found = Vec::new();
+        let mut rest = self.cmd.as_str();
+        while let Some(open) = rest.find("{{") {
+            rest = &rest[open + 2..];
+            let Some(close) = rest.find("}}") else { break };
+            let name = &rest[..close];
+            let ident =
+                !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+            if ident && !self.args.contains_key(name) && !found.iter().any(|f| f == name) {
+                found.push(name.to_string());
+            }
+            rest = &rest[close + 2..];
+        }
+        found
+    }
+
     pub fn to_oai_schema(&self) -> Value {
         let mut properties = serde_json::Map::new();
         let mut required = Vec::new();
@@ -651,6 +671,14 @@ mod tests {
             stdout_of(&tool, args),
             "<two words><it's \"q\" $HOME; ls><1>"
         );
+    }
+
+    #[test]
+    fn an_undeclared_placeholder_is_named() {
+        let tool = positional_tool(&[("a", None)]);
+        assert_eq!(tool.undeclared_placeholders(), vec!["b", "c"]);
+        let quiet = shell_tool("jq '{{ .x }}' {{}}", 1024);
+        assert!(quiet.undeclared_placeholders().is_empty());
     }
 
     #[test]

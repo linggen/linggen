@@ -647,6 +647,13 @@ pub fn parse_skill_text(text: &str, source: SkillSource) -> Result<Skill> {
     let senses = known_senses(frontmatter.senses, &frontmatter.name);
     for tool_def in &mut tool_defs {
         tool_def.senses = senses.clone();
+        for arg in tool_def.undeclared_placeholders() {
+            tracing::warn!(
+                "skill '{}': tool '{}' uses {{{{{arg}}}}} but declares no such arg; it stays literal",
+                frontmatter.name,
+                tool_def.name
+            );
+        }
     }
 
     Ok(Skill {
