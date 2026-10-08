@@ -68,14 +68,17 @@ held to shared fixtures; stage-first UI per
 `skills/lingjing/doc/phone-prototype.html`; a skill-moment hook gives Yinyue a
 turn.
 
-Pending (Hanli 2026-10-08, "待定, 先记下来, 之后做"): **Yinyue appears
-nowhere until found in Lingjing** — not on Mac (pet window, 3D body, menubar
-face, chat, Settings sections, heralds) nor on the phone (Chat, Settings).
-Today the gate (`absent_until` → `server/chat/presence.rs`) covers only
-Lingjing's own sessions. Shape: a global "met Yinyue" flag set by the Lingjing
-save, declared in Yinyue's own agent config (no skill names in Rust), synced to
-the phone (cloud save); before it, Chat is Ling only. Open: whether
-non-players get another way to meet her (the site and App Store present her).
+10. **Yinyue appears nowhere until found in Lingjing** (Hanli 2026-10-08: needed
+    — every app shares one Chat on the phone, and her being there from the
+    start breaks Lingjing's story). Not on the Mac (pet window, 3D body, menubar
+    face, chat, Settings sections, heralds) nor the phone (Chat, Settings).
+    Today the gate (`absent_until` → `server/chat/presence.rs`) covers only
+    Lingjing's own sessions. Shape: a global "met Yinyue" flag set by the
+    Lingjing save, declared in Yinyue's own agent config (no skill names in
+    Rust), synced to the phone (cloud save); before it, Chat is Ling only.
+    Needs 5 and 8. Open: non-players never meet her (site and App Store present
+    her); the fresh-install guide (2026-09-25) has her offer 开府 — Ling offers
+    it instead.
 
 ## Risks
 
