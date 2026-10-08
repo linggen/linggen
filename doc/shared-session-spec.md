@@ -121,7 +121,7 @@ agent's context is built from it:
 
 - **Phone.** Decided 2026-10-08 in `one-ling-spec.md`: one Ling and one
   Yinyue on every device; the phone runs its own two-member table; sessions
-  stay on their device; cross-device work lends the turn to the Mac.
+  stay on their device; Mac work continues in the app's latest Mac session as the same Ling.
 - **Speed.** Yinyue in a long shared thread reads more than her 10-message
   home window; her replies slow down. Watch it in Lingjing before tuning.
 - **Tool widening.** Several 2026-09 incidents were fixed by narrowing her

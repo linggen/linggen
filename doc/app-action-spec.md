@@ -24,7 +24,7 @@ Ling does every action, on every device (`one-ling-spec.md`, 2026-10-08; Yinyue 
 
 - The **owning side** (where the data or OS capability lives) declares a local tool and executes it.
 - The **other side** reaches it as a typed call routed to the owner — never by re-phrasing through the other agent.
-- Judgment-shaped asks that need the Mac ("get me the karaoke version") **lend the turn** to the Mac's engine instead of relaying to a second agent. `ask_mac_app` retires.
+- Judgment-shaped asks that need the Mac ("get me the karaoke version") go to the app's latest Mac session as **Ling continuing her own task** — one Ling on two devices, never the phone's Yinyue asking the Mac's Ling.
 - User buttons are never gated. Tiers gate agents only.
 
 ## One writer per mutation (Mac)

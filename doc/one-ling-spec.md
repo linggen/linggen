@@ -54,27 +54,30 @@ One speaker per turn, so a message costs about one model call.
 
 ## Where a turn runs
 
-- **Mac reachable → the turn runs on the Mac**: the Mac's model and all its
-  tools. The phone **lends the turn**: its session stays on the phone, the
-  Mac's engine runs the loop with the phone's context, and the reply streams
-  back over WebRTC.
-- **Mac unreachable → the turn runs on the phone** with phone tools only. A
-  step that needs the Mac waits, and Ling says so plainly ("your Mac is
-  asleep — I'll do it when it's back"); she queues it, never fails silently.
+- **Mac work goes to the Mac app's latest session.** When a task needs the
+  Mac, Ling on the phone hands it to the relevant app's most recent session on
+  the Mac (the lookup already built for DJ), and Ling continues it there with
+  the Mac's model and tools. The user sees the work in that Mac session; the
+  phone shows it as Ling's own step (`Mac · DJ`, live status) and Ling reports
+  the result in her own words. It is one Ling working on two devices: the
+  hand-off is written as Ling continuing her own task, never as Yinyue (or
+  another agent) asking her.
+- **Mac unreachable → Ling says so and stops.** No queue, no waking the Mac.
 - **Tools run where they live.** Mac tools on the Mac, phone tools on the
   phone, reached as typed calls (`app-action-spec.md`). Each tool chip shows
   where it ran: `Mac · dj.download`, `iPhone · save to Photos`.
 
-Example: on the phone, "pull the photo from my Mac". Ling's turn runs on the
-Mac, finds and opens the file (Mac tools), then calls the phone's save tool;
-the bytes cross by reference over WebRTC. One Ling, one turn.
+Example: on the phone, "download this song to my phone". Ling hands it to
+DJ's latest session on the Mac, continues there (download, add to the phone
+view), and on the phone says it's on its way. One Ling, two devices.
 
 ## No agent-to-agent hops across devices
 
-Cross-device work is a reach, never a conversation. `ask_mac_app`
-(a message to the Mac app's Ling, who runs a second turn and replies) and
-`sendToSkillSession` for actions retire. Their jobs become typed tool calls in
-Ling's own turn, or a lent turn.
+Cross-device work is a reach, never a conversation. Today `ask_mac_app` has
+the phone's Yinyue write to the Mac app's Ling, who answers her — two agents
+chatting. The same path stays (latest app session, visible on the Mac), but
+the sender becomes Ling herself continuing her task, and exact-param actions
+become typed tool calls with no second turn at all.
 
 ## Sessions stay on their device
 
@@ -105,20 +108,14 @@ Ling's own turn, or a lent turn.
 
 1. **Typed Mac tools for the phone.** The Mac publishes its app actions as a
    retained `mac/tools` catalog, as the phone does with `phone/tools`; Ling's
-   phone loop calls them directly. `ask_mac_app` retires (DJ download first).
+   phone loop calls them directly, with no second turn (DJ download first).
 2. **Ling on the phone.** A Ling member in the phone's Chat; dispatch as in
    § Who answers; Yinyue's soul loses its task-running parts; the two chat
    screens merge.
-3. **Lend the turn.** The phone sends its context to the Mac's engine; the
-   Mac runs the turn with Mac + phone tools; the reply streams back.
+3. **One Ling across the hand-off.** The phone-to-Mac hand-off (latest app
+   session) is sent and framed as Ling continuing her own task; the phone
+   shows it as her step and her result.
 4. **Lingjing on the phone** (`skills/lingjing/doc/phone-prototype.html`):
    stage-first native UI, a pure-Dart port of the rules held to shared
    fixtures (as CFO's engine), Ling and Yinyue at the game's table, the save
    synced through the cloud save. Playable without the Mac.
-
-## Open
-
-- **A sleeping Mac.** Lent turns need it awake; queue-and-say is the floor.
-  Waking it is not designed.
-- **Existing phone threads.** Yinyue's history stays as written; only new
-  turns follow the new roles.
