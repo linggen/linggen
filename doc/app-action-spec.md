@@ -20,11 +20,11 @@ Every user-visible app action is a declared tool. Both agents can reach every ac
 
 ## The symmetry rule
 
-Both Ling and Yinyue know how to do everything. For each action:
+Ling does every action, on every device (`one-ling-spec.md`, 2026-10-08; Yinyue is the companion and runs no tasks). For each action:
 
 - The **owning side** (where the data or OS capability lives) declares a local tool and executes it.
 - The **other side** reaches it as a typed call routed to the owner — never by re-phrasing through the other agent.
-- `agent_chat` relay is reserved for **judgment-shaped asks** ("get me the karaoke version") where the receiving agent's intelligence is the point. Exact-param mutations never pass through a second model.
+- Judgment-shaped asks that need the Mac ("get me the karaoke version") **lend the turn** to the Mac's engine instead of relaying to a second agent. `ask_mac_app` retires.
 - User buttons are never gated. Tiers gate agents only.
 
 ## One writer per mutation (Mac)
@@ -69,6 +69,7 @@ Three tiers: `read`, `edit`, `destructive`.
 - **Shared data never crosses as an action.** Each side mutates its own copy through its local tool; LWW/CAS sync propagates (Ling saves a playlist via the Mac script; the phone pulls). This removes most cross-device traffic by construction.
 - **Typed queue for device-exclusive verbs only** (~3 today: PhotoKit delete, backup upload, device scan). Envelope `{app, tool, params}` over the retained-topic transport names the same tool the local agent would call; it drains on app resume. `sync-requested` is the precedent and folds into this shape.
 - **Catalog**: the phone publishes its registry as a retained `phone/tools` topic on connect (same mechanism as `shifu/readout`). The Mac never requests it — reads are published, actions are queued.
+- **Mac catalog** (designed 2026-10-08): the Mac publishes its app actions as a retained `mac/tools` topic the same way, so Ling's phone loop calls them as typed tools; they go grey while the Mac is unreachable.
 
 ## Visibility
 

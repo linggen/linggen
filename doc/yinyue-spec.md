@@ -19,6 +19,12 @@ The engine hosts multiple named agents (see `agent-spec.md`). Two ship today:
 
 They coexist. Yinyue is not Ling's master — she leaves the other agents to their work.
 
+**Roles revised 2026-10-08 (`one-ling-spec.md`):** one Ling and one Yinyue on
+every device. Ling answers every message and does every task; Yinyue is the
+companion — she speaks on her own moments or when addressed `@Yinyue`, and
+runs no tasks. Where this spec has her doing or marshalling work (§ Purpose 1
+and 3), that work is Ling's.
+
 Source: `agents/yinyue.md` (shipped) → installed to `~/.linggen/agents/yinyue.md`.
 
 ## Purpose
@@ -130,8 +136,8 @@ windows.
 
 One device shows exactly one Yinyue 3D model, and that one carries her voice.
 Every other place she appears on that device is silent and shows her words as
-text. The rule is per device, not per person: a Mac and a phone each have their
-own Yinyue, and both may speak at the same time.
+text. The rule is per device, not per person: she is one Yinyue (`one-ling-spec.md`)
+with a voice on each device, and both may speak at the same time.
 
 The engine enforces it per engine: every surface that can render her — the web
 tab, the desktop pet window, a stage inside an app page — subscribes over the

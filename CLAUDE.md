@@ -29,6 +29,7 @@ Read files under `doc/` and follow them. If you find wrong content in any doc fi
 - `doc/permission-spec.md` — permission system: modes, layers, tool classification, remote trust
 - `doc/yinyue-spec.md` — Yinyue companion: avatar, voice, session + memory model
 - `doc/shared-session-spec.md` — shared sessions: several agents at one table, one thread/tools/permissions, per-agent persona + model
+- `doc/one-ling-spec.md` — one Ling + one Yinyue on every device: who answers, where a turn runs (lend the turn), no cross-device agent hops, sessions stay per device
 - `doc/yinyue-companion-spec.md` — Yinyue's proactive/interactive layer: senses, heralds, `agent_chat`, ambient life-signs
 - `doc/perception-spec.md` — what a resident agent knows without being told: world state, the activity log, and when to speak
 - `doc/app-action-spec.md` — app actions as tools: one writer per mutation, phone tool registry, typed cross-device calls, destructive confirms

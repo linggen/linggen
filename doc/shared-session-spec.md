@@ -53,8 +53,10 @@ agents: [{id: "ling", model: "gpt-5.6-sol"}, {id: "yinyue", model: "gpt-5.6-luna
 ## Who answers
 
 - An addressed message (`@name`) goes to that agent.
-- Otherwise the surface's default answers: **Ling on the Mac, Yinyue on the
-  phone**, if a member; else the session's first member.
+- Otherwise **Ling answers**, on every device, if a member; else the
+  session's first member. After the user addresses Yinyue, the input
+  pre-fills `@Yinyue` (`one-ling-spec.md` § Who answers).
+- Either member may forward a message to the other, one hop.
 - One agent per turn. The other reads the turn when its own comes.
 - Skill-declared moments (a story node in Lingjing) may wake a named member;
   that is a turn like any other.
@@ -117,10 +119,9 @@ agent's context is built from it:
 
 ## Open
 
-- **Phone.** The phone's Yinyue is a local LLM loop with its own thread and
-  phone tools, not a Mac session. "Yinyue answers by default on the phone"
-  for a Mac shared session would run a second, Mac-side Yinyue. How the two
-  relate is decided after the Mac side lands.
+- **Phone.** Decided 2026-10-08 in `one-ling-spec.md`: one Ling and one
+  Yinyue on every device; the phone runs its own two-member table; sessions
+  stay on their device; cross-device work lends the turn to the Mac.
 - **Speed.** Yinyue in a long shared thread reads more than her 10-message
   home window; her replies slow down. Watch it in Lingjing before tuning.
 - **Tool widening.** Several 2026-09 incidents were fixed by narrowing her
