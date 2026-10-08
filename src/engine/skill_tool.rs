@@ -237,13 +237,8 @@ impl SkillToolDef {
         // Replace {{param}} placeholders with argument values.
         for (name, param) in &self.args {
             let placeholder = format!("{{{{{}}}}}", name);
-            let value = obj.and_then(|o| o.get(name)).or(param.default.as_ref());
-
-            if let Some(val) = value {
-                rendered = rendered.replace(&placeholder, &render_arg(param, val)?);
-            } else {
-                rendered = rendered.replace(&placeholder, "");
-            }
+            let given = obj.and_then(|o| o.get(name));
+            rendered = rendered.replace(&placeholder, &fill_arg(param, given)?);
         }
 
         info!("Skill tool '{}' rendered command: {}", self.name, rendered);
@@ -394,6 +389,23 @@ fn drain<R: std::io::Read + Send + 'static>(stream: Option<R>) -> impl FnOnce() 
         }
         String::from_utf8_lossy(&buf).to_string()
     }
+}
+
+/// What stands in for one `{{placeholder}}`: the given value, else the
+/// declared `default`, else an empty quoted word (`''`) — so a missing or
+/// null argument keeps its position and later positional args never shift.
+/// An `argv` parameter with nothing to fill is zero words.
+fn fill_arg(param: &SkillParamDef, given: Option<&Value>) -> Result<String> {
+    let value = given
+        .filter(|v| !v.is_null())
+        .or(param.default.as_ref().filter(|v| !v.is_null()));
+    if let Some(val) = value {
+        return render_arg(param, val);
+    }
+    if param.param_type == "argv" {
+        return Ok(String::new());
+    }
+    Ok(shell_escape_arg(""))
 }
 
 /// One argument as it stands in the command. An `argv` parameter is a list
@@ -575,6 +587,70 @@ mod tests {
         assert_eq!(stdout, "look|--said=it's; rm -rf /|--n=2|3|");
         let nested = serde_json::json!({ "verb": "look", "flags": [["x"]] });
         assert!(tool.execute(&nested, Path::new("."), &[]).is_err());
+    }
+
+    fn positional_tool(defaults: &[(&str, Option<Value>)]) -> SkillToolDef {
+        let mut tool = shell_tool("printf '<%s>' {{a}} {{b}} {{c}}", 64 * 1024);
+        for (name, default) in defaults {
+            tool.args.insert(
+                name.to_string(),
+                SkillParamDef {
+                    param_type: "string".to_string(),
+                    required: false,
+                    default: default.clone(),
+                    description: String::new(),
+                    items: None,
+                },
+            );
+        }
+        tool
+    }
+
+    fn stdout_of(tool: &SkillToolDef, args: Value) -> String {
+        let ToolResult::CommandOutput { stdout, .. } =
+            tool.execute(&args, Path::new("."), &[]).expect("tool runs")
+        else {
+            panic!("expected CommandOutput");
+        };
+        stdout
+    }
+
+    #[test]
+    fn a_missing_optional_arg_keeps_its_position() {
+        let tool = positional_tool(&[("a", None), ("b", None), ("c", None)]);
+        let out = stdout_of(&tool, serde_json::json!({ "b": 2 }));
+        assert_eq!(out, "<><2><>");
+        let out = stdout_of(&tool, serde_json::json!({ "a": null, "c": "z" }));
+        assert_eq!(out, "<><><z>");
+    }
+
+    #[test]
+    fn a_missing_arg_takes_its_declared_default() {
+        let tool = positional_tool(&[
+            ("a", None),
+            ("b", Some(serde_json::json!(100))),
+            ("c", Some(serde_json::json!("mac"))),
+        ]);
+        assert_eq!(stdout_of(&tool, serde_json::json!({})), "<><100><mac>");
+        let given = serde_json::json!({ "b": 5, "c": "phone" });
+        assert_eq!(stdout_of(&tool, given), "<><5><phone>");
+    }
+
+    #[test]
+    fn an_empty_string_stays_one_arg() {
+        let tool = positional_tool(&[("a", None), ("b", None), ("c", None)]);
+        let out = stdout_of(&tool, serde_json::json!({ "a": "", "b": "", "c": 0 }));
+        assert_eq!(out, "<><><0>");
+    }
+
+    #[test]
+    fn values_with_spaces_and_quotes_stay_one_word() {
+        let tool = positional_tool(&[("a", None), ("b", None), ("c", None)]);
+        let args = serde_json::json!({ "a": "two words", "b": "it's \"q\" $HOME; ls", "c": 1 });
+        assert_eq!(
+            stdout_of(&tool, args),
+            "<two words><it's \"q\" $HOME; ls><1>"
+        );
     }
 
     #[test]
