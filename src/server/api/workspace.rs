@@ -141,6 +141,58 @@ pub(crate) struct FileSearchQuery {
     limit: Option<usize>,
 }
 
+/// Most entries one `@` search will look at, and the longest it will walk.
+/// A home directory holds millions of files; the picker wants a handful of
+/// near matches fast, not a complete census.
+const SEARCH_MAX_VISITED: usize = 20_000;
+const SEARCH_MAX_DEPTH: usize = 6;
+const SEARCH_BUDGET: std::time::Duration = std::time::Duration::from_millis(1500);
+
+/// Directory names never worth descending into for a file picker.
+fn skip_search_dir(name: &str, depth: usize) -> bool {
+    matches!(name, "node_modules" | "target" | "build" | "dist")
+        || (depth == 1
+            && matches!(
+                name,
+                "Library" | "Applications" | "Movies" | "Music" | "Pictures"
+            ))
+}
+
+/// Bounded walk of `root` for paths containing `needle` (lowercase).
+fn walk_for_search(root: &std::path::Path, needle: &str) -> Vec<(String, bool)> {
+    let started = std::time::Instant::now();
+    let walker = WalkBuilder::new(root)
+        .standard_filters(true)
+        .hidden(true)
+        .max_depth(Some(SEARCH_MAX_DEPTH))
+        .filter_entry(|e| {
+            let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            !(is_dir && skip_search_dir(&e.file_name().to_string_lossy(), e.depth()))
+        })
+        .build();
+
+    let mut results: Vec<(String, bool)> = Vec::new();
+    for (visited, entry) in walker.enumerate() {
+        if visited >= SEARCH_MAX_VISITED || started.elapsed() >= SEARCH_BUDGET {
+            break;
+        }
+        let Ok(entry) = entry else { continue };
+        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        let Ok(rel) = entry.path().strip_prefix(root) else {
+            continue;
+        };
+        let rel_str = rel.to_string_lossy().to_string();
+        if rel_str.is_empty() {
+            continue;
+        }
+        if !needle.is_empty() && !rel_str.to_lowercase().contains(needle) {
+            continue;
+        }
+        results.push((rel_str, is_dir));
+    }
+    results
+}
+
 pub(crate) async fn search_files(
     State(state): State<Arc<ServerState>>,
     Query(query): Query<FileSearchQuery>,
@@ -153,32 +205,16 @@ pub(crate) async fn search_files(
     let limit = query.limit.unwrap_or(50);
     let search = query.query.as_deref().unwrap_or("").to_lowercase();
 
-    let walker = WalkBuilder::new(&canonical_root)
-        .standard_filters(true)
-        .hidden(true)
-        .build();
-
-    let mut results: Vec<(String, bool)> = Vec::new();
-    for entry in walker {
-        let entry = match entry {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-        let abs_path = entry.path();
-        let rel = match abs_path.strip_prefix(&canonical_root) {
-            Ok(r) => r,
-            Err(_) => continue,
-        };
-        let rel_str = rel.to_string_lossy().to_string();
-        if rel_str.is_empty() {
-            continue;
-        }
-        if !search.is_empty() && !rel_str.to_lowercase().contains(&search) {
-            continue;
-        }
-        results.push((rel_str, is_dir));
-    }
+    // The walk is blocking filesystem work. Run on the blocking pool — never
+    // on a runtime worker: when the project root is a home directory, an
+    // inline walk starved the whole runtime for 80 s, which dropped every
+    // WebRTC peer (the chat send that followed an `@` was lost).
+    let root = canonical_root.clone();
+    let needle = search.clone();
+    let mut results: Vec<(String, bool)> =
+        tokio::task::spawn_blocking(move || walk_for_search(&root, &needle))
+            .await
+            .unwrap_or_default();
 
     // Sort: exact filename matches first, then by path length, then alphabetical
     results.sort_by(|(a_path, _), (b_path, _)| {
@@ -589,5 +625,31 @@ mod known_root_tests {
             !is_known_root(&project.join("sub"), &roots),
             "exact roots only"
         );
+    }
+}
+
+#[cfg(test)]
+mod search_walk_tests {
+    use super::*;
+
+    #[test]
+    fn walk_is_bounded_in_depth_and_skips_heavy_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        std::fs::create_dir_all(root.join("a/b")).unwrap();
+        std::fs::write(root.join("a/b/needle.txt"), "x").unwrap();
+        std::fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+        std::fs::write(root.join("node_modules/pkg/needle.js"), "x").unwrap();
+        let deep = root.join("1/2/3/4/5/6/7/8");
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(deep.join("needle-deep.txt"), "x").unwrap();
+
+        let hits: Vec<String> = walk_for_search(&root, "needle")
+            .into_iter()
+            .map(|(p, _)| p)
+            .collect();
+        assert!(hits.iter().any(|p| p.ends_with("a/b/needle.txt")));
+        assert!(!hits.iter().any(|p| p.contains("node_modules")));
+        assert!(!hits.iter().any(|p| p.contains("needle-deep")));
     }
 }
