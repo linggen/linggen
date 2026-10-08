@@ -180,6 +180,7 @@ pub(super) async fn run_plan_execution(ctx: &ChatRunCtx, engine: &mut crate::eng
                             run_id: None,
                             parent_agent_id: None,
                             client_id: None,
+                            via: None,
                         });
                     }
                 }

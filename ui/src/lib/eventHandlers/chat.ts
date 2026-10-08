@@ -171,7 +171,8 @@ export function handleMessage(item: UiEventOf<'message'>): void {
   const { elapsed: msgElapsed, contextTokens: msgCtxTokens } = sid ? agentTracker.clearRun(sid) : {};
 
   const isError = from !== 'user' && content.startsWith('Error:');
-  chatStore.finalizeMessage(from, content, to, tsMs, msgElapsed, msgCtxTokens, isError || undefined);
+  chatStore.finalizeMessage(from, content, to, tsMs, msgElapsed, msgCtxTokens, isError || undefined,
+    from === 'user' && item.data?.via ? String(item.data.via) : undefined);
 }
 
 // ---------------------------------------------------------------------------

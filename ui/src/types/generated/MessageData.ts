@@ -7,4 +7,8 @@ export type MessageData = { from: string, to: string, role: string, run_id: stri
 /**
  * A person's message: the sending surface's id for its bubble.
  */
-client_id?: string, };
+client_id?: string, 
+/**
+ * A hand-off: the device the user's task continues from.
+ */
+via?: string, };

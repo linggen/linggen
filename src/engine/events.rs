@@ -142,6 +142,9 @@ pub enum ServerEvent {
         /// what was kept instead of showing both.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         client_id: Option<String>,
+        /// The device a hand-off row continues the user's task from.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        via: Option<String>,
     },
     SubagentSpawned {
         parent_id: String,
@@ -399,6 +402,7 @@ impl ServerEvent {
                 run_id,
                 parent_agent_id: parent_id,
                 client_id: None,
+                via: None,
             }),
             AgentEvent::SubagentSpawned {
                 parent_id,

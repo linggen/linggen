@@ -170,6 +170,14 @@ impl AgentEngine {
                 .agent_id
                 .clone()
                 .unwrap_or_else(|| "unknown".to_string());
+            // A speaker label is metadata, never part of the words: a model
+            // that saw `[Yinyue]: …` lines may echo the habit.
+            let mut known = vec![agent_id.clone(), "user".to_string()];
+            if let Ok(specs) = manager.list_agents(&self.cfg.ws_root).await {
+                known.extend(specs.into_iter().map(|a| a.name));
+            }
+            let content = strip_speaker_tag(content, &known);
+            let content = content.as_str();
             let target = self.outbound_target();
             // Emit to UI immediately, so structured messages are visible
             // even when no outer chat handler emits an explicit Outcome event.
@@ -754,5 +762,54 @@ mod silence_tests {
         assert!(is_silence(" silent.\n"));
         assert!(!is_silence("The hall falls silent."));
         assert!(!is_silence(""));
+    }
+}
+
+/// `text` without a leading `[Name]:` / `[Name]` speaker tag, when `Name`
+/// (any case) is one of `known` agent ids. Labels are metadata for the
+/// model's context, never part of a reply; a line that merely opens with a
+/// bracket ("[scene] …", a markdown link) is left alone.
+pub(crate) fn strip_speaker_tag(text: &str, known: &[String]) -> String {
+    let t = text.trim_start();
+    let Some(rest) = t.strip_prefix('[') else {
+        return text.to_string();
+    };
+    let Some((name, after)) = rest.split_once(']') else {
+        return text.to_string();
+    };
+    if !known.iter().any(|k| k.eq_ignore_ascii_case(name.trim())) {
+        return text.to_string();
+    }
+    let after = after.strip_prefix(':').unwrap_or(after);
+    // `[Ling](url)` is a link, not a tag.
+    if after.starts_with('(') {
+        return text.to_string();
+    }
+    after.trim_start().to_string()
+}
+
+#[cfg(test)]
+mod speaker_tag_tests {
+    use super::strip_speaker_tag;
+
+    fn known() -> Vec<String> {
+        vec!["ling".into(), "yinyue".into(), "user".into()]
+    }
+
+    #[test]
+    fn a_leading_speaker_tag_is_dropped_from_a_reply() {
+        assert_eq!(strip_speaker_tag("[Ling]: 3 songs.", &known()), "3 songs.");
+        assert_eq!(strip_speaker_tag("[Ling] 3 songs.", &known()), "3 songs.");
+        assert_eq!(strip_speaker_tag("[yinyue]:hi", &known()), "hi");
+    }
+
+    #[test]
+    fn other_brackets_stay() {
+        assert_eq!(strip_speaker_tag("[scene] dusk", &known()), "[scene] dusk");
+        assert_eq!(
+            strip_speaker_tag("[Ling](http://x) hi", &known()),
+            "[Ling](http://x) hi"
+        );
+        assert_eq!(strip_speaker_tag("hi [Ling]: x", &known()), "hi [Ling]: x");
     }
 }

@@ -450,6 +450,7 @@ async fn dequeue_and_emit(
     from_id: &str,
     clean_msg: &str,
     response_session_id: Option<&str>,
+    via: Option<&str>,
 ) -> bool {
     let key = queue_key(project_root, session_id, target_id);
     let was_queued = {
@@ -481,7 +482,7 @@ async fn dequeue_and_emit(
         response_session_id,
         false,
         None,
-        None,
+        via,
     )
     .await;
     true
@@ -746,6 +747,7 @@ async fn dispatch_turn(
             run_id: None,
             parent_agent_id: None,
             client_id: None,
+            via: None,
         });
         return;
     }
@@ -1214,6 +1216,7 @@ pub(crate) async fn start_turn(
                 &from_id,
                 &clean_msg_clone,
                 session_id.as_deref(),
+                via.as_deref(),
             )
             .await;
             if !still_wanted {

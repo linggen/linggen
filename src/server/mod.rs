@@ -331,6 +331,7 @@ mod tests {
                 run_id: None,
                 parent_agent_id: None,
                 client_id: None,
+                via: None,
             },
             ServerEvent::SubagentSpawned {
                 parent_id: "ling".into(),

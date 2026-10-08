@@ -21,6 +21,7 @@ fn a_message_names_its_role_and_keeps_null_routing_keys() {
         run_id: None,
         parent_agent_id: None,
         client_id: None,
+        via: None,
     });
     assert_eq!(
         d,
@@ -38,6 +39,7 @@ fn a_persons_message_echoes_its_client_id() {
         run_id: None,
         parent_agent_id: None,
         client_id: Some("c-1-ab".into()),
+        via: None,
     });
     assert_eq!(d["client_id"], json!("c-1-ab"));
 }

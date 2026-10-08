@@ -26,6 +26,10 @@ pub(super) struct MessageData {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub client_id: Option<String>,
+    /// A hand-off: the device the user's task continues from.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub via: Option<String>,
 }
 
 /// `token` carrying a reasoning token.

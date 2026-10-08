@@ -89,6 +89,7 @@ pub(crate) async fn persist_and_emit_message(
         run_id: None,
         parent_agent_id: None,
         client_id: None,
+        via: None,
     });
     persist_message_only(
         manager,
@@ -128,6 +129,7 @@ pub(crate) async fn persist_and_emit_to_store(
         run_id: None,
         parent_agent_id: None,
         client_id: client_id.clone(),
+        via: via.map(str::to_string),
     });
     let sid = session_id.unwrap_or("default");
     let msg = crate::state_fs::sessions::ChatMsg {
@@ -243,6 +245,7 @@ pub(crate) fn emit_outcome_event(
                 run_id: None,
                 parent_agent_id: None,
                 client_id: None,
+                via: None,
             });
         }
         AgentOutcome::PlanApproved(plan) => {
@@ -258,6 +261,7 @@ pub(crate) fn emit_outcome_event(
                 run_id: None,
                 parent_agent_id: None,
                 client_id: None,
+                via: None,
             });
             let _ = events_tx.send(ServerEvent::PlanUpdate {
                 agent_id: from_id.to_string(),
@@ -310,5 +314,39 @@ mod turn_error_tests {
             format_turn_error("BILLING_REQUIRED: Your free tokens are used up"),
             "Error: BILLING_REQUIRED: Your free tokens are used up"
         );
+    }
+}
+
+#[cfg(test)]
+mod via_tests {
+    use super::persist_and_emit_to_store;
+    use crate::server::ServerEvent;
+
+    /// A dequeued hand-off persists and emits through this call with the
+    /// `via` it was queued with; the live event carries it too.
+    #[tokio::test]
+    async fn a_hand_off_keeps_via_on_the_row_and_the_live_event() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = crate::state_fs::SessionStore::with_sessions_dir(dir.path().to_path_buf());
+        let (tx, mut rx) = tokio::sync::broadcast::channel(8);
+        persist_and_emit_to_store(
+            &store,
+            &tx,
+            "ling",
+            "user",
+            "ling",
+            "how many songs?",
+            Some("s1"),
+            false,
+            None,
+            Some("iphone"),
+        )
+        .await;
+        match rx.recv().await.unwrap() {
+            ServerEvent::Message { via, .. } => assert_eq!(via.as_deref(), Some("iphone")),
+            _ => panic!("expected a message event"),
+        }
+        let rows = store.get_chat_history("s1").unwrap();
+        assert_eq!(rows[0].via.as_deref(), Some("iphone"));
     }
 }
