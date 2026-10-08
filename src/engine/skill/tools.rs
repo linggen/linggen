@@ -13,7 +13,8 @@
 //!   like its turns, and a tool that may write pushes the save afterwards.
 //!
 //! The companion only reaches tools the skill marks `pet: true` whose own
-//! tier is read ([`run_for_pet`]).
+//! tier is read ([`run_for_pet`]). Another device's agent reaches the tools
+//! marked `remote: true` through the page's door ([`remote_tools`]).
 
 use serde_json::Value;
 use std::collections::HashMap;
@@ -171,6 +172,7 @@ fn stamp_tool(skill: &Skill, id: &str, at: &str) -> Result<SkillToolDef, Refusal
         page_only: true,
         others_read: Vec::new(),
         pet: false,
+        remote: false,
         skill_name: Some(skill.name.clone()),
         skill_dir: skill.skill_dir.clone(),
         senses: skill.senses.clone(),
@@ -227,6 +229,20 @@ pub fn pet_tools(skill: &Skill) -> impl Iterator<Item = &SkillToolDef> {
         .filter(|t| t.pet && t.kind() == SkillToolKind::Shell && tier_of(t) <= PermissionMode::Read)
 }
 
+/// The tools a skill offers another device's agent (`remote: true`) that
+/// would actually run when called: a shell tool (the door runs nothing
+/// else), never `page_only` (the caller is a model), and within the skill's
+/// own grant. Any tier — the caller gates writes as its own tiers say.
+pub fn remote_tools(skill: &Skill) -> impl Iterator<Item = &SkillToolDef> {
+    let cwd = working_folder(skill);
+    skill.tool_defs.iter().filter(move |t| {
+        t.remote
+            && !t.page_only
+            && t.kind() == SkillToolKind::Shell
+            && within_grant(skill, t, &cwd).is_ok()
+    })
+}
+
 fn declared<'a>(skill: &'a Skill, name: &str) -> Result<&'a SkillToolDef, Refusal> {
     skill
         .tool_defs
@@ -263,7 +279,7 @@ fn working_folder(skill: &Skill) -> PathBuf {
     }
 }
 
-fn tier_of(tool: &SkillToolDef) -> PermissionMode {
+pub(crate) fn tier_of(tool: &SkillToolDef) -> PermissionMode {
     tool.tier
         .as_deref()
         .and_then(parse_skill_tier)
@@ -359,6 +375,31 @@ tools:
     description: No tier, so admin.
     cmd: "echo untiered"
     pet: true
+  - name: ListThings
+    description: Remote read.
+    cmd: "echo things"
+    tier: read
+    remote: true
+  - name: RenameThing
+    description: Remote edit.
+    cmd: "echo renamed"
+    tier: edit
+    remote: true
+  - name: FetchThing
+    description: The user's tap only.
+    cmd: "echo fetched"
+    tier: edit
+    page_only: true
+    remote: true
+  - name: ShowThing
+    description: Data tool, runs nothing.
+    tier: read
+    remote: true
+  - name: WipeAll
+    description: Beyond the edit grant.
+    cmd: "echo wiped"
+    tier: admin
+    remote: true
 ---
 body
 "#;
@@ -476,5 +517,21 @@ body
         let s = skill(dir.path());
         let names: Vec<_> = pet_tools(&s).map(|t| t.name.as_str()).collect();
         assert_eq!(names, vec!["Progress"]);
+    }
+
+    #[test]
+    fn only_runnable_model_facing_remote_tools_are_listed() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = skill(dir.path());
+        let names: Vec<_> = remote_tools(&s).map(|t| t.name.as_str()).collect();
+        assert_eq!(names, vec!["ListThings", "RenameThing"]);
+    }
+
+    #[tokio::test]
+    async fn a_remote_tool_runs_through_the_page_door() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = skill(dir.path());
+        let out = output(run(&s, "RenameThing", &args()).await.expect("runs"));
+        assert_eq!(out["stdout"], "renamed\n");
     }
 }

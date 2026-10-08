@@ -118,6 +118,11 @@ pub struct SkillToolDef {
     /// refuses anything else whatever the flag says.
     #[serde(default)]
     pub pet: bool,
+    /// `remote: true` — another device's agent may call it: the Mac lists it
+    /// on the retained `mac/tools` catalog and the caller runs it through the
+    /// page's door. Only a model-facing shell tool qualifies (`remote_tools`).
+    #[serde(default)]
+    pub remote: bool,
     /// Name of the skill that declared this tool. Set at skill-load time so
     /// dispatch can resolve the daemon (via `SkillLoader`) without another
     /// lookup. Not serialized — populated from the containing skill's name.
@@ -481,6 +486,7 @@ mod tests {
             page_only: false,
             others_read: Vec::new(),
             pet: false,
+            remote: false,
             skill_name: None,
             skill_dir: None,
             senses: Vec::new(),
@@ -595,6 +601,7 @@ mod tests {
             page_only: false,
             others_read: Vec::new(),
             pet: false,
+            remote: false,
             skill_name: None,
             skill_dir: None,
             senses: Vec::new(),

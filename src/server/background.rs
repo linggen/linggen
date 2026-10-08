@@ -33,6 +33,8 @@ pub(super) fn spawn_background_tasks(
     );
     spawn_companion(state);
     spawn_perception(state);
+    // What this Mac's apps let another device's agent call (`mac/tools`).
+    tokio::spawn(super::mac_tools::publish_loop(state.clone()));
     sweep_stale_runs(state);
 
     // Spawn remote relay tasks (heartbeat + offer polling) if remote.toml exists.

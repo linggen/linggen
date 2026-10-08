@@ -5,6 +5,7 @@ pub(crate) mod bridge;
 mod chat;
 mod facts;
 mod loopback_guard;
+mod mac_tools;
 mod mcp;
 mod mcp_agent;
 pub(crate) mod milestones;

@@ -69,7 +69,7 @@ Three tiers: `read`, `edit`, `destructive`.
 - **Shared data never crosses as an action.** Each side mutates its own copy through its local tool; LWW/CAS sync propagates (Ling saves a playlist via the Mac script; the phone pulls). This removes most cross-device traffic by construction.
 - **Typed queue for device-exclusive verbs only** (~3 today: PhotoKit delete, backup upload, device scan). Envelope `{app, tool, params}` over the retained-topic transport names the same tool the local agent would call; it drains on app resume. `sync-requested` is the precedent and folds into this shape.
 - **Catalog**: the phone publishes its registry as a retained `phone/tools` topic on connect (same mechanism as `shifu/readout`). The Mac never requests it — reads are published, actions are queued.
-- **Mac catalog** (designed 2026-10-08): the Mac publishes its app actions as a retained `mac/tools` topic the same way, so Ling's phone loop calls them as typed tools; they go grey while the Mac is unreachable.
+- **Mac catalog** (built 2026-10-08): the engine publishes every skill's `remote: true` tools as a retained `mac/tools` topic (`{tools: [{app, name, wire_name, description, params, tier}], host, published_at}`, republished on skill load/reload), so Ling's phone loop calls them as typed tools through `POST /api/skills/{app}/tools/{name}`; they go grey while the Mac is unreachable.
 
 ## Visibility
 

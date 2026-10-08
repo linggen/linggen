@@ -94,6 +94,7 @@ fn page_update_tool_def() -> SkillToolDef {
         page_only: false,
         others_read: Vec::new(),
         pet: false,
+        remote: false,
         skill_name: None,
         skill_dir: None,
         senses: Vec::new(),
@@ -394,6 +395,8 @@ struct SkillFrontmatter {
 pub struct SkillLoader {
     skills: Mutex<HashMap<String, Skill>>,
     triggers: Mutex<HashMap<String, String>>,
+    /// Rung after every load or reload, for whoever mirrors the skill set.
+    changed: tokio::sync::Notify,
 }
 
 impl SkillLoader {
@@ -401,7 +404,14 @@ impl SkillLoader {
         Self {
             skills: Mutex::new(HashMap::new()),
             triggers: Mutex::new(HashMap::new()),
+            changed: tokio::sync::Notify::new(),
         }
+    }
+
+    /// Resolves after the next load or reload (or at once, if one happened
+    /// since the last wait). One waiter: the `mac/tools` publisher.
+    pub async fn changed(&self) {
+        self.changed.notified().await;
     }
 
     pub async fn load_all(&self, project_root: Option<&Path>) -> Result<()> {
@@ -454,6 +464,7 @@ impl SkillLoader {
                 }
             }
         }
+        self.changed.notify_one();
 
         Ok(())
     }
@@ -559,6 +570,7 @@ impl SkillLoader {
             .lock()
             .await
             .insert(parsed.name.clone(), parsed.clone());
+        self.changed.notify_one();
         Some(parsed)
     }
 
