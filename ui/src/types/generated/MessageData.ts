@@ -11,4 +11,4 @@ client_id?: string,
 /**
  * A hand-off: the device the user's task continues from.
  */
-via?: string, };
+via?: string, via_note?: string, };

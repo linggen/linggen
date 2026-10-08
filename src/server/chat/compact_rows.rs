@@ -193,6 +193,7 @@ pub(crate) async fn compact_session(
     );
     let row = ChatMsg {
         via: None,
+        via_note: None,
         agent_id: models.summarizer_id.clone(),
         from_id: COMPACTION_SENDER.to_string(),
         to_id: "user".to_string(),
@@ -265,6 +266,7 @@ mod tests {
     fn row(from: &str, content: &str) -> ChatMsg {
         ChatMsg {
             via: None,
+            via_note: None,
             agent_id: "ling".into(),
             from_id: from.into(),
             to_id: "user".into(),

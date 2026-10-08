@@ -472,6 +472,7 @@ pub(crate) async fn trigger_mission_core(
                 sid,
                 &crate::state_fs::sessions::ChatMsg {
                     via: None,
+                    via_note: None,
                     agent_id: mission.agent_id.clone(),
                     from_id: "user".to_string(),
                     to_id: mission.agent_id.clone(),

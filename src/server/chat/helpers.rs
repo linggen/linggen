@@ -90,6 +90,7 @@ pub(crate) async fn persist_and_emit_message(
         parent_agent_id: None,
         client_id: None,
         via: None,
+        via_note: None,
     });
     persist_message_only(
         manager,
@@ -119,6 +120,7 @@ pub(crate) async fn persist_and_emit_to_store(
     is_observation: bool,
     client_id: Option<&str>,
     via: Option<&str>,
+    via_note: Option<&str>,
 ) {
     let client_id = client_id.map(str::to_string);
     let _ = events_tx.send(ServerEvent::Message {
@@ -130,6 +132,7 @@ pub(crate) async fn persist_and_emit_to_store(
         parent_agent_id: None,
         client_id: client_id.clone(),
         via: via.map(str::to_string),
+        via_note: via_note.map(str::to_string),
     });
     let sid = session_id.unwrap_or("default");
     let msg = crate::state_fs::sessions::ChatMsg {
@@ -142,6 +145,7 @@ pub(crate) async fn persist_and_emit_to_store(
         client_id,
         failed: false,
         via: via.map(str::to_string),
+        via_note: via_note.map(str::to_string),
     };
     if let Err(e) = store.add_chat_message(sid, &msg) {
         tracing::warn!("Failed to persist chat message to mission store: {}", e);
@@ -162,6 +166,7 @@ pub(crate) async fn persist_message_only(
     let sid = session_id.unwrap_or("default");
     let msg = crate::state_fs::sessions::ChatMsg {
         via: None,
+        via_note: None,
         agent_id: agent_id.to_string(),
         from_id: from.to_string(),
         to_id: to.to_string(),
@@ -246,6 +251,7 @@ pub(crate) fn emit_outcome_event(
                 parent_agent_id: None,
                 client_id: None,
                 via: None,
+                via_note: None,
             });
         }
         AgentOutcome::PlanApproved(plan) => {
@@ -262,6 +268,7 @@ pub(crate) fn emit_outcome_event(
                 parent_agent_id: None,
                 client_id: None,
                 via: None,
+                via_note: None,
             });
             let _ = events_tx.send(ServerEvent::PlanUpdate {
                 agent_id: from_id.to_string(),
@@ -340,6 +347,7 @@ mod via_tests {
             false,
             None,
             Some("iphone"),
+            Some("Let me check how many songs we have here."),
         )
         .await;
         match rx.recv().await.unwrap() {
@@ -348,5 +356,9 @@ mod via_tests {
         }
         let rows = store.get_chat_history("s1").unwrap();
         assert_eq!(rows[0].via.as_deref(), Some("iphone"));
+        assert_eq!(
+            rows[0].via_note.as_deref(),
+            Some("Let me check how many songs we have here.")
+        );
     }
 }

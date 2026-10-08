@@ -69,7 +69,7 @@ interface ChatState {
   upsertPlan: (agentId: string, planText: string) => void;
   updateSubagentTree: (parentId: string, subagentId: string, updater: (entry: SubagentTreeEntry) => SubagentTreeEntry) => void;
   addSubagentToTree: (parentId: string, entry: SubagentTreeEntry) => void;
-  finalizeMessage: (agentId: string, content: string, to: string, tsMs: number, elapsed?: number, ctxTokens?: number, isError?: boolean, via?: string) => void;
+  finalizeMessage: (agentId: string, content: string, to: string, tsMs: number, elapsed?: number, ctxTokens?: number, isError?: boolean, via?: string, viaNote?: string) => void;
   /** The engine kept a message this surface sent (its bubble's `clientId`):
    *  the bubble takes the kept words. False when no bubble has that id. */
   confirmSent: (clientId: string, text: string, to: string) => boolean;
@@ -327,7 +327,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     return next;
   })),
 
-  finalizeMessage: (agentId, content, to, tsMs, elapsed, ctxTokens, isError, via) => set(mutate((state) => {
+  finalizeMessage: (agentId, content, to, tsMs, elapsed, ctxTokens, isError, via, viaNote) => set(mutate((state) => {
     const generatingIdx = findLastGeneratingMessageIndex(state, agentId);
     if (generatingIdx >= 0) {
       const next = [...state];
@@ -401,6 +401,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       isGenerating: false,
       isError,
       ...(via ? { via } : {}),
+      ...(viaNote ? { viaNote } : {}),
     }];
   })),
 
@@ -724,6 +725,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               ...(isError ? { isError: true } : {}),
               ...(meta.client_id ? { clientId: String(meta.client_id) } : {}),
               ...(meta.via ? { via: String(meta.via) } : {}),
+              ...(meta.via_note ? { viaNote: String(meta.via_note) } : {}),
             }];
           });
         state.syncPersisted(msgs);

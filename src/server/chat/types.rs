@@ -43,6 +43,10 @@ pub(crate) struct ChatRequest {
     /// read by the model and labeled on surfaces as a hand-off.
     #[serde(default)]
     pub(super) via: Option<String>,
+    /// One line in the handing-off agent's own first-person voice ('Let me check…');
+    /// what surfaces show instead of the request text. Never read by the model.
+    #[serde(default)]
+    pub(super) via_note: Option<String>,
     /// The surface shows follow-up buttons — ask the model for them this turn.
     #[serde(default)]
     pub(super) followups: bool,

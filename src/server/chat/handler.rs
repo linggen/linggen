@@ -451,6 +451,7 @@ async fn dequeue_and_emit(
     clean_msg: &str,
     response_session_id: Option<&str>,
     via: Option<&str>,
+    via_note: Option<&str>,
 ) -> bool {
     let key = queue_key(project_root, session_id, target_id);
     let was_queued = {
@@ -483,6 +484,7 @@ async fn dequeue_and_emit(
         false,
         None,
         via,
+        via_note,
     )
     .await;
     true
@@ -748,6 +750,7 @@ async fn dispatch_turn(
             parent_agent_id: None,
             client_id: None,
             via: None,
+            via_note: None,
         });
         return;
     }
@@ -988,6 +991,7 @@ async fn turn_in_session(
         images: Vec::new(),
         sender: None,
         via: None,
+        via_note: None,
         followups: false,
         client_id: None,
     };
@@ -1116,6 +1120,13 @@ pub(crate) async fn start_turn(
         .as_deref()
         .map(|s| s.trim().to_lowercase())
         .filter(|s| !s.is_empty() && s.len() <= 32);
+    // The hand-off's one line in the agent's own voice; only meaningful with `via`.
+    let via_note = req
+        .via_note
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| via.is_some() && !s.is_empty())
+        .map(|s| s.chars().take(200).collect::<String>());
     // A hand-off is the user's request, not another speaker's.
     let sender = req
         .sender
@@ -1174,6 +1185,7 @@ pub(crate) async fn start_turn(
             false,
             client_id.as_deref(),
             via.as_deref(),
+            via_note.as_deref(),
         )
         .await;
     }
@@ -1217,6 +1229,7 @@ pub(crate) async fn start_turn(
                 &clean_msg_clone,
                 session_id.as_deref(),
                 via.as_deref(),
+                via_note.as_deref(),
             )
             .await;
             if !still_wanted {

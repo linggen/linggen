@@ -77,6 +77,7 @@ impl AgentEngine {
                     session_id.unwrap_or("default"),
                     &crate::state_fs::sessions::ChatMsg {
                         via: None,
+                        via_note: None,
                         agent_id: aid.clone(),
                         from_id: "system".to_string(),
                         to_id: aid,
@@ -144,6 +145,7 @@ impl AgentEngine {
                 session_id.unwrap_or("default"),
                 &crate::state_fs::sessions::ChatMsg {
                     via: None,
+                    via_note: None,
                     agent_id: agent_id.clone(),
                     from_id: agent_id,
                     to_id: self.outbound_target(),
@@ -226,6 +228,7 @@ impl AgentEngine {
                         session_id.unwrap_or("default"),
                         &crate::state_fs::sessions::ChatMsg {
                             via: None,
+                            via_note: None,
                             agent_id: agent_id.clone(),
                             from_id: agent_id.clone(),
                             to_id: target,

@@ -41,6 +41,8 @@ pub enum StateFile {
         /// Device the session's agent continues the user's task from (`ChatMsg::via`).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         via: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        via_note: Option<String>,
     },
 }
 

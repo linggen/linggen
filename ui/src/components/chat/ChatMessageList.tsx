@@ -24,11 +24,29 @@ const UNSPOKEN = UNSPOKEN_SENDERS;
  */
 const DEVICE_NAMES: Record<string, string> = { iphone: 'iPhone', ipad: 'iPad', android: 'Android' };
 
-/** "Ling · from iPhone" — a hand-off row: the panel's own agent continuing the user's task. */
-function handOffLabel(msg: ChatMessage, panelAgent: string): string | null {
-  if (!msg.via) return null;
-  const name = panelAgent.charAt(0).toUpperCase() + panelAgent.slice(1);
-  return `${name} · from ${DEVICE_NAMES[msg.via] ?? msg.via}`;
+/**
+ * A hand-off row: the panel's own agent continuing the user's task from
+ * another device. Never a user bubble — her own small line (the note she
+ * wrote when handing off) with a tiny device tag; without a note, a thin
+ * divider with the request hidden.
+ */
+function HandOffRow({ msg }: { msg: ChatMessage }) {
+  const device = DEVICE_NAMES[msg.via ?? ''] ?? msg.via;
+  if (!msg.viaNote) {
+    return (
+      <div className="flex items-center gap-2 my-1 text-[11px] text-slate-400 dark:text-slate-500" data-handoff>
+        <span className="flex-1 border-t border-slate-200 dark:border-white/10" />
+        <span>from {device}</span>
+        <span className="flex-1 border-t border-slate-200 dark:border-white/10" />
+      </div>
+    );
+  }
+  return (
+    <div className="my-1 text-[13px] text-slate-500 dark:text-slate-400" data-handoff>
+      {msg.viaNote}
+      <span className="ml-2 text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500">from {device}</span>
+    </div>
+  );
 }
 
 function agentLabel(msg: ChatMessage, panelAgent: string): string | null {
@@ -192,6 +210,7 @@ export const ChatMessageList = React.memo<{
         // Skip hidden system messages (used by app skills for internal prompts)
         if (msg.role === 'user' && msg.text.startsWith('[HIDDEN]')) return null;
         const key = `${msg.timestamp}-${i}-${msg.from || msg.role}-${msg.text.slice(0, 24)}`;
+        if (msg.via) return <HandOffRow key={key} msg={msg} />;
         const isUser = msg.role === 'user';
         const isExpanded = verboseMode || expandedMessages.has(key);
         const userMsgIndex = isUser ? i : undefined;
@@ -202,10 +221,9 @@ export const ChatMessageList = React.memo<{
             msgKey={key}
             isUser={isUser}
             senderTag={
-              handOffLabel(msg, selectedAgent) ??
-              (isUser && (!msg.from || msg.from === 'user')
+              isUser && (!msg.from || msg.from === 'user')
                 ? (coreName ?? 'Hanli')
-                : agentLabel(msg, selectedAgent))
+                : agentLabel(msg, selectedAgent)
             }
             isExpanded={isExpanded}
             onToggle={toggleExpanded}

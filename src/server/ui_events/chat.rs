@@ -24,6 +24,7 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
             parent_agent_id,
             client_id,
             via,
+            via_note,
         } => {
             let cleaned = crate::engine::tool_render::sanitize_message_for_ui(&from, &content)?;
             Some(
@@ -44,6 +45,7 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
                         parent_agent_id,
                         client_id,
                         via,
+                        via_note,
                     }),
             )
         }

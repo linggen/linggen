@@ -727,6 +727,7 @@ async fn dispatch_mission_prompt(
                 sid,
                 &crate::state_fs::sessions::ChatMsg {
                     via: None,
+                    via_note: None,
                     agent_id: agent_id.to_string(),
                     from_id: "user".to_string(),
                     to_id: agent_id.to_string(),
@@ -944,6 +945,7 @@ async fn dispatch_mission_prompt(
                         sid,
                         &crate::state_fs::sessions::ChatMsg {
                             via: None,
+                            via_note: None,
                             agent_id: agent_id.to_string(),
                             from_id: agent_id.to_string(),
                             to_id: "user".to_string(),
@@ -1039,6 +1041,7 @@ async fn append_run_report(state: &Arc<SchedulerHost>, agent_id: &str, session_i
         sid,
         &crate::state_fs::sessions::ChatMsg {
             via: None,
+            via_note: None,
             agent_id: agent_id.to_string(),
             from_id: agent_id.to_string(),
             to_id: "user".to_string(),

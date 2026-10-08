@@ -172,7 +172,8 @@ export function handleMessage(item: UiEventOf<'message'>): void {
 
   const isError = from !== 'user' && content.startsWith('Error:');
   chatStore.finalizeMessage(from, content, to, tsMs, msgElapsed, msgCtxTokens, isError || undefined,
-    from === 'user' && item.data?.via ? String(item.data.via) : undefined);
+    from === 'user' && item.data?.via ? String(item.data.via) : undefined,
+    from === 'user' && item.data?.via_note ? String(item.data.via_note) : undefined);
 }
 
 // ---------------------------------------------------------------------------

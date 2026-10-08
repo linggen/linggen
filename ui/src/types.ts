@@ -108,6 +108,8 @@ export interface ChatMessage {
   /** The session's own agent continuing the user's task from another device
    *  ("iphone"): a hand-off, shown as "<Agent> · from iPhone". */
   via?: string;
+  /** The hand-off in the agent's own voice ("Let me check…"), shown instead of the request. */
+  viaNote?: string;
 }
 
 
@@ -127,6 +129,7 @@ export interface PersistedMeta {
   client_id?: string | null;
   /** Device the session's agent continues the user's task from. */
   via?: string | null;
+  via_note?: string | null;
   [key: string]: unknown;
 }
 

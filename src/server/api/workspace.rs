@@ -300,6 +300,7 @@ pub(crate) async fn get_workspace_state(
                 task_id: None,
                 client_id: m.client_id,
                 via: m.via,
+                via_note: m.via_note,
             };
             let meta = serde_json::to_value(meta).ok()?;
             Some((run_calls::with_tools(meta, calls), cleaned))

@@ -30,6 +30,9 @@ pub(super) struct MessageData {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub via: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub via_note: Option<String>,
 }
 
 /// `token` carrying a reasoning token.

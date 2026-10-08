@@ -558,6 +558,7 @@ pub(super) async fn push_user_turn_with_recall(
             false,
             None,
             None,
+            None,
         )
         .await;
     }

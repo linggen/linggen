@@ -181,6 +181,7 @@ pub(super) async fn run_plan_execution(ctx: &ChatRunCtx, engine: &mut crate::eng
                             parent_agent_id: None,
                             client_id: None,
                             via: None,
+                            via_note: None,
                         });
                     }
                 }
@@ -404,6 +405,7 @@ async fn persist_plan_message(
     let plan_json = serde_json::json!({ "type": "plan", "plan": plan });
     let msg = crate::state_fs::sessions::ChatMsg {
         via: None,
+        via_note: None,
         agent_id: agent_id.to_string(),
         from_id: agent_id.to_string(),
         to_id: "user".to_string(),
