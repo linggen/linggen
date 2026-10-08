@@ -103,10 +103,11 @@ become typed tool calls with no second turn at all.
   context built per member as in `shared-session-spec.md` § The thread.
 - **Memory writers:** agents write, apps never (replaces "only Yinyue writes
   phone memory").
-- **Session files on the phone are kept 90 days.** Older ones are deleted on
-  the phone automatically (checked at app start). Settings also has a clear
-  button for chat history, with one confirm. Only chat session files are
-  cleared: memory and app data (the Lingjing save, DJ, CFO) stay.
+- **One thread on the phone, as today.** The Chat keeps a single continuous
+  thread (`yinyue/thread.json`: resumed within 24 h, else fresh; older turns
+  folded into its summary), now holding Ling's and Yinyue's lines. Simple, and
+  nothing piles up. A 90-day retention rule and a Settings clear button come
+  only if the phone ever keeps many sessions.
 
 ## What changes
 
