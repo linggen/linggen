@@ -76,9 +76,9 @@ turn.
     Lingjing's own sessions. Shape: a global "met Yinyue" flag set by the
     Lingjing save, declared in Yinyue's own agent config (no skill names in
     Rust), synced to the phone (cloud save); before it, Chat is Ling only.
-    Needs 5 and 8. Open: non-players never meet her (site and App Store present
-    her); the fresh-install guide (2026-09-25) has her offer 开府 — Ling offers
-    it instead.
+    Needs 5 and 8. Settled: **no Lingjing, no Yinyue** — a user who never plays
+    never sees her. The fresh-install guide (2026-09-25) has Ling, not her,
+    offer 开府. Site and App Store copy follow later.
 
 ## Risks
 
