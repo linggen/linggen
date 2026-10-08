@@ -38,3 +38,20 @@ test('no words after the name, a path, or a mid-text @ is no mention', () => {
   assert.equal(leadingAgentMention('@src/main.rs fix it', AGENTS), undefined);
   assert.equal(leadingAgentMention('hello @银月', AGENTS), undefined);
 });
+
+import { completeFileMention, mentionInProgress } from '../src/lib/chatMentions.mts';
+
+test('@ opens agents only at the start; /f opens files', () => {
+  assert.deepEqual(mentionInProgress('@y'), { kind: 'lead-agent', filter: 'y' });
+  assert.equal(mentionInProgress('hi @y'), null);
+  assert.equal(mentionInProgress('@Yinyue '), null);
+  assert.deepEqual(mentionInProgress('/f'), { kind: 'file-search', query: '' });
+  assert.deepEqual(mentionInProgress('see /f ab'), { kind: 'file-search', query: 'ab' });
+  assert.deepEqual(mentionInProgress('/f src/x'), { kind: 'file-browse', dir: 'src/', filter: 'x' });
+  assert.equal(mentionInProgress('/fix'), null);
+});
+
+test('completing a file writes @path, a directory stays in /f', () => {
+  assert.equal(completeFileMention('look /f ab', 'a/b.ts', true), 'look @a/b.ts ');
+  assert.equal(completeFileMention('/f a', 'src/', false), '/f src/');
+});

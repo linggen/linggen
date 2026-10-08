@@ -2,7 +2,8 @@
 //   @agent   — address a main agent by id or declared alias (`@银月 …`), for
 //              this message only (only at the start of a message)
 //   @@agent  — the same, and the chat stays with that agent
-//   @path    — a file: `@src/` browses a directory, `@name` searches
+//   /f name  — pick a file: `/f src/` browses a directory, `/f name` searches;
+//              the chosen file is written into the message as `@path`
 // The server reads the same grammar (chat/handler.rs leading_mention — the longest id or alias at the start),
 // so a page that sends `@银月 …` through the embed reaches her either way.
 
@@ -56,27 +57,38 @@ export function completeAgentMention(input: string, agentName: string): string {
   return `${before}@@${agentName.charAt(0).toUpperCase() + agentName.slice(1)} `;
 }
 
-/** The input with its trailing `@partial` replaced by `@path` (plus a space
- *  when the mention is complete, i.e. a file rather than a directory). */
+/** The file picker's token at the end of the input: `/f` or `/f query`. */
+const FILE_TOKEN = /(^|\s)\/f(?:\s(\S*))?$/;
+
+/** The input with its trailing `/f query` token replaced by `@path` (plus a
+ *  space when the reference is complete, i.e. a file); a directory keeps the
+ *  picker open as `/f dir/`. */
 export function completeFileMention(input: string, path: string, complete: boolean): string {
-  return `${input.substring(0, input.lastIndexOf('@'))}@${path}${complete ? ' ' : ''}`;
+  return input.replace(FILE_TOKEN, (_m, pre: string) => (complete ? `${pre}@${path} ` : `${pre}/f ${path}`));
 }
 
 export type MentionInProgress =
   | { kind: 'agent'; filter: string }
+  | { kind: 'lead-agent'; filter: string }
   | { kind: 'file-browse'; dir: string; filter: string }
-  | { kind: 'file-search'; query: string; atStart: boolean };
+  | { kind: 'file-search'; query: string };
 
-/** The mention being typed at the end of the input, if any. */
+/** The mention being typed at the end of the input, if any: `@@x` (stay with
+ *  an agent), a leading `@x` (address an agent), or `/f x` (pick a file). */
 export function mentionInProgress(val: string): MentionInProgress | null {
+  const f = FILE_TOKEN.exec(val);
+  if (f) {
+    const after = f[2] ?? '';
+    const slash = after.lastIndexOf('/');
+    if (slash >= 0) return { kind: 'file-browse', dir: after.substring(0, slash + 1), filter: after.substring(slash + 1) };
+    return { kind: 'file-search', query: after };
+  }
   const lastAt = val.lastIndexOf('@');
   if (lastAt < 0 || val.includes(' ', lastAt)) return null;
   const after = val.substring(lastAt + 1);
   if (lastAt > 0 && val[lastAt - 1] === '@') return { kind: 'agent', filter: after.toLowerCase() };
-  if (after.startsWith('@')) return null;
-  const slash = after.lastIndexOf('/');
-  if (slash >= 0) return { kind: 'file-browse', dir: after.substring(0, slash + 1), filter: after.substring(slash + 1) };
-  return { kind: 'file-search', query: after, atStart: val.substring(0, lastAt).trim() === '' };
+  if (after.startsWith('@') || val.substring(0, lastAt).trim() !== '') return null;
+  return { kind: 'lead-agent', filter: after };
 }
 
 /** Whether `filter` (what follows a leading `@`) could name this agent: a

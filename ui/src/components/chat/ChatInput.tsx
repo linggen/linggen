@@ -255,14 +255,14 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   // Agents a leading `@partial` could address (only in search mode — a path
   // with `/` is never an agent's name).
   const leadAgents = useMemo(
-    () => (mentionAtStart && fileSearchMode ? mainAgents.filter((a) => agentMatches(a, fileFilter)) : []),
-    [mainAgents, mentionAtStart, fileSearchMode, fileFilter],
+    () => (mentionAtStart ? mainAgents.filter((a) => agentMatches(a, fileFilter)) : []),
+    [mainAgents, mentionAtStart, fileFilter],
   );
   // Without a project root (a skill page's chat) there are no files to find:
   // the `@` dropdown is agents only, and closed when none match.
-  const fileRows = projectRoot ? filteredFileEntries : [];
+  const fileRows = projectRoot && !mentionAtStart ? filteredFileEntries : [];
   const mentionRowCount = leadAgents.length + fileRows.length;
-  const fileDropdownVisible = showFileDropdown && (!!projectRoot || leadAgents.length > 0);
+  const fileDropdownVisible = showFileDropdown && (mentionAtStart ? leadAgents.length > 0 : !!projectRoot);
 
   const closeFileDropdown = () => {
     setShowFileDropdown(false);
@@ -272,7 +272,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   };
 
   const applyLeadAgent = (agent: AgentInfo) => {
-    setChatInput(completeLeadingAgentMention(chatInput, agentMentionLabel(agent, mentionLang)));
+    // Ling is the default responder: choosing her just drops the mention.
+    const isDefault = agent.name.toLowerCase() === 'ling';
+    const label = agent.name.charAt(0).toUpperCase() + agent.name.slice(1);
+    setChatInput(isDefault ? chatInput.substring(0, chatInput.lastIndexOf('@')) : completeLeadingAgentMention(chatInput, label));
     closeFileDropdown();
     inputRef.current?.focus();
   };
@@ -618,29 +621,19 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               const val = e.target.value;
               setChatInput(val);
 
-              // Skill dropdown: `/` trigger
-              if (val.includes('/') && !val.includes(' ', val.lastIndexOf('/'))) {
-                const lastSlash = val.lastIndexOf('/');
-                // Only trigger skill dropdown if the `/` is not part of a file path (i.e. after `@`)
-                const atIdx = val.lastIndexOf('@');
-                if (atIdx < 0 || lastSlash < atIdx) {
-                  setSkillFilter(val.substring(lastSlash + 1).toLowerCase());
-                  setShowSkillDropdown(true);
-                  setShowAgentDropdown(false);
-                  setShowFileDropdown(false);
-                  setSelectedSuggestionIndex(0);
-                  return;
-                }
-              }
-
               const mention = mentionInProgress(val);
               if (mention) {
                 setShowAgentDropdown(mention.kind === 'agent');
                 setShowFileDropdown(mention.kind !== 'agent');
+                setMentionAtStart(mention.kind === 'lead-agent');
                 setShowSkillDropdown(false);
                 setSelectedSuggestionIndex(0);
                 if (mention.kind === 'agent') {
                   setAgentFilter(mention.filter);
+                } else if (mention.kind === 'lead-agent') {
+                  setFileFilter(mention.filter);
+                  setFileSearchMode(true);
+                  setFileBrowsePath('');
                 } else if (mention.kind === 'file-browse') {
                   setFileFilter(mention.filter);
                   setFileSearchMode(false);
@@ -654,8 +647,22 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                   setFileBrowsePath('');
                   searchFiles(mention.query);
                 }
-                setMentionAtStart(mention.kind === 'file-search' && mention.atStart);
                 return;
+              }
+
+              // Skill dropdown: `/` trigger
+              if (val.includes('/') && !val.includes(' ', val.lastIndexOf('/'))) {
+                const lastSlash = val.lastIndexOf('/');
+                // Only trigger skill dropdown if the `/` is not part of a file path (i.e. after `@`)
+                const atIdx = val.lastIndexOf('@');
+                if (atIdx < 0 || lastSlash < atIdx) {
+                  setSkillFilter(val.substring(lastSlash + 1).toLowerCase());
+                  setShowSkillDropdown(true);
+                  setShowAgentDropdown(false);
+                  setShowFileDropdown(false);
+                  setSelectedSuggestionIndex(0);
+                  return;
+                }
               }
 
               // No dropdown — but check for skill argument hint
@@ -731,11 +738,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 if (e.key === 'Enter' || (e.key === 'Tab' && entry?.isDir)) {
                   e.preventDefault();
                   if (!entry) return;
-                  const lastAt = chatInput.lastIndexOf('@');
-                  const beforeAt = chatInput.substring(0, lastAt);
                   if (entry.isDir) {
                     const newPath = fileSearchMode ? entry.path + '/' : fileBrowsePath + entry.name + '/';
-                    setChatInput(`${beforeAt}@${newPath}`);
+                    setChatInput(completeFileMention(chatInput, newPath, false));
                     setFileBrowsePath(newPath);
                     setFileFilter('');
                     setFileSearchMode(false);
@@ -743,7 +748,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                     fetchFileEntries(newPath);
                   } else {
                     const fullPath = fileSearchMode ? entry.path : fileBrowsePath + entry.name;
-                    setChatInput(`${beforeAt}@${fullPath} `);
+                    setChatInput(completeFileMention(chatInput, fullPath, true));
                     setShowFileDropdown(false);
                     setFileFilter('');
                     setFileBrowsePath('');
@@ -789,7 +794,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 setShowFileDropdown(false);
               }
             }}
-            placeholder={hint ? `${hint}   ⇥ Tab` : mobile ? "Message..." : "Message... (/ for skills, @ for files, Shift+Enter for newline)"}
+            placeholder={hint ? `${hint}   ⇥ Tab` : mobile ? "Message..." : "Message... (@ Ling/银月, /f files, / skills, Shift+Enter newline)"}
             rows={1}
             className={cn(
               "flex-1 bg-transparent border-none outline-none resize-none leading-5 overflow-y-hidden",
