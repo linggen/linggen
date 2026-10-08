@@ -109,9 +109,25 @@ become typed tool calls with no second turn at all.
   nothing piles up. A 90-day retention rule and a Settings clear button come
   only if the phone ever keeps many sessions.
 
+## Tool names and packs
+
+- **Every app tool is named `<app>_<verb>`**: `dj_play`, `dj_delete_playlist`,
+  `cfo_read`, `photos_find`. Underscore, not dot — model function names and
+  retained-topic ops reject dots; chips may show `dj.play`. Mac tools reaching
+  the phone (`mac/tools`) follow the same rule.
+- **Packs stay the isolation.** Each turn carries only the active apps' tools,
+  plus Ling's own and `common` ones; `open_toolbox` is the index (one line per
+  tool of an app) and loads a pack on demand. No session switching.
+- **Pack signals are deterministic**: the app screen the user was last on
+  before opening the Chat (within a few minutes), DJ playing, apps used
+  recently in the thread, a body word for Health. Today's "open tab" signal
+  never fires, because typing happens on the chat tab itself.
+
 ## What changes
 
-1. **Typed Mac tools for the phone.** The Mac publishes its app actions as a
+1. **Tool names + typed Mac tools for the phone.** Rename every phone tool to
+   `<app>_<verb>`; replace the open-tab pack signal with the last app screen.
+   The Mac publishes its app actions as a
    retained `mac/tools` catalog, as the phone does with `phone/tools`; Ling's
    phone loop calls them directly, with no second turn (DJ download first).
 2. **Ling on the phone.** A Ling member in the phone's Chat; dispatch as in
