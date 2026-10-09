@@ -80,6 +80,28 @@ turn.
     never sees her. The fresh-install guide (2026-09-25) has Ling, not her,
     offer 开府. Site and App Store copy follow later.
 
+    **Settled 2026-10-09 (Hanli):**
+    - **For good.** Once found, she stays: restarting the game, loading an
+      earlier save or forgetting one never removes her. The engine keeps a
+      one-way `met` latch under `~/.linggen` state (not the save, not the
+      skill folder), written once, never cleared.
+    - **Trigger** declared in `agents/yinyue.md` frontmatter (a skill, a
+      file, a path — here Lingjing's `data/state.json` `companion.joined`);
+      the engine resolves the skill folder generically and reuses
+      `StateFlag`. No skill names in Rust.
+    - **Existing users keep her.** On startup, before the server binds, the
+      latch is set once if she already has chat history with this user.
+      Fresh installs follow the rule strictly. No flash on upgrade.
+    - **Inside a skill** her place follows the skill's own `absent_until`
+      (asleep, away, not yet met in Lingjing). The latch governs every other
+      surface: chat members and the `@` picker, pet window, 3D body, menubar
+      face, Settings, heralds.
+    - **Phone** reads the latch from the Mac's retained topic when paired,
+      plus its own grandfather check (its own Yinyue thread). Phone-only and
+      never met: Ling only.
+    - **Before she's met, Ling does what she did** — permission prompts,
+      heralds, notices — so nothing a fresh install needs depends on her.
+
 ## Risks
 
 - Rename blast radius (queue ops, stored threads, CarPlay, Mac callers).
