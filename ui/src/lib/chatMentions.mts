@@ -50,6 +50,15 @@ export function leadingAgentMention(
   return body ? { agent: best.agent, sticky, body } : undefined;
 }
 
+/** Whether the text is only an agent's name after `@` / `@@` — an address
+ *  with nothing said yet (the pre-filled box, sent as it stands). */
+export function isBareMention(text: string, agents: MentionableAgent[]): boolean {
+  const t = text.trim();
+  if (!t.startsWith('@')) return false;
+  const name = t.replace(/^@@?/, '').replace(NAME_ENDS, '').toLowerCase();
+  return agents.some((a) => [a.name, ...(a.aliases ?? [])].some((n) => n.trim().toLowerCase() === name));
+}
+
 /** The input with its trailing `@@partial` completed to `@@Agent `. */
 export function completeAgentMention(input: string, agentName: string): string {
   const at = input.lastIndexOf('@@');
@@ -132,4 +141,47 @@ export function agentMentionLabel(agent: MentionableAgent, lang: string): string
 /** The input with its leading `@partial` replaced by `@Label `. */
 export function completeLeadingAgentMention(input: string, label: string): string {
   return `${input.substring(0, input.lastIndexOf('@'))}@${label} `;
+}
+
+// The composer's pre-fill (one-ling-spec § Who answers; the phone's
+// screens/chat/dispatch.dart is the reference): once the user addresses
+// Yinyue, or she replies, the box opens with her mention so the talk stays
+// with her. Deleting it hands the next line back to Ling. It clears after
+// PREFILL_QUIET_MS without a word from her.
+
+/** How long the pre-filled mention outlives the last exchange with her. */
+export const PREFILL_QUIET_MS = 10 * 60 * 1000;
+
+/** The slice of a chat row the table reads. */
+export interface TableMessage {
+  role: 'user' | 'agent';
+  from?: string;
+  to?: string;
+  timestampMs?: number;
+}
+
+/** Who held the table last, and when. */
+export interface Floor {
+  speaker?: string;
+  at?: number;
+}
+
+/** The last exchange at the table: a user line counts for the agent it was
+ *  sent to, a reply for the agent that wrote it. Rows between anyone else
+ *  (`system`, shell lines, sub-agents) are not at the table. */
+export function floorOf(messages: TableMessage[], tableIds: string[]): Floor {
+  const at = new Set(tableIds.map((id) => id.toLowerCase()));
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    const speaker = (m.role === 'agent' ? m.from : m.to)?.toLowerCase();
+    if (speaker && at.has(speaker)) return { speaker, at: m.timestampMs };
+  }
+  return {};
+}
+
+/** The box's pre-fill: `@Label ` while Yinyue holds the floor and it is
+ *  fresher than PREFILL_QUIET_MS, else empty. */
+export function prefillAfter(floor: Floor, now: number, label: string): string {
+  if (floor.speaker !== 'yinyue' || floor.at === undefined) return '';
+  return now - floor.at >= PREFILL_QUIET_MS ? '' : `@${label} `;
 }

@@ -510,6 +510,7 @@ export const ChatPanel: React.FC<{
         selectedMainRunningRunId={selectedMainRunningRunId}
         activePlan={activePlan}
         visibleQueued={visibleQueued}
+        chatMessages={chatMessages}
         sessionId={sessionId}
         openQuestion={pendingAskUser && !askUserBelongsToSubagent && pendingAskUser.questions[0]?.header !== 'Permission' ? pendingAskUser : null}
         onAnswerQuestion={onRespondToAskUser}

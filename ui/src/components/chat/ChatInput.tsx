@@ -11,6 +11,7 @@ import { useSuggestionStore } from '../../stores/suggestionStore';
 import { normalizeAgentKey } from '../../lib/messageUtils';
 import type {
   AgentInfo,
+  ChatMessage,
   FileEntry,
   ModelInfo,
   Plan,
@@ -19,12 +20,14 @@ import type {
 } from '../../types';
 import { sessionApi, workspaceApi } from '../../lib/endpoints';
 import { readImageForSend } from '../../lib/imageEncode';
+import { useYinyuePrefill } from '../../hooks/useYinyuePrefill';
 import {
   agentMatches,
   agentMentionLabel,
   completeAgentMention,
   completeFileMention,
   completeLeadingAgentMention,
+  isBareMention,
   leadingAgentMention,
   mentionLanguage,
   mentionInProgress,
@@ -43,6 +46,8 @@ export interface ChatInputProps {
   selectedMainRunningRunId?: string;
   activePlan?: Plan | null;
   visibleQueued: QueuedChatItem[];
+  /** The thread, read for who holds the table (the `@Yinyue` pre-fill). */
+  chatMessages?: ChatMessage[];
   /** The session this chat shows. A skill page's embedded chat has its own;
    *  the app's global store is empty there, so the queue's ✕ did nothing. */
   sessionId?: string | null;
@@ -74,6 +79,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   selectedMainRunningRunId,
   activePlan,
   visibleQueued,
+  chatMessages,
   sessionId,
   openQuestion,
   onAnswerQuestion,
@@ -121,6 +127,16 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     [agents, mainAgentIds],
   );
   const mentionLang = useMemo(() => mentionLanguage(), []);
+  // After the person addresses Yinyue, or she replies, the box opens with
+  // her mention — for ~10 minutes (see useYinyuePrefill).
+  const yinyue = mainAgents.find((a) => a.name.toLowerCase() === 'yinyue');
+  const prefillSpent = useYinyuePrefill(
+    chatMessages ?? [],
+    mainAgents.map((a) => a.name),
+    yinyue ? agentMentionLabel(yinyue, mentionLang) : '',
+    chatInput,
+    setChatInput,
+  );
 
   const resizeInput = () => {
     if (!inputRef.current) return;
@@ -144,8 +160,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const send = () => {
     if (!chatInput.trim() && pendingImages.length === 0) return;
     const userMessage = chatInput.trim();
+    // The pre-fill alone is an address with nothing said: keep it, send nothing.
+    if (pendingImages.length === 0 && isBareMention(userMessage, mainAgents)) return;
     const imagesToSend = pendingImages.length > 0 ? pendingImages.map((img) => img.data) : undefined;
     setChatInput('');
+    prefillSpent(); // the next floor state refills the box
     setPendingImages([]);
     setShowSkillDropdown(false);
     setShowAgentDropdown(false);
