@@ -87,6 +87,23 @@ pub(super) fn resolve_model_catalog(
         .collect()
 }
 
+/// Which model each agent runs on here, by agent id — what a phone with no
+/// pick of its own follows. Ling uses the routing default chain's first entry;
+/// Yinyue her `[pet] model`, with "auto" resolved the way her turns resolve it
+/// and falling back to the routing default when it names none. An agent with
+/// no answer is left out.
+fn agent_models(config: &crate::config::Config) -> serde_json::Value {
+    let routing = config.routing.default_models.first().cloned();
+    let mut out = serde_json::Map::new();
+    if let Some(m) = &routing {
+        out.insert("ling".into(), m.clone().into());
+    }
+    if let Some(m) = crate::server::resident::resolve_pet_model(&config.pet.model).or(routing) {
+        out.insert("yinyue".into(), m.into());
+    }
+    out.into()
+}
+
 /// GET /api/pair/me — the calling phone's own paired-device row: name, settings,
 /// and a resolved model catalog (endpoint + key per allow-listed model). This is
 /// the "Sync from Mac" pull, identified by the device token.
@@ -128,6 +145,7 @@ pub(crate) async fn get_pair_me(
         "device_id": d.device_id,
         "settings": d.settings,
         "models": resolve_model_catalog(&allow, &config),
+        "agent_models": agent_models(&config),
         // Where to reach this Mac when the phone is off the LAN: the relay
         // signals per instance. Not a secret — an address. Absent while
         // signed out, since the relay leg needs the account credential.
@@ -208,4 +226,29 @@ pub(crate) async fn delete_pair_device(Path(id): Path<String>) -> impl IntoRespo
     }
     tracing::info!("[pair] device {id} revoked");
     Json(serde_json::json!({ "status": "ok" })).into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_agent_reports_the_model_it_runs_on() {
+        let mut cfg = crate::config::Config::default();
+        cfg.routing.default_models = vec!["m-main".into(), "m-next".into()];
+        cfg.pet.model = "m-pet".into();
+        let m = agent_models(&cfg);
+        assert_eq!(m["ling"], "m-main");
+        assert_eq!(m["yinyue"], "m-pet");
+    }
+
+    #[test]
+    fn an_empty_chain_leaves_the_agents_out() {
+        let mut cfg = crate::config::Config::default();
+        cfg.routing.default_models.clear();
+        cfg.pet.model = "m-pet".into();
+        let m = agent_models(&cfg);
+        assert!(m.get("ling").is_none());
+        assert_eq!(m["yinyue"], "m-pet");
+    }
 }
