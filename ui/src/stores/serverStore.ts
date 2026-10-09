@@ -8,6 +8,7 @@ import { useSessionStore } from './sessionStore';
 import { TOKEN_RATE_WINDOW_MS } from '../lib/messageUtils';
 import { dedupFetch } from '../lib/dedupFetch';
 import { agentTracker } from '../lib/agentTracker';
+import { presentAgents, type AgentMet } from '../lib/agentsMet.mts';
 import { agentsApi, appConfig, skillsApi } from '../lib/endpoints';
 
 export type AgentStatusValue = 'idle' | 'model_loading' | 'thinking' | 'calling_tool' | 'working';
@@ -15,7 +16,14 @@ export type AgentStatusValue = 'idle' | 'model_loading' | 'thinking' | 'calling_
 type StateSetter<T> = T | ((prev: T) => T);
 
 interface ServerState {
+  /** The agents a person may meet — `rawAgents` less any not yet met. */
   agents: AgentInfo[];
+  /** The agent list as the engine pushed it. */
+  rawAgents: AgentInfo[];
+  /** page_state.agents_met; null until the engine has said. */
+  agentsMet: AgentMet[] | null;
+  /** Take a push of the agent list and/or who is met, and re-derive `agents`. */
+  applyAgentPresence: (push: { agents?: AgentInfo[]; agentsMet?: AgentMet[] }) => void;
   models: ModelInfo[];
   /** GET /api/models — the settings screens' view (built-ins, auth mode).
    *  One shared copy; refreshRuntimeModels() re-reads it. */
@@ -98,6 +106,13 @@ interface ServerState {
 
 export const useServerStore = create<ServerState>((set, get) => ({
   agents: [],
+  rawAgents: [],
+  agentsMet: null,
+  applyAgentPresence: ({ agents, agentsMet }) => set((s) => {
+    const rawAgents = agents ?? s.rawAgents;
+    const met = agentsMet ?? s.agentsMet;
+    return { rawAgents, agentsMet: met, agents: presentAgents(rawAgents, met) };
+  }),
   models: [],
   ollamaStatus: null,
   defaultModels: [],

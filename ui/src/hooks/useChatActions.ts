@@ -18,6 +18,7 @@ import { postToParent } from '../lib/parentFrame';
 import { agentMentionLabel, leadingAgentMention, mentionLanguage } from '../lib/chatMentions.mts';
 import { turnlessReply } from '../lib/agentTurns.mts';
 import { chatAgentOf } from '../lib/sessionMembers.mts';
+import { COMPANION_ID, isAgentPresent } from '../lib/agentsMet.mts';
 import { newClientId } from '../lib/sentMessage.mts';
 import { stillOn } from '../lib/sessionLoad.mts';
 
@@ -141,7 +142,8 @@ export function useChatActions(
         '**Commands:**', '- `/help` — Show available commands', '- `/clear` — Clear chat context',
         '- `/compact [focus]` — Compact context (summarize old messages)',
         '- `/status` — Show project status', '- `/model` — List models; `/model <id>` — Switch default model',
-        "- `/mute` / `/unmute` — Yinyue's voice on this Mac off / back on (she still writes)",
+        ...(isAgentPresent(useServerStore.getState().agentsMet, COMPANION_ID)
+          ? ["- `/mute` / `/unmute` — Yinyue's voice on this Mac off / back on (she still writes)"] : []),
         '- `/plan <task>` — Ask agent to create a plan (read-only)', '- `/image <path>` — Attach an image file',
         '- `!command` — Run a shell command directly',
         '- `@path` — Mention a file', '- `@agent message` — Say it to one agent (`@@agent` stays with it)', '', '**Skills:** Type `/` to see available skills.',

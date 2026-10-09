@@ -107,8 +107,8 @@ function applyQueued(ps: PageState): void {
 }
 
 function applyScopedState(ps: PageState): void {
-  if (ps.agents) {
-    useServerStore.setState({ agents: ps.agents });
+  if (ps.agents || ps.agents_met) {
+    useServerStore.getState().applyAgentPresence({ agents: ps.agents, agentsMet: ps.agents_met });
   }
   if (ps.agent_runs) {
     // Skip update if runs haven't changed (prevents re-render loops)

@@ -21,6 +21,8 @@ import type {
 import { sessionApi, workspaceApi } from '../../lib/endpoints';
 import { readImageForSend } from '../../lib/imageEncode';
 import { useYinyuePrefill } from '../../hooks/useYinyuePrefill';
+import { useAgentPresent } from '../../hooks/useAgentPresent';
+import { COMPANION_ID } from '../../lib/agentsMet.mts';
 import {
   agentMatches,
   agentMentionLabel,
@@ -32,6 +34,12 @@ import {
   mentionLanguage,
   mentionInProgress,
 } from '../../lib/chatMentions.mts';
+
+/** Her voice switches — offered only once she is there. */
+const voiceCommands: [string, string][] = [
+  ['/mute', "Mute Yinyue's voice on this Mac"],
+  ['/unmute', "Turn Yinyue's voice back on"],
+];
 
 export interface ChatInputProps {
   projectRoot?: string | null;
@@ -129,7 +137,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const mentionLang = useMemo(() => mentionLanguage(), []);
   // After the person addresses Yinyue, or she replies, the box opens with
   // her mention — for ~10 minutes (see useYinyuePrefill).
-  const yinyue = mainAgents.find((a) => a.name.toLowerCase() === 'yinyue');
+  const yinyueHere = useAgentPresent(COMPANION_ID);
+  const yinyue = yinyueHere ? mainAgents.find((a) => a.name.toLowerCase() === COMPANION_ID) : undefined;
   const prefillSpent = useYinyuePrefill(
     chatMessages ?? [],
     mainAgents.map((a) => a.name),
@@ -315,8 +324,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       ['/compact', 'Compact context (summarize old messages)'],
       ['/status', 'Show project status'],
       ['/model', 'Switch default model'],
-      ['/mute', "Mute Yinyue's voice on this Mac"],
-      ['/unmute', "Turn Yinyue's voice back on"],
+      ...(yinyueHere ? voiceCommands : []),
       ['/image', 'Attach an image file'],
     ];
 
@@ -344,7 +352,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       });
 
     return suggestions;
-  }, [skills, skillFilter]);
+  }, [skills, skillFilter, yinyueHere]);
 
   const applySuggestion = useCallback((suggestion: typeof skillSuggestions[number]) => {
     const beforeSlash = chatInput.substring(0, chatInput.lastIndexOf('/'));
@@ -813,7 +821,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 setShowFileDropdown(false);
               }
             }}
-            placeholder={hint ? `${hint}   ⇥ Tab` : mobile ? "Message..." : "Message... (@ Ling/银月, /f files, / skills, Shift+Enter newline)"}
+            placeholder={hint ? `${hint}   ⇥ Tab` : mobile ? "Message..." : `Message... (${yinyueHere ? '@ Ling/银月, ' : ''}/f files, / skills, Shift+Enter newline)`}
             rows={1}
             className={cn(
               "flex-1 bg-transparent border-none outline-none resize-none leading-5 overflow-y-hidden",

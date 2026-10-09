@@ -103,6 +103,13 @@ turn.
       latch `~/.linggen/met/yinyue.json`; grandfather at startup; one gate
       (`AgentManager::agent_present`); page_state `agents_met` + retained
       `mac/agents`. Mac UI (10B) and phone (10C) read those.
+    - **Built 2026-10-09 (10B, Mac):** web UI reads `agents_met` once
+      (`useAgentPresent`; the store's `agents` list drops unmet agents): dock,
+      pet view, `@`/pre-fill, `/mute`, Settings sections wait on it. The shell
+      (`companion.rs`) polls retained `mac/agents` until she is met: no pet
+      window; the tray is the plain launcher tray (app icon, Open / Settings /
+      Quit; none for an app that is not a background launcher) and takes her
+      face and menu live when she arrives.
     - **Before she's met, Ling does what she did** — permission prompts,
       heralds, notices — so nothing a fresh install needs depends on her.
 

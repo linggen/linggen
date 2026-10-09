@@ -8,6 +8,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { X } from 'lucide-react';
 import { account as accountApi, appConfig, skillsApi, workspaceApi, type Account } from '../lib/endpoints';
 import type { AppConfig, SkillAppConfig, SkillInfoFull } from '../types';
+import { useAgentPresent } from '../hooks/useAgentPresent';
+import { COMPANION_ID } from '../lib/agentsMet.mts';
 
 /** A skill that is an app. */
 type AppSkill = SkillInfoFull & { app: SkillAppConfig };
@@ -212,11 +214,13 @@ export const LauncherSettings: React.FC<{ onClose: () => void }> = ({ onClose })
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  // Her section waits until she is met.
+  const yinyueHere = useAgentPresent(COMPANION_ID);
   const sections: Section[] = [
     { id: 'account', label: 'Account', kind: 'account' },
     { id: 'general', label: 'General', kind: 'general' },
     { id: 'model', label: 'Model', kind: 'model' },
-    { id: 'yinyue', label: 'Yinyue', kind: 'yinyue' },
+    ...(yinyueHere ? [{ id: 'yinyue', label: 'Yinyue', kind: 'yinyue' as const }] : []),
     ...apps.map((a) => ({ id: `app-${a.name}`, label: labelFor(a.name), kind: 'app' as const, skill: a })),
   ];
   const current = sections.find((s) => s.id === active) ?? sections[0];

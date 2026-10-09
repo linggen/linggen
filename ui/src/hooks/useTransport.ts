@@ -17,6 +17,8 @@ import { useUserStore } from '../stores/userStore';
 import { useChatStore } from '../stores/chatStore';
 import { useSessionStore } from '../stores/sessionStore';
 import { useServerStore } from '../stores/serverStore';
+import { useAgentPresent } from './useAgentPresent';
+import { COMPANION_ID } from '../lib/agentsMet.mts';
 
 /** Send the frontend's active view context to the server.
  *  The server uses this to scope its page_state push. */
@@ -72,13 +74,16 @@ function sendYinyueRelease() {
  * corner, otherwise first arrival holds; released on close, the next surface
  * takes over. Pass `enabled = false` for surfaces that must never present her
  * (e.g. a branded app's main window, where the native pet window owns her).
+ * Until she is met nothing presents her; when she is, the surface joins at once.
  */
 export function useYinyuePresenter(enabled = true, stage = false): boolean {
+  const here = useAgentPresent(COMPANION_ID);
+  const wanted = enabled && here;
   const present = useUiStore((s) => s.yinyuePresenter);
   useEffect(() => {
-    yinyuePresenterWanted = enabled;
+    yinyuePresenterWanted = wanted;
     yinyuePresenterStage = stage;
-    if (!enabled) return;
+    if (!wanted) return;
     // Best-effort now (covers route changes where the transport already exists);
     // the real guarantee is the re-send in onReconnect once connected.
     sendYinyueSubscribe(stage);
@@ -91,8 +96,8 @@ export function useYinyuePresenter(enabled = true, stage = false): boolean {
       yinyuePresenterWanted = false;
       sendYinyueRelease();
     };
-  }, [enabled, stage]);
-  return enabled && present;
+  }, [wanted, stage]);
+  return wanted && present;
 }
 
 /** Map transport status to the UI store's connection status values. */
