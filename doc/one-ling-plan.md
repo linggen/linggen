@@ -110,6 +110,12 @@ turn.
       window; the tray is the plain launcher tray (app icon, Open / Settings /
       Quit; none for an app that is not a background launcher) and takes her
       face and menu live when she arrives.
+    - **Ling's soul names her only once met (2026-10-09):** the two passages
+      about her moved out of `agents/ling.md` into `agents/places/ling-yinyue.md`
+      (`surface: soul`, `needs: yinyue`) — a soul addition the engine appends
+      after the soul on every surface while she is here
+      (`doc/persona-design.md`); the phone bakes the same file and adds it only
+      when `YinyueMet`.
     - **Before she's met, Ling does what she did** — permission prompts,
       heralds, notices — so nothing a fresh install needs depends on her.
 

@@ -102,6 +102,17 @@ impl MetGate {
         book.declared = declared;
     }
 
+    /// Test seam: `ids` declare a trigger and are unmet, whatever this
+    /// machine has latched on disk.
+    #[cfg(test)]
+    pub(crate) fn declare_unmet(&self, ids: &[&str]) {
+        let mut book = self.book.lock_ok();
+        for id in ids {
+            book.latched.remove(*id);
+            book.declared.insert(id.to_string(), test_when());
+        }
+    }
+
     /// The declaring agents not yet met, with what they wait for.
     pub fn waiting(&self) -> Vec<(String, MetWhen)> {
         let book = self.book.lock_ok();
@@ -273,6 +284,11 @@ impl AgentManager {
         }
         self.check_met_triggers().await;
     }
+}
+
+#[cfg(test)]
+fn test_when() -> MetWhen {
+    serde_norway::from_str("skill: game\nfile: data/state.json\npath: companion.joined\n").unwrap()
 }
 
 #[cfg(test)]

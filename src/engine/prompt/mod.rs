@@ -184,6 +184,9 @@ struct Soul {
     body: String,
     /// Whether the spec has any body at all.
     has_text: bool,
+    /// What the soul says only while another agent is here
+    /// (`place::soul_additions`); follows the body wherever the body goes.
+    addition: String,
 }
 
 impl Soul {
@@ -210,7 +213,13 @@ impl Soul {
             },
             body: rest.to_string(),
             has_text: !spec_body.is_empty(),
+            addition: String::new(),
         }
+    }
+
+    /// The body with its additions right after it.
+    fn with_additions(&self) -> String {
+        join_sections([self.body.clone(), self.addition.clone()])
     }
 }
 
@@ -232,7 +241,7 @@ fn mission_prompt(soul: Soul, mission: &ActiveMission) -> String {
         Some(dir) => mission.body.replace("$MISSION_DIR", &dir.to_string_lossy()),
         None => mission.body.clone(),
     };
-    join_sections([soul.identity, soul.body, body])
+    join_sections([soul.identity.clone(), soul.with_additions(), body])
 }
 
 impl AgentEngine {
@@ -250,7 +259,8 @@ impl AgentEngine {
             .as_deref()
             .map(str::trim)
             .unwrap_or("");
-        let soul = Soul::of(personality, spec_body);
+        let mut soul = Soul::of(personality, spec_body);
+        soul.addition = self.soul_addition();
 
         if let Some(mission) = &self.active_mission {
             return mission_prompt(soul, mission);
@@ -270,6 +280,21 @@ impl AgentEngine {
         prompt
     }
 
+    /// What this agent's soul adds while the agents it needs are here —
+    /// the same on every surface (`place::soul_additions`).
+    fn soul_addition(&self) -> String {
+        let Some(agent) = self
+            .agent_id
+            .as_deref()
+            .or(self.spec.as_ref().map(|s| s.name.as_str()))
+        else {
+            return String::new();
+        };
+        let manager = self.tools.get_manager();
+        let here = |other: &str| manager.as_ref().is_none_or(|m| m.agent_present(other));
+        place::soul_additions(agent, &here)
+    }
+
     /// The soul's body for this session. Every session keeps it — an app
     /// adds a place, it doesn't take the soul away — except a consumer's,
     /// whose frame (`build_stable_system_content`) replaces the owner's
@@ -279,7 +304,7 @@ impl AgentEngine {
             return String::new();
         }
         if soul.has_text || self.is_app_session() {
-            return soul.body.clone();
+            return soul.with_additions();
         }
         self.prompt_store
             .render_or_fallback(crate::prompts::keys::SYSTEM_FALLBACK_IDENTITY, &[])

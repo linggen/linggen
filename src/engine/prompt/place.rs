@@ -13,6 +13,11 @@
 //!   A file may also name `needs: <agent>`: it adds to the base block only
 //!   while that agent is here (`engine::agent::met`) — so Ling's block
 //!   speaks of a companion only once she has been met.
+//!   `surface: soul` is not a surface but an addition to the **soul** itself:
+//!   text the agent's soul says only while its `needs` agent is here, appended
+//!   right after the soul on every surface the agent speaks on — home, app,
+//!   member, a mission's frame — including where no engine block exists (an
+//!   app's own agent). The soul file stays free of any other agent's name.
 //! - **Skills** — a skill declares `place:` per agent in its SKILL.md for
 //!   the members at its table besides its lead; the declared text replaces
 //!   the engine's member block. The engine names no app and no agent: it
@@ -49,6 +54,9 @@ impl Surface {
         }
     }
 }
+
+/// The `surface:` value of a soul addition (see the module doc).
+const SOUL_SURFACE: &str = "soul";
 
 #[derive(Deserialize)]
 struct PlaceHeader {
@@ -102,6 +110,24 @@ fn engine_additions<'a>(
         .filter(move |p| p.header.agent == agent && p.header.surface == surface.key())
         .filter(move |p| p.header.needs.as_deref().is_some_and(present))
         .map(|p| p.body.as_str())
+}
+
+/// What the agent's soul adds while the agents it needs are here (`present`):
+/// the `surface: soul` files, in file order, joined as paragraphs. Empty when
+/// there is none, so an unmet companion leaves no trace in the soul.
+pub(crate) fn soul_additions(agent: &str, present: &dyn Fn(&str) -> bool) -> String {
+    let mut files: Vec<&PlaceFile> = place_files()
+        .iter()
+        .filter(|p| p.header.agent == agent && p.header.surface == SOUL_SURFACE)
+        .filter(|p| p.header.needs.as_deref().is_none_or(present))
+        .collect();
+    // Sorted, so the order never depends on the filesystem.
+    files.sort_by(|a, b| a.body.cmp(&b.body));
+    files
+        .iter()
+        .map(|p| p.body.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 /// The place text for `agent`. A member takes the table's declaration when
@@ -199,5 +225,32 @@ mod tests {
         );
         assert!(with.starts_with(&without), "the base is shared");
         assert_eq!(engine_place("ling", Surface::Home), Some(without.as_str()));
+    }
+
+    /// A soul addition is the soul's own text while its agent is here, on no
+    /// surface's block, and nothing at all while she is not.
+    #[test]
+    fn a_soul_addition_follows_its_agent_and_is_no_surface() {
+        let with = soul_additions("ling", &|a| a == "yinyue");
+        assert!(with.contains("Yinyue is the friend."));
+        assert!(with.contains("One memory, shared with Yinyue."));
+        assert_eq!(soul_additions("ling", &|_| false), "");
+        assert_eq!(soul_additions("yinyue", &|_| true), "");
+        for surface in [Surface::Home, Surface::App, Surface::Member] {
+            let block = place_text("ling", surface, None, &|_| true).unwrap_or_default();
+            assert!(!block.contains("Yinyue is the friend."), "{surface:?}");
+        }
+    }
+
+    #[test]
+    fn every_place_file_is_a_surface_or_a_soul_addition() {
+        for p in place_files() {
+            let s = p.header.surface.as_str();
+            assert!(
+                [SOUL_SURFACE, "home", "app", "member"].contains(&s),
+                "{}: unknown surface {s:?}",
+                p.header.agent
+            );
+        }
     }
 }

@@ -27,7 +27,8 @@ lives in `agents/ling.md` and `agents/yinyue.md` and says only who they are.
 Every place adds a `## Where you are` block to the system prompt, at run time,
 telling them where they are and what is true there.
 
-A soul file never names a device, a screen, an app, a tool or a story. A place
+A soul file never names a device, a screen, an app, a tool or a story — nor
+an agent that may not have been met yet (below). A place
 block never changes who they are — only where they stand, who is there, what
 they can do and what they know.
 
@@ -100,6 +101,30 @@ The engine stays a general core: it knows devices and surfaces, never an app.
 An app session keeps the soul and adds the app as a place. (Until 2026-09-25
 `engine/prompt/mod.rs` dropped the agent body in an app skill session, so
 inside an app Ling kept only its `personality:` lines.)
+
+## A soul that speaks of another agent
+
+Some agents appear only once met (`met_when` in the agent's own frontmatter;
+`doc/one-ling-plan.md` slice 10). Before she is met nothing the user's agent
+says may name her, so the soul file cannot. What a soul says of another agent
+lives in a **soul addition**: a file under `agents/places/` declared
+
+```
+agent: ling
+surface: soul
+needs: yinyue
+```
+
+The engine appends its body right after the soul's own text, on every surface
+the agent speaks on — home, an app's session, a member's seat, a mission's
+frame — whenever every `needs` agent is here (`AgentManager::agent_present`);
+otherwise nothing is added. A consumer's frame, which drops the soul body,
+drops it too. It is not a surface: it never joins a `## Where you are` block,
+and it works where the engine has no block (an app's own agent). A `needs:`
+file with a real surface (`home`, `app`, `member`) is the other kind: an
+addition to that surface's block only. The engine names no agent in either
+case — it matches the ids the files declare. The phone does the same in Dart
+(`LingSoul`, gated on `YinyueMet`).
 
 ## What moves (the migration)
 

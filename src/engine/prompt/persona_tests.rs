@@ -163,3 +163,89 @@ fn a_consumer_frame_and_a_delegate_have_no_place() {
     assert!(!p.contains("## Where you are"));
     at(&p, "## How you work");
 }
+
+/// What Ling's soul says of the companion — moved out of `agents/ling.md` so
+/// it is there only once she is met.
+const SOUL_FRIEND: &str =
+    "Yinyue is the friend. She lives with them; you\nrun everything underneath.";
+const SOUL_MEMORY: &str = "One memory, shared with Yinyue.";
+
+/// A manager that knows Yinyue as unmet (`met_when`, nothing latched) or met.
+fn with_manager(engine: &mut AgentEngine, yinyue_met: bool) {
+    let (manager, _rx) = crate::engine::agent::AgentManager::new(
+        crate::config::Config::default(),
+        None,
+        std::sync::Arc::new(crate::engine::test_registries::Empty),
+        std::sync::Arc::new(crate::engine::test_registries::Empty),
+        std::sync::Arc::new(crate::engine::test_registries::Empty),
+        InterfaceMode::Web,
+    );
+    if !yinyue_met {
+        manager.met.declare_unmet(&["yinyue"]);
+    }
+    engine.set_manager_context(manager);
+}
+
+/// Ling's own soul file never names her, on any surface.
+#[test]
+fn lings_soul_file_says_nothing_of_the_companion() {
+    assert!(!LING.contains("Yinyue") && !LING.contains("银月"));
+}
+
+/// Before she is met Ling's whole prompt — home, an app, a member's seat —
+/// has no Yinyue in it; once she is met the soul says what it said.
+#[test]
+fn ling_speaks_of_yinyue_only_once_she_is_met() {
+    type Setup = fn(&mut AgentEngine);
+    let surfaces: [(&str, Setup); 4] = [
+        ("home", |_| {}),
+        ("app", |e| e.active_skill = Some(skill(""))),
+        ("bound skill", |e| {
+            let plain = crate::extensions::skills::parse_skill_text(
+                "---\nname: zz\ndescription: A plain skill.\n---\nTHE SKILL'S OWN RULES.",
+                SkillSource::Global,
+            )
+            .unwrap();
+            e.active_skill = Some(plain);
+            e.skill_bound = true;
+        }),
+        ("member", |e| seat_at(e, "someone")),
+    ];
+    for (name, setup) in surfaces {
+        let mut alone = engine_as("ling", LING);
+        with_manager(&mut alone, false);
+        setup(&mut alone);
+        let p = alone.system_prompt();
+        assert!(
+            !p.contains("Yinyue") && !p.contains("银月"),
+            "{name}: unmet, Ling names her:\n{p}"
+        );
+        at(&p, "## How you work");
+
+        let mut together = engine_as("ling", LING);
+        with_manager(&mut together, true);
+        setup(&mut together);
+        let p = together.system_prompt();
+        let tail = at(&p, "### Memory writes");
+        let friend = at(&p, SOUL_FRIEND);
+        let memory = at(&p, SOUL_MEMORY);
+        assert!(
+            tail < friend && friend < memory,
+            "{name}: after the soul, in order"
+        );
+        match name {
+            "home" => assert!(memory < at(&p, "## Where you are"), "soul before place"),
+            "app" | "bound skill" => assert!(memory < at(&p, "THE "), "soul before skill"),
+            _ => {}
+        }
+    }
+}
+
+/// A consumer's frame replaces the soul's working guidance: no addition.
+#[test]
+fn a_consumer_frame_gets_no_soul_addition() {
+    let mut consumer = engine_as("ling", LING);
+    with_manager(&mut consumer, true);
+    consumer.prompt_profile.consumer_frame = true;
+    assert!(!consumer.system_prompt().contains("Yinyue"));
+}
