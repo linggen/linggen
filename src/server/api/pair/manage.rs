@@ -88,18 +88,18 @@ pub(super) fn resolve_model_catalog(
 }
 
 /// Which model each agent runs on here, by agent id — what a phone with no
-/// pick of its own follows. Ling uses the routing default chain's first entry;
-/// Yinyue her `[pet] model`, with "auto" resolved the way her turns resolve it
+/// pick of its own follows. The lead agent uses the routing default chain's first entry;
+/// the companion (`[pet] pet`) her `[pet] model`, with "auto" resolved the way her turns resolve it
 /// and falling back to the routing default when it names none. An agent with
 /// no answer is left out.
 fn agent_models(config: &crate::config::Config) -> serde_json::Value {
     let routing = config.routing.default_models.first().cloned();
     let mut out = serde_json::Map::new();
     if let Some(m) = &routing {
-        out.insert("ling".into(), m.clone().into());
+        out.insert(crate::engine::agent::LEAD_AGENT_ID.into(), m.clone().into());
     }
     if let Some(m) = crate::server::resident::resolve_pet_model(&config.pet.model).or(routing) {
-        out.insert("yinyue".into(), m.into());
+        out.insert(config.pet.pet.clone(), m.into());
     }
     out.into()
 }
