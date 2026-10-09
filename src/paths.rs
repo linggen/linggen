@@ -85,6 +85,12 @@ pub fn quests_dir() -> PathBuf {
     linggen_home().join("quests")
 }
 
+/// `~/.linggen/met/` — one write-once latch per agent that appears only
+/// once met (`<agent>.json`). See `engine::agent::met`.
+pub fn met_dir() -> PathBuf {
+    linggen_home().join("met")
+}
+
 /// Resolve the workspace root: the explicit `--root` argument when given,
 /// otherwise the cwd canonicalized to the nearest enclosing git root (or
 /// cwd itself when not in a repo).

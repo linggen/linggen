@@ -35,8 +35,20 @@ Agents are discovered dynamically from `agents/*.md` markdown files. No hardcode
 | `personality` | no | Response style guide — concise directive for HOW the agent communicates |
 | `aliases` | no | Other names a message may address it by at its start (`@银月 …`), beside its id |
 | `internal` | no | `true` = not addressable by a person: left out of the chat's `@` / `@@` lists and never the target of a leading `@name`. The engine still runs it (missions, delegation). |
+| `met_when` | no | `{skill, file, path}` — the agent appears only once met: absent from every surface the engine controls until the value at `path` in the skill's JSON `file` is set (same reading as a skill's `absent_until`, `skill-spec.md` § Place). Absent: always present. See *Appearing only once met* below. |
 
 Runtime configuration (model, effective tools, bound skill) is set at the session level. See `session-spec.md`.
+
+### Appearing only once met
+
+An agent that declares `met_when` (Yinyue: Lingjing's `data/state.json`, `companion.joined`) is **absent until met, and met for good**. The engine names no agent and no skill — it reads the declaration and resolves the skill's folder through the skill registry.
+
+- **The latch** is a one-way file, `~/.linggen/met/<agent>.json` (`{"at": RFC 3339, "reason": "trigger" | "history"}`; `storage-spec.md`). Written once, never cleared — a save forgotten, a game restarted or the skill removed leaves her met. It is not in the skill's folder, not in the save, not under `agents/` (rewritten on every start).
+- **Trigger.** The declared state read set latches it (`reason: trigger`): checked at startup, on a 3 s tick while the agent waits, and at once whenever a surface asks.
+- **Grandfather.** At startup, before the server binds, an agent that already has chat history with this person — a line it spoke itself in its own `sess-<agent>-…` thread or in any session that seats it — is latched (`reason: history`). An upgrade never makes her vanish; a fresh install follows the rule strictly.
+- **The gate** is `AgentManager::agent_present` (sync) / `agent_present_now` (reads the trigger first). Unmet, the agent is left out of the agent list, `/api/agent-files`, the `@` picker and leading-`@` resolution; a message to it by id is refused (`status: "absent"`); its own turns, heralds, ambient glances, app moments, speech cues, presenter registration and `/mute` do not run; Ling's prompt and `agent_chat` do not speak of her. Inside a skill that gates the agent itself (`absent_until`), the skill's gate stays authoritative; at any other skill's table the agent is there only once met.
+- **Exposed** as page_state `agents_met` (`[{id, present, met: {at, reason} | null}]`) and the retained `mac/agents` topic (`{agents: [...same], host, published_at}`) for the phone and the Mac shell. Only agents that declare `met_when` are listed.
+- Permission prompts, questions and run failures never routed through her: they are widgets and chat lines on the plain UI path, so a fresh install needs nothing of her. Her heralds (an away callback) are voice only and simply do not happen before she is met.
 
 ### Voice: opt-in, not universal
 

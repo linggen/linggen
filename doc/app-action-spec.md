@@ -71,6 +71,8 @@ Three tiers: `read`, `edit`, `destructive`.
 - **Catalog**: the phone publishes its registry as a retained `phone/tools` topic on connect (same mechanism as `shifu/readout`). The Mac never requests it — reads are published, actions are queued.
 - **Mac catalog** (built 2026-10-08): the engine publishes every skill's `remote: true` tools as a retained `mac/tools` topic (`{tools: [{app, name, wire_name, description, params, tier}], host, published_at}`, republished on skill load/reload), so Ling's phone loop calls them as typed tools through `POST /api/skills/{app}/tools/{name}`; they go grey while the Mac is unreachable.
 
+- **Agents catalog** (built 2026-10-09): the engine publishes which agents appear only once met as a retained `mac/agents` topic (`{agents: [{id, present, met: {at, reason} | null}], host, published_at}`; `agent-spec.md` § Appearing only once met), so the phone shows her only when the Mac says she is met.
+
 ## Visibility
 
 Every tool call is visible where it runs:

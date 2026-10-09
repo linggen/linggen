@@ -83,6 +83,9 @@ export interface PageState {
   missions?: unknown[];
   pending_ask_user?: Array<{ question_id: string; agent_id?: string; questions?: AskUserQuestion[]; session_id?: string | null }>;
   busy_sessions?: Record<string, string>;
+  /** Agents that appear only once met (engine `agent/met.rs`): hide the
+   *  ones with `present: false` — the lists above already leave them out. */
+  agents_met?: Array<{ id: string; present: boolean; met: { at: string; reason: 'trigger' | 'history' } | null }>;
   agents?: AgentInfo[];
   agent_runs?: AgentRunInfo[];
   queued?: Array<{ agent_id?: string; items?: QueuedChatItem[] }>;

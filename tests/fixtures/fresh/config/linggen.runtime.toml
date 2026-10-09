@@ -1,0 +1,55 @@
+# System-test config (tests/system). Rendered per test: {{…}} are the test's
+# own ports and paths. Fake models only — every one points at the in-test
+# llmposter; no real key or account is here.
+
+[server]
+url = "127.0.0.1:{{ENGINE_PORT}}"
+
+[agent]
+max_iters = 12
+ling_mem_url = "{{MEM_URL}}"
+# No follow-up buttons: a test turn makes only the model calls it scripts.
+suggest_followups = false
+
+[logging]
+level = "info"
+
+[routing]
+default_models = ["fake-ling"]
+# A refused fake call is a failed test, never a hop to a real provider.
+auto_fallback = false
+
+[pet]
+enabled = true
+model = "fake-yinyue"
+# She writes every line; no audio is made.
+muted = true
+
+# Chat Completions wire.
+[[models]]
+id = "fake-ling"
+provider = "openai"
+url = "{{MODEL_URL}}/v1"
+model = "fake-ling-1"
+api_key = "test-not-a-key"
+context_window = 32000
+supports_tools = true
+
+[[models]]
+id = "fake-yinyue"
+provider = "openai"
+url = "{{MODEL_URL}}/v1"
+model = "fake-yinyue-1"
+api_key = "test-not-a-key"
+context_window = 32000
+supports_tools = true
+
+# The Responses API wire (the ChatGPT sign-in path), on fake tokens
+# (codex_auth.json beside this folder).
+[[models]]
+id = "fake-sol"
+provider = "chatgpt"
+auth_mode = "chatgpt_oauth"
+url = "{{MODEL_URL}}/v1"
+model = "fake-sol-1"
+context_window = 32000

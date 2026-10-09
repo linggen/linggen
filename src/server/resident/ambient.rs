@@ -32,8 +32,8 @@ pub async fn yinyue_ambient_loop(state: Arc<ServerState>) {
 /// its own: a notice is only worth raising at a moment she could speak anyway,
 /// and a condition firing into a silent house is work nobody can hear.
 pub(super) async fn ambient_glance(state: &Arc<ServerState>) {
-    if !state.manager.get_config_snapshot().await.pet.enabled {
-        return; // pet off → no ambient life
+    if !state.manager.get_config_snapshot().await.pet.enabled || !here(state).await {
+        return; // pet off, or she isn't met yet → no ambient life
     }
     if let Some(notice) = crate::perception::conditions::sweep() {
         tracing::info!("[yinyue-ambient] condition crossed: {}", notice.topic);

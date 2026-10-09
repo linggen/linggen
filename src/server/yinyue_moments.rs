@@ -414,9 +414,10 @@ pub async fn yinyue_moment_loop(state: Arc<ServerState>) {
             q.extend(stay);
             taken
         };
-        if !state.manager.get_config_snapshot().await.pet.enabled {
+        let pet_on = state.manager.get_config_snapshot().await.pet.enabled;
+        if !pet_on || !super::resident::here(&state).await {
             tell_unanswered(&state, &taken);
-            continue; // pet off: the moments are dropped, nobody to say them
+            continue; // pet off, or not met: the moments are dropped, nobody to say them
         }
         LAST_WAKE_AT.store(now, Ordering::Relaxed);
         let asked = taken[0].asked;

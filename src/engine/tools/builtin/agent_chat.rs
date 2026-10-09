@@ -90,6 +90,12 @@ impl Tool for AgentChatTool {
             }
         }
         if let Some(manager) = tools.get_manager() {
+            // An agent that appears only once met is not there to message.
+            if !manager.agent_present_now(&to.to_lowercase()).await {
+                return Ok(ToolResult::Success(format!(
+                    "there is no agent {to} here — nothing sent."
+                )));
+            }
             manager
                 .send_event(
                     crate::engine::agent::AgentEvent::AgentChat {

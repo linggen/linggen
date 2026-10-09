@@ -739,7 +739,10 @@ async fn dispatch_turn(
     manager: &Arc<AgentManager>,
     clean_msg: &str,
 ) {
-    if let Some(muted) = crate::server::api::yinyue::voice_command(clean_msg) {
+    // Her voice is hers to switch: before she is met there is none to switch.
+    let voice = crate::server::api::yinyue::voice_command(clean_msg)
+        .filter(|_| manager.agent_present(crate::engine::agent::COMPANION_AGENT_ID));
+    if let Some(muted) = voice {
         let line = crate::server::api::yinyue::run_voice_command(&ctx.state, muted).await;
         let _ = ctx.events_tx.send(ServerEvent::Message {
             from: "system".to_string(),

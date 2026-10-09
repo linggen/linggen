@@ -19,6 +19,13 @@ use crate::server::{ServerEvent, ServerState};
 /// Push a speak cue to all of the user's surfaces. The single producer — the
 /// event-reactive watch loop calls this when Yinyue reacts.
 pub fn emit_speak(state: &Arc<ServerState>, text: String, emotion: Option<String>) {
+    // Not met yet: there is no one to speak.
+    if !state
+        .manager
+        .agent_present(crate::engine::agent::COMPANION_AGENT_ID)
+    {
+        return;
+    }
     // Muted, the line still goes out — as words only.
     let voice = !state.manager.pet_muted();
     // Every line she says, from any path, restarts the quiet an app moment
@@ -166,6 +173,14 @@ pub(crate) async fn chat_handler(
     let text = req.text.trim().to_string();
     if text.is_empty() {
         return (StatusCode::BAD_REQUEST, "empty text").into_response();
+    }
+    // Not met yet: she is not here to be talked to.
+    if !state
+        .manager
+        .agent_present_now(crate::engine::agent::COMPANION_AGENT_ID)
+        .await
+    {
+        return (StatusCode::CONFLICT, "absent").into_response();
     }
     if let Some(muted) = voice_command(&text) {
         // The avatar has no chat to write a line into: the surface shows

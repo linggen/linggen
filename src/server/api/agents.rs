@@ -387,6 +387,7 @@ pub(crate) async fn reload_agents(
         let root_buf = std::path::PathBuf::from(root);
         let _ = state.manager.invalidate_agent_cache(&root_buf, None).await;
     }
+    state.manager.load_met_declarations().await;
     let _ = state.events_tx.send(ServerEvent::StateUpdated);
     Json(serde_json::json!({ "ok": true })).into_response()
 }

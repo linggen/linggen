@@ -76,6 +76,11 @@ pub struct PageState {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub busy_sessions: Option<std::collections::HashMap<String, String>>,
 
+    /// The agents that appear only once met, and whether each has been
+    /// (`engine::agent::met`): `{id, present, met: {at, reason} | null}`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agents_met: Option<Vec<crate::engine::agent::met::AgentMet>>,
+
     // -- Scoped (based on ViewContext, Admin only) --
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agents: Option<Vec<serde_json::Value>>,
@@ -172,6 +177,7 @@ pub async fn build_page_state(
         pending_ask_user: None,
         session_counts_by_project: None,
         busy_sessions: None,
+        agents_met: None,
         agents: None,
         agent_runs: None,
         queued: None,
@@ -241,6 +247,7 @@ pub async fn build_page_state(
 
     // Models + skills + pending ask-user + busy sessions
     if include_global {
+        ps.agents_met = Some(state.manager.met.status());
         // Models — admin sees all, others see shared_models only
         let models_guard = state.manager.models.read().await;
         let all_models: Vec<(_, bool)> = models_guard

@@ -99,6 +99,10 @@ turn.
     - **Phone** reads the latch from the Mac's retained topic when paired,
       plus its own grandfather check (its own Yinyue thread). Phone-only and
       never met: Ling only.
+    - **Built 2026-10-09 (10A, engine):** `met_when` in `agents/yinyue.md`;
+      latch `~/.linggen/met/yinyue.json`; grandfather at startup; one gate
+      (`AgentManager::agent_present`); page_state `agents_met` + retained
+      `mac/agents`. Mac UI (10B) and phone (10C) read those.
     - **Before she's met, Ling does what she did** — permission prompts,
       heralds, notices — so nothing a fresh install needs depends on her.
 

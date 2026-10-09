@@ -75,6 +75,8 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 │       └── runs.jsonl                # Mission run history (JSONL)
 ├── quests/
 │   └── {app}.json                    # Real-life quests an app publishes; linggen.json = setup milestones
+├── met/
+│   └── {agent}.json                  # The one-way "met" latch of an agent that appears only once met (agent-spec.md)
 ├── senses/
 │   └── weather.json                  # The weather sense: the city set, the off switch, the last reading (skill-spec § Senses)
 ├── ling.pid                          # Daemon PID
@@ -121,6 +123,14 @@ Stored at `~/.linggen/credentials.json`. Keyed by model `id` from `linggen.toml`
 Stored at `~/.linggen/sessions/{session_id}/permission.json`. Per-session, cleared on session end. `path_modes[]` is the only field — the entire permission state. Only explicit user approvals, mission frontmatter, and skill frontmatter write to it. See `permission-spec.md` for the full model.
 
 There is no `[permissions]` block in `linggen.toml` and no project-level `permissions.json`. The engine's hardcoded deny floor is baked into the binary, not user-configurable.
+
+### Met latch (`met/{agent}.json`)
+
+```json
+{ "at": "2026-10-09T08:30:00Z", "reason": "trigger" }
+```
+
+One file per agent that declares `met_when` (`agent-spec.md` § Appearing only once met). `reason` is `trigger` (the declared skill state was seen set) or `history` (the agent already had chat history with this person when the engine started). Written once, atomically; never rewritten and never removed by the engine — the agent stays present whatever the skill's state later reads.
 
 ### Session metadata (`session.yaml`)
 

@@ -74,7 +74,7 @@ async fn run_home(
 
     // Pet settings (Settings → General → Pet). Disabled → she doesn't run at all.
     let pet = state.manager.get_config_snapshot().await.pet;
-    if !pet.enabled {
+    if !pet.enabled || !here(state).await {
         return None;
     }
 

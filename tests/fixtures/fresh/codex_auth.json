@@ -1,0 +1,7 @@
+{
+  "access_token": "test-access-not-a-token",
+  "refresh_token": "test-refresh-not-a-token",
+  "id_token": null,
+  "account_id": "test-account",
+  "last_refresh": "{{NOW_RFC3339}}"
+}

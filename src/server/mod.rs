@@ -8,6 +8,7 @@ mod loopback_guard;
 mod mac_tools;
 mod mcp;
 mod mcp_agent;
+mod met_watch;
 pub(crate) mod milestones;
 mod quests_watch;
 mod resident;
@@ -90,6 +91,11 @@ async fn prepare_server(
         yinyue_presenters: Arc::new(std::sync::Mutex::new(Vec::new())),
         next_peer_id: Arc::new(std::sync::atomic::AtomicU64::new(1)),
     });
+
+    // Who is met, settled before anything can ask or bind: an agent that
+    // appears only once met is latched now when it already has history here
+    // (an upgrade keeps her), or when its trigger already reads set.
+    state.manager.settle_met().await;
 
     background::spawn_background_tasks(
         &state,

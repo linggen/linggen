@@ -346,7 +346,9 @@ impl AgentEngine {
             .agent_id
             .as_deref()
             .or(self.spec.as_ref().map(|s| s.name.as_str()))?;
-        place::place_text(agent, surface, self.declared_places()).map(place::render)
+        let manager = self.tools.get_manager();
+        let here = |other: &str| manager.as_ref().is_none_or(|m| m.agent_present(other));
+        place::place_text(agent, surface, self.declared_places(), &here).map(|t| place::render(&t))
     }
 
     /// The skills this agent may take up. None in an app session — the model

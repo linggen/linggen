@@ -10,6 +10,9 @@
 //!   SKILL.md is its place. Their text is a readable file under
 //!   `agents/places/`, embedded at build time; its frontmatter names the
 //!   agent and the surface it is for.
+//!   A file may also name `needs: <agent>`: it adds to the base block only
+//!   while that agent is here (`engine::agent::met`) — so Ling's block
+//!   speaks of a companion only once she has been met.
 //! - **Skills** — a skill declares `place:` per agent in its SKILL.md for
 //!   the members at its table besides its lead; the declared text replaces
 //!   the engine's member block. The engine names no app and no agent: it
@@ -51,6 +54,9 @@ impl Surface {
 struct PlaceHeader {
     agent: String,
     surface: String,
+    /// Another agent this block speaks of: it counts only while that agent is here.
+    #[serde(default)]
+    needs: Option<String>,
 }
 
 struct PlaceFile {
@@ -79,23 +85,45 @@ fn place_files() -> &'static [PlaceFile] {
 pub(crate) fn engine_place(agent: &str, surface: Surface) -> Option<&'static str> {
     place_files()
         .iter()
-        .find(|p| p.header.agent == agent && p.header.surface == surface.key())
+        .find(|p| {
+            p.header.agent == agent && p.header.surface == surface.key() && p.header.needs.is_none()
+        })
+        .map(|p| p.body.as_str())
+}
+
+/// What the engine adds to that block for each agent that is here (`present`).
+fn engine_additions<'a>(
+    agent: &'a str,
+    surface: Surface,
+    present: &'a dyn Fn(&str) -> bool,
+) -> impl Iterator<Item = &'static str> + 'a {
+    place_files()
+        .iter()
+        .filter(move |p| p.header.agent == agent && p.header.surface == surface.key())
+        .filter(move |p| p.header.needs.as_deref().is_some_and(present))
         .map(|p| p.body.as_str())
 }
 
 /// The place text for `agent`. A member takes the table's declaration when
 /// the skill wrote one for it, else the engine's member block; an app's own
-/// agent has its SKILL.md for a place and gets none here.
-pub(crate) fn place_text<'a>(
+/// agent has its SKILL.md for a place and gets none here. The engine's block
+/// carries what it says of each other agent only while that agent is here.
+pub(crate) fn place_text(
     agent: &str,
     surface: Surface,
-    declared: Option<&'a Places>,
-) -> Option<&'a str> {
+    declared: Option<&Places>,
+    present: &dyn Fn(&str) -> bool,
+) -> Option<String> {
     let skill_says = match surface {
         Surface::Member => declared.and_then(|p| p.text_for(agent)),
         Surface::Home | Surface::App => None,
     };
-    skill_says.or_else(|| engine_place(agent, surface))
+    if let Some(says) = skill_says {
+        return Some(says.to_string());
+    }
+    let mut parts = vec![engine_place(agent, surface)?];
+    parts.extend(engine_additions(agent, surface, present));
+    Some(parts.join("\n\n"))
 }
 
 /// The section as it sits in the system prompt.
@@ -143,19 +171,33 @@ mod tests {
             serde_norway::from_str("ling: The world of the game.\nyinyue: At the player's side.")
                 .unwrap();
         assert_eq!(
-            place_text("ling", Surface::App, Some(&declared)),
+            place_text("ling", Surface::App, Some(&declared), &|_| true),
             None,
             "the app's own agent reads its SKILL.md, not a place"
         );
         assert_eq!(
-            place_text("yinyue", Surface::Member, Some(&declared)),
+            place_text("yinyue", Surface::Member, Some(&declared), &|_| true).as_deref(),
             Some("At the player's side.")
         );
         let none: Places = serde_norway::from_str("ling: The world of the game.").unwrap();
         assert_eq!(
-            place_text("yinyue", Surface::Member, Some(&none)),
+            place_text("yinyue", Surface::Member, Some(&none), &|_| true).as_deref(),
             engine_place("yinyue", Surface::Member),
             "no declaration for her: the engine's member block"
         );
+    }
+
+    /// Ling's block speaks of the companion only while she is here.
+    #[test]
+    fn a_block_speaks_of_another_agent_only_while_she_is_here() {
+        let with = place_text("ling", Surface::Home, None, &|a| a == "yinyue").unwrap();
+        let without = place_text("ling", Surface::Home, None, &|_| false).unwrap();
+        assert!(with.contains("Yinyue lives on this Mac"));
+        assert!(
+            !without.contains("Yinyue"),
+            "unmet: Ling never speaks of her"
+        );
+        assert!(with.starts_with(&without), "the base is shared");
+        assert_eq!(engine_place("ling", Surface::Home), Some(without.as_str()));
     }
 }

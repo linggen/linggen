@@ -9,6 +9,7 @@
 //! `LINGGEN_SYSTEM_KEEP=1` keeps every one. `LING_MEM_BIN` picks the ling-mem.
 
 mod fixtures;
+mod met;
 mod presence;
 mod prompt;
 mod sessions;

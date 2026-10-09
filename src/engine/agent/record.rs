@@ -36,6 +36,11 @@ pub struct AgentSpec {
     /// (missions, delegation).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub internal: bool,
+    /// The agent is absent from every surface the engine controls until this
+    /// is met — a skill's state, read through the skill registry. Once met,
+    /// for good (`engine::agent::met`). Absent: always present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub met_when: Option<crate::engine::agent::met::MetWhen>,
 }
 
 impl AgentSpecFile {
@@ -84,6 +89,7 @@ mod tests {
                 reasoning_effort: None,
                 aliases: aliases.iter().map(|a| a.to_string()).collect(),
                 internal: false,
+                met_when: None,
             },
             spec_path: PathBuf::new(),
             system_prompt: String::new(),

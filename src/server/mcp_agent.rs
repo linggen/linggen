@@ -96,7 +96,8 @@ pub async fn run(
 
     // Validate the agent up front so an unknown name is a clean error, not a
     // half-created session — and list the real options for the caller.
-    if !state.manager.agent_exists(&root, &agent_id).await {
+    let here = state.manager.agent_present_now(&agent_id).await;
+    if !here || !state.manager.agent_exists(&root, &agent_id).await {
         let names: Vec<String> = state
             .manager
             .list_agents(&root)

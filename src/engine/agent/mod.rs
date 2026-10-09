@@ -28,6 +28,7 @@ use tracing::{info, warn};
 
 pub mod event;
 pub mod locks;
+pub mod met;
 pub mod presence;
 pub mod record;
 pub mod registry;
@@ -95,6 +96,9 @@ pub struct AgentManager {
     /// `config.pet.muted`, readable without the config lock — every spoken
     /// line checks it.
     pet_muted: AtomicBool,
+    /// Which agents appear only once met, and which have been
+    /// (`met.rs`) — the one gate every surface asks.
+    pub met: met::MetGate,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -279,6 +283,10 @@ impl AgentManager {
         engine
             .load_available_agents_metadata(self.agents.as_ref(), project_root)
             .await;
+        // An agent not met yet is not one to hand work to.
+        engine
+            .available_agents_metadata
+            .retain(|(name, _)| self.met.present(&Self::normalize_agent_id(name)));
         Ok(engine)
     }
 
@@ -324,6 +332,7 @@ impl AgentManager {
                 agent_chat_sessions: std::sync::Mutex::new(HashSet::new()),
                 latest_session_by_agent: std::sync::Mutex::new(HashMap::new()),
                 pet_muted,
+                met: met::MetGate::new(crate::paths::met_dir()),
             }),
             rx,
         )
@@ -612,8 +621,13 @@ impl AgentManager {
         true
     }
 
+    /// The agents that are here: every installed spec, less the ones that
+    /// appear only once met and have not been (`met.rs`). The listing every
+    /// surface reads — the agent list, the `@` picker, the settings editor.
     pub async fn list_agent_specs(&self, project_root: &Path) -> Result<Vec<AgentSpecFile>> {
-        self.agents.list(project_root).await
+        let mut specs = self.agents.list(project_root).await?;
+        specs.retain(|s| self.met.present(&s.agent_id));
+        Ok(specs)
     }
 
     pub async fn list_agents(&self, project_root: &PathBuf) -> Result<Vec<AgentSpec>> {

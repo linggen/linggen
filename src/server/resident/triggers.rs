@@ -34,6 +34,9 @@ pub(super) fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
             if agent_id == YINYUE_AGENT {
                 return; // she's the one asking — not a herald
             }
+            if !state.manager.agent_present(YINYUE_AGENT) {
+                return; // not met: the prompt waits on the screen, as it does for anyone
+            }
             if user_sees_screen(state) {
                 return; // the question is on the screen they're looking at
             }
@@ -110,6 +113,9 @@ pub(super) fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
             }
             let state = state.clone();
             if to == YINYUE_AGENT {
+                if !state.manager.agent_present(YINYUE_AGENT) {
+                    return; // not met: nobody here to receive it
+                }
                 tokio::spawn(async move {
                     let kickoff = format!(
                         "The agent \"{from}\" sent you a message, addressed to YOU: \"{message}\". \
@@ -149,6 +155,9 @@ pub(super) fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
 
 /// Dispatch a notification payload to its reaction.
 pub(super) fn handle_notification(state: &Arc<ServerState>, payload: NotificationPayload) {
+    if !state.manager.agent_present(YINYUE_AGENT) {
+        return; // heralds are hers; before she is met there is no one to speak them
+    }
     match payload {
         // A background mission finished — wake Yinyue to decide whether it's worth
         // a word. A real LLM reaction, because she may have something to say.

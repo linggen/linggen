@@ -44,6 +44,13 @@ pub(crate) use turn::{resolve_pet_model, tune_companion};
 use turn::{run_moment_turn, Reach};
 
 const YINYUE_AGENT: &str = crate::engine::agent::COMPANION_AGENT_ID;
+
+/// Whether she is here at all — met, where she appears only once met
+/// (`engine::agent::met`). Every turn, herald and glance of hers asks first.
+pub(crate) async fn here(state: &ServerState) -> bool {
+    state.manager.agent_present_now(YINYUE_AGENT).await
+}
+
 /// Yinyue's sessions roll daily (`sess-yinyue-YYYY-MM-DD`) with an extra
 /// segment (`…-2`, `…-3`) when a day's thread nears its context limit. One
 /// session is active at a time, so turns still serialize through a single

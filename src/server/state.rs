@@ -158,6 +158,13 @@ impl ServerState {
     /// of its page (which moves no one). Broadcasts `YinyuePresenterChanged`
     /// so every peer re-evaluates whether it is now the holder.
     pub fn yinyue_subscribe(&self, peer_id: u64, stage: bool, session: Option<String>) {
+        // Not met yet: no surface shows her, so none holds her.
+        if !self
+            .manager
+            .agent_present(crate::engine::agent::COMPANION_AGENT_ID)
+        {
+            return;
+        }
         let changed = {
             let mut reg = self.yinyue_presenters.lock_ok();
             match reg.iter_mut().find(|p| p.peer_id == peer_id) {
