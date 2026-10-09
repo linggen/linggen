@@ -20,8 +20,10 @@ phone `linggen-mobile/lib`, skills `skills/`.
   `ChatMessageList.tsx::agentLabel`.
 - Phone → Mac hand-off: `ask_mac_app` → `LingChatController.askSkill` →
   `_skillSession` (latest app session).
-- DJ download is a typed call (`QueueTracks`) behind the user's confirm card —
-  **the card stays** (Hanli 2026-10-08).
+- DJ download is a typed call (`QueueTracks`), no confirm card: asked to
+  download, the agent downloads; asked to find, it proposes (Hanli 2026-10-09,
+  replacing the 10-08 card). The Mac turn queues it; the phone's
+  `dj_get_songs` is the same door.
 - Retained topics `server/api/topic.rs`; publish loop precedent
   `perception/publish.rs`; phone `tool_catalog_publisher.dart`; flag precedent
   `SkillToolDef.pet` / `pet_tools`.
