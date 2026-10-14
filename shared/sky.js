@@ -77,15 +77,16 @@ const OVERLAY_PLAN = {
 
 /* Overlay mist, bottom up: band centre and height (fractions of the
    viewport), peak alpha, drift in px/s (alternating, for parallax). With
-   MIST_FLOOR under them the veil is ~0.27 at the bottom edge and ~0.05 at the
-   top; the middle, where text sits, stays around 0.1. */
+   MIST_FLOOR under them the veil peaks ~0.45 at the bottom edge, ~0.38 three
+   quarters down, ~0.2 mid screen, ~0.04-0.08 in the top third. Chat text
+   (above the composer) keeps >= 4.5:1 everywhere and >= 7:1 in the top half. */
 const MIST_BANDS = [
-  { y: 0.95, h: 0.42, a: 0.22, v: 6 },
-  { y: 0.72, h: 0.38, a: 0.12, v: -10 },
-  { y: 0.46, h: 0.36, a: 0.08, v: 15 },
-  { y: 0.17, h: 0.34, a: 0.05, v: -8 },
+  { y: 1.02, h: 0.16, a: 0.3, v: 12 },
+  { y: 0.76, h: 0.28, a: 0.27, v: -18 },
+  { y: 0.52, h: 0.3, a: 0.15, v: 24 },
+  { y: 0.2, h: 0.26, a: 0.03, v: -14 },
 ];
-const MIST_FLOOR = [[0, 0.02], [0.45, 0.02], [0.75, 0.05], [1, 0.15]];
+const MIST_FLOOR = [[0, 0.03], [0.5, 0.09], [0.62, 0.12], [0.75, 0.17], [0.9, 0.2], [0.96, 0.24], [1, 0.3]];
 const TEX_SCALE = 4; // textures paint at 1/4 size; the upscale is the blur
 
 /* Inks by look and page theme. Background: the front reads at a glance in
@@ -97,8 +98,8 @@ const INKS = {
     dark: { front: 'rgba(200,215,235,0.5)', back: 'rgba(185,200,218,0.13)', flake: 'rgba(225,232,242,0.8)', flakeBack: 'rgba(225,232,242,0.45)', rim: null, width: 1.4, flash: 0.14 },
   },
   overlay: {
-    light: { front: 'rgba(70,92,120,0.32)', back: 'rgba(70,92,120,0.14)', flake: 'rgba(130,155,190,0.36)', flakeBack: 'rgba(130,155,190,0.18)', rim: null, width: 1, flash: 0.05, mist: 'rgba(118,130,148,', cloud: 0.16 },
-    dark: { front: 'rgba(205,218,235,0.28)', back: 'rgba(205,218,235,0.12)', flake: 'rgba(230,236,245,0.32)', flakeBack: 'rgba(230,236,245,0.16)', rim: null, width: 1, flash: 0.05, mist: 'rgba(196,203,212,', cloud: 0.11 },
+    light: { front: 'rgba(70,92,120,0.32)', back: 'rgba(70,92,120,0.14)', flake: 'rgba(130,155,190,0.36)', flakeBack: 'rgba(130,155,190,0.18)', rim: null, width: 1, flash: 0.05, mist: 'rgba(172,184,200,', cloud: 0.24 },
+    dark: { front: 'rgba(205,218,235,0.28)', back: 'rgba(205,218,235,0.12)', flake: 'rgba(230,236,245,0.32)', flakeBack: 'rgba(230,236,245,0.16)', rim: null, width: 1, flash: 0.05, mist: 'rgba(178,186,197,', cloud: 0.14 },
   },
 };
 
@@ -217,10 +218,11 @@ export function mountSky(host, opts = {}) {
     const h = b.h * H, rgb = ink().mist;
     const tex = texture(W, h, (g, w, th) => {
       const stripe = g.createLinearGradient(0, 0, 0, th);
-      stripe.addColorStop(0, `${rgb}0)`); stripe.addColorStop(0.5, `${rgb}0.3)`); stripe.addColorStop(1, `${rgb}0)`);
+      stripe.addColorStop(0, `${rgb}0)`); stripe.addColorStop(0.3, `${rgb}0.35)`);
+      stripe.addColorStop(0.7, `${rgb}0.35)`); stripe.addColorStop(1, `${rgb}0)`);
       g.fillStyle = stripe; g.fillRect(0, 0, w, th);
-      for (let n = 0; n < 7; n++) {
-        const x = rnd(0, w), y = th * rnd(0.38, 0.62), rx = w * rnd(0.1, 0.26), ry = th * rnd(0.25, 0.45), a = rnd(0.4, 1);
+      for (let n = 0; n < 6; n++) {
+        const x = rnd(0, w), y = th * rnd(0.4, 0.6), rx = w * rnd(0.07, 0.16), ry = th * rnd(0.3, 0.45), a = rnd(0.5, 1);
         for (const dx of [-w, 0, w]) puff(g, x + dx, y, rx, ry, rgb, a);
       }
     });
