@@ -12,7 +12,6 @@ import {
   stripEmbeddedStructuredJson,
   isStatusLineText,
   isTransientStatus,
-  normalizeMessageTextForDedup,
   summarizeActivityEntries,
   findLastGeneratingMessageIndex,
   upsertGeneratingAgentMessage,
@@ -28,6 +27,7 @@ import { interruptedRunMessage, isInterruptedRunMeta, type RunMeta } from '../li
 import { savedToolBlocks } from '../lib/toolStatus.mts';
 import { agentTracker } from '../lib/agentTracker';
 import { confirmSent } from '../lib/sentMessage.mts';
+import { isEventEcho } from '../lib/rowIdentity.mts';
 import { loadOutcome, type LoadSnapshot } from '../lib/sessionLoad.mts';
 import { computeDisplay, mutate, mutateLast } from './chatMutationHelpers';
 import { useSessionStore } from './sessionStore';
@@ -69,7 +69,7 @@ interface ChatState {
   upsertPlan: (agentId: string, planText: string) => void;
   updateSubagentTree: (parentId: string, subagentId: string, updater: (entry: SubagentTreeEntry) => SubagentTreeEntry) => void;
   addSubagentToTree: (parentId: string, entry: SubagentTreeEntry) => void;
-  finalizeMessage: (agentId: string, content: string, to: string, tsMs: number, elapsed?: number, ctxTokens?: number, isError?: boolean, via?: string, viaNote?: string) => void;
+  finalizeMessage: (agentId: string, content: string, to: string, tsMs: number, elapsed?: number, ctxTokens?: number, isError?: boolean, via?: string, viaNote?: string, clientId?: string) => void;
   /** The engine kept a message this surface sent (its bubble's `clientId`):
    *  the bubble takes the kept words. False when no bubble has that id. */
   confirmSent: (clientId: string, text: string, to: string) => boolean;
@@ -327,7 +327,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     return next;
   })),
 
-  finalizeMessage: (agentId, content, to, tsMs, elapsed, ctxTokens, isError, via, viaNote) => set(mutate((state) => {
+  finalizeMessage: (agentId, content, to, tsMs, elapsed, ctxTokens, isError, via, viaNote, clientId) => set(mutate((state) => {
     const generatingIdx = findLastGeneratingMessageIndex(state, agentId);
     if (generatingIdx >= 0) {
       const next = [...state];
@@ -383,15 +383,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return next;
     }
 
-    // Dedup check
-    if (state.some((msg) =>
-      !msg.isGenerating &&
-      (msg.from || msg.role) === agentId &&
-      (msg.to || '') === to &&
-      normalizeMessageTextForDedup(msg.text) === normalizeMessageTextForDedup(content)
-    )) return state;
-
-    return [...state, {
+    const row: ChatMessage = {
       role: agentId === 'user' ? 'user' : 'agent',
       from: agentId,
       to,
@@ -400,9 +392,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       timestampMs: tsMs,
       isGenerating: false,
       isError,
+      ...(clientId ? { clientId } : {}),
       ...(via ? { via } : {}),
       ...(viaNote ? { viaNote } : {}),
-    }];
+    };
+    // A row already here (by its sent id, or the same row again): not twice.
+    // The same words said again are a new row.
+    if (isEventEcho(state, row)) return state;
+    return [...state, row];
   })),
 
   confirmSent: (clientId, text, to) => {

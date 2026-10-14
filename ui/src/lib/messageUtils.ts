@@ -8,6 +8,7 @@ import type {
 } from '../types';
 import { liveBubbleOfRun } from './interruptedRun.mts';
 import { sameSentMessage } from './sentMessage.mts';
+import { dropLiveEchoes, idsDecide, normalizeFrom, normalizeMessageTextForDedup, sameMessageContent } from './rowIdentity.mts';
 import { dedupeActivityEntries, isProgressLineText, summarizeCollapsedActivity } from '../components/chat/utils/activity';
 
 // Re-export agent tree utilities (extracted to agentTreeUtils.ts)
@@ -311,8 +312,7 @@ export const addActivityEntry = (msg: ChatMessage, entry: string): ChatMessage =
 export const roleFromAgentId = (agentId: string): ChatMessage['role'] =>
   agentId === 'user' ? 'user' : 'agent';
 
-export const normalizeMessageTextForDedup = (text?: string) =>
-  (text || '').replace(/\s+/g, ' ').trim();
+export { normalizeMessageTextForDedup, sameMessageContent };
 
 // ---------------------------------------------------------------------------
 // Generating message helpers
@@ -440,25 +440,6 @@ export const chatMessageKey = (msg: ChatMessage): string => {
   return `${from}|${to}|${ts}|${msg.text}`;
 };
 
-/** Strip run-ID prefix (e.g. "run-ling-1234" → "ling") so streaming messages
- *  (which carry the run ID as `from`) can match persisted messages (which use
- *  the bare agent name). */
-const normalizeFrom = (from: string): string => {
-  const m = from.match(/^run-(.+?)-\d+$/);
-  return m ? m[1] : from;
-};
-
-export const sameMessageContent = (a: ChatMessage, b: ChatMessage): boolean => {
-  const fromA = normalizeFrom(a.from || a.role);
-  const fromB = normalizeFrom(b.from || b.role);
-  const toA = a.to || '';
-  const toB = b.to || '';
-  return (
-    fromA === fromB &&
-    toA === toB &&
-    normalizeMessageTextForDedup(a.text) === normalizeMessageTextForDedup(b.text)
-  );
-};
 
 export const isStructuredAgentMessage = (msg: ChatMessage): boolean => {
   if ((msg.from || msg.role) === 'user') return false;
@@ -481,6 +462,9 @@ export const isPlanMessage = (msg: ChatMessage): boolean => {
 };
 
 const likelySameMessage = (a: ChatMessage, b: ChatMessage): boolean => {
+  // Two sent messages are one only by their ids — the same words said twice
+  // are two messages.
+  if (idsDecide(a, b)) return sameSentMessage(a, b);
   if (isPlanMessage(a) && isPlanMessage(b)) {
     return (a.from || a.role) === (b.from || b.role);
   }
@@ -714,24 +698,10 @@ export const mergeChatMessages = (persisted: ChatMessage[], live: ChatMessage[])
       return now - ts <= LIVE_MESSAGE_GRACE_MS;
     }
   );
-  const merged = [...unshown, ...uniqueExtras];
-
-  // Final content-based dedup: remove consecutive messages with identical
-  // content from the same sender.  This catches duplicates that slip through
-  // the merge passes above (e.g. when a finalized live message and its
-  // persisted counterpart have slightly different timestamps).
-  const deduped: typeof merged = [];
-  const seenContent = new Set<string>();
-  for (const msg of merged) {
-    // Interrupted runs have no words; each is its own run.
-    if (msg.interrupted) { deduped.push(msg); continue; }
-    const key = `${normalizeFrom(msg.from || msg.role)}|${msg.to || ''}|${normalizeMessageTextForDedup(msg.text)}`;
-    if (seenContent.has(key) && !msg.isGenerating) continue;
-    seenContent.add(key);
-    deduped.push(msg);
-  }
-
-  return dedupPlanMessages(deduped);
+  // Final pass: every saved row shows; a live row that is a saved row again
+  // (its finalized copy stamped at another moment) is dropped. Words said
+  // twice are two rows — see rowIdentity.mts.
+  return dedupPlanMessages(dropLiveEchoes(unshown, uniqueExtras));
 };
 
 export const shouldHideInternalChatMessage = (_from?: string, text?: string): boolean => {
