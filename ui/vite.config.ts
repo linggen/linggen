@@ -23,8 +23,14 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
+  resolve: {
+    // The engine's shared sky painter: one file, served at /shared/sky.js
+    // for skill pages and bundled here for the shell.
+    alias: { '@linggen/sky': path.resolve(__dirname, '../shared/sky.js') },
+  },
   server: {
     host: '0.0.0.0',
+    fs: { allow: ['..'] },
     proxy: {
       '/api': {
         target: `http://localhost:${backendPort}`,
@@ -34,6 +40,7 @@ export default defineConfig({
       },
       '/apps': `http://localhost:${backendPort}`,
       '/sdk': `http://localhost:${backendPort}`,
+      '/shared': `http://localhost:${backendPort}`,
     },
   },
   build: {

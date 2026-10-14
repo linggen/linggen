@@ -120,7 +120,7 @@ export const HeaderBar: React.FC<{
   }, [userType, connectionStatus]);
 
   return (
-    <header className="flex items-center justify-between px-4 md:px-6 py-2.5 border-b border-slate-200 dark:border-white/5 bg-white/90 dark:bg-[#0f0f0f]/90 backdrop-blur-md z-50">
+    <header className="sky-bar flex items-center justify-between px-4 md:px-6 py-2.5 border-b border-slate-200 dark:border-white/5 bg-white/90 dark:bg-[#0f0f0f]/90 backdrop-blur-md z-50">
       {/* Left: Hamburger (mobile) + Logo */}
       <div className="flex items-center gap-2 md:gap-3">
         {onToggleMobileMenu && (

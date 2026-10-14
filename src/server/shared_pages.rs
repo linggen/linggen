@@ -39,7 +39,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_helpers_are_served_as_javascript() {
-        for file in ["chat-bridge.js", "api.js", "app-mode.js", "channel.js"] {
+        for file in ["chat-bridge.js", "api.js", "app-mode.js", "channel.js", "sky.js"] {
             let res = serve(Path(file.to_string())).await;
             assert_eq!(res.status(), StatusCode::OK, "{file}");
             let ct = res.headers()["content-type"].to_str().unwrap().to_string();

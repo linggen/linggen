@@ -11,6 +11,7 @@ import { Settings } from 'lucide-react';
 import logoUrl from '../assets/logo.svg';
 import { LauncherSettings } from './LauncherSettings';
 import { AccountAvatar } from '../components/AccountAvatar';
+import { SkyBackground } from '../components/SkyBackground';
 import { skillsApi } from '../lib/endpoints';
 import type { SkillAppConfig, SkillInfoFull } from '../types';
 
@@ -108,9 +109,10 @@ export const LauncherApp: React.FC = () => {
   const urlFor = (a: AppSkill) => `/apps/${a.name}/${a.app.entry}?app_mode=1&in_launcher=1`;
 
   return (
-    <div className="flex flex-col h-screen bg-white dark:bg-[#0a0a0a] text-slate-900 dark:text-slate-200 overflow-hidden">
+    <div className="sky-page flex flex-col h-screen bg-white dark:bg-[#0a0a0a] text-slate-900 dark:text-slate-200 overflow-hidden">
+      <SkyBackground />
       {/* Top bar: brand + app tabview */}
-      <header className="flex items-center gap-3 px-3 h-11 shrink-0 border-b border-slate-200 dark:border-white/10 bg-white dark:bg-[#0f0f0f]">
+      <header className="sky-bar flex items-center gap-3 px-3 h-11 shrink-0 border-b border-slate-200 dark:border-white/10 bg-white dark:bg-[#0f0f0f]">
         <div className="flex items-center gap-2 shrink-0">
           <img src={logoUrl} alt="Linggen" className="w-6 h-6" />
           <span className="text-sm font-bold tracking-tight text-slate-900 dark:text-white">Linggen</span>
@@ -149,7 +151,7 @@ export const LauncherApp: React.FC = () => {
       </header>
 
       {/* Body: each opened app kept mounted; only the active one is visible. */}
-      <div className="flex-1 relative min-h-0">
+      <div className="flex-1 relative min-h-0 bg-white dark:bg-[#0a0a0a]">
         {apps.length === 0 && (
           <div className="absolute inset-0 flex items-center justify-center text-sm text-slate-400">
             Loading apps…

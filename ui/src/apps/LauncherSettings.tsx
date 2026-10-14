@@ -10,6 +10,7 @@ import { account as accountApi, appConfig, skillsApi, workspaceApi, type Account
 import type { AppConfig, SkillAppConfig, SkillInfoFull } from '../types';
 import { useAgentPresent } from '../hooks/useAgentPresent';
 import { COMPANION_ID } from '../lib/agentsMet.mts';
+import { WeatherSettings } from '../components/WeatherSettings';
 
 /** A skill that is an app. */
 type AppSkill = SkillInfoFull & { app: SkillAppConfig };
@@ -113,6 +114,7 @@ const GeneralPanel: React.FC = () => {
           Launch Linggen in the background when you sign in. It waits in the menu bar; closing the window keeps it running there. Quit it from the menu-bar icon.
         </p>
       </div>
+      <WeatherSettings className="lg-set-card" />
     </div>
   );
 };

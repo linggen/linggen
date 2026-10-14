@@ -307,7 +307,7 @@ export const MainApp: React.FC = () => {
     <>
       <ToastContainer />
       {showYinyue && <YinyueBubble />}
-      <div className={`flex flex-col h-screen bg-slate-100/70 dark:bg-[#0a0a0a] text-slate-900 dark:text-slate-200 font-sans overflow-hidden${isOverlayRoute ? ' hidden' : ''}`}>
+      <div className={`sky-page flex flex-col h-screen bg-slate-100/70 dark:bg-[#0a0a0a] text-slate-900 dark:text-slate-200 font-sans overflow-hidden${isOverlayRoute ? ' hidden' : ''}`}>
         {/* Header */}
         <HeaderBar
           isRunning={isRunning}
@@ -323,7 +323,7 @@ export const MainApp: React.FC = () => {
           {mobileMenuOpen && (
             <>
               <div className="fixed inset-0 bg-black/30 z-40 md:hidden" onClick={() => setMobileMenuOpen(false)} />
-              <div className="fixed inset-y-0 left-0 w-72 z-50 md:hidden bg-white dark:bg-[#0f0f0f] shadow-xl animate-slide-in flex flex-col">
+              <div data-sky-cover className="sky-panel fixed inset-y-0 left-0 w-72 z-50 md:hidden bg-white dark:bg-[#0f0f0f] shadow-xl animate-slide-in flex flex-col">
                 <SessionList
                   activeSessionId={activeSessionId}
                   onSelectSession={(session) => selectSession(session, () => setMobileMenuOpen(false))}
@@ -336,7 +336,7 @@ export const MainApp: React.FC = () => {
           )}
 
           {/* Left sidebar — unified session list (desktop only) */}
-          <div className="hidden md:flex w-72 border-r border-slate-200 dark:border-white/5 flex-col bg-white dark:bg-[#0f0f0f] h-full">
+          <div data-sky-cover className="sky-panel hidden md:flex w-72 border-r border-slate-200 dark:border-white/5 flex-col bg-white dark:bg-[#0f0f0f] h-full">
             <SessionList
               activeSessionId={activeSessionId}
               onSelectSession={(session) => selectSession(session)}
@@ -348,8 +348,8 @@ export const MainApp: React.FC = () => {
           </div>
 
           {/* Center: Chat */}
-          <main className={`flex-1 flex flex-col overflow-hidden bg-slate-100/40 dark:bg-[#0a0a0a] min-h-0${isMobile ? ' p-0' : ''}`}>
-            <div className={`flex-1 min-h-0${isMobile ? '' : ' p-2'}`}>
+          <main className={`sky-page flex-1 flex flex-col overflow-hidden bg-slate-100/40 dark:bg-[#0a0a0a] min-h-0${isMobile ? ' p-0' : ''}`}>
+            <div className={`flex-1 min-h-0${isMobile ? '' : ' p-2 sky-gutter'}`}>
               <ChatWidget
                 sessionId={activeSessionId}
                 projectRoot={selectedProjectRoot}
@@ -360,7 +360,7 @@ export const MainApp: React.FC = () => {
 
           {/* Right sidebar (desktop only) */}
           {!isMobile && (
-            <aside className="hidden lg:flex w-72 border-l border-slate-200 dark:border-white/5 flex-col bg-slate-100/40 dark:bg-[#0a0a0a] overflow-hidden">
+            <aside data-sky-cover className="sky-panel hidden lg:flex w-72 border-l border-slate-200 dark:border-white/5 flex-col bg-slate-100/40 dark:bg-[#0a0a0a] overflow-hidden">
               {/* Models + skills scroll above; Yinyue is docked below. */}
               <div className="flex-1 min-h-0 overflow-y-auto p-3 flex flex-col gap-3">
                 <InfoPanel {...infoPanelProps} />
@@ -380,7 +380,7 @@ export const MainApp: React.FC = () => {
           {isMobile && mobileInfoOpen && (
             <>
               <div className="fixed inset-0 bg-black/30 z-40" onClick={() => setMobileInfoOpen(false)} />
-              <div className="fixed inset-y-0 right-0 w-72 z-50 bg-white dark:bg-[#0f0f0f] shadow-xl flex flex-col animate-slide-in-right">
+              <div data-sky-cover className="sky-panel fixed inset-y-0 right-0 w-72 z-50 bg-white dark:bg-[#0f0f0f] shadow-xl flex flex-col animate-slide-in-right">
                 <div className="flex items-center justify-between px-3 py-2 border-b border-slate-200 dark:border-white/10">
                   <span className="text-xs font-bold uppercase tracking-widest text-slate-500">Info</span>
                   <button onClick={() => setMobileInfoOpen(false)} className="p-1 rounded hover:bg-slate-100 dark:hover:bg-white/5 text-slate-400">

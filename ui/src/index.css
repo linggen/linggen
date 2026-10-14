@@ -288,3 +288,32 @@ body {
     flex-shrink: 0;
   }
 }
+
+/* ── Sky — the live weather behind the shell (SkyBackground.tsx,
+   /shared/sky.js). Off, html has no data-sky and nothing here applies.
+   `sky-page`: a shell background that clears to show the sky. `sky-panel`: a
+   reading surface, frosted over the moving sky (`glass`) or opaque over a
+   still one (`solid`). `sky-bar`: the header strip, thinner frost — the sky
+   shows there. Opacities are tuned for WCAG AA on the darkest/brightest sky
+   (light .95: slate-500 stays 4.5:1 over the darkest storm; dark .88). Unlayered, so these beat the
+   Tailwind utilities they replace. ── */
+html[data-sky] .sky-page { background: transparent; }
+html[data-sky] .sky-gutter { padding: 12px; }
+html[data-sky="glass"] .sky-panel {
+  background-color: rgb(255 255 255 / 0.95);
+  -webkit-backdrop-filter: blur(24px) saturate(1.15);
+  backdrop-filter: blur(24px) saturate(1.15);
+}
+html[data-sky="glass"] .sky-bar {
+  background-color: rgb(255 255 255 / 0.74);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
+  backdrop-filter: blur(20px) saturate(1.2);
+}
+html[data-sky="solid"] .sky-panel { background-color: #fff; }
+html[data-sky="solid"] .sky-bar { background-color: rgb(255 255 255 / 0.8); }
+@media (prefers-color-scheme: dark) {
+  html[data-sky="glass"] .sky-panel { background-color: rgb(15 15 15 / 0.88); }
+  html[data-sky="glass"] .sky-bar { background-color: rgb(15 15 15 / 0.72); }
+  html[data-sky="solid"] .sky-panel { background-color: #0f0f0f; }
+  html[data-sky="solid"] .sky-bar { background-color: rgb(15 15 15 / 0.8); }
+}

@@ -3,6 +3,7 @@ import type { AppConfig } from '../types';
 import { PetSection } from './PetSection';
 import { useAgentPresent } from '../hooks/useAgentPresent';
 import { COMPANION_ID } from '../lib/agentsMet.mts';
+import { WeatherSettings } from './WeatherSettings';
 
 const inputCls = 'w-full bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-lg px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-blue-500/50';
 const labelCls = 'text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400';
@@ -28,6 +29,8 @@ export const GeneralTab: React.FC<{
 
   return (
     <div className="space-y-6">
+      <WeatherSettings className={sectionCls} />
+
       {/* Agent Settings */}
       <section className={sectionCls}>
         <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-4">Agent Settings</h2>

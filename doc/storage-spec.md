@@ -78,7 +78,7 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 ├── met/
 │   └── {agent}.json                  # The one-way "met" latch of an agent that appears only once met (agent-spec.md)
 ├── senses/
-│   └── weather.json                  # The weather sense: the city set, the off switch, the last reading (skill-spec § Senses)
+│   └── weather.json                  # The weather sense: the place (typed, or found by IP: auto), the off switch, the last reading (skill-spec § Senses)
 ├── ling.pid                          # Daemon PID
 └── ling.log                          # Daemon stdout
 ```
