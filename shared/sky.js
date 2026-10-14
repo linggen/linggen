@@ -5,11 +5,15 @@
 //   - background (default): a sky gradient with the weather in it, behind
 //     the page's content;
 //   - `overlay: true`: only the weather itself over the content, no sky fill:
-//     thin streaks, soft flakes, fog as slow mist bands lying low (dense at
-//     the bottom, a light veil where text sits), cloudy as a few faint clouds
-//     along the top edge. Clear draws nothing; no lightning unless
+//     thin streaks, soft flakes, fog as a wide flat sheet of ground mist
+//     rising from the bottom edge with thin wisps sliding through it,
+//     cloudy as a few faint clouds along the top edge. Fog and clouds blend
+//     with the page (multiply on light, screen on dark) so they show on
+//     white and keep text dark; on light, a second pass lifts thin white
+//     streaks over the grey. Clear shows a sun (or a moon and a few stars)
+//     in the top-right corner; no lightning unless
 //     `lightning: true` (then a short, faint flash, never a white-out).
-//     A still overlay (reduced motion, slow machine) keeps the mist and
+//     A still overlay (reduced motion, slow machine) keeps the fog and
 //     clouds as one frozen frame and drops what falls.
 //
 //   import { mountSky } from '/shared/sky.js';
@@ -65,9 +69,9 @@ const PLAN = {
   snow: { flakes: [60, 16], fps: 30 },
 };
 
-/* The overlay's lighter plan: fewer particles, nothing for clear skies. */
+/* The overlay's lighter plan: fewer particles; clear skies get a sun or moon. */
 const OVERLAY_PLAN = {
-  clear: { fps: 12 },
+  clear: { orb: true, fps: 12 },
   cloudy: { topClouds: 4, fps: 12 },
   fog: { mist: true, fps: 12 },
   rain: { drops: [40, 12], fps: 30 },
@@ -75,18 +79,17 @@ const OVERLAY_PLAN = {
   snow: { flakes: [48, 12], fps: 30 },
 };
 
-/* Overlay mist, bottom up: band centre and height (fractions of the
-   viewport), peak alpha, drift in px/s (alternating, for parallax). With
-   MIST_FLOOR under them the veil peaks ~0.45 at the bottom edge, ~0.38 three
-   quarters down, ~0.2 mid screen, ~0.04-0.08 in the top third. Chat text
-   (above the composer) keeps >= 4.5:1 everywhere and >= 7:1 in the top half. */
-const MIST_BANDS = [
-  { y: 1.02, h: 0.16, a: 0.3, v: 12 },
-  { y: 0.76, h: 0.28, a: 0.27, v: -18 },
-  { y: 0.52, h: 0.3, a: 0.15, v: 24 },
-  { y: 0.2, h: 0.26, a: 0.03, v: -14 },
-];
-const MIST_FLOOR = [[0, 0.03], [0.5, 0.09], [0.62, 0.12], [0.75, 0.17], [0.9, 0.2], [0.96, 0.24], [1, 0.3]];
+/* Overlay fog: ground mist. A sheet rising from the bottom edge to `top`
+   (fraction of the viewport from the top), thickest at the bottom and
+   feathering out upward, sliding back and forth (`sweep` of the width, a
+   sine over `period`, so it eases at each end). Through it, long thin wisps
+   (centre and height as fractions, speed in px/s) slide faster and trail
+   off; on light pages each wisp carries a thin white lift (kept faint:
+   screen lifts the text under it too). */
+const FOG = {
+  top: 0.4, sweep: 0.22, period: 30000, breath: 7000,
+  wisps: [{ y: 0.62, h: 0.2, v: 38 }, { y: 0.76, h: 0.2, v: 26 }, { y: 0.9, h: 0.18, v: -20 }],
+};
 const TEX_SCALE = 4; // textures paint at 1/4 size; the upscale is the blur
 
 /* Inks by look and page theme. Background: the front reads at a glance in
@@ -98,8 +101,12 @@ const INKS = {
     dark: { front: 'rgba(200,215,235,0.5)', back: 'rgba(185,200,218,0.13)', flake: 'rgba(225,232,242,0.8)', flakeBack: 'rgba(225,232,242,0.45)', rim: null, width: 1.4, flash: 0.14 },
   },
   overlay: {
-    light: { front: 'rgba(70,92,120,0.32)', back: 'rgba(70,92,120,0.14)', flake: 'rgba(130,155,190,0.36)', flakeBack: 'rgba(130,155,190,0.18)', rim: null, width: 1, flash: 0.05, mist: 'rgba(172,184,200,', cloud: 0.24 },
-    dark: { front: 'rgba(205,218,235,0.28)', back: 'rgba(205,218,235,0.12)', flake: 'rgba(230,236,245,0.32)', flakeBack: 'rgba(230,236,245,0.16)', rim: null, width: 1, flash: 0.05, mist: 'rgba(178,186,197,', cloud: 0.14 },
+    light: { front: 'rgba(70,92,120,0.32)', back: 'rgba(70,92,120,0.14)', flake: 'rgba(130,155,190,0.36)', flakeBack: 'rgba(130,155,190,0.18)', rim: null, width: 1, flash: 0.05, mist: 'rgba(160,172,192,', sheet: 0.9, wisp: 0.5, lift: 'rgba(255,255,255,', liftA: 0.12, cloud: 0.45, blend: 'multiply',
+      sun: { glow: 'rgba(255,206,120,', glowA: 0.3, disc: 'rgba(255,220,140,', ray: 0.08 },
+      moon: { halo: 'rgba(170,196,236,', haloA: 0.22, fill: '#f4f7fc', rim: 'rgba(140,162,198,0.9)', glow: null, star: 'rgba(130,165,220,', sparkle: true } },
+    dark: { front: 'rgba(205,218,235,0.28)', back: 'rgba(205,218,235,0.12)', flake: 'rgba(230,236,245,0.32)', flakeBack: 'rgba(230,236,245,0.16)', rim: null, width: 1, flash: 0.05, mist: 'rgba(200,206,215,', sheet: 0.24, wisp: 0.12, lift: null, liftA: 0, cloud: 0.12, blend: 'screen',
+      sun: { glow: 'rgba(255,210,140,', glowA: 0.14, disc: 'rgba(255,232,190,', ray: 0.05 },
+      moon: { halo: 'rgba(255,236,196,', haloA: 0.1, fill: '#f6ecd2', rim: null, glow: 'rgba(255,236,196,0.8)', star: 'rgba(240,244,255,', sparkle: false } },
   },
 };
 
@@ -129,12 +136,18 @@ export function mountSky(host, opts = {}) {
   });
   if (!page && getComputedStyle(host).position === 'static') host.style.position = 'relative';
   host.prepend(canvas);
+  // Mist blends with the page (multiply on light, screen on dark): set on the
+  // element whose stacking context sits over the page — the host, unless the
+  // canvas is the page's own child.
+  const blendEl = page ? canvas : host;
+  const lift = o.overlay ? liftCanvas() : null;
+  const liftCtx = lift?.getContext('2d');
   const ctx = canvas.getContext('2d', { alpha: o.overlay });
   const darkMq = matchMedia('(prefers-color-scheme: dark)');
   const calmMq = matchMedia('(prefers-reduced-motion: reduce)');
 
   const st = { kind: o.kind ?? 'clear', day: o.is_day !== false, dark: o.dark ?? darkMq.matches };
-  let W = 0, H = 0, bg = null, front = [], back = [], clouds = [], layers = [], floor = null, covers = [], coversAt = 0;
+  let W = 0, H = 0, bg = null, front = [], back = [], clouds = [], layers = [], fog = null, orb = null, covers = [], coversAt = 0;
   let raf = 0, timer = 0, last = 0, flash = 0, nextFlash = 0, slow = false, alive = true;
   const cost = [];
 
@@ -170,7 +183,7 @@ export function mountSky(host, opts = {}) {
     const flake = (d) => ({ x: rnd(0, W), y: rnd(-H, H), v: rnd(26, 60) * d, r: rnd(1.6, 3.4) * (0.6 + d * 0.4), ph: rnd(0, 6.3) });
     const star = () => ({ x: rnd(0, W), y: rnd(0, H * 0.6), r: rnd(0.6, 1.4), ph: rnd(0, 6.3) });
     const cloud = () => ({ x: rnd(-0.3, 1) * W, y: rnd(0, 0.45) * H, s: rnd(0.7, 1.4), v: rnd(4, 9) });
-    front = []; back = []; clouds = []; layers = []; floor = null;
+    front = []; back = []; clouds = []; layers = []; fog = null; orb = null;
     if (o.overlay) return seedOverlay(p);
     if (p.drops) { front = make(n(p.drops, 0), drop, 1); back = make(n(p.drops, 1), drop, 0.6); }
     if (p.flakes) { front = make(n(p.flakes, 0), flake, 1); back = make(n(p.flakes, 1), flake, 0.6); }
@@ -179,8 +192,8 @@ export function mountSky(host, opts = {}) {
     clouds = Array.from({ length: blobs }, cloud);
   }
 
-  /* Overlay: the falling particles, plus the drifting layers (mist bands,
-     top-edge clouds), each painted once here into a small texture. */
+  /* Overlay: the falling particles, the ground fog, or the top-edge clouds
+     — each painted once here into small textures. */
   function seedOverlay(p) {
     const k = Math.min(1.5, Math.max(0.4, (W * H) / AREA)) * o.density;
     const drop = (d) => ({ x: rnd(0, W), y: rnd(-H, H), v: rnd(520, 780) * d, len: rnd(14, 28) * d });
@@ -191,8 +204,11 @@ export function mountSky(host, opts = {}) {
     ];
     if (p.drops) [front, back] = make(p.drops, drop);
     if (p.flakes) [front, back] = make(p.flakes, flake);
-    if (p.mist) { layers = MIST_BANDS.map(mistBand); floor = mistFloor(); }
+    if (p.mist) fog = groundFog();
+    if (p.orb) orb = st.day ? sun() : moon();
     if (p.topClouds) layers = Array.from({ length: p.topClouds }, (_, i) => topCloud(i, p.topClouds));
+    blendEl.style.mixBlendMode = fog || layers.length ? ink().blend : '';
+    lift.style.mixBlendMode = 'screen';
   }
 
   // A small canvas at 1/TEX_SCALE of the drawn size, filled by `paint`.
@@ -212,28 +228,147 @@ export function mountSky(host, opts = {}) {
     g.restore();
   }
 
-  /* A mist band: a soft stripe plus uneven puffs, tiled across the width
-     (each puff also painted one tile left and right, so the seam is gone). */
-  function mistBand(b, i) {
-    const h = b.h * H, rgb = ink().mist;
-    const tex = texture(W, h, (g, w, th) => {
-      const stripe = g.createLinearGradient(0, 0, 0, th);
-      stripe.addColorStop(0, `${rgb}0)`); stripe.addColorStop(0.3, `${rgb}0.35)`);
-      stripe.addColorStop(0.7, `${rgb}0.35)`); stripe.addColorStop(1, `${rgb}0)`);
-      g.fillStyle = stripe; g.fillRect(0, 0, w, th);
-      for (let n = 0; n < 6; n++) {
-        const x = rnd(0, w), y = th * rnd(0.4, 0.6), rx = w * rnd(0.07, 0.16), ry = th * rnd(0.3, 0.45), a = rnd(0.5, 1);
-        for (const dx of [-w, 0, w]) puff(g, x + dx, y, rx, ry, rgb, a);
-      }
-    });
-    return { tex, tile: true, x: rnd(0, W), y: b.y * H - h / 2, w: W, h, a: b.a, v: b.v, ph: rnd(0, 6.3), period: 6000 + i * 1900 };
+  /* A second canvas over the overlay's host, for the light theme's white
+     lift (screen): one element can only blend one way. */
+  function liftCanvas() {
+    const c = document.createElement('canvas');
+    c.setAttribute('aria-hidden', 'true');
+    Object.assign(c.style, { position: 'fixed', inset: '0', width: '100%', height: '100%', pointerEvents: 'none', zIndex: '2147483001', display: 'block' });
+    if (page) host.append(c); else host.after(c);
+    return c;
   }
 
-  // The ground haze under the bands: one cached vertical gradient.
-  function mistFloor() {
-    const rgb = ink().mist, grad = ctx.createLinearGradient(0, 0, 0, H);
-    for (const [at, a] of MIST_FLOOR) grad.addColorStop(at, `${rgb}${a})`);
-    return grad;
+  /* A texture that tiles across the width: painted with a few pixels of
+     the wrap on each side, so the upscale has no seam where tiles meet. */
+  function tileTexture(h, paint) {
+    const pad = 3, tw = Math.ceil(W / TEX_SCALE);
+    const c = texture((tw + 2 * pad) * TEX_SCALE, h, (g, _w, th) => {
+      g.translate(pad, 0);
+      paint(g, tw, th);
+    });
+    c.pad = pad; c.tw = tw;
+    return c;
+  }
+
+  /* Flat, soft ellipses tiled across `w` — streaks, never lumps. `rys` is
+     their half-height as a fraction of the tile; with `ys` it keeps every
+     smear well inside, so the tile's top and bottom rows stay clear. */
+  function smears(g, w, th, n, rgb, ys, a, rys) {
+    for (let k = 0; k < n; k++) {
+      const x = rnd(0, w), y = th * rnd(ys[0], ys[1]), rx = w * rnd(0.1, 0.24), ry = th * rnd(rys[0], rys[1]);
+      for (const dx of [-w, 0, w]) puff(g, x + dx, y, rx, ry, rgb, rnd(a[0], a[1]));
+    }
+  }
+
+  /* A clear sky: a sun (day) or a moon with a few stars (night) in the
+     top-right corner, beside the chat column, never over it. The disc and
+     its glow are one sprite; the sun's faint rays another, turned slowly. */
+  function orbSprite(k, r, R) {
+    const size = Math.ceil(R * 2), c = size / 2, sprite = document.createElement('canvas');
+    sprite.width = sprite.height = size;
+    const g = sprite.getContext('2d');
+    const glow = g.createRadialGradient(c, c, r * 0.8, c, c, R);
+    glow.addColorStop(0, `${k.glow}${k.glowA})`); glow.addColorStop(0.35, `${k.glow}${k.glowA * 0.35})`); glow.addColorStop(1, `${k.glow}0)`);
+    g.fillStyle = glow; g.fillRect(0, 0, size, size);
+    const disc = g.createRadialGradient(c, c, 0, c, c, r);
+    disc.addColorStop(0, `${k.disc}0.95)`); disc.addColorStop(0.8, `${k.disc}0.85)`); disc.addColorStop(1, `${k.disc}0)`);
+    g.fillStyle = disc; g.beginPath(); g.arc(c, c, r, 0, 6.2832); g.fill();
+    return sprite;
+  }
+
+  function rays(k, r, R) {
+    const size = Math.ceil(R * 2), c = size / 2, sprite = document.createElement('canvas');
+    sprite.width = sprite.height = size;
+    const g = sprite.getContext('2d');
+    const fade = g.createRadialGradient(c, c, r, c, c, R * 0.95);
+    fade.addColorStop(0, `${k.disc}${k.ray})`); fade.addColorStop(1, `${k.disc}0)`);
+    g.fillStyle = fade;
+    for (let i = 0; i < 9; i++) {
+      const a = (i / 9) * 6.2832, w = 0.05;
+      g.beginPath(); g.moveTo(c, c);
+      g.lineTo(c + Math.cos(a - w) * R, c + Math.sin(a - w) * R);
+      g.lineTo(c + Math.cos(a + w) * R, c + Math.sin(a + w) * R);
+      g.fill();
+    }
+    return sprite;
+  }
+
+  const orbAt = (R) => ({ x: W - Math.min(120, W * 0.1), y: Math.min(64, H * 0.08), R });
+
+  function sun() {
+    const k = ink().sun, r = 22, R = Math.min(W, H) * 0.24;
+    return { ...orbAt(R), body: orbSprite(k, r, R), rays: rays(k, r, R), stars: [] };
+  }
+
+  /* A waxing crescent (~35% lit: the disc minus one offset by 0.55 r),
+     tilted, lit on the right; a wide faint halo around it. */
+  function crescentSprite(k, r, R) {
+    const size = Math.ceil(R * 2), c = size / 2, sprite = document.createElement('canvas');
+    sprite.width = sprite.height = size;
+    const g = sprite.getContext('2d');
+    const halo = g.createRadialGradient(c, c, r * 0.6, c, c, R);
+    halo.addColorStop(0, `${k.halo}${k.haloA})`); halo.addColorStop(0.4, `${k.halo}${k.haloA * 0.3})`); halo.addColorStop(1, `${k.halo}0)`);
+    g.fillStyle = halo; g.fillRect(0, 0, size, size);
+    const d = r * 0.55, h = Math.sqrt(r * r - (d * d) / 4), a = Math.atan2(h, d / 2);
+    g.translate(c, c); g.rotate(-0.45); g.scale(-1, 1);
+    g.beginPath();
+    g.arc(0, 0, r, a, 2 * Math.PI - a);
+    g.arc(d, 0, r, Math.atan2(-h, -d / 2), Math.atan2(h, -d / 2), true);
+    g.closePath();
+    if (k.glow) { g.shadowColor = k.glow; g.shadowBlur = r * 0.8; }
+    g.fillStyle = k.fill; g.fill();
+    g.shadowBlur = 0;
+    if (k.rim) { g.strokeStyle = k.rim; g.lineWidth = 1.2; g.stroke(); }
+    return sprite;
+  }
+
+  function moon() {
+    const k = ink().moon, R = Math.min(W, H) * 0.16, at = orbAt(R);
+    const near = () => ({ x: at.x + rnd(-150, 40), y: rnd(10, at.y + 50), r: rnd(1.6, 2.6), ph: rnd(0, 6.3) });
+    const edge = () => ({ x: rnd(W * 0.55, W), y: rnd(6, H * 0.09), r: rnd(0.7, 1.3), ph: rnd(0, 6.3) });
+    const stars = k.sparkle ? Array.from({ length: 4 }, near) : Array.from({ length: 12 }, edge);
+    return { ...at, body: crescentSprite(k, 20, R), rays: null, stars, star: k.star, sparkle: k.sparkle };
+  }
+
+  // A tiny four-point sparkle: two thin crossed diamonds.
+  function sparkle(x, y, r) {
+    ctx.beginPath();
+    ctx.moveTo(x, y - r * 2); ctx.lineTo(x + r * 0.35, y); ctx.lineTo(x, y + r * 2); ctx.lineTo(x - r * 0.35, y); ctx.closePath();
+    ctx.moveTo(x - r * 2, y); ctx.lineTo(x, y + r * 0.35); ctx.lineTo(x + r * 2, y); ctx.lineTo(x, y - r * 0.35); ctx.closePath();
+    ctx.fill();
+  }
+
+  function drawOrb(t) {
+    if (orb.rays) {
+      ctx.save(); ctx.translate(orb.x, orb.y); ctx.rotate((t / 90000) * 6.2832);
+      ctx.drawImage(orb.rays, -orb.R, -orb.R, orb.R * 2, orb.R * 2);
+      ctx.restore();
+    }
+    ctx.drawImage(orb.body, orb.x - orb.R, orb.y - orb.R, orb.R * 2, orb.R * 2);
+    for (const s of orb.stars) {
+      ctx.fillStyle = `${orb.star}${0.2 + 0.55 * Math.sin(t / 1600 + s.ph) ** 2})`;
+      if (orb.sparkle) { sparkle(s.x, s.y, s.r); continue; }
+      ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, 6.2832); ctx.fill();
+    }
+  }
+
+  /* The ground fog: the sheet (a tall feathered gradient whose top edge is
+     smeared, not lumpy) and the wisps, each one tiled texture. */
+  function groundFog() {
+    const k = ink(), rgb = k.mist, h = (1 - FOG.top) * H;
+    const sheet = tileTexture(h, (g, w, th) => {
+      const grad = g.createLinearGradient(0, 0, 0, th);
+      grad.addColorStop(0, `${rgb}0)`); grad.addColorStop(0.35, `${rgb}0.22)`);
+      grad.addColorStop(0.7, `${rgb}0.62)`); grad.addColorStop(1, `${rgb}1)`);
+      g.fillStyle = grad; g.fillRect(-4, 0, w + 8, th); // the pads too
+      smears(g, w, th, 12, rgb, [0.3, 0.55], [0.15, 0.4], [0.06, 0.14]);
+      g.globalCompositeOperation = 'destination-out';
+      smears(g, w, th, 5, 'rgba(0,0,0,', [0.25, 0.45], [0.3, 0.6], [0.06, 0.12]);
+      g.globalCompositeOperation = 'source-over';
+    });
+    const wisp = (wd, tint) => tileTexture(wd.h * H, (g, w, th) => smears(g, w, th, 9, tint, [0.42, 0.58], [0.4, 0.9], [0.14, 0.26]));
+    const wisps = FOG.wisps.map((wd) => ({ ...wd, x: rnd(0, W), tex: wisp(wd, rgb), lift: k.lift ? wisp(wd, k.lift) : null }));
+    return { sheet, h, wisps, ph: rnd(0, 6.3) };
   }
 
   /* A faint cloud hugging the top edge: a row of puffs, a lumpy top. */
@@ -246,7 +381,7 @@ export function mountSky(host, opts = {}) {
       }
     });
     const x = ((i + rnd(0, 0.6)) / count) * (W + w) - w;
-    return { tex, tile: false, x, y: -h * rnd(0.2, 0.42), w, h, a: ink().cloud, v: rnd(3, 6), ph: rnd(0, 6.3), period: 7000 + i * 1300 };
+    return { tex, x, y: -h * rnd(0.2, 0.42), w, h, a: ink().cloud, v: rnd(3, 6), ph: rnd(0, 6.3), period: 7000 + i * 1300 };
   }
 
   function resize() {
@@ -254,6 +389,7 @@ export function mountSky(host, opts = {}) {
     const h = Math.max(1, Math.round(host.clientHeight || innerHeight));
     if (w === W && h === H) return;
     W = canvas.width = w; H = canvas.height = h;
+    if (lift) { lift.width = w; lift.height = h; }
     paintBackground(); seed(); coversAt = 0; draw(0);
   }
 
@@ -309,23 +445,44 @@ export function mountSky(host, opts = {}) {
     }
   }
 
-  // A tile wraps within the width; a cloud leaves on the right, enters left.
-  function wrapX(L, x) {
-    if (L.tile) return ((x % W) + W) % W;
-    return x > W ? -L.w : x;
+  const wrapW = (x) => ((x % W) + W) % W;
+  // One tile across the width, drawn twice so it wraps without a seam.
+  function tile(g, tex, x, y, h) {
+    g.drawImage(tex, tex.pad, 0, tex.tw, tex.height, x, y, W, h);
+    g.drawImage(tex, tex.pad, 0, tex.tw, tex.height, x - W, y, W, h);
   }
 
-  /* The overlay's drifting layers: each slides sideways at its own speed and
-     breathes slowly (alpha 0.75–1 of its peak). */
+  // A cloud leaves on the right and comes back in on the left.
+  const wrapX = (L, x) => (x > W ? -L.w : x);
+
+  /* The overlay's drifting things: the ground fog's sheet sweeping back and
+     forth and breathing, its wisps sliding through; clouds along the top. */
   function drift(dt, t) {
-    if (floor) { ctx.fillStyle = floor; ctx.fillRect(0, 0, W, H); }
+    if (fog) drawFog(dt, t);
+    if (orb) drawOrb(t);
     for (const L of layers) {
       L.x = wrapX(L, L.x + L.v * dt);
       ctx.globalAlpha = L.a * (0.875 + 0.125 * Math.sin(t / L.period + L.ph));
       ctx.drawImage(L.tex, L.x, L.y, L.w, L.h);
-      if (L.tile) ctx.drawImage(L.tex, L.x - W, L.y, L.w, L.h);
     }
     ctx.globalAlpha = 1;
+  }
+
+  function drawFog(dt, t) {
+    const k = ink(), breath = 0.92 + 0.08 * Math.sin(t / FOG.breath + fog.ph);
+    const sx = wrapW(FOG.sweep * W * Math.sin((t / FOG.period) * 6.2832 + fog.ph));
+    ctx.globalAlpha = k.sheet * breath;
+    tile(ctx, fog.sheet, sx, H - fog.h, fog.h);
+    for (const w of fog.wisps) {
+      w.x = wrapW(w.x + w.v * dt);
+      const y = w.y * H - (w.h * H) / 2;
+      ctx.globalAlpha = k.wisp * breath;
+      tile(ctx, w.tex, w.x, y, w.h * H);
+      if (!w.lift) continue;
+      liftCtx.globalAlpha = k.liftA * breath;
+      tile(liftCtx, w.lift, wrapW(w.x + W * 0.07), y - w.h * H * 0.12, w.h * H);
+    }
+    liftCtx.globalAlpha = 1;
   }
 
   function blobs(dt) {
@@ -356,7 +513,7 @@ export function mountSky(host, opts = {}) {
   }
 
   function draw(dt, t = performance.now()) {
-    if (o.overlay) ctx.clearRect(0, 0, W, H);
+    if (o.overlay) { ctx.clearRect(0, 0, W, H); liftCtx.clearRect(0, 0, W, H); }
     else if (bg) ctx.drawImage(bg, 0, 0);
     else return;
     if (o.overlay) drift(dt, t); else blobs(dt);
@@ -376,7 +533,7 @@ export function mountSky(host, opts = {}) {
   }
 
   function moving() {
-    return alive && !still() && !document.hidden && (front.length || back.length || clouds.length || layers.length || plan().flash);
+    return alive && !still() && !document.hidden && (front.length || back.length || clouds.length || layers.length || fog || orb || plan().flash);
   }
 
   function watch(ms) {
@@ -459,7 +616,9 @@ export function mountSky(host, opts = {}) {
       document.removeEventListener('visibilitychange', onVisible);
       darkMq.removeEventListener('change', onTheme);
       calmMq.removeEventListener('change', onCalm);
+      blendEl.style.mixBlendMode = '';
       canvas.remove();
+      lift?.remove();
     },
   };
 
