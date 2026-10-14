@@ -7,6 +7,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { X } from 'lucide-react';
 import { account as accountApi, appConfig, skillsApi, workspaceApi, type Account } from '../lib/endpoints';
+import { appLabel } from './appLabel';
 import type { AppConfig, SkillAppConfig, SkillInfoFull } from '../types';
 import { useAgentPresent } from '../hooks/useAgentPresent';
 import { COMPANION_ID } from '../lib/agentsMet.mts';
@@ -16,16 +17,6 @@ import { WeatherSettings } from '../components/WeatherSettings';
 type AppSkill = SkillInfoFull & { app: SkillAppConfig };
 const isApp = (s: SkillInfoFull): s is AppSkill => !!s.app;
 
-const LABELS: Record<string, string> = {
-  cfo: 'CFO',
-  'apple-shifu': 'Apple Shifu',
-  'mac-shifu': 'Apple Shifu',
-  'sys-doctor': 'Apple Shifu',
-  pulse: 'Pulse',
-  dj: 'DJ',
-  'shared-memory': 'Memory',
-};
-const labelFor = (n: string) => LABELS[n] ?? n;
 
 /** Apps that ship a settings.html (others have no per-app settings to show). */
 const HAS_SETTINGS = new Set(['cfo', 'apple-shifu', 'mac-shifu', 'sys-doctor', 'pulse', 'dj']);
@@ -223,7 +214,7 @@ export const LauncherSettings: React.FC<{ onClose: () => void }> = ({ onClose })
     { id: 'general', label: 'General', kind: 'general' },
     { id: 'model', label: 'Model', kind: 'model' },
     ...(yinyueHere ? [{ id: 'yinyue', label: 'Yinyue', kind: 'yinyue' as const }] : []),
-    ...apps.map((a) => ({ id: `app-${a.name}`, label: labelFor(a.name), kind: 'app' as const, skill: a })),
+    ...apps.map((a) => ({ id: `app-${a.name}`, label: appLabel(a), kind: 'app' as const, skill: a })),
   ];
   const current = sections.find((s) => s.id === active) ?? sections[0];
   // Divider sits between the shared sections and the per-app ones.
@@ -292,7 +283,7 @@ export const LauncherSettings: React.FC<{ onClose: () => void }> = ({ onClose })
               <iframe
                 className="lg-set-frame"
                 src={`/apps/${current.skill.name}/scripts/settings.html?embed=1`}
-                title={labelFor(current.skill.name)}
+                title={appLabel(current.skill)}
               />
             )}
           </div>

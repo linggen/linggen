@@ -18,6 +18,10 @@ pub struct AppConfig {
     pub launcher: String,
     /// Entry point: filename (web/bash) or URL (url launcher).
     pub entry: String,
+    /// The name the launcher shows for the app ("CFO", "Apple Shifu"). Absent →
+    /// the skill's own name. The app declares it; the engine names no app.
+    #[serde(default)]
+    pub title: Option<String>,
     /// Suggested panel width in pixels.
     #[serde(default)]
     pub width: Option<u32>,

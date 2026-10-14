@@ -380,6 +380,8 @@ A skill with an `app:` section is a runnable app — invoking it opens a UI.
 
 Three launcher types: `web` (static files in an embedded panel), `bash` (run a script, stream output), `url` (external URL).
 
+`title` is the name the launcher shows (`title: CFO`, `title: Apple Shifu`); without it the launcher shows the skill's `name`. The engine keeps no table of app names.
+
 `list: false` keeps a `web` app out of the launcher's tab bar while leaving it installed and runnable — what a skill that isn't finished declares about itself. Defaults to true.
 
 Interactive apps are **session-bound** — every message in the session activates the skill (tool restrictions, prompt injection). The app talks to the agent through the same WebRTC surface as the main UI; no custom endpoints needed.

@@ -13,23 +13,13 @@ import { LauncherSettings } from './LauncherSettings';
 import { AccountAvatar } from '../components/AccountAvatar';
 import { SkyBackground } from '../components/SkyBackground';
 import { skillsApi } from '../lib/endpoints';
+import { appLabel } from './appLabel';
 import type { SkillAppConfig, SkillInfoFull } from '../types';
 
 /** A skill that is an app. */
 type AppSkill = SkillInfoFull & { app: SkillAppConfig };
 const isApp = (s: SkillInfoFull): s is AppSkill => !!s.app;
 
-/** Friendly labels for the known apps; falls back to the raw skill name. */
-const LABELS: Record<string, string> = {
-  cfo: 'CFO',
-  'apple-shifu': 'Apple Shifu',
-  'mac-shifu': 'Apple Shifu',
-  'sys-doctor': 'Apple Shifu',
-  pulse: 'Pulse',
-  dj: 'DJ',
-  'shared-memory': 'Memory',
-};
-const labelFor = (name: string) => LABELS[name] ?? name;
 
 /** Curated menu order — products first; anything else falls to the end
  *  alphabetically (by label) so new apps still appear deterministically. */
@@ -68,7 +58,7 @@ export const LauncherApp: React.FC = () => {
         const web = list.filter(isApp).filter((s) => s.app.launcher === 'web' && s.app.list !== false);
         web.sort((a, b) =>
           orderIndex(a.name) - orderIndex(b.name) ||
-          labelFor(a.name).localeCompare(labelFor(b.name)));
+          appLabel(a).localeCompare(appLabel(b)));
         setApps(web);
       })
       .catch(() => {});
@@ -130,7 +120,7 @@ export const LauncherApp: React.FC = () => {
                     : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-white/5'
                 }`}
               >
-                {labelFor(a.name)}
+                {appLabel(a)}
               </button>
             );
           })}
@@ -164,7 +154,7 @@ export const LauncherApp: React.FC = () => {
             <iframe
               key={name}
               src={urlFor(a)}
-              title={labelFor(name)}
+              title={appLabel(a)}
               className={activeName === name ? 'absolute inset-0 w-full h-full' : 'hidden'}
               style={{ border: 'none' }}
               sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
