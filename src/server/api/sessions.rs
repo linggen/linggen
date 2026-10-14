@@ -159,7 +159,8 @@ pub(crate) async fn get_skill_session_state(
         messages,
         running,
         |m, calls| {
-            if m.is_observation || m.content.contains("[HIDDEN]") {
+            if m.is_observation || crate::server::resident::is_engine_prompt(&m.from_id, &m.content)
+            {
                 return None;
             }
             let cleaned =

@@ -5,22 +5,39 @@
 /// reaches her voice is the final paragraph alone. Stated to her, not
 /// inferred — so a model that thinks in its output (deepseek-v4-flash on the
 /// fallback chain, 2026-09-08) is following the rules, not leaking.
-pub(super) const SPOKEN_CONTRACT: &str =
+pub(crate) const SPOKEN_CONTRACT: &str =
     "If you need to think first, do it above a blank line: only your \
     final paragraph is spoken aloud, the rest is discarded.";
 /// What an unasked kickoff adds: silence is an answer.
 pub(super) const SILENT_CLAUSE: &str =
     "If nothing is worth saying, make that final paragraph exactly SILENT.";
 
+/// The marker on a prompt the engine wrote: kept for the model, never shown
+/// as anyone's words (`doc/chat-spec.md`, hidden rows).
+const HIDDEN: &str = "[HIDDEN]";
+
 /// The kickoff as she reads it. A person's own words ("user") carry nothing;
 /// an answer they asked for ("asked") carries the spoken contract alone;
-/// every other engine-authored kickoff may also end in SILENT.
+/// every other engine-authored kickoff may also end in SILENT. Every
+/// engine-authored kickoff is a hidden row: the engine wrote it, not the user.
 pub(super) fn with_contract(task: String, trigger_source: &str) -> String {
-    match trigger_source {
-        "user" => task,
-        "asked" => format!("{task} {SPOKEN_CONTRACT}"),
-        _ => format!("{task} {SPOKEN_CONTRACT} {SILENT_CLAUSE}"),
+    if trigger_source == "user" {
+        return task;
     }
+    let task = task.trim_start_matches(HIDDEN).trim_start();
+    match trigger_source {
+        "asked" => format!("{HIDDEN} {task} {SPOKEN_CONTRACT}"),
+        _ => format!("{HIDDEN} {task} {SPOKEN_CONTRACT} {SILENT_CLAUSE}"),
+    }
+}
+
+/// A row that is a prompt the engine wrote, not anyone's words: it carries
+/// the hidden marker — or, on a row saved before her kickoffs were marked
+/// (2026-10-14), the spoken contract every engine kickoff has carried since
+/// 2026-09-08 and no person's message does. Kept for the model; the chat
+/// never shows it.
+pub(crate) fn is_engine_prompt(from_id: &str, content: &str) -> bool {
+    content.contains(HIDDEN) || (from_id == "user" && content.contains(SPOKEN_CONTRACT))
 }
 
 /// What a reply under [`SPOKEN_CONTRACT`] actually says: the final paragraph,
@@ -78,7 +95,7 @@ pub(crate) fn speak_reply(state: &std::sync::Arc<crate::server::ServerState>, re
 
 #[cfg(test)]
 mod tests {
-    use super::{spoken_line, with_contract};
+    use super::{is_engine_prompt, spoken_line, with_contract};
 
     #[test]
     fn an_asked_turn_is_not_offered_silence() {
@@ -87,6 +104,30 @@ mod tests {
         assert!(asked.contains("final paragraph is spoken"));
         assert!(!asked.contains("SILENT"));
         assert_eq!(with_contract("hi".into(), "user"), "hi");
+    }
+
+    #[test]
+    fn an_engine_kickoff_is_hidden_a_persons_words_are_not() {
+        assert!(with_contract("k".into(), "event").starts_with("[HIDDEN] k "));
+        assert!(with_contract("k".into(), "asked").starts_with("[HIDDEN] k "));
+        // Already marked: one marker, not two.
+        let once = with_contract("[HIDDEN] k".into(), "event");
+        assert_eq!(once.matches("[HIDDEN]").count(), 1);
+        assert!(!with_contract("hi".into(), "user").contains("[HIDDEN]"));
+    }
+
+    #[test]
+    fn an_old_kickoff_row_is_known_by_its_contract() {
+        let kickoff = with_contract("A quiet moment".into(), "event");
+        assert!(is_engine_prompt("user", &kickoff));
+        // A row saved before the marker: the contract alone names it.
+        let old = kickoff.trim_start_matches("[HIDDEN] ");
+        assert!(is_engine_prompt("user", old));
+        assert!(!is_engine_prompt("user", "hello"));
+        assert!(!is_engine_prompt(
+            "user",
+            &with_contract("hello".into(), "user")
+        ));
     }
 
     #[test]

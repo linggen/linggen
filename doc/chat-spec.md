@@ -174,6 +174,10 @@ A session is a single conversation thread scoped to a project. Each session has 
   "Interrupted" note; a session's still-running run and `[HIDDEN]` kickoffs
   (which may end in silence) get none (`server/chat/run_calls.rs`). A call
   whose result never came back is `failed`.
+- **Engine prompts are never a user bubble**: a prompt the engine writes to an
+  agent (a page's report, Yinyue's heralds and ambient moments) is saved with
+  `from_id: "user"` and a `[HIDDEN]` prefix; the history views and the live
+  handler drop it (`resident::is_engine_prompt`, `ui/src/lib/hiddenRows.mts`).
 
 ### Multi-session architecture
 

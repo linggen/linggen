@@ -142,7 +142,12 @@ game's loss, a hard win, a wound. **Nothing is said then.** The moments queue
   no quiet, no cooldown, and told silence is not an answer.
 
 Then she is woken once with everything queued (`wake_herald`), in her own
-voice, and may answer `SILENT`. Every `PetSpeak` stamps the cooldown
+voice, and may answer `SILENT`. Every kickoff the engine writes her — heralds,
+ambient moments, a relayed `agent_chat`, an app moment — is a `[HIDDEN]` row
+(`resident::spoken::with_contract`): kept for her model, never shown as the
+user's words. Rows saved before 2026-10-14 carry no marker; the history views
+know them by the spoken contract every kickoff has carried since 2026-09-08
+(`is_engine_prompt`). Older rows still show. Every `PetSpeak` stamps the cooldown
 (`emit_speak` → `note_spoke`), so every line she says counts, whatever
 the path. The engine names no app: it carries the app's
 words. Why a gate and not a wake per event: a model asked to respond always

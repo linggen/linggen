@@ -704,19 +704,7 @@ export const mergeChatMessages = (persisted: ChatMessage[], live: ChatMessage[])
   return dedupPlanMessages(dropLiveEchoes(unshown, uniqueExtras));
 };
 
-export const shouldHideInternalChatMessage = (_from?: string, text?: string): boolean => {
-  if (!text) return false;
-  // Hide [HIDDEN] messages (system prompts from app skills)
-  if (text.startsWith('[HIDDEN]')) return true;
-  if (text.startsWith('Starting autonomous loop for task:')) return true;
-  // Hide raw tool observation messages that leak from context (e.g. "Tool Bash: Bash output...")
-  if (/^Tool\s+\w+:/i.test(text)) return true;
-  // Hide "Used tool: Read · target=..." lines rendered from sanitization
-  if (text.startsWith('Used tool:')) return true;
-  // Hide delegation task text (already shown in SubagentTreeView)
-  if (text.startsWith('Delegated task:')) return true;
-  return false;
-};
+export { shouldHideInternalChatMessage } from './hiddenRows.mts';
 
 /** Hide persisted-only tool-status messages that are redundant with content blocks.
  *  NOT used for live streaming messages (those drive spinner/activity). */

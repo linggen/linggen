@@ -324,7 +324,7 @@ pub(crate) async fn get_workspace_state(
         messages,
         running,
         |m, calls| {
-            if m.content.contains("[HIDDEN]") {
+            if crate::server::resident::is_engine_prompt(&m.from_id, &m.content) {
                 return None;
             }
             let cleaned = sanitize_message_for_ui(&m.from_id, &m.content)?;

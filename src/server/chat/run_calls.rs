@@ -234,7 +234,7 @@ pub(crate) fn run_calls(history: &[ChatMsg], running: bool) -> RunCalls {
             }
         }
         if m.from_id == "user" {
-            hidden_turn = m.content.contains("[HIDDEN]");
+            hidden_turn = crate::server::resident::is_engine_prompt(&m.from_id, &m.content);
         }
     }
     if !running {
