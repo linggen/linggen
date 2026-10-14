@@ -4,11 +4,13 @@
 // a light or a dark page. Two looks:
 //   - background (default): a sky gradient with the weather in it, behind
 //     the page's content;
-//   - `overlay: true`: only the falling weather — thin streaks, soft flakes,
-//     edge wisps of fog — over the content, no fill or tint at all, so text
-//     under it reads as before. Clear and cloudy draw nothing; no lightning
-//     unless `lightning: true` (then a short, faint flash, never a white-out).
-//     Reduced motion draws nothing.
+//   - `overlay: true`: only the weather itself over the content, no sky fill:
+//     thin streaks, soft flakes, fog as slow mist bands lying low (dense at
+//     the bottom, a light veil where text sits), cloudy as a few faint clouds
+//     along the top edge. Clear draws nothing; no lightning unless
+//     `lightning: true` (then a short, faint flash, never a white-out).
+//     A still overlay (reduced motion, slow machine) keeps the mist and
+//     clouds as one frozen frame and drops what falls.
 //
 //   import { mountSky } from '/shared/sky.js';
 //   const sky = mountSky(el, { auto: true });   // follows /api/senses/weather
@@ -66,12 +68,25 @@ const PLAN = {
 /* The overlay's lighter plan: fewer particles, nothing for clear skies. */
 const OVERLAY_PLAN = {
   clear: { fps: 12 },
-  cloudy: { fps: 12 },
-  fog: { wisps: 2, fps: 12 },
+  cloudy: { topClouds: 4, fps: 12 },
+  fog: { mist: true, fps: 12 },
   rain: { drops: [40, 12], fps: 30 },
   storm: { drops: [62, 16], fps: 30, flash: true },
   snow: { flakes: [48, 12], fps: 30 },
 };
+
+/* Overlay mist, bottom up: band centre and height (fractions of the
+   viewport), peak alpha, drift in px/s (alternating, for parallax). With
+   MIST_FLOOR under them the veil is ~0.27 at the bottom edge and ~0.05 at the
+   top; the middle, where text sits, stays around 0.1. */
+const MIST_BANDS = [
+  { y: 0.95, h: 0.42, a: 0.22, v: 6 },
+  { y: 0.72, h: 0.38, a: 0.12, v: -10 },
+  { y: 0.46, h: 0.36, a: 0.08, v: 15 },
+  { y: 0.17, h: 0.34, a: 0.05, v: -8 },
+];
+const MIST_FLOOR = [[0, 0.02], [0.45, 0.02], [0.75, 0.05], [1, 0.15]];
+const TEX_SCALE = 4; // textures paint at 1/4 size; the upscale is the blur
 
 /* Inks by look and page theme. Background: the front reads at a glance in
    the open sky, the back (behind panels) stays faint. Overlay: everything
@@ -82,8 +97,8 @@ const INKS = {
     dark: { front: 'rgba(200,215,235,0.5)', back: 'rgba(185,200,218,0.13)', flake: 'rgba(225,232,242,0.8)', flakeBack: 'rgba(225,232,242,0.45)', rim: null, width: 1.4, flash: 0.14 },
   },
   overlay: {
-    light: { front: 'rgba(70,92,120,0.32)', back: 'rgba(70,92,120,0.14)', flake: 'rgba(130,155,190,0.36)', flakeBack: 'rgba(130,155,190,0.18)', rim: null, width: 1, flash: 0.05, wisp: 'rgba(150,160,172,' },
-    dark: { front: 'rgba(205,218,235,0.28)', back: 'rgba(205,218,235,0.12)', flake: 'rgba(230,236,245,0.32)', flakeBack: 'rgba(230,236,245,0.16)', rim: null, width: 1, flash: 0.05, wisp: 'rgba(200,206,214,' },
+    light: { front: 'rgba(70,92,120,0.32)', back: 'rgba(70,92,120,0.14)', flake: 'rgba(130,155,190,0.36)', flakeBack: 'rgba(130,155,190,0.18)', rim: null, width: 1, flash: 0.05, mist: 'rgba(118,130,148,', cloud: 0.16 },
+    dark: { front: 'rgba(205,218,235,0.28)', back: 'rgba(205,218,235,0.12)', flake: 'rgba(230,236,245,0.32)', flakeBack: 'rgba(230,236,245,0.16)', rim: null, width: 1, flash: 0.05, mist: 'rgba(196,203,212,', cloud: 0.11 },
   },
 };
 
@@ -118,7 +133,7 @@ export function mountSky(host, opts = {}) {
   const calmMq = matchMedia('(prefers-reduced-motion: reduce)');
 
   const st = { kind: o.kind ?? 'clear', day: o.is_day !== false, dark: o.dark ?? darkMq.matches };
-  let W = 0, H = 0, bg = null, front = [], back = [], clouds = [], covers = [], coversAt = 0;
+  let W = 0, H = 0, bg = null, front = [], back = [], clouds = [], layers = [], floor = null, covers = [], coversAt = 0;
   let raf = 0, timer = 0, last = 0, flash = 0, nextFlash = 0, slow = false, alive = true;
   const cost = [];
 
@@ -154,13 +169,82 @@ export function mountSky(host, opts = {}) {
     const flake = (d) => ({ x: rnd(0, W), y: rnd(-H, H), v: rnd(26, 60) * d, r: rnd(1.6, 3.4) * (0.6 + d * 0.4), ph: rnd(0, 6.3) });
     const star = () => ({ x: rnd(0, W), y: rnd(0, H * 0.6), r: rnd(0.6, 1.4), ph: rnd(0, 6.3) });
     const cloud = () => ({ x: rnd(-0.3, 1) * W, y: rnd(0, 0.45) * H, s: rnd(0.7, 1.4), v: rnd(4, 9) });
-    front = []; back = []; clouds = [];
+    front = []; back = []; clouds = []; layers = []; floor = null;
+    if (o.overlay) return seedOverlay(p);
     if (p.drops) { front = make(n(p.drops, 0), drop, 1); back = make(n(p.drops, 1), drop, 0.6); }
     if (p.flakes) { front = make(n(p.flakes, 0), flake, 1); back = make(n(p.flakes, 1), flake, 0.6); }
     if (p.night && !st.day) front = make(n(p.night, 0), star, 1);
     const blobs = p.clouds ?? p.fog ?? 0;
     clouds = Array.from({ length: blobs }, cloud);
-    if (p.wisps) clouds = Array.from({ length: p.wisps }, (_, i) => ({ side: i % 2, y: rnd(0.15, 0.7) * H, ph: rnd(0, 6.3) }));
+  }
+
+  /* Overlay: the falling particles, plus the drifting layers (mist bands,
+     top-edge clouds), each painted once here into a small texture. */
+  function seedOverlay(p) {
+    const k = Math.min(1.5, Math.max(0.4, (W * H) / AREA)) * o.density;
+    const drop = (d) => ({ x: rnd(0, W), y: rnd(-H, H), v: rnd(520, 780) * d, len: rnd(14, 28) * d });
+    const flake = (d) => ({ x: rnd(0, W), y: rnd(-H, H), v: rnd(26, 60) * d, r: rnd(1.6, 3.4) * (0.6 + d * 0.4), ph: rnd(0, 6.3) });
+    const make = (pair, maker) => [
+      Array.from({ length: Math.round(pair[0] * k) }, () => maker(1)),
+      Array.from({ length: Math.round(pair[1] * k) }, () => maker(0.6)),
+    ];
+    if (p.drops) [front, back] = make(p.drops, drop);
+    if (p.flakes) [front, back] = make(p.flakes, flake);
+    if (p.mist) { layers = MIST_BANDS.map(mistBand); floor = mistFloor(); }
+    if (p.topClouds) layers = Array.from({ length: p.topClouds }, (_, i) => topCloud(i, p.topClouds));
+  }
+
+  // A small canvas at 1/TEX_SCALE of the drawn size, filled by `paint`.
+  function texture(w, h, paint) {
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.ceil(w / TEX_SCALE)); c.height = Math.max(1, Math.ceil(h / TEX_SCALE));
+    paint(c.getContext('2d'), c.width, c.height);
+    return c;
+  }
+
+  // One soft elliptical puff of `rgb` at alpha `a`.
+  function puff(g, x, y, rx, ry, rgb, a) {
+    const grad = g.createRadialGradient(0, 0, 0, 0, 0, 1);
+    grad.addColorStop(0, `${rgb}${a})`); grad.addColorStop(0.55, `${rgb}${a * 0.45})`); grad.addColorStop(1, `${rgb}0)`);
+    g.save(); g.translate(x, y); g.scale(rx, ry);
+    g.fillStyle = grad; g.fillRect(-1, -1, 2, 2);
+    g.restore();
+  }
+
+  /* A mist band: a soft stripe plus uneven puffs, tiled across the width
+     (each puff also painted one tile left and right, so the seam is gone). */
+  function mistBand(b, i) {
+    const h = b.h * H, rgb = ink().mist;
+    const tex = texture(W, h, (g, w, th) => {
+      const stripe = g.createLinearGradient(0, 0, 0, th);
+      stripe.addColorStop(0, `${rgb}0)`); stripe.addColorStop(0.5, `${rgb}0.3)`); stripe.addColorStop(1, `${rgb}0)`);
+      g.fillStyle = stripe; g.fillRect(0, 0, w, th);
+      for (let n = 0; n < 7; n++) {
+        const x = rnd(0, w), y = th * rnd(0.38, 0.62), rx = w * rnd(0.1, 0.26), ry = th * rnd(0.25, 0.45), a = rnd(0.4, 1);
+        for (const dx of [-w, 0, w]) puff(g, x + dx, y, rx, ry, rgb, a);
+      }
+    });
+    return { tex, tile: true, x: rnd(0, W), y: b.y * H - h / 2, w: W, h, a: b.a, v: b.v, ph: rnd(0, 6.3), period: 6000 + i * 1900 };
+  }
+
+  // The ground haze under the bands: one cached vertical gradient.
+  function mistFloor() {
+    const rgb = ink().mist, grad = ctx.createLinearGradient(0, 0, 0, H);
+    for (const [at, a] of MIST_FLOOR) grad.addColorStop(at, `${rgb}${a})`);
+    return grad;
+  }
+
+  /* A faint cloud hugging the top edge: a row of puffs, a lumpy top. */
+  function topCloud(i, count) {
+    const w = rnd(280, 460), h = w * rnd(0.32, 0.42), rgb = ink().mist;
+    const tex = texture(w, h, (g, tw, th) => {
+      for (let n = 0; n < 6; n++) {
+        const x = tw * (0.18 + n * 0.13 + rnd(-0.04, 0.04)), y = th * rnd(0.45, 0.62);
+        puff(g, x, y, tw * rnd(0.14, 0.22), th * rnd(0.3, 0.45), rgb, rnd(0.55, 0.85));
+      }
+    });
+    const x = ((i + rnd(0, 0.6)) / count) * (W + w) - w;
+    return { tex, tile: false, x, y: -h * rnd(0.2, 0.42), w, h, a: ink().cloud, v: rnd(3, 6), ph: rnd(0, 6.3), period: 7000 + i * 1300 };
   }
 
   function resize() {
@@ -223,20 +307,26 @@ export function mountSky(host, opts = {}) {
     }
   }
 
-  /* Overlay fog: a faint wisp breathing at each edge, never over the middle. */
-  function wisps(t) {
-    const w = Math.min(W * 0.22, 320), shade = ink().wisp;
-    for (const c of clouds) {
-      const a = 0.05 + 0.03 * Math.sin(t / 5000 + c.ph);
-      const x = c.side ? W : 0;
-      const g = ctx.createRadialGradient(x, c.y, 0, x, c.y, w);
-      g.addColorStop(0, `${shade}${a})`); g.addColorStop(1, `${shade}0)`);
-      ctx.fillStyle = g; ctx.fillRect(x - w, c.y - w, w * 2, w * 2);
-    }
+  // A tile wraps within the width; a cloud leaves on the right, enters left.
+  function wrapX(L, x) {
+    if (L.tile) return ((x % W) + W) % W;
+    return x > W ? -L.w : x;
   }
 
-  function blobs(dt, t) {
-    if (o.overlay) return wisps(t);
+  /* The overlay's drifting layers: each slides sideways at its own speed and
+     breathes slowly (alpha 0.75–1 of its peak). */
+  function drift(dt, t) {
+    if (floor) { ctx.fillStyle = floor; ctx.fillRect(0, 0, W, H); }
+    for (const L of layers) {
+      L.x = wrapX(L, L.x + L.v * dt);
+      ctx.globalAlpha = L.a * (0.875 + 0.125 * Math.sin(t / L.period + L.ph));
+      ctx.drawImage(L.tex, L.x, L.y, L.w, L.h);
+      if (L.tile) ctx.drawImage(L.tex, L.x - W, L.y, L.w, L.h);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function blobs(dt) {
     const fog = st.kind === 'fog';
     const shade = st.dark ? (fog ? 'rgba(150,158,165,' : 'rgba(110,120,132,') : (st.kind === 'storm' ? 'rgba(95,105,118,' : 'rgba(255,255,255,');
     const a = st.dark ? 0.1 : fog ? 0.5 : 0.42;
@@ -267,9 +357,9 @@ export function mountSky(host, opts = {}) {
     if (o.overlay) ctx.clearRect(0, 0, W, H);
     else if (bg) ctx.drawImage(bg, 0, 0);
     else return;
-    if (o.overlay && still()) return; // reduced motion: no overlay at all
+    if (o.overlay) drift(dt, t); else blobs(dt);
+    if (o.overlay && still()) return; // a still overlay: the mist stays, nothing falls
     readCovers(t);
-    blobs(dt, t);
     const kind = st.kind;
     const k = ink();
     if (kind === 'rain' || kind === 'storm') rain(back, dt, k.back, 1);
@@ -284,7 +374,7 @@ export function mountSky(host, opts = {}) {
   }
 
   function moving() {
-    return alive && !still() && !document.hidden && (front.length || back.length || clouds.length || plan().flash);
+    return alive && !still() && !document.hidden && (front.length || back.length || clouds.length || layers.length || plan().flash);
   }
 
   function watch(ms) {
@@ -294,6 +384,7 @@ export function mountSky(host, opts = {}) {
     cost.length = 0;
     if (avg <= SLOW_MS) return;
     slow = true;
+    draw(0); // the still frame: no half-fallen particles left frozen
     o.onMode?.('still');
   }
 
@@ -323,7 +414,7 @@ export function mountSky(host, opts = {}) {
   }
 
   const onVisible = () => (document.hidden ? stop() : start());
-  const onTheme = () => { if (o.dark === undefined) { st.dark = darkMq.matches; paintBackground(); start(); } };
+  const onTheme = () => { if (o.dark === undefined) { st.dark = darkMq.matches; paintBackground(); seed(); start(); } };
   const onCalm = () => { o.onMode?.(mode()); start(); };
   const onFocus = () => { if (moving() && timer) { clearTimeout(timer); timer = 0; raf = requestAnimationFrame(frame); } };
   const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => resize()) : null;
