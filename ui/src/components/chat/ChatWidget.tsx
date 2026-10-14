@@ -22,12 +22,15 @@ export interface ChatWidgetProps {
   sessionId?: string | null;
   projectRoot?: string;
   mode?: 'full' | 'compact' | 'mobile';
+  /** Sit flush in the shell rather than as a card (ChatPanel `flush`). */
+  flush?: boolean;
 }
 
 export const ChatWidget: React.FC<ChatWidgetProps> = ({
   sessionId,
   projectRoot,
   mode,
+  flush,
 }) => {
   // --- Stores ---
   const displayMessages = useChatStore((s) => s.displayMessages);
@@ -143,6 +146,7 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
       tokensPerSec={tokensPerSec}
       onSwitchModel={switchModel}
       mobile={mode === 'mobile'}
+      flush={flush}
       scrollToBottom={scrollToBottom}
       showScrollButton={showScrollButton}
     />

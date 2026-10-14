@@ -82,8 +82,8 @@ const INKS = {
     dark: { front: 'rgba(200,215,235,0.5)', back: 'rgba(185,200,218,0.13)', flake: 'rgba(225,232,242,0.8)', flakeBack: 'rgba(225,232,242,0.45)', rim: null, width: 1.4, flash: 0.14 },
   },
   overlay: {
-    light: { front: 'rgba(70,92,120,0.38)', back: 'rgba(70,92,120,0.16)', flake: 'rgba(130,155,190,0.4)', flakeBack: 'rgba(130,155,190,0.2)', rim: null, width: 1, flash: 0.05, wisp: 'rgba(150,160,172,' },
-    dark: { front: 'rgba(205,218,235,0.32)', back: 'rgba(205,218,235,0.14)', flake: 'rgba(230,236,245,0.38)', flakeBack: 'rgba(230,236,245,0.18)', rim: null, width: 1, flash: 0.05, wisp: 'rgba(200,206,214,' },
+    light: { front: 'rgba(70,92,120,0.32)', back: 'rgba(70,92,120,0.14)', flake: 'rgba(130,155,190,0.36)', flakeBack: 'rgba(130,155,190,0.18)', rim: null, width: 1, flash: 0.05, wisp: 'rgba(150,160,172,' },
+    dark: { front: 'rgba(205,218,235,0.28)', back: 'rgba(205,218,235,0.12)', flake: 'rgba(230,236,245,0.32)', flakeBack: 'rgba(230,236,245,0.16)', rim: null, width: 1, flash: 0.05, wisp: 'rgba(200,206,214,' },
   },
 };
 

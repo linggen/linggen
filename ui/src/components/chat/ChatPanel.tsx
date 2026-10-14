@@ -194,6 +194,8 @@ export const ChatPanel: React.FC<{
   onSwitchModel?: (modelId: string) => void;
   tokensPerSec?: number;
   mobile?: boolean;
+  /** Sit flush in the shell (no card radius or outer border): the main UI. */
+  flush?: boolean;
   scrollToBottom?: () => void;
   showScrollButton?: boolean;
   /** Render the dedicated SubagentPane on the right (or stacked on
@@ -240,6 +242,7 @@ export const ChatPanel: React.FC<{
   onSwitchModel,
   tokensPerSec,
   mobile,
+  flush,
   scrollToBottom: scrollToBottomProp,
   showScrollButton: showScrollButtonProp,
   showSubagentPane = true,
@@ -309,7 +312,7 @@ export const ChatPanel: React.FC<{
   }, [openSubagentId, subagents]);
 
   return (
-    <section data-sky-cover className="h-full flex flex-col bg-white dark:bg-[#0f0f0f] rounded-xl border border-slate-200 dark:border-white/5 overflow-hidden min-h-0 relative">
+    <section className={cn('h-full flex flex-col bg-white dark:bg-[#0f0f0f] overflow-hidden min-h-0 relative', !flush && 'rounded-xl border border-slate-200 dark:border-white/5')}>
       <div className="px-1.5 py-1 border-b border-slate-200 dark:border-white/5 bg-slate-50/70 dark:bg-white/[0.02] space-y-1">
         {sessionId && (
           <details className="rounded-md border border-slate-200 dark:border-white/10 bg-white/80 dark:bg-black/20 px-2 py-1 text-[11px] text-slate-600 dark:text-slate-300">
