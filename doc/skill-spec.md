@@ -425,6 +425,10 @@ Skills that want to be hostable by an app shell ship a tiny `app-mode.js` that:
 
 The shell never reaches into skill DOM; it only posts these messages. Reference: `apple-shifu/scripts/app-mode.js`.
 
+The page may tell the host one thing back, by `window.parent.postMessage(msg, location.origin)` (same origin only):
+
+- `{ type: "linggen:companion", companion: "hidden" | "shown" }` — whether the app's companion body (the desktop corner's 3D figure) may show while this page is open. A page whose story has no place for her yet says `hidden`. The launcher honours it only while that page is the active tab; switching tabs, the page reloading or navigating away, or `shown` brings her back. Default is `shown`, so a page that never says it changes nothing. Say it on every change. Her voice is untouched; only the body steps aside (`doc/yinyue-spec.md` § presenter).
+
 ### Persisted UI prefs (`<skill>:ui`)
 
 App skills persist UI selections (active tab, selected playlist, time range, toggles) client-side so the user lands where they left off. Convention:

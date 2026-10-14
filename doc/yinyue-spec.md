@@ -153,6 +153,13 @@ game table other players' Yinyue are silent figures on your device (each speaks
 on her own player's device). Engine: `ServerState::yinyue_*`
 in `src/server/state.rs`; UI: `useYinyuePresenter(enabled, stage)`.
 
+An app page can also say "no body here right now" — the app-mode message
+`{type: 'linggen:companion', companion: 'hidden'}` (skill-spec § App-mode).
+While that page is the launcher's active tab the launcher itself holds her as a
+bodyless stage, so the corner draws nothing; `shown`, a tab change or the page
+going away hands her back. Her voice, if she speaks meanwhile, plays from the
+launcher with no body — the same as a `body=0` stage.
+
 ### Mute (built 2026-09-16)
 
 A person mutes her on the device they type on, to whoever they're talking to

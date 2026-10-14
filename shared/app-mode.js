@@ -9,6 +9,11 @@
 //   { type: "linggen:show-settings" }   show the settings overlay
 //   { type: "linggen:hide-settings" }   hide the settings overlay
 //
+// Protocol (skill -> shell), posted by the page to window.parent itself:
+//   { type: "linggen:companion", companion: "hidden" | "shown" }
+//     whether the companion's body may show while this page is the active
+//     tab (doc/skill-spec.md § App-mode). Default shown.
+//
 // The overlay slides over the page without unmounting it, so page state
 // survives. Esc and the close button dismiss back to the app. It loads the
 // skill's own `settings.html` (resolved against the page, not this script).

@@ -6,7 +6,7 @@
  * The desktop shell opens this view (`/?launcher=1`); apps run as kept-mounted
  * iframes so switching preserves each app's state.
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Settings } from 'lucide-react';
 import logoUrl from '../assets/logo.svg';
 import { LauncherSettings } from './LauncherSettings';
@@ -14,6 +14,7 @@ import { AccountAvatar } from '../components/AccountAvatar';
 import { SkyBackground } from '../components/SkyBackground';
 import { skillsApi } from '../lib/endpoints';
 import { appLabel } from './appLabel';
+import { useYinyuePresenter } from '../hooks/useTransport';
 import type { SkillAppConfig, SkillInfoFull } from '../types';
 
 /** A skill that is an app. */
@@ -46,6 +47,20 @@ export const LauncherApp: React.FC = () => {
   const [activeName, setActiveName] = useState<string | null>(null);
   const [opened, setOpened] = useState<string[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // What each app page last said about the companion's body (skill-spec
+  // § App-mode: `linggen:companion`). Honoured only for the active tab; a
+  // page that reloads starts again from `shown`.
+  const [companion, setCompanion] = useState<Record<string, 'hidden' | 'shown'>>({});
+  const frames = useRef(new Map<string, HTMLIFrameElement>());
+  // The active page says "no body here right now": the launcher holds her as a
+  // bodyless stage, so the desktop corner draws nothing (it is not the holder).
+  // She comes back to the corner when the page says `shown`, or the tab changes.
+  const forgetCompanion = (name: string) => setCompanion((prev) => {
+    if (!(name in prev)) return prev;
+    const { [name]: _gone, ...rest } = prev;
+    return rest;
+  });
+  useYinyuePresenter(!!activeName && companion[activeName] === 'hidden', true);
 
   // Self-fetch the app list over HTTP so the launcher doesn't depend on the
   // WebRTC page_state timing (the dev console's source).
@@ -82,6 +97,11 @@ export const LauncherApp: React.FC = () => {
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
       if (e.data && e.data.type === 'linggen:show-settings') setSettingsOpen(true);
+      if (e.data?.type === 'linggen:companion' && e.origin === window.location.origin) {
+        const name = [...frames.current].find(([, f]) => f.contentWindow === e.source)?.[0];
+        const want = e.data.companion === 'hidden' ? 'hidden' : 'shown';
+        if (name) setCompanion((prev) => (prev[name] === want ? prev : { ...prev, [name]: want }));
+      }
     };
     window.addEventListener('message', onMsg);
     return () => window.removeEventListener('message', onMsg);
@@ -153,6 +173,13 @@ export const LauncherApp: React.FC = () => {
           return (
             <iframe
               key={name}
+              ref={(f) => { if (f) frames.current.set(name, f); else frames.current.delete(name); }}
+              // The page going away (reload, navigation) takes its word with it.
+              onLoad={(e) => {
+                try {
+                  e.currentTarget.contentWindow?.addEventListener('pagehide', () => forgetCompanion(name));
+                } catch { /* not same-origin: nothing it said was honoured */ }
+              }}
               src={urlFor(a)}
               title={appLabel(a)}
               className={activeName === name ? 'absolute inset-0 w-full h-full' : 'hidden'}
