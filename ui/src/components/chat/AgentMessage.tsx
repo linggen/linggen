@@ -10,6 +10,7 @@ import { BillingRequiredBlock } from './BillingRequiredBlock';
 import { BudgetEmptyBlock } from './BudgetEmptyBlock';
 import { parseBudgetEmpty } from '../../lib/budgetEmpty';
 import { getMessagePhase, isTransientStatus, isToolStatusText } from './MessagePhase';
+import { mayBecomeSilence } from '../../lib/hiddenRows.mts';
 import { visibleMessageText } from './MessageHelpers';
 import { INTERRUPTED_RUN_TEXT } from '../../lib/interruptedRun.mts';
 import { stripEmbeddedStructuredJson, isPlanMessage, normalizeMessageTextForDedup } from '../../lib/messageUtils';
@@ -83,7 +84,10 @@ export const AgentMessage: React.FC<{
   const phase = getMessagePhase(msg);
   const contentBlocks = msg.content || [];
   const hasToolBlocks = contentBlocks.some(b => b.type === 'tool_use');
-  const isStreamingText = !!msg.liveText;
+  // Silence shows no words: a silent reply's, or text still streaming that
+  // may yet be the word itself.
+  const wordless = (text?: string) => !!msg.silent || (!!msg.isGenerating && mayBecomeSilence(text));
+  const isStreamingText = !!msg.liveText && !wordless(msg.liveText);
 
   const hasAnyActivity = hasToolBlocks ||
     (msg.activityEntries || []).some(e => !isTransientStatus(e));
@@ -94,7 +98,7 @@ export const AgentMessage: React.FC<{
   if (hasToolBlocks) {
     for (const block of contentBlocks) {
       if (block.type === 'text' && block.text) {
-        if (!isToolStatusText(block.text)) {
+        if (!isToolStatusText(block.text) && !wordless(block.text)) {
           segments.push({ kind: 'text', text: block.text });
         }
       } else if (block.type === 'tool_use') {
@@ -109,7 +113,7 @@ export const AgentMessage: React.FC<{
     // an earlier pre-tool preamble block. Gating on "no text blocks" hid that
     // answer behind the preamble; gate on "not already shown" instead.
     const msgText = visibleMessageText(msg);
-    if (msgText && !isTransientStatus(msgText) && !isToolStatusText(msgText)) {
+    if (msgText && !isTransientStatus(msgText) && !isToolStatusText(msgText) && !wordless(msgText)) {
       const shownText = segments
         .filter((s): s is { kind: 'text'; text: string } => s.kind === 'text')
         .map(s => s.text)
@@ -123,9 +127,10 @@ export const AgentMessage: React.FC<{
 
   // Plan messages store JSON in msg.text — don't sanitize or the plan JSON
   // gets stripped by stripEmbeddedStructuredJson, hiding the PlanBlock.
-  const fallbackText = !hasToolBlocks
+  const fallbackRaw = !hasToolBlocks
     ? (isPlanMessage(msg) ? (msg.text || '').trim() : visibleMessageText(msg))
     : '';
+  const fallbackText = wordless(fallbackRaw) ? '' : fallbackRaw;
 
   // An expired-OAuth turn surfaces an inline sign-in CTA, regardless of any
   // partial output the failed turn produced before the 401.

@@ -11,3 +11,10 @@ test("an engine kickoff ([HIDDEN]) is hidden, a person's words are not", () => {
   assert.equal(shouldHideInternalChatMessage('user', 'A quiet moment, I wanted to say hi'), false);
   assert.equal(shouldHideInternalChatMessage('user', 'hello'), false);
 });
+
+test('streaming text that may still be SILENT is held back; real words are not', async () => {
+  const { mayBecomeSilence, SILENT } = await import('../src/lib/hiddenRows.mts');
+  assert.equal(SILENT, 'SILENT');
+  for (const t of ['S', 'SIL', 'SILENT', ' SILENT.', 'silent']) assert.equal(mayBecomeSilence(t), true, t);
+  for (const t of ['', 'Sure', 'Silent night', 'Good evening']) assert.equal(mayBecomeSilence(t), false, t);
+});

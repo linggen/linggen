@@ -209,6 +209,8 @@ export const ChatMessageList = React.memo<{
         const i = from + j;
         // Skip hidden system messages (used by app skills for internal prompts)
         if (msg.role === 'user' && msg.text.startsWith('[HIDDEN]')) return null;
+        // A silent reply with no calls to show is no row at all.
+        if (msg.silent && !(msg.content || []).some((b) => b.type === 'tool_use')) return null;
         const key = `${msg.timestamp}-${i}-${msg.from || msg.role}-${msg.text.slice(0, 24)}`;
         if (msg.via) return <HandOffRow key={key} msg={msg} />;
         const isUser = msg.role === 'user';

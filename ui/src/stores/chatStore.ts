@@ -74,6 +74,8 @@ interface ChatState {
    *  the bubble takes the kept words. False when no bubble has that id. */
   confirmSent: (clientId: string, text: string, to: string) => boolean;
   finalizeOnIdle: (agentId: string, elapsed?: number, ctxTokens?: number) => void;
+  /** The agent's latest row was the spoken contract's silence. */
+  markLastSilent: (agentId: string) => void;
   contentBlockStart: (agentId: string, block: ContentBlock) => void;
   contentBlockUpdate: (agentId: string, blockId: string, status?: ContentBlock['status'], summary?: string, isError?: boolean, diffData?: ContentBlock['diffData'], bashOutput?: string[]) => void;
   toolProgress: (agentId: string, line: string) => void;
@@ -411,6 +413,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
     return found;
   },
+
+  markLastSilent: (agentId) => set(mutate((state) => {
+    const idx = state.map((m) => m.from).lastIndexOf(agentId);
+    if (idx < 0) return state;
+    const next = [...state];
+    next[idx] = { ...next[idx], silent: true, text: '', liveText: undefined };
+    return next;
+  })),
 
   finalizeOnIdle: (agentId, elapsed, ctxTokens) => set(mutate((state) => {
     const idx = findLastGeneratingMessageIndex(state, agentId);

@@ -36,7 +36,7 @@ pub use ambient::yinyue_ambient_loop;
 pub(crate) use session_roll::is_own_session;
 use session_roll::*;
 use spoken::*;
-pub(crate) use spoken::{is_engine_prompt, speak_reply};
+pub(crate) use spoken::{is_engine_prompt, is_silent_reply, speak_reply};
 pub use triggers::yinyue_watch_loop;
 pub(crate) use triggers::{wake_for_moment, wake_herald};
 pub(crate) use turn::run_yinyue_turn;

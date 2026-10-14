@@ -11,4 +11,9 @@ client_id?: string,
 /**
  * A hand-off: the device the user's task continues from.
  */
-via?: string, via_note?: string, };
+via?: string, via_note?: string, 
+/**
+ * An agent's reply that is the spoken contract's silence
+ * (`resident::is_silent_reply`): the chat shows no words for it.
+ */
+silent?: boolean, };

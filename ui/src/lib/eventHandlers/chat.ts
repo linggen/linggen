@@ -170,6 +170,15 @@ export function handleMessage(item: UiEventOf<'message'>): void {
   const sid = getSessionId(item);
   const { elapsed: msgElapsed, contextTokens: msgCtxTokens } = sid ? agentTracker.clearRun(sid) : {};
 
+  // The contract's silence: the turn ends with no words — its bubble keeps
+  // its calls and is marked, and a turn with no bubble on screen adds none.
+  if (from !== 'user' && item.data?.silent) {
+    if (!chatStore.messages.some((m) => m.from === from && m.isGenerating)) return;
+    chatStore.finalizeMessage(from, '', to, tsMs, msgElapsed, msgCtxTokens);
+    chatStore.markLastSilent(from);
+    return;
+  }
+
   const isError = from !== 'user' && content.startsWith('Error:');
   chatStore.finalizeMessage(from, content, to, tsMs, msgElapsed, msgCtxTokens, isError || undefined,
     from === 'user' && item.data?.via ? String(item.data.via) : undefined,

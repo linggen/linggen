@@ -16,3 +16,16 @@ export const shouldHideInternalChatMessage = (_from?: string, text?: string): bo
   if (text.startsWith('Delegated task:')) return true;
   return false;
 };
+
+// The spoken contract's word for "say nothing" — the engine's
+// `resident::spoken::SILENT`, mirrored here (a Rust test locks the two).
+// The engine marks a silent reply (`silent` on its message event, and leaves
+// its word out of history); this word only keeps it from streaming in first.
+export const SILENT = 'SILENT';
+
+/** Text that, streaming, may still turn out to be the contract's silence —
+ *  held back until it says otherwise. */
+export const mayBecomeSilence = (text?: string): boolean => {
+  const t = (text || '').trim().replace(/[.!…]+$/, '').toUpperCase();
+  return t.length > 0 && SILENT.startsWith(t);
+};

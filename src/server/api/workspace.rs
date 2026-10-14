@@ -327,7 +327,15 @@ pub(crate) async fn get_workspace_state(
             if crate::server::resident::is_engine_prompt(&m.from_id, &m.content) {
                 return None;
             }
-            let cleaned = sanitize_message_for_ui(&m.from_id, &m.content)?;
+            // Silence keeps its calls, never its word.
+            let silent = crate::server::resident::is_silent_reply(&m.from_id, &m.content);
+            if silent && calls.is_empty() {
+                return None;
+            }
+            let cleaned = match silent {
+                true => String::new(),
+                false => sanitize_message_for_ui(&m.from_id, &m.content)?,
+            };
             let meta = crate::state_fs::StateFile::Message {
                 id: format!("msg-{}", m.timestamp),
                 from: m.from_id,

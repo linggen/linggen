@@ -96,6 +96,9 @@ export interface ChatMessage {
   content?: ContentBlock[];
   /** True when the message represents an error (agent loop failure, etc.). */
   isError?: boolean;
+  /** The reply was the spoken contract's silence: no words show, its tool
+   *  calls may. */
+  silent?: boolean;
   /** On a "Message failed to send" line: what was sent, so a tap can resend it. */
   resend?: { text: string; agentId: string; images?: string[]; persisted?: boolean; clientId?: string };
   /** A run that ended without a reply: its tool calls, then a short note. */

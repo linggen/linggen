@@ -163,8 +163,17 @@ pub(crate) async fn get_skill_session_state(
             {
                 return None;
             }
-            let cleaned =
-                crate::engine::tool_render::sanitize_message_for_ui(&m.from_id, &m.content)?;
+            // Silence keeps its calls, never its word.
+            let silent = crate::server::resident::is_silent_reply(&m.from_id, &m.content);
+            if silent && calls.is_empty() {
+                return None;
+            }
+            let cleaned = match silent {
+                true => String::new(),
+                false => {
+                    crate::engine::tool_render::sanitize_message_for_ui(&m.from_id, &m.content)?
+                }
+            };
             let meta = serde_json::json!({
                 "id": format!("msg-{}", m.timestamp),
                 "from": m.from_id,

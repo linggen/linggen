@@ -8,9 +8,22 @@
 pub(crate) const SPOKEN_CONTRACT: &str =
     "If you need to think first, do it above a blank line: only your \
     final paragraph is spoken aloud, the rest is discarded.";
+/// The word a reply under the contract says nothing with.
+macro_rules! silent_word {
+    () => {
+        "SILENT"
+    };
+}
+/// The spoken contract's word for "say nothing": a reply whose final
+/// paragraph is this word is silence — never spoken, never a chat bubble.
+/// The web UI mirrors it (`ui/src/lib/hiddenRows.mts`, locked by a test).
+pub(crate) const SILENT: &str = silent_word!();
 /// What an unasked kickoff adds: silence is an answer.
-pub(super) const SILENT_CLAUSE: &str =
-    "If nothing is worth saying, make that final paragraph exactly SILENT.";
+pub(super) const SILENT_CLAUSE: &str = concat!(
+    "If nothing is worth saying, make that final paragraph exactly ",
+    silent_word!(),
+    "."
+);
 
 /// The marker on a prompt the engine wrote: kept for the model, never shown
 /// as anyone's words (`doc/chat-spec.md`, hidden rows).
@@ -72,10 +85,9 @@ pub(crate) fn spoken_line(reply: &str) -> Option<String> {
         }
     }
 
-    let is_punct = |c: char| c.is_ascii_punctuation() || c == '\u{2026}';
     let core = line.trim_end_matches(is_punct);
     let last_word = core.split_whitespace().last().unwrap_or("");
-    if core.eq_ignore_ascii_case("silent") || last_word.trim_end_matches(is_punct) == "SILENT" {
+    if is_silence(core) || last_word.trim_end_matches(is_punct) == SILENT {
         return None;
     }
     if notes > 0 {
@@ -84,6 +96,34 @@ pub(crate) fn spoken_line(reply: &str) -> Option<String> {
         );
     }
     Some(line)
+}
+
+fn is_punct(c: char) -> bool {
+    c.is_ascii_punctuation() || c == '\u{2026}'
+}
+
+/// One paragraph that is the contract's silence: the word alone, any case,
+/// trailing punctuation aside.
+fn is_silence(paragraph: &str) -> bool {
+    paragraph
+        .trim()
+        .trim_end_matches(is_punct)
+        .eq_ignore_ascii_case(SILENT)
+}
+
+/// An agent's reply that is silence: its whole final paragraph is the
+/// contract's [`SILENT`]. Nothing was said — the chat shows no words for it
+/// (its tool calls may stay). A person's message is never one.
+pub(crate) fn is_silent_reply(from_id: &str, content: &str) -> bool {
+    if from_id == "user" || from_id == "system" {
+        return false;
+    }
+    content
+        .split("\n\n")
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .last()
+        .is_some_and(is_silence)
 }
 
 /// Say her reply aloud: its spoken line, when it has one (not SILENT).
@@ -128,6 +168,28 @@ mod tests {
             "user",
             &with_contract("hello".into(), "user")
         ));
+    }
+
+    #[test]
+    fn a_silent_reply_is_its_whole_final_paragraph() {
+        use super::is_silent_reply;
+        assert!(is_silent_reply("yinyue", "SILENT"));
+        assert!(is_silent_reply("ling", "  SILENT.\n"));
+        assert!(is_silent_reply("yinyue", "Let me think.\n\nSILENT"));
+        assert!(!is_silent_reply(
+            "yinyue",
+            "It is quiet. SILENT is my answer?"
+        ));
+        assert!(!is_silent_reply("yinyue", "Silent night tonight."));
+        assert!(!is_silent_reply("user", "SILENT"));
+        assert!(super::SILENT_CLAUSE.ends_with("exactly SILENT."));
+    }
+
+    #[test]
+    fn the_web_ui_mirrors_the_silent_word() {
+        let ui = include_str!("../../../ui/src/lib/hiddenRows.mts");
+        let mirror = format!("export const SILENT = '{}';", super::SILENT);
+        assert!(ui.contains(&mirror), "hiddenRows.mts must declare {mirror}");
     }
 
     #[test]

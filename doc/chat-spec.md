@@ -178,6 +178,13 @@ A session is a single conversation thread scoped to a project. Each session has 
   agent (a page's report, Yinyue's heralds and ambient moments) is saved with
   `from_id: "user"` and a `[HIDDEN]` prefix; the history views and the live
   handler drop it (`resident::is_engine_prompt`, `ui/src/lib/hiddenRows.mts`).
+- **Silence is never a bubble**: an agent reply whose whole final paragraph is
+  the spoken contract's `SILENT` (`resident::spoken::SILENT`,
+  `is_silent_reply`) shows no words. History drops the row, or keeps it with
+  an empty body when it carries tool calls; the live `message` event carries
+  `silent: true` and the bubble keeps only its calls. While text streams, the
+  UI holds back text that may still become the word (`hiddenRows.mts` mirrors
+  it; a Rust test locks the two).
 
 ### Multi-session architecture
 

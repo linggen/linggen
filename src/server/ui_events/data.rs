@@ -33,6 +33,11 @@ pub(super) struct MessageData {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub via_note: Option<String>,
+    /// An agent's reply that is the spoken contract's silence
+    /// (`resident::is_silent_reply`): the chat shows no words for it.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    #[cfg_attr(test, ts(optional = nullable))]
+    pub silent: bool,
 }
 
 /// `token` carrying a reasoning token.
