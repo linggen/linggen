@@ -1,10 +1,7 @@
 /**
- * How the shell wears the live sky — pure, so it is tested without a page.
- * `glass`: the sky moves behind frosted panels; `solid`: a still sky with
- * opaque panels (reduced motion, no backdrop-filter, a slow machine); null:
- * no sky (turned off in Settings, or no weather known).
+ * The shell's sky, pure so it is tested without a page: which weather to
+ * draw, and the place line Settings shows.
  */
-export type SkyMode = 'glass' | 'solid' | null;
 
 export interface Sky {
   kind: string;
@@ -25,12 +22,6 @@ export function skyOfView(view: { reading?: { kind?: string; is_day?: boolean } 
   const r = view?.reading;
   if (!r?.kind || !SKY_KINDS.includes(r.kind)) return null;
   return { kind: r.kind, is_day: r.is_day !== false };
-}
-
-export function skyMode(o: { enabled: boolean; sky: Sky | null; frost: boolean; still: boolean }): SkyMode {
-  if (!o.enabled || !o.sky) return null;
-  if (o.still || !o.frost) return 'solid';
-  return 'glass';
 }
 
 /** The place line in Settings: "Halifax, CA · automatic". */

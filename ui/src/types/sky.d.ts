@@ -16,9 +16,9 @@ declare module '@linggen/sky' {
     still?: boolean;
     auto?: boolean;
     cover?: () => DOMRect[];
+    overlay?: boolean;
     onMode?: (mode: 'motion' | 'still') => void;
   }
   export const KINDS: string[];
   export function mountSky(host: HTMLElement, opts?: SkyOptions): SkyHandle;
-  export function canFrost(): boolean;
 }

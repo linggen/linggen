@@ -12,7 +12,6 @@ import { AgentMessage } from './AgentMessage';
 import { MemoryRecallMessage } from './MemoryRecallMessage';
 import { CompactionMessage } from './CompactionMessage';
 import { showsInterruptedNote } from '../../lib/interruptedRun.mts';
-import { SkyWindow } from '../SkyBackground';
 
 /** Plumbing rows — context, not a speaker, so never labelled. */
 const UNSPOKEN = UNSPOKEN_SENDERS;
@@ -186,8 +185,7 @@ export const ChatMessageList = React.memo<{
   return (
     <>
       {messages.length === 0 && (
-        <div className="self-center mt-12 max-w-md w-full text-center">
-          <SkyWindow />
+        <div className="self-center mt-12 max-w-md text-center">
           <div className="text-sm font-semibold text-slate-600 dark:text-slate-300">
             {skillChat ? 'No messages yet' : `No messages for ${selectedAgent}`}
           </div>

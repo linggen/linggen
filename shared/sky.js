@@ -1,7 +1,14 @@
-// sky.js — the live weather as a page's background, one painter for the main
-// UI and any skill page that opts in (served at /shared/sky.js; the UI bundles
-// this same file). Draws clear · cloudy · fog · rain · snow · storm, day and
-// night, for a light or a dark page.
+// sky.js — the live weather on a page, one painter for the main UI and any
+// skill page that opts in (served at /shared/sky.js; the UI bundles this same
+// file). Draws clear · cloudy · fog · rain · snow · storm, day and night, for
+// a light or a dark page. Two looks:
+//   - background (default): a sky gradient with the weather in it, behind
+//     the page's content;
+//   - `overlay: true`: only the falling weather — thin streaks, soft flakes,
+//     edge wisps of fog — over the content, no fill or tint at all, so text
+//     under it reads as before. Clear and cloudy draw nothing; no lightning
+//     unless `lightning: true` (then a short, faint flash, never a white-out).
+//     Reduced motion draws nothing.
 //
 //   import { mountSky } from '/shared/sky.js';
 //   const sky = mountSky(el, { auto: true });   // follows /api/senses/weather
@@ -27,7 +34,7 @@ const SKIES = {
   light: {
     day: {
       clear: ['#8fc3e8', '#dcecf7'], cloudy: ['#aab7c3', '#e1e7ec'], fog: ['#c3c9cd', '#e9ebea'],
-      rain: ['#8c99a6', '#c2cbd3'], snow: ['#b9c5d0', '#e8edf1'], storm: ['#7f8d9b', '#aeb8c1'],
+      rain: ['#8c99a6', '#c2cbd3'], snow: ['#a9b7c4', '#dde3e9'], storm: ['#7f8d9b', '#aeb8c1'],
     },
     night: {
       clear: ['#7d8fae', '#b9c4d6'], cloudy: ['#8c96a3', '#bcc3cc'], fog: ['#9da3a9', '#c8ccce'],
@@ -51,9 +58,33 @@ const PLAN = {
   clear: { day: [0, 0], night: [40, 0], fps: 12 },
   cloudy: { clouds: 5, fps: 12 },
   fog: { fog: 4, fps: 12 },
-  rain: { drops: [46, 16], fps: 30 },
-  storm: { drops: [78, 24], clouds: 4, fps: 30, flash: true },
-  snow: { flakes: [42, 16], fps: 30 },
+  rain: { drops: [70, 16], fps: 30 },
+  storm: { drops: [110, 24], clouds: 4, fps: 30, flash: true },
+  snow: { flakes: [60, 16], fps: 30 },
+};
+
+/* The overlay's lighter plan: fewer particles, nothing for clear skies. */
+const OVERLAY_PLAN = {
+  clear: { fps: 12 },
+  cloudy: { fps: 12 },
+  fog: { wisps: 2, fps: 12 },
+  rain: { drops: [40, 12], fps: 30 },
+  storm: { drops: [62, 16], fps: 30, flash: true },
+  snow: { flakes: [48, 12], fps: 30 },
+};
+
+/* Inks by look and page theme. Background: the front reads at a glance in
+   the open sky, the back (behind panels) stays faint. Overlay: everything
+   low (≤ 0.4) and thin, over the page's own colours. */
+const INKS = {
+  background: {
+    light: { front: 'rgba(40,55,75,0.6)', back: 'rgba(58,76,96,0.16)', flake: 'rgba(255,255,255,0.95)', flakeBack: 'rgba(255,255,255,0.55)', rim: 'rgba(80,100,122,0.55)', width: 1.4, flash: 0.3 },
+    dark: { front: 'rgba(200,215,235,0.5)', back: 'rgba(185,200,218,0.13)', flake: 'rgba(225,232,242,0.8)', flakeBack: 'rgba(225,232,242,0.45)', rim: null, width: 1.4, flash: 0.14 },
+  },
+  overlay: {
+    light: { front: 'rgba(70,92,120,0.38)', back: 'rgba(70,92,120,0.16)', flake: 'rgba(130,155,190,0.4)', flakeBack: 'rgba(130,155,190,0.2)', rim: null, width: 1, flash: 0.05, wisp: 'rgba(150,160,172,' },
+    dark: { front: 'rgba(205,218,235,0.32)', back: 'rgba(205,218,235,0.14)', flake: 'rgba(230,236,245,0.38)', flakeBack: 'rgba(230,236,245,0.18)', rim: null, width: 1, flash: 0.05, wisp: 'rgba(200,206,214,' },
+  },
 };
 
 const BLUR_FPS = 6;
@@ -70,22 +101,19 @@ export function skyOf(view) {
   return { kind: r.kind, is_day: r.is_day !== false };
 }
 
-/** Whether the browser can frost a panel over the sky. */
-export const canFrost = () =>
-  typeof CSS !== 'undefined' && (CSS.supports('backdrop-filter', 'blur(2px)') || CSS.supports('-webkit-backdrop-filter', 'blur(2px)'));
-
 export function mountSky(host, opts = {}) {
-  const o = { lightning: true, density: 1, cover: null, still: false, auto: false, onMode: null, ...opts };
+  const o = { lightning: !opts.overlay, density: 1, cover: null, still: false, auto: false, onMode: null, overlay: false, ...opts };
+  const look = o.overlay ? 'overlay' : 'background';
   const canvas = document.createElement('canvas');
   canvas.setAttribute('aria-hidden', 'true');
   const page = host === document.body || host === document.documentElement;
   Object.assign(canvas.style, {
     position: page ? 'fixed' : 'absolute', inset: '0', width: '100%', height: '100%',
-    pointerEvents: 'none', zIndex: page ? '-1' : '0', display: 'block',
+    pointerEvents: 'none', zIndex: o.overlay ? '2147483000' : page ? '-1' : '0', display: 'block',
   });
   if (!page && getComputedStyle(host).position === 'static') host.style.position = 'relative';
   host.prepend(canvas);
-  const ctx = canvas.getContext('2d', { alpha: false });
+  const ctx = canvas.getContext('2d', { alpha: o.overlay });
   const darkMq = matchMedia('(prefers-color-scheme: dark)');
   const calmMq = matchMedia('(prefers-reduced-motion: reduce)');
 
@@ -95,11 +123,12 @@ export function mountSky(host, opts = {}) {
   const cost = [];
 
   const theme = () => SKIES[st.dark ? 'dark' : 'light'][st.day ? 'day' : 'night'];
-  const plan = () => PLAN[st.kind] ?? PLAN.clear;
+  const plan = () => (o.overlay ? OVERLAY_PLAN : PLAN)[st.kind] ?? PLAN.clear;
   const still = () => o.still || slow || calmMq.matches;
   const mode = () => (still() ? 'still' : 'motion');
 
   function paintBackground() {
+    if (o.overlay) return;
     bg = document.createElement('canvas');
     bg.width = W; bg.height = H;
     const g = bg.getContext('2d');
@@ -121,22 +150,23 @@ export function mountSky(host, opts = {}) {
     const p = plan(), k = Math.min(1.5, Math.max(0.4, (W * H) / AREA)) * o.density;
     const n = (pair, i) => Math.round((pair?.[i] ?? 0) * k);
     const make = (count, maker, depth) => Array.from({ length: count }, () => maker(depth));
-    const drop = (d) => ({ x: rnd(0, W), y: rnd(-H, H), v: rnd(520, 780) * d, len: rnd(10, 20) * d });
-    const flake = (d) => ({ x: rnd(0, W), y: rnd(-H, H), v: rnd(26, 60) * d, r: rnd(1, 2.6) * (0.6 + d * 0.4), ph: rnd(0, 6.3) });
+    const drop = (d) => ({ x: rnd(0, W), y: rnd(-H, H), v: rnd(520, 780) * d, len: rnd(14, 28) * d });
+    const flake = (d) => ({ x: rnd(0, W), y: rnd(-H, H), v: rnd(26, 60) * d, r: rnd(1.6, 3.4) * (0.6 + d * 0.4), ph: rnd(0, 6.3) });
     const star = () => ({ x: rnd(0, W), y: rnd(0, H * 0.6), r: rnd(0.6, 1.4), ph: rnd(0, 6.3) });
     const cloud = () => ({ x: rnd(-0.3, 1) * W, y: rnd(0, 0.45) * H, s: rnd(0.7, 1.4), v: rnd(4, 9) });
     front = []; back = []; clouds = [];
     if (p.drops) { front = make(n(p.drops, 0), drop, 1); back = make(n(p.drops, 1), drop, 0.6); }
     if (p.flakes) { front = make(n(p.flakes, 0), flake, 1); back = make(n(p.flakes, 1), flake, 0.6); }
-    if (st.kind === 'clear' && !st.day) front = make(n(p.night, 0), star, 1);
+    if (p.night && !st.day) front = make(n(p.night, 0), star, 1);
     const blobs = p.clouds ?? p.fog ?? 0;
     clouds = Array.from({ length: blobs }, cloud);
+    if (p.wisps) clouds = Array.from({ length: p.wisps }, (_, i) => ({ side: i % 2, y: rnd(0.15, 0.7) * H, ph: rnd(0, 6.3) }));
   }
 
   function resize() {
     const w = Math.max(1, Math.round(host.clientWidth || innerWidth));
     const h = Math.max(1, Math.round(host.clientHeight || innerHeight));
-    if (w === W && h === H && bg) return;
+    if (w === W && h === H) return;
     W = canvas.width = w; H = canvas.height = h;
     paintBackground(); seed(); coversAt = 0; draw(0);
   }
@@ -158,20 +188,22 @@ export function mountSky(host, opts = {}) {
     ctx.clip('evenodd');
   }
 
-  const ink = (a) => (st.dark ? `rgba(185,200,218,${a * 0.8})` : `rgba(58,76,96,${a})`);
-  const snowInk = (a) => (st.dark ? `rgba(220,230,242,${a * 0.6})` : `rgba(255,255,255,${a})`);
+  /* Inks by layer: the front reads at a glance in the open sky (dark streaks
+     on a light page, pale on a dark one); the back, behind panels, stays
+     faint — the panels' contrast is measured against it. */
+  const ink = () => INKS[look][st.dark ? 'dark' : 'light'];
 
-  function rain(list, dt, a) {
+  function rain(list, dt, color, width) {
     ctx.beginPath();
     for (const d of list) {
       d.y += d.v * dt; d.x -= d.v * dt * 0.12;
       if (d.y > H) { d.y = rnd(-40, -10); d.x = rnd(0, W * 1.1); }
       ctx.moveTo(d.x, d.y); ctx.lineTo(d.x - d.len * 0.12, d.y + d.len);
     }
-    ctx.strokeStyle = ink(a); ctx.lineWidth = 1; ctx.stroke();
+    ctx.strokeStyle = color; ctx.lineWidth = width; ctx.stroke();
   }
 
-  function snow(list, dt, t, a) {
+  function snow(list, dt, t, color, rim) {
     ctx.beginPath();
     for (const f of list) {
       f.y += f.v * dt;
@@ -179,7 +211,8 @@ export function mountSky(host, opts = {}) {
       const x = f.x + Math.sin(t / 1400 + f.ph) * 12;
       ctx.moveTo(x + f.r, f.y); ctx.arc(x, f.y, f.r, 0, 6.2832);
     }
-    ctx.fillStyle = snowInk(a); ctx.fill();
+    ctx.fillStyle = color; ctx.fill();
+    if (rim) { ctx.strokeStyle = rim; ctx.lineWidth = 0.8; ctx.stroke(); }
   }
 
   function stars(list, t) {
@@ -190,7 +223,20 @@ export function mountSky(host, opts = {}) {
     }
   }
 
-  function blobs(dt) {
+  /* Overlay fog: a faint wisp breathing at each edge, never over the middle. */
+  function wisps(t) {
+    const w = Math.min(W * 0.22, 320), shade = ink().wisp;
+    for (const c of clouds) {
+      const a = 0.05 + 0.03 * Math.sin(t / 5000 + c.ph);
+      const x = c.side ? W : 0;
+      const g = ctx.createRadialGradient(x, c.y, 0, x, c.y, w);
+      g.addColorStop(0, `${shade}${a})`); g.addColorStop(1, `${shade}0)`);
+      ctx.fillStyle = g; ctx.fillRect(x - w, c.y - w, w * 2, w * 2);
+    }
+  }
+
+  function blobs(dt, t) {
+    if (o.overlay) return wisps(t);
     const fog = st.kind === 'fog';
     const shade = st.dark ? (fog ? 'rgba(150,158,165,' : 'rgba(110,120,132,') : (st.kind === 'storm' ? 'rgba(95,105,118,' : 'rgba(255,255,255,');
     const a = st.dark ? 0.1 : fog ? 0.5 : 0.42;
@@ -212,23 +258,26 @@ export function mountSky(host, opts = {}) {
     if (!nextFlash) nextFlash = t + rnd(6000, 16000);
     if (t > nextFlash) { flash = 1; nextFlash = t + rnd(7000, 18000); }
     if (flash <= 0.02) return;
-    ctx.fillStyle = `rgba(235,240,255,${flash * (st.dark ? 0.14 : 0.3)})`;
+    ctx.fillStyle = `rgba(235,240,255,${flash * ink().flash})`;
     ctx.fillRect(0, 0, W, H);
-    flash *= 0.8;
+    flash *= o.overlay ? 0.6 : 0.8;
   }
 
   function draw(dt, t = performance.now()) {
-    if (!bg) return;
+    if (o.overlay) ctx.clearRect(0, 0, W, H);
+    else if (bg) ctx.drawImage(bg, 0, 0);
+    else return;
+    if (o.overlay && still()) return; // reduced motion: no overlay at all
     readCovers(t);
-    ctx.drawImage(bg, 0, 0);
-    blobs(dt);
+    blobs(dt, t);
     const kind = st.kind;
-    if (kind === 'rain' || kind === 'storm') rain(back, dt, 0.16);
-    if (kind === 'snow') snow(back, dt, t, 0.55);
+    const k = ink();
+    if (kind === 'rain' || kind === 'storm') rain(back, dt, k.back, 1);
+    if (kind === 'snow') snow(back, dt, t, k.flakeBack, null);
     ctx.save();
     clipOutCovers();
-    if (kind === 'rain' || kind === 'storm') rain(front, dt, kind === 'storm' ? 0.36 : 0.3);
-    if (kind === 'snow') snow(front, dt, t, 0.9);
+    if (kind === 'rain' || kind === 'storm') rain(front, dt, k.front, k.width);
+    if (kind === 'snow') snow(front, dt, t, k.flake, k.rim);
     if (kind === 'clear') stars(front, t);
     lightning(t);
     ctx.restore();
@@ -305,7 +354,7 @@ export function mountSky(host, opts = {}) {
     set(next) {
       const kind = KINDS.includes(next?.kind) ? next.kind : st.kind;
       const day = next?.is_day !== false;
-      if (kind === st.kind && day === st.day && bg) return;
+      if (kind === st.kind && day === st.day && W) return;
       st.kind = kind; st.day = day; nextFlash = 0;
       paintBackground(); seed(); start();
     },

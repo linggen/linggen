@@ -3,6 +3,7 @@
  * the weather sense's view (`/api/senses/weather`, the engine's — the place,
  * automatic or typed, and the last reading).
  */
+import { useEffect } from 'react';
 import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 import { ApiError, apiGet, apiPut } from '../lib/api';
@@ -67,3 +68,25 @@ export const useSkyStore = create<SkyState>((set) => {
 /** The sky to draw: the override, else the reading. */
 export const useSky = (): Sky | null =>
   useSkyStore(useShallow((s) => s.force ?? skyOfView(s.view)));
+
+const POLL_MS = 10 * 60 * 1000;
+let pollers = 0;
+let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+/** Keep the weather view current while the page is visible — one poll for
+ *  the page however many surfaces (the sky, the top-bar chip) ask. */
+export function useWeatherPoll() {
+  useEffect(() => {
+    pollers += 1;
+    if (pollers === 1) {
+      useSkyStore.getState().load();
+      pollTimer = setInterval(() => { if (!document.hidden) useSkyStore.getState().load(); }, POLL_MS);
+    }
+    return () => {
+      pollers -= 1;
+      if (pollers > 0 || !pollTimer) return;
+      clearInterval(pollTimer);
+      pollTimer = null;
+    };
+  }, []);
+}

@@ -11,7 +11,7 @@ import { Settings } from 'lucide-react';
 import logoUrl from '../assets/logo.svg';
 import { LauncherSettings } from './LauncherSettings';
 import { AccountAvatar } from '../components/AccountAvatar';
-import { SkyBackground } from '../components/SkyBackground';
+import { WeatherChip } from '../components/WeatherChip';
 import { skillsApi } from '../lib/endpoints';
 import { appLabel } from './appLabel';
 import { useYinyuePresenter } from '../hooks/useTransport';
@@ -46,7 +46,8 @@ export const LauncherApp: React.FC = () => {
   const [apps, setApps] = useState<AppSkill[]>([]);
   const [activeName, setActiveName] = useState<string | null>(null);
   const [opened, setOpened] = useState<string[]>([]);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  // true, or the section to open on (the weather chip opens General).
+  const [settingsOpen, setSettingsOpen] = useState<boolean | string>(false);
   // What each app page last said about the companion's body (skill-spec
   // § App-mode: `linggen:companion`). Honoured only for the active tab; a
   // page that reloads starts again from `shown`.
@@ -119,10 +120,9 @@ export const LauncherApp: React.FC = () => {
   const urlFor = (a: AppSkill) => `/apps/${a.name}/${a.app.entry}?app_mode=1&in_launcher=1`;
 
   return (
-    <div className="sky-page flex flex-col h-screen bg-white dark:bg-[#0a0a0a] text-slate-900 dark:text-slate-200 overflow-hidden">
-      <SkyBackground />
+    <div className="flex flex-col h-screen bg-white dark:bg-[#0a0a0a] text-slate-900 dark:text-slate-200 overflow-hidden">
       {/* Top bar: brand + app tabview */}
-      <header className="sky-bar flex items-center gap-3 px-3 h-11 shrink-0 border-b border-slate-200 dark:border-white/10 bg-white dark:bg-[#0f0f0f]">
+      <header className="flex items-center gap-3 px-3 h-11 shrink-0 border-b border-slate-200 dark:border-white/10 bg-white dark:bg-[#0f0f0f]">
         <div className="flex items-center gap-2 shrink-0">
           <img src={logoUrl} alt="Linggen" className="w-6 h-6" />
           <span className="text-sm font-bold tracking-tight text-slate-900 dark:text-white">Linggen</span>
@@ -149,6 +149,7 @@ export const LauncherApp: React.FC = () => {
           {/* Billing account the daemon spends from — always visible.
               Remounts when Settings closes so a sign in/out done there
               reflects immediately. */}
+          <WeatherChip onOpen={() => setSettingsOpen('general')} />
           <AccountAvatar key={String(settingsOpen)} onManage={() => setSettingsOpen(true)} />
           <button
             onClick={() => setSettingsOpen(true)}
@@ -161,7 +162,7 @@ export const LauncherApp: React.FC = () => {
       </header>
 
       {/* Body: each opened app kept mounted; only the active one is visible. */}
-      <div className="flex-1 relative min-h-0 bg-white dark:bg-[#0a0a0a]">
+      <div className="flex-1 relative min-h-0">
         {apps.length === 0 && (
           <div className="absolute inset-0 flex items-center justify-center text-sm text-slate-400">
             Loading apps…
@@ -190,7 +191,7 @@ export const LauncherApp: React.FC = () => {
         })}
       </div>
 
-      {settingsOpen && <LauncherSettings onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <LauncherSettings initial={settingsOpen === true ? undefined : settingsOpen} onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 };

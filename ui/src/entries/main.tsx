@@ -29,7 +29,7 @@ import { BareChat } from '../pages/Bare/BareChat';
 import { BareSessions } from '../pages/Bare/BareSessions';
 import { BareInfoPanel } from '../pages/Bare/BareInfoPanel';
 import { ErrorBoundary } from '../components/ErrorBoundary';
-import { SkyBackground } from '../components/SkyBackground';
+import { SkyOverlay } from '../components/SkyOverlay';
 import { useUiStore } from '../stores/uiStore';
 import { useSessionStore } from '../stores/sessionStore';
 import { useTransport, sendViewContext } from '../hooks/useTransport';
@@ -116,7 +116,7 @@ const Root: React.FC = () => {
 
   return (
     <>
-      {!isBareRoute && <SkyBackground />}
+      {!isBareRoute && <SkyOverlay />}
       {!isBareRoute && <MainApp />}
       <Routes>
         <Route path="/settings" element={<Suspense fallback={<PageFallback />}><SettingsHome /></Suspense>} />

@@ -6,6 +6,7 @@ import { useOpenSettings } from '../hooks/useOpenSettings';
 import { AccountAvatar } from './AccountAvatar';
 import logoUrl from '../assets/logo.svg';
 import { roomApi } from './room/roomApi';
+import { WeatherChip } from './WeatherChip';
 
 /** Remote/tunnel mode — the UI reached this daemon via the relay. */
 const isRemoteUi = typeof document !== 'undefined' && !!document.querySelector('meta[name="linggen-instance"]');
@@ -120,7 +121,7 @@ export const HeaderBar: React.FC<{
   }, [userType, connectionStatus]);
 
   return (
-    <header className="sky-bar flex items-center justify-between px-4 md:px-6 py-2.5 border-b border-slate-200 dark:border-white/5 bg-white/90 dark:bg-[#0f0f0f]/90 backdrop-blur-md z-50">
+    <header className="flex items-center justify-between px-4 md:px-6 py-2.5 border-b border-slate-200 dark:border-white/5 bg-white/90 dark:bg-[#0f0f0f]/90 backdrop-blur-md z-50">
       {/* Left: Hamburger (mobile) + Logo */}
       <div className="flex items-center gap-2 md:gap-3">
         {onToggleMobileMenu && (
@@ -166,6 +167,7 @@ export const HeaderBar: React.FC<{
 
       {/* Right: Status + Info + Settings + Avatar */}
       <div className="flex items-center gap-2 bg-slate-100 dark:bg-white/5 px-2.5 py-1.5 rounded-full border border-slate-200 dark:border-white/10 shadow-sm">
+        <WeatherChip onOpen={onOpenSettings} className="pr-2 border-r border-slate-300 dark:border-white/10" />
         {connectionStatus === 'reconnecting' ? (
           <div className="flex items-center gap-1.5">
             <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />

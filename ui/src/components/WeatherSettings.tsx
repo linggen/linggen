@@ -1,5 +1,5 @@
 /**
- * Settings → Weather: the live sky background (this browser), the place the
+ * Settings → Weather: the live sky over the UI (this browser), the place the
  * weather is read at (found by IP, or typed), and the weather sense itself.
  */
 import React, { useEffect, useState } from 'react';
@@ -42,7 +42,7 @@ export const WeatherSettings: React.FC<{ className?: string }> = ({ className })
     <section className={className}>
       <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-4">Weather</h2>
       <div className="space-y-4">
-        <Toggle label="Live sky background" hint="The weather outside, behind Linggen." on={enabled} onChange={setEnabled} />
+        <Toggle label="Live sky" hint="The weather outside, falling over Linggen." on={enabled} onChange={setEnabled} />
         <Toggle label="Read the weather" hint="Off: nothing is fetched, not even your city." on={!off} onChange={(on) => run(() => setOff(!on))} />
         <div>
           <div className={labelCls}>Place</div>

@@ -188,9 +188,9 @@ const YinyuePanel: React.FC = () => {
   );
 };
 
-export const LauncherSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+export const LauncherSettings: React.FC<{ onClose: () => void; initial?: string }> = ({ onClose, initial }) => {
   const [apps, setApps] = useState<AppSkill[]>([]);
-  const [active, setActive] = useState<string>('account');
+  const [active, setActive] = useState<string>(initial ?? 'account');
 
   useEffect(() => {
     skillsApi.list()
