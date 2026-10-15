@@ -515,6 +515,7 @@ pub(crate) async fn run_bash_api(
         .arg(&wrapped_cmd)
         .current_dir(&base_cwd)
         .env("PATH", crate::util::shell_path())
+        .env(crate::language::ENV_KEY, crate::language::effective())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);

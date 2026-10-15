@@ -33,6 +33,8 @@ Every session has a **working folder** (cwd) — the directory the agent operate
 
 The **home path** is the default working folder for new sessions. Defaults to `~`. Users can change it in settings (e.g. `~/workspace`, `~/projects`). Stored in `linggen.toml` as `home_path`.
 
+The **Linggen language** (`language`, Settings → General) is the language Linggen writes in for the person: a BCP-47 tag, unset = Auto (the Mac's first preferred language, then `en`). One resolver (`src/language.rs`) answers it for the prompt's language line, `LINGGEN_LANGUAGE` in skill commands, and `GET /api/user/language`.
+
 **Skill-bound sessions** can override this. If the bound skill declares `cwd:` in its frontmatter (e.g. `cwd: ~/.linggen` for `ling-mem`), the session boots there instead of the home path. Resolution order at `POST /api/sessions`: skill's `cwd:` → request's `project_root` → `home_path`. Mirrors the `cwd:` field in mission frontmatter.
 
 ### How it works

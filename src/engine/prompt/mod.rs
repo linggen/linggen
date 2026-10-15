@@ -236,12 +236,12 @@ fn join_sections(parts: impl IntoIterator<Item = String>) -> String {
 /// custom mission agent (e.g. `memory`, whose body carries the judgment rules
 /// and status-line format) stripping it leaves the mission pointing at
 /// instructions the model never sees (the 2026-07-06 dream run failure).
-fn mission_prompt(soul: Soul, mission: &ActiveMission) -> String {
+fn mission_prompt(soul: Soul, mission: &ActiveMission, language: String) -> String {
     let body = match &mission.mission_dir {
         Some(dir) => mission.body.replace("$MISSION_DIR", &dir.to_string_lossy()),
         None => mission.body.clone(),
     };
-    join_sections([soul.identity.clone(), soul.with_additions(), body])
+    join_sections([soul.identity.clone(), soul.with_additions(), body, language])
 }
 
 impl AgentEngine {
@@ -263,7 +263,7 @@ impl AgentEngine {
         soul.addition = self.soul_addition();
 
         if let Some(mission) = &self.active_mission {
-            return mission_prompt(soul, mission);
+            return mission_prompt(soul, mission, self.language_line());
         }
 
         let mut prompt = join_sections([
@@ -277,7 +277,27 @@ impl AgentEngine {
         if let Some(skill) = self.active_skill.as_ref().filter(|_| self.is_lead()) {
             prompt.push_str(&self.active_skill_section(skill));
         }
+        prompt.push_str("\n\n");
+        prompt.push_str(&self.language_line());
         prompt
+    }
+
+    /// The one line on language: a mission (no person present) writes in
+    /// the Linggen language; a chat answers in the person's own and writes
+    /// page/report content in the Linggen language.
+    fn language_line(&self) -> String {
+        self.language_line_in(&crate::language::effective())
+    }
+
+    pub(crate) fn language_line_in(&self, tag: &str) -> String {
+        use crate::prompts::keys;
+        let name = crate::language::display_name(tag);
+        let key = match self.active_mission {
+            Some(_) => keys::SYSTEM_LANGUAGE_MISSION,
+            None => keys::SYSTEM_LANGUAGE_CHAT,
+        };
+        self.prompt_store
+            .render_or_fallback(key, &[("language", &name)])
     }
 
     /// What this agent's soul adds while the agents it needs are here —

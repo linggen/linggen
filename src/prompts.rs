@@ -32,6 +32,8 @@ pub mod keys {
     pub const CORE_MEMORY_BLOCK_EMPTY: &str = "system-prompt.core_memory_block_empty";
     pub const CORE_MEMORY_SHARED: &str = "system-prompt.core_memory_shared";
     pub const SYSTEM_CONSUMER_FRAME: &str = "system-prompt.consumer_frame";
+    pub const SYSTEM_LANGUAGE_MISSION: &str = "system-prompt.language_mission";
+    pub const SYSTEM_LANGUAGE_CHAT: &str = "system-prompt.language_chat";
 
     // -- system-reminder.* ------------------------------------------------
     pub const NUDGE_INVALID_JSON: &str = "system-reminder.nudge_invalid_json";

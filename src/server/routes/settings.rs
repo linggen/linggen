@@ -36,7 +36,9 @@ use crate::server::api::status::{get_status_api, list_models_api};
 use crate::server::api::storage::{
     storage_delete_file, storage_read_file, storage_roots, storage_tree, storage_write_file,
 };
-use crate::server::api::utils::{get_ollama_status, get_user_name, health_handler};
+use crate::server::api::utils::{
+    get_ollama_status, get_user_language, get_user_name, health_handler,
+};
 use axum::routing::{any, delete, get, post, put};
 
 pub(super) fn routes() -> Routes {
@@ -99,6 +101,7 @@ pub(super) fn routes() -> Routes {
         .route("/api/status", get(get_status_api))
         .route("/api/account", get(get_account))
         .route("/api/user/name", get(get_user_name))
+        .route("/api/user/language", get(get_user_language))
         .route("/api/account/login", post(post_account_login))
         .route("/api/account/callback", get(get_account_callback))
         .route("/api/account/logout", post(post_account_logout))

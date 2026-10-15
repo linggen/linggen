@@ -29,6 +29,24 @@ export const GeneralTab: React.FC<{
 
   return (
     <div className="space-y-6">
+      <section className={sectionCls}>
+        <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-4">Language</h2>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <select
+              className={inputCls}
+              value={config.language ?? ''}
+              onChange={(e) => onChange({ ...config, language: e.target.value || null })}
+            >
+              <option value="">Auto (follows the Mac)</option>
+              <option value="en">English</option>
+              <option value="zh-Hans">中文</option>
+            </select>
+            <p className="text-[11px] text-slate-400 mt-0.5">Pages, reports and missions use this. Chat replies follow what you write.</p>
+          </div>
+        </div>
+      </section>
+
       <WeatherSettings className={sectionCls} />
 
       {/* Agent Settings */}

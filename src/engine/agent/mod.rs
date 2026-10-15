@@ -304,6 +304,7 @@ impl AgentManager {
         let (tx, rx) = mpsc::unbounded_channel();
         let models = Arc::new(ModelManager::new(config.models.clone()));
         let pet_muted = AtomicBool::new(config.pet.muted);
+        crate::language::set_setting(config.language.clone());
         (
             Arc::new(Self {
                 config: RwLock::new(config),
@@ -760,6 +761,7 @@ impl AgentManager {
         new_config.save_runtime(self.config_dir.as_deref())?;
         let new_models = Arc::new(ModelManager::new(new_config.models.clone()));
         *self.models.write().await = new_models;
+        crate::language::set_setting(new_config.language.clone());
         *self.config.write().await = new_config.clone();
         let was_muted = self
             .pet_muted

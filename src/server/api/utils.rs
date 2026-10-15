@@ -22,6 +22,16 @@ pub(crate) async fn get_user_name(State(state): State<Arc<ServerState>>) -> impl
     axum::Json(serde_json::json!({ "name": name }))
 }
 
+/// GET /api/user/language — the language Linggen writes in for the person.
+/// `language` is the effective tag (the setting, else the Mac's, else "en");
+/// `setting` is the explicit choice, null for Auto.
+pub(crate) async fn get_user_language() -> impl IntoResponse {
+    axum::Json(json!({
+        "language": crate::language::effective(),
+        "setting": crate::language::setting(),
+    }))
+}
+
 pub(crate) async fn health_handler(
     axum::extract::State(state): axum::extract::State<Arc<ServerState>>,
 ) -> impl IntoResponse {

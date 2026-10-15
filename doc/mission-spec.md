@@ -143,7 +143,11 @@ So the assembled system prompt for a mission is:
 <agent.personality + agent spec's first-paragraph identity preface>
 
 <mission body — verbatim, with $MISSION_DIR substituted>
+
+Write everything meant for the user in <Linggen language>.
 ```
+
+The last line names the **Linggen language** (`language` in config; unset = the Mac's first preferred language, then English). An interactive chat gets the other half instead: reply in the person's language, write page/report content in the Linggen language. Every skill command a mission runs carries it as `LINGGEN_LANGUAGE`.
 
 Tools come from `allowed-tools`, permission from `permission`. Everything else the LLM needs to know is in the mission body.
 

@@ -249,3 +249,26 @@ fn a_consumer_frame_gets_no_soul_addition() {
     consumer.prompt_profile.consumer_frame = true;
     assert!(!consumer.system_prompt().contains("Yinyue"));
 }
+
+#[test]
+fn a_mission_writes_in_the_linggen_language_and_a_chat_follows_the_person() {
+    // The tag is passed in: the process-wide setting is reset by every
+    // manager other tests build, so the frames are checked by tag.
+    let mut engine = engine_as("ling", LING);
+    at(
+        &engine.system_prompt(),
+        "Reply in the language the person writes in",
+    );
+    at(&engine.language_line_in("zh-Hans"), "Simplified Chinese");
+    engine.active_mission = Some(crate::engine::types::ActiveMission {
+        body: "Check the books.".to_string(),
+        mission_dir: None,
+    });
+    let mission = engine.system_prompt();
+    at(&mission, "Write everything meant for the user in");
+    assert!(!mission.contains("Reply in the language the person writes in"));
+    assert_eq!(
+        engine.language_line_in("zh-Hans"),
+        "Write everything meant for the user in Simplified Chinese."
+    );
+}

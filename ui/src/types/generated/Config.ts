@@ -14,6 +14,12 @@ export type Config = { models: Array<ModelConfig>, server: ServerConfig, agent: 
  */
 home_path?: string | null, 
 /**
+ * The language Linggen writes in for the person — a BCP-47 tag ("en",
+ * "zh-Hans"); unset = Auto (the Mac's, then English). Resolved by
+ * [`crate::language::effective`]. Named as Claude Code names it.
+ */
+language?: string | null, 
+/**
  * Desktop pet / companion (Yinyue) settings — see [`PetConfig`].
  * Surfaced in Settings → General → Pet.
  */

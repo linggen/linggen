@@ -61,6 +61,10 @@ impl UserPermission {
         {
             return true;
         }
+        // The language pages write in — harmless, and every page needs it.
+        if url == "/api/user/language" && method == "GET" {
+            return true;
+        }
         false
     }
 
@@ -355,6 +359,15 @@ mod tests {
         assert!(read.can_access_endpoint("GET", "/apps/cfo/scripts/cfo.html"));
         assert!(!read.can_access_endpoint("POST", "/shared/chat-bridge.js"));
         assert!(!read.can_access_endpoint("GET", "/api/config"));
+    }
+
+    #[test]
+    fn any_peer_may_read_the_language_but_not_the_config() {
+        for perm in [UserPermission::Read, UserPermission::Chat] {
+            assert!(perm.can_access_endpoint("GET", "/api/user/language"));
+            assert!(!perm.can_access_endpoint("POST", "/api/user/language"));
+            assert!(!perm.can_access_endpoint("GET", "/api/config"));
+        }
     }
 
     #[test]

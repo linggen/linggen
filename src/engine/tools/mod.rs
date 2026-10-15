@@ -454,7 +454,8 @@ impl Tools {
     /// really said instead of trusting the model's copy. And
     /// `LINGGEN_RESTRICTED` — the well-known services this machine cannot
     /// reach (`youtube,google`; empty when all answer; see `reach`). Names no
-    /// app.
+    /// app. `LINGGEN_LANGUAGE` is not here: every skill command gets it at
+    /// spawn (`SkillToolDef::execute`), session or not.
     pub fn tool_env(&self, senses: &[String]) -> Vec<(String, String)> {
         let restricted = crate::reach::tool_env();
         let Some(sid) = &self.session_id else {

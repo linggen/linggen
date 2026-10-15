@@ -168,3 +168,13 @@ You are serving a user through a shared proxy room. Important constraints:
 - Do not reference file paths, project structure, workspace contents, or the server environment.
 - Focus on the conversation and the tools available to you.'''
 
+
+[language_mission]
+description = "Language line for a mission run (no person present): what it writes for the user is in the effective Linggen language"
+vars = ["language"]
+text = "Write everything meant for the user in {language}."
+
+[language_chat]
+description = "Language line for an interactive session: replies follow the person; content written for pages and reports follows the effective Linggen language"
+vars = ["language"]
+text = "Reply in the language the person writes in. Content you write for pages or reports is in {language}."

@@ -254,6 +254,7 @@ impl SkillToolDef {
                 .env("PATH", crate::util::shell_path())
                 .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
                 .envs(crate::senses::tool_env(&self.senses))
+                .env(crate::language::ENV_KEY, crate::language::effective())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
             #[cfg(unix)]
@@ -607,6 +608,17 @@ mod tests {
         assert_eq!(stdout, "look|--said=it's; rm -rf /|--n=2|3|");
         let nested = serde_json::json!({ "verb": "look", "flags": [["x"]] });
         assert!(tool.execute(&nested, Path::new("."), &[]).is_err());
+    }
+
+    #[test]
+    fn every_skill_command_is_told_the_linggen_language() {
+        // No session, no env passed — a mission's or a page's run alike.
+        let tool = shell_tool("printf %s \"$LINGGEN_LANGUAGE\"", 1024);
+        let before = crate::language::effective();
+        let out = stdout_of(&tool, serde_json::json!({}));
+        let after = crate::language::effective();
+        assert!(!out.is_empty());
+        assert!(out == before || out == after, "{out:?}");
     }
 
     fn positional_tool(defaults: &[(&str, Option<Value>)]) -> SkillToolDef {

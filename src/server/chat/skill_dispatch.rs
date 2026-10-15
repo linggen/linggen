@@ -272,6 +272,7 @@ async fn launch_skill_app(
                 }
                 cmd.current_dir(&ctx.root);
                 cmd.env("PATH", crate::util::shell_path());
+                cmd.env(crate::language::ENV_KEY, crate::language::effective());
                 match cmd.output() {
                     Ok(output) => {
                         let result_msg = String::from_utf8_lossy(&output.stdout).to_string();

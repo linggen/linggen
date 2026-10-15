@@ -5,6 +5,7 @@ mod credentials;
 mod engine;
 mod extensions;
 mod hf_mirror;
+mod language;
 mod logging;
 mod mcp_client;
 mod message;

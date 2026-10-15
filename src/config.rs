@@ -19,6 +19,11 @@ pub struct Config {
     /// Default working folder for new sessions. Defaults to `~` if not set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home_path: Option<String>,
+    /// The language Linggen writes in for the person — a BCP-47 tag ("en",
+    /// "zh-Hans"); unset = Auto (the Mac's, then English). Resolved by
+    /// [`crate::language::effective`]. Named as Claude Code names it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
     /// Desktop pet / companion (Yinyue) settings — see [`PetConfig`].
     /// Surfaced in Settings → General → Pet.
     #[serde(default)]
@@ -701,6 +706,7 @@ impl Default for Config {
                 ..Default::default()
             },
             home_path: None,
+            language: None,
             pet: PetConfig::default(),
             mcp_servers: Default::default(),
         }
