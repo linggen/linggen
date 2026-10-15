@@ -1,6 +1,7 @@
 import React from 'react';
 import type { AppConfig } from '../types';
 import { WeatherSettings } from './WeatherSettings';
+import { serverAddr, withServerAddr } from '../lib/serverAddr';
 import { Field, Grid, MoreGroup, Section, inputCls, sectionCls } from './settings/kit';
 
 /** Settings → General: language, the sky, and — folded away — the server
@@ -41,8 +42,11 @@ export const GeneralTab: React.FC<{
               type="number"
               min={1}
               max={65535}
-              value={config.server.port}
-              onChange={(e) => onChange({ ...config, server: { ...config.server, port: parseInt(e.target.value) || 8080 } })}
+              value={serverAddr(config.server).port}
+              onChange={(e) => {
+                const port = parseInt(e.target.value, 10);
+                if (port >= 1 && port <= 65535) onChange({ ...config, server: withServerAddr(config.server, { port }) });
+              }}
             />
           </Field>
         </Grid>

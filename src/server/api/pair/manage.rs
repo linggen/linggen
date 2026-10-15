@@ -35,7 +35,8 @@ pub(crate) async fn get_pair_info(
         .collect();
     Json(serde_json::json!({
         "lan_live": lan_live,
-        "config_host": config.server.host,
+        // The host the config asks for, from `url` or the legacy pair.
+        "config_host": config.server.addr().0,
         "port": state.port,
         "lan_ip": lan_ip(),
         "mdns_host": format!("{}.local", mac_name.to_lowercase()),

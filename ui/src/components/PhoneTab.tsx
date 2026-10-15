@@ -2,6 +2,7 @@ import React from 'react';
 import { Check, Pencil, RefreshCw, Smartphone, Trash2, X } from 'lucide-react';
 import type { AppConfig } from '../types';
 import { useServerStore } from '../stores/serverStore';
+import { serverAddr, withServerAddr } from '../lib/serverAddr';
 import { pairApi } from '../lib/endpoints';
 
 const sectionCls ='bg-white dark:bg-[#141414] rounded-xl border border-slate-200 dark:border-white/5 shadow-sm p-5';
@@ -54,7 +55,7 @@ export const PhoneTab: React.FC<{
   const models = useServerStore((s) => s.models);
   const modelIds = React.useMemo(() => models.map((m) => m.id).filter(Boolean), [models]);
 
-  const lanEnabled = config.server.host === LAN_HOST;
+  const lanEnabled = serverAddr(config.server).host === LAN_HOST;
 
   const fetchInfo = React.useCallback(async () => {
     try {
@@ -128,7 +129,7 @@ export const PhoneTab: React.FC<{
   };
 
   const setLan = (on: boolean) => {
-    onChange({ ...config, server: { ...config.server, host: on ? LAN_HOST : LOOPBACK } });
+    onChange({ ...config, server: withServerAddr(config.server, { host: on ? LAN_HOST : LOOPBACK }) });
   };
 
   const revoke = async (id: string) => {

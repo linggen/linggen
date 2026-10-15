@@ -146,7 +146,7 @@ export const SettingsHome: React.FC = () => {
           <button onClick={onBack} className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-blue-600 transition-colors shrink-0">
             <ArrowLeft size={16} /> Back
           </button>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 min-h-[30px]">
             {error && <span className="text-[11px] text-red-500 max-w-xl text-right" title={error}>{error}</span>}
             {success && <span className="text-[11px] text-green-500">Saved</span>}
             {showSaveButton && (
