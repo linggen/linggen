@@ -20,8 +20,9 @@ home_path?: string | null,
  */
 language?: string | null, 
 /**
- * Desktop pet / companion (Yinyue) settings — see [`PetConfig`].
- * Surfaced in Settings → General → Pet.
+ * Yinyue's settings — see [`PetConfig`]. Surfaced in Settings → Agents
+ * beside Ling's model (Ling's is `routing.default_models[0]`). The key
+ * stays `[pet]` so existing files and paired phones keep working.
  */
 pet: PetConfig, 
 /**

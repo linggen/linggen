@@ -117,7 +117,7 @@ const MILESTONES: &[Milestone] = &[
         device: "mac",
         zh: "唤银月 · 听见她的声音",
         en: "Call Yinyue · hear her voice",
-        open: "/settings?tab=general",
+        open: "/settings?tab=agents",
         check: voice_heard,
         fact: None,
     },

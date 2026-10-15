@@ -24,8 +24,9 @@ pub struct Config {
     /// [`crate::language::effective`]. Named as Claude Code names it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
-    /// Desktop pet / companion (Yinyue) settings — see [`PetConfig`].
-    /// Surfaced in Settings → General → Pet.
+    /// Yinyue's settings — see [`PetConfig`]. Surfaced in Settings → Agents
+    /// beside Ling's model (Ling's is `routing.default_models[0]`). The key
+    /// stays `[pet]` so existing files and paired phones keep working.
     #[serde(default)]
     pub pet: PetConfig,
     /// MCP servers this engine connects to as a *client* — the same shape
@@ -35,7 +36,7 @@ pub struct Config {
     pub mcp_servers: std::collections::BTreeMap<String, crate::mcp_client::McpServerConfig>,
 }
 
-/// Settings for the desktop pet / companion (Yinyue today). The recall fields
+/// Settings for Yinyue, the companion agent (`[pet]` on disk). The recall fields
 /// are intentionally separate from the global `agent.memory_*` knobs: a
 /// companion does many small turns, so her recall stays tighter than a coding
 /// session's.
@@ -46,7 +47,8 @@ pub struct PetConfig {
     /// watch loop stays silent.
     #[serde(default = "default_true")]
     pub enabled: bool,
-    /// Which pet/avatar to show. One id per shipped model; "yinyue" today.
+    /// Her agent id ("yinyue"). Not shown in Settings — there is one Yinyue —
+    /// but kept: `/api/pair/me` `agent_models` keys her model by it.
     #[serde(default = "default_pet")]
     pub pet: String,
     /// Show the speech-bubble text alongside her spoken audio.
@@ -791,6 +793,42 @@ mod tests {
             is_builtin: false,
         });
         cfg
+    }
+
+    #[test]
+    fn an_old_pet_table_still_loads_as_yinyue_settings() {
+        let mut v: toml::Value = toml::Value::try_from(Config::default()).unwrap();
+        let old: toml::Value = toml::from_str(
+            "enabled = false\npet = \"yinyue\"\nmodel = \"m-her\"\nvoice = \"serena\"\nrecall_count = 4\nrecall_min_score = 0.6\n",
+        )
+        .unwrap();
+        v.as_table_mut().unwrap().insert("pet".into(), old);
+        let cfg: Config = toml::from_str(&toml::to_string(&v).unwrap()).unwrap();
+        assert!(!cfg.pet.enabled);
+        assert_eq!(cfg.pet.pet, "yinyue");
+        assert_eq!(cfg.pet.model, "m-her");
+        assert_eq!(cfg.pet.voice, "serena");
+        assert_eq!(cfg.pet.recall_count, 4);
+        assert!((cfg.pet.recall_min_score - 0.6).abs() < 1e-6);
+        assert!(!cfg.pet.muted);
+    }
+
+    /// Settings → Agents writes Ling's pick to the front of the default chain
+    /// and Yinyue's to `[pet] model`; both survive a save and reload.
+    #[test]
+    fn ling_and_yinyue_models_round_trip() {
+        let mut cfg = Config::default();
+        cfg.routing.default_models = vec!["m-ling".into(), "m-fallback".into()];
+        cfg.pet.model = "m-her".into();
+        let text = toml::to_string(&cfg).unwrap();
+        assert!(text.contains("[pet]"));
+        let back: Config = toml::from_str(&text).unwrap();
+        assert_eq!(
+            back.routing.default_models,
+            vec!["m-ling".to_string(), "m-fallback".to_string()]
+        );
+        assert_eq!(back.pet.model, "m-her");
+        assert_eq!(back.pet.pet, "yinyue");
     }
 
     #[test]

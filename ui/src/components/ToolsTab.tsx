@@ -1,4 +1,5 @@
 import React from 'react';
+import { McpTab } from './McpTab';
 
 const sectionCls = 'bg-white dark:bg-[#141414] rounded-xl border border-slate-200 dark:border-white/5 shadow-sm p-5';
 
@@ -54,6 +55,13 @@ export const ToolsTab: React.FC = () => {
         <p className="mt-3 text-[11px] text-slate-400">
           Web search runs on your Linggen account — sign in to enable it. No API key needed.
         </p>
+      </section>
+
+      <section className={sectionCls}>
+        <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-4">
+          MCP Servers
+        </h2>
+        <McpTab />
       </section>
     </div>
   );

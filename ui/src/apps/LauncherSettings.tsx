@@ -2,7 +2,7 @@
  * Merged Linggen settings (app-host). One settings surface for the unified
  * app: shared sections (Account, Model, Yinyue) once at top, then a section
  * per installed app reusing that app's own settings.html (iframed with
- * ?embed=1 so the app hides its now-duplicate Account/Model/pet sections).
+ * ?embed=1 so the app hides its now-duplicate Account/Model/Yinyue sections).
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import { X } from 'lucide-react';
@@ -110,7 +110,7 @@ const GeneralPanel: React.FC = () => {
   );
 };
 
-// ── Yinyue / desktop pet panel (shared; the pet is app-wide) ──
+// ── Yinyue panel (shared; she is app-wide) ──
 const YinyuePanel: React.FC = () => {
   const [shown, setShown] = useState<boolean | null>(null);
   const [onTop, setOnTop] = useState<boolean | null>(null);

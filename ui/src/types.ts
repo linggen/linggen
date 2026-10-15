@@ -236,6 +236,7 @@ export interface AppConfig {
   logging: { level?: string | null; directory?: string | null; retention_days?: number | null };
   agents: { id: string; spec_path: string; model?: string | null }[];
   routing?: { default_models?: string[]; auto_fallback?: boolean };
+  /** Yinyue's settings. The key stays `pet` on disk so old files and phones keep working. */
   pet?: { enabled?: boolean; pet?: string; show_text?: boolean; recall_count?: number; recall_min_score?: number; model?: string; voice?: string; muted?: boolean };
 }
 
@@ -354,7 +355,8 @@ export interface BuiltInSkillInfo {
   installed: boolean;
 }
 
-export type ManagementTab = 'models' | 'agents' | 'skills' | 'tools' | 'mcp' | 'general' | 'phone' | 'mission' | 'storage' | 'room';
+/** A Settings tab. `mcp` is kept for old links and opens Tools, where MCP now lives. */
+export type ManagementTab = 'models' | 'agents' | 'skills' | 'tools' | 'mcp' | 'general' | 'session' | 'phone' | 'mission' | 'storage' | 'room';
 
 // --- Mission types (cron-based) ---
 

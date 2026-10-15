@@ -2,7 +2,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import type { AppConfig } from '../../types';
 import { ModelsTab } from '../../components/ModelsTab';
-import { AgentsTab } from '../../components/AgentsTab';
+import { AgentsPage } from '../../components/AgentsPage';
+import { SessionTab } from '../../components/SessionTab';
 import { SkillsTab } from '../../components/SkillsTab';
 import { ToolsTab } from '../../components/ToolsTab';
 import { GeneralTab } from '../../components/GeneralTab';
@@ -14,17 +15,18 @@ import { apiErrorMessage } from '../../lib/api';
 // Only the truly form-shaped sections are exposed via bare routes. Mission
 // and Storage are full-page experiences with their own chrome — embedding
 // them defeats the "bare" goal, so they're intentionally excluded.
-type BareTab = 'models' | 'agents' | 'skills' | 'tools' | 'general' | 'room';
+type BareTab = 'models' | 'agents' | 'skills' | 'tools' | 'general' | 'session' | 'room';
 
 const KNOWN_SECTIONS: ReadonlySet<BareTab> = new Set([
-  'models', 'agents', 'skills', 'tools', 'general', 'room',
+  'models', 'agents', 'skills', 'tools', 'general', 'session', 'room',
 ]);
 
-const NEEDS_CONFIG: ReadonlySet<BareTab> = new Set(['models', 'general']);
+const NEEDS_CONFIG: ReadonlySet<BareTab> = new Set(['models', 'general', 'agents', 'session']);
 
 /**
  * Bare iframe target for /settings/:section. Renders just the section, no
- * back button or tab strip. Sections that mutate config (Models, General)
+ * back button or tab strip. Sections that mutate config (Models, General,
+ * Agents, Session)
  * include a thin save bar; others manage their own persistence.
  *
  * See `linggen-app/doc/architecture.md` and `doc/ui-router-migration.md`.
@@ -129,7 +131,17 @@ export const BareSection: React.FC = () => {
           </div>
         )}
 
-        {tab === 'agents' && <AgentsTab projectRoot={projectRoot} />}
+        {tab === 'agents' && config && (
+          <div className="h-full overflow-y-auto p-3 md:p-6">
+            <div className="max-w-4xl mx-auto"><AgentsPage config={config} onChange={setConfig} projectRoot={projectRoot} /></div>
+          </div>
+        )}
+
+        {tab === 'session' && config && (
+          <div className="h-full overflow-y-auto p-3 md:p-6">
+            <div className="max-w-4xl mx-auto"><SessionTab config={config} onChange={setConfig} /></div>
+          </div>
+        )}
 
         {tab === 'skills' && (
           <div className="h-full overflow-y-auto px-3 md:px-6 py-4 md:py-5">

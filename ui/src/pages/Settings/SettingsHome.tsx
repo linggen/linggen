@@ -3,10 +3,10 @@ import { ArrowLeft } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import type { AppConfig, ManagementTab } from '../../types';
 import { ModelsTab } from '../../components/ModelsTab';
-import { AgentsTab } from '../../components/AgentsTab';
+import { AgentsPage } from '../../components/AgentsPage';
+import { SessionTab } from '../../components/SessionTab';
 import { SkillsTab } from '../../components/SkillsTab';
 import { ToolsTab } from '../../components/ToolsTab';
-import { McpTab } from '../../components/McpTab';
 import { GeneralTab } from '../../components/GeneralTab';
 import { PhoneTab } from '../../components/PhoneTab';
 import { MissionPage } from '../../components/MissionPage';
@@ -18,18 +18,38 @@ import type { SettingsLocationState } from '../../hooks/useOpenSettings';
 import { appConfig } from '../../lib/endpoints';
 import { apiErrorMessage } from '../../lib/api';
 
-const tabs: { key: ManagementTab; label: string }[] = [
-  { key: 'general', label: 'General' },
-  { key: 'phone', label: 'Phone' },
-  { key: 'models', label: 'Models' },
-  { key: 'agents', label: 'Agents' },
-  { key: 'skills', label: 'Skills' },
-  { key: 'tools', label: 'Tools' },
-  { key: 'mcp', label: 'MCP' },
-  { key: 'mission', label: 'Mission' },
-  { key: 'storage', label: 'Storage' },
-  { key: 'room', label: 'Room' },
+type TabKey = Exclude<ManagementTab, 'mcp'>;
+
+/** Grouped the way the person thinks about them: who the agents are and how
+ *  a chat runs; what they can do; the devices around them; the data kept. */
+const groups: { label?: string; tabs: { key: TabKey; label: string }[] }[] = [
+  { tabs: [
+    { key: 'general', label: 'General' },
+    { key: 'agents', label: 'Agents' },
+    { key: 'models', label: 'Models' },
+    { key: 'session', label: 'Session' },
+  ] },
+  { label: 'Capabilities', tabs: [
+    { key: 'skills', label: 'Skills' },
+    { key: 'tools', label: 'Tools & MCP' },
+    { key: 'mission', label: 'Missions' },
+  ] },
+  { label: 'Devices', tabs: [
+    { key: 'phone', label: 'Phone' },
+    { key: 'room', label: 'Room' },
+  ] },
+  { label: 'Data', tabs: [
+    { key: 'storage', label: 'Storage' },
+  ] },
 ];
+const tabs = groups.flatMap((g) => g.tabs);
+
+/** Tabs whose fields write the config file — the Save button's tabs. */
+const CONFIG_TABS: ReadonlySet<TabKey> = new Set(['general', 'agents', 'models', 'session', 'phone']);
+
+/** An old tab key (`mcp`) opens where that content lives now. */
+const toTab = (key: string | null | undefined): TabKey | undefined =>
+  key === 'mcp' ? 'tools' : tabs.find((t) => t.key === key)?.key;
 
 export const SettingsHome: React.FC = () => {
   const navigate = useNavigate();
@@ -43,9 +63,8 @@ export const SettingsHome: React.FC = () => {
   // `/settings?tab=models` works too — a link from outside the app (a quest's
   // `open`) has no route state to carry.
   const queryTab = new URLSearchParams(location.search).get('tab');
-  const requestedTab = (location.state as SettingsLocationState | null)?.tab
-    ?? tabs.find((t) => t.key === queryTab)?.key;
-  const [activeTab, setActiveTab] = useState<ManagementTab>(requestedTab || 'general');
+  const requestedTab = toTab((location.state as SettingsLocationState | null)?.tab ?? queryTab);
+  const [activeTab, setActiveTab] = useState<TabKey>(requestedTab || 'general');
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [originalConfig, setOriginalConfig] = useState<AppConfig | null>(null);
   const [saving, setSaving] = useState(false);
@@ -109,7 +128,8 @@ export const SettingsHome: React.FC = () => {
     navigate('/');
   };
 
-  const showSaveButton = activeTab === 'models' || activeTab === 'general' || activeTab === 'phone';
+  // On a config tab, or with unsaved edits from one — never strand a change.
+  const showSaveButton = CONFIG_TABS.has(activeTab) || dirty;
 
   if (!config) {
     return (
@@ -144,24 +164,26 @@ export const SettingsHome: React.FC = () => {
             )}
           </div>
         </div>
-        <nav className="flex items-center gap-1 px-3 md:px-6 pb-2 overflow-x-auto">
+        {/* Phone width: one scrolling row. Wider screens use the sidebar. */}
+        <nav className="md:hidden flex items-center gap-1 px-3 pb-2 overflow-x-auto">
           {tabs.map((tab) => (
-            <button
-              key={tab.key}
-              onClick={() => setActiveTab(tab.key)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
-                activeTab === tab.key
-                  ? 'bg-blue-600/10 text-blue-600 dark:text-blue-400'
-                  : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/5'
-              }`}
-            >
-              {tab.label}
-            </button>
+            <TabButton key={tab.key} label={tab.label} active={activeTab === tab.key} onClick={() => setActiveTab(tab.key)} />
           ))}
         </nav>
       </header>
 
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 flex min-h-0">
+        <aside className="hidden md:flex flex-col w-48 shrink-0 border-r border-slate-200 dark:border-white/5 bg-white/60 dark:bg-[#0f0f0f]/60 overflow-y-auto py-3 px-2">
+          {groups.map((g, i) => (
+            <div key={g.label ?? i} className={i ? 'mt-4' : undefined}>
+              {g.label && <div className="px-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">{g.label}</div>}
+              {g.tabs.map((tab) => (
+                <TabButton key={tab.key} label={tab.label} active={activeTab === tab.key} onClick={() => setActiveTab(tab.key)} block />
+              ))}
+            </div>
+          ))}
+        </aside>
+      <div className="flex-1 min-w-0 overflow-hidden">
         {activeTab === 'models' && (
           <div className="h-full overflow-y-auto p-3 md:p-6">
             <div className="max-w-4xl mx-auto">
@@ -170,8 +192,17 @@ export const SettingsHome: React.FC = () => {
           </div>
         )}
 
-        {activeTab === 'mcp' && <McpTab />}
-        {activeTab === 'agents' && <AgentsTab projectRoot={projectRoot} />}
+        {activeTab === 'agents' && (
+          <div className="h-full overflow-y-auto p-3 md:p-6">
+            <div className="max-w-4xl mx-auto"><AgentsPage config={config} onChange={setConfig} projectRoot={projectRoot} /></div>
+          </div>
+        )}
+
+        {activeTab === 'session' && (
+          <div className="h-full overflow-y-auto p-3 md:p-6">
+            <div className="max-w-4xl mx-auto"><SessionTab config={config} onChange={setConfig} /></div>
+          </div>
+        )}
 
         {activeTab === 'skills' && (
           <div className="h-full overflow-y-auto px-3 md:px-6 py-4 md:py-5">
@@ -209,6 +240,20 @@ export const SettingsHome: React.FC = () => {
           <div className="h-full overflow-y-auto p-3 md:p-5"><RoomTab /></div>
         )}
       </div>
+      </div>
     </div>
   );
 };
+
+const TabButton: React.FC<{ label: string; active: boolean; onClick: () => void; block?: boolean }> = ({ label, active, onClick, block }) => (
+  <button
+    onClick={onClick}
+    className={`${block ? 'w-full text-left' : 'shrink-0'} px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
+      active
+        ? 'bg-blue-600/10 text-blue-600 dark:text-blue-400'
+        : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/5'
+    }`}
+  >
+    {label}
+  </button>
+);
