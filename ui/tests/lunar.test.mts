@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { festivalOn, LUNAR, lunarOf, nthWeekday, seasonOf, termAt, termOf } from '../src/lib/lunar.mts';
-import { backdropOf, BACKDROP_TIERS, FESTIVAL_ART, FESTIVALS, todayOf, windOf, windWords } from '../src/lib/skyArt.mts';
+import { backdropOf, BACKDROP_TIERS, FESTIVAL_ART, FESTIVALS, TERM_ART, todayOf, windOf, windWords } from '../src/lib/skyArt.mts';
 
 const ymd = (iso: string) => { const [y, m, d] = iso.split('-').map(Number); return { y, m, d }; };
 const fest = (iso: string, country: string | null = null) => { const { y, m, d } = ymd(iso); return festivalOn(y, m, d, LUNAR, { country })?.id ?? null; };
@@ -58,6 +58,10 @@ test('the faint picture: the festival\'s on its day (春节 初一–初七), el
   assert.deepEqual(at('2027-02-12'), { tier: 'festival', src: 'festivals/chunjie.webp' }, '初七');
   assert.notEqual(at('2027-02-13')?.tier, 'festival', '初八: the 节气 again');
   assert.deepEqual(at('2027-02-20'), { tier: 'festival', src: 'festivals/yuanxiao.webp' });
+  // Any other day: the 节气 in effect.
+  assert.deepEqual(at('2026-10-15'), { tier: 'term', src: 'jieqi/hanlu.webp' });
+  assert.deepEqual(at('2027-02-13'), { tier: 'term', src: 'jieqi/lichun.webp' });
+  assert.equal(TERM_ART.size, 24);
   // The tiers are data, in order.
   assert.deepEqual(BACKDROP_TIERS.map(([t]) => t), ['festival', 'term']);
   // A festival this build has no picture for falls through.

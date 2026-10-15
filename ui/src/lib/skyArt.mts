@@ -36,7 +36,7 @@ export const FESTIVALS: Record<string, FestivalMeta> = {
 
 /** The pictures this build ships (ui/public/festivals/<id>.webp, ui/public/jieqi/<id>.webp). */
 export const FESTIVAL_ART = new Set(['chuxi', 'chunjie', 'yuanxiao', 'qingrenjie', 'qingming', 'duanwu', 'qixi', 'zhongqiu', 'chongyang', 'wanshengjie', 'ganenjie', 'laba', 'yuandan', 'shengdan']);
-export const TERM_ART = new Set<string>([]);
+export const TERM_ART = new Set<string>(['lichun', 'yushui', 'jingzhe', 'chunfen', 'qingming', 'guyu', 'lixia', 'xiaoman', 'mangzhong', 'xiazhi', 'xiaoshu', 'dashu', 'liqiu', 'chushu', 'bailu', 'qiufen', 'hanlu', 'shuangjiang', 'lidong', 'xiaoxue', 'daxue', 'dongzhi', 'xiaohan', 'dahan']);
 
 /** A Date read in its own time zone as {y, m, d}. */
 export const ymdOf = (now: Date): Ymd => ({ y: now.getFullYear(), m: now.getMonth() + 1, d: now.getDate() });
