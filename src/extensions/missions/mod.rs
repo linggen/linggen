@@ -3,6 +3,7 @@ pub mod draft;
 pub mod enter;
 pub mod parser;
 mod report;
+mod run_if;
 pub mod scheduler;
 mod skill_missions;
 
@@ -213,6 +214,7 @@ impl MissionLoader {
             schedule: schedule.to_string(),
             enabled: draft.enabled.unwrap_or(true),
             catchup_hours: draft.catchup_hours.flatten(),
+            run_if: None,
             cwd: draft.cwd.clone().flatten(),
             model: draft.model.clone().flatten(),
             kickoff: draft.kickoff.clone().unwrap_or_default(),
@@ -778,6 +780,7 @@ mod tests {
             status: "completed".into(),
             skipped: false,
             usage: None,
+            ..Default::default()
         };
         let entry2 = MissionRunEntry {
             run_id: "run-2".into(),
@@ -786,6 +789,7 @@ mod tests {
             status: "skipped".into(),
             skipped: true,
             usage: None,
+            ..Default::default()
         };
         store.append_mission_run(&m.id, &entry1).unwrap();
         store.append_mission_run(&m.id, &entry2).unwrap();
@@ -811,6 +815,7 @@ mod tests {
             status: status.into(),
             skipped: false,
             usage: None,
+            ..Default::default()
         };
         store
             .append_mission_run(&m.id, &run("run-1", "running"))
@@ -1036,6 +1041,7 @@ mod tests {
             status: "completed".into(),
             skipped: false,
             usage: None,
+            ..Default::default()
         };
         store.append_mission_run(&m.id, &run).unwrap();
         assert!(dir.path().join("missions/cfo:reports/runs.jsonl").exists());
@@ -1156,6 +1162,7 @@ mod tests {
             status: "completed".into(),
             skipped: false,
             usage: None,
+            ..Default::default()
         };
         store.append_mission_run(&m.id, &entry).unwrap();
         assert!(root.join("test-dir").join("runs.jsonl").exists());

@@ -41,6 +41,13 @@ pub struct Mission {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub catchup_hours: Option<u64>,
 
+    /// Precondition for a scheduled run (frontmatter `run-if`): a shell
+    /// command run in `cwd` right before a cron or catch-up dispatch. Exit
+    /// 0 runs the mission; anything else records a skip, no session, no
+    /// model call. Manual triggers ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_if: Option<String>,
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -125,8 +132,18 @@ fn default_mission_agent() -> String {
     MISSION_AGENT_ID.to_string()
 }
 
+/// Why a trigger was skipped.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum SkipKind {
+    /// A run of the mission was already in flight.
+    Busy,
+    /// The mission's `run-if` check said no (or couldn't answer).
+    RunIf,
+}
+
 /// A single entry in a mission's run history (`<id>/runs.jsonl`).
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct MissionRunEntry {
     pub run_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -137,4 +154,23 @@ pub struct MissionRunEntry {
     /// The run's model calls and tokens, written when it finishes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<crate::provider::models::RunUsage>,
+    /// What skipped it. Rows written before this field have none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skip: Option<SkipKind>,
+    /// A `run-if` skip's reason: the check's first stdout line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+impl MissionRunEntry {
+    /// True when this entry handled its schedule slot, so catch-up leaves
+    /// the slot alone: a run that started (and wasn't cut off by a dead
+    /// daemon), or a `run-if` skip — the check answered for that slot. A
+    /// busy skip handled nothing.
+    pub fn fills_slot(&self) -> bool {
+        if self.status == "interrupted" {
+            return false;
+        }
+        !self.skipped || self.skip == Some(SkipKind::RunIf)
+    }
 }

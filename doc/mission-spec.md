@@ -75,6 +75,7 @@ description: >-
 schedule: "0 3 * * *"
 catchup_hours: 24                  # optional — a slot missed within this many hours runs late
 enabled: true
+run-if: perl scripts/check.pl      # optional — scheduled runs go only when this exits 0
 agent: ling                        # optional — engine agent to run this mission (default: ling)
 cwd: ~/.linggen                    # working directory for the agent
 model: <optional override>
@@ -115,6 +116,7 @@ permission:
 | `schedule` | yes | Cron expression (5-field standard) |
 | `catchup_hours` | no | If set, the scheduler fires the mission when a scheduled time inside the last this-many hours has no run started at or after it. Used to recover from cron fires missed while the machine was off/asleep. Omit to leave the mission cron-only. `0` is treated as opt-out |
 | `enabled` | yes | On/off. For a skill mission this is the default; the user's choice wins |
+| `run-if` | no | Shell check run before a scheduled run (cron or catch-up). Exit 0 runs; anything else skips with no session or model call. See "run-if" |
 | `agent` | no | Engine agent that runs the mission (key into `agents/`). Defaults to `ling`. The mission body is still the system prompt — `agent:` just picks the routing identity, the model default, and the persona-level config |
 | `cwd` | yes | Working directory for the agent |
 | `model` | no | Model override |
@@ -163,6 +165,9 @@ Tools come from `allowed-tools`, permission from `permission`. Everything else t
  busy-skip check (previous run still running?) ─── yes ──► record skipped
    │ no
    ▼
+ run-if check (scheduled only) ─── non-zero / no answer ──► record skipped + reason
+   │ exit 0
+   ▼
  create session + persist kickoff[0] as user turn
    │
    ▼
@@ -187,6 +192,18 @@ Each drained item follows the final reply it answers, so the model sees its own 
 `kickoff-then:` maps a sentinel to its own items. A final reply ending on one (same matching as `kickoff-stop`) replaces whatever is left of the queue with that sentinel's items; the branch fires once per run. The dream replies `CLEAR` when its worklist is empty, which swaps the leftover day nudges for its finish-up — sweep + condense, markers, subjects — one stage per turn, so with `kickoff-fresh` each stage's scan folds away before the next.
 
 There is no pre-agent shell stage. Deterministic data fetches happen inside the agent loop via the mission's `allowed-tools` (typically a memory tool like `memory_list`, or `Bash` when the mission declares it). For missions that previously relied on a shell pre-fetch to dodge LLM-judgment risk on empty results, the protection now lives at ling-mem's own MCP dispatch boundary — see the `past_ttl=true` strip rule.
+
+### run-if
+
+A mission with work only some people have — a weekly report on holdings someone may not hold — declares a cheap check instead of spending a model call to find nothing:
+
+- **When** — right before a scheduled dispatch (cron fire or catch-up), before any session exists. A manual trigger ("Run now") never runs it: a person's action is never gated.
+- **How** — a shell command in the mission's `cwd`, with the env a skill tool's command gets (`SKILL_DIR` for a skill mission, `LINGGEN_LANGUAGE`, the skill's senses), and about 10 seconds to answer. It runs outside the permission layer, trusted like a skill tool's `cmd`.
+- **Exit 0** — the run goes ahead as normal.
+- **Anything else** — a run is recorded `skipped` with `skip: "run-if"` and `reason`: the command's first stdout line, trimmed, capped near 120 characters ("no holdings"). A timeout or spawn failure skips too, with a reason saying the check failed: a run is never spent when the check couldn't answer.
+- **Catch-up** — a run-if skip handles its slot, so catch-up doesn't ask again every minute. Busy skips still leave the slot missed.
+
+Keep checks fast and offline: read a file, never the network. The engine never names a skill; the mission declares the check.
 
 ## Cron syntax
 
@@ -254,8 +271,9 @@ Background task evaluates all enabled missions against their cron schedules ever
 1. **Tick** — wake, list enabled missions.
 2. **Match** — for each, check if its cron expression matches the current minute window.
 3. **Busy-skip** — if the previous run is still executing, record `skipped` and move on.
-4. **Agent** — create session, persist `kickoff[0]` as the first user turn, seed `kickoff[1..]` into the engine queue, run the agent loop with the body as system prompt.
-5. **Record** — write `runs.jsonl` entry; emit events; finalize run record.
+4. **run-if** — if the mission declares one, run it; a non-zero exit records a `run-if` skip and moves on.
+5. **Agent** — create session, persist `kickoff[0]` as the first user turn, seed `kickoff[1..]` into the engine queue, run the agent loop with the body as system prompt.
+6. **Record** — write `runs.jsonl` entry; emit events; finalize run record.
 
 ### Deduplication
 
@@ -263,7 +281,7 @@ The scheduler tracks the last fire minute per mission. A cron match only fires o
 
 ### Catch-up fires
 
-Cron is missed when the machine is off or asleep. To recover, a mission can declare `catchup_hours: <n>` in its frontmatter. The scheduler's own tick sweeps all enabled missions for a missed slot — the latest scheduled time inside the last `catchup_hours` that no run started at or after (skipped and `interrupted` runs don't count; a run from before the slot, like an afternoon's manual trigger, doesn't either) — and triggers them once the machine has been quiet for the background quiet window — no user turn needed. Same dispatch path as a normal cron fire; overlaps are prevented by the same busy-skip. Missions that omit `catchup_hours` (or set it to `0`) are cron-only.
+Cron is missed when the machine is off or asleep. To recover, a mission can declare `catchup_hours: <n>` in its frontmatter. The scheduler's own tick sweeps all enabled missions for a missed slot — the latest scheduled time inside the last `catchup_hours` that no run started at or after (busy-skipped and `interrupted` runs don't count, a `run-if` skip does; a run from before the slot, like an afternoon's manual trigger, doesn't either) — and triggers them once the machine has been quiet for the background quiet window — no user turn needed. Same dispatch path as a normal cron fire; overlaps are prevented by the same busy-skip. Missions that omit `catchup_hours` (or set it to `0`) are cron-only.
 
 The built-in `dream` mission uses `catchup_hours: 24`: a missed 3am fire re-runs soon after the machine wakes. Catch-up attempts are capped per local day (a repeatedly-failing mission must not burn the day's token budget), and one run per mission is enforced across all trigger paths — cron, catch-up, and manual triggers share a single in-flight guard; an overlapping trigger records a `skipped` run.
 
@@ -285,9 +303,16 @@ Each trigger creates:
 }
 ```
 
+A skipped entry adds `skip` — `busy` or `run-if` — and a run-if skip its `reason`:
+
+```json
+{ "run_id": "mission-run-1700000000-e5f6a7b8", "triggered_at": 1700000000,
+  "status": "skipped", "skipped": true, "skip": "run-if", "reason": "no holdings" }
+```
+
 The mission-level `run_id` (format `mission-run-<ts>-<uuid8>`) keys the `runs.jsonl` entry. It's distinct from the agent's internal `AgentRunRecord.run_id`, which stays an engine-internal concern.
 
-Skipped triggers (busy / daily cap) are logged with `skipped: true` and no `session_id`; they still get a real `run_id` so downstream tooling can reference them.
+Skipped triggers (busy, or a `run-if` that said no) are logged with `skipped: true` and no `session_id`; they still get a real `run_id` so downstream tooling can reference them. The daily cap logs nothing; the tick simply stops firing.
 
 ## Safety
 

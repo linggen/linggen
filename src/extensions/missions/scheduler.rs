@@ -1,5 +1,6 @@
+use super::run_if::{self, Trigger};
 use crate::engine::events::{AgentStatusKind, NotificationPayload, ServerEvent};
-use crate::engine::mission::record::{Mission, MissionRunEntry};
+use crate::engine::mission::record::{Mission, MissionRunEntry, SkipKind};
 use crate::provider::models::RunUsage;
 use crate::util::LockExt;
 use chrono::Local;
@@ -214,12 +215,7 @@ pub async fn mission_scheduler_loop(state: Arc<SchedulerHost>) {
                     "Mission scheduler: mission '{}' still running, skipping trigger",
                     mission.id
                 );
-                let skip_id = format!(
-                    "mission-run-{}-{}",
-                    crate::util::now_ts_secs(),
-                    &uuid::Uuid::new_v4().to_string()[..8]
-                );
-                record_mission_run(&state, mission, &skip_id, None, "skipped", true);
+                record_busy_skip(&state, mission);
                 ms.last_fire_minute = Some(current_minute);
                 continue;
             }
@@ -269,8 +265,7 @@ pub async fn mission_scheduler_loop(state: Arc<SchedulerHost>) {
                     &project_path_owned,
                     &mission_owned,
                     None,
-                    None,
-                    false,
+                    Trigger::Scheduled,
                 )
                 .await;
                 running_flag.store(false, std::sync::atomic::Ordering::Relaxed);
@@ -420,16 +415,8 @@ pub async fn dispatch_mission_prompt_public(
     day: Option<String>,
     attended: bool,
 ) {
-    dispatch_mission_prompt(
-        state,
-        root,
-        project_path,
-        mission,
-        session_id,
-        day,
-        attended,
-    )
-    .await;
+    let trigger = Trigger::Manual { day, attended };
+    dispatch_mission_prompt(state, root, project_path, mission, session_id, trigger).await;
 }
 
 /// Resolve a mission's working dir the same way the scheduler loop does:
@@ -463,9 +450,9 @@ fn mission_root(mission: &Mission) -> (std::path::PathBuf, String) {
 /// frontmatter. Omit the field to leave the mission cron-only.
 ///
 /// Cheap + non-blocking: spawns once per call, walks missions, calls
-/// `dispatch_mission_prompt_public` for each overdue one. Overlap with the
-/// regular cron fire is prevented by the generic mission busy-skip in the
-/// scheduler tick.
+/// `dispatch_mission_prompt` (scheduled, so `run-if` gates it) for each
+/// overdue one. Overlap with the regular cron fire is prevented by the
+/// generic mission busy-skip in the scheduler tick.
 pub(crate) fn maybe_fire_catchup_missions(state: Arc<SchedulerHost>) {
     if !state.quiet_for_background(QUIET_WINDOW_SECS) {
         return;
@@ -536,14 +523,13 @@ pub(crate) fn maybe_fire_catchup_missions(state: Arc<SchedulerHost>) {
                 catchup_hours
             );
             let (root, project_path) = mission_root(&mission);
-            dispatch_mission_prompt_public(
+            dispatch_mission_prompt(
                 state.clone(),
                 root,
                 &project_path,
                 &mission,
                 None,
-                None,
-                false,
+                Trigger::Scheduled,
             )
             .await;
         }
@@ -554,7 +540,9 @@ pub(crate) fn maybe_fire_catchup_missions(state: Arc<SchedulerHost>) {
 /// the last `catchup_hours`, from a minute already past (the tick owns the
 /// current one), that no run started at or after. Skipped runs and runs a
 /// dead daemon left `interrupted` don't fill it. Neither does a run from
-/// before the slot — an afternoon's manual run is not the night's.
+/// before the slot — an afternoon's manual run is not the night's. A `run-if`
+/// skip does fill it: the check answered for that slot, and asking again
+/// every minute would only log the same no.
 fn missed_slot(
     schedule: &cron::Schedule,
     catchup_hours: u64,
@@ -570,19 +558,19 @@ fn missed_slot(
     let slot_secs = u64::try_from(slot.timestamp()).ok()?;
     let filled = runs
         .iter()
-        .any(|r| !r.skipped && r.status != "interrupted" && r.triggered_at >= slot_secs);
+        .any(|r| r.fills_slot() && r.triggered_at >= slot_secs);
     (!filled).then_some(slot)
 }
 
-/// Dispatch a mission prompt to the mission agent.
+/// Dispatch a mission prompt to the mission agent. A scheduled trigger
+/// passes the mission's `run-if` first; a manual one never asks it.
 async fn dispatch_mission_prompt(
     state: Arc<SchedulerHost>,
     root: std::path::PathBuf,
     project_path: &str,
     mission: &Mission,
     pre_session_id: Option<String>,
-    day: Option<String>,
-    attended: bool,
+    trigger: Trigger,
 ) {
     // Refresh from disk so in-flight `mission.md` edits land on the next
     // run without needing a daemon restart. Falls back to the cached
@@ -606,22 +594,22 @@ async fn dispatch_mission_prompt(
             let _ = state.manager.global_sessions.remove_session(sid);
             let _ = state.events_tx.send(ServerEvent::StateUpdated);
         }
-        let skip_id = format!(
-            "mission-run-{}-{}",
-            crate::util::now_ts_secs(),
-            &uuid::Uuid::new_v4().to_string()[..8]
-        );
-        record_mission_run(&state, mission, &skip_id, None, "skipped", true);
+        record_busy_skip(&state, mission);
         return;
+    };
+
+    // The precondition, before any session or model call.
+    if !passes_run_if(&state, mission, &root, &trigger).await {
+        return;
+    }
+    let (day, attended) = match trigger {
+        Trigger::Scheduled => (None, false),
+        Trigger::Manual { day, attended } => (day, attended),
     };
 
     // Mission-level run id. Keys MissionRunEntry.run_id and the
     // MissionTriggered event.
-    let mission_run_id = format!(
-        "mission-run-{}-{}",
-        crate::util::now_ts_secs(),
-        &uuid::Uuid::new_v4().to_string()[..8]
-    );
+    let mission_run_id = new_run_id();
 
     // Use pre-created session or create a new one
     let has_pre_session = pre_session_id.is_some();
@@ -631,14 +619,7 @@ async fn dispatch_mission_prompt(
     // function — a hang, crash, or daemon restart must leave a visible
     // row (healed to `interrupted` on the next start), never an
     // invisible zombie (2026-07-10 dream hang left no record at all).
-    record_mission_run(
-        &state,
-        mission,
-        &mission_run_id,
-        session_id.as_deref(),
-        "running",
-        false,
-    );
+    record_running(&state, mission, &mission_run_id, session_id.as_deref());
 
     // Memory-agent runs end in the condense stage, whose replace_ids
     // merges retire long-term rows with no undo — snapshot the store
@@ -1076,21 +1057,65 @@ fn finalize_mission_run(
     }
 }
 
-fn record_mission_run(
+/// A mission-level run id: `mission-run-<ts>-<uuid8>`.
+pub(super) fn new_run_id() -> String {
+    format!(
+        "mission-run-{}-{}",
+        crate::util::now_ts_secs(),
+        &uuid::Uuid::new_v4().to_string()[..8]
+    )
+}
+
+/// The `run-if` gate, with the owning skill looked up only when there is a
+/// check to run.
+async fn passes_run_if(
+    state: &Arc<SchedulerHost>,
+    mission: &Mission,
+    root: &std::path::Path,
+    trigger: &Trigger,
+) -> bool {
+    use crate::engine::skill::SkillRegistry;
+    let needs_skill = matches!(trigger, Trigger::Scheduled) && mission.run_if.is_some();
+    let skill = match mission.skill.as_deref() {
+        Some(name) if needs_skill => state.skills.get_skill(name).await,
+        _ => None,
+    };
+    run_if::admit(
+        &state.missions,
+        mission,
+        root,
+        skill.as_ref(),
+        trigger,
+        run_if::TIMEOUT_MS,
+    )
+    .await
+}
+
+fn record_running(
     state: &Arc<SchedulerHost>,
     mission: &Mission,
     run_id: &str,
     session_id: Option<&str>,
-    status: &str,
-    skipped: bool,
 ) {
     let entry = MissionRunEntry {
         run_id: run_id.to_string(),
         session_id: session_id.map(|s| s.to_string()),
         triggered_at: crate::util::now_ts_secs(),
-        status: status.to_string(),
-        skipped,
-        usage: None,
+        status: "running".into(),
+        ..Default::default()
+    };
+    let _ = state.missions.append_mission_run(&mission.id, &entry);
+}
+
+/// A trigger that found a run already in flight.
+fn record_busy_skip(state: &Arc<SchedulerHost>, mission: &Mission) {
+    let entry = MissionRunEntry {
+        run_id: new_run_id(),
+        triggered_at: crate::util::now_ts_secs(),
+        status: "skipped".into(),
+        skipped: true,
+        skip: Some(SkipKind::Busy),
+        ..Default::default()
     };
     let _ = state.missions.append_mission_run(&mission.id, &entry);
 }
@@ -1111,7 +1136,8 @@ mod tests {
             triggered_at: started.timestamp() as u64,
             status: status.into(),
             skipped,
-            usage: None,
+            skip: skipped.then_some(SkipKind::Busy),
+            ..Default::default()
         }
     }
 
@@ -1144,6 +1170,27 @@ mod tests {
         ];
         let slot = missed_slot(&nightly(), 20, &runs, at(17, 9, 12));
         assert_eq!(slot, Some(at(17, 1, 0)));
+    }
+
+    #[test]
+    fn a_run_if_skip_fills_the_slot_and_a_busy_skip_does_not() {
+        let busy = [run(at(17, 1, 0), "skipped", true)];
+        assert_eq!(
+            missed_slot(&nightly(), 20, &busy, at(17, 9, 12)),
+            Some(at(17, 1, 0))
+        );
+        let mut said_no = run(at(17, 9, 5), "skipped", true);
+        said_no.skip = Some(SkipKind::RunIf);
+        said_no.reason = Some("no holdings".into());
+        assert_eq!(missed_slot(&nightly(), 20, &[said_no], at(17, 9, 12)), None);
+    }
+
+    #[test]
+    fn an_old_skipped_row_without_a_kind_still_leaves_the_slot_missed() {
+        let line = r#"{"run_id":"r","triggered_at":1789693200,"status":"skipped","skipped":true}"#;
+        let old: MissionRunEntry = serde_json::from_str(line).unwrap();
+        assert_eq!(old.skip, None);
+        assert!(!old.fills_slot());
     }
 
     #[test]
