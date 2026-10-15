@@ -112,13 +112,22 @@ const SEASON_THINGS = {
   winter: { day: ['frost', 'twig'], night: ['frost', 'twig'] },
 };
 const FESTIVAL_THINGS = { sparks: 'spark', glow: 'lantern', stars: 'star', leaves: 'leaf', petals: 'petal', snow: 'flake' };
-const THING_COUNT = { petal: 14, leaf: 12, firefly: 14, spark: 22, lantern: 12, star: 14, flake: 30 };
+const THING_COUNT = { petal: 16, leaf: 16, firefly: 14, spark: 22, lantern: 12, star: 14, flake: 30 };
 const STILL_THINGS = new Set(['frost', 'twig']);
-/* A wind this strong draws gust strokes (the shell's WINDS `force`). */
-const GUSTS_FROM = 0.6;
+/* The wind reads in what it carries (Hanli, 2026-10-15: 「落叶的走向可以代表风」):
+   leaves, petals, snow and rain drift with its direction, lean and tumble
+   with its force, and from BURST_FROM it comes in bursts — every few seconds
+   everything sweeps across faster for a moment. Only a gale adds a few faint
+   gust strokes. */
+const BURST_FROM = 0.5;
+const GUSTS_FROM = 0.9;
+const BURST_MS = 1800;
+/* Inks for the season's and festival's things: muted, ink-like colours drawn
+   on their own canvas, multiplied into a light page and screened onto a dark
+   one, so they show on white without a light haze over the text. */
 const THING_INK = {
-  light: { petal: 'rgba(226,150,168,', leaf: 'rgba(196,110,46,', firefly: 'rgba(170,190,60,', spark: 'rgba(222,104,48,', lantern: 'rgba(232,150,70,', star: 'rgba(200,160,80,', flake: 'rgba(130,155,190,', gust: 'rgba(70,92,120,', frost: 'rgba(150,175,200,', twig: 'rgba(40,36,30,', a: 0.42 },
-  dark: { petal: 'rgba(240,186,198,', leaf: 'rgba(222,146,80,', firefly: 'rgba(220,240,120,', spark: 'rgba(255,170,90,', lantern: 'rgba(255,190,110,', star: 'rgba(250,236,190,', flake: 'rgba(230,236,245,', gust: 'rgba(205,218,235,', frost: 'rgba(220,232,245,', twig: 'rgba(220,214,200,', a: 0.36 },
+  light: { petal: 'rgba(196,112,132,', leaf: 'rgba(160,92,40,', firefly: 'rgba(140,160,40,', spark: 'rgba(200,84,36,', lantern: 'rgba(210,128,52,', star: 'rgba(176,136,60,', flake: 'rgba(100,122,156,', gust: 'rgba(84,98,118,', frost: 'rgba(150,175,200,', twig: 'rgba(40,36,30,', a: 0.62, blend: 'multiply' },
+  dark: { petal: 'rgba(240,186,198,', leaf: 'rgba(226,158,92,', firefly: 'rgba(220,240,120,', spark: 'rgba(255,170,90,', lantern: 'rgba(255,190,110,', star: 'rgba(250,236,190,', flake: 'rgba(230,236,245,', gust: 'rgba(196,208,224,', frost: 'rgba(220,232,245,', twig: 'rgba(220,214,200,', a: 0.5, blend: 'screen' },
 };
 
 /* Inks by look and page theme. Background: the front reads at a glance in
@@ -182,14 +191,16 @@ export function mountSky(host, opts = {}) {
   // canvas is the page's own child.
   const blendEl = page ? canvas : host;
   const lift = o.overlay ? liftCanvas() : null;
+  const inkC = o.overlay ? liftCanvas() : null; // the season's and festival's things, blended on their own
+  const inkCtx = inkC?.getContext('2d');
   const liftCtx = lift?.getContext('2d');
   const ctx = canvas.getContext('2d', { alpha: o.overlay });
   const darkMq = matchMedia('(prefers-color-scheme: dark)');
   const calmMq = matchMedia('(prefers-reduced-motion: reduce)');
 
-  const st = { kind: o.kind ?? 'clear', day: o.is_day !== false, dark: o.dark ?? darkMq.matches, wind: windOf(o.wind), season: o.season ?? null, festival: o.festival ?? null };
+  const st = { kind: o.kind ?? 'clear', day: o.is_day !== false, dark: o.dark ?? darkMq.matches, wind: windOf(o.wind), season: o.season ?? null, festival: o.festival ?? null, blow: 1 };
   let W = 0, H = 0, bg = null, front = [], back = [], clouds = [], cumuli = [], fog = null, orb = null, covers = [], coversAt = 0;
-  let things = [], gusts = [], deco = null;
+  let things = [], gusts = [], deco = null, burst = { at: -1e9, next: 0 };
   let raf = 0, timer = 0, last = 0, flash = 0, nextFlash = 0, slow = false, alive = true;
   const cost = [];
 
@@ -485,7 +496,17 @@ export function mountSky(host, opts = {}) {
     const kinds = [...new Set([...season.filter((t) => STILL_THINGS.has(t) || (!falls && !fest)), fest].filter(Boolean))];
     things = kinds.filter((t) => !STILL_THINGS.has(t)).flatMap((t) => Array.from({ length: Math.round((THING_COUNT[t] ?? 10) * k) }, () => thing(t)));
     deco = kinds.some((t) => STILL_THINGS.has(t)) ? decoTexture(kinds) : null;
-    gusts = st.wind.force >= GUSTS_FROM ? Array.from({ length: Math.round(7 * Math.min(1.2, k)) }, () => gust(true)) : [];
+    gusts = st.wind.force >= GUSTS_FROM ? Array.from({ length: Math.round(3 * Math.min(1.2, k)) }, () => gust(true)) : [];
+    inkC.style.mixBlendMode = THING_INK[st.dark ? 'dark' : 'light'].blend;
+  }
+
+  /* How hard the wind blows this instant: 1, rising to ~1 + 2·force in a
+     burst that swells and fades over BURST_MS, every few seconds. */
+  function blowAt(t) {
+    if (st.wind.force < BURST_FROM) return 1;
+    if (t > burst.next) { burst.at = t; burst.next = t + rnd(3000, 7000) / st.wind.force; }
+    const u = (t - burst.at) / BURST_MS;
+    return u >= 0 && u < 1 ? 1 + 2 * st.wind.force * Math.sin(Math.PI * u) : 1;
   }
 
   function thing(t) {
@@ -532,19 +553,22 @@ export function mountSky(host, opts = {}) {
     g.restore();
   }
 
-  /* Moving things: each blown by the wind (its sign and force), drawn faint. */
+  /* Moving things: each carried by the wind — its way across, its force,
+     its bursts — the leaves and petals tumbling faster as it blows. */
   function drawThings(dt, t) {
-    const k = THING_INK[st.dark ? 'dark' : 'light'], drift = st.wind.sign * (20 + 160 * st.wind.force);
+    const k = THING_INK[st.dark ? 'dark' : 'light'], blow = blowAt(t);
+    const drift = st.wind.sign * (20 + 220 * st.wind.force) * blow;
     for (const p of things) {
-      stepThing(p, dt, t, drift);
+      stepThing(p, dt, t, drift, blow);
       drawThing(p, t, k);
     }
   }
 
-  function stepThing(p, dt, t, drift) {
+  function stepThing(p, dt, t, drift, blow) {
     if (p.t === 'star') return;
     if (p.t === 'firefly') { p.x += (Math.sin(t / 1700 + p.ph) * 10 + drift * 0.1) * dt; p.y += Math.cos(t / 2100 + p.ph) * p.v * dt; return; }
     p.y += p.v * dt;
+    p.tumble = (p.tumble ?? 0) + (p.spin ?? 0) * dt * (1 + 2 * st.wind.force) * blow;
     p.x += (drift * (p.t === 'spark' || p.t === 'lantern' ? 0.2 : 1) + Math.sin(t / 1300 + p.ph) * 14) * dt;
     if (p.y > H + 10) { p.y = -10; p.x = rnd(0, W); }
     if (p.y < -12) { p.y = H + 10; p.x = rnd(0, W); }
@@ -552,31 +576,34 @@ export function mountSky(host, opts = {}) {
   }
 
   function drawThing(p, t, k) {
-    const tw = 0.5 + 0.5 * Math.sin(t / 900 + p.ph);
+    const g = inkCtx, tw = 0.5 + 0.5 * Math.sin(t / 900 + p.ph);
     if (p.t === 'firefly' || p.t === 'star' || p.t === 'spark' || p.t === 'lantern') {
-      const a = (p.t === 'spark' ? 0.9 : p.t === 'lantern' ? 0.7 : 0.4 + 0.6 * tw) * k.a * 1.6;
-      ctx.fillStyle = `${k[p.t]}${Math.min(0.9, a)})`;
-      ctx.beginPath(); ctx.arc(p.x, p.y, (p.t === 'lantern' ? 3.2 : 1.6) * p.r, 0, 6.2832); ctx.fill();
+      const a = (p.t === 'spark' ? 0.9 : p.t === 'lantern' ? 0.7 : 0.4 + 0.6 * tw) * k.a * 1.4;
+      g.fillStyle = `${k[p.t]}${Math.min(0.9, a)})`;
+      g.beginPath(); g.arc(p.x, p.y, (p.t === 'lantern' ? 3.2 : 1.6) * p.r, 0, 6.2832); g.fill();
       return;
     }
-    ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.ph + (t / 1000) * (p.spin ?? 0));
-    ctx.fillStyle = `${k[p.t]}${k.a * (p.t === 'flake' ? 0.9 : 1)})`;
-    ctx.beginPath();
-    if (p.t === 'flake') ctx.arc(0, 0, 2.2 * p.r, 0, 6.2832);
-    else ctx.ellipse(0, 0, (p.t === 'leaf' ? 6 : 4.5) * p.r, (p.t === 'leaf' ? 2.6 : 3) * p.r, 0, 0, 6.2832);
-    ctx.fill(); ctx.restore();
+    // A leaf or petal tumbles: it turns, and its face narrows as it flips.
+    const turn = p.ph + (p.tumble ?? 0);
+    g.save(); g.translate(p.x, p.y); g.rotate(turn);
+    if (p.t !== 'flake') g.scale(1, 0.35 + 0.65 * Math.abs(Math.cos(turn * 1.7)));
+    g.fillStyle = `${k[p.t]}${k.a * (p.t === 'flake' ? 0.8 : 1)})`;
+    g.beginPath();
+    if (p.t === 'flake') g.arc(0, 0, 2.2 * p.r, 0, 6.2832);
+    else g.ellipse(0, 0, (p.t === 'leaf' ? 7.5 : 5) * p.r, (p.t === 'leaf' ? 3.2 : 3.4) * p.r, 0, 0, 6.2832);
+    g.fill(); g.restore();
   }
 
   /* Gusts: long dry-brush strokes sweeping across the way the wind blows. */
   function drawGusts(dt) {
-    const k = THING_INK[st.dark ? 'dark' : 'light'];
+    const k = THING_INK[st.dark ? 'dark' : 'light'], ctx = inkCtx;
     for (let i = 0; i < gusts.length; i++) {
       const gs = gusts[i];
       gs.x += gs.v * dt;
       if (gs.x > W + gs.len) { gusts[i] = gust(); continue; }
       const x0 = st.wind.sign > 0 ? gs.x : W - gs.x, x1 = x0 + st.wind.sign * gs.len;
       const grad = ctx.createLinearGradient(x0, 0, x1, 0);
-      grad.addColorStop(0, `${k.gust}0)`); grad.addColorStop(0.3, `${k.gust}${k.a})`); grad.addColorStop(1, `${k.gust}0)`);
+      grad.addColorStop(0, `${k.gust}0)`); grad.addColorStop(0.3, `${k.gust}${k.a * 0.4})`); grad.addColorStop(1, `${k.gust}0)`);
       ctx.strokeStyle = grad; ctx.lineWidth = gs.w;
       ctx.beginPath(); ctx.moveTo(x0, gs.y); ctx.quadraticCurveTo((x0 + x1) / 2, gs.y + gs.bow, x1, gs.y + gs.bow * 0.4); ctx.stroke();
     }
@@ -587,7 +614,7 @@ export function mountSky(host, opts = {}) {
     const h = Math.max(1, Math.round(host.clientHeight || innerHeight));
     if (w === W && h === H) return;
     W = canvas.width = w; H = canvas.height = h;
-    if (lift) { lift.width = w; lift.height = h; }
+    if (lift) { lift.width = w; lift.height = h; inkC.width = w; inkC.height = h; }
     paintBackground(); seed(); coversAt = 0; draw(0);
   }
 
@@ -616,9 +643,9 @@ export function mountSky(host, opts = {}) {
   function rain(list, dt, color, width) {
     ctx.beginPath();
     for (const d of list) {
-      d.y += d.v * dt; d.x += d.v * dt * st.wind.lean;
+      d.y += d.v * dt; d.x += d.v * dt * st.wind.lean * (1 + 0.3 * (st.blow - 1));
       if (d.y > H) { d.y = rnd(-40, -10); d.x = rnd(-W * 0.3, W * 1.3); }
-      ctx.moveTo(d.x, d.y); ctx.lineTo(d.x + d.len * st.wind.lean, d.y + d.len);
+      ctx.moveTo(d.x, d.y); ctx.lineTo(d.x + d.len * st.wind.lean * (1 + 0.3 * (st.blow - 1)), d.y + d.len);
     }
     ctx.strokeStyle = color; ctx.lineWidth = width; ctx.stroke();
   }
@@ -626,7 +653,7 @@ export function mountSky(host, opts = {}) {
   function snow(list, dt, t, color, rim) {
     ctx.beginPath();
     for (const f of list) {
-      f.y += f.v * dt; f.x += st.wind.sign * 140 * st.wind.force * dt;
+      f.y += f.v * dt; f.x += st.wind.sign * 140 * st.wind.force * st.blow * dt;
       if (f.y > H + 4) { f.y = -4; f.x = rnd(0, W); }
       if (f.x > W + 8) f.x = -8; else if (f.x < -8) f.x = W + 8;
       const x = f.x + Math.sin(t / 1400 + f.ph) * 12;
@@ -655,7 +682,7 @@ export function mountSky(host, opts = {}) {
      forth and breathing, its wisps sliding through; the sun or moon; the
      clouds drifting across the top. */
   function drift(dt, t) {
-    if (deco) ctx.drawImage(deco, 0, 0);
+    if (deco) inkCtx.drawImage(deco, 0, 0);
     if (fog) drawFog(dt * (1 + 2 * st.wind.force), t);
     if (orb) drawOrb(t);
     for (const c of cumuli) drawCumulus(c, dt, t);
@@ -707,7 +734,8 @@ export function mountSky(host, opts = {}) {
   }
 
   function draw(dt, t = performance.now()) {
-    if (o.overlay) { ctx.clearRect(0, 0, W, H); liftCtx.clearRect(0, 0, W, H); }
+    st.blow = o.overlay ? blowAt(t) : 1;
+    if (o.overlay) { ctx.clearRect(0, 0, W, H); liftCtx.clearRect(0, 0, W, H); inkCtx.clearRect(0, 0, W, H); }
     else if (bg) ctx.drawImage(bg, 0, 0);
     else return;
     if (o.overlay) drift(dt, t); else blobs(dt);
@@ -817,6 +845,7 @@ export function mountSky(host, opts = {}) {
       blendEl.style.mixBlendMode = '';
       canvas.remove();
       lift?.remove();
+      inkC?.remove();
     },
   };
 
