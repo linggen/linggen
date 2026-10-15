@@ -15,6 +15,11 @@
 //     `lightning: true` (then a short, faint flash, never a white-out).
 //     A still overlay (reduced motion, slow machine) keeps the fog and
 //     clouds as one frozen frame and drops what falls.
+//     Wind (`wind: {force 0–1, dir}`) leans the rain, carries snow and the
+//     season's things across, speeds clouds and mist, and a strong one draws
+//     a few gust strokes. `season` adds its things (petals, fireflies at
+//     night, leaves, frost and a bare twig) and `festival` its particle kind
+//     (sparks, glow, stars, leaves, petals, snow) — few and faint.
 //
 //   import { mountSky } from '/shared/sky.js';
 //   const sky = mountSky(el, { auto: true });   // follows /api/senses/weather
@@ -32,6 +37,8 @@
 // lights them — full weather shows only in the uncovered space.
 
 export const KINDS = ['clear', 'cloudy', 'fog', 'rain', 'snow', 'storm'];
+/* `none`: no weather read — only the season's or a festival's things draw (overlay). */
+const ALL_KINDS = [...KINDS, 'none'];
 
 /* Sky gradients, top → bottom, by page theme, then day / night. The light
    theme never goes darker than a rain sky (#7f8d9b), so frosted light panels
@@ -71,6 +78,7 @@ const PLAN = {
 
 /* The overlay's lighter plan: fewer particles; clear skies get a sun or moon. */
 const OVERLAY_PLAN = {
+  none: { fps: 12 },
   clear: { orb: true, fps: 12 },
   cloudy: { cumuli: 4, fps: 12 },
   fog: { mist: true, fps: 12 },
@@ -92,6 +100,26 @@ const FOG = {
   wisps: [{ y: 0.62, h: 0.26, v: 24 }, { y: 0.76, h: 0.26, v: 16 }, { y: 0.9, h: 0.22, v: -12 }],
 };
 const TEX_SCALE = 4; // textures paint at 1/4 size; the upscale is the blur
+
+/* The overlay's season and festival things (2026-10-15), per 1440×900: what
+   each season draws (by day, by night) and what a festival's particle kind
+   is. Faint, ink-like and few; a still overlay keeps only the frost and the
+   twig. Falling weather (rain, snow) takes the season's moving things away. */
+const SEASON_THINGS = {
+  spring: { day: ['petal'], night: ['petal'] },
+  summer: { day: [], night: ['firefly'] },
+  autumn: { day: ['leaf'], night: ['leaf'] },
+  winter: { day: ['frost', 'twig'], night: ['frost', 'twig'] },
+};
+const FESTIVAL_THINGS = { sparks: 'spark', glow: 'lantern', stars: 'star', leaves: 'leaf', petals: 'petal', snow: 'flake' };
+const THING_COUNT = { petal: 14, leaf: 12, firefly: 14, spark: 22, lantern: 12, star: 14, flake: 30 };
+const STILL_THINGS = new Set(['frost', 'twig']);
+/* A wind this strong draws gust strokes (the shell's WINDS `force`). */
+const GUSTS_FROM = 0.6;
+const THING_INK = {
+  light: { petal: 'rgba(226,150,168,', leaf: 'rgba(196,110,46,', firefly: 'rgba(170,190,60,', spark: 'rgba(222,104,48,', lantern: 'rgba(232,150,70,', star: 'rgba(200,160,80,', flake: 'rgba(130,155,190,', gust: 'rgba(70,92,120,', frost: 'rgba(150,175,200,', twig: 'rgba(40,36,30,', a: 0.42 },
+  dark: { petal: 'rgba(240,186,198,', leaf: 'rgba(222,146,80,', firefly: 'rgba(220,240,120,', spark: 'rgba(255,170,90,', lantern: 'rgba(255,190,110,', star: 'rgba(250,236,190,', flake: 'rgba(230,236,245,', gust: 'rgba(205,218,235,', frost: 'rgba(220,232,245,', twig: 'rgba(220,214,200,', a: 0.36 },
+};
 
 /* Inks by look and page theme. Background: the front reads at a glance in
    the open sky, the back (behind panels) stays faint. Overlay: everything
@@ -119,6 +147,16 @@ const AREA = 1440 * 900;
 
 const rnd = (a, b) => a + Math.random() * (b - a);
 const cssRect = (r) => ({ x: r.left ?? r.x, y: r.top ?? r.y, w: r.width, h: r.height });
+
+/* The wind as the painter uses it: force 0–1, which way across (+1 = to the
+   right; `dir` is where it blows FROM), and the rain's lean (dx per dy).
+   None given: a light one leaning left, the old look. */
+function windOf(w) {
+  const force = Math.min(1, Math.max(0, Number.isFinite(w?.force) ? w.force : 0.15));
+  const toward = Number.isFinite(w?.dir) ? -Math.sin((w.dir * Math.PI) / 180) : -1;
+  const sign = toward >= 0 ? 1 : -1;
+  return { force, sign, lean: sign * Math.tan(((6 + 30 * force) * Math.PI) / 180) };
+}
 
 /** Weather view (`/api/senses/weather`) → `{kind, is_day}` or null. */
 export function skyOf(view) {
@@ -149,8 +187,9 @@ export function mountSky(host, opts = {}) {
   const darkMq = matchMedia('(prefers-color-scheme: dark)');
   const calmMq = matchMedia('(prefers-reduced-motion: reduce)');
 
-  const st = { kind: o.kind ?? 'clear', day: o.is_day !== false, dark: o.dark ?? darkMq.matches };
+  const st = { kind: o.kind ?? 'clear', day: o.is_day !== false, dark: o.dark ?? darkMq.matches, wind: windOf(o.wind), season: o.season ?? null, festival: o.festival ?? null };
   let W = 0, H = 0, bg = null, front = [], back = [], clouds = [], cumuli = [], fog = null, orb = null, covers = [], coversAt = 0;
+  let things = [], gusts = [], deco = null;
   let raf = 0, timer = 0, last = 0, flash = 0, nextFlash = 0, slow = false, alive = true;
   const cost = [];
 
@@ -164,7 +203,7 @@ export function mountSky(host, opts = {}) {
     bg = document.createElement('canvas');
     bg.width = W; bg.height = H;
     const g = bg.getContext('2d');
-    const [top, bottom] = theme()[st.kind];
+    const [top, bottom] = theme()[st.kind] ?? theme().clear;
     const grad = g.createLinearGradient(0, 0, 0, H);
     grad.addColorStop(0, top); grad.addColorStop(1, bottom);
     g.fillStyle = grad; g.fillRect(0, 0, W, H);
@@ -211,6 +250,7 @@ export function mountSky(host, opts = {}) {
     if (p.mist) fog = groundFog();
     if (p.orb) orb = st.day ? sun() : moon();
     if (p.cumuli) cumuli = Array.from({ length: p.cumuli }, (_, i) => cumulus(i, p.cumuli));
+    seedThings(k);
     blendEl.style.mixBlendMode = fog || cumuli.length ? ink().blend : '';
     lift.style.mixBlendMode = 'screen';
   }
@@ -423,8 +463,9 @@ export function mountSky(host, opts = {}) {
   }
 
   function drawCumulus(c, dt, t) {
-    c.x += c.v * dt;
+    c.x += c.v * dt * st.wind.sign * (0.6 + 3 * st.wind.force);
     if (c.x > W) c.x = -c.w;
+    else if (c.x < -c.w) c.x = W;
     const sx = 1 + 0.04 * Math.sin(t / c.T + c.ph), sy = 1 + 0.05 * Math.sin(t / (c.T * 1.4) + c.ph + 1);
     const w = c.w * sx, h = c.h * sy, y = c.y + c.h - h;
     ctx.globalAlpha = c.k.a;
@@ -434,6 +475,111 @@ export function mountSky(host, opts = {}) {
     liftCtx.globalAlpha = c.k.lift;
     liftCtx.drawImage(c.lift, c.x, y - h * 0.04, w, h);
     liftCtx.globalAlpha = 1;
+  }
+
+  /* The season's and the festival's things, and the wind's gusts. */
+  function seedThings(k) {
+    const falls = st.kind === 'rain' || st.kind === 'storm' || st.kind === 'snow';
+    const season = SEASON_THINGS[st.season]?.[st.day ? 'day' : 'night'] ?? [];
+    const fest = FESTIVAL_THINGS[st.festival] ?? null;
+    const kinds = [...new Set([...season.filter((t) => STILL_THINGS.has(t) || (!falls && !fest)), fest].filter(Boolean))];
+    things = kinds.filter((t) => !STILL_THINGS.has(t)).flatMap((t) => Array.from({ length: Math.round((THING_COUNT[t] ?? 10) * k) }, () => thing(t)));
+    deco = kinds.some((t) => STILL_THINGS.has(t)) ? decoTexture(kinds) : null;
+    gusts = st.wind.force >= GUSTS_FROM ? Array.from({ length: Math.round(7 * Math.min(1.2, k)) }, () => gust(true)) : [];
+  }
+
+  function thing(t) {
+    const base = { t, x: rnd(0, W), y: rnd(-H, H), ph: rnd(0, 6.3), r: rnd(0.7, 1.3) };
+    if (t === 'firefly') return { ...base, y: rnd(H * 0.35, H), v: rnd(6, 14) };
+    if (t === 'star') return { ...base, y: rnd(0, H * 0.35), v: 0 };
+    if (t === 'spark' || t === 'lantern') return { ...base, y: rnd(0, H * 1.2), v: -rnd(t === 'spark' ? 40 : 14, t === 'spark' ? 90 : 30) };
+    if (t === 'flake') return { ...base, v: rnd(26, 52) };
+    return { ...base, v: rnd(30, 60), spin: rnd(-2, 2) }; // petal, leaf
+  }
+
+  function gust(first = false) {
+    const len = rnd(0.18, 0.34) * W;
+    return { y: rnd(0.08, 0.7) * H, len, x: first ? rnd(-W, W) : -len - rnd(0, W * 0.8), v: rnd(700, 1100) * (0.6 + st.wind.force * 0.6), bow: rnd(-14, 14), w: rnd(1.3, 2.8) };
+  }
+
+  /* Frost breathing in from the corners and one bare ink twig at the top-left
+     corner (the sun and moon keep the right): painted once. */
+  function decoTexture(kinds) {
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const g = c.getContext('2d'), k = THING_INK[st.dark ? 'dark' : 'light'];
+    if (kinds.includes('frost')) {
+      for (const [x, y, r] of [[0, 0, 0.32], [W, 0, 0.26], [0, H, 0.22], [W, H, 0.22]]) {
+        const R = Math.max(W, H) * r, grad = g.createRadialGradient(x, y, 0, x, y, R);
+        grad.addColorStop(0, `${k.frost}${k.a * 0.55})`); grad.addColorStop(1, `${k.frost}0)`);
+        g.fillStyle = grad; g.fillRect(0, 0, W, H);
+      }
+    }
+    if (kinds.includes('twig')) twig(g, k);
+    return c;
+  }
+
+  function twig(g, k) {
+    const s = Math.min(1, W / 1440) * 1.1;
+    g.save(); g.scale(s, s);
+    g.strokeStyle = `${k.twig}${k.a})`; g.lineCap = 'round';
+    const branch = (pts, w) => { g.lineWidth = w; g.beginPath(); g.moveTo(pts[0], pts[1]); g.bezierCurveTo(...pts.slice(2)); g.stroke(); };
+    branch([0, 8, 60, 20, 120, 46, 200, 70], 4.5);
+    branch([70, 26, 82, 46, 84, 64, 78, 84], 2.2);
+    branch([120, 46, 140, 36, 156, 30, 170, 30], 2);
+    branch([160, 62, 166, 80, 180, 92, 196, 98], 1.6);
+    branch([200, 70, 226, 72, 246, 80, 262, 92], 1.4);
+    g.restore();
+  }
+
+  /* Moving things: each blown by the wind (its sign and force), drawn faint. */
+  function drawThings(dt, t) {
+    const k = THING_INK[st.dark ? 'dark' : 'light'], drift = st.wind.sign * (20 + 160 * st.wind.force);
+    for (const p of things) {
+      stepThing(p, dt, t, drift);
+      drawThing(p, t, k);
+    }
+  }
+
+  function stepThing(p, dt, t, drift) {
+    if (p.t === 'star') return;
+    if (p.t === 'firefly') { p.x += (Math.sin(t / 1700 + p.ph) * 10 + drift * 0.1) * dt; p.y += Math.cos(t / 2100 + p.ph) * p.v * dt; return; }
+    p.y += p.v * dt;
+    p.x += (drift * (p.t === 'spark' || p.t === 'lantern' ? 0.2 : 1) + Math.sin(t / 1300 + p.ph) * 14) * dt;
+    if (p.y > H + 10) { p.y = -10; p.x = rnd(0, W); }
+    if (p.y < -12) { p.y = H + 10; p.x = rnd(0, W); }
+    if (p.x > W + 20) p.x = -20; else if (p.x < -20) p.x = W + 20;
+  }
+
+  function drawThing(p, t, k) {
+    const tw = 0.5 + 0.5 * Math.sin(t / 900 + p.ph);
+    if (p.t === 'firefly' || p.t === 'star' || p.t === 'spark' || p.t === 'lantern') {
+      const a = (p.t === 'spark' ? 0.9 : p.t === 'lantern' ? 0.7 : 0.4 + 0.6 * tw) * k.a * 1.6;
+      ctx.fillStyle = `${k[p.t]}${Math.min(0.9, a)})`;
+      ctx.beginPath(); ctx.arc(p.x, p.y, (p.t === 'lantern' ? 3.2 : 1.6) * p.r, 0, 6.2832); ctx.fill();
+      return;
+    }
+    ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.ph + (t / 1000) * (p.spin ?? 0));
+    ctx.fillStyle = `${k[p.t]}${k.a * (p.t === 'flake' ? 0.9 : 1)})`;
+    ctx.beginPath();
+    if (p.t === 'flake') ctx.arc(0, 0, 2.2 * p.r, 0, 6.2832);
+    else ctx.ellipse(0, 0, (p.t === 'leaf' ? 6 : 4.5) * p.r, (p.t === 'leaf' ? 2.6 : 3) * p.r, 0, 0, 6.2832);
+    ctx.fill(); ctx.restore();
+  }
+
+  /* Gusts: long dry-brush strokes sweeping across the way the wind blows. */
+  function drawGusts(dt) {
+    const k = THING_INK[st.dark ? 'dark' : 'light'];
+    for (let i = 0; i < gusts.length; i++) {
+      const gs = gusts[i];
+      gs.x += gs.v * dt;
+      if (gs.x > W + gs.len) { gusts[i] = gust(); continue; }
+      const x0 = st.wind.sign > 0 ? gs.x : W - gs.x, x1 = x0 + st.wind.sign * gs.len;
+      const grad = ctx.createLinearGradient(x0, 0, x1, 0);
+      grad.addColorStop(0, `${k.gust}0)`); grad.addColorStop(0.3, `${k.gust}${k.a})`); grad.addColorStop(1, `${k.gust}0)`);
+      ctx.strokeStyle = grad; ctx.lineWidth = gs.w;
+      ctx.beginPath(); ctx.moveTo(x0, gs.y); ctx.quadraticCurveTo((x0 + x1) / 2, gs.y + gs.bow, x1, gs.y + gs.bow * 0.4); ctx.stroke();
+    }
   }
 
   function resize() {
@@ -470,9 +616,9 @@ export function mountSky(host, opts = {}) {
   function rain(list, dt, color, width) {
     ctx.beginPath();
     for (const d of list) {
-      d.y += d.v * dt; d.x -= d.v * dt * 0.12;
-      if (d.y > H) { d.y = rnd(-40, -10); d.x = rnd(0, W * 1.1); }
-      ctx.moveTo(d.x, d.y); ctx.lineTo(d.x - d.len * 0.12, d.y + d.len);
+      d.y += d.v * dt; d.x += d.v * dt * st.wind.lean;
+      if (d.y > H) { d.y = rnd(-40, -10); d.x = rnd(-W * 0.3, W * 1.3); }
+      ctx.moveTo(d.x, d.y); ctx.lineTo(d.x + d.len * st.wind.lean, d.y + d.len);
     }
     ctx.strokeStyle = color; ctx.lineWidth = width; ctx.stroke();
   }
@@ -480,8 +626,9 @@ export function mountSky(host, opts = {}) {
   function snow(list, dt, t, color, rim) {
     ctx.beginPath();
     for (const f of list) {
-      f.y += f.v * dt;
+      f.y += f.v * dt; f.x += st.wind.sign * 140 * st.wind.force * dt;
       if (f.y > H + 4) { f.y = -4; f.x = rnd(0, W); }
+      if (f.x > W + 8) f.x = -8; else if (f.x < -8) f.x = W + 8;
       const x = f.x + Math.sin(t / 1400 + f.ph) * 12;
       ctx.moveTo(x + f.r, f.y); ctx.arc(x, f.y, f.r, 0, 6.2832);
     }
@@ -508,7 +655,8 @@ export function mountSky(host, opts = {}) {
      forth and breathing, its wisps sliding through; the sun or moon; the
      clouds drifting across the top. */
   function drift(dt, t) {
-    if (fog) drawFog(dt, t);
+    if (deco) ctx.drawImage(deco, 0, 0);
+    if (fog) drawFog(dt * (1 + 2 * st.wind.force), t);
     if (orb) drawOrb(t);
     for (const c of cumuli) drawCumulus(c, dt, t);
   }
@@ -563,7 +711,8 @@ export function mountSky(host, opts = {}) {
     else if (bg) ctx.drawImage(bg, 0, 0);
     else return;
     if (o.overlay) drift(dt, t); else blobs(dt);
-    if (o.overlay && still()) return; // a still overlay: the mist stays, nothing falls
+    if (o.overlay && still()) return; // a still overlay: the mist, frost and twig stay, nothing falls
+    if (o.overlay) { drawThings(dt, t); drawGusts(dt); }
     readCovers(t);
     const kind = st.kind;
     const k = ink();
@@ -579,7 +728,7 @@ export function mountSky(host, opts = {}) {
   }
 
   function moving() {
-    return alive && !still() && !document.hidden && (front.length || back.length || clouds.length || cumuli.length || fog || orb || plan().flash);
+    return alive && !still() && !document.hidden && (front.length || back.length || clouds.length || cumuli.length || fog || orb || things.length || gusts.length || plan().flash);
   }
 
   function watch(ms) {
@@ -646,12 +795,15 @@ export function mountSky(host, opts = {}) {
   const api = {
     canvas,
     get mode() { return mode(); },
-    /** `{kind, is_day}` — a reading from the weather sense, or your own. */
+    /** `{kind, is_day, wind?, season?, festival?}` — a reading from the weather
+        sense, or your own. `wind` {force 0–1, dir: degrees it blows from}. */
     set(next) {
-      const kind = KINDS.includes(next?.kind) ? next.kind : st.kind;
+      const kind = ALL_KINDS.includes(next?.kind) ? next.kind : st.kind;
       const day = next?.is_day !== false;
-      if (kind === st.kind && day === st.day && W) return;
-      st.kind = kind; st.day = day; nextFlash = 0;
+      const wind = windOf(next?.wind), season = next?.season ?? null, festival = next?.festival ?? null;
+      const same = kind === st.kind && day === st.day && season === st.season && festival === st.festival && wind.force === st.wind.force && wind.sign === st.wind.sign;
+      if (same && W) return;
+      Object.assign(st, { kind, day, wind, season, festival }); nextFlash = 0;
       paintBackground(); seed(); start();
     },
     destroy() {

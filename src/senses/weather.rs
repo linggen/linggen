@@ -20,7 +20,10 @@
 //!   cities of one name never share one.
 //! - To a declaring skill's tool: `LINGGEN_WEATHER`, the reading as JSON
 //!   `{kind, code, temp_c, is_day, city, at}` — `kind` one of clear, cloudy,
-//!   fog, rain, snow, storm. Absent while off, unset or not yet read.
+//!   fog, rain, snow, storm — plus, when known, `wind_kmh`, `gust_kmh`,
+//!   `wind_dir` (degrees it blows from), `latitude` and `country_code` (where
+//!   it was read). Wind is its own dimension, never a kind. Absent while off,
+//!   unset or not yet read.
 //! - `GET /api/senses/weather` — `{city, auto, off, reading}`, refreshed if
 //!   stale; `auto` is true while no city is typed (the place is, or will be,
 //!   found by IP). `PUT /api/senses/weather` — `{city: "Harbin", lang?}` types
@@ -52,6 +55,10 @@ pub struct City {
     pub name: String,
     #[serde(default)]
     pub country: String,
+    /// ISO 3166-1 alpha-2 (`CA`, `US`), for what differs by country (a
+    /// holiday's date). Empty in files kept before it was, until re-read.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub country_code: String,
     pub latitude: f64,
     pub longitude: f64,
     /// Found by IP rather than typed.
@@ -76,6 +83,20 @@ pub struct Reading {
     pub city: String,
     /// When it was read, unix seconds.
     pub at: u64,
+    /// Wind at 10 m, km/h; its gusts, km/h; where it blows FROM, degrees
+    /// (0 = north, 90 = east). Absent in readings kept before they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wind_kmh: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gust_kmh: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wind_dir: Option<f64>,
+    /// Where it was read: the latitude (the hemisphere's seasons) and the
+    /// place's country code.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latitude: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub country_code: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -272,11 +293,22 @@ pub fn geo_city(body: &serde_json::Value, at: u64) -> Option<City> {
         query: String::new(),
         name,
         country: text("country"),
+        country_code: iso_code(&text("country")),
         latitude,
         longitude,
         auto: true,
         located_at: at,
     })
+}
+
+/// A two-letter country code, upper-cased, or empty.
+fn iso_code(raw: &str) -> String {
+    let code = raw.trim();
+    if code.len() == 2 && code.chars().all(|c| c.is_ascii_alphabetic()) {
+        code.to_ascii_uppercase()
+    } else {
+        String::new()
+    }
 }
 
 /// A geocoder answer's first result as a [`City`].
@@ -290,6 +322,7 @@ pub fn city_of(query: &str, body: &serde_json::Value) -> Option<City> {
             .and_then(|c| c.as_str())
             .unwrap_or("")
             .to_string(),
+        country_code: iso_code(r.get("country_code").and_then(|c| c.as_str()).unwrap_or("")),
         latitude: r.get("latitude")?.as_f64()?,
         longitude: r.get("longitude")?.as_f64()?,
         auto: false,
@@ -301,6 +334,7 @@ pub fn city_of(query: &str, body: &serde_json::Value) -> Option<City> {
 pub fn reading_of(city: &City, body: &serde_json::Value, at: u64) -> Option<Reading> {
     let c = body.get("current")?;
     let code = c.get("weather_code")?.as_i64()?;
+    let num = |k: &str| c.get(k).and_then(|v| v.as_f64());
     Some(Reading {
         kind: kind_of(code).to_string(),
         code,
@@ -311,6 +345,11 @@ pub fn reading_of(city: &City, body: &serde_json::Value, at: u64) -> Option<Read
         is_day: c.get("is_day").and_then(|d| d.as_i64()).unwrap_or(1) == 1,
         city: city.name.clone(),
         at,
+        wind_kmh: num("wind_speed_10m"),
+        gust_kmh: num("wind_gusts_10m"),
+        wind_dir: num("wind_direction_10m"),
+        latitude: Some(city.latitude),
+        country_code: Some(city.country_code.clone()).filter(|c| !c.is_empty()),
     })
 }
 
@@ -319,7 +358,10 @@ async fn fetch(city: &City) -> Option<Reading> {
     let query = [
         ("latitude", lat.as_str()),
         ("longitude", lon.as_str()),
-        ("current", "temperature_2m,weather_code,is_day"),
+        (
+            "current",
+            "temperature_2m,weather_code,is_day,wind_speed_10m,wind_gusts_10m,wind_direction_10m",
+        ),
     ];
     match get_json(FORECAST, &query).await {
         Ok(body) => reading_of(city, &body, now()),
@@ -433,6 +475,45 @@ fn keep(city: &City, reading: Reading) -> std::io::Result<Store> {
     })
 }
 
+/// Whether a typed city still lacks its country code (kept before there was
+/// one) and has not been looked up for it yet this run.
+static COUNTRY_ASKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn lacks_country(city: &City) -> bool {
+    !city.auto && city.country_code.is_empty() && !city.query.trim().is_empty()
+}
+
+/// A typed city kept before country codes were: its name looked up once
+/// more for the code, kept only if the answer is the same place.
+async fn with_country(city: City) -> City {
+    use std::sync::atomic::Ordering;
+    if !lacks_country(&city) || COUNTRY_ASKED.swap(true, Ordering::Relaxed) {
+        return city;
+    }
+    let Some(found) = geocode(&city.query, "en").await else {
+        return city;
+    };
+    let near = (found.latitude - city.latitude).abs() < 0.05
+        && (found.longitude - city.longitude).abs() < 0.05;
+    if !near || found.country_code.is_empty() {
+        return city;
+    }
+    let code = found.country_code;
+    let _ = change(|store| {
+        if let Some(c) = store
+            .city
+            .as_mut()
+            .filter(|c| same_place(c.place(), city.place()))
+        {
+            c.country_code = code.clone();
+        }
+    });
+    City {
+        country_code: code,
+        ..city
+    }
+}
+
 /// Read the weather again when it is stale (one fetch at a time); the store
 /// as it stands after.
 pub async fn refresh() -> Store {
@@ -445,6 +526,7 @@ pub async fn refresh() -> Store {
         return store;
     };
     note_try(&city);
+    let city = with_country(city).await;
     let Some(reading) = fetch(&city).await else {
         tracing::info!("[weather] no reading for {}", city.name);
         return load();
@@ -642,6 +724,7 @@ mod tests {
             query: "x".into(),
             name: "甲".into(),
             country: String::new(),
+            country_code: String::new(),
             latitude: 0.0,
             longitude: 0.0,
             auto: false,
@@ -654,6 +737,11 @@ mod tests {
             is_day: true,
             city: "甲".into(),
             at: now(),
+            wind_kmh: None,
+            gust_kmh: None,
+            wind_dir: None,
+            latitude: None,
+            country_code: None,
         };
         let on = Store {
             city: Some(city.clone()),
@@ -695,6 +783,7 @@ mod tests {
             query: name.into(),
             name: name.into(),
             country: String::new(),
+            country_code: String::new(),
             latitude: lat,
             longitude: 0.0,
             auto: false,
@@ -712,6 +801,11 @@ mod tests {
             is_day: true,
             city: "Springfield".into(),
             at: now(),
+            wind_kmh: None,
+            gust_kmh: None,
+            wind_dir: None,
+            latitude: None,
+            country_code: None,
         };
         let kept = Store {
             city: Some(springfield.clone()),
@@ -758,6 +852,11 @@ mod tests {
             is_day: true,
             city: "A".into(),
             at: now(),
+            wind_kmh: None,
+            gust_kmh: None,
+            wind_dir: None,
+            latitude: None,
+            country_code: None,
         };
         let mut store = Store {
             city: Some(a.clone()),
@@ -793,7 +892,51 @@ mod tests {
             is_day: true,
             city: "A".into(),
             at,
+            wind_kmh: None,
+            gust_kmh: None,
+            wind_dir: None,
+            latitude: None,
+            country_code: None,
         }
+    }
+
+    #[test]
+    fn a_forecast_carries_the_wind_and_where_it_was_read() {
+        let geo = serde_json::json!({"results": [{"name": "Halifax", "country": "Canada", "country_code": "ca", "latitude": 44.64, "longitude": -63.58}]});
+        let halifax = city_of("Halifax", &geo).unwrap();
+        assert_eq!(halifax.country_code, "CA");
+        let now = serde_json::json!({"current": {"temperature_2m": 9.0, "weather_code": 0, "is_day": 1,
+            "wind_speed_10m": 30.4, "wind_gusts_10m": 62.6, "wind_direction_10m": 317}});
+        let r = reading_of(&halifax, &now, 1).unwrap();
+        assert_eq!(
+            (r.kind.as_str(), r.wind_kmh, r.gust_kmh, r.wind_dir),
+            ("clear", Some(30.4), Some(62.6), Some(317.0))
+        );
+        assert_eq!(
+            (r.latitude, r.country_code.as_deref()),
+            (Some(44.64), Some("CA"))
+        );
+        // A forecast without wind: none, and the JSON a tool sees has no wind keys.
+        let calm =
+            serde_json::json!({"current": {"temperature_2m": 9.0, "weather_code": 0, "is_day": 1}});
+        let r = reading_of(&city("A", 1.0), &calm, 1).unwrap();
+        assert_eq!(
+            (r.wind_kmh, r.gust_kmh, r.country_code.clone()),
+            (None, None, None)
+        );
+        let json = serde_json::to_value(&r).unwrap();
+        assert!(json.get("wind_kmh").is_none() && json.get("country_code").is_none());
+    }
+
+    #[test]
+    fn a_reading_kept_before_the_wind_still_reads() {
+        let old: Reading = serde_json::from_str(
+            r#"{"kind":"clear","code":0,"temp_c":9.0,"is_day":true,"city":"Halifax","at":1}"#,
+        )
+        .unwrap();
+        assert_eq!((old.wind_kmh, old.latitude), (None, None));
+        let geo = serde_json::json!({"city": "Halifax", "country": "CA", "latitude": 44.6, "longitude": -63.6});
+        assert_eq!(geo_city(&geo, 1).unwrap().country_code, "CA");
     }
 
     #[test]
