@@ -13,7 +13,7 @@ export const GeneralTab: React.FC<{
   <div className="space-y-6">
     <Section title="Language">
       <Grid>
-        <Field label="Language" hint="Pages, reports and missions use this. Chat replies follow what you write.">
+        <Field hint="Pages, reports and missions use this. Chat replies follow what you write.">
           <select
             className={inputCls}
             value={config.language ?? ''}

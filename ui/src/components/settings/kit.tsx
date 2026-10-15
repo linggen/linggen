@@ -29,15 +29,15 @@ export const Grid: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 );
 
 export const Field: React.FC<{
-  label: string;
+  label?: string;
   hint?: React.ReactNode;
   details?: React.ReactNode;
   wide?: boolean;
   children: React.ReactNode;
 }> = ({ label, hint, details, wide, children }) => (
   <div className={wide ? 'sm:col-span-2' : undefined}>
-    <label className={labelCls}>{label}</label>
-    <div className="mt-1">{children}</div>
+    {label && <label className={labelCls}>{label}</label>}
+    <div className={label ? 'mt-1' : undefined}>{children}</div>
     {hint && <p className="text-[11px] text-slate-400 mt-1">{hint}</p>}
     {details && (
       <details className="group mt-0.5">
