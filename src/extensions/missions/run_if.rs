@@ -283,6 +283,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_skill_missions_check_finds_its_skill_dir_without_the_loaded_skill() {
+        let dir = tempfile::tempdir().unwrap();
+        let skills = dir.path().join("skills");
+        let def = skills.join("cfo/missions/weekly");
+        std::fs::create_dir_all(&def).unwrap();
+        std::fs::write(skills.join("cfo/SKILL.md"), "---\nname: cfo\n---\n").unwrap();
+        std::fs::write(
+            def.join("mission.md"),
+            "---\nschedule: \"0 19 * * 0\"\nenabled: true\nrun-if: 'test -f \"$SKILL_DIR/SKILL.md\"'\n---\nBody\n",
+        )
+        .unwrap();
+        let store = MissionLoader::with_dirs(dir.path().join("missions"), skills);
+        let m = store.reload_one("cfo:weekly").unwrap();
+        assert_eq!(m.skill.as_deref(), Some("cfo"));
+        assert!(gate(&store, &m, Trigger::Scheduled, 5_000).await);
+        assert!(store.list_mission_runs("cfo:weekly").unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn a_mission_without_run_if_always_goes() {
         let (store, _dir) = store();
         let m = store
