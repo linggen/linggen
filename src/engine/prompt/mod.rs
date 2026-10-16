@@ -590,18 +590,17 @@ impl AgentEngine {
             // server's instructions — one doctrine source for every host.
         }
 
-        // --- An app's own memory index (skill sessions with memory) ---
-        // No biography: the index of the app's own dir alone, so its standing
-        // rules ride every session of it.
+        // --- An app's session: core and the app's own memory, nothing else ---
         if !self.prompt_profile.include_memory {
-            if let Some(dir) = &self.prompt_profile.memory_app_dir {
-                let place = crate::engine::tools::place_of(dir);
-                if let Some(c) =
-                    core_block::load_session_start(&self.cfg.ling_mem_url, place.as_ref(), false)
-                {
-                    stable.push_str("\n\n");
-                    stable.push_str(&c.facts);
-                }
+            let dir = self.prompt_profile.memory_app_dir.as_deref();
+            let place = dir.and_then(crate::engine::tools::place_of);
+            if let Some(text) = core_block::load_app_start(
+                &self.cfg.ling_mem_url,
+                place.as_ref(),
+                self.prompt_profile.include_core,
+            ) {
+                stable.push_str("\n\n");
+                stable.push_str(&text);
             }
         }
 

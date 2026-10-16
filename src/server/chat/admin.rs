@@ -131,11 +131,11 @@ pub(crate) async fn get_system_prompt_api(
         engine.withheld_tools.extend(meta.withheld_tools.clone());
         // The same creator rule a real turn follows: a skill's or a
         // mission's session gets no core block and no memory protocol.
-        if super::handler::turn_creator(meta.mission_id.as_deref(), None, meta.skill.as_deref())
-            != "user"
-        {
-            engine.prompt_profile.include_memory = false;
-        }
+        engine.prompt_profile.narrow_for_creator(super::handler::turn_creator(
+            meta.mission_id.as_deref(),
+            None,
+            meta.skill.as_deref(),
+        ));
         if let Some(ref skill_name) = meta.skill {
             if let Some(skill) = state.manager.skills.reload_one(skill_name).await {
                 engine.activate_skill(skill, ActivationMode::Export).await;

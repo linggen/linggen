@@ -1304,7 +1304,7 @@ pub(crate) async fn start_turn(
         // gets `include_memory=true` by default — so we narrow it here once
         // the live creator is known.
         if session_creator != "user" {
-            engine.prompt_profile.include_memory = false;
+            engine.prompt_profile.narrow_for_creator(session_creator);
             engine.cached_system_prompt = None;
         }
 

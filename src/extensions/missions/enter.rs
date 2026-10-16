@@ -32,7 +32,7 @@ pub async fn enter_mission(
     // Mission sessions don't write to the user's biographical memory and
     // don't carry the core block + memory protocol. Any cached prompt
     // predates the mission body.
-    engine.prompt_profile.include_memory = false;
+    engine.prompt_profile.narrow_for_creator("mission");
     engine.cached_system_prompt = None;
     skill
 }

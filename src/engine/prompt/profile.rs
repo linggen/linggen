@@ -12,6 +12,12 @@ pub struct PromptProfile {
     pub include_project_context: bool,
     /// Memory: project MEMORY.md + global MEMORY.md.
     pub include_memory: bool,
+    /// Core memory (who the person is) in an app's session, where
+    /// `include_memory` is off: an app's turn knows the person, and reads
+    /// nothing else but its own memory (Hanli, 2026-10-16: 「lingjing里面应该
+    /// 有lingjing相关记忆. 当然还有core记忆」 · 「只是相应app相关的, 不要加载进来其他的」).
+    /// Off for missions and consumers.
+    pub include_core: bool,
     /// Frame the turn as an autonomous task: wrap the task text in the
     /// bootstrap message (workspace listing + step-by-step coda). Off for a
     /// person's session — their message reaches the model verbatim, the way
@@ -42,6 +48,7 @@ impl PromptProfile {
             include_environment: true,
             include_project_context: true,
             include_memory: true,
+            include_core: true,
             task_bootstrap: false,
             include_delegation: true,
             consumer_frame: false,
@@ -58,6 +65,7 @@ impl PromptProfile {
             include_environment: false,
             include_project_context: false,
             include_memory: false,
+            include_core: false,
             task_bootstrap: false,
             include_delegation: false,
             consumer_frame: true,
@@ -65,6 +73,19 @@ impl PromptProfile {
             memory_app_dir: None,
             memory_recall_min_score: None,
             memory_recall_count: None,
+        }
+    }
+
+    /// Narrow memory to who opened the session (`handler::turn_creator`):
+    /// a person's keeps everything; an app's (`skill`) keeps core and its own
+    /// memory only; a mission's keeps neither.
+    pub fn narrow_for_creator(&mut self, creator: &str) {
+        if creator == "user" {
+            return;
+        }
+        self.include_memory = false;
+        if creator == "mission" {
+            self.include_core = false;
         }
     }
 
@@ -84,5 +105,26 @@ impl PromptProfile {
 impl Default for PromptProfile {
     fn default() -> Self {
         Self::autonomous()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PromptProfile;
+
+    /// An app's session knows the person (core) and nothing else of the
+    /// biography; a mission knows neither; a person's keeps everything.
+    #[test]
+    fn memory_narrows_by_who_opened_the_session() {
+        let mut app = PromptProfile::owner();
+        app.narrow_for_creator("skill");
+        assert!(!app.include_memory && app.include_core);
+        let mut mission = PromptProfile::owner();
+        mission.narrow_for_creator("mission");
+        assert!(!mission.include_memory && !mission.include_core);
+        let mut person = PromptProfile::owner();
+        person.narrow_for_creator("user");
+        assert!(person.include_memory && person.include_core);
+        assert!(!PromptProfile::consumer().include_core);
     }
 }
