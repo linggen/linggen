@@ -106,6 +106,37 @@ pub(crate) fn load_session_start(
     })
 }
 
+/// What an app's session loads: core (when `core`) and the index of the
+/// app's own dir (given its `place`) — read-only, so without the scope line
+/// or the reconcile footer, which speak to memory tools it doesn't have.
+/// Nothing from any other project or app.
+pub(crate) fn load_app_start(
+    ling_mem_url: &str,
+    place: Option<&crate::engine::tools::MemoryPlace>,
+    core: bool,
+) -> Option<String> {
+    if !core && place.is_none() {
+        return None;
+    }
+    let mut args = serde_json::json!({"verb": "session_start", "core": core});
+    if let Some(p) = place {
+        args["cwd"] = serde_json::json!(p.cwd);
+        args["root"] = serde_json::json!(p.root);
+    }
+    app_block(&fetch(ling_mem_url, args, LOAD_CORE_TIMEOUT)?.ok()?)
+}
+
+/// The core and index parts of a `session_start` answer, joined.
+fn app_block(value: &serde_json::Value) -> Option<String> {
+    let part = |k: &str| value.get(k).and_then(|v| v.as_str()).map(str::trim).unwrap_or("");
+    let text = [part("core_block"), part("index_block")]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    (!text.is_empty()).then_some(text)
+}
+
 /// Said in place of core when the daemon answered too late. A timeout is
 /// not an empty store: rendering the empty-store bootstrap would tell the
 /// model core has no rows and to start saving them. The prompt is rebuilt
@@ -309,6 +340,21 @@ fn parse_rows(value: &serde_json::Value) -> Option<Vec<CoreRow>> {
 
 #[cfg(test)]
 mod tests {
+
+    /// An app's session takes core and its own index only: no scope line,
+    /// no reconcile footer — it has no memory tools to act on them.
+    #[test]
+    fn an_app_start_is_core_and_its_own_index_alone() {
+        let v = serde_json::json!({
+            "core_block": "## Core\n- a",
+            "index_block": "## Index — app\n- b",
+            "candidates_line": "Memory scopes here: app",
+            "block": "everything",
+        });
+        assert_eq!(app_block(&v).as_deref(), Some("## Core\n- a\n\n## Index — app\n- b"));
+        assert_eq!(app_block(&serde_json::json!({"core_block": "", "index_block": ""})), None);
+        assert_eq!(load_app_start("http://127.0.0.1:1", None, false), None, "no core, no app: nothing asked");
+    }
     use super::*;
 
     #[test]
