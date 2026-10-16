@@ -36,7 +36,7 @@ const PROVIDER_PRESETS: Record<string, { url: string; defaultModel: string; plac
   // not something added here. This provider stays available in Add Model
   // only for a genuinely different/custom ChatGPT-backed model id.
   chatgpt: { url: 'https://chatgpt.com/backend-api/codex', defaultModel: '', placeholder: 'e.g. gpt-5.4, o3, gpt-4o', authMode: 'chatgpt_oauth' },
-  anthropic: { url: 'https://api.anthropic.com', defaultModel: 'claude-opus-4-5', placeholder: 'e.g. claude-opus-4-5, claude-sonnet-4-5, claude-haiku-4-5', authMode: 'claude_oauth' },
+  anthropic: { url: 'https://api.anthropic.com', defaultModel: 'claude-sonnet-5-5', placeholder: 'e.g. claude-sonnet-5-5, claude-haiku-5-5, claude-opus-5-5' },
   openai: { url: 'https://api.openai.com/v1', defaultModel: 'gpt-4o', placeholder: 'e.g. gpt-4o' },
   gemini: { url: 'https://generativelanguage.googleapis.com/v1beta/openai', defaultModel: 'gemini-2.5-flash', placeholder: 'e.g. gemini-2.5-flash, gemini-3-flash-preview' },
   groq: { url: 'https://api.groq.com/openai/v1', defaultModel: 'llama-3.3-70b-versatile', placeholder: 'e.g. llama-3.3-70b-versatile' },
@@ -118,18 +118,6 @@ export const ModelsTab: React.FC<{
   const [credsDirty, setCredsDirty] = useState(false);
   const [codexAuthStatus, setCodexAuthStatus] = useState<CodexStatus | null>(null);
   const [codexAuthLoading, setCodexAuthLoading] = useState(false);
-  // Claude Code OAuth status — sign-in/refresh is delegated to the `claude`
-  // CLI (see claude_auth.rs); Linggen only reads the keychain, so there are
-  // no login/logout handlers. The UI shows status + a nudge to run `claude`.
-  const [claudeAuthStatus, setClaudeAuthStatus] = useState<{
-    authenticated: boolean;
-    expired?: boolean;
-    subscription_type?: string | null;
-    rate_limit_tier?: string | null;
-    scopes?: string[];
-    expires_at?: number;
-    error?: string;
-  } | null>(null);
 
   const defaultModels = config.routing?.default_models ?? [];
 
@@ -191,12 +179,6 @@ export const ModelsTab: React.FC<{
     } catch { /* ignore */ }
   }, []);
 
-  const fetchClaudeAuthStatus = useCallback(async () => {
-    try {
-      setClaudeAuthStatus(await providerAuth.status('/api/auth/claude/status'));
-    } catch { /* ignore */ }
-  }, []);
-
   const handleCodexLogin = async () => {
     setCodexAuthLoading(true);
     try {
@@ -228,10 +210,9 @@ export const ModelsTab: React.FC<{
     fetchHealth();
     fetchCredentials();
     fetchCodexAuthStatus();
-    fetchClaudeAuthStatus();
     const timer = setInterval(() => { fetchOllamaStatus(); fetchHealth(); }, 5000);
     return () => clearInterval(timer);
-  }, [fetchOllamaStatus, fetchHealth, fetchCredentials, fetchCodexAuthStatus, fetchClaudeAuthStatus]);
+  }, [fetchOllamaStatus, fetchHealth, fetchCredentials, fetchCodexAuthStatus]);
 
   const updateModel = (index: number, field: keyof ModelConfigUI, value: string | number | null) => {
     const models = [...config.models];
@@ -511,7 +492,7 @@ export const ModelsTab: React.FC<{
                     <select className={inputCls} value={model.provider} onChange={(e) => updateModel(i, 'provider', e.target.value)}>
                       <option value="ollama">Ollama (local)</option>
                       <option value="chatgpt">ChatGPT (Subscription)</option>
-                      <option value="anthropic">Anthropic Claude (Subscription)</option>
+                      <option value="anthropic">Anthropic Claude (API)</option>
                       <option value="gemini">Google Gemini</option>
                       <option value="openai">OpenAI (API)</option>
                       <option value="groq">Groq</option>
@@ -563,57 +544,6 @@ export const ModelsTab: React.FC<{
                           </button>
                         )}
                         <p className="text-[10px] text-slate-400 mt-1">Uses your ChatGPT Plus/Pro subscription — no API key needed.</p>
-                      </>
-                    ) : model.auth_mode === 'claude_oauth' ? (
-                      <>
-                        <label className={labelCls}>Claude Code OAuth</label>
-                        {claudeAuthStatus?.authenticated ? (
-                          <div className="flex items-center gap-2 mt-1 flex-wrap">
-                            <span className="inline-flex items-center gap-1.5 text-[11px] text-green-600 dark:text-green-400 font-medium">
-                              <span className="w-2 h-2 rounded-full bg-green-500" />
-                              Signed in
-                              {claudeAuthStatus.subscription_type && (
-                                <span className="text-slate-400 font-normal ml-1">({claudeAuthStatus.subscription_type})</span>
-                              )}
-                            </span>
-                            <button
-                              onClick={fetchClaudeAuthStatus}
-                              className="flex items-center gap-1 text-[11px] text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 font-medium"
-                              title="Re-read the keychain after running `claude` in a terminal"
-                            >
-                              Refresh
-                            </button>
-                          </div>
-                        ) : claudeAuthStatus?.expired ? (
-                          <div className="flex items-center gap-2 mt-1 flex-wrap">
-                            <span className="inline-flex items-center gap-1.5 text-[11px] text-amber-600 dark:text-amber-400 font-medium">
-                              <span className="w-2 h-2 rounded-full bg-amber-500" />
-                              Token expired
-                            </span>
-                            <button
-                              onClick={fetchClaudeAuthStatus}
-                              className="flex items-center gap-1 text-[11px] text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 font-medium"
-                            >
-                              Refresh
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-2 mt-1 flex-wrap">
-                            <span className="inline-flex items-center gap-1.5 text-[11px] text-red-600 dark:text-red-400 font-medium">
-                              <span className="w-2 h-2 rounded-full bg-red-500" />
-                              Not signed in
-                            </span>
-                            <button
-                              onClick={fetchClaudeAuthStatus}
-                              className="flex items-center gap-1 text-[11px] text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 font-medium"
-                            >
-                              Refresh
-                            </button>
-                          </div>
-                        )}
-                        <p className="text-[10px] text-slate-400 mt-1">
-                          Uses your Claude Code subscription. Sign in by running <code className="font-mono text-[10px] text-slate-500">claude</code> in a terminal — Linggen reads the token from the keychain on each call.
-                        </p>
                       </>
                     ) : (
                       <>
