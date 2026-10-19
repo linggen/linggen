@@ -73,10 +73,20 @@ export async function mount(el, options) {
     ? new URL(relayOrigin, window.location.href).origin
     : window.location.origin;
 
+  function boundParams() {
+    const entries = Object.entries(options.params || {}).filter(([, v]) => v != null && v !== '');
+    return entries.length ? Object.fromEntries(entries.map(([k, v]) => [k, String(v)])) : null;
+  }
+
   function buildSrc(sid) {
     const p = new URLSearchParams({ skill: skillName, session: sid, hide_toolbar: '1' });
     if (modelId) p.set('model', modelId);
     if (options.agentId) p.set('agent', options.agentId);
+    // The values this page's sessions are bound to: the chat's own New chat
+    // carries them and its list shows only sessions bound the same way, so a
+    // page on a test save never starts a chat on the main one.
+    const bound = boundParams();
+    if (bound) p.set('params', JSON.stringify(bound));
     if (instanceMeta) {
       // Remote: the relay's connect page establishes its own WebRTC.
       const instanceId = instanceMeta.getAttribute('content') || '';

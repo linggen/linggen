@@ -30,10 +30,8 @@ import { SubagentPane } from './SubagentPane';
 import { statusBadgeClass } from './MessageHelpers';
 import { SessionModelSelector, SessionModeSelector, SessionStats } from './SessionSelectors';
 import { useChatActions } from '../../hooks/useChatActions';
-import { useChatStore } from '../../stores/chatStore';
-import { sessions as sessionsApi } from '../../lib/api';
 import { sessionApi } from '../../lib/endpoints';
-import { postToParent } from '../../lib/parentFrame';
+import { startNewChat } from '../../lib/newChat';
 
 /**
  * Debug action buttons shown inside the expanded session header.
@@ -97,36 +95,11 @@ const ChatDebugActions: React.FC<{ projectRoot?: string | null; sessionId?: stri
   const labelFor = (status: 'idle' | 'copied' | 'error', idle: string) =>
     status === 'copied' ? 'Copied' : status === 'error' ? 'Failed' : idle;
 
-  // A fresh session in place — the way an app page (its toolbar hidden)
-  // gets a new chat, e.g. to bind a skill's rules changed since the last
-  // one. A skill session stays bound to its skill; the parent page is told
-  // the way a first send tells it, so its bridge follows the new id.
+  // A fresh session in place, bound as this chat is (lib/newChat.ts).
   const [newStatus, setNewStatus] = useState<'idle' | 'copied' | 'error'>('idle');
   const handleNewChat = useCallback(async () => {
-    const ss = useSessionStore.getState();
-    const skill = ss.isSkillSession && ss.activeSkillName ? ss.activeSkillName : undefined;
-    const now = new Date();
-    const title = skill
-      ? `${skill} session`
-      : `Chat ${now.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, ${now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
-    // A message sent before the session exists waits for it (newChat).
-    const making = sessionsApi.create({ title, ...(skill ? { skill } : {}) }).then((data) => {
-      const created = { id: data.id, repo_path: '', title, created_at: Math.floor(Date.now() / 1000), ...(skill ? { skill } : {}) };
-      useSessionStore.setState((s) => ({ activeSessionId: data.id, allSessions: [created, ...s.allSessions] }));
-      const cs = useChatStore.getState();
-      cs.setActiveSession(data.id);
-      cs.fetchSessionState();
-      postToParent({ type: 'linggen-skill-event', event: 'session_created', payload: { sessionId: data.id } });
-      setNewStatus('copied');
-      return data.id;
-    }, (err) => {
-      console.error('[new-chat] failed:', err);
-      setNewStatus('error');
-      return null;
-    });
-    useSessionStore.setState({ newChat: making });
-    await making;
-    if (useSessionStore.getState().newChat === making) useSessionStore.setState({ newChat: null });
+    const id = await startNewChat();
+    setNewStatus(id ? 'copied' : 'error');
     setTimeout(() => setNewStatus('idle'), 1500);
   }, []);
 

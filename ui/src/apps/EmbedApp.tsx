@@ -7,6 +7,8 @@
  *   skill    — bound skill name (marks the session as skill-session)
  *   project  — VS Code project root (auto-creates/resumes a "VS Code" session)
  *   hide_toolbar — 1 to hide the compact toolbar (when parent provides its own chrome)
+ *   params   — JSON: the values the page's sessions are bound to (`mount(el, {params})`);
+ *              every new chat here carries them, and the list shows only sessions bound so
  */
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { pageImages, pageSender } from '../lib/chatImage.mts';
@@ -25,11 +27,15 @@ import { useChatActions } from '../hooks/useChatActions';
 import { useRunInfo } from '../hooks/useRunInfo';
 import { postToParent, fromParent } from '../lib/parentFrame';
 import { pageAgent, setPageAgent } from '../lib/pageAgent';
+import { boundTo, parseBinding } from '../lib/sessionBinding.mts';
+import { startNewChat } from '../lib/newChat';
 
 const params = new URLSearchParams(window.location.search);
 const pinnedSession = params.get('session') || '';
 const pinnedSkill = params.get('skill') || '';
 const pinnedModel = params.get('model') || '';
+// A page on a test save must never start or open a chat on the main one.
+const pinnedParams = parseBinding(params.get('params'));
 // The skill's own agent (the page's `mount({ agentId })`): its hidden reports
 // go to it, and its stream is the one the page's turn handlers hear.
 setPageAgent(params.get('agent') || '');
@@ -77,6 +83,29 @@ export const EmbedApp: React.FC = () => {
 
   const isRunning = useServerStore((s) => isSessionBusy(s, activeSessionId));
 
+  // An app's chat lists its skill's sessions bound exactly as this one.
+  const boundParams = useSessionStore((s) => s.boundParams);
+  const [skillSessions, setSkillSessions] = React.useState<SessionInfo[]>([]);
+  const listed = useMemo(
+    () => (pinnedSkill ? boundTo(skillSessions, boundParams) : sessions),
+    [skillSessions, boundParams, sessions],
+  );
+  const loadSkillSessions = useCallback(async (): Promise<SessionInfo[]> => {
+    if (!pinnedSkill) return [];
+    try {
+      const r = await fetch(`/api/skill-sessions?skill=${encodeURIComponent(pinnedSkill)}`);
+      const list: SessionInfo[] = (await r.json())?.sessions ?? [];
+      setSkillSessions(list);
+      return list;
+    } catch {
+      return [];
+    }
+  }, []);
+  const newChat = useCallback(() => {
+    if (!pinnedSkill) return projectStore.createSession();
+    return startNewChat().then(() => loadSkillSessions());
+  }, [projectStore, loadSkillSessions]);
+
   // --- Run info + chat actions (for clipboard bridge) ---
   const { runningMainRunIds } = useRunInfo();
   const scrollToBottomNoop = useCallback(() => {}, []);
@@ -94,6 +123,7 @@ export const EmbedApp: React.FC = () => {
       useSessionStore.setState({
         activeSessionId: pinnedSession,
         selectedProjectRoot: '',
+        boundParams: pinnedParams,
         ...(pinnedSkill ? { isSkillSession: true, activeSkillName: pinnedSkill } : {}),
       });
       // Honor the model the host skill pinned (?model=…). useChatActions reads
@@ -108,16 +138,18 @@ export const EmbedApp: React.FC = () => {
       // them from the skill-sessions endpoint (the one list that reaches an
       // embed). A host-pinned ?model= still wins.
       if (pinnedSkill) {
-        fetch(`/api/skill-sessions?skill=${encodeURIComponent(pinnedSkill)}`)
-          .then((r) => r.json())
-          .then((d) => {
-            const sess = (d?.sessions ?? []).find((s: { id: string; agents?: SessionMember[] }) => s.id === pinnedSession);
-            const members: SessionMember[] = sess?.agents ?? [];
-            useUiStore.getState().setSessionMembers(members);
-            const model = memberModel(members, chatAgentOf(useServerStore.getState().selectedAgent, members));
-            if (model && !pinnedModel) useUiStore.getState().setSessionModel(model);
-          })
-          .catch(() => {});
+        loadSkillSessions().then((list) => {
+          const sess = list.find((s) => s.id === pinnedSession);
+          const members: SessionMember[] = sess?.agents ?? [];
+          useUiStore.getState().setSessionMembers(members);
+          const model = memberModel(members, chatAgentOf(useServerStore.getState().selectedAgent, members));
+          if (model && !pinnedModel) useUiStore.getState().setSessionModel(model);
+          // Opened straight on a bound session, no `params` given: its own
+          // binding is this chat's — a new chat here stays on that save.
+          if (Object.keys(pinnedParams).length === 0 && sess?.params && Object.keys(sess.params).length > 0) {
+            useSessionStore.setState({ boundParams: { ...sess.params } });
+          }
+        });
       }
       return;
     }
@@ -148,7 +180,7 @@ export const EmbedApp: React.FC = () => {
         console.error('Embed session init error:', e);
       }
     })();
-  }, []);
+  }, [loadSkillSessions]);
 
   // --- Clipboard + skill command bridge (postMessage from parent page) ---
   const clearChatRef = useRef(clearChat);
@@ -273,11 +305,11 @@ export const EmbedApp: React.FC = () => {
               onChange={(e) => { projectStore.setActiveSessionId(e.target.value || null); projectStore.setIsMissionSession(false); }}
               className="text-xs bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded px-1.5 py-0.5 text-slate-700 dark:text-slate-300 outline-none flex-1 min-w-0 truncate"
             >
-              {sessions.length === 0 && <option value="">No sessions</option>}
-              {sessions.map((s) => <option key={s.id} value={s.id}>{s.title || s.id.slice(0, 8)}</option>)}
+              {listed.length === 0 && <option value="">No sessions</option>}
+              {listed.map((s) => <option key={s.id} value={s.id}>{s.title || s.id.slice(0, 8)}</option>)}
             </select>
             <button
-              onClick={() => projectStore.createSession()}
+              onClick={() => { void newChat(); }}
               title="New chat session"
               className="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-white/10 text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition-colors flex-shrink-0"
             >

@@ -113,3 +113,22 @@ test("a guest's tool blocks stay off the page unless it opts in", async () => {
   open.emit('content_block', { phase: 'start', tool: 'Express', agent: 'yinyue', own: false });
   assert.deepEqual(blocks, ['Express']);
 });
+
+test('a mount bound to params hands them to the chat, so its New chat stays bound', async () => {
+  const el = fakeElement();
+  const srcs: string[] = [];
+  el.appendChild = (child: ReturnType<typeof fakeElement> & { src?: string }) => {
+    setTimeout(() => { srcs.push(String(child.src)); child.fire('load'); }, 0);
+  };
+  await mount(el, { skillName: 'demo', sessionId: 'sess-1', params: { save: 'x', empty: '' } });
+  const p = new URL(srcs[0], 'http://engine').searchParams;
+  assert.deepEqual(JSON.parse(p.get('params') ?? 'null'), { save: 'x' });
+
+  const plain = fakeElement();
+  const plainSrcs: string[] = [];
+  plain.appendChild = (child: ReturnType<typeof fakeElement> & { src?: string }) => {
+    setTimeout(() => { plainSrcs.push(String(child.src)); child.fire('load'); }, 0);
+  };
+  await mount(plain, { skillName: 'demo', sessionId: 'sess-1' });
+  assert.equal(new URL(plainSrcs[0], 'http://engine').searchParams.get('params'), null);
+});

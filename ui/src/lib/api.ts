@@ -83,6 +83,8 @@ interface SessionCreateRequest {
   title: string;
   /** A skill-bound session (an app page's chat): binds the skill's rules and tools. */
   skill?: string;
+  /** The values a skill session is bound to (its declared session params). */
+  params?: Record<string, string>;
 }
 interface SessionCreateResponse {
   id: string;

@@ -280,6 +280,7 @@ export interface SessionInfo {
   cwd?: string;             // current working directory
   agents?: SessionMember[]; // the agents at the session's table, the lead first
   permission_mode?: string | null; // effective permission mode (read/edit/admin)
+  params?: Record<string, string> | null; // the values a skill session is bound to (its session params)
 }
 
 

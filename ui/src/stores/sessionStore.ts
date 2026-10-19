@@ -21,6 +21,9 @@ interface SessionState {
   activeMissionId: string | null;
   isSkillSession: boolean;
   activeSkillName: string | null;
+  /** An app page's chat: the values its sessions are bound to (the page's
+   *  `mount(el, {params})`) — every new chat through it carries them. */
+  boundParams: Record<string, string>;
 
   // Actions
   setSelectedProjectRoot: (root: string) => void;
@@ -61,6 +64,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   activeMissionId: null,
   isSkillSession: false,
   activeSkillName: null,
+  boundParams: {},
 
   setSelectedProjectRoot: (root) => {
     if (root) window.localStorage.setItem(SELECTED_PROJECT_STORAGE_KEY, root);
