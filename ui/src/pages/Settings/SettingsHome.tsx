@@ -107,6 +107,11 @@ export const SettingsHome: React.FC = () => {
           return;
         }
         setOriginalConfig(config);
+        // A new language is the whole page's: reload it into the new words.
+        if (config.language !== originalConfig?.language) {
+          (window.top ?? window).location.reload();
+          return;
+        }
       }
       if (credsDirty && saveCredsRef.current) {
         await saveCredsRef.current();

@@ -128,7 +128,8 @@ export const ChatMessageRow = React.memo<{
         )}
         {isUser ? (
           <>
-            {msg.text}
+            {/* The person's own words: never mistaken for the page's English. */}
+            <span data-no-i18n>{msg.text}</span>
             {(msg.imageCount ?? msg.images?.length ?? 0) > 0 && (
               <span className="text-slate-400 dark:text-slate-500 ml-1">
                 {(() => {
