@@ -11,6 +11,7 @@ mod plan;
 pub mod prompt;
 pub mod render;
 pub mod session_policy;
+pub mod shown_images;
 pub mod skill;
 pub mod skill_activation;
 pub mod skill_tool;
@@ -137,6 +138,7 @@ impl AgentEngine {
                         is_observation: false,
                         client_id: None,
                         failed: false,
+                        images: Vec::new(),
                     },
                 )
                 .await;
@@ -325,6 +327,7 @@ impl AgentEngine {
                             is_observation: true,
                             client_id: None,
                             failed: false,
+                            images: Vec::new(),
                         },
                     )
                     .await;
@@ -1468,6 +1471,41 @@ mod member_tests {
             "her turn asks the person"
         );
         let _ = std::fs::remove_dir_all(&sdir);
+    }
+
+    /// Pictures go to the model once: a session with a picture on each of
+    /// three turns sends exactly one on turn 3 — the earlier two stand as
+    /// numbered notes in their turns' place.
+    #[test]
+    fn only_the_current_turns_pictures_are_sent() {
+        let mut engine = yinyue_engine();
+        engine.prompt_profile.task_bootstrap = false;
+        let mut sent = Vec::new();
+        let mut last = Vec::new();
+        for turn in 1..=3 {
+            let said = format!("look {turn}");
+            engine.chat_history.push(crate::message::ChatMessage::new("user", said.clone()));
+            engine.pending_images = vec![format!("BASE64-{turn}")];
+            let (messages, _, _) = engine.prepare_loop_messages(
+                &said,
+                true,
+                crate::engine::prompt::PromptPurpose::Turn,
+            );
+            sent.push(messages.iter().map(|m| m.images.len()).sum::<usize>());
+            last = messages;
+            engine
+                .chat_history
+                .push(crate::message::ChatMessage::new("assistant", format!("guess {turn}")));
+        }
+        assert_eq!(sent, vec![1, 1, 1], "one picture a turn, never the earlier ones");
+        let pictured: Vec<&crate::message::ChatMessage> = last.iter().filter(|m| !m.images.is_empty()).collect();
+        assert_eq!(pictured.len(), 1);
+        assert_eq!(pictured[0].images, vec!["BASE64-3".to_string()]);
+        assert!(pictured[0].content.ends_with("look 3"), "{}", pictured[0].content);
+        let text: String = last.iter().map(|m| m.content.as_str()).collect::<Vec<_>>().join("\n");
+        assert!(text.contains("look 1 [image01, shown earlier]"), "{text}");
+        assert!(text.contains("look 2 [image02, shown earlier]"), "{text}");
+        assert!(!text.contains("image03"), "the current one is shown, not noted");
     }
 
     /// A withheld tool is not offered on the turn — her moment wake must not

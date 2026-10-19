@@ -200,6 +200,7 @@ mod tests {
             is_observation: true,
             client_id: None,
             failed: false,
+            images: Vec::new(),
         }
     }
 

@@ -22,7 +22,7 @@
 use super::compact_rows::COMPACTION_SENDER;
 use super::restored_tools::{self, ToolReplay, ToolRow};
 use super::ChatRunCtx;
-use crate::engine::{AgentEngine, ThreadMark};
+use crate::engine::{shown_images, AgentEngine, ThreadMark};
 use crate::message::ChatMessage;
 use crate::state_fs::sessions::ChatMsg;
 use serde_json::{Map, Value};
@@ -193,6 +193,9 @@ pub(crate) fn build(rows: &[ChatMsg], reader: &Reader) -> Vec<ChatMessage> {
     let mut out = Vec::new();
     let mut own = ToolReplay::new(reader.native);
     let mut others = OthersTools::default();
+    // Pictures earlier turns carried, so far: each stands as a note, never
+    // sent again (`shown_images`).
+    let mut pictures = 0;
     for (i, m) in rows.iter().enumerate() {
         if m.is_observation {
             read_tool_row(
@@ -208,7 +211,11 @@ pub(crate) fn build(rows: &[ChatMsg], reader: &Reader) -> Vec<ChatMessage> {
         }
         own.flush(&mut out);
         others.flush(&mut out);
-        if let Some(msg) = spoken(m, reader) {
+        if let Some(mut msg) = spoken(m, reader) {
+            if !m.images.is_empty() {
+                msg.content = shown_images::with_notes(&msg.content, pictures + 1, m.images.len());
+                pictures += m.images.len();
+            }
             out.push(msg);
         }
     }
@@ -470,6 +477,7 @@ mod tests {
             is_observation: obs,
             client_id: None,
             failed: false,
+            images: Vec::new(),
         }
     }
 
@@ -486,6 +494,38 @@ mod tests {
             others_read: &others,
         };
         spoken(m, &reader).unwrap()
+    }
+
+    /// A rebuilt thread never carries a picture: each earlier one stands as
+    /// a numbered note in its message, for every reader, a guest's turn too.
+    #[test]
+    fn earlier_pictures_read_as_notes_when_the_thread_is_rebuilt() {
+        let mut first = row("yinyue", "user", "yinyue", "@银月 what is it?", false);
+        first.images = vec!["a.png".into()];
+        let guess = row("yinyue", "yinyue", "user", "a fox", false);
+        let mut second = row("yinyue", "user", "yinyue", "and this?", false);
+        second.images = vec!["b.png".into(), "c.png".into()];
+        let agents = agents();
+        let others = HashMap::new();
+        for id in ["yinyue", "ling"] {
+            let reader = Reader {
+                id,
+                agents: &agents,
+                native: true,
+                others_read: &others,
+            };
+            let out = build(&[first.clone(), guess.clone(), second.clone()], &reader);
+            assert!(out.iter().all(|m| m.images.is_empty()), "{id}");
+            let text: Vec<&str> = out.iter().map(|m| m.content.as_str()).collect();
+            assert!(
+                text[0].ends_with("what is it? [image01, shown earlier]"),
+                "{text:?}"
+            );
+            assert!(
+                text[2].ends_with("and this? [image02, shown earlier] [image03, shown earlier]"),
+                "{text:?}"
+            );
+        }
     }
 
     #[test]

@@ -481,6 +481,7 @@ pub(crate) async fn trigger_mission_core(
                     is_observation: false,
                     client_id: None,
                     failed: false,
+                    images: Vec::new(),
                 },
             );
         }

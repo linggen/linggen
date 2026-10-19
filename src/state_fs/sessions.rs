@@ -230,6 +230,11 @@ pub struct ChatMsg {
     /// The hand-off in the agent's own voice ('ChatMsg::via_note').
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub via_note: Option<String>,
+    /// The pictures a person's message carried, as file names under the
+    /// session's `images/` folder ([`SessionStore::keep_images`]). Rows
+    /// before 2026-10-19 kept none: their pictures were never stored.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<String>,
 }
 
 impl SessionStore {
@@ -783,6 +788,7 @@ mod tests {
             is_observation: false,
             client_id: None,
             failed: false,
+            images: Vec::new(),
         };
         let msg2 = ChatMsg {
             via: None,
@@ -795,6 +801,7 @@ mod tests {
             is_observation: false,
             client_id: None,
             failed: false,
+            images: Vec::new(),
         };
         store.add_chat_message("s1", &msg1).unwrap();
         store.add_chat_message("s1", &msg2).unwrap();
@@ -820,6 +827,7 @@ mod tests {
             is_observation: false,
             client_id: client_id.map(str::to_string),
             failed: false,
+            images: Vec::new(),
         };
         let kept = serde_json::to_string(&row(Some("c-1-ab"))).unwrap();
         let back: ChatMsg = serde_json::from_str(&kept).unwrap();
@@ -873,6 +881,7 @@ mod tests {
                     is_observation: false,
                     client_id: None,
                     failed: false,
+                    images: Vec::new(),
                 },
             )
             .unwrap();
@@ -890,6 +899,7 @@ mod tests {
                     is_observation: false,
                     client_id: None,
                     failed: false,
+                    images: Vec::new(),
                 },
             )
             .unwrap();
@@ -940,6 +950,7 @@ mod tests {
                     is_observation: false,
                     client_id: None,
                     failed: false,
+                    images: Vec::new(),
                 },
             )
             .unwrap();
@@ -988,6 +999,7 @@ mod tests {
                     is_observation: false,
                     client_id: None,
                     failed: false,
+                    images: Vec::new(),
                 },
             )
             .unwrap();
@@ -1086,6 +1098,7 @@ mod tests {
                     is_observation: false,
                     client_id: None,
                     failed: false,
+                    images: Vec::new(),
                 },
             )
             .unwrap();

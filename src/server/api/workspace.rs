@@ -323,7 +323,7 @@ pub(crate) async fn get_workspace_state(
     let mapped_messages = run_calls::with_run_calls(
         messages,
         running,
-        |m, calls| {
+        |mut m, calls| {
             if crate::server::resident::is_engine_prompt(&m.from_id, &m.content) {
                 return None;
             }
@@ -336,6 +336,7 @@ pub(crate) async fn get_workspace_state(
                 true => String::new(),
                 false => sanitize_message_for_ui(&m.from_id, &m.content)?,
             };
+            let images = std::mem::take(&mut m.images);
             let meta = crate::state_fs::StateFile::Message {
                 id: format!("msg-{}", m.timestamp),
                 from: m.from_id,
@@ -347,6 +348,7 @@ pub(crate) async fn get_workspace_state(
                 via_note: m.via_note,
             };
             let meta = serde_json::to_value(meta).ok()?;
+            let meta = crate::state_fs::session_images::with_urls(meta, sid, &images);
             Some((run_calls::with_tools(meta, calls), cleaned))
         },
         |run| (run.meta(), String::new()),

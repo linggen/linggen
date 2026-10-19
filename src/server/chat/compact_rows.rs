@@ -202,6 +202,7 @@ pub(crate) async fn compact_session(
         is_observation: false,
         client_id: None,
         failed: false,
+        images: Vec::new(),
     };
     // The prefix up to `cut` is the snapshot's — rows written meanwhile
     // only append after it — so the summary goes in at the same place.
@@ -275,6 +276,7 @@ mod tests {
             is_observation: false,
             client_id: None,
             failed: false,
+            images: Vec::new(),
         }
     }
 

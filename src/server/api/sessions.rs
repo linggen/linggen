@@ -109,6 +109,39 @@ pub(crate) async fn create_session(
     }
 }
 
+#[derive(Deserialize)]
+pub(crate) struct SessionImageQuery {
+    session_id: String,
+    name: String,
+}
+
+/// GET /api/sessions/images?session_id=&name= — a picture a person's
+/// message carried, as kept beside the transcript (`ChatMsg::images`).
+pub(crate) async fn get_session_image(
+    State(state): State<Arc<ServerState>>,
+    Query(query): Query<SessionImageQuery>,
+) -> impl IntoResponse {
+    use crate::state_fs::session_images::media_type;
+    let store = &state.manager.global_sessions;
+    let Some(path) = store.image_path(&query.session_id, &query.name) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => (
+            [
+                (axum::http::header::CONTENT_TYPE, media_type(&query.name)),
+                (
+                    axum::http::header::CACHE_CONTROL,
+                    "private, max-age=31536000, immutable",
+                ),
+            ],
+            bytes,
+        )
+            .into_response(),
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Skill session endpoints (sessions stored under ~/.linggen/skills/{name}/sessions/)
 // ---------------------------------------------------------------------------
@@ -210,6 +243,7 @@ pub(crate) async fn get_skill_session_state(
                 "via": m.via,
                 "via_note": m.via_note
             });
+            let meta = crate::state_fs::session_images::with_urls(meta, &session_id, &m.images);
             Some(serde_json::json!([
                 run_calls::with_tools(meta, calls),
                 cleaned

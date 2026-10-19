@@ -122,6 +122,36 @@ pub(crate) async fn persist_and_emit_to_store(
     via: Option<&str>,
     via_note: Option<&str>,
 ) {
+    persist_and_emit_with_images(
+        store,
+        events_tx,
+        agent_id,
+        (from, to, content),
+        session_id,
+        is_observation,
+        client_id,
+        (via, via_note),
+        &[],
+    )
+    .await
+}
+
+/// [`persist_and_emit_to_store`] for a person's message that carried
+/// pictures (`sent`, base64 as the chat sent them): each is kept beside the
+/// transcript and the row names them (`ChatMsg::images`), so every chat
+/// surface draws them again after a reload.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn persist_and_emit_with_images(
+    store: &crate::state_fs::SessionStore,
+    events_tx: &broadcast::Sender<ServerEvent>,
+    agent_id: &str,
+    (from, to, content): (&str, &str, &str),
+    session_id: Option<&str>,
+    is_observation: bool,
+    client_id: Option<&str>,
+    (via, via_note): (Option<&str>, Option<&str>),
+    sent: &[String],
+) {
     let client_id = client_id.map(str::to_string);
     let _ = events_tx.send(ServerEvent::Message {
         from: from.to_string(),
@@ -146,6 +176,7 @@ pub(crate) async fn persist_and_emit_to_store(
         failed: false,
         via: via.map(str::to_string),
         via_note: via_note.map(str::to_string),
+        images: store.keep_images(sid, sent),
     };
     if let Err(e) = store.add_chat_message(sid, &msg) {
         tracing::warn!("Failed to persist chat message to mission store: {}", e);
@@ -175,6 +206,7 @@ pub(crate) async fn persist_message_only(
         is_observation,
         client_id: None,
         failed: false,
+        images: Vec::new(),
     };
     if let Err(e) = manager.global_sessions.add_chat_message(sid, &msg) {
         tracing::warn!("Failed to persist chat message: {}", e);

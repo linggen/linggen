@@ -86,6 +86,7 @@ impl AgentEngine {
                         is_observation: true,
                         client_id: None,
                         failed,
+                        images: Vec::new(),
                     },
                 )
                 .await;
@@ -154,6 +155,7 @@ impl AgentEngine {
                     is_observation: false,
                     client_id: None,
                     failed: false,
+                    images: Vec::new(),
                 },
             )
             .await;
@@ -237,6 +239,7 @@ impl AgentEngine {
                             is_observation: false,
                             client_id: None,
                             failed: false,
+                            images: Vec::new(),
                         },
                     )
                     .await;

@@ -191,6 +191,7 @@ pub async fn run(
             is_observation: false,
             client_id: None,
             failed: false,
+            images: Vec::new(),
         },
     );
 

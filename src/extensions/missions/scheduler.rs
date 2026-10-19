@@ -718,6 +718,7 @@ async fn dispatch_mission_prompt(
                     is_observation: false,
                     client_id: None,
                     failed: false,
+                    images: Vec::new(),
                 },
             );
         }
@@ -936,6 +937,7 @@ async fn dispatch_mission_prompt(
                             is_observation: false,
                             client_id: None,
                             failed: false,
+                            images: Vec::new(),
                         },
                     );
                     // Ping the UI so it reloads persisted messages immediately
@@ -1032,6 +1034,7 @@ async fn append_run_report(state: &Arc<SchedulerHost>, agent_id: &str, session_i
             is_observation: false,
             client_id: None,
             failed: false,
+            images: Vec::new(),
         },
     );
     let _ = state.events_tx.send(ServerEvent::StateUpdated);

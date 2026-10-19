@@ -430,6 +430,7 @@ mod tests {
             failed: false,
             via: None,
             via_note: None,
+            images: Vec::new(),
         }
     }
 

@@ -1,7 +1,7 @@
 use crate::engine::agent::AgentManager;
 use crate::engine::skill::QueueMode;
 use crate::server::chat::helpers::{
-    emit_queue_updated, persist_and_emit_to_store, queue_key, queue_preview,
+    emit_queue_updated, persist_and_emit_with_images, queue_key, queue_preview,
 };
 use crate::server::{AgentStatusKind, QueuedChatItem, ServerEvent, ServerState};
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
@@ -453,6 +453,7 @@ async fn dequeue_and_emit(
     response_session_id: Option<&str>,
     via: Option<&str>,
     via_note: Option<&str>,
+    images: &[String],
 ) -> bool {
     let key = queue_key(project_root, session_id, target_id);
     let was_queued = {
@@ -474,18 +475,16 @@ async fn dequeue_and_emit(
         return false;
     }
     emit_queue_updated(state, project_root, session_id, target_id).await;
-    persist_and_emit_to_store(
+    persist_and_emit_with_images(
         &state.manager.global_sessions,
         events_tx,
         target_id,
-        from_id,
-        target_id,
-        clean_msg,
+        (from_id, target_id, clean_msg),
         response_session_id,
         false,
         None,
-        via,
-        via_note,
+        (via, via_note),
+        images,
     )
     .await;
     true
@@ -1166,20 +1165,18 @@ pub(crate) async fn start_turn(
     .await;
 
     if !was_busy {
-        // Persist + emit. Images are ephemeral (sent inline as base64 for the
-        // current turn, not persisted).
-        persist_and_emit_to_store(
+        // Persist + emit. The pictures ride the turn inline (base64) and a
+        // copy is kept beside the transcript for the chat to draw again.
+        persist_and_emit_with_images(
             &state.manager.global_sessions,
             &events_tx,
             &target_id,
-            &from_id,
-            &target_id,
-            &clean_msg,
+            (&from_id, &target_id, &clean_msg),
             session_id.as_deref(),
             false,
             client_id.as_deref(),
-            via.as_deref(),
-            via_note.as_deref(),
+            (via.as_deref(), via_note.as_deref()),
+            &req.images,
         )
         .await;
     }
@@ -1224,6 +1221,7 @@ pub(crate) async fn start_turn(
                 session_id.as_deref(),
                 via.as_deref(),
                 via_note.as_deref(),
+                &req_images,
             )
             .await;
             if !still_wanted {

@@ -942,11 +942,15 @@ impl AgentEngine {
                 });
             }
             None if !images.is_empty() => {
-                // Images ride on the turn they came with. `messages` is this
-                // loop's copy, so history itself stays text-only as before.
+                // Images ride on the turn they came with, once. `messages` is
+                // this loop's copy; in the kept history the turn stands with
+                // a note per picture, so no later turn re-sends them
+                // (`shown_images`).
+                let count = images.len();
                 if let Some(last) = messages.pop() {
                     messages.push(last.with_images(images));
                 }
+                crate::engine::shown_images::mark_sent(&mut self.chat_history, count);
             }
             None => {}
         }

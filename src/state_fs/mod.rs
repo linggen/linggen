@@ -1,4 +1,5 @@
 pub mod devices;
+pub mod session_images;
 pub mod sessions;
 
 use anyhow::Result;

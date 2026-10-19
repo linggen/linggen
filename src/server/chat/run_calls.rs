@@ -301,6 +301,7 @@ mod tests {
             is_observation: obs,
             client_id: None,
             failed: false,
+            images: Vec::new(),
         }
     }
     fn user(text: &str, ts: u64) -> ChatMsg {
