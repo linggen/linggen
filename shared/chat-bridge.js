@@ -259,15 +259,21 @@ export async function mount(el, options) {
     post({ type: 'linggen-skill', action: 'send_hidden', payload: { text } });
   }
 
-  /** Add a local-only message to the chat display. */
-  function addMessage(role, text) {
+  /** Add a local-only message to the chat display. `opts.images`: pictures
+   *  (data: URLs or bare base64) drawn as thumbnails; `opts.from`: whose turn
+   *  it reads as — an agent id ('yinyue') labels it with her name. */
+  function addMessage(role, text, opts = {}) {
     const mappedRole = (role === 'ai' || role === 'assistant') ? 'assistant' : role;
+    const extra = {
+      ...(Array.isArray(opts.images) && opts.images.length ? { images: opts.images } : {}),
+      ...(typeof opts.from === 'string' && opts.from ? { from: opts.from } : {}),
+    };
     if (!iframe) {
-      localLog.push({ role: mappedRole, text });
+      localLog.push({ role: mappedRole, text, ...extra });
       renderLocalMessage(mappedRole, text);
       return;
     }
-    post({ type: 'linggen-skill', action: 'add_message', payload: { role: mappedRole, text } });
+    post({ type: 'linggen-skill', action: 'add_message', payload: { role: mappedRole, text, ...extra } });
   }
 
   /** The buttons above the chat for what the page shows; [] hands the row back to the skill's starters. */

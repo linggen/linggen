@@ -133,6 +133,8 @@ export interface PersistedMeta {
   /** Device the session's agent continues the user's task from. */
   via?: string | null;
   via_note?: string | null;
+  /** A person's message: the engine's URLs for the pictures it kept. */
+  images?: string[];
   [key: string]: unknown;
 }
 

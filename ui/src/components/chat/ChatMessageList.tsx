@@ -11,6 +11,7 @@ import { getMessagePhase } from './MessagePhase';
 import { AgentMessage } from './AgentMessage';
 import { MemoryRecallMessage } from './MemoryRecallMessage';
 import { CompactionMessage } from './CompactionMessage';
+import { ChatImages } from './ChatImages';
 import { showsInterruptedNote } from '../../lib/interruptedRun.mts';
 
 /** Plumbing rows — context, not a speaker, so never labelled. */
@@ -130,17 +131,13 @@ export const ChatMessageRow = React.memo<{
           <>
             {/* The person's own words: never mistaken for the page's English. */}
             <span data-no-i18n>{msg.text}</span>
-            {(msg.imageCount ?? msg.images?.length ?? 0) > 0 && (
-              <span className="text-slate-400 dark:text-slate-500 ml-1">
-                {(() => {
-                  const count = msg.imageCount ?? msg.images?.length ?? 0;
-                  return Array.from({ length: count }, (_, i) => `[image${count > 1 ? `#${i + 1}` : ''}]`).join(' ');
-                })()}
-              </span>
-            )}
+            <ChatImages images={msg.images} />
           </>
         ) : (
-          <AgentMessage msg={msg} isExpanded={isExpanded} onToggle={toggle} planProps={planProps} showInterrupted={showInterrupted} />
+          <>
+            <AgentMessage msg={msg} isExpanded={isExpanded} onToggle={toggle} planProps={planProps} showInterrupted={showInterrupted} />
+            <ChatImages images={msg.images} />
+          </>
         )}
       </div>
     </div>

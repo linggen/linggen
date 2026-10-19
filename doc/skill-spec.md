@@ -412,7 +412,7 @@ The engine serves the helpers every skill page uses, one copy per engine:
 | :--- | :--- |
 | `/shared/channel.js` | The page's data path. Every engine call — `/api/*`, a `POST` to `/apps/<skill>/capability/*` — rides a WebRTC data channel; plain HTTP carries only the page's own files. Loading it routes the page's `fetch` for those paths, so `fetch('/api/…')` in skill code works unchanged. |
 | `/shared/api.js` | Sessions, models, skill cloud, sign-in (`fetchModels`, `createSession(title, skill, params?)`, `listSkillSessions`, `boundTo`, `pickResumable`, …) over that channel. |
-| `/shared/chat-bridge.js` | Mounts the chat panel (`/embed` iframe) and beats presence (over the channel; skipped while it is down). |
+| `/shared/chat-bridge.js` | Mounts the chat panel (`/embed` iframe) and beats presence (over the channel; skipped while it is down). `mount(el, {params})` binds a new session (§ Session parameters); `chat.addMessage(role, text, {images, from})` shows a local turn with pictures (data: URLs or base64) as thumbnails and labelled as `from` (an agent id, e.g. `yinyue`). |
 | `/shared/app-mode.js` | App-shell chrome (§ App-mode). |
 
 `api.js` and `chat-bridge.js` load `channel.js` themselves. A page that loads neither, but calls the engine, loads it first — as a classic script in `<head>` when an inline script calls the API while the page parses: `<script src="/shared/channel.js"></script>`.

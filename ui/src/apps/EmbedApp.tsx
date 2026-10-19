@@ -9,6 +9,7 @@
  *   hide_toolbar — 1 to hide the compact toolbar (when parent provides its own chrome)
  */
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+import { pageImages, pageSender } from '../lib/chatImage.mts';
 import { chatAgentOf, defaultResponder, memberModel, type SessionMember } from '../lib/sessionMembers.mts';
 import { Plus } from 'lucide-react';
 import { ChatWidget } from '../components/chat';
@@ -195,17 +196,23 @@ export const EmbedApp: React.FC = () => {
           if (hiddenText) sendChatMessageRef.current(`[HIDDEN] ${hiddenText}`, pageAgent() || undefined);
           break;
         }
-        case 'add_message':
+        case 'add_message': {
+          // A page's own turn, shown here only: its pictures as thumbnails, and
+          // `from` (an agent id, e.g. 'yinyue') labels whose it is.
+          const isUser = payload?.role === 'user';
+          const images = pageImages(payload?.images);
           useChatStore.getState().addMessage({
-            role: payload?.role === 'user' ? 'user' as const : 'agent' as const,
-            from: payload?.role === 'user' ? 'user' : 'assistant',
+            role: isUser ? 'user' as const : 'agent' as const,
+            from: pageSender(payload?.from) ?? (isUser ? 'user' : 'assistant'),
             to: '',
             text: payload?.text || '',
             timestamp: new Date().toLocaleTimeString(),
             timestampMs: Date.now(),
             isGenerating: false,
+            ...(images.length ? { images } : {}),
           });
           break;
+        }
         case 'clear':
           clearChatRef.current();
           break;

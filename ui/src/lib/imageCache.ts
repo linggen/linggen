@@ -1,8 +1,10 @@
 /**
  * Client-side image cache for chat messages.
  *
- * Images are ephemeral (never persisted to disk), so we cache them here
- * keyed by "from::normalizedText" to survive merges and state reloads.
+ * The engine keeps a person's pictures with the row (restored as URLs), but
+ * the sending surface's own base64 copy is cached here, keyed by
+ * "from::normalizedText", so a bubble keeps its picture through merges and
+ * reloads before the kept copy is fetched.
  */
 import type { ChatMessage } from '../types';
 import { normalizeMessageTextForDedup } from './messageUtils';
