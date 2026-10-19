@@ -27,6 +27,21 @@ pub fn with_notes(content: &str, first: usize, count: usize) -> String {
     }
 }
 
+/// `text` without the picture notes at its end — the words as they were
+/// said, for matching a turn already in the history.
+pub fn without_notes(text: &str) -> &str {
+    let mut rest = text.trim_end();
+    while let Some(at) = rest.rfind(NOTE_HEAD) {
+        let tail = &rest[at + NOTE_HEAD.len()..];
+        let digits = tail.bytes().take_while(u8::is_ascii_digit).count();
+        if digits == 0 || &tail[digits..] != NOTE_TAIL {
+            break;
+        }
+        rest = rest[..at].trim_end();
+    }
+    rest
+}
+
 /// How many picture notes `history` already holds — the next is numbered
 /// after them.
 pub fn noted(history: &[ChatMessage]) -> usize {
@@ -84,5 +99,7 @@ mod tests {
         assert_eq!(noted(&h), 3);
         assert!(h[3].content.ends_with("[image03, shown earlier]"));
         assert_eq!(notes_in("[image] [imagex, shown earlier]"), 0);
+        assert_eq!(without_notes(&h[3].content), "d");
+        assert_eq!(without_notes("plain [image] "), "plain [image]");
     }
 }

@@ -1506,6 +1506,16 @@ mod member_tests {
         assert!(text.contains("look 1 [image01, shown earlier]"), "{text}");
         assert!(text.contains("look 2 [image02, shown earlier]"), "{text}");
         assert!(!text.contains("image03"), "the current one is shown, not noted");
+        // A second run in the same turn, before any reply (a retry), still
+        // finds the turn delivered: the words are not pushed again.
+        engine.chat_history.pop();
+        let (again, _, _) = engine.prepare_loop_messages(
+            "look 3",
+            true,
+            crate::engine::prompt::PromptPurpose::Turn,
+        );
+        let said = again.iter().filter(|m| m.content.contains("look 3")).count();
+        assert_eq!(said, 1, "the turn is in the history once");
     }
 
     /// A withheld tool is not offered on the turn — her moment wake must not

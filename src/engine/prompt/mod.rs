@@ -136,7 +136,10 @@ fn locale_tag() -> String {
 fn turn_already_delivered(messages: &[ChatMessage], task: &str) -> bool {
     messages
         .last()
-        .map(|m| m.role == "user" && m.content.trim_end().ends_with(task.trim()))
+        .map(|m| {
+            m.role == "user"
+                && crate::engine::shown_images::without_notes(&m.content).ends_with(task.trim())
+        })
         .unwrap_or(false)
 }
 
