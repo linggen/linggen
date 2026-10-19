@@ -221,6 +221,11 @@ export const ZH: Record<string, string> = {
   'Loading model: {m}': '正在加载模型：{m}',
   'Musing for {t}': '思索了 {t}',
   'Worked for {t}': '工作了 {t}',
+  'user (': '用户（',
+  'mission (': '任务（',
+  'skill (': '技能（',
+  'All (': '全部（',
+  'No messages for {a}': '{a} 还没有消息',
   // ── Agents ──
   'Agents': '智能体',
   'Agent Specs': '智能体定义',
