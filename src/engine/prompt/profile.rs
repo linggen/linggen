@@ -32,9 +32,9 @@ pub struct PromptProfile {
     /// `memory-context` (its opt-in to memory). The turn auto-recalls ONLY the
     /// rows under `memory_app_dir` (`~/.linggen/skills/<name>`) and the prompt
     /// carries that dir's index — independent of `include_memory` (which stays
-    /// off for skill sessions, so the core block / full biography is NOT
-    /// injected). The two `recall_*` fields tune that scoped recall; `None` →
-    /// engine defaults.
+    /// off for skill sessions: core rides via `include_core`, nothing else of
+    /// the biography). The two `recall_*` fields tune that scoped recall;
+    /// `None` → engine defaults.
     pub memory_context: Option<String>,
     pub memory_app_dir: Option<std::path::PathBuf>,
     pub memory_recall_min_score: Option<f32>,
@@ -87,6 +87,23 @@ impl PromptProfile {
         if creator == "mission" {
             self.include_core = false;
         }
+    }
+
+    /// Scope memory to a bound skill's own dir when it declares
+    /// `memory-context` — the one wiring a real turn and the prompt export
+    /// share. A skill without it leaves the profile as is.
+    pub fn scope_to_app(&mut self, skill: &crate::engine::skill::Skill) {
+        let opted_in = skill
+            .memory_context
+            .as_deref()
+            .is_some_and(|c| !c.trim().is_empty());
+        if !opted_in {
+            return;
+        }
+        self.memory_context = skill.memory_context.clone();
+        self.memory_app_dir = Some(crate::paths::global_skills_dir().join(&skill.name));
+        self.memory_recall_min_score = skill.memory_recall_min_score;
+        self.memory_recall_count = skill.memory_recall_count;
     }
 
     /// Autonomous run — a mission, a delegated subagent, a headless agent

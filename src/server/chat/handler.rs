@@ -689,20 +689,10 @@ async fn apply_session_bound_skill(engine: &mut crate::engine::AgentEngine, ctx:
 
     // Scoped per-app memory: if the bound skill declares a `memory-context`,
     // wire its dir (+ its recall thresholds) onto the prompt profile so this
-    // turn auto-recalls ONLY the rows under `~/.linggen/skills/<name>`. Independent of `include_memory`
-    // (which stays off for skill sessions, so no core block / full biography).
-    if skill
-        .memory_context
-        .as_deref()
-        .map(|c| !c.trim().is_empty())
-        .unwrap_or(false)
-    {
-        engine.prompt_profile.memory_context = skill.memory_context.clone();
-        engine.prompt_profile.memory_app_dir =
-            Some(crate::paths::global_skills_dir().join(&skill.name));
-        engine.prompt_profile.memory_recall_min_score = skill.memory_recall_min_score;
-        engine.prompt_profile.memory_recall_count = skill.memory_recall_count;
-    }
+    // turn auto-recalls ONLY the rows under `~/.linggen/skills/<name>`.
+    // Independent of `include_memory`, which stays off for skill sessions:
+    // core rides via `include_core`, nothing else of the biography.
+    engine.prompt_profile.scope_to_app(&skill);
 
     // Ensure session_dir is populated so skill-permission saves persist.
     // Otherwise run_agent_loop later loads permission.json from disk and

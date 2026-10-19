@@ -138,6 +138,8 @@ pub(crate) async fn get_system_prompt_api(
         ));
         if let Some(ref skill_name) = meta.skill {
             if let Some(skill) = state.manager.skills.reload_one(skill_name).await {
+                // The app's own memory index, as a real turn wires it.
+                engine.prompt_profile.scope_to_app(&skill);
                 engine.activate_skill(skill, ActivationMode::Export).await;
             }
         }
