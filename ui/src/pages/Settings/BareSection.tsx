@@ -10,6 +10,7 @@ import { GeneralTab } from '../../components/GeneralTab';
 import { RoomTab } from '../../components/RoomTab';
 import { useSessionStore } from '../../stores/sessionStore';
 import { appConfig } from '../../lib/endpoints';
+import { rememberLanguage } from '../../lib/i18n';
 import { apiErrorMessage } from '../../lib/api';
 
 // Only the truly form-shaped sections are exposed via bare routes. Mission
@@ -79,6 +80,7 @@ export const BareSection: React.FC = () => {
         setOriginalConfig(config);
         // A new language is the whole page's: reload it into the new words.
         if (config.language !== originalConfig?.language) {
+          rememberLanguage(config.language ?? null);
           (window.top ?? window).location.reload();
           return;
         }

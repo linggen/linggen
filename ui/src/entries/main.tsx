@@ -23,7 +23,7 @@ import React, { Suspense, lazy, useEffect } from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { MainApp } from '../apps/MainApp';
-import { loadLanguage, watchDom } from '../lib/i18n';
+import { confirmLanguage, startLanguage, watchDom } from '../lib/i18n';
 import { EmbedApp } from '../apps/EmbedApp';
 import { ConsumerApp } from '../apps/ConsumerApp';
 import { BareChat } from '../pages/Bare/BareChat';
@@ -140,16 +140,18 @@ if (urlParams.get('channel') === '1') {
   startChannelView();
 } else {
   // The language first, so the page's English is put into it as it renders.
-  void loadLanguage().finally(() => {
-    ReactDOM.createRoot(document.getElementById('root')!).render(
-      <React.StrictMode>
-        <ErrorBoundary>
-          <BrowserRouter>
-            <Root />
-          </BrowserRouter>
-        </ErrorBoundary>
-      </React.StrictMode>
-    );
-    watchDom();
-  });
+  // The engine's value rides the data channel, which opens only after this
+  // render — so it confirms afterwards instead of gating it.
+  startLanguage();
+  ReactDOM.createRoot(document.getElementById('root')!).render(
+    <React.StrictMode>
+      <ErrorBoundary>
+        <BrowserRouter>
+          <Root />
+        </BrowserRouter>
+      </ErrorBoundary>
+    </React.StrictMode>
+  );
+  watchDom();
+  void confirmLanguage();
 }

@@ -16,6 +16,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useServerStore } from '../../stores/serverStore';
 import type { SettingsLocationState } from '../../hooks/useOpenSettings';
 import { appConfig } from '../../lib/endpoints';
+import { rememberLanguage } from '../../lib/i18n';
 import { apiErrorMessage } from '../../lib/api';
 
 type TabKey = Exclude<ManagementTab, 'mcp'>;
@@ -109,6 +110,7 @@ export const SettingsHome: React.FC = () => {
         setOriginalConfig(config);
         // A new language is the whole page's: reload it into the new words.
         if (config.language !== originalConfig?.language) {
+          rememberLanguage(config.language ?? null);
           (window.top ?? window).location.reload();
           return;
         }

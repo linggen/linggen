@@ -9,8 +9,9 @@
  * the chat never matches by accident — the transcript, editors and inputs are
  * skipped outright, and so is anything marked `data-no-i18n`.
  *
- * Read once at start, before the first render; a change in Settings reloads
- * the page into the new language.
+ * Started from the language the page last had (startLanguage), confirmed
+ * against the engine once the data channel is up (confirmLanguage); a change
+ * in Settings reloads the page into the new language.
  */
 import { ZH } from './strings-zh';
 
@@ -25,19 +26,46 @@ export function normalizeLanguage(tag: string | null | undefined): Language {
   return s === 'zh' || s.startsWith('zh-') ? 'zh-Hans' : 'en';
 }
 
-/** The engine's effective value, else the browser's; `?lang=` wins for a check. */
-export async function loadLanguage(): Promise<Language> {
-  let tag = new URLSearchParams(location.search).get('lang') || '';
-  if (!tag) {
-    try {
-      const res = await fetch('/api/user/language', { cache: 'no-store' });
-      if (res.ok) tag = (await res.json())?.language || '';
-    } catch { /* an engine without the endpoint — fall back */ }
-  }
-  if (!tag) tag = navigator.language || '';
+const CACHE = 'linggen.language';
+
+function cached(): string {
+  try { return localStorage.getItem(CACHE) || ''; } catch { return ''; }
+}
+
+/** Keep the page's language for the next start; null forgets it (Auto). */
+export function rememberLanguage(tag: string | null) {
+  try {
+    if (tag && tag !== 'auto') localStorage.setItem(CACHE, normalizeLanguage(tag));
+    else localStorage.removeItem(CACHE);
+  } catch { /* storage blocked — the next start reads the browser's */ }
+}
+
+function apply(tag: string) {
   lang = normalizeLanguage(tag);
   document.documentElement.lang = lang;
+}
+
+/** At start, before the first render: `?lang=` for a check, else the language
+ *  this page last had, else the browser's. Synchronous — the engine is only
+ *  reachable over the data channel, and that opens after the page renders. */
+export function startLanguage(): Language {
+  const query = new URLSearchParams(location.search).get('lang');
+  apply(query || cached() || navigator.language || '');
   return lang;
+}
+
+/** Once the channel is up: the engine's effective value. A page that started
+ *  in another language keeps it and reloads into the engine's. */
+export async function confirmLanguage() {
+  if (new URLSearchParams(location.search).get('lang')) return;
+  let tag = '';
+  try {
+    const res = await fetch('/api/user/language', { cache: 'no-store' });
+    if (res.ok) tag = (await res.json())?.language || '';
+  } catch { return; /* an engine without the endpoint — keep the start value */ }
+  if (!tag) return;
+  rememberLanguage(tag);
+  if (normalizeLanguage(tag) !== lang) location.reload();
 }
 
 // ── The page's English, put into the person's language in place ───────────
