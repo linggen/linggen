@@ -475,6 +475,23 @@ impl Tools {
         env
     }
 
+    /// The values this session is bound to (`SessionMeta::params`), for a
+    /// tool of `skill` — only when the session is that skill's: a session's
+    /// params are its own skill's declarations, never another skill's.
+    pub fn session_params_for(
+        &self,
+        skill: Option<&str>,
+    ) -> crate::engine::skill::params::SessionParams {
+        let (Some(sid), Some(skill), Some(manager)) = (&self.session_id, skill, self.get_manager())
+        else {
+            return Default::default();
+        };
+        manager
+            .global_sessions
+            .params_for(sid, skill)
+            .unwrap_or_default()
+    }
+
     pub fn cwd(&self) -> PathBuf {
         let map = self.cwd_by_session.lock_ok();
         if let Some(sid) = &self.session_id {

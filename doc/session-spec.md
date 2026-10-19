@@ -111,6 +111,7 @@ Each session carries:
 | `created_at` | creation | no | Unix timestamp |
 | `creator` | creation | promotion only | Who owns this session: `user`, `skill`, `agent`, `mission`. Changes from `mission` → `user` on promotion. |
 | `skill` | creation | no | Bound skill name (if any) — active for the session's lifetime |
+| `params` | creation | no | The values the session is bound to, by the bound skill's declared session params (`skill-spec.md` § Session parameters) — e.g. `{save: test}`. Checked against the declaration when the session is made and on every use. Absent: the skill as it runs unbound. |
 | `mission_id` | creation | no | Originating mission (if creator is `mission`) |
 | `agents` | creation | grows | The members `[{id, model}]`, the lead first; `@name` seats one for good. Old sessions' `agent_id`/`model_id` migrate to a one-member list. |
 | `cwd` | creation | yes | Current working folder. Starts at home path. Updated on `cd`. |
@@ -130,6 +131,7 @@ Each session carries:
 ### What's fixed for the session lifetime
 
 - **Bound skill** — set at creation, cannot be changed. Start a new session for a different skill.
+- **Bound params** — one session, one value per param: a different save is a different session.
 - **Creator** — immutable except for promotion (mission → user when a human takes over).
 
 ## System prompt assembly
@@ -255,7 +257,8 @@ This is how `ling` can delegate exploration to itself: the sub-task runs in an i
 
 ## API
 
-- `POST /api/sessions` — create session (accepts `skill`, `title`). No project required — starts in home mode.
+- `POST /api/sessions` — create session (accepts `skill`, `title`, `params`). No project required — starts in home mode. `params` the skill doesn't declare, or values it refuses: 400 with the reason.
+- `GET /api/skill-sessions?skill=` lists each session with its `params`.
 - `PATCH /api/sessions` — rename / set the session model
 - `DELETE /api/sessions/all` — delete a session (`session_id`)
 - Session lists reach surfaces through `page_state`; skill pages use `GET /api/skill-sessions?skill=`.

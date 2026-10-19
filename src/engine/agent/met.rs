@@ -452,6 +452,7 @@ mod tests {
             compact_focus: None,
             title_locked: false,
             withheld_tools: Vec::new(),
+            params: Default::default(),
         };
         meta.legacy = Default::default();
         store.add_session(&meta).unwrap();

@@ -1,14 +1,18 @@
 //! A skill page's declared door to its own scripts:
 //!
-//!   POST /api/skills/{skill}/tools/{tool}   body: the tool's args as JSON
-//!   → { exit_code, stdout, stderr }
+//!   POST /api/skills/{skill}/tools/{tool}[?session=<id>]
+//!   body: the tool's args as JSON → { exit_code, stdout, stderr }
+//!
+//! `session` runs the tool as that session of the skill would: with the
+//! values it is bound to (`{{session.<name>}}`). A session of another skill
+//! is refused.
 //!
 //! Instead of a page writing raw shell to `/api/bash`, it names a tool; the
 //! engine knows what may run. The run itself — lock, grant, cloud gate, push —
 //! is `engine::skill::tools`; this is its HTTP shape.
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     Json,
@@ -33,9 +37,33 @@ fn status_of(refusal: &Refusal) -> StatusCode {
     }
 }
 
+#[derive(serde::Deserialize)]
+pub struct DoorQuery {
+    #[serde(default)]
+    session: Option<String>,
+}
+
+/// The values the named session is bound to, when it is a session of
+/// `skill`; no session named, none.
+fn bound_params(
+    state: &ServerState,
+    skill: &str,
+    session: Option<&str>,
+) -> Result<crate::engine::skill::params::SessionParams, String> {
+    let Some(sid) = session.filter(|s| !s.is_empty()) else {
+        return Ok(Default::default());
+    };
+    state
+        .manager
+        .global_sessions
+        .params_for(sid, skill)
+        .ok_or_else(|| format!("'{sid}' is not a session of '{skill}'"))
+}
+
 pub async fn run_tool(
     State(state): State<Arc<ServerState>>,
     Path((skill_name, tool_name)): Path<(String, String)>,
+    Query(query): Query<DoorQuery>,
     body: Option<Json<Value>>,
 ) -> Response {
     let args = body
@@ -51,7 +79,11 @@ pub async fn run_tool(
         let refusal = Refusal::no_skill(&skill_name);
         return refuse(status_of(&refusal), refusal.to_string());
     };
-    match tools::run(&skill, &tool_name, &args).await {
+    let params = match bound_params(&state, &skill_name, query.session.as_deref()) {
+        Ok(p) => p,
+        Err(why) => return refuse(StatusCode::BAD_REQUEST, why),
+    };
+    match tools::run(&skill, &tool_name, &args, &params).await {
         Ok(result) => Json(tools::output(result)).into_response(),
         Err(refusal) => refuse(status_of(&refusal), refusal.to_string()),
     }

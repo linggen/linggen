@@ -101,6 +101,7 @@ fn check_tool(
         skill_name: skill.map(|s| s.name.clone()),
         skill_dir,
         senses: skill.map(|s| s.senses.clone()).unwrap_or_default(),
+        session_params: Default::default(),
     }
 }
 

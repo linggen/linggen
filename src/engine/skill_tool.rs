@@ -1,12 +1,13 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 use tracing::info;
 
+use super::skill::params::{self, SessionParamDef, SessionParams};
 use super::tools::ToolResult;
 
 /// Recursively detects no-op payloads. Returns true for `null`, empty
@@ -135,6 +136,11 @@ pub struct SkillToolDef {
     /// the command as env (`crate::senses::tool_env`).
     #[serde(skip)]
     pub senses: Vec<String>,
+    /// The session parameters the owning skill declares, stamped at load:
+    /// `{{session.<name>}}` in `cmd` reads the calling session's value
+    /// (`crate::engine::skill::params`).
+    #[serde(skip)]
+    pub session_params: BTreeMap<String, SessionParamDef>,
 }
 
 impl SkillToolDef {
@@ -160,6 +166,20 @@ impl SkillToolDef {
         args: &Value,
         workspace_root: &Path,
         env: &[(String, String)],
+    ) -> Result<ToolResult> {
+        self.execute_bound(args, workspace_root, env, &SessionParams::new())
+    }
+
+    /// [`Self::execute`] for a session bound to `session` values (the
+    /// owning skill's session parameters): `{{session.<name>}}` takes the
+    /// value, `''` when the session has none. A value its declaration now
+    /// refuses fails the call — never rendered.
+    pub fn execute_bound(
+        &self,
+        args: &Value,
+        workspace_root: &Path,
+        env: &[(String, String)],
+        session: &SessionParams,
     ) -> Result<ToolResult> {
         let obj = args.as_object();
 
@@ -226,20 +246,7 @@ impl SkillToolDef {
             });
         }
 
-        // Render command template.
-        let mut rendered = self.cmd.clone();
-
-        // Replace $SKILL_DIR with the skill's directory path.
-        if let Some(skill_dir) = &self.skill_dir {
-            rendered = rendered.replace("$SKILL_DIR", &skill_dir.to_string_lossy());
-        }
-
-        // Replace {{param}} placeholders with argument values.
-        for (name, param) in &self.args {
-            let placeholder = format!("{{{{{}}}}}", name);
-            let given = obj.and_then(|o| o.get(name));
-            rendered = rendered.replace(&placeholder, &fill_arg(param, given)?);
-        }
+        let rendered = self.render_cmd(args, session)?;
 
         info!("Skill tool '{}' rendered command: {}", self.name, rendered);
 
@@ -307,6 +314,57 @@ impl SkillToolDef {
         ))
     }
 
+    /// The command as it runs: `$SKILL_DIR` expanded, then every `{{arg}}`
+    /// and `{{session.<name>}}` in one pass — so a value that reads like a
+    /// placeholder stays the value. A placeholder nothing declares stays
+    /// literal.
+    fn render_cmd(&self, args: &Value, session: &SessionParams) -> Result<String> {
+        params::check(&self.session_params, &self.declared_session_values(session))
+            .map_err(|e| anyhow::anyhow!("{} cannot run in this session: {e}", self.name))?;
+        let mut template = self.cmd.clone();
+        if let Some(skill_dir) = &self.skill_dir {
+            template = template.replace("$SKILL_DIR", &skill_dir.to_string_lossy());
+        }
+        let obj = args.as_object();
+        let mut failed = None;
+        let rendered = params::render(&template, |token| {
+            if let Some(name) = token.strip_prefix(params::PLACEHOLDER_PREFIX) {
+                return self.fill_session(name, session);
+            }
+            let param = self.args.get(token)?;
+            match fill_arg(param, obj.and_then(|o| o.get(token))) {
+                Ok(text) => Some(text),
+                Err(e) => {
+                    failed.get_or_insert(e);
+                    Some(String::new())
+                }
+            }
+        });
+        match failed {
+            Some(e) => Err(e),
+            None => Ok(rendered),
+        }
+    }
+
+    /// The values this session holds that this tool's skill declares —
+    /// only those are ever rendered, so only those are checked.
+    fn declared_session_values(&self, session: &SessionParams) -> SessionParams {
+        session
+            .iter()
+            .filter(|(k, _)| self.session_params.contains_key(*k))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    }
+
+    /// One `{{session.<name>}}`: the session's value as one quoted word,
+    /// `''` without one; `None` (left literal) for a name the skill doesn't
+    /// declare.
+    fn fill_session(&self, name: &str, session: &SessionParams) -> Option<String> {
+        self.session_params.get(name)?;
+        let value = session.get(name).map(String::as_str).unwrap_or("");
+        Some(shell_escape_arg(value))
+    }
+
     /// Convert this skill tool definition to an OpenAI-compatible tool schema.
     /// `{{name}}` placeholders in `cmd` that `args` doesn't declare. The
     /// engine never fills one — it reaches the script literally, and the
@@ -324,6 +382,11 @@ impl SkillToolDef {
                 found.push(name.to_string());
             }
             rest = &rest[close + 2..];
+        }
+        for name in params::names_in(&self.cmd) {
+            if !self.session_params.contains_key(&name) {
+                found.push(format!("{}{name}", params::PLACEHOLDER_PREFIX));
+            }
         }
         found
     }
@@ -523,6 +586,7 @@ mod tests {
             skill_name: None,
             skill_dir: None,
             senses: Vec::new(),
+            session_params: Default::default(),
         }
     }
 
@@ -693,6 +757,93 @@ mod tests {
         assert!(quiet.undeclared_placeholders().is_empty());
     }
 
+    fn save_tool() -> SkillToolDef {
+        let mut tool = shell_tool("printf '<%s>' --save={{session.save}} {{a}}", 64 * 1024);
+        tool.args.insert(
+            "a".to_string(),
+            SkillParamDef {
+                param_type: "string".to_string(),
+                required: false,
+                default: None,
+                description: String::new(),
+                items: None,
+            },
+        );
+        tool.session_params.insert(
+            "save".to_string(),
+            SessionParamDef {
+                pattern: Some("[a-z0-9][a-z0-9_-]{0,31}".to_string()),
+                description: String::new(),
+            },
+        );
+        tool
+    }
+
+    fn bound_stdout(tool: &SkillToolDef, args: Value, session: &SessionParams) -> Result<String> {
+        match tool.execute_bound(&args, Path::new("."), &[], session)? {
+            ToolResult::CommandOutput { stdout, .. } => Ok(stdout),
+            _ => panic!("expected CommandOutput"),
+        }
+    }
+
+    fn bound(save: &str) -> SessionParams {
+        SessionParams::from([("save".to_string(), save.to_string())])
+    }
+
+    #[test]
+    fn a_session_param_fills_its_placeholder_as_one_word() {
+        let tool = save_tool();
+        let out = bound_stdout(&tool, serde_json::json!({ "a": "x" }), &bound("lx-gu3")).unwrap();
+        assert_eq!(out, "<--save=lx-gu3><x>");
+    }
+
+    #[test]
+    fn no_session_value_renders_as_before() {
+        let tool = save_tool();
+        let none = SessionParams::new();
+        let out = bound_stdout(&tool, serde_json::json!({ "a": "x" }), &none).unwrap();
+        assert_eq!(
+            out, "<--save=><x>",
+            "an empty quoted word, like a missing arg"
+        );
+        assert_eq!(stdout_of(&tool, serde_json::json!({ "a": "x" })), out);
+        // A plain tool with no session param is untouched by a bound session.
+        let plain = positional_tool(&[("a", None), ("b", None), ("c", None)]);
+        let out = bound_stdout(&plain, serde_json::json!({ "b": 2 }), &bound("lx")).unwrap();
+        assert_eq!(out, "<><2><>");
+    }
+
+    #[test]
+    fn a_refused_session_value_never_runs() {
+        let tool = save_tool();
+        for bad in ["x'; touch /tmp/pwned; '", "-rf", "../main", ""] {
+            let err = bound_stdout(&tool, serde_json::json!({}), &bound(bad)).unwrap_err();
+            assert!(
+                err.to_string().contains("session param 'save'"),
+                "{bad:?}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_arg_that_reads_like_a_placeholder_stays_the_arg() {
+        let tool = save_tool();
+        let args = serde_json::json!({ "a": "{{session.save}}" });
+        let out = bound_stdout(&tool, args, &bound("lx")).unwrap();
+        assert_eq!(out, "<--save=lx><{{session.save}}>");
+    }
+
+    #[test]
+    fn a_session_placeholder_the_skill_does_not_declare_is_named() {
+        let mut tool = save_tool();
+        tool.cmd.push_str(" {{session.world}}");
+        assert_eq!(tool.undeclared_placeholders(), vec!["session.world"]);
+        // Left literal, and a value for it is ignored — only declared names render.
+        let session = SessionParams::from([("world".to_string(), "w".to_string())]);
+        let out = bound_stdout(&tool, serde_json::json!({}), &session).unwrap();
+        assert!(out.contains("{{session.world}}"), "{out}");
+    }
+
     #[test]
     fn to_schema_json_includes_all_fields() {
         let tool = SkillToolDef {
@@ -721,6 +872,7 @@ mod tests {
             skill_name: None,
             skill_dir: None,
             senses: Vec::new(),
+            session_params: Default::default(),
         };
 
         let schema = tool.to_schema_json();

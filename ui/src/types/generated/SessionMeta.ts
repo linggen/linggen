@@ -69,4 +69,12 @@ title_locked: boolean,
  * made (`POST /api/sessions`): a scratch session that must not write
  * the real memory store withholds the memory server.
  */
-withheld_tools?: Array<string>, };
+withheld_tools?: Array<string>, 
+/**
+ * The values this session is bound to — the bound skill's declared
+ * session parameters (`session-params`), set once when the session is
+ * made (`POST /api/sessions` `params`) and checked against the
+ * declaration then. Empty: the skill as it runs unbound. See
+ * `doc/skill-spec.md` § Session parameters.
+ */
+params?: { [key in string]: string }, };

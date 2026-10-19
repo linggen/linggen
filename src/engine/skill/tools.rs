@@ -24,6 +24,7 @@ use std::sync::{Arc, Mutex};
 use crate::engine::permission::{
     effective_mode_for_path, parse_skill_tier, PathMode, PermissionMode,
 };
+use crate::engine::skill::params::SessionParams;
 use crate::engine::skill::Skill;
 use crate::engine::skill_tool::{SkillToolDef, SkillToolKind};
 use crate::engine::tools::ToolResult;
@@ -79,8 +80,14 @@ fn skill_lock(skill: &str) -> SkillLock {
         .clone()
 }
 
-/// Run `tool_name` of `skill` with `args` (an object).
-pub async fn run(skill: &Skill, tool_name: &str, args: &Value) -> Result<ToolResult, Refusal> {
+/// Run `tool_name` of `skill` with `args` (an object), for a session bound
+/// to `params` (the skill's session parameters; empty: none).
+pub async fn run(
+    skill: &Skill,
+    tool_name: &str,
+    args: &Value,
+    params: &SessionParams,
+) -> Result<ToolResult, Refusal> {
     let tool = shell_tool(skill, tool_name)?;
     if skill.cloud.is_some() && crate::account::resolve_token().is_none() {
         return Err(Refusal::SignedOut);
@@ -92,7 +99,10 @@ pub async fn run(skill: &Skill, tool_name: &str, args: &Value) -> Result<ToolRes
     let _one = lock.lock().await;
     let run_args = args.clone();
     let run_tool = tool.clone();
-    let ran = tokio::task::spawn_blocking(move || run_tool.execute(&run_args, &cwd, &[])).await;
+    let params = params.clone();
+    let ran =
+        tokio::task::spawn_blocking(move || run_tool.execute_bound(&run_args, &cwd, &[], &params))
+            .await;
     let result = match ran {
         Ok(Ok(r)) => r,
         Ok(Err(e)) => return Err(Refusal::BadCall(format!("{e:#}"))),
@@ -176,6 +186,7 @@ fn stamp_tool(skill: &Skill, id: &str, at: &str) -> Result<SkillToolDef, Refusal
         skill_name: Some(skill.name.clone()),
         skill_dir: skill.skill_dir.clone(),
         senses: skill.senses.clone(),
+        session_params: Default::default(),
     })
 }
 
@@ -199,9 +210,10 @@ pub async fn run_for_pet(
     skill: &Skill,
     tool_name: &str,
     args: &Value,
+    params: &SessionParams,
 ) -> Result<ToolResult, Refusal> {
     pet_gate(skill, tool_name)?;
-    run(skill, tool_name, args).await
+    run(skill, tool_name, args, params).await
 }
 
 fn pet_gate(skill: &Skill, tool_name: &str) -> Result<(), Refusal> {
@@ -420,7 +432,9 @@ body
     async fn a_pet_tool_runs() {
         let dir = tempfile::tempdir().unwrap();
         let s = skill(dir.path());
-        let result = run_for_pet(&s, "Progress", &args()).await.expect("runs");
+        let result = run_for_pet(&s, "Progress", &args(), &SessionParams::new())
+            .await
+            .expect("runs");
         let out = output(result);
         assert_eq!(out["exit_code"], 0);
         assert_eq!(out["stdout"], "progress alex\n");
@@ -430,10 +444,14 @@ body
     async fn a_tool_not_offered_to_the_pet_is_refused() {
         let dir = tempfile::tempdir().unwrap();
         let s = skill(dir.path());
-        let err = run_for_pet(&s, "Hidden", &args()).await.unwrap_err();
+        let err = run_for_pet(&s, "Hidden", &args(), &SessionParams::new())
+            .await
+            .unwrap_err();
         assert!(matches!(err, Refusal::NotForPet(_)), "{err}");
         // The page door still runs it.
-        assert!(run(&s, "Hidden", &args()).await.is_ok());
+        assert!(run(&s, "Hidden", &args(), &SessionParams::new())
+            .await
+            .is_ok());
     }
 
     #[tokio::test]
@@ -441,7 +459,9 @@ body
         let dir = tempfile::tempdir().unwrap();
         let s = skill(dir.path());
         for name in ["Write", "Untiered"] {
-            let err = run_for_pet(&s, name, &args()).await.unwrap_err();
+            let err = run_for_pet(&s, name, &args(), &SessionParams::new())
+                .await
+                .unwrap_err();
             assert!(matches!(err, Refusal::NotForPet(_)), "{name}: {err}");
         }
     }
@@ -450,7 +470,9 @@ body
     async fn an_unknown_tool_is_refused() {
         let dir = tempfile::tempdir().unwrap();
         let s = skill(dir.path());
-        let err = run_for_pet(&s, "Nope", &args()).await.unwrap_err();
+        let err = run_for_pet(&s, "Nope", &args(), &SessionParams::new())
+            .await
+            .unwrap_err();
         assert!(matches!(err, Refusal::NoTool(_)), "{err}");
         assert_eq!(err.to_string(), "'zz-pet-test' declares no tool 'Nope'");
     }
@@ -531,7 +553,11 @@ body
     async fn a_remote_tool_runs_through_the_page_door() {
         let dir = tempfile::tempdir().unwrap();
         let s = skill(dir.path());
-        let out = output(run(&s, "RenameThing", &args()).await.expect("runs"));
+        let out = output(
+            run(&s, "RenameThing", &args(), &SessionParams::new())
+                .await
+                .expect("runs"),
+        );
         assert_eq!(out["stdout"], "renamed\n");
     }
 }

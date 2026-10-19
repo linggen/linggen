@@ -12,23 +12,26 @@
 //! authoritative at its own table.
 
 use crate::engine::agent::AgentManager;
+use crate::engine::skill::params::SessionParams;
 use crate::engine::skill::Skill;
 
-/// The skill a session is bound to.
-async fn session_skill(manager: &AgentManager, session_id: &str) -> Option<Skill> {
+/// The skill a session is bound to, and the values the session is bound to
+/// for it (`SessionMeta::params`).
+async fn session_skill(manager: &AgentManager, session_id: &str) -> Option<(Skill, SessionParams)> {
     let meta = manager
         .global_sessions
         .get_session_meta(session_id)
         .ok()??;
-    manager.skills.get_skill(&meta.skill?).await
+    let skill = manager.skills.get_skill(&meta.skill?).await?;
+    Some((skill, meta.params))
 }
 
 /// Whether `agent` is absent from `skill` right now: the skill's own gate
-/// when it has one (`Skill::keeps_away`), else whether the agent is there
-/// at all (`here`).
-fn absent_from(skill: &Skill, agent: &str, here: bool) -> bool {
+/// when it has one (`Skill::keeps_away_in`, read through the session's
+/// bound values), else whether the agent is there at all (`here`).
+fn absent_from(skill: &Skill, params: &SessionParams, agent: &str, here: bool) -> bool {
     match &skill.place {
-        Some(places) if places.is_gated(agent) => skill.keeps_away(agent),
+        Some(places) if places.is_gated(agent) => skill.keeps_away_in(agent, params),
         _ => !here,
     }
 }
@@ -42,7 +45,7 @@ pub(crate) async fn absent_in_session(
 ) -> bool {
     let here = manager.agent_present_now(agent).await;
     match session_skill(manager, session_id).await {
-        Some(skill) => absent_from(&skill, agent, here),
+        Some((skill, params)) => absent_from(&skill, &params, agent, here),
         None => !here,
     }
 }
@@ -52,7 +55,7 @@ pub(crate) async fn absent_in_session(
 pub(crate) async fn absent_in_skill(manager: &AgentManager, skill_name: &str, agent: &str) -> bool {
     let here = manager.agent_present_now(agent).await;
     match manager.skills.get_skill(skill_name).await {
-        Some(skill) => absent_from(&skill, agent, here),
+        Some(skill) => absent_from(&skill, &SessionParams::new(), agent, here),
         None => !here,
     }
 }
@@ -60,7 +63,12 @@ pub(crate) async fn absent_in_skill(manager: &AgentManager, skill_name: &str, ag
 #[cfg(test)]
 mod tests {
     use super::absent_from;
+    use crate::engine::skill::params::SessionParams;
     use crate::engine::skill::SkillSource;
+
+    fn none() -> SessionParams {
+        SessionParams::new()
+    }
 
     fn skill(extra: &str, dir: Option<&std::path::Path>) -> crate::engine::skill::Skill {
         let text = format!("---\nname: zz\ndescription: d\n{extra}---\nBody.");
@@ -78,21 +86,26 @@ mod tests {
         let gated =
             "place:\n  yinyue:\n    absent_until: {file: state.json, path: companion.joined}\n";
         let s = skill(gated, Some(dir.path()));
-        assert!(absent_from(&s, "yinyue", true));
-        assert!(!absent_from(&s, "ling", true));
+        assert!(absent_from(&s, &none(), "yinyue", true));
+        assert!(!absent_from(&s, &none(), "ling", true));
 
         std::fs::write(
             dir.path().join("state.json"),
             r#"{"companion":{"joined":"2026-09-18"}}"#,
         )
         .unwrap();
-        assert!(!absent_from(&s, "yinyue", true));
+        assert!(!absent_from(&s, &none(), "yinyue", true));
 
         assert!(
-            absent_from(&skill(gated, None), "yinyue", true),
+            absent_from(&skill(gated, None), &none(), "yinyue", true),
             "unreadable: away"
         );
-        assert!(!absent_from(&skill("", Some(dir.path())), "yinyue", true));
+        assert!(!absent_from(
+            &skill("", Some(dir.path())),
+            &none(),
+            "yinyue",
+            true
+        ));
     }
 
     /// The skill's own gate is authoritative at its table, whether or not the
@@ -110,16 +123,46 @@ mod tests {
             "place:\n  yinyue:\n    absent_until: {file: state.json, path: companion.joined}\n";
         let own = skill(gated, Some(dir.path()));
         assert!(
-            !absent_from(&own, "yinyue", false),
+            !absent_from(&own, &none(), "yinyue", false),
             "its gate says she is there"
         );
 
         let open = skill("members: [ling, yinyue]\n", Some(dir.path()));
         assert!(
-            absent_from(&open, "yinyue", false),
+            absent_from(&open, &none(), "yinyue", false),
             "not met: not at its table"
         );
-        assert!(!absent_from(&open, "yinyue", true));
-        assert!(!absent_from(&open, "ling", true));
+        assert!(!absent_from(&open, &none(), "yinyue", true));
+        assert!(!absent_from(&open, &none(), "ling", true));
+    }
+
+    /// A session bound to a save reads her gate from that save's own state;
+    /// the main save, and every unbound session, are untouched by it.
+    #[test]
+    fn a_session_bound_to_a_save_reads_that_saves_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let gated = "session-params:\n  save: {pattern: \"[a-z0-9-]{1,32}\"}\nplace:\n  yinyue:\n    absent_until: {file: data/state.json, session_file: \"data/saves/{{session.save}}/state.json\", path: companion.awake}\n";
+        let s = skill(gated, Some(dir.path()));
+        let save = |name: &str| SessionParams::from([("save".to_string(), name.to_string())]);
+        let awake = r#"{"companion":{"awake":true}}"#;
+        std::fs::create_dir_all(dir.path().join("data/saves/lx")).unwrap();
+        std::fs::write(dir.path().join("data/state.json"), awake).unwrap();
+        assert!(
+            !absent_from(&s, &none(), "yinyue", true),
+            "main save: awake"
+        );
+        assert!(
+            absent_from(&s, &save("lx"), "yinyue", true),
+            "scratch: no state yet"
+        );
+
+        std::fs::write(dir.path().join("data/saves/lx/state.json"), awake).unwrap();
+        std::fs::write(dir.path().join("data/state.json"), "{}").unwrap();
+        assert!(
+            !absent_from(&s, &save("lx"), "yinyue", true),
+            "scratch: awake"
+        );
+        assert!(absent_from(&s, &none(), "yinyue", true), "main: asleep");
+        assert!(absent_from(&s, &save("other"), "yinyue", true));
     }
 }

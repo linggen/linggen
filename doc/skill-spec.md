@@ -142,6 +142,7 @@ Three groups of fields. Standard fields work across tools; the others are extens
 | `quests` | Which phone facts stamp which of the skill's quests, and the skill's own writer that stamps them (see "Quests") |
 | `place` | Where the skill's sessions stand for each agent, and whether an agent is there yet (see "Place") |
 | `senses` | Real-world facts the engine reads for the skill, e.g. `[weather]` (see "Senses") |
+| `session-params` | Values a session of the skill may be bound to when it is made, e.g. a save (see "Session parameters") |
 | `requires` | External dependencies to resolve at install |
 | `renamed-from` | Slugs this skill used to be called (see "Renaming a skill") |
 
@@ -171,7 +172,7 @@ A skill can declare its own tools in the `tools:` frontmatter list. Each tool su
 
 | Kind | Trigger | What happens when the agent calls it |
 | :--- | :------ | :----------------------------------- |
-| **Shell** | `cmd: "..."` is set | Engine runs the command, stdout returns to the model. `$SKILL_DIR` and `{{argname}}` placeholders are expanded — each value one single-quoted word; an omitted or null arg becomes its `default`, else `''`, so later positional args never shift (an `argv` arg with nothing is zero words). The command's env carries `LINGGEN_SESSION_ID` and `LINGGEN_USER_TURNS` — how many messages the person has sent in this session, the one being answered included — so a script that counts the person's turns takes the number from the engine, never from the model's report. Every command — the model's, a mission's, a page's — also carries `LINGGEN_LANGUAGE`, the language to write in for the person (`en`, `zh-Hans`, …); a page asks `GET /api/user/language` → `{"language": "<effective>", "setting": null\|"<tag>"}`. |
+| **Shell** | `cmd: "..."` is set | Engine runs the command, stdout returns to the model. `$SKILL_DIR`, `{{argname}}` and `{{session.<name>}}` (see "Session parameters") placeholders are expanded in one pass — each value one single-quoted word; an omitted or null arg becomes its `default`, else `''`, so later positional args never shift (an `argv` arg with nothing is zero words). The command's env carries `LINGGEN_SESSION_ID` and `LINGGEN_USER_TURNS` — how many messages the person has sent in this session, the one being answered included — so a script that counts the person's turns takes the number from the engine, never from the model's report. Every command — the model's, a mission's, a page's — also carries `LINGGEN_LANGUAGE`, the language to write in for the person (`en`, `zh-Hans`, …); a page asks `GET /api/user/language` → `{"language": "<effective>", "setting": null\|"<tag>"}`. |
 | **HTTP** | `endpoint: "..."` is set (requires `daemon:` block) | Engine POSTs args as JSON to `http://127.0.0.1:<daemon.port>{endpoint}`; response body returns to the model. |
 | **Data** | Neither `cmd` nor `endpoint` | No backend execution. Args surface as a `content_block` event to the app's iframe. Used for app UI signals like `PageUpdate`. |
 
@@ -197,7 +198,7 @@ tools:
 
 ### Page door
 
-A skill's page runs the skill's declared shell tools through `POST /api/skills/{skill}/tools/{tool}` (body: the args object) → `{exit_code, stdout, stderr}` — the same command, PATH and timeout as the model's call, in the skill's `cwd`, one call per skill at a time. The tool's `tier` must be within the skill's own `permission.paths` grant on that folder (403 otherwise); a tool that may write pushes a cloud save afterwards. `page_only: true` keeps a tool off the model's list. An argument of `type: argv` takes a list of words, each passed as its own shell word — a page's generic verb door:
+A skill's page runs the skill's declared shell tools through `POST /api/skills/{skill}/tools/{tool}` (body: the args object) → `{exit_code, stdout, stderr}` — the same command, PATH and timeout as the model's call, in the skill's `cwd`, one call per skill at a time. `?session=<id>` runs it as that session of the skill would, with the values it is bound to (§ Session parameters); a session of another skill is refused (400). The tool's `tier` must be within the skill's own `permission.paths` grant on that folder (403 otherwise); a tool that may write pushes a cloud save afterwards. `page_only: true` keeps a tool off the model's list. An argument of `type: argv` takes a list of words, each passed as its own shell word — a page's generic verb door:
 
 ```yaml
   - name: Verb
@@ -346,13 +347,30 @@ place:
 
 - **Text** (a plain string, or `text:`). When that agent sits at the skill's table as a member who isn't its lead, the engine puts the text under `## Where you are`, after the soul and voice, in place of the engine's member block (`agents/places/member.md`) — and the SKILL.md body is the lead's, never hers. A member with no entry gets the member block. An entry for the lead is ignored — its place is the SKILL.md.
 - **`tools`** — what that member uses at the table, in place of the skill's `allowed-tools` (a companion reads the game, she never makes its moves). Absent: the skill's set.
-- **`absent_until`** — the agent isn't in the skill's sessions until the value at `path` (dot-separated keys) in the skill's JSON `file` (relative to the skill folder) is set: present and not `null`, `false`, `0`, `""`, `[]` or `{}`. Read on every check; unreadable counts as unset. While absent:
+- **`absent_until`** — the agent isn't in the skill's sessions until the value at `path` (dot-separated keys) in the skill's JSON `file` (relative to the skill folder) is set: present and not `null`, `false`, `0`, `""`, `[]` or `{}`. Read on every check; unreadable counts as unset. `session_file: "data/saves/{{session.save}}/state.json"` is the file a session bound to those session params reads instead (§ Session parameters) — used when the session holds every value it names, `file` otherwise; a path that climbs out of the skill folder reads as unset. Checks with no session (an app moment naming only the skill, `AppTool`'s list for another app) read `file`. While absent:
   - a message addressed to it in the skill's chat runs no turn and keeps nothing: `/api/chat` answers `{"status": "absent", "agent_id", "session_id"}`, and the embedded chat posts `linggen-skill-event` `agent_absent {agent, text}` to the page, which says its own line;
   - an app moment for it naming the skill's chat (or the skill as `app`) is refused (`409 absent`) and never queued;
   - the avatar's box, while a stage in that chat holds it, talks on its own thread instead.
 - A skill that declares no gate for an agent follows the machine: an agent that appears only once met (`met_when`, `agent-spec.md`) is not at that skill's table before it is met. A skill's own `absent_until` stays authoritative at its own table.
 - An entry with any other key, or a value of the wrong type, is logged and keeps that agent away — a gate written wrong never lets its agent in early; the rest of the skill still loads.
 - The engine names no app and no agent: it matches the speaking agent's id against the keys.
+
+## Session parameters
+
+A session of a skill can be bound, when it is made, to values the skill declares — a game's save, a ledger's account. The engine never knows what a value means; it keeps it with the session and hands it to the skill's own commands.
+
+```yaml
+session-params:
+  save:
+    pattern: "[a-z0-9][a-z0-9_-]{0,31}"   # the whole value must match
+    description: A scratch save under data/saves/<name>/.
+```
+
+- **Declare.** Each name is `[a-z][a-z0-9_]{0,31}`. `pattern` is anchored by the engine; without one a value is a plain word (`[A-Za-z0-9][A-Za-z0-9_.-]{0,63}` — no `/`). Whatever the pattern, a value is never empty, never over 128 bytes, never opens with `-`, and holds no control character. A bad name or a pattern that doesn't compile is logged and dropped: nothing can be bound to it.
+- **Bind.** `POST /api/sessions` with `skill` and `params: {save: "test"}` (`createSession(title, skill, params)` in `/shared/api.js`; `mount(el, {params})` in the chat bridge). An undeclared name or a refused value: 400 with the reason. One session, one value per name, set once — a different save is a different session. The value is kept in the session record and survives restore. `GET /api/skill-sessions` lists each session's `params`; a page resumes only a session bound as it is now (`pickResumable(boundTo(list, {save}))` — `boundTo(list)` keeps the unbound ones).
+- **Read in a command.** `{{session.<name>}}` in a tool's `cmd` is the session's value as one quoted word — the model's calls, the companion's `AppTool` from that session, and the page door with `?session=`. Without a value it is `''`, like a missing arg — so a script given an empty value does what it always did: `--save={{session.save}}` arrives as `--save=` and means the main save. The value is checked against the declaration again before every run; a value it now refuses fails the call and nothing runs. A session's values belong to its own skill: another skill's tools called in it see none. A `{{session.<name>}}` the skill doesn't declare stays literal and is named in the log at load.
+- **Read in a gate.** `place.<agent>.absent_until` may name `session_file:` — the state file a bound session reads instead of `file` (§ Place).
+- No `params`: the session runs the skill exactly as before.
 
 ## Senses
 
@@ -393,7 +411,7 @@ The engine serves the helpers every skill page uses, one copy per engine:
 | Helper | What it is |
 | :--- | :--- |
 | `/shared/channel.js` | The page's data path. Every engine call — `/api/*`, a `POST` to `/apps/<skill>/capability/*` — rides a WebRTC data channel; plain HTTP carries only the page's own files. Loading it routes the page's `fetch` for those paths, so `fetch('/api/…')` in skill code works unchanged. |
-| `/shared/api.js` | Sessions, models, skill cloud, sign-in (`fetchModels`, `createSession`, `listSkillSessions`, …) over that channel. |
+| `/shared/api.js` | Sessions, models, skill cloud, sign-in (`fetchModels`, `createSession(title, skill, params?)`, `listSkillSessions`, `boundTo`, `pickResumable`, …) over that channel. |
 | `/shared/chat-bridge.js` | Mounts the chat panel (`/embed` iframe) and beats presence (over the channel; skipped while it is down). |
 | `/shared/app-mode.js` | App-shell chrome (§ App-mode). |
 

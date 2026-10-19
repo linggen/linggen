@@ -7,6 +7,7 @@
 //! engine reads or routes against. Disk-level concerns (frontmatter
 //! splitter, file discovery, marketplace fetch) stay in `extensions/`.
 
+use super::params::SessionParams;
 use crate::engine::permission::Grants as SkillPermission;
 use crate::engine::skill_tool::SkillToolDef;
 use serde::{Deserialize, Serialize};
@@ -209,10 +210,16 @@ pub struct GatedPlace {
 /// A value the skill keeps in one of its own JSON files: `path` is a
 /// dot-separated key path inside `file` (relative to the skill folder).
 /// Set = present and not `null`, `false`, `0`, `""`, `[]` or `{}`.
+///
+/// `session_file` is the file a session bound to session params reads
+/// instead (`data/saves/{{session.save}}/state.json`): used when the session
+/// holds every `{{session.<name>}}` it names, `file` otherwise.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct StateFlag {
     pub file: String,
     pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_file: Option<String>,
 }
 
 impl Places {
@@ -239,12 +246,23 @@ impl Places {
     /// `skill_dir` is not set. A file that can't be read or parsed leaves
     /// the flag unset.
     pub fn is_absent(&self, agent: &str, skill_dir: &std::path::Path) -> bool {
+        self.is_absent_in(agent, skill_dir, &SessionParams::new())
+    }
+
+    /// [`Self::is_absent`] for a session bound to `params`: the flag is read
+    /// from the file those values name (`StateFlag::session_file`).
+    pub fn is_absent_in(
+        &self,
+        agent: &str,
+        skill_dir: &std::path::Path,
+        params: &SessionParams,
+    ) -> bool {
         match self.0.get(agent) {
             Some(PlaceEntry::Broken) => true,
             Some(PlaceEntry::Gated(g)) => g
                 .absent_until
                 .as_ref()
-                .is_some_and(|f| !f.is_set(skill_dir)),
+                .is_some_and(|f| !f.is_set_in(skill_dir, params)),
             _ => false,
         }
     }
@@ -264,7 +282,14 @@ impl StateFlag {
     /// Read the flag from the skill's own folder. A file path that is
     /// absolute or climbs out of the folder is never read.
     pub fn is_set(&self, skill_dir: &std::path::Path) -> bool {
-        let rel = std::path::Path::new(&self.file);
+        self.is_set_in(skill_dir, &SessionParams::new())
+    }
+
+    /// [`Self::is_set`], read from the file a session bound to `params`
+    /// reads ([`Self::file_for`]).
+    pub fn is_set_in(&self, skill_dir: &std::path::Path, params: &SessionParams) -> bool {
+        let file = self.file_for(params);
+        let rel = std::path::Path::new(&file);
         let inside = rel
             .components()
             .all(|c| matches!(c, std::path::Component::Normal(_)));
@@ -275,6 +300,25 @@ impl StateFlag {
             .ok()
             .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
             .is_some_and(|json| value_is_set(value_at(&json, &self.path)))
+    }
+}
+
+impl StateFlag {
+    /// The file to read for a session bound to `params`: `session_file` with
+    /// its values filled in when the session holds every one it names, else
+    /// `file`. The path is checked to stay inside the skill folder after.
+    pub fn file_for(&self, params: &SessionParams) -> String {
+        let Some(template) = &self.session_file else {
+            return self.file.clone();
+        };
+        let names = super::params::names_in(template);
+        if names.is_empty() || !names.iter().all(|n| params.contains_key(n)) {
+            return self.file.clone();
+        }
+        super::params::render(template, |token| {
+            let name = token.strip_prefix(super::params::PLACEHOLDER_PREFIX)?;
+            params.get(name).cloned()
+        })
     }
 }
 
@@ -424,6 +468,10 @@ pub struct Skill {
     /// [weather]`) — see `crate::senses` and `doc/skill-spec.md` § Senses.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub senses: Vec<String>,
+    /// The values a session of this skill may be bound to (`session-params:`)
+    /// — see [`super::params`] and `doc/skill-spec.md` § Session parameters.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub session_params: std::collections::BTreeMap<String, super::params::SessionParamDef>,
     /// Filesystem path to the skill directory (set at load time, not serialized to clients).
     #[serde(skip)]
     pub skill_dir: Option<PathBuf>,
@@ -435,11 +483,17 @@ impl Skill {
     /// can't be read keeps the agent away; an agent the skill declares no
     /// gate for is always there.
     pub fn keeps_away(&self, agent: &str) -> bool {
+        self.keeps_away_in(agent, &SessionParams::new())
+    }
+
+    /// [`Self::keeps_away`] in a session bound to `params`: the gate's state
+    /// is read from the file those values name (`StateFlag::session_file`).
+    pub fn keeps_away_in(&self, agent: &str, params: &SessionParams) -> bool {
         let Some(places) = &self.place else {
             return false;
         };
         match &self.skill_dir {
-            Some(dir) => places.is_absent(agent, dir),
+            Some(dir) => places.is_absent_in(agent, dir, params),
             None => places.is_gated(agent),
         }
     }
@@ -518,8 +572,34 @@ mod place_tests {
             let flag = StateFlag {
                 file: file.into(),
                 path: "x".into(),
+                session_file: None,
             };
             assert!(!flag.is_set(dir.path()), "{file}");
         }
+    }
+
+    /// The bound file is read only when the session holds every value it
+    /// names; a value that would climb out of the folder reads nothing.
+    #[test]
+    fn a_bound_session_reads_its_own_file() {
+        let flag = StateFlag {
+            file: "data/state.json".into(),
+            path: "x".into(),
+            session_file: Some("data/saves/{{session.save}}/state.json".into()),
+        };
+        let bound = |v: &str| SessionParams::from([("save".to_string(), v.to_string())]);
+        assert_eq!(flag.file_for(&SessionParams::new()), "data/state.json");
+        assert_eq!(flag.file_for(&bound("lx")), "data/saves/lx/state.json");
+        let other = SessionParams::from([("world".to_string(), "w".to_string())]);
+        assert_eq!(flag.file_for(&other), "data/state.json");
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("state.json"), r#"{"x":1}"#).unwrap();
+        let climbing = StateFlag {
+            file: "nothing.json".into(),
+            path: "x".into(),
+            session_file: Some("data/{{session.save}}/state.json".into()),
+        };
+        assert!(!climbing.is_set_in(dir.path(), &bound("../..")));
     }
 }

@@ -102,6 +102,13 @@ pub struct SessionMeta {
     /// the real memory store withholds the memory server.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub withheld_tools: Vec<String>,
+    /// The values this session is bound to — the bound skill's declared
+    /// session parameters (`session-params`), set once when the session is
+    /// made (`POST /api/sessions` `params`) and checked against the
+    /// declaration then. Empty: the skill as it runs unbound. See
+    /// `doc/skill-spec.md` § Session parameters.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub params: std::collections::BTreeMap<String, String>,
 }
 
 fn default_true() -> bool {
@@ -270,6 +277,20 @@ impl SessionStore {
             let _ = fs::write(&yaml_path, serde_norway::to_string(&meta)?);
         }
         Ok(Some(meta))
+    }
+
+    /// The values session `session_id` is bound to, when it is a session of
+    /// `skill`; `None` when it isn't (or doesn't exist). A session's params
+    /// are its own skill's declarations — never handed to another skill.
+    pub fn params_for(
+        &self,
+        session_id: &str,
+        skill: &str,
+    ) -> Option<std::collections::BTreeMap<String, String>> {
+        match self.get_session_meta(session_id) {
+            Ok(Some(meta)) if meta.skill.as_deref() == Some(skill) => Some(meta.params),
+            _ => None,
+        }
     }
 
     pub fn list_sessions(&self) -> Result<Vec<SessionMeta>> {
@@ -632,6 +653,7 @@ mod tests {
             compact_focus: None,
             title_locked: false,
             withheld_tools: Vec::new(),
+            params: Default::default(),
         };
         store.add_session(&meta).unwrap();
 
@@ -657,6 +679,42 @@ mod tests {
         assert_eq!(store.list_sessions().unwrap().len(), 0);
     }
 
+    /// A session's bound values survive the store: written with the meta,
+    /// read back on restore, every later meta update keeping them. A session
+    /// bound to nothing writes no `params` key at all.
+    #[test]
+    fn a_sessions_bound_params_survive_restore() {
+        let (store, dir) = temp_store();
+        let mut meta = SessionMeta {
+            id: "sess-1-bound".into(),
+            title: "t".into(),
+            skill: Some("game".into()),
+            params: [("save".to_string(), "lx-gu3".to_string())].into(),
+            ..Default::default()
+        };
+        store.add_session(&meta).unwrap();
+        let reopened = SessionStore::with_sessions_dir(dir.path().join(".linggen/sessions"));
+        let back = reopened.get_session_meta("sess-1-bound").unwrap().unwrap();
+        assert_eq!(back.params.get("save").map(String::as_str), Some("lx-gu3"));
+        reopened.rename_session("sess-1-bound", "renamed").unwrap();
+        let back = reopened.get_session_meta("sess-1-bound").unwrap().unwrap();
+        assert_eq!(back.params.len(), 1, "an update keeps them");
+        let tools_see = reopened.params_for("sess-1-bound", "game").unwrap();
+        assert_eq!(tools_see.get("save").map(String::as_str), Some("lx-gu3"));
+        assert!(
+            reopened.params_for("sess-1-bound", "other").is_none(),
+            "only its own skill's"
+        );
+        assert!(reopened.params_for("sess-unknown", "game").is_none());
+
+        meta.id = "sess-2-plain".into();
+        meta.params.clear();
+        store.add_session(&meta).unwrap();
+        let yaml = std::fs::read_to_string(store.session_dir("sess-2-plain").join("session.yaml"))
+            .unwrap();
+        assert!(!yaml.contains("params"), "{yaml}");
+    }
+
     #[test]
     fn test_list_sessions_sorted_desc() {
         let (store, _dir) = temp_store();
@@ -680,6 +738,7 @@ mod tests {
                     compact_focus: None,
                     title_locked: false,
                     withheld_tools: Vec::new(),
+                    params: Default::default(),
                 })
                 .unwrap();
         }
@@ -709,6 +768,7 @@ mod tests {
             compact_focus: None,
             title_locked: false,
             withheld_tools: Vec::new(),
+            params: Default::default(),
         };
         store.add_session(&meta).unwrap();
 
@@ -795,6 +855,7 @@ mod tests {
                 compact_focus: None,
                 title_locked: false,
                 withheld_tools: Vec::new(),
+                params: Default::default(),
             })
             .unwrap();
 
@@ -862,6 +923,7 @@ mod tests {
                 compact_focus: None,
                 title_locked: false,
                 withheld_tools: Vec::new(),
+                params: Default::default(),
             })
             .unwrap();
         store
@@ -909,6 +971,7 @@ mod tests {
                 compact_focus: None,
                 title_locked: false,
                 withheld_tools: Vec::new(),
+                params: Default::default(),
             })
             .unwrap();
         store
@@ -956,6 +1019,7 @@ mod tests {
                 compact_focus: None,
                 title_locked: false,
                 withheld_tools: Vec::new(),
+                params: Default::default(),
             })
             .is_err());
         assert!(store
@@ -977,6 +1041,7 @@ mod tests {
                 compact_focus: None,
                 title_locked: false,
                 withheld_tools: Vec::new(),
+                params: Default::default(),
             })
             .is_err());
         assert!(store
@@ -998,6 +1063,7 @@ mod tests {
                 compact_focus: None,
                 title_locked: false,
                 withheld_tools: Vec::new(),
+                params: Default::default(),
             })
             .is_err());
     }

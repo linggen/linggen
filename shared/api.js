@@ -29,13 +29,21 @@ export async function fetchDefaultModel() {
   return defaults && defaults.length > 0 ? defaults[0] : null;
 }
 
-export async function createSession(title, skill) {
+/// `params`: the values the session is bound to, by the skill's declared
+/// session params (`session-params` in SKILL.md) — e.g. `{ save: 'test' }`.
+/// Set once, here; a value the skill doesn't declare or accept is refused.
+/// Omitted: the session runs the skill as it always has.
+export async function createSession(title, skill, params) {
+  const bound = params && Object.keys(params).length ? { params } : {};
   const res = await overChannel(`/api/sessions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title, skill }),
+    body: JSON.stringify({ title, skill, ...bound }),
   });
-  if (!res.ok) throw new Error(`Failed to create session: ${res.status}`);
+  if (!res.ok) {
+    const why = await res.text().catch(() => '');
+    throw new Error(`Failed to create session: ${res.status}${why ? ` ${why}` : ''}`);
+  }
   return res.json();
 }
 
@@ -44,6 +52,17 @@ export async function listSkillSessions(skill) {
   if (!res.ok) return [];
   const data = await res.json();
   return data.sessions || [];
+}
+
+/// The sessions bound to exactly `params` (each session lists its own as
+/// `params`): `{}` keeps the unbound ones. A page resumes only a session
+/// bound as it is now — `pickResumable(boundTo(list, { save }))`.
+export function boundTo(sessions, params = {}) {
+  const want = Object.entries(params || {}).filter(([, v]) => v != null && v !== '');
+  return (sessions || []).filter((s) => {
+    const have = s.params || {};
+    return Object.keys(have).length === want.length && want.every(([k, v]) => have[k] === String(v));
+  });
 }
 
 /// The day's chat to pick up, from the list the engine gives. `updated_at` is

@@ -27,6 +27,25 @@ pub(crate) struct CreateSessionRequest {
     /// Tools no member may use here (`SessionMeta::withheld_tools`).
     #[serde(default)]
     withheld_tools: Vec<String>,
+    /// The values the session is bound to, by the skill's declared session
+    /// params (`SessionMeta::params`). Only with `skill`; checked here.
+    #[serde(default)]
+    params: crate::engine::skill::params::SessionParams,
+}
+
+/// Why a session can't be bound to `params`: no skill to declare them, or
+/// one that doesn't declare (or accept) them.
+fn refuse_params(
+    params: &crate::engine::skill::params::SessionParams,
+    skill: Option<&crate::engine::skill::Skill>,
+) -> Option<String> {
+    if params.is_empty() {
+        return None;
+    }
+    let Some(skill) = skill else {
+        return Some("session params need a skill that declares them".into());
+    };
+    crate::engine::skill::params::check(&skill.session_params, params).err()
 }
 
 pub(crate) async fn create_session(
@@ -46,6 +65,9 @@ pub(crate) async fn create_session(
         Some(name) => state.manager.skills.get_skill(name).await,
         None => None,
     };
+    if let Some(why) = refuse_params(&req.params, skill.as_ref()) {
+        return (StatusCode::BAD_REQUEST, why).into_response();
+    }
     let cwd_str: Option<String> = skill.as_ref().and_then(|s| s.cwd.clone());
     let cwd_str = cwd_str.or_else(|| req.project_root.clone());
     let cwd = cwd_str
@@ -78,6 +100,7 @@ pub(crate) async fn create_session(
         // once the user's first message lands.
         title_locked: is_skill,
         withheld_tools: req.withheld_tools,
+        params: req.params,
     };
 
     match state.manager.global_sessions.add_session(&meta) {
@@ -119,6 +142,9 @@ pub(crate) async fn list_skill_sessions(
                         // the model on every send — without it the engine
                         // falls to the global default.
                         "agents": s.agents,
+                        // The values the session is bound to (`params`): a
+                        // page resumes only a session bound as it is.
+                        "params": s.params,
                     })
                 })
                 .collect();
@@ -324,5 +350,39 @@ pub(crate) async fn delete_unified_session(
             StatusCode::OK.into_response()
         }
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::refuse_params;
+    use crate::engine::skill::params::SessionParams;
+
+    fn skill(extra: &str) -> crate::engine::skill::Skill {
+        let text = format!("---\nname: game\ndescription: d\n{extra}---\nBody.");
+        crate::extensions::skills::parse_skill_text(
+            &text,
+            crate::engine::skill::SkillSource::Global,
+        )
+        .unwrap()
+    }
+
+    /// A session is bound only to what its skill declares and accepts;
+    /// binding nothing is always fine.
+    #[test]
+    fn a_session_binds_only_declared_accepted_values() {
+        let game = skill("session-params:\n  save:\n    pattern: \"[a-z0-9-]{1,32}\"\n");
+        let save = |v: &str| SessionParams::from([("save".to_string(), v.to_string())]);
+        assert!(refuse_params(&SessionParams::new(), None).is_none());
+        assert!(refuse_params(&save("lx-gu3"), Some(&game)).is_none());
+        assert!(refuse_params(&save("lx gu3"), Some(&game)).is_some());
+        assert!(
+            refuse_params(&save("lx"), None).is_some(),
+            "no skill, no params"
+        );
+        assert!(
+            refuse_params(&save("lx"), Some(&skill(""))).is_some(),
+            "undeclared"
+        );
     }
 }

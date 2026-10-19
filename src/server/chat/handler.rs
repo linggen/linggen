@@ -269,6 +269,7 @@ async fn ensure_session(
         // `auto_session_title`, so it's a real title — lock it.
         title_locked: true,
         withheld_tools: Vec::new(),
+        params: Default::default(),
     };
 
     if let Some(sid) = req.session_id.clone() {

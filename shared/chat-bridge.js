@@ -27,6 +27,7 @@ import '/shared/channel.js'; // the page's data channel (api.js loads it too)
  *   modelId?: string,
  *   title?: string,
  *   sessionId?: string,
+ *   params?: Record<string, string>,
  *   placeholder?: string,
  *   lazy?: boolean,
  *   deleteOnLeave?: boolean,
@@ -213,7 +214,8 @@ export async function mount(el, options) {
     if (mounting) return mounting;
     mounting = (async () => {
       if (!sessionId) {
-        const data = await createSession(options.title || `${skillName} session`, skillName);
+        // `params`: the values a new session is bound to (api.js createSession).
+        const data = await createSession(options.title || `${skillName} session`, skillName, options.params);
         sessionId = data.id;
         tellStages();
         if (onSessionCreated) onSessionCreated(sessionId);

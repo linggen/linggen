@@ -55,10 +55,13 @@ impl ToolRegistry {
                     self.dispatch_via_skill_http(&skill_tool.name, &call.args)
                         .await
                 }
-                _ => skill_tool.execute(
+                _ => skill_tool.execute_bound(
                     &call.args,
                     &self.builtins.cwd(),
                     &self.builtins.tool_env(&skill_tool.senses),
+                    &self
+                        .builtins
+                        .session_params_for(skill_tool.skill_name.as_deref()),
                 ),
             };
         }

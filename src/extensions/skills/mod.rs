@@ -98,6 +98,7 @@ fn page_update_tool_def() -> SkillToolDef {
         skill_name: None,
         skill_dir: None,
         senses: Vec::new(),
+        session_params: Default::default(),
     }
 }
 
@@ -390,6 +391,11 @@ struct SkillFrontmatter {
     members: Vec<String>,
     #[serde(default)]
     senses: Vec<String>,
+    /// What a session of this skill may be bound to — see `doc/skill-spec.md`
+    /// § Session parameters.
+    #[serde(default, rename = "session-params")]
+    session_params:
+        std::collections::BTreeMap<String, crate::engine::skill::params::SessionParamDef>,
 }
 
 pub struct SkillLoader {
@@ -645,8 +651,11 @@ pub fn parse_skill_text(text: &str, source: SkillSource) -> Result<Skill> {
     }
     let cloud = cloud_if_allowed(frontmatter.cloud, &frontmatter.name, &source);
     let senses = known_senses(frontmatter.senses, &frontmatter.name);
+    let session_params =
+        crate::engine::skill::params::usable(&frontmatter.name, frontmatter.session_params);
     for tool_def in &mut tool_defs {
         tool_def.senses = senses.clone();
+        tool_def.session_params = session_params.clone();
         for arg in tool_def.undeclared_placeholders() {
             tracing::warn!(
                 "skill '{}': tool '{}' uses {{{{{arg}}}}} but declares no such arg; it stays literal",
@@ -693,6 +702,7 @@ pub fn parse_skill_text(text: &str, source: SkillSource) -> Result<Skill> {
             .filter(|m| !m.is_empty())
             .collect(),
         senses,
+        session_params,
         skill_dir: None,
     })
 }

@@ -5,6 +5,7 @@
 use super::super::{ToolCall, ToolResult, Tools};
 use super::Tool;
 use crate::engine::permission::PermissionMode;
+use crate::engine::skill::params::SessionParams;
 use crate::engine::skill::tools::{pet_tools, run_for_pet, Refusal};
 use crate::engine::skill::Skill;
 use anyhow::Result;
@@ -75,7 +76,9 @@ impl Tool for AppTool {
         };
         // An app that keeps the caller away (`place.<agent>.absent_until`)
         // offers it nothing: it isn't in that world yet.
-        let skills = reachable(skills, tools.agent_id());
+        let skills = reachable(skills, tools.agent_id(), |s| {
+            tools.session_params_for(Some(&s.name))
+        });
         if let (Some(app), true) = (args.app.as_deref(), skills.is_empty()) {
             anyhow::bail!(Refusal::no_skill(app).to_string());
         }
@@ -89,7 +92,9 @@ impl Tool for AppTool {
         if !tool_args.is_object() {
             anyhow::bail!("AppTool: `args` is the tool's args, as an object");
         }
-        run_for_pet(skill, tool, &tool_args)
+        // Called from a session of this app: its bound values come along.
+        let params = tools.session_params_for(Some(&skill.name));
+        run_for_pet(skill, tool, &tool_args, &params)
             .await
             .map_err(|r| anyhow::anyhow!(r.to_string()))
     }
@@ -102,14 +107,20 @@ fn named_tool(tool: Option<&str>) -> Option<&str> {
     tool.map(str::trim).filter(|t| !t.is_empty())
 }
 
-/// The apps `agent` may reach now: every app, less those keeping it away.
-fn reachable(skills: Vec<Skill>, agent: Option<&str>) -> Vec<Skill> {
+/// The apps `agent` may reach now: every app, less those keeping it away —
+/// each read through the values the calling session is bound to for it
+/// (`params_of`; only the session's own app has any).
+fn reachable(
+    skills: Vec<Skill>,
+    agent: Option<&str>,
+    params_of: impl Fn(&Skill) -> SessionParams,
+) -> Vec<Skill> {
     let Some(agent) = agent else {
         return skills;
     };
     skills
         .into_iter()
-        .filter(|s| !s.keeps_away(agent))
+        .filter(|s| !s.keeps_away_in(agent, &params_of(s)))
         .collect()
 }
 
@@ -159,11 +170,23 @@ mod tests {
         let open = parse("");
         let names = |v: Vec<crate::engine::skill::Skill>| v.len();
         assert_eq!(
-            names(reachable(vec![gated.clone(), open.clone()], Some("yinyue"))),
+            names(reachable(
+                vec![gated.clone(), open.clone()],
+                Some("yinyue"),
+                |_| Default::default()
+            )),
             1
         );
-        assert_eq!(names(reachable(vec![gated.clone()], Some("ling"))), 1);
-        assert_eq!(names(reachable(vec![gated], None)), 1);
+        assert_eq!(
+            names(reachable(vec![gated.clone()], Some("ling"), |_| {
+                Default::default()
+            })),
+            1
+        );
+        assert_eq!(
+            names(reachable(vec![gated], None, |_| Default::default())),
+            1
+        );
     }
 
     #[test]

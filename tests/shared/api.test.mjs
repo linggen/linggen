@@ -16,7 +16,7 @@ const shared = new URL('../../shared/', import.meta.url);
 const dir = mkdtempSync(join(tmpdir(), 'api-'));
 writeFileSync(join(dir, 'api.mjs'), readFileSync(new URL('api.js', shared), 'utf8')
   .replace("import '/shared/channel.js'", `import '${new URL('channel.js', shared).href}'`));
-const { pickResumable } = await import(pathToFileURL(join(dir, 'api.mjs')).href);
+const { pickResumable, boundTo } = await import(pathToFileURL(join(dir, 'api.mjs')).href);
 
 const NOW = 1789700000;
 const hoursAgo = h => NOW - h * 3600;
@@ -43,4 +43,15 @@ test('a day old is a new day', () => {
 test('no sessions at all', () => {
   assert.equal(pickResumable([], NOW), null);
   assert.equal(pickResumable(undefined, NOW), null);
+});
+
+test('a page resumes only a session bound as it is now', () => {
+  const main = { ...spoken('main', hoursAgo(1)) };
+  const scratch = { ...spoken('scratch', hoursAgo(0.5)), params: { save: 'test' } };
+  const other = { ...spoken('other', hoursAgo(0.2)), params: { save: 'lx' } };
+  const all = [main, scratch, other];
+  assert.equal(pickResumable(boundTo(all), NOW), 'main', 'the main save never resumes a scratch chat');
+  assert.equal(pickResumable(boundTo(all, { save: 'test' }), NOW), 'scratch');
+  assert.equal(pickResumable(boundTo(all, { save: 'none-yet' }), NOW), null);
+  assert.deepEqual(boundTo(all, { save: '' }).map(s => s.id), ['main'], 'an empty value is no value');
 });
