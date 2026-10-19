@@ -38,6 +38,11 @@ pub(super) struct MessageData {
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     #[cfg_attr(test, ts(optional = nullable))]
     pub silent: bool,
+    /// A person's message: its pictures as the engine keeps them — the same
+    /// URLs the state endpoints hand out.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(test, ts(optional = nullable))]
+    pub images: Vec<String>,
 }
 
 /// `token` carrying a reasoning token.

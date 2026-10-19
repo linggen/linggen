@@ -25,6 +25,7 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
             client_id,
             via,
             via_note,
+            images,
         } => {
             let cleaned = crate::engine::tool_render::sanitize_message_for_ui(&from, &content)?;
             let silent = crate::server::resident::is_silent_reply(&from, &content);
@@ -48,6 +49,7 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
                         via,
                         via_note,
                         silent,
+                        images,
                     }),
             )
         }

@@ -744,6 +744,7 @@ async fn dispatch_turn(
             client_id: None,
             via: None,
             via_note: None,
+            images: Vec::new(),
         });
         return;
     }

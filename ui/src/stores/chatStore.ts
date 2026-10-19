@@ -69,10 +69,10 @@ interface ChatState {
   upsertPlan: (agentId: string, planText: string) => void;
   updateSubagentTree: (parentId: string, subagentId: string, updater: (entry: SubagentTreeEntry) => SubagentTreeEntry) => void;
   addSubagentToTree: (parentId: string, entry: SubagentTreeEntry) => void;
-  finalizeMessage: (agentId: string, content: string, to: string, tsMs: number, elapsed?: number, ctxTokens?: number, isError?: boolean, via?: string, viaNote?: string, clientId?: string) => void;
+  finalizeMessage: (agentId: string, content: string, to: string, tsMs: number, elapsed?: number, ctxTokens?: number, isError?: boolean, via?: string, viaNote?: string, clientId?: string, images?: string[]) => void;
   /** The engine kept a message this surface sent (its bubble's `clientId`):
    *  the bubble takes the kept words. False when no bubble has that id. */
-  confirmSent: (clientId: string, text: string, to: string) => boolean;
+  confirmSent: (clientId: string, text: string, to: string, images?: string[]) => boolean;
   finalizeOnIdle: (agentId: string, elapsed?: number, ctxTokens?: number) => void;
   /** The agent's latest row was the spoken contract's silence. */
   markLastSilent: (agentId: string) => void;
@@ -329,7 +329,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     return next;
   })),
 
-  finalizeMessage: (agentId, content, to, tsMs, elapsed, ctxTokens, isError, via, viaNote, clientId) => set(mutate((state) => {
+  finalizeMessage: (agentId, content, to, tsMs, elapsed, ctxTokens, isError, via, viaNote, clientId, images) => set(mutate((state) => {
     const generatingIdx = findLastGeneratingMessageIndex(state, agentId);
     if (generatingIdx >= 0) {
       const next = [...state];
@@ -397,6 +397,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       ...(clientId ? { clientId } : {}),
       ...(via ? { via } : {}),
       ...(viaNote ? { viaNote } : {}),
+      ...(images?.length ? { images } : {}),
     };
     // A row already here (by its sent id, or the same row again): not twice.
     // The same words said again are a new row.
@@ -404,10 +405,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     return [...state, row];
   })),
 
-  confirmSent: (clientId, text, to) => {
+  confirmSent: (clientId, text, to, images) => {
     let found = false;
     set(mutate((msgs) => {
-      const next = confirmSent(msgs, clientId, text, to);
+      const next = confirmSent(msgs, clientId, text, to, images);
       found = next !== null;
       return next ?? msgs;
     }));

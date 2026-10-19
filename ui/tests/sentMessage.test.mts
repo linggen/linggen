@@ -41,3 +41,12 @@ test('the echoed event turns the bubble into what was kept, no second row', () =
 test('a message another surface sent is not this one’s bubble', () => {
   assert.equal(confirmSent([bubble('hi', 'c-1')], 'c-9', 'hi', 'ling'), null);
 });
+
+test('the echo hands its kept pictures to a bubble drawn without them; inline ones stay', () => {
+  const url = '/api/sessions/images?session_id=s&name=ab.png';
+  const bare = confirmSent([bubble('look', 'c-1')], 'c-1', 'look', 'ling', [url]);
+  assert.deepEqual(bare?.[0].images, [url]);
+  const drawn = { ...bubble('look', 'c-2'), images: ['data:image/png;base64,AAAA'] };
+  const kept = confirmSent([drawn], 'c-2', 'look', 'ling', [url]);
+  assert.deepEqual(kept?.[0].images, ['data:image/png;base64,AAAA']);
+});

@@ -23,6 +23,7 @@ fn a_message_names_its_role_and_keeps_null_routing_keys() {
         client_id: None,
         via: None,
         via_note: None,
+        images: Vec::new(),
     });
     assert_eq!(
         d,
@@ -42,8 +43,27 @@ fn a_persons_message_echoes_its_client_id() {
         client_id: Some("c-1-ab".into()),
         via: None,
         via_note: None,
+        images: Vec::new(),
     });
     assert_eq!(d["client_id"], json!("c-1-ab"));
+}
+
+#[test]
+fn a_pictured_message_carries_its_picture_urls() {
+    let url = "/api/sessions/images?session_id=s&name=ab.png".to_string();
+    let d = data(ServerEvent::Message {
+        from: "user".into(),
+        to: "ling".into(),
+        content: "what is this".into(),
+        session_id: Some("s".into()),
+        run_id: None,
+        parent_agent_id: None,
+        client_id: None,
+        via: None,
+        via_note: None,
+        images: vec![url.clone()],
+    });
+    assert_eq!(d["images"], json!([url]));
 }
 
 #[test]

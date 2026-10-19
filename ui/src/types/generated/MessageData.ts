@@ -16,4 +16,9 @@ via?: string, via_note?: string,
  * An agent's reply that is the spoken contract's silence
  * (`resident::is_silent_reply`): the chat shows no words for it.
  */
-silent?: boolean, };
+silent?: boolean, 
+/**
+ * A person's message: its pictures as the engine keeps them — the same
+ * URLs the state endpoints hand out.
+ */
+images?: Array<string>, };

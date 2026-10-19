@@ -182,6 +182,7 @@ pub(super) async fn run_plan_execution(ctx: &ChatRunCtx, engine: &mut crate::eng
                             client_id: None,
                             via: None,
                             via_note: None,
+                            images: Vec::new(),
                         });
                     }
                 }

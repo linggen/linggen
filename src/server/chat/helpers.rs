@@ -91,6 +91,7 @@ pub(crate) async fn persist_and_emit_message(
         client_id: None,
         via: None,
         via_note: None,
+        images: Vec::new(),
     });
     persist_message_only(
         manager,
@@ -153,6 +154,9 @@ pub(crate) async fn persist_and_emit_with_images(
     sent: &[String],
 ) {
     let client_id = client_id.map(str::to_string);
+    let sid = session_id.unwrap_or("default");
+    // Kept first, so the live event names the same copies a reload shows.
+    let kept = store.keep_images(sid, sent);
     let _ = events_tx.send(ServerEvent::Message {
         from: from.to_string(),
         to: to.to_string(),
@@ -163,8 +167,11 @@ pub(crate) async fn persist_and_emit_with_images(
         client_id: client_id.clone(),
         via: via.map(str::to_string),
         via_note: via_note.map(str::to_string),
+        images: kept
+            .iter()
+            .map(|n| crate::state_fs::session_images::url(sid, n))
+            .collect(),
     });
-    let sid = session_id.unwrap_or("default");
     let msg = crate::state_fs::sessions::ChatMsg {
         agent_id: agent_id.to_string(),
         from_id: from.to_string(),
@@ -176,7 +183,7 @@ pub(crate) async fn persist_and_emit_with_images(
         failed: false,
         via: via.map(str::to_string),
         via_note: via_note.map(str::to_string),
-        images: store.keep_images(sid, sent),
+        images: kept,
     };
     if let Err(e) = store.add_chat_message(sid, &msg) {
         tracing::warn!("Failed to persist chat message to mission store: {}", e);
@@ -284,6 +291,7 @@ pub(crate) fn emit_outcome_event(
                 client_id: None,
                 via: None,
                 via_note: None,
+                images: Vec::new(),
             });
         }
         AgentOutcome::PlanApproved(plan) => {
@@ -301,6 +309,7 @@ pub(crate) fn emit_outcome_event(
                 client_id: None,
                 via: None,
                 via_note: None,
+                images: Vec::new(),
             });
             let _ = events_tx.send(ServerEvent::PlanUpdate {
                 agent_id: from_id.to_string(),
@@ -358,7 +367,7 @@ mod turn_error_tests {
 
 #[cfg(test)]
 mod via_tests {
-    use super::persist_and_emit_to_store;
+    use super::{persist_and_emit_to_store, persist_and_emit_with_images};
     use crate::server::ServerEvent;
 
     /// A dequeued hand-off persists and emits through this call with the
@@ -392,5 +401,43 @@ mod via_tests {
             rows[0].via_note.as_deref(),
             Some("Let me check how many songs we have here.")
         );
+    }
+
+    /// A pictured turn's live event names the kept copies by the same URLs
+    /// a reload hands out, so a second screen draws them as it lands.
+    #[tokio::test]
+    async fn a_pictured_turn_carries_its_kept_pictures_live() {
+        use base64::Engine as _;
+        let dir = tempfile::tempdir().unwrap();
+        let store = crate::state_fs::SessionStore::with_sessions_dir(dir.path().to_path_buf());
+        let (tx, mut rx) = tokio::sync::broadcast::channel(8);
+        // The smallest PNG header the keeper accepts as a picture.
+        let mut png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        png.extend_from_slice(&[0u8; 32]);
+        let sent = vec![base64::engine::general_purpose::STANDARD.encode(&png)];
+        persist_and_emit_with_images(
+            &store,
+            &tx,
+            "ling",
+            ("user", "ling", "what is this"),
+            Some("s1"),
+            false,
+            Some("c-1"),
+            (None, None),
+            &sent,
+        )
+        .await;
+        let rows = store.get_chat_history("s1").unwrap();
+        assert_eq!(rows[0].images.len(), 1, "the row keeps the picture");
+        let want = crate::state_fs::session_images::url("s1", &rows[0].images[0]);
+        match rx.recv().await.unwrap() {
+            ServerEvent::Message {
+                images, client_id, ..
+            } => {
+                assert_eq!(images, vec![want]);
+                assert_eq!(client_id.as_deref(), Some("c-1"));
+            }
+            _ => panic!("expected a message event"),
+        }
     }
 }

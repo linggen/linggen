@@ -16,6 +16,7 @@ import { getSessionId, formatToolStartLine } from './_shared';
 import { askEndsWithTurn, completeAgentRuns, otherAgentRunning, sendEndsWithTurn } from '../agentTurns.mts';
 import { stillOn } from '../sessionLoad.mts';
 import { toolStatus } from '../toolStatus.mts';
+import { pageImages } from '../chatImage.mts';
 
 // ---------------------------------------------------------------------------
 // Text segment
@@ -160,7 +161,9 @@ export function handleMessage(item: UiEventOf<'message'>): void {
   // A message this surface sent, as the engine kept it: its own bubble takes
   // the kept words (matched by the id it was sent with), no second row.
   const clientId = from === 'user' ? item.data?.client_id : undefined;
-  if (clientId && chatStore.confirmSent(clientId, content, to)) return;
+  // A person's pictures, as the engine kept them — drawn as the turn lands.
+  const images = from === 'user' ? pageImages(item.data?.images) : [];
+  if (clientId && chatStore.confirmSent(clientId, content, to, images)) return;
   if (from !== 'user' && isStatusLineText(content)) {
     chatStore.appendActivity(from, content);
     return;
@@ -183,7 +186,8 @@ export function handleMessage(item: UiEventOf<'message'>): void {
   chatStore.finalizeMessage(from, content, to, tsMs, msgElapsed, msgCtxTokens, isError || undefined,
     from === 'user' && item.data?.via ? String(item.data.via) : undefined,
     from === 'user' && item.data?.via_note ? String(item.data.via_note) : undefined,
-    clientId ? String(clientId) : undefined);
+    clientId ? String(clientId) : undefined,
+    images.length ? images : undefined);
 }
 
 // ---------------------------------------------------------------------------

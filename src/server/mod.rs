@@ -339,6 +339,7 @@ mod tests {
                 client_id: None,
                 via: None,
                 via_note: None,
+                images: Vec::new(),
             },
             ServerEvent::SubagentSpawned {
                 parent_id: "ling".into(),

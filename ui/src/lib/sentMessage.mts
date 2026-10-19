@@ -18,16 +18,20 @@ export const sameSentMessage = (a: ChatMessage, b: ChatMessage): boolean =>
 
 /** The bubble with `clientId`, now as the engine kept it — the saved words
  *  and whom it went to. `null` when no bubble here has that id (another
- *  surface sent it): the event is then a new row like any other. */
+ *  surface sent it): the event is then a new row like any other. `images`:
+ *  the kept pictures' URLs — taken only by a bubble drawn without its own
+ *  copies (the inline ones it already shows stay). */
 export const confirmSent = (
   msgs: ChatMessage[],
   clientId: string,
   text: string,
   to: string,
+  images: string[] = [],
 ): ChatMessage[] | null => {
   const idx = msgs.findIndex((m) => m.clientId === clientId);
   if (idx < 0) return null;
   const next = [...msgs];
-  next[idx] = { ...msgs[idx], text, ...(to ? { to } : {}) };
+  const pictures = !msgs[idx].images?.length && images.length ? { images } : {};
+  next[idx] = { ...msgs[idx], text, ...(to ? { to } : {}), ...pictures };
   return next;
 };

@@ -68,7 +68,7 @@ Each message carries:
 - **Activity**: tool calls made during this turn — names, arguments, status, grouped by type.
 - **Context stats**: token count, elapsed time, tool call count.
 - **Rich content**: subagent delegation tree, structured content blocks, images.
-- **Pictures**: a person's message may carry pictures (`images` on `/api/chat`). They are kept with the row (`storage-spec.md` § Chat messages) and drawn as thumbnails that open larger on click, after a reload too. The model sees a picture once — with the turn that carries it. Every later turn reads it as a numbered note in its message's place, `[image01, shown earlier]`, never the picture again (a cost rule, every session; `engine/shown_images.rs`). A skill page's `chat.addMessage(role, text, {images, from})` shows a local turn with pictures and a sender label.
+- **Pictures**: a person's message may carry pictures (`images` on `/api/chat`). They are kept with the row (`storage-spec.md` § Chat messages) and drawn as thumbnails that open larger on click, after a reload too. The live `message` event carries them as well (`images`: the same `/api/sessions/images?…` URLs the state endpoints hand out), so a second screen, or a page that posted the turn through `/api/chat`, draws them as the turn lands. The model sees a picture once — with the turn that carries it. Every later turn reads it as a numbered note in its message's place, `[image01, shown earlier]`, never the picture again (a cost rule, every session; `engine/shown_images.rs`). A skill page's `chat.addMessage(role, text, {images, from})` shows a local turn with pictures and a sender label.
 
 ### Message phases
 

@@ -147,6 +147,11 @@ pub enum ServerEvent {
         via: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         via_note: Option<String>,
+        /// The pictures a person's message carried, as the URLs the state
+        /// endpoints hand out (`/api/sessions/images?…`), so a surface draws
+        /// them as the turn lands — no reload.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        images: Vec<String>,
     },
     SubagentSpawned {
         parent_id: String,
@@ -406,6 +411,7 @@ impl ServerEvent {
                 client_id: None,
                 via: None,
                 via_note: None,
+                images: Vec::new(),
             }),
             AgentEvent::SubagentSpawned {
                 parent_id,
