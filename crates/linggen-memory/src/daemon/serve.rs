@@ -22,6 +22,28 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 
+/// One change log for both tables (`memory::changes`) — what a replica pulls.
+/// A store that has never had one is seeded with every existing row, so a
+/// replica's first pull is a full copy.
+async fn attach_change_log(
+    data_dir: &Path,
+    semantic: &MemoryStore,
+    episodic: &MemoryStore,
+) -> Result<()> {
+    use crate::memory::changes::{log_path, ChangeLog, Op};
+    let log = Arc::new(ChangeLog::open(log_path(data_dir)).context("opening the change log")?);
+    if log.needs_seed() {
+        for store in [semantic, episodic] {
+            let ids = store.ids_where(None).await?;
+            log.record(store.table_name(), Op::Upsert, &ids);
+        }
+        tracing::info!("change log seeded at seq {}", log.head());
+    }
+    semantic.attach_changes(Arc::clone(&log));
+    episodic.attach_changes(log);
+    Ok(())
+}
+
 /// Bind, write pidfile, serve, clean up.
 ///
 /// `data_dir` is the Linggen home (e.g. `~/.linggen/`); MemoryStore opens
@@ -103,6 +125,7 @@ pub async fn run(data_dir: &Path, skill_dir: &Path, port: u16, host: Option<IpAd
             .await
             .with_context(|| format!("opening episodic store under {}", data_dir.display()))?,
     );
+    attach_change_log(data_dir, &semantic, &episodic).await?;
     // Recall shares the semantic handle with the write path so the table
     // has one LanceDB connection across reads and writes. The episodic
     // handle is reused for write routing in `http::memory::add` when the

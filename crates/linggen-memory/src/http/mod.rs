@@ -28,6 +28,7 @@ pub(crate) mod network;
 pub(crate) mod session;
 pub mod state;
 mod stats;
+pub(crate) mod sync;
 mod ui;
 
 use crate::telemetry::Telemetry;
@@ -64,6 +65,7 @@ pub fn build_router(state: SharedState, telemetry: Telemetry) -> Router {
         .merge(config::router())
         .merge(network::router())
         .merge(connect::router())
+        .merge(sync::router())
         .merge(migration::router())
         .merge(ui::router())
         // Outermost, so it runs before any handler: a caller off this machine

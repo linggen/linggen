@@ -81,7 +81,7 @@ pub struct DaysState {
     pub days: BTreeMap<String, DayRecord>,
 }
 
-fn days_path(data_dir: &Path) -> PathBuf {
+pub(crate) fn days_path(data_dir: &Path) -> PathBuf {
     data_dir.join("memory").join(".days.json")
 }
 

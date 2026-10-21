@@ -698,6 +698,9 @@ pub struct MemoryStore {
     /// the semantic and episodic stores hold independent locks, so a
     /// cross-tier write touching both never self-deadlocks.
     write_lock: tokio::sync::Mutex<()>,
+    /// Where every write records the ids it touched — what a replica pulls.
+    /// Attached by the daemon after open; absent in tests and offline CLI use.
+    changes: std::sync::OnceLock<Arc<super::changes::ChangeLog>>,
     /// What of the v1 layout the table still carries — the 1→2 step has not
     /// run. Writes fill the old columns (keeping a row's `contexts`/`tags`,
     /// naming `summary`/`scope` by their v1 names); app/skill scopes also
@@ -811,6 +814,7 @@ impl MemoryStore {
             _conn: conn,
             table,
             write_lock: tokio::sync::Mutex::new(()),
+            changes: std::sync::OnceLock::new(),
             layout: std::sync::RwLock::new(layout),
         })
     }
@@ -963,7 +967,54 @@ impl MemoryStore {
             .execute(batches)
             .await
             .context("upserting memory row (merge_insert on id)")?;
+        self.record(super::changes::Op::Upsert, std::slice::from_ref(&fact.id));
         Ok(())
+    }
+
+    /// Send every later write's ids to `log` (see `changes.rs`).
+    pub fn attach_changes(&self, log: Arc<super::changes::ChangeLog>) {
+        let _ = self.changes.set(log);
+    }
+
+    /// The change log this store writes to, once the daemon attached one.
+    pub fn changes(&self) -> Option<Arc<super::changes::ChangeLog>> {
+        self.changes.get().cloned()
+    }
+
+    fn record(&self, op: super::changes::Op, ids: &[String]) {
+        if let Some(log) = self.changes.get() {
+            log.record(self.table.name(), op, ids);
+        }
+    }
+
+    /// Ids of the rows matching `predicate` (every row when `None`).
+    pub async fn ids_where(&self, predicate: Option<&str>) -> Result<Vec<String>> {
+        let mut q = self
+            .table
+            .query()
+            .select(lancedb::query::Select::columns(&["id"]));
+        if let Some(p) = predicate {
+            q = q.only_if(p.to_string());
+        }
+        let mut stream = q.execute().await.context("listing row ids")?;
+        let mut out = Vec::new();
+        while let Some(batch) = stream.try_next().await.context("reading id batch")? {
+            let Some(col) = batch.column_by_name("id") else {
+                continue;
+            };
+            let Some(ids) = col.as_any().downcast_ref::<arrow_array::StringArray>() else {
+                continue;
+            };
+            out.extend(ids.iter().flatten().map(str::to_string));
+        }
+        Ok(out)
+    }
+
+    /// Write a row exactly as given (vector included) — a replica applying
+    /// what its primary sent. Insert or replace by id.
+    pub async fn put_synced(&self, fact: &Memory) -> Result<()> {
+        let _guard = self.write_lock.lock().await;
+        self.upsert(fact).await
     }
 
     /// Insert one or more facts. Returns the number of rows written.
@@ -986,6 +1037,8 @@ impl MemoryStore {
             .execute()
             .await
             .context("adding batch to memory table")?;
+        let ids: Vec<String> = facts.iter().map(|f| f.id.clone()).collect();
+        self.record(super::changes::Op::Upsert, &ids);
 
         Ok(facts.len())
     }
@@ -1680,10 +1733,17 @@ impl MemoryStore {
             .count_rows(Some(predicate.to_string()))
             .await
             .context("counting rows matching delete predicate")?;
+        // The ids first, so the change log can name what is about to go.
+        let doomed = if self.changes.get().is_some() && removed > 0 {
+            self.ids_where(Some(predicate)).await?
+        } else {
+            Vec::new()
+        };
         self.table
             .delete(predicate)
             .await
             .context("executing delete")?;
+        self.record(super::changes::Op::Delete, &doomed);
         Ok(removed)
     }
 
@@ -2481,6 +2541,32 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains(&format!("dim is {VECTOR_DIM}")));
+    }
+
+    /// Every write primitive names its ids in the change log: inserts and
+    /// in-place writes as upserts, deletes (even by filter) as deletes.
+    #[tokio::test]
+    async fn writes_and_deletes_land_in_the_change_log() {
+        use crate::memory::changes::{ChangeLog, Op};
+        let (store, dir) = fresh_store().await;
+        let log = Arc::new(ChangeLog::open(dir.path().join("c.jsonl")).unwrap());
+        store.attach_changes(Arc::clone(&log));
+
+        let f = make_fact("x", MemoryType::Fact);
+        let id = f.id.clone();
+        store.insert(&[f.clone()]).await.unwrap();
+        store.put_synced(&f).await.unwrap();
+        let g = make_fact("y", MemoryType::Fact);
+        let gid = g.id.clone();
+        store.insert(&[g]).await.unwrap();
+        assert!(store.delete(&id).await.unwrap());
+
+        let (page, next, _) = log.since(0, 100);
+        assert_eq!(next, log.head());
+        let op_of = |i: &str| page.iter().find(|e| e.id == i).map(|e| e.op);
+        assert_eq!(op_of(&id), Some(Op::Delete));
+        assert_eq!(op_of(&gid), Some(Op::Upsert));
+        assert_eq!(store.ids_where(None).await.unwrap(), vec![gid]);
     }
 
     // ── update + delete + forget tests ─────────────────────────────────────

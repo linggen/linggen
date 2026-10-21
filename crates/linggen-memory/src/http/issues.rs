@@ -79,7 +79,7 @@ pub struct IssuesState {
     pub issues: Vec<IssueRecord>,
 }
 
-fn issues_path(data_dir: &Path) -> PathBuf {
+pub(crate) fn issues_path(data_dir: &Path) -> PathBuf {
     data_dir.join("memory").join(".issues.json")
 }
 

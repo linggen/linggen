@@ -8,6 +8,7 @@
 //! that stores and retrieves them. CLI parsing, embedding, and extraction
 //! pipelines live in sibling modules.
 
+pub mod changes;
 pub mod hybrid;
 pub mod maintenance;
 pub mod recall;
