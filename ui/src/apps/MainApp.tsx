@@ -12,6 +12,7 @@ import { ChatWidget } from '../components/chat';
 import { HeaderBar } from '../components/HeaderBar';
 import { AgentSpecEditorModal } from '../components/AgentSpecEditorModal';
 import { ToastContainer } from '../components/ToastContainer';
+import { LingMemConnectModal } from '../components/LingMemConnectModal';
 import { YinyueBubble } from '../components/YinyueBubble';
 import { YinyueAvatar } from '../components/yinyue/YinyueAvatar';
 import { AppPanel } from '../components/AppPanel';
@@ -306,6 +307,7 @@ export const MainApp: React.FC = () => {
   return (
     <>
       <ToastContainer />
+      <LingMemConnectModal />
       {showYinyue && <YinyueBubble />}
       <div className={`flex flex-col h-screen bg-slate-100/70 dark:bg-[#0a0a0a] text-slate-900 dark:text-slate-200 font-sans overflow-hidden${isOverlayRoute ? ' hidden' : ''}`}>
         {/* Header */}

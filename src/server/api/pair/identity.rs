@@ -12,6 +12,12 @@ use super::*;
 /// is already the Mac's owner. It routes and attributes; it never authorizes.
 pub const ACTOR_DEVICE_HEADER: &str = "x-linggen-actor-device";
 
+/// Header the WebRTC tunnel stamps on EVERY request it re-issues to loopback,
+/// identified peer or not. Loopback alone does not mean "someone at this Mac"
+/// once the tunnel is involved; a handler that needs that (approving a machine
+/// in `ling_mem_connect`) refuses anything carrying this.
+pub const TUNNEL_HEADER: &str = "x-linggen-tunnel";
+
 /// Same as [`actor_for_token`] for an HTTP caller carrying the device token.
 pub fn actor_for_headers(headers: &axum::http::HeaderMap) -> Option<Actor> {
     if let Some(a) = device_token_from_headers(headers).and_then(|t| actor_for_token(&t)) {

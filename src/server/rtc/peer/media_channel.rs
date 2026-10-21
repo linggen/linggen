@@ -149,6 +149,7 @@ pub(super) fn spawn_get(
         let client = reqwest::Client::new();
         let resp = client
             .get(format!("http://127.0.0.1:{port}{url}"))
+            .header(crate::server::api::pair::TUNNEL_HEADER, "1")
             .send()
             .await;
         let result = match resp {

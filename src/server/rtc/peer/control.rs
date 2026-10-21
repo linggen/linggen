@@ -361,6 +361,7 @@ async fn loopback(
         "DELETE" => client.delete(url).json(body),
         _ => client.get(url),
     };
+    let req = req.header(crate::server::api::pair::TUNNEL_HEADER, "1");
     let req = match actor_device {
         Some(d) => req.header(crate::server::api::pair::ACTOR_DEVICE_HEADER, d),
         None => req,

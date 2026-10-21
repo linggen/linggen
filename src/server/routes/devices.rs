@@ -39,6 +39,15 @@ pub(super) fn routes() -> Routes {
             patch(api::pair::rename_pair_device).delete(api::pair::delete_pair_device),
         )
         .route("/pair", get(api::pair::get_pair_page))
+        // A LAN machine asking ling-mem to share memory: Allow / Deny here
+        .route(
+            "/api/ling-mem/connect/pending",
+            get(api::ling_mem_connect::pending),
+        )
+        .route(
+            "/api/ling-mem/connect/{id}/{verdict}",
+            post(api::ling_mem_connect::decide),
+        )
         // Topics and the activity log
         .route("/api/topic/publish", post(api::topic::publish))
         .route("/api/topic/latest", get(api::topic::latest))
