@@ -220,6 +220,10 @@ agent). This mission adds only the nightly run protocol:
   (`memory_days({"undreamed_only":true})`), take the
   **oldest** day, run the remember procedure on it, stamp it, stop.
   The next kickoff nudge continues the loop.
+- **One executor per day.** The procedure locks each day first
+  (`memory_dream_lease`). A day another executor holds, or a machine
+  that is a replica (memory is dreamed on the primary) → report the
+  `LOCKED …` line and reply `STALLED`.
 - **Stop conditions.** Empty worklist → reply `CLEAR`; the engine
   then runs the finish-up (below) as its own turns. The oldest day
   already has your `DAY <date> done` line from this run → reply

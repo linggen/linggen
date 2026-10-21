@@ -75,6 +75,10 @@ for each is below.
 Given a date `YYYY-MM-DD` (from the undreamed-days worklist or the
 request):
 
+0. **Lock the day.** `memory_dream_lease {"day":"<date>","holder":"linggen-engine","action":"acquire"}`
+   before reading anything — one executor per day. Refused (another
+   holder is dreaming it, or this machine is a replica) → say
+   `LOCKED <date> <reason>` and stop this day; do not judge it.
 1. **Context.** `memory_days` if you don't already
    have it this run — note the day's `remembered_at`. If set, this is
    a re-pend: only rows created after that stamp need judging, and the
@@ -128,9 +132,10 @@ request):
    alongside it*; that reconciliation happens at recall time with the
    user present. Your own derived notes are the exception (the Merge
    case above).
-6. **Stamp.** `memory_remember_day {"date":"<date>","judged":<rows seen>,"promoted":<adds made>}`.
+6. **Stamp.** `memory_remember_day {"date":"<date>","judged":<rows seen>,"promoted":<adds made>,"holder":"linggen-engine"}`.
    This is what marks the day dreamed — never skip it, even
-   when you promoted nothing.
+   when you promoted nothing. Then free the day:
+   `memory_dream_lease {"day":"<date>","holder":"linggen-engine","action":"release"}`.
 
 ## Forget stage
 

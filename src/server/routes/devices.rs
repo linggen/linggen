@@ -48,6 +48,11 @@ pub(super) fn routes() -> Routes {
             "/api/ling-mem/connect/{id}/{verdict}",
             post(api::ling_mem_connect::decide),
         )
+        // Primary or replica — the local ling-mem's own setting
+        .route(
+            "/api/ling-mem/primary",
+            get(api::ling_mem_primary::get_primary).put(api::ling_mem_primary::put_primary),
+        )
         // Where this machine's memory lives (client.json)
         .route(
             "/api/ling-mem/client",
