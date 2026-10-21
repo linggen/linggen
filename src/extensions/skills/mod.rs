@@ -1203,9 +1203,11 @@ Play."#;
             .app
             .unwrap();
         assert!(app.allows("camera"));
+        // Declaring camera is not declaring the microphone.
+        assert!(!app.allows("microphone"));
         // Unknown names never count, even when declared.
         assert!(!app.allows("teleport"));
-        assert_eq!(app.permissions_policy(), "camera=(self)");
+        assert_eq!(app.permissions_policy(), "camera=(self), microphone=()");
 
         let undeclared = r#"---
 name: board-game
@@ -1221,7 +1223,24 @@ Play."#;
             .unwrap();
         assert!(app.allow.is_empty());
         assert!(!app.allows("camera"));
-        assert_eq!(app.permissions_policy(), "camera=()");
+        assert_eq!(app.permissions_policy(), "camera=(), microphone=()");
+
+        let mic = r#"---
+name: karaoke
+description: Sings along
+app:
+  launcher: web
+  entry: index.html
+  allow: [microphone]
+---
+Sing."#;
+        let app = parse_skill_text(mic, SkillSource::Global)
+            .unwrap()
+            .app
+            .unwrap();
+        assert!(app.allows("microphone"));
+        assert!(!app.allows("camera"));
+        assert_eq!(app.permissions_policy(), "camera=(), microphone=(self)");
     }
 
     #[test]

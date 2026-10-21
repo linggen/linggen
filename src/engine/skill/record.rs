@@ -34,7 +34,8 @@ pub struct AppConfig {
     /// the way without uninstalling it, so it still runs when opened directly.
     #[serde(default = "listed_by_default")]
     pub list: bool,
-    /// Device features the app's page may ask the browser for, e.g. `[camera]`.
+    /// Device features the app's page may ask the browser for, e.g. `[camera]`,
+    /// `[microphone]`.
     /// Drives the frame's `allow` attribute and the page's `Permissions-Policy`;
     /// anything not declared here is denied. Only names in [`DEVICE_FEATURES`]
     /// count — each one needs the Mac shell to carry its usage text.
@@ -49,7 +50,7 @@ fn listed_by_default() -> bool {
 /// The device features an app page can declare in `app.allow`. Adding one here
 /// means the Mac shell must also carry its Info.plist usage description and
 /// hardened-runtime entitlement, or macOS stops the app on first use.
-pub const DEVICE_FEATURES: &[&str] = &["camera"];
+pub const DEVICE_FEATURES: &[&str] = &["camera", "microphone"];
 
 impl AppConfig {
     /// Whether the page declared `feature` — and the engine knows it.
