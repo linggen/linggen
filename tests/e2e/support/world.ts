@@ -223,6 +223,7 @@ const HTTP_ALLOWED: RegExp[] = [
   /^GET \/assets\//, // its scripts, styles, lazy chunks
   /^GET \/(yinyue\.vrm|logo\.svg|favicon\.ico)$/, // static files from ui/public
   /^GET \/anim\//, // Yinyue's animations
+  /^GET \/(jieqi|festivals)\/[a-z]+\.webp$/, // the sky's pictures (ui/public, lib/skyArt)
   /^GET \/apps\/[^/]+\/(?!capability\/)/, // a skill page's own files
   /^GET \/shared\/[a-z-]+\.js$/, // the page helpers skill pages load
   /^(GET|POST|PATCH|DELETE) \/api\/rtc\//, // signaling
