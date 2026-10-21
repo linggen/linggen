@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.10.0] - 2026-10-21 — one memory across machines
+
+- **Memory across machines** (ling-mem 1.13.0). When a LAN machine asks to
+  share this Mac's memory, Allow / Deny shows in the web UI; only someone
+  at this Mac can answer (loopback, not through the phone's WebRTC tunnel,
+  which now stamps `x-linggen-tunnel`). Settings → Memory → Primary sets this
+  machine's primary; `~/.linggen/client.json` holds where ling-mem lives.
+  The dream takes ling-mem's per-day lock.
+- **One Linggen-wide language setting**; the engine's pages render in 中文.
+- **Yinyue appears only once met** (a one-way latch); Ling continues her own
+  tasks across devices, and Yinyue hands work to Ling.
+- **Pictures in a turn** are kept with the row, sent to the model once, and
+  shown as thumbnails that survive a reload.
+- **Weather** — the sky over the whole UI: rain, fog, sun and moon, wind,
+  the 24 节气 and festivals; the place found by IP.
+- **Skills** — apps may declare `app.allow: [camera|microphone]`; sessions
+  bound to declared params (`{{session.<name>}}`); missions take a `run-if`
+  precondition; `remote: true` tools are published to the phone as a
+  catalog; an app's title comes from its SKILL.md.
+- **Composer** — `@` addresses Ling or Yinyue, `/f` opens the file picker.
+- **All WebRTC** — the web UI and skill pages have no HTTP data path; the UI
+  reconnects when ICE stays down.
+- **Settings** regrouped (Agents, Session + Memory); Anthropic is API-key
+  only.
+- **Linux** binaries build on Ubuntu 24.04 and need glibc 2.38+ (Ubuntu
+  24.04 or newer).
+
 ## [1.9.0] - 2026-10-05 — shared sessions
 
 - **Shared sessions** (`doc/shared-session-spec.md`). Several agents sit in
