@@ -134,36 +134,87 @@ never writes to project files.
   plugin hosts, the memory app chat on Linggen; the ling-mem console
   shows the queue read-only. Dream reports and the recall footer
   carry the open count.
-- **Across machines** (designed 2026-10-21, building) — one memory
-  shared by every machine, as a star: one **primary** store, any
-  number of **replicas**.
-  - Every machine runs its own ling-mem, and clients (plugins, the
-    engine) only ever talk to the local one.
-  - The one setting is the local store's primary: *local*, or another
-    machine's address. It can be set in 9527 Settings, the ling-mem
-    console, or `/linggen:config`. Changing it never touches a client.
-  - **Joining**: the asking machine sends a request; the primary's
-    machine shows Allow / Deny (on 9527 and in the console). Allow
-    issues a device token that only the stores hold. Deny is
-    remembered, and devices can be revoked.
-  - **Who can approve**: approvals are accepted only from the
-    primary's own machine. A paired device's token is not enough.
-  - **Network**: ling-mem listens on the LAN by default; the console
-    can switch it to this machine only.
-  - **Reads** come from the local copy, so they keep working while the
-    primary is away.
-  - **Writes** go to the primary. While it is away, a replica queues
-    them, shows them locally at once, and sends them later.
-  - **Conflicts**: on a conflict the primary wins and the conflict
-    becomes a review item. The user-voice floor is enforced by the
-    primary.
-  - **Dream and solve** run only on the primary machine's engine,
-    behind a per-day lock, so two runs never judge the same day. A
-    replica's `/linggen:dream` points to the primary.
-  - **Scan** runs on each machine over its own session logs.
-  - **Inline fixes** stay open everywhere: ordinary writes and merges
-    are allowed from any machine.
+- **Across machines** — one memory shared by every machine the user
+  works on; see the section below.
 - **Secrets** — credentials never enter memory; deleted on sight.
+
+## Across machines (multi-instance)
+
+Designed 2026-10-21; being built. One person, one memory — even across
+a desk Mac, a laptop and a GPU box. Two copies that each grow on
+their own would be two different people. So the instances form a
+**star**: one **primary**, any number of **replicas**.
+
+```
+  replica (DS242) ──┐
+  replica (laptop) ─┼──► primary (Mac)   ◄── the one source of truth
+  replica (…)  ─────┘
+```
+
+- **Every machine runs its own ling-mem.** Clients — the plugins, the
+  engine, any MCP host — only ever talk to the local one. Where the
+  primary lives is the store's business, never a client's.
+- **One setting: the primary.** Set it to *local* (this machine is the
+  primary — the default, and the only setup most people need) or to
+  another machine's address (this machine becomes a replica). It can
+  be set in 9527 Settings, the ling-mem console, or `/linggen:config`.
+  Changing it needs no client restart.
+- **Joining.** A replica asks to join; the primary's machine shows
+  Allow / Deny (on 9527 and in the console). Allow issues a device
+  token that only the two stores hold — no one types it. Deny is
+  remembered; joined devices can be revoked from a list.
+- **Who may approve.** Only someone at the primary's own machine. A
+  joined device's token is not enough to approve another device, and
+  a web page in the local browser can't approve on the user's behalf.
+- **Network.** ling-mem listens on the LAN by default, so a primary is
+  reachable; the console can switch it to this machine only.
+  Everything except a health probe and the join request needs a token.
+
+### Reads, writes, offline
+
+- **Reads** come from the replica's local copy, which pulls changes
+  (rows, vectors, deletions) from the primary every few seconds.
+  Memory keeps working while the primary is away.
+- **Writes** go to the primary first, then land locally. While the
+  primary is away a replica queues them, shows them locally at once,
+  and sends them in order when it is back.
+- **Conflicts** happen only to queued writes. If a queued merge or
+  delete hits rows the primary already changed, the primary wins and
+  the replica's intent becomes a review item — nothing is overwritten
+  silently. The user-voice floor (rule 1) is enforced by the primary
+  on every forwarded write.
+- **Same embedding model everywhere.** A replica whose model differs
+  from the primary's refuses to sync and says why.
+
+### Dream, solve, scan
+
+- **Dream and solve run only on the primary machine's engine.**
+  Judging a day is a whole-store pass; one place does it. A per-day
+  lock in the store keeps two runs (the nightly mission and a manual
+  one) from judging the same day. On a replica, `/linggen:dream` and
+  `/linggen:solve` point to the primary.
+- **Inline fixes stay open everywhere.** Any agent on any machine can
+  add, update, delete and merge as it works — those are ordinary
+  writes and follow the write path above.
+- **Scan runs on each machine** over that machine's own session logs;
+  its rows travel to the primary like any other write.
+- **Forgetting** (the mechanical sweep) runs on the primary; replicas
+  receive the deletions.
+
+### Status
+
+The console, 9527 and `/linggen:config` all show the same facts: this
+store's role, its primary, online or away, last sync, and queued
+writes.
+
+### Why a star, and what comes later
+
+A star is simple and safe while one machine is reliably online. It
+cannot let two replicas see each other's writes while the primary is
+away, and the primary is a single point to replace by hand. When no
+machine can be the primary, the next step is multi-primary sync — an
+op log per store, merged by version vectors, with dream as a single
+leaseholder — see Future.
 
 ## Rules
 
