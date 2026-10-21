@@ -190,6 +190,8 @@ pub(super) struct ResponsesStream {
     spoken: std::collections::HashSet<(usize, usize)>,
     /// The part the reply's last text came from.
     last_spoken: Option<(usize, usize)>,
+    /// Drops the model's own citation markers; keeps url_citation links.
+    citations: super::citations::CitationFilter,
 }
 
 impl ResponsesStream {
@@ -252,11 +254,26 @@ impl ResponsesStream {
             }
             "response.output_text.delta" => self.text(val, "delta", false),
             "response.output_text.done" => self.text(val, "text", true),
-            "response.completed" => completed_usage(val).map(Ok).into_iter().collect(),
+            "response.output_text.annotation.added" => {
+                self.citations.note_annotation(val);
+                vec![]
+            }
+            "response.completed" => self.completed(val),
             "error" => vec![Err(error_event(val))],
             _ => return None,
         };
         Some(chunks)
+    }
+
+    /// The end of the response: the sources, if any came, then the usage.
+    fn completed(&mut self, val: &Value) -> Vec<Result<StreamChunk>> {
+        let sources = self.citations.finish();
+        let sources = (!sources.is_empty()).then_some(StreamChunk::Token(sources));
+        sources
+            .into_iter()
+            .chain(completed_usage(val))
+            .map(Ok)
+            .collect()
     }
 
     /// Remember a commentary message item, so its text stays out of the reply.
@@ -289,6 +306,10 @@ impl ResponsesStream {
         };
         self.spoken.insert(part);
         self.last_spoken = Some(part);
+        let text = self.citations.push(&text);
+        if text.is_empty() {
+            return vec![];
+        }
         vec![Ok(StreamChunk::Token(text))]
     }
 }
@@ -503,6 +524,19 @@ mod tests {
             part_done(1, "Second."),
         ];
         assert_eq!(read(&events, false).0, "First.\n\nSecond.");
+    }
+
+    /// gpt-6-luna's own citation markers, split across deltas as a stream
+    /// sends them, never reach the reply.
+    #[test]
+    fn citation_markers_stay_out_of_the_reply() {
+        let events = [
+            delta(0, "msg_a", "可以在 Canada 申请。\u{e200}cite\u{e202}turn2"),
+            delta(0, "msg_a", "search1\u{e202}turn2search2\u{e201}"),
+            delta(0, "msg_a", "下一步是填表。"),
+            json!({"type": "response.completed", "response": {}}),
+        ];
+        assert_eq!(read(&events, false).0, "可以在 Canada 申请。下一步是填表。");
     }
 
     #[test]

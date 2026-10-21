@@ -3,6 +3,7 @@
 //! Chat Completions ([`chat_completions`]). Wire shapes live in [`wire`].
 
 mod chat_completions;
+mod citations;
 mod responses_api;
 mod strict_schema;
 mod wire;
