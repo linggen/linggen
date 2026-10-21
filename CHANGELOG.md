@@ -24,7 +24,7 @@
   reconnects when ICE stays down.
 - **Settings** regrouped (Agents, Session + Memory); Anthropic is API-key
   only.
-- **Linux** binaries build on Ubuntu 24.04 and need glibc 2.38+ (Ubuntu
+- **Linux** binaries build on Ubuntu 24.04 and need glibc 2.39+ (Ubuntu
   24.04 or newer).
 
 ## [1.9.0] - 2026-10-05 — shared sessions

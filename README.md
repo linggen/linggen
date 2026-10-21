@@ -40,7 +40,7 @@
 curl -fsSL https://linggen.dev/install-app.sh | bash
 ```
 
-**Engine only** — CLI + web UI, macOS and Linux (glibc 2.38+, Ubuntu 24.04 or newer):
+**Engine only** — CLI + web UI, macOS and Linux (glibc 2.39+, Ubuntu 24.04 or newer):
 
 ```bash
 curl -fsSL https://linggen.dev/install.sh | bash
