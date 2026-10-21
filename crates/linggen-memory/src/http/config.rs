@@ -152,27 +152,9 @@ async fn put_config(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::memory::MemoryStore;
-    use std::sync::Arc;
 
     async fn scratch_state(dir: &std::path::Path) -> SharedState {
-        let semantic = Arc::new(MemoryStore::open_semantic(dir).await.unwrap());
-        let episodic = Arc::new(MemoryStore::open_episodic(dir).await.unwrap());
-        let recall = Arc::new(crate::memory::Recall::new(
-            Arc::clone(&semantic),
-            Arc::clone(&episodic),
-        ));
-        fn no_model() -> anyhow::Result<crate::embed::Embedder> {
-            anyhow::bail!("no model in unit tests")
-        }
-        Arc::new(crate::http::state::AppState::new(
-            semantic,
-            episodic,
-            recall,
-            Arc::new(crate::embed::LoadOnce::new(no_model)),
-            dir.to_path_buf(),
-            std::net::SocketAddr::from(([0, 0, 0, 0], 0)),
-        ))
+        crate::http::state::scratch_state(dir, std::net::SocketAddr::from(([0, 0, 0, 0], 0))).await
     }
 
     /// `PUT /api/config` is open to paired devices; the network choice is

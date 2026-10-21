@@ -24,6 +24,7 @@ pub enum ErrorCode {
     NotFound,
     Unauthorized,
     Forbidden,
+    TooMany,
     Internal,
 }
 
@@ -34,6 +35,7 @@ impl ErrorCode {
             ErrorCode::NotFound => StatusCode::NOT_FOUND,
             ErrorCode::Unauthorized => StatusCode::UNAUTHORIZED,
             ErrorCode::Forbidden => StatusCode::FORBIDDEN,
+            ErrorCode::TooMany => StatusCode::TOO_MANY_REQUESTS,
             ErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -44,6 +46,7 @@ impl ErrorCode {
             ErrorCode::NotFound => "NOT_FOUND",
             ErrorCode::Unauthorized => "UNAUTHORIZED",
             ErrorCode::Forbidden => "FORBIDDEN",
+            ErrorCode::TooMany => "TOO_MANY_REQUESTS",
             ErrorCode::Internal => "INTERNAL",
         }
     }
@@ -87,6 +90,14 @@ impl ApiError {
     pub fn forbidden(msg: impl Into<String>) -> Self {
         Self {
             code: ErrorCode::Forbidden,
+            message: msg.into(),
+        }
+    }
+
+    /// An open route asked too often from one address.
+    pub fn too_many(msg: impl Into<String>) -> Self {
+        Self {
+            code: ErrorCode::TooMany,
             message: msg.into(),
         }
     }

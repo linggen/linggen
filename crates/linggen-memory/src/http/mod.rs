@@ -14,11 +14,13 @@
 
 mod chains;
 pub(crate) mod config;
+pub(crate) mod connect;
 pub(crate) mod days;
 pub mod envelope;
 pub mod gate;
 mod health;
 pub(crate) mod issues;
+pub(crate) mod local;
 mod mcp;
 mod memory;
 mod migration;
@@ -61,11 +63,13 @@ pub fn build_router(state: SharedState, telemetry: Telemetry) -> Router {
         .merge(mcp::router())
         .merge(config::router())
         .merge(network::router())
+        .merge(connect::router())
         .merge(migration::router())
         .merge(ui::router())
         // Outermost, so it runs before any handler: a caller off this machine
         // must be a paired device. Loopback — the CLI, the engine, the local
-        // app — goes straight through, and `/api/health` stays open for probes.
+        // app — goes straight through, and `/api/health` plus the two routes a
+        // machine uses to ask for a token (`connect.rs`) stay open.
         // See `gate.rs`. With no paired devices, nothing off-machine gets in.
         .layer(middleware::from_fn_with_state(
             state.clone(),

@@ -39,6 +39,8 @@ pub struct AppState {
     /// The address the listener actually bound — what the console shows as
     /// a fact beside the saved network choice.
     pub bound: SocketAddr,
+    /// Machines on the LAN asking to connect — see `http::connect`.
+    pub connect: crate::http::connect::Broker,
 
     /// When the daemon was started, and when it last served a request —
     /// milliseconds since `started`. Background storage maintenance waits
@@ -71,6 +73,7 @@ impl AppState {
             data_dir,
             port: bound.port(),
             bound,
+            connect: Default::default(),
             started: Instant::now(),
             last_request_ms: AtomicU64::new(0),
         }
@@ -102,3 +105,22 @@ impl AppState {
 }
 
 pub type SharedState = Arc<AppState>;
+
+/// A daemon state over a scratch store, for handler tests.
+#[cfg(test)]
+pub(crate) async fn scratch_state(dir: &std::path::Path, bound: SocketAddr) -> SharedState {
+    let semantic = Arc::new(MemoryStore::open_semantic(dir).await.unwrap());
+    let episodic = Arc::new(MemoryStore::open_episodic(dir).await.unwrap());
+    let recall = Arc::new(Recall::new(Arc::clone(&semantic), Arc::clone(&episodic)));
+    fn no_model() -> anyhow::Result<Embedder> {
+        anyhow::bail!("no model in unit tests")
+    }
+    Arc::new(AppState::new(
+        semantic,
+        episodic,
+        recall,
+        Arc::new(LoadOnce::new(no_model)),
+        dir.to_path_buf(),
+        bound,
+    ))
+}

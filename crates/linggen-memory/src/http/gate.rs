@@ -64,10 +64,20 @@ fn is_paired_token(data_dir: &Path, token: &str) -> bool {
     devices.iter().any(|d| d.secret == token)
 }
 
-/// The admission rule, apart from axum so it can be tested as-is: loopback and
-/// the health probe always; anything else only with a paired device's token.
+/// The admission rule, apart from axum so it can be tested as-is: loopback, the
+/// health probe and the two routes a machine uses to ask for a token
+/// (`connect.rs`) always; anything else only with a paired device's token.
 fn admits(peer: IpAddr, path: &str, token: &str, data_dir: &Path) -> bool {
-    peer.is_loopback() || path == "/api/health" || is_paired_token(data_dir, token)
+    peer.is_loopback() || is_open_path(path) || is_paired_token(data_dir, token)
+}
+
+#[cfg(test)]
+pub(crate) fn admits_for_test(peer: IpAddr, path: &str, token: &str, data_dir: &Path) -> bool {
+    admits(peer, path, token, data_dir)
+}
+
+fn is_open_path(path: &str) -> bool {
+    path == "/api/health" || super::connect::is_open_path(path)
 }
 
 /// Everything a caller off this machine must pass. Loopback goes straight
@@ -127,6 +137,10 @@ mod tests {
         ));
         assert!(admits(ip("::1"), "/mcp", "", dir.path()));
         assert!(admits(lan, "/api/health", "", dir.path()));
+        assert!(admits(lan, "/api/connect/request", "", dir.path()));
+        assert!(admits(lan, "/api/connect/status/abc", "", dir.path()));
+        assert!(!admits(lan, "/api/connect/pending", "", dir.path()));
+        assert!(!admits(lan, "/api/connect/abc/allow", "", dir.path()));
     }
 
     /// An empty header from loopback — what the plugin sends when

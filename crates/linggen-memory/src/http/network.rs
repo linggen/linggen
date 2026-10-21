@@ -8,7 +8,7 @@
 //!
 //! Only this machine may change it. The gate already admits paired devices
 //! from the LAN, and a device must never decide how the Mac listens — so both
-//! writes here check the peer is loopback themselves, and `PUT /api/config`
+//! writes here pass `local::require_local` themselves, and `PUT /api/config`
 //! keeps whatever is on disk (see `config::put_config`).
 //!
 //! A new bind needs a new listener, so a change applies on restart:
@@ -30,7 +30,9 @@ use std::time::Duration;
 use crate::http::config;
 use crate::http::envelope::{ok, ApiError};
 use crate::http::gate;
+use crate::http::local;
 use crate::http::state::SharedState;
+use axum::http::HeaderMap;
 
 /// Where the daemon listens. LAN by default: one store shared by this
 /// machine and the others on the network, with the gate requiring a paired
@@ -55,16 +57,6 @@ impl Network {
 /// The address `serve` binds: the flag someone typed, else the saved choice.
 pub fn resolve_bind(flag: Option<IpAddr>, setting: Network) -> IpAddr {
     flag.unwrap_or_else(|| setting.host())
-}
-
-/// Let a write through only from this machine.
-fn require_loopback(peer: IpAddr) -> Result<(), ApiError> {
-    if peer.is_loopback() {
-        return Ok(());
-    }
-    Err(ApiError::forbidden(
-        "network settings change only from this machine",
-    ))
 }
 
 #[derive(Deserialize)]
@@ -97,9 +89,10 @@ async fn get_network(State(state): State<SharedState>) -> Result<Response, ApiEr
 async fn put_network(
     State(state): State<SharedState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(body): Json<SetNetwork>,
 ) -> Result<Response, ApiError> {
-    require_loopback(peer.ip())?;
+    local::require_local(peer.ip(), &headers, state.port)?;
     let mut cfg = config::load(&state.data_dir).await;
     cfg.network = body.network;
     config::save(&state.data_dir, &cfg)
@@ -111,8 +104,9 @@ async fn put_network(
 async fn restart(
     State(state): State<SharedState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    require_loopback(peer.ip())?;
+    local::require_local(peer.ip(), &headers, state.port)?;
     schedule_restart(state.data_dir.clone(), state.port);
     Ok(ok(json!({ "restarting": true })))
 }
@@ -170,19 +164,6 @@ mod tests {
         assert_eq!(v, json!("local"));
         let n: Network = serde_json::from_value(json!("lan")).unwrap();
         assert_eq!(n, Network::Lan);
-    }
-
-    /// A paired device passes the gate, but it may not change how this
-    /// machine listens.
-    #[test]
-    fn only_this_machine_may_change_the_network() {
-        assert!(require_loopback("127.0.0.1".parse().unwrap()).is_ok());
-        assert!(require_loopback("::1".parse().unwrap()).is_ok());
-        let err = require_loopback("192.168.20.31".parse().unwrap()).unwrap_err();
-        assert!(matches!(
-            err.code,
-            crate::http::envelope::ErrorCode::Forbidden
-        ));
     }
 
     #[test]
