@@ -148,6 +148,51 @@ Certain structured payloads render as dedicated widgets:
 
 All other content renders as Markdown.
 
+### Sources and pictures in answers
+
+Designed 2026-10-21, not built. An answer can show where it came from and
+what things look like (a product, a step, a part, a place), in any session,
+not only shopping. This lives in the engine, not in a skill. A model only
+ever **refers to what a tool returned**; it never writes its own image URL.
+
+- **Numbered results.** Every web result and picture a tool returns gets a
+  number in the shape GPT models already write: `turn{N}search{i}` for a
+  source, `turn{N}image{i}` for a picture. The engine keeps a per-session
+  table from number to source (url, title, and caption, plus name and price
+  for a product).
+- **Where pictures come from.** WebSearch returns image results. WebFetch
+  returns a page's main image (`og:image`) and its in-text pictures with
+  their captions. Browser screenshots and local files a session touched
+  count too.
+- **The model refers by number.** GPT models use their own citation
+  markers. Other models are told the plain form `[turn2image1]` in the tool
+  description, which describes the capability without setting a style.
+- **Rendering.** A source shows as a link chip. Pictures show as thumbnails
+  with their caption, side by side in a grid, and open larger on click, just
+  like a person's pictures. **A number that matches nothing renders
+  nothing**, so a picture can never be made up.
+- **Cache.**
+  - Only pictures an answer actually shows are cached; search results that
+    go unused are not.
+  - The engine downloads each one once when the answer lands, scaled to
+    about 1000 px.
+  - The cache is kept with the session, deduplicated by content, and
+    deleted with the session.
+  - Each picture keeps its original URL for a click-through to the source.
+  - A size cap per session applies; past it, the picture loads from its
+    URL.
+  - A failed download means the picture isn't shown.
+  - Old sessions keep their pictures, the source never sees the viewer, and
+    a phone gets them from the Mac over WebRTC.
+- **Not sent back to the model.** The model chose pictures from what the
+  tool said about them, and history images are never resent.
+- **Later.** An `image_group` of search queries (pictures the engine looks
+  up for the model) may come as a second route. Number-referenced pictures
+  come first because they match what the text says.
+- **Lock.** `check.sh live` asks one shopping question and one how-to
+  question. Each answer must show real pictures, and every one must resolve
+  to a tool result.
+
 ## Sessions
 
 A session is a single conversation thread scoped to a project. Each session has its own message history, context, and state — completely isolated from other sessions.
