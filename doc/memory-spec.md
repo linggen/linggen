@@ -134,6 +134,35 @@ never writes to project files.
   plugin hosts, the memory app chat on Linggen; the ling-mem console
   shows the queue read-only. Dream reports and the recall footer
   carry the open count.
+- **Across machines** (designed 2026-10-21, building) — one memory
+  shared by every machine, as a star: one **primary** store, any
+  number of **replicas**.
+  - Every machine runs its own ling-mem, and clients (plugins, the
+    engine) only ever talk to the local one.
+  - The one setting is the local store's primary: *local*, or another
+    machine's address. It can be set in 9527 Settings, the ling-mem
+    console, or `/linggen:config`. Changing it never touches a client.
+  - **Joining**: the asking machine sends a request; the primary's
+    machine shows Allow / Deny (on 9527 and in the console). Allow
+    issues a device token that only the stores hold. Deny is
+    remembered, and devices can be revoked.
+  - **Who can approve**: approvals are accepted only from the
+    primary's own machine. A paired device's token is not enough.
+  - **Network**: ling-mem listens on the LAN by default; the console
+    can switch it to this machine only.
+  - **Reads** come from the local copy, so they keep working while the
+    primary is away.
+  - **Writes** go to the primary. While it is away, a replica queues
+    them, shows them locally at once, and sends them later.
+  - **Conflicts**: on a conflict the primary wins and the conflict
+    becomes a review item. The user-voice floor is enforced by the
+    primary.
+  - **Dream and solve** run only on the primary machine's engine,
+    behind a per-day lock, so two runs never judge the same day. A
+    replica's `/linggen:dream` points to the primary.
+  - **Scan** runs on each machine over its own session logs.
+  - **Inline fixes** stay open everywhere: ordinary writes and merges
+    are allowed from any machine.
 - **Secrets** — credentials never enter memory; deleted on sight.
 
 ## Rules
@@ -173,9 +202,11 @@ a real engine against a throwaway store and judges the end state.
 
 ## Future
 
-- Cross-device sync — the phone's half is designed in
-  `phone-memory-spec.md` (2026-09-08, not built); a second Mac still
-  waits on exports + git first.
+- Cross-device sync — machines: see **Across machines** above; the
+  phone's half is designed in `phone-memory-spec.md` (2026-09-08, not
+  built).
+- Multi-primary sync (an op log per store, merged by version vectors) —
+  only when no machine is reliably online to be the primary.
 - Soft-forget (archive): hidden from search but recoverable.
 
 ## Where the detail lives
