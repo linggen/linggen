@@ -718,8 +718,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             onKeyDown={(e) => {
               // Ignore Enter during IME composition (e.g. Chinese pinyin input)
               if (e.key === 'Enter' && (e.nativeEvent.isComposing || e.keyCode === 229)) return;
-              // Tab takes the grey hint into the input; Enter then sends it.
-              if (e.key === 'Tab' && !e.shiftKey && hint) {
+              // Tab or → takes the grey hint into the input; Enter then sends it.
+              // The hint shows only on an empty input, so → has nothing else to do.
+              if (hint && ((e.key === 'Tab' && !e.shiftKey) || e.key === 'ArrowRight')) {
                 e.preventDefault();
                 setChatInput(hint);
                 return;
@@ -821,7 +822,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 setShowFileDropdown(false);
               }
             }}
-            placeholder={hint ? `${hint}   ⇥ Tab` : mobile ? "Message..." : `Message... (${yinyueHere ? '@ Ling/银月, ' : ''}/f files, / skills, Shift+Enter newline)`}
+            placeholder={hint ? `${hint}   ⇥ Tab / →` : mobile ? "Message..." : `Message... (${yinyueHere ? '@ Ling/银月, ' : ''}/f files, / skills, Shift+Enter newline)`}
             rows={1}
             className={cn(
               "flex-1 bg-transparent border-none outline-none resize-none leading-5 overflow-y-hidden",
