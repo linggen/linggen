@@ -39,17 +39,16 @@ memory_inject_min_score: number | null,
  */
 memory_recall_count: number, 
 /**
- * Base URL of the local `ling-mem` HTTP daemon. Two things resolve
- * from it: the built-in memory MCP server's endpoint (`<url>/mcp`,
- * which is how a model reaches memory), and the engine's own program-
- * side calls — the `dream` mission reads `episodic_ttl_days` from
- * `<url>/api/config`. Unset, it is `$LING_MEM_URL` when that is set,
- * else the daemon's own default port (see [`default_ling_mem_url`]) —
- * change only if you ran `ling-mem start` against a different
- * `--port`, or pointed it at a remote host. Trailing slash optional;
- * no path segment.
+ * Base URL of the `ling-mem` HTTP daemon. Two things resolve from it:
+ * the built-in memory MCP server's endpoint (`<url>/mcp`, which is how a
+ * model reaches memory), and the engine's own program-side calls.
+ *
+ * Resolved at load from `~/.linggen/client.json` (`ling_mem`), the one
+ * file every writer shares (`state_fs::client`); else `$LING_MEM_URL`;
+ * else the daemon's own default port. Read from an older toml only to
+ * migrate it into client.json once — never written to the toml.
  */
-ling_mem_url: string, 
+ling_mem_url?: string, 
 /**
  * Ask the model for follow-up buttons on the turns of a chat that shows
  * them (the Mac chat). Off: no asking; a skill's starters and a page's
