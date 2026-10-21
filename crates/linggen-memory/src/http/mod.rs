@@ -13,7 +13,7 @@
 //! `static/`. See `doc/ui-spec.md`.
 
 mod chains;
-mod config;
+pub(crate) mod config;
 pub(crate) mod days;
 pub mod envelope;
 pub mod gate;
@@ -22,6 +22,7 @@ pub(crate) mod issues;
 mod mcp;
 mod memory;
 mod migration;
+pub(crate) mod network;
 pub(crate) mod session;
 pub mod state;
 mod stats;
@@ -59,13 +60,13 @@ pub fn build_router(state: SharedState, telemetry: Telemetry) -> Router {
         )
         .merge(mcp::router())
         .merge(config::router())
+        .merge(network::router())
         .merge(migration::router())
         .merge(ui::router())
         // Outermost, so it runs before any handler: a caller off this machine
         // must be a paired device. Loopback — the CLI, the engine, the local
         // app — goes straight through, and `/api/health` stays open for probes.
-        // See `gate.rs`; the daemon also refuses to bind wide in the first
-        // place unless this machine has paired devices.
+        // See `gate.rs`. With no paired devices, nothing off-machine gets in.
         .layer(middleware::from_fn_with_state(
             state.clone(),
             gate::lan_gate,

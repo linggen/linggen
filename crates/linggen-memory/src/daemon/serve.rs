@@ -4,9 +4,11 @@
 //! `ling-mem serve` re-exec target — also what `start` spawns in the
 //! background. Blocks until SIGTERM / SIGINT.
 //!
-//! Binds **loopback** unless `--host` says otherwise, and refuses a wider bind
-//! on a machine with no paired devices — see `http::gate` for both halves of
-//! that rule and why the second machine on the LAN is the case it exists for.
+//! Binds the LAN (`0.0.0.0`) by default, or loopback when the console's
+//! network setting says "this machine only"; an explicit `--host` overrides
+//! both (`http::network`). Off-machine callers still need a paired device's
+//! token — `http::gate` — so a machine that never paired anything opens a port
+//! but not its store.
 
 use crate::daemon::pidfile::{self, PidInfo};
 use crate::embed::{Embedder, LoadOnce};
@@ -25,10 +27,9 @@ use tokio::net::TcpListener;
 /// `data_dir` is the Linggen home (e.g. `~/.linggen/`); MemoryStore opens
 /// its LanceDB tree underneath at `<data_dir>/memory/memory.lancedb/`.
 /// `skill_dir` is the per-skill data root at `<data_dir>/memory/linggen-memory/`
-/// where the pidfile lives. `port` and `host` are the requested bind address;
-/// `host` defaults to loopback at the CLI, and anything wider is refused unless
-/// this machine has paired devices.
-pub async fn run(data_dir: &Path, skill_dir: &Path, port: u16, host: IpAddr) -> Result<()> {
+/// where the pidfile lives. `port` is the requested port; `host` is the
+/// `--host` flag if one was typed, else the saved network setting decides.
+pub async fn run(data_dir: &Path, skill_dir: &Path, port: u16, host: Option<IpAddr>) -> Result<()> {
     // The daemon is the only path that emits logs (the CLI stays quiet by
     // design). `start` redirects this process's stderr into serve.log; the
     // subscriber is what makes `tracing::*` actually write there. `try_init`
@@ -61,9 +62,9 @@ pub async fn run(data_dir: &Path, skill_dir: &Path, port: u16, host: IpAddr) -> 
         );
     }
 
-    // Checked before the listener exists: a refusal must be a daemon that
-    // doesn't start, never a port that is briefly open and unguarded.
-    crate::http::gate::check_bind(host, data_dir)?;
+    // The one place the bind is decided, so no starter has to pass `--host`.
+    let setting = crate::http::config::load(data_dir).await.network;
+    let host = crate::http::network::resolve_bind(host, setting);
 
     let addr = SocketAddr::new(host, port);
     let listener = TcpListener::bind(addr)
@@ -118,7 +119,7 @@ pub async fn run(data_dir: &Path, skill_dir: &Path, port: u16, host: IpAddr) -> 
         recall,
         Arc::clone(&embedder),
         data_dir.to_path_buf(),
-        bound_port,
+        bound,
     ));
 
     // Background storage upkeep: compaction + version pruning, on a

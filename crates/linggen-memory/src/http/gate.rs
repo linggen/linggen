@@ -1,20 +1,16 @@
 //! The LAN gate — who may reach this store from off-machine.
 //!
-//! The daemon binds loopback and nothing else unless someone asks for more, so
-//! the ordinary user — one machine, memory for their own agents — never opens a
-//! port and never needs any of this. It exists for the one case that is real:
-//! a second machine on the LAN whose agents should share ONE memory, rather
-//! than growing a second binary, a second daemon, and a second store that
-//! forks the user's biography.
+//! The daemon listens on the LAN by default (`0.0.0.0`; see `network.rs` for
+//! the setting, and "this machine only" in the console). The case it exists
+//! for: a second machine on the LAN whose agents should share ONE memory,
+//! rather than growing a second binary, a second daemon, and a second store
+//! that forks the user's biography.
 //!
-//! Two rules, and the second is why the first is safe:
-//!
-//! 1. **A wide bind is refused unless the machine has paired devices.**
-//!    Opening a port before there is anything to check a caller against is an
-//!    open store on the network, so `--host` fails loudly instead.
-//! 2. **A non-loopback request must carry a paired device's token.** Loopback
-//!    stays open: the CLI, the engine, and the local app all talk to
-//!    `127.0.0.1`, and a process already on this machine is inside the fence.
+//! One rule makes the open port safe: **a non-loopback request must carry a
+//! paired device's token.** Loopback stays open — the CLI, the engine, and the
+//! local app all talk to `127.0.0.1`, and a process already on this machine is
+//! inside the fence. A machine that has never paired anything has no tokens,
+//! so everything off-machine is refused; the port is open, the store is not.
 //!
 //! The auth is **not new**. Both daemons live under the same `~/.linggen`, so
 //! this reads the very file the engine's pairing flow writes — pair once, on
@@ -47,11 +43,8 @@ pub fn devices_path(data_dir: &Path) -> PathBuf {
     data_dir.join("paired-devices.json")
 }
 
-/// Has this machine ever paired a device? The precondition for binding wide.
-///
-/// The file's *existence* is the question, not its contents: an empty list is a
-/// machine whose devices were all revoked, and re-binding it wide should still
-/// be allowed — every request will simply be refused until something pairs.
+/// Has this machine ever paired a device? A fact the console shows: with no
+/// file, every request from off-machine is refused.
 pub fn has_paired_devices_file(data_dir: &Path) -> bool {
     devices_path(data_dir).is_file()
 }
@@ -71,22 +64,10 @@ fn is_paired_token(data_dir: &Path, token: &str) -> bool {
     devices.iter().any(|d| d.secret == token)
 }
 
-/// Refuse a wide bind on a machine that has never paired a device.
-///
-/// Called before the listener exists, so the failure is a daemon that does not
-/// start rather than a port that is open and unguarded for the moments it takes
-/// someone to notice.
-pub fn check_bind(host: IpAddr, data_dir: &Path) -> anyhow::Result<()> {
-    if host.is_loopback() || has_paired_devices_file(data_dir) {
-        return Ok(());
-    }
-    anyhow::bail!(
-        "refusing to bind {host}: no paired devices on this machine, so every \
-         request from off-machine would be unauthenticated. Pair the other \
-         machine with Linggen first (its pairing flow writes {}), then start \
-         again. Loopback needs none of this and is the default.",
-        devices_path(data_dir).display()
-    )
+/// The admission rule, apart from axum so it can be tested as-is: loopback and
+/// the health probe always; anything else only with a paired device's token.
+fn admits(peer: IpAddr, path: &str, token: &str, data_dir: &Path) -> bool {
+    peer.is_loopback() || path == "/api/health" || is_paired_token(data_dir, token)
 }
 
 /// Everything a caller off this machine must pass. Loopback goes straight
@@ -102,16 +83,12 @@ pub async fn lan_gate(
     req: Request,
     next: Next,
 ) -> Response {
-    if peer.ip().is_loopback() || req.uri().path() == "/api/health" {
-        return next.run(req).await;
-    }
     let token = req
         .headers()
         .get(DEVICE_HEADER)
         .and_then(|v| v.to_str().ok())
-        .unwrap_or_default()
-        .to_string();
-    if is_paired_token(&state.data_dir, &token) {
+        .unwrap_or_default();
+    if admits(peer.ip(), req.uri().path(), token, &state.data_dir) {
         return next.run(req).await;
     }
     tracing::warn!(
@@ -130,26 +107,42 @@ pub async fn lan_gate(
 mod tests {
     use super::*;
 
-    #[test]
-    fn loopback_never_needs_a_paired_device() {
-        let dir = tempfile::tempdir().unwrap();
-        assert!(check_bind("127.0.0.1".parse().unwrap(), dir.path()).is_ok());
-        assert!(check_bind("::1".parse().unwrap(), dir.path()).is_ok());
+    fn ip(s: &str) -> IpAddr {
+        s.parse().unwrap()
     }
 
-    /// Binding wide before anything can be checked is an open store, so the
-    /// daemon refuses to start rather than opening the port and hoping.
+    /// The LAN is the default bind, so a fresh install — no paired devices,
+    /// no file — must still refuse everything from off-machine.
     #[test]
-    fn a_wide_bind_is_refused_until_something_is_paired() {
+    fn with_nothing_paired_only_this_machine_gets_in() {
         let dir = tempfile::tempdir().unwrap();
-        let err = check_bind("0.0.0.0".parse().unwrap(), dir.path()).unwrap_err();
-        assert!(err.to_string().contains("no paired devices"));
+        let lan = ip("192.168.20.31");
+        assert!(!admits(lan, "/api/memory/search", "", dir.path()));
+        assert!(!admits(lan, "/mcp", "guess", dir.path()));
+        assert!(admits(
+            ip("127.0.0.1"),
+            "/api/memory/search",
+            "",
+            dir.path()
+        ));
+        assert!(admits(ip("::1"), "/mcp", "", dir.path()));
+        assert!(admits(lan, "/api/health", "", dir.path()));
+    }
 
-        std::fs::write(devices_path(dir.path()), "[]").unwrap();
-        assert!(
-            check_bind("0.0.0.0".parse().unwrap(), dir.path()).is_ok(),
-            "an all-revoked machine may still bind — every request is refused anyway"
-        );
+    /// An empty header from loopback — what the plugin sends when
+    /// `LING_MEM_TOKEN` is unset — is still this machine.
+    #[test]
+    fn loopback_never_needs_a_token() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            devices_path(dir.path()),
+            r#"[{"id":"a","name":"DS242","secret":"cafe1234","created_at":0}]"#,
+        )
+        .unwrap();
+        assert!(admits(ip("127.0.0.1"), "/mcp", "", dir.path()));
+        assert!(admits(ip("192.168.20.31"), "/mcp", "cafe1234", dir.path()));
+        assert!(!admits(ip("192.168.20.31"), "/mcp", "beef0000", dir.path()));
+        assert!(!admits(ip("192.168.20.31"), "/api/network", "", dir.path()));
     }
 
     /// The file the engine's pairing flow writes, read as-is. Nothing here

@@ -81,16 +81,10 @@ pub(crate) async fn try_running_or_start(data_dir: &Path, skill_dir: &Path) -> O
     // No daemon reachable — start one. Matches Linggen engine autostart
     // semantics: data_dir flows through `LINGGEN_DATA_DIR` so the child's
     // store path resolution matches ours.
-    // Loopback: a daemon nobody asked to share is this machine's own. Opening
-    // it to the LAN is always an explicit `--host`, never something an
-    // autostart decides on the user's behalf.
-    match crate::daemon::lifecycle::start(
-        data_dir,
-        skill_dir,
-        crate::daemon::DEFAULT_PORT,
-        std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
-    )
-    .await
+    // No `--host`: the daemon binds the saved network setting, the same as
+    // every other starter.
+    match crate::daemon::lifecycle::start(data_dir, skill_dir, crate::daemon::DEFAULT_PORT, None)
+        .await
     {
         Ok(outcome) => {
             let url = try_running_daemon(skill_dir).await;

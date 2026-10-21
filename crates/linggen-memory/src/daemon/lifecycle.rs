@@ -92,7 +92,7 @@ pub async fn start(
     data_dir: &Path,
     skill_dir: &Path,
     port: u16,
-    host: std::net::IpAddr,
+    host: Option<std::net::IpAddr>,
 ) -> Result<LifecycleOutcome> {
     if let Some(info) = live_pidfile(skill_dir)? {
         return Ok(LifecycleOutcome::AlreadyRunning(info));
@@ -120,15 +120,13 @@ pub async fn start(
 
     let exe = std::env::current_exe().context("resolving current executable path")?;
     let mut cmd = std::process::Command::new(exe);
-    cmd.arg("serve")
-        .arg("--port")
-        .arg(port.to_string())
-        // Passed through rather than defaulted in the child: the flag the user
-        // typed is the one that binds, and a wide bind the child refuses shows
-        // up here as "exited before binding" with the reason in serve.log.
-        .arg("--host")
-        .arg(host.to_string())
-        .env("LINGGEN_DATA_DIR", data_dir)
+    cmd.arg("serve").arg("--port").arg(port.to_string());
+    // Only a flag the user typed is passed on; without one the child binds
+    // the saved network setting (`http::network`), so every starter agrees.
+    if let Some(host) = host {
+        cmd.arg("--host").arg(host.to_string());
+    }
+    cmd.env("LINGGEN_DATA_DIR", data_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::from(log_file))
         .stderr(Stdio::from(log_err));
@@ -194,7 +192,7 @@ pub async fn restart(
     data_dir: &Path,
     skill_dir: &Path,
     port: u16,
-    host: std::net::IpAddr,
+    host: Option<std::net::IpAddr>,
 ) -> Result<LifecycleOutcome> {
     let _ = stop(skill_dir).await?;
     start(data_dir, skill_dir, port, host).await

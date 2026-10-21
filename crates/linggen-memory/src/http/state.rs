@@ -7,6 +7,7 @@
 use super::envelope::ApiError;
 use crate::embed::{Embedder, LoadOnce};
 use crate::memory::{MemoryStore, Recall};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -35,6 +36,9 @@ pub struct AppState {
     /// reuses the same handlers (and their dispatch fixes) instead of
     /// duplicating logic.
     pub port: u16,
+    /// The address the listener actually bound — what the console shows as
+    /// a fact beside the saved network choice.
+    pub bound: SocketAddr,
 
     /// When the daemon was started, and when it last served a request —
     /// milliseconds since `started`. Background storage maintenance waits
@@ -57,7 +61,7 @@ impl AppState {
         recall: Arc<Recall>,
         embedder: Arc<LoadOnce<Embedder>>,
         data_dir: PathBuf,
-        port: u16,
+        bound: SocketAddr,
     ) -> Self {
         Self {
             store,
@@ -65,7 +69,8 @@ impl AppState {
             recall,
             embedder,
             data_dir,
-            port,
+            port: bound.port(),
+            bound,
             started: Instant::now(),
             last_request_ms: AtomicU64::new(0),
         }

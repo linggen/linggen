@@ -23,6 +23,7 @@ pub enum ErrorCode {
     BadRequest,
     NotFound,
     Unauthorized,
+    Forbidden,
     Internal,
 }
 
@@ -32,6 +33,7 @@ impl ErrorCode {
             ErrorCode::BadRequest => StatusCode::BAD_REQUEST,
             ErrorCode::NotFound => StatusCode::NOT_FOUND,
             ErrorCode::Unauthorized => StatusCode::UNAUTHORIZED,
+            ErrorCode::Forbidden => StatusCode::FORBIDDEN,
             ErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -41,6 +43,7 @@ impl ErrorCode {
             ErrorCode::BadRequest => "BAD_REQUEST",
             ErrorCode::NotFound => "NOT_FOUND",
             ErrorCode::Unauthorized => "UNAUTHORIZED",
+            ErrorCode::Forbidden => "FORBIDDEN",
             ErrorCode::Internal => "INTERNAL",
         }
     }
@@ -75,6 +78,15 @@ impl ApiError {
     pub fn unauthorized(msg: impl Into<String>) -> Self {
         Self {
             code: ErrorCode::Unauthorized,
+            message: msg.into(),
+        }
+    }
+
+    /// A caller the gate let in that still may not do this — a paired device
+    /// asking to change how this machine listens. Only this machine may.
+    pub fn forbidden(msg: impl Into<String>) -> Self {
+        Self {
+            code: ErrorCode::Forbidden,
             message: msg.into(),
         }
     }

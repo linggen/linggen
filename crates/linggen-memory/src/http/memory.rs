@@ -1872,7 +1872,7 @@ mod tests {
             recall,
             Arc::new(crate::embed::LoadOnce::new(no_model)),
             dir.to_path_buf(),
-            0,
+            std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
         ))
     }
 

@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 use crate::http::envelope::{ok, ApiError};
+use crate::http::network::Network;
 use crate::http::state::SharedState;
 
 /// User-tunable knobs persisted to disk. Add a field with a sensible
@@ -47,6 +48,13 @@ pub struct Config {
     /// on-topic project questions reached 0.71–0.79.
     #[serde(default = "default_no_root_project_min_score")]
     pub no_root_project_min_score: f32,
+
+    /// Where the daemon listens — the LAN (default) or this machine only.
+    /// Read at bind time by `serve`; written only by `PUT /api/network`,
+    /// which checks the caller is this machine. `PUT /api/config` keeps
+    /// the value on disk, so a paired device can never flip it here.
+    #[serde(default)]
+    pub network: Network,
 }
 
 fn default_no_root_project_min_score() -> f32 {
@@ -67,6 +75,7 @@ impl Default for Config {
             episodic_ttl_days: default_episodic_ttl_days(),
             recall_min_score: default_recall_min_score(),
             no_root_project_min_score: default_no_root_project_min_score(),
+            network: Network::default(),
         }
     }
 }
@@ -91,7 +100,7 @@ pub(crate) async fn load(data_dir: &std::path::Path) -> Config {
     serde_json::from_slice::<Config>(&bytes).unwrap_or_default()
 }
 
-async fn save(data_dir: &std::path::Path, cfg: &Config) -> Result<(), std::io::Error> {
+pub(crate) async fn save(data_dir: &std::path::Path, cfg: &Config) -> Result<(), std::io::Error> {
     let path = config_path(data_dir);
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await?;
@@ -112,8 +121,10 @@ async fn get_config(State(state): State<SharedState>) -> Result<Response, ApiErr
 
 async fn put_config(
     State(state): State<SharedState>,
-    Json(cfg): Json<Config>,
+    Json(mut cfg): Json<Config>,
 ) -> Result<Response, ApiError> {
+    // The network choice is not this route's to change — see `network.rs`.
+    cfg.network = load(&state.data_dir).await.network;
     // Light range check — the dream pass treats a 0 TTL as "evict
     // everything," which is rarely what the user wants. Allow it but
     // pin the lower bound; cap is generous to keep this future-proof.
@@ -136,4 +147,64 @@ async fn put_config(
         .await
         .map_err(|e| ApiError::internal(anyhow::anyhow!(e)))?;
     Ok(ok(serde_json::to_value(cfg).expect("Config serializes")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memory::MemoryStore;
+    use std::sync::Arc;
+
+    async fn scratch_state(dir: &std::path::Path) -> SharedState {
+        let semantic = Arc::new(MemoryStore::open_semantic(dir).await.unwrap());
+        let episodic = Arc::new(MemoryStore::open_episodic(dir).await.unwrap());
+        let recall = Arc::new(crate::memory::Recall::new(
+            Arc::clone(&semantic),
+            Arc::clone(&episodic),
+        ));
+        fn no_model() -> anyhow::Result<crate::embed::Embedder> {
+            anyhow::bail!("no model in unit tests")
+        }
+        Arc::new(crate::http::state::AppState::new(
+            semantic,
+            episodic,
+            recall,
+            Arc::new(crate::embed::LoadOnce::new(no_model)),
+            dir.to_path_buf(),
+            std::net::SocketAddr::from(([0, 0, 0, 0], 0)),
+        ))
+    }
+
+    /// `PUT /api/config` is open to paired devices; the network choice is
+    /// not, so this route keeps whatever is on disk.
+    #[tokio::test]
+    async fn the_config_route_never_changes_the_network() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = scratch_state(dir.path()).await;
+        let cfg = Config {
+            network: Network::Local,
+            ..Config::default()
+        };
+        save(dir.path(), &cfg).await.unwrap();
+
+        let sent = Config {
+            network: Network::Lan,
+            episodic_ttl_days: 9,
+            ..Config::default()
+        };
+        put_config(State(state), Json(sent)).await.unwrap();
+
+        let stored = load(dir.path()).await;
+        assert_eq!(stored.network, Network::Local);
+        assert_eq!(stored.episodic_ttl_days, 9);
+    }
+
+    #[tokio::test]
+    async fn an_old_config_file_reads_as_shared_on_the_lan() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = config_path(dir.path());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, r#"{"episodic_ttl_days":7}"#).unwrap();
+        assert_eq!(load(dir.path()).await.network, Network::Lan);
+    }
 }

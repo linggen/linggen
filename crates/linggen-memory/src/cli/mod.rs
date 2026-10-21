@@ -180,12 +180,11 @@ pub enum Command {
     Start {
         #[arg(long, default_value_t = crate::daemon::DEFAULT_PORT)]
         port: u16,
-        /// Bind address. Loopback by default — the ordinary case is this
-        /// machine's own agents. Widen it (e.g. `0.0.0.0`) only to share ONE
-        /// store with a second machine on the LAN, which requires a paired
-        /// device or the daemon refuses to start.
-        #[arg(long, default_value = "127.0.0.1")]
-        host: std::net::IpAddr,
+        /// Bind address for this run. Without it, the console's network
+        /// setting decides: the LAN (`0.0.0.0`, the default) or this machine
+        /// only (`127.0.0.1`). Off-machine callers need a paired device.
+        #[arg(long)]
+        host: Option<std::net::IpAddr>,
         /// Block in the current process instead of forking. Use this
         /// when something else (launchd, systemd, docker, the user's
         /// terminal) is the supervising parent.
@@ -200,12 +199,11 @@ pub enum Command {
     Serve {
         #[arg(long, default_value_t = crate::daemon::DEFAULT_PORT)]
         port: u16,
-        /// Bind address. Loopback by default — the ordinary case is this
-        /// machine's own agents. Widen it (e.g. `0.0.0.0`) only to share ONE
-        /// store with a second machine on the LAN, which requires a paired
-        /// device or the daemon refuses to start.
-        #[arg(long, default_value = "127.0.0.1")]
-        host: std::net::IpAddr,
+        /// Bind address for this run. Without it, the console's network
+        /// setting decides: the LAN (`0.0.0.0`, the default) or this machine
+        /// only (`127.0.0.1`). Off-machine callers need a paired device.
+        #[arg(long)]
+        host: Option<std::net::IpAddr>,
     },
 
     /// SIGTERM the running daemon and wait for it to exit. Hidden —
@@ -219,12 +217,11 @@ pub enum Command {
     Restart {
         #[arg(long, default_value_t = crate::daemon::DEFAULT_PORT)]
         port: u16,
-        /// Bind address. Loopback by default — the ordinary case is this
-        /// machine's own agents. Widen it (e.g. `0.0.0.0`) only to share ONE
-        /// store with a second machine on the LAN, which requires a paired
-        /// device or the daemon refuses to start.
-        #[arg(long, default_value = "127.0.0.1")]
-        host: std::net::IpAddr,
+        /// Bind address for this run. Without it, the console's network
+        /// setting decides: the LAN (`0.0.0.0`, the default) or this machine
+        /// only (`127.0.0.1`). Off-machine callers need a paired device.
+        #[arg(long)]
+        host: Option<std::net::IpAddr>,
     },
 
     /// Report daemon state: pidfile, liveness, health probe. Also surfaces
