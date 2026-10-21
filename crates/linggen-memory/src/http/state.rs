@@ -41,6 +41,8 @@ pub struct AppState {
     pub bound: SocketAddr,
     /// Machines on the LAN asking to connect — see `http::connect`.
     pub connect: crate::http::connect::Broker,
+    /// Paired devices seen by the gate, in memory — see `http::presence`.
+    pub presence: crate::http::presence::Presence,
     /// Primary or replica, and a replica's sync state — see `crate::replica`.
     pub replica: crate::replica::Replica,
 
@@ -78,6 +80,7 @@ impl AppState {
             port: bound.port(),
             bound,
             connect: Default::default(),
+            presence: Default::default(),
 
             started: Instant::now(),
             last_request_ms: AtomicU64::new(0),

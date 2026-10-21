@@ -37,6 +37,7 @@ use std::time::Instant;
 
 use crate::http::envelope::{ok, ApiError};
 use crate::http::local::require_local;
+use crate::http::presence::{Presence, Seen};
 use crate::http::state::SharedState;
 
 /// Paths the gate leaves open: the asking machine has no token yet.
@@ -193,7 +194,34 @@ async fn list_devices(
 ) -> Result<Response, ApiError> {
     require_local(peer.ip(), &headers, state.port)?;
     let rows = devices::list_allowed(&state.data_dir).map_err(io_error)?;
-    Ok(ok(json!({ "devices": rows })))
+    Ok(ok(devices_json(&state.presence, &rows, Instant::now())))
+}
+
+/// Each machine this daemon allowed, with what the gate saw of it. No secret
+/// is in `Allowed`, so none can leak here.
+fn devices_json(presence: &Presence, rows: &[devices::Allowed], now: Instant) -> serde_json::Value {
+    let list: Vec<_> = rows
+        .iter()
+        .map(|a| device_json(a, presence.get(&a.id), now))
+        .collect();
+    let connected = list.iter().filter(|d| d["online"] == true).count();
+    json!({
+        "devices": list,
+        "summary": { "connected": connected, "total": rows.len() },
+    })
+}
+
+fn device_json(a: &devices::Allowed, seen: Option<Seen>, now: Instant) -> serde_json::Value {
+    let wall = chrono::Utc::now().timestamp();
+    json!({
+        "id": a.id,
+        "name": a.name,
+        "ip": seen.map_or(a.ip, |s| s.ip),
+        "allowed_at": a.allowed_at,
+        "kind": if seen.is_some_and(|s| s.is_replica()) { "replica" } else { "client" },
+        "last_seen": seen.map(|s| wall - s.age_secs(now)),
+        "online": seen.is_some_and(|s| s.online(now)),
+    })
 }
 
 async fn revoke(
@@ -382,6 +410,39 @@ mod tests {
             &token,
             dir.path()
         ));
+    }
+
+    #[test]
+    fn devices_carry_presence_and_a_summary() {
+        let row = |id: &str| devices::Allowed {
+            id: id.into(),
+            device_id: format!("dev-{id}"),
+            name: "luffy-ubuntu".into(),
+            ip: "192.168.20.242".parse().unwrap(),
+            allowed_at: 1,
+        };
+        let presence = Presence::default();
+        let now = Instant::now();
+        presence.record(
+            "a",
+            "192.168.20.50".parse().unwrap(),
+            "/api/sync/changes",
+            now,
+        );
+        let v = devices_json(&presence, &[row("a"), row("b")], now);
+        assert_eq!(v["summary"]["connected"], 1);
+        assert_eq!(v["summary"]["total"], 2);
+        let a = &v["devices"][0];
+        assert_eq!(a["online"], true);
+        assert_eq!(a["kind"], "replica");
+        assert_eq!(a["ip"], "192.168.20.50");
+        assert!(a["last_seen"].is_i64());
+        assert!(a.get("secret").is_none());
+        let b = &v["devices"][1];
+        assert_eq!(b["online"], false);
+        assert_eq!(b["kind"], "client");
+        assert!(b["last_seen"].is_null());
+        assert_eq!(b["ip"], "192.168.20.242");
     }
 
     #[tokio::test]

@@ -26,6 +26,7 @@ mod mcp;
 mod memory;
 mod migration;
 pub(crate) mod network;
+pub mod presence;
 mod primary;
 pub(crate) mod session;
 pub mod state;
