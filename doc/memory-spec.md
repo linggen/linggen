@@ -173,7 +173,7 @@ their own would be two different people. So the instances form a
 ### Reads, writes, offline
 
 - **Reads** come from the replica's local copy, which pulls changes
-  (rows, vectors, deletions) from the primary every few seconds.
+  (rows, vectors, deletions) from the primary about every 30 seconds.
   Memory keeps working while the primary is away.
 - **Writes** go to the primary first, then land locally. While the
   primary is away a replica queues them, shows them locally at once,
