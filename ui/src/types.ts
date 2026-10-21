@@ -309,6 +309,8 @@ export interface SkillAppConfig {
   list?: boolean;
   width?: number;
   height?: number;
+  /** Device features the page may use, e.g. `['camera']`; others are denied. */
+  allow?: string[];
 }
 
 export interface SkillPermission {

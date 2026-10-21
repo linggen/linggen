@@ -34,10 +34,41 @@ pub struct AppConfig {
     /// the way without uninstalling it, so it still runs when opened directly.
     #[serde(default = "listed_by_default")]
     pub list: bool,
+    /// Device features the app's page may ask the browser for, e.g. `[camera]`.
+    /// Drives the frame's `allow` attribute and the page's `Permissions-Policy`;
+    /// anything not declared here is denied. Only names in [`DEVICE_FEATURES`]
+    /// count — each one needs the Mac shell to carry its usage text.
+    #[serde(default)]
+    pub allow: Vec<String>,
 }
 
 fn listed_by_default() -> bool {
     true
+}
+
+/// The device features an app page can declare in `app.allow`. Adding one here
+/// means the Mac shell must also carry its Info.plist usage description and
+/// hardened-runtime entitlement, or macOS stops the app on first use.
+pub const DEVICE_FEATURES: &[&str] = &["camera"];
+
+impl AppConfig {
+    /// Whether the page declared `feature` — and the engine knows it.
+    pub fn allows(&self, feature: &str) -> bool {
+        DEVICE_FEATURES.contains(&feature) && self.allow.iter().any(|f| f == feature)
+    }
+
+    /// The `Permissions-Policy` header for this app's pages: each known device
+    /// feature is `(self)` when declared, `()` (nobody) otherwise.
+    pub fn permissions_policy(&self) -> String {
+        DEVICE_FEATURES
+            .iter()
+            .map(|f| {
+                let who = if self.allows(f) { "(self)" } else { "()" };
+                format!("{f}={who}")
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
 }
 
 /// One sidecar file resolved from a primary item's stem — a lyric file next to

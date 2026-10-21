@@ -1,5 +1,6 @@
 import React from 'react';
 import { X } from 'lucide-react';
+import { frameAllow } from '../lib/frameAllow.mts';
 
 export interface AppPanelState {
   skill: string;
@@ -38,6 +39,7 @@ export const AppPanel: React.FC<{
           title={app.title}
           style={{ width: '100%', height: '100%', border: 'none' }}
           sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+          allow={frameAllow()}
         />
       </div>
     </div>

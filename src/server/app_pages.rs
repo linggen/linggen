@@ -202,6 +202,11 @@ pub(super) async fn serve_app_file(
             // revalidation costs nothing on localhost and removes a sharp
             // edge from the development loop.
             headers.insert("Cache-Control", "no-store".parse().expect("static header"));
+            // Device features (camera) only for apps that declared them in
+            // `app.allow`; the launcher frame's `allow` attribute says the same.
+            if let Ok(v) = app.permissions_policy().parse() {
+                headers.insert("Permissions-Policy", v);
+            }
             res
         }
         Err(_) => build_err(500, &format!("File not readable: {}", file_path_clean)),

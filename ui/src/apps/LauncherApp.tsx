@@ -16,6 +16,7 @@ import { skillsApi } from '../lib/endpoints';
 import { appLabel } from './appLabel';
 import { useYinyuePresenter } from '../hooks/useTransport';
 import type { SkillAppConfig, SkillInfoFull } from '../types';
+import { frameAllow } from '../lib/frameAllow.mts';
 
 /** A skill that is an app. */
 type AppSkill = SkillInfoFull & { app: SkillAppConfig };
@@ -186,6 +187,7 @@ export const LauncherApp: React.FC = () => {
               className={activeName === name ? 'absolute inset-0 w-full h-full' : 'hidden'}
               style={{ border: 'none' }}
               sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+              allow={frameAllow(a.app.allow)}
             />
           );
         })}

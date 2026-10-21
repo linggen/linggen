@@ -402,6 +402,8 @@ Three launcher types: `web` (static files in an embedded panel), `bash` (run a s
 
 `list: false` keeps a `web` app out of the launcher's tab bar while leaving it installed and runnable — what a skill that isn't finished declares about itself. Defaults to true.
 
+`allow` names the device features the app's page may ask for — today only `camera` (`allow: [camera]`). The launcher frames a declaring app with `allow="camera"` and the engine serves its pages with `Permissions-Policy: camera=(self)`; every other app gets `camera 'none'` / `camera=()`. In Linggen.app the shell grants a capture request only to the engine's own origin and only for a page under a declaring app; macOS asks the user once. A new feature name needs the Mac shell's usage text and entitlement first.
+
 Interactive apps are **session-bound** — every message in the session activates the skill (tool restrictions, prompt injection). The app talks to the agent through the same WebRTC surface as the main UI; no custom endpoints needed.
 
 ### Page helpers (`/shared/*`)

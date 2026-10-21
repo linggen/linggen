@@ -1188,6 +1188,43 @@ Play games."#;
     }
 
     #[test]
+    fn app_allow_gates_device_features() {
+        let declared = r#"---
+name: hand-signs
+description: A camera game
+app:
+  launcher: web
+  entry: index.html
+  allow: [camera, teleport]
+---
+Play."#;
+        let app = parse_skill_text(declared, SkillSource::Global)
+            .unwrap()
+            .app
+            .unwrap();
+        assert!(app.allows("camera"));
+        // Unknown names never count, even when declared.
+        assert!(!app.allows("teleport"));
+        assert_eq!(app.permissions_policy(), "camera=(self)");
+
+        let undeclared = r#"---
+name: board-game
+description: No camera
+app:
+  launcher: web
+  entry: index.html
+---
+Play."#;
+        let app = parse_skill_text(undeclared, SkillSource::Global)
+            .unwrap()
+            .app
+            .unwrap();
+        assert!(app.allow.is_empty());
+        assert!(!app.allows("camera"));
+        assert_eq!(app.permissions_policy(), "camera=()");
+    }
+
+    #[test]
     fn test_parse_skill_without_app_config() {
         let text = r#"---
 name: normal-skill
