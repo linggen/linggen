@@ -34,6 +34,9 @@ pub const PULL_EVERY: Duration = Duration::from_secs(30);
 /// Requests to the primary give up after this — a dead primary must not stall
 /// a client's write for long before it is queued instead.
 pub const UPSTREAM_TIMEOUT: Duration = Duration::from_secs(5);
+/// A pull page carries vectors (~10 MB per 500 rows), so it gets longer to
+/// arrive; a dead primary is still caught by the connect timeout.
+pub const PULL_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// The header a paired device presents — the primary's gate reads it.
 pub const DEVICE_HEADER: &str = "x-linggen-device";
@@ -90,6 +93,16 @@ impl Replica {
 pub fn http() -> reqwest::Client {
     reqwest::Client::builder()
         .timeout(UPSTREAM_TIMEOUT)
+        .build()
+        .unwrap_or_default()
+}
+
+/// A client for pulling pages: quick to notice a dead primary, patient with a
+/// big page on a slow link.
+pub fn pull_http() -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(UPSTREAM_TIMEOUT)
+        .timeout(PULL_TIMEOUT)
         .build()
         .unwrap_or_default()
 }

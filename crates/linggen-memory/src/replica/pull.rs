@@ -100,14 +100,17 @@ impl From<anyhow::Error> for UpstreamError {
 
 async fn fetch(base: &str, token: &str, cursor: u64) -> Result<Page, UpstreamError> {
     let url = format!("{base}/api/sync/changes?since={cursor}&limit={PAGE}");
-    let resp = super::http()
+    let resp = super::pull_http()
         .get(&url)
         .header(super::DEVICE_HEADER, token)
         .send()
         .await
-        .map_err(|_| UpstreamError {
-            offline: true,
-            message: "primary offline".into(),
+        .map_err(|e| {
+            tracing::info!("replica: pull from {base} failed: {e}");
+            UpstreamError {
+                offline: true,
+                message: "primary offline".into(),
+            }
         })?;
     if matches!(resp.status().as_u16(), 401 | 403) {
         return Err(anyhow!("the primary no longer accepts this machine").into());
