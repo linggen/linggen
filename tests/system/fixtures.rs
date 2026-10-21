@@ -39,9 +39,12 @@ async fn the_fixture_home_loads() {
     w.assert_all_scripted();
 }
 
-/// A true first install — no config folder at all — boots on the engine's
-/// own defaults, and its memory goes to the world's ling-mem (named only by
-/// `LING_MEM_URL`), not the real one on 9528.
+/// A true first install — no config folder, no client.json — boots on the
+/// engine's own defaults: its memory is the default address, which a real
+/// install resolves to 127.0.0.1:9528 and this world to its own ling-mem
+/// (named only by `LING_MEM_URL`), never the real one on 9528. The address
+/// lives in `~/.linggen/client.json`, not the config, and a default one is
+/// written nowhere.
 #[tokio::test]
 async fn a_first_install_with_no_config_reaches_its_own_memory() {
     let w = World::start(Setup {
@@ -50,7 +53,14 @@ async fn a_first_install_with_no_config_reaches_its_own_memory() {
     })
     .await;
     let config = w.api.get("/api/config").await;
-    assert_eq!(config["agent"]["ling_mem_url"], w.memory.url, "{config}");
+    assert!(
+        config["agent"].get("ling_mem_url").is_none(),
+        "the config still carries the memory address: {config}"
+    );
+    let client = w.api.get("/api/ling-mem/client").await;
+    assert_eq!(client["data"]["ling_mem"], w.memory.url, "{client}");
+    assert_eq!(client["data"]["local"], json!(true), "{client}");
+    assert_eq!(client["data"]["state"], "ok", "{client}");
 
     // A memory call through the engine lands in the world's own store.
     let note = format!("no-config world {}", w.home.root.display());
@@ -71,6 +81,10 @@ async fn a_first_install_with_no_config_reaches_its_own_memory() {
     assert!(
         !w.home.linggen_home().join("config").exists(),
         "booting wrote a config"
+    );
+    assert!(
+        !w.home.linggen_home().join("client.json").exists(),
+        "a default memory address was written to client.json"
     );
     w.assert_all_scripted();
 }
