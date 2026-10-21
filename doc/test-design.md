@@ -220,7 +220,10 @@ points every installer and updater at the gate's mirror of the drafts
 config, models and stores, read-only; scratch sessions withhold memory tools
 and are deleted after. It catches what fixtures can't: his real models, real
 skills, real network. Model cases use real providers, so a few stay; the rest
-run with `--no-model`.
+run with `--no-model`. One guards Ling's answer length in a plain chat (case
+g): three real questions must get a full answer (≥150 CJK chars or ≥80
+words), and "hi" a short one (≤300 chars). `--url`/`--home` run it against a
+scratch engine instead of 9527.
 
 ## Real-model checks
 

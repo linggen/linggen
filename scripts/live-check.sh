@@ -455,7 +455,8 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════
 
 MODEL_CASES=("(a) shared table: Ling Looks, @银月 answers from it" "(b) @银月 joins a chat; her Write asks; Deny writes nothing" \
-  "(d) forced shared compaction" "(e) two members on two models")
+  "(d) forced shared compaction" "(e) two members on two models" \
+  "(g) plain chat: Ling answers in full, a greeting stays short")
 if [ "$MODEL" = 0 ]; then
   section "Model cases"
   for c in "${MODEL_CASES[@]}" "(f) app moment at a table"; do skip "$c" "--no-model"; done
@@ -648,6 +649,40 @@ PY
     expect "(f) her hidden kickoff is hers alone (thread.rs: not in Ling's thread)" "$HID" \
       'length >= 1 and all(.[]; .agent == "yinyue")' "a [HIDDEN] row held by another member"
   fi
+
+  # ── (g) ──────────────────────────────────────────────────────────────────
+  # A plain user chat answers in the model's own default style (2026-10-21):
+  # no persona rule may cut a real question to a line. Each question gets a
+  # fresh plain session (no folder, memory withheld). Thresholds are generous
+  # — this catches a regressed persona, not style.
+  section "${MODEL_CASES[4]}"
+  answer_size() { # text → "<cjk chars> <english words> <chars>"
+    python3 -c 'import re,sys; t=sys.stdin.read(); print(len(re.findall(r"[\u4e00-\u9fff]", t)), len(re.findall(r"[A-Za-z][A-Za-z\x27-]*", t)), len(t))'
+  }
+  plain_turn() { # message → Ling's reply text ("" when the turn did not finish)
+    local sid m
+    sid="$(new_session "$(jq -nc --argjson w "$NO_MEMORY" '{title:"live-check length"} + $w')")"
+    [ -n "$sid" ] || return 0
+    m="$(log_mark)"
+    chat "$sid" "" "$1" >/dev/null
+    finish_ling "$sid" "$m" || return 0
+    sleep 2
+    rows_py last_said "$sid" 0 ling
+  }
+  G_QUESTIONS=("我在考虑从 Breville Bambino 升级到 E61 冲煮头的机器，你怎么看？"
+    "Rust 里多个线程之间共享数据，用 Arc<Mutex<T>> 和用 channel 传消息，各适合什么场景？"
+    "I'm planning my first three-day trip to Kyoto in late November. How should I plan the days?")
+  for q in "${G_QUESTIONS[@]}"; do
+    SAID="$(plain_turn "$q")"
+    read -r CJK WORDS CHARS <<<"$(printf '%s' "$SAID" | answer_size)"
+    [ "$CJK" -ge 150 ] || [ "$WORDS" -ge 80 ]
+    check "(g) a real question gets a full answer: ${q:0:24}…" $? \
+      "$CJK CJK chars / $WORDS words (want ≥150 / ≥80): ${SAID:0:160}" "$CJK CJK chars, $WORDS words"
+  done
+  SAID="$(plain_turn "hi")"
+  read -r CJK WORDS CHARS <<<"$(printf '%s' "$SAID" | answer_size)"
+  [ -n "$SAID" ] && [ "$CHARS" -le 300 ]
+  check "(g) \"hi\" gets a short answer" $? "$CHARS chars (want 1–300): ${SAID:0:160}" "$CHARS chars"
 
   [ -n "$BEAT_PID" ] && { kill "$BEAT_PID" 2>/dev/null; BEAT_PID=""; }
 
