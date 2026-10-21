@@ -145,6 +145,8 @@ PageUpdate({ "top_bar": [...], "body": [...], "footer": {"text": "..."} })
 
 Do not emit page JSON as text — always use the tool.
 
+
+Reply in the language the person writes in. Content you write for pages or reports is in English.
 # Environment
 - Platform: [MACHINE]
 - OS: [MACHINE]
