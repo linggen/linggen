@@ -27,7 +27,38 @@ const DEFAULT_LIMIT: usize = 200;
 const MAX_LIMIT: usize = 1000;
 
 pub fn router() -> Router<SharedState> {
-    Router::new().route("/api/sync/changes", get(changes))
+    Router::new()
+        .route("/api/sync/changes", get(changes))
+        .route("/api/sync/rows", get(rows))
+}
+
+#[derive(Deserialize)]
+struct RowsQuery {
+    /// Comma-separated row ids.
+    ids: String,
+}
+
+/// `GET /api/sync/rows?ids=a,b` — these rows as they are now (or tombstones):
+/// how a replica restores rows after the primary refused a queued write.
+async fn rows(
+    State(state): State<SharedState>,
+    Query(q): Query<RowsQuery>,
+) -> Result<Response, ApiError> {
+    let entries: Vec<Entry> = q
+        .ids
+        .split(',')
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .take(MAX_LIMIT)
+        .map(|id| Entry {
+            seq: 0,
+            id: id.to_string(),
+            table: String::new(),
+            op: crate::memory::changes::Op::Upsert,
+        })
+        .collect();
+    let (rows, tombstones) = bodies(&state, &entries).await?;
+    Ok(ok(json!({ "rows": rows, "tombstones": tombstones })))
 }
 
 #[derive(Deserialize)]

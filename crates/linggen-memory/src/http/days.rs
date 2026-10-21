@@ -339,6 +339,10 @@ pub struct RememberDayRequest {
     /// pass that covered this day.
     #[serde(default)]
     pub harvested: bool,
+    /// Who is dreaming (the holder of the day's dream lease, if one was
+    /// taken). A day another holder has leased is refused.
+    #[serde(default)]
+    pub holder: Option<String>,
 }
 
 async fn remember_day(
@@ -352,6 +356,11 @@ async fn remember_day(
         return Err(ApiError::bad_request(format!(
             "day {key} is not over yet — only past local days can be remembered"
         )));
+    }
+
+    let holder = req.holder.as_deref().unwrap_or("");
+    if let Some(l) = crate::http::lease::held_by_other(&state.data_dir, &key, holder, Utc::now()) {
+        return Err(crate::http::lease::busy(&key, &l));
     }
 
     let mut days_state = load(&state.data_dir).await;

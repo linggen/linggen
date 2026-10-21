@@ -149,6 +149,8 @@ pub async fn run(data_dir: &Path, skill_dir: &Path, port: u16, host: Option<IpAd
     // measured condition, in idle windows. Silent by design — see
     // `daemon::maintenance`.
     crate::daemon::maintenance::spawn(Arc::clone(&state));
+    // A replica follows its primary; a primary's loop just sleeps.
+    crate::replica::spawn(Arc::clone(&state));
     warm_embedder(embedder);
 
     let router = http::build_router(state, telemetry);

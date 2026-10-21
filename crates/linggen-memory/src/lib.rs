@@ -12,6 +12,7 @@ pub mod embed;
 mod hash;
 pub mod http;
 pub mod memory;
+pub mod replica;
 pub mod telemetry;
 pub mod update;
 

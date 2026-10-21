@@ -276,10 +276,29 @@ fn tool_defs() -> Vec<Value> {
                 "properties": {
                     "date":     {"type": "string", "description": "Local calendar day, YYYY-MM-DD."},
                     "judged":   {"type": "integer", "description": "Rows judged in this pass."},
-                    "promoted": {"type": "integer", "description": "Rows promoted to semantic in this pass."}
+                    "promoted": {"type": "integer", "description": "Rows promoted to semantic in this pass."},
+                    "holder":   {"type": "string", "description": "The dream lease holder, when one was taken."}
                 },
                 "required": ["date"]
             }
+        }),
+        json!({
+            "name": "memory_dream_lease",
+            "description": "Take (acquire), extend (renew) or free (release) the per-day dream lock before judging a day — one executor per day. Refused when another holder is dreaming that day, or when this machine is a replica (memory is dreamed on the primary): then stop and tell the user the reason verbatim.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "day":    {"type": "string", "description": "Local calendar day, YYYY-MM-DD."},
+                    "holder": {"type": "string", "description": "Who is dreaming, e.g. claude-code@<host>."},
+                    "action": {"type": "string", "enum": ["acquire", "renew", "release"]}
+                },
+                "required": ["day", "holder"]
+            }
+        }),
+        json!({
+            "name": "memory_role",
+            "description": "Is this machine's memory the primary or a replica? Returns role, upstream, online, last_sync and queued writes. Dream and solve run only on the primary.",
+            "inputSchema": { "type": "object", "properties": {} }
         }),
         json!({
             "name": "memory_sweep",
@@ -383,6 +402,8 @@ fn tool_name_to_verb(name: &str) -> Option<&'static str> {
         "memory_remember_day" => Some("remember_day"),
         "memory_harvest_day" => Some("harvest_day"),
         "memory_sweep" => Some("sweep"),
+        "memory_dream_lease" => Some("dream_lease"),
+        "memory_role" => Some("role"),
         "memory_chains" => Some("chains"),
         "memory_issues" => Some("issues"),
         "memory_issue_add" => Some("issue_add"),
@@ -828,6 +849,8 @@ mod tests {
             "remember_day",
             "harvest_day",
             "sweep",
+            "dream_lease",
+            "role",
             "chains",
             "issues",
             "issue_add",

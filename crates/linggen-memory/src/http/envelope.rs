@@ -25,6 +25,7 @@ pub enum ErrorCode {
     Unauthorized,
     Forbidden,
     TooMany,
+    Conflict,
     Internal,
 }
 
@@ -36,6 +37,7 @@ impl ErrorCode {
             ErrorCode::Unauthorized => StatusCode::UNAUTHORIZED,
             ErrorCode::Forbidden => StatusCode::FORBIDDEN,
             ErrorCode::TooMany => StatusCode::TOO_MANY_REQUESTS,
+            ErrorCode::Conflict => StatusCode::CONFLICT,
             ErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -47,6 +49,7 @@ impl ErrorCode {
             ErrorCode::Unauthorized => "UNAUTHORIZED",
             ErrorCode::Forbidden => "FORBIDDEN",
             ErrorCode::TooMany => "TOO_MANY_REQUESTS",
+            ErrorCode::Conflict => "CONFLICT",
             ErrorCode::Internal => "INTERNAL",
         }
     }
@@ -98,6 +101,14 @@ impl ApiError {
     pub fn too_many(msg: impl Into<String>) -> Self {
         Self {
             code: ErrorCode::TooMany,
+            message: msg.into(),
+        }
+    }
+
+    /// Someone else holds what this asked for (a dream lease on that day).
+    pub fn conflict(msg: impl Into<String>) -> Self {
+        Self {
+            code: ErrorCode::Conflict,
             message: msg.into(),
         }
     }

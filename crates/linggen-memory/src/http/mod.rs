@@ -20,11 +20,13 @@ pub mod envelope;
 pub mod gate;
 mod health;
 pub(crate) mod issues;
+pub(crate) mod lease;
 pub(crate) mod local;
 mod mcp;
 mod memory;
 mod migration;
 pub(crate) mod network;
+mod primary;
 pub(crate) mod session;
 pub mod state;
 mod stats;
@@ -66,8 +68,16 @@ pub fn build_router(state: SharedState, telemetry: Telemetry) -> Router {
         .merge(network::router())
         .merge(connect::router())
         .merge(sync::router())
+        .merge(primary::router())
+        .merge(lease::router())
         .merge(migration::router())
         .merge(ui::router())
+        // On a replica, writes go to the primary (or the outbox) — inside the
+        // gate, so only admitted callers reach it. See `replica::forward`.
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::replica::forward::replica_writes,
+        ))
         // Outermost, so it runs before any handler: a caller off this machine
         // must be a paired device. Loopback — the CLI, the engine, the local
         // app — goes straight through, and `/api/health` plus the two routes a
@@ -140,4 +150,54 @@ async fn command_telemetry_layer(
         }
     }
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memory::{Memory, MemoryType, Origin};
+    use axum::extract::ConnectInfo;
+    use std::net::SocketAddr;
+
+    /// A write a replica forwards (or replays from its outbox) arrives here
+    /// from the LAN with the replica's token, and meets the same user-voice
+    /// guard as any local write: replacing a from=user row without
+    /// `user_directed` is refused ON THE PRIMARY, and the row stays.
+    #[tokio::test]
+    async fn the_primary_enforces_the_user_voice_guard_on_forwarded_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = state::scratch_state(dir.path(), "0.0.0.0:9528".parse().unwrap()).await;
+        std::fs::write(
+            gate::devices_path(dir.path()),
+            r#"[{"id":"r","name":"DS242","secret":"cafe1234","created_at":0}]"#,
+        )
+        .unwrap();
+        let voice = Memory::new("Alex prefers tea", MemoryType::Preference, Origin::User);
+        let id = voice.id.clone();
+        state.store.insert(&[voice]).await.unwrap();
+
+        let app = memory::router()
+            .layer(middleware::from_fn_with_state(
+                state.clone(),
+                gate::lan_gate,
+            ))
+            .with_state(state.clone());
+        let body = serde_json::json!({ "content": "Alex prefers coffee", "replace_ids": [id] });
+        let mut req = axum::http::Request::post("/api/memory/add")
+            .header("content-type", "application/json")
+            .header("x-linggen-device", "cafe1234")
+            .body(axum::body::Body::from(body.to_string()))
+            .unwrap();
+        let replica: SocketAddr = "192.168.20.242:50000".parse().unwrap();
+        req.extensions_mut().insert(ConnectInfo(replica));
+        let res = tower::ServiceExt::oneshot(app, req).await.unwrap();
+
+        assert!(res.status().is_client_error(), "{}", res.status());
+        let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        assert!(String::from_utf8_lossy(&bytes).contains("user-voice"));
+        let kept = state.store.get(&id).await.unwrap().unwrap();
+        assert!(kept.expired_at.is_none(), "the user's row is untouched");
+    }
 }

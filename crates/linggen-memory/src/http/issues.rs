@@ -44,7 +44,13 @@ pub fn router() -> Router<SharedState> {
 
 /// Scope, index and summary fixes are not queued: the dream applies them
 /// itself (they are not the row's words) and logs what it changed.
-const KINDS: &[&str] = &["chain", "stale-status", "contradiction", "subject"];
+const KINDS: &[&str] = &[
+    "chain",
+    "stale-status",
+    "contradiction",
+    "subject",
+    crate::replica::forward::CONFLICT_KIND,
+];
 const OUTCOMES: &[&str] = &["resolved", "dismissed"];
 
 /// One queued review item.

@@ -41,6 +41,8 @@ pub struct AppState {
     pub bound: SocketAddr,
     /// Machines on the LAN asking to connect — see `http::connect`.
     pub connect: crate::http::connect::Broker,
+    /// Primary or replica, and a replica's sync state — see `crate::replica`.
+    pub replica: crate::replica::Replica,
 
     /// When the daemon was started, and when it last served a request —
     /// milliseconds since `started`. Background storage maintenance waits
@@ -65,7 +67,9 @@ impl AppState {
         data_dir: PathBuf,
         bound: SocketAddr,
     ) -> Self {
+        let replica = crate::replica::Replica::load(&data_dir);
         Self {
+            replica,
             store,
             episodic,
             recall,
@@ -74,6 +78,7 @@ impl AppState {
             port: bound.port(),
             bound,
             connect: Default::default(),
+
             started: Instant::now(),
             last_request_ms: AtomicU64::new(0),
         }
