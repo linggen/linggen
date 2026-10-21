@@ -113,8 +113,14 @@ pub const BUILTIN_MEMORY: &str = "memory";
 /// permission code, so the exemption is visible wherever servers are and the
 /// engine never learns this server's name.
 pub fn builtin_memory(url: &str) -> McpServerConfig {
+    // The device token from client.json, for a ling-mem on another machine.
+    let headers = crate::state_fs::client::token()
+        .map(|t| (crate::state_fs::client::DEVICE_HEADER.to_string(), t))
+        .into_iter()
+        .collect();
     McpServerConfig {
         url: Some(format!("{}/mcp", url.trim_end_matches('/'))),
+        headers,
         gated: false,
         ..Default::default()
     }

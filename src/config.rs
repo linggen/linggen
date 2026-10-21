@@ -310,16 +310,15 @@ pub struct AgentConfig {
     #[serde(default = "default_memory_recall_count")]
     pub memory_recall_count: usize,
 
-    /// Base URL of the local `ling-mem` HTTP daemon. Two things resolve
-    /// from it: the built-in memory MCP server's endpoint (`<url>/mcp`,
-    /// which is how a model reaches memory), and the engine's own program-
-    /// side calls — the `dream` mission reads `episodic_ttl_days` from
-    /// `<url>/api/config`. Unset, it is `$LING_MEM_URL` when that is set,
-    /// else the daemon's own default port (see [`default_ling_mem_url`]) —
-    /// change only if you ran `ling-mem start` against a different
-    /// `--port`, or pointed it at a remote host. Trailing slash optional;
-    /// no path segment.
-    #[serde(default = "default_ling_mem_url")]
+    /// Base URL of the `ling-mem` HTTP daemon. Two things resolve from it:
+    /// the built-in memory MCP server's endpoint (`<url>/mcp`, which is how a
+    /// model reaches memory), and the engine's own program-side calls.
+    ///
+    /// Resolved at load from `~/.linggen/client.json` (`ling_mem`), the one
+    /// file every writer shares (`state_fs::client`); else `$LING_MEM_URL`;
+    /// else the daemon's own default port. Read from an older toml only to
+    /// migrate it into client.json once — never written to the toml.
+    #[serde(default = "default_ling_mem_url", skip_serializing)]
     pub ling_mem_url: String,
     /// Ask the model for follow-up buttons on the turns of a chat that shows
     /// them (the Mac chat). Off: no asking; a skill's starters and a page's
@@ -370,27 +369,6 @@ fn ling_mem_url_default_from(env: Option<&str>) -> String {
         }
         None => format!("http://127.0.0.1:{DEFAULT_LING_MEM_PORT}"),
     }
-}
-
-/// A config's saved text, minus a `ling_mem_url` that only came from
-/// `$LING_MEM_URL` (`value` is the config's, `env` the variable's): the env
-/// sets a default, it is never written into the file — where it would then
-/// win over the env for good.
-fn drop_env_ling_mem_url(text: String, value: &str, env: Option<&str>) -> String {
-    let Some(env) = env.map(str::trim).filter(|v| !v.is_empty()) else {
-        return text;
-    };
-    if value != ling_mem_url_default_from(Some(env)) {
-        return text;
-    }
-    let line = format!("ling_mem_url = {}", toml::Value::String(value.to_string()));
-    let mut out: String = text
-        .lines()
-        .filter(|l| l.trim() != line)
-        .collect::<Vec<_>>()
-        .join("\n");
-    out.push('\n');
-    out
 }
 
 impl AgentConfig {
@@ -483,11 +461,23 @@ impl Config {
                 config.server.migrated_legacy_addr = config.server.migrate_legacy_fields();
                 config.migrate_retired_chatgpt_builtins();
                 config.migrate_retired_cloud_ids();
+                config.resolve_ling_mem();
                 return Ok((config, Some(path)));
             }
         }
 
-        Ok((Config::default(), None))
+        let mut config = Config::default();
+        config.resolve_ling_mem();
+        Ok((config, None))
+    }
+
+    /// `[agent].ling_mem_url` from client.json (migrating a custom toml value
+    /// there once). See `state_fs::client`.
+    fn resolve_ling_mem(&mut self) {
+        self.agent.ling_mem_url = crate::state_fs::client::resolve_ling_mem(
+            &self.agent.ling_mem_url,
+            &default_ling_mem_url(),
+        );
     }
 
     /// Migrate persisted state left behind by a ChatGPT built-in generation
@@ -553,12 +543,7 @@ impl Config {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let content = drop_env_ling_mem_url(
-            toml::to_string_pretty(self)?,
-            &self.agent.ling_mem_url,
-            std::env::var(LING_MEM_URL_ENV).ok().as_deref(),
-        );
-        fs::write(&path, content)?;
+        fs::write(&path, toml::to_string_pretty(self)?)?;
         Ok(path)
     }
 
@@ -1198,27 +1183,12 @@ mod tests {
         assert_eq!(Config::default().agent.ling_mem_url, default_ling_mem_url());
     }
 
-    /// The env's value is never saved into the file (it would then outrank
-    /// the env for good); any other value is.
+    /// The address lives in client.json; the toml never carries it.
     #[test]
-    fn ling_mem_url_from_env_is_not_saved() {
+    fn ling_mem_url_is_never_saved_to_the_toml() {
         let mut cfg = Config::default();
         cfg.agent.ling_mem_url = "http://127.0.0.1:4100".into();
         let text = toml::to_string_pretty(&cfg).unwrap();
-        assert!(text.contains("ling_mem_url = \"http://127.0.0.1:4100\""));
-
-        let saved = drop_env_ling_mem_url(
-            text.clone(),
-            &cfg.agent.ling_mem_url,
-            Some("http://127.0.0.1:4100/"),
-        );
-        assert!(!saved.contains("ling_mem_url"), "{saved}");
-        let back: Config = toml::from_str(&saved).unwrap();
-        assert_eq!(back.agent.max_iters, cfg.agent.max_iters);
-
-        for env in [None, Some("http://127.0.0.1:5000")] {
-            let kept = drop_env_ling_mem_url(text.clone(), &cfg.agent.ling_mem_url, env);
-            assert_eq!(kept, text, "env {env:?}");
-        }
+        assert!(!text.contains("ling_mem_url"), "{text}");
     }
 }

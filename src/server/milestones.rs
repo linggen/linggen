@@ -281,9 +281,8 @@ fn memory_rows(state: Arc<ServerState>) -> CheckFuture {
     Box::pin(async move {
         let url = state.manager.get_config_snapshot().await.agent.ling_mem_url;
         let url = format!("{}/api/memory/count", url.trim_end_matches('/'));
-        let body: Value = reqwest::Client::new()
-            .post(&url)
-            .json(&json!({}))
+        let request = reqwest::Client::new().post(&url).json(&json!({}));
+        let body: Value = crate::state_fs::client::with_token(request)
             .timeout(Duration::from_secs(3))
             .send()
             .await?

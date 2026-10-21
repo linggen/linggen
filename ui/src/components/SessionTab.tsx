@@ -6,6 +6,7 @@
 import React from 'react';
 import type { AppConfig } from '../types';
 import { Field, Grid, MoreGroup, NumberInput, Section, inputCls } from './settings/kit';
+import { LingMemAddress } from './settings/LingMemAddress';
 
 type AgentCfg = AppConfig['agent'];
 
@@ -116,16 +117,11 @@ export const SessionTab: React.FC<{
           <Grid>
             <Field
               label="Ling-mem URL"
-              hint="Where the memory service runs. Change only for another port or host."
-              details={<>The memory MCP server is <code>&lt;url&gt;/mcp</code>; the dream mission reads <code>&lt;url&gt;/api/config</code>.</>}
+              hint="Where memory lives: this machine, or another on your LAN."
+              details={<>Saved in <code>~/.linggen/client.json</code>, shared with <code>/linggen:config</code>.</>}
               wide
             >
-              <input
-                className={inputCls}
-                value={a.ling_mem_url ?? 'http://127.0.0.1:9528'}
-                onChange={(e) => set({ ling_mem_url: e.target.value })}
-                placeholder="http://127.0.0.1:9528"
-              />
+              <LingMemAddress />
             </Field>
           </Grid>
         </MoreGroup>

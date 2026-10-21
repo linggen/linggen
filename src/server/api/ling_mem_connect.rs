@@ -64,7 +64,7 @@ pub async fn decide(
 
 /// Someone at this Mac: loopback socket, not tunnelled, loopback Host, and no
 /// foreign Origin.
-fn is_at_this_mac(peer: SocketAddr, headers: &HeaderMap) -> bool {
+pub(super) fn is_at_this_mac(peer: SocketAddr, headers: &HeaderMap) -> bool {
     let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
     peer.ip().is_loopback()
         && header(TUNNEL_HEADER).is_none()
@@ -78,11 +78,11 @@ fn is_local_page(origin: &str) -> bool {
 }
 
 /// ling-mem's request ids are uuids; nothing else is forwarded into a path.
-fn is_request_id(id: &str) -> bool {
+pub(super) fn is_request_id(id: &str) -> bool {
     (1..=64).contains(&id.len()) && id.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
 }
 
-fn refused() -> Response {
+pub(super) fn refused() -> Response {
     (
         StatusCode::FORBIDDEN,
         Json(json!({ "ok": false, "error": "only at this Mac" })),

@@ -755,7 +755,17 @@ impl AgentManager {
         self.config.read().await.clone()
     }
 
-    pub async fn apply_config(&self, new_config: Config) -> Result<()> {
+    /// Point the engine at another ling-mem. The caller has already written
+    /// client.json; this makes the running engine follow it.
+    pub async fn set_ling_mem_url(&self, url: String) {
+        self.config.write().await.agent.ling_mem_url = url;
+    }
+
+    pub async fn apply_config(&self, mut new_config: Config) -> Result<()> {
+        // The ling-mem address is client.json's, changed only through
+        // `set_ling_mem_url` (a loopback-only route) — never by a whole-config
+        // write, which a paired device may also send.
+        new_config.agent.ling_mem_url = self.config.read().await.agent.ling_mem_url.clone();
         new_config.validate()?;
         // Write to disk first — if this fails, in-memory state remains unchanged.
         new_config.save_runtime(self.config_dir.as_deref())?;

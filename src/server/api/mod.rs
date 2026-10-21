@@ -5,6 +5,7 @@ pub(super) mod account;
 pub(super) mod activity;
 pub(super) mod agents;
 pub(super) mod config;
+pub(super) mod ling_mem_client;
 pub(super) mod ling_mem_connect;
 pub(super) mod marketplace;
 pub(super) mod media;

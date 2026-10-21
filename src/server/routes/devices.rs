@@ -48,6 +48,19 @@ pub(super) fn routes() -> Routes {
             "/api/ling-mem/connect/{id}/{verdict}",
             post(api::ling_mem_connect::decide),
         )
+        // Where this machine's memory lives (client.json)
+        .route(
+            "/api/ling-mem/client",
+            get(api::ling_mem_client::get_client).put(api::ling_mem_client::put_client),
+        )
+        .route(
+            "/api/ling-mem/client/request-access",
+            post(api::ling_mem_client::request_access),
+        )
+        .route(
+            "/api/ling-mem/client/access/{id}",
+            get(api::ling_mem_client::access_status),
+        )
         // Topics and the activity log
         .route("/api/topic/publish", post(api::topic::publish))
         .route("/api/topic/latest", get(api::topic::latest))
