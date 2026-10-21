@@ -102,6 +102,9 @@ pub async fn start(
     // /dev/null. Without it, a daemon-side fault (the 109 GB OOM) leaves no
     // trace and the triggering request is unrecoverable. Size-rotated:
     // one previous generation kept as serve.log.1.
+    // A data dir this daemon has never used has no skill dir yet.
+    std::fs::create_dir_all(skill_dir)
+        .with_context(|| format!("creating {}", skill_dir.display()))?;
     let log_path = skill_dir.join("serve.log");
     if std::fs::metadata(&log_path)
         .map(|m| m.len() > 5 * 1024 * 1024)
