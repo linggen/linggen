@@ -24,8 +24,10 @@ export function useYinyuePrefill(
 ): () => void {
   const [now, setNow] = useState(() => Date.now());
   const written = useRef('');
+  // The caller builds `tableIds` fresh each render; key the memo on its
+  // contents, and read the ids back from that key so the deps are exact.
   const tableKey = tableIds.join(',');
-  const floor = useMemo(() => floorOf(messages, tableIds), [messages, tableKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const floor = useMemo(() => floorOf(messages, tableKey.split(',')), [messages, tableKey]);
   const want = label ? prefillAfter(floor, now, label) : '';
 
   useEffect(() => {
