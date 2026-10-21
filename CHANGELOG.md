@@ -19,6 +19,12 @@
   bound to declared params (`{{session.<name>}}`); missions take a `run-if`
   precondition; `remote: true` tools are published to the phone as a
   catalog; an app's title comes from its SKILL.md.
+- **Ling answers in the model's own style** in a plain chat — no persona
+  rule cuts a real question to a line; apps and skills still set their own.
+  `check.sh live` guards it (case g).
+- **No citation glyphs** — a ChatGPT model's private citation markers
+  (`cite turn2search1` between boxes) are dropped from replies; url
+  citations, when sent, follow as links.
 - **Composer** — `@` addresses Ling or Yinyue, `/f` opens the file picker.
 - **All WebRTC** — the web UI and skill pages have no HTTP data path; the UI
   reconnects when ICE stays down.
