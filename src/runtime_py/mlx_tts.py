@@ -8,7 +8,10 @@
 # Protocol, JSON lines on stdio:
 #   startup  ->  {"ready": true}                  (after the model loads)
 #   request  <-  {"text": "...", "voice": "...", "lang": "english"}
-#                (lang: auto | english; absent = auto)
+#                (lang: auto | chinese | english; absent = auto. The
+#                engine sends one short clause per request and names the
+#                language whenever the clause's script or the user's
+#                language setting makes it known.)
 #   reply    ->  {"ok": true, "wav_b64": "...", "sr": 24000}
 #            ->  {"ok": false, "error": "..."}    (the loop keeps serving)
 #
@@ -68,7 +71,8 @@ def main():
             # tokens run at 12Hz; ~0.5s of audio per char is already twice
             # a slow zh reading) so an autoregressive runaway can never
             # stall the clip until the engine's timeout.
-            max_tokens = min(max(int(len(req["text"]) * 0.5 * 12), 120), 1800)
+            # The floor (5 s) is for the shortest clauses the engine sends.
+            max_tokens = min(max(int(len(req["text"]) * 0.5 * 12), 60), 1800)
             # stream=True purely to overlap decode and vocoder work; the
             # whole clip is still returned at once (the /api/tts contract).
             for res in model.generate(

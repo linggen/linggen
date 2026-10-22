@@ -304,6 +304,10 @@ pub(super) struct PetSpeakData {
     pub text: String,
     pub emotion: Option<String>,
     pub voice: bool,
+    /// The line's spoken copy in clauses, in order — the surface asks
+    /// `/api/tts` for each and plays the first while the rest are made.
+    /// Empty when the voice is off.
+    pub chunks: Vec<crate::server::api::tts_text::SpokenChunk>,
 }
 
 /// `pet_express`.

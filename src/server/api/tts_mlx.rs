@@ -3,8 +3,10 @@
 //! MLX is only practically callable from Python, so the model runs in a
 //! child process on the managed runtime's `tts` venv (see
 //! [`crate::runtime`]) and the engine talks JSON lines over its stdio:
-//! one `{text, voice}` request in, one complete base64 WAV out. One
-//! request is in flight at a time — the caller holds the child lock, and
+//! one `{text, voice, lang}` request in — one short clause, see
+//! [`super::tts_text`] — one complete base64 WAV out. A take that drifts
+//! (too slow for its length) is made once more. One request is in
+//! flight at a time — the caller holds the child lock, and
 //! generation saturates the GPU anyway.
 //!
 //! Every failure — venv missing (Intel Mac, prewarm not done), sidecar
@@ -21,6 +23,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::Mutex;
 
 use super::tts::TtsProvider;
+use super::tts_text::{self, Take};
+use super::tts_wav;
 
 const SIDECAR_SRC: &str = include_str!("../../runtime_py/mlx_tts.py");
 
@@ -46,28 +50,6 @@ const READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 fn synth_timeout(text: &str) -> std::time::Duration {
     let chars = text.chars().count() as u64;
     std::time::Duration::from_secs((12 + chars / 3).clamp(15, 60))
-}
-
-/// The `lang_code` for this line. "auto" reads Chinese and mixed zh/en
-/// lines well, but pure English comes out with a Chinese accent in the
-/// default voice — so only a line with Latin words and no Han at all is
-/// named "english"; everything else stays "auto".
-fn language_for(text: &str) -> &'static str {
-    let has_han = text.chars().any(|c| {
-        matches!(c as u32,
-            0x4E00..=0x9FFF   // CJK Unified Ideographs
-            | 0x3400..=0x4DBF // Extension A
-            | 0xF900..=0xFAFF // Compatibility Ideographs
-        )
-    });
-    let has_latin_word = text
-        .split(|c: char| !c.is_ascii_alphabetic())
-        .any(|w| w.len() >= 2);
-    if !has_han && has_latin_word {
-        "english"
-    } else {
-        "auto"
-    }
 }
 
 struct Sidecar {
@@ -159,7 +141,7 @@ impl MlxTtsProvider {
             let req = serde_json::json!({
                 "text": text,
                 "voice": voice,
-                "lang": language_for(text),
+                "lang": tts_text::language_for(text, crate::language::setting().as_deref()),
             });
             sidecar
                 .stdin
@@ -192,6 +174,39 @@ impl MlxTtsProvider {
             .ok_or_else(|| anyhow::anyhow!("reply missing wav_b64"))?;
         Ok(base64::engine::general_purpose::STANDARD.decode(b64)?)
     }
+}
+
+impl MlxTtsProvider {
+    /// One clause, checked for drift: a take outside the healthy speech
+    /// rate is made once more, and the closer of the two ships. Never
+    /// Kokoro on rate grounds — a slow Qwen take still says the right words
+    /// (the clip Hanli heard as garbled transcribed at 3.8% CER), Kokoro
+    /// misreads about one character in five (18% CER, 2026-10-22).
+    async fn checked(&self, text: &str, voice: &str) -> anyhow::Result<Vec<u8>> {
+        let first = self.request(text, voice).await?;
+        let verdict = judge_take(text, &first);
+        if verdict.passes() {
+            return Ok(first);
+        }
+        tracing::info!("[tts-mlx] take drifted ({verdict:?}), making it again: {text}");
+        let Ok(second) = self.request(text, voice).await else {
+            return Ok(first);
+        };
+        let again = judge_take(text, &second);
+        tracing::info!("[tts-mlx] second take {again:?}");
+        Ok(if again.shortfall() < verdict.shortfall() {
+            second
+        } else {
+            first
+        })
+    }
+}
+
+/// The rate verdict on one take; an undecodable clip goes unjudged.
+fn judge_take(text: &str, wav: &[u8]) -> Take {
+    tts_wav::decode(wav).map_or(Take::Unjudged, |pcm| {
+        tts_text::judge(text, tts_wav::voiced_secs(&pcm))
+    })
 }
 
 impl MlxTtsProvider {
@@ -243,7 +258,7 @@ impl TtsProvider for MlxTtsProvider {
             Some(v) if SPEAKERS.contains(&v) => v,
             _ => DEFAULT_VOICE,
         };
-        match self.request(text, voice).await {
+        match self.checked(text, voice).await {
             Ok(wav) => Ok(wav),
             Err(e) => {
                 tracing::warn!("[tts-mlx] {e:#}; falling back to Kokoro for this clip");
@@ -281,31 +296,5 @@ impl TtsProvider for MlxTtsProvider {
 
     fn prewarm_on_boot(&self) -> bool {
         true
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn pure_english_is_named_english() {
-        assert_eq!(language_for("Good morning, see you at ten"), "english");
-        assert_eq!(language_for("Master, I am here."), "english");
-    }
-
-    #[test]
-    fn any_han_leaves_it_to_auto() {
-        assert_eq!(language_for("师父，我在这里。"), "auto");
-        assert_eq!(language_for("你今天十点和 Alex 有个 meeting"), "auto");
-        assert_eq!(language_for("Hello 你好"), "auto");
-        assert_eq!(language_for("That character is 字, meaning word."), "auto");
-    }
-
-    #[test]
-    fn nothing_to_judge_leaves_it_to_auto() {
-        assert_eq!(language_for(""), "auto");
-        assert_eq!(language_for("🎉 123 !"), "auto");
-        assert_eq!(language_for("a 1"), "auto");
     }
 }

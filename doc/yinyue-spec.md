@@ -74,8 +74,13 @@ see "Adaptive presentation".
 - **Menubar** — a small animated tray face; her persistence anchor and summon
   point. App-only (no browser tray). See "Menubar presence" below.
 - **Chat** — interactive sessions, same as any agent.
-- **Voice** — neural TTS (Kokoro, local) generated engine-side and played by the
-  active surface, lip-synced on the body. Mutable per device — see "Mute" below.
+- **Voice** — neural TTS (Qwen3-TTS bf16 on the GPU, Kokoro as fallback, local)
+  generated engine-side and played by the active surface, lip-synced on the body.
+  A line is spoken in short clauses (`api/tts_text.rs`): the `pet_speak` cue carries
+  them, the surface fetches each from `/api/tts` and plays the first while the next
+  is made; a clause that comes out too slow (drift) is made once more. The bubble
+  shows the original text — only the spoken copy drops quotes, a leading 「……」, and
+  turns 「——」/「……」 into pauses. Mutable per device — see "Mute" below.
 
 ## Adaptive presentation (app vs web)
 
@@ -285,7 +290,7 @@ needs the singleton overlay (above) and rides that work.
 The local tier is shell-only. The daemon tier consumes the **same speech/expression
 event the other surfaces get** — `ServerEvent::YinyueSpeak { text, emotion }`: global
 (no session), explicitly fanned to pet / menubar / web overlay; the cue is small, the
-audio blob is pulled from `/api/tts`. The catch: that event rides the **WebRTC data
+audio is pulled from `/api/tts`, clause by clause. The catch: that event rides the **WebRTC data
 channel to webview peers**, and the tray is **Rust, not a peer**. The bridge:
 
 1. The webview already voicing her (`pet-ui` / WebUI overlay) receives `YinyueSpeak`,
@@ -450,7 +455,7 @@ user's region and time without asking.
 | Environment block | `linggen/prompts/system-prompt.toml`, `linggen/src/engine/prompt/mod.rs` |
 | Desktop pet (body) | `linggen-app/shell/src/pet.rs` — thin native window → core `?pet=1` |
 | Pet renderer (web + native) | `linggen/ui` — `PetStage` + `PetApp` (`?pet=1`) + `YinyueAvatar` overlay |
-| Voice (TTS provider) | `linggen/src/server/api/tts.rs` (`TtsProvider`; Kokoro via any-tts) |
+| Voice (TTS provider) | `linggen/src/server/api/tts.rs` (`TtsProvider`), `tts_mlx.rs` (Qwen3-TTS sidecar), `tts_text.rs` (clauses, language, drift check); Kokoro via any-tts as fallback |
 | Pet coordination — lease + surface registry | `linggen/src/server/` (engine API, planned) |
 | Menubar tray + face animator | `linggen-app/shell/src/menubar.rs` (planned) |
 | Tray face frames + generator | `linggen-app/shell/pet-ui` capture tool → staged `tray/` (planned) |

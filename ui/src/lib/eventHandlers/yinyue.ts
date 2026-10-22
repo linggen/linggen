@@ -3,22 +3,31 @@
  * spine (see `doc/yinyue-spec.md` › Adaptive presentation).
  *
  * The engine pushes a small `{ text, emotion }` cue (`ServerEvent::YinyueSpeak`)
- * over the control channel; here we fetch the audio from `/api/tts` and play it,
- * show the speech bubble, and publish a live **mouth-opening** signal so the VRM
- * avatar can lip-sync in step with the audio it doesn't own.
+ * over the control channel, with the line already cut into short clauses. Here
+ * we fetch each clause's audio from `/api/tts` — the first plays as soon as it
+ * is made while the next is synthesized — show the speech bubble, and publish a
+ * live **mouth-opening** signal so the VRM avatar can lip-sync in step with the
+ * audio it doesn't own.
  */
 import type { UiEventOf } from '../../types';
+import type { SpokenChunk } from '../../types/generated/SpokenChunk';
 import { useUiStore } from '../../stores/uiStore';
 
 // One shared AudioContext, created lazily on first cue.
 let audioCtx: AudioContext | null = null;
-let current: AudioBufferSourceNode | null = null;
+// The clauses of the current line scheduled on the context and not yet ended.
+let queued: AudioBufferSourceNode[] = [];
 
 // Lip-sync resolution: one RMS sample per ~frame (≈60fps).
 const ENVELOPE_FRAME_MS = 16;
-// The playing clip's loudness curve + the time it started, so any surface can
+// Each scheduled clause's loudness curve + its start time, so any surface can
 // read the current mouth opening by indexing the envelope at elapsed time.
-let playback: { envelope: Float32Array; startTime: number } | null = null;
+let segments: { envelope: Float32Array; startTime: number }[] = [];
+
+// Bubble floor per spoken character while the rest of the line is still being
+// made. Her lines measured 280–340 ms per character with pauses (2026-10-22);
+// this errs long so the bubble never leaves before the voice.
+const BUBBLE_MS_PER_CHAR = 380;
 
 /** Pre-compute a per-frame RMS loudness envelope from a decoded clip. */
 function computeRmsEnvelope(buf: AudioBuffer): Float32Array {
@@ -39,9 +48,14 @@ function computeRmsEnvelope(buf: AudioBuffer): Float32Array {
 /** Current mouth opening (0..1) for the clip playing right now, else 0.
  *  Read each frame by the VRM avatar to drive lip-sync. */
 export function getMouthOpening(): number {
-  if (!playback || !audioCtx) return 0;
-  const frame = Math.floor((audioCtx.currentTime - playback.startTime) / (ENVELOPE_FRAME_MS / 1000));
-  const amp = playback.envelope[Math.max(0, Math.min(frame, playback.envelope.length - 1))] ?? 0;
+  if (!audioCtx) return 0;
+  const now = audioCtx.currentTime;
+  const seg = segments.findLast((s) => s.startTime <= now);
+  if (!seg) return 0;
+  const frame = Math.floor((now - seg.startTime) / (ENVELOPE_FRAME_MS / 1000));
+  // Past the clause's end = the pause before the next one: mouth closed.
+  if (frame >= seg.envelope.length) return 0;
+  const amp = seg.envelope[Math.max(0, frame)] ?? 0;
   // RMS of speech sits ~0..0.3; scale into a mouth opening.
   return Math.max(0, Math.min(0.06 + amp * 3.2, 1));
 }
@@ -89,10 +103,16 @@ let voiceGeneration = 0;
 function hush(): void {
   voiceGeneration++;
   synthInFlight = false;
-  current?.stop();
-  current = null;
-  playback = null;
+  stopQueued();
   useUiStore.getState().setPetSpeaking(false);
+}
+
+/// Silence every clause already scheduled.
+function stopQueued(): void {
+  const playing = queued;
+  queued = [];
+  segments = [];
+  for (const src of playing) src.stop();
 }
 
 /// Whether a clip started at `generation` may still sound on this surface.
@@ -110,7 +130,7 @@ export function handlePetExpress(item: UiEventOf<'pet_express'>): void {
   console.info(`[pet] express emotion=${emotion ?? '-'} action=${action ?? '-'}`);
 
   // Already speaking → the gesture rides the current speech immediately.
-  if (current) {
+  if (queued.length > 0) {
     useUiStore.getState().pushPetExpress(emotion, action);
     return;
   }
@@ -142,7 +162,8 @@ export function handlePetSpeak(item: UiEventOf<'pet_speak'>): void {
   }
   // Keep her in thinking until the voice actually starts (synth lags a few
   // seconds); the bubble, voice, and any held gesture all land together then.
-  void play(text, emotion);
+  const chunks = (item.data?.chunks as SpokenChunk[] | undefined) ?? [];
+  void play(text, emotion, chunks.length > 0 ? chunks : [{ text, pause_ms: 0 }]);
 }
 
 /// Her voice was turned off or on (`/mute`, her Voice tool, Settings). Every
@@ -161,11 +182,30 @@ function showWords(text: string, emotion: string): void {
   flushExpress();
 }
 
-async function play(text: string, emotion: string): Promise<void> {
+/// One clause's audio, over the data channel (the WAV comes back as bytes).
+async function fetchClause(text: string): Promise<ArrayBuffer> {
+  const resp = await fetch('/api/tts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  });
+  if (!resp.ok) throw new Error(`tts ${resp.status}`);
+  return resp.arrayBuffer();
+}
+
+/// How long the bubble must stay at least, before the line's real length is
+/// known: its characters at a slow reading pace, plus every pause.
+function estimateLineMs(chunks: SpokenChunk[]): number {
+  return chunks.reduce((ms, c) => ms + c.text.length * BUBBLE_MS_PER_CHAR + c.pause_ms, 0);
+}
+
+async function play(text: string, emotion: string, chunks: SpokenChunk[]): Promise<void> {
   // Speech is coming → hold any pending gesture for the voice onset (not the
   // short silent-gesture fallback), and keep her in thinking until then.
   synthInFlight = true;
-  const generation = voiceGeneration;
+  // A new line supersedes any line still being made: its remaining clauses
+  // stop scheduling, and what is sounding stops when this line's audio starts.
+  const generation = ++voiceGeneration;
   if (pendingTimer !== undefined) {
     clearTimeout(pendingTimer);
     pendingTimer = undefined;
@@ -178,48 +218,68 @@ async function play(text: string, emotion: string): Promise<void> {
     useUiStore.getState().setPetThinking(false);
     useUiStore.getState().setPetSpeaking(true); // talking body loop while the voice plays
     // The bubble must outlive the voice: floor its dismiss countdown at the
-    // clip's real duration (plus a beat) — the reading-time formula alone
+    // line's (estimated) duration plus a beat — the reading-time formula alone
     // under-shoots spoken Chinese.
     useUiStore.getState().showYinyueSpeech(text, emotion, audioMs + 2500);
     flushExpress();
   };
 
+  let started = false;
+  let lineDone = false;
+  // The talking loop ends with the line's last clause, not with a gap between
+  // clauses while the next one is still being made.
+  const settle = (src?: AudioBufferSourceNode) => {
+    if (src) queued = queued.filter((q) => q !== src);
+    if (lineDone && queued.length === 0 && generation === voiceGeneration) {
+      segments = [];
+      useUiStore.getState().setPetSpeaking(false);
+    }
+  };
+
   try {
-    // Over the data channel: the WAV comes back as bytes (base64 on the wire).
-    const resp = await fetch('/api/tts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
-    });
-    if (!resp.ok) throw new Error(`tts ${resp.status}`);
-    const bytes = await resp.arrayBuffer();
-
     const ctx = (audioCtx ??= new AudioContext());
-    if (ctx.state === 'suspended') await ctx.resume();
-    const decoded = await ctx.decodeAudioData(bytes);
-    // The lock moved (or she was muted) while the line was synthesized: the
-    // surface that holds her now speaks; this one stays quiet.
-    if (!mayStillSpeak(generation)) return;
-
-    current?.stop(); // cut off any clip still playing
-    const src = ctx.createBufferSource();
-    src.buffer = decoded;
-    src.connect(ctx.destination);
-
-    playback = { envelope: computeRmsEnvelope(decoded), startTime: ctx.currentTime };
-    current = src;
-    src.onended = () => {
-      if (current === src) {
-        current = null;
-        playback = null;
-        useUiStore.getState().setPetSpeaking(false); // voice done → drop the talking loop
+    let next = fetchClause(chunks[0].text);
+    let queueEnd = 0;
+    for (let i = 0; i < chunks.length; i++) {
+      const bytes = await next;
+      // The lock moved, she was muted, or a newer line began while this clause
+      // was made: the newer owner speaks; this line stays quiet.
+      if (!mayStillSpeak(generation)) return;
+      // Pipeline: the next clause is made while this one decodes and plays.
+      if (i + 1 < chunks.length) {
+        next = fetchClause(chunks[i + 1].text);
+        next.catch(() => undefined); // awaited below; never an unhandled rejection
       }
-    };
-    onAudioStart(decoded.duration * 1000); // bubble + gesture land exactly as the voice begins
-    src.start();
+      if (ctx.state === 'suspended') await ctx.resume();
+      const decoded = await ctx.decodeAudioData(bytes);
+      if (!mayStillSpeak(generation)) return;
+
+      if (!started) {
+        stopQueued(); // cut off the previous line, if still sounding
+        queueEnd = ctx.currentTime;
+      }
+      const at = Math.max(ctx.currentTime, queueEnd);
+      const src = ctx.createBufferSource();
+      src.buffer = decoded;
+      src.connect(ctx.destination);
+      src.onended = () => settle(src);
+      src.start(at);
+      queued.push(src);
+      segments.push({ envelope: computeRmsEnvelope(decoded), startTime: at });
+      queueEnd = at + decoded.duration + chunks[i].pause_ms / 1000;
+
+      if (!started) {
+        started = true;
+        onAudioStart(Math.max(decoded.duration * 1000, estimateLineMs(chunks)));
+      }
+    }
   } catch (err) {
-    // TTS failed — show text, leave thinking, fire the gesture; no audio so no talking loop.
     console.error('[yinyue] speak failed', err);
-    showWords(text, emotion);
+    // Nothing sounded yet → her words, no audio, no talking loop. Mid-line →
+    // the bubble is up; she simply stops after what was said.
+    if (!started && mayStillSpeak(generation)) showWords(text, emotion);
+  } finally {
+    lineDone = true;
+    settle();
   }
 }

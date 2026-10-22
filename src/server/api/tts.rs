@@ -9,10 +9,12 @@
 //! [`ServerState`](crate::server::ServerState) so it loads once, not per
 //! request — `SystemSayProvider` is stateless and simply ignored by that rule.
 //!
-//! Returns one COMPLETE WAV clip, not a stream. The caller needs the whole
-//! buffer anyway: the web surface decodes it and computes an amplitude
-//! envelope from the decoded samples to drive lip-sync, which cannot be done
-//! incrementally. Chunked synthesis would mean an incremental envelope too.
+//! Returns one COMPLETE WAV clip, not a stream. A long line is cut into short
+//! clauses ([`super::tts_text`]) — synthesized one by one and joined with
+//! their pauses — because the GPU voice drifts on long lines. The web surface
+//! streams by asking for each clause itself: the `pet_speak` event carries the
+//! clauses, the surface plays the first while the next is made, and a
+//! one-clause request here is just that clause.
 
 use std::sync::Arc;
 
@@ -93,14 +95,7 @@ const VOICE_ZH: &str = "zf_xiaoxiao"; // Mandarin female
 /// mix scripts inside one utterance, so a mixed line follows its Han content
 /// (she is likelier to be answering in Chinese than naming one English word).
 fn voice_for(text: &str) -> &'static str {
-    let has_han = text.chars().any(|c| {
-        matches!(c as u32,
-            0x4E00..=0x9FFF   // CJK Unified Ideographs
-            | 0x3400..=0x4DBF // Extension A
-            | 0xF900..=0xFAFF // Compatibility Ideographs
-        )
-    });
-    if has_han {
+    if super::tts_text::han_count(text) > 0 {
         VOICE_ZH
     } else {
         VOICE_EN
@@ -362,6 +357,31 @@ impl TtsProvider for KokoroProvider {
     }
 }
 
+/// The whole line as one clip: its spoken copy, clause by clause, each
+/// followed by its pause. A one-clause line goes straight through.
+async fn speak_line(
+    tts: &dyn TtsProvider,
+    text: &str,
+    voice: Option<&str>,
+) -> anyhow::Result<Vec<u8>> {
+    let started = std::time::Instant::now();
+    let chunks = super::tts_text::chunks(text);
+    if let [only] = chunks.as_slice() {
+        return tts.synthesize(&only.text, voice).await;
+    }
+    let mut parts = Vec::with_capacity(chunks.len());
+    for chunk in &chunks {
+        let wav = tts.synthesize(&chunk.text, voice).await?;
+        parts.push((super::tts_wav::decode(&wav)?, chunk.pause_ms));
+    }
+    tracing::info!(
+        "[tts] {} clauses in {} ms",
+        chunks.len(),
+        started.elapsed().as_millis()
+    );
+    Ok(super::tts_wav::encode(&super::tts_wav::join(&parts)))
+}
+
 /// POST /api/tts — `{ text, voice? }` → `audio/wav` bytes.
 pub(crate) async fn tts_handler(
     State(state): State<Arc<ServerState>>,
@@ -381,7 +401,7 @@ pub(crate) async fn tts_handler(
         }
     };
 
-    match state.tts.synthesize(&req.text, voice.as_deref()).await {
+    match speak_line(state.tts.as_ref(), &req.text, voice.as_deref()).await {
         Ok(wav) => (StatusCode::OK, [(header::CONTENT_TYPE, "audio/wav")], wav).into_response(),
         Err(e) => {
             tracing::warn!("[tts] synthesis failed: {e}");

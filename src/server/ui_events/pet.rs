@@ -20,6 +20,7 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
             pet(format!("pet-speak-{seq}"), "pet_speak")
                 .text(text.clone())
                 .data(PetSpeakData {
+                    chunks: spoken_chunks(&text, voice),
                     text,
                     emotion,
                     voice,
@@ -31,4 +32,12 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
         ),
         _ => None,
     }
+}
+
+/// The clauses her voice speaks; none when the voice is off.
+fn spoken_chunks(text: &str, voice: bool) -> Vec<crate::server::api::tts_text::SpokenChunk> {
+    if !voice {
+        return Vec::new();
+    }
+    crate::server::api::tts_text::chunks(text)
 }

@@ -56,8 +56,11 @@ const VENVS: [(&str, &[&str]); 3] = [
 ];
 
 /// The TTS voice model the `tts` venv serves; warmed into the shared HF
-/// cache so first playback never downloads, then stamped.
-pub const TTS_MODEL: &str = "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-4bit";
+/// cache so first playback never downloads, then stamped. bf16, not the
+/// 4-bit build:
+/// on the same 35 takes (2026-10-22) the 4-bit voice drifted slow on 7,
+/// bf16 on none, and misread up to 15% of a line vs 4.7%.
+pub const TTS_MODEL: &str = "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16";
 
 /// The picture model the `pictures` venv runs: FLUX.2 klein 4B, 4-bit,
 /// in mflux's own weight layout (only that layout loads pre-quantized;
@@ -75,7 +78,8 @@ pub const PICTURE_MODEL: &str = "ar9av/FLUX.2-klein-4B-mflux-4bit";
 /// A local-model lane and the machine it needs. A lane is an engine
 /// capability (voice, pictures), never an app. Both run on MLX, so both
 /// are Apple-Silicon-only. The thresholds are measurements from 2026-09-15:
-/// the voice sidecar peaks at 2.5 GB resident, a 512² picture at 6.9 GB;
+/// the voice sidecar peaks at 2.5 GB resident (2.6 GB on the bf16 voice,
+/// 2026-10-22), a 512² picture at 6.9 GB;
 /// beside the engine and a browser an 8 GB Mac carries neither, a 16 GB
 /// Mac carries both. Disk is the download plus unpack headroom.
 #[derive(Clone, Copy, Debug, serde::Serialize)]
@@ -376,7 +380,7 @@ pub async fn download_slot() -> tokio::sync::MutexGuard<'static, ()> {
 }
 
 /// Boot runs every stage the lane gate admits — voice (venv + model,
-/// ~2.1 GB) and pictures (venv + ~4.3 GB model) — so neither waits for
+/// ~2.8 GB on bf16) and pictures (venv + ~4.3 GB model) — so neither waits for
 /// its first use. Python and the tools venv start at once (small, and
 /// skills call them on a fresh install's first turn); the lane stages
 /// wait for `quiet`. `progress` receives each stage payload; the server
