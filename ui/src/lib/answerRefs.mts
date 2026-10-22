@@ -82,6 +82,12 @@ function splitDescendants(node: MdNode, pictures: string[]): void {
 
 const FOLLOWED = new Set(['paragraph', 'heading']);
 
+function onlyPictures(block: MdNode): boolean {
+  return (block.children ?? []).every((c) =>
+    c.type === 'text' ? !c.value?.trim() : c.type === 'lgRef' && isPictureId(c.data?.hProperties?.dataRef ?? ''),
+  );
+}
+
 function transform(node: MdNode): void {
   if (!node.children) return;
   const next: MdNode[] = [];
@@ -90,6 +96,8 @@ function transform(node: MdNode): void {
     if (FOLLOWED.has(child.type)) {
       const pictures: string[] = [];
       splitDescendants(child, pictures);
+      // A block of nothing but pictures is the grid alone.
+      if (pictures.length && onlyPictures(child)) next.pop();
       if (pictures.length) next.push(picturesNode(pictures));
       continue;
     }

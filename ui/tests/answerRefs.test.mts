@@ -31,6 +31,15 @@ test('a list item keeps its pictures under its own words', () => {
   assert.deepEqual(items[1], { listItem: [{ paragraph: ['Boil'] }] });
 });
 
+test('a paragraph of nothing but pictures is the grid alone', () => {
+  const t = tree('Look:\n\n[turn1image1] [turn1image2]\n\nDone.');
+  assert.deepEqual(t.children!.map(shape), [
+    { paragraph: ['Look:'] },
+    'lg-pictures:turn1image1 turn1image2',
+    { paragraph: ['Done.'] },
+  ]);
+});
+
 test('other brackets and code are left alone', () => {
   const t = tree('See [notes] and `[turn1image1]` and [turn1news1].');
   assert.deepEqual(t.children!.map(shape), [
