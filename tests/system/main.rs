@@ -10,6 +10,7 @@
 
 mod fixtures;
 mod met;
+mod pictures;
 mod presence;
 mod prompt;
 mod sessions;

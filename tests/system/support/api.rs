@@ -50,6 +50,17 @@ impl Api {
         body(resp, path).await
     }
 
+    pub async fn delete(&self, path: &str, payload: Value) -> Value {
+        let resp = self
+            .client
+            .delete(format!("{}{path}", self.base))
+            .json(&payload)
+            .send()
+            .await
+            .unwrap_or_else(|e| panic!("DELETE {path}: {e}"));
+        body(resp, path).await
+    }
+
     /// `POST /api/sessions` → the new session's id.
     pub async fn create_session(&self, payload: Value) -> String {
         let resp = self.post("/api/sessions", payload).await;
