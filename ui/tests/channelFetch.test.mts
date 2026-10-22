@@ -114,3 +114,10 @@ test('a text reply keeps its status and type; a bodiless status has no body', as
   assert.deepEqual(await resp.json(), { error: 'gone' });
   assert.equal(toResponse({ status: 204, body: '' }).status, 204);
 });
+
+test('an empty reply is no body, so a bare-status endpoint resolves (found 2026-10-22: Rename threw)', async () => {
+  const resp = toResponse({ status: 200, content_type: '', body: '' });
+  assert.equal(resp.status, 200);
+  assert.equal(resp.headers.get('content-type'), null);
+  assert.equal(await resp.text(), '');
+});

@@ -113,6 +113,14 @@ function fromBase64(b64: string): Uint8Array {
  *  bytes intact when they came as base64. */
 export function toResponse(reply: ProxyReply): Response {
   const status = reply.status || 200;
+  // An empty reply is no body, typed only as the engine typed it. A handler
+  // that answers a bare status (`StatusCode::OK`) sends neither, and labelled
+  // JSON its empty body made the caller's `resp.json()` throw — Rename in the
+  // session list "failed" on every save.
+  if (reply.body === '') {
+    const own = reply.content_type ? { 'Content-Type': reply.content_type } : undefined;
+    return new Response(null, { status, headers: own });
+  }
   const headers = { 'Content-Type': reply.content_type || 'application/json' };
   if (NO_BODY.has(status)) return new Response(null, { status, headers });
   const body = reply.body_encoding === 'base64'

@@ -28,6 +28,8 @@
 - **Composer** — `@` addresses Ling or Yinyue, `/f` opens the file picker.
 - **All WebRTC** — the web UI and skill pages have no HTTP data path; the UI
   reconnects when ICE stays down.
+- **Rename in the session list saves cleanly** — an empty reply over the
+  data channel is no body, so a save that answers a bare status resolves.
 - **Settings** regrouped (Agents, Session + Memory); Anthropic is API-key
   only.
 - **Linux** binaries build on Ubuntu 24.04 and need glibc 2.39+ (Ubuntu

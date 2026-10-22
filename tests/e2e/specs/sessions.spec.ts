@@ -43,6 +43,11 @@ test('switching sessions shows each one its own rows', async ({ page, world, htt
 // selectedProjectRoot was '' (a session opened by link, not picked from the
 // list), a root the server never needed.
 test('a session renamed in the list keeps its name after a reload', async ({ page, world, httpRequests }) => {
+  // Found 2026-10-22: the save's empty 200 reached the store labelled JSON,
+  // `resp.json()` threw, and only the server's next list push showed the new
+  // name — a race the gate lost on a loaded Mac. The save itself must land.
+  const renameErrors: string[] = [];
+  page.on('console', (m) => { if (m.type() === 'error' && m.text().includes('renaming')) renameErrors.push(m.text()); });
   await page.goto(`${world.url}/?session=${FERRY}`);
   await expectWebRtc(page, httpRequests);
   await expect(row(page, FERRY)).toContainText('Ferry notes');
@@ -52,6 +57,7 @@ test('a session renamed in the list keeps its name after a reload', async ({ pag
   await box.fill('Sunday ferries');
   await box.press('Enter');
   await expect(row(page, FERRY)).toContainText('Sunday ferries', { timeout: 5_000 });
+  expect(renameErrors).toEqual([]);
 
   await page.reload();
   await expectWebRtc(page, httpRequests);
