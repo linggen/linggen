@@ -527,16 +527,19 @@ mod tests {
     }
 
     /// gpt-6-luna's own citation markers, split across deltas as a stream
-    /// sends them, never reach the reply.
+    /// sends them, reach the reply as the plain numbers alone.
     #[test]
-    fn citation_markers_stay_out_of_the_reply() {
+    fn citation_markers_reach_the_reply_as_plain_numbers() {
         let events = [
             delta(0, "msg_a", "可以在 Canada 申请。\u{e200}cite\u{e202}turn2"),
             delta(0, "msg_a", "search1\u{e202}turn2search2\u{e201}"),
             delta(0, "msg_a", "下一步是填表。"),
             json!({"type": "response.completed", "response": {}}),
         ];
-        assert_eq!(read(&events, false).0, "可以在 Canada 申请。下一步是填表。");
+        assert_eq!(
+            read(&events, false).0,
+            "可以在 Canada 申请。[turn2search1][turn2search2]下一步是填表。"
+        );
     }
 
     #[test]
