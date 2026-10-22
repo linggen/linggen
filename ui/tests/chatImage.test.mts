@@ -18,3 +18,7 @@ test("a page's turn takes an agent id as sender and only string pictures", () =>
   assert.deepEqual(pageImages('a'), []);
   assert.equal(pageImages(Array(12).fill('x')).length, 8);
 });
+
+test("an answer's picture past the cache cap loads from its address", () => {
+  assert.deepEqual(imageSource('https://img.example/k.jpg'), { kind: 'inline', src: 'https://img.example/k.jpg' });
+});

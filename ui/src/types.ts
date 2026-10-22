@@ -143,6 +143,8 @@ export interface SessionState {
   user_stories: [PersistedMeta, string] | null;
   tasks: [PersistedMeta, string][];
   messages: [PersistedMeta, string][];
+  /** What the answers' `[turn2image1]` numbers resolve to (lib/answerRefs.mts). */
+  refs?: Record<string, import('./lib/answerRefs.mts').AnswerRef>;
   agent_status?: string;
   plan_status?: string;
 }
