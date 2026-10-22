@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { Wrench } from 'lucide-react';
 import type { SkillInfoFull } from '../types';
 import { sortByUsage } from '../lib/skillUsage';
+import { SkeletonRows } from './Skeleton';
 
 const sourceBadgeCls: Record<string, string> = {
   Global: 'bg-purple-500/10 text-purple-600 dark:text-purple-400',
@@ -71,13 +72,16 @@ function SkillRow({ skill, projectName, onClick }: {
 
 export const SkillsCard: React.FC<{
   skills: SkillInfoFull[];
+  /** The skill list has arrived — until then a shimmer, not "No skills loaded". */
+  loaded: boolean;
   projectRoot?: string;
   onClickSkill?: (skill: SkillInfoFull) => void;
-}> = ({ skills, projectRoot, onClickSkill }) => {
+}> = ({ skills, loaded, projectRoot, onClickSkill }) => {
   const projectSkills = useMemo(() => sortByUsage(skills.filter((s) => !isGlobalOrCompat(s))), [skills]);
   const globalSkills = useMemo(() => sortByUsage(skills.filter(isGlobalOrCompat)), [skills]);
   const projectName = projectRoot ? projectRoot.split('/').filter(Boolean).pop() || 'Project' : 'Project';
 
+  if (!loaded) return <SkeletonRows rows={4} rowClass="h-12 rounded-lg" className="px-2 py-2" testId="skills-loading" />;
   if (skills.length === 0) {
     return (
       <div className="p-4 text-center text-[12px] text-slate-400 italic">

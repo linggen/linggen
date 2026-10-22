@@ -16,6 +16,8 @@ interface SessionState {
   sessions: SessionInfo[];
   /** Unified list of ALL sessions across projects, missions, skills. */
   allSessions: SessionInfo[];
+  /** The engine has pushed `allSessions` once — until then the list is loading, not empty. */
+  allSessionsLoaded: boolean;
   activeSessionId: string | null;
   isMissionSession: boolean;
   activeMissionId: string | null;
@@ -52,6 +54,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     : '',
   sessions: [],
   allSessions: [],
+  allSessionsLoaded: false,
   // Deep link: `/?session=<id>` opens that session directly — skill pages
   // link into mission runs this way (the memory calendar's "dreaming in
   // mission" chip). Compact/embed mode has always relied on this param;

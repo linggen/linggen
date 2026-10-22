@@ -72,10 +72,12 @@ export const MainApp: React.FC = () => {
     isMissionSession: s.isMissionSession,
     isSkillSession: s.isSkillSession,
   })));
-  const { agents, models, skills, selectedAgent, agentStatusText, defaultModels, ollamaStatus, reloadingSkills, agentTreesByProject } = useServerStore(useShallow((s) => ({
+  const { agents, models, skills, modelsLoaded, skillsLoaded, selectedAgent, agentStatusText, defaultModels, ollamaStatus, reloadingSkills, agentTreesByProject } = useServerStore(useShallow((s) => ({
     agents: s.agents,
     models: s.models,
     skills: s.skills,
+    modelsLoaded: s.modelsLoaded,
+    skillsLoaded: s.skillsLoaded,
     selectedAgent: s.selectedAgent,
     agentStatusText: s.agentStatusText,
     defaultModels: s.defaultModels,
@@ -260,7 +262,7 @@ export const MainApp: React.FC = () => {
   }, [sendChatMessage]);
 
   const infoPanelProps = {
-    models, skills, agents: mainAgents, activeModelId,
+    models, skills, modelsLoaded, skillsLoaded, agents: mainAgents, activeModelId,
     defaultModels, ollamaStatus, reloadingSkills,
     projectRoot: selectedProjectRoot,
     onToggleDefault: agentStore.toggleDefaultModel,

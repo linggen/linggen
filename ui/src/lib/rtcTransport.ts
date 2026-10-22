@@ -20,6 +20,7 @@ import type {
 import { connection } from './transport';
 import type { ProxyReply } from './channelFetch.mts';
 import { WhipSignaling, type SignalingStrategy } from './signaling';
+import { gatherNeed, waitForIceGathering } from './iceGather.mts';
 
 /** Configuration for the WebRTC transport. */
 export interface RtcTransportConfig {
@@ -282,15 +283,18 @@ export class RtcTransport implements Transport {
         }
       };
 
-      // Create offer, gather all ICE candidates (full ICE, no trickle)
-      console.log('[WebRTC] creating offer...');
-      const offer = await this.pc.createOffer();
-      await this.pc.setLocalDescription(offer);
-      await this.waitForIceGathering();
-      console.log('[WebRTC] ICE gathering complete, exchanging SDP...');
+      // Create offer, bundle ICE candidates (full ICE, no trickle). The wait
+      // is armed before setLocalDescription so no candidate slips past it.
+      const signaling = this.config.signaling ?? new WhipSignaling();
+      const pc = this.pc;
+      const offer = await pc.createOffer();
+      const gathered = waitForIceGathering(pc, { need: gatherNeed(iceServers, signaling.remote) });
+      await pc.setLocalDescription(offer);
+      const g = await gathered;
+      const inSdp = (pc.localDescription?.sdp.match(/^a=candidate:/gm) ?? []).length;
+      console.log(`[WebRTC] ICE gathered in ${g.ms} ms (${g.end}, ${g.candidates} candidates, ${inSdp} in offer), exchanging SDP...`);
 
       // Exchange SDP via the configured signaling strategy
-      const signaling = this.config.signaling ?? new WhipSignaling();
       const controller = new AbortController();
       this.signalingAbort = controller;
       const answerSdp = await signaling.exchange(
@@ -305,25 +309,6 @@ export class RtcTransport implements Transport {
       console.error('WebRTC connection failed:', err);
       this.handleDisconnect();
     }
-  }
-
-  private waitForIceGathering(): Promise<void> {
-    return new Promise((resolve) => {
-      if (!this.pc) { resolve(); return; }
-      if (this.pc.iceGatheringState === 'complete') { resolve(); return; }
-
-      const timeout = setTimeout(() => {
-        // If gathering hasn't completed in 5s, proceed with what we have
-        resolve();
-      }, 5000);
-
-      this.pc.onicegatheringstatechange = () => {
-        if (this.pc?.iceGatheringState === 'complete') {
-          clearTimeout(timeout);
-          resolve();
-        }
-      };
-    });
   }
 
   // --- Internal: data channels ---

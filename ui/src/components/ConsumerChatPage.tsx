@@ -173,7 +173,7 @@ export const ConsumerChatPage: React.FC = () => {
               badge={`${filteredSkills.length}`}
               defaultOpen
             >
-              <SkillsCard skills={filteredSkills} onClickSkill={handleClickSkill} />
+              <SkillsCard skills={filteredSkills} loaded onClickSkill={handleClickSkill} />
             </CollapsibleCard>
           </aside>
         )}

@@ -11,6 +11,9 @@ import type { AgentInfo, ManagementTab, ModelInfo, OllamaPsResponse, SkillInfo }
 export interface InfoPanelProps {
   models: ModelInfo[];
   skills: SkillInfo[];
+  /** Each list has arrived — until then its card shimmers and shows no count. */
+  modelsLoaded: boolean;
+  skillsLoaded: boolean;
   agents: AgentInfo[];
   activeModelId?: string;
   defaultModels: string[];
@@ -25,24 +28,24 @@ export interface InfoPanelProps {
 }
 
 export const InfoPanel: React.FC<InfoPanelProps> = ({
-  models, skills, agents, activeModelId,
+  models, skills, modelsLoaded, skillsLoaded, agents, activeModelId,
   defaultModels, ollamaStatus, reloadingSkills,
   projectRoot, onToggleDefault, onChangeReasoningEffort, onReloadSkills,
   onOpenSettings, onClickSkill,
 }) => (
   <>
-    <CollapsibleCard title="MODELS" icon={<Sparkles size={12} />} iconColor="text-purple-500" badge={`${models.length}`} defaultOpen
+    <CollapsibleCard title="MODELS" icon={<Sparkles size={12} />} iconColor="text-purple-500" badge={modelsLoaded ? `${models.length}` : undefined} defaultOpen
       headerAction={
         <button onClick={() => onOpenSettings('models')}
           className="p-1 hover:bg-slate-100 dark:hover:bg-white/5 rounded transition-colors text-slate-400 hover:text-blue-500" title="Manage Models">
           <Settings size={12} />
         </button>
       }>
-      <ModelsCard models={models} agents={agents} ollamaStatus={ollamaStatus}
+      <ModelsCard models={models} loaded={modelsLoaded} agents={agents} ollamaStatus={ollamaStatus}
         activeModelId={activeModelId}
         defaultModels={defaultModels} onToggleDefault={onToggleDefault} onChangeReasoningEffort={onChangeReasoningEffort} />
     </CollapsibleCard>
-    <CollapsibleCard title="SKILLS" icon={<Zap size={12} />} iconColor="text-amber-500" badge={`${skills.length} loaded`} defaultOpen
+    <CollapsibleCard title="SKILLS" icon={<Zap size={12} />} iconColor="text-amber-500" badge={skillsLoaded ? `${skills.length} loaded` : undefined} defaultOpen
       headerAction={
         <div className="flex items-center gap-0.5">
           <button onClick={onReloadSkills} disabled={reloadingSkills}
@@ -55,7 +58,7 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
           </button>
         </div>
       }>
-      <SkillsCard skills={skills} projectRoot={projectRoot} onClickSkill={onClickSkill} />
+      <SkillsCard skills={skills} loaded={skillsLoaded} projectRoot={projectRoot} onClickSkill={onClickSkill} />
     </CollapsibleCard>
   </>
 );
