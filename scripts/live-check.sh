@@ -456,7 +456,8 @@ fi
 
 MODEL_CASES=("(a) shared table: Ling Looks, @银月 answers from it" "(b) @银月 joins a chat; her Write asks; Deny writes nothing" \
   "(d) forced shared compaction" "(e) two members on two models" \
-  "(g) plain chat: Ling answers in full, a greeting stays short")
+  "(g) plain chat: Ling answers in full, a greeting stays short" \
+  "(h) pictures in answers: shopping + how-to show real, resolved pictures")
 if [ "$MODEL" = 0 ]; then
   section "Model cases"
   for c in "${MODEL_CASES[@]}" "(f) app moment at a table"; do skip "$c" "--no-model"; done
@@ -683,6 +684,60 @@ PY
   read -r CJK WORDS CHARS <<<"$(printf '%s' "$SAID" | answer_size)"
   [ -n "$SAID" ] && [ "$CHARS" -le 300 ]
   check "(g) \"hi\" gets a short answer" $? "$CHARS chars (want 1–300): ${SAID:0:160}" "$CHARS chars"
+
+  # ── (h) ──────────────────────────────────────────────────────────────────
+  # Sources and pictures in answers (doc/chat-spec.md): a shopping question
+  # and a how-to question each answer with real pictures, and every number
+  # the answer writes resolves to a tool result in the session's table
+  # (refs.jsonl) — a picture is never made up. Each runs in a fresh plain
+  # session (memory withheld).
+  section "${MODEL_CASES[5]}"
+  picture_turn() { # message → "<sid>" of the finished session ("" when it did not finish)
+    local sid m
+    sid="$(new_session "$(jq -nc --argjson w "$NO_MEMORY" '{title:"live-check pictures"} + $w')")"
+    [ -n "$sid" ] || return 0
+    m="$(log_mark)"
+    chat "$sid" "" "$1" >/dev/null
+    finish_ling "$sid" "$m" || return 0
+    sleep 2
+    printf '%s' "$sid"
+  }
+  pictures_verdict() { # sid → "ok <n shown> <n written>" or "bad <reason>"
+    get "/api/workspace/state?project_root=&session_id=$1" | python3 -c '
+import json, re, sys, os
+state = json.load(sys.stdin)
+sid, lg = sys.argv[1], sys.argv[2]
+table = {}
+try:
+    for line in open(os.path.join(lg, "sessions", sid, "refs.jsonl")):
+        if line.strip():
+            r = json.loads(line); table[r["id"]] = r
+except FileNotFoundError:
+    pass
+said = " ".join(t for m, t in state.get("messages", []) if m.get("from") == "ling")
+written = sorted(set(re.findall(r"\[(turn\d+image\d+)\]", said)))
+refs = state.get("refs") or {}
+shown = [i for i, r in refs.items() if r.get("kind") == "picture" and r.get("src")]
+own = re.findall(r"!\[[^\]]*\]\(https?://", said)
+if own:
+    print("bad the answer wrote its own picture URL:", own[0]); sys.exit()
+unknown = [i for i in written if i not in table]
+if unknown:
+    print("bad numbers no tool returned:", " ".join(unknown)); sys.exit()
+if not shown:
+    print("bad no picture shown (written:", " ".join(written) or "none", ")"); sys.exit()
+print("ok", len(shown), len(written))
+' "$1" "$LG"
+  }
+  H_QUESTIONS=("I want a gooseneck electric kettle for pour-over coffee, under \$100. Which two would you pick, and what do they look like?"
+    "How do I replace the blade on a Fiskars paper trimmer? Walk me through the steps.")
+  for q in "${H_QUESTIONS[@]}"; do
+    SID_H="$(picture_turn "$q")"
+    if [ -z "$SID_H" ]; then fail "(h) ${q:0:40}…" "the turn did not finish"; continue; fi
+    read -r VERDICT REST <<<"$(pictures_verdict "$SID_H")"
+    [ "$VERDICT" = ok ]
+    check "(h) real, resolved pictures: ${q:0:40}…" $? "$REST" "$REST (shown, written)"
+  done
 
   [ -n "$BEAT_PID" ] && { kill "$BEAT_PID" 2>/dev/null; BEAT_PID=""; }
 
