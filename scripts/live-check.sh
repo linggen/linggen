@@ -286,6 +286,10 @@ elif cmd == "hidden":         # [HIDDEN] rows since start: who holds them
     print(json.dumps([{"agent": r.get("agent_id"), "from": r.get("from_id")} for r in new if "[HIDDEN]" in r.get("content", "")]))
 elif cmd == "grep":           # rows since start whose content holds args[0]
     print(sum(1 for r in new if args[0] in r.get("content", "")))
+elif cmd == "call_before_answer":  # agent tool → was a call to it made before the agent's last spoken row
+    calls = [i for i, r in enumerate(new) if is_call(r, args[0]) == args[1]]
+    said = [i for i, r in enumerate(new) if not r.get("is_observation") and r.get("from_id") == args[0]]
+    print(json.dumps({"calls": len(calls), "before": bool(calls and said and calls[0] < said[-1]), "said": bool(said)}))
 PY
 }
 
@@ -457,7 +461,8 @@ fi
 MODEL_CASES=("(a) shared table: Ling Looks, @银月 answers from it" "(b) @银月 joins a chat; her Write asks; Deny writes nothing" \
   "(d) forced shared compaction" "(e) two members on two models" \
   "(g) plain chat: Ling answers in full, a greeting stays short" \
-  "(h) pictures in answers: shopping + how-to show real, resolved pictures")
+  "(h) pictures in answers: shopping + how-to show real, resolved pictures" \
+  "(i) plain chat: Ling checks the machine it runs on, and only when asked about it")
 if [ "$MODEL" = 0 ]; then
   section "Model cases"
   for c in "${MODEL_CASES[@]}" "(f) app moment at a table"; do skip "$c" "--no-model"; done
@@ -738,6 +743,30 @@ print("ok", len(shown), len(written))
     [ "$VERDICT" = ok ]
     check "(h) real, resolved pictures: ${q:0:40}…" $? "$REST" "$REST (shown, written)"
   done
+
+  # Ling runs on the person's own computer (2026-10-22): asked about it, it
+  # runs Bash before answering, never "I can't see your Mac" from general
+  # knowledge (it did in about half the runs while Bash read as "for
+  # build/test/git"). A question about the world outside runs no Bash. Open
+  # permission prompts are dismissed, so the case passes on the call itself —
+  # nothing here depends on what the command printed.
+  section "${MODEL_CASES[6]}"
+  call_turn() { # message → {calls, before, said} for Ling's Bash calls
+    local sid m
+    sid="$(new_session "$(jq -nc --argjson w "$NO_MEMORY" '{title:"live-check machine"} + $w')")"
+    [ -n "$sid" ] || { echo '{}'; return 0; }
+    m="$(log_mark)"
+    chat "$sid" "" "$1" >/dev/null
+    finish_ling "$sid" "$m" || { echo '{}'; return 0; }
+    sleep 2
+    rows_py call_before_answer "$sid" 0 ling Bash
+  }
+  O="$(call_turn "How does my Mac's memory work — should I worry about memory pressure?")"
+  expect "(i) a this-machine question: Bash runs before the answer" "$O" \
+    '.before == true' "no Bash call before Ling's answer: $O" "$O"
+  O="$(call_turn "Do I need snow tires in Halifax?")"
+  expect "(i) a world question runs no Bash" "$O" \
+    '.said == true and .calls == 0' "Bash ran, or no answer: $O" "$O"
 
   [ -n "$BEAT_PID" ] && { kill "$BEAT_PID" 2>/dev/null; BEAT_PID=""; }
 

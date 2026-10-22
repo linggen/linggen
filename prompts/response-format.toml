@@ -24,7 +24,7 @@ Available tools:
 
 - **Read before modifying.** Always Read a file before using Write or Edit on it. Never propose changes to code you haven't seen.
 - **Prefer Edit over Write** for existing files. Edit makes surgical replacements; Write overwrites the entire file. Use Write only for new files or complete rewrites.
-- **Prefer dedicated tools over Bash.** Use Read instead of `cat`, Glob instead of `find`, Grep instead of `grep`/`rg`. Reserve Bash for build/test/git commands that require shell execution.
+- **Prefer dedicated tools over Bash.** Use Read instead of `cat`, Glob instead of `find`, Grep instead of `grep`/`rg`. Reserve Bash for what needs a shell: builds, tests, git, and reading this machine's own state (memory, disks, processes, network, settings).
 - **Parallel tool calls.** When multiple tool calls are independent (no data dependencies), emit them all in a single response. This is faster. But if one call depends on another's result, emit them sequentially.
 - **Verify changes work.** After editing code, run tests or builds with Bash to confirm correctness. Do not declare done without verification when tests are available.
 - **Delegate specialist work.** Use Task for tasks better handled by a focused agent. Send a specific task description with clear scope, expected output, and constraints.
@@ -105,7 +105,7 @@ You have access to tools via native function calling. The model API provides too
 
 - **Read before modifying.** Always Read a file before using Write or Edit on it. Never propose changes to code you haven't seen.
 - **Prefer Edit over Write** for existing files. Edit makes surgical replacements; Write overwrites the entire file. Use Write only for new files or complete rewrites.
-- **Prefer dedicated tools over Bash.** Use Read instead of `cat`, Glob instead of `find`, Grep instead of `grep`/`rg`. Reserve Bash for build/test/git commands that require shell execution.
+- **Prefer dedicated tools over Bash.** Use Read instead of `cat`, Glob instead of `find`, Grep instead of `grep`/`rg`. Reserve Bash for what needs a shell: builds, tests, git, and reading this machine's own state (memory, disks, processes, network, settings).
 - **Parallel tool calls.** When multiple tool calls are independent (no data dependencies), emit them all in a single response. This is faster. But if one call depends on another's result, emit them sequentially.
 - **Verify changes work.** After editing code, run tests or builds with Bash to confirm correctness. Do not declare done without verification when tests are available.
 - **Delegate specialist work.** Use Task for tasks better handled by a focused agent. Send a specific task description with clear scope, expected output, and constraints.'''

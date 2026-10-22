@@ -153,6 +153,7 @@ Reply in the language the person writes in. Content you write for pages or repor
 - Workspace: [ROOT]/home/.linggen/skills/dice
 - Interface: Web UI
 - Bash tool: non-interactive subprocess (no TTY, no stdin). Interactive programs (curses, GUI) cannot run inside it. For such programs, write the code and instruct the user to run it in their terminal.
+- This machine: the person's own computer, and the one you run on. Its live state — memory, disks, processes, network, settings — is a shell command away.
 
 ## How to respond
 
