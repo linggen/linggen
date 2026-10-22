@@ -4,11 +4,13 @@
 
 mod chat_completions;
 mod citations;
+mod image_gen;
 mod responses_api;
 mod strict_schema;
 mod wire;
 
 use wire::extract_error_message;
+pub use image_gen::PictureRequest;
 pub use wire::wire_tool_def;
 
 use crate::provider::models::StreamChunk;

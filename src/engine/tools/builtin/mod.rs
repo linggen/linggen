@@ -81,10 +81,11 @@ pub trait Tool: Send + Sync {
         true
     }
 
-    /// The local-model lane this tool runs on, if any. A tool that names
-    /// one is offered only on a machine the lane gate accepts.
-    fn lane(&self) -> Option<&'static crate::runtime::Lane> {
-        None
+    /// True when this machine can run the tool right now (a sign-in, a
+    /// local-model lane). A tool that cannot run is never offered, so the
+    /// model never reaches for it.
+    fn offered(&self) -> bool {
+        true
     }
 
     /// True when an identical later call may be served from the per-run
@@ -207,7 +208,7 @@ pub fn tool_max_duration(name: &str) -> Option<Duration> {
 pub(super) fn model_facing_args_schemas() -> Vec<(String, String, Value)> {
     registry()
         .iter()
-        .filter(|t| t.model_facing())
+        .filter(|t| t.model_facing() && t.offered())
         .map(|t| {
             (
                 t.name().to_string(),
@@ -223,7 +224,7 @@ pub(super) fn model_facing_args_schemas() -> Vec<(String, String, Value)> {
 pub(super) fn model_facing_legacy_entries() -> Vec<Value> {
     registry()
         .iter()
-        .filter(|t| t.model_facing())
+        .filter(|t| t.model_facing() && t.offered())
         .map(|t| t.legacy_schema_entry())
         .collect()
 }

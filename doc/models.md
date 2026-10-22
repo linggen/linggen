@@ -46,6 +46,10 @@ ling account login  # Opens browser → sign in to linggen.dev
 
 The ChatGPT built-ins (`gpt-6.1-sol`, `gpt-6-luna` — Luna is the default) are also present in every install and
 need only a ChatGPT sign-in (Settings → Models → Sign in with ChatGPT).
+The same sign-in draws pictures: `GenerateImage` asks Luna with the
+Responses API's `image_generation` tool (about 30 s a picture, PNG). The
+plan's picture allowance is small and separate from chat; a refusal is
+reported to the model in one line (tool-spec § GenerateImage).
 
 The model is auto-configured. Tokens are stored in `~/.linggen/codex_auth.json` and auto-refresh. To sign out: `ling auth logout`.
 

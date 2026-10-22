@@ -117,18 +117,16 @@ impl ToolRegistry {
             .unwrap_or(false)
     }
 
-    /// `true` if `name` passes the allowed-tools filter (or no filter set)
-    /// and, for a tool bound to a local-model lane, this machine can carry
-    /// that lane — a Mac without the memory is never offered the tool, so
-    /// the model never reaches for what cannot run.
+    /// `true` if `name` passes the allowed-tools filter (or no filter set).
+    /// A built-in this machine cannot run is already left out of the
+    /// schemas (`Tool::offered`).
     fn is_allowed(allowed: Option<&HashSet<String>>, name: &str) -> bool {
-        let listed = match allowed {
+        match allowed {
             // Wildcard (`*`): everything EXCEPT pet-scoped tools (only an agent
             // that lists them explicitly gets those).
             None => !tools::is_pet_scoped(name),
             Some(set) => set.contains(name),
-        };
-        listed && tools::lane_supported_for(name)
+        }
     }
 
     /// Merge built-in and skill tool schemas, filtered by the allowed

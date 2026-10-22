@@ -201,10 +201,7 @@ fn is_own_model(m: &crate::config::ModelConfig) -> bool {
 }
 
 fn chatgpt_signed_in(_: Arc<ServerState>) -> CheckFuture {
-    Box::pin(async {
-        use crate::provider::codex_auth::{codex_auth_file, CodexAuthTokens};
-        Ok(CodexAuthTokens::load(&codex_auth_file()).is_valid())
-    })
+    Box::pin(async { Ok(crate::provider::codex_auth::chatgpt_signed_in()) })
 }
 
 fn account_signed_in(_: Arc<ServerState>) -> CheckFuture {

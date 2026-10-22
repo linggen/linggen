@@ -48,6 +48,15 @@ pub fn render_tool_result(r: &ToolResult) -> String {
                 label(id)
             )
         }
+        ToolResult::Picture {
+            caption,
+            source,
+            seconds,
+            seed,
+            saved,
+            id,
+            ..
+        } => render_picture(caption, source, *seconds, *seed, saved.as_ref(), id),
         ToolResult::Success(msg) => format!("success: {}", msg),
         ToolResult::LockResult { acquired, denied } => {
             format!("lock_result: acquired={:?}, denied={:?}", acquired, denied)
@@ -123,6 +132,32 @@ pub fn render_tool_result(r: &ToolResult) -> String {
             out
         }
     }
+}
+
+/// A drawn picture: who drew it, its number and how to show it — never an
+/// address to write; a skill's own copy is named for the skill's page.
+fn render_picture(
+    caption: &str,
+    source: &str,
+    seconds: f64,
+    seed: Option<u64>,
+    saved: Option<&(String, String)>,
+    id: &str,
+) -> String {
+    let mut out = format!("GenerateImage: drawn by {source} in {seconds:.0} s");
+    if let Some(seed) = seed {
+        out.push_str(&format!(", seed {seed}"));
+    }
+    match id {
+        "" => out.push_str(" — not kept in this conversation, so the chat cannot show it.\n"),
+        id => out.push_str(&format!(
+            "\n[{id}] {caption}\nShow it by writing [{id}] in the answer; never write a link or markdown image for it.\n"
+        )),
+    }
+    if let Some((url, path)) = saved {
+        out.push_str(&format!("The skill's copy: {url} ({path})\n"));
+    }
+    out
 }
 
 /// ` [turn2search1]` after a numbered result's head; nothing unnumbered.

@@ -70,7 +70,10 @@ own world and throws it away:
   actually sent. A member is told apart by its system prompt, so a test says
   "Ling: call Look, then say X; Yinyue: say Y" and gets exactly that; the
   Responses API path runs on fake ChatGPT tokens. An Ollama stub is not built
-  yet.
+  yet. ChatGPT's picture generation (an `image_generation_call` llmposter
+  cannot send) is a loopback stand-in in the test (`tests/system/drawing.rs`);
+  `Setup::image_api` points the engine at it through
+  `LINGGEN_IMAGE_API_URL`.
 - **Snapshots: insta** — system-prompt exports per member, each member's
   built thread, history API output. A change shows as a diff to review.
 - **Web UI: Playwright** against the test engine; Chromium with

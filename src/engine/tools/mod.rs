@@ -12,6 +12,7 @@ pub(crate) mod memory_http;
 mod memory_mcp;
 pub(crate) use memory_mcp::{memory_root, place_of, MemoryPlace};
 mod delegation;
+mod drawing;
 mod search_exec;
 mod tool_helpers;
 mod write_tools;
@@ -61,6 +62,20 @@ pub enum ToolResult {
     Screenshot {
         url: String,
         base64: String,
+        /// Its number in the session (`turn3image1`), once numbered.
+        id: String,
+    },
+    /// A drawn picture (`GenerateImage`). Numbered into the session like a
+    /// screenshot; its bytes are dropped once kept.
+    Picture {
+        base64: String,
+        caption: String,
+        /// Who drew it ("ChatGPT", "this Mac").
+        source: String,
+        seconds: f64,
+        seed: Option<u64>,
+        /// In a skill: the skill's own copy, as (url, path).
+        saved: Option<(String, String)>,
         /// Its number in the session (`turn3image1`), once numbered.
         id: String,
     },
@@ -194,14 +209,6 @@ pub struct AskUserAnswer {
 /// `agent_chat` instead.
 pub(crate) fn is_pet_scoped(name: &str) -> bool {
     matches!(name, "Express")
-}
-
-/// `false` only for a built-in bound to a local-model lane this machine
-/// cannot carry; every other name passes.
-pub(crate) fn lane_supported_for(name: &str) -> bool {
-    builtin::lookup(name)
-        .and_then(|t| t.lane())
-        .is_none_or(crate::runtime::lane_supported)
 }
 
 /// Bridge between the synchronous tool executor and the async server state,
@@ -382,56 +389,6 @@ impl Tools {
     /// with its URL. When the lane is not installed yet the install starts
     /// in the background and the reply says so in one line — a first call
     /// never blocks for a 5 GB download.
-    pub(crate) async fn generate_image(
-        &self,
-        args: builtin::GenerateImageArgs,
-    ) -> Result<ToolResult> {
-        use crate::pictures;
-        let (skill_name, skill_dir) = self.active_skill().cloned().ok_or_else(|| {
-            anyhow::anyhow!("GenerateImage needs an active skill to keep the picture")
-        })?;
-        if let Err(reason) = crate::runtime::lane_gate(&crate::runtime::PICTURES_LANE) {
-            anyhow::bail!("this Mac cannot draw pictures: {reason}");
-        }
-        if !crate::runtime::pictures_ready() {
-            crate::runtime::ensure_pictures_in_background();
-            return Ok(ToolResult::Success(
-                "The picture model is being installed on this Mac (about 5 GB). Try again in a few minutes."
-                    .to_string(),
-            ));
-        }
-        let shape = pictures::Shape::parse(args.shape.as_deref())?;
-        let stem = pictures::safe_stem(&args.name);
-        let reference = match args.reference.as_deref() {
-            Some(r) if !r.trim().is_empty() => Some(pictures::reference_inside(&skill_dir, r)?),
-            _ => None,
-        };
-        let rel = format!("data/pictures/{stem}.png");
-        let rendered = pictures::render(pictures::Request {
-            prompt: args.prompt,
-            out: skill_dir.join(&rel),
-            shape,
-            seed: args.seed.unwrap_or_else(|| {
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs() % 1_000_000)
-                    .unwrap_or(7)
-            }),
-            reference,
-        })
-        .await?;
-        let url = format!("/apps/{skill_name}/{rel}");
-        Ok(ToolResult::Success(
-            serde_json::json!({
-                "url": url,
-                "path": rendered.path,
-                "seconds": rendered.seconds,
-                "seed": rendered.seed,
-            })
-            .to_string(),
-        ))
-    }
-
     pub fn get_manager(&self) -> Option<Arc<AgentManager>> {
         self.manager.clone()
     }

@@ -164,19 +164,23 @@ never writes its own image URL.
   plus name and price for a product) — `refs.jsonl`, see storage-spec. The
   model reads each number beside the thing it names; a picture's address
   stays out of what the model reads.
-- **Where pictures come from.** WebFetch and browser screenshots only.
-  WebFetch returns a page's main image (`og:image`, captioned by the page
-  title, with a declared product's name and price) and its in-text
-  pictures with their captions (`<figcaption>`, else `alt`, else `title`,
-  else the words of the file's name — `move-schwarz-frontal.jpg` → "move
-  schwarz frontal", without hashes, sizes, bare numbers or filler like
-  `img`/`dsc` — else the page title; never the address; icons, logos and
-  vectors skipped). WebSearch is text only (numbered sources): asking
-  Tavily for image descriptions took a search from ~2 s to 10–12 s, past
-  the engine's 15 s timeout on a slow day (2026-10-22). So to show what
-  something looks like, Ling fetches the maker's or a product page. A
-  search that cannot reach its service says WebFetch still opens a known
-  page. Local files are not numbered yet: `Read` has no picture path.
+- **Where pictures come from.** WebFetch, browser screenshots, and
+  pictures `GenerateImage` draws. WebFetch returns a page's main image
+  (`og:image`, captioned by the page title, with a declared product's name
+  and price) and its in-text pictures with their captions (`<figcaption>`,
+  else `alt`, else `title`, else the words of the file's name —
+  `move-schwarz-frontal.jpg` → "move schwarz frontal", without hashes,
+  sizes, bare numbers or filler like `img`/`dsc` — else the page title;
+  never the address; icons, logos and vectors skipped). A drawn picture
+  (ChatGPT on the person's sign-in, else this Mac's FLUX lane) is kept in
+  the session's `images/` at once, like a screenshot, numbered with its
+  prompt as the caption, and has no click-through. WebSearch is text only
+  (numbered sources): asking Tavily for image descriptions took a search
+  from ~2 s to 10–12 s, past the engine's 15 s timeout on a slow day
+  (2026-10-22). So to show what something looks like, Ling fetches the
+  maker's or a product page. A search that cannot reach its service says
+  WebFetch still opens a known page. Local files are not numbered yet:
+  `Read` has no picture path.
 - **The model refers by number.** GPT models use their own citation
   markers; the Responses API stream turns each id inside one into the plain
   form (`\u{e200}i\u{e202}turn2image1\u{e201}` → `[turn2image1]`), so the
