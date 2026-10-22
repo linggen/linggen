@@ -261,6 +261,7 @@ impl Tool for BrowserScreenshotTool {
         Ok(ToolResult::Screenshot {
             url: data_str(&data, "url"),
             base64: data_str(&data, "base64"),
+            id: String::new(),
         })
     }
 }

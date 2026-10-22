@@ -21,8 +21,10 @@ impl Tool for WebSearchTool {
         "Search the web (Tavily: the user's own key from Settings when saved, \
          otherwise Linggen Cloud, which needs linggen.dev sign-in and is \
          metered against the account's monthly pool). Returns titles, URLs, \
-         and snippets. If it reports a key, sign-in, or quota error, do not \
-         retry — tell the user instead."
+         snippets and pictures, each with a number such as [turn2search1] or \
+         [turn2image1]: writing a number in the answer shows that source as a \
+         link, or that picture itself. If it reports a key, sign-in, or quota \
+         error, do not retry — tell the user instead."
     }
     fn tier(&self) -> PermissionMode {
         PermissionMode::Read
@@ -49,8 +51,8 @@ impl Tool for WebSearchTool {
         let args: WebSearchArgs = serde_json::from_value(call.args)
             .map_err(|e| anyhow::anyhow!("invalid args for WebSearch: {}", e))?;
         let max = args.max_results.unwrap_or(5).min(10);
-        let results = match crate::engine::web_search::web_search(&args.query, max).await {
-            Ok(results) => results,
+        let found = match crate::engine::web_search::web_search(&args.query, max).await {
+            Ok(found) => found,
             Err(err) => {
                 let msg = err.to_string();
                 let code = if msg.contains("AUTH_REQUIRED") {
@@ -66,7 +68,8 @@ impl Tool for WebSearchTool {
         };
         Ok(ToolResult::WebSearchResults {
             query: args.query,
-            results,
+            results: found.results,
+            pictures: found.pictures,
         })
     }
 }
@@ -81,7 +84,9 @@ impl Tool for WebFetchTool {
         &["web_fetch"]
     }
     fn description(&self) -> &'static str {
-        "Fetch a URL and return its content as text. HTML tags are stripped. Default max 100KB."
+        "Fetch a URL and return its content as text. HTML tags are stripped. Default max 100KB. \
+         The page and its pictures come with numbers such as [turn2search1] or [turn2image1]: \
+         writing a number in the answer shows that source as a link, or that picture itself."
     }
     fn tier(&self) -> PermissionMode {
         PermissionMode::Read
@@ -113,6 +118,9 @@ impl Tool for WebFetchTool {
             content: result.content,
             content_type: result.content_type,
             truncated: result.truncated,
+            title: result.title,
+            pictures: result.pictures,
+            id: String::new(),
         })
     }
 }

@@ -67,6 +67,8 @@ pub(crate) fn spoken_line(reply: &str) -> Option<String> {
         .map(|p| p.len())
         .sum();
 
+    // Her voice says the words, never a picture's or a source's number.
+    let last = crate::engine::answer_refs::strip_ids(last);
     let mut line = last
         .split('\n')
         .map(str::trim)

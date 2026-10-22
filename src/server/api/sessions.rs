@@ -252,11 +252,17 @@ pub(crate) async fn get_skill_session_state(
         |run| serde_json::json!([run.meta(), ""]),
     );
 
+    let refs = crate::engine::answer_refs::view::refs_for(
+        &state.manager.global_sessions,
+        &session_id,
+        mapped.iter().filter_map(|row| row[1].as_str()),
+    );
     Json(serde_json::json!({
         "active_task": null,
         "user_stories": null,
         "tasks": [],
-        "messages": mapped
+        "messages": mapped,
+        "refs": refs
     }))
     .into_response()
 }

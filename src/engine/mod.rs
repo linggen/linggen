@@ -1,4 +1,5 @@
 pub mod actions;
+pub mod answer_refs;
 pub mod agent;
 mod closing_ask;
 pub(crate) mod cloud_meter;
@@ -6,6 +7,7 @@ mod context;
 mod dispatch;
 pub mod events;
 pub mod mission;
+pub mod page_pictures;
 pub mod permission;
 mod plan;
 pub mod prompt;

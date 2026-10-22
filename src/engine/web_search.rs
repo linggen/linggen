@@ -18,7 +18,37 @@ pub struct WebSearchResult {
     pub title: String,
     pub url: String,
     pub snippet: String,
+    /// Its number in the session (`turn2search1`), once numbered.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub id: String,
 }
+
+/// A picture a web tool found: its address, what it shows, and — when the
+/// page declared a product — the product's name and price.
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
+pub struct WebPicture {
+    pub url: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub caption: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub price: String,
+    /// Its number in the session (`turn2image1`), once numbered.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub id: String,
+}
+
+/// What a search found: the pages, and the pictures the search service
+/// returned beside them.
+#[derive(Debug, Default)]
+pub struct WebSearchFound {
+    pub results: Vec<WebSearchResult>,
+    pub pictures: Vec<WebPicture>,
+}
+
+/// Pictures kept from one search.
+const MAX_PICTURES: usize = 8;
 
 /// Search the web. A Tavily key saved in Settings goes straight to Tavily:
 /// the user chose it, it costs nothing against the account's pool, and it
@@ -28,7 +58,7 @@ pub struct WebSearchResult {
 ///
 /// A failing key is reported, never silently swapped for the cloud — a quiet
 /// fallback would hide that the key the user saved is broken.
-pub async fn web_search(query: &str, max_results: usize) -> Result<Vec<WebSearchResult>> {
+pub async fn web_search(query: &str, max_results: usize) -> Result<WebSearchFound> {
     if let Some(key) = own_tavily_key() {
         return tavily_search(&key, query, max_results).await;
     }
@@ -47,13 +77,43 @@ fn own_tavily_key() -> Option<String> {
     creds.service_key("tavily").map(str::to_string)
 }
 
-/// Search response — `{ results: [{ title, url, content }] }`. Tavily answers
-/// in this shape, and the cloud proxy (`linggensite/functions/api/_lib/search.ts`)
-/// passes it through.
+/// Search response — `{ results: [{ title, url, content }], images: [...] }`.
+/// Tavily answers in this shape, and the cloud proxy
+/// (`linggensite/functions/api/_lib/search.ts`) passes `results` through.
+/// `images` holds `{url, description}` when descriptions were asked for, bare
+/// URLs otherwise.
 #[derive(Debug, Deserialize)]
 struct SearchResponse {
     #[serde(default)]
     results: Vec<SearchItem>,
+    #[serde(default)]
+    images: Vec<ImageItem>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum ImageItem {
+    Bare(String),
+    Described {
+        url: String,
+        #[serde(default)]
+        description: Option<String>,
+    },
+}
+
+impl ImageItem {
+    fn into_picture(self) -> Option<WebPicture> {
+        let (url, caption) = match self {
+            ImageItem::Bare(url) => (url, String::new()),
+            ImageItem::Described { url, description } => (url, description.unwrap_or_default()),
+        };
+        let web = url.starts_with("https://") || url.starts_with("http://");
+        web.then(|| WebPicture {
+            url,
+            caption: caption.trim().to_string(),
+            ..Default::default()
+        })
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -66,11 +126,13 @@ struct SearchItem {
     content: String,
 }
 
-async fn tavily_search(key: &str, query: &str, max_results: usize) -> Result<Vec<WebSearchResult>> {
+async fn tavily_search(key: &str, query: &str, max_results: usize) -> Result<WebSearchFound> {
     let body = serde_json::json!({
         "query": query,
         "max_results": max_results,
         "include_answer": false,
+        "include_images": true,
+        "include_image_descriptions": true,
     });
 
     let resp = HTTP_CLIENT
@@ -108,11 +170,12 @@ async fn cloud_search(
     token: &str,
     query: &str,
     max_results: usize,
-) -> Result<Vec<WebSearchResult>> {
+) -> Result<WebSearchFound> {
     let url = format!("{}/api/search", crate::account::site_url());
     let body = serde_json::json!({
         "query": query,
         "max_results": max_results,
+        "include_images": true,
     });
 
     let resp = HTTP_CLIENT
@@ -142,12 +205,15 @@ async fn cloud_search(
     read_results(resp, max_results).await
 }
 
-async fn read_results(resp: reqwest::Response, max_results: usize) -> Result<Vec<WebSearchResult>> {
+async fn read_results(resp: reqwest::Response, max_results: usize) -> Result<WebSearchFound> {
     let parsed: SearchResponse = resp
         .json()
         .await
         .context("failed to parse the search response")?;
+    Ok(found(parsed, max_results))
+}
 
+fn found(parsed: SearchResponse, max_results: usize) -> WebSearchFound {
     let results = parsed
         .results
         .into_iter()
@@ -156,10 +222,16 @@ async fn read_results(resp: reqwest::Response, max_results: usize) -> Result<Vec
             title: r.title,
             url: r.url,
             snippet: r.content,
+            id: String::new(),
         })
         .collect();
-
-    Ok(results)
+    let pictures = parsed
+        .images
+        .into_iter()
+        .filter_map(ImageItem::into_picture)
+        .take(MAX_PICTURES)
+        .collect();
+    WebSearchFound { results, pictures }
 }
 
 #[cfg(test)]
@@ -179,6 +251,24 @@ mod tests {
         assert_eq!(resp.results[0].title, "Example");
         assert_eq!(resp.results[0].url, "https://example.com");
         assert_eq!(resp.results[0].content, "A snippet here");
+    }
+
+    #[test]
+    fn pictures_come_with_their_descriptions_in_either_shape() {
+        let json = r#"{
+            "results": [{"title": "A", "url": "https://a.example", "content": "a"}],
+            "images": [
+                {"url": "https://img.example/k1.jpg", "description": " A steel kettle. "},
+                "https://img.example/k2.jpg",
+                {"url": "data:image/png;base64,AAAA"}
+            ]
+        }"#;
+        let f = found(serde_json::from_str(json).unwrap(), 5);
+        assert_eq!(f.results.len(), 1);
+        assert_eq!(f.pictures.len(), 2, "a data: URL is no web picture");
+        assert_eq!(f.pictures[0].caption, "A steel kettle.");
+        assert_eq!(f.pictures[1].url, "https://img.example/k2.jpg");
+        assert_eq!(found(serde_json::from_str(r#"{"results": []}"#).unwrap(), 5).pictures.len(), 0);
     }
 
     #[test]
@@ -212,6 +302,7 @@ mod tests {
             title: item.title,
             url: item.url,
             snippet: item.content,
+            id: String::new(),
         };
         assert_eq!(result.title, "Rust Lang");
         assert_eq!(result.snippet, "A systems programming language");
