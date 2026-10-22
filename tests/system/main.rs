@@ -16,6 +16,7 @@ mod plan;
 mod presence;
 mod reading;
 mod prompt;
+mod runs;
 mod sessions;
 mod shared_table;
 mod skills;

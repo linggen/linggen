@@ -42,6 +42,7 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
                 run_id: run_id.clone(),
                 parent_run_id: parent_run_id.clone(),
             };
+            let run = run_id.clone();
             let idle = status.eq_ignore_ascii_case("idle");
             if idle && lifecycle.is_none() {
                 // Still emit the idle event so the UI can transition agent status.
@@ -50,6 +51,7 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
                         .phase(UI_PHASE_DONE)
                         .agent(agent_id)
                         .session(session_id)
+                        .run(run)
                         .data(data("idle")),
                 );
             }
@@ -66,6 +68,7 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
                     .text(text)
                     .agent(agent_id)
                     .session(session_id)
+                    .run(run)
                     .data(data(&status)),
             )
         }
@@ -99,12 +102,14 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
             agent_id,
             outcome,
             session_id,
+            run_id,
         } => Some(
             ui.event(format!("run-outcome-{agent_id}-{seq}"), UI_KIND_RUN)
                 .phase(UI_PHASE_OUTCOME)
                 .text("Run outcome")
                 .agent(agent_id)
                 .session(session_id)
+                .run(run_id)
                 .data(OutcomeData { outcome }),
         ),
         ServerEvent::ContextUsage {

@@ -31,6 +31,12 @@ export function getSessionId(item: UiEvent): string {
   return item.session_id || useSessionStore.getState().activeSessionId || '';
 }
 
+/** The run an event came from (`run_id`): it lands in that run's bubble
+ *  alone. None for an event no run sent. */
+export function runOf(item: UiEvent): string | undefined {
+  return item.run_id || undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Tool activity text parser
 // ---------------------------------------------------------------------------

@@ -7,6 +7,7 @@ import type {
   SubagentTreeEntry,
 } from '../types';
 import { liveBubbleOfRun } from './interruptedRun.mts';
+import { bubbleOfRun, claimForRun, isRunBubble, isRunRow, runBubbleIndex } from './runBinding.mts';
 import { sameSentMessage } from './sentMessage.mts';
 import { dropLiveEchoes, idsDecide, normalizeFrom, normalizeMessageTextForDedup, sameMessageContent } from './rowIdentity.mts';
 import { dedupeActivityEntries, isProgressLineText, summarizeCollapsedActivity } from '../components/chat/utils/activity';
@@ -318,32 +319,37 @@ export { normalizeMessageTextForDedup, sameMessageContent };
 // Generating message helpers
 // ---------------------------------------------------------------------------
 
-export const findLastGeneratingMessageIndex = (messages: ChatMessage[], agentId: string) => {
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
-    const msg = messages[i];
-    if (msg.from === agentId && msg.isGenerating) return i;
-  }
-  return -1;
-};
+/** A bubble's time after an update. A run's bubble keeps the moment it
+ *  began, so it sorts under the message that started its run however late
+ *  its last event lands; a bubble of no run follows its latest update. */
+const touched = (m: ChatMessage, now: Date): Pick<ChatMessage, 'timestamp' | 'timestampMs'> =>
+  m.runId && m.timestampMs
+    ? { timestamp: m.timestamp, timestampMs: m.timestampMs }
+    : { timestamp: now.toLocaleTimeString(), timestampMs: now.getTime() };
+
+/** The bubble an event lands in: its run's (`runId`), else — an event no
+ *  run sent — the agent's latest generating bubble of no run. */
+export const findLastGeneratingMessageIndex = (messages: ChatMessage[], agentId: string, runId?: string) =>
+  runBubbleIndex(messages, agentId, runId);
 
 export const upsertGeneratingAgentMessage = (
   messages: ChatMessage[],
   agentId: string,
   text: string,
-  activityLine?: string
+  activityLine?: string,
+  runId?: string,
 ): ChatMessage[] => {
-  const idx = findLastGeneratingMessageIndex(messages, agentId);
+  const idx = findLastGeneratingMessageIndex(messages, agentId, runId);
   const now = new Date();
   if (idx >= 0) {
-    const next = [...messages];
+    const next = claimForRun([...messages], idx, runId);
     let updated: ChatMessage = {
       ...next[idx],
       role: roleFromAgentId(agentId),
       from: agentId,
       to: next[idx].to || 'user',
       text,
-      timestamp: now.toLocaleTimeString(),
-      timestampMs: now.getTime(),
+      ...touched(next[idx], now),
       isGenerating: true,
     };
     if (activityLine) {
@@ -360,6 +366,7 @@ export const upsertGeneratingAgentMessage = (
     timestamp: now.toLocaleTimeString(),
     timestampMs: now.getTime(),
     isGenerating: true,
+    ...bubbleOfRun(messages, runId),
   };
   if (activityLine) {
     created = addActivityEntry(created, activityLine);
@@ -370,22 +377,15 @@ export const upsertGeneratingAgentMessage = (
   ];
 };
 
-export const appendGeneratingActivity = (messages: ChatMessage[], agentId: string, activityLine: string): ChatMessage[] => {
-  const idx = findLastGeneratingMessageIndex(messages, agentId);
+export const appendGeneratingActivity = (messages: ChatMessage[], agentId: string, activityLine: string, runId?: string): ChatMessage[] => {
+  const idx = findLastGeneratingMessageIndex(messages, agentId, runId);
   const now = new Date();
   if (idx >= 0) {
-    const next = [...messages];
-    next[idx] = addActivityEntry(
-      {
-        ...next[idx],
-        timestamp: now.toLocaleTimeString(),
-        timestampMs: now.getTime(),
-      },
-      activityLine
-    );
+    const next = claimForRun([...messages], idx, runId);
+    next[idx] = addActivityEntry({ ...next[idx], ...touched(next[idx], now) }, activityLine);
     return next;
   }
-  return upsertGeneratingAgentMessage(messages, agentId, activityLine, activityLine);
+  return upsertGeneratingAgentMessage(messages, agentId, activityLine, activityLine, runId);
 };
 
 // ---------------------------------------------------------------------------
@@ -534,7 +534,30 @@ const transferRichContent = (persisted: ChatMessage, live: ChatMessage): ChatMes
   };
 };
 
+/**
+ * A load's saved rows with what this page holds live. A run's rows and its
+ * bubble both stay — the display binds them by run id (runBinding.bindRuns);
+ * a new load's run rows replace the last load's. Rows and live messages with
+ * no run id (saved before 2026-10-22, or sent by no run) take the legacy
+ * matching below.
+ */
 export const mergeChatMessages = (persisted: ChatMessage[], live: ChatMessage[]): ChatMessage[] => {
+  const runRows = persisted.filter(isRunRow);
+  const bubbles = live.filter((m) => isRunBubble(m));
+  const legacy = mergeLegacyMessages(
+    persisted.filter((m) => !isRunRow(m)),
+    live.filter((m) => !isRunBubble(m) && !isRunRow(m)),
+  );
+  return [...legacy, ...runRows, ...bubbles];
+};
+
+// ---------------------------------------------------------------------------
+// LEGACY — rows without a run id (saved before 2026-10-22). They name no
+// run, so a live bubble is matched to them by agent, words and time. Delete
+// once such sessions no longer matter.
+// ---------------------------------------------------------------------------
+
+const mergeLegacyMessages = (persisted: ChatMessage[], live: ChatMessage[]): ChatMessage[] => {
   if (persisted.length === 0) {
     // Keep generating messages, user messages, and finalized messages with
     // rich content (tool blocks, activity entries, etc.) — these hold

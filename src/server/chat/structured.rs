@@ -54,6 +54,7 @@ pub(super) async fn run_structured_loop(ctx: &ChatRunCtx, engine: &mut crate::en
                 &err_msg,
                 ctx.session_id.as_deref(),
                 false,
+                None,
             )
             .await;
             let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
@@ -110,7 +111,9 @@ pub(super) async fn run_structured_loop(ctx: &ChatRunCtx, engine: &mut crate::en
     unwire_interrupt_channel(ctx, engine, &interrupt_key).await;
 
     // Agent requested plan mode — re-dispatch using existing plan machinery.
-    if let Ok(crate::engine::AgentOutcome::PlanModeRequested { ref reason }) = outcome {
+    if let Ok(ref asked @ crate::engine::AgentOutcome::PlanModeRequested { ref reason }) = outcome {
+        // This run ends here; planning runs as a run of its own.
+        emit_outcome_event(ctx, asked, engine.last_run_id.as_deref()).await;
         let plan_task = reason.clone().unwrap_or_else(|| ctx.clean_msg.clone());
         engine.task = Some(plan_task);
         run_plan_dispatch(ctx, engine).await;
@@ -131,14 +134,10 @@ pub(super) async fn run_structured_loop(ctx: &ChatRunCtx, engine: &mut crate::en
             &plan_json,
             ctx.session_id.as_deref(),
             false,
+            engine.last_run_id.as_deref(),
         )
         .await;
-        emit_outcome_event(
-            ok_outcome,
-            &ctx.events_tx,
-            &ctx.agent_id,
-            ctx.session_id.as_deref(),
-        );
+        emit_outcome_event(ctx, ok_outcome, engine.last_run_id.as_deref()).await;
         ctx.manager
             .set_pending_plan(
                 &ctx.root.to_string_lossy(),
@@ -155,11 +154,11 @@ pub(super) async fn run_structured_loop(ctx: &ChatRunCtx, engine: &mut crate::en
     if let Ok(crate::engine::AgentOutcome::PlanApproved(ref plan)) = outcome {
         persist_and_emit_last_assistant_text(ctx, engine).await;
         emit_outcome_event(
+            ctx,
             outcome.as_ref().unwrap(),
-            &ctx.events_tx,
-            &ctx.agent_id,
-            ctx.session_id.as_deref(),
-        );
+            engine.last_run_id.as_deref(),
+        )
+        .await;
         engine.plan = Some(plan.clone());
         engine.plan_mode = false;
         engine.observations.clear();
@@ -171,12 +170,7 @@ pub(super) async fn run_structured_loop(ctx: &ChatRunCtx, engine: &mut crate::en
     }
 
     if let Ok(outcome) = &outcome {
-        emit_outcome_event(
-            outcome,
-            &ctx.events_tx,
-            &ctx.agent_id,
-            ctx.session_id.as_deref(),
-        );
+        emit_outcome_event(ctx, outcome, engine.last_run_id.as_deref()).await;
         // persist_assistant_message() (engine/context.rs) already emits
         // AgentEvent::Message which the bridge converts to ServerEvent::Message.
         // Emitting one here would duplicate the assistant response for WebRTC consumers.
@@ -192,6 +186,7 @@ pub(super) async fn run_structured_loop(ctx: &ChatRunCtx, engine: &mut crate::en
             &error_msg,
             ctx.session_id.as_deref(),
             false,
+            engine.last_run_id.as_deref(),
         )
         .await;
     }

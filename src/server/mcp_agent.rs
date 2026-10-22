@@ -181,6 +181,7 @@ pub async fn run(
     let _ = store.add_chat_message(
         &session_id,
         &crate::state_fs::sessions::ChatMsg {
+            run_id: None,
             via: None,
             via_note: None,
             agent_id: agent_id.clone(),

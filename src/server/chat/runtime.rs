@@ -22,6 +22,7 @@ pub(super) async fn run_loop_with_tracking(
         .ok();
 
     engine.set_run_id(run_id.clone());
+    engine.last_run_id = run_id.clone();
     let result = super::cloud_gate::run_gated(engine, session_id, events_tx).await;
     engine.set_run_id(None);
     // Taken on every path: only a finished, uncancelled turn forks it.
@@ -80,7 +81,7 @@ pub(super) async fn run_loop_with_tracking(
                     lifecycle: Some("done".to_string()),
                     parent_agent_id: None,
                     session_id: session_id.map(|s| s.to_string()),
-                    run_id: None,
+                    run_id: Some(run_id.clone()),
                     parent_run_id: None,
                 });
                 // Let Yinyue surface it in her own voice (her watch loop reacts).
@@ -173,6 +174,7 @@ pub(super) async fn persist_and_emit_last_assistant_text(
                 text,
                 ctx.session_id.as_deref(),
                 false,
+                engine.last_run_id.as_deref(),
             )
             .await;
         }
@@ -587,26 +589,14 @@ pub(super) async fn push_user_turn_with_recall(
 /// Forward an engine's thinking-channel events to the SSE event bus.
 /// Spawned per-turn for plan dispatch, plan execution, and the structured loop.
 pub(super) fn spawn_thinking_forwarder(
-    mut thinking_rx: tokio::sync::mpsc::UnboundedReceiver<crate::engine::ThinkingEvent>,
+    mut thinking_rx: tokio::sync::mpsc::UnboundedReceiver<crate::engine::StreamedToken>,
     events_tx: broadcast::Sender<ServerEvent>,
     agent_id: String,
     session_id: Option<String>,
 ) {
     tokio::spawn(async move {
-        while let Some(event) = thinking_rx.recv().await {
-            let (token, done, thinking) = match event {
-                crate::engine::ThinkingEvent::Token(t) => (t, false, true),
-                crate::engine::ThinkingEvent::ContentToken(t) => (t, false, false),
-                crate::engine::ThinkingEvent::Done => (String::new(), true, true),
-                crate::engine::ThinkingEvent::ContentDone => (String::new(), true, false),
-            };
-            let _ = events_tx.send(ServerEvent::Token {
-                session_id: session_id.clone(),
-                agent_id: agent_id.clone(),
-                token,
-                done,
-                thinking,
-            });
+        while let Some(token) = thinking_rx.recv().await {
+            let _ = events_tx.send(token.into_event(&agent_id, session_id.clone()));
         }
     });
 }
@@ -628,8 +618,14 @@ pub(super) async fn send_thinking_status(ctx: &ChatRunCtx, detail: impl Into<Str
 /// queue, behind the run's own events (its last text block, its message) —
 /// sent straight to the UI they could overtake them, and the UI finalized the
 /// reply before its last block came: the block opened a second bubble and
-/// the message filled it (tests/e2e, 2026-10-05).
-pub(super) async fn close_turn(state: &ServerState, agent_id: String, session_id: Option<String>) {
+/// the message filled it (tests/e2e, 2026-10-05). Both carry the turn's last
+/// run (`run_id`), so the UI ends that run's bubble and no other.
+pub(super) async fn close_turn(
+    state: &ServerState,
+    agent_id: String,
+    session_id: Option<String>,
+    run_id: Option<String>,
+) {
     let manager = &state.manager;
     manager
         .send_event(
@@ -638,7 +634,7 @@ pub(super) async fn close_turn(state: &ServerState, agent_id: String, session_id
                 duration_ms: None,
                 context_tokens: None,
                 parent_id: None,
-                run_id: None,
+                run_id: run_id.clone(),
                 parent_run_id: None,
             },
             session_id.clone(),
@@ -651,7 +647,7 @@ pub(super) async fn close_turn(state: &ServerState, agent_id: String, session_id
                 status: "idle".to_string(),
                 detail: Some("Idle".to_string()),
                 parent_id: None,
-                run_id: None,
+                run_id,
                 parent_run_id: None,
             },
             session_id,

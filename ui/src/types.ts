@@ -113,6 +113,14 @@ export interface ChatMessage {
   via?: string;
   /** The hand-off in the agent's own voice ("Let me check…"), shown instead of the request. */
   viaNote?: string;
+  /** The run that wrote it (`run_id` on its events and saved row): a run's
+   *  bubble and its saved rows bind by it alone (lib/runBinding.mts). */
+  runId?: string;
+  /** Built on this page from a run's events — a bubble, not a saved row. */
+  live?: boolean;
+  /** A run's bubble: how many of its run's saved rows were on screen when it
+   *  took the run (a reload mid-run) — those rows show; the rest are its. */
+  seenSaved?: number;
 }
 
 

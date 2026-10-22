@@ -468,6 +468,7 @@ pub(super) async fn deliver_to_chat_agent(
         &message,
         Some(&session_id),
         false,
+        None,
     )
     .await;
 

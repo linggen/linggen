@@ -174,6 +174,20 @@ impl World {
         resp
     }
 
+    /// Every UI event the engine sent so far (`LINGGEN_EVENT_LOG`), in order.
+    pub fn events(&self) -> Vec<serde_json::Value> {
+        let text = std::fs::read_to_string(self.home.root.join("events.jsonl")).unwrap_or_default();
+        text.lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("bad event {l}: {e}")))
+            .collect()
+    }
+
+    /// A session's rows on disk as JSON, every field kept.
+    pub fn raw_rows(&self, sid: &str) -> Vec<serde_json::Value> {
+        rows::read_raw(&self.home.linggen_home(), sid)
+    }
+
     /// The rows of a session's thread on disk (it must be there).
     pub fn rows(&self, sid: &str) -> Vec<rows::Row> {
         rows::read(&self.home.linggen_home(), sid)

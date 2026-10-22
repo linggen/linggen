@@ -215,6 +215,9 @@ pub enum ServerEvent {
         agent_id: String,
         outcome: crate::engine::AgentOutcome,
         session_id: Option<String>,
+        /// The run this event belongs to — the key the UI binds it by.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        run_id: Option<String>,
     },
     Token {
         agent_id: String,
@@ -223,6 +226,9 @@ pub enum ServerEvent {
         thinking: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
         session_id: Option<String>,
+        /// The run this event belongs to — the key the UI binds it by.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        run_id: Option<String>,
     },
     PlanUpdate {
         agent_id: String,
@@ -251,6 +257,9 @@ pub enum ServerEvent {
         text: String,
         parent_id: Option<String>,
         session_id: Option<String>,
+        /// The run this event belongs to — the key the UI binds it by.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        run_id: Option<String>,
     },
     AskUser {
         agent_id: String,
@@ -285,6 +294,9 @@ pub enum ServerEvent {
         line: String,
         stream: String, // "stdout" | "stderr"
         session_id: Option<String>,
+        /// The run this event belongs to — the key the UI binds it by.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        run_id: Option<String>,
     },
     Resync {
         reason: String,
@@ -441,10 +453,15 @@ impl ServerEvent {
                 subagent_run_id,
                 parent_run_id,
             }),
-            AgentEvent::Outcome { agent_id, outcome } => Some(Self::Outcome {
+            AgentEvent::Outcome {
+                agent_id,
+                outcome,
+                run_id,
+            } => Some(Self::Outcome {
                 agent_id,
                 outcome,
                 session_id,
+                run_id,
             }),
             AgentEvent::ContextUsage {
                 agent_id,
@@ -494,11 +511,13 @@ impl ServerEvent {
                 agent_id,
                 text,
                 parent_id,
+                run_id,
             } => Some(Self::TextSegment {
                 agent_id,
                 text,
                 parent_id,
                 session_id,
+                run_id,
             }),
             AgentEvent::Followups {
                 agent_id,
@@ -527,12 +546,14 @@ impl ServerEvent {
                 tool,
                 line,
                 stream,
+                run_id,
             } => Some(Self::ToolProgress {
                 agent_id,
                 tool,
                 line,
                 stream,
                 session_id,
+                run_id,
             }),
             AgentEvent::ContentBlockStart {
                 agent_id,
@@ -624,6 +645,12 @@ pub struct UiEvent {
     pub session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_root: Option<String>,
+    /// The run the event belongs to: set on every event a run sends (its
+    /// tokens, text, blocks, tool output, message, status, outcome, turn
+    /// end), so a surface binds each to that run's bubble (chat-spec.md §
+    /// Runs). Absent on events no run sends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data: Option<serde_json::Value>,
 }

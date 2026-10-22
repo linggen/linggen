@@ -55,12 +55,16 @@ fn calls_json(calls: &[RunCall]) -> Value {
     Value::Array(calls.iter().map(RunCall::json).collect())
 }
 
-/// A spoken row's header, with the calls made before it (`tools`) if any.
-pub(crate) fn with_tools(mut meta: Value, calls: &[RunCall]) -> Value {
-    if calls.is_empty() {
+/// A spoken row's header, with the run that wrote it (`run_id`, when the
+/// row has one) and the calls made before it (`tools`) if any.
+pub(crate) fn with_tools(mut meta: Value, run_id: Option<&str>, calls: &[RunCall]) -> Value {
+    let Some(m) = meta.as_object_mut() else {
         return meta;
+    };
+    if let Some(run_id) = run_id {
+        m.insert("run_id".into(), run_id.into());
     }
-    if let Some(m) = meta.as_object_mut() {
+    if !calls.is_empty() {
         m.insert("tools".into(), calls_json(calls));
     }
     meta
@@ -113,12 +117,14 @@ pub(crate) struct UnansweredRun {
     pub started: u64,
     pub ended: u64,
     pub calls: Vec<RunCall>,
+    /// The run, from its rows (`ChatMsg::run_id`); none on older rows.
+    pub run_id: Option<String>,
 }
 
 impl UnansweredRun {
     /// The row's header, shaped like every other history row's, plus the run.
     pub(crate) fn meta(&self) -> Value {
-        json!({
+        let mut meta = json!({
             "type": "message",
             "id": format!("run-{}", self.started),
             "from": self.agent,
@@ -128,7 +134,11 @@ impl UnansweredRun {
             "task_id": null,
             "run": "interrupted",
             "tools": calls_json(&self.calls),
-        })
+        });
+        if let Some(run_id) = &self.run_id {
+            meta["run_id"] = run_id.as_str().into();
+        }
+        meta
     }
 }
 
@@ -156,6 +166,7 @@ impl Open {
                 started: m.timestamp,
                 ended: m.timestamp,
                 calls: Vec::new(),
+                run_id: m.run_id.clone(),
             },
             hidden,
         }
@@ -184,6 +195,18 @@ impl Open {
     }
 }
 
+/// A call row continues the open run: the same agent, and — when both carry
+/// one — the same run. Rows before `run_id` was saved go by agent alone.
+fn same_run(run: &UnansweredRun, m: &ChatMsg) -> bool {
+    if run.agent != m.from_id {
+        return false;
+    }
+    match (&run.run_id, &m.run_id) {
+        (Some(a), Some(b)) => a == b,
+        _ => true,
+    }
+}
+
 /// Every run's calls in `history`. `running`: the session has a run in
 /// flight, so its last run is still live, not cut off.
 pub(crate) fn run_calls(history: &[ChatMsg], running: bool) -> RunCalls {
@@ -203,7 +226,7 @@ pub(crate) fn run_calls(history: &[ChatMsg], running: bool) -> RunCalls {
         if m.is_observation {
             match tool_row(m, &m.from_id) {
                 Some(ToolRow::Call { name, args }) => {
-                    if open.as_ref().is_some_and(|o| o.run.agent != m.from_id) {
+                    if open.as_ref().is_some_and(|o| !same_run(&o.run, m)) {
                         close(&mut open, &mut out);
                     }
                     let o = open.get_or_insert_with(|| Open::new(i, m, hidden_turn));
@@ -291,6 +314,7 @@ mod tests {
 
     fn row(from: &str, to: &str, content: &str, obs: bool, ts: u64) -> ChatMsg {
         ChatMsg {
+            run_id: None,
             via: None,
             via_note: None,
             agent_id: "ling".into(),
@@ -320,8 +344,15 @@ mod tests {
     /// A failed call's result row, as saved since the row carries the flag.
     fn failed(name: &str, text: &str, ts: u64) -> ChatMsg {
         ChatMsg {
+            run_id: None,
             failed: true,
             ..row("system", "ling", &format!("Tool {name}: {text}"), true, ts)
+        }
+    }
+    fn of_run(m: ChatMsg, run: &str) -> ChatMsg {
+        ChatMsg {
+            run_id: Some(run.into()),
+            ..m
         }
     }
     fn unanswered_runs(h: &[ChatMsg], running: bool) -> Vec<UnansweredRun> {
@@ -396,11 +427,11 @@ mod tests {
         let rc = run_calls(&h, false);
         assert!(rc.unanswered.is_empty());
         assert_eq!(rc.answered.len(), 2);
-        let tools = |i: usize| statuses(&with_tools(json!({}), &rc.answered[&i])["tools"]);
+        let tools = |i: usize| statuses(&with_tools(json!({}), None, &rc.answered[&i])["tools"]);
         assert_eq!(tools(3), [("Read".to_string(), "done".to_string())]);
         assert_eq!(tools(6), [("Write".to_string(), "failed".to_string())]);
         assert!(
-            with_tools(json!({"from": "ling"}), &[])
+            with_tools(json!({"from": "ling"}), None, &[])
                 .get("tools")
                 .is_none(),
             "a row with no calls before it carries none"
@@ -498,5 +529,28 @@ mod tests {
             |r| format!("run:{}", r.calls.len()),
         );
         assert_eq!(rows, ["q", "run:1", "again"]);
+    }
+
+    /// Two runs of one agent back to back, the first stopped with no reply
+    /// and no message between (a kickoff's next item): each is its own run,
+    /// told apart by its rows' `run_id`, and its row carries that id.
+    #[test]
+    fn runs_with_ids_are_told_apart_by_id() {
+        let h = vec![
+            user("Draw it.", 1),
+            of_run(call("Bash", 2), "r1"),
+            of_run(call("Bash", 5), "r2"),
+            of_run(result("Bash", 6), "r2"),
+            of_run(reply("Drawn.", 7), "r2"),
+        ];
+        let rc = run_calls(&h, false);
+        let cut: Vec<_> = rc.unanswered.iter().map(|r| r.run_id.clone()).collect();
+        assert_eq!(cut, vec![Some("r1".to_string())]);
+        assert_eq!(rc.unanswered[0].meta()["run_id"], "r1");
+        assert_eq!(
+            rc.answered[&4].len(),
+            1,
+            "r2's reply carries r2's call alone"
+        );
     }
 }

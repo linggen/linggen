@@ -227,3 +227,51 @@ test.describe('a stopped run, then a turn with a tool', () => {
     await expectScriptedCalls(world, ['ling', 'ling', 'ling']);
   });
 });
+
+// A run binds to its own bubble by run id (chat-spec.md § Runs): away to
+// another session while it works, back before it ends — its call and answer
+// stay under its own message, once, live and after a reload.
+test.describe('a mid-turn switch to another session and back', () => {
+  test.use({
+    scenario: {
+      scripts: { ling: [{ tool: 'Bash', args: { cmd: 'sleep 4' } }, { text: 'Slept well.' }] },
+    },
+  });
+
+  test('the run keeps its call and answer under its own message', async ({ page, world, httpRequests }) => {
+    await page.goto(world.url);
+    await expectWebRtc(page, httpRequests);
+    await page.getByRole('button', { name: 'New chat', exact: true }).click();
+    await send(page, 'Take a nap.');
+    const c = chat(page);
+    await c.getByTestId('permission-card').getByRole('button', { name: /^Allow once/ }).click();
+    const bash = c.locator('[data-testid="tool-call"][data-tool="Bash"]');
+    await expect(bash).toHaveAttribute('data-status', 'running');
+
+    const rows = page.getByTestId('session-row');
+    await rows.filter({ hasText: 'Ferry notes' }).click();
+    await expect(shown(page, 'Every thirty minutes on Sundays.')).toHaveCount(1);
+    await rows.filter({ hasText: 'Take a nap.' }).click();
+
+    const kept = async () => {
+      await expect(shown(page, 'Slept well.')).toHaveCount(1, { timeout: 15_000 });
+      await expectTurnOver(page);
+      await expect(shown(page, 'Take a nap.')).toHaveCount(1);
+      await expect(shown(page, '[Ling]')).toHaveCount(1);
+      await expect(bash).toHaveCount(1);
+      await expect(bash).toHaveAttribute('data-status', 'done');
+      await expect(shown(page, 'Every thirty minutes on Sundays.')).toHaveCount(0);
+      const order = await c.evaluate((root) => {
+        const text = root.textContent || '';
+        return [text.indexOf('Take a nap.'), text.indexOf('sleep 4'), text.indexOf('Slept well.')];
+      });
+      expect(order[0]).toBeLessThan(order[1]);
+      expect(order[1]).toBeLessThan(order[2]);
+    };
+    await kept();
+    await page.reload();
+    await expectWebRtc(page, httpRequests);
+    await kept();
+    await expectScriptedCalls(world, ['ling', 'ling']);
+  });
+});

@@ -43,14 +43,15 @@ pub enum AgentEvent {
     Outcome {
         agent_id: String,
         outcome: AgentOutcome,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        run_id: Option<String>,
     },
     Message {
         from: String,
         to: String,
         content: String,
-        /// Unique run_id of the emitting agent — set for subagents so the
-        /// UI can route the message into the SubagentPane instead of
-        /// leaking it into the parent chat. None for top-level messages.
+        /// The run that wrote it. A subagent's message is told apart by
+        /// `parent_id` (the UI routes it into the SubagentPane).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         run_id: Option<String>,
         /// agent_id of the parent when this comes from a subagent.
@@ -109,6 +110,8 @@ pub enum AgentEvent {
         agent_id: String,
         text: String,
         parent_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        run_id: Option<String>,
     },
     PlanUpdate {
         agent_id: String,
@@ -133,6 +136,8 @@ pub enum AgentEvent {
         tool: String,
         line: String,
         stream: String, // "stdout" | "stderr"
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        run_id: Option<String>,
     },
     /// A new content block started within the current assistant turn.
     ContentBlockStart {
@@ -174,4 +179,87 @@ pub enum AgentEvent {
         parent_run_id: Option<String>,
     },
     StateUpdated,
+}
+
+impl AgentEvent {
+    /// Stamp the run that sends this event on it — the one place a run's
+    /// events get their `run_id` (and `parent_run_id`), so the UI binds each
+    /// to its run's bubble. A field already set is kept; an event that
+    /// belongs to no run is left alone.
+    pub fn stamp_run(&mut self, run: Option<&str>, parent_run: Option<&str>) {
+        let fill = |slot: &mut Option<String>, v: Option<&str>| {
+            if slot.is_none() {
+                *slot = v.map(str::to_string);
+            }
+        };
+        match self {
+            Self::Outcome { run_id, .. }
+            | Self::Message { run_id, .. }
+            | Self::TextSegment { run_id, .. }
+            | Self::ToolProgress { run_id, .. }
+            | Self::Followups { run_id, .. } => fill(run_id, run),
+            Self::AgentStatus {
+                run_id,
+                parent_run_id,
+                ..
+            }
+            | Self::ContentBlockStart {
+                run_id,
+                parent_run_id,
+                ..
+            }
+            | Self::ContentBlockUpdate {
+                run_id,
+                parent_run_id,
+                ..
+            }
+            | Self::TurnComplete {
+                run_id,
+                parent_run_id,
+                ..
+            } => {
+                fill(run_id, run);
+                fill(parent_run_id, parent_run);
+            }
+            _ => {}
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AgentEvent;
+
+    /// A run's events take its id where they carry none, and keep one they
+    /// were given (a subagent's own run inside its parent's).
+    #[test]
+    fn a_runs_events_are_stamped_with_it() {
+        let mut seg = AgentEvent::TextSegment {
+            agent_id: "ling".into(),
+            text: "x".into(),
+            parent_id: None,
+            run_id: None,
+        };
+        seg.stamp_run(Some("r1"), None);
+        assert!(matches!(seg, AgentEvent::TextSegment { run_id: Some(ref r), .. } if r == "r1"));
+        let mut done = AgentEvent::TurnComplete {
+            agent_id: "ling".into(),
+            duration_ms: None,
+            context_tokens: None,
+            parent_id: None,
+            run_id: Some("own".into()),
+            parent_run_id: None,
+        };
+        done.stamp_run(Some("r1"), Some("p1"));
+        let AgentEvent::TurnComplete {
+            run_id,
+            parent_run_id,
+            ..
+        } = done
+        else {
+            unreachable!()
+        };
+        assert_eq!(run_id.as_deref(), Some("own"));
+        assert_eq!(parent_run_id.as_deref(), Some("p1"));
+    }
 }

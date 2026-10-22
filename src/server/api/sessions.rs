@@ -256,7 +256,7 @@ pub(crate) async fn get_skill_session_state(
             });
             let meta = crate::state_fs::session_images::with_urls(meta, &session_id, &m.images);
             Some(serde_json::json!([
-                run_calls::with_tools(meta, calls),
+                run_calls::with_tools(meta, m.run_id.as_deref(), calls),
                 cleaned
             ]))
         },

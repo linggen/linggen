@@ -185,11 +185,9 @@ impl AgentEngine {
                     if !thinking_ended {
                         if Self::looks_like_json_action_start(&accumulated) {
                             thinking_ended = true;
-                            if let Some(tx) = &self.thinking_tx {
-                                let _ = tx.send(ThinkingEvent::Done);
-                            }
-                        } else if let Some(tx) = &self.thinking_tx {
-                            let _ = tx.send(ThinkingEvent::Token(token));
+                            self.stream(ThinkingEvent::Done);
+                        } else {
+                            self.stream(ThinkingEvent::Token(token));
                         }
                     }
                     // After thinking ended, try to parse the first complete action
@@ -215,9 +213,7 @@ impl AgentEngine {
 
         // If thinking never ended (entire response was prose), signal done.
         if !thinking_ended {
-            if let Some(tx) = &self.thinking_tx {
-                let _ = tx.send(ThinkingEvent::Done);
-            }
+            self.stream(ThinkingEvent::Done);
         }
 
         // Strip <think>...</think> blocks from the accumulated text.
@@ -300,9 +296,7 @@ impl AgentEngine {
                     // a generating message. When PlanUpdate arrives the frontend
                     // replaces the streaming text with the PlanBlock.
                     if !in_think_block {
-                        if let Some(tx) = &self.thinking_tx {
-                            let _ = tx.send(ThinkingEvent::ContentToken(token));
-                        }
+                        self.stream(ThinkingEvent::ContentToken(token));
                     }
                 }
                 StreamChunk::Usage(usage) => {
@@ -342,9 +336,7 @@ impl AgentEngine {
 
         // Signal content stream done (not thinking done — avoids re-enabling
         // the UI thinking indicator after content tokens have been streamed).
-        if let Some(tx) = &self.thinking_tx {
-            let _ = tx.send(ThinkingEvent::ContentDone);
-        }
+        self.stream(ThinkingEvent::ContentDone);
 
         // Build ParsedToolCall objects from accumulated deltas.
         // Skip phantom entries (empty name + empty args) caused by Responses API
@@ -537,24 +529,17 @@ impl AgentEngine {
         actual: &str,
         reason: &str,
     ) {
-        let Some(manager) = self.tools.get_manager() else {
-            return;
-        };
         let agent_id = self
             .agent_id
             .clone()
             .unwrap_or_else(|| "unknown".to_string());
-        manager
-            .send_event(
-                crate::engine::agent::AgentEvent::ModelFallback {
-                    agent_id,
-                    preferred_model: preferred.to_string(),
-                    actual_model: actual.to_string(),
-                    reason: reason.to_string(),
-                },
-                self.session_id.clone(),
-            )
-            .await;
+        self.emit(crate::engine::agent::AgentEvent::ModelFallback {
+            agent_id,
+            preferred_model: preferred.to_string(),
+            actual_model: actual.to_string(),
+            reason: reason.to_string(),
+        })
+        .await;
     }
 
     /// Drain any pending tool progress lines from the channel and forward
@@ -563,25 +548,19 @@ impl AgentEngine {
         &self,
         progress_rx: &mut tokio::sync::mpsc::UnboundedReceiver<(String, String, String)>,
     ) {
-        let Some(manager) = self.tools.get_manager() else {
-            return;
-        };
         let agent_id = self
             .agent_id
             .clone()
             .unwrap_or_else(|| "unknown".to_string());
         while let Ok((tool, stream, line)) = progress_rx.try_recv() {
-            manager
-                .send_event(
-                    crate::engine::agent::AgentEvent::ToolProgress {
-                        agent_id: agent_id.clone(),
-                        tool,
-                        line,
-                        stream,
-                    },
-                    self.session_id.clone(),
-                )
-                .await;
+            self.emit(crate::engine::agent::AgentEvent::ToolProgress {
+                agent_id: agent_id.clone(),
+                tool,
+                line,
+                stream,
+                run_id: None,
+            })
+            .await;
         }
     }
 

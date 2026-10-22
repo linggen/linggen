@@ -97,17 +97,13 @@ impl AgentEngine {
         );
         self.plan = Some(plan);
 
-        if let Some(manager) = self.tools.get_manager() {
+        if self.tools.get_manager().is_some() {
             let agent_id = self
                 .agent_id
                 .clone()
                 .unwrap_or_else(|| "unknown".to_string());
             let plan = self.plan.clone().unwrap();
-            manager
-                .send_event(
-                    crate::engine::agent::AgentEvent::PlanUpdate { agent_id, plan },
-                    self.session_id.clone(),
-                )
+            self.emit(crate::engine::agent::AgentEvent::PlanUpdate { agent_id, plan })
                 .await;
         }
     }

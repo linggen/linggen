@@ -74,6 +74,11 @@ own world and throws it away:
   cannot send) is a loopback stand-in in the test (`tests/system/drawing.rs`);
   `Setup::image_api` points the engine at it through
   `LINGGEN_IMAGE_API_URL`.
+- **The event stream**: each world's engine runs with
+  `LINGGEN_EVENT_LOG=<root>/events.jsonl` — every UI event it sends, one JSON
+  line each (off unless set) — so a test reads what a surface would see
+  (`World::events`) beside the rows on disk (`runs.rs`: every run event and
+  row names its run).
 - **Snapshots: insta** — system-prompt exports per member, each member's
   built thread, history API output. A change shows as a diff to review.
 - **Web UI: Playwright** against the test engine; Chromium with

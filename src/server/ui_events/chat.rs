@@ -34,6 +34,7 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
                     .text(cleaned)
                     .agent(from.clone())
                     .session(session_id)
+                    .run(run_id.clone())
                     .data(MessageData {
                         role: if from == "user" { "user" } else { "assistant" }.to_string(),
                         from,
@@ -59,12 +60,14 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
             done,
             thinking,
             session_id,
+            run_id,
         } => {
             let mut e = ui
                 .event(format!("token-{agent_id}-{seq}"), UI_KIND_TOKEN)
                 .text(token)
                 .agent(agent_id)
-                .session(session_id);
+                .session(session_id)
+                .run(run_id);
             if done {
                 e = e.phase(UI_PHASE_DONE);
             }
@@ -78,11 +81,13 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
             text,
             parent_id,
             session_id,
+            run_id,
         } => Some(
             ui.event(format!("text-seg-{agent_id}-{seq}"), UI_KIND_TEXT_SEGMENT)
                 .text(text)
                 .agent(agent_id)
                 .session(session_id)
+                .run(run_id)
                 .data(TextSegmentData { parent_id }),
         ),
         ServerEvent::ContentBlockStart {
@@ -100,6 +105,7 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
                 .phase("start")
                 .agent(agent_id)
                 .session(session_id)
+                .run(run_id.clone())
                 .data(ContentBlockStartData {
                     block_id,
                     block_type,
@@ -130,7 +136,7 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
                 summary: summary.clone(),
                 is_error,
                 parent_id,
-                run_id,
+                run_id: run_id.clone(),
                 parent_run_id,
                 extra: match extra {
                     Some(serde_json::Value::Object(map)) => map,
@@ -142,6 +148,7 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
                 .phase("update")
                 .agent(agent_id)
                 .session(session_id)
+                .run(run_id)
                 .data(data);
             e.text = summary;
             Some(e)
@@ -161,6 +168,7 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
             )
             .agent(agent_id)
             .session(session_id)
+            .run(run_id.clone())
             .data(TurnCompleteData {
                 duration_ms,
                 context_tokens,
@@ -200,6 +208,7 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
             ui.event(format!("followups-{agent_id}-{seq}"), "followups")
                 .agent(agent_id)
                 .session(session_id)
+                .run(run_id.clone())
                 .data(FollowupsData { items, run_id }),
         ),
         ServerEvent::ModelFallback {
@@ -228,11 +237,13 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
             line,
             stream,
             session_id,
+            run_id,
         } => Some(
             ui.event(format!("tool-progress-{agent_id}-{seq}"), "tool_progress")
                 .text(line.clone())
                 .agent(agent_id)
                 .session(session_id)
+                .run(run_id)
                 .data(ToolProgressData { tool, line, stream }),
         ),
         _ => None,
