@@ -99,7 +99,8 @@ install, never on first use: a person never waits on one.
   quiet — no top-level agent run in flight and no chat turn for 5 minutes
   (`quiet_for_background`, the fact mission catch-up uses; its clock starts
   at boot). A download already running is not paused. The interpreter and
-  the `tools` venv are small and start at once.
+  the `tools` venv are small and start at once, as does a model stage whose
+  snapshot is already in the cache (it only verifies and stamps).
 - **One at a time.** Every download holds the runtime's download slot.
 - **What.** Python + `tools`; the voice lane (`tts` venv + Qwen3-TTS, ~2.1 GB);
   the pictures lane (`pictures` venv + FLUX.2 klein 4B, ~4.3 GB); Kokoro's

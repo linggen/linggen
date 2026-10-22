@@ -467,6 +467,25 @@ fn stage_ready(stage: &str) -> bool {
     }
 }
 
+/// A model stage whose snapshot is already in the shared cache has nothing
+/// to download — it only verifies and stamps — so it need not wait for
+/// quiet. This is what an install from before the stamps looks like.
+fn model_cached(stage: &str) -> bool {
+    let repo = match stage {
+        "tts-model" => TTS_MODEL,
+        "pictures-model" => PICTURE_MODEL,
+        _ => return false,
+    };
+    hub_snapshot_present(&hf_home().join("hub"), repo)
+}
+
+fn hub_snapshot_present(hub: &Path, repo: &str) -> bool {
+    let snapshots = hub
+        .join(format!("models--{}", repo.replace('/', "--")))
+        .join("snapshots");
+    std::fs::read_dir(snapshots).is_ok_and(|mut d| d.next().is_some())
+}
+
 async fn prewarm_stages(
     with_tts: bool,
     with_pictures: bool,
@@ -494,7 +513,7 @@ async fn prewarm_stages(
         if !enabled {
             continue;
         }
-        if waits_for_quiet(stage) && !stage_ready(stage) {
+        if waits_for_quiet(stage) && !stage_ready(stage) && !model_cached(stage) {
             publish_progress(progress, done, total, stage, Phase::WaitingForQuiet);
             wait_for_quiet(quiet, QUIET_POLL).await;
         }
@@ -978,6 +997,19 @@ mod tests {
         for stage in ["python", "tools"] {
             assert!(!waits_for_quiet(stage), "{stage} should not wait");
         }
+    }
+
+    #[test]
+    fn a_cached_snapshot_is_recognised_and_an_empty_one_is_not() {
+        let hub = tempfile::tempdir().unwrap();
+        let repo = "org/model-4bit";
+        assert!(!hub_snapshot_present(hub.path(), repo));
+        let snaps = hub.path().join("models--org--model-4bit/snapshots");
+        std::fs::create_dir_all(&snaps).unwrap();
+        assert!(!hub_snapshot_present(hub.path(), repo));
+        std::fs::create_dir_all(snaps.join("abc123")).unwrap();
+        assert!(hub_snapshot_present(hub.path(), repo));
+        assert!(!model_cached("tts"), "a venv stage is never a cached model");
     }
 
     #[tokio::test]
