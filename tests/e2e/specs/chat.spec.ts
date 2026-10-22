@@ -163,3 +163,67 @@ test.describe('a live run', () => {
     await expect(shown(page, '[Ling]')).toHaveCount(1);
   });
 });
+
+// Found live (2026-10-22): a picture asked for, stopped mid-tool, then asked
+// for again. The second turn's tool row, picture and answer showed under
+// BOTH messages, and the stopped call showed ✓. Each turn keeps its own.
+test.describe('a stopped run, then a turn with a tool', () => {
+  test.use({
+    scenario: {
+      scripts: {
+        ling: [
+          { tool: 'Bash', args: { cmd: 'sleep 120', timeout_ms: 180_000 } },
+          // The same tool again, as the picture was asked for again.
+          { tool: 'Bash', args: { cmd: 'echo drawn' } },
+          { text: 'Drawn this time.' },
+        ],
+      },
+    },
+  });
+
+  test("each message keeps its own reply, and the stopped call stays failed", async ({ page, world, httpRequests }) => {
+    await page.goto(world.url);
+    await expectWebRtc(page, httpRequests);
+    await page.getByRole('button', { name: 'New chat', exact: true }).click();
+    await send(page, 'Draw a half-auto one.');
+    const c = chat(page);
+    await c.getByTestId('permission-card').getByRole('button', { name: /^Allow once/ }).click();
+    const bash = c.locator('[data-testid="tool-call"][data-tool="Bash"]');
+    await expect(bash.first()).toHaveAttribute('data-status', 'running');
+    await c.getByRole('button', { name: 'Stop agent' }).click();
+    await expectTurnOver(page);
+
+    // `echo` runs unasked in chat mode.
+    await send(page, 'Draw a full-auto one.');
+    await expect(shown(page, 'Drawn this time.')).toHaveCount(1);
+    await expectTurnOver(page);
+
+    const live = async () => {
+      await expect(shown(page, 'Drawn this time.')).toHaveCount(1);
+      await expect(bash).toHaveCount(2);
+      await expect(bash.nth(0)).toHaveAttribute('data-status', 'failed');
+      await expect(bash.nth(1)).toHaveAttribute('data-status', 'done');
+      await expect(c.getByTestId('interrupted-marker')).toHaveCount(1);
+      // The answer sits after the second message, the stopped call before it.
+      const order = await c.evaluate((root) => {
+        const text = root.textContent || '';
+        return {
+          first: text.indexOf('Draw a half-auto one.'),
+          stopped: text.indexOf('sleep 120'),
+          second: text.indexOf('Draw a full-auto one.'),
+          drawn: text.indexOf('echo drawn'),
+          answer: text.indexOf('Drawn this time.'),
+        };
+      });
+      expect(order.first).toBeLessThan(order.stopped);
+      expect(order.stopped).toBeLessThan(order.second);
+      expect(order.second).toBeLessThan(order.drawn);
+      expect(order.drawn).toBeLessThan(order.answer);
+    };
+    await live();
+    await page.reload();
+    await expectWebRtc(page, httpRequests);
+    await live();
+    await expectScriptedCalls(world, ['ling', 'ling', 'ling']);
+  });
+});

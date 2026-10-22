@@ -47,24 +47,46 @@ export function interruptedRunMessage(meta: RunMeta): ChatMessage {
 const sameAgent = (a?: string, b?: string) =>
   (a || '').trim().toLowerCase() === (b || '').trim().toLowerCase();
 
+/** Saved rows stamp whole seconds and the live block the page's clock: the
+ *  run's first call and its bubble's first block differ by about this. */
+const CALL_STAMP_SLACK_MS = 5_000;
+
+const toolNames = (m: ChatMessage): string[] =>
+  (m.content || []).filter((b) => b.type === 'tool_use').map((b) => b.tool || '');
+
+/** This run's row as an earlier merge left it: claimed again, so a second
+ *  load finds the run where it is and never goes looking for another bubble.
+ *  Matched by the run's end — the merge may have moved its start to the
+ *  bubble's. */
+const isMergedRow = (run: ChatMessage, m: ChatMessage): boolean =>
+  !!m.interrupted && sameAgent(m.from, run.from) && m.runEndedMs === run.runEndedMs;
+
+/** A bubble that streamed this run: the same calls, in order, the first one
+ *  made when the run's first call was. A later turn's bubble — the next
+ *  message's, even one asking for the same tool — began after the run ended. */
+const streamedRun = (run: ChatMessage, m: ChatMessage): boolean => {
+  if (m.interrupted || m.role !== 'agent' || !sameAgent(m.from, run.from)) return false;
+  const names = toolNames(m);
+  if (names.length === 0 || names.join('\n') !== toolNames(run).join('\n')) return false;
+  const firstCall = (m.content || []).find((b) => b.type === 'tool_use')?.timestampMs;
+  if (firstCall == null) return false;
+  const start = (run.timestampMs ?? 0) - CALL_STAMP_SLACK_MS;
+  const end = (run.runEndedMs ?? run.timestampMs ?? 0) + CALL_STAMP_SLACK_MS;
+  return firstCall >= start && firstCall <= end;
+};
+
 /**
- * The live bubble that showed this run as it streamed, if this client still
- * holds it: the same agent's tool bubble from within the run's span. That
- * bubble IS the run — the saved row only adds that it stopped.
+ * The live row that shows this run, if this client holds one: the run's row
+ * from an earlier merge, else the bubble that streamed it. That bubble IS
+ * the run — the saved row only adds that it stopped. Never another turn's
+ * bubble: a time window alone let a stopped run take the next turn's
+ * calls and answer (2026-10-22).
  */
 export function liveBubbleOfRun(run: ChatMessage, live: readonly ChatMessage[], taken: ReadonlySet<number>): number {
-  // A bubble opens as its turn starts, seconds before the first call.
-  const start = (run.timestampMs ?? 0) - 30_000;
-  const end = (run.runEndedMs ?? run.timestampMs ?? 0) + 120_000;
-  return live.findIndex((m, i) =>
-    !taken.has(i) &&
-    !m.interrupted &&
-    m.role === 'agent' &&
-    sameAgent(m.from, run.from) &&
-    (m.content || []).some((b) => b.type === 'tool_use') &&
-    (m.timestampMs ?? 0) >= start &&
-    (m.timestampMs ?? 0) <= end,
-  );
+  const free = (i: number) => !taken.has(i);
+  const merged = live.findIndex((m, i) => free(i) && isMergedRow(run, m));
+  if (merged >= 0) return merged;
+  return live.findIndex((m, i) => free(i) && streamedRun(run, m));
 }
 
 /** Show the small note on an interrupted run unless the next row already

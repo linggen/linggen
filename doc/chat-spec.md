@@ -219,7 +219,11 @@ A session is a single conversation thread scoped to a project. Each session has 
   row — `run: "interrupted"` with its calls in `tools` — shown with a small
   "Interrupted" note; a session's still-running run and `[HIDDEN]` kickoffs
   (which may end in silence) get none (`server/chat/run_calls.rs`). A call
-  whose result never came back is `failed`.
+  whose result never came back is `failed`. Live, that row takes over the
+  bubble that streamed the run — the same calls in order, the first made when
+  the run's first call was — or, on a later load, the row an earlier load
+  left. Never the next turn's bubble, even one calling the same tool seconds
+  after the stop (`lib/interruptedRun.mts`).
 - **Engine prompts are never a user bubble**: a prompt the engine writes to an
   agent (a page's report, Yinyue's heralds and ambient moments) is saved with
   `from_id: "user"` and a `[HIDDEN]` prefix; the history views and the live
