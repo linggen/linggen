@@ -59,13 +59,53 @@ test('the note shows unless the next row already says the turn stopped', () => {
   assert.equal(showsInterruptedNote(answered), false, 'a completed run looks as before');
 });
 
-test("the live bubble of the run is claimed; another turn's is not", () => {
+/** A live bubble's tool blocks, the first stamped at `firstMs`. */
+const liveCalls = (names: string[], firstMs: number) =>
+  names.map((tool, i) => ({ type: 'tool_use' as const, tool, status: 'running' as const, timestampMs: firstMs + i * 1_000 }));
+const runNames = ['WeeklyScan', 'WebSearch', 'SaveWeekly'];
+
+test("the live bubble of the run is claimed; another agent's or an earlier turn's is not", () => {
   const run = interruptedRunMessage(runMeta);
-  const tools = [{ type: 'tool_use' as const, tool: 'WebSearch', status: 'running' as const }];
-  const earlier: ChatMessage = { role: 'agent', from: 'ling', text: 'old', timestamp: '', timestampMs: 10_000, content: tools };
-  const other: ChatMessage = { role: 'agent', from: 'yinyue', text: '', timestamp: '', timestampMs: 120_000, content: tools };
-  const bubble: ChatMessage = { role: 'agent', from: 'Ling', text: '', timestamp: '', timestampMs: 150_000, content: tools, isGenerating: true };
+  const earlier: ChatMessage = { role: 'agent', from: 'ling', text: 'old', timestamp: '', timestampMs: 10_000, content: liveCalls(runNames, 10_000) };
+  const other: ChatMessage = { role: 'agent', from: 'yinyue', text: '', timestamp: '', timestampMs: 120_000, content: liveCalls(runNames, 100_400) };
+  const bubble: ChatMessage = { role: 'agent', from: 'Ling', text: '', timestamp: '', timestampMs: 150_000, content: liveCalls(runNames, 100_400), isGenerating: true };
   assert.equal(liveBubbleOfRun(run, [earlier, other, bubble], new Set()), 2);
   assert.equal(liveBubbleOfRun(run, [earlier, other, bubble], new Set([2])), -1);
-  assert.equal(liveBubbleOfRun(run, [run], new Set()), -1, 'a saved run row is not a live bubble');
+});
+
+// Found live (2026-10-22): a picture asked for, stopped 2 s in, asked for
+// again. The next turn's bubble — the same tool, seconds after the stop —
+// was taken by the stopped run's row: its calls and answer showed under
+// both messages.
+const stopped: RunMeta = {
+  from: 'ling', to: 'user', ts: 1_792_685_999, ended: 1_792_686_001, run: 'interrupted',
+  tools: [{ tool: 'GenerateImage', args: '{"prompt":"semi-auto"}', status: 'failed' }],
+};
+const nextTurn = (firstCallMs: number): ChatMessage => ({
+  role: 'agent', from: 'ling', text: '', timestamp: '', timestampMs: firstCallMs, isGenerating: true,
+  content: [{ type: 'tool_use', tool: 'GenerateImage', status: 'running', timestampMs: firstCallMs }],
+});
+
+test("a later turn's bubble is never the stopped run's, even with the same tool", () => {
+  const run = interruptedRunMessage(stopped);
+  assert.equal(liveBubbleOfRun(run, [nextTurn(1_792_686_009_000)], new Set()), -1);
+  assert.equal(liveBubbleOfRun(run, [nextTurn(1_792_686_040_000)], new Set()), -1);
+});
+
+test("a bubble with other calls is not the run's", () => {
+  const run = interruptedRunMessage(stopped);
+  const glob: ChatMessage = { ...nextTurn(1_792_685_999_300), content: liveCalls(['Glob'], 1_792_685_999_300) };
+  assert.equal(liveBubbleOfRun(run, [glob], new Set()), -1);
+});
+
+test('a second load claims the run row the first one left, not the next bubble', () => {
+  const run = interruptedRunMessage(stopped);
+  const own: ChatMessage = { ...nextTurn(1_792_685_999_400), isGenerating: false };
+  // First load: the run's own bubble.
+  assert.equal(liveBubbleOfRun(run, [own], new Set()), 0);
+  // What that merge left (its start moved to the bubble's), then the next turn.
+  const merged: ChatMessage = { ...run, content: own.content, timestampMs: 1_792_685_998_000 };
+  const next = nextTurn(1_792_686_003_000);
+  assert.equal(liveBubbleOfRun(run, [next, merged], new Set()), 1);
+  assert.equal(liveBubbleOfRun(run, [run], new Set()), 0, 'a run row with no bubble is itself');
 });
