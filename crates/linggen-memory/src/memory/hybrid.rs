@@ -40,7 +40,7 @@
 //! ## Floor
 //!
 //! `min_score` gates the **weighted** score (not raw cosine). The default
-//! (`recall_min_score`, 0.6) thus admits a keyword hit whose cosine alone
+//! (`recall_min_score`, 0.7) thus admits a keyword hit whose cosine alone
 //! would fall under it — because the boost lifts it over the line — while
 //! still dropping low-cosine rows with no real keyword match. The console
 //! passes `min_score: 0` to show every match for inspection.
