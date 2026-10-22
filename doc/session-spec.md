@@ -143,7 +143,7 @@ The system prompt is rebuilt each turn from layers. Which layers are included de
 [2]  Agent body              — always (sets identity and behavior)
 [3]  Available skills        — skill names + descriptions for discovery; none in a skill-bound session (app or not), whose skill is its place
 [4]  Active skill body       — when session has a bound skill
-[5]  Environment             — always (platform, cwd, date)
+[5]  Environment             — always (platform, cwd, date; this machine is the person's own and Ling runs on it — its live state is a shell command away)
 [6]  Project instructions    — when in project mode and CLAUDE.md exists at git root
 [7]  Memory                  — global memory always; project memory when in project mode
 [8]  Tool schemas            — when effective_tools is non-empty

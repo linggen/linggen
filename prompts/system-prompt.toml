@@ -137,7 +137,8 @@ text = '''
 - Shell: {shell}
 - Workspace: {ws_root}
 - Interface: {interface_mode}
-- Bash tool: non-interactive subprocess (no TTY, no stdin). Interactive programs (curses, GUI) cannot run inside it. For such programs, write the code and instruct the user to run it in their terminal.'''
+- Bash tool: non-interactive subprocess (no TTY, no stdin). Interactive programs (curses, GUI) cannot run inside it. For such programs, write the code and instruct the user to run it in their terminal.
+- This machine: the person's own computer, and the one you run on. Its live state — memory, disks, processes, network, settings — is a shell command away.'''
 
 [right_now_block]
 description = "Volatile per-turn read of the user's situation and this machine's world — injected for sessions that hold the `sense` tool, so a companion need not spend a round trip fetching it"

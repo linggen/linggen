@@ -21,7 +21,7 @@ impl Tool for BashTool {
         None
     }
     fn description(&self) -> &'static str {
-        "Run a shell command via sh -c. Working directory persists across calls (cd is remembered). Use for build, test, git, and other commands that require shell execution. Prefer dedicated tools (Read, Glob, Grep) over Bash equivalents."
+        "Run a shell command via sh -c on this machine — the person's own computer, the one you run on. Working directory persists across calls (cd is remembered). Use for builds, tests, git, and reading the machine's own live state (memory, disks, processes, network, settings). Prefer dedicated tools (Read, Glob, Grep) over Bash equivalents."
     }
     fn tier(&self) -> PermissionMode {
         PermissionMode::Admin
@@ -62,5 +62,35 @@ impl Tool for BashTool {
             mgr.clear_tool_cancel_flag(bid);
         }
         result
+    }
+}
+
+/// Ling runs on the person's own computer. Every text that frames Bash says
+/// so, and says Bash reads that machine's live state: when Bash was "for
+/// build/test/git" and nothing said whose machine this was, a plain "should I
+/// worry about my Mac's memory?" went looking for a dedicated tool, found
+/// none, and answered "I can't see your Mac" in about half the runs
+/// (2026-10-22 A/B).
+#[cfg(test)]
+mod machine_tests {
+    use super::*;
+    use crate::prompts::{keys, PromptStore};
+
+    const OWN: &str = "the person's own computer";
+    const STATE: &str = "memory, disks, processes, network, settings";
+
+    #[test]
+    fn bash_is_how_ling_reads_the_machine_it_runs_on() {
+        let bash = BashTool.description();
+        assert!(bash.contains(OWN) && bash.contains(STATE), "{bash}");
+
+        let store = PromptStore::load(None);
+        let env = store.get(keys::SYSTEM_ENVIRONMENT_BLOCK).unwrap();
+        assert!(env.contains(OWN) && env.contains(STATE), "{env}");
+        for key in ["response-format.native", "response-format.default"] {
+            let rules = store.get(key).unwrap();
+            assert!(!rules.contains("Reserve Bash for build/test/git"), "{key}");
+            assert!(rules.contains(STATE), "{key} never names the machine's state");
+        }
     }
 }
