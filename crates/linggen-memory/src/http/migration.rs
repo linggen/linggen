@@ -57,13 +57,17 @@ async fn apply_schema(
 }
 
 /// Copy the store directory and its sidecar version to
-/// `memory/backups/schema-v2-<ts>/`. A plain file copy: LanceDB data files
+/// `memory/backups/schema-v2-<ts>/` (named by `memory::backups`, which
+/// expires it after 14 days). A plain file copy: LanceDB data files
 /// are immutable once written, and a manifest copied mid-commit only leaves
 /// the copy one version behind.
 fn backup(data_dir: &Path) -> std::io::Result<PathBuf> {
     let mem = data_dir.join("memory");
-    let stamp = Utc::now().format("%Y%m%dT%H%M%SZ");
-    let dest = mem.join("backups").join(format!("schema-v2-{stamp}"));
+    let dest = crate::memory::backups::migration_backup_dir(
+        data_dir,
+        crate::memory::backups::SCHEMA_V2,
+        Utc::now(),
+    );
     copy_dir(&mem.join("memory.lancedb"), &dest.join("memory.lancedb"))?;
     let version = mem.join("SCHEMA_VERSION");
     if version.exists() {

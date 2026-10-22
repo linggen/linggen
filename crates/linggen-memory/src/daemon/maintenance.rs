@@ -69,6 +69,10 @@ pub fn spawn(state: SharedState) {
 /// as it was. Maintenance falling behind is a slow disk problem; a daemon
 /// that dies because compaction failed is an outage.
 async fn run_if_due(state: &SharedState) {
+    // Backup expiry is a directory walk, not a table rewrite — it never
+    // waits for a lull.
+    prune_backups(state).await;
+
     if !idle_long_enough(state) {
         tracing::debug!("maintenance: skipped, daemon busy");
         return;
@@ -76,6 +80,23 @@ async fn run_if_due(state: &SharedState) {
 
     for store in [&state.store, &state.episodic] {
         maintain_table(state, store).await;
+    }
+}
+
+/// Expire old backups under `memory/backups/` (`memory::backups`).
+async fn prune_backups(state: &SharedState) {
+    let dir = crate::memory::backups::backups_dir(&state.data_dir);
+    let now = chrono::Utc::now();
+    let pass = tokio::task::spawn_blocking(move || crate::memory::backups::prune(&dir, now));
+    match pass.await {
+        Ok(removed) if !removed.is_empty() => {
+            tracing::info!(
+                removed = removed.len(),
+                "maintenance: expired backups removed"
+            );
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!(error = %e, "maintenance: backup expiry failed"),
     }
 }
 
