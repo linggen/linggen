@@ -148,6 +148,7 @@ The system prompt is rebuilt each turn from layers. Which layers are included de
 [3]  Available skills        — skill names + descriptions for discovery; none in a skill-bound session (app or not), whose skill is its place
 [4]  Active skill body       — when session has a bound skill
 [5]  Environment             — always (platform, cwd, date; this machine is the person's own and Ling runs on it — its live state is a shell command away)
+[5a] Not available here      — owner sessions: tools the agent would have but this machine can't run, one fact line each (tool-spec.md § Offered only where it runs); stable prefix, changes on sign-in or install
 [6]  Project instructions    — when in project mode and CLAUDE.md exists at git root
 [7]  Memory                  — global memory always; project memory when in project mode
 [8]  Tool schemas            — when effective_tools is non-empty

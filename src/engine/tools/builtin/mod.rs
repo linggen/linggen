@@ -81,11 +81,13 @@ pub trait Tool: Send + Sync {
         true
     }
 
-    /// True when this machine can run the tool right now (a sign-in, a
+    /// `Ok` when this machine can run the tool right now (a sign-in, a
     /// local-model lane). A tool that cannot run is never offered, so the
-    /// model never reaches for it.
-    fn offered(&self) -> bool {
-        true
+    /// model never reaches for it; its `Err` is the one-line fact of what
+    /// the tool does and what it needs here, listed in the prompt so the
+    /// model can tell the person how to get it ([`unavailable`]).
+    fn offered(&self) -> Result<(), String> {
+        Ok(())
     }
 
     /// True when an identical later call may be served from the per-run
@@ -208,7 +210,7 @@ pub fn tool_max_duration(name: &str) -> Option<Duration> {
 pub(super) fn model_facing_args_schemas() -> Vec<(String, String, Value)> {
     registry()
         .iter()
-        .filter(|t| t.model_facing() && t.offered())
+        .filter(|t| t.model_facing() && t.offered().is_ok())
         .map(|t| {
             (
                 t.name().to_string(),
@@ -224,8 +226,18 @@ pub(super) fn model_facing_args_schemas() -> Vec<(String, String, Value)> {
 pub(super) fn model_facing_legacy_entries() -> Vec<Value> {
     registry()
         .iter()
-        .filter(|t| t.model_facing() && t.offered())
+        .filter(|t| t.model_facing() && t.offered().is_ok())
         .map(|t| t.legacy_schema_entry())
+        .collect()
+}
+
+/// The model-facing built-ins this machine cannot run, each with its
+/// unmet-requirement fact (`Tool::offered`), that `keep` admits.
+pub(crate) fn unavailable(keep: impl Fn(&str) -> bool) -> Vec<(&'static str, String)> {
+    registry()
+        .iter()
+        .filter(|t| t.model_facing() && keep(t.name()))
+        .filter_map(|t| t.offered().err().map(|why| (t.name(), why)))
         .collect()
 }
 

@@ -467,6 +467,33 @@ impl AgentEngine {
         out
     }
 
+    /// The tools this session's agent would have but this machine cannot
+    /// run, each with its one-line fact — empty when there are none. Only
+    /// an environment requirement lands here (`Tool::offered`); a tool the
+    /// agent never had, or one the session withholds, is not listed. It
+    /// changes only on a sign-in or an install, so it sits in the stable
+    /// prefix.
+    fn unavailable_section(&self) -> String {
+        use crate::prompts::keys;
+        let allowed = self.allowed_tool_names();
+        let missing = crate::engine::tools::unavailable_builtins(|name| {
+            allowed.as_ref().is_none_or(|s| s.contains(name)) && !self.is_withheld(name)
+        });
+        if missing.is_empty() {
+            return String::new();
+        }
+        let mut out = self
+            .prompt_store
+            .render_or_fallback(keys::SYSTEM_UNAVAILABLE_HEADER, &[]);
+        for (tool, fact) in &missing {
+            out.push_str(&self.prompt_store.render_or_fallback(
+                keys::SYSTEM_UNAVAILABLE_ENTRY,
+                &[("tool", tool), ("fact", fact.as_str())],
+            ));
+        }
+        out
+    }
+
     /// Build the stable portion of the system prompt (agent spec + project context + memory)
     /// and return (content, hash). This is the cacheable prefix.
     pub(crate) fn build_stable_system_content(&self) -> (String, u64) {
@@ -494,6 +521,11 @@ impl AgentEngine {
                     ("interface_mode", &self.cfg.interface_mode.to_string()),
                 ],
             ));
+        }
+
+        // --- Tools this machine cannot run (owner only) ---
+        if self.prompt_profile.include_environment {
+            stable.push_str(&self.unavailable_section());
         }
 
         // --- Project context files (owner only) ---

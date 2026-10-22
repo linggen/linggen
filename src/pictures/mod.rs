@@ -45,9 +45,27 @@ impl Source {
     }
 }
 
-/// True when something here can draw — the tool's offer gate.
-pub fn offered() -> bool {
-    Source::here().is_some()
+/// The tool's offer gate: `Ok` when something here can draw, else what
+/// drawing needs and what this machine lacks, in one line.
+pub fn offered() -> Result<(), String> {
+    offer(
+        crate::provider::codex_auth::chatgpt_signed_in(),
+        crate::runtime::lane_verdict(&crate::runtime::PICTURES_LANE),
+    )
+}
+
+/// [`offered`] on given facts: a ChatGPT sign-in, and the pictures lane's
+/// verdict (its `Err` is the gate's own reason).
+fn offer(chatgpt_signed_in: bool, lane: Result<(), String>) -> Result<(), String> {
+    if Source::pick(chatgpt_signed_in, lane.is_ok()).is_some() {
+        return Ok(());
+    }
+    let need = crate::runtime::PICTURES_LANE;
+    let this_mac = lane.err().unwrap_or_default();
+    Err(format!(
+        "draws pictures; needs a ChatGPT sign-in, or an Apple Silicon Mac with {} GB of memory and {} GB free disk. Here: not signed in to ChatGPT, and the picture lane {this_mac}",
+        need.min_memory_gb, need.disk_gb
+    ))
 }
 
 /// What to draw.
@@ -140,6 +158,26 @@ mod tests {
             None,
             "nothing draws: not offered"
         );
+    }
+
+    #[test]
+    fn the_reason_names_both_ways_and_what_this_machine_lacks() {
+        let small = Err("needs 16 GB of memory, this Mac has 8 GB".to_string());
+        let why = offer(false, small.clone()).unwrap_err();
+        assert!(why.contains("ChatGPT sign-in"), "{why}");
+        let need = crate::runtime::PICTURES_LANE;
+        let mac = format!(
+            "Apple Silicon Mac with {} GB of memory and {} GB free disk",
+            need.min_memory_gb, need.disk_gb
+        );
+        assert!(why.contains(&mac), "{why}");
+        assert!(
+            why.ends_with("the picture lane needs 16 GB of memory, this Mac has 8 GB"),
+            "{why}"
+        );
+        assert!(!why.contains('\n'), "one line: {why}");
+        assert_eq!(offer(true, small), Ok(()), "signed in: offered");
+        assert_eq!(offer(false, Ok(())), Ok(()), "the lane passes: offered");
     }
 
     #[test]
