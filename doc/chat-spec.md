@@ -255,7 +255,11 @@ by agent, words or time.
 - **The binding** (`ui/src/lib/runBinding.mts`): an event of run R lands in
   R's bubble — or, at R's first event, in the placeholder this turn opened
   before R began — never in another run's bubble; an event with no run
-  never lands in a run's bubble. For display, R shows as its bubble when
+  never lands in a run's bubble. A run's outcome ends its bubble (a turn
+  may hold two runs; `turn_complete` names only the last), and rides the
+  agent-event queue behind the run's own blocks and message. A run's bubble
+  keeps the moment it began, so it sorts under the message that started it
+  however late its last event lands. For display, R shows as its bubble when
   this page has one, its saved rows staying behind it: while R runs, after
   the rows it did not see (a reload mid-run); once done, the bubble when it
   holds every call and every piece of words R's rows hold — taking from the

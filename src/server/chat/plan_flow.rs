@@ -93,13 +93,7 @@ pub(super) async fn run_plan_dispatch(ctx: &ChatRunCtx, engine: &mut crate::engi
                 )
                 .await;
             }
-            emit_outcome_event(
-                out,
-                &ctx.events_tx,
-                &ctx.agent_id,
-                ctx.session_id.as_deref(),
-                engine.last_run_id.as_deref(),
-            );
+            emit_outcome_event(ctx, out, engine.last_run_id.as_deref()).await;
             if let crate::engine::AgentOutcome::Plan(ref plan) = out {
                 ctx.manager
                     .set_pending_plan(
@@ -164,13 +158,7 @@ pub(super) async fn run_plan_execution(ctx: &ChatRunCtx, engine: &mut crate::eng
 
     match exec_outcome {
         Ok(ref out) => {
-            emit_outcome_event(
-                out,
-                &ctx.events_tx,
-                &ctx.agent_id,
-                ctx.session_id.as_deref(),
-                engine.last_run_id.as_deref(),
-            );
+            emit_outcome_event(ctx, out, engine.last_run_id.as_deref()).await;
             // Done (AgentOutcome::None): emit last_assistant_text so the UI
             // shows the completion summary.
             if matches!(out, crate::engine::AgentOutcome::None) {

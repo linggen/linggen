@@ -319,6 +319,14 @@ export { normalizeMessageTextForDedup, sameMessageContent };
 // Generating message helpers
 // ---------------------------------------------------------------------------
 
+/** A bubble's time after an update. A run's bubble keeps the moment it
+ *  began, so it sorts under the message that started its run however late
+ *  its last event lands; a bubble of no run follows its latest update. */
+const touched = (m: ChatMessage, now: Date): Pick<ChatMessage, 'timestamp' | 'timestampMs'> =>
+  m.runId && m.timestampMs
+    ? { timestamp: m.timestamp, timestampMs: m.timestampMs }
+    : { timestamp: now.toLocaleTimeString(), timestampMs: now.getTime() };
+
 /** The bubble an event lands in: its run's (`runId`), else — an event no
  *  run sent — the agent's latest generating bubble of no run. */
 export const findLastGeneratingMessageIndex = (messages: ChatMessage[], agentId: string, runId?: string) =>
@@ -341,8 +349,7 @@ export const upsertGeneratingAgentMessage = (
       from: agentId,
       to: next[idx].to || 'user',
       text,
-      timestamp: now.toLocaleTimeString(),
-      timestampMs: now.getTime(),
+      ...touched(next[idx], now),
       isGenerating: true,
     };
     if (activityLine) {
@@ -375,14 +382,7 @@ export const appendGeneratingActivity = (messages: ChatMessage[], agentId: strin
   const now = new Date();
   if (idx >= 0) {
     const next = claimForRun([...messages], idx, runId);
-    next[idx] = addActivityEntry(
-      {
-        ...next[idx],
-        timestamp: now.toLocaleTimeString(),
-        timestampMs: now.getTime(),
-      },
-      activityLine
-    );
+    next[idx] = addActivityEntry({ ...next[idx], ...touched(next[idx], now) }, activityLine);
     return next;
   }
   return upsertGeneratingAgentMessage(messages, agentId, activityLine, activityLine, runId);

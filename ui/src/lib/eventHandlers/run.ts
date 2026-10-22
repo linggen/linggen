@@ -3,7 +3,7 @@ import { useChatStore } from '../../stores/chatStore';
 import { useServerStore } from '../../stores/serverStore';
 import { useInteractionStore } from '../../stores/interactionStore';
 import { agentTracker } from '../agentTracker';
-import { getSessionId } from './_shared';
+import { getSessionId, runOf } from './_shared';
 import { markRunsCompletedForSession } from './chat';
 
 export function handleRun(item: UiEventOf<'run'>): void {
@@ -13,7 +13,7 @@ export function handleRun(item: UiEventOf<'run'>): void {
       // sync/resync are now handled by server-pushed page_state — no HTTP fetches needed.
       return;
     case 'outcome':
-      handleRunOutcome();
+      handleRunOutcome(item);
       return;
     case 'context_usage':
       handleContextUsage(item);
@@ -30,7 +30,14 @@ export function handleRun(item: UiEventOf<'run'>): void {
   }
 }
 
-function handleRunOutcome(): void {
+/** A run ended: its bubble is done (a turn may hold two runs — a plan and
+ *  its execution — and only the turn's last one hears `turn_complete`). */
+function handleRunOutcome(item: RunEventOf<'outcome'>): void {
+  const runId = runOf(item);
+  const agentId = String(item.agent_id || '');
+  if (runId && agentId && !agentTracker.getParent(agentId)) {
+    useChatStore.getState().turnComplete(agentId, undefined, undefined, runId);
+  }
   // Skip session state fetch for consumer mode — messages arrive via streaming
   // events, and the HTTP fetch goes through the WebRTC tunnel which blocks
   // /api/workspace/state for browser consumers.

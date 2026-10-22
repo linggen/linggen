@@ -608,9 +608,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   turnComplete: (agentId, durationMs, contextTokens, runId) => set(mutate((state) => {
     const idx = findLastGeneratingMessageIndex(state, agentId, runId);
-    if (idx < 0 || !state[idx].isGenerating) return state;
+    if (idx < 0) return state;
     const next = [...state];
     const msg = next[idx];
+    // Already ended by its run's outcome: the turn's end adds only its stats.
+    if (!msg.isGenerating) {
+      if (!durationMs && !contextTokens) return state;
+      next[idx] = { ...msg, durationMs: msg.durationMs || durationMs, contextTokens: msg.contextTokens || contextTokens };
+      return next;
+    }
 
     const hasRunningSubagents = (msg.subagentTree || []).some((e) => e.status === 'running');
     if (hasRunningSubagents) {

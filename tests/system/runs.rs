@@ -28,7 +28,10 @@ async fn every_run_event_and_row_names_its_run() {
         vec![
             tool("Glob", json!({"pattern": "*.md"})),
             text("Two notes here."),
-            tool("Bash", json!({"cmd": "echo started; sleep 120", "timeout_ms": 180_000})),
+            tool(
+                "Bash",
+                json!({"cmd": "echo started; sleep 120", "timeout_ms": 180_000}),
+            ),
             tool("Glob", json!({"pattern": "*.md"})),
             text("Still here."),
         ],
@@ -59,9 +62,17 @@ async fn every_run_event_and_row_names_its_run() {
     // Not a check of nothing: each kind a run sends came. (The fake model
     // cannot write words beside a call, so the text segment checked is a
     // final reply's — the same path saves and sends both.)
-    for kind in ["token", "text_segment", "content_block", "turn_complete", "message"] {
+    for kind in [
+        "token",
+        "text_segment",
+        "content_block",
+        "turn_complete",
+        "message",
+    ] {
         assert!(
-            events.iter().any(|e| e["kind"] == kind && belongs_to_a_run(e)),
+            events
+                .iter()
+                .any(|e| e["kind"] == kind && belongs_to_a_run(e)),
             "no {kind} event from a run"
         );
     }
@@ -72,6 +83,37 @@ async fn every_run_event_and_row_names_its_run() {
         .filter_map(|e| e["run_id"].as_str().map(str::to_string))
         .collect();
     assert_eq!(ends, row_runs, "turn ends vs the runs on disk");
+    // A run's outcome ends its bubble: it follows the run's own blocks and
+    // message, and comes before the turn's end.
+    let outcomes: Vec<(usize, &str)> = events
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| e["kind"] == "run" && e["phase"] == "outcome")
+        .filter_map(|(i, e)| e["run_id"].as_str().map(|r| (i, r)))
+        .collect();
+    // A stop ends its run with an outcome or an error; the other two always
+    // end with one.
+    assert!(
+        outcomes.len() >= 2,
+        "runs did not say they ended: {outcomes:?}"
+    );
+    for (at, run) in outcomes {
+        let of_run = |e: &Value| e["run_id"] == run;
+        let last_own = events
+            .iter()
+            .rposition(|e| of_run(e) && (e["kind"] == "content_block" || e["kind"] == "message"));
+        assert!(
+            last_own.is_some_and(|l| l < at),
+            "{run}'s outcome overtook its blocks"
+        );
+        let end = events
+            .iter()
+            .position(|e| of_run(e) && e["kind"] == "turn_complete");
+        assert!(
+            end.is_some_and(|t| t > at),
+            "{run}'s outcome came after its turn's end"
+        );
+    }
     // The stopped run's interrupted row carries its run.
     let history = w.api.history(&sid, &root).await;
     let cut = history["messages"]

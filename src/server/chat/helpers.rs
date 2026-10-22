@@ -273,14 +273,18 @@ pub(crate) async fn emit_queue_updated(
 // Outcome events
 // ---------------------------------------------------------------------------
 
-pub(crate) fn emit_outcome_event(
+/// A run's outcome: its plan, when it made one, then `Outcome` — which ends
+/// the run's bubble (a turn may hold two runs: a plan and its execution).
+/// `Outcome` rides the agent-event queue, behind the run's own blocks and
+/// message, like the turn's end (`runtime::close_turn`).
+pub(crate) async fn emit_outcome_event(
+    ctx: &super::ChatRunCtx,
     outcome: &AgentOutcome,
-    events_tx: &broadcast::Sender<ServerEvent>,
-    from_id: &str,
-    session_id: Option<&str>,
     run_id: Option<&str>,
 ) {
-    let sid = session_id.map(|s| s.to_string());
+    let events_tx = &ctx.events_tx;
+    let from_id = ctx.agent_id.as_str();
+    let sid = ctx.session_id.clone();
     let run = run_id.map(str::to_string);
     match outcome {
         AgentOutcome::Plan(plan) => {
@@ -328,12 +332,16 @@ pub(crate) fn emit_outcome_event(
     }
     // Always emit an Outcome event so the UI transitions the run from
     // RUNNING to completed and resets status to idle.
-    let _ = events_tx.send(ServerEvent::Outcome {
-        agent_id: from_id.to_string(),
-        outcome: outcome.clone(),
-        session_id: sid.clone(),
-        run_id: run,
-    });
+    ctx.manager
+        .send_event(
+            crate::engine::agent::AgentEvent::Outcome {
+                agent_id: from_id.to_string(),
+                outcome: outcome.clone(),
+                run_id: run,
+            },
+            sid,
+        )
+        .await;
 }
 
 #[cfg(test)]

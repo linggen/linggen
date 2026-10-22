@@ -121,13 +121,7 @@ pub(super) async fn run_skill_dispatch(ctx: &ChatRunCtx, engine: &mut crate::eng
     } else {
         tracing::info!("Skill completed: {}", cmd);
         if let Ok(outcome) = &outcome {
-            emit_outcome_event(
-                outcome,
-                &ctx.events_tx,
-                &ctx.agent_id,
-                ctx.session_id.as_deref(),
-                engine.last_run_id.as_deref(),
-            );
+            emit_outcome_event(ctx, outcome, engine.last_run_id.as_deref()).await;
         }
         let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
     }
@@ -451,13 +445,7 @@ pub(super) async fn run_trigger_dispatch(
     } else {
         tracing::info!("Trigger skill completed: {}", skill_name);
         if let Ok(outcome) = &outcome {
-            emit_outcome_event(
-                outcome,
-                &ctx.events_tx,
-                &ctx.agent_id,
-                ctx.session_id.as_deref(),
-                engine.last_run_id.as_deref(),
-            );
+            emit_outcome_event(ctx, outcome, engine.last_run_id.as_deref()).await;
         }
         let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
     }
