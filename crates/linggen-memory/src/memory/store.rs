@@ -2262,6 +2262,8 @@ mod tests {
         q
     }
 
+    /// Rows as `(content, score)`, best first; equal scores by content, so
+    /// the order never rides on the table's scan order.
     async fn weighed(
         store: &MemoryStore,
         root: Option<String>,
@@ -2271,13 +2273,15 @@ mod tests {
             scope_root: root,
             ..Default::default()
         };
-        store
+        let mut got = store
             .hybrid_scored(&query_vec(), "", &f, 50, floor)
             .await
             .unwrap()
             .into_iter()
             .map(|h| (h.memory.content, (h.score * 1000.0).round() / 1000.0))
-            .collect()
+            .collect::<Vec<_>>();
+        got.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+        got
     }
 
     #[tokio::test]
