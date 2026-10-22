@@ -97,6 +97,7 @@ fn a_thinking_token_says_so_and_a_plain_one_carries_nothing() {
         done: false,
         thinking,
         session_id: None,
+        run_id: None,
     };
     assert_eq!(data(token(true)), json!({"thinking": true}));
     assert!(map(token(false), 1).unwrap().data.is_none());
@@ -116,4 +117,108 @@ fn a_new_session_notification_is_tagged_session_created() {
     assert_eq!(d["kind"], "session_created");
     assert_eq!(d["skill"], "cfo");
     assert!(d["project"].is_null());
+}
+
+/// Every event a run sends reaches the surface with its run on it: the key
+/// the chat binds the event to that run's bubble by (chat-spec.md § Runs).
+#[test]
+fn every_run_event_carries_its_run_id() {
+    let run = || Some("run-1".to_string());
+    let sid = || Some("s".to_string());
+    let events = vec![
+        ServerEvent::Token {
+            agent_id: "ling".into(),
+            token: "x".into(),
+            done: false,
+            thinking: false,
+            session_id: sid(),
+            run_id: run(),
+        },
+        ServerEvent::TextSegment {
+            agent_id: "ling".into(),
+            text: "x".into(),
+            parent_id: None,
+            session_id: sid(),
+            run_id: run(),
+        },
+        ServerEvent::ContentBlockStart {
+            agent_id: "ling".into(),
+            block_id: "b".into(),
+            block_type: "tool_use".into(),
+            tool: Some("Bash".into()),
+            args: None,
+            parent_id: None,
+            session_id: sid(),
+            run_id: run(),
+            parent_run_id: None,
+        },
+        ServerEvent::ContentBlockUpdate {
+            agent_id: "ling".into(),
+            block_id: "b".into(),
+            status: Some("done".into()),
+            summary: None,
+            is_error: None,
+            parent_id: None,
+            extra: None,
+            session_id: sid(),
+            run_id: run(),
+            parent_run_id: None,
+        },
+        ServerEvent::ToolProgress {
+            agent_id: "ling".into(),
+            tool: "Bash".into(),
+            line: "l".into(),
+            stream: "stdout".into(),
+            session_id: sid(),
+            run_id: run(),
+        },
+        ServerEvent::Message {
+            from: "ling".into(),
+            to: "user".into(),
+            content: "Done.".into(),
+            session_id: sid(),
+            run_id: run(),
+            parent_agent_id: None,
+            client_id: None,
+            via: None,
+            via_note: None,
+            images: Vec::new(),
+        },
+        ServerEvent::TurnComplete {
+            agent_id: "ling".into(),
+            duration_ms: None,
+            context_tokens: None,
+            parent_id: None,
+            session_id: sid(),
+            run_id: run(),
+            parent_run_id: None,
+        },
+        ServerEvent::AgentStatus {
+            agent_id: "ling".into(),
+            status: "idle".into(),
+            detail: None,
+            status_id: None,
+            lifecycle: None,
+            parent_agent_id: None,
+            session_id: sid(),
+            run_id: run(),
+            parent_run_id: None,
+        },
+        ServerEvent::Outcome {
+            agent_id: "ling".into(),
+            outcome: crate::engine::AgentOutcome::None,
+            session_id: sid(),
+            run_id: run(),
+        },
+    ];
+    for (i, event) in events.into_iter().enumerate() {
+        let what = format!("{event:?}");
+        let ui = map(event, i as u64).unwrap_or_else(|| panic!("unmapped: {what}"));
+        assert_eq!(
+            ui.run_id.as_deref(),
+            Some("run-1"),
+            "no run_id on {}",
+            ui.kind
+        );
+    }
 }

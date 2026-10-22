@@ -471,6 +471,7 @@ pub(crate) async fn trigger_mission_core(
             let _ = state.manager.global_sessions.add_chat_message(
                 sid,
                 &crate::state_fs::sessions::ChatMsg {
+                    run_id: None,
                     via: None,
                     via_note: None,
                     agent_id: mission.agent_id.clone(),
@@ -589,7 +590,7 @@ pub(crate) async fn get_mission_session_state(
                 "client_id": m.client_id
             });
             Some(serde_json::json!([
-                run_calls::with_tools(meta, calls),
+                run_calls::with_tools(meta, m.run_id.as_deref(), calls),
                 cleaned
             ]))
         },

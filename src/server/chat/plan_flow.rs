@@ -89,6 +89,7 @@ pub(super) async fn run_plan_dispatch(ctx: &ChatRunCtx, engine: &mut crate::engi
                     &plan_json,
                     ctx.session_id.as_deref(),
                     false,
+                    engine.last_run_id.as_deref(),
                 )
                 .await;
             }
@@ -97,6 +98,7 @@ pub(super) async fn run_plan_dispatch(ctx: &ChatRunCtx, engine: &mut crate::engi
                 &ctx.events_tx,
                 &ctx.agent_id,
                 ctx.session_id.as_deref(),
+                engine.last_run_id.as_deref(),
             );
             if let crate::engine::AgentOutcome::Plan(ref plan) = out {
                 ctx.manager
@@ -121,6 +123,7 @@ pub(super) async fn run_plan_dispatch(ctx: &ChatRunCtx, engine: &mut crate::engi
                 &error_msg,
                 ctx.session_id.as_deref(),
                 false,
+                engine.last_run_id.as_deref(),
             )
             .await;
         }
@@ -166,6 +169,7 @@ pub(super) async fn run_plan_execution(ctx: &ChatRunCtx, engine: &mut crate::eng
                 &ctx.events_tx,
                 &ctx.agent_id,
                 ctx.session_id.as_deref(),
+                engine.last_run_id.as_deref(),
             );
             // Done (AgentOutcome::None): emit last_assistant_text so the UI
             // shows the completion summary.
@@ -200,6 +204,7 @@ pub(super) async fn run_plan_execution(ctx: &ChatRunCtx, engine: &mut crate::eng
                 &error_msg,
                 ctx.session_id.as_deref(),
                 false,
+                engine.last_run_id.as_deref(),
             )
             .await;
         }
@@ -299,6 +304,7 @@ pub(crate) async fn approve_plan_handler(
         "Plan approved. Starting execution.",
         session_id.as_deref(),
         false,
+        None,
     )
     .await;
 
@@ -389,7 +395,8 @@ async fn run_approved_plan_task(
         }
     }
 
-    super::runtime::close_turn(&state, agent_id, session_id).await;
+    let run_id = engine.last_run_id.clone();
+    super::runtime::close_turn(&state, agent_id, session_id, run_id).await;
 }
 
 /// Persist a plan as the latest `{type:"plan", plan:...}` message in the
@@ -405,6 +412,7 @@ async fn persist_plan_message(
 ) {
     let plan_json = serde_json::json!({ "type": "plan", "plan": plan });
     let msg = crate::state_fs::sessions::ChatMsg {
+        run_id: None,
         via: None,
         via_note: None,
         agent_id: agent_id.to_string(),
@@ -469,6 +477,7 @@ pub(crate) async fn reject_plan_handler(
         &plan_json.to_string(),
         req.session_id.as_deref(),
         false,
+        None,
     )
     .await;
 

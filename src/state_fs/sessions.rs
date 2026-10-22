@@ -235,6 +235,13 @@ pub struct ChatMsg {
     /// before 2026-10-19 kept none: their pictures were never stored.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<String>,
+    /// The run that wrote the row: every row a run saves (its calls, their
+    /// results, its words, its final reply) carries it, and the chat binds
+    /// the row to that run's live bubble by it (chat-spec.md § Runs). A
+    /// person's message has none — it opens the turn before a run exists.
+    /// Rows before 2026-10-22 have none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
 }
 
 impl SessionStore {
@@ -778,6 +785,7 @@ mod tests {
         store.add_session(&meta).unwrap();
 
         let msg1 = ChatMsg {
+            run_id: None,
             via: None,
             via_note: None,
             agent_id: "ling".into(),
@@ -791,6 +799,7 @@ mod tests {
             images: Vec::new(),
         };
         let msg2 = ChatMsg {
+            run_id: None,
             via: None,
             via_note: None,
             agent_id: "ling".into(),
@@ -817,6 +826,7 @@ mod tests {
     #[test]
     fn a_rows_client_id_round_trips_and_is_optional() {
         let row = |client_id: Option<&str>| ChatMsg {
+            run_id: None,
             via: None,
             via_note: None,
             agent_id: "yinyue".into(),
@@ -871,6 +881,7 @@ mod tests {
             .add_chat_message(
                 "s1",
                 &ChatMsg {
+                    run_id: None,
                     via: None,
                     via_note: None,
                     agent_id: "ling".into(),
@@ -889,6 +900,7 @@ mod tests {
             .add_chat_message(
                 "s1",
                 &ChatMsg {
+                    run_id: None,
                     via: None,
                     via_note: None,
                     agent_id: "coder".into(),
@@ -940,6 +952,7 @@ mod tests {
             .add_chat_message(
                 "s1",
                 &ChatMsg {
+                    run_id: None,
                     via: None,
                     via_note: None,
                     agent_id: "ling".into(),
@@ -989,6 +1002,7 @@ mod tests {
             .add_chat_message(
                 "s1",
                 &ChatMsg {
+                    run_id: None,
                     via: None,
                     via_note: None,
                     agent_id: "ling".into(),
@@ -1088,6 +1102,7 @@ mod tests {
             .add_chat_message(
                 "auto-created",
                 &ChatMsg {
+                    run_id: None,
                     via: None,
                     via_note: None,
                     agent_id: "ling".into(),

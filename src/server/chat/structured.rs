@@ -54,6 +54,7 @@ pub(super) async fn run_structured_loop(ctx: &ChatRunCtx, engine: &mut crate::en
                 &err_msg,
                 ctx.session_id.as_deref(),
                 false,
+                None,
             )
             .await;
             let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
@@ -131,6 +132,7 @@ pub(super) async fn run_structured_loop(ctx: &ChatRunCtx, engine: &mut crate::en
             &plan_json,
             ctx.session_id.as_deref(),
             false,
+            engine.last_run_id.as_deref(),
         )
         .await;
         emit_outcome_event(
@@ -138,6 +140,7 @@ pub(super) async fn run_structured_loop(ctx: &ChatRunCtx, engine: &mut crate::en
             &ctx.events_tx,
             &ctx.agent_id,
             ctx.session_id.as_deref(),
+            engine.last_run_id.as_deref(),
         );
         ctx.manager
             .set_pending_plan(
@@ -159,6 +162,7 @@ pub(super) async fn run_structured_loop(ctx: &ChatRunCtx, engine: &mut crate::en
             &ctx.events_tx,
             &ctx.agent_id,
             ctx.session_id.as_deref(),
+            engine.last_run_id.as_deref(),
         );
         engine.plan = Some(plan.clone());
         engine.plan_mode = false;
@@ -176,6 +180,7 @@ pub(super) async fn run_structured_loop(ctx: &ChatRunCtx, engine: &mut crate::en
             &ctx.events_tx,
             &ctx.agent_id,
             ctx.session_id.as_deref(),
+            engine.last_run_id.as_deref(),
         );
         // persist_assistant_message() (engine/context.rs) already emits
         // AgentEvent::Message which the bridge converts to ServerEvent::Message.
@@ -192,6 +197,7 @@ pub(super) async fn run_structured_loop(ctx: &ChatRunCtx, engine: &mut crate::en
             &error_msg,
             ctx.session_id.as_deref(),
             false,
+            engine.last_run_id.as_deref(),
         )
         .await;
     }

@@ -708,6 +708,7 @@ async fn dispatch_mission_prompt(
             let _ = global_store.add_chat_message(
                 sid,
                 &crate::state_fs::sessions::ChatMsg {
+                    run_id: None,
                     via: None,
                     via_note: None,
                     agent_id: agent_id.to_string(),
@@ -853,29 +854,26 @@ async fn dispatch_mission_prompt(
     // Wire up thinking channel so tokens are emitted as SSE events,
     // allowing the UI to stream mission output in real time.
     let (thinking_tx, mut thinking_rx) =
-        tokio::sync::mpsc::unbounded_channel::<crate::engine::ThinkingEvent>();
+        tokio::sync::mpsc::unbounded_channel::<crate::engine::StreamedToken>();
     engine.thinking_tx = Some(thinking_tx);
 
     let events_tx_stream = events_tx.clone();
     let agent_id_stream = agent_id.to_string();
     let session_id_stream = session_id.clone();
     tokio::spawn(async move {
-        while let Some(event) = thinking_rx.recv().await {
-            let (token, done, thinking) = match event {
-                crate::engine::ThinkingEvent::Token(t) => (t, false, true),
-                crate::engine::ThinkingEvent::ContentToken(t) => (t, false, false),
-                crate::engine::ThinkingEvent::Done => (String::new(), true, true),
-                crate::engine::ThinkingEvent::ContentDone => (String::new(), true, false),
-            };
-            let _ = events_tx_stream.send(ServerEvent::Token {
-                agent_id: agent_id_stream.clone(),
-                token,
-                done,
-                thinking,
-                session_id: session_id_stream.clone(),
-            });
+        while let Some(token) = thinking_rx.recv().await {
+            let event = token.into_event(&agent_id_stream, session_id_stream.clone());
+            let done = matches!(
+                &event,
+                ServerEvent::Token {
+                    done: true,
+                    thinking: false,
+                    ..
+                }
+            );
+            let _ = events_tx_stream.send(event);
             // Emit StateUpdated on content done so the UI reloads persisted messages
-            if done && !thinking {
+            if done {
                 let _ = events_tx_stream.send(ServerEvent::StateUpdated);
             }
         }
@@ -900,6 +898,7 @@ async fn dispatch_mission_prompt(
                 agent_id: agent_id.to_string(),
                 outcome,
                 session_id: session_id.clone(),
+                run_id: Some(run_id.clone()),
             });
             "completed"
         }
@@ -927,6 +926,7 @@ async fn dispatch_mission_prompt(
                     let _ = state.manager.global_sessions.add_chat_message(
                         sid,
                         &crate::state_fs::sessions::ChatMsg {
+                            run_id: None,
                             via: None,
                             via_note: None,
                             agent_id: agent_id.to_string(),
@@ -1024,6 +1024,7 @@ async fn append_run_report(state: &Arc<SchedulerHost>, agent_id: &str, session_i
     let _ = state.manager.global_sessions.add_chat_message(
         sid,
         &crate::state_fs::sessions::ChatMsg {
+            run_id: None,
             via: None,
             via_note: None,
             agent_id: agent_id.to_string(),

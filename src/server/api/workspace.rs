@@ -349,7 +349,10 @@ pub(crate) async fn get_workspace_state(
             };
             let meta = serde_json::to_value(meta).ok()?;
             let meta = crate::state_fs::session_images::with_urls(meta, sid, &images);
-            Some((run_calls::with_tools(meta, calls), cleaned))
+            Some((
+                run_calls::with_tools(meta, m.run_id.as_deref(), calls),
+                cleaned,
+            ))
         },
         |run| (run.meta(), String::new()),
     );

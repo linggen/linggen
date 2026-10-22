@@ -10,6 +10,7 @@ pub mod permission;
 mod plan;
 pub mod prompt;
 pub mod render;
+mod run_scope;
 pub mod session_policy;
 pub mod shown_images;
 pub mod skill;
@@ -31,7 +32,7 @@ pub mod web_search;
 // Re-export public API types
 pub use types::{
     ActiveMission, AgentEngine, AgentOutcome, AgentRole, ContextType, EngineConfig, InterfaceMode,
-    Plan, PlanStatus, ThinkingEvent, ThreadMark,
+    Plan, PlanStatus, StreamedToken, ThreadMark,
 };
 
 pub use actions::{
@@ -118,35 +119,30 @@ impl AgentEngine {
         let Some(next) = self.kickoff_queue.pop_front() else {
             return false;
         };
-        if let Some(manager) = self.tools.get_manager() {
+        if self.tools.get_manager().is_some() {
             let agent_id = self
                 .agent_id
                 .clone()
                 .unwrap_or_else(|| "unknown".to_string());
-            manager
-                .add_chat_message(
-                    &self.cfg.ws_root,
-                    session_id.unwrap_or("default"),
-                    &crate::state_fs::sessions::ChatMsg {
-                        via: None,
-                        via_note: None,
-                        agent_id: agent_id.clone(),
-                        from_id: "user".to_string(),
-                        to_id: agent_id,
-                        content: next.clone(),
-                        timestamp: crate::util::now_ts_secs(),
-                        is_observation: false,
-                        client_id: None,
-                        failed: false,
-                        images: Vec::new(),
-                    },
-                )
-                .await;
-            manager
-                .send_event(
-                    crate::engine::agent::AgentEvent::StateUpdated,
-                    self.session_id.clone(),
-                )
+            self.save_row(
+                session_id,
+                crate::state_fs::sessions::ChatMsg {
+                    run_id: None,
+                    via: None,
+                    via_note: None,
+                    agent_id: agent_id.clone(),
+                    from_id: "user".to_string(),
+                    to_id: agent_id,
+                    content: next.clone(),
+                    timestamp: crate::util::now_ts_secs(),
+                    is_observation: false,
+                    client_id: None,
+                    failed: false,
+                    images: Vec::new(),
+                },
+            )
+            .await;
+            self.emit(crate::engine::agent::AgentEvent::StateUpdated)
                 .await;
         }
         // The next item answers this reply, so the model sees it first.
@@ -236,24 +232,20 @@ impl AgentEngine {
             anyhow::bail!("run cancelled");
         }
 
-        if let Some(manager) = self.tools.get_manager() {
+        if self.tools.get_manager().is_some() {
             let agent_id = self
                 .agent_id
                 .clone()
                 .unwrap_or_else(|| "unknown".to_string());
-            manager
-                .send_event(
-                    crate::engine::agent::AgentEvent::AgentStatus {
-                        agent_id,
-                        status: "working".to_string(),
-                        detail: Some("Running".to_string()),
-                        parent_id: self.parent_agent_id.clone(),
-                        run_id: self.run_id.clone(),
-                        parent_run_id: self.parent_run_id.clone(),
-                    },
-                    self.session_id.clone(),
-                )
-                .await;
+            self.emit(crate::engine::agent::AgentEvent::AgentStatus {
+                agent_id,
+                status: "working".to_string(),
+                detail: Some("Running".to_string()),
+                parent_id: self.parent_agent_id.clone(),
+                run_id: self.run_id.clone(),
+                parent_run_id: self.parent_run_id.clone(),
+            })
+            .await;
         }
 
         // Sync world state before running the loop if we have a manager
@@ -306,31 +298,30 @@ impl AgentEngine {
         // the encoder's full "<recent-exchange>...</recent-exchange>"
         // payload — into the parent's messages.jsonl as a system
         // observation, which then re-renders on every chat reload.
-        if let Some(manager) = self.tools.get_manager() {
+        if self.tools.get_manager().is_some() {
             if self.tools.builtins.delegation_depth() == 0 {
                 let aid = self
                     .agent_id
                     .clone()
                     .unwrap_or_else(|| "unknown".to_string());
-                manager
-                    .add_chat_message(
-                        &self.cfg.ws_root,
-                        session_id.unwrap_or("default"),
-                        &crate::state_fs::sessions::ChatMsg {
-                            via: None,
-                            via_note: None,
-                            agent_id: aid.clone(),
-                            from_id: "system".to_string(),
-                            to_id: aid,
-                            content: format!("Starting autonomous loop for task: {}", task),
-                            timestamp: crate::util::now_ts_secs(),
-                            is_observation: true,
-                            client_id: None,
-                            failed: false,
-                            images: Vec::new(),
-                        },
-                    )
-                    .await;
+                self.save_row(
+                    session_id,
+                    crate::state_fs::sessions::ChatMsg {
+                        run_id: None,
+                        via: None,
+                        via_note: None,
+                        agent_id: aid.clone(),
+                        from_id: "system".to_string(),
+                        to_id: aid,
+                        content: format!("Starting autonomous loop for task: {}", task),
+                        timestamp: crate::util::now_ts_secs(),
+                        is_observation: true,
+                        client_id: None,
+                        failed: false,
+                        images: Vec::new(),
+                    },
+                )
+                .await;
             }
         }
 
@@ -422,24 +413,20 @@ impl AgentEngine {
                 }
             }
 
-            if let Some(manager) = self.tools.get_manager() {
+            if self.tools.get_manager().is_some() {
                 let agent_id = self
                     .agent_id
                     .clone()
                     .unwrap_or_else(|| "unknown".to_string());
-                manager
-                    .send_event(
-                        crate::engine::agent::AgentEvent::AgentStatus {
-                            agent_id,
-                            status: "thinking".to_string(),
-                            detail: Some(format!("Thinking ({})", self.model_id)),
-                            parent_id: self.parent_agent_id.clone(),
-                            run_id: self.run_id.clone(),
-                            parent_run_id: self.parent_run_id.clone(),
-                        },
-                        self.session_id.clone(),
-                    )
-                    .await;
+                self.emit(crate::engine::agent::AgentEvent::AgentStatus {
+                    agent_id,
+                    status: "thinking".to_string(),
+                    detail: Some(format!("Thinking ({})", self.model_id)),
+                    parent_id: self.parent_agent_id.clone(),
+                    run_id: self.run_id.clone(),
+                    parent_run_id: self.parent_run_id.clone(),
+                })
+                .await;
             }
 
             // Skip compaction while executing an approved plan — the model
@@ -550,21 +537,18 @@ impl AgentEngine {
                         self.model_id, state.empty_response_streak
                     );
                     let _ = self.persist_assistant_message(&msg, session_id).await;
-                    if let Some(manager) = self.tools.get_manager() {
+                    if self.tools.get_manager().is_some() {
                         let agent_id = self
                             .agent_id
                             .clone()
                             .unwrap_or_else(|| "unknown".to_string());
-                        manager
-                            .send_event(
-                                crate::engine::agent::AgentEvent::TextSegment {
-                                    agent_id,
-                                    text: msg.clone(),
-                                    parent_id: self.parent_agent_id.clone(),
-                                },
-                                self.session_id.clone(),
-                            )
-                            .await;
+                        self.emit(crate::engine::agent::AgentEvent::TextSegment {
+                            agent_id,
+                            text: msg.clone(),
+                            parent_id: self.parent_agent_id.clone(),
+                            run_id: None,
+                        })
+                        .await;
                     }
                     self.active_skill = None;
                     return Ok(AgentOutcome::None);
@@ -696,36 +680,29 @@ impl AgentEngine {
                     }
 
                     // Pure conversational text — emit as a complete block.
-                    if let Some(manager) = self.tools.get_manager() {
+                    if self.tools.get_manager().is_some() {
                         let agent_id = self
                             .agent_id
                             .clone()
                             .unwrap_or_else(|| "unknown".to_string());
-                        manager
-                            .send_event(
-                                crate::engine::agent::AgentEvent::TextSegment {
-                                    agent_id: agent_id.clone(),
-                                    text: raw.clone(),
-                                    parent_id: self.parent_agent_id.clone(),
-                                },
-                                self.session_id.clone(),
-                            )
-                            .await;
-                        manager
-                            .send_event(
-                                crate::engine::agent::AgentEvent::ContentBlockStart {
-                                    agent_id,
-                                    block_id: uuid::Uuid::new_v4().to_string(),
-                                    block_type: "text".to_string(),
-                                    tool: None,
-                                    args: Some(raw.clone()),
-                                    parent_id: self.parent_agent_id.clone(),
-                                    run_id: self.run_id.clone(),
-                                    parent_run_id: self.parent_run_id.clone(),
-                                },
-                                self.session_id.clone(),
-                            )
-                            .await;
+                        self.emit(crate::engine::agent::AgentEvent::TextSegment {
+                            agent_id: agent_id.clone(),
+                            text: raw.clone(),
+                            parent_id: self.parent_agent_id.clone(),
+                            run_id: None,
+                        })
+                        .await;
+                        self.emit(crate::engine::agent::AgentEvent::ContentBlockStart {
+                            agent_id,
+                            block_id: uuid::Uuid::new_v4().to_string(),
+                            block_type: "text".to_string(),
+                            tool: None,
+                            args: Some(raw.clone()),
+                            parent_id: self.parent_agent_id.clone(),
+                            run_id: self.run_id.clone(),
+                            parent_run_id: self.parent_run_id.clone(),
+                        })
+                        .await;
                     }
                     let _ = self.persist_assistant_message(&raw, session_id).await;
                     self.chat_history
@@ -1484,7 +1461,9 @@ mod member_tests {
         let mut last = Vec::new();
         for turn in 1..=3 {
             let said = format!("look {turn}");
-            engine.chat_history.push(crate::message::ChatMessage::new("user", said.clone()));
+            engine
+                .chat_history
+                .push(crate::message::ChatMessage::new("user", said.clone()));
             engine.pending_images = vec![format!("BASE64-{turn}")];
             let (messages, _, _) = engine.prepare_loop_messages(
                 &said,
@@ -1493,19 +1472,36 @@ mod member_tests {
             );
             sent.push(messages.iter().map(|m| m.images.len()).sum::<usize>());
             last = messages;
-            engine
-                .chat_history
-                .push(crate::message::ChatMessage::new("assistant", format!("guess {turn}")));
+            engine.chat_history.push(crate::message::ChatMessage::new(
+                "assistant",
+                format!("guess {turn}"),
+            ));
         }
-        assert_eq!(sent, vec![1, 1, 1], "one picture a turn, never the earlier ones");
-        let pictured: Vec<&crate::message::ChatMessage> = last.iter().filter(|m| !m.images.is_empty()).collect();
+        assert_eq!(
+            sent,
+            vec![1, 1, 1],
+            "one picture a turn, never the earlier ones"
+        );
+        let pictured: Vec<&crate::message::ChatMessage> =
+            last.iter().filter(|m| !m.images.is_empty()).collect();
         assert_eq!(pictured.len(), 1);
         assert_eq!(pictured[0].images, vec!["BASE64-3".to_string()]);
-        assert!(pictured[0].content.ends_with("look 3"), "{}", pictured[0].content);
-        let text: String = last.iter().map(|m| m.content.as_str()).collect::<Vec<_>>().join("\n");
+        assert!(
+            pictured[0].content.ends_with("look 3"),
+            "{}",
+            pictured[0].content
+        );
+        let text: String = last
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
         assert!(text.contains("look 1 [image01, shown earlier]"), "{text}");
         assert!(text.contains("look 2 [image02, shown earlier]"), "{text}");
-        assert!(!text.contains("image03"), "the current one is shown, not noted");
+        assert!(
+            !text.contains("image03"),
+            "the current one is shown, not noted"
+        );
         // A second run in the same turn, before any reply (a retry), still
         // finds the turn delivered: the words are not pushed again.
         engine.chat_history.pop();
@@ -1514,7 +1510,10 @@ mod member_tests {
             true,
             crate::engine::prompt::PromptPurpose::Turn,
         );
-        let said = again.iter().filter(|m| m.content.contains("look 3")).count();
+        let said = again
+            .iter()
+            .filter(|m| m.content.contains("look 3"))
+            .count();
         assert_eq!(said, 1, "the turn is in the history once");
     }
 

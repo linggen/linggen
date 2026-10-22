@@ -82,6 +82,7 @@ pub(super) async fn run_skill_dispatch(ctx: &ChatRunCtx, engine: &mut crate::eng
         &skill_msg,
         ctx.session_id.as_deref(),
         false,
+        None,
     )
     .await;
 
@@ -114,6 +115,7 @@ pub(super) async fn run_skill_dispatch(ctx: &ChatRunCtx, engine: &mut crate::eng
             &err_msg,
             ctx.session_id.as_deref(),
             false,
+            engine.last_run_id.as_deref(),
         )
         .await;
     } else {
@@ -124,6 +126,7 @@ pub(super) async fn run_skill_dispatch(ctx: &ChatRunCtx, engine: &mut crate::eng
                 &ctx.events_tx,
                 &ctx.agent_id,
                 ctx.session_id.as_deref(),
+                engine.last_run_id.as_deref(),
             );
         }
         let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
@@ -173,6 +176,7 @@ async fn resolve_slash_skill(
             &err_msg,
             ctx.session_id.as_deref(),
             false,
+            None,
         )
         .await;
         return SlashResolution::HandledOrBlocked;
@@ -189,6 +193,7 @@ async fn resolve_slash_skill(
             &err_msg,
             ctx.session_id.as_deref(),
             false,
+            None,
         )
         .await;
         return SlashResolution::HandledOrBlocked;
@@ -226,6 +231,7 @@ async fn launch_skill_app(
         &launch_msg,
         ctx.session_id.as_deref(),
         false,
+        None,
     )
     .await;
 
@@ -287,6 +293,7 @@ async fn launch_skill_app(
                                 &result_msg,
                                 ctx.session_id.as_deref(),
                                 false,
+                                None,
                             )
                             .await;
                         }
@@ -303,6 +310,7 @@ async fn launch_skill_app(
                             &err_msg,
                             ctx.session_id.as_deref(),
                             false,
+                            None,
                         )
                         .await;
                     }
@@ -346,6 +354,7 @@ pub(super) async fn run_trigger_dispatch(
                     &err_msg,
                     ctx.session_id.as_deref(),
                     false,
+                    None,
                 )
                 .await;
                 return;
@@ -362,6 +371,7 @@ pub(super) async fn run_trigger_dispatch(
                     &err_msg,
                     ctx.session_id.as_deref(),
                     false,
+                    None,
                 )
                 .await;
                 return;
@@ -398,6 +408,7 @@ pub(super) async fn run_trigger_dispatch(
         &skill_msg,
         ctx.session_id.as_deref(),
         false,
+        None,
     )
     .await;
 
@@ -434,6 +445,7 @@ pub(super) async fn run_trigger_dispatch(
             &err_msg,
             ctx.session_id.as_deref(),
             false,
+            engine.last_run_id.as_deref(),
         )
         .await;
     } else {
@@ -444,6 +456,7 @@ pub(super) async fn run_trigger_dispatch(
                 &ctx.events_tx,
                 &ctx.agent_id,
                 ctx.session_id.as_deref(),
+                engine.last_run_id.as_deref(),
             );
         }
         let _ = ctx.events_tx.send(ServerEvent::StateUpdated);

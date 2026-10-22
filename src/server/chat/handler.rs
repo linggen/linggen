@@ -825,6 +825,8 @@ pub(crate) async fn run_session_turn(
     manager: &Arc<AgentManager>,
     max_live_msgs: Option<usize>,
 ) {
+    // What closes this turn names this turn's run, never the last one's.
+    engine.last_run_id = None;
     seat_member(engine, ctx).await;
     engine.withhold_session_tools(&manager.global_sessions, ctx.session_id.as_deref());
     super::thread::sync(engine, ctx).await;
@@ -1337,7 +1339,8 @@ pub(crate) async fn start_turn(
         }
 
         // TurnComplete gives the Web UI a single finalizer.
-        super::runtime::close_turn(&state_clone, target_id_clone, session_id.clone()).await;
+        let run_id = engine.last_run_id.clone();
+        super::runtime::close_turn(&state_clone, target_id_clone, session_id.clone(), run_id).await;
     });
 
     let status = if was_busy { "queued" } else { "started" };

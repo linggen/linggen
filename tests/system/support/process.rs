@@ -37,6 +37,8 @@ pub fn hermetic_env(home: &Home, mem_url: Option<&str>) -> Vec<(String, String)>
         ("LINGGEN_SITE_URL", DEAD_PROXY.to_string()),
         ("HF_HUB_OFFLINE", "1".to_string()),
         ("NO_COLOR", "1".to_string()),
+        // Every UI event the engine sends, one JSON line each (`World::events`).
+        ("LINGGEN_EVENT_LOG", path("events.jsonl")),
     ];
     for key in [
         "HTTP_PROXY",

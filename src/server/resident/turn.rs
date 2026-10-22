@@ -195,6 +195,7 @@ async fn run_at(
             &task,
             Some(session_id),
             false,
+            None,
         )
         .await;
         // Loop-break: if this turn was woken by an agent_chat, mark the session so

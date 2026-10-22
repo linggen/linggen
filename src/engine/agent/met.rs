@@ -420,6 +420,7 @@ mod tests {
 
     fn row(from: &str, to: &str, observation: bool) -> ChatMsg {
         ChatMsg {
+            run_id: None,
             agent_id: "her".into(),
             from_id: from.into(),
             to_id: to.into(),

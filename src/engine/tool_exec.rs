@@ -260,26 +260,19 @@ impl AgentEngine {
 
     /// The live tool block of a refused call, marked failed.
     async fn announce_tool_refused(&self, block_id: &str, msg: &str) {
-        let Some(manager) = self.tools.get_manager() else {
-            return;
-        };
         let agent_id = self.agent_id.clone().unwrap_or_else(|| "unknown".into());
-        manager
-            .send_event(
-                crate::engine::agent::AgentEvent::ContentBlockUpdate {
-                    agent_id,
-                    block_id: block_id.to_string(),
-                    status: Some(tool_call_status(true).to_string()),
-                    summary: Some(msg.to_string()),
-                    is_error: Some(true),
-                    parent_id: self.parent_agent_id.clone(),
-                    extra: None,
-                    run_id: self.run_id.clone(),
-                    parent_run_id: self.parent_run_id.clone(),
-                },
-                self.session_id.clone(),
-            )
-            .await;
+        self.emit(crate::engine::agent::AgentEvent::ContentBlockUpdate {
+            agent_id,
+            block_id: block_id.to_string(),
+            status: Some(tool_call_status(true).to_string()),
+            summary: Some(msg.to_string()),
+            is_error: Some(true),
+            parent_id: self.parent_agent_id.clone(),
+            extra: None,
+            run_id: self.run_id.clone(),
+            parent_run_id: self.parent_run_id.clone(),
+        })
+        .await;
     }
 
     /// Answer the model's call with `msg` instead of running it, and go on.
@@ -589,12 +582,8 @@ impl AgentEngine {
                     self.session_permissions.save(sdir);
                 }
                 // Notify UI so the mode badge updates.
-                if let Some(manager) = self.tools.get_manager() {
-                    manager
-                        .send_event(
-                            crate::engine::agent::AgentEvent::StateUpdated,
-                            self.session_id.clone(),
-                        )
+                if self.tools.get_manager().is_some() {
+                    self.emit(crate::engine::agent::AgentEvent::StateUpdated)
                         .await;
                 }
                 None
@@ -711,9 +700,9 @@ impl AgentEngine {
     /// transcript. Returns the call's block id.
     async fn announce_tool_start(&mut self, t: &ToolTurn<'_>, safe_args: &JsonValue) -> String {
         let block_id = uuid::Uuid::new_v4().to_string();
-        let Some(manager) = self.tools.get_manager() else {
+        if self.tools.get_manager().is_none() {
             return block_id;
-        };
+        }
         let from = self
             .agent_id
             .clone()
@@ -721,21 +710,17 @@ impl AgentEngine {
         let target = self.outbound_target();
         // Emit structured ContentBlockStart for the Web UI.
         let compact_args = serde_json::to_string(safe_args).unwrap_or_else(|_| "{}".to_string());
-        let _ = manager
-            .send_event(
-                crate::engine::agent::AgentEvent::ContentBlockStart {
-                    agent_id: from.clone(),
-                    block_id: block_id.clone(),
-                    block_type: "tool_use".to_string(),
-                    tool: Some(t.canonical.to_string()),
-                    args: Some(compact_args),
-                    parent_id: self.parent_agent_id.clone(),
-                    run_id: self.run_id.clone(),
-                    parent_run_id: self.parent_run_id.clone(),
-                },
-                self.session_id.clone(),
-            )
-            .await;
+        self.emit(crate::engine::agent::AgentEvent::ContentBlockStart {
+            agent_id: from.clone(),
+            block_id: block_id.clone(),
+            block_type: "tool_use".to_string(),
+            tool: Some(t.canonical.to_string()),
+            args: Some(compact_args),
+            parent_id: self.parent_agent_id.clone(),
+            run_id: self.run_id.clone(),
+            parent_run_id: self.parent_run_id.clone(),
+        })
+        .await;
         // Persist tool call to session store as an observation (not loaded
         // into chat history on reload — tool results are ephemeral context).
         // Skip for subagents: they share the parent's session_id, so
@@ -748,25 +733,24 @@ impl AgentEngine {
                 "args": safe_args
             })
             .to_string();
-            manager
-                .add_chat_message(
-                    &self.tools.builtins.cwd(),
-                    t.session_id.unwrap_or("default"),
-                    &crate::state_fs::sessions::ChatMsg {
-                        via: None,
-                        via_note: None,
-                        agent_id: from.clone(),
-                        from_id: from,
-                        to_id: target,
-                        content: tool_msg,
-                        timestamp: crate::util::now_ts_secs(),
-                        is_observation: true,
-                        client_id: None,
-                        failed: false,
-                        images: Vec::new(),
-                    },
-                )
-                .await;
+            self.save_row(
+                t.session_id,
+                crate::state_fs::sessions::ChatMsg {
+                    run_id: None,
+                    via: None,
+                    via_note: None,
+                    agent_id: from.clone(),
+                    from_id: from,
+                    to_id: target,
+                    content: tool_msg,
+                    timestamp: crate::util::now_ts_secs(),
+                    is_observation: true,
+                    client_id: None,
+                    failed: false,
+                    images: Vec::new(),
+                },
+            )
+            .await;
         }
         block_id
     }
@@ -818,7 +802,7 @@ impl AgentEngine {
                 let _ = self
                     .persist_observation(&canonical_tool, &rendered_public, false, session_id)
                     .await;
-                if let Some(manager) = self.tools.get_manager() {
+                if self.tools.get_manager().is_some() {
                     let agent_id = self
                         .agent_id
                         .clone()
@@ -851,41 +835,29 @@ impl AgentEngine {
                                 None
                             }
                         });
-                    manager
-                        .send_event(
-                            crate::engine::agent::AgentEvent::ContentBlockUpdate {
-                                agent_id: agent_id.clone(),
-                                block_id: block_id.clone(),
-                                status: Some(tool_call_status(false).to_string()),
-                                summary: Some(tool_done_status.clone()),
-                                is_error: Some(false),
-                                parent_id: self.parent_agent_id.clone(),
-                                extra,
-                                run_id: self.run_id.clone(),
-                                parent_run_id: self.parent_run_id.clone(),
-                            },
-                            self.session_id.clone(),
-                        )
+                    self.emit(crate::engine::agent::AgentEvent::ContentBlockUpdate {
+                        agent_id: agent_id.clone(),
+                        block_id: block_id.clone(),
+                        status: Some(tool_call_status(false).to_string()),
+                        summary: Some(tool_done_status.clone()),
+                        is_error: Some(false),
+                        parent_id: self.parent_agent_id.clone(),
+                        extra,
+                        run_id: self.run_id.clone(),
+                        parent_run_id: self.parent_run_id.clone(),
+                    })
+                    .await;
+                    self.emit(crate::engine::agent::AgentEvent::StateUpdated)
                         .await;
-                    manager
-                        .send_event(
-                            crate::engine::agent::AgentEvent::StateUpdated,
-                            self.session_id.clone(),
-                        )
-                        .await;
-                    manager
-                        .send_event(
-                            crate::engine::agent::AgentEvent::AgentStatus {
-                                agent_id,
-                                status: "thinking".to_string(),
-                                detail: Some(format!("Thinking ({})", self.model_id)),
-                                parent_id: self.parent_agent_id.clone(),
-                                run_id: self.run_id.clone(),
-                                parent_run_id: self.parent_run_id.clone(),
-                            },
-                            self.session_id.clone(),
-                        )
-                        .await;
+                    self.emit(crate::engine::agent::AgentEvent::AgentStatus {
+                        agent_id,
+                        status: "thinking".to_string(),
+                        detail: Some(format!("Thinking ({})", self.model_id)),
+                        parent_id: self.parent_agent_id.clone(),
+                        run_id: self.run_id.clone(),
+                        parent_run_id: self.parent_run_id.clone(),
+                    })
+                    .await;
                 }
 
                 // For file mutations, emit a brief user-visible summary line.
@@ -1012,42 +984,34 @@ impl AgentEngine {
                 let _ = self
                     .persist_observation(&canonical_tool, &rendered, true, session_id)
                     .await;
-                if let Some(manager) = self.tools.get_manager() {
+                if self.tools.get_manager().is_some() {
                     let agent_id = self
                         .agent_id
                         .clone()
                         .unwrap_or_else(|| "unknown".to_string());
                     // Emit structured ContentBlockUpdate (failed) for the Web UI.
                     let err_summary = format!("{}: {}", tool_failed_status, e);
-                    manager
-                        .send_event(
-                            crate::engine::agent::AgentEvent::ContentBlockUpdate {
-                                agent_id: agent_id.clone(),
-                                block_id: block_id.clone(),
-                                status: Some(tool_call_status(true).to_string()),
-                                summary: Some(err_summary),
-                                is_error: Some(true),
-                                parent_id: self.parent_agent_id.clone(),
-                                extra: None,
-                                run_id: self.run_id.clone(),
-                                parent_run_id: self.parent_run_id.clone(),
-                            },
-                            self.session_id.clone(),
-                        )
-                        .await;
-                    manager
-                        .send_event(
-                            crate::engine::agent::AgentEvent::AgentStatus {
-                                agent_id,
-                                status: "thinking".to_string(),
-                                detail: Some(format!("Thinking ({})", self.model_id)),
-                                parent_id: self.parent_agent_id.clone(),
-                                run_id: self.run_id.clone(),
-                                parent_run_id: self.parent_run_id.clone(),
-                            },
-                            self.session_id.clone(),
-                        )
-                        .await;
+                    self.emit(crate::engine::agent::AgentEvent::ContentBlockUpdate {
+                        agent_id: agent_id.clone(),
+                        block_id: block_id.clone(),
+                        status: Some(tool_call_status(true).to_string()),
+                        summary: Some(err_summary),
+                        is_error: Some(true),
+                        parent_id: self.parent_agent_id.clone(),
+                        extra: None,
+                        run_id: self.run_id.clone(),
+                        parent_run_id: self.parent_run_id.clone(),
+                    })
+                    .await;
+                    self.emit(crate::engine::agent::AgentEvent::AgentStatus {
+                        agent_id,
+                        status: "thinking".to_string(),
+                        detail: Some(format!("Thinking ({})", self.model_id)),
+                        parent_id: self.parent_agent_id.clone(),
+                        run_id: self.run_id.clone(),
+                        parent_run_id: self.parent_run_id.clone(),
+                    })
+                    .await;
                 }
                 let err_content = self.prompt_store.render_or_fallback(
                     crate::prompts::keys::TOOL_EXEC_FAILED,

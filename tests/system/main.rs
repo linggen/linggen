@@ -12,6 +12,7 @@ mod fixtures;
 mod met;
 mod presence;
 mod prompt;
+mod runs;
 mod sessions;
 mod shared_table;
 mod skills;

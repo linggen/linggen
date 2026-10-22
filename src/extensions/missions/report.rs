@@ -190,6 +190,7 @@ mod tests {
 
     fn sys(content: &str) -> ChatMsg {
         ChatMsg {
+            run_id: None,
             via: None,
             via_note: None,
             agent_id: "memory".into(),

@@ -70,6 +70,7 @@ pub fn env(vars: &[(String, String)], root: &Path) {
                 | "XDG_DATA_HOME"
                 | "XDG_CACHE_HOME"
                 | "XDG_STATE_HOME"
+                | "LINGGEN_EVENT_LOG"
         );
         if is_path {
             path_in_root(Path::new(value), root, key);

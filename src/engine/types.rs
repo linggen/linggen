@@ -1,5 +1,6 @@
 use crate::engine::agent::record::AgentSpec;
 use crate::engine::agent::AgentManager;
+use crate::engine::events::ServerEvent;
 use crate::engine::permission;
 use crate::engine::skill::registry::SkillRegistry;
 use crate::engine::skill::Skill;
@@ -77,6 +78,33 @@ pub enum ThinkingEvent {
     Done,
     /// Content stream finished (native tool calling — does NOT re-enable thinking flag).
     ContentDone,
+}
+
+/// A streamed token with the run that streamed it (`AgentEngine::stream`).
+#[derive(Debug, Clone)]
+pub struct StreamedToken {
+    pub run_id: Option<String>,
+    pub event: ThinkingEvent,
+}
+
+impl StreamedToken {
+    /// The `Token` event a surface reads, stamped with its run.
+    pub fn into_event(self, agent_id: &str, session_id: Option<String>) -> ServerEvent {
+        let (token, done, thinking) = match self.event {
+            ThinkingEvent::Token(t) => (t, false, true),
+            ThinkingEvent::ContentToken(t) => (t, false, false),
+            ThinkingEvent::Done => (String::new(), true, true),
+            ThinkingEvent::ContentDone => (String::new(), true, false),
+        };
+        ServerEvent::Token {
+            agent_id: agent_id.to_string(),
+            token,
+            done,
+            thinking,
+            session_id,
+            run_id: self.run_id,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -291,10 +319,14 @@ pub struct AgentEngine {
     /// the same `agent_id` (e.g. several "ling" subagents in parallel).
     pub parent_run_id: Option<String>,
     pub run_id: Option<String>,
+    /// The run this turn ran last (`chat::runtime`): kept after the run
+    /// ends, so what closes the turn — its outcome, error line, turn end and
+    /// idle — carries it too. Cleared when a turn starts.
+    pub last_run_id: Option<String>,
     /// Session this engine is running in — threaded into every emitted event
     /// so the server can route events without a shared mutable map.
     pub session_id: Option<String>,
-    pub thinking_tx: Option<mpsc::UnboundedSender<ThinkingEvent>>,
+    pub thinking_tx: Option<mpsc::UnboundedSender<StreamedToken>>,
     /// This turn may answer with silence: a final reply that is exactly the
     /// silence marker (`SILENT`) is neither shown nor kept. Set per turn by
     /// whoever woke the agent with a kickoff that offers silence.
@@ -572,6 +604,7 @@ impl AgentEngine {
             parent_agent_id: None,
             parent_run_id: None,
             run_id: None,
+            last_run_id: None,
             session_id: None,
             thinking_tx: None,
             silence_ok: false,

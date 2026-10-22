@@ -33,6 +33,17 @@ pub fn read_opt(linggen_home: &Path, sid: &str) -> Option<Vec<Row>> {
     Some(rows)
 }
 
+/// A session's rows as JSON, every field kept (the thread must be on disk).
+pub fn read_raw(linggen_home: &Path, sid: &str) -> Vec<serde_json::Value> {
+    let path = thread_path(linggen_home, sid);
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("no thread on disk at {}: {e}", path.display()));
+    text.lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("bad row {l}: {e}")))
+        .collect()
+}
+
 fn thread_path(linggen_home: &Path, sid: &str) -> PathBuf {
     linggen_home
         .join("sessions")

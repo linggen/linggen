@@ -57,6 +57,7 @@ impl Ui {
             agent_id: None,
             session_id: None,
             project_root: None,
+            run_id: None,
             data: None,
         }
     }
@@ -77,6 +78,11 @@ impl UiEvent {
     }
     fn session(mut self, session_id: Option<String>) -> Self {
         self.session_id = session_id;
+        self
+    }
+    /// The run that sent it (`UiEvent::run_id`).
+    fn run(mut self, run_id: Option<String>) -> Self {
+        self.run_id = run_id;
         self
     }
     fn global(mut self) -> Self {

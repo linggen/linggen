@@ -56,7 +56,7 @@ impl AgentEngine {
         failed: bool,
         session_id: Option<&str>,
     ) -> anyhow::Result<()> {
-        if let Some(manager) = self.tools.get_manager() {
+        if self.tools.get_manager().is_some() {
             let aid = self
                 .agent_id
                 .clone()
@@ -71,25 +71,24 @@ impl AgentEngine {
             if self.tools.builtins.delegation_depth() > 0 {
                 return Ok(());
             }
-            manager
-                .add_chat_message(
-                    &self.cfg.ws_root,
-                    session_id.unwrap_or("default"),
-                    &crate::state_fs::sessions::ChatMsg {
-                        via: None,
-                        via_note: None,
-                        agent_id: aid.clone(),
-                        from_id: "system".to_string(),
-                        to_id: aid,
-                        content: format!("Tool {}: {}", tool, rendered),
-                        timestamp: crate::util::now_ts_secs(),
-                        is_observation: true,
-                        client_id: None,
-                        failed,
-                        images: Vec::new(),
-                    },
-                )
-                .await;
+            self.save_row(
+                session_id,
+                crate::state_fs::sessions::ChatMsg {
+                    run_id: None,
+                    via: None,
+                    via_note: None,
+                    agent_id: aid.clone(),
+                    from_id: "system".to_string(),
+                    to_id: aid,
+                    content: format!("Tool {}: {}", tool, rendered),
+                    timestamp: crate::util::now_ts_secs(),
+                    is_observation: true,
+                    client_id: None,
+                    failed,
+                    images: Vec::new(),
+                },
+            )
+            .await;
         }
         Ok(())
     }
@@ -105,60 +104,49 @@ impl AgentEngine {
         if text.is_empty() || self.plan_mode {
             return;
         }
-        let Some(manager) = self.tools.get_manager() else {
-            return;
-        };
         let agent_id = self
             .agent_id
             .clone()
             .unwrap_or_else(|| "unknown".to_string());
-        manager
-            .send_event(
-                crate::engine::agent::AgentEvent::TextSegment {
-                    agent_id: agent_id.clone(),
-                    text: text.clone(),
-                    parent_id: self.parent_agent_id.clone(),
-                },
-                self.session_id.clone(),
-            )
-            .await;
-        manager
-            .send_event(
-                crate::engine::agent::AgentEvent::ContentBlockStart {
-                    agent_id: agent_id.clone(),
-                    block_id: uuid::Uuid::new_v4().to_string(),
-                    block_type: "text".to_string(),
-                    tool: None,
-                    args: Some(text.clone()),
-                    parent_id: self.parent_agent_id.clone(),
-                    run_id: self.run_id.clone(),
-                    parent_run_id: self.parent_run_id.clone(),
-                },
-                self.session_id.clone(),
-            )
-            .await;
+        self.emit(crate::engine::agent::AgentEvent::TextSegment {
+            agent_id: agent_id.clone(),
+            text: text.clone(),
+            parent_id: self.parent_agent_id.clone(),
+            run_id: None,
+        })
+        .await;
+        self.emit(crate::engine::agent::AgentEvent::ContentBlockStart {
+            agent_id: agent_id.clone(),
+            block_id: uuid::Uuid::new_v4().to_string(),
+            block_type: "text".to_string(),
+            tool: None,
+            args: Some(text.clone()),
+            parent_id: self.parent_agent_id.clone(),
+            run_id: self.run_id.clone(),
+            parent_run_id: self.parent_run_id.clone(),
+        })
+        .await;
         if self.tools.builtins.delegation_depth() > 0 {
             return;
         }
-        manager
-            .add_chat_message(
-                &self.cfg.ws_root,
-                session_id.unwrap_or("default"),
-                &crate::state_fs::sessions::ChatMsg {
-                    via: None,
-                    via_note: None,
-                    agent_id: agent_id.clone(),
-                    from_id: agent_id,
-                    to_id: self.outbound_target(),
-                    content: text,
-                    timestamp: crate::util::now_ts_secs(),
-                    is_observation: false,
-                    client_id: None,
-                    failed: false,
-                    images: Vec::new(),
-                },
-            )
-            .await;
+        self.save_row(
+            session_id,
+            crate::state_fs::sessions::ChatMsg {
+                run_id: None,
+                via: None,
+                via_note: None,
+                agent_id: agent_id.clone(),
+                from_id: agent_id,
+                to_id: self.outbound_target(),
+                content: text,
+                timestamp: crate::util::now_ts_secs(),
+                is_observation: false,
+                client_id: None,
+                failed: false,
+                images: Vec::new(),
+            },
+        )
+        .await;
     }
 
     pub async fn persist_assistant_message(
@@ -185,34 +173,23 @@ impl AgentEngine {
             let target = self.outbound_target();
             // Emit to UI immediately, so structured messages are visible
             // even when no outer chat handler emits an explicit Outcome event.
-            // Include run_id + parent_id so the UI can route subagent
-            // messages into SubagentPane instead of leaking them into the
-            // parent's main chat — these fields are None for top-level
-            // (depth-0) messages and routing falls back to main chat as
-            // before.
+            // The run stamps itself on (`emit`); a subagent's message also
+            // names its parent, so the UI routes it into the SubagentPane
+            // instead of the parent's main chat.
             let is_subagent = self.tools.builtins.delegation_depth() > 0;
-            let run_id = if is_subagent {
-                self.run_id.clone()
-            } else {
-                None
-            };
             let parent_id = if is_subagent {
                 self.parent_agent_id.clone()
             } else {
                 None
             };
-            manager
-                .send_event(
-                    crate::engine::agent::AgentEvent::Message {
-                        from: agent_id.clone(),
-                        to: target.clone(),
-                        content: content.to_string(),
-                        run_id,
-                        parent_id,
-                    },
-                    self.session_id.clone(),
-                )
-                .await;
+            self.emit(crate::engine::agent::AgentEvent::Message {
+                from: agent_id.clone(),
+                to: target.clone(),
+                content: content.to_string(),
+                run_id: None,
+                parent_id,
+            })
+            .await;
             // Subagents inherit the parent's session_id. Persisting their
             // terminal message into the parent's messages.jsonl was making
             // contract status lines (e.g. the encoder's `ENCODED
@@ -224,32 +201,27 @@ impl AgentEngine {
             // step that needs to skip for delegated runs.
             let is_subagent = self.tools.builtins.delegation_depth() > 0;
             if !is_subagent {
-                manager
-                    .add_chat_message(
-                        &self.cfg.ws_root,
-                        session_id.unwrap_or("default"),
-                        &crate::state_fs::sessions::ChatMsg {
-                            via: None,
-                            via_note: None,
-                            agent_id: agent_id.clone(),
-                            from_id: agent_id.clone(),
-                            to_id: target,
-                            content: content.to_string(),
-                            timestamp: crate::util::now_ts_secs(),
-                            is_observation: false,
-                            client_id: None,
-                            failed: false,
-                            images: Vec::new(),
-                        },
-                    )
-                    .await;
+                self.save_row(
+                    session_id,
+                    crate::state_fs::sessions::ChatMsg {
+                        run_id: None,
+                        via: None,
+                        via_note: None,
+                        agent_id: agent_id.clone(),
+                        from_id: agent_id.clone(),
+                        to_id: target,
+                        content: content.to_string(),
+                        timestamp: crate::util::now_ts_secs(),
+                        is_observation: false,
+                        client_id: None,
+                        failed: false,
+                        images: Vec::new(),
+                    },
+                )
+                .await;
 
                 // Nudge UI to refresh immediately.
-                manager
-                    .send_event(
-                        crate::engine::agent::AgentEvent::StateUpdated,
-                        self.session_id.clone(),
-                    )
+                self.emit(crate::engine::agent::AgentEvent::StateUpdated)
                     .await;
             }
         }
@@ -413,9 +385,6 @@ impl AgentEngine {
         messages: &[ChatMessage],
         summary_count: usize,
     ) {
-        let Some(manager) = self.tools.get_manager() else {
-            return;
-        };
         let token_limit = self.context_window_tokens.or({
             // Fallback: not cached yet (shouldn't happen after loop start).
             None
@@ -424,26 +393,22 @@ impl AgentEngine {
             Some(u) => (u.prompt_tokens, u.completion_tokens),
             None => (None, None),
         };
-        let _ = manager
-            .send_event(
-                crate::engine::agent::AgentEvent::ContextUsage {
-                    agent_id: self
-                        .agent_id
-                        .clone()
-                        .unwrap_or_else(|| "unknown".to_string()),
-                    stage: stage.to_string(),
-                    message_count: messages.len(),
-                    char_count: Self::estimate_chars_for_messages(messages),
-                    estimated_tokens: Self::estimate_tokens_for_messages(messages),
-                    token_limit,
-                    actual_prompt_tokens: actual_prompt,
-                    actual_completion_tokens: actual_completion,
-                    compressed: summary_count > 0,
-                    summary_count,
-                },
-                self.session_id.clone(),
-            )
-            .await;
+        self.emit(crate::engine::agent::AgentEvent::ContextUsage {
+            agent_id: self
+                .agent_id
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string()),
+            stage: stage.to_string(),
+            message_count: messages.len(),
+            char_count: Self::estimate_chars_for_messages(messages),
+            estimated_tokens: Self::estimate_tokens_for_messages(messages),
+            token_limit,
+            actual_prompt_tokens: actual_prompt,
+            actual_completion_tokens: actual_completion,
+            compressed: summary_count > 0,
+            summary_count,
+        })
+        .await;
     }
 
     // Compaction

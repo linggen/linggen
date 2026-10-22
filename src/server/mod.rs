@@ -3,6 +3,7 @@ mod app_pages;
 mod background;
 pub(crate) mod bridge;
 mod chat;
+mod event_log;
 mod facts;
 mod loopback_guard;
 mod mac_tools;
@@ -391,6 +392,7 @@ mod tests {
                 agent_id: "ling".into(),
                 outcome: crate::engine::AgentOutcome::None,
                 session_id: None,
+                run_id: None,
             },
             ServerEvent::Token {
                 session_id: None,
@@ -398,6 +400,7 @@ mod tests {
                 token: "Hello".into(),
                 done: false,
                 thinking: false,
+                run_id: None,
             },
             ServerEvent::PlanUpdate {
                 agent_id: "ling".into(),
@@ -420,6 +423,7 @@ mod tests {
                 text: "some text".into(),
                 parent_id: None,
                 session_id: None,
+                run_id: None,
             },
             ServerEvent::AskUser {
                 agent_id: "ling".into(),
@@ -446,6 +450,7 @@ mod tests {
                 line: "building...".into(),
                 stream: "stdout".into(),
                 session_id: None,
+                run_id: None,
             },
             ServerEvent::Resync {
                 reason: "broadcast_lag".into(),

@@ -27,6 +27,7 @@ pub(super) fn spawn_background_tasks(
     if let Some(timeout) = idle_shutdown_secs.filter(|t| *t > 0) {
         idle_shutdown(state, timeout);
     }
+    super::event_log::spawn(state);
     tokio::spawn(bridge_agent_events(state.clone(), agent_events_rx));
     tokio::spawn(
         crate::extensions::missions::scheduler::mission_scheduler_loop(state.scheduler_host()),

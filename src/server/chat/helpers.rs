@@ -80,13 +80,14 @@ pub(crate) async fn persist_and_emit_message(
     content: &str,
     session_id: Option<&str>,
     is_observation: bool,
+    run_id: Option<&str>,
 ) {
     let _ = events_tx.send(ServerEvent::Message {
         from: from.to_string(),
         to: to.to_string(),
         content: content.to_string(),
         session_id: session_id.map(|s| s.to_string()),
-        run_id: None,
+        run_id: run_id.map(str::to_string),
         parent_agent_id: None,
         client_id: None,
         via: None,
@@ -102,6 +103,7 @@ pub(crate) async fn persist_and_emit_message(
         content,
         session_id,
         is_observation,
+        run_id,
     )
     .await;
 }
@@ -173,6 +175,7 @@ pub(crate) async fn persist_and_emit_with_images(
             .collect(),
     });
     let msg = crate::state_fs::sessions::ChatMsg {
+        run_id: None,
         agent_id: agent_id.to_string(),
         from_id: from.to_string(),
         to_id: to.to_string(),
@@ -200,9 +203,11 @@ pub(crate) async fn persist_message_only(
     content: &str,
     session_id: Option<&str>,
     is_observation: bool,
+    run_id: Option<&str>,
 ) {
     let sid = session_id.unwrap_or("default");
     let msg = crate::state_fs::sessions::ChatMsg {
+        run_id: run_id.map(str::to_string),
         via: None,
         via_note: None,
         agent_id: agent_id.to_string(),
@@ -273,8 +278,10 @@ pub(crate) fn emit_outcome_event(
     events_tx: &broadcast::Sender<ServerEvent>,
     from_id: &str,
     session_id: Option<&str>,
+    run_id: Option<&str>,
 ) {
     let sid = session_id.map(|s| s.to_string());
+    let run = run_id.map(str::to_string);
     match outcome {
         AgentOutcome::Plan(plan) => {
             let _ = events_tx.send(ServerEvent::Message {
@@ -286,7 +293,7 @@ pub(crate) fn emit_outcome_event(
                 })
                 .to_string(),
                 session_id: sid.clone(),
-                run_id: None,
+                run_id: run.clone(),
                 parent_agent_id: None,
                 client_id: None,
                 via: None,
@@ -304,7 +311,7 @@ pub(crate) fn emit_outcome_event(
                 })
                 .to_string(),
                 session_id: sid.clone(),
-                run_id: None,
+                run_id: run.clone(),
                 parent_agent_id: None,
                 client_id: None,
                 via: None,
@@ -325,6 +332,7 @@ pub(crate) fn emit_outcome_event(
         agent_id: from_id.to_string(),
         outcome: outcome.clone(),
         session_id: sid.clone(),
+        run_id: run,
     });
 }
 
