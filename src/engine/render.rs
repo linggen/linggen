@@ -40,11 +40,12 @@ pub fn render_tool_result(r: &ToolResult) -> String {
                 exit_code, stdout, stderr
             )
         }
-        ToolResult::Screenshot { url, base64 } => {
+        ToolResult::Screenshot { url, base64, id } => {
             format!(
-                "screenshot_captured: {} (base64 length: {})",
+                "screenshot_captured: {} (base64 length: {}){}",
                 url,
-                base64.len()
+                base64.len(),
+                label(id)
             )
         }
         ToolResult::Success(msg) => format!("success: {}", msg),
@@ -66,17 +67,27 @@ pub fn render_tool_result(r: &ToolResult) -> String {
                 reason.as_deref().unwrap_or("(no reason)")
             ),
         },
-        ToolResult::WebSearchResults { query, results } => {
-            let mut out = format!("WebSearch: \"{}\" ({} results)\n", query, results.len());
-            for (i, r) in results.iter().enumerate() {
+        ToolResult::WebSearchResults {
+            query,
+            results,
+            pictures,
+        } => {
+            let mut out = format!("WebSearch: \"{}\" ({} results)", query, results.len());
+            if let Some(first) = results.first().filter(|r| !r.id.is_empty()) {
                 out.push_str(&format!(
-                    "{}. {} — {}\n   {}\n",
-                    i + 1,
-                    r.title,
-                    r.url,
-                    r.snippet
+                    " — write a number such as [{}] in the answer to link that source",
+                    first.id
                 ));
             }
+            out.push('\n');
+            for (i, r) in results.iter().enumerate() {
+                let head = match r.id.as_str() {
+                    "" => format!("{}.", i + 1),
+                    id => format!("[{id}]"),
+                };
+                out.push_str(&format!("{head} {} — {}\n   {}\n", r.title, r.url, r.snippet));
+            }
+            out.push_str(&render_pictures(pictures));
             out
         }
         ToolResult::WebFetchContent {
@@ -84,10 +95,18 @@ pub fn render_tool_result(r: &ToolResult) -> String {
             content,
             content_type,
             truncated,
+            pictures,
+            id,
+            ..
         } => {
             format!(
-                "WebFetch: {} (type: {}, truncated: {})\n{}",
-                url, content_type, truncated, content
+                "WebFetch: {} (type: {}, truncated: {}){}\n{}{}",
+                url,
+                content_type,
+                truncated,
+                label(id),
+                render_pictures(pictures),
+                content
             )
         }
         ToolResult::AskUserResponse { answers } => {
@@ -106,6 +125,48 @@ pub fn render_tool_result(r: &ToolResult) -> String {
             out
         }
     }
+}
+
+/// ` [turn2search1]` after a numbered result's head; nothing unnumbered.
+fn label(id: &str) -> String {
+    match id {
+        "" => String::new(),
+        id => format!(" [{id}]"),
+    }
+}
+
+/// The numbered pictures of a result, one a line: number, what it shows,
+/// and a product's name and price. The address stays out — the model shows
+/// a picture by its number, never by a URL it writes.
+fn render_pictures(pictures: &[crate::engine::web_search::WebPicture]) -> String {
+    let numbered: Vec<String> = pictures
+        .iter()
+        .filter(|p| !p.id.is_empty())
+        .map(|p| {
+            let product = [p.name.as_str(), p.price.as_str()]
+                .iter()
+                .filter(|s| !s.is_empty() && **s != p.caption)
+                .copied()
+                .collect::<Vec<_>>()
+                .join(" · ");
+            let what = [p.caption.as_str(), product.as_str()]
+                .iter()
+                .filter(|s| !s.is_empty())
+                .copied()
+                .collect::<Vec<_>>()
+                .join(" — ");
+            let what = if what.is_empty() { "(no caption)" } else { &what };
+            format!("[{}] {what}\n", p.id)
+        })
+        .collect();
+    if numbered.is_empty() {
+        return String::new();
+    }
+    let first = pictures.iter().find(|p| !p.id.is_empty()).map_or("", |p| p.id.as_str());
+    format!(
+        "Pictures — each shows what its line says (the picture itself is not attached). The person sees one in your answer where you write its number, such as [{first}]. Worth it when they ask what something looks like, or a step is clearer seen than read.\n{}",
+        numbered.concat()
+    )
 }
 
 fn preview_text(content: &str, max_lines: usize, max_chars: usize) -> (String, bool) {
@@ -151,12 +212,21 @@ pub fn render_tool_result_public(r: &ToolResult) -> String {
             content,
             content_type,
             truncated,
+            pictures,
+            id,
+            ..
         } => {
             let (preview, preview_truncated) = preview_text(content, 30, 2000);
             let shown_note = if preview_truncated { " (preview)" } else { "" };
             format!(
-                "WebFetch: {} (type: {}, truncated: {}){}\n{}",
-                url, content_type, truncated, shown_note, preview
+                "WebFetch: {} (type: {}, truncated: {}){}{}\n{}{}",
+                url,
+                content_type,
+                truncated,
+                label(id),
+                shown_note,
+                render_pictures(pictures),
+                preview
             )
         }
         ToolResult::WebSearchResults { .. } => render_tool_result(r),
@@ -311,6 +381,9 @@ mod tests {
             content: "月".repeat(1000),
             content_type: "text/plain".into(),
             truncated: false,
+            title: String::new(),
+            pictures: Vec::new(),
+            id: String::new(),
         };
         assert!(render_tool_result_public(&r).contains("(preview)"));
     }

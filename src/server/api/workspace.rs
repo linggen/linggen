@@ -278,6 +278,8 @@ struct WorkspaceStateResponse {
     user_stories: Option<(crate::state_fs::StateFile, String)>,
     tasks: Vec<(crate::state_fs::StateFile, String)>,
     messages: Vec<(serde_json::Value, String)>,
+    /// The sources and pictures the answers show (`answer_refs::view`).
+    refs: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -320,6 +322,7 @@ pub(crate) async fn get_workspace_state(
     };
     let running = !sid.is_empty() && run_calls::session_running(&state.manager, sid).await;
 
+    let spoken = crate::engine::answer_refs::view::spoken_texts(&messages);
     let mapped_messages = run_calls::with_run_calls(
         messages,
         running,
@@ -354,11 +357,17 @@ pub(crate) async fn get_workspace_state(
         |run| (run.meta(), String::new()),
     );
 
+    let refs = crate::engine::answer_refs::view::refs_for(
+        &state.manager.global_sessions,
+        sid,
+        spoken.iter().map(String::as_str),
+    );
     Json(WorkspaceStateResponse {
         active_task,
         user_stories,
         tasks,
         messages: mapped_messages,
+        refs,
     })
     .into_response()
 }

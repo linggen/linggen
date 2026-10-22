@@ -13,6 +13,7 @@ import { getMessagePhase, isTransientStatus, isToolStatusText } from './MessageP
 import { mayBecomeSilence } from '../../lib/hiddenRows.mts';
 import { visibleMessageText } from './MessageHelpers';
 import { INTERRUPTED_RUN_TEXT } from '../../lib/interruptedRun.mts';
+import { hidePartialRef } from '../../lib/answerRefs.mts';
 import { stripEmbeddedStructuredJson, isPlanMessage, normalizeMessageTextForDedup } from '../../lib/messageUtils';
 
 /** Render the inline sign-in CTA when a turn fails on an expired OAuth session.
@@ -198,7 +199,7 @@ export const AgentMessage: React.FC<{
       })()}
 
       {isStreamingText && msg.liveText && (() => {
-        const cleaned = stripEmbeddedStructuredJson(msg.liveText);
+        const cleaned = hidePartialRef(stripEmbeddedStructuredJson(msg.liveText));
         if (!cleaned) return null;
         return (
           <>

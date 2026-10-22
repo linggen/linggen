@@ -61,6 +61,8 @@ pub enum ToolResult {
     Screenshot {
         url: String,
         base64: String,
+        /// Its number in the session (`turn3image1`), once numbered.
+        id: String,
     },
     Success(String),
     LockResult {
@@ -71,12 +73,17 @@ pub enum ToolResult {
     WebSearchResults {
         query: String,
         results: Vec<super::web_search::WebSearchResult>,
+        pictures: Vec<super::web_search::WebPicture>,
     },
     WebFetchContent {
         url: String,
         content: String,
         content_type: String,
         truncated: bool,
+        title: String,
+        pictures: Vec<super::web_search::WebPicture>,
+        /// The page's own number as a source (`turn2search1`), once numbered.
+        id: String,
     },
     AskUserResponse {
         answers: Vec<AskUserAnswer>,

@@ -771,6 +771,15 @@ impl AgentEngine {
         block_id
     }
 
+    /// Number the sources and pictures a result carries in the session's
+    /// table (`answer_refs`), so the model can show them by number.
+    fn number_answer_refs(&self, result: &mut tools::ToolResult, session_id: Option<&str>) {
+        let (Some(manager), Some(sid)) = (self.tools.get_manager(), session_id) else {
+            return;
+        };
+        crate::engine::answer_refs::register::number(&manager.global_sessions, sid, result);
+    }
+
     /// Post-execution phase: render and cache the result, emit "done"/"failed"
     /// events, push the observation message, and track empty-search streaks.
     #[allow(clippy::too_many_arguments)]
@@ -794,8 +803,9 @@ impl AgentEngine {
         } = exec;
 
         match result {
-            Ok(result) => {
+            Ok(mut result) => {
                 self.note_closing_ask(&canonical_tool, &result);
+                self.number_answer_refs(&mut result, session_id);
                 let rendered_model = render_tool_result(&result);
                 let rendered_public = render_tool_result_public(&result);
 
@@ -923,6 +933,7 @@ impl AgentEngine {
                     if let tools::ToolResult::Screenshot {
                         ref url,
                         ref base64,
+                        ..
                     } = result
                     {
                         if !base64.is_empty() {

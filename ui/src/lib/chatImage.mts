@@ -11,6 +11,8 @@ export type ChatImageSource =
 export function imageSource(image: string): ChatImageSource {
   if (image.startsWith('data:') || image.startsWith('blob:')) return { kind: 'inline', src: image };
   if (image.startsWith('/api/')) return { kind: 'fetch', url: image };
+  // An answer's picture past the session's cache cap loads from its address.
+  if (/^https?:\/\//.test(image)) return { kind: 'inline', src: image };
   // Bare base64: the browser sniffs the real kind from the bytes.
   return { kind: 'inline', src: `data:image/png;base64,${image}` };
 }

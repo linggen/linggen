@@ -140,6 +140,7 @@ impl AgentEngine {
         if self.tools.builtins.delegation_depth() > 0 {
             return;
         }
+        keep_answer_pictures(&manager, session_id, &text).await;
         manager
             .add_chat_message(
                 &self.cfg.ws_root,
@@ -224,6 +225,7 @@ impl AgentEngine {
             // step that needs to skip for delegated runs.
             let is_subagent = self.tools.builtins.delegation_depth() > 0;
             if !is_subagent {
+                keep_answer_pictures(&manager, session_id, content).await;
                 manager
                     .add_chat_message(
                         &self.cfg.ws_root,
@@ -794,6 +796,18 @@ pub(crate) fn strip_speaker_tag(text: &str, known: &[String]) -> String {
     after.trim_start().to_string()
 }
 
+/// The pictures an answer shows, kept with the session before its row lands
+/// (`answer_refs::cache`), so the state the row's StateUpdated brings
+/// already draws them.
+async fn keep_answer_pictures(
+    manager: &crate::engine::agent::AgentManager,
+    session_id: Option<&str>,
+    text: &str,
+) {
+    let Some(sid) = session_id else { return };
+    crate::engine::answer_refs::cache::show(&manager.global_sessions, sid, text).await;
+}
+
 #[cfg(test)]
 mod speaker_tag_tests {
     use super::strip_speaker_tag;
@@ -819,3 +833,4 @@ mod speaker_tag_tests {
         assert_eq!(strip_speaker_tag("hi [Ling]: x", &known()), "hi [Ling]: x");
     }
 }
+

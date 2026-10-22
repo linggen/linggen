@@ -22,6 +22,9 @@ pub struct WebFetchResult {
     pub content: String,
     pub content_type: String,
     pub truncated: bool,
+    /// The page's title and pictures, for an HTML page.
+    pub title: String,
+    pub pictures: Vec<super::web_search::WebPicture>,
 }
 
 /// Fetch a URL and return its content as text.
@@ -45,9 +48,14 @@ pub async fn fetch_url(url: &str, max_bytes: Option<usize>) -> Result<WebFetchRe
         .unwrap_or("text/plain")
         .to_string();
 
+    // Relative picture addresses resolve against where the redirects ended.
+    let final_url = resp.url().to_string();
+    let mut facts = super::page_pictures::PageFacts::default();
     let text = match body_kind(&content_type) {
         BodyKind::Html => {
-            strip_html_tags(&resp.text().await.context("failed to read response body")?)
+            let html = resp.text().await.context("failed to read response body")?;
+            facts = super::page_pictures::read(&html, &final_url);
+            strip_html_tags(&html)
         }
         BodyKind::Text => resp.text().await.context("failed to read response body")?,
         // Octet-stream is sometimes a plain file served without a type.
@@ -78,6 +86,8 @@ pub async fn fetch_url(url: &str, max_bytes: Option<usize>) -> Result<WebFetchRe
         content,
         content_type,
         truncated,
+        title: facts.title,
+        pictures: facts.pictures,
     })
 }
 

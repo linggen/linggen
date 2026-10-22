@@ -271,7 +271,7 @@ fn spoken(m: &ChatMsg, reader: &Reader) -> Option<ChatMessage> {
         ));
     }
     if m.from_id == reader.id {
-        return Some(ChatMessage::new("assistant", m.content.clone()));
+        return Some(ChatMessage::new("assistant", answer_words(&m.content)));
     }
     if m.from_id == "user" {
         return Some(ChatMessage::new("user", user_line(m, reader)));
@@ -279,12 +279,20 @@ fn spoken(m: &ChatMsg, reader: &Reader) -> Option<ChatMessage> {
     if reader.agents.contains(&m.from_id) {
         return Some(ChatMessage::new(
             "user",
-            super::with_sender_label(&m.from_id, &m.content),
+            super::with_sender_label(&m.from_id, &answer_words(&m.content)),
         ));
     }
     // Recall, a compaction summary, any other pseudo-sender: context the
     // session was handed — a note for every member, never anyone's words.
     Some(ChatMessage::new("system", m.content.clone()))
+}
+
+/// A saved answer as the model reads it again: its words, without the
+/// `[turn2image1]` numbers it showed sources and pictures by. Those were for
+/// the chat to draw; read back without the tool results they named, a model
+/// takes them for numbers it made up.
+fn answer_words(content: &str) -> String {
+    crate::engine::answer_refs::strip_ids(content)
 }
 
 /// The user's line: plain when it was to the reader, labeled with whom it
@@ -526,6 +534,18 @@ mod tests {
                 "{text:?}"
             );
         }
+    }
+
+    /// Rebuilt, an answer's numbers would stand without the tool results
+    /// they named (those come back cut short): its words alone go back.
+    #[test]
+    fn a_rebuilt_answer_reads_without_its_picture_numbers() {
+        let agents = agents();
+        let m = row("ling", "ling", "user", "This one [turn1image1] from [turn1search2].", false);
+        let own = row_for_test(&m, "ling", &agents);
+        assert_eq!((own.role.as_str(), own.content.as_str()), ("assistant", "This one from."));
+        let theirs = row_for_test(&m, "yinyue", &agents);
+        assert!(!theirs.content.contains("[turn1"), "{}", theirs.content);
     }
 
     #[test]

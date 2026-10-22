@@ -6,6 +6,8 @@ import remarkCjkFriendlyGfmStrikethrough from 'remark-cjk-friendly-gfm-strikethr
 import rehypeHighlight from 'rehype-highlight';
 import { hashText, normalizeMarkdownish } from './utils/markdown';
 import { getMermaid } from '../../lib/mermaid';
+import { remarkAnswerRefs } from '../../lib/answerRefs.mts';
+import { RefChip, RefPictures } from './AnswerRefs';
 
 const MermaidBlock: React.FC<{ code: string }> = ({ code }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -55,9 +57,20 @@ const MermaidBlock: React.FC<{ code: string }> = ({ code }) => {
 // CJK-friendly emphasis: CommonMark's flanking rules leave `**银月：**青鼎`
 // as literal asterisks (full-width punctuation beside a CJK letter). The
 // strikethrough twin must come after remark-gfm.
-const REMARK_PLUGINS = [remarkGfm, remarkCjkFriendly, remarkCjkFriendlyGfmStrikethrough];
+// remarkAnswerRefs turns an answer's `[turn2image1]` numbers into chips and
+// picture grids (components below, `lg-ref` / `lg-pictures`).
+const REMARK_PLUGINS = [remarkGfm, remarkCjkFriendly, remarkCjkFriendlyGfmStrikethrough, remarkAnswerRefs];
 const REHYPE_PLUGINS = [rehypeHighlight];
-const MD_COMPONENTS: Components = {
+/** A custom element's string property, as hast hands it over. */
+function nodeProp(node: unknown, key: string): string {
+  const props = (node as { properties?: Record<string, unknown> } | undefined)?.properties;
+  const value = props?.[key];
+  return typeof value === 'string' ? value : '';
+}
+
+const MD_COMPONENTS = {
+  'lg-ref': ({ node }: { node?: unknown }) => <RefChip id={nodeProp(node, 'dataRef')} />,
+  'lg-pictures': ({ node }: { node?: unknown }) => <RefPictures ids={nodeProp(node, 'dataRefs')} />,
   a: ({ href, children, node: _node, ...props }) => (
     <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>
   ),
@@ -91,7 +104,7 @@ const MD_COMPONENTS: Components = {
       </pre>
     );
   },
-};
+} as Components;
 
 /** Memoized on `text`: a finished message's markdown parses once, not once
  *  per streamed token of the message below it. */

@@ -150,48 +150,74 @@ All other content renders as Markdown.
 
 ### Sources and pictures in answers
 
-Designed 2026-10-21, not built. An answer can show where it came from and
-what things look like (a product, a step, a part, a place), in any session,
-not only shopping. This lives in the engine, not in a skill. A model only
-ever **refers to what a tool returned**; it never writes its own image URL.
+Built 2026-10-22 (designed 2026-10-21). An answer can show where it came
+from and what things look like (a product, a step, a part, a place), in any
+session, not only shopping. This lives in the engine (`engine/answer_refs`),
+not in a skill. A model only ever **refers to what a tool returned**; it
+never writes its own image URL.
 
 - **Numbered results.** Every web result and picture a tool returns gets a
   number in the shape GPT models already write: `turn{N}search{i}` for a
-  source, `turn{N}image{i}` for a picture. The engine keeps a per-session
-  table from number to source (url, title, and caption, plus name and price
-  for a product).
-- **Where pictures come from.** WebSearch returns image results. WebFetch
-  returns a page's main image (`og:image`) and its in-text pictures with
-  their captions. Browser screenshots and local files a session touched
-  count too.
+  source, `turn{N}image{i}` for a picture. N is the tool result's own number
+  in the session (one past the highest so far), i counts from 1. The engine
+  keeps a per-session table from number to source (url, title, and caption,
+  plus name and price for a product) — `refs.jsonl`, see storage-spec. The
+  model reads each number beside the thing it names; a picture's address
+  stays out of what the model reads.
+- **Where pictures come from.** WebSearch returns image results (Tavily's,
+  with descriptions — the Linggen Cloud proxy does not pass them through
+  yet). WebFetch returns a page's main image (`og:image`, with a declared
+  product's name and price) and its in-text pictures with their captions
+  (`<figcaption>`, else `alt`; icons, logos and vectors skipped). Browser
+  screenshots count too. Local files are not numbered yet: `Read` has no
+  picture path.
 - **The model refers by number.** GPT models use their own citation
-  markers. Other models are told the plain form `[turn2image1]` in the tool
-  description, which describes the capability without setting a style.
-- **Rendering.** A source shows as a link chip. Pictures show as thumbnails
-  with their caption, side by side in a grid, and open larger on click, just
-  like a person's pictures. **A number that matches nothing renders
-  nothing**, so a picture can never be made up.
+  markers; the Responses API stream turns each id inside one into the plain
+  form (`\u{e200}i\u{e202}turn2image1\u{e201}` → `[turn2image1]`), so the
+  saved answer holds one form for every model. Other models are told the
+  plain form `[turn2image1]` in the tool description, which describes the
+  capability without setting a style; a result that carries pictures says
+  under what they are worth showing (the person asks what something looks
+  like, a step is clearer seen) — without it, Claude and Gemini answered
+  shopping and how-to questions in words alone on the live check. The
+  numbers stay in the saved text; a voice reads the words without them, and
+  a thread rebuilt from the file gives the model its old answers without
+  them (their tool results come back cut short, and a model reading numbers
+  it cannot find takes them for ones it made up).
+- **Rendering.** A source shows as a link chip (its site). A picture's
+  number shows as a small thumbnail in place (models write one as a word:
+  "[turn1image1] shows the latch"), and the pictures a paragraph names
+  follow it as thumbnails with their caption (a product's name and price first), side by side in a grid, and
+  open larger on click in the same viewer as a person's pictures, with a
+  click-through to the source. **A number that matches nothing renders
+  nothing**, so a picture can never be made up; a number still streaming is
+  hidden. The state endpoints hand out `refs`: what each number the answers
+  write resolves to, and for a picture its drawable `src`.
 - **Cache.**
   - Only pictures an answer actually shows are cached; search results that
     go unused are not.
-  - The engine downloads each one once when the answer lands, scaled to
-    about 1000 px.
-  - The cache is kept with the session, deduplicated by content, and
-    deleted with the session.
+  - The engine downloads each one once when the answer lands — before the
+    row is saved, at most 10 s an answer — scaled to about 1000 px.
+  - The cache is kept with the session (its `images/`), deduplicated by
+    content, and deleted with the session.
   - Each picture keeps its original URL for a click-through to the source.
-  - A size cap per session applies; past it, the picture loads from its
-    URL.
+  - A size cap per session (30 MB) applies; past it, the picture loads from
+    its URL.
   - A failed download means the picture isn't shown.
   - Old sessions keep their pictures, the source never sees the viewer, and
-    a phone gets them from the Mac over WebRTC.
+    a phone gets them from the Mac over WebRTC (`GET /api/sessions/images`
+    on the data channel, like a person's pictures).
 - **Not sent back to the model.** The model chose pictures from what the
   tool said about them, and history images are never resent.
 - **Later.** An `image_group` of search queries (pictures the engine looks
-  up for the model) may come as a second route. Number-referenced pictures
-  come first because they match what the text says.
-- **Lock.** `check.sh live` asks one shopping question and one how-to
-  question. Each answer must show real pictures, and every one must resolve
-  to a tool result.
+  up for the model) may come as a second route; such a marker is dropped
+  today. Number-referenced pictures come first because they match what the
+  text says.
+- **Lock.** `check.sh live` (case h) asks one shopping question and one
+  how-to question. Each answer must show real pictures, and every number it
+  writes must resolve to a tool result. `tests/system/pictures.rs` covers
+  numbering, resolution, unmatched-renders-nothing, dedupe and delete on a
+  fake model.
 
 ## Sessions
 

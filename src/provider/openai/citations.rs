@@ -1,10 +1,14 @@
 //! ChatGPT-trained models write their own citation markers into the reply
 //! text: `\u{e200}cite\u{e202}turn2search1\u{e202}turn2search2\u{e201}` —
 //! private-use characters (start U+E200, separator U+E202, end U+E201) that a
-//! chat shows as box glyphs around "cite turn2search1". They point into
-//! ChatGPT's own search results, which a Linggen turn never has, so they are
-//! dropped. A marker can span stream deltas: text from an open U+E200 is held
-//! until its U+E201 arrives.
+//! chat would show as box glyphs. Each id inside a marker that names a
+//! numbered result (`turn{N}search{i}`, `turn{N}image{i}` — the numbers the
+//! engine gave the session's tool results, `engine::answer_refs`) comes out
+//! as the plain form every model is told, `[turn2search1]`, so the engine
+//! resolves one form for all models. The rest of a marker (its kind word,
+//! an `image_group` query, ids of another shape) is dropped. A marker can
+//! span stream deltas: text from an open U+E200 is held until its U+E201
+//! arrives.
 //!
 //! When the API does attach `url_citation` annotations (its hosted web
 //! search), they are kept and read as markdown links after the reply.
@@ -48,6 +52,7 @@ impl CitationFilter {
                 }
                 return out;
             };
+            out.push_str(&marker_refs(&rest[..close]));
             self.held = rest[close + CLOSE.len_utf8()..].to_string();
         }
     }
@@ -86,6 +91,17 @@ impl CitationFilter {
     }
 }
 
+/// The plain `[id]` form of each numbered-result id in one marker (its text
+/// from U+E200 up to U+E201).
+fn marker_refs(marker: &str) -> String {
+    marker
+        .split(|c: char| is_marker_char(c))
+        .map(str::trim)
+        .filter(|part| crate::engine::answer_refs::is_ref_id(part))
+        .map(|id| format!("[{id}]"))
+        .collect()
+}
+
 fn strip_strays(text: &str) -> String {
     text.chars().filter(|c| !is_marker_char(*c)).collect()
 }
@@ -99,14 +115,25 @@ mod tests {
     const REAL: &str = "可以在 Canada 申请。\u{e200}cite\u{e202}turn2search1\u{e202}turn2search2\u{e201}下一步是填表。";
 
     #[test]
-    fn a_whole_marker_is_dropped() {
+    fn a_whole_marker_becomes_plain_ids() {
         let mut f = CitationFilter::default();
-        assert_eq!(f.push(REAL), "可以在 Canada 申请。下一步是填表。");
+        assert_eq!(
+            f.push(REAL),
+            "可以在 Canada 申请。[turn2search1][turn2search2]下一步是填表。"
+        );
         assert_eq!(f.finish(), "");
     }
 
     #[test]
-    fn a_marker_split_across_deltas_is_dropped() {
+    fn a_picture_marker_keeps_its_ids_and_a_query_marker_is_dropped() {
+        let mut f = CitationFilter::default();
+        let text = "Two kettles:\u{e200}i\u{e202}turn1image1\u{e202}turn1image3\u{e201} \
+                    \u{e200}image_group\u{e202}{\"query\":[\"kettle\"]}\u{e201}done";
+        assert_eq!(f.push(text), "Two kettles:[turn1image1][turn1image3] done");
+    }
+
+    #[test]
+    fn a_marker_split_across_deltas_still_resolves() {
         let mut f = CitationFilter::default();
         let mut out = String::new();
         for piece in [
@@ -119,7 +146,10 @@ mod tests {
             out.push_str(&f.push(piece));
         }
         out.push_str(&f.finish());
-        assert_eq!(out, "可以在 Canada 申请。下一步是填表。");
+        assert_eq!(
+            out,
+            "可以在 Canada 申请。[turn2search1][turn2search2]下一步是填表。"
+        );
     }
 
     #[test]
