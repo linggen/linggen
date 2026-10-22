@@ -28,6 +28,12 @@ pub fn number(store: &SessionStore, session_id: &str, result: &mut ToolResult) {
         ToolResult::Screenshot { url, base64, id } => {
             number_screenshot(store, session_id, url, base64, id)
         }
+        ToolResult::Picture {
+            base64,
+            caption,
+            id,
+            ..
+        } => number_drawn(store, session_id, base64, caption, id),
         _ => {}
     }
 }
@@ -39,6 +45,7 @@ fn numberable(result: &ToolResult) -> bool {
         } => !results.is_empty() || !pictures.is_empty(),
         ToolResult::WebFetchContent { .. } => true,
         ToolResult::Screenshot { base64, .. } => !base64.is_empty(),
+        ToolResult::Picture { base64, .. } => !base64.is_empty(),
         _ => false,
     }
 }
@@ -47,7 +54,11 @@ fn valid_session(id: &str) -> bool {
     !id.is_empty() && !id.contains("..") && !id.contains('/') && !id.contains('\\')
 }
 
-fn number_search(dir: &std::path::Path, results: &mut [WebSearchResult], pictures: &mut [WebPicture]) {
+fn number_search(
+    dir: &std::path::Path,
+    results: &mut [WebSearchResult],
+    pictures: &mut [WebPicture],
+) {
     let turn = table::number(dir, |turn| {
         let sources = results
             .iter()
@@ -98,6 +109,32 @@ fn number_screenshot(
         shot.page = url.to_string();
         shot.file = Some(file);
         vec![shot]
+    });
+    if let Some(turn) = turn {
+        *id = picture_id(turn, 1);
+    }
+}
+
+/// A drawn picture is kept at once, like a screenshot, and its bytes leave
+/// the result: the session's copy is the one the chat shows.
+fn number_drawn(
+    store: &SessionStore,
+    session_id: &str,
+    base64: &mut String,
+    caption: &str,
+    id: &mut String,
+) {
+    let Some(file) = store
+        .keep_images(session_id, &[std::mem::take(base64)])
+        .pop()
+    else {
+        return;
+    };
+    let dir = store.session_dir(session_id);
+    let turn = table::number(&dir, |turn| {
+        let mut drawn = Ref::picture(picture_id(turn, 1), "", caption);
+        drawn.file = Some(file);
+        vec![drawn]
     });
     if let Some(turn) = turn {
         *id = picture_id(turn, 1);
@@ -156,15 +193,95 @@ mod tests {
         number(&store, "sess-1-a", &mut second);
 
         let text = render_tool_result(&second);
-        assert!(text.contains("[turn2search1] Best kettles — https://a.example/k"), "{text}");
-        assert!(text.contains("[turn2image1]") && text.contains("\n[turn2image1] A gooseneck kettle\n"), "{text}");
-        assert!(text.contains("write a number such as [turn2search1]"), "{text}");
-        assert!(!text.contains("img.example"), "the model never reads a picture's address");
+        assert!(
+            text.contains("[turn2search1] Best kettles — https://a.example/k"),
+            "{text}"
+        );
+        assert!(
+            text.contains("[turn2image1]") && text.contains("\n[turn2image1] A gooseneck kettle\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("write a number such as [turn2search1]"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("img.example"),
+            "the model never reads a picture's address"
+        );
 
         let refs = table::load(&store.session_dir("sess-1-a"));
         assert_eq!(refs.len(), 4);
         assert_eq!(refs["turn1image1"].url, "https://img.example/k.jpg");
         assert_eq!(refs["turn2search1"].title, "Best kettles");
+    }
+
+    fn drawn(saved: Option<(String, String)>) -> ToolResult {
+        use base64::Engine as _;
+        ToolResult::Picture {
+            base64: base64::engine::general_purpose::STANDARD.encode(b"\x89PNG\r\n\x1a\ndrawn"),
+            caption: "A coffee machine, flat style".into(),
+            source: "ChatGPT".into(),
+            seconds: 31.6,
+            seed: None,
+            saved,
+            id: String::new(),
+        }
+    }
+
+    #[test]
+    fn a_drawn_picture_is_kept_at_once_and_shown_by_number() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::with_sessions_dir(dir.path().to_path_buf());
+        let mut first = search();
+        number(&store, "sess-1-a", &mut first);
+        let mut picture = drawn(None);
+        number(&store, "sess-1-a", &mut picture);
+
+        let ToolResult::Picture {
+            ref base64, ref id, ..
+        } = picture
+        else {
+            unreachable!()
+        };
+        assert_eq!(id, "turn2image1");
+        assert!(base64.is_empty(), "the bytes leave the result once kept");
+        let text = render_tool_result(&picture);
+        assert!(text.contains("drawn by ChatGPT in 32 s"), "{text}");
+        assert!(
+            text.contains("[turn2image1] A coffee machine, flat style"),
+            "{text}"
+        );
+        assert!(text.contains("writing [turn2image1]"), "{text}");
+        assert!(
+            !text.contains("/api/") && !text.contains("http"),
+            "no address to write: {text}"
+        );
+
+        let kept = &table::load(&store.session_dir("sess-1-a"))["turn2image1"];
+        assert!(kept.settled() && kept.url.is_empty());
+        let file = kept.file.clone().unwrap();
+        assert!(
+            store.image_path("sess-1-a", &file).is_some(),
+            "kept in the session's images/"
+        );
+    }
+
+    #[test]
+    fn a_skill_picture_names_the_skills_copy_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::with_sessions_dir(dir.path().to_path_buf());
+        let saved = (
+            "/apps/game/data/pictures/fuzhu.png".to_string(),
+            "/x/fuzhu.png".to_string(),
+        );
+        let mut picture = drawn(Some(saved));
+        number(&store, "sess-1-a", &mut picture);
+        let text = render_tool_result(&picture);
+        assert!(
+            text.contains("[turn1image1]") && text.contains("/apps/game/data/pictures/fuzhu.png"),
+            "{text}"
+        );
     }
 
     #[test]

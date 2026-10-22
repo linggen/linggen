@@ -37,7 +37,7 @@ Built-in tools are the kernel API. Skills are userspace.
 | `Write` | `path, content` | Create/overwrite file |
 | `Edit` | `path, old_string, new_string, replace_all?` | String replacement in file |
 | `Bash` | `cmd, timeout_ms?` | Shell command execution |
-| `GenerateImage` | `prompt, name, shape?, reference?, seed?` | One picture from the local picture lane, saved as `<skill>/data/pictures/<name>.png`, returned as `/apps/<skill>/data/pictures/<name>.png` |
+| `GenerateImage` | `prompt, shape?, name?, reference?, seed?` | Draw one picture when the person asks for a drawing (never to show a real thing — that is a WebFetch photo). Kept with the session and numbered (`[turn3image1]`) like any picture an answer shows; in a skill also saved as `<skill>/data/pictures/<name>.png` |
 | `lock_paths` | `globs, ttl_ms?` | Acquire file locks (multi-agent) |
 | `unlock_paths` | `tokens` | Release file locks |
 | `Task` | `target_agent_id, task` | Spawn subagent |
@@ -52,17 +52,29 @@ Built-in tools are the kernel API. Skills are userspace.
 | `ExitPlanMode` | `plan_text` | Exit plan mode with completed plan |
 | `UpdatePlan` | `plan_text?, items?` | Update plan progress during execution |
 
-**Lane-bound tools.** A built-in may name a local-model lane
-(`Tool::lane`); `GenerateImage` runs on the `pictures` lane. The tool is
-offered only when a skill lists it in `allowed-tools` *and* the machine
-passes the lane gate (Apple Silicon, 16 GB unified memory) — a Mac that
-cannot draw never sees the tool, so the model never reaches for it. The
-lane installs on first use, never at boot (pictures are not a daily
-model): the first call starts the install in the background (venv +
-~5 GB model) and answers in one line;
-every runtime progress payload carries each lane's verdict. Renders run one at
-a time, one process per picture, `square` 512×512 or `landscape`
-768×512; a `reference` (a file inside the skill) keeps its pose and shape.
+**Offered only where it runs.** A built-in may say it cannot run here
+(`Tool::offered`); such a tool is left out of every tool list, so the model
+never reaches for it. `GenerateImage` is offered when something can draw:
+
+- **ChatGPT** first, when the person is signed in to ChatGPT: the Responses
+  API's `image_generation` tool through the default built-in model (Luna),
+  as Codex CLI draws. About 30 s; `square` 1024×1024, `landscape`
+  1536×1024. The plan's picture allowance is small: a refusal (a usage
+  limit, a declined prompt) is the tool's result in one line, and nothing
+  is drawn elsewhere instead.
+- **This Mac** otherwise, when it passes the `pictures` lane gate (Apple
+  Silicon, 16 GB unified memory): local FLUX. The lane installs on first
+  use, never at boot: the first call starts the install in the background
+  (venv + ~5 GB model) and answers in one line; every runtime progress
+  payload carries each lane's verdict. Renders run one at a time, one
+  process per picture, `square` 512×512 or `landscape` 768×512.
+
+The picture is kept in the session's `images/` and numbered in its refs
+table at once (like a screenshot), so the chat shows it by number and it
+goes with the session; the model never writes its address. In a skill the
+skill also gets its copy (`name`, else a fresh name) and the result names
+its `/apps/<skill>/…` URL for the skill's page; a `reference` (a file inside
+the skill) keeps its pose and shape. Read tier: it writes no workspace file.
 
 **Aliases**: `Read`/`Write`/`Edit` accept `file`/`filepath` for `path`. `Edit` accepts `old`/`search`/`from` for `old_string`, `new`/`replace`/`to` for `new_string`.
 

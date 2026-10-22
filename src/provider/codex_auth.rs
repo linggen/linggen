@@ -86,6 +86,11 @@ impl CodexAuthTokens {
     }
 }
 
+/// Signed in to ChatGPT: the stored tokens are usable.
+pub fn chatgpt_signed_in() -> bool {
+    CodexAuthTokens::load(&codex_auth_file()).is_valid()
+}
+
 /// Default auth file path: `~/.linggen/codex_auth.json`.
 pub fn codex_auth_file() -> PathBuf {
     crate::paths::linggen_home().join("codex_auth.json")

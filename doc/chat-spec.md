@@ -169,8 +169,11 @@ never writes its own image URL.
   yet). WebFetch returns a page's main image (`og:image`, with a declared
   product's name and price) and its in-text pictures with their captions
   (`<figcaption>`, else `alt`; icons, logos and vectors skipped). Browser
-  screenshots count too. Local files are not numbered yet: `Read` has no
-  picture path.
+  screenshots count too, and so do pictures `GenerateImage` draws (ChatGPT
+  on the person's sign-in, else this Mac's FLUX lane): each is kept in the
+  session's `images/` at once, like a screenshot, numbered with its prompt
+  as the caption, and has no click-through. Local files are not numbered
+  yet: `Read` has no picture path.
 - **The model refers by number.** GPT models use their own citation
   markers; the Responses API stream turns each id inside one into the plain
   form (`\u{e200}i\u{e202}turn2image1\u{e201}` → `[turn2image1]`), so the

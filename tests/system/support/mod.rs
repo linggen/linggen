@@ -48,6 +48,9 @@ pub struct Setup {
     /// runs on its own defaults, its port from `--port` and its ling-mem
     /// from `LING_MEM_URL`. (`fixture` is ignored.)
     pub no_config: bool,
+    /// Where the engine sends a picture request (`LINGGEN_IMAGE_API_URL`):
+    /// a loopback stand-in for ChatGPT's image generation.
+    pub image_api: Option<String>,
 }
 
 impl Setup {
@@ -87,7 +90,12 @@ impl World {
         if let Some(file) = setup.memory_rows {
             memory.seed(file, &vars).await;
         }
-        let engine = Engine::start(&home, port, &memory.url, !setup.no_config).await;
+        let extra_env: Vec<(String, String)> = setup
+            .image_api
+            .iter()
+            .map(|url| ("LINGGEN_IMAGE_API_URL".to_string(), url.clone()))
+            .collect();
+        let engine = Engine::start(&home, port, &memory.url, !setup.no_config, &extra_env).await;
         let api = Api::new(engine.base_url());
         Self {
             api,

@@ -34,8 +34,15 @@ impl Engine {
     /// `mem_url` is the world's ling-mem (`LING_MEM_URL`). With no config
     /// (`has_config` false) the flag alone names the port, and the env alone
     /// names ling-mem — a first install.
-    pub async fn start(home: &Home, port: u16, mem_url: &str, has_config: bool) -> Self {
-        let env = hermetic_env(home, Some(mem_url));
+    pub async fn start(
+        home: &Home,
+        port: u16,
+        mem_url: &str,
+        has_config: bool,
+        extra_env: &[(String, String)],
+    ) -> Self {
+        let mut env = hermetic_env(home, Some(mem_url));
+        env.extend_from_slice(extra_env);
         let spawn = |port: u16| {
             if has_config {
                 set_config_port(home, port);

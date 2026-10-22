@@ -12,6 +12,13 @@
   downloaded once, scaled to ~1000 px and kept with the session (30 MB a
   session; past it they load from their address). `check.sh live` guards it
   (case h).
+- **Ling draws pictures in any chat.** Ask for a drawing and `GenerateImage`
+  draws it with ChatGPT on your ChatGPT sign-in (about 30 s), else on this
+  Mac's local picture model; the picture shows in the answer by its number
+  and is deleted with the conversation. A ChatGPT usage limit is said in one
+  line, never swapped for another source. Fixed: the tool was offered in
+  plain chats where it could only fail; a tool that cannot run is no longer
+  offered.
 
 ## [1.10.0] - 2026-10-21 — one memory across machines
 
