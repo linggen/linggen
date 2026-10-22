@@ -65,8 +65,19 @@ OLD_RESTARTS=false
 "$LING" update --help 2>/dev/null | grep -qi 'restart' && OLD_RESTARTS=true
 if "$LING" update --help 2>/dev/null | grep -q -- '--rollback'; then
   LINGGEN_RELEASE_BASE="$GOOD" "$LING" update >"$OUT/ling-update.log" 2>&1
-  check "ling update (from $PREV_LING)" $? "$(tail -3 "$OUT/ling-update.log")"
+  rc=$?
   VIA_INSTALL_SH=0
+  # Updaters before 1.10.0 gave a new binary 10 s to answer --version, and a
+  # new file's first run waits on the macOS scan (8-22 s in this VM). They
+  # restore the old binary; a user re-runs install.sh, so the gate does too.
+  if [ $rc != 0 ] && grep -q 'no answer within 10s' "$OUT/ling-update.log"; then
+    gap "ling update (from $PREV_LING)" "the old updater's 10 s start limit lost to the macOS scan — it restored $PREV_LING; upgraded by re-running install.sh"
+    curl -fsSL "$GOOD/install.sh" | LINGGEN_RELEASE_BASE="$GOOD" bash >"$OUT/install.log" 2>&1
+    check "install.sh after the old updater gave up" $? "$(tail -3 "$OUT/install.log")"
+    VIA_INSTALL_SH=1
+  else
+    check "ling update (from $PREV_LING)" $rc "$(tail -3 "$OUT/ling-update.log")"
+  fi
 else
   gap "ling update (from $PREV_LING)" "the old binary predates LINGGEN_RELEASE_BASE — upgraded by re-running install.sh instead"
   curl -fsSL "$GOOD/install.sh" | LINGGEN_RELEASE_BASE="$GOOD" bash >"$OUT/install.log" 2>&1

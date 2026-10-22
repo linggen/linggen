@@ -148,7 +148,9 @@ tcc_watch_stop() { # label
 # (or any other CLT shim) opens on a Mac without developer tools.
 CLT_DIALOG='Install Command Line Developer Tools|CommandLineTools\.installondemand'
 clt_dialog_up() { pgrep -f "$CLT_DIALOG" >/dev/null 2>&1; }
-clt_dialog_close() { pkill -f "$CLT_DIALOG" 2>/dev/null || true; sleep 1; }
+# SIGKILL: the dialog ignores SIGTERM, and a dialog left up is blamed on the
+# next check that looks for one.
+clt_dialog_close() { pkill -9 -f "$CLT_DIALOG" 2>/dev/null || true; sleep 1; }
 
 listener_pid() { lsof -nP -ti "tcp:$1" -sTCP:LISTEN 2>/dev/null | head -1; }
 

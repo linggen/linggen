@@ -163,8 +163,9 @@ ling update --rollback
 - Skips when already up to date.
 - Keeps the replaced binary as `ling.prev` beside `ling`; the new one goes in
   by rename (a fresh inode, never a copy over a live file).
-- Keeps the new binary only if `ling --version` answers within 10 s; else
-  puts `ling.prev` back and fails. A sha256 mismatch fails before anything
+- Keeps the new binary only if `ling --version` answers within 60 s (a new
+  file's first run waits on the macOS scan); else puts `ling.prev` back and
+  fails. A sha256 mismatch fails before anything
   is touched.
 - `--rollback` swaps `ling` and `ling.prev` (run it again to return), and
   refuses when `ling.prev` is missing or doesn't start.

@@ -24,7 +24,9 @@ pub const RELEASE_BASE_ENV: &str = "LINGGEN_RELEASE_BASE";
 const REPO: &str = "linggen/linggen";
 
 /// How long a freshly installed binary has to answer `--version`.
-const START_TIMEOUT: Duration = Duration::from_secs(10);
+/// 60 s: a new file's first run waits on the macOS scan (8-22 s measured
+/// in the release gate VM).
+const START_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Deserialize)]
 struct ReleaseManifest {
