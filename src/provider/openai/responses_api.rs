@@ -375,7 +375,11 @@ pub(super) fn responses_api_input_item(msg: &crate::message::ChatMessage) -> ser
         for img in &msg.images {
             content_parts.push(serde_json::json!({
                 "type": "input_image",
-                "image_url": format!("data:image/png;base64,{}", img),
+                "image_url": format!(
+                            "data:{};base64,{}",
+                            crate::pictures::kind::media_type_of_base64(img),
+                            img
+                        ),
             }));
         }
         serde_json::json!({

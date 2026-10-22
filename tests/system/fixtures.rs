@@ -19,7 +19,7 @@ fn ids(list: &Value, key: &str) -> Vec<String> {
 async fn the_fixture_home_loads() {
     let w = World::start(Setup::default()).await;
     let models = ids(&w.api.get("/api/models").await, "id");
-    for m in ["fake-ling", "fake-yinyue", "fake-sol"] {
+    for m in ["fake-ling", "fake-yinyue", "fake-eye", "fake-sol"] {
         assert!(
             models.contains(&m.to_string()),
             "model {m} missing: {models:?}"

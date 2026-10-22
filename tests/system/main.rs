@@ -14,6 +14,7 @@ mod met;
 mod pictures;
 mod plan;
 mod presence;
+mod reading;
 mod prompt;
 mod sessions;
 mod shared_table;

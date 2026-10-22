@@ -164,23 +164,25 @@ never writes its own image URL.
   plus name and price for a product) — `refs.jsonl`, see storage-spec. The
   model reads each number beside the thing it names; a picture's address
   stays out of what the model reads.
-- **Where pictures come from.** WebFetch, browser screenshots, and
-  pictures `GenerateImage` draws. WebFetch returns a page's main image
-  (`og:image`, captioned by the page title, with a declared product's name
-  and price) and its in-text pictures with their captions (`<figcaption>`,
-  else `alt`, else `title`, else the words of the file's name —
-  `move-schwarz-frontal.jpg` → "move schwarz frontal", without hashes,
-  sizes, bare numbers or filler like `img`/`dsc` — else the page title;
-  never the address; icons, logos and vectors skipped). A drawn picture
-  (ChatGPT on the person's sign-in, else this Mac's FLUX lane) is kept in
-  the session's `images/` at once, like a screenshot, numbered with its
-  prompt as the caption, and has no click-through. WebSearch is text only
-  (numbered sources): asking Tavily for image descriptions took a search
-  from ~2 s to 10–12 s, past the engine's 15 s timeout on a slow day
+- **Where pictures come from.** WebFetch, browser screenshots, pictures
+  `GenerateImage` draws, and picture files `Read` opens. WebFetch returns a
+  page's main image (`og:image`, captioned by the page title, with a
+  declared product's name and price) and its in-text pictures with their
+  captions (`<figcaption>`, else `alt`, else `title`, else the words of the
+  file's name — `move-schwarz-frontal.jpg` → "move schwarz frontal",
+  without hashes, sizes, bare numbers or filler like `img`/`dsc` — else the
+  page title; never the address; icons, logos and vectors skipped). A drawn
+  picture (ChatGPT on the person's sign-in, else this Mac's FLUX lane) is
+  kept in the session's `images/` at once, like a screenshot, numbered with
+  its prompt as the caption, and has no click-through. WebSearch is text
+  only (numbered sources): asking Tavily for image descriptions took a
+  search from ~2 s to 10–12 s, past the engine's 15 s timeout on a slow day
   (2026-10-22). So to show what something looks like, Ling fetches the
   maker's or a product page. A search that cannot reach its service says
-  WebFetch still opens a known page. Local files are not numbered yet:
-  `Read` has no picture path.
+  WebFetch still opens a known page. Local files a session touched count
+  too: a picture file `Read` opens is kept and numbered the same way, its
+  file name the caption, so the answer keeps showing it after the file
+  changes or goes (built 2026-10-22; tool-spec `Read`).
 - **The model refers by number.** GPT models use their own citation
   markers; the Responses API stream turns each id inside one into the plain
   form (`\u{e200}i\u{e202}turn2image1\u{e201}` → `[turn2image1]`), so the
@@ -223,7 +225,9 @@ never writes its own image URL.
     a phone gets them from the Mac over WebRTC (`GET /api/sessions/images`
     on the data channel, like a person's pictures).
 - **Not sent back to the model.** The model chose pictures from what the
-  tool said about them, and history images are never resent.
+  tool said about them, and history images are never resent. A screenshot
+  or a picture file a seeing model read rides in its own turn only; later
+  turns read the tool result's facts and number in its place.
 - **Later.** An `image_group` of search queries (pictures the engine looks
   up for the model) may come as a second route; such a marker is dropped
   today. Number-referenced pictures come first because they match what the
@@ -232,7 +236,8 @@ never writes its own image URL.
   how-to question. Each answer must show real pictures from a fetched page,
   and every number it writes must resolve to a tool result. `tests/system/pictures.rs` covers
   numbering, resolution, unmatched-renders-nothing, dedupe and delete on a
-  fake model.
+  fake model; `tests/system/reading.rs` a picture file read by a seeing and
+  a blind model.
 
 ## Sessions
 

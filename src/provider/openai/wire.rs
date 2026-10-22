@@ -149,7 +149,11 @@ impl OaiMessage {
             for img in &msg.images {
                 parts.push(OaiContentPart::ImageUrl {
                     image_url: OaiImageUrl {
-                        url: format!("data:image/png;base64,{}", img),
+                        url: format!(
+                            "data:{};base64,{}",
+                            crate::pictures::kind::media_type_of_base64(img),
+                            img
+                        ),
                     },
                 });
             }
@@ -248,7 +252,11 @@ impl OaiMessageWithTools {
             for img in &msg.images {
                 parts.push(OaiContentPart::ImageUrl {
                     image_url: OaiImageUrl {
-                        url: format!("data:image/png;base64,{}", img),
+                        url: format!(
+                            "data:{};base64,{}",
+                            crate::pictures::kind::media_type_of_base64(img),
+                            img
+                        ),
                     },
                 });
             }

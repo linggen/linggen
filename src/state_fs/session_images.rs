@@ -21,19 +21,6 @@ pub const MAX_IMAGE_BYTES: usize = 8 * 1024 * 1024;
 
 const IMAGES_DIR: &str = "images";
 
-/// The picture's kind by its first bytes: (extension, media type).
-fn kind_of(bytes: &[u8]) -> Option<(&'static str, &'static str)> {
-    match bytes {
-        [0x89, b'P', b'N', b'G', ..] => Some(("png", "image/png")),
-        [0xFF, 0xD8, 0xFF, ..] => Some(("jpg", "image/jpeg")),
-        [b'G', b'I', b'F', b'8', ..] => Some(("gif", "image/gif")),
-        [b'R', b'I', b'F', b'F', _, _, _, _, b'W', b'E', b'B', b'P', ..] => {
-            Some(("webp", "image/webp"))
-        }
-        _ => None,
-    }
-}
-
 /// A picture as the chat sends it: bare base64, or a `data:` URL.
 fn decode(sent: &str) -> Option<Vec<u8>> {
     let b64 = match sent.split_once(";base64,") {
@@ -113,7 +100,7 @@ impl SessionStore {
         if bytes.len() > MAX_IMAGE_BYTES {
             return None;
         }
-        let (ext, _) = kind_of(&bytes)?;
+        let ext = crate::pictures::kind::Kind::drawable(&bytes)?.ext();
         let digest = Sha256::digest(&bytes);
         let stem: String = digest[..8].iter().map(|b| format!("{b:02x}")).collect();
         let name = format!("{stem}.{ext}");

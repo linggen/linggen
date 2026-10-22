@@ -310,6 +310,9 @@ impl Tools {
         max_bytes: Option<usize>,
         line_range: Option<[usize; 2]>,
     ) -> Result<ToolResult> {
+        if let Some(picture) = super::read_picture::read_picture(rel, path)? {
+            return Ok(picture);
+        }
         let max = max_bytes.unwrap_or(64 * 1024);
 
         let (content, truncated) = if let Some([start, end]) = line_range {
@@ -375,18 +378,16 @@ impl Tools {
         line_range: Option<[usize; 2]>,
         note: &str,
     ) -> Result<ToolResult> {
-        match self.do_read_file(rel, path, max_bytes, line_range)? {
-            ToolResult::FileContent {
-                path,
-                content,
-                truncated,
-            } => Ok(ToolResult::FileContent {
-                path: format!("{} ({})", path, note),
-                content: format!("/* {} */\n\n{}", note, content),
-                truncated,
-            }),
-            other => Ok(other),
+        let mut result = self.do_read_file(rel, path, max_bytes, line_range)?;
+        match &mut result {
+            ToolResult::FileContent { path, content, .. } => {
+                *path = format!("{} ({})", path, note);
+                *content = format!("/* {} */\n\n{}", note, content);
+            }
+            ToolResult::PictureFile { path, .. } => *path = format!("{} ({})", path, note),
+            _ => {}
         }
+        Ok(result)
     }
 }
 

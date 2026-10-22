@@ -57,6 +57,7 @@ pub fn render_tool_result(r: &ToolResult) -> String {
             id,
             ..
         } => render_picture(caption, source, *seconds, *seed, saved.as_ref(), id),
+        ToolResult::PictureFile { .. } => render_picture_file(r, true),
         ToolResult::Success(msg) => format!("success: {}", msg),
         ToolResult::LockResult { acquired, denied } => {
             format!("lock_result: acquired={:?}, denied={:?}", acquired, denied)
@@ -150,12 +151,52 @@ fn render_picture(
     }
     match id {
         "" => out.push_str(" — not kept in this conversation, so the chat cannot show it.\n"),
-        id => out.push_str(&format!(
-            "\n[{id}] {caption}\nShow it by writing [{id}] in the answer; never write a link or markdown image for it.\n"
-        )),
+        id => out.push_str(&format!("\n{}", shown_by_number(id, caption))),
     }
     if let Some((url, path)) = saved {
         out.push_str(&format!("The skill's copy: {url} ({path})\n"));
+    }
+    out
+}
+
+/// A numbered picture's line and how the answer shows it.
+fn shown_by_number(id: &str, caption: &str) -> String {
+    format!(
+        "[{id}] {caption}\nShow it by writing [{id}] in the answer; never write a link or markdown image for it.\n"
+    )
+}
+
+/// A picture file `Read` opened: its facts and number, never its bytes.
+/// The model's copy says whether the picture is attached; the kept row
+/// (`for_model` false) holds the facts alone — the stand-in a later turn
+/// reads in the picture's place.
+fn render_picture_file(r: &ToolResult, for_model: bool) -> String {
+    let ToolResult::PictureFile {
+        path,
+        name,
+        kind,
+        width,
+        height,
+        size,
+        seen,
+        id,
+        ..
+    } = r
+    else {
+        return String::new();
+    };
+    let size = crate::engine::tools::human_size(*size);
+    let mut out =
+        format!("Read: {path} — a picture ({kind}, {width}×{height}, {size}), not text.\n");
+    if for_model {
+        out.push_str(match seen {
+            true => "The picture is attached below for you to see.\n",
+            false => "This model cannot see pictures; these facts are all there is to read.\n",
+        });
+    }
+    match id.as_str() {
+        "" => out.push_str("Not kept in this conversation, so the chat cannot show it.\n"),
+        id => out.push_str(&shown_by_number(id, name)),
     }
     out
 }
@@ -269,6 +310,7 @@ pub fn render_tool_result_public(r: &ToolResult) -> String {
                 preview
             )
         }
+        ToolResult::PictureFile { .. } => render_picture_file(r, false),
         ToolResult::WebSearchResults { .. } => render_tool_result(r),
         ToolResult::AskUserResponse { .. } => render_tool_result(r),
         other => render_tool_result(other),
