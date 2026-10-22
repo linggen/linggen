@@ -141,7 +141,7 @@ fn tool_defs() -> Vec<Value> {
                 "properties": {
                     "query":    {"type": "string", "description": "Natural-language description of what to find."},
                     "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Restrict to one tier. Omit to span all."},
-                    "scope_root": {"type": "string", "description": "HOST-FILLED — leave it out; the host stamps the session root, which narrows results to rows whose stored scope is under it or at its parents, and rows about the person (no scope)."},
+                    "scope_root": {"type": "string", "description": "HOST-FILLED — leave it out; the host stamps the session root, which weighs each row by how near its stored scope is to the root (a skill's dir sees only its own rows)."},
                     "limit":    {"type": "integer", "description": "Max rows. Default 10."}
                 },
                 "required": ["query"]
@@ -162,7 +162,7 @@ fn tool_defs() -> Vec<Value> {
                 "properties": {
                     "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"]},
                     "types":    {"type": "array", "items": {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"]}, "description": "Only rows of these types."},
-                    "scope_root": {"type": "string", "description": "A session root: rows whose stored scope is under it or at its parents, and rows about the person (no scope)."},
+                    "scope_root": {"type": "string", "description": "A session root: rows whose stored scope is under it or at its parents, and rows about the person (no scope). A skill's dir sees only its own rows."},
                     "indexed":  {"type": "boolean", "description": "Only indexed rows (true) or only the rest (false)."},
                     "past_ttl": {"type": "boolean", "description": "Return only rows past the configured episodic TTL. Implies tier=episodic."},
                     "day":      {"type": "string", "description": "One local calendar day, YYYY-MM-DD — the remember stage lists a single day's worklist with this."},

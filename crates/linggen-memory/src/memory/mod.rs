@@ -18,7 +18,7 @@ pub mod scope;
 pub mod store;
 pub mod types;
 
-pub use hybrid::Candidate;
+pub use hybrid::{Candidate, Hit};
 pub use recall::Recall;
 pub use schema::{
     build_schema, memories_to_record_batch, record_batch_to_memories, SEMANTIC_TABLE_NAME,
@@ -26,7 +26,7 @@ pub use schema::{
 };
 pub use scope::RecallScope;
 pub use store::{
-    AccountScope, Filters, InsertOutcome, MemoryPatch, MemoryStore, SortOrder,
+    AccountScope, Filters, InsertOutcome, MemoryPatch, MemoryStore, ScopeWeigher, SortOrder,
     DEDUP_SIMILARITY_THRESHOLD,
 };
 pub use types::{Memory, MemoryType, Origin, Outcome, ParseEnumError, Tier};

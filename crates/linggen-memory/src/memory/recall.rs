@@ -26,7 +26,9 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 
-use crate::memory::{Candidate, Filters, Memory, MemoryStore};
+use std::collections::HashSet;
+
+use crate::memory::{Candidate, Filters, Hit, MemoryStore};
 
 /// Dual-table read path. Holds shared handles to the `semantic` and
 /// `episodic` stores and owns the merge/dedup policy.
@@ -56,11 +58,11 @@ impl Recall {
         Ok(Self::new(Arc::new(semantic), Arc::new(episodic)))
     }
 
-    /// Hybrid recall across both tables. Scores each row as cosine + an
-    /// IDF-weighted keyword boost over the *combined* candidate pool, so the
-    /// ranking is global, not per-table-then-merged. `query_text` drives the
-    /// keyword boost; `min_score` gates the hybrid score (see
-    /// [`crate::memory::hybrid`]). Each hit is `(memory, cosine, hybrid)`.
+    /// Hybrid recall across both tables. Scores each row as (cosine + an
+    /// IDF-weighted keyword boost over the *combined* candidate pool) × its
+    /// scope weight, so the ranking is global, not per-table-then-merged.
+    /// `query_text` drives the keyword boost; `min_score` gates the weighted
+    /// score (see [`crate::memory::hybrid`]).
     pub async fn query(
         &self,
         query_vec: &[f32],
@@ -68,7 +70,7 @@ impl Recall {
         filters: &Filters,
         limit: usize,
         min_score: Option<f32>,
-    ) -> Result<Vec<(Memory, f32, f32)>> {
+    ) -> Result<Vec<Hit>> {
         // Pull the full filtered candidate pool from both tables. Fusion and
         // the floor happen once over the union, not per table — so a row's
         // rank reflects the whole corpus.
@@ -82,12 +84,10 @@ impl Recall {
         // dropped only if its content is byte-identical to one already kept.
         // A high-cosine *contradiction* (different content) is intentionally
         // kept so recall can surface it (Reconcile, memory-spec §2).
+        let mut seen: HashSet<String> = HashSet::new();
         let mut pool: Vec<Candidate> = Vec::with_capacity(semantic.len() + episodic.len());
         for cand in semantic.into_iter().chain(episodic) {
-            if !pool
-                .iter()
-                .any(|kept| is_near_dup(&kept.memory, &cand.memory))
-            {
+            if seen.insert(dup_key(&cand.memory.content)) {
                 pool.push(cand);
             }
         }
@@ -98,18 +98,19 @@ impl Recall {
     }
 }
 
-/// Union dedup test: byte-identical content (trimmed). Cosine is
+/// Union dedup key: byte-identical content (trimmed). Cosine is
 /// deliberately not used — it cannot tell a restatement from a
 /// contradiction, and collapsing a high-cosine pair here would hide a
 /// contradiction recall must surface (Reconcile, memory-spec §2).
-fn is_near_dup(a: &Memory, b: &Memory) -> bool {
-    a.content.trim() == b.content.trim()
+fn dup_key(content: &str) -> String {
+    content.trim().to_string()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::memory::types::{MemoryType, Origin};
+    use crate::memory::Memory;
     use crate::memory::VECTOR_DIM;
     use tempfile::TempDir;
 
@@ -147,7 +148,7 @@ mod tests {
             .query(&vec_at(0), "", &Filters::default(), 10, None)
             .await
             .unwrap();
-        let contents: Vec<_> = got.iter().map(|(m, _, _)| m.content.as_str()).collect();
+        let contents: Vec<_> = got.iter().map(|h| h.memory.content.as_str()).collect();
         assert!(contents.contains(&"semantic hit"));
         assert!(contents.contains(&"episodic hit"));
     }
@@ -166,7 +167,7 @@ mod tests {
             .unwrap();
         assert_eq!(got.len(), 1, "exact-content dup across tables collapses");
         assert_eq!(
-            got[0].0.content, "user has a cat named Xiaoman",
+            got[0].memory.content, "user has a cat named Xiaoman",
             "semantic copy wins"
         );
     }
@@ -200,6 +201,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(got.len(), 3, "distinct union truncated to limit");
-        assert_eq!(got[0].0.content, "s0", "highest-scored row first");
+        assert_eq!(got[0].memory.content, "s0", "highest-scored row first");
     }
 }

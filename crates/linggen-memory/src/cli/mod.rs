@@ -510,10 +510,11 @@ pub struct FilterArgs {
     #[arg(long, value_name = "YYYY-MM-DD")]
     pub day: Option<String>,
 
-    /// Recall scope, given as the session root: rows under it, rows at its
-    /// parents, and rows with no scope. A skill's dir
-    /// (`~/.linggen/skills/<name>`) sees only its own rows; `$HOME` only
-    /// rows with no scope. `forget` ignores this on its own — it matches
+    /// Recall scope, given as the session root. `list`: rows under it, rows
+    /// at its parents, and rows with no scope (`$HOME` only rows with no
+    /// scope). `search`: every non-app row, its score weighed by its
+    /// directory's distance from the root. A skill's dir
+    /// (`~/.linggen/skills/<name>`) sees only its own rows on both. `forget` ignores this on its own — it matches
     /// unscoped rows by design and would take most of the store.
     /// `--cwd-scope` is the pre-v2 name, accepted for one release.
     #[arg(
@@ -1277,34 +1278,34 @@ async fn cmd_search_recall(recall: &Recall, args: SearchArgs, format: OutputForm
 /// Emit scored search hits, attaching the cosine similarity to each row.
 /// JSON output adds a `score` field; text output prefixes the score so
 /// users can eyeball relevance without parsing JSON.
-fn emit_scored_facts(
-    scored: &[(crate::memory::Memory, f32, f32)],
-    format: OutputFormat,
-) -> Result<()> {
-    // Each hit is (memory, cosine, hybrid). JSON exposes both `score`
-    // (cosine) and `hybrid_score` (the blended [0,1] relevance the rows are
-    // ordered by); text leads with the raw cosine for at-a-glance similarity.
+fn emit_scored_facts(scored: &[crate::memory::Hit], format: OutputFormat) -> Result<()> {
+    // JSON exposes `score` (cosine), `hybrid_score` (the shown, weighted
+    // [0,1] relevance the rows are ordered by), `raw_hybrid` and
+    // `scope_weight`; text leads with the raw cosine for at-a-glance
+    // similarity.
     match format {
         OutputFormat::Json => {
-            for (f, cosine, hybrid) in scored {
-                let mut v = serde_json::to_value(f)
+            for h in scored {
+                let mut v = serde_json::to_value(&h.memory)
                     .context("serializing fact to JSON for scored search output")?;
                 if let Some(obj) = v.as_object_mut() {
-                    obj.insert("score".into(), serde_json::json!(cosine));
-                    obj.insert("hybrid_score".into(), serde_json::json!(hybrid));
+                    obj.insert("score".into(), serde_json::json!(h.cosine));
+                    obj.insert("hybrid_score".into(), serde_json::json!(h.shown()));
+                    obj.insert("raw_hybrid".into(), serde_json::json!(h.hybrid));
+                    obj.insert("scope_weight".into(), serde_json::json!(h.weight));
                 }
                 let line = serde_json::to_string(&v).context("encoding scored fact JSON")?;
                 println!("{line}");
             }
         }
         OutputFormat::Text => {
-            for (f, cosine, _) in scored {
+            for h in scored {
                 println!(
                     "{:.2} {} [{}] {}",
-                    cosine,
-                    f.id,
-                    f.r#type,
-                    truncate(&f.content, 120)
+                    h.cosine,
+                    h.memory.id,
+                    h.memory.r#type,
+                    truncate(&h.memory.content, 120)
                 );
             }
         }
