@@ -58,8 +58,9 @@ never reaches for it. `GenerateImage` is offered when something can draw:
 
 - **ChatGPT** first, when the person is signed in to ChatGPT: the Responses
   API's `image_generation` tool through the default built-in model (Luna),
-  as Codex CLI draws. About 30 s; `square` 1024×1024, `landscape`
-  1536×1024. The plan's picture allowance is small: a refusal (a usage
+  as Codex CLI draws. About 30–40 s, a 1–2 MB PNG; it asks `square`
+  1024×1024 or `landscape` 1536×1024, though the backend may pick its own
+  (1312×1199 seen live). The plan's picture allowance is small: a refusal (a usage
   limit, a declined prompt) is the tool's result in one line, and nothing
   is drawn elsewhere instead.
 - **This Mac** otherwise, when it passes the `pictures` lane gate (Apple

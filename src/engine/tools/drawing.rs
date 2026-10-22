@@ -42,7 +42,7 @@ impl Tools {
         };
         Ok(ToolResult::Picture {
             base64: base64::engine::general_purpose::STANDARD.encode(&drawn.png),
-            caption: args.prompt.trim().chars().take(CAPTION_CHARS).collect(),
+            caption: caption(&args.prompt),
             source: drawn.source.label().to_string(),
             seconds: drawn.seconds,
             seed: drawn.seed,
@@ -104,6 +104,18 @@ async fn save_in_skill(
     Ok((format!("/apps/{skill}/{rel}"), path.display().to_string()))
 }
 
+/// The prompt as a caption: whole words up to [`CAPTION_CHARS`], with `…`
+/// when cut.
+fn caption(prompt: &str) -> String {
+    let prompt = prompt.trim();
+    if prompt.chars().count() <= CAPTION_CHARS {
+        return prompt.to_string();
+    }
+    let cut: String = prompt.chars().take(CAPTION_CHARS).collect();
+    let words = cut.rsplit_once(' ').map_or(cut.as_str(), |(head, _)| head);
+    format!("{}…", words.trim_end_matches([',', ';', ' ']))
+}
+
 fn clock_seed() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -114,6 +126,15 @@ fn clock_seed() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_long_prompt_is_cut_at_a_word() {
+        assert_eq!(caption(" a coffee machine "), "a coffee machine");
+        let long = format!("{} enamel, small glass cup", "word ".repeat(23));
+        let cut = caption(&long);
+        assert!(cut.ends_with("word…"), "{cut}");
+        assert!(cut.chars().count() <= CAPTION_CHARS + 1);
+    }
 
     #[test]
     fn a_reference_needs_a_skill() {
