@@ -7,11 +7,14 @@ import { sessions as sessionsApi } from '../lib/api';
 import { confirmDialog } from '../lib/confirmDialog';
 import { useInteractionStore } from './interactionStore';
 import { sessionApi } from '../lib/endpoints';
+import { newChatRequest } from '../lib/sessionBinding.mts';
+import { afterNewChat } from '../lib/sessionRoot.mts';
 
-const SELECTED_PROJECT_STORAGE_KEY = 'linggen:selected-project';
 const ACTIVE_SESSION_STORAGE_KEY = 'linggen:active-session';
 
 interface SessionState {
+  /** The open session's folder (`lib/sessionRoot.mts`): in memory only, so
+   *  a folder picked for one session never reaches the next New chat. */
   selectedProjectRoot: string;
   sessions: SessionInfo[];
   /** Unified list of ALL sessions across projects, missions, skills. */
@@ -49,9 +52,7 @@ interface SessionState {
 }
 
 export const useSessionStore = create<SessionState>((set, get) => ({
-  selectedProjectRoot: typeof window !== 'undefined'
-    ? window.localStorage.getItem(SELECTED_PROJECT_STORAGE_KEY) || ''
-    : '',
+  selectedProjectRoot: '',
   sessions: [],
   allSessions: [],
   allSessionsLoaded: false,
@@ -69,11 +70,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   activeSkillName: null,
   boundParams: {},
 
-  setSelectedProjectRoot: (root) => {
-    if (root) window.localStorage.setItem(SELECTED_PROJECT_STORAGE_KEY, root);
-    else window.localStorage.removeItem(SELECTED_PROJECT_STORAGE_KEY);
-    set({ selectedProjectRoot: root });
-  },
+  setSelectedProjectRoot: (root) => set({ selectedProjectRoot: root }),
   setActiveSessionId: (id) => {
     if (id) window.localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, id);
     else window.localStorage.removeItem(ACTIVE_SESSION_STORAGE_KEY);
@@ -177,10 +174,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
 /**
  * The project root a call about the open session works in: `override` >
- * the selected project > the open session's own project/cwd. The selected
- * project is set only when a session is picked from the list — one opened
- * by a link, the last-used restore or New chat leaves it '' (or another
- * session's), so the session's own folder is the fallback.
+ * the open session's folder as mirrored (`selectedProjectRoot`) > its own
+ * project/cwd, for a session opened by a link before the mirror is set.
+ * The engine prefers the session's own folder over any root sent.
  */
 export function effectiveProjectRoot(override?: string | null): string {
   if (override) return override;
@@ -195,12 +191,9 @@ async function makeSession(set: (fn: (s: SessionState) => Partial<SessionState>)
   const now = new Date();
   const title = `Chat ${now.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, ${now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
   try {
-    const data = await sessionsApi.create({ title });
-    const newSession = { id: data.id, repo_path: '', title, created_at: Math.floor(Date.now() / 1000) };
-    set((s) => ({
-      activeSessionId: data.id,
-      allSessions: [newSession, ...s.allSessions],
-    }));
+    // Never a folder: the engine starts a New chat in the default workspace.
+    const data = await sessionsApi.create(newChatRequest(title));
+    set((s) => afterNewChat(s.allSessions, { id: data.id, title, cwd: data.cwd }, Math.floor(Date.now() / 1000)));
     window.localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, data.id);
     return data.id;
   } catch (e) {

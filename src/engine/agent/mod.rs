@@ -489,8 +489,7 @@ impl AgentManager {
         let pinned_root = meta
             .as_ref()
             .filter(|m| matches!(m.creator.as_str(), "mission" | "agent"))
-            .and_then(|m| m.cwd.as_deref())
-            .filter(|s| !s.trim().is_empty())
+            .map(|m| m.cwd.as_str())
             .map(|cwd| crate::util::resolve_path(std::path::Path::new(cwd)));
         let project_root =
             pinned_root.unwrap_or_else(|| Self::canonical_project_root(project_root));

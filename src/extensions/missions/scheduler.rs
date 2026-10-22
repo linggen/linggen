@@ -351,18 +351,15 @@ pub fn mission_kickoff_messages(
     )]
 }
 
-/// Create a new session for a mission run in the global session store.
-pub fn create_mission_session(mission: &Mission) -> Option<String> {
-    let session_id = format!(
-        "sess-{}-{}",
-        crate::util::now_ts_secs(),
-        &uuid::Uuid::new_v4().to_string()[..8]
-    );
-    let store =
-        crate::state_fs::SessionStore::with_sessions_dir(crate::paths::global_sessions_dir());
+/// A mission run's session: it works in the mission's `cwd:` (else its
+/// project, else where a plain chat does), on the mission's agent and model.
+fn mission_session_meta(
+    mission: &Mission,
+    session_id: &str,
+) -> crate::state_fs::sessions::SessionMeta {
     let mission_cwd = mission.cwd.clone().or_else(|| mission.project.clone());
-    let meta = crate::state_fs::sessions::SessionMeta {
-        id: session_id.clone(),
+    crate::state_fs::sessions::SessionMeta {
+        id: session_id.to_string(),
         title: mission_session_title(mission),
         created_at: crate::util::now_ts_secs(),
         updated_at: 0,
@@ -370,7 +367,10 @@ pub fn create_mission_session(mission: &Mission) -> Option<String> {
         // `creator: "mission"` alone distinguishes mission sessions.
         skill: None,
         creator: "mission".into(),
-        cwd: mission_cwd.clone(),
+        // A mission with no `cwd:` works where a plain chat does.
+        cwd: mission_cwd
+            .clone()
+            .unwrap_or_else(|| crate::state_fs::sessions::fallback_cwd(None)),
         project: mission_cwd.clone(),
         project_name: mission_cwd.as_ref().and_then(|p| {
             std::path::Path::new(p)
@@ -393,7 +393,19 @@ pub fn create_mission_session(mission: &Mission) -> Option<String> {
         title_locked: true,
         withheld_tools: Vec::new(),
         params: Default::default(),
-    };
+    }
+}
+
+/// Create a new session for a mission run in the global session store.
+pub fn create_mission_session(mission: &Mission) -> Option<String> {
+    let session_id = format!(
+        "sess-{}-{}",
+        crate::util::now_ts_secs(),
+        &uuid::Uuid::new_v4().to_string()[..8]
+    );
+    let store =
+        crate::state_fs::SessionStore::with_sessions_dir(crate::paths::global_sessions_dir());
+    let meta = mission_session_meta(mission, &session_id);
     match store.add_session(&meta) {
         Ok(_) => Some(session_id),
         Err(e) => {
@@ -1143,6 +1155,26 @@ mod tests {
             skip: skipped.then_some(SkipKind::Busy),
             ..Default::default()
         }
+    }
+
+    fn parsed(front: &str) -> Mission {
+        let md = format!("---\nschedule: \"0 9 * * *\"\nenabled: true\n{front}---\nBody\n");
+        super::super::parser::parse_mission_md("m", &md).unwrap()
+    }
+
+    /// A mission run's session works in the mission's `cwd:`; one that
+    /// declares none works where a plain chat does — never nowhere.
+    #[test]
+    fn a_mission_session_always_has_a_folder() {
+        let with = mission_session_meta(&parsed("cwd: /tmp/proj\n"), "sess-1-m");
+        assert_eq!(with.cwd, "/tmp/proj");
+        let without = mission_session_meta(&parsed(""), "sess-1-m");
+        assert_eq!(
+            without.cwd,
+            crate::state_fs::sessions::fallback_cwd(None),
+            "a mission with no cwd: has no folder"
+        );
+        assert!(!without.cwd.is_empty());
     }
 
     fn nightly() -> cron::Schedule {

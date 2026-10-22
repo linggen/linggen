@@ -57,7 +57,7 @@ pub(super) fn ensure_session_exists(state: &Arc<ServerState>, sid: &str, root: &
         title: format!("Yinyue · {label}"),
         created_at: crate::util::now_ts_secs(),
         creator: "agent".to_string(),
-        cwd: Some(root.to_string_lossy().to_string()),
+        cwd: root.to_string_lossy().to_string(),
         title_locked: true,
         withheld_tools: Vec::new(),
         // Her daily thread is hers: she is its one member and its lead.

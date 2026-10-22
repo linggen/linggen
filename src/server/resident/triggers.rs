@@ -534,31 +534,24 @@ pub(super) async fn session_for_skill(
     state: &Arc<ServerState>,
     skill: &str,
 ) -> Option<(String, std::path::PathBuf)> {
-    let home = crate::util::resolve_path(std::path::Path::new("~/.linggen"));
     if let Ok(sessions) = state.manager.global_sessions.list_sessions() {
         if let Some(meta) = sessions
             .into_iter()
             .filter(|s| s.skill.as_deref() == Some(skill))
             .max_by_key(|s| s.created_at)
         {
-            let root = meta
-                .cwd
-                .or(meta.project)
-                .map(std::path::PathBuf::from)
-                .unwrap_or(home);
-            return Some((meta.id, root));
+            return Some((meta.id, std::path::PathBuf::from(meta.cwd)));
         }
     }
     // None yet — mint a skill-bound session so "tell Yinyue → app" works first time.
     let now = crate::util::now_ts_secs();
     let sid = format!("sess-{skill}-{now}");
-    let declared = state
-        .manager
-        .skills
-        .get_skill(skill)
-        .await
-        .map(|s| crate::server::chat::members::default_members(Some(&s)))
-        .unwrap_or_else(|| crate::server::chat::members::default_members(None));
+    let found = state.manager.skills.get_skill(skill).await;
+    let declared = crate::server::chat::members::default_members(found.as_ref());
+    let root = match &found {
+        Some(s) => s.working_dir(),
+        None => std::path::PathBuf::from(crate::state_fs::sessions::fallback_cwd(Some(skill))),
+    };
     let meta = crate::state_fs::sessions::SessionMeta {
         id: sid.clone(),
         title: skill.to_string(),
@@ -566,7 +559,7 @@ pub(super) async fn session_for_skill(
         updated_at: 0,
         skill: Some(skill.to_string()),
         creator: "agent".to_string(),
-        cwd: Some(home.to_string_lossy().to_string()),
+        cwd: root.to_string_lossy().to_string(),
         title_locked: true,
         withheld_tools: Vec::new(),
         agents: declared,
@@ -576,5 +569,5 @@ pub(super) async fn session_for_skill(
         tracing::warn!("[agent-chat] could not create '{skill}' session: {e}");
         return None;
     }
-    Some((sid, home))
+    Some((sid, root))
 }

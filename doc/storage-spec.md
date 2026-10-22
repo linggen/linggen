@@ -27,6 +27,7 @@ Two-tier layout, aligned with Claude Code's `~/.claude/` + `{repo}/.claude/` con
 |-----------|---------|
 | `~/.linggen/` | Global home (override with `$LINGGEN_HOME`) |
 | `~/.linggen/sessions/` | All sessions (flat, creator/project tracked in metadata) |
+| `~/.linggen/workspace/` | Default working folder of a new chat (`session-spec.md` § Default workspace) |
 | `~/.linggen/memory/` | Global memory |
 | `~/.linggen/missions/` | Mission definitions and run history |
 | `~/.linggen/skills/{name}/` | Per-skill state |
@@ -54,6 +55,7 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 │   ├── envs/{name}/                  # Named venvs: tools (yt-dlp), tts (mlx-audio), pictures (mflux)
 │   ├── mlx_tts.py, mlx_picture.py    # Sidecar/runner scripts, rewritten from the binary at spawn
 │   └── pictures-model.stamp          # Picture model warmed into models/hf-hub (the lane is ready)
+├── workspace/                        # Where a new chat works until another folder is chosen for it (made on demand)
 ├── sessions/                         # All sessions (user, skill, mission — flat)
 │   └── {session_id}/
 │       ├── session.yaml              # Session metadata (includes creator, cwd, project)
@@ -146,7 +148,7 @@ project: /Users/foo/workspace/myproject
 project_name: myproject
 ```
 
-All sessions live at `~/.linggen/sessions/{id}/` — no path reconstruction needed. `cwd`, `project`, and `project_name` are updated dynamically as the agent changes directories. `project` and `project_name` are null when in home mode (no git repo detected).
+All sessions live at `~/.linggen/sessions/{id}/` — no path reconstruction needed. `cwd` is always written (a file without one is read as its project, its skill's folder, or `~/.linggen/workspace`, and gains it on its next write). `cwd`, `project`, and `project_name` are updated dynamically as the agent changes directories. `project` and `project_name` are null when in home mode (no git repo detected).
 
 ### Chat messages (`messages.jsonl`)
 

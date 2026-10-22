@@ -237,6 +237,8 @@ pub async fn start_server(
     idle_shutdown_secs: Option<u64>,
     agent_events_rx: background::AgentEvents,
 ) -> anyhow::Result<()> {
+    // Every session settles on a folder; a plain chat's is this one.
+    crate::paths::ensure_default_workspace();
     let handle = prepare_server(
         manager,
         skills,

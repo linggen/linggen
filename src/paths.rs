@@ -65,6 +65,22 @@ pub fn global_sessions_dir() -> PathBuf {
     linggen_home().join("sessions")
 }
 
+/// `~/.linggen/workspace/` — where a new chat works until the person picks
+/// another folder for it. A session's own files stay in `sessions/`, and the
+/// home's credentials and config stay out of reach.
+pub fn default_workspace() -> PathBuf {
+    linggen_home().join("workspace")
+}
+
+/// [`default_workspace`], made if missing — for a caller about to work there.
+pub fn ensure_default_workspace() -> PathBuf {
+    let dir = default_workspace();
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        tracing::warn!("default workspace {}: {e}", dir.display());
+    }
+    dir
+}
+
 /// `~/.linggen/missions/`
 pub fn global_missions_dir() -> PathBuf {
     linggen_home().join("missions")

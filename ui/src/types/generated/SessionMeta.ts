@@ -17,9 +17,11 @@ creator: string,
  */
 agents?: Array<SessionMember>, 
 /**
- * Current working directory of the agent in this session.
+ * The folder the agent works in. Never empty: set when the session is
+ * made, moved by a `cd`; a session.yaml written without one gets it when
+ * read ([`SessionMeta::settle_cwd`]) and keeps it from its next write.
  */
-cwd?: string | null, 
+cwd: string, 
 /**
  * Detected git root path when agent is inside a project. None in home mode.
  */

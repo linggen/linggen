@@ -444,7 +444,7 @@ mod tests {
             creator: "user".into(),
             agents: seated.iter().map(|a| SessionMember::new(a)).collect(),
             legacy: Default::default(),
-            cwd: None,
+            cwd: "/tmp".into(),
             project: None,
             project_name: None,
             mission_id: None,

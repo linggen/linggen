@@ -203,27 +203,27 @@ pub(super) fn resolve_request_root(req_root: &str) -> PathBuf {
     crate::util::resolve_path(&expanded)
 }
 
-/// The folder a turn works in: the request's root, else the session's own.
-/// A surface that sends before it has the session list (a message typed
-/// while the page is still connecting) does not know the folder yet and
-/// sends none — the turn then runs where the session lives, not in `~`.
-fn turn_root(state: &ServerState, req: &ChatRequest) -> PathBuf {
+/// The folder a turn works in: the session's own, else the request's, else
+/// where a new session like it starts (a skill's folder, or the default
+/// workspace). The session's folder is set when it is made and moved only by
+/// a `cd`; a surface's idea of it (a project picked for another session, or
+/// none while a page still connects) never overrides it — else the first Bash
+/// would report that folder as a `cd` and bind the session to it.
+fn turn_root(
+    meta: Option<&crate::state_fs::sessions::SessionMeta>,
+    req: &ChatRequest,
+    skill: Option<&crate::engine::skill::Skill>,
+) -> PathBuf {
+    if let Some(meta) = meta {
+        return resolve_request_root(&meta.cwd);
+    }
     if !req.project_root.trim().is_empty() {
         return resolve_request_root(&req.project_root);
     }
-    let own = req
-        .session_id
-        .as_deref()
-        .and_then(|sid| {
-            state
-                .manager
-                .global_sessions
-                .get_session_meta(sid)
-                .ok()
-                .flatten()
-        })
-        .and_then(|meta| meta.cwd.or(meta.project));
-    resolve_request_root(own.as_deref().unwrap_or(""))
+    match skill {
+        Some(s) => s.working_dir(),
+        None => crate::util::resolve_path(&crate::paths::ensure_default_workspace()),
+    }
 }
 
 /// A fresh session id, for a request that sent none.
@@ -256,7 +256,7 @@ async fn ensure_session(
         updated_at: 0,
         skill: req.skill_name.clone(),
         creator: session_creator.into(),
-        cwd: Some(project_root_str.to_string()),
+        cwd: project_root_str.to_string(),
         project: None,
         project_name: None,
         mission_id: req.mission_id.clone(),
@@ -973,7 +973,7 @@ async fn turn_in_session(
         return false;
     };
     let req = ChatRequest {
-        project_root: meta.cwd.or(meta.project).unwrap_or_default(),
+        project_root: meta.cwd,
         agent_id: agent_id.to_string(),
         message,
         session_id: Some(session_id.to_string()),
@@ -1037,9 +1037,6 @@ pub(crate) async fn start_turn(
     req: ChatRequest,
     origin: TurnOrigin,
 ) -> axum::response::Response {
-    let root = turn_root(&state, &req);
-    let project_root_str = root.to_string_lossy().to_string();
-
     if origin == TurnOrigin::Person {
         // Any user chat turn stamps the quiet clock — background mission work
         // (catch-up, deferrable cron fires) waits for a quiet window instead of
@@ -1077,6 +1074,8 @@ pub(crate) async fn start_turn(
         Some(m) => super::members::effective(m, skill.as_ref()),
         None => super::members::default_members(skill.as_ref()),
     };
+    let root = turn_root(meta.as_ref(), &req, skill.as_ref());
+    let project_root_str = root.to_string_lossy().to_string();
 
     let (target_id, clean_msg, addressed) = route_target(&state, &req, &root, &members).await;
     let sid = req.session_id.clone().unwrap_or_else(new_session_id);

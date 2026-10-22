@@ -53,9 +53,11 @@ pub struct SessionMeta {
     #[serde(flatten, skip_serializing)]
     #[cfg_attr(test, ts(skip))]
     pub legacy: LegacyMember,
-    /// Current working directory of the agent in this session.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cwd: Option<String>,
+    /// The folder the agent works in. Never empty: set when the session is
+    /// made, moved by a `cd`; a session.yaml written without one gets it when
+    /// read ([`SessionMeta::settle_cwd`]) and keeps it from its next write.
+    #[serde(default)]
+    pub cwd: String,
     /// Detected git root path when agent is inside a project. None in home mode.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
@@ -145,6 +147,21 @@ pub struct LegacyMember {
 }
 
 impl SessionMeta {
+    /// Give a session with no folder its own: its project, else where a
+    /// session like it starts — a skill's in the skill's folder, any other
+    /// in the default workspace. True when it had none.
+    pub fn settle_cwd(&mut self) -> bool {
+        if !self.cwd.trim().is_empty() {
+            return false;
+        }
+        self.cwd = self
+            .project
+            .clone()
+            .filter(|p| !p.trim().is_empty())
+            .unwrap_or_else(|| fallback_cwd(self.skill.as_deref()));
+        true
+    }
+
     /// Move what the session recorded before it had members into `agents`:
     /// its pinned agent and model become a one-member list; a session that
     /// pinned neither seats the agents that answered there (`answered`, in
@@ -192,6 +209,35 @@ impl SessionMeta {
             }
         }
     }
+}
+
+/// Where a session with no folder of its own works: a skill's in the
+/// skill's folder, any other in the default workspace.
+pub fn fallback_cwd(skill: Option<&str>) -> String {
+    let dir = match skill.filter(|s| !s.trim().is_empty()) {
+        Some(name) => crate::paths::global_skills_dir().join(name),
+        None => crate::paths::default_workspace(),
+    };
+    crate::util::resolve_path(&dir)
+        .to_string_lossy()
+        .to_string()
+}
+
+/// A session.yaml as read: its folder settled ([`SessionMeta::settle_cwd`]).
+fn parse_meta(content: &str) -> Result<SessionMeta> {
+    let mut meta: SessionMeta = serde_norway::from_str(content)?;
+    meta.settle_cwd();
+    Ok(meta)
+}
+
+/// A session as written: never without a folder.
+fn meta_yaml(meta: &SessionMeta) -> Result<String> {
+    if !meta.cwd.trim().is_empty() {
+        return Ok(serde_norway::to_string(meta)?);
+    }
+    let mut settled = meta.clone();
+    settled.settle_cwd();
+    Ok(serde_norway::to_string(&settled)?)
 }
 
 /// The agents that answered in `rows`, in the order they first spoke.
@@ -255,8 +301,7 @@ impl SessionStore {
         Self::validate_id(&meta.id)?;
         let dir = self.session_dir(&meta.id);
         fs::create_dir_all(&dir)?;
-        let yaml = serde_norway::to_string(meta)?;
-        fs::write(dir.join("session.yaml"), yaml)?;
+        fs::write(dir.join("session.yaml"), meta_yaml(meta)?)?;
         // Create empty messages file
         let msgs_path = dir.join("messages.jsonl");
         if !msgs_path.exists() {
@@ -271,7 +316,7 @@ impl SessionStore {
             return Ok(None);
         }
         let content = fs::read_to_string(&yaml_path)?;
-        let mut meta: SessionMeta = serde_norway::from_str(&content)?;
+        let mut meta = parse_meta(&content)?;
         let answered = || {
             self.get_chat_history(session_id)
                 .map(|rows| answering_agents(&rows))
@@ -321,7 +366,7 @@ impl SessionStore {
             let yaml_path = entry.path().join("session.yaml");
             if yaml_path.exists() {
                 let content = fs::read_to_string(&yaml_path)?;
-                match serde_norway::from_str::<SessionMeta>(&content) {
+                match parse_meta(&content) {
                     Ok(mut meta) => {
                         // A listing reads no transcripts: only a pinned
                         // agent or model moves here (see get_session_meta).
@@ -381,7 +426,7 @@ impl SessionStore {
             bail!("Session not found: {}", session_id);
         }
         let content = fs::read_to_string(&yaml_path)?;
-        let mut meta: SessionMeta = serde_norway::from_str(&content)?;
+        let mut meta = parse_meta(&content)?;
         meta.title = new_title.to_string();
         // Any explicit rename — user via the API, or the chat auto-rename
         // hook — locks the title so the placeholder-overwrite path stays
@@ -398,7 +443,7 @@ impl SessionStore {
         if !yaml_path.exists() {
             bail!("Session not found: {}", meta.id);
         }
-        let yaml = serde_norway::to_string(meta)?;
+        let yaml = meta_yaml(meta)?;
         fs::write(yaml_path, yaml)?;
         Ok(())
     }
@@ -418,7 +463,7 @@ impl SessionStore {
             bail!("Session not found: {}", session_id);
         }
         let content = fs::read_to_string(&yaml_path)?;
-        let mut meta: SessionMeta = serde_norway::from_str(&content)?;
+        let mut meta = parse_meta(&content)?;
         meta.compact_threshold = threshold;
         meta.compact_focus = focus;
         let yaml = serde_norway::to_string(&meta)?;
@@ -637,6 +682,65 @@ mod tests {
         (store, dir)
     }
 
+    /// Write a session.yaml as an older engine did: no `cwd:` at all.
+    fn legacy_session(store: &SessionStore, id: &str, extra: &str) {
+        let dir = store.session_dir(id);
+        fs::create_dir_all(&dir).unwrap();
+        let yaml = format!("id: {id}\ntitle: Old\ncreated_at: 1\n{extra}");
+        fs::write(dir.join("session.yaml"), yaml).unwrap();
+        fs::write(dir.join("messages.jsonl"), "").unwrap();
+    }
+
+    fn yaml_of(store: &SessionStore, id: &str) -> String {
+        fs::read_to_string(store.session_dir(id).join("session.yaml")).unwrap()
+    }
+
+    /// A session read without a folder gets one — a plain chat the default
+    /// workspace, a skill's its skill folder, one with a project that project
+    /// — on every read path, and keeps it from its next write.
+    #[test]
+    fn a_session_without_a_folder_settles_on_one() {
+        let (store, _dir) = temp_store();
+        legacy_session(&store, "sess-1-plain", "creator: user\n");
+        legacy_session(&store, "sess-2-skill", "creator: skill\nskill: dice\n");
+        legacy_session(&store, "sess-3-proj", "creator: user\nproject: /tmp\n");
+
+        let plain = store.get_session_meta("sess-1-plain").unwrap().unwrap();
+        assert_eq!(plain.cwd, fallback_cwd(None));
+        assert!(plain.cwd.ends_with("workspace"), "{}", plain.cwd);
+        let skill = store.get_session_meta("sess-2-skill").unwrap().unwrap();
+        assert_eq!(skill.cwd, fallback_cwd(Some("dice")));
+        assert!(skill.cwd.ends_with("skills/dice"), "{}", skill.cwd);
+        let proj = store.get_session_meta("sess-3-proj").unwrap().unwrap();
+        assert_eq!(proj.cwd, "/tmp");
+        let listed = store.list_sessions().unwrap();
+        assert!(
+            listed.iter().all(|m| !m.cwd.is_empty()),
+            "a listing gave none"
+        );
+
+        assert!(
+            !yaml_of(&store, "sess-1-plain").contains("cwd:"),
+            "a read wrote"
+        );
+        store.rename_session("sess-1-plain", "Renamed").unwrap();
+        assert!(yaml_of(&store, "sess-1-plain").contains(&format!("cwd: {}", plain.cwd)));
+        store.update_session_meta(&skill).unwrap();
+        assert!(yaml_of(&store, "sess-2-skill").contains("skills/dice"));
+    }
+
+    /// The one write path never writes a session without a folder.
+    #[test]
+    fn a_session_is_never_written_without_a_folder() {
+        let (store, _dir) = temp_store();
+        let meta = SessionMeta {
+            id: "sess-1-blank".into(),
+            ..Default::default()
+        };
+        store.add_session(&meta).unwrap();
+        assert!(yaml_of(&store, "sess-1-blank").contains(&format!("cwd: {}", fallback_cwd(None))));
+    }
+
     #[test]
     fn test_session_crud() {
         let (store, _dir) = temp_store();
@@ -647,7 +751,7 @@ mod tests {
             updated_at: 0,
             skill: None,
             creator: "user".into(),
-            cwd: None,
+            cwd: "/tmp".into(),
             project: None,
             project_name: None,
             mission_id: None,
@@ -732,7 +836,7 @@ mod tests {
                     updated_at: 0,
                     skill: None,
                     creator: "user".into(),
-                    cwd: None,
+                    cwd: "/tmp".into(),
                     project: None,
                     project_name: None,
                     mission_id: None,
@@ -762,7 +866,7 @@ mod tests {
             updated_at: 0,
             skill: None,
             creator: "user".into(),
-            cwd: None,
+            cwd: "/tmp".into(),
             project: None,
             project_name: None,
             mission_id: None,
@@ -852,7 +956,7 @@ mod tests {
                 updated_at: 0,
                 skill: None,
                 creator: "user".into(),
-                cwd: None,
+                cwd: "/tmp".into(),
                 project: None,
                 project_name: None,
                 mission_id: None,
@@ -922,7 +1026,7 @@ mod tests {
                 updated_at: 0,
                 skill: None,
                 creator: "user".into(),
-                cwd: None,
+                cwd: "/tmp".into(),
                 project: None,
                 project_name: None,
                 mission_id: None,
@@ -971,7 +1075,7 @@ mod tests {
                 updated_at: 0,
                 skill: None,
                 creator: "user".into(),
-                cwd: None,
+                cwd: "/tmp".into(),
                 project: None,
                 project_name: None,
                 mission_id: None,
@@ -1020,7 +1124,7 @@ mod tests {
                 updated_at: 0,
                 skill: None,
                 creator: "user".into(),
-                cwd: None,
+                cwd: "/tmp".into(),
                 project: None,
                 project_name: None,
                 mission_id: None,
@@ -1042,7 +1146,7 @@ mod tests {
                 updated_at: 0,
                 skill: None,
                 creator: "user".into(),
-                cwd: None,
+                cwd: "/tmp".into(),
                 project: None,
                 project_name: None,
                 mission_id: None,
@@ -1064,7 +1168,7 @@ mod tests {
                 updated_at: 0,
                 skill: None,
                 creator: "user".into(),
-                cwd: None,
+                cwd: "/tmp".into(),
                 project: None,
                 project_name: None,
                 mission_id: None,

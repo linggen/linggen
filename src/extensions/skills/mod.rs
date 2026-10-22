@@ -349,10 +349,10 @@ struct SkillFrontmatter {
     permission: Option<SkillPermission>,
     /// Optional starting cwd for sessions invoking this skill. Tilde-expandable
     /// (e.g. `~/.linggen`). When set, sessions created by this skill's app
-    /// launcher (or the slash-command activation path) start at this folder
-    /// instead of the user's home_path. Mirrors the `cwd:` field in mission
-    /// frontmatter. When omitted, defaults to the user's `home_path` (or
-    /// whatever the iframe's session-create call passes).
+    /// launcher (or the slash-command activation path) start at this folder.
+    /// Mirrors the `cwd:` field in mission frontmatter. When omitted, a
+    /// session starts where its create call chose, else in the skill's own
+    /// folder (`Skill::working_dir`).
     #[serde(default)]
     cwd: Option<String>,
     #[serde(default)]

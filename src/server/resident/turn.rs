@@ -121,11 +121,7 @@ async fn run_at_table(
         return None;
     }
     crate::server::chat::members::seat(&state.manager, &session_id, YINYUE_AGENT).await;
-    let root = meta
-        .cwd
-        .or(meta.project)
-        .map(|c| crate::util::resolve_path(std::path::Path::new(&c)))
-        .unwrap_or_else(her_root);
+    let root = crate::util::resolve_path(std::path::Path::new(&meta.cwd));
     let task = with_contract(task, trigger_source);
     let turn = Turn {
         session_id,

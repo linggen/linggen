@@ -393,10 +393,7 @@ pub async fn build_page_state(
             if let Ok(all) = state.manager.global_sessions.list_sessions() {
                 let project_sessions: Vec<_> = all
                     .into_iter()
-                    .filter(|s| {
-                        s.project.as_deref() == Some(root.as_str())
-                            || s.cwd.as_deref() == Some(root.as_str())
-                    })
+                    .filter(|s| s.project.as_deref() == Some(root.as_str()) || s.cwd == *root)
                     .take(50)
                     .filter_map(|s| serde_json::to_value(s).ok())
                     .collect();
@@ -438,8 +435,7 @@ pub async fn build_page_state(
                 .get_session_meta(session_id)
                 .ok()
                 .flatten()
-                .and_then(|m| m.cwd)
-                .filter(|s| !s.is_empty())
+                .map(|m| m.cwd)
                 .or_else(|| ctx.project_root.clone().filter(|s| !s.is_empty()));
 
             if let Some(ref root) = effective_root {

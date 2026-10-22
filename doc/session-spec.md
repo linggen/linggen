@@ -29,17 +29,21 @@ A session is created by a **creator**, which determines the session's initial co
 
 Every session has a **working folder** (cwd) — the directory the agent operates in. The working folder replaces the old "project selection" concept.
 
-### Home path
+### Default workspace
 
-The **home path** is the default working folder for new sessions. Defaults to `~`. Users can change it in settings (e.g. `~/workspace`, `~/projects`). Stored in `linggen.toml` as `home_path`.
+A new chat works in the **default workspace**, `~/.linggen/workspace` (under `$LINGGEN_HOME` when set; made when missing). Not `~/.linggen` itself — credentials and config live there — and not the session's own folder, where the engine keeps its files.
+
+A session's working folder is fixed **when it is made**, on the server, and never empty. It is another folder only when one was chosen for that session: a picked project (`project_root` at create), a skill's `cwd:`, a mission's `cwd:`, or a `cd` inside the session. A folder chosen for one session never carries to the next New chat. What a surface sends with later calls (a chat turn's or a `!` command's `project_root`) never moves an existing session — the session's own `cwd` wins; only a `cd` moves it.
 
 The **Linggen language** (`language`, Settings → General) is the language Linggen writes in for the person: a BCP-47 tag, unset = Auto (the Mac's first preferred language, then `en`). One resolver (`src/language.rs`) answers it for the prompt's language line, `LINGGEN_LANGUAGE` in skill commands, and `GET /api/user/language`.
 
-**Skill-bound sessions** can override this. If the bound skill declares `cwd:` in its frontmatter (e.g. `cwd: ~/.linggen` for `ling-mem`), the session boots there instead of the home path. Resolution order at `POST /api/sessions`: skill's `cwd:` → request's `project_root` → `home_path`. Mirrors the `cwd:` field in mission frontmatter.
+**Skill-bound sessions** start in the skill's declared `cwd:` (e.g. `cwd: ~/.linggen` for `ling-mem`), else the skill's own folder. Resolution order at `POST /api/sessions`: skill's `cwd:` → request's `project_root` → the skill's folder (skill sessions) or the default workspace. A session first made by `POST /api/chat` follows the same rule; a mission's run session takes the mission's `cwd:`, else the default workspace.
+
+A `session.yaml` written before this rule with no `cwd` is read as its project, else its skill's folder (skill sessions), else the default workspace, and keeps that from its next write — nothing downstream (memory scope, Bash, permissions) sees a session without a folder.
 
 ### How it works
 
-1. **New chat** — starts at the home path. No project picker — just click `+` and go.
+1. **New chat** — starts in the default workspace. No project picker — just click `+` and go.
 2. **Agent or user runs `cd`** — after any bash command, the backend checks the new cwd.
 3. **Git detection** — if `.git/` exists in the cwd or any parent up to `$HOME` (never above it; home itself is never a project), the session enters **project mode** for that git root. The engine loads the project's `CLAUDE.md`, agents, permissions, and git context.
 4. **Leaving a project** — if the agent `cd`s to a directory outside any git repo, the session returns to **home mode**.
@@ -48,8 +52,8 @@ The **Linggen language** (`language`, Settings → General) is the language Ling
 
 | Aspect | Home mode | Project mode |
 |:-------|:----------|:-------------|
-| cwd | home path (default `~`) | anywhere within the git repo |
-| CLAUDE.md | not loaded from home path | loaded from git root + parents, up to `$HOME` |
+| cwd | default workspace, or any non-git folder | anywhere within the git repo |
+| CLAUDE.md | not loaded outside a git repo | loaded from git root + parents, up to `$HOME` |
 | agents/ | global only (`~/.linggen/agents/`) | global + project (`{git_root}/agents/`) |
 | Permissions | session `permission.json` path grants | session `permission.json` path grants |
 | Git context | none | branch, status, recent commits |
@@ -114,7 +118,7 @@ Each session carries:
 | `params` | creation | no | The values the session is bound to, by the bound skill's declared session params (`skill-spec.md` § Session parameters) — e.g. `{save: test}`. Checked against the declaration when the session is made and on every use. Absent: the skill as it runs unbound. |
 | `mission_id` | creation | no | Originating mission (if creator is `mission`) |
 | `agents` | creation | grows | The members `[{id, model}]`, the lead first; `@name` seats one for good. Old sessions' `agent_id`/`model_id` migrate to a one-member list. |
-| `cwd` | creation | yes | Current working folder. Starts at home path. Updated on `cd`. |
+| `cwd` | creation | yes | Current working folder — never empty. Set at creation (see § Default workspace). Updated on `cd`. |
 | `project` | runtime | yes | Detected git root path (if any). `null` in home mode. |
 | `project_name` | runtime | yes | Display name — last segment of git root (e.g. `linggen`). `null` in home mode. |
 | `messages` | runtime | append | Chat history (`messages.jsonl`) |
@@ -257,7 +261,7 @@ This is how `ling` can delegate exploration to itself: the sub-task runs in an i
 
 ## API
 
-- `POST /api/sessions` — create session (accepts `skill`, `title`, `params`). No project required — starts in home mode. `params` the skill doesn't declare, or values it refuses: 400 with the reason.
+- `POST /api/sessions` — create session (accepts `skill`, `title`, `params`, `project_root`). No project required — starts in the default workspace. Returns `{id, cwd}`. `params` the skill doesn't declare, or values it refuses: 400 with the reason.
 - `GET /api/skill-sessions?skill=` lists each session with its `params`.
 - `PATCH /api/sessions` — rename / set the session model
 - `DELETE /api/sessions/all` — delete a session (`session_id`)
@@ -266,7 +270,7 @@ This is how `ling` can delegate exploration to itself: the sub-task runs in an i
 
 ## UI behavior
 
-- **New chat** — clicking `+` immediately creates a home-mode session. No project picker dialog.
+- **New chat** — clicking `+` immediately creates a session in the default workspace; the request carries no folder. The page mirrors the open session's folder in memory only, so the folder of the chat open before never reaches the new one. No project picker dialog.
 - **Chat header** — shows the current working folder or project name (read-only). Updated reactively when the agent `cd`s.
 - **Session list** — sessions can be grouped/labeled by their `project_name` field. No manual project management in the sidebar.
 - **Project cards** — removed from sidebar. Projects are auto-discovered, not manually managed.

@@ -28,7 +28,14 @@ export async function startNewChat(): Promise<string | null> {
       ...(req.skill ? { skill: req.skill } : {}),
       ...(req.params ? { params: req.params } : {}),
     };
-    useSessionStore.setState((s) => ({ activeSessionId: data.id, allSessions: [created, ...s.allSessions] }));
+    // A plain chat's folder is the one the engine chose; a skill embed keeps
+    // '' so its calls use the session's own (EmbedApp).
+    const root = req.skill ? '' : data.cwd || '';
+    useSessionStore.setState((s) => ({
+      activeSessionId: data.id,
+      selectedProjectRoot: root,
+      allSessions: [{ ...created, ...(data.cwd ? { cwd: data.cwd } : {}) }, ...s.allSessions],
+    }));
     const cs = useChatStore.getState();
     cs.setActiveSession(data.id);
     cs.fetchSessionState();
