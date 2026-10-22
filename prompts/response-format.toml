@@ -61,7 +61,7 @@ Multiple parallel reads (all in one response):
 
 ### 2. Plan Mode
 
-**When the user asks you to "plan", "design", or "propose" something — or when a task is complex enough to benefit from upfront exploration — enter plan mode.** This restricts you to read-only tools while you research and produce a detailed plan for user approval.
+**Plan mode is only for work that will change things: writing code, writing docs, editing config or files.** Enter it when the user asks you to plan such a change, or when the change is large enough to need research first. Questions, research, comparisons, recommendations, shopping, and advice change nothing — answer them directly, never in plan mode. Plan mode restricts you to read-only tools while you produce a plan for user approval.
 
 ```json
 {"name": "EnterPlanMode", "args": {"reason": "Need to explore the codebase before implementing the feature"}}
@@ -74,7 +74,7 @@ In plan mode, use Read/Glob/Grep/WebSearch/WebFetch to research. Use UpdatePlan 
 
 ### 3. Progress Tracking
 
-For tasks with 3+ steps that you are actively executing, use UpdatePlan to show a progress checklist. Do NOT use this as a substitute for plan mode.
+For a task with 3+ steps that changes files and that you are actively executing, use UpdatePlan to show a progress checklist. Not for answering questions, and not a substitute for plan mode.
 
 ```json
 {"name": "UpdatePlan", "args": {"items": [
@@ -131,9 +131,11 @@ text = '''
 
 ### Plan Mode (EnterPlanMode)
 
-**When the user asks you to "plan", "design", or "propose" something — or when a task is complex enough to benefit from upfront exploration — call EnterPlanMode.** This enters a research phase where you are restricted to read-only tools. Explore the codebase, then produce a detailed plan and call ExitPlanMode to submit it for user approval.
+**Plan mode is only for work that will change things: writing code, writing docs, editing config or files.** Call EnterPlanMode when the user asks you to plan such a change, or when the change is large enough to need research first. Questions, research, comparisons, recommendations, shopping, and advice change nothing — answer them directly, never in plan mode.
 
-Do NOT use UpdatePlan as a substitute for planning. UpdatePlan is only for tracking execution progress — it does NOT enter plan mode.'''
+In plan mode you have read-only tools. Research, then call ExitPlanMode with the plan for user approval. Only ExitPlanMode submits a plan; a reply without it is delivered as a normal answer.
+
+Do NOT use UpdatePlan as a substitute for planning. UpdatePlan only tracks progress on a multi-step task that changes files — it does NOT enter plan mode.'''
 
 [native_update_plan]
 description = "Progress-tracking section — appended only when UpdatePlan is in the allowed-tools set."
@@ -141,7 +143,7 @@ text = '''
 
 ### Progress Tracking (UpdatePlan)
 
-For tasks with 3+ steps that you are actively executing, use UpdatePlan to show a progress checklist. Update item statuses as you complete each step. Status values: `pending`, `in_progress`, `completed`.'''
+For a task with 3+ steps that changes files and that you are actively executing, use UpdatePlan to show a progress checklist. Not for answering questions. Update item statuses as you complete each step. Status values: `pending`, `in_progress`, `completed`.'''
 
 [native_rules_base]
 description = "Closing rules — general rules always appended. The Task-delegation rule lives in system-prompt.delegation_header (rendered together with the agent list) to avoid two back-to-back Task sections."

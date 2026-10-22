@@ -83,7 +83,7 @@ fn plan_mode_schemas() -> impl Iterator<Item = Value> {
         ),
         tool_def(
             "EnterPlanMode",
-            "Enter plan mode to research and produce a detailed implementation plan for user approval. Use this when the user asks you to 'plan', 'design', or 'propose' something, or when a task is complex enough to need upfront exploration before making changes. In plan mode you are restricted to read-only tools until you call ExitPlanMode.",
+            "Enter plan mode to research and produce an implementation plan for user approval. Only for work that will change things: writing code, writing docs, editing config or files. Use it when the user asks to plan such a change, or the change needs research first. Never for questions, research, comparisons, recommendations, shopping, or advice — answer those directly. In plan mode you have read-only tools until you call ExitPlanMode.",
             json!({
                 "type": "object",
                 "properties": {
@@ -97,7 +97,7 @@ fn plan_mode_schemas() -> impl Iterator<Item = Value> {
         ),
         tool_def(
             "UpdatePlan",
-            "Update the plan content and/or progress checklist. Use plan_text for the detailed implementation plan (markdown with file paths, code snippets, explanations). Use items for the progress checklist. Both can be provided together.",
+            "Track progress on a multi-step task that changes files (code, docs, config): items is the checklist, plan_text optionally updates the approved plan. Not for answering questions, and not for planning — submit a plan with ExitPlanMode.",
             json!({
                 "type": "object",
                 "properties": {
