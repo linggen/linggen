@@ -8,11 +8,14 @@ import { _originalFetch } from './fetchProxy';
 
 /** Abstracts the SDP offer/answer exchange. */
 export interface SignalingStrategy {
+  /** The peer is off this machine — the offer waits for a public candidate. */
+  readonly remote: boolean;
   exchange(offerSdp: string, signal: AbortSignal): Promise<string>;
 }
 
 /** Local signaling via WHIP — single POST, get SDP answer back. */
 export class WhipSignaling implements SignalingStrategy {
+  readonly remote = false;
   constructor(private whipUrl: string = '/api/rtc/whip') {}
 
   async exchange(offerSdp: string, signal: AbortSignal): Promise<string> {
@@ -39,6 +42,7 @@ export class WhipSignaling implements SignalingStrategy {
 
 /** Remote signaling via relay — POST offer, poll for answer. */
 export class RelaySignaling implements SignalingStrategy {
+  readonly remote = true;
   private instanceId: string;
   private relayBaseUrl: string;
 

@@ -120,12 +120,23 @@ Linggen uses WHIP (WebRTC-HTTP Ingestion Protocol) for signaling. WHIP reduces s
 
 ### How WHIP works
 
-1. Client gathers all ICE candidates (ICE full mode — no trickle).
+1. Client gathers its ICE candidates (ICE full mode — no trickle; see § When the offer goes).
 2. Client sends a single HTTP POST with the complete SDP offer in the body.
 3. Server processes the offer, gathers its own ICE candidates, returns the complete SDP answer.
 4. Peer connection establishes. Done.
 
 One HTTP round trip. No separate ICE exchange endpoint. No stateful signaling channel.
+
+### When the offer goes
+
+The browser's own "gathering complete" lags far behind its candidates: every candidate (host, srflx) is in within ~200 ms, yet the state can sit in "gathering" for 10 s. Waiting for it would hold every load and reconnect at the cap. So the offer goes once candidates **fall quiet** — at least one candidate in hand and none new for ~250 ms.
+
+- **Local** (WHIP on this machine): any candidate counts; the offer goes ~250 ms after the last one.
+- **Remote** (relay signaling): the quiet only counts once the first public candidate (srflx or relay) is in — a host-only offer cannot reach a peer off this LAN.
+- **TURN in the ICE servers**: the quiet only counts once the relay candidate is in — it is the one candidate that dial exists for.
+- "Gathering complete" sends at once; a **5 s cap** sends whatever is in hand.
+
+The phone's transport keeps its own wait, with the same TURN rule (`linggen-mobile/doc/tech-spec.md` § Transport).
 
 ### Local signaling (WHIP on linggen server)
 
@@ -163,7 +174,7 @@ All stateless HTTP — no WebSocket. The relay is a simple nonce-based queue wit
 | Ecosystem compatibility | None | OBS, FFmpeg, GStreamer, any WHIP client |
 | Endpoints needed | 3+ | 1 |
 
-Bundling ICE candidates in the SDP (ICE full mode) adds ~100-200ms of gathering time before the POST. For linggen's one-client-to-one-server use case, this is negligible.
+Bundling ICE candidates in the SDP (ICE full mode) adds ~250-450 ms before the POST (§ When the offer goes). For linggen's one-client-to-one-server use case, this is negligible.
 
 ## Data channels
 
@@ -300,7 +311,7 @@ TURN credentials are time-limited and issued by linggen.dev's API based on the u
 1. UI loads from `localhost:9527`.
 2. Client creates `RTCPeerConnection` with configured ICE servers.
 3. Client creates the `control` data channel.
-4. Client generates SDP offer, gathers all ICE candidates (full ICE).
+4. Client generates SDP offer, gathers ICE candidates until they fall quiet (§ When the offer goes).
 5. Client sends SDP offer via `POST /api/rtc/whip` directly to linggen.
 6. Server returns SDP answer. Peer connection establishes.
 7. Control channel opens. Client creates session data channels as needed.
@@ -311,7 +322,7 @@ TURN credentials are time-limited and issued by linggen.dev's API based on the u
 2. User clicks an instance to connect. Bootstrap page loads from `linggen.dev/connect/{instance}`.
 3. Bootstrap creates `RTCPeerConnection` with configured ICE servers (including TURN if Pro account).
 4. Bootstrap creates the `control` data channel.
-5. Bootstrap generates SDP offer, gathers all ICE candidates.
+5. Bootstrap generates SDP offer, gathers ICE candidates — through the first public one (§ When the offer goes).
 6. Bootstrap sends SDP offer to relay via `RelaySignaling` (POST offer, poll for answer), authenticated with session token.
 7. Relay matches to the user's instance, delivers offer to linggen's waiting long-poll.
 8. Linggen returns SDP answer via relay. Peer connection establishes.
