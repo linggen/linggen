@@ -54,7 +54,11 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 │   ├── py/                           # Pinned relocatable CPython (python-build-standalone)
 │   ├── envs/{name}/                  # Named venvs: tools (yt-dlp), tts (mlx-audio), pictures (mflux)
 │   ├── mlx_tts.py, mlx_picture.py    # Sidecar/runner scripts, rewritten from the binary at spawn
+│   ├── tts-model.stamp               # Voice model warmed into models/hf-hub (the voice lane is ready)
 │   └── pictures-model.stamp          # Picture model warmed into models/hf-hub (the lane is ready)
+├── models/
+│   ├── hf-hub/hub/                   # The one Hugging Face cache: Qwen3-TTS, FLUX.2 klein, Kokoro-82M
+│   └── kokoro-voices/{voice}.pt      # Kokoro voice packs (af_heart, zf_xiaoxiao)
 ├── workspace/                        # Where a new chat works until another folder is chosen for it (made on demand)
 ├── sessions/                         # All sessions (user, skill, mission — flat)
 │   └── {session_id}/
@@ -88,6 +92,35 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 ```
 
 All sessions live in one flat directory. The `creator`, `project`, and `skill` fields in `session.yaml` provide the metadata for filtering, grouping, and display. No session files under `missions/` or `skills/` — those directories hold definitions only.
+
+### Large downloads
+
+Every large file the engine manages downloads in the background soon after
+install, never on first use: a person never waits on one.
+
+- **When.** A lane stage (a venv or model) starts only when the machine is
+  quiet — no top-level agent run in flight and no chat turn for 5 minutes
+  (`quiet_for_background`, the fact mission catch-up uses; its clock starts
+  at boot). A download already running is not paused. The interpreter and
+  the `tools` venv are small and start at once, as does a model stage whose
+  snapshot is already in the cache (it only verifies and stamps).
+- **One at a time.** Every download holds the runtime's download slot.
+- **What.** Python + `tools`; the voice lane (`tts` venv + Qwen3-TTS, ~2.1 GB);
+  the pictures lane (`pictures` venv + FLUX.2 klein 4B, ~4.3 GB); Kokoro's
+  weights (~300 MB, the fallback voice, every platform). Voice and pictures
+  run where the lane gate admits them, pet on or off.
+- **Loading stays with use.** A download never loads a model: the voice
+  sidecar and Kokoro load only when the pet is on, a picture per render.
+  Until a model is on disk its user falls back (Kokoro, then `say`; a picture
+  call answers "installing" and starts that lane at once).
+- **Failure.** Low disk stops until next boot; other failures retry (the
+  runtime three times with backoff, Kokoro next boot). Hugging Face pulls
+  resume; release assets resume from `.part` and are SHA-256 verified.
+- **Progress** rides the retained `tasks`/`runtime` topic; `waiting_for_quiet`
+  marks a stage queued for a quiet moment.
+
+Ollama models are the user's own pulls, not managed here. ling-mem's
+embedding model is ling-mem's (it fetches it when its daemon starts).
 
 ## Project-local state (`{repo}/.linggen/`)
 

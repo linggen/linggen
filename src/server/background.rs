@@ -98,32 +98,69 @@ fn prewarm_memory(state: &Arc<ServerState>) {
     });
 }
 
-/// Managed Python runtime: fetch/repair in the background so no skill or
-/// TTS request ever waits on a download. The voice stages (venv + model,
-/// ~2.1 GB) run on every machine their lane admits, pet on or off, so
-/// turning Yinyue on later never waits on a download; loading the model
-/// into memory stays with the pet (prewarm_voice). Progress goes out live
-/// on the `tasks` topic and is retained for surfaces that attach later.
+/// How long no one must have chatted (with no top-level run in flight)
+/// before a large download starts. A fresh daemon's clock starts at boot,
+/// so the first download waits out one window after install.
+const DOWNLOAD_QUIET_SECS: u64 = 300;
+
+/// The quiet fact large downloads wait on: the same one mission catch-up
+/// uses ([`ServerState::quiet_for_background`]), with its own window.
+fn download_quiet(state: &Arc<ServerState>) -> crate::runtime::Quiet {
+    let state = state.clone();
+    Arc::new(move || state.quiet_for_background(DOWNLOAD_QUIET_SECS))
+}
+
+/// Managed Python runtime: fetch/repair in the background so no skill,
+/// voice or picture ever waits on a download. Every stage the lane gate
+/// admits runs — voice (~2.1 GB) and pictures (~4.3 GB) — pet on or off,
+/// each lane stage starting only when the machine is quiet; loading a
+/// model into memory stays with its use. Progress goes out live on the
+/// `tasks` topic and is retained for surfaces that attach later.
 fn prewarm_runtime(state: &Arc<ServerState>) {
+    let quiet = download_quiet(state);
     let state = state.clone();
     let progress: crate::runtime::Progress = std::sync::Arc::new(move |payload| {
         api::topic::publish_topic(&state, "tasks", "runtime", payload.clone());
         api::topic::retain("tasks", "runtime", payload);
     });
     crate::runtime::set_progress_sink(progress.clone());
-    tokio::spawn(crate::runtime::prewarm(progress));
+    tokio::spawn(crate::runtime::prewarm(progress, quiet));
     // The region fact (which services are unreachable here) is probed now,
     // so a skill's first ask does not wait on it.
     tokio::spawn(crate::reach::region());
 }
 
-/// Pre-warm the voice providers off the hot path when the pet is enabled:
-/// Kokoro's weights (~300 MB, the fallback voice) and the TTS sidecar if
-/// the runtime prewarm above has already delivered its venv + model.
+/// The voice providers' own weights (Kokoro, ~300 MB, the fallback voice)
+/// download when the machine is quiet, pet on or off. Loading stays with
+/// the pet: when it is enabled, the provider is warmed once the weights
+/// are on disk (the TTS sidecar too, if the runtime has delivered it).
 fn prewarm_voice(state: &Arc<ServerState>, pet_enabled: bool) {
-    if pet_enabled && state.tts.prewarm_on_boot() {
-        let tts = state.tts.clone();
-        tokio::spawn(async move { tts.prewarm().await });
+    let tts = state.tts.clone();
+    let quiet = download_quiet(state);
+    tokio::spawn(async move {
+        fetch_voice_weights(tts.as_ref(), &quiet, QUIET_POLL).await;
+        if pet_enabled && tts.prewarm_on_boot() {
+            tts.prewarm().await;
+        }
+    });
+}
+
+const QUIET_POLL: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Fetch a provider's weights at the first quiet moment, inside the
+/// runtime's download slot. Nothing to fetch → returns at once.
+async fn fetch_voice_weights(
+    tts: &dyn api::tts::TtsProvider,
+    quiet: &crate::runtime::Quiet,
+    poll: std::time::Duration,
+) {
+    if !tts.needs_fetch() {
+        return;
+    }
+    crate::runtime::wait_for_quiet(quiet, poll).await;
+    let _slot = crate::runtime::download_slot().await;
+    if let Err(e) = tts.fetch().await {
+        tracing::warn!("[tts] voice weights not fetched ({e:#}); next boot retries");
     }
 }
 
@@ -386,4 +423,69 @@ fn auto_connect_rooms(state: &Arc<ServerState>) {
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         rtc::proxy_room::auto_connect_joined_rooms(auto_state).await;
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, AtomicUsize};
+
+    /// A provider whose weights are missing until `fetch` runs.
+    struct FakeVoice {
+        missing: AtomicBool,
+        fetches: AtomicUsize,
+    }
+
+    impl FakeVoice {
+        fn new(missing: bool) -> Self {
+            FakeVoice {
+                missing: AtomicBool::new(missing),
+                fetches: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl api::tts::TtsProvider for FakeVoice {
+        async fn synthesize(&self, _: &str, _: Option<&str>) -> anyhow::Result<Vec<u8>> {
+            Ok(vec![])
+        }
+        fn needs_fetch(&self) -> bool {
+            self.missing.load(Ordering::SeqCst)
+        }
+        async fn fetch(&self) -> anyhow::Result<()> {
+            self.fetches.fetch_add(1, Ordering::SeqCst);
+            self.missing.store(false, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    const POLL: std::time::Duration = std::time::Duration::from_millis(1);
+
+    #[tokio::test]
+    async fn voice_weights_wait_for_a_quiet_machine() {
+        let voice = Arc::new(FakeVoice::new(true));
+        let busy = Arc::new(AtomicBool::new(true));
+        let probe = busy.clone();
+        let quiet: crate::runtime::Quiet = Arc::new(move || !probe.load(Ordering::SeqCst));
+
+        let task = {
+            let voice = voice.clone();
+            tokio::spawn(async move { fetch_voice_weights(voice.as_ref(), &quiet, POLL).await })
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        assert_eq!(voice.fetches.load(Ordering::SeqCst), 0, "fetched mid-run");
+
+        busy.store(false, Ordering::SeqCst);
+        task.await.unwrap();
+        assert_eq!(voice.fetches.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn weights_on_disk_are_never_fetched_again() {
+        let voice = FakeVoice::new(false);
+        let quiet = crate::runtime::always_quiet();
+        fetch_voice_weights(&voice, &quiet, POLL).await;
+        assert_eq!(voice.fetches.load(Ordering::SeqCst), 0);
+    }
 }

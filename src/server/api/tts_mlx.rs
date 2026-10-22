@@ -26,7 +26,7 @@ const SIDECAR_SRC: &str = include_str!("../../runtime_py/mlx_tts.py");
 
 /// The model the sidecar serves. Apache-2.0 (upstream Qwen and the MLX
 /// conversion both) — license-checked 2026-08-19.
-const MODEL: &str = "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-4bit";
+const MODEL: &str = crate::runtime::TTS_MODEL;
 
 /// Multilingual (zh + en in one timbre), so unlike Kokoro no script→voice
 /// mapping is needed. Names must match the model's speaker roster.
@@ -89,8 +89,10 @@ impl MlxTtsProvider {
         }
     }
 
+    /// Venv and model both on disk: a sidecar spawned before the model
+    /// stage lands would download it in front of the first line.
     fn available() -> bool {
-        crate::runtime::env_bin("tts", "python3").exists()
+        crate::runtime::voice_ready()
     }
 
     async fn spawn() -> anyhow::Result<Sidecar> {
@@ -100,10 +102,7 @@ impl MlxTtsProvider {
         let mut child = tokio::process::Command::new(crate::runtime::env_bin("tts", "python3"))
             .arg(&script)
             .arg(MODEL)
-            .env(
-                "HF_HOME",
-                crate::paths::linggen_home().join("models/hf-hub"),
-            )
+            .env("HF_HOME", crate::runtime::hf_home())
             .env("HF_ENDPOINT", crate::hf_mirror::endpoint().await)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -251,6 +250,16 @@ impl TtsProvider for MlxTtsProvider {
                 self.fallback.synthesize(text, None).await
             }
         }
+    }
+
+    /// The sidecar's own venv + model are the runtime's lane stages; what is
+    /// left to fetch here is the fallback's (Kokoro) weights.
+    fn needs_fetch(&self) -> bool {
+        self.fallback.needs_fetch()
+    }
+
+    async fn fetch(&self) -> anyhow::Result<()> {
+        self.fallback.fetch().await
     }
 
     async fn prewarm(&self) {

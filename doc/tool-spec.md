@@ -64,9 +64,10 @@ never reaches for it. `GenerateImage` is offered when something can draw:
   limit, a declined prompt) is the tool's result in one line, and nothing
   is drawn elsewhere instead.
 - **This Mac** otherwise, when it passes the `pictures` lane gate (Apple
-  Silicon, 16 GB unified memory): local FLUX. The lane installs on first
-  use, never at boot: the first call starts the install in the background
-  (venv + ~5 GB model) and answers in one line; every runtime progress
+  Silicon, 16 GB unified memory): local FLUX. The lane downloads in the
+  background after install, at the first quiet moment (storage-spec.md
+  § Large downloads); a call that beats it starts the install at once
+  (venv + ~4.3 GB model) and answers in one line; every runtime progress
   payload carries each lane's verdict. Renders run one at a time, one
   process per picture, `square` 512×512 or `landscape` 768×512.
 

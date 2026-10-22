@@ -50,6 +50,20 @@ pub trait TtsProvider: Send + Sync {
     /// overrides this so the first user-facing utterance isn't slow.
     async fn prewarm(&self) {}
 
+    /// Whether this provider's weights still need downloading. Default
+    /// `false` (nothing to fetch); the boot task asks before it queues
+    /// [`fetch`](TtsProvider::fetch) for a quiet moment.
+    fn needs_fetch(&self) -> bool {
+        false
+    }
+
+    /// Download the weights to disk without loading them. Called by the
+    /// boot task when the machine is quiet, inside the runtime's download
+    /// slot, pet on or off — loading stays with [`prewarm`](TtsProvider::prewarm).
+    async fn fetch(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
     /// Whether to pre-warm this provider's model at daemon boot. A light model
     /// (Kokoro, ~300 MB) says `true` for a fast first utterance; a heavier one
     /// can say `false` to keep its download/load lazy. The boot caller also gates
@@ -154,14 +168,14 @@ pub fn fallback_provider() -> Box<dyn TtsProvider> {
 /// the production voice. Pure-Rust phonemizer (no espeak-ng) and a candle
 /// backend (no ONNX Runtime), so there's nothing native to bundle.
 ///
-/// The ~300 MB weights are fetched from HuggingFace (`hexgrad/Kokoro-82M`) on
-/// first use and cached under `~/.linggen/models`. Loading is lazy by
-/// construction (a `OnceCell`), but [`prewarm_on_boot`](TtsProvider::prewarm_on_boot)
-/// returns `true`, so when the pet is enabled the daemon warms the model at
-/// boot rather than making Yinyue's first utterance pay for it; with the pet
-/// disabled nothing loads until she actually speaks. If it can't load
-/// (offline, download failed), synthesis falls back to `say` so the pet always
-/// has a voice.
+/// The ~300 MB weights come from HuggingFace (`hexgrad/Kokoro-82M`) into the
+/// shared cache (`runtime::hf_home`), fetched by [`fetch`](TtsProvider::fetch)
+/// when the machine is quiet after install — never by a first utterance:
+/// until they are on disk, synthesis is `say`. Loading is lazy (a
+/// `OnceCell`), but [`prewarm_on_boot`](TtsProvider::prewarm_on_boot) returns
+/// `true`, so with the pet enabled the daemon loads the model at boot; with
+/// the pet disabled nothing loads until she actually speaks. If it can't load,
+/// synthesis falls back to `say` so the pet always has a voice.
 #[cfg(feature = "kokoro")]
 pub struct KokoroProvider {
     model: OnceCell<Arc<dyn TtsModel>>,
@@ -182,7 +196,52 @@ impl KokoroProvider {
     /// on disk and has no per-voice download, so owning the path is what lets
     /// us guarantee a voice is there before asking for it.
     fn voices_dir() -> std::path::PathBuf {
-        crate::util::resolve_path(std::path::Path::new("~/.linggen/models/kokoro-voices"))
+        crate::paths::linggen_home().join("models/kokoro-voices")
+    }
+
+    /// The hub cache any-tts reads. It honours `HUGGINGFACE_HUB_CACHE` (not
+    /// `HF_HUB_CACHE`), so [`use_shared_cache`](Self::use_shared_cache) sets
+    /// both; this is where the weights land and where [`weights_on_disk`]
+    /// looks.
+    fn hub_cache() -> std::path::PathBuf {
+        std::env::var_os("HUGGINGFACE_HUB_CACHE")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| crate::runtime::hf_home().join("hub"))
+    }
+
+    /// Point any-tts at the one shared cache and the reachable Hub. This sets
+    /// the engine's own env, which every model process inherits: HF_HUB_CACHE
+    /// beats HF_HOME (pointing it at hf-hub itself instead of hf-hub/hub made
+    /// a second copy of each model). The mirror is set here because any-tts'
+    /// in-process loader reads only the process env.
+    async fn use_shared_cache() {
+        let endpoint = crate::hf_mirror::endpoint().await;
+        if std::env::var_os("HF_ENDPOINT").is_none() && endpoint != crate::hf_mirror::HF {
+            std::env::set_var("HF_ENDPOINT", &endpoint);
+        }
+        let hub = crate::runtime::hf_home().join("hub");
+        for key in ["HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE"] {
+            if std::env::var_os(key).is_none() {
+                std::env::set_var(key, &hub);
+            }
+        }
+    }
+
+    /// The files a Kokoro load reads, in any-tts' cache layout, plus the
+    /// two voice packs [`prewarm`](TtsProvider::prewarm) speaks with.
+    fn weights_on_disk() -> bool {
+        let snapshot = Self::hub_cache().join("models--hexgrad--Kokoro-82M/snapshots/main");
+        let weights = ["config.json", "kokoro-v1_0.pth"]
+            .iter()
+            .all(|f| snapshot.join(f).exists());
+        let voices = [VOICE_EN, VOICE_ZH]
+            .iter()
+            .all(|v| Self::voices_dir().join(format!("{v}.pt")).exists());
+        weights && voices
+    }
+
+    fn config() -> TtsConfig {
+        TtsConfig::new(ModelType::Kokoro).with_voices_dir(Self::voices_dir())
     }
 
     /// Make sure one voice pack (~500 KB) is on disk, fetching it if not.
@@ -209,37 +268,22 @@ impl KokoroProvider {
         Ok(())
     }
 
-    /// Load the model once, on first use. Download + candle init are blocking,
-    /// so they run on a blocking thread; `OnceCell` serializes concurrent
-    /// first-callers behind a single init.
+    /// Load the model once, on first use — from disk only: a missing weight
+    /// file is an error here (the caller speaks with `say`), never a
+    /// download in front of a person. candle init is blocking, so it runs on
+    /// a blocking thread; `OnceCell` serializes concurrent first-callers
+    /// behind a single init and stays empty on error, so a later call
+    /// retries once [`fetch`](TtsProvider::fetch) has landed the weights.
     async fn model(&self) -> anyhow::Result<Arc<dyn TtsModel>> {
         self.model
             .get_or_try_init(|| async {
-                // Probe the Hub first: any-tts' in-process loader reads only
-                // the process env, so the mirror is set here, where the
-                // cache dir already is — once, before the load that reads it.
-                let endpoint = crate::hf_mirror::endpoint().await;
+                Self::use_shared_cache().await;
+                if !Self::weights_on_disk() {
+                    anyhow::bail!("Kokoro weights are not downloaded yet");
+                }
                 let model =
                     tokio::task::spawn_blocking(move || -> anyhow::Result<Arc<dyn TtsModel>> {
-                        if std::env::var_os("HF_ENDPOINT").is_none()
-                            && endpoint != crate::hf_mirror::HF
-                        {
-                            std::env::set_var("HF_ENDPOINT", &endpoint);
-                        }
-                        // The one shared cache (runtime::hf_home). This sets the
-                        // engine's own env, which every model process inherits, and
-                        // HF_HUB_CACHE beats HF_HOME: pointing it at hf-hub itself
-                        // instead of hf-hub/hub made a second copy of each model.
-                        if std::env::var_os("HF_HUB_CACHE").is_none() {
-                            std::env::set_var("HF_HUB_CACHE", crate::runtime::hf_home().join("hub"));
-                        }
-                        // No path set → any-tts downloads hexgrad/Kokoro-82M from HF
-                        // (or HF_ENDPOINT).
-                        // Voices come from our own directory (see `voices_dir`).
-                        let model = any_tts::load_model(
-                            TtsConfig::new(ModelType::Kokoro).with_voices_dir(Self::voices_dir()),
-                        )?;
-                        Ok(Arc::from(model))
+                        Ok(Arc::from(any_tts::load_model(Self::config())?))
                     })
                     .await??;
                 Ok::<_, anyhow::Error>(model)
@@ -284,16 +328,28 @@ impl TtsProvider for KokoroProvider {
         Ok(wav)
     }
 
-    async fn prewarm(&self) {
-        // Both voices up front (~500 KB each), so neither language's first line
-        // pays for a download or falls back to `say`.
+    fn needs_fetch(&self) -> bool {
+        !Self::weights_on_disk()
+    }
+
+    /// Both voices (~500 KB each) and the ~300 MB weights, to disk only.
+    /// `resolve_files` is the loader's own file resolution, so exactly what
+    /// a load reads is fetched; a file already there costs nothing.
+    async fn fetch(&self) -> anyhow::Result<()> {
+        crate::runtime::check_disk_headroom(&crate::runtime::hf_home(), 1)?;
         for v in [VOICE_EN, VOICE_ZH] {
-            if let Err(e) = Self::ensure_voice(v).await {
-                tracing::warn!("[tts] could not fetch voice {v} ({e})");
-            }
+            Self::ensure_voice(v).await?;
         }
+        Self::use_shared_cache().await;
+        tokio::task::spawn_blocking(|| Self::config().resolve_files().map(|_| ())).await??;
+        tracing::info!("[tts] Kokoro weights on disk");
+        Ok(())
+    }
+
+    async fn prewarm(&self) {
         // Loading the ~300 MB weights onto the GPU takes several seconds; do it
-        // now so Yinyue's first utterance is as fast as the rest.
+        // now so Yinyue's first utterance is as fast as the rest. The boot task
+        // has run `fetch` first, so this reads only what is on disk.
         match self.model().await {
             Ok(_) => tracing::info!("[tts] Kokoro model pre-warmed"),
             Err(e) => tracing::warn!("[tts] Kokoro pre-warm failed ({e}); will fall back to `say`"),
