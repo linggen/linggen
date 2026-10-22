@@ -21,7 +21,7 @@ pub(super) fn spawn_background_tasks(
     flush_token_usage(state);
     watch_skill_sync(state);
     prewarm_memory(state);
-    prewarm_runtime(state, pet_enabled);
+    prewarm_runtime(state);
     prewarm_voice(state, pet_enabled);
     connect_mcp_servers(state);
     if let Some(timeout) = idle_shutdown_secs.filter(|t| *t > 0) {
@@ -100,17 +100,18 @@ fn prewarm_memory(state: &Arc<ServerState>) {
 
 /// Managed Python runtime: fetch/repair in the background so no skill or
 /// TTS request ever waits on a download. The voice stages (venv + model,
-/// ~2.1 GB) run only when the pet is enabled — a disabled pet never pulls
-/// them. Progress goes out live on the `tasks` topic and is retained for
-/// surfaces that attach later.
-fn prewarm_runtime(state: &Arc<ServerState>, pet_enabled: bool) {
+/// ~2.1 GB) run on every machine their lane admits, pet on or off, so
+/// turning Yinyue on later never waits on a download; loading the model
+/// into memory stays with the pet (prewarm_voice). Progress goes out live
+/// on the `tasks` topic and is retained for surfaces that attach later.
+fn prewarm_runtime(state: &Arc<ServerState>) {
     let state = state.clone();
     let progress: crate::runtime::Progress = std::sync::Arc::new(move |payload| {
         api::topic::publish_topic(&state, "tasks", "runtime", payload.clone());
         api::topic::retain("tasks", "runtime", payload);
     });
     crate::runtime::set_progress_sink(progress.clone());
-    tokio::spawn(crate::runtime::prewarm(pet_enabled, progress));
+    tokio::spawn(crate::runtime::prewarm(progress));
     // The region fact (which services are unreachable here) is probed now,
     // so a skill's first ask does not wait on it.
     tokio::spawn(crate::reach::region());

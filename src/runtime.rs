@@ -330,15 +330,15 @@ fn progress_sink() -> Progress {
         .unwrap_or_else(|| std::sync::Arc::new(|_| {}))
 }
 
-/// `with_tts` gates the voice stages (venv + model, ~2.1 GB): the caller
-/// passes whether anything on this machine actually speaks (pet enabled),
-/// so a machine with the pet off never pulls the model. Pictures are not
+/// Boot runs the voice stages (venv + model, ~2.1 GB) on every machine
+/// the lane admits, so the voice is on disk before Yinyue first speaks.
+/// Pictures are not
 /// a daily model — most players never make a scene — so their stages
 /// never run at boot; [`ensure_pictures_in_background`] runs them on the
 /// first call that needs them. `progress` receives each stage payload;
 /// the server wires it to the live topic bus + retained store.
-pub async fn prewarm(with_tts: bool, progress: Progress) {
-    prewarm_lanes(with_tts, false, progress).await
+pub async fn prewarm(progress: Progress) {
+    prewarm_lanes(true, false, progress).await
 }
 
 async fn prewarm_lanes(with_tts: bool, with_pictures: bool, progress: Progress) {
