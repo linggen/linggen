@@ -730,7 +730,7 @@ print("ok", len(shown), len(written))
 ' "$1" "$LG"
   }
   H_QUESTIONS=("I want a gooseneck electric kettle for pour-over coffee, under \$100. Which two would you pick, and what do they look like?"
-    "How do I replace the blade on a Fiskars paper trimmer? Walk me through the steps.")
+    "How do I replace the cabin air filter in a 2024 Toyota RAV4? Show me where it is.")
   for q in "${H_QUESTIONS[@]}"; do
     SID_H="$(picture_turn "$q")"
     if [ -z "$SID_H" ]; then fail "(h) ${q:0:40}…" "the turn did not finish"; continue; fi

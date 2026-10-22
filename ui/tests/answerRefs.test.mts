@@ -15,10 +15,10 @@ const tree = (md: string): Node => {
 const shape = (n: Node): unknown =>
   n.type === 'text' ? n.value : n.data?.hName ? `${n.data.hName}:${Object.values(n.data.hProperties ?? {}).join()}` : { [n.type]: (n.children ?? []).map(shape) };
 
-test("a paragraph's pictures follow it as one grid; a source stays a chip in place", () => {
+test("a paragraph's pictures follow it as one grid; every number stays in place inline", () => {
   const t = tree('Kettle A [turn1image2][turn1image1] from [turn1search1].\n\nNext.');
   assert.deepEqual(t.children!.map(shape), [
-    { paragraph: ['Kettle A', ' from ', 'lg-ref:turn1search1', '.'] },
+    { paragraph: ['Kettle A ', 'lg-ref:turn1image2', 'lg-ref:turn1image1', ' from ', 'lg-ref:turn1search1', '.'] },
     'lg-pictures:turn1image2 turn1image1',
     { paragraph: ['Next.'] },
   ]);
@@ -27,7 +27,7 @@ test("a paragraph's pictures follow it as one grid; a source stays a chip in pla
 test('a list item keeps its pictures under its own words', () => {
   const t = tree('1. Fill it [turn3image1]\n2. Boil');
   const items = (t.children![0].children ?? []).map(shape);
-  assert.deepEqual(items[0], { listItem: [{ paragraph: ['Fill it'] }, 'lg-pictures:turn3image1'] });
+  assert.deepEqual(items[0], { listItem: [{ paragraph: ['Fill it ', 'lg-ref:turn3image1'] }, 'lg-pictures:turn3image1'] });
   assert.deepEqual(items[1], { listItem: [{ paragraph: ['Boil'] }] });
 });
 

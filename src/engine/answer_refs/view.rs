@@ -32,6 +32,15 @@ pub fn refs_for<'a>(
     out
 }
 
+/// The words of a session's rows that are someone's words — a tool's result
+/// row carries numbers too, but only an answer shows them.
+pub fn spoken_texts(rows: &[crate::state_fs::sessions::ChatMsg]) -> Vec<String> {
+    rows.iter()
+        .filter(|m| !m.is_observation && !super::ids_in(&m.content).is_empty())
+        .map(|m| m.content.clone())
+        .collect()
+}
+
 fn shown(session_id: &str, r: &Ref) -> Option<Value> {
     let mut v = json!({ "kind": r.kind, "url": r.url });
     let obj = v.as_object_mut()?;

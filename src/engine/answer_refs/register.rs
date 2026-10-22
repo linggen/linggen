@@ -157,7 +157,8 @@ mod tests {
 
         let text = render_tool_result(&second);
         assert!(text.contains("[turn2search1] Best kettles — https://a.example/k"), "{text}");
-        assert!(text.contains("Pictures:\n[turn2image1] A gooseneck kettle\n"), "{text}");
+        assert!(text.contains("[turn2image1]") && text.contains("\n[turn2image1] A gooseneck kettle\n"), "{text}");
+        assert!(text.contains("write a number such as [turn2search1]"), "{text}");
         assert!(!text.contains("img.example"), "the model never reads a picture's address");
 
         let refs = table::load(&store.session_dir("sess-1-a"));
@@ -174,6 +175,6 @@ mod tests {
         number(&store, "../x", &mut r);
         let text = render_tool_result(&r);
         assert!(text.contains("1. Best kettles"), "{text}");
-        assert!(!text.contains("Pictures:"));
+        assert!(!text.contains("Pictures") && !text.contains("write a number"));
     }
 }

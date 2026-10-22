@@ -13,8 +13,25 @@ function useAnswerRef(id: string): AnswerRef | undefined {
   return useChatStore((s) => s.sessionState?.refs?.[id]);
 }
 
+/** Where a picture's number stood: a small thumbnail, opening it large. */
+const InlinePicture: React.FC<{ id: string; answer: AnswerRef }> = ({ id, answer }) => {
+  const src = useImageSrc(answer.src || '');
+  const [open, setOpen] = useState(false);
+  const caption = pictureCaption(answer);
+  if (!src) return null;
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)} data-answer-ref={id} title={caption || 'Open'} className="inline-block align-text-bottom mx-0.5 p-0 border-0 bg-transparent cursor-zoom-in">
+        <img src={src} alt={caption} className="h-5 w-7 object-cover rounded-sm border border-slate-200 dark:border-white/10" />
+      </button>
+      {open && <Lightbox src={src} caption={caption} href={answer.page || answer.url || undefined} onClose={() => setOpen(false)} />}
+    </>
+  );
+};
+
 export const RefChip: React.FC<{ id: string }> = ({ id }) => {
   const ref = useAnswerRef(id);
+  if (ref?.kind === 'picture' && ref.src) return <InlinePicture id={id} answer={ref} />;
   if (!ref || ref.kind !== 'source' || !ref.url) return null;
   return (
     <a

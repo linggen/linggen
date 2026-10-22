@@ -2,9 +2,10 @@
 // tool result by its number — `[turn2search1]` a source, `[turn2image1]` a
 // picture — and the session state hands out what each number resolves to
 // (`refs`). This remark plugin turns the numbers into nodes the chat draws:
-// a source becomes an inline `lg-ref` chip; the pictures of a paragraph or
-// heading leave its words and follow it as one `lg-pictures` grid (inside a
-// table cell, they stay in the cell). A number that resolves to nothing
+// each becomes an inline `lg-ref` (a source chip, or a small thumbnail where
+// a picture's number stood), and the pictures of a paragraph or heading
+// follow it as one captioned `lg-pictures` grid (inside a table cell, the
+// grid stays in the cell). A number that resolves to nothing
 // draws nothing — the components decide, from `refs`.
 
 export interface AnswerRef {
@@ -47,19 +48,19 @@ const picturesNode = (ids: string[]): MdNode => ({
   children: [],
 });
 
-/** One text node split at its numbers: words and chips; pictures collected. */
+/** One text node split at its numbers: every number becomes an inline
+ *  `lg-ref` (a chip, or for a picture a small thumbnail in its place — a
+ *  model may write one as a word: "[turn1image1] shows the latch");
+ *  pictures are also collected for the grid that follows the block. */
 function splitText(value: string, pictures: string[]): MdNode[] {
   const out: MdNode[] = [];
   let last = 0;
   for (const m of value.matchAll(REF)) {
     const id = m[1];
-    let before = value.slice(last, m.index);
-    if (isPictureId(id)) {
-      before = before.replace(/[ \t]+$/, '');
-      if (!pictures.includes(id)) pictures.push(id);
-    }
+    const before = value.slice(last, m.index);
     if (before) out.push({ type: 'text', value: before });
-    if (!isPictureId(id)) out.push(refNode(id));
+    out.push(refNode(id));
+    if (isPictureId(id) && !pictures.includes(id)) pictures.push(id);
     last = (m.index ?? 0) + m[0].length;
   }
   const rest = value.slice(last);

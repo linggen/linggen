@@ -322,6 +322,7 @@ pub(crate) async fn get_workspace_state(
     };
     let running = !sid.is_empty() && run_calls::session_running(&state.manager, sid).await;
 
+    let spoken = crate::engine::answer_refs::view::spoken_texts(&messages);
     let mapped_messages = run_calls::with_run_calls(
         messages,
         running,
@@ -359,7 +360,7 @@ pub(crate) async fn get_workspace_state(
     let refs = crate::engine::answer_refs::view::refs_for(
         &state.manager.global_sessions,
         sid,
-        mapped_messages.iter().map(|(_, text)| text.as_str()),
+        spoken.iter().map(String::as_str),
     );
     Json(WorkspaceStateResponse {
         active_task,

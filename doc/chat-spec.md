@@ -176,11 +176,18 @@ never writes its own image URL.
   form (`\u{e200}i\u{e202}turn2image1\u{e201}` → `[turn2image1]`), so the
   saved answer holds one form for every model. Other models are told the
   plain form `[turn2image1]` in the tool description, which describes the
-  capability without setting a style. The numbers stay in the saved text;
-  a voice reads the words without them.
-- **Rendering.** A source shows as a link chip (its site). The pictures a
-  paragraph names leave its words and follow it as thumbnails with their
-  caption (a product's name and price first), side by side in a grid, and
+  capability without setting a style; a result that carries pictures says
+  under what they are worth showing (the person asks what something looks
+  like, a step is clearer seen) — without it, Claude and Gemini answered
+  shopping and how-to questions in words alone on the live check. The
+  numbers stay in the saved text; a voice reads the words without them, and
+  a thread rebuilt from the file gives the model its old answers without
+  them (their tool results come back cut short, and a model reading numbers
+  it cannot find takes them for ones it made up).
+- **Rendering.** A source shows as a link chip (its site). A picture's
+  number shows as a small thumbnail in place (models write one as a word:
+  "[turn1image1] shows the latch"), and the pictures a paragraph names
+  follow it as thumbnails with their caption (a product's name and price first), side by side in a grid, and
   open larger on click in the same viewer as a person's pictures, with a
   click-through to the source. **A number that matches nothing renders
   nothing**, so a picture can never be made up; a number still streaming is

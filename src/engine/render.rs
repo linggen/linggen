@@ -72,7 +72,14 @@ pub fn render_tool_result(r: &ToolResult) -> String {
             results,
             pictures,
         } => {
-            let mut out = format!("WebSearch: \"{}\" ({} results)\n", query, results.len());
+            let mut out = format!("WebSearch: \"{}\" ({} results)", query, results.len());
+            if let Some(first) = results.first().filter(|r| !r.id.is_empty()) {
+                out.push_str(&format!(
+                    " — write a number such as [{}] in the answer to link that source",
+                    first.id
+                ));
+            }
+            out.push('\n');
             for (i, r) in results.iter().enumerate() {
                 let head = match r.id.as_str() {
                     "" => format!("{}.", i + 1),
@@ -155,7 +162,11 @@ fn render_pictures(pictures: &[crate::engine::web_search::WebPicture]) -> String
     if numbered.is_empty() {
         return String::new();
     }
-    format!("Pictures:\n{}", numbered.concat())
+    let first = pictures.iter().find(|p| !p.id.is_empty()).map_or("", |p| p.id.as_str());
+    format!(
+        "Pictures — each shows what its line says (the picture itself is not attached). The person sees one in your answer where you write its number, such as [{first}]. Worth it when they ask what something looks like, or a step is clearer seen than read.\n{}",
+        numbered.concat()
+    )
 }
 
 fn preview_text(content: &str, max_lines: usize, max_chars: usize) -> (String, bool) {

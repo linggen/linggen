@@ -23,7 +23,8 @@ impl Tool for WebSearchTool {
          metered against the account's monthly pool). Returns titles, URLs, \
          snippets and pictures, each with a number such as [turn2search1] or \
          [turn2image1]: writing a number in the answer shows that source as a \
-         link, or that picture itself. If it reports a key, sign-in, or quota \
+         link, or that picture itself (worth it when the person asks what \
+         something looks like). If it reports a key, sign-in, or quota \
          error, do not retry — tell the user instead."
     }
     fn tier(&self) -> PermissionMode {
