@@ -2,8 +2,9 @@
 //! chat starts in the default workspace, a skill in its declared `cwd:`, a
 //! chosen folder wins — and nothing a surface sends later rebinds it.
 
+use crate::support::engine::RunEnd;
 use crate::support::model::Agent;
-use crate::support::{text, Setup, World};
+use crate::support::{text, tool, Setup, World};
 use serde_json::json;
 use std::path::PathBuf;
 
@@ -121,4 +122,39 @@ async fn a_session_kept_without_a_folder_works_in_the_default_workspace() {
     let want = workspace(&w).display().to_string();
     assert_eq!(ran["stdout"].as_str().unwrap_or_default().trim(), want);
     assert_eq!(cwd_of(&w, sid), want, "not kept from the next write");
+}
+
+/// The chat half of the same bug: a turn sent with another session's folder
+/// runs in the session's own, and its first Bash does not move the session.
+#[tokio::test]
+async fn a_turn_with_another_sessions_folder_runs_in_the_sessions_own() {
+    let w = World::start(Setup::default().script(
+        Agent::Ling,
+        vec![tool("Bash", json!({"cmd": "pwd"})), text("Done.")],
+    ))
+    .await;
+    let sid = w.api.create_session(json!({"title": "Chat"})).await;
+    let mark = w.mark();
+    w.api.chat(&sid, &w.work(), "Where are we?").await;
+    if let RunEnd::Asked(ask) = w.wait_run(&sid, Agent::Ling, mark).await {
+        w.api.answer(&ask, "allow once").await;
+        w.finish_run(&sid, Agent::Ling, mark).await;
+    }
+    assert_eq!(cwd_of(&w, &sid), workspace(&w).display().to_string());
+    let call = w
+        .model
+        .calls_of(Agent::Ling)
+        .pop()
+        .expect("his second call");
+    let thread = call.thread();
+    let (_, ran) = thread
+        .iter()
+        .rev()
+        .find(|(role, _)| role == "tool")
+        .expect("no Bash result");
+    assert!(
+        ran.contains(&workspace(&w).display().to_string()) && !ran.contains(&w.work()),
+        "pwd did not run in the workspace: {ran}"
+    );
+    w.assert_all_scripted();
 }
