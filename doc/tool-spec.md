@@ -32,7 +32,7 @@ Built-in tools are the kernel API. Skills are userspace.
 | Tool | Args | Purpose |
 |:-----|:-----|:--------|
 | `Glob` | `globs?, max_results?` | File pattern matching |
-| `Read` | `path, max_bytes?, line_range?` | Read file contents |
+| `Read` | `path, max_bytes?, line_range?` | Read file contents. A picture file (PNG, JPEG, GIF, WebP; HEIC converted with `sips` on macOS, else said so), known by its first bytes, comes back as a picture: numbered (`[turn3image1]`, caption = file name) and kept in the session's `images/` like a screenshot; a model that sees gets it attached once in that turn, scaled like a pasted picture (long edge 1568 px; JPEG q0.85, or PNG when smaller; a small one as it came), a blind one gets the facts (format, width×height, size). Over 20 MB, undecodable or unconvertible: one line of facts. Path rules are Read's own |
 | `Grep` | `query, globs?, max_results?` | Content search (ripgrep) |
 | `Write` | `path, content` | Create/overwrite file |
 | `Edit` | `path, old_string, new_string, replace_all?` | String replacement in file |

@@ -13,6 +13,7 @@ mod fixtures;
 mod met;
 mod pictures;
 mod presence;
+mod reading;
 mod prompt;
 mod sessions;
 mod shared_table;

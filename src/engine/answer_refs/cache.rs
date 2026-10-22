@@ -156,15 +156,10 @@ pub struct Kept {
 /// it has transparency). Anything that is not a PNG, JPEG, GIF or WebP is
 /// refused.
 pub fn scaled(bytes: &[u8]) -> Option<Kept> {
-    let (ext, format) = kind_of(bytes)?;
+    let kind = crate::pictures::kind::Kind::drawable(bytes)?;
+    let ext = kind.ext();
     let stem = content_stem(bytes);
-    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), format);
-    let mut limits = image::Limits::default();
-    limits.max_image_width = Some(16_000);
-    limits.max_image_height = Some(16_000);
-    limits.max_alloc = Some(512 * 1024 * 1024);
-    reader.limits(limits);
-    let img = reader.decode().ok()?;
+    let img = crate::pictures::for_model::decode(bytes, kind)?;
     if img.width().max(img.height()) <= LONG_EDGE {
         return Some(Kept {
             name: format!("{stem}.{ext}"),
@@ -190,17 +185,6 @@ fn encode(img: image::DynamicImage, stem: &str) -> Option<Kept> {
         name: format!("{stem}.{ext}"),
         bytes: out.into_inner(),
     })
-}
-
-fn kind_of(bytes: &[u8]) -> Option<(&'static str, image::ImageFormat)> {
-    use image::ImageFormat as F;
-    match bytes {
-        [0x89, b'P', b'N', b'G', ..] => Some(("png", F::Png)),
-        [0xFF, 0xD8, 0xFF, ..] => Some(("jpg", F::Jpeg)),
-        [b'G', b'I', b'F', b'8', ..] => Some(("gif", F::Gif)),
-        [b'R', b'I', b'F', b'F', _, _, _, _, b'W', b'E', b'B', b'P', ..] => Some(("webp", F::WebP)),
-        _ => None,
-    }
 }
 
 /// 16 hex digits of the content's SHA-256 — the naming the session's

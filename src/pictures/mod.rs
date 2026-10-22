@@ -6,6 +6,8 @@
 //! (the session's pictures, or a skill's `data/pictures/`).
 
 pub mod chatgpt;
+pub mod for_model;
+pub mod kind;
 pub mod local;
 
 use anyhow::{bail, Context, Result};

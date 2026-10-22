@@ -20,6 +20,14 @@
   plain chats where it could only fail; a tool that cannot run is no longer
   offered.
 
+- **Read opens pictures.** A PNG, JPEG, GIF, WebP or HEIC file (known by
+  its bytes, not its name) is no longer read as garbage text. A model that
+  sees gets the picture once, scaled like a pasted one (1568 px, JPEG);
+  a blind model gets the facts (format, size in pixels and bytes). Either
+  way it is numbered and kept with the session, so the answer shows it even
+  after the file changes or goes. Over 20 MB: facts only. Fixed: a JPEG,
+  GIF or WebP sent to a model was always labelled PNG.
+
 ## [1.10.0] - 2026-10-21 — one memory across machines
 
 - **Memory across machines** (ling-mem 1.13.0). When a LAN machine asks to

@@ -83,9 +83,12 @@ fn parse_read_result_path_from_tool_header(line: &str) -> Option<String> {
     if rest.len() >= 5 && rest[..5].eq_ignore_ascii_case("read:") {
         rest = rest[5..].trim();
     }
+    // A text read ends its head with "(truncated: …)", a picture with
+    // "— a picture (…)".
     let path = rest
         .split(" (truncated:")
         .next()
+        .and_then(|p| p.split(" — a picture").next())
         .map(str::trim)
         .unwrap_or_default();
     if path.is_empty() {
@@ -549,6 +552,13 @@ mod tests {
         let input = "Tool Read: Read: doc/storage-spec.md (truncated: false)\n\nFilesystem layout for all persistent state.\nNo database — everything is files.\n\n(content omitted in chat; open the file viewer for full text)";
         let cleaned = sanitize_message_for_ui("system", input).expect("expected sanitized output");
         assert_eq!(cleaned, "Used tool: Read · target=storage-spec.md");
+    }
+
+    #[test]
+    fn sanitize_names_a_read_picture_by_its_file() {
+        let input = "Tool Read: Read: shots/login.png — a picture (PNG, 64×48, 2 KB), not text.\n[turn1image1] login.png";
+        let cleaned = sanitize_message_for_ui("system", input).expect("expected sanitized output");
+        assert_eq!(cleaned, "Used tool: Read · target=login.png");
     }
 
     #[test]

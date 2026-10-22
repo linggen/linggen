@@ -72,7 +72,7 @@ impl Tool for ReadTool {
         true
     }
     fn description(&self) -> &'static str {
-        "Read a file's contents. Path can be relative (resolved from workspace root) or absolute. Always read a file before modifying it."
+        "Read a file's contents. Path can be relative (resolved from workspace root) or absolute. Always read a file before modifying it. A picture file (PNG, JPEG, GIF, WebP, HEIC) comes back as a picture with a number such as [turn3image1] the answer can show, and is shown to you when this model can see."
     }
     fn tier(&self) -> PermissionMode {
         PermissionMode::Read

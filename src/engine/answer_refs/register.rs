@@ -34,6 +34,9 @@ pub fn number(store: &SessionStore, session_id: &str, result: &mut ToolResult) {
             id,
             ..
         } => number_drawn(store, session_id, base64, caption, id),
+        ToolResult::PictureFile {
+            base64, name, id, ..
+        } => number_picture_file(store, session_id, base64, name, id),
         _ => {}
     }
 }
@@ -46,6 +49,7 @@ fn numberable(result: &ToolResult) -> bool {
         ToolResult::WebFetchContent { .. } => true,
         ToolResult::Screenshot { base64, .. } => !base64.is_empty(),
         ToolResult::Picture { base64, .. } => !base64.is_empty(),
+        ToolResult::PictureFile { base64, .. } => !base64.is_empty(),
         _ => false,
     }
 }
@@ -135,6 +139,31 @@ fn number_drawn(
         let mut drawn = Ref::picture(picture_id(turn, 1), "", caption);
         drawn.file = Some(file);
         vec![drawn]
+    });
+    if let Some(turn) = turn {
+        *id = picture_id(turn, 1);
+    }
+}
+
+/// A picture file `Read` opened is kept at once (its readied copy, by
+/// content), so the answer shows it even after the file changes or goes.
+/// Its bytes stay in the result: the engine attaches them for a model that
+/// can see.
+fn number_picture_file(
+    store: &SessionStore,
+    session_id: &str,
+    base64: &str,
+    name: &str,
+    id: &mut String,
+) {
+    let Some(file) = store.keep_images(session_id, &[base64.to_string()]).pop() else {
+        return;
+    };
+    let dir = store.session_dir(session_id);
+    let turn = table::number(&dir, |turn| {
+        let mut read = Ref::picture(picture_id(turn, 1), "", name);
+        read.file = Some(file);
+        vec![read]
     });
     if let Some(turn) = turn {
         *id = picture_id(turn, 1);
@@ -282,6 +311,98 @@ mod tests {
             text.contains("[turn1image1]") && text.contains("/apps/game/data/pictures/fuzhu.png"),
             "{text}"
         );
+    }
+
+    fn picture_file(png: &[u8]) -> ToolResult {
+        use base64::Engine as _;
+        ToolResult::PictureFile {
+            path: "shots/login.png".into(),
+            name: "login.png".into(),
+            kind: "PNG".into(),
+            width: 64,
+            height: 48,
+            size: 2048,
+            base64: base64::engine::general_purpose::STANDARD.encode(png),
+            seen: false,
+            id: String::new(),
+        }
+    }
+
+    fn png() -> Vec<u8> {
+        let img = image::RgbImage::from_pixel(64, 48, image::Rgb([9, 99, 199]));
+        let mut out = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(img)
+            .write_to(&mut out, image::ImageFormat::Png)
+            .unwrap();
+        out.into_inner()
+    }
+
+    /// A picture file is numbered and kept with its file name as caption;
+    /// read twice it is two numbers on one kept copy.
+    #[test]
+    fn a_read_picture_is_numbered_and_kept_once_by_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::with_sessions_dir(dir.path().to_path_buf());
+        let mut first = picture_file(&png());
+        number(&store, "sess-1-a", &mut first);
+        let mut again = picture_file(&png());
+        number(&store, "sess-1-a", &mut again);
+
+        let ToolResult::PictureFile {
+            ref id, ref base64, ..
+        } = again
+        else {
+            unreachable!()
+        };
+        assert_eq!(id, "turn2image1");
+        assert!(!base64.is_empty(), "the bytes stay for the model");
+        let refs = table::load(&store.session_dir("sess-1-a"));
+        assert_eq!(refs["turn1image1"].caption, "login.png");
+        assert!(refs["turn1image1"].url.is_empty() && refs["turn1image1"].settled());
+        assert_eq!(refs["turn1image1"].file, refs["turn2image1"].file);
+        let kept = std::fs::read_dir(store.session_dir("sess-1-a").join("images"))
+            .unwrap()
+            .count();
+        assert_eq!(kept, 1, "one copy for one content");
+    }
+
+    /// What the model reads: facts and the number, and whether it sees the
+    /// picture; the kept row holds facts and number alone.
+    #[test]
+    fn a_read_picture_reads_as_facts_and_a_number() {
+        use crate::engine::render::render_tool_result_public;
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::with_sessions_dir(dir.path().to_path_buf());
+        let mut blind = picture_file(&png());
+        number(&store, "sess-1-a", &mut blind);
+        let text = render_tool_result(&blind);
+        assert!(
+            text.starts_with("Read: shots/login.png — a picture (PNG, 64×48, 2 KB), not text.\n"),
+            "{text}"
+        );
+        assert!(text.contains("This model cannot see pictures"), "{text}");
+        assert!(
+            text.contains("[turn1image1] login.png\nShow it by writing [turn1image1]"),
+            "{text}"
+        );
+        assert!(!text.contains("iVBOR"), "the bytes are never text");
+
+        let ToolResult::PictureFile { ref mut seen, .. } = blind else {
+            unreachable!()
+        };
+        *seen = true;
+        let text = render_tool_result(&blind);
+        assert!(text.contains("attached below"), "{text}");
+        let kept = render_tool_result_public(&blind);
+        assert!(
+            !kept.contains("attached") && !kept.contains("cannot see"),
+            "{kept}"
+        );
+        assert!(kept.contains("[turn1image1] login.png"), "{kept}");
+
+        let mut unkept = picture_file(&png());
+        number(&store, "../x", &mut unkept);
+        assert!(render_tool_result(&unkept).contains("Not kept in this conversation"));
     }
 
     #[test]

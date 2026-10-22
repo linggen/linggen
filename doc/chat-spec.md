@@ -172,8 +172,10 @@ never writes its own image URL.
   screenshots count too, and so do pictures `GenerateImage` draws (ChatGPT
   on the person's sign-in, else this Mac's FLUX lane): each is kept in the
   session's `images/` at once, like a screenshot, numbered with its prompt
-  as the caption, and has no click-through. Local files are not numbered
-  yet: `Read` has no picture path.
+  as the caption, and has no click-through. Local files a session touched
+  count too: a picture file `Read` opens is kept and numbered the same way,
+  its file name the caption, so the answer keeps showing it after the file
+  changes or goes (built 2026-10-22; tool-spec `Read`).
 - **The model refers by number.** GPT models use their own citation
   markers; the Responses API stream turns each id inside one into the plain
   form (`\u{e200}i\u{e202}turn2image1\u{e201}` → `[turn2image1]`), so the
@@ -211,7 +213,9 @@ never writes its own image URL.
     a phone gets them from the Mac over WebRTC (`GET /api/sessions/images`
     on the data channel, like a person's pictures).
 - **Not sent back to the model.** The model chose pictures from what the
-  tool said about them, and history images are never resent.
+  tool said about them, and history images are never resent. A screenshot
+  or a picture file a seeing model read rides in its own turn only; later
+  turns read the tool result's facts and number in its place.
 - **Later.** An `image_group` of search queries (pictures the engine looks
   up for the model) may come as a second route; such a marker is dropped
   today. Number-referenced pictures come first because they match what the
@@ -220,7 +224,8 @@ never writes its own image URL.
   how-to question. Each answer must show real pictures, and every number it
   writes must resolve to a tool result. `tests/system/pictures.rs` covers
   numbering, resolution, unmatched-renders-nothing, dedupe and delete on a
-  fake model.
+  fake model; `tests/system/reading.rs` a picture file read by a seeing and
+  a blind model.
 
 ## Sessions
 

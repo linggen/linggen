@@ -780,6 +780,25 @@ impl AgentEngine {
         crate::engine::answer_refs::register::number(&manager.global_sessions, sid, result);
     }
 
+    /// A picture file goes to the model only when it can see one; for a
+    /// model that cannot, its bytes are dropped and the facts stay.
+    async fn settle_picture_file(&self, result: &mut tools::ToolResult) {
+        let tools::ToolResult::PictureFile { base64, seen, .. } = result else {
+            return;
+        };
+        if base64.is_empty() {
+            return;
+        }
+        *seen = self
+            .model_manager
+            .has_vision(&self.model_id)
+            .await
+            .unwrap_or(false);
+        if !*seen {
+            base64.clear();
+        }
+    }
+
     /// Post-execution phase: render and cache the result, emit "done"/"failed"
     /// events, push the observation message, and track empty-search streaks.
     #[allow(clippy::too_many_arguments)]
@@ -806,6 +825,7 @@ impl AgentEngine {
             Ok(mut result) => {
                 self.note_closing_ask(&canonical_tool, &result);
                 self.number_answer_refs(&mut result, session_id);
+                self.settle_picture_file(&mut result).await;
                 let rendered_model = render_tool_result(&result);
                 let rendered_public = render_tool_result_public(&result);
 
@@ -926,23 +946,14 @@ impl AgentEngine {
 
                 self.push_tracked_message(messages, obs_msg);
 
-                // Browser screenshots: attach the actual image so the model
-                // sees what it captured — the text observation only records
-                // that a capture happened.
-                if canonical_tool == "Browser_screenshot" {
-                    if let tools::ToolResult::Screenshot {
-                        ref url,
-                        ref base64,
-                        ..
-                    } = result
-                    {
-                        if !base64.is_empty() {
-                            let img_msg =
-                                ChatMessage::new("user", format!("[screenshot of {url}]"))
-                                    .with_images(vec![base64.clone()]);
-                            self.push_tracked_message(messages, img_msg);
-                        }
-                    }
+                // A picture the result shows the model (a screenshot, a
+                // picture file read by a model that sees) rides in its own
+                // message, this turn only: `messages` is the loop's copy, so
+                // a later turn reads the result's text in its place.
+                if let Some((note, base64)) = result.attachment() {
+                    let img_msg =
+                        ChatMessage::new("user", note).with_images(vec![base64.to_string()]);
+                    self.push_tracked_message(messages, img_msg);
                 }
 
                 let is_empty_search = (canonical_tool == "Grep"

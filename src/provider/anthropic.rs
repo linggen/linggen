@@ -428,7 +428,7 @@ fn translate_messages(messages: &[ChatMessage]) -> Translated {
                             "type": "image",
                             "source": {
                                 "type": "base64",
-                                "media_type": "image/png",
+                                "media_type": crate::pictures::kind::media_type_of_base64(img),
                                 "data": img,
                             },
                         }));

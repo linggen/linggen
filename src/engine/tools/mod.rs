@@ -7,6 +7,8 @@ pub(crate) use builtin::RightNow;
 
 pub(crate) mod browser_tool;
 mod file_tools;
+mod read_picture;
+pub use read_picture::human_size;
 pub(crate) mod json_schema;
 pub(crate) mod memory_http;
 mod memory_mcp;
@@ -76,6 +78,24 @@ pub enum ToolResult {
         seed: Option<u64>,
         /// In a skill: the skill's own copy, as (url, path).
         saved: Option<(String, String)>,
+        /// Its number in the session (`turn3image1`), once numbered.
+        id: String,
+    },
+    /// A picture file `Read` opened, readied for the model (scaled like a
+    /// person's pasted picture). Numbered into the session; attached to the
+    /// model once when it can see (`seen`), else its bytes are dropped.
+    PictureFile {
+        path: String,
+        /// Its file name: the caption the chat shows.
+        name: String,
+        /// "PNG", "JPEG", "GIF", "WebP", "HEIC".
+        kind: String,
+        width: u32,
+        height: u32,
+        /// The file's size in bytes.
+        size: u64,
+        base64: String,
+        seen: bool,
         /// Its number in the session (`turn3image1`), once numbered.
         id: String,
     },
@@ -151,6 +171,23 @@ Narrow the command (filter, grep, head) to see the rest.]\n{}",
 }
 
 impl ToolResult {
+    /// The picture this result shows the model, as the note it rides with
+    /// and its base64 — a screenshot, or a picture file a seeing model read.
+    pub fn attachment(&self) -> Option<(String, &str)> {
+        match self {
+            ToolResult::Screenshot { url, base64, .. } if !base64.is_empty() => {
+                Some((format!("[screenshot of {url}]"), base64))
+            }
+            ToolResult::PictureFile {
+                path,
+                base64,
+                seen: true,
+                ..
+            } if !base64.is_empty() => Some((format!("[picture {path}]"), base64)),
+            _ => None,
+        }
+    }
+
     /// Build a `CommandOutput` with both streams capped. Every producer of
     /// process output goes through here so none of them can forget: an
     /// unbounded stdout is a context blowup, not a big answer.
