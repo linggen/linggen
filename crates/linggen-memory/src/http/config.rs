@@ -51,7 +51,7 @@ fn default_episodic_ttl_days() -> u32 {
 }
 
 fn default_recall_min_score() -> f32 {
-    0.6
+    0.7
 }
 
 impl Default for Config {
