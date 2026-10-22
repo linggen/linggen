@@ -4,8 +4,8 @@
 //! `alt`). Read from the HTML before its tags are stripped. Nothing here
 //! knows any site: only the standard meta tags and elements.
 
-use super::web_search::WebPicture;
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
 
 /// Pictures kept from one page.
@@ -23,12 +23,27 @@ static FIGURE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?is)<figure\b[^>]*>(.*?)</figure>").unwrap());
 static FIGCAPTION: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?is)<figcaption\b[^>]*>(.*?)</figcaption>").unwrap());
-static ATTR: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?is)([a-z_:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')"#).unwrap()
-});
+static ATTR: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?is)([a-z_:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')"#).unwrap());
 static TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?s)<[^>]+>").unwrap());
 static TITLE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?is)<title\b[^>]*>(.*?)</title>").unwrap());
+
+/// A picture a fetched page shows: its address, what it shows, and — when the
+/// page declared a product — the product's name and price.
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
+pub struct WebPicture {
+    pub url: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub caption: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub price: String,
+    /// Its number in the session (`turn2image1`), once numbered.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub id: String,
+}
 
 /// What a page says about itself: its title, and its pictures.
 #[derive(Debug, Default, PartialEq)]
@@ -45,7 +60,10 @@ pub fn read(html: &str, page_url: &str) -> PageFacts {
     if let Some(main) = main_picture(&meta, &title, base.as_ref()) {
         pictures.push(main);
     }
-    for pic in figures(html, base.as_ref()).into_iter().chain(images(html, base.as_ref())) {
+    for pic in figures(html, base.as_ref())
+        .into_iter()
+        .chain(images(html, base.as_ref()))
+    {
         if pictures.len() >= MAX_PICTURES {
             break;
         }

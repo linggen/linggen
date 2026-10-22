@@ -176,6 +176,22 @@ impl Call {
             .collect()
     }
 
+    /// The description of the tool `name` offered on this call ("" when
+    /// it was not offered).
+    pub fn tool_description(&self, name: &str) -> String {
+        let tools = self.body["tools"].as_array().cloned().unwrap_or_default();
+        tools
+            .iter()
+            .find(|t| t["function"]["name"] == name || t["name"] == name)
+            .and_then(|t| {
+                t["function"]["description"]
+                    .as_str()
+                    .or(t["description"].as_str())
+            })
+            .unwrap_or("")
+            .to_string()
+    }
+
     /// The conversation as (role, text) pairs — Chat Completions `messages`
     /// or Responses `input` — with the system prompt left out.
     pub fn thread(&self) -> Vec<(String, String)> {

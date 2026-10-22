@@ -3,8 +3,8 @@
 ## [Unreleased]
 
 - **Sources and pictures in answers** — in any session. Every web result and
-  picture a tool returns (WebSearch's image results, a fetched page's main
-  picture and captioned pictures, a browser screenshot) gets a number such
+  picture a tool returns (a search's sources, a fetched page's main picture
+  and captioned pictures, a browser screenshot) gets a number such
   as `[turn2image1]`; an answer that writes one shows the source as a link
   chip or the picture as a captioned thumbnail that opens large. A number
   that matches nothing shows nothing. GPT models' own citation markers now
@@ -12,6 +12,9 @@
   downloaded once, scaled to ~1000 px and kept with the session (30 MB a
   session; past it they load from their address). `check.sh live` guards it
   (case h).
+- **Web search is text only again, and fast** (~2 s, not 10–12 s): pictures
+  come from the pages Ling fetches. A search that cannot reach its service
+  says WebFetch still works, instead of ending the answer.
 
 ## [1.10.0] - 2026-10-21 — one memory across machines
 

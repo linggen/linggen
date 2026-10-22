@@ -3,8 +3,9 @@
 //! model reads it beside the thing it names.
 
 use super::{picture_id, source_id, table, Ref};
+use crate::engine::page_pictures::WebPicture;
 use crate::engine::tools::ToolResult;
-use crate::engine::web_search::{WebPicture, WebSearchResult};
+use crate::engine::web_search::WebSearchResult;
 use crate::state_fs::sessions::SessionStore;
 
 /// Number `result` in `session_id`'s table. A result with nothing to number,
@@ -15,9 +16,7 @@ pub fn number(store: &SessionStore, session_id: &str, result: &mut ToolResult) {
     }
     let dir = store.session_dir(session_id);
     match result {
-        ToolResult::WebSearchResults {
-            results, pictures, ..
-        } => number_search(&dir, results, pictures),
+        ToolResult::WebSearchResults { results, .. } => number_search(&dir, results),
         ToolResult::WebFetchContent {
             url,
             title,
@@ -34,9 +33,7 @@ pub fn number(store: &SessionStore, session_id: &str, result: &mut ToolResult) {
 
 fn numberable(result: &ToolResult) -> bool {
     match result {
-        ToolResult::WebSearchResults {
-            results, pictures, ..
-        } => !results.is_empty() || !pictures.is_empty(),
+        ToolResult::WebSearchResults { results, .. } => !results.is_empty(),
         ToolResult::WebFetchContent { .. } => true,
         ToolResult::Screenshot { base64, .. } => !base64.is_empty(),
         _ => false,
@@ -47,19 +44,19 @@ fn valid_session(id: &str) -> bool {
     !id.is_empty() && !id.contains("..") && !id.contains('/') && !id.contains('\\')
 }
 
-fn number_search(dir: &std::path::Path, results: &mut [WebSearchResult], pictures: &mut [WebPicture]) {
+/// A search numbers its sources only: pictures come from fetched pages.
+fn number_search(dir: &std::path::Path, results: &mut [WebSearchResult]) {
     let turn = table::number(dir, |turn| {
-        let sources = results
+        results
             .iter()
             .enumerate()
-            .map(|(i, r)| Ref::source(source_id(turn, i + 1), &r.url, &r.title));
-        sources.chain(picture_rows(turn, pictures, "")).collect()
+            .map(|(i, r)| Ref::source(source_id(turn, i + 1), &r.url, &r.title))
+            .collect()
     });
     let Some(turn) = turn else { return };
     for (i, r) in results.iter_mut().enumerate() {
         r.id = source_id(turn, i + 1);
     }
-    label_pictures(turn, pictures);
 }
 
 fn number_page(
@@ -138,11 +135,22 @@ mod tests {
                 snippet: "…".into(),
                 id: String::new(),
             }],
+        }
+    }
+
+    fn page() -> ToolResult {
+        ToolResult::WebFetchContent {
+            url: "https://shop.example/gooseneck".into(),
+            content: "A kettle.".into(),
+            content_type: "text/html".into(),
+            truncated: false,
+            title: "Gooseneck Kettle".into(),
             pictures: vec![WebPicture {
                 url: "https://img.example/k.jpg".into(),
                 caption: "A gooseneck kettle".into(),
                 ..Default::default()
             }],
+            id: String::new(),
         }
     }
 
@@ -150,21 +158,45 @@ mod tests {
     fn results_are_numbered_in_the_table_and_in_what_the_model_reads() {
         let dir = tempfile::tempdir().unwrap();
         let store = SessionStore::with_sessions_dir(dir.path().to_path_buf());
-        let mut first = search();
-        number(&store, "sess-1-a", &mut first);
-        let mut second = search();
-        number(&store, "sess-1-a", &mut second);
+        let mut found = search();
+        number(&store, "sess-1-a", &mut found);
+        let mut fetched = page();
+        number(&store, "sess-1-a", &mut fetched);
 
-        let text = render_tool_result(&second);
-        assert!(text.contains("[turn2search1] Best kettles — https://a.example/k"), "{text}");
-        assert!(text.contains("[turn2image1]") && text.contains("\n[turn2image1] A gooseneck kettle\n"), "{text}");
-        assert!(text.contains("write a number such as [turn2search1]"), "{text}");
-        assert!(!text.contains("img.example"), "the model never reads a picture's address");
+        let text = render_tool_result(&found);
+        assert!(
+            text.contains("[turn1search1] Best kettles — https://a.example/k"),
+            "{text}"
+        );
+        assert!(
+            text.contains("write a number such as [turn1search1]"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("Pictures"),
+            "a search carries no pictures: {text}"
+        );
+
+        let text = render_tool_result(&fetched);
+        assert!(
+            text.contains("WebFetch: https://shop.example/gooseneck")
+                && text.contains("[turn2search1]"),
+            "{text}"
+        );
+        assert!(
+            text.contains("\n[turn2image1] A gooseneck kettle\n"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("img.example"),
+            "the model never reads a picture's address"
+        );
 
         let refs = table::load(&store.session_dir("sess-1-a"));
-        assert_eq!(refs.len(), 4);
-        assert_eq!(refs["turn1image1"].url, "https://img.example/k.jpg");
-        assert_eq!(refs["turn2search1"].title, "Best kettles");
+        assert_eq!(refs.len(), 3);
+        assert_eq!(refs["turn1search1"].title, "Best kettles");
+        assert_eq!(refs["turn2image1"].url, "https://img.example/k.jpg");
+        assert_eq!(refs["turn2image1"].page, "https://shop.example/gooseneck");
     }
 
     #[test]

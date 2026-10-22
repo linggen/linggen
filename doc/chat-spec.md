@@ -164,19 +164,24 @@ never writes its own image URL.
   plus name and price for a product) — `refs.jsonl`, see storage-spec. The
   model reads each number beside the thing it names; a picture's address
   stays out of what the model reads.
-- **Where pictures come from.** WebSearch returns image results (Tavily's,
-  with descriptions — the Linggen Cloud proxy does not pass them through
-  yet). WebFetch returns a page's main image (`og:image`, with a declared
-  product's name and price) and its in-text pictures with their captions
-  (`<figcaption>`, else `alt`; icons, logos and vectors skipped). Browser
-  screenshots count too. Local files are not numbered yet: `Read` has no
-  picture path.
+- **Where pictures come from.** WebFetch and browser screenshots only.
+  WebFetch returns a page's main image (`og:image`, captioned by the page
+  title, with a declared product's name and price) and its in-text
+  pictures with their captions (`<figcaption>`, else `alt`; icons, logos
+  and vectors skipped). WebSearch is text only (numbered sources): asking
+  Tavily for image descriptions took a search from ~2 s to 10–12 s, past
+  the engine's 15 s timeout on a slow day (2026-10-22). So to show what
+  something looks like, Ling fetches the maker's or a product page. A
+  search that cannot reach its service says WebFetch still opens a known
+  page. Local files are not numbered yet: `Read` has no picture path.
 - **The model refers by number.** GPT models use their own citation
   markers; the Responses API stream turns each id inside one into the plain
   form (`\u{e200}i\u{e202}turn2image1\u{e201}` → `[turn2image1]`), so the
   saved answer holds one form for every model. Other models are told the
-  plain form `[turn2image1]` in the tool description, which describes the
-  capability without setting a style; a result that carries pictures says
+  plain form `[turn2image1]` in the tool description (WebFetch's, which
+  also says pictures are worth showing when the person asks what something
+  looks like), which describes the capability without setting a style; a
+  result that carries pictures says
   under what they are worth showing (the person asks what something looks
   like, a step is clearer seen) — without it, Claude and Gemini answered
   shopping and how-to questions in words alone on the live check. The
@@ -214,8 +219,8 @@ never writes its own image URL.
   today. Number-referenced pictures come first because they match what the
   text says.
 - **Lock.** `check.sh live` (case h) asks one shopping question and one
-  how-to question. Each answer must show real pictures, and every number it
-  writes must resolve to a tool result. `tests/system/pictures.rs` covers
+  how-to question. Each answer must show real pictures from a fetched page,
+  and every number it writes must resolve to a tool result. `tests/system/pictures.rs` covers
   numbering, resolution, unmatched-renders-nothing, dedupe and delete on a
   fake model.
 
