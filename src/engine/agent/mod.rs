@@ -78,7 +78,8 @@ pub struct AgentManager {
     /// Interface mode passed into every EngineConfig.
     interface_mode: InterfaceMode,
     /// Monotonic per-agent seq counter for short, memorable run ids
-    /// (e.g. `ling01`, `ling02`). Resets on process restart.
+    /// (e.g. `ling01-…`, `ling02-…`); the suffix (`process_epoch`) keeps ids
+    /// apart across restarts.
     run_id_counters: std::sync::Mutex<HashMap<String, u64>>,
     /// Live user-presence signal, fed by a throttled client beat
     /// (`POST /api/presence`) — only recency, focus, and a typing flag, never
@@ -210,11 +211,14 @@ impl AgentManager {
         auth_dead_default.ok_or_else(|| anyhow::anyhow!("No models configured"))
     }
 
+    /// `ling01-mh3k9x`: the agent's count this process, then the moment the
+    /// process began (base 36). Rows keep a run's id (`ChatMsg::run_id`), so
+    /// it must never repeat after a restart — the chat binds by it alone.
     fn make_run_id(&self, agent_id: &str) -> String {
         let mut counters = self.run_id_counters.lock_ok();
         let seq = counters.entry(agent_id.to_string()).or_insert(0);
         *seq += 1;
-        format!("{}{:02}", agent_id, *seq)
+        format!("{}{:02}-{}", agent_id, *seq, process_epoch())
     }
 
     /// Build a fully-initialized `AgentEngine` for the given project + agent_id.
@@ -1067,4 +1071,20 @@ mod pet_voice_tests {
             Some((AgentEvent::PetVoice { muted: false }, None))
         ));
     }
+}
+
+/// When this process began, in milliseconds, base 36 — the same for every
+/// run id it makes.
+fn process_epoch() -> &'static str {
+    static EPOCH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    EPOCH.get_or_init(|| {
+        let mut n = crate::util::now_ts_ms();
+        let mut out = Vec::new();
+        while n > 0 {
+            out.push(b"0123456789abcdefghijklmnopqrstuvwxyz"[(n % 36) as usize]);
+            n /= 36;
+        }
+        out.reverse();
+        String::from_utf8(out).unwrap_or_default()
+    })
 }
