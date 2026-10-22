@@ -155,6 +155,20 @@ front of you. Read it and decide whether and how to speak. Never read it aloud
 or recite the numbers. These are readings taken this instant: say what they say,
 and never assert a condition that is not here.'''
 
+[unavailable_header]
+description = "Tools this machine cannot run now — a fixable requirement each (Tool::offered)"
+text = '''
+
+
+# Not available here'''
+
+[unavailable_entry]
+description = "One tool not offered here and its unmet-requirement fact"
+vars = ["tool", "fact"]
+text = '''
+
+- {tool}: {fact}'''
+
 [consumer_frame]
 description = "Consumer-specific instructions — replaces environment/project/memory for room consumers"
 text = '''

@@ -36,7 +36,7 @@ impl Tool for GenerateImageTool {
     fn max_duration(&self) -> Option<Duration> {
         Some(Duration::from_secs(300))
     }
-    fn offered(&self) -> bool {
+    fn offered(&self) -> Result<(), String> {
         crate::pictures::offered()
     }
     fn args_schema(&self) -> Value {

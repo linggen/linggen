@@ -68,6 +68,82 @@ async fn export_per_member_at_a_skill_table() {
     w.assert_all_scripted();
 }
 
+const NOT_HERE: &str = "# Not available here";
+
+/// Not signed in to ChatGPT, on a machine the picture lane refuses:
+/// GenerateImage is not offered, and the prompt carries its one-line fact
+/// instead; a skill table whose tools never had it lists nothing.
+#[tokio::test]
+async fn a_tool_this_machine_cannot_run_is_named_with_what_it_needs() {
+    let w = World::start(Setup {
+        signed_out: true,
+        machine_memory_gb: Some(8),
+        ..Setup::default()
+    })
+    .await;
+    let root = w.work();
+    let sid = w
+        .api
+        .create_session(json!({"title": "draw", "project_root": root}))
+        .await;
+    let e = w.api.export(&sid, "ling", &root).await;
+    assert!(
+        !has(&tool_names(&e), "GenerateImage"),
+        "offered with nothing to draw"
+    );
+    let prompt = e["system_prompt"].as_str().unwrap_or("");
+    let line = prompt
+        .lines()
+        .find(|l| l.starts_with("- GenerateImage: "))
+        .unwrap_or_else(|| panic!("no GenerateImage line:\n{prompt}"));
+    assert!(
+        prompt.contains(&format!("\n\n{NOT_HERE}\n- GenerateImage: ")),
+        "{prompt}"
+    );
+    for fact in [
+        "needs a ChatGPT sign-in",
+        "Apple Silicon Mac with 16 GB of memory and 8 GB free disk",
+        "not signed in to ChatGPT",
+    ] {
+        assert!(line.contains(fact), "{fact:?} missing: {line}");
+    }
+    if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        assert!(
+            line.ends_with("needs 16 GB of memory, this Mac has 8 GB"),
+            "{line}"
+        );
+    }
+
+    let table = w
+        .api
+        .create_session(json!({"title": "table", "skill": "dice"}))
+        .await;
+    let at_table = w.api.export(&table, "ling", "").await;
+    let prompt = at_table["system_prompt"].as_str().unwrap_or("");
+    assert!(!prompt.contains(NOT_HERE), "a tool it never had: {prompt}");
+    w.assert_all_scripted();
+}
+
+/// Signed in to ChatGPT, the same machine draws: offered, nothing listed.
+#[tokio::test]
+async fn a_signed_in_chat_lists_nothing_unavailable() {
+    let w = World::start(Setup {
+        machine_memory_gb: Some(8),
+        ..Setup::default()
+    })
+    .await;
+    let root = w.work();
+    let sid = w
+        .api
+        .create_session(json!({"title": "draw", "project_root": root}))
+        .await;
+    let e = w.api.export(&sid, "ling", &root).await;
+    assert!(has(&tool_names(&e), "GenerateImage"), "not offered");
+    let prompt = e["system_prompt"].as_str().unwrap_or("");
+    assert!(!prompt.contains(NOT_HERE), "{prompt}");
+    w.assert_all_scripted();
+}
+
 /// An ordinary chat's export once the memory server's tools are in (the MCP
 /// connection is made in the background after startup).
 async fn export_with_memory_tools(w: &World, sid: &str) -> Vec<String> {

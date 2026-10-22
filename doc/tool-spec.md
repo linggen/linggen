@@ -54,7 +54,21 @@ Built-in tools are the kernel API. Skills are userspace.
 
 **Offered only where it runs.** A built-in may say it cannot run here
 (`Tool::offered`); such a tool is left out of every tool list, so the model
-never reaches for it. `GenerateImage` is offered when something can draw:
+never reaches for it. Instead it states one line of fact — what it does,
+what it needs, what this machine lacks — and the prompt lists it under
+`# Not available here`, so the model can tell the person how to get it.
+Only tools the session's agent would otherwise have are listed (its tool
+list, a skill's `allowed-tools`, less what the session withholds); a tool
+left out by policy (plan mode, permission mode) is not. The model writes
+the sentence; the engine gives the fact. `GenerateImage` is offered when
+something can draw, else its line reads:
+
+```
+- GenerateImage: draws pictures; needs a ChatGPT sign-in, or an Apple Silicon Mac with 16 GB of memory and 8 GB free disk. Here: not signed in to ChatGPT, and the picture lane needs 16 GB of memory, this Mac has 8 GB
+```
+
+(the numbers are the `pictures` lane's; the tail is the lane gate's own
+reason). The sources, in order:
 
 - **ChatGPT** first, when the person is signed in to ChatGPT: the Responses
   API's `image_generation` tool through the default built-in model (Luna),

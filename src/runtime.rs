@@ -144,14 +144,14 @@ fn gate(lane: &Lane, m: &Machine) -> Result<(), String> {
 
 /// Whether this machine can ever carry `lane` — platform and memory only,
 /// which do not change while the engine runs. Cached; used on the hot
-/// path that decides which tools the model is offered. Free disk is the
-/// install stage's concern, not this one's.
-pub fn lane_supported(lane: &Lane) -> bool {
-    static CACHE: std::sync::OnceLock<
-        std::sync::Mutex<std::collections::HashMap<&'static str, bool>>,
-    > = std::sync::OnceLock::new();
+/// path that decides which tools the model is offered, and `Err` is the
+/// gate's own reason. Free disk is the install stage's concern, not this
+/// one's.
+pub fn lane_verdict(lane: &Lane) -> Result<(), String> {
+    type Verdicts = std::collections::HashMap<&'static str, Result<(), String>>;
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<Verdicts>> = std::sync::OnceLock::new();
     let cache = CACHE.get_or_init(Default::default);
-    if let Some(v) = cache.lock().ok().and_then(|m| m.get(lane.name).copied()) {
+    if let Some(v) = cache.lock().ok().and_then(|m| m.get(lane.name).cloned()) {
         return v;
     }
     let m = Machine {
@@ -160,11 +160,16 @@ pub fn lane_supported(lane: &Lane) -> bool {
         memory_gb: unified_memory_gb(),
         disk_gb: u64::MAX,
     };
-    let ok = gate(lane, &m).is_ok();
+    let verdict = gate(lane, &m);
     if let Ok(mut map) = cache.lock() {
-        map.insert(lane.name, ok);
+        map.insert(lane.name, verdict.clone());
     }
-    ok
+    verdict
+}
+
+/// [`lane_verdict`] as a yes or no.
+pub fn lane_supported(lane: &Lane) -> bool {
+    lane_verdict(lane).is_ok()
 }
 
 /// Every lane with its verdict — what Settings and the progress topic show.
@@ -193,6 +198,14 @@ pub fn lanes_status() -> serde_json::Value {
 /// Installed unified memory in whole GB; 0 when it cannot be read, which
 /// fails the gate closed rather than open.
 fn unified_memory_gb() -> u64 {
+    // The memory the gate reads, set by a test world so the lane's verdict
+    // does not depend on the machine the tests run on.
+    if let Some(gb) = std::env::var("LINGGEN_MACHINE_MEMORY_GB")
+        .ok()
+        .and_then(|v| v.trim().parse().ok())
+    {
+        return gb;
+    }
     if !cfg!(target_os = "macos") {
         return 0;
     }

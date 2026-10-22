@@ -51,6 +51,11 @@ pub struct Setup {
     /// Where the engine sends a picture request (`LINGGEN_IMAGE_API_URL`):
     /// a loopback stand-in for ChatGPT's image generation.
     pub image_api: Option<String>,
+    /// Not signed in to ChatGPT: the fixture's `codex_auth.json` is removed.
+    pub signed_out: bool,
+    /// The memory the lane gate reads (`LINGGEN_MACHINE_MEMORY_GB`), so a
+    /// lane's verdict does not depend on the machine the tests run on.
+    pub machine_memory_gb: Option<u64>,
 }
 
 impl Setup {
@@ -90,11 +95,17 @@ impl World {
         if let Some(file) = setup.memory_rows {
             memory.seed(file, &vars).await;
         }
-        let extra_env: Vec<(String, String)> = setup
+        if setup.signed_out {
+            let _ = std::fs::remove_file(home.linggen_home().join("codex_auth.json"));
+        }
+        let mut extra_env: Vec<(String, String)> = setup
             .image_api
             .iter()
             .map(|url| ("LINGGEN_IMAGE_API_URL".to_string(), url.clone()))
             .collect();
+        if let Some(gb) = setup.machine_memory_gb {
+            extra_env.push(("LINGGEN_MACHINE_MEMORY_GB".to_string(), gb.to_string()));
+        }
         let engine = Engine::start(&home, port, &memory.url, !setup.no_config, &extra_env).await;
         let api = Api::new(engine.base_url());
         Self {
