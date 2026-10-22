@@ -28,6 +28,7 @@ import { savedToolBlocks } from '../lib/toolStatus.mts';
 import { agentTracker } from '../lib/agentTracker';
 import { confirmSent } from '../lib/sentMessage.mts';
 import { isEventEcho } from '../lib/rowIdentity.mts';
+import { bubbleOfRun, claimForRun, runBubbleIndex } from '../lib/runBinding.mts';
 import { loadOutcome, type LoadSnapshot } from '../lib/sessionLoad.mts';
 import { computeDisplay, mutate, mutateLast } from './chatMutationHelpers';
 import { useSessionStore } from './sessionStore';
@@ -59,27 +60,29 @@ interface ChatState {
   removeLastUserMessage: (text: string, agentId: string) => void;
   /** Drop one message — matched by timestamp and text, as rows are rebuilt on merge. */
   removeMessage: (target: ChatMessage) => void;
-  upsertGenerating: (agentId: string, text: string, activityLine?: string) => void;
-  appendActivity: (agentId: string, activityLine: string) => void;
-  appendActivityWithSegments: (agentId: string, activityLine: string) => void;
-  setPlaceholder: (agentId: string, text: string) => void;
-  appendToken: (agentId: string, tokenText: string, isThinking: boolean) => void;
-  setThinkingFlag: (agentId: string) => void;
-  addTextSegment: (agentId: string, text: string) => void;
+  // `runId`: the run the event came from (`run_id`) — it lands in that run's
+  // bubble alone (lib/runBinding.mts); none for an event no run sent.
+  upsertGenerating: (agentId: string, text: string, activityLine?: string, runId?: string) => void;
+  appendActivity: (agentId: string, activityLine: string, runId?: string) => void;
+  appendActivityWithSegments: (agentId: string, activityLine: string, runId?: string) => void;
+  setPlaceholder: (agentId: string, text: string, runId?: string) => void;
+  appendToken: (agentId: string, tokenText: string, isThinking: boolean, runId?: string) => void;
+  setThinkingFlag: (agentId: string, runId?: string) => void;
+  addTextSegment: (agentId: string, text: string, runId?: string) => void;
   upsertPlan: (agentId: string, planText: string) => void;
   updateSubagentTree: (parentId: string, subagentId: string, updater: (entry: SubagentTreeEntry) => SubagentTreeEntry) => void;
   addSubagentToTree: (parentId: string, entry: SubagentTreeEntry) => void;
-  finalizeMessage: (agentId: string, content: string, to: string, tsMs: number, elapsed?: number, ctxTokens?: number, isError?: boolean, via?: string, viaNote?: string, clientId?: string, images?: string[]) => void;
+  finalizeMessage: (agentId: string, content: string, to: string, tsMs: number, elapsed?: number, ctxTokens?: number, isError?: boolean, via?: string, viaNote?: string, clientId?: string, images?: string[], runId?: string) => void;
   /** The engine kept a message this surface sent (its bubble's `clientId`):
    *  the bubble takes the kept words. False when no bubble has that id. */
   confirmSent: (clientId: string, text: string, to: string, images?: string[]) => boolean;
-  finalizeOnIdle: (agentId: string, elapsed?: number, ctxTokens?: number) => void;
+  finalizeOnIdle: (agentId: string, elapsed?: number, ctxTokens?: number, runId?: string) => void;
   /** The agent's latest row was the spoken contract's silence. */
-  markLastSilent: (agentId: string) => void;
-  contentBlockStart: (agentId: string, block: ContentBlock) => void;
-  contentBlockUpdate: (agentId: string, blockId: string, status?: ContentBlock['status'], summary?: string, isError?: boolean, diffData?: ContentBlock['diffData'], bashOutput?: string[]) => void;
-  toolProgress: (agentId: string, line: string) => void;
-  turnComplete: (agentId: string, durationMs?: number, contextTokens?: number) => void;
+  markLastSilent: (agentId: string, runId?: string) => void;
+  contentBlockStart: (agentId: string, block: ContentBlock, runId?: string) => void;
+  contentBlockUpdate: (agentId: string, blockId: string, status?: ContentBlock['status'], summary?: string, isError?: boolean, diffData?: ContentBlock['diffData'], bashOutput?: string[], runId?: string) => void;
+  toolProgress: (agentId: string, line: string, runId?: string) => void;
+  turnComplete: (agentId: string, durationMs?: number, contextTokens?: number, runId?: string) => void;
   finalizeAllGenerating: (olderThanMs?: number) => void;
 
   // Workspace state
@@ -166,16 +169,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
     return next;
   })),
 
-  upsertGenerating: (agentId, text, activityLine) =>
-    set(mutate((msgs) => upsertGeneratingAgentMessage(msgs, agentId, text, activityLine))),
+  upsertGenerating: (agentId, text, activityLine, runId) =>
+    set(mutate((msgs) => upsertGeneratingAgentMessage(msgs, agentId, text, activityLine, runId))),
 
-  appendActivity: (agentId, activityLine) =>
-    set(mutate((msgs) => appendGeneratingActivity(msgs, agentId, activityLine))),
+  appendActivity: (agentId, activityLine, runId) =>
+    set(mutate((msgs) => appendGeneratingActivity(msgs, agentId, activityLine, runId))),
 
-  appendActivityWithSegments: (agentId, activityLine) => set(mutate((msgs) => {
-    const updated = appendGeneratingActivity(msgs, agentId, activityLine);
+  appendActivityWithSegments: (agentId, activityLine, runId) => set(mutate((msgs) => {
+    const updated = appendGeneratingActivity(msgs, agentId, activityLine, runId);
     if (isTransientStatus(activityLine)) return updated;
-    const idx = findLastGeneratingMessageIndex(updated, agentId);
+    const idx = findLastGeneratingMessageIndex(updated, agentId, runId);
     if (idx < 0 || !updated[idx].segments) return updated;
     const next = [...updated];
     const msg = { ...next[idx] };
@@ -191,11 +194,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     return next;
   })),
 
-  setPlaceholder: (agentId, text) => set(mutateLast((state) => {
-    const idx = findLastGeneratingMessageIndex(state, agentId);
-    if (idx >= 0 && state[idx].segments) return state;
-    const updated = upsertGeneratingAgentMessage(state, agentId, text);
-    const uIdx = findLastGeneratingMessageIndex(updated, agentId);
+  setPlaceholder: (agentId, text, runId) => set(mutateLast((state) => {
+    const idx = findLastGeneratingMessageIndex(state, agentId, runId);
+    if (idx >= 0 && state[idx].segments) return claimForRun(state, idx, runId);
+    const updated = upsertGeneratingAgentMessage(state, agentId, text, undefined, runId);
+    const uIdx = findLastGeneratingMessageIndex(updated, agentId, runId);
     if (uIdx >= 0) {
       const next = [...updated];
       next[uIdx] = { ...next[uIdx], isThinking: true };
@@ -204,10 +207,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     return updated;
   })),
 
-  appendToken: (agentId, tokenText, isThinking) => set(mutateLast((state) => {
-    const idx = findLastGeneratingMessageIndex(state, agentId);
+  appendToken: (agentId, tokenText, isThinking, runId) => set(mutateLast((state) => {
+    const idx = findLastGeneratingMessageIndex(state, agentId, runId);
     if (idx >= 0) {
-      const next = [...state];
+      const next = claimForRun([...state], idx, runId);
       if (next[idx].segments) {
         if (isThinking) return state;
         next[idx] = {
@@ -236,8 +239,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return next;
     }
     if (isThinking) {
-      const created = upsertGeneratingAgentMessage(state, agentId, 'Thinking...');
-      const cIdx = findLastGeneratingMessageIndex(created, agentId);
+      const created = upsertGeneratingAgentMessage(state, agentId, 'Thinking...', undefined, runId);
+      const cIdx = findLastGeneratingMessageIndex(created, agentId, runId);
       if (cIdx >= 0) {
         const next = [...created];
         next[cIdx] = { ...next[cIdx], isThinking: true };
@@ -245,13 +248,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
       return created;
     }
-    return upsertGeneratingAgentMessage(state, agentId, tokenText);
+    return upsertGeneratingAgentMessage(state, agentId, tokenText, undefined, runId);
   })),
 
-  setThinkingFlag: (agentId) => set(mutate((state) => {
-    const idx = findLastGeneratingMessageIndex(state, agentId);
+  setThinkingFlag: (agentId, runId) => set(mutate((state) => {
+    const idx = findLastGeneratingMessageIndex(state, agentId, runId);
     if (idx >= 0) {
-      const next = [...state];
+      const next = claimForRun([...state], idx, runId);
       if (next[idx].segments) return next;
       next[idx] = { ...next[idx], isThinking: true };
       return next;
@@ -259,10 +262,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     return state;
   })),
 
-  addTextSegment: (agentId, text) => set(mutate((state) => {
-    const idx = findLastGeneratingMessageIndex(state, agentId);
-    if (idx < 0) return upsertGeneratingAgentMessage(state, agentId, '');
-    const next = [...state];
+  addTextSegment: (agentId, text, runId) => set(mutate((state) => {
+    const idx = findLastGeneratingMessageIndex(state, agentId, runId);
+    if (idx < 0) return upsertGeneratingAgentMessage(state, agentId, '', undefined, runId);
+    const next = claimForRun([...state], idx, runId);
     const msg = { ...next[idx] };
     msg.segments = [...(msg.segments || []), { type: 'text' as const, text }];
     msg.liveText = '';
@@ -329,10 +332,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     return next;
   })),
 
-  finalizeMessage: (agentId, content, to, tsMs, elapsed, ctxTokens, isError, via, viaNote, clientId, images) => set(mutate((state) => {
-    const generatingIdx = findLastGeneratingMessageIndex(state, agentId);
+  finalizeMessage: (agentId, content, to, tsMs, elapsed, ctxTokens, isError, via, viaNote, clientId, images, runId) => set(mutate((state) => {
+    const generatingIdx = findLastGeneratingMessageIndex(state, agentId, runId);
     if (generatingIdx >= 0) {
-      const next = [...state];
+      const next = claimForRun([...state], generatingIdx, runId);
       const existingMsg = next[generatingIdx];
       const existingEntries = Array.isArray(existingMsg.activityEntries) ? existingMsg.activityEntries : [];
       const nonTransient = existingEntries.filter((e: string) => !isTransientStatus(e));
@@ -398,10 +401,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
       ...(via ? { via } : {}),
       ...(viaNote ? { viaNote } : {}),
       ...(images?.length ? { images } : {}),
+      ...bubbleOfRun(state, runId),
     };
-    // A row already here (by its sent id, or the same row again): not twice.
-    // The same words said again are a new row.
-    if (isEventEcho(state, row)) return state;
+    // A run's words with no bubble here: the run's row, bound by its id
+    // (runBinding.mts). Else a row already here (by its sent id, or the same
+    // row again) is not added twice; the same words said again are a new row.
+    if (!runId && isEventEcho(state, row)) return state;
     return [...state, row];
   })),
 
@@ -415,17 +420,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
     return found;
   },
 
-  markLastSilent: (agentId) => set(mutate((state) => {
-    const idx = state.map((m) => m.from).lastIndexOf(agentId);
+  markLastSilent: (agentId, runId) => set(mutate((state) => {
+    const idx = runId ? runBubbleIndex(state, agentId, runId) : state.map((m) => m.from).lastIndexOf(agentId);
     if (idx < 0) return state;
     const next = [...state];
     next[idx] = { ...next[idx], silent: true, text: '', liveText: undefined };
     return next;
   })),
 
-  finalizeOnIdle: (agentId, elapsed, ctxTokens) => set(mutate((state) => {
-    const idx = findLastGeneratingMessageIndex(state, agentId);
-    if (idx < 0) return state;
+  finalizeOnIdle: (agentId, elapsed, ctxTokens, runId) => set(mutate((state) => {
+    const idx = findLastGeneratingMessageIndex(state, agentId, runId);
+    if (idx < 0 || !state[idx].isGenerating) return state;
     const tree = state[idx].subagentTree;
     if (tree && tree.some((e) => e.status === 'running')) return state;
     const next = [...state];
@@ -446,10 +451,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     return next;
   })),
 
-  contentBlockStart: (agentId, block) => set(mutate((state) => {
-    const idx = findLastGeneratingMessageIndex(state, agentId);
+  contentBlockStart: (agentId, block, runId) => set(mutate((state) => {
+    const idx = findLastGeneratingMessageIndex(state, agentId, runId);
     if (idx >= 0) {
-      const next = [...state];
+      const next = claimForRun([...state], idx, runId);
       const msg = { ...next[idx] };
       const blocks = [...(msg.content || [])];
       blocks.push(block);
@@ -490,12 +495,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         : block.type === 'text' && block.text
           ? [{ type: 'text', text: block.text }]
           : [],
+      ...bubbleOfRun(state, runId),
     };
     return [...state, newMsg];
   })),
 
-  contentBlockUpdate: (agentId, blockId, status, summary, isError, diffData, bashOutput) => set(mutate((state) => {
-    const idx = findLastGeneratingMessageIndex(state, agentId);
+  contentBlockUpdate: (agentId, blockId, status, summary, isError, diffData, bashOutput, runId) => set(mutate((state) => {
+    const idx = findLastGeneratingMessageIndex(state, agentId, runId);
     if (idx < 0) return state;
     const next = [...state];
     const msg = { ...next[idx] };
@@ -536,9 +542,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     return next;
   })),
 
-  toolProgress: (agentId, line) => set(mutateLast((state) => {
-    let idx = findLastGeneratingMessageIndex(state, agentId);
-    if (idx < 0) {
+  toolProgress: (agentId, line, runId) => set(mutateLast((state) => {
+    let idx = findLastGeneratingMessageIndex(state, agentId, runId);
+    if (idx < 0 && !runId) {
       for (let i = state.length - 1; i >= 0; i--) {
         if (state[i].from === agentId) { idx = i; break; }
       }
@@ -600,9 +606,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   })),
 
-  turnComplete: (agentId, durationMs, contextTokens) => set(mutate((state) => {
-    const idx = findLastGeneratingMessageIndex(state, agentId);
-    if (idx < 0) return state;
+  turnComplete: (agentId, durationMs, contextTokens, runId) => set(mutate((state) => {
+    const idx = findLastGeneratingMessageIndex(state, agentId, runId);
+    if (idx < 0 || !state[idx].isGenerating) return state;
     const next = [...state];
     const msg = next[idx];
 
@@ -693,6 +699,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
           .flatMap(([meta, body], idx) => {
             // A run that stopped before it replied: its calls, marked interrupted.
             if (isInterruptedRunMeta(meta as RunMeta)) return [interruptedRunMessage(meta as RunMeta)];
+            // The run that wrote the row: it binds to that run's bubble by it.
+            const runId = typeof meta.run_id === 'string' ? { runId: meta.run_id } : {};
             const isUser = meta.from === 'user' || meta.from === 'system';
             let bodyStr = String(body || '');
 
@@ -729,6 +737,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               text: bodyStr,
               timestamp: new Date(meta.ts * 1000).toLocaleTimeString(),
               timestampMs: Number(meta.ts || 0) * 1000,
+              ...runId,
               ...(tools.length ? { content: tools, toolCount: tools.length } : {}),
               ...(isError ? { isError: true } : {}),
               ...(meta.client_id ? { clientId: String(meta.client_id) } : {}),

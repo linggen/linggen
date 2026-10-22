@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+- **A run's content stays under its own message** — every event a run sends
+  (tokens, text, tool blocks and output, its message, status, outcome, turn
+  end) and every row it saves carries `run_id`; the chat binds a run's bubble
+  to its saved rows by that id alone. A stop followed by a new request with
+  the same tool, a mid-turn session switch, a reconnect or a reload no longer
+  moves one turn's calls or answer under another. Sessions saved before keep
+  the old matching. `LINGGEN_EVENT_LOG` tees UI events to a file for tests.
+
 ## [1.10.0] - 2026-10-21 — one memory across machines
 
 - **Memory across machines** (ling-mem 1.13.0). When a LAN machine asks to

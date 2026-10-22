@@ -157,6 +157,8 @@ One JSON object per line, append-only.
 
 A person's row may carry `client_id` — the id the sending surface gave its bubble (see `chat-spec.md` § Addressing an agent).
 
+Every row a run writes (its calls, their results, its words and reply, its error line, its plan) carries `run_id` — the run that wrote it (see `chat-spec.md` § Runs). A person's row has none. Rows written before 2026-10-22 have none.
+
 A person's row that carried pictures names them: `"images": ["3f2a…9c.png"]`, files under the session's `images/` (named by content; PNG, JPEG, GIF, WebP; at most 8 a message, 8 MB each — anything else isn't kept). The state endpoints hand each as a URL, `GET /api/sessions/images?session_id=&name=`, fetched over the data channel. Rows before 2026-10-19 kept none.
 
 A tool's result row (`Tool <name>: …`, an observation) carries `"failed": true` when the call did not succeed — an error, a cancel, a refusal; absent otherwise. Rows written before 2026-10-06 have none: their status is read from the text — the engine's error forms and each refusal it saved (`run_calls.rs` `LEGACY_FAILED_OPENINGS`).

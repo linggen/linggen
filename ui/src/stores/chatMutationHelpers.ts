@@ -9,6 +9,7 @@ import {
   isPlanMessage,
   dedupPlanMessages,
 } from '../lib/messageUtils';
+import { bindRuns } from '../lib/runBinding.mts';
 
 /**
  * Subset of ChatMutationState used by mutation helpers.
@@ -25,7 +26,8 @@ export interface ChatMutationState {
 /** Compute display messages from raw messages. */
 export function computeDisplay(messages: ChatMessage[]): ChatMessage[] {
   // Hide [BOARD_MOVE] messages — internal game state not meant for display
-  const visible = messages.filter(m => !(m.role === 'user' && m.text?.startsWith('[BOARD_MOVE]')));
+  // Each run shows as its bubble or its saved rows, bound by run id.
+  const visible = bindRuns(messages).filter(m => !(m.role === 'user' && m.text?.startsWith('[BOARD_MOVE]')));
   const deduped = dedupPlanMessages(visible);
   const plans: ChatMessage[] = [];
   const nonPlans: ChatMessage[] = [];

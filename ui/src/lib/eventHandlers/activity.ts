@@ -6,7 +6,7 @@ import { useSuggestionStore } from '../../stores/suggestionStore';
 import type { AgentStatusValue } from '../../stores/serverStore';
 import { agentTracker } from '../agentTracker';
 import { normalizeAgentStatus } from '../messageUtils';
-import { getSessionId, toolPrefixMap } from './_shared';
+import { getSessionId, runOf, toolPrefixMap } from './_shared';
 import { otherAgentRunning } from '../agentTurns.mts';
 
 export function handleActivity(item: UiEventOf<'activity'>): void {
@@ -51,6 +51,7 @@ export function handleActivity(item: UiEventOf<'activity'>): void {
     statusRaw,
     statusText,
     sid: getSessionId(item),
+    runId: runOf(item),
   });
 }
 
@@ -121,8 +122,9 @@ function applyTopLevelActivity(opts: {
   statusRaw: string;
   statusText: string;
   sid: string;
+  runId?: string;
 }): void {
-  const { agentId, phase, nextStatus, statusRaw, statusText, sid } = opts;
+  const { agentId, phase, nextStatus, statusRaw, statusText, sid, runId } = opts;
   const agentStore = useServerStore.getState();
   const chatStore = useChatStore.getState();
 
@@ -146,18 +148,18 @@ function applyTopLevelActivity(opts: {
 
   if (statusText.length > 0 && phase !== 'done') {
     if (nextStatus === 'model_loading' || nextStatus === 'thinking') {
-      chatStore.setPlaceholder(agentId, statusText);
+      chatStore.setPlaceholder(agentId, statusText, runId);
     } else {
-      chatStore.appendActivityWithSegments(agentId, statusText);
+      chatStore.appendActivityWithSegments(agentId, statusText, runId);
     }
   } else if ((nextStatus === 'model_loading' || nextStatus === 'thinking') && phase !== 'done') {
     const placeholder = nextStatus === 'model_loading' ? 'Model loading...' : 'Thinking...';
-    chatStore.setPlaceholder(agentId, placeholder);
+    chatStore.setPlaceholder(agentId, placeholder, runId);
   }
 
   if (goingIdle) {
     const { elapsed, contextTokens: ctxTokens } = sid && !othersRunning ? agentTracker.clearRun(sid) : {};
-    chatStore.finalizeOnIdle(agentId, elapsed, ctxTokens);
+    chatStore.finalizeOnIdle(agentId, elapsed, ctxTokens, runId);
     useInteractionStore.getState().setActivePlan(null);
   }
 }

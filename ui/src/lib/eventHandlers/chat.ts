@@ -12,7 +12,7 @@ import {
   isStatusLineText,
   shouldHideInternalChatMessage,
 } from '../messageUtils';
-import { getSessionId, formatToolStartLine } from './_shared';
+import { getSessionId, formatToolStartLine, runOf } from './_shared';
 import { askEndsWithTurn, completeAgentRuns, otherAgentRunning, sendEndsWithTurn } from '../agentTurns.mts';
 import { stillOn } from '../sessionLoad.mts';
 import { toolStatus } from '../toolStatus.mts';
@@ -28,7 +28,7 @@ export function handleTextSegment(item: UiEventOf<'text_segment'>): void {
   if (agentTracker.getParent(agentId)) return;
   const segText = String(item.text || '').trim();
   if (!segText) return;
-  useChatStore.getState().addTextSegment(agentId, segText);
+  useChatStore.getState().addTextSegment(agentId, segText, runOf(item));
 }
 
 // ---------------------------------------------------------------------------
@@ -57,10 +57,11 @@ export function sessionMovedOn(sid: string, runId: string | null): boolean {
 // Token — batched to rAF to avoid "Maximum update depth exceeded"
 // ---------------------------------------------------------------------------
 
-/** Buffered per agent; each entry keeps the session its tokens came for, and
- *  a flush that lands after a switch drops them rather than stream them into
- *  the chat now on screen. */
-const _tokenBuffer: Map<string, { text: string; isThinking: boolean; sid: string | null }> = new Map();
+/** Buffered per agent and run; each entry keeps the session its tokens came
+ *  for, and a flush that lands after a switch drops them rather than stream
+ *  them into the chat now on screen. */
+type TokenBatch = { agentId: string; runId?: string; text: string; isThinking: boolean; sid: string | null };
+const _tokenBuffer: Map<string, TokenBatch> = new Map();
 let _tokenFlushScheduled = false;
 
 function flushTokenBuffer(): void {
@@ -68,8 +69,8 @@ function flushTokenBuffer(): void {
   if (_tokenBuffer.size === 0) return;
   const chatStore = useChatStore.getState();
   const open = useSessionStore.getState().activeSessionId;
-  for (const [agentId, { text, isThinking, sid }] of _tokenBuffer) {
-    if (text && stillOn(sid, open)) chatStore.appendToken(agentId, text, isThinking);
+  for (const { agentId, runId, text, isThinking, sid } of _tokenBuffer.values()) {
+    if (text && stillOn(sid, open)) chatStore.appendToken(agentId, text, isThinking, runId);
   }
   _tokenBuffer.clear();
   useServerStore.getState().recomputeTokenRate();
@@ -86,7 +87,7 @@ export function handleToken(item: UiEventOf<'token'>): void {
     // Flush any pending tokens before marking thinking done
     if (_tokenBuffer.size > 0) flushTokenBuffer();
     if (isThinking) {
-      useChatStore.getState().setThinkingFlag(agentId);
+      useChatStore.getState().setThinkingFlag(agentId, runOf(item));
     }
     return;
   }
@@ -97,13 +98,15 @@ export function handleToken(item: UiEventOf<'token'>): void {
   }
 
   const sid = useSessionStore.getState().activeSessionId;
-  const existing = _tokenBuffer.get(agentId);
+  const runId = runOf(item);
+  const key = `${agentId}|${runId || ''}`;
+  const existing = _tokenBuffer.get(key);
   if (existing && existing.isThinking === isThinking && existing.sid === sid) {
     existing.text += tokenText;
   } else {
     // Flush if thinking state (or the session on screen) changed for this agent
     if (existing) flushTokenBuffer();
-    _tokenBuffer.set(agentId, { text: tokenText, isThinking, sid });
+    _tokenBuffer.set(key, { agentId, runId, text: tokenText, isThinking, sid });
   }
 
   if (!_tokenFlushScheduled) {
@@ -164,8 +167,9 @@ export function handleMessage(item: UiEventOf<'message'>): void {
   // A person's pictures, as the engine kept them — drawn as the turn lands.
   const images = from === 'user' ? pageImages(item.data?.images) : [];
   if (clientId && chatStore.confirmSent(clientId, content, to, images)) return;
+  const runId = from !== 'user' ? runOf(item) : undefined;
   if (from !== 'user' && isStatusLineText(content)) {
-    chatStore.appendActivity(from, content);
+    chatStore.appendActivity(from, content, runId);
     return;
   }
 
@@ -176,9 +180,13 @@ export function handleMessage(item: UiEventOf<'message'>): void {
   // The contract's silence: the turn ends with no words — its bubble keeps
   // its calls and is marked, and a turn with no bubble on screen adds none.
   if (from !== 'user' && item.data?.silent) {
-    if (!chatStore.messages.some((m) => m.from === from && m.isGenerating)) return;
-    chatStore.finalizeMessage(from, '', to, tsMs, msgElapsed, msgCtxTokens);
-    chatStore.markLastSilent(from);
+    const onScreen = runId
+      ? chatStore.messages.some((m) => m.live && m.runId === runId)
+      : chatStore.messages.some((m) => m.from === from && m.isGenerating);
+    if (!onScreen) return;
+    chatStore.finalizeMessage(from, '', to, tsMs, msgElapsed, msgCtxTokens,
+      undefined, undefined, undefined, undefined, undefined, runId);
+    chatStore.markLastSilent(from, runId);
     return;
   }
 
@@ -187,7 +195,8 @@ export function handleMessage(item: UiEventOf<'message'>): void {
     from === 'user' && item.data?.via ? String(item.data.via) : undefined,
     from === 'user' && item.data?.via_note ? String(item.data.via_note) : undefined,
     clientId ? String(clientId) : undefined,
-    images.length ? images : undefined);
+    images.length ? images : undefined,
+    runId);
 }
 
 // ---------------------------------------------------------------------------
@@ -215,7 +224,7 @@ export function handleContentBlock(item: UiEventOf<'content_block'>): void {
     return;
   }
   if (item.phase === 'update') {
-    applyContentBlockUpdate(agentId, item.data);
+    applyContentBlockUpdate(agentId, item.data, runOf(item));
   }
 }
 
@@ -286,14 +295,15 @@ function applyContentBlockStart(item: UiEvent, data: ContentBlockStartData): voi
     status: blockType === 'tool_use' ? 'running' : undefined,
     text: blockType === 'text' ? (data.args || '') : undefined,
   };
-  chatStore.contentBlockStart(agentId, block);
+  const runId = runOf(item);
+  chatStore.contentBlockStart(agentId, block, runId);
 
   if (blockType !== 'tool_use') return;
 
   const toolName = data.tool || 'Tool';
   const toolArgs = data.args || '';
   const activityLine = formatToolStartLine(toolName, toolArgs);
-  chatStore.appendActivity(agentId, activityLine);
+  chatStore.appendActivity(agentId, activityLine, runId);
 
   const sid = getSessionId(item);
   if (!sid) return;
@@ -302,7 +312,7 @@ function applyContentBlockStart(item: UiEvent, data: ContentBlockStartData): voi
   agentTracker.ensureRunStarted(sid);
 }
 
-function applyContentBlockUpdate(agentId: string, update: ContentBlockUpdateData): void {
+function applyContentBlockUpdate(agentId: string, update: ContentBlockUpdateData, runId?: string): void {
   const chatStore = useChatStore.getState();
   const data = update as ContentBlockUpdateData & ToolExtras;
   const diffData = data.diff_type
@@ -324,10 +334,11 @@ function applyContentBlockUpdate(agentId: string, update: ContentBlockUpdateData
     data.is_error ?? undefined,
     diffData,
     Array.isArray(data.bash_output) ? data.bash_output as string[] : undefined,
+    runId,
   );
 
   if (data.summary) {
-    chatStore.appendActivity(agentId, data.summary);
+    chatStore.appendActivity(agentId, data.summary, runId);
   }
 }
 
@@ -358,7 +369,7 @@ export function handleTurnComplete(item: UiEventOf<'turn_complete'>): void {
   const elapsed = durationMs || cleared.elapsed;
   const ctxTokens = contextTokens || cleared.contextTokens;
 
-  useChatStore.getState().turnComplete(agentId, elapsed, ctxTokens);
+  useChatStore.getState().turnComplete(agentId, elapsed, ctxTokens, runOf(item));
   const interaction = useInteractionStore.getState();
   if (askEndsWithTurn(interaction.pendingAskUser?.agentId, agentId, (id) => agentTracker.getParent(id))) {
     interaction.setPendingAskUser(null);
@@ -405,5 +416,5 @@ export function handleToolProgress(item: UiEventOf<'tool_progress'>): void {
   if (agentTracker.getParent(agentId)) return;
   const line = String(item.data?.line || item.text || '');
   if (!line) return;
-  useChatStore.getState().toolProgress(agentId, line);
+  useChatStore.getState().toolProgress(agentId, line, runOf(item));
 }

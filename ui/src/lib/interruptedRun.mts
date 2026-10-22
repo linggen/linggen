@@ -15,6 +15,8 @@ export interface RunMeta {
   ts: number;
   ended?: number;
   run?: string;
+  /** The run (absent on rows saved before 2026-10-22). */
+  run_id?: string;
   /** The calls made before this row (a spoken row), or the run's (its own row). */
   tools?: SavedTool[];
   [key: string]: unknown;
@@ -40,6 +42,7 @@ export function interruptedRunMessage(meta: RunMeta): ChatMessage {
     content,
     interrupted: true,
     runEndedMs: Number(meta.ended || meta.ts || 0) * 1000,
+    ...(meta.run_id ? { runId: meta.run_id } : {}),
   };
 }
 
@@ -76,6 +79,8 @@ const streamedRun = (run: ChatMessage, m: ChatMessage): boolean => {
 };
 
 /**
+ * LEGACY — only for an interrupted row with no `run_id` (saved before
+ * 2026-10-22); a row with one binds by it (runBinding.mts).
  * The live row that shows this run, if this client holds one: the run's row
  * from an earlier merge, else the bubble that streamed it. That bubble IS
  * the run — the saved row only adds that it stopped. Never another turn's

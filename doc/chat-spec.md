@@ -205,9 +205,8 @@ A session is a single conversation thread scoped to a project. Each session has 
 - **What a turn saves**: every piece of text the agent writes — the final reply
   and the text it writes between tool calls — is its own `messages.jsonl` row;
   tool calls and results are observation rows. A reload shows the whole
-  conversation. Live, the turn's bubble already holds the between-calls text as
-  segments, so the UI's merge drops a saved row whose words are on screen that
-  way. (Until 2026-09-11 only the final reply was saved, and a long tool-using
+  conversation. Each row a run writes names the run (`run_id`, § Runs); live,
+  the run's bubble already holds those words, so its rows show through it. (Until 2026-09-11 only the final reply was saved, and a long tool-using
   turn — a Lingjing game day — reloaded as an empty chat.)
 - **Tool calls on reload**: the history views (`/api/workspace/state`,
   `/api/missions/sessions/state`, `/api/skill-sessions/state`) bring a run's
@@ -219,11 +218,9 @@ A session is a single conversation thread scoped to a project. Each session has 
   row — `run: "interrupted"` with its calls in `tools` — shown with a small
   "Interrupted" note; a session's still-running run and `[HIDDEN]` kickoffs
   (which may end in silence) get none (`server/chat/run_calls.rs`). A call
-  whose result never came back is `failed`. Live, that row takes over the
-  bubble that streamed the run — the same calls in order, the first made when
-  the run's first call was — or, on a later load, the row an earlier load
-  left. Never the next turn's bubble, even one calling the same tool seconds
-  after the stop (`lib/interruptedRun.mts`).
+  whose result never came back is `failed`. Every history row a run wrote,
+  the interrupted row too, carries the run's `run_id`; live, the row binds to
+  that run's bubble by it (§ Runs).
 - **Engine prompts are never a user bubble**: a prompt the engine writes to an
   agent (a page's report, Yinyue's heralds and ambient moments) is saved with
   `from_id: "user"` and a `[HIDDEN]` prefix; the history views and the live
@@ -235,6 +232,40 @@ A session is a single conversation thread scoped to a project. Each session has 
   `silent: true` and the bubble keeps only its calls. While text streams, the
   UI holds back text that may still become the word (`hiddenRows.mts` mirrors
   it; a Rust test locks the two).
+
+### Runs
+
+A turn's agent work is one or more runs (a plan and its execution are two),
+each with a `run_id`. Live state and saved rows meet by that id alone — never
+by agent, words or time.
+
+- **On the wire**: every event a run sends carries `run_id` (the UI event's
+  top-level field): its tokens, text segments, content blocks and tool
+  output, its message, status, outcome, and the turn end and idle that close
+  it (`TurnComplete` and idle name the turn's last run). The engine stamps it
+  in one place (`engine/run_scope.rs`: `emit`, `save_row`, `stream`); what
+  the turn sends after its run reads `last_run_id`. Statuses sent before a
+  run exists ("Loading model…", the first "Thinking") carry none.
+- **On disk**: every row a run saves carries `run_id` — its calls and their
+  results, its words, its final reply, its error line, its plan. A person's
+  message carries none: it opens the turn before any run begins (and a
+  message sent while a run works may be read by that run or the next); it
+  binds to its own bubble by `client_id` (§ Addressing an agent). The
+  history views hand `run_id` out on each row.
+- **The binding** (`ui/src/lib/runBinding.mts`): an event of run R lands in
+  R's bubble — or, at R's first event, in the placeholder this turn opened
+  before R began — never in another run's bubble; an event with no run
+  never lands in a run's bubble. For display, R shows as its bubble when
+  this page has one, its saved rows staying behind it: while R runs, after
+  the rows it did not see (a reload mid-run); once done, the bubble when it
+  holds every call and every piece of words R's rows hold — taking from the
+  rows that R stopped (its calls left running become failed) — else R's
+  saved rows (a bubble that missed events: a reconnect, a switch away past
+  the replay window). R with no bubble shows its rows.
+- **Legacy rows** (saved before 2026-10-22) carry no `run_id` and keep the
+  old matching: by agent, words and time (`mergeChatMessages`' legacy
+  passes, `lib/interruptedRun.mts`, `lib/rowIdentity.mts`). Delete it once
+  such sessions no longer matter.
 
 ### Multi-session architecture
 
