@@ -282,11 +282,14 @@ async fn auto_recall_memory(
     // The session's recall scope, sent to the daemon as `scope_root` so it
     // shapes the RANKING (rows from elsewhere can't crowd the wanted ones out
     // of the top N; a filter applied to the returned list can only shrink an
-    // already-wrong N). The daemon reads the path (`scope-index-spec.md`):
-    // a project root sees rows under it, at its parents and about the
-    // person; a skill's dir sees only its own rows; a session at `$HOME`,
-    // `~/.linggen` or a temp dir sees rows about the person plus at most two
-    // strong non-preference matches filed under a directory. Same
+    // already-wrong N). The daemon reads the path (`scope-index-spec.md`
+    // § Recall weights): a skill's dir sees only its own rows; any other root
+    // — a project, `$HOME`, `~/.linggen`, a temp dir — sees every non-app row,
+    // each row's score (cosine + keyword boost) multiplied by how far its
+    // scope sits from the root: same dir 1.1, one level below 1.0, parent
+    // 0.9, two steps (sibling, grandparent, grandchild) 0.85, further 0.8,
+    // no scope (about the person) 1.0. `min_score` gates the weighted score.
+    // App rows (`~/.linggen/skills/…`) never reach non-app recall. Same
     // contract as the plugin's recall.sh on Claude Code.
     let scope_root: Option<String> = match &app_dir {
         Some(dir) => Some(dir.to_string_lossy().to_string()),
