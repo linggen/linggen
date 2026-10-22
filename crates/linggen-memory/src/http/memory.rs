@@ -10,8 +10,8 @@
 use super::envelope::{ok, ApiError};
 use super::state::SharedState;
 use crate::memory::{
-    AccountScope, Filters, InsertOutcome, Memory, MemoryPatch, MemoryStore, MemoryType, Origin,
-    Outcome, SortOrder, Tier,
+    AccountScope, Filters, Hit, InsertOutcome, Memory, MemoryPatch, MemoryStore, MemoryType,
+    Origin, Outcome, SortOrder, Tier,
 };
 use axum::extract::State;
 use axum::response::Response;
@@ -108,25 +108,28 @@ fn facts_public(facts: &[Memory]) -> Vec<Value> {
     facts.iter().map(fact_public).collect()
 }
 
-/// Like [`fact_public`] but adds the relevance fields for search responses.
-/// Each input hit is `(memory, cosine, hybrid)`:
+/// Like [`fact_public`] but adds the relevance fields for search responses:
 ///
 /// - `score` — the raw **cosine** similarity (`[0,1]`), the absolute
 ///   dense-relevance signal. Kept for the recall hook, CLI, and cross-host
 ///   comparisons that already read it.
-/// - `hybrid_score` — the blended relevance (`cosine` + IDF-weighted keyword
-///   boost, clamped to `[0,1]`; see [`crate::memory::hybrid`]). This is the
-///   number the console displays: it is what the rows are ordered by, so it
-///   is monotonic with rank, and it is absolute — an unrelated query does
-///   not get a fake 1.0.
-fn scored_facts_public(scored: &[(Memory, f32, f32)]) -> Vec<Value> {
-    scored
-        .iter()
-        .map(|(f, cosine, hybrid)| {
-            let mut v = fact_public(f);
+/// - `hybrid_score` — the shown relevance: (cosine + IDF-weighted keyword
+///   boost) × the row's scope weight, clamped to `[0,1]` (see
+///   [`crate::memory::hybrid`]). The number the console displays: what the
+///   rows are ordered by, so it is monotonic with rank, and absolute — an
+///   unrelated query does not get a fake 1.0.
+/// - `raw_hybrid` — cosine + keyword boost, before the weight and unclamped.
+/// - `scope_weight` — the row's scope weight in this session (1.0 with no
+///   root), for inspection.
+fn scored_facts_public(hits: &[Hit]) -> Vec<Value> {
+    hits.iter()
+        .map(|h| {
+            let mut v = fact_public(&h.memory);
             if let Some(obj) = v.as_object_mut() {
-                obj.insert("score".into(), json!(cosine));
-                obj.insert("hybrid_score".into(), json!(hybrid));
+                obj.insert("score".into(), json!(h.cosine));
+                obj.insert("hybrid_score".into(), json!(h.shown()));
+                obj.insert("raw_hybrid".into(), json!(h.hybrid));
+                obj.insert("scope_weight".into(), json!(h.weight));
             }
             v
         })
@@ -357,9 +360,10 @@ pub struct FilterDTO {
     #[serde(default)]
     pub source_session: Option<String>,
     /// The session's recall scope, given as its root (see
-    /// `Filters::scope_root`): an owner root sees its subtree, its parents and
-    /// person rows; a skill's dir only its own rows; `$HOME`/`~/.linggen`/temp
-    /// person rows plus at most two strong non-preference project rows.
+    /// `Filters::scope_root`). On search a skill's dir sees only its own rows;
+    /// any other root weighs every non-app row by its directory's distance
+    /// from the root. On list it filters: an owner root sees its subtree, its
+    /// parents and person rows; `$HOME`/`~/.linggen`/temp person rows only.
     ///
     /// Deliberately NOT accepted by `forget` as a standalone filter: it matches
     /// every unscoped row by design, so a delete carrying only this would take
@@ -431,7 +435,7 @@ impl FilterDTO {
             apps,
             indexed: self.indexed,
             scope_in: Vec::new(),
-            scoped_only: false,
+            no_skills: false,
             legacy_contexts: false,
             legacy_cwd: false,
             account: self.scope.scope(),
@@ -1182,22 +1186,12 @@ async fn search(
         Some(false) => SearchTable::Semantic,
         None => req.table,
     };
-    let mut results = scored(
+    let results = scored(
         &state, &table, &vector, &req.query, &filters, req.limit, min_score,
     )
     .await?;
-    if is_no_root(&filters) {
-        let extra = no_root_project_rows(&state, &table, &vector, &req.query, &filters).await?;
-        merge_extra(&mut results, extra, req.limit);
-    }
     Ok(ok(scored_facts_public(&results)))
 }
-
-/// At most this many rows filed under a directory join a no-root session's
-/// recall.
-pub const NO_ROOT_PROJECT_ROWS: usize = 2;
-
-type Hit = (Memory, f32, f32);
 
 async fn scored(
     state: &SharedState,
@@ -1228,53 +1222,6 @@ async fn scored(
                 .await?
         }
     })
-}
-
-/// Is this search a no-root session's (`$HOME`, `~/.linggen`, temp)?
-fn is_no_root(filters: &Filters) -> bool {
-    filters.scope_root.as_deref().is_some_and(|p| {
-        crate::memory::RecallScope::of(p, &crate::memory::scope::home())
-            == crate::memory::RecallScope::NoRoot
-    })
-}
-
-/// The project half of a no-root session's recall: rows filed under some
-/// directory, never `preference` (dev and project rules must not ride into
-/// everyday chat), whose cosine reaches `no_root_project_min_score` — at
-/// most [`NO_ROOT_PROJECT_ROWS`] of them.
-async fn no_root_project_rows(
-    state: &SharedState,
-    table: &SearchTable,
-    vector: &[f32],
-    query: &str,
-    filters: &Filters,
-) -> Result<Vec<Hit>, ApiError> {
-    let floor = crate::http::config::load(&state.data_dir)
-        .await
-        .no_root_project_min_score;
-    let mut wide = filters.clone();
-    wide.scope_root = None;
-    wide.scoped_only = true;
-    if !wide.exclude_types.contains(&MemoryType::Preference) {
-        wide.exclude_types.push(MemoryType::Preference);
-    }
-    let mut hits = scored(state, table, vector, query, &wide, 20, None).await?;
-    hits.retain(|(_, cosine, _)| *cosine >= floor);
-    hits.sort_by(|a, b| b.1.total_cmp(&a.1));
-    hits.truncate(NO_ROOT_PROJECT_ROWS);
-    Ok(hits)
-}
-
-/// Fold the project rows into a no-root answer, best hybrid first, within
-/// `limit` — the project rows keep their place even when person rows fill it.
-fn merge_extra(results: &mut Vec<Hit>, extra: Vec<Hit>, limit: usize) {
-    if extra.is_empty() {
-        return;
-    }
-    let keep = limit.saturating_sub(extra.len());
-    results.truncate(keep);
-    results.extend(extra);
-    results.sort_by(|a, b| b.2.total_cmp(&a.2));
 }
 
 async fn list(
@@ -1749,25 +1696,6 @@ mod tests {
         assert_eq!(resolve_scope(&r, &[], Tier::Semantic), None);
         let r = add_req(json!({"content": "x", "scope": "relative/dir"}));
         assert_eq!(resolve_scope(&r, &[], Tier::Semantic), None);
-    }
-
-    #[test]
-    fn a_no_root_answer_keeps_its_project_rows() {
-        let hit = |c: &str, h: f32| (Memory::new(c, MemoryType::Fact, Origin::User), h, h);
-        let mut results = vec![hit("p1", 0.9), hit("p2", 0.8), hit("p3", 0.7)];
-        merge_extra(&mut results, vec![hit("x1", 0.75)], 3);
-        let names: Vec<&str> = results.iter().map(|r| r.0.content.as_str()).collect();
-        assert_eq!(names, ["p1", "p2", "x1"]);
-        let f = Filters {
-            scope_root: Some(crate::memory::scope::home().to_string_lossy().to_string()),
-            ..Default::default()
-        };
-        assert!(is_no_root(&f));
-        let f = Filters {
-            scope_root: Some("/w/repo".into()),
-            ..Default::default()
-        };
-        assert!(!is_no_root(&f));
     }
 
     #[test]

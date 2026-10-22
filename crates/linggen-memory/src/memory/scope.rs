@@ -11,7 +11,8 @@
 //! - **candidates**: the scopes a row written here may take — root down to
 //!   the session cwd, root's marked subdirectories, and root's parents below
 //!   `$HOME`. Shown to the model once at session start.
-//! - **recall scope**: which rows a session may recall ([`RecallScope`]).
+//! - **recall scope**: which rows a session may recall ([`RecallScope`]),
+//!   and how much a row's directory weighs on its score ([`Kin`]).
 //! - **index chain**: the directories whose indexed rows load at start.
 
 use std::path::{Component, Path, PathBuf};
@@ -69,9 +70,9 @@ pub enum RecallScope {
     /// A skill's own session (`~/.linggen/skills/<name>`): rows under that
     /// directory only — no person rows. App isolation, keyed by path.
     Skill { dir: String, name: String },
-    /// No root (`$HOME`, `~/.linggen`, temp dirs): rows with no cwd. (The
-    /// search path adds at most two strong non-preference matches filed under
-    /// a directory — `http::memory::no_root_project_rows`.)
+    /// No root (`$HOME`, `~/.linggen`, temp dirs): no row can be about it.
+    /// `list` sees rows with no scope; search weighs every row by [`Kin`]
+    /// like an owner's.
     NoRoot,
 }
 
@@ -96,6 +97,93 @@ impl RecallScope {
             ancestors: ancestors(&p, home).iter().map(|a| to_str(a)).collect(),
         }
     }
+}
+
+/// Where a row's directory sits relative to the session root — what its
+/// search score is weighed by ([`Kin::weight`]). Skill sessions are never
+/// weighed: they see only their own rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kin {
+    /// The root itself.
+    Same,
+    /// One step below the root. Deeper rows count by distance like any
+    /// other (`root/a/b` is [`Kin::Near`]), so a session at `$HOME` does not
+    /// see every project as its own.
+    Child,
+    /// The root's parent (one step up).
+    Parent,
+    /// Two steps apart: a sibling, a grandparent, a grandchild.
+    Near,
+    /// Further: another project, or the root is no project at all.
+    Far,
+    /// No scope: the row is about the person.
+    Person,
+}
+
+/// The one table of scope weights. A hit's score is its unclamped hybrid
+/// score (cosine + keyword boost) times its row's weight; `min_score` gates
+/// and ranking use that product, and the shown score is clamped to 1.0.
+/// Tuned on the live store 2026-10-22 (`doc/scope-index-spec.md` § Recall
+/// weights).
+pub const KIN_WEIGHTS: [(Kin, f32); 6] = [
+    (Kin::Same, 1.1),
+    (Kin::Child, 1.0),
+    (Kin::Parent, 0.9),
+    (Kin::Near, 0.85),
+    (Kin::Far, 0.8),
+    (Kin::Person, 1.0),
+];
+
+impl Kin {
+    /// Classify a row's `scope` against the session's root. `root` is
+    /// `None` when the session sent a path that does not parse: every
+    /// scoped row is then [`Kin::Far`].
+    pub fn of(root: Option<&Path>, scope: Option<&str>, home: &Path) -> Self {
+        let Some(scope) = scope.filter(|s| !s.trim().is_empty()) else {
+            return Self::Person;
+        };
+        let (Some(root), Some(row)) = (root, expand(scope, home)) else {
+            return Self::Far;
+        };
+        let up = depth(root) - common_depth(root, &row);
+        let down = depth(&row) - common_depth(root, &row);
+        match (up, down) {
+            (0, 0) => Self::Same,
+            (0, 1) => Self::Child,
+            (1, 0) => Self::Parent,
+            _ if up + down == 2 => Self::Near,
+            _ => Self::Far,
+        }
+    }
+
+    pub fn weight(self) -> f32 {
+        KIN_WEIGHTS
+            .iter()
+            .find(|(k, _)| *k == self)
+            .map_or(1.0, |(_, w)| *w)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Same => "same",
+            Self::Child => "child",
+            Self::Parent => "parent",
+            Self::Near => "near",
+            Self::Far => "far",
+            Self::Person => "person",
+        }
+    }
+}
+
+fn depth(p: &Path) -> usize {
+    p.components().count()
+}
+
+fn common_depth(a: &Path, b: &Path) -> usize {
+    a.components()
+        .zip(b.components())
+        .take_while(|(x, y)| x == y)
+        .count()
 }
 
 /// `~/…` expanded, trailing slashes dropped, `.`/`..` folded. `None` for an
@@ -427,6 +515,72 @@ mod tests {
         ] {
             assert_eq!(RecallScope::of(none, &home), RecallScope::NoRoot, "{none}");
         }
+    }
+
+    #[test]
+    fn kin_by_tree_distance() {
+        let home = h();
+        let root = PathBuf::from("/Users/alex/workspace/linggen");
+        let kin = |s: &str| Kin::of(Some(&root), Some(s), &home);
+        assert_eq!(kin("/Users/alex/workspace/linggen/"), Kin::Same);
+        assert_eq!(kin("~/workspace/linggen"), Kin::Same);
+        assert_eq!(kin("/Users/alex/workspace/linggen/linggen"), Kin::Child);
+        assert_eq!(
+            kin("/Users/alex/workspace/linggen/skills/lingjing"),
+            Kin::Near
+        );
+        assert_eq!(
+            kin("/Users/alex/workspace/linggen/skills/lingjing/story"),
+            Kin::Far
+        );
+        assert_eq!(kin("/Users/alex/workspace"), Kin::Parent);
+        assert_eq!(kin("/Users/alex/workspace/rust"), Kin::Near);
+        assert_eq!(kin("/Users/alex/workspace/linggen-old"), Kin::Near);
+        assert_eq!(kin("/Users/alex/workspace/rust/sanji"), Kin::Far);
+        assert_eq!(kin("/Users/alex/.linggen/workspace"), Kin::Far);
+        assert_eq!(Kin::of(Some(&root), None, &home), Kin::Person);
+        assert_eq!(Kin::of(Some(&root), Some(" "), &home), Kin::Person);
+        // Siblings two levels down: linggen/linggen vs linggen/linggen-memory.
+        let sib = PathBuf::from("/Users/alex/workspace/linggen/linggen");
+        assert_eq!(
+            Kin::of(
+                Some(&sib),
+                Some("/Users/alex/workspace/linggen/linggen-memory"),
+                &home
+            ),
+            Kin::Near
+        );
+        // Grandparent is two steps too.
+        assert_eq!(
+            Kin::of(Some(&sib), Some("/Users/alex/workspace"), &home),
+            Kin::Near
+        );
+        // A root that is no project gets the same arithmetic: from `$HOME`
+        // a project two levels down is near, a repo three levels down far.
+        assert_eq!(
+            Kin::of(Some(&home), Some("/Users/alex/workspace"), &home),
+            Kin::Child
+        );
+        assert_eq!(
+            Kin::of(Some(&home), Some("/Users/alex/workspace/rust/sanji"), &home),
+            Kin::Far
+        );
+        let ws = PathBuf::from("/Users/alex/.linggen/workspace");
+        assert_eq!(
+            Kin::of(Some(&ws), Some("/Users/alex/workspace/linggen"), &home),
+            Kin::Far
+        );
+        assert_eq!(Kin::of(None, Some("/x"), &home), Kin::Far);
+    }
+
+    #[test]
+    fn kin_weights_are_one_table() {
+        assert_eq!(Kin::Same.weight(), 1.1);
+        assert_eq!(Kin::Child.weight(), 1.0);
+        assert_eq!(Kin::Parent.weight(), 0.9);
+        assert_eq!(Kin::Near.weight(), 0.85);
+        assert_eq!(Kin::Far.weight(), 0.8);
+        assert_eq!(Kin::Person.weight(), 1.0);
     }
 
     #[test]

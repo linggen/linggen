@@ -27,7 +27,7 @@ use lancedb::{
     table::NewColumnTransform,
     Connection, DistanceType, Table,
 };
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Whose rows a query sees. One person at a time, always: the store holds
@@ -89,9 +89,10 @@ pub struct Filters {
     pub indexed: Option<bool>,
     /// Only rows whose `scope` is exactly one of these — the index query.
     pub scope_in: Vec<String>,
-    /// Only rows filed under some directory (`scope IS NOT NULL`) — the
-    /// project half of a no-root session's recall.
-    pub scoped_only: bool,
+    /// No rows under `~/.linggen/skills` (an app's own rows). Set by
+    /// [`Filters::for_search`] on a search outside a skill: weights replace
+    /// the scope filter there, but app rows stay out of non-app recall.
+    pub no_skills: bool,
     /// Set by the store, never by callers: the table still carries the v1
     /// `contexts` column (migration not yet accepted), so app and skill
     /// scopes also match rows tagged with the app's name there.
@@ -119,10 +120,12 @@ pub struct Filters {
     /// during one engine session.
     pub source_session: Option<String>,
     /// The session's recall scope, given as its root (or cwd): see
-    /// [`RecallScope`]. An owner root sees rows under it, rows at its parents
-    /// and rows with no scope; a skill's dir sees only rows under it; `$HOME`,
-    /// `~/.linggen` and temp dirs see only rows with no scope. Applied in SQL,
-    /// before ranking.
+    /// [`RecallScope`]. On `list` it filters in SQL: an owner root sees rows
+    /// under it, rows at its parents and rows with no scope; a skill's dir
+    /// sees only rows under it; `$HOME`, `~/.linggen` and temp dirs see only
+    /// rows with no scope. On search ([`Filters::for_search`]) a skill's dir
+    /// still filters the same way; any other root weighs every non-app row
+    /// by its directory's distance ([`super::scope::Kin`]) instead.
     pub scope_root: Option<String>,
     /// Include archived rows (`expired_at IS NOT NULL`). Default `false`:
     /// live memory only — the archive exists for provenance and unpack,
@@ -147,7 +150,7 @@ impl Filters {
         self.apps.is_empty()
             && self.indexed.is_none()
             && self.scope_in.is_empty()
-            && !self.scoped_only
+            && !self.no_skills
             && self.types.is_empty()
             && self.origin.is_none()
             && self.outcome.is_none()
@@ -199,8 +202,13 @@ impl Filters {
             });
         }
 
-        if self.scoped_only {
-            clauses.push(format!("{} IS NOT NULL", self.col()));
+        if self.no_skills {
+            let skills = home.join(super::scope::SKILLS_REL);
+            clauses.push(format!(
+                "({} IS NULL OR NOT ({}))",
+                self.col(),
+                self.subtree_sql(&skills.to_string_lossy())
+            ));
         }
 
         if !self.scope_in.is_empty() {
@@ -304,7 +312,40 @@ impl Filters {
     }
 }
 
+/// How a search weighs each candidate row by its scope. `None` root: the
+/// session sent a path that does not parse — every filed row is far.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScopeWeigher {
+    pub root: Option<PathBuf>,
+}
+
+impl ScopeWeigher {
+    pub fn weight(&self, scope: Option<&str>, home: &Path) -> f32 {
+        super::scope::Kin::of(self.root.as_deref(), scope, home).weight()
+    }
+}
+
 impl Filters {
+    /// The filter a search runs, and how it weighs rows. A skill's own
+    /// session keeps its hard filter (only its rows, no weights: app
+    /// isolation is a standing rule). Any other `scope_root` stops
+    /// filtering by scope and weighs instead, minus every app's rows. No
+    /// `scope_root`: unchanged, unweighted.
+    pub fn for_search(&self) -> (Filters, Option<ScopeWeigher>) {
+        let Some(raw) = &self.scope_root else {
+            return (self.clone(), None);
+        };
+        let home = super::scope::home();
+        if let RecallScope::Skill { .. } = RecallScope::of(raw, &home) {
+            return (self.clone(), None);
+        }
+        let mut f = self.clone();
+        f.scope_root = None;
+        f.no_skills = true;
+        let root = super::scope::expand(raw, &home);
+        (f, Some(ScopeWeigher { root }))
+    }
+
     /// A directory and everything under it. The trailing separator on the
     /// LIKE keeps `…/linggen` from claiming `…/linggen-mobile`.
     fn subtree_sql(&self, dir: &str) -> String {
@@ -1377,6 +1418,11 @@ impl MemoryStore {
             ));
         }
 
+        // Outside a skill, scope weighs rather than filters, so the pool is
+        // every live non-app row — the same flat scan an unscoped search
+        // always ran (no ANN index at this size; revisit near 100k rows).
+        let (filters, weigher) = filters.for_search();
+        let home = super::scope::home();
         let mut q = self.table.query();
         if let Some(sql) = self.sql(&filters) {
             q = q.only_if(sql);
@@ -1392,16 +1438,23 @@ impl MemoryStore {
                     .as_ref()
                     .map(|v| cosine_similarity(query_vec, v))
                     .unwrap_or(0.0);
-                super::Candidate { memory: f, cosine }
+                let weight = weigher
+                    .as_ref()
+                    .map_or(1.0, |w| w.weight(f.scope.as_deref(), &home));
+                super::Candidate {
+                    memory: f,
+                    cosine,
+                    weight,
+                }
             })
             .collect())
     }
 
     /// Hybrid (dense + lexical) search over this one table. Fetches the
     /// candidate pool ([`Self::scored_candidates`]) and scores each row as
-    /// cosine + an IDF-weighted keyword boost (see [`super::hybrid::fuse`]).
-    /// Returns up to `limit` `(memory, cosine, hybrid)` hits ordered by the
-    /// hybrid score; `min_score` gates that hybrid score.
+    /// (cosine + an IDF-weighted keyword boost) × its scope weight (see
+    /// [`super::hybrid::fuse`]). Returns up to `limit` hits ordered by that
+    /// score; `min_score` gates it.
     pub async fn hybrid_scored(
         &self,
         query_vec: &[f32],
@@ -1409,7 +1462,7 @@ impl MemoryStore {
         filters: &Filters,
         limit: usize,
         min_score: Option<f32>,
-    ) -> Result<Vec<(Memory, f32, f32)>> {
+    ) -> Result<Vec<super::Hit>> {
         let candidates = self.scored_candidates(query_vec, filters).await?;
         Ok(super::hybrid::fuse(
             candidates, query_text, limit, min_score,
@@ -2016,7 +2069,7 @@ mod tests {
             apps: Vec::new(),
             indexed: Some(true),
             scope_in: vec!["/w/a".into()],
-            scoped_only: true,
+            no_skills: true,
             legacy_contexts: false,
             legacy_cwd: false,
             types: vec![MemoryType::Fixed],
@@ -2036,7 +2089,7 @@ mod tests {
         let sql = f.to_sql().unwrap();
         assert!(sql.contains("indexed = true"), "{sql}");
         assert!(sql.contains("scope IN ('/w/a')"), "{sql}");
-        assert!(sql.contains("scope IS NOT NULL"), "{sql}");
+        assert!(sql.contains("(scope IS NULL OR NOT (scope = '"), "{sql}");
         // A v1 table not yet renamed: the same filter says `cwd`.
         let v1 = Filters {
             legacy_cwd: true,
@@ -2169,6 +2222,164 @@ mod tests {
             ["budget in CAD"]
         );
         assert_eq!(seen(&home.to_string_lossy()).await, ["likes tea"]);
+    }
+
+    /// One row per distance band, all with the same vector, so a search's
+    /// score is exactly cosine (0.8) × the row's weight.
+    async fn banded_store() -> (MemoryStore, TempDir, PathBuf) {
+        let (store, dir) = fresh_store().await;
+        let home = crate::memory::scope::home();
+        let at = |p: &str| Some(home.join(p).to_string_lossy().to_string());
+        let mut v = vec![0.0_f32; VECTOR_DIM as usize];
+        v[0] = 0.8;
+        v[1] = 0.6;
+        let row = |content: &str, scope: Option<String>| {
+            let mut m = make_fact(content, MemoryType::Fact);
+            m.scope = scope;
+            m.vector = Some(v.clone());
+            m
+        };
+        store
+            .insert(&[
+                row("same", at("w/linggen")),
+                row("child", at("w/linggen/linggen")),
+                row("grandchild", at("w/linggen/skills/lingjing")),
+                row("parent", at("w")),
+                row("sibling", at("w/linggen-old")),
+                row("far", at("w/rust/sanji")),
+                row("person", None),
+                row("app", at(".linggen/skills/cfo")),
+                row("app deep", at(".linggen/skills/cfo/data")),
+            ])
+            .await
+            .unwrap();
+        (store, dir, home)
+    }
+
+    fn query_vec() -> Vec<f32> {
+        let mut q = vec![0.0_f32; VECTOR_DIM as usize];
+        q[0] = 1.0;
+        q
+    }
+
+    /// Rows as `(content, score)`, best first; equal scores by content, so
+    /// the order never rides on the table's scan order.
+    async fn weighed(
+        store: &MemoryStore,
+        root: Option<String>,
+        floor: Option<f32>,
+    ) -> Vec<(String, f32)> {
+        let f = Filters {
+            scope_root: root,
+            ..Default::default()
+        };
+        let mut got = store
+            .hybrid_scored(&query_vec(), "", &f, 50, floor)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|h| (h.memory.content, (h.score * 1000.0).round() / 1000.0))
+            .collect::<Vec<_>>();
+        got.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+        got
+    }
+
+    #[tokio::test]
+    async fn search_weighs_each_distance_band() {
+        let (store, _dir, home) = banded_store().await;
+        let root = home.join("w/linggen").to_string_lossy().to_string();
+        let got = weighed(&store, Some(root), None).await;
+        assert_eq!(
+            got,
+            [
+                ("same".to_string(), 0.88),
+                ("child".to_string(), 0.8),
+                ("person".to_string(), 0.8),
+                ("parent".to_string(), 0.72),
+                ("grandchild".to_string(), 0.68),
+                ("sibling".to_string(), 0.68),
+                ("far".to_string(), 0.64),
+            ],
+            "no app row, every other row weighed by its distance"
+        );
+    }
+
+    #[tokio::test]
+    async fn weighted_min_score_gates_search() {
+        let (store, _dir, home) = banded_store().await;
+        let root = home.join("w/linggen").to_string_lossy().to_string();
+        let names: Vec<String> = weighed(&store, Some(root), Some(0.7))
+            .await
+            .into_iter()
+            .map(|(n, _)| n)
+            .collect();
+        assert_eq!(names, ["same", "child", "person", "parent"]);
+    }
+
+    #[tokio::test]
+    async fn a_skill_session_still_sees_only_its_own_rows() {
+        let (store, _dir, home) = banded_store().await;
+        let skill = home
+            .join(".linggen/skills/cfo")
+            .to_string_lossy()
+            .to_string();
+        let mut got = weighed(&store, Some(skill), None).await;
+        got.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            got,
+            [("app".to_string(), 0.8), ("app deep".to_string(), 0.8)],
+            "its own rows only, unweighed"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_root_sessions_weigh_and_never_see_app_rows() {
+        let (store, _dir, home) = banded_store().await;
+        let ws = home
+            .join(".linggen/workspace")
+            .to_string_lossy()
+            .to_string();
+        let got = weighed(&store, Some(ws), None).await;
+        let names: Vec<&str> = got.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names[0], "person");
+        assert!(!names.iter().any(|n| n.starts_with("app")), "{names:?}");
+        assert!(got[1..].iter().all(|(_, s)| *s == 0.64), "{got:?}");
+        // No root at all: unweighed and unfiltered, as before.
+        let all = weighed(&store, None, None).await;
+        assert_eq!(all.len(), 9);
+        assert!(all.iter().all(|(_, s)| *s == 0.8));
+    }
+
+    #[tokio::test]
+    async fn search_filter_split() {
+        let home = crate::memory::scope::home();
+        let skill = Filters {
+            scope_root: Some(
+                home.join(".linggen/skills/dj")
+                    .to_string_lossy()
+                    .to_string(),
+            ),
+            ..Default::default()
+        };
+        let (f, w) = skill.for_search();
+        assert!(w.is_none() && f.scope_root == skill.scope_root && !f.no_skills);
+        let owner = Filters {
+            scope_root: Some("/Users/l/work/linggen/".into()),
+            ..Default::default()
+        };
+        let (f, w) = owner.for_search();
+        assert!(f.scope_root.is_none() && f.no_skills);
+        assert_eq!(
+            w.unwrap().root,
+            Some(PathBuf::from("/Users/l/work/linggen"))
+        );
+        let sql = f.to_sql().unwrap();
+        assert!(
+            sql.contains("(scope IS NULL OR NOT (scope = '") && sql.contains("/.linggen/skills/%'"),
+            "{sql}"
+        );
+        let (f, w) = Filters::default().for_search();
+        assert!(w.is_none() && !f.no_skills);
     }
 
     #[tokio::test]
