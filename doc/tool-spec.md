@@ -57,9 +57,9 @@ Built-in tools are the kernel API. Skills are userspace.
 offered only when a skill lists it in `allowed-tools` *and* the machine
 passes the lane gate (Apple Silicon, 16 GB unified memory) — a Mac that
 cannot draw never sees the tool, so the model never reaches for it. The
-lane installs on first use, never at boot (pictures are not a daily
-model): the first call starts the install in the background (venv +
-~5 GB model) and answers in one line;
+lane downloads in the background after install, at the first quiet
+moment (storage-spec.md § Large downloads); a call that beats it starts
+the install at once (venv + ~4.3 GB model) and answers in one line;
 every runtime progress payload carries each lane's verdict. Renders run one at
 a time, one process per picture, `square` 512×512 or `landscape`
 768×512; a `reference` (a file inside the skill) keeps its pose and shape.

@@ -4,7 +4,10 @@
 //! Mac without Xcode CLT has none at all).
 //!
 //! Everything here is fetched by [`prewarm`], a background task spawned on
-//! engine start, so nothing user-facing ever waits on a download. Each
+//! engine start, so nothing user-facing ever waits on a download. The big
+//! stages (each lane's venv and model) start only when the machine is
+//! quiet — no agent run in flight and no one chatting for a few minutes —
+//! and one download runs at a time ([`download_slot`]). Each
 //! component is stamped on disk and re-verified on every boot; a stamp
 //! mismatch (version bump, changed package pins) rebuilds just that
 //! component. Downloads resume from a `.part` file and are SHA-256
@@ -53,8 +56,8 @@ const VENVS: [(&str, &[&str]); 3] = [
 ];
 
 /// The TTS voice model the `tts` venv serves; warmed into the shared HF
-/// cache so first playback never downloads.
-const TTS_MODEL: &str = "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-4bit";
+/// cache so first playback never downloads, then stamped.
+pub const TTS_MODEL: &str = "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-4bit";
 
 /// The picture model the `pictures` venv runs: FLUX.2 klein 4B, 4-bit,
 /// in mflux's own weight layout (only that layout loads pre-quantized;
@@ -330,23 +333,46 @@ fn progress_sink() -> Progress {
         .unwrap_or_else(|| std::sync::Arc::new(|_| {}))
 }
 
-/// Boot runs the voice stages (venv + model, ~2.1 GB) on every machine
-/// the lane admits, so the voice is on disk before Yinyue first speaks.
-/// Pictures are not
-/// a daily model — most players never make a scene — so their stages
-/// never run at boot; [`ensure_pictures_in_background`] runs them on the
-/// first call that needs them. `progress` receives each stage payload;
-/// the server wires it to the live topic bus + retained store.
-pub async fn prewarm(progress: Progress) {
-    prewarm_lanes(true, false, progress).await
+/// Is the machine quiet enough to start a download? The server answers
+/// from its own facts (no top-level run, no chat turn for a few minutes);
+/// an on-demand install passes [`always_quiet`].
+pub type Quiet = std::sync::Arc<dyn Fn() -> bool + Send + Sync>;
+
+/// How often a waiting stage asks [`Quiet`] again.
+const QUIET_POLL: std::time::Duration = std::time::Duration::from_secs(30);
+
+pub fn always_quiet() -> Quiet {
+    std::sync::Arc::new(|| true)
 }
 
-async fn prewarm_lanes(with_tts: bool, with_pictures: bool, progress: Progress) {
-    // One prewarm at a time; a second boot-time spawn or an on-demand
-    // ensure_* call waits instead of racing the unpack.
-    static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-    let _guard = LOCK.lock().await;
+/// Return once `quiet` says so, asking every `poll`. A download never
+/// starts mid-run; one already started is not paused.
+pub async fn wait_for_quiet(quiet: &Quiet, poll: std::time::Duration) {
+    while !quiet() {
+        tokio::time::sleep(poll).await;
+    }
+}
 
+/// One large download at a time, engine-wide: every stage here and every
+/// other managed download (Kokoro's weights) holds this while it runs.
+/// Held per stage, not per prewarm, so an on-demand install can run
+/// between boot stages that are waiting for quiet.
+pub async fn download_slot() -> tokio::sync::MutexGuard<'static, ()> {
+    static SLOT: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    SLOT.lock().await
+}
+
+/// Boot runs every stage the lane gate admits — voice (venv + model,
+/// ~2.1 GB) and pictures (venv + ~4.3 GB model) — so neither waits for
+/// its first use. Python and the tools venv start at once (small, and
+/// skills call them on a fresh install's first turn); the lane stages
+/// wait for `quiet`. `progress` receives each stage payload; the server
+/// wires it to the live topic bus + retained store.
+pub async fn prewarm(progress: Progress, quiet: Quiet) {
+    prewarm_lanes(true, true, progress, quiet).await
+}
+
+async fn prewarm_lanes(with_tts: bool, with_pictures: bool, progress: Progress, quiet: Quiet) {
     if !cfg!(target_os = "macos") {
         tracing::info!("[runtime] prewarm skipped: unsupported platform");
         return;
@@ -354,7 +380,7 @@ async fn prewarm_lanes(with_tts: bool, with_pictures: bool, progress: Progress) 
     export_python_env();
 
     for attempt in 0..3u32 {
-        match prewarm_stages(with_tts, with_pictures, &progress).await {
+        match prewarm_stages(with_tts, with_pictures, &progress, &quiet).await {
             Ok(()) => return,
             Err(e) if format!("{e:#}").contains("low disk") => {
                 // Not retryable on a timer — the disk won't free itself.
@@ -387,16 +413,25 @@ pub fn pictures_ready() -> bool {
     env_bin("pictures", "python3").exists() && stamp_matches(&picture_model_stamp(), PICTURE_MODEL)
 }
 
+/// Are the voice venv and model both on disk? The sidecar spawns only then.
+pub fn voice_ready() -> bool {
+    env_bin("tts", "python3").exists() && stamp_matches(&tts_model_stamp(), TTS_MODEL)
+}
+
 fn picture_model_stamp() -> PathBuf {
     runtime_dir().join("pictures-model.stamp")
 }
 
-/// Start the picture stages now, off the caller's path: the first
-/// GenerateImage call on this machine finds them missing and answers
-/// "installing" while this runs (venv + ~5 GB model, minutes on a fast
-/// line). Serialized by prewarm's own lock.
+fn tts_model_stamp() -> PathBuf {
+    runtime_dir().join("tts-model.stamp")
+}
+
+/// Run the picture stages now, off the caller's path. Boot already queues
+/// them for the first quiet moment; this is for a GenerateImage call that
+/// beats it (or a boot prewarm that gave up). The person asked, so it does
+/// not wait for quiet — only for the download slot.
 pub fn ensure_pictures_in_background() {
-    tokio::spawn(prewarm_lanes(false, true, progress_sink()));
+    tokio::spawn(prewarm_lanes(false, true, progress_sink(), always_quiet()));
 }
 
 /// Which lanes a stage set may run: each goes through the gate and a
@@ -414,7 +449,30 @@ fn lane_open(lane: &Lane, wanted: bool) -> bool {
     }
 }
 
-async fn prewarm_stages(with_tts: bool, with_pictures: bool, progress: &Progress) -> Result<()> {
+/// A lane stage is a large download and waits for quiet; python and the
+/// tools venv are small and needed on a fresh install's first turn.
+fn waits_for_quiet(stage: &str) -> bool {
+    !matches!(stage, "python" | "tools")
+}
+
+/// Is this stage already done on disk? A done stage skips the quiet wait.
+fn stage_ready(stage: &str) -> bool {
+    match stage {
+        "python" => python_ready(),
+        "tts-model" => stamp_matches(&tts_model_stamp(), TTS_MODEL),
+        "pictures-model" => stamp_matches(&picture_model_stamp(), PICTURE_MODEL),
+        venv => VENVS
+            .iter()
+            .any(|(name, spec)| *name == venv && env_ready(name, spec)),
+    }
+}
+
+async fn prewarm_stages(
+    with_tts: bool,
+    with_pictures: bool,
+    progress: &Progress,
+    quiet: &Quiet,
+) -> Result<()> {
     // Each lane goes through the lane gate (Apple Silicon, memory, disk);
     // a Mac that fails it keeps the runtime + tools and simply never grows
     // that lane. The reason is logged and rides on the progress payload so
@@ -436,33 +494,59 @@ async fn prewarm_stages(with_tts: bool, with_pictures: bool, progress: &Progress
         if !enabled {
             continue;
         }
-        publish_progress(progress, done, total, stage, false);
-        match *stage {
-            "python" => {
-                ensure_python().await.map(|_| ())?;
-                export_python_env();
-            }
-            "tools" => ensure_venv("tools").await.map(|_| ())?,
-            "tts" => ensure_venv("tts").await.map(|_| ())?,
-            "tts-model" => ensure_tts_model().await?,
-            "pictures" => ensure_venv("pictures").await.map(|_| ())?,
-            "pictures-model" => ensure_picture_model().await?,
-            _ => unreachable!(),
+        if waits_for_quiet(stage) && !stage_ready(stage) {
+            publish_progress(progress, done, total, stage, Phase::WaitingForQuiet);
+            wait_for_quiet(quiet, QUIET_POLL).await;
         }
+        publish_progress(progress, done, total, stage, Phase::Running);
+        run_stage(stage).await?;
         done += 1;
-        publish_progress(progress, done, total, stage, done == total);
+        let phase = if done == total {
+            Phase::Finished
+        } else {
+            Phase::Running
+        };
+        publish_progress(progress, done, total, stage, phase);
     }
     tracing::info!("[runtime] prewarm complete");
     Ok(())
 }
 
-fn publish_progress(progress: &Progress, done: usize, total: usize, current: &str, finished: bool) {
+/// Run one stage inside the download slot. Every `ensure_*` re-checks its
+/// own stamp first, so a stage another prewarm finished meanwhile is free.
+async fn run_stage(stage: &str) -> Result<()> {
+    let _slot = download_slot().await;
+    match stage {
+        "python" => {
+            ensure_python().await?;
+            export_python_env();
+        }
+        "tools" | "tts" | "pictures" => {
+            ensure_venv(stage).await?;
+        }
+        "tts-model" => ensure_tts_model().await?,
+        "pictures-model" => ensure_picture_model().await?,
+        _ => unreachable!(),
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    WaitingForQuiet,
+    Running,
+    Finished,
+}
+
+fn publish_progress(progress: &Progress, done: usize, total: usize, current: &str, phase: Phase) {
     progress(&serde_json::json!({
             "app": "runtime",
             "task_id": "runtime-prewarm",
             "label": "Preparing runtime",
             "done": done, "total": total, "current": current,
-            "finished": finished,
+            "finished": phase == Phase::Finished,
+            // The next stage is queued for a quiet moment, not stuck.
+            "waiting_for_quiet": phase == Phase::WaitingForQuiet,
             "machine": lanes_status(),
             "at": std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -613,10 +697,14 @@ async fn pip(env: &str, args: &[&str]) -> Result<String> {
 }
 
 /// Warm the TTS model into the shared HF cache (the same one Kokoro uses),
-/// so the first spoken line never downloads. huggingface_hub resumes
+/// so the first spoken line never downloads, and stamp it so a later boot
+/// skips both the load and the quiet wait. huggingface_hub resumes
 /// partial downloads on its own; `HF_ENDPOINT` is the user's, else
 /// hf-mirror.com when huggingface.co is unreachable (see `hf_mirror`).
 async fn ensure_tts_model() -> Result<()> {
+    if stamp_matches(&tts_model_stamp(), TTS_MODEL) {
+        return Ok(());
+    }
     check_disk_headroom(&runtime_dir(), 6)?;
     let code = format!("from mlx_audio.tts.utils import load_model; load_model({TTS_MODEL:?})");
     run_ok(
@@ -627,8 +715,10 @@ async fn ensure_tts_model() -> Result<()> {
             .env("HF_ENDPOINT", crate::hf_mirror::endpoint().await),
         "warm tts model",
     )
-    .await
-    .map(|_| ())
+    .await?;
+    std::fs::write(tts_model_stamp(), TTS_MODEL)?;
+    tracing::info!("[runtime] tts model ready");
+    Ok(())
 }
 
 /// Warm the picture model into the same HF cache, then stamp it so
@@ -738,7 +828,7 @@ pub(crate) fn file_sha256(path: &Path) -> Result<String> {
 
 /// Refuse to start a stage without `need_gb` of free disk — a full disk
 /// mid-unpack is worse than a missing runtime.
-fn check_disk_headroom(dir: &Path, need_gb: u64) -> Result<()> {
+pub(crate) fn check_disk_headroom(dir: &Path, need_gb: u64) -> Result<()> {
     let free = disk_free_gb(dir);
     if free < need_gb {
         bail!("low disk: {free}GB free, need {need_gb}GB");
@@ -842,6 +932,61 @@ mod tests {
             1
         );
         assert_eq!(pip_attempts(&["list"]).len(), 1);
+    }
+
+    /// A predicate that says "busy" `busy` times, then "quiet", counting asks.
+    fn quiet_after(busy: usize) -> (Quiet, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        let asks = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let seen = asks.clone();
+        let quiet: Quiet = std::sync::Arc::new(move || {
+            seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst) >= busy
+        });
+        (quiet, asks)
+    }
+
+    #[tokio::test]
+    async fn a_download_waits_until_the_machine_is_quiet() {
+        let (quiet, asks) = quiet_after(3);
+        wait_for_quiet(&quiet, std::time::Duration::from_millis(1)).await;
+        // Three busy answers, then the quiet one that let it through.
+        assert_eq!(asks.load(std::sync::atomic::Ordering::SeqCst), 4);
+    }
+
+    #[tokio::test]
+    async fn a_quiet_machine_starts_at_once() {
+        let (quiet, asks) = quiet_after(0);
+        let started = std::time::Instant::now();
+        wait_for_quiet(&quiet, std::time::Duration::from_secs(60)).await;
+        assert_eq!(asks.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+        assert!(always_quiet()());
+    }
+
+    #[tokio::test]
+    async fn a_busy_machine_never_starts() {
+        let (quiet, _) = quiet_after(usize::MAX);
+        let wait = wait_for_quiet(&quiet, std::time::Duration::from_millis(1));
+        let r = tokio::time::timeout(std::time::Duration::from_millis(50), wait).await;
+        assert!(r.is_err(), "a download started while the machine was busy");
+    }
+
+    #[test]
+    fn only_the_lane_stages_wait_for_quiet() {
+        for stage in ["tts", "tts-model", "pictures", "pictures-model"] {
+            assert!(waits_for_quiet(stage), "{stage} should wait");
+        }
+        for stage in ["python", "tools"] {
+            assert!(!waits_for_quiet(stage), "{stage} should not wait");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_download_slot_admits_one_at_a_time() {
+        let first = download_slot().await;
+        let second = tokio::time::timeout(std::time::Duration::from_millis(20), download_slot());
+        assert!(second.await.is_err(), "two downloads held the slot at once");
+        drop(first);
+        let _again = download_slot().await;
     }
 
     #[test]
