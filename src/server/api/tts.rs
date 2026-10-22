@@ -226,12 +226,12 @@ impl KokoroProvider {
                         {
                             std::env::set_var("HF_ENDPOINT", &endpoint);
                         }
-                        // Keep all model state under ~/.linggen (project convention).
+                        // The one shared cache (runtime::hf_home). This sets the
+                        // engine's own env, which every model process inherits, and
+                        // HF_HUB_CACHE beats HF_HOME: pointing it at hf-hub itself
+                        // instead of hf-hub/hub made a second copy of each model.
                         if std::env::var_os("HF_HUB_CACHE").is_none() {
-                            let cache = crate::util::resolve_path(std::path::Path::new(
-                                "~/.linggen/models/hf-hub",
-                            ));
-                            std::env::set_var("HF_HUB_CACHE", cache);
+                            std::env::set_var("HF_HUB_CACHE", crate::runtime::hf_home().join("hub"));
                         }
                         // No path set → any-tts downloads hexgrad/Kokoro-82M from HF
                         // (or HF_ENDPOINT).
