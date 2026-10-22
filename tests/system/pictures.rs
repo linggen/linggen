@@ -1,7 +1,9 @@
-//! Sources and pictures in answers (doc/chat-spec.md): a page fetched in a
-//! turn numbers its sources and pictures, the answer shows some by number,
-//! and the history view hands out exactly those that resolve — each picture
-//! kept once, scaled, with the session, and gone with it.
+//! Sources and pictures in answers (doc/chat-spec.md): pictures come from a
+//! fetched page, never a search (search is text only, so it stays fast). A
+//! page fetched in a turn numbers its sources and pictures, the answer shows
+//! some by number, and the history view hands out exactly those that
+//! resolve — each picture kept once, scaled, with the session, and gone
+//! with it.
 
 use crate::support::model::Agent;
 use crate::support::{text, tool, Setup, World};
@@ -85,6 +87,13 @@ async fn an_answer_shows_the_pictures_it_names_and_nothing_else() {
         .create_session(json!({"title": "kettle", "project_root": root}))
         .await;
     let history = fetch_and_answer(&w, &sid).await;
+
+    // What the model was told: WebFetch brings pictures, WebSearch none.
+    let first_call = &w.model.calls_of(Agent::Ling)[0];
+    let fetch = first_call.tool_description("WebFetch");
+    assert!(fetch.contains("[turn2image1]") && fetch.contains("looks like"), "{fetch}");
+    let search = first_call.tool_description("WebSearch");
+    assert!(!search.is_empty() && !search.contains("image1"), "{search}");
 
     // What the model read: numbers beside each thing, never a picture's address.
     let answer_call = &w.model.calls_of(Agent::Ling)[1];

@@ -73,7 +73,6 @@ pub enum ToolResult {
     WebSearchResults {
         query: String,
         results: Vec<super::web_search::WebSearchResult>,
-        pictures: Vec<super::web_search::WebPicture>,
     },
     WebFetchContent {
         url: String,
@@ -81,7 +80,7 @@ pub enum ToolResult {
         content_type: String,
         truncated: bool,
         title: String,
-        pictures: Vec<super::web_search::WebPicture>,
+        pictures: Vec<super::page_pictures::WebPicture>,
         /// The page's own number as a source (`turn2search1`), once numbered.
         id: String,
     },

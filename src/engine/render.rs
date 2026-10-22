@@ -67,11 +67,7 @@ pub fn render_tool_result(r: &ToolResult) -> String {
                 reason.as_deref().unwrap_or("(no reason)")
             ),
         },
-        ToolResult::WebSearchResults {
-            query,
-            results,
-            pictures,
-        } => {
+        ToolResult::WebSearchResults { query, results } => {
             let mut out = format!("WebSearch: \"{}\" ({} results)", query, results.len());
             if let Some(first) = results.first().filter(|r| !r.id.is_empty()) {
                 out.push_str(&format!(
@@ -85,9 +81,11 @@ pub fn render_tool_result(r: &ToolResult) -> String {
                     "" => format!("{}.", i + 1),
                     id => format!("[{id}]"),
                 };
-                out.push_str(&format!("{head} {} — {}\n   {}\n", r.title, r.url, r.snippet));
+                out.push_str(&format!(
+                    "{head} {} — {}\n   {}\n",
+                    r.title, r.url, r.snippet
+                ));
             }
-            out.push_str(&render_pictures(pictures));
             out
         }
         ToolResult::WebFetchContent {
@@ -138,7 +136,7 @@ fn label(id: &str) -> String {
 /// The numbered pictures of a result, one a line: number, what it shows,
 /// and a product's name and price. The address stays out — the model shows
 /// a picture by its number, never by a URL it writes.
-fn render_pictures(pictures: &[crate::engine::web_search::WebPicture]) -> String {
+fn render_pictures(pictures: &[crate::engine::page_pictures::WebPicture]) -> String {
     let numbered: Vec<String> = pictures
         .iter()
         .filter(|p| !p.id.is_empty())
@@ -155,14 +153,21 @@ fn render_pictures(pictures: &[crate::engine::web_search::WebPicture]) -> String
                 .copied()
                 .collect::<Vec<_>>()
                 .join(" — ");
-            let what = if what.is_empty() { "(no caption)" } else { &what };
+            let what = if what.is_empty() {
+                "(no caption)"
+            } else {
+                &what
+            };
             format!("[{}] {what}\n", p.id)
         })
         .collect();
     if numbered.is_empty() {
         return String::new();
     }
-    let first = pictures.iter().find(|p| !p.id.is_empty()).map_or("", |p| p.id.as_str());
+    let first = pictures
+        .iter()
+        .find(|p| !p.id.is_empty())
+        .map_or("", |p| p.id.as_str());
     format!(
         "Pictures — each shows what its line says (the picture itself is not attached). The person sees one in your answer where you write its number, such as [{first}]. Worth it when they ask what something looks like, or a step is clearer seen than read.\n{}",
         numbered.concat()

@@ -12,6 +12,12 @@ use tracing::warn;
 // Think-tag stripping
 // ---------------------------------------------------------------------------
 
+/// A reply as it is kept: no `<think>` blocks, and every number it writes
+/// in the plain `[turn2image1]` form (`answer_refs::plain_refs`).
+fn final_text(raw: &str) -> String {
+    crate::engine::answer_refs::plain_refs(&strip_think_tags(raw)).into_owned()
+}
+
 /// Strip `<think>...</think>` blocks that many local models (Qwen, DeepSeek)
 /// emit for chain-of-thought reasoning. These should not appear in user-facing
 /// text responses. Also handles unclosed `<think>` (strips to end of string).
@@ -215,7 +221,7 @@ impl AgentEngine {
         }
 
         // Strip <think>...</think> blocks from the accumulated text.
-        let accumulated = strip_think_tags(&accumulated);
+        let accumulated = final_text(&accumulated);
 
         Ok(StreamResult {
             full_text: accumulated,
@@ -380,7 +386,7 @@ impl AgentEngine {
         }
 
         // Strip <think>...</think> blocks from the accumulated text.
-        let accumulated_text = strip_think_tags(&accumulated_text);
+        let accumulated_text = final_text(&accumulated_text);
 
         if accumulated_text.is_empty() && tool_calls.is_empty() {
             warn!(

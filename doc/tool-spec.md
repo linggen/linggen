@@ -41,8 +41,8 @@ Built-in tools are the kernel API. Skills are userspace.
 | `lock_paths` | `globs, ttl_ms?` | Acquire file locks (multi-agent) |
 | `unlock_paths` | `tokens` | Release file locks |
 | `Task` | `target_agent_id, task` | Spawn subagent |
-| `WebSearch` | `query, max_results?` | Web search (Tavily — your key from Settings first, else Linggen Cloud with sign-in; a failing key is reported, never swapped). Results and image results come numbered (`[turn2search1]`, `[turn2image1]`; chat-spec § Sources and pictures) |
-| `WebFetch` | `url, max_bytes?` | Fetch URL content as text; the page and its pictures (`og:image` with a declared product's name and price, then `<figure>`/`<img>` with captions) come numbered |
+| `WebSearch` | `query, max_results?` | Web search (Tavily — your key from Settings first, else Linggen Cloud with sign-in; a failing key is reported, never swapped). Text only: results come numbered (`[turn2search1]`; chat-spec § Sources and pictures). Unreachable → the error says WebFetch still opens a known page |
+| `WebFetch` | `url, max_bytes?` | Fetch URL content as text; the page and its pictures (`og:image` with a declared product's name and price, then `<figure>`/`<img>` with captions) come numbered (`[turn2image1]`) — the route to showing what something looks like |
 | `Skill` | `skill, args?` | Invoke a skill by name |
 | `RunApp` | `skill, args?` | Launch an app-enabled skill |
 | `AskUser` | `questions` | Ask user structured questions mid-execution |

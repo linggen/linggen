@@ -694,8 +694,9 @@ PY
   # Sources and pictures in answers (doc/chat-spec.md): a shopping question
   # and a how-to question each answer with real pictures, and every number
   # the answer writes resolves to a tool result in the session's table
-  # (refs.jsonl) — a picture is never made up. Each runs in a fresh plain
-  # session (memory withheld).
+  # (refs.jsonl) — a picture is never made up. Search is text only, so each
+  # shown picture comes from a page Ling fetched (or a screenshot): its row
+  # names that page. Each runs in a fresh plain session (memory withheld).
   section "${MODEL_CASES[5]}"
   picture_turn() { # message → "<sid>" of the finished session ("" when it did not finish)
     local sid m
@@ -731,6 +732,9 @@ if unknown:
     print("bad numbers no tool returned:", " ".join(unknown)); sys.exit()
 if not shown:
     print("bad no picture shown (written:", " ".join(written) or "none", ")"); sys.exit()
+pageless = [i for i in shown if not table.get(i, {}).get("page")]
+if pageless:
+    print("bad pictures from no fetched page:", " ".join(pageless)); sys.exit()
 print("ok", len(shown), len(written))
 ' "$1" "$LG"
   }

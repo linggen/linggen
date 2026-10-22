@@ -24,7 +24,7 @@ pub struct WebFetchResult {
     pub truncated: bool,
     /// The page's title and pictures, for an HTML page.
     pub title: String,
-    pub pictures: Vec<super::web_search::WebPicture>,
+    pub pictures: Vec<super::page_pictures::WebPicture>,
 }
 
 /// Fetch a URL and return its content as text.
