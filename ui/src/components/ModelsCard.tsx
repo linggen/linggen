@@ -1,6 +1,7 @@
 import React from 'react';
 import { Brain, Star } from 'lucide-react';
 import { cn } from '../lib/cn';
+import { SkeletonRows } from './Skeleton';
 import type { AgentInfo, ModelInfo, OllamaPsResponse } from '../types';
 
 /** Check if a model supports reasoning effort control. */
@@ -22,13 +23,15 @@ function supportsReasoningEffort(model: ModelInfo): boolean {
 
 export const ModelsCard: React.FC<{
   models: ModelInfo[];
+  /** The model list has arrived — until then a shimmer. */
+  loaded: boolean;
   agents: AgentInfo[];
   ollamaStatus: OllamaPsResponse | null;
   activeModelId?: string;
   defaultModels?: string[];
   onToggleDefault?: (modelId: string) => void;
   onChangeReasoningEffort?: (modelId: string, effort: string | null) => void;
-}> = ({ models, ollamaStatus, activeModelId, defaultModels = [], onToggleDefault, onChangeReasoningEffort }) => {
+}> = ({ models, loaded, ollamaStatus, activeModelId, defaultModels = [], onToggleDefault, onChangeReasoningEffort }) => {
   const scrollContainerRef = React.useRef<HTMLDivElement>(null);
 
   // Scroll to the default (starred) model once, when it is first known
@@ -39,8 +42,9 @@ export const ModelsCard: React.FC<{
     scrolledRef.current = true;
     const el = scrollContainerRef.current.querySelector('[data-default-model]');
     if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  }, [hasDefault]);
+  }, [hasDefault, loaded]);
 
+  if (!loaded) return <SkeletonRows rows={2} rowClass="h-14 rounded-lg" className="px-3 py-2" testId="models-loading" />;
   return (
     <div ref={scrollContainerRef} className="px-3 py-2 space-y-2 max-h-48 overflow-y-auto">
       {models.map((m) => {

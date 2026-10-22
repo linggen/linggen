@@ -28,7 +28,7 @@ import { savedToolBlocks } from '../lib/toolStatus.mts';
 import { agentTracker } from '../lib/agentTracker';
 import { confirmSent } from '../lib/sentMessage.mts';
 import { isEventEcho } from '../lib/rowIdentity.mts';
-import { loadOutcome, type LoadSnapshot } from '../lib/sessionLoad.mts';
+import { loadOutcome, stillOn, type LoadSnapshot } from '../lib/sessionLoad.mts';
 import { computeDisplay, mutate, mutateLast } from './chatMutationHelpers';
 import { useSessionStore } from './sessionStore';
 import { useUserStore } from './userStore';
@@ -39,6 +39,9 @@ interface ChatState {
   sessionState: SessionState | null;
   /** The session `sessionState` was loaded for, and what it held. */
   _sessionStateLoad: LoadSnapshot | null;
+  /** The session whose load last answered (or failed) — until it is the one
+   *  open, the chat is loading, not empty. */
+  loadedSessionId: string | null;
 
   // Per-session message storage — avoids clear/refetch race on session switch
   _messagesBySession: Record<string, ChatMessage[]>;
@@ -113,6 +116,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   messages: [],
   sessionState: null,
   _sessionStateLoad: null,
+  loadedSessionId: null,
   _messagesBySession: {},
   _activeSessionId: null,
   _chatClearTs: 0,
@@ -682,6 +686,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // moved on meanwhile, skipped when nothing changed (re-render loops).
       const loaded = loadSnapshot(activeSessionId, data);
       const outcome = loadOutcome(loaded, useSessionStore.getState().activeSessionId, get()._sessionStateLoad);
+      if (outcome === 'stale') return;
+      set({ loadedSessionId: activeSessionId });
       if (outcome !== 'apply') return;
       set({ sessionState: data, _sessionStateLoad: loaded });
 
@@ -762,6 +768,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
     } catch (e) {
       console.error('Error fetching workspace state:', e);
+      if (stillOn(activeSessionId, useSessionStore.getState().activeSessionId)) set({ loadedSessionId: activeSessionId });
     }
   },
 

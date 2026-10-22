@@ -6,6 +6,9 @@ import { cn } from '../../lib/cn';
 import { UNSPOKEN_SENDERS } from '../../lib/messageUtils';
 import { useUserStore } from '../../stores/userStore';
 import { useSessionStore } from '../../stores/sessionStore';
+import { useChatStore } from '../../stores/chatStore';
+import { useServerStore } from '../../stores/serverStore';
+import { SkeletonBar } from '../Skeleton';
 import type { ChatMessage } from '../../types';
 import { getMessagePhase } from './MessagePhase';
 import { AgentMessage } from './AgentMessage';
@@ -144,6 +147,28 @@ export const ChatMessageRow = React.memo<{
   );
 });
 
+/** The open chat's first load has not answered yet: its session's state is
+ *  still on the way, or — no session yet — the first page_state, which picks
+ *  one, has not landed. */
+function useChatLoading(): boolean {
+  const activeSessionId = useSessionStore((s) => s.activeSessionId);
+  const loadedSessionId = useChatStore((s) => s.loadedSessionId);
+  const pushed = useServerStore((s) => s.modelsLoaded);
+  return activeSessionId ? loadedSessionId !== activeSessionId : !pushed;
+}
+
+/** A chat's rows while its first load is on the way. */
+const ChatSkeleton: React.FC = () => (
+  <div className="flex flex-col gap-4 mt-6 px-2" data-testid="chat-loading" aria-busy="true">
+    <SkeletonBar className="self-end h-9 w-1/3 rounded-2xl" />
+    <div className="space-y-2">
+      <SkeletonBar className="h-3.5 w-3/4" />
+      <SkeletonBar className="h-3.5 w-2/3" />
+      <SkeletonBar className="h-3.5 w-1/2" />
+    </div>
+  </div>
+);
+
 /** Memoized historical message list — skips re-render during streaming & typing. */
 export const ChatMessageList = React.memo<{
   messages: ChatMessage[];
@@ -170,6 +195,7 @@ export const ChatMessageList = React.memo<{
   const coreName = useUserStore((s) => s.coreName);
   // An app's chat is the app's agent (its skill persona), not "the main agent".
   const skillChat = useSessionStore((s) => s.isSkillSession && !!s.activeSkillName);
+  const loading = useChatLoading();
   // One toggle for every row (keyed by the row's key), so a row's props
   // stay equal across renders and its memo holds.
   const toggleExpanded = useCallback((key: string) => {
@@ -182,7 +208,8 @@ export const ChatMessageList = React.memo<{
   }, [setExpandedMessages]);
   return (
     <>
-      {messages.length === 0 && (
+      {messages.length === 0 && loading && <ChatSkeleton />}
+      {messages.length === 0 && !loading && (
         <div className="self-center mt-12 max-w-md text-center">
           <div className="text-sm font-semibold text-slate-600 dark:text-slate-300">
             {skillChat ? 'No messages yet' : `No messages for ${selectedAgent}`}

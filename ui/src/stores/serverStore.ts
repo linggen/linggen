@@ -25,6 +25,9 @@ interface ServerState {
   /** Take a push of the agent list and/or who is met, and re-derive `agents`. */
   applyAgentPresence: (push: { agents?: AgentInfo[]; agentsMet?: AgentMet[] }) => void;
   models: ModelInfo[];
+  /** The engine has pushed `models` / `skills` once — until then they are loading, not empty. */
+  modelsLoaded: boolean;
+  skillsLoaded: boolean;
   /** GET /api/models — the settings screens' view (built-ins, auth mode).
    *  One shared copy; refreshRuntimeModels() re-reads it. */
   runtimeModels: RuntimeModelInfo[];
@@ -114,9 +117,11 @@ export const useServerStore = create<ServerState>((set, get) => ({
     return { rawAgents, agentsMet: met, agents: presentAgents(rawAgents, met) };
   }),
   models: [],
+  modelsLoaded: false,
   ollamaStatus: null,
   defaultModels: [],
   skills: [],
+  skillsLoaded: false,
   agentRuns: [],
   runtimeModels: [],
   refreshRuntimeModels: async () => {

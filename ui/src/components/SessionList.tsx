@@ -14,6 +14,7 @@ import {
 import { cn } from '../lib/cn';
 import type { SessionInfo, CronMission, ManagementTab } from '../types';
 import { useSessionStore } from '../stores/sessionStore';
+import { SkeletonRows } from './Skeleton';
 import { useServerStore, isSessionBusy } from '../stores/serverStore';
 import { useShallow } from 'zustand/react/shallow';
 import { useOpenMissionEditor } from '../hooks/useOpenMissionEditor';
@@ -119,6 +120,7 @@ export const SessionList: React.FC<{
   hideFilters?: boolean;
 }> = ({ activeSessionId, onSelectSession, onCreateSession, onDeleteSession, onOpenSettings, filterSessions, hideMissions, hideFilters }) => {
   const storeSessions = useSessionStore((s) => s.allSessions);
+  const sessionsLoaded = useSessionStore((s) => s.allSessionsLoaded);
   const allSessions = filterSessions ?? storeSessions;
   // Which sessions have an agent in flight — serverStore.isSessionBusy, the
   // same answer the chat spinner uses. For sessions this transport has no run
@@ -429,11 +431,15 @@ export const SessionList: React.FC<{
                   ? 'bg-blue-100 dark:bg-blue-500/15 text-blue-600 dark:text-blue-400'
                   : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/5')}>
               {f === 'all' ? 'All' : f}
-              {' ('}
-              <span key={k} className={cn('inline-block tabular-nums', k > 0 && 'animate-count-bump')}>
-                {counts[f]}
-              </span>
-              {')'}
+              {sessionsLoaded && (
+                <>
+                  {' ('}
+                  <span key={k} className={cn('inline-block tabular-nums', k > 0 && 'animate-count-bump')}>
+                    {counts[f]}
+                  </span>
+                  {')'}
+                </>
+              )}
               {k > 0 && (
                 <span key={`plus-${k}`}
                   className="absolute left-1/2 -top-2 text-[16px] font-extrabold text-emerald-500 drop-shadow-[0_1px_2px_rgba(16,185,129,0.45)] pointer-events-none animate-plus-one-fly">
@@ -478,7 +484,10 @@ export const SessionList: React.FC<{
 
       {/* Session list (scrollable) */}
       <div className="flex-1 overflow-y-auto min-h-0" data-testid="session-list">
-        {groups.length === 0 && (
+        {groups.length === 0 && !sessionsLoaded && (
+          <SkeletonRows rows={5} rowClass="h-10 rounded-lg" className="px-3 py-2" testId="session-list-loading" />
+        )}
+        {groups.length === 0 && sessionsLoaded && (
           <div className="flex flex-col items-center justify-center py-12 text-slate-400" data-testid="session-list-empty">
             <MessageSquare size={24} className="mb-2 opacity-30" />
             <p className="text-xs">No sessions yet</p>

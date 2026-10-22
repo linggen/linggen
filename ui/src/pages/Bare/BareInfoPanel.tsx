@@ -12,6 +12,8 @@ export const BareInfoPanel: React.FC = () => {
   const projectRoot = useSessionStore((s) => s.selectedProjectRoot);
   const models = useServerStore((s) => s.models);
   const skills = useServerStore((s) => s.skills);
+  const modelsLoaded = useServerStore((s) => s.modelsLoaded);
+  const skillsLoaded = useServerStore((s) => s.skillsLoaded);
   const agents = useServerStore((s) => s.agents);
   const defaultModels = useServerStore((s) => s.defaultModels);
   const ollamaStatus = useServerStore((s) => s.ollamaStatus);
@@ -28,6 +30,8 @@ export const BareInfoPanel: React.FC = () => {
       <InfoPanel
         models={models}
         skills={skills}
+        modelsLoaded={modelsLoaded}
+        skillsLoaded={skillsLoaded}
         agents={agents}
         defaultModels={defaultModels}
         ollamaStatus={ollamaStatus}

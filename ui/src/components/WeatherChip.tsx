@@ -2,13 +2,14 @@
  * The weather in the top bar: an icon, the temperature, and the city when
  * there is room; a wind mark when it blows hard (wind is never a kind: a
  * clear day can be windy) and a festival mark on a festival's day, named in
- * the title. Hidden while the sense is off or nothing is read yet. A click
- * opens Settings → Weather. Reads the same view the sky does.
+ * the title. A shimmer until the first load answers; hidden while the sense
+ * is off or nothing is read yet. A click opens Settings → Weather. Reads the same view the sky does.
  */
 import React from 'react';
 import { Cloud, CloudFog, CloudLightning, CloudRain, CloudSnow, Moon, Sparkles, Sun, Wind, type LucideIcon } from 'lucide-react';
 import { useSkyStore, useWeatherPoll } from '../stores/skyStore';
 import { cn } from '../lib/cn';
+import { SkeletonBar } from './Skeleton';
 import { windOf, windWords } from '../lib/skyArt.mts';
 
 const ICONS: Record<string, LucideIcon> = {
@@ -22,7 +23,9 @@ export const WeatherChip: React.FC<{ onOpen?: () => void; className?: string }> 
   useWeatherPoll();
   const view = useSkyStore((s) => s.view);
   const festival = useSkyStore((s) => s.today?.festival ?? null);
+  const read = useSkyStore((s) => s.today !== null); // the first load has answered
   const reading = view?.reading;
+  if (!read) return <div className={cn('flex items-center', className)} data-testid="weather-loading"><SkeletonBar className="h-3.5 w-10 rounded-full" /></div>;
   if (!view || view.off || !reading) return null;
   const Icon = ICONS[reading.kind] ?? (reading.is_day ? Sun : Moon);
   const city = view.city?.name ?? reading.city;

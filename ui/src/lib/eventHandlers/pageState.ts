@@ -47,7 +47,7 @@ function applyPermission(ps: PageState): void {
 
 function applyGlobalLists(ps: PageState): void {
   if (ps.all_sessions) {
-    useSessionStore.setState({ allSessions: ps.all_sessions });
+    useSessionStore.setState({ allSessions: ps.all_sessions, allSessionsLoaded: true });
     // Auto-select session if none is active (e.g. on init/restart):
     // 1. Try to restore from localStorage (last used session)
     // 2. Fall back to first session in the list
@@ -58,9 +58,9 @@ function applyGlobalLists(ps: PageState): void {
       store.setActiveSessionId(match ? saved! : ps.all_sessions[0].id);
     }
   }
-  if (ps.models) useServerStore.setState({ models: ps.models });
+  if (ps.models) useServerStore.setState({ models: ps.models, modelsLoaded: true });
   if (ps.default_models) useServerStore.setState({ defaultModels: ps.default_models });
-  if (ps.skills) useServerStore.setState({ skills: ps.skills });
+  if (ps.skills) useServerStore.setState({ skills: ps.skills, skillsLoaded: true });
   if (ps.missions) useUiStore.getState().bumpMissionRefreshKey();
 }
 
