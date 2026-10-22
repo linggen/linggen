@@ -51,11 +51,7 @@ async fn every_run_event_and_row_names_its_run() {
     let row_runs = runs_of_rows(&rows);
     assert_eq!(row_runs.len(), 3, "three turns, three runs: {rows:#?}");
 
-    let events: Vec<Value> = w
-        .events()
-        .into_iter()
-        .filter(|e| e["session_id"] == sid.as_str())
-        .collect();
+    let events = events_until_turns_end(&w, &sid, row_runs.len()).await;
     for e in events.iter().filter(|e| belongs_to_a_run(e)) {
         assert!(e["run_id"].is_string(), "a run's event has no run_id: {e}");
     }
@@ -124,6 +120,28 @@ async fn every_run_event_and_row_names_its_run() {
         .unwrap_or_else(|| panic!("no interrupted row: {history:#}"));
     assert_eq!(cut[0]["run_id"], row_runs[1].as_str(), "{cut}");
     w.assert_all_scripted();
+}
+
+/// The session's events once `turns` turn ends have come: a run's finish is
+/// logged before its turn closes, so the last turn's end may still be on its
+/// way.
+async fn events_until_turns_end(w: &World, sid: &str, turns: usize) -> Vec<Value> {
+    let start = Instant::now();
+    loop {
+        let events: Vec<Value> = w
+            .events()
+            .into_iter()
+            .filter(|e| e["session_id"] == sid)
+            .collect();
+        let ends = events
+            .iter()
+            .filter(|e| e["kind"] == "turn_complete")
+            .count();
+        if ends >= turns || start.elapsed() > Duration::from_secs(10) {
+            return events;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }
 
 /// Ask for a long Bash, allow it, stop it while it runs.
