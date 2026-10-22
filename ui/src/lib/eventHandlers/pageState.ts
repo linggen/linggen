@@ -13,6 +13,7 @@ import { useChatStore } from '../../stores/chatStore';
 import { UNSPOKEN_SENDERS } from '../messageUtils';
 import { interruptedResend, INTERRUPTED_TEXT } from '../interruptedTurn.mts';
 import { stillOn } from '../sessionLoad.mts';
+import { sessionRootOf } from '../sessionRoot.mts';
 import { isPermissionSuppressed } from './_shared';
 
 
@@ -54,8 +55,10 @@ function applyGlobalLists(ps: PageState): void {
     const store = useSessionStore.getState();
     if (!store.activeSessionId && ps.all_sessions.length > 0) {
       const saved = window.localStorage.getItem('linggen:active-session');
-      const match = saved && ps.all_sessions.find((s) => s.id === saved);
-      store.setActiveSessionId(match ? saved! : ps.all_sessions[0].id);
+      const pick = ps.all_sessions.find((s) => s.id === saved) || ps.all_sessions[0];
+      store.setActiveSessionId(pick.id);
+      // The restored session's own folder — never one kept from another.
+      store.setSelectedProjectRoot(sessionRootOf(pick));
     }
   }
   if (ps.models) useServerStore.setState({ models: ps.models });

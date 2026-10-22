@@ -453,7 +453,8 @@ pub struct Skill {
     #[serde(default)]
     pub permission: Option<SkillPermission>,
     /// Optional starting cwd for sessions invoking this skill. Tilde-expandable
-    /// (`~/.linggen`). When omitted, sessions inherit the user's `home_path`.
+    /// (`~/.linggen`). When omitted, its sessions start in the skill's own
+    /// folder ([`Skill::working_dir`]).
     /// Mirrors the `cwd:` field in mission frontmatter.
     #[serde(default)]
     pub cwd: Option<String>,
@@ -510,6 +511,19 @@ pub struct Skill {
 }
 
 impl Skill {
+    /// Where a session of this skill works when nobody chose a folder: its
+    /// declared `cwd:`, else its own folder.
+    pub fn working_dir(&self) -> PathBuf {
+        if let Some(cwd) = self.cwd.as_deref().filter(|c| !c.trim().is_empty()) {
+            return crate::util::resolve_path(std::path::Path::new(cwd));
+        }
+        let dir = self
+            .skill_dir
+            .clone()
+            .unwrap_or_else(|| crate::paths::global_skills_dir().join(&self.name));
+        crate::util::resolve_path(&dir)
+    }
+
     /// Whether this skill keeps `agent` away right now (`place.<agent>.
     /// absent_until`, read from the skill's own state). A gate whose state
     /// can't be read keeps the agent away; an agent the skill declares no

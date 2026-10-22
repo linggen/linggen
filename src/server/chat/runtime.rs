@@ -299,7 +299,7 @@ async fn auto_recall_memory(
                     .ok()
                     .flatten()
             })
-            .and_then(|m| m.cwd.or(m.project))
+            .map(|m| m.cwd)
             .map(|cwd| {
                 let p = std::path::PathBuf::from(&cwd);
                 crate::engine::tools::memory_root(&p)

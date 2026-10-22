@@ -68,9 +68,7 @@ pub(crate) async fn get_system_prompt_api(
     // An existing session's own cwd first: where its turns stand.
     let mut candidates: Vec<String> = Vec::new();
     if let Some(ref m) = session_meta {
-        if let Some(cwd) = m.cwd.as_deref().filter(|s| !s.is_empty()) {
-            candidates.push(cwd.to_string());
-        }
+        candidates.push(m.cwd.clone());
         if let Some(proj) = m.project.as_deref().filter(|s| !s.is_empty()) {
             candidates.push(proj.to_string());
         }

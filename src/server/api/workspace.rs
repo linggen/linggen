@@ -80,7 +80,7 @@ async fn known_roots(state: &ServerState, fresh: bool) -> HashSet<PathBuf> {
         .list_sessions()
         .unwrap_or_default()
     {
-        raw.extend(meta.cwd);
+        raw.push(meta.cwd);
         raw.extend(meta.project);
     }
     let roots: HashSet<PathBuf> = raw
@@ -471,6 +471,33 @@ fn kill_group(pgid: Option<u32>) {
     let _ = pgid;
 }
 
+/// Where a `!` command starts: where the last one in this session ended,
+/// else the session's own folder, else the request's, else the default
+/// workspace. The session's folder beats the request's — a surface's idea of
+/// the folder can be another session's, and the sentinel below would write it
+/// onto this one.
+async fn bash_start_dir(state: &ServerState, req: &BashRequest) -> PathBuf {
+    if let Some(sid) = &req.session_id {
+        if let Some(dir) = state.user_bash_cwd.lock().await.get(sid).cloned() {
+            return dir;
+        }
+        let own = state
+            .manager
+            .global_sessions
+            .get_session_meta(sid)
+            .ok()
+            .flatten()
+            .map(|meta| meta.cwd);
+        if let Some(own) = own {
+            return expand_project_root(&own);
+        }
+    }
+    if req.project_root.trim().is_empty() {
+        return crate::paths::ensure_default_workspace();
+    }
+    expand_project_root(&req.project_root)
+}
+
 /// POST /api/bash — run a shell command directly (CC `!` shortcut).
 ///
 /// Tracks cwd per session (same sentinel as the agent Bash tool) so that
@@ -486,16 +513,7 @@ pub(crate) async fn run_bash_api(
 
     use crate::util::CWD_SENTINEL;
 
-    // Resolve cwd: use per-session stored cwd if available, else project_root.
-    let base_cwd: PathBuf = if let Some(sid) = &req.session_id {
-        let guard = state.user_bash_cwd.lock().await;
-        guard
-            .get(sid)
-            .cloned()
-            .unwrap_or_else(|| expand_project_root(&req.project_root))
-    } else {
-        expand_project_root(&req.project_root)
-    };
+    let base_cwd = bash_start_dir(&state, &req).await;
 
     // Fall back to home directory when the session's cwd no longer exists
     // (e.g. project directory was deleted). This lets the user `! cd` elsewhere.
@@ -590,7 +608,7 @@ pub(crate) async fn run_bash_api(
                     let cwd_str = new_cwd.to_string_lossy().to_string();
                     if let Ok(Some(mut meta)) = state.manager.global_sessions.get_session_meta(sid)
                     {
-                        meta.cwd = Some(cwd_str.clone());
+                        meta.cwd = cwd_str.clone();
                         meta.project = project.clone();
                         meta.project_name = project_name.clone();
                         let _ = state.manager.global_sessions.update_session_meta(&meta);

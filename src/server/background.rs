@@ -275,7 +275,7 @@ fn note_working_folder(state: &Arc<ServerState>, session_id: String, cwd: String
     let (project, project_name) = (part(0), part(1));
     let sessions = &state.manager.global_sessions;
     if let Ok(Some(mut meta)) = sessions.get_session_meta(&session_id) {
-        meta.cwd = Some(cwd.clone());
+        meta.cwd = cwd.clone();
         meta.project = project.clone();
         meta.project_name = project_name.clone();
         let _ = sessions.update_session_meta(&meta);

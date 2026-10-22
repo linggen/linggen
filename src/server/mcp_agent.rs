@@ -134,7 +134,7 @@ pub async fn run(
         updated_at: 0,
         skill: None,
         creator: "agent".into(),
-        cwd: Some(root_str.clone()),
+        cwd: root_str.clone(),
         project: Some(root_str.clone()),
         project_name: root.file_name().map(|n| n.to_string_lossy().to_string()),
         mission_id: None,

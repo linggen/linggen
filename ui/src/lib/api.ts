@@ -88,6 +88,8 @@ interface SessionCreateRequest {
 }
 interface SessionCreateResponse {
   id: string;
+  /** The folder the engine started the session in. */
+  cwd?: string;
 }
 interface SessionDeleteRequest {
   session_id: string;

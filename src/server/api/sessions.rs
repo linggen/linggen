@@ -15,7 +15,8 @@ use super::canonical_project_root;
 
 #[derive(Deserialize)]
 pub(crate) struct CreateSessionRequest {
-    /// Required for user/project sessions, optional for skill sessions.
+    /// The folder the person chose for this session (a picked project);
+    /// absent for a plain New chat, which starts in the default workspace.
     #[serde(default)]
     project_root: Option<String>,
     title: String,
@@ -48,6 +49,24 @@ fn refuse_params(
     crate::engine::skill::params::check(&skill.session_params, params).err()
 }
 
+/// Where a new session works, fixed when it is made: the bound skill's
+/// declared `cwd:`, else the folder the request chose for it, else where a
+/// session like it starts — a skill's own folder, or the default workspace
+/// (`paths::default_workspace`). Nothing a surface sends later moves it; only
+/// a `cd` does.
+fn session_cwd(skill: Option<&crate::engine::skill::Skill>, project_root: Option<&str>) -> String {
+    let given = |p: &&str| !p.trim().is_empty();
+    let declared = skill.and_then(|s| s.cwd.as_deref()).filter(given);
+    let dir = match declared.or(project_root.filter(given)) {
+        Some(p) => canonical_project_root(p),
+        None => match skill {
+            Some(s) => s.working_dir(),
+            None => crate::util::resolve_path(&crate::paths::ensure_default_workspace()),
+        },
+    };
+    dir.to_string_lossy().to_string()
+}
+
 pub(crate) async fn create_session(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<CreateSessionRequest>,
@@ -57,10 +76,6 @@ pub(crate) async fn create_session(
         crate::util::now_ts_secs(),
         &uuid::Uuid::new_v4().to_string()[..8]
     );
-    // cwd resolution: skill's declared `cwd:` (if any) wins, otherwise the
-    // iframe's project_root, otherwise the configured home_path. Mirrors how
-    // mission frontmatter sets cwd; lets ling-mem boot at ~/.linggen instead
-    // of the user's home dir.
     let skill = match req.skill.as_deref() {
         Some(name) => state.manager.skills.get_skill(name).await,
         None => None,
@@ -68,11 +83,7 @@ pub(crate) async fn create_session(
     if let Some(why) = refuse_params(&req.params, skill.as_ref()) {
         return (StatusCode::BAD_REQUEST, why).into_response();
     }
-    let cwd_str: Option<String> = skill.as_ref().and_then(|s| s.cwd.clone());
-    let cwd_str = cwd_str.or_else(|| req.project_root.clone());
-    let cwd = cwd_str
-        .as_deref()
-        .map(|p| canonical_project_root(p).to_string_lossy().to_string());
+    let cwd = session_cwd(skill.as_ref(), req.project_root.as_deref());
     let is_skill = req.skill.is_some();
     let meta = crate::state_fs::sessions::SessionMeta {
         id: id.clone(),
@@ -85,7 +96,7 @@ pub(crate) async fn create_session(
         } else {
             "user".into()
         },
-        cwd,
+        cwd: cwd.clone(),
         project: None,
         project_name: None,
         mission_id: None,
@@ -104,7 +115,7 @@ pub(crate) async fn create_session(
     };
 
     match state.manager.global_sessions.add_session(&meta) {
-        Ok(_) => Json(serde_json::json!({ "id": id })).into_response(),
+        Ok(_) => Json(serde_json::json!({ "id": id, "cwd": cwd })).into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
