@@ -222,3 +222,26 @@ fn every_run_event_carries_its_run_id() {
         );
     }
 }
+
+/// A top-level reply names its run on the event, never in `data.run_id`:
+/// that key means "a subagent's" to surfaces already shipped (the phone).
+#[test]
+fn a_top_level_message_keeps_its_run_out_of_the_subagent_key() {
+    let msg = |parent: Option<&str>| ServerEvent::Message {
+        from: "ling".into(),
+        to: "user".into(),
+        content: "Done.".into(),
+        session_id: Some("s".into()),
+        run_id: Some("r1".into()),
+        parent_agent_id: parent.map(str::to_string),
+        client_id: None,
+        via: None,
+        via_note: None,
+        images: Vec::new(),
+    };
+    let top = map(msg(None), 1).expect("mapped");
+    assert_eq!(top.run_id.as_deref(), Some("r1"));
+    assert!(top.data.expect("data")["run_id"].is_null());
+    let sub = map(msg(Some("ling")), 2).expect("mapped");
+    assert_eq!(sub.data.expect("data")["run_id"], "r1");
+}

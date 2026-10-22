@@ -69,7 +69,11 @@ pub(crate) fn model_error_code(msg: &str) -> &'static str {
 // Message persistence
 // ---------------------------------------------------------------------------
 
-/// Emit a `ServerEvent::Message` **and** persist to session files.
+/// Emit a `ServerEvent::Message` **and** persist to session files. A run's
+/// line (`run_id`: its error, its plan text) rides the agent-event queue,
+/// behind the run's own events: sent straight, it overtook the run's queued
+/// status, which then reopened the bubble the line had closed.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn persist_and_emit_message(
     manager: &Arc<AgentManager>,
     events_tx: &broadcast::Sender<ServerEvent>,
@@ -82,18 +86,31 @@ pub(crate) async fn persist_and_emit_message(
     is_observation: bool,
     run_id: Option<&str>,
 ) {
-    let _ = events_tx.send(ServerEvent::Message {
-        from: from.to_string(),
-        to: to.to_string(),
-        content: content.to_string(),
-        session_id: session_id.map(|s| s.to_string()),
-        run_id: run_id.map(str::to_string),
-        parent_agent_id: None,
-        client_id: None,
-        via: None,
-        via_note: None,
-        images: Vec::new(),
-    });
+    if run_id.is_some() {
+        let line = crate::engine::agent::AgentEvent::Message {
+            from: from.to_string(),
+            to: to.to_string(),
+            content: content.to_string(),
+            run_id: run_id.map(str::to_string),
+            parent_id: None,
+        };
+        manager
+            .send_event(line, session_id.map(str::to_string))
+            .await;
+    } else {
+        let _ = events_tx.send(ServerEvent::Message {
+            from: from.to_string(),
+            to: to.to_string(),
+            content: content.to_string(),
+            session_id: session_id.map(|s| s.to_string()),
+            run_id: None,
+            parent_agent_id: None,
+            client_id: None,
+            via: None,
+            via_note: None,
+            images: Vec::new(),
+        });
+    }
     persist_message_only(
         manager,
         root,

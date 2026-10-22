@@ -43,8 +43,11 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
                         // from a delegated engine. handleMessage in the UI
                         // uses these to route the bubble into SubagentPane
                         // instead of the parent's main chat (the gap that
-                        // was leaking "ENCODED encoded=0" into chat).
-                        run_id,
+                        // was leaking "ENCODED encoded=0" into chat). A
+                        // top-level message's run rides `UiEvent::run_id`
+                        // only: the phone app reads a set `data.run_id` as a
+                        // subagent's and drops the message.
+                        run_id: parent_agent_id.as_ref().and(run_id.clone()),
                         parent_agent_id,
                         client_id,
                         via,

@@ -291,7 +291,9 @@ by agent, words or time.
   it (`TurnComplete` and idle name the turn's last run). The engine stamps it
   in one place (`engine/run_scope.rs`: `emit`, `save_row`, `stream`); what
   the turn sends after its run reads `last_run_id`. Statuses sent before a
-  run exists ("Loading model…", the first "Thinking") carry none.
+  run exists ("Loading model…", the first "Thinking") carry none. A message's
+  `data.run_id` stays a subagent's key (a top-level reply's is null): shipped
+  surfaces (the phone) read it as "a subagent's" and drop the message.
 - **On disk**: every row a run saves carries `run_id` — its calls and their
   results, its words, its final reply, its error line, its plan. A person's
   message carries none: it opens the turn before any run begins (and a
