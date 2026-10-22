@@ -14,7 +14,9 @@
   (case h).
 - **Web search is text only again, and fast** (~2 s, not 10–12 s): pictures
   come from the pages Ling fetches. A search that cannot reach its service
-  says WebFetch still works, instead of ending the answer.
+  says WebFetch still works, instead of ending the answer. A page picture
+  with no caption is named by its file's words (else the page title), and
+  a number written as a markdown image or link is kept in the plain form.
 
 ## [1.10.0] - 2026-10-21 — one memory across machines
 

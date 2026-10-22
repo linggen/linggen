@@ -139,6 +139,20 @@ pub fn ids_in(text: &str) -> Vec<String> {
     ids
 }
 
+/// A number a model wrote as a markdown link or image — `![alt](turn2image1)`,
+/// `[site](turn2search1)` — in the plain form every model is told,
+/// `[turn2image1]`, so a saved answer holds one form for every model.
+pub fn plain_refs(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains("](") {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    LINKED_REF.replace_all(text, "[$1]")
+}
+
+static LINKED_REF: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"!?\[[^\]\n]*\]\(\s*<?(turn\d{1,6}(?:search|image)\d{1,6})>?\s*\)").unwrap()
+});
+
 /// `text` without its `[turn…]` numbers — the words alone, for a voice or a
 /// surface that cannot draw them.
 pub fn strip_ids(text: &str) -> String {
@@ -181,6 +195,19 @@ mod tests {
                     again [turn1image2], a [link](x) and [turn9news1].";
         assert_eq!(ids_in(text), vec!["turn1image2", "turn1image1", "turn1search1"]);
         assert!(ids_in("[turn").is_empty());
+    }
+
+    #[test]
+    fn a_number_written_as_a_markdown_link_or_image_becomes_plain() {
+        let text = "看图：\n![MOVE 2.0 官网图 1](turn2image1)\n![](turn2image2) \
+                    from [the maker]( turn2search1 ), a [real link](https://a.example/turn1image1) \
+                    and [turn3image1] as is.";
+        assert_eq!(
+            plain_refs(text),
+            "看图：\n[turn2image1]\n[turn2image2] from [turn2search1], a \
+             [real link](https://a.example/turn1image1) and [turn3image1] as is."
+        );
+        assert!(matches!(plain_refs("no links"), std::borrow::Cow::Borrowed(_)));
     }
 
     #[test]

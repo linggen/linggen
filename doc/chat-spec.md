@@ -167,8 +167,11 @@ never writes its own image URL.
 - **Where pictures come from.** WebFetch and browser screenshots only.
   WebFetch returns a page's main image (`og:image`, captioned by the page
   title, with a declared product's name and price) and its in-text
-  pictures with their captions (`<figcaption>`, else `alt`; icons, logos
-  and vectors skipped). WebSearch is text only (numbered sources): asking
+  pictures with their captions (`<figcaption>`, else `alt`, else `title`,
+  else the words of the file's name — `move-schwarz-frontal.jpg` → "move
+  schwarz frontal", without hashes, sizes, bare numbers or filler like
+  `img`/`dsc` — else the page title; never the address; icons, logos and
+  vectors skipped). WebSearch is text only (numbered sources): asking
   Tavily for image descriptions took a search from ~2 s to 10–12 s, past
   the engine's 15 s timeout on a slow day (2026-10-22). So to show what
   something looks like, Ling fetches the maker's or a product page. A
@@ -177,7 +180,10 @@ never writes its own image URL.
 - **The model refers by number.** GPT models use their own citation
   markers; the Responses API stream turns each id inside one into the plain
   form (`\u{e200}i\u{e202}turn2image1\u{e201}` → `[turn2image1]`), so the
-  saved answer holds one form for every model. Other models are told the
+  saved answer holds one form for every model. A number written as a
+  markdown image or link (`![alt](turn2image1)`, `[site](turn2search1)`,
+  as Claude sometimes does) is put in the plain form where every reply's
+  text is finished (`answer_refs::plain_refs`). Other models are told the
   plain form `[turn2image1]` in the tool description (WebFetch's, which
   also says pictures are worth showing when the person asks what something
   looks like), which describes the capability without setting a style; a
