@@ -617,17 +617,8 @@ impl AgentEngine {
                 // All native tool calls were filtered (e.g. all were "Done") →
                 // treat as text-only response and end the loop.
                 if actions.is_empty() {
-                    // Plan mode fallback: model emitted Done without calling
-                    // ExitPlanMode.  Treat the text as the plan and auto-finalize.
-                    if self.plan_mode {
-                        info!("[plan] Done-only tool call in plan mode → implicit ExitPlanMode");
-                        let plan_text = raw.trim().to_string();
-                        if !plan_text.is_empty() {
-                            self.last_assistant_text = Some(plan_text.clone());
-                        }
-                        let outcome = self.finalize_plan_mode(plan_text).await;
-                        return Ok(outcome);
-                    }
+                    // Only ExitPlanMode submits a plan; anything else is an answer.
+                    self.leave_plan_mode_for_answer();
                     let _ = self.persist_assistant_message(&raw, session_id).await;
                     self.chat_history
                         .push(ChatMessage::new("assistant", raw.clone()));
@@ -685,17 +676,8 @@ impl AgentEngine {
                         && (trimmed.contains("\"type\"") || trimmed.contains("\"name\""))
                 };
                 if !has_json_actions {
-                    // Plan mode fallback: model output plan text without calling
-                    // ExitPlanMode.  Treat the text as the plan and auto-finalize.
-                    if self.plan_mode {
-                        info!("[plan] Text-only response in plan mode → implicit ExitPlanMode");
-                        let plan_text = raw.trim().to_string();
-                        if !plan_text.is_empty() {
-                            self.last_assistant_text = Some(plan_text.clone());
-                        }
-                        let outcome = self.finalize_plan_mode(plan_text).await;
-                        return Ok(outcome);
-                    }
+                    // Only ExitPlanMode submits a plan; a text reply is an answer.
+                    self.leave_plan_mode_for_answer();
 
                     // Pure conversational text — emit as a complete block.
                     if let Some(manager) = self.tools.get_manager() {

@@ -11,6 +11,7 @@
 mod fixtures;
 mod met;
 mod pictures;
+mod plan;
 mod presence;
 mod prompt;
 mod sessions;

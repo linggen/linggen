@@ -11,8 +11,8 @@ use tokio::sync::Mutex;
 
 use super::handler::resolve_request_root;
 use super::runtime::{
-    persist_and_emit_last_assistant_text, push_user_turn_with_recall, run_loop_with_tracking,
-    send_thinking_status, spawn_thinking_forwarder, unwire_interrupt_channel, wire_engine_bridges,
+    push_user_turn_with_recall, run_loop_with_tracking, send_thinking_status,
+    spawn_thinking_forwarder, unwire_interrupt_channel, wire_engine_bridges,
     wire_interrupt_channel,
 };
 use super::types::{EditPlanRequest, PlanActionRequest};
@@ -71,13 +71,8 @@ pub(super) async fn run_plan_dispatch(ctx: &ChatRunCtx, engine: &mut crate::engi
 
     match outcome {
         Ok(ref out) => {
-            // Skip emitting the raw plan text as a regular message — the plan
-            // content reaches the UI via the PlanUpdate SSE event instead.
-            // Emitting here would hide the PlanBlock widget behind a duplicate
-            // text bubble.
-            if !matches!(out, crate::engine::AgentOutcome::Plan(_)) {
-                persist_and_emit_last_assistant_text(ctx, engine).await;
-            }
+            // A plan reaches the UI via PlanUpdate; any other reply was
+            // already shown and saved by the engine (as in `structured`).
             if let crate::engine::AgentOutcome::Plan(ref plan) = out {
                 let plan_json = serde_json::json!({ "type": "plan", "plan": plan }).to_string();
                 persist_message_only(

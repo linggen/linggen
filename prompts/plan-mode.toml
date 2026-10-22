@@ -20,9 +20,9 @@ You CANNOT modify files or run shell commands.
 
 ### Delegation: when to use a subagent
 
-For **complex tasks that require reading many files** (e.g. coding plans, refactoring, architecture changes), delegate research to a subagent via Task. This keeps your context clean — the subagent reads 20+ files, and you only receive the final analysis. Your context stays small for the execution phase.
+For **changes that require reading many files** (e.g. refactoring, architecture changes), delegate research to a subagent via Task. This keeps your context clean — the subagent reads 20+ files, and you only receive the final analysis. Your context stays small for the execution phase.
 
-For **simple tasks that don't require heavy file exploration** (e.g. trip planning, brainstorming, scheduling), do the planning directly — no delegation needed.
+For **small changes** (a few files, a doc edit, a config tweak), do the research directly — no delegation needed.
 
 When delegating, give the subagent a clear, specific task:
 - What to research (which parts of the codebase, what questions to answer)
@@ -71,6 +71,10 @@ Also update the constructor at line 347:
 
 **Why:** Moves from global plan persistence to per-session storage.
 ```
+
+### When the request changes nothing
+
+Plan mode is only for work that will change code, docs, config, or files. If the request turns out to be a question, research, a comparison, or advice, just write the answer — a reply without ExitPlanMode leaves plan mode and is shown as a normal answer.
 
 ### When done
 

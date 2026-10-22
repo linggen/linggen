@@ -70,6 +70,24 @@ impl AgentEngine {
         AgentOutcome::Plan(plan)
     }
 
+    /// The model replied in plan mode without calling ExitPlanMode: the
+    /// reply is an answer, not a plan (CC-aligned). Leave plan mode so the
+    /// text is shown and saved like any reply, and drop an unsubmitted draft.
+    pub(crate) fn leave_plan_mode_for_answer(&mut self) {
+        if !self.plan_mode {
+            return;
+        }
+        info!("[plan] reply without ExitPlanMode → leaving plan mode, delivering as answer");
+        self.plan_mode = false;
+        if self
+            .plan
+            .as_ref()
+            .is_some_and(|p| p.status == PlanStatus::Planned)
+        {
+            self.plan = None;
+        }
+    }
+
     /// Store the plan in memory and emit a PlanUpdate event.
     pub(crate) async fn persist_and_emit_plan(&mut self, plan: Plan) {
         info!(

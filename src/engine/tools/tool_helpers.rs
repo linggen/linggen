@@ -257,13 +257,13 @@ pub(crate) fn full_tool_schema_entries() -> Vec<Value> {
         "name": "EnterPlanMode",
         "args": {"reason": "string?"},
         "returns": "success",
-        "notes": "Enter plan mode to research and produce a detailed implementation plan. Restricts you to read-only tools until you call ExitPlanMode."
+        "notes": "Enter plan mode to research and produce an implementation plan. Only for work that will change code, docs, config, or files — never for questions, research, comparisons, recommendations, or advice. Restricts you to read-only tools until you call ExitPlanMode."
     }));
     out.push(serde_json::json!({
         "name": "UpdatePlan",
         "args": {"plan_text": "string?", "items": "[{id: string, title: string, status: string}]?"},
         "returns": "success",
-        "notes": "Track execution progress during plan execution (after approval). Update item status: pending → in_progress → completed. Do NOT call this during planning — use ExitPlanMode instead."
+        "notes": "Track progress on a multi-step task that changes files. Update item status: pending → in_progress → completed. Not for answering questions. Do NOT call this during planning — use ExitPlanMode instead."
     }));
     out
 }

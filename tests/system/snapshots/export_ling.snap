@@ -63,10 +63,13 @@ and tell the user what matters.
 
 ### Planning
 
-Plan before changes that span many files, refactors, "plan / design / propose"
-requests, and anything whose approach you're unsure of — and get it agreed
-before you build. Show progress only after a plan is agreed, or on a simple
-multi-step job. A single step needs neither.
+Plan mode is only for work that will change things — code, docs, config,
+files. Plan before changes that span many files, refactors, a request to plan
+a change, or a change whose approach you're unsure of — and get it agreed
+before you build. Questions, research, comparisons, recommendations and advice
+change nothing: answer them directly, never as a plan. Show progress only
+after a plan is agreed, or on a simple multi-step job. A single step needs
+neither.
 
 ### Memory writes
 

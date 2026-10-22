@@ -11,6 +11,8 @@ guide: |
 
 Redesign of the plan feature, aligned with Claude Code. Separates planning (read-only research) from execution, with user approval gates. Multi-model compatible.
 
+**Plan mode is only for work that will change things** — writing code, writing docs, editing config or files. Questions, research, comparisons, recommendations, shopping and advice change nothing: they are answered directly, never planned. The prompt sections and the `EnterPlanMode` / `UpdatePlan` tool descriptions state this rule.
+
 ## Related docs
 
 - `agentic-loop.md`: kernel loop, termination.
@@ -38,6 +40,7 @@ Redesign of the plan feature, aligned with Claude Code. Separates planning (read
 - `generate_plan_filename()` — removed. No `~/.linggen/plans/` directory.
 - Sidecar `.meta.json` files — removed.
 - Stale `Planned` → `Executing` auto-promotion — no silent approval bypass.
+- Implicit `ExitPlanMode` on a reply — a plan-mode reply without `ExitPlanMode` was turned into a plan (2026-10-22: a coffee-machine shortlist got Start building / Reject). Now it is an answer.
 - Bash in plan mode — blocked entirely for safety.
 - Task blocked in plan mode — now allowed so the model can delegate research to subagents for complex tasks (keeps main context clean).
 
@@ -51,7 +54,7 @@ Redesign of the plan feature, aligned with Claude Code. Separates planning (read
 ### Added
 
 - **`ExitPlanMode` tool** — model calls this when plan is ready, triggers approval.
-- **Fallback detection** — if model emits `done` in plan mode without calling `ExitPlanMode`, treat as implicit exit.
+- **Reply without `ExitPlanMode` is an answer** — the engine leaves plan mode, drops any unsubmitted draft, and shows and saves the text like any reply. Only `ExitPlanMode` submits a plan (CC-aligned).
 - **Direct plan editing** — user can edit plan markdown before approving (Web UI: inline editor).
 - **Approval UI** — inline: "Start building" / "Reject" / custom feedback. Web UI: approve endpoint with `clear_context` option.
 - **Self-contained plan prompts** — plan-mode prompt emphasizes code snippets and line numbers.
@@ -70,7 +73,7 @@ Tools available: `Read`, `Glob`, `Grep`, `WebSearch`, `WebFetch`, `AskUser`, `Ex
 
 Tools blocked (removed from API call): `Write`, `Edit`, `Bash`, `lock_paths`, `unlock_paths`, `Skill`.
 
-Model researches the codebase (directly or by delegating to a subagent via Task for complex tasks), then writes a self-contained markdown plan and calls `ExitPlanMode`. Delegation keeps the main agent's context clean — research results stay in the subagent's context, and only the analysis is returned.
+Model researches the codebase (directly or by delegating to a subagent via Task for complex tasks), then writes a self-contained markdown plan and calls `ExitPlanMode`. If the request turns out to change nothing, the model just answers; that reply ends plan mode. Delegation keeps the main agent's context clean — research results stay in the subagent's context, and only the analysis is returned.
 
 ### Approval
 
@@ -93,7 +96,7 @@ Not yet implemented. Future: on `done`, mark remaining tracked items as `Skipped
 
 ## Progress tracking
 
-`update_plan` remains as an independent feature — not coupled to plan mode. Used during execution or spontaneously for complex tasks. Drives the sidebar task list UI. Both `plan_text` and `items` are optional — the model can update either or both.
+`update_plan` remains as an independent feature — not coupled to plan mode. Used during execution or spontaneously for a multi-step task that changes files; never for answering questions. Drives the sidebar task list UI. Both `plan_text` and `items` are optional — the model can update either or both.
 
 ## Storage
 
@@ -107,6 +110,6 @@ No separate plan files. The session is the single source of truth. On reload, th
 
 ## Model compatibility
 
-Fallback detection (`done` in plan mode → implicit `ExitPlanMode`) applies to all models unconditionally, so plan mode works regardless of model capability. Models with native tool calling use `ExitPlanMode` directly; models without it rely on the fallback path.
+A plan is submitted only by `ExitPlanMode`, for every model: a model able to call `EnterPlanMode` can call `ExitPlanMode`. A plan-mode reply without it is an answer. If a model stops responding mid-plan (empty-response streak), the engine still finalizes what it gathered as a plan — a reliability bailout, not a reply.
 
 Future: `capability_tier` config field to fine-tune per-model behavior (e.g., disabling `UpdatePlan` for small models).

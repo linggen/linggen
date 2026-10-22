@@ -250,6 +250,58 @@ mod tests {
         assert!(store.get(keys::OBSERVATION_WRAPPER).is_some());
     }
 
+    /// Plan mode is only for work that changes things (code, docs, config,
+    /// files); questions and research are answered, never planned
+    /// (2026-10-22: a coffee-machine shortlist came back as a plan).
+    #[test]
+    fn plan_mode_trigger_names_changes_and_excludes_research() {
+        let store = PromptStore::load(None);
+        let enter = crate::engine::tools::json_schema::oai_tool_definitions(None)
+            .into_iter()
+            .find(|d| d["function"]["name"] == "EnterPlanMode")
+            .map(|d| {
+                d["function"]["description"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_string()
+            })
+            .expect("EnterPlanMode schema");
+        let legacy = store.get(RESPONSE_FORMAT).unwrap();
+        let legacy = legacy
+            .split("### 2. Plan Mode")
+            .nth(1)
+            .expect("legacy plan section");
+        let legacy = legacy.split("### 3.").next().unwrap_or("").to_string();
+        let texts = [
+            legacy,
+            store
+                .get(keys::RESPONSE_FORMAT_NATIVE_PLAN_MODE)
+                .unwrap()
+                .to_string(),
+            enter,
+        ];
+        for text in &texts {
+            let lower = text.to_lowercase();
+            assert!(
+                lower.contains("only for work that will change things"),
+                "{text}"
+            );
+            for named in [
+                "code",
+                "docs",
+                "config",
+                "files",
+                "research",
+                "recommendations",
+                "advice",
+            ] {
+                assert!(text.contains(named), "{named} missing: {text}");
+            }
+            assert!(!text.contains("propose"), "{text}");
+            assert!(!text.contains("upfront exploration"), "{text}");
+        }
+    }
+
     #[test]
     fn render_substitutes_vars() {
         let store = PromptStore::load(None);
