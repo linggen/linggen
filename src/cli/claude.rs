@@ -12,7 +12,12 @@ pub async fn run(port: u16, args: &[String]) -> Result<()> {
     let Some(main) = pick(&models, |id| !id.contains("haiku")).or(models.first()) else {
         bail!("Linggen has no Anthropic API-key model to serve. Add one in Settings → Models.");
     };
-    let small = pick(&models, |id| id.contains("haiku")).unwrap_or(main);
+    // Every family the picker shows lands on a served model: its own when
+    // Linggen has one, else the main one — a built-in row never 404s.
+    let family = |name: &str| pick(&models, |id| id.contains(name));
+    let small = family("haiku").unwrap_or(main);
+    let opus = family("opus").unwrap_or(main);
+    let fable = family("fable").unwrap_or(opus);
     println!("  Claude Code on Linggen — {main} (small: {small})");
 
     let err = std::process::Command::new("claude")
@@ -21,7 +26,8 @@ pub async fn run(port: u16, args: &[String]) -> Result<()> {
         .env("ANTHROPIC_AUTH_TOKEN", "linggen")
         .env_remove("ANTHROPIC_API_KEY")
         .env("ANTHROPIC_MODEL", main)
-        .env("ANTHROPIC_DEFAULT_OPUS_MODEL", main)
+        .env("ANTHROPIC_DEFAULT_FABLE_MODEL", fable)
+        .env("ANTHROPIC_DEFAULT_OPUS_MODEL", opus)
         .env("ANTHROPIC_DEFAULT_SONNET_MODEL", main)
         .env("ANTHROPIC_DEFAULT_HAIKU_MODEL", small)
         .env("ANTHROPIC_SMALL_FAST_MODEL", small)
