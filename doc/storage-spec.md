@@ -27,6 +27,7 @@ Two-tier layout, aligned with Claude Code's `~/.claude/` + `{repo}/.claude/` con
 |-----------|---------|
 | `~/.linggen/` | Global home (override with `$LINGGEN_HOME`) |
 | `~/.linggen/sessions/` | All sessions (flat, creator/project tracked in metadata) |
+| `~/.linggen/runtimes/claude-agent-sdk/` | Versioned SDK dependencies and its isolated Claude config/transcripts (`state/`) |
 | `~/.linggen/workspace/` | Default working folder of a new chat (`session-spec.md` § Default workspace) |
 | `~/.linggen/memory/` | Global memory |
 | `~/.linggen/missions/` | Mission definitions and run history |
@@ -64,6 +65,7 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 │   └── {session_id}/
 │       ├── session.yaml              # Session metadata (includes creator, cwd, project)
 │       ├── messages.jsonl            # Chat messages, append-only (JSONL)
+│       ├── sdk-{agent}.json          # External runtime conversation ID, cwd and thread rewrite generation
 │       ├── refs.jsonl                # Numbered sources and pictures tools returned (append-only)
 │       └── images/                   # Pictures a person's messages carried, pictures Read opened, and the ones answers showed (<sha256-16>.png|jpg|gif|webp)
 ├── memory/                           # Global memory

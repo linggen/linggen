@@ -1,6 +1,7 @@
 pub mod actions;
-pub mod answer_refs;
 pub mod agent;
+pub mod answer_refs;
+mod claude_sdk;
 mod closing_ask;
 pub(crate) mod cloud_meter;
 mod context;
@@ -390,6 +391,13 @@ impl AgentEngine {
     }
 
     async fn run_agent_loop_unguarded(&mut self, session_id: Option<&str>) -> Result<AgentOutcome> {
+        if self
+            .spec
+            .as_ref()
+            .is_some_and(|spec| spec.runtime == agent::record::AgentRuntime::ClaudeAgentSdk)
+        {
+            return self.run_claude_sdk(session_id).await;
+        }
         self.begin_suggestion_turn();
         let mut state = self.initialize_loop(session_id).await?;
         self.kickoff_turn = KickoffTurn::opened_by_last(&state.messages);

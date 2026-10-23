@@ -657,8 +657,12 @@ fn normalize_path(path: &str) -> String {
     }
     let mut suffix: Vec<std::ffi::OsString> = Vec::new();
     while let Some(parent) = p.parent().map(|x| x.to_path_buf()) {
-        if let Some(name) = p.file_name() {
-            suffix.push(name.to_os_string());
+        // file_name() drops `..`. Keep it until the nearest real ancestor
+        // has been canonicalized, then collapse the missing suffix. A new
+        // path such as /project/missing/../../outside must not inherit the
+        // /project grant merely because `missing` does not exist yet.
+        if let Some(component) = p.components().next_back() {
+            suffix.push(component.as_os_str().to_os_string());
         }
         if parent.as_os_str().is_empty() {
             break;
@@ -666,7 +670,11 @@ fn normalize_path(path: &str) -> String {
         if let Ok(c) = parent.canonicalize() {
             let mut out = c;
             for n in suffix.iter().rev() {
-                out.push(n);
+                if n == ".." {
+                    out.pop();
+                } else if n != "." {
+                    out.push(n);
+                }
             }
             return out.to_string_lossy().to_string();
         }
@@ -750,6 +758,13 @@ pub fn tool_action_tier(tool: &str) -> PermissionMode {
         return tier;
     }
     match tool {
+        // Trusted SDK bookkeeping tools only inspect tool metadata or the
+        // SDK's own task list. The discovered tools still pass this gate
+        // individually; discovery never grants permission to execute them.
+        "ToolSearch" | "TaskCreate" | "TaskUpdate" | "TaskList" | "TaskGet" | "TodoWrite" => {
+            PermissionMode::Chat
+        }
+        "Agent" | "TaskOutput" => PermissionMode::Read,
         "EnterPlanMode" | "ExitPlanMode" | "UpdatePlan" => PermissionMode::Read,
         _ => PermissionMode::Admin,
     }

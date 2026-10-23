@@ -32,12 +32,35 @@ Agents are discovered dynamically from `agents/*.md` markdown files. No hardcode
 | `name` | yes | Agent identity |
 | `description` | yes | What the agent does (used for discovery and delegation) |
 | `tools` | yes | Tool declarations (used for prompt assembly). The session's effective path mode controls actual access — see `permission-spec.md`. |
+| `runtime` | no | `linggen` (default) or `claude_agent_sdk`. The runtime supplies the execution loop, system prompt and built-in tools. |
 | `personality` | no | Response style guide — concise directive for HOW the agent communicates |
 | `aliases` | no | Other names a message may address it by at its start (`@银月 …`), beside its id |
 | `internal` | no | `true` = not addressable by a person: left out of the chat's `@` / `@@` lists and never the target of a leading `@name`. The engine still runs it (missions, delegation). |
 | `met_when` | no | `{skill, file, path}` — the agent appears only once met: absent from every surface the engine controls until the value at `path` in the skill's JSON `file` is set (same reading as a skill's `absent_until`, `skill-spec.md` § Place). Absent: always present. See *Appearing only once met* below. |
 
 Runtime configuration (model, effective tools, bound skill) is set at the session level. See `session-spec.md`.
+
+### Claude Agent SDK
+
+Coder uses `runtime: claude_agent_sdk`. Its Markdown body may be empty:
+the SDK supplies the official `claude_code` prompt and built-in tools;
+an optional body adds Linggen-specific instructions after that preset.
+`tools: ["*"]` selects the SDK's default tools, while an explicit list
+narrows its tools. Linggen's existing agents keep their current runtime.
+
+The SDK runs under Linggen's bundled Bun, downloaded on first use with a
+pinned dependency lockfile. It requires a configured Anthropic API-key
+model; an explicit incompatible model fails visibly. With no explicit
+model, Coder uses the first compatible routing default or configured model.
+
+The SDK owns its context and compaction. Linggen keeps the visible messages
+and tool events in the session log, bridges questions and every tool's
+permission check to the existing session grants, and cancels the runner
+when the user stops or interrupts a task. Conversation IDs persist per
+session and agent, so follow-ups survive an engine restart. Clearing or
+rewriting a thread, or changing its working folder, starts from Linggen's
+current conversation instead of resuming stale SDK context. The shared
+memory server is connected through MCP.
 
 ### Appearing only once met
 
@@ -89,6 +112,7 @@ When a skill sets `allowed-tools: []`, tool-related prompt sections (schemas, us
 | Agent | Role | Key tools |
 |:------|:-----|:----------|
 | `ling` | The universal user-facing agent — adapts to any context via skills | `["*"]` |
+| `coder` | Coding through Claude Agent SDK, with its official prompt and tools | SDK defaults |
 
 Memory consolidation is **not** done by a separate subagent anymore. `ling`
 itself writes durable rows inline (driven by the system prompt's memory
