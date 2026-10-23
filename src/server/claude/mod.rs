@@ -2,6 +2,7 @@
 //! Only transport, run bookkeeping and UI events are shared with native chat.
 mod install;
 mod interaction;
+mod media;
 mod protocol;
 mod runtime;
 #[cfg(test)]
@@ -21,6 +22,76 @@ use serde_json::json;
 use std::{path::Path, sync::Arc};
 
 pub(crate) const AGENT_ID: &str = "claude";
+
+pub(crate) struct ModeChange {
+    pub mode: crate::state_fs::sessions::ClaudePermissionMode,
+    pub reply: tokio::sync::oneshot::Sender<std::result::Result<(), String>>,
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct CapabilitiesQuery {
+    session_id: String,
+}
+
+pub(crate) async fn capabilities(
+    axum::extract::State(state): axum::extract::State<Arc<ServerState>>,
+    axum::extract::Query(query): axum::extract::Query<CapabilitiesQuery>,
+) -> Response {
+    let Ok(Some(meta)) = state
+        .manager
+        .global_sessions
+        .get_session_meta(&query.session_id)
+    else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if meta.runtime.is_linggen() || meta.skill.is_some() {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let dir = state.manager.global_sessions.session_dir(&meta.id);
+    for name in ["claude.json", "claude-capabilities.json"] {
+        if let Some(value) = std::fs::read(dir.join(name))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        {
+            if value["commands"].is_array() {
+                return Json(json!({"commands":value["commands"]})).into_response();
+            }
+        }
+    }
+    match runtime::validate_mode(&state, &meta, meta.claude_permission_mode).await {
+        Ok(()) => match std::fs::read(dir.join("claude-capabilities.json"))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        {
+            Some(value) => Json(value).into_response(),
+            None => Json(json!({"commands":[]})).into_response(),
+        },
+        Err(error) => (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
+    }
+}
+
+/// A live change is acknowledged by the SDK before the API persists it.
+pub(crate) async fn set_mode(
+    state: &ServerState,
+    session: &SessionMeta,
+    mode: crate::state_fs::sessions::ClaudePermissionMode,
+) -> Result<()> {
+    let sender = state.claude_controls.lock().await.get(&session.id).cloned();
+    if let Some(sender) = sender {
+        let (reply, response) = tokio::sync::oneshot::channel();
+        sender
+            .send(ModeChange { mode, reply })
+            .map_err(|_| anyhow::anyhow!("Claude turn ended; try changing the mode again."))?;
+        tokio::time::timeout(std::time::Duration::from_secs(20), response)
+            .await
+            .context("Claude permission change timed out")?
+            .context("Claude turn ended before applying the permission change")?
+            .map_err(anyhow::Error::msg)?;
+    } else if mode == crate::state_fs::sessions::ClaudePermissionMode::Auto {
+        runtime::validate_mode(state, session, mode).await?;
+    }
+    Ok(())
+}
 
 /// Clear/delete owns the turn lock only after the old SDK process unwound.
 pub(crate) async fn quiesce(
@@ -119,6 +190,13 @@ pub(crate) async fn start_turn(
     req: chat::types::ChatRequest,
     meta: SessionMeta,
 ) -> Response {
+    if req.skill_name.is_some() || meta.skill.is_some() {
+        return (
+            StatusCode::BAD_REQUEST,
+            "Linggen apps require a Linggen session.",
+        )
+            .into_response();
+    }
     // Consumer rooms share model inference, not access to an owner's SDK shell.
     if req.user_type == "consumer" {
         return StatusCode::FORBIDDEN.into_response();
@@ -245,13 +323,22 @@ async fn execute_turn(state: Arc<ServerState>, req: chat::types::ChatRequest, me
     let key = chat::helpers::queue_key(&meta.cwd, &meta.id, AGENT_ID);
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     state.interrupt_tx.lock().await.insert(key.clone(), tx);
+    let (control_tx, control_rx) = tokio::sync::mpsc::unbounded_channel();
+    state
+        .claude_controls
+        .lock()
+        .await
+        .insert(meta.id.clone(), control_tx);
     let mut host = runtime::ClaudeSession {
         state: state.clone(),
         meta,
         run_id: run_id.clone(),
         interrupt: rx,
     };
-    let result = crate::util::panic_as_error(host.run(req.message, req.images, req.model_id)).await;
+    let result =
+        crate::util::panic_as_error(host.run(req.message, req.images, req.model_id, control_rx))
+            .await;
+    state.claude_controls.lock().await.remove(&host.meta.id);
     state.interrupt_tx.lock().await.remove(&key);
     let cancelled = state.manager.is_run_cancelled(&run_id).await
         || result
@@ -267,7 +354,9 @@ async fn execute_turn(state: Arc<ServerState>, req: chat::types::ChatRequest, me
     };
     if let Err(ref error) = result {
         if !cancelled {
-            host.text(&format!("Error: {error}")).await;
+            let text = format!("Error: {error}");
+            host.text(&text).await;
+            host.finalize_text(&text).await;
         }
     }
     let _ = state

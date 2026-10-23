@@ -34,13 +34,13 @@ pub(super) async fn ensure_installed() -> Result<PathBuf> {
     let dir = runtime_dir();
     tokio::fs::create_dir_all(&dir).await?;
     let manifest = include_str!("../../../runtimes/claude-agent-sdk/package.json");
-    tokio::fs::write(dir.join("package.json"), manifest).await?;
-    tokio::fs::write(
+    write_asset(dir.join("package.json"), manifest).await?;
+    write_asset(
         dir.join("bun.lock"),
         include_str!("../../../runtimes/claude-agent-sdk/bun.lock"),
     )
     .await?;
-    tokio::fs::write(
+    write_asset(
         dir.join("runner.ts"),
         include_str!("../../../runtimes/claude-agent-sdk/runner.ts"),
     )
@@ -49,6 +49,7 @@ pub(super) async fn ensure_installed() -> Result<PathBuf> {
         && dir
             .join("node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs")
             .is_file()
+        && dir.join("node_modules/zod/package.json").is_file()
     {
         return Ok(dir.join("runner.ts"));
     }
@@ -72,4 +73,16 @@ pub(super) async fn ensure_installed() -> Result<PathBuf> {
     }
     tokio::fs::write(dir.join("installed"), VERSION).await?;
     Ok(dir.join("runner.ts"))
+}
+
+// Concurrent capability probes and chat turns must never read a half-written
+// runner. Unchanged assets need no write; upgrades replace a complete inode.
+async fn write_asset(path: PathBuf, content: &str) -> Result<()> {
+    if tokio::fs::read(&path).await.ok().as_deref() == Some(content.as_bytes()) {
+        return Ok(());
+    }
+    let staged = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+    tokio::fs::write(&staged, content).await?;
+    tokio::fs::rename(staged, path).await?;
+    Ok(())
 }

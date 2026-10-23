@@ -44,6 +44,15 @@ pub(crate) async fn clear_chat_history_api(
         .clear_chat_history(&session_id)
     {
         Ok(removed) => {
+            if claude {
+                let _ = std::fs::remove_file(
+                    state
+                        .manager
+                        .global_sessions
+                        .session_dir(&session_id)
+                        .join("claude-permissions.json"),
+                );
+            }
             let _ = std::fs::remove_file(
                 state
                     .manager

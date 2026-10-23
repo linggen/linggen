@@ -32,7 +32,7 @@ export const BareSessions: React.FC = () => {
   // When mounted inside a skill app iframe, filter to that skill only.
   const filtered = useMemo(() => {
     if (!skillParam) return undefined;
-    return allSessions.filter(s => s.creator === 'skill' && (s.skill || '') === skillParam);
+    return allSessions.filter(s => s.runtime !== 'claude_agent_sdk' && s.creator === 'skill' && (s.skill || '') === skillParam);
   }, [allSessions, skillParam]);
 
   // Skill-bound active highlight overrides the store's activeSessionId so

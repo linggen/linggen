@@ -21,6 +21,10 @@ pub(super) fn routes() -> Routes {
         .route("/api/sessions/all", delete(delete_unified_session))
         .route("/api/sessions", post(create_session))
         .route("/api/sessions", patch(rename_session_api))
+        .route(
+            "/api/sessions/claude-capabilities",
+            get(crate::server::claude::capabilities),
+        )
         .route("/api/sessions/images", get(get_session_image))
         .route(
             "/api/sessions/permission",

@@ -87,7 +87,7 @@ export const EmbedApp: React.FC = () => {
   const boundParams = useSessionStore((s) => s.boundParams);
   const [skillSessions, setSkillSessions] = React.useState<SessionInfo[]>([]);
   const listed = useMemo(
-    () => (pinnedSkill ? boundTo(skillSessions, boundParams) : sessions),
+    () => (pinnedSkill ? boundTo(skillSessions, boundParams) : sessions).filter((session) => session.runtime !== 'claude_agent_sdk'),
     [skillSessions, boundParams, sessions],
   );
   const loadSkillSessions = useCallback(async (): Promise<SessionInfo[]> => {

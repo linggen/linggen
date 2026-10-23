@@ -75,6 +75,7 @@ async fn prepare_server(
         prompt_store,
         queued_chats: Arc::new(Mutex::new(HashMap::new())),
         interrupt_tx: Arc::new(Mutex::new(HashMap::new())),
+        claude_controls: Mutex::new(HashMap::new()),
         pending_ask_user: Arc::new(Mutex::new(HashMap::new())),
         status_seq: AtomicU64::new(1),
         active_statuses: Arc::new(Mutex::new(HashMap::new())),

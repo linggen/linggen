@@ -17,6 +17,7 @@ export const EVENT_KINDS = [
   'text_segment',
   'content_block',
   'turn_complete',
+  'session_reset',
   // The next questions a reply offers, shown as buttons above the input.
   'followups',
 

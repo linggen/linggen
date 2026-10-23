@@ -43,3 +43,43 @@ fn sdk_requires_a_compatible_model_with_resolved_credentials() {
     )));
     assert!(!supports_model(&model("openai", Some("test-key"), None)));
 }
+
+#[test]
+fn sdk_permission_names_are_native_and_new_modes_roundtrip() {
+    for mode in ["default", "acceptEdits", "auto", "plan", "dontAsk"] {
+        let parsed: ClaudePermissionMode = serde_json::from_value(json!(mode)).unwrap();
+        assert_eq!(serde_json::to_value(parsed).unwrap(), mode);
+    }
+}
+
+#[tokio::test]
+async fn sdk_images_reuse_persistent_session_images_and_resolvable_references() {
+    let dir = tempfile::tempdir().unwrap();
+    let store =
+        crate::state_fs::sessions::SessionStore::with_sessions_dir(dir.path().join("sessions"));
+    let meta = new_meta("picture".into(), dir.path().to_string_lossy().into(), None);
+    store.add_session(&meta).unwrap();
+    let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    let shown = super::media::keep(&store, &meta.id, png, "Read image").unwrap();
+    let id = shown["reference"].as_str().unwrap();
+    let refs =
+        crate::engine::answer_refs::view::refs_for(&store, &meta.id, [format!("[{id}]").as_str()]);
+    assert!(refs[id]["src"]
+        .as_str()
+        .unwrap()
+        .starts_with("/api/sessions/images?"));
+    assert!(super::media::keep(&store, &meta.id, "not an image", "bad").is_err());
+    use base64::Engine;
+    std::fs::write(
+        dir.path().join("image.png"),
+        base64::engine::general_purpose::STANDARD
+            .decode(png)
+            .unwrap(),
+    )
+    .unwrap();
+    let opened = super::media::display(&store, &meta, "image.png", "Local image")
+        .await
+        .unwrap();
+    assert_ne!(opened["reference"], shown["reference"]);
+    assert!(!store.session_dir(&meta.id).join("permission.json").exists());
+}

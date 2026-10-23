@@ -15,6 +15,11 @@ use crate::engine::events::{ServerEvent, UiEvent};
 pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
     let seq = ui.seq;
     match event {
+        ServerEvent::SessionReset { session_id } => Some(
+            ui.event(format!("reset-{seq}"), "session_reset")
+                .global()
+                .data(serde_json::json!({"session_id":session_id})),
+        ),
         ServerEvent::Message {
             from,
             to,

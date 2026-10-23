@@ -251,6 +251,20 @@ pub(crate) async fn get_skill_session_state(
     let Some(session_id) = query.session_id.filter(|s| !s.is_empty()) else {
         return Json(serde_json::json!({ "messages": [] })).into_response();
     };
+    if state
+        .manager
+        .global_sessions
+        .get_session_meta(&session_id)
+        .ok()
+        .flatten()
+        .is_some_and(|meta| !meta.runtime.is_linggen())
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            "Linggen apps require a Linggen session.",
+        )
+            .into_response();
+    }
 
     let messages = state
         .manager
@@ -367,14 +381,14 @@ pub(crate) async fn rename_session_api(
                 .as_deref()
                 .is_some_and(|id| id != crate::server::claude::AGENT_ID)
             {
-                return StatusCode::BAD_REQUEST;
+                return StatusCode::BAD_REQUEST.into_response();
             }
             if let Some(model) = &req.model_id {
                 if crate::server::claude::resolve_model(&state, Some(model))
                     .await
                     .is_err()
                 {
-                    return StatusCode::BAD_REQUEST;
+                    return StatusCode::BAD_REQUEST.into_response();
                 }
                 meta.set_member_model(
                     crate::server::claude::AGENT_ID,
@@ -382,6 +396,10 @@ pub(crate) async fn rename_session_api(
                 );
             }
             if let Some(mode) = req.claude_permission_mode {
+                if let Err(error) = crate::server::claude::set_mode(&state, &meta, mode).await {
+                    tracing::warn!("Claude permission mode change failed: {error}");
+                    return (StatusCode::CONFLICT, error.to_string()).into_response();
+                }
                 meta.claude_permission_mode = mode;
             }
             if let Some(title) = req.title {
@@ -394,15 +412,15 @@ pub(crate) async fn rename_session_api(
                 .update_session_meta(&meta)
                 .is_err()
             {
-                return StatusCode::INTERNAL_SERVER_ERROR;
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
             }
             let _ = state
                 .events_tx
                 .send(crate::server::ServerEvent::StateUpdated);
-            return StatusCode::OK;
+            return StatusCode::OK.into_response();
         }
         if req.claude_permission_mode.is_some() {
-            return StatusCode::BAD_REQUEST;
+            return StatusCode::BAD_REQUEST.into_response();
         }
     }
     if let Some(ref title) = req.title {
@@ -412,7 +430,7 @@ pub(crate) async fn rename_session_api(
             .rename_session(&req.session_id, title)
             .is_err()
         {
-            return StatusCode::INTERNAL_SERVER_ERROR;
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     }
     if let Some(ref model_id) = req.model_id {
@@ -456,7 +474,7 @@ pub(crate) async fn rename_session_api(
     let _ = state
         .events_tx
         .send(crate::server::ServerEvent::StateUpdated);
-    StatusCode::OK
+    StatusCode::OK.into_response()
 }
 
 // ---------------------------------------------------------------------------

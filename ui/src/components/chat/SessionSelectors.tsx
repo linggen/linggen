@@ -2,14 +2,14 @@
  * Compact per-session model and permission mode selectors + stats.
  * Extracted from ChatPanel.tsx.
  */
-import React from 'react';
+import React, { useState } from 'react';
 import { chatAgentOf, withMemberModel } from '../../lib/sessionMembers.mts';
-import { useServerStore, isSessionBusy } from '../../stores/serverStore';
+import { useServerStore } from '../../stores/serverStore';
 import { useUiStore } from '../../stores/uiStore';
 import { useUserStore } from '../../stores/userStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { suppressPermissionSync } from '../../lib/eventDispatcher';
-import { apiPatch } from '../../lib/api';
+import { apiPatch, apiErrorMessage } from '../../lib/api';
 import { sessionApi } from '../../lib/endpoints';
 import type { SessionInfo } from '../../types';
 
@@ -163,18 +163,28 @@ export const SessionModeSelector: React.FC = () => {
 
 /** SDK modes belong to this Claude session, never to native path grants. */
 const ClaudeModeSelector: React.FC<{ session: SessionInfo }> = ({ session }) => {
-  const busy = useServerStore((s) => isSessionBusy(s, session.id));
+  const [saving, setSaving] = useState(false);
   const modes = [
-    { value: 'default', label: 'Ask before changes' },
-    { value: 'acceptEdits', label: 'Accept file edits' },
-    { value: 'plan', label: 'Plan' },
+    { value: 'default', label: 'default' },
+    { value: 'acceptEdits', label: 'acceptEdits' },
+    { value: 'auto', label: 'auto' },
+    { value: 'plan', label: 'plan' },
+    { value: 'dontAsk', label: 'dontAsk' },
   ] as const;
   const change = async (value: string) => {
-    await apiPatch('/api/sessions', { session_id: session.id, claude_permission_mode: value });
-    useSessionStore.setState((s) => ({ allSessions: s.allSessions.map((item) => item.id === session.id
-      ? { ...item, claude_permission_mode: value as SessionInfo['claude_permission_mode'] } : item) }));
+    setSaving(true);
+    try {
+      await apiPatch('/api/sessions', { session_id: session.id, claude_permission_mode: value });
+      useSessionStore.setState((s) => {
+        const update = (item: SessionInfo) => item.id === session.id
+          ? { ...item, claude_permission_mode: value as SessionInfo['claude_permission_mode'] } : item;
+        return { allSessions:s.allSessions.map(update), sessions:s.sessions.map(update) };
+      });
+    } catch (error) {
+      useUiStore.getState().addToast({ variant:'error', message:apiErrorMessage(error) });
+    } finally { setSaving(false); }
   };
-  return <select value={session.claude_permission_mode ?? 'default'} disabled={busy}
+  return <select value={session.claude_permission_mode ?? 'default'} disabled={saving} data-no-i18n
     onChange={(event) => { void change(event.target.value); }} onClick={(event) => event.stopPropagation()}
     className="text-[11px] border border-slate-200 dark:border-white/10 rounded px-1.5 py-0.5 bg-white dark:bg-black/30"
     title="Claude permission mode" aria-label="Claude permission mode">

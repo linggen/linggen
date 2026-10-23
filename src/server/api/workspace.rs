@@ -327,7 +327,8 @@ pub(crate) async fn get_workspace_state(
         messages,
         running,
         |mut m, calls| {
-            if crate::server::resident::is_engine_prompt(&m.from_id, &m.content) {
+            if m.is_observation || crate::server::resident::is_engine_prompt(&m.from_id, &m.content)
+            {
                 return None;
             }
             // Silence keeps its calls, never its word.

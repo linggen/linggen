@@ -82,6 +82,80 @@ async fn claude_session_creation_and_permissions_are_independent() {
         .await
         .unwrap();
     assert_eq!(response.status(), 400);
+    // Apps may only create, bind and run native Linggen sessions.
+    for (path, payload) in [
+        (
+            "/api/sessions",
+            json!({"title":"App", "runtime":"claude_agent_sdk", "skill":"dice"}),
+        ),
+        (
+            "/api/chat",
+            json!({"session_id":sid, "project_root":w.work(), "agent_id":"claude", "skill_name":"dice", "message":"Hello"}),
+        ),
+    ] {
+        let response = client
+            .post(format!("{}{path}", w.engine.base_url()))
+            .json(&payload)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            400,
+            "{path} accepted a Claude app session"
+        );
+    }
+    let response = client
+        .get(format!("{}/api/skill-sessions/state", w.engine.base_url()))
+        .query(&[("skill", "dice"), ("session_id", sid.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 400);
+    w.assert_all_scripted();
+}
+
+#[tokio::test]
+async fn claude_history_keeps_the_answer_and_restores_tools_without_observation_bubbles() {
+    let w = World::start(Setup::default()).await;
+    let sid = w
+        .api
+        .create_session(json!({"title":"Claude", "runtime":"claude_agent_sdk"}))
+        .await;
+    let rows = [
+        json!({"from_id":"user", "to_id":"claude", "content":"Show the image", "is_observation":false}),
+        json!({"from_id":"claude", "to_id":"user", "content":json!({"type":"tool", "tool":"mcp__linggen-display__DisplayImage", "args":{"source":"image.png"}}).to_string(), "is_observation":true}),
+        json!({"from_id":"system", "to_id":"claude", "content":"Tool mcp__linggen-display__DisplayImage: image kept", "is_observation":true}),
+        json!({"from_id":"claude", "to_id":"user", "content":"[turn1image1]", "is_observation":false}),
+    ];
+    let text = rows
+        .into_iter()
+        .enumerate()
+        .map(|(i, mut row)| {
+            row["agent_id"] = json!("claude");
+            row["timestamp"] = json!(1790000000 + i);
+            row["run_id"] = json!("sdk-image");
+            format!("{row}\n")
+        })
+        .collect::<String>();
+    std::fs::write(
+        w.home
+            .linggen_home()
+            .join("sessions")
+            .join(&sid)
+            .join("messages.jsonl"),
+        text,
+    )
+    .unwrap();
+    let state = w.api.history(&sid, &w.work()).await;
+    let messages = state["messages"].as_array().unwrap();
+    assert_eq!(
+        messages.len(),
+        2,
+        "tool observations became chat bubbles: {state}"
+    );
+    assert_eq!(messages[1][1], "[turn1image1]");
+    assert_eq!(messages[1][0]["tools"][0]["status"], "done");
     w.assert_all_scripted();
 }
 

@@ -31,6 +31,13 @@ impl Tool for ClaudeSessionTool {
         json!({"name":self.name(), "args":{"title":"string", "task":"string", "cwd":"string?"}, "returns":"session_id, url"})
     }
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
+        if let (Some(manager), Some(id)) = (tools.get_manager(), tools.session_id.as_deref()) {
+            let parent = manager.global_sessions.get_session_meta(id)?;
+            anyhow::ensure!(
+                !parent.is_some_and(|meta| meta.skill.is_some() || meta.creator == "skill"),
+                "Linggen apps must use Linggen sessions and cannot delegate to a Claude session."
+            );
+        }
         anyhow::ensure!(
             !tools
                 .session_policy

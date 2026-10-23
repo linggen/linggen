@@ -10,6 +10,7 @@
  */
 import type { UiEvent, UiEventByKind } from '../../types';
 import type { EventKind } from '../eventKinds';
+import { useChatStore } from '../../stores/chatStore';
 
 import { handleRun } from './run';
 import { handleActivity } from './activity';
@@ -51,6 +52,16 @@ export const eventHandlers: { [K in EventKind]: (item: UiEventByKind[K]) => void
   text_segment: handleTextSegment,
   content_block: handleContentBlock,
   turn_complete: handleTurnComplete,
+  session_reset: (item) => {
+    const id = item.data?.session_id;
+    if (!id) return;
+    const chat = useChatStore.getState();
+    if (chat._activeSessionId === id) chat.clear(false);
+    else useChatStore.setState((s) => {
+      const buckets = { ...s._messagesBySession }; delete buckets[id];
+      return { _messagesBySession: buckets };
+    });
+  },
   followups: handleFollowups,
 
   // Activity / lifecycle

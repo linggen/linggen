@@ -19,6 +19,7 @@ import type {
   SkillInfo,
 } from '../../types';
 import { sessionApi, workspaceApi } from '../../lib/endpoints';
+import { apiGet } from '../../lib/api';
 import { readImageForSend } from '../../lib/imageEncode';
 import { useYinyuePrefill } from '../../hooks/useYinyuePrefill';
 import { useAgentPresent } from '../../hooks/useAgentPresent';
@@ -308,7 +309,19 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     inputRef.current?.focus();
   };
 
-  const claudeSession = useSessionStore((s) => s.allSessions.find((session) => session.id === s.activeSessionId)?.runtime === 'claude_agent_sdk');
+  const currentSession = useSessionStore((s) => sessionId || s.activeSessionId);
+  const claudeSession = useSessionStore((s) => s.allSessions.find((session) => session.id === currentSession)?.runtime === 'claude_agent_sdk');
+  const [sdkCommands, setSdkCommands] = useState<Array<{ name: string; description: string; argumentHint?: string; builtin?: boolean }>>([]);
+  useEffect(() => {
+    let live = true;
+    setSdkCommands([]);
+    if (claudeSession && currentSession) {
+      apiGet<{ commands: typeof sdkCommands }>(`/api/sessions/claude-capabilities?session_id=${encodeURIComponent(currentSession)}`)
+        .then((data) => { if (live) setSdkCommands(data.commands || []); })
+        .catch(() => {});
+    }
+    return () => { live = false; };
+  }, [claudeSession, currentSession, isRunning]);
   const skillSuggestions = useMemo(() => {
     const suggestions: {
       key: string;
@@ -328,6 +341,15 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       ...(yinyueHere ? voiceCommands : []),
       ['/image', 'Attach an image file'],
     ];
+
+    if (claudeSession) {
+      for (const command of sdkCommands) {
+        if (!command.name.toLowerCase().includes(skillFilter) && !command.description?.toLowerCase().includes(skillFilter)) continue;
+        suggestions.push({ key:`sdk-${command.name}`, label:`/${command.name}`, description:command.description,
+          argumentHint:command.argumentHint, isBuiltin:command.builtin === true });
+      }
+      return suggestions;
+    }
 
     for (const [cmd, desc] of builtinCommands) {
       const name = cmd.slice(1);
@@ -353,7 +375,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       });
 
     return suggestions;
-  }, [skills, skillFilter, yinyueHere, claudeSession]);
+  }, [skills, skillFilter, yinyueHere, claudeSession, sdkCommands]);
 
   const applySuggestion = useCallback((suggestion: typeof skillSuggestions[number]) => {
     const beforeSlash = chatInput.substring(0, chatInput.lastIndexOf('/'));
@@ -735,7 +757,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                   return;
                 }
                 if (e.key === 'Enter') {
-                  const exactCommands = ['/help', '/clear', '/compact', '/status', '/model'];
+                  const exactCommands = claudeSession ? sdkCommands.filter((command) => command.builtin).map((command) => `/${command.name}`) : ['/help', '/clear', '/compact', '/status', '/model'];
                   if (exactCommands.includes(chatInput.trim())) {
                     e.preventDefault();
                     setShowSkillDropdown(false);

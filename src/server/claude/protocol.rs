@@ -13,9 +13,24 @@ impl ClaudeSession {
         &mut self,
         lines: &mut Lines<BufReader<ChildStdout>>,
         stdin: &mut ChildStdin,
+        controls: tokio::sync::mpsc::UnboundedReceiver<super::ModeChange>,
     ) -> Result<()> {
         let mut active = HashMap::new();
-        let result = self.read_events(lines, stdin, &mut active).await;
+        let result = self.read_events(lines, stdin, &mut active, controls).await;
+        let ids: Vec<String> = self
+            .state
+            .pending_ask_user
+            .lock()
+            .await
+            .iter()
+            .filter(|(_, item)| {
+                item.session_id.as_deref() == Some(&self.meta.id) && item.agent_id == AGENT_ID
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in ids {
+            self.dismiss_question(&id).await;
+        }
         for (id, tool) in active {
             self.tool_end(&id, &tool, true, &json!("Task stopped"))
                 .await;
@@ -28,10 +43,36 @@ impl ClaudeSession {
         lines: &mut Lines<BufReader<ChildStdout>>,
         stdin: &mut ChildStdin,
         active: &mut HashMap<String, String>,
+        mut controls: tokio::sync::mpsc::UnboundedReceiver<super::ModeChange>,
     ) -> Result<()> {
         let mut has_text = false;
+        let mut last_text = String::new();
+        let mut requests = tokio::task::JoinSet::new();
+        let mut request_tasks = HashMap::new();
+        let mut changes = HashMap::new();
+        let mut next_change = 0_i64;
+        let mut controls_open = true;
         loop {
             let line = tokio::select! {
+                response = requests.join_next(), if !requests.is_empty() => {
+                    if let Some(Ok((id, response))) = response {
+                        request_tasks.remove(&id);
+                        let response: Result<Value> = response;
+                        let mut reply = response.unwrap_or_else(|error| json!({"allow":false,"error":error.to_string(),"reason":error.to_string()}));
+                        reply["type"] = json!("reply"); reply["id"] = json!(id);
+                        stdin.write_all(format!("{reply}\n").as_bytes()).await?;
+                    }
+                    continue;
+                }
+                change = controls.recv(), if controls_open => {
+                    if let Some(change) = change {
+                        next_change += 1;
+                        let message = json!({"type":"mode", "id":next_change, "mode":change.mode});
+                        changes.insert(next_change, change);
+                        stdin.write_all(format!("{message}\n").as_bytes()).await?;
+                    } else { controls_open = false; }
+                    continue;
+                }
                 line = lines.next_line() => line?.context("Claude Agent SDK exited without a result")?,
                 _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
                     if self.cancelled().await { bail!("run cancelled"); } continue;
@@ -43,9 +84,10 @@ impl ClaudeSession {
                     std::fs::write(
                         self.checkpoint(),
                         serde_json::to_vec(
-                            &json!({"session_id":event["session_id"], "cwd":self.meta.cwd}),
+                            &json!({"session_id":event["session_id"], "cwd":self.meta.cwd, "commands":event["commands"]}),
                         )?,
                     )?;
+                    self.sync_mode(&event).await?;
                 }
                 "token" => {
                     if let Some(text) = event["text"].as_str() {
@@ -60,21 +102,7 @@ impl ClaudeSession {
                     }
                 }
                 "status" => {
-                    if let Ok(mode) = serde_json::from_value(event["permissionMode"].clone()) {
-                        if let Some(mut meta) = self
-                            .state
-                            .manager
-                            .global_sessions
-                            .get_session_meta(&self.meta.id)?
-                        {
-                            meta.claude_permission_mode = mode;
-                            self.state
-                                .manager
-                                .global_sessions
-                                .update_session_meta(&meta)?;
-                        }
-                        self.emit(AgentEvent::StateUpdated).await;
-                    }
+                    self.sync_mode(&event).await?;
                     if event["status"] == "compacting" {
                         self.emit(AgentEvent::AgentStatus {
                             agent_id: AGENT_ID.into(),
@@ -87,9 +115,16 @@ impl ClaudeSession {
                         .await;
                     }
                 }
+                "commands" => {
+                    let mut checkpoint: Value =
+                        serde_json::from_slice(&std::fs::read(self.checkpoint())?)?;
+                    checkpoint["commands"] = event["commands"].clone();
+                    std::fs::write(self.checkpoint(), serde_json::to_vec(&checkpoint)?)?;
+                }
                 "text" => {
                     if let Some(text) = event["text"].as_str().filter(|s| !s.is_empty()) {
                         self.text(text).await;
+                        last_text = text.into();
                         has_text = true;
                     }
                 }
@@ -110,6 +145,7 @@ impl ClaudeSession {
                     })
                     .await;
                     self.save(
+                        AGENT_ID,
                         json!({"type":"tool", "tool":tool, "args":args}).to_string(),
                         true,
                         false,
@@ -129,13 +165,53 @@ impl ClaudeSession {
                     }
                 }
                 "request" => {
-                    let response = self.request(&event).await?;
-                    let mut reply = response.as_object().cloned().unwrap_or_default();
-                    reply.insert("type".into(), json!("reply"));
-                    reply.insert("id".into(), event["id"].clone());
-                    stdin
-                        .write_all(format!("{}\n", Value::Object(reply)).as_bytes())
-                        .await?;
+                    let interaction = super::interaction::Interaction {
+                        state: self.state.clone(),
+                        meta: self.meta.clone(),
+                        run_id: self.run_id.clone(),
+                    };
+                    let id = event["id"].as_i64().context("SDK request has no id")?;
+                    let task =
+                        requests.spawn(async move { (id, interaction.request(&event).await) });
+                    request_tasks.insert(id, task);
+                }
+                "cancel_request" => {
+                    let id = event["id"].as_i64().unwrap_or_default();
+                    if let Some(task) = request_tasks.remove(&id) {
+                        task.abort();
+                    }
+                    self.dismiss_question(&format!("sdk-{}-{id}", self.run_id))
+                        .await;
+                }
+                "mode_result" => {
+                    if let Some(change) = changes.remove(&event["id"].as_i64().unwrap_or_default())
+                    {
+                        let _ = change.reply.send(if event["ok"] == true {
+                            Ok(())
+                        } else {
+                            Err(event["error"].as_str().unwrap_or("Mode unavailable").into())
+                        });
+                    }
+                }
+                "reset" => {
+                    let mut checkpoint: Value = std::fs::read(self.checkpoint())
+                        .ok()
+                        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+                        .unwrap_or(json!({}));
+                    checkpoint["session_id"] = event["session_id"].clone();
+                    std::fs::write(self.checkpoint(), serde_json::to_vec(&checkpoint)?)?;
+                    let _ = std::fs::remove_file(
+                        self.checkpoint().with_file_name("claude-permissions.json"),
+                    );
+                    self.state
+                        .manager
+                        .global_sessions
+                        .clear_chat_history(&self.meta.id)?;
+                    let _ = self.state.events_tx.send(ServerEvent::SessionReset {
+                        session_id: self.meta.id.clone(),
+                    });
+                    has_text = false;
+                    last_text.clear();
                 }
                 "result" => {
                     if !event["success"].as_bool().unwrap_or(false) {
@@ -144,7 +220,11 @@ impl ClaudeSession {
                     if !has_text {
                         if let Some(text) = event["text"].as_str().filter(|s| !s.is_empty()) {
                             self.text(text).await;
+                            last_text = text.into();
                         }
+                    }
+                    if !last_text.is_empty() {
+                        self.finalize_text(&last_text).await;
                     }
                     let count = |key: &str| event["usage"][key].as_u64().unwrap_or(0) as usize;
                     let input = count("input_tokens")
@@ -163,8 +243,8 @@ impl ClaudeSession {
                         summary_count: 0,
                     })
                     .await;
-                    return Ok(());
                 }
+                "done" => return Ok(()),
                 "error" => bail!(
                     "Claude Agent SDK: {}",
                     event["message"].as_str().unwrap_or("runtime error")
@@ -174,8 +254,44 @@ impl ClaudeSession {
         }
     }
 
+    async fn sync_mode(&mut self, event: &Value) -> Result<()> {
+        if let Ok(mode) = serde_json::from_value(event["permissionMode"].clone()) {
+            if let Some(mut meta) = self
+                .state
+                .manager
+                .global_sessions
+                .get_session_meta(&self.meta.id)?
+            {
+                meta.claude_permission_mode = mode;
+                self.meta.claude_permission_mode = mode;
+                self.state
+                    .manager
+                    .global_sessions
+                    .update_session_meta(&meta)?;
+            }
+            self.emit(AgentEvent::StateUpdated).await;
+        }
+        Ok(())
+    }
+
+    async fn dismiss_question(&self, id: &str) {
+        if self
+            .state
+            .pending_ask_user
+            .lock()
+            .await
+            .remove(id)
+            .is_some()
+        {
+            let _ = self.state.events_tx.send(ServerEvent::WidgetResolved {
+                widget_id: id.into(),
+                session_id: Some(self.meta.id.clone()),
+            });
+        }
+    }
+
     pub async fn text(&self, text: &str) {
-        self.save(text.into(), false, false);
+        self.save(AGENT_ID, text.into(), false, false);
         self.emit(AgentEvent::TextSegment {
             agent_id: AGENT_ID.into(),
             text: text.into(),
@@ -185,12 +301,27 @@ impl ClaudeSession {
         .await;
     }
 
-    fn save(&self, content: String, observation: bool, failed: bool) {
+    pub async fn finalize_text(&self, text: &str) {
+        let _ = self.state.events_tx.send(ServerEvent::Message {
+            from: AGENT_ID.into(),
+            to: "user".into(),
+            content: text.into(),
+            session_id: Some(self.meta.id.clone()),
+            run_id: Some(self.run_id.clone()),
+            parent_agent_id: None,
+            client_id: None,
+            via: None,
+            via_note: None,
+            images: Vec::new(),
+        });
+    }
+
+    fn save(&self, from: &str, content: String, observation: bool, failed: bool) {
         let row = ChatMsg {
             run_id: Some(self.run_id.clone()),
             agent_id: AGENT_ID.into(),
-            from_id: AGENT_ID.into(),
-            to_id: "user".into(),
+            from_id: from.into(),
+            to_id: if from == "system" { AGENT_ID } else { "user" }.into(),
             content,
             timestamp: crate::util::now_ts_secs(),
             is_observation: observation,
@@ -230,6 +361,6 @@ impl ClaudeSession {
             parent_run_id: None,
         })
         .await;
-        self.save(format!("Tool {tool}: {rendered}"), true, failed);
+        self.save("system", format!("Tool {tool}: {rendered}"), true, failed);
     }
 }

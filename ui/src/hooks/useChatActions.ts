@@ -110,13 +110,48 @@ export function useChatActions(
     const chat = useChatStore.getState();
 
     // A resend's bubble is already on screen from the first try.
-    if (!opts?.resend && (claude || trimmed !== '/help' && trimmed !== '/status' && trimmed !== '/clear' && trimmed !== '/compact' && !trimmed.startsWith('/compact ') && !trimmed.startsWith('/model') && !trimmed.startsWith('!'))) {
+    if (!opts?.resend && (claude && !trimmed.startsWith('!') || !claude && trimmed !== '/help' && trimmed !== '/status' && trimmed !== '/clear' && trimmed !== '/compact' && !trimmed.startsWith('/compact ') && !trimmed.startsWith('/model') && !trimmed.startsWith('!'))) {
       chat.addMessage({
         role: 'user', from: 'user', to: agentToUse, text: userMessage, clientId,
         timestamp: now.toLocaleTimeString(), timestampMs: now.getTime(), isGenerating: false,
         ...(images && images.length > 0 ? { images, imageCount: images.length } : {}),
       });
       scrollToBottom();
+    }
+
+    // ! prefix — direct bash execution (CC-style)
+    if (trimmed.startsWith('!') && trimmed.length > 1) {
+      const cmd = trimmed.slice(1);
+      const ts = new Date();
+      chat.addMessage({
+        role: 'user', from: 'user', to: 'system', text: `\`$ ${cmd}\``,
+        timestamp: ts.toLocaleTimeString(), timestampMs: ts.getTime(), isGenerating: false,
+      });
+      scrollToBottom();
+      try {
+        const data = await workspaceApi.bash(root, cmd, sid);
+        if (!onSession(sid)) return;
+        const resultTs = new Date();
+        const output = [data.stdout, data.stderr].filter(Boolean).join('\n').trim();
+        const exitInfo = data.exit_code !== 0 ? `\n\n(exit code ${data.exit_code})` : '';
+        chat.addMessage({
+          role: 'agent', from: 'system', to: 'user',
+          text: output ? `\`\`\`\n${output}\n\`\`\`${exitInfo}` : `(no output)${exitInfo}`,
+          timestamp: resultTs.toLocaleTimeString(), timestampMs: resultTs.getTime(), isGenerating: false,
+        });
+        scrollToBottom();
+      } catch (e) {
+        console.error('Bash error:', e);
+        if (!onSession(sid)) return;
+        const errTs = new Date();
+        chat.addMessage({
+          role: 'agent', from: 'system', to: 'user',
+          text: `Error: ${e instanceof Error ? e.message : String(e)}`, isError: true,
+          timestamp: errTs.toLocaleTimeString(), timestampMs: errTs.getTime(), isGenerating: false,
+        });
+        scrollToBottom();
+      }
+      return;
     }
 
     if (!claude) {
@@ -180,41 +215,6 @@ export function useChatActions(
     }
 
     if (trimmed === '/clear') { await clearChat(); return; }
-
-    // ! prefix — direct bash execution (CC-style)
-    if (trimmed.startsWith('!') && trimmed.length > 1) {
-      const cmd = trimmed.slice(1);
-      const ts = new Date();
-      chat.addMessage({
-        role: 'user', from: 'user', to: 'system', text: `\`$ ${cmd}\``,
-        timestamp: ts.toLocaleTimeString(), timestampMs: ts.getTime(), isGenerating: false,
-      });
-      scrollToBottom();
-      try {
-        const data = await workspaceApi.bash(root, cmd, sid);
-        if (!onSession(sid)) return;
-        const resultTs = new Date();
-        const output = [data.stdout, data.stderr].filter(Boolean).join('\n').trim();
-        const exitInfo = data.exit_code !== 0 ? `\n\n(exit code ${data.exit_code})` : '';
-        chat.addMessage({
-          role: 'agent', from: 'system', to: 'user',
-          text: output ? `\`\`\`\n${output}\n\`\`\`${exitInfo}` : `(no output)${exitInfo}`,
-          timestamp: resultTs.toLocaleTimeString(), timestampMs: resultTs.getTime(), isGenerating: false,
-        });
-        scrollToBottom();
-      } catch (e) {
-        console.error('Bash error:', e);
-        if (!onSession(sid)) return;
-        const errTs = new Date();
-        chat.addMessage({
-          role: 'agent', from: 'system', to: 'user',
-          text: `Error: ${e instanceof Error ? e.message : String(e)}`, isError: true,
-          timestamp: errTs.toLocaleTimeString(), timestampMs: errTs.getTime(), isGenerating: false,
-        });
-        scrollToBottom();
-      }
-      return;
-    }
 
     if (trimmed === '/compact' || trimmed.startsWith('/compact ')) {
       const focus = trimmed.slice('/compact'.length).trim() || undefined;

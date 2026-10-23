@@ -112,6 +112,7 @@ export interface UiEventByKind {
   text_segment: Ev<'text_segment', TextSegmentData>;
   content_block: ContentBlockEvent;
   turn_complete: Ev<'turn_complete', TurnCompleteData>;
+  session_reset: Ev<'session_reset', { session_id: string }>;
   followups: Ev<'followups', FollowupsData>;
   activity: Ev<'activity', ActivityData>;
   queue: Ev<'queue', QueueData>;

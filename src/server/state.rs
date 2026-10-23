@@ -45,6 +45,8 @@ pub struct ServerState {
     /// Senders for interrupt messages keyed by queue_key. Used to inject user
     /// messages into a running agent loop so the model can adapt mid-run.
     pub interrupt_tx: Arc<Mutex<HashMap<String, mpsc::UnboundedSender<String>>>>,
+    pub(crate) claude_controls:
+        Mutex<HashMap<String, mpsc::UnboundedSender<super::claude::ModeChange>>>,
     /// Pending AskUser questions waiting for user responses.
     /// Keyed by unique question_id. The oneshot sender delivers the user's answer.
     pub pending_ask_user: Arc<Mutex<HashMap<String, crate::engine::tools::PendingAskUser>>>,

@@ -108,6 +108,7 @@ pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Op
     match &event {
         PetVoice { .. } | PetSpeak { .. } | PetExpress { .. } => pet::map(event, ui),
         Message { .. }
+        | SessionReset { .. }
         | Token { .. }
         | TextSegment { .. }
         | ContentBlockStart { .. }

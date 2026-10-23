@@ -51,6 +51,8 @@ pub enum ClaudePermissionMode {
     #[default]
     Default,
     AcceptEdits,
+    Auto,
+    DontAsk,
     Plan,
 }
 

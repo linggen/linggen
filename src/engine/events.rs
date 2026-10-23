@@ -82,6 +82,9 @@ pub enum NotificationPayload {
 #[serde(tag = "type")]
 pub enum ServerEvent {
     StateUpdated,
+    SessionReset {
+        session_id: String,
+    },
     /// The Yinyue presenter set changed (a surface subscribed / released /
     /// disconnected). Carries no payload: each peer re-evaluates whether IT is
     /// the FCFS holder (against its own peer id) and the holder renders her

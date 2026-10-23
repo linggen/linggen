@@ -1,4 +1,4 @@
-use super::{install, resolve_model, AGENT_ID};
+use super::{install, resolve_model, ModeChange, AGENT_ID};
 use crate::engine::agent::AgentEvent;
 use crate::server::{ServerEvent, ServerState};
 use crate::state_fs::sessions::SessionMeta;
@@ -41,6 +41,7 @@ impl ClaudeSession {
         prompt: String,
         images: Vec<String>,
         chosen: Option<String>,
+        controls: tokio::sync::mpsc::UnboundedReceiver<ModeChange>,
     ) -> Result<()> {
         if self.cancelled().await {
             bail!("run cancelled");
@@ -82,35 +83,8 @@ impl ClaudeSession {
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or(Value::Null);
-        let resume = (checkpoint["cwd"].as_str() == Some(self.meta.cwd.as_str()))
-            .then(|| checkpoint["session_id"].as_str())
-            .flatten();
-        let mut command = Command::new(install::bun_path()?);
-        command
-            .arg(runner)
-            .current_dir(&self.meta.cwd)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .env(
-                "ANTHROPIC_API_KEY",
-                model.api_key.as_deref().unwrap_or_default(),
-            )
-            .env(
-                "ANTHROPIC_BASE_URL",
-                if model.url.is_empty() {
-                    "https://api.anthropic.com"
-                } else {
-                    &model.url
-                },
-            )
-            .env(
-                "CLAUDE_CONFIG_DIR",
-                crate::paths::linggen_home().join("runtimes/claude-agent-sdk/state"),
-            )
-            .kill_on_drop(true);
-        #[cfg(unix)]
-        command.process_group(0);
+        let resume = checkpoint["session_id"].as_str();
+        let mut command = sdk_command(&runner, &self.meta.cwd, &model)?;
         let mut child = command
             .spawn()
             .context("Could not start Claude Agent SDK")?;
@@ -122,13 +96,19 @@ impl ClaudeSession {
             let mut lines = BufReader::new(stderr).lines();
             while let Ok(Some(_)) = lines.next_line().await {}
         });
+        let permission_updates: Value =
+            std::fs::read(self.checkpoint().with_file_name("claude-permissions.json"))
+                .ok()
+                .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+                .unwrap_or(json!([]));
         let start = json!({"type":"start", "prompt":prompt, "images":images, "cwd":self.meta.cwd,
             "model":model.model, "resume":resume, "permissionMode":self.meta.claude_permission_mode,
+            "permissionUpdates":permission_updates,
             "disallowedTools":self.meta.withheld_tools, "mcpServers":self.mcp_servers().await});
         // Every post-spawn error goes through cleanup, including a broken stdin.
         let result = async {
             stdin.write_all(format!("{start}\n").as_bytes()).await?;
-            self.consume(&mut lines, &mut stdin).await
+            self.consume(&mut lines, &mut stdin, controls).await
         }
         .await;
         let _ = stdin.write_all(b"{\"type\":\"cancel\"}\n").await;
@@ -183,4 +163,104 @@ impl ClaudeSession {
         }
         Value::Object(servers)
     }
+}
+
+fn sdk_command(
+    runner: &std::path::Path,
+    cwd: &str,
+    model: &crate::config::ModelConfig,
+) -> Result<Command> {
+    let mut command = Command::new(install::bun_path()?);
+    command
+        .arg(runner)
+        .current_dir(cwd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env(
+            "ANTHROPIC_API_KEY",
+            model.api_key.as_deref().unwrap_or_default(),
+        )
+        .env(
+            "ANTHROPIC_BASE_URL",
+            if model.url.is_empty() {
+                "https://api.anthropic.com"
+            } else {
+                &model.url
+            },
+        )
+        .env(
+            "CLAUDE_CONFIG_DIR",
+            crate::paths::linggen_home().join("runtimes/claude-agent-sdk/state"),
+        )
+        .kill_on_drop(true);
+    #[cfg(unix)]
+    command.process_group(0);
+    Ok(command)
+}
+
+/// Probe SDK mode availability without a model turn or a saved conversation.
+pub(super) async fn validate_mode(
+    state: &ServerState,
+    meta: &SessionMeta,
+    mode: crate::state_fs::sessions::ClaudePermissionMode,
+) -> Result<()> {
+    let runner = install::ensure_installed().await?;
+    let model = resolve_model(
+        state,
+        meta.member(AGENT_ID).and_then(|m| m.model.as_deref()),
+    )
+    .await?;
+    let mut child = sdk_command(&runner, &meta.cwd, &model)?.spawn()?;
+    let mut stdin = child.stdin.take().context("SDK stdin missing")?;
+    let mut lines = BufReader::new(child.stdout.take().context("SDK stdout missing")?).lines();
+    let stderr = child.stderr.take().context("SDK stderr missing")?;
+    let drain = tokio::spawn(async move {
+        let mut lines = BufReader::new(stderr).lines();
+        while let Ok(Some(_)) = lines.next_line().await {}
+    });
+    let request = json!({"type":"start", "cwd":meta.cwd, "model":model.model, "validateOnly":true, "permissionMode":mode});
+    let result = tokio::time::timeout(Duration::from_secs(20), async {
+        stdin.write_all(format!("{request}\n").as_bytes()).await?;
+        while let Some(line) = lines.next_line().await? {
+            let event: Value = serde_json::from_str(&line)?;
+            if event["type"] == "mode_result" {
+                if event["ok"] == true {
+                    std::fs::write(
+                        state
+                            .manager
+                            .global_sessions
+                            .session_dir(&meta.id)
+                            .join("claude-capabilities.json"),
+                        serde_json::to_vec(&json!({"commands":event["commands"]}))?,
+                    )?;
+                    return Ok(());
+                }
+                bail!("{}", event["error"].as_str().unwrap_or("Mode unavailable"));
+            }
+            if event["type"] == "error" {
+                bail!("{}", event["message"]);
+            }
+        }
+        bail!("Claude exited before validating the permission mode")
+    })
+    .await
+    .context("Claude mode validation timed out")
+    .and_then(|result| result);
+    let _ = stdin.write_all(b"{\"type\":\"cancel\"}\n").await;
+    drop(stdin);
+    if tokio::time::timeout(Duration::from_secs(2), child.wait())
+        .await
+        .is_err()
+    {
+        #[cfg(unix)]
+        if let Some(pid) = child.id() {
+            unsafe {
+                libc::killpg(pid as i32, libc::SIGKILL);
+            }
+        }
+        let _ = child.kill().await;
+    }
+    drain.abort();
+    result
 }
