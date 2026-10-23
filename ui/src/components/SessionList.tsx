@@ -8,7 +8,7 @@ import { useUserStore } from '../stores/userStore';
  */
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import {
-  MessageSquare, Bot, Sparkles, Plus, Search, X, Trash2,
+  MessageSquare, Bot, Sparkles, Search, X, Trash2,
   Play, Pause, ChevronDown, ChevronRight, Settings, RefreshCw,
   CheckSquare, Loader2, MoreHorizontal, Pencil,
 } from 'lucide-react';
@@ -408,12 +408,12 @@ export const SessionList: React.FC<{
           {owner && onCreateClaudeSession && <button onClick={onCreateClaudeSession}
             className="px-1.5 py-0.5 text-[11px] rounded hover:bg-slate-100 dark:hover:bg-white/5 text-slate-500 hover:text-orange-600 transition-colors"
             title="New Claude session" aria-label="New Claude session" data-testid="new-claude-session">
-            + Claude
+            +C
           </button>}
           <button onClick={onCreateSession}
-            className="p-1 rounded hover:bg-slate-100 dark:hover:bg-white/5 text-slate-400 hover:text-blue-500 transition-colors"
+            className="px-1.5 py-0.5 text-[11px] rounded hover:bg-slate-100 dark:hover:bg-white/5 text-slate-400 hover:text-blue-500 transition-colors"
             title="New chat">
-            <Plus size={13} />
+            +L
           </button>
         </div>
       </div>
