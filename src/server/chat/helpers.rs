@@ -58,7 +58,7 @@ pub(crate) fn model_error_code(msg: &str) -> &'static str {
     }
     match kind_of_message(msg) {
         RateLimit | QuotaExhausted => "quota",
-        Network | Server5xx => "network",
+        Network | Server5xx | Stalled => "network",
         Auth | BadRequest | ContextTooLong => "provider_http",
         EmptyResponse | Other if lower.contains("http") => "provider_http",
         EmptyResponse | Other => "other",

@@ -440,6 +440,9 @@ impl AgentEngine {
             }
         }
 
+        // Models that already stalled once this call: a second stall moves on.
+        let mut stalled: Vec<String> = Vec::new();
+
         loop {
             let result = if let Some(ref tool_defs) = tools {
                 self.stream_with_tool_calling(&model_id, messages, tool_defs.clone())
@@ -473,6 +476,15 @@ impl AgentEngine {
                     return Ok(result);
                 }
                 Err(e) => {
+                    // A backend that said nothing at all for the first-event
+                    // window changed nothing: ask the same model once more
+                    // before blaming it (a second silence benches it and
+                    // moves down the chain like any other failure).
+                    if stall_worth_retrying(&e, &model_id, &stalled) {
+                        warn!("model '{model_id}' stalled ({e}); asking it once more");
+                        stalled.push(model_id.clone());
+                        continue;
+                    }
                     crate::provider::models::note_unavailable(&model_id, &e);
                     tried.push(model_id.clone());
                     if !self.auto_fallback || !crate::provider::models::is_fallback_worthy_error(&e)
@@ -619,5 +631,46 @@ mod tests {
     fn strip_think_tags_with_newlines() {
         let input = "<think>\nThe user said hi.\nI should respond.\n</think>\nHi! How can I help?";
         assert_eq!(strip_think_tags(input), "\nHi! How can I help?");
+    }
+}
+
+/// A first-event stall on a model that has not stalled yet in this call.
+fn stall_worth_retrying(err: &anyhow::Error, model_id: &str, stalled: &[String]) -> bool {
+    use crate::provider::error::{kind_of, ProviderErrorKind};
+    kind_of(err) == ProviderErrorKind::Stalled && !stalled.iter().any(|m| m == model_id)
+}
+
+#[cfg(test)]
+mod stall_tests {
+    use super::*;
+    use crate::provider::error::{ProviderError, ProviderErrorKind};
+
+    fn stall() -> anyhow::Error {
+        ProviderError::new(
+            ProviderErrorKind::Stalled,
+            "no response (first-event guard)".into(),
+        )
+        .into()
+    }
+
+    #[test]
+    fn a_first_stall_is_asked_again_a_second_moves_on() {
+        let err = stall();
+        assert!(stall_worth_retrying(&err, "m1", &[]));
+        assert!(!stall_worth_retrying(&err, "m1", &["m1".to_string()]));
+        // Another model in the chain still gets its own one retry.
+        assert!(stall_worth_retrying(&err, "m2", &["m1".to_string()]));
+    }
+
+    #[test]
+    fn only_a_stall_is_retried_on_the_same_model() {
+        let other: anyhow::Error =
+            ProviderError::new(ProviderErrorKind::Server5xx, "502".into()).into();
+        assert!(!stall_worth_retrying(&other, "m1", &[]));
+    }
+
+    #[test]
+    fn a_stall_is_a_reason_to_try_the_next_model() {
+        assert!(ProviderErrorKind::Stalled.is_fallback_worthy());
     }
 }

@@ -32,3 +32,122 @@ pub(crate) fn stream_read_error(e: impl std::fmt::Display) -> anyhow::Error {
     };
     error::ProviderError::new(error::ProviderErrorKind::Network, msg).into()
 }
+
+/// Seconds of total silence the first answer of a call may take: no response
+/// headers and no first stream event. Unset (`0` here) means the built-in
+/// default; `Some(0)` from config turns the guard off.
+static FIRST_EVENT_SECS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(DEFAULT_FIRST_EVENT_SECS);
+const DEFAULT_FIRST_EVENT_SECS: u64 = 30;
+const FIRST_EVENT_ENV: &str = "LINGGEN_FIRST_EVENT_TIMEOUT_SECS";
+
+/// Apply `[routing].first_event_timeout_secs` (`None`: the default).
+pub fn set_first_event_timeout(secs: Option<u64>) {
+    FIRST_EVENT_SECS.store(
+        secs.unwrap_or(DEFAULT_FIRST_EVENT_SECS),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+fn first_event_window() -> Option<std::time::Duration> {
+    let secs = std::env::var(FIRST_EVENT_ENV)
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or_else(|| FIRST_EVENT_SECS.load(std::sync::atomic::Ordering::Relaxed));
+    (secs > 0).then(|| std::time::Duration::from_secs(secs))
+}
+
+/// One call's first-answer deadline, measured from [`FirstEvent::start`]: the
+/// request, its response headers and the stream's first event all fit in one
+/// window. The wire's own `read_timeout` (180 s) bounds silence *between*
+/// reads; this bounds the wait for the first one — the stall that took 164 s
+/// on a 68-token reply (Lingjing, 2026-10-22). A reasoning model keeps
+/// sending reasoning and `created` events while it thinks, so any event
+/// ends the guard — only a backend with nothing to say trips it.
+pub(crate) struct FirstEvent {
+    window: Option<std::time::Duration>,
+    deadline: Option<tokio::time::Instant>,
+}
+
+impl FirstEvent {
+    pub(crate) fn start() -> Self {
+        let window = first_event_window();
+        Self {
+            window,
+            deadline: window.map(|w| tokio::time::Instant::now() + w),
+        }
+    }
+
+    /// `fut` (a request's send, or the first read of its body) under the
+    /// deadline. Past it, a `Stalled` error the engine can retry.
+    pub(crate) async fn within<T>(
+        &self,
+        fut: impl std::future::Future<Output = T>,
+    ) -> anyhow::Result<T> {
+        let (Some(deadline), Some(window)) = (self.deadline, self.window) else {
+            return Ok(fut.await);
+        };
+        tokio::time::timeout_at(deadline, fut).await.map_err(|_| {
+            error::ProviderError::new(
+                error::ProviderErrorKind::Stalled,
+                format!(
+                    "no response from the model in {}s (first-event guard)",
+                    window.as_secs()
+                ),
+            )
+            .into()
+        })
+    }
+}
+
+#[cfg(test)]
+mod first_event_tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn guard(ms: Option<u64>) -> FirstEvent {
+        let window = ms.map(Duration::from_millis);
+        FirstEvent {
+            window,
+            deadline: window.map(|w| tokio::time::Instant::now() + w),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_silent_call_stalls_at_the_window() {
+        let err = guard(Some(50))
+            .within(std::future::pending::<()>())
+            .await
+            .unwrap_err();
+        assert_eq!(error::kind_of(&err), error::ProviderErrorKind::Stalled);
+    }
+
+    #[tokio::test]
+    async fn a_prompt_answer_passes_and_a_zero_window_is_off() {
+        assert_eq!(guard(Some(500)).within(async { 7 }).await.unwrap(), 7);
+        let slow = async {
+            tokio::time::sleep(Duration::from_millis(80)).await;
+            9
+        };
+        assert_eq!(guard(None).within(slow).await.unwrap(), 9);
+    }
+
+    #[tokio::test]
+    async fn the_send_and_the_first_read_share_one_window() {
+        let g = guard(Some(120));
+        g.within(tokio::time::sleep(Duration::from_millis(80)))
+            .await
+            .unwrap();
+        let err = g
+            .within(tokio::time::sleep(Duration::from_millis(80)))
+            .await
+            .unwrap_err();
+        assert_eq!(error::kind_of(&err), error::ProviderErrorKind::Stalled);
+    }
+
+    #[test]
+    fn a_stall_read_from_its_words_is_still_a_stall() {
+        let err = anyhow::anyhow!("no response from the model in 30s (first-event guard)");
+        assert_eq!(error::kind_of(&err), error::ProviderErrorKind::Stalled);
+    }
+}

@@ -214,7 +214,11 @@ impl AnthropicClient {
         );
 
         let rb = self.apply_auth(self.http.post(&url).json(&req))?;
-        let resp = rb.send().await.context("Anthropic request failed")?;
+        let first = crate::provider::FirstEvent::start();
+        let resp = first
+            .within(rb.send())
+            .await?
+            .context("Anthropic request failed")?;
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
@@ -230,8 +234,14 @@ impl AnthropicClient {
         // token. We decode each complete event payload as UTF-8 only once
         // the `\n\n` terminator arrives, when the codepoint boundary is
         // guaranteed to be aligned.
-        let byte_stream = Box::pin(resp.bytes_stream());
-        let buf: Vec<u8> = Vec::new();
+        let mut byte_stream = Box::pin(resp.bytes_stream());
+        let mut buf: Vec<u8> = Vec::new();
+        // The first bytes arrive inside the call's first-event window.
+        match first.within(byte_stream.next()).await? {
+            Some(Ok(chunk)) => buf.extend_from_slice(&chunk),
+            Some(Err(e)) => return Err(crate::provider::stream_read_error(e)),
+            None => {}
+        }
         let state = BlockState::default();
 
         let stream = futures_util::stream::unfold(

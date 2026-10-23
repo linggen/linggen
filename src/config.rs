@@ -435,6 +435,11 @@ pub struct RoutingConfig {
     /// (timeout, rate limit, 502/503, connection failures). Default: true.
     #[serde(default = "default_true")]
     pub auto_fallback: bool,
+    /// Seconds a model may say nothing at all — no response headers, no
+    /// first stream event — before the call is abandoned and retried (then
+    /// moved down the chain). Unset: 30. `0` turns the guard off.
+    #[serde(default)]
+    pub first_event_timeout_secs: Option<u64>,
 }
 
 pub(crate) fn default_true() -> bool {
@@ -462,6 +467,7 @@ impl Config {
                 config.migrate_retired_chatgpt_builtins();
                 config.migrate_retired_cloud_ids();
                 config.resolve_ling_mem();
+                crate::provider::set_first_event_timeout(config.routing.first_event_timeout_secs);
                 return Ok((config, Some(path)));
             }
         }

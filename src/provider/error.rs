@@ -35,6 +35,10 @@ pub enum ProviderErrorKind {
     Network,
     /// The model answered with nothing at all.
     EmptyResponse,
+    /// The backend accepted the request and sent nothing — no headers, no
+    /// first stream event — for the whole first-event window. The call can
+    /// be tried again: it changed nothing.
+    Stalled,
     Other,
 }
 
@@ -52,6 +56,7 @@ impl ProviderErrorKind {
                 | Self::Server5xx
                 | Self::Network
                 | Self::EmptyResponse
+                | Self::Stalled
         )
     }
 }
@@ -196,6 +201,8 @@ fn classify_message(msg: &str) -> ProviderErrorKind {
         || lower.contains("usage_limit_reached")
     {
         RateLimit
+    } else if lower.contains("first-event guard") {
+        Stalled
     } else if lower.contains("overloaded") {
         Server5xx
     } else if lower.contains("timed out")

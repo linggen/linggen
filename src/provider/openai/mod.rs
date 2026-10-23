@@ -9,8 +9,8 @@ mod responses_api;
 mod strict_schema;
 mod wire;
 
-use wire::extract_error_message;
 pub use image_gen::PictureRequest;
+use wire::extract_error_message;
 pub use wire::wire_tool_def;
 
 use crate::provider::models::StreamChunk;
@@ -24,16 +24,24 @@ type Parser = Box<dyn FnMut(&str) -> Vec<Result<StreamChunk>> + Send>;
 
 /// A response's SSE lines read into chunks — one line can yield several
 /// (batched tool call deltas from Gemini/Groq, a new item's paragraph break).
-fn parse_sse(
+/// The first line — any line, `event:` and blanks included — is awaited
+/// here, inside the call's first-event window, so a backend that took the
+/// request and says nothing fails as `Stalled` instead of waiting out the
+/// wire's 180 s read timeout.
+async fn parse_sse(
     resp: reqwest::Response,
     mut parse: Parser,
-) -> impl Stream<Item = Result<StreamChunk>> + Send {
-    sse_lines(resp)
+    first: &crate::provider::FirstEvent,
+) -> Result<impl Stream<Item = Result<StreamChunk>> + Send> {
+    let mut lines = Box::pin(sse_lines(resp));
+    let opening = first.within(lines.next()).await?;
+    Ok(futures_util::stream::iter(opening)
+        .chain(lines)
         .map(move |line_result| match line_result {
             Ok(line) => sse_data(&line).map(&mut parse).unwrap_or_default(),
             Err(e) => vec![Err(crate::provider::stream_read_error(e))],
         })
-        .flat_map(futures_util::stream::iter)
+        .flat_map(futures_util::stream::iter))
 }
 
 /// The `data:` payload of one SSE line, or `None` for blank lines, `event:`
@@ -437,8 +445,9 @@ impl OpenAiClient {
                 }),
             )
         };
-        let resp = self.send_turn(rb, app).await?;
-        Ok(parse_sse(resp, parse))
+        let first = crate::provider::FirstEvent::start();
+        let resp = first.within(self.send_turn(rb, app)).await??;
+        parse_sse(resp, parse, &first).await
     }
 
     /// Streaming chat with native tool calling support (SSE format).
@@ -473,7 +482,67 @@ impl OpenAiClient {
                 Box::new(chat_completions::parse_tool_chunk),
             )
         };
-        let resp = self.send_turn(rb, app).await?;
-        Ok(parse_sse(resp, parse))
+        let first = crate::provider::FirstEvent::start();
+        let resp = first.within(self.send_turn(rb, app)).await??;
+        parse_sse(resp, parse, &first).await
+    }
+}
+
+#[cfg(test)]
+mod first_event_wire_tests {
+    use super::*;
+    use crate::provider::error::{kind_of, ProviderErrorKind};
+    use std::time::{Duration, Instant};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// A backend on a local socket: it reads the request, waits `delay`, then
+    /// answers `reply` (headers and the first event in one write).
+    async fn backend(delay: Duration, reply: &'static str) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                return;
+            };
+            let mut buf = vec![0u8; 65536];
+            let _ = sock.read(&mut buf).await;
+            tokio::time::sleep(delay).await;
+            let _ = sock.write_all(reply.as_bytes()).await;
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        });
+        format!("http://{addr}")
+    }
+
+    const SSE: &str = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\ndata: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n";
+
+    async fn ask(base: String) -> Result<()> {
+        let client = OpenAiClient::new(base, Some("k".into()));
+        let msgs = vec![crate::message::ChatMessage::new("user", "hi".to_string())];
+        client
+            .chat_tool_stream("m", &msgs, vec![], None, None)
+            .await
+            .map(|_| ())
+    }
+
+    // The first-event window is process-wide: one test owns it.
+    #[tokio::test]
+    async fn the_first_event_guard_on_a_real_socket() {
+        crate::provider::set_first_event_timeout(Some(1));
+
+        let silent = backend(Duration::from_secs(4), SSE).await;
+        let t = Instant::now();
+        let err = ask(silent).await.unwrap_err();
+        assert_eq!(kind_of(&err), ProviderErrorKind::Stalled, "{err:#}");
+        assert!(
+            t.elapsed() < Duration::from_secs(3),
+            "tripped at the window, not later"
+        );
+
+        let prompt = backend(Duration::from_millis(100), SSE).await;
+        ask(prompt)
+            .await
+            .expect("an answer inside the window passes");
+
+        crate::provider::set_first_event_timeout(None);
     }
 }
