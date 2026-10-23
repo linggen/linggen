@@ -752,4 +752,119 @@ mod tests {
             "cargo build"
         );
     }
+
+    /// A granted workspace `ws/` with `ws/skills/` inside it and a sibling
+    /// `other/` beside it — under `target/`, since the OS temp dir is exempt
+    /// from the gate and would test nothing.
+    fn granted_workspace(name: &str) -> (std::path::PathBuf, SessionPermissions) {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join(format!("perm-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("ws/skills")).unwrap();
+        std::fs::create_dir_all(root.join("other")).unwrap();
+        let ws = root.join("ws").canonicalize().unwrap();
+        let mut sp = SessionPermissions::default();
+        sp.set_path_mode(&ws.to_string_lossy(), PermissionMode::Admin);
+        (ws, sp)
+    }
+
+    fn bash(cmd: &str, cwd: &std::path::Path, sp: &SessionPermissions) -> PermissionCheckResult {
+        check_permission("Bash", Some(cmd), None, cwd, sp, None)
+    }
+
+    fn prompted_path(r: PermissionCheckResult) -> String {
+        match r {
+            PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling { path, .. }) => path,
+            other => panic!("expected a prompt, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_upward_path_after_cd_is_resolved_from_where_the_shell_stands() {
+        let (ws, sp) = granted_workspace("after-cd");
+        let cmd = format!(
+            "cd {}/skills 2>/dev/null && git status; ls -d ../skills-wt-* | head",
+            ws.display()
+        );
+        assert!(matches!(
+            bash(&cmd, &ws, &sp),
+            PermissionCheckResult::Allowed
+        ));
+        // `cd` is followed through `;` and a flag too.
+        let cmd = format!("cd -P {}/skills; cat ../README", ws.display());
+        assert!(matches!(
+            bash(&cmd, &ws, &sp),
+            PermissionCheckResult::Allowed
+        ));
+    }
+
+    #[test]
+    fn a_path_that_really_leaves_the_grant_still_asks_and_offers_a_grant_that_covers_it() {
+        let (ws, sp) = granted_workspace("leaves");
+        let outside = ws.parent().unwrap().join("other");
+        // No `cd`: `..` is the session folder's parent.
+        let path = prompted_path(bash("ls ../other", &ws, &sp));
+        assert_ne!(
+            shellexpand_home(&path),
+            ws,
+            "offered the grant already held"
+        );
+        assert!(
+            outside.starts_with(shellexpand_home(&path)),
+            "{path} does not cover {outside:?}"
+        );
+        // After a `cd`, two levels up still leaves it.
+        let cmd = format!("cd {}/skills && ls ../../other", ws.display());
+        let path = prompted_path(bash(&cmd, &ws, &sp));
+        assert_ne!(shellexpand_home(&path), ws);
+    }
+
+    #[test]
+    fn a_cd_that_cannot_be_followed_resolves_from_the_session_folder() {
+        let (ws, sp) = granted_workspace("unfollowed");
+        // A missing directory, a variable, a subshell: not followed.
+        for cmd in [
+            format!("cd {}/nope; ls ../../other", ws.display()),
+            "cd $SOME_DIR && ls ../other".to_string(),
+            format!("(cd {}/skills; ls ../other)", ws.display()),
+        ] {
+            assert!(
+                matches!(bash(&cmd, &ws, &sp), PermissionCheckResult::NeedsPrompt(_)),
+                "{cmd}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_dotdot_escape_stays_closed_after_a_cd() {
+        let (ws, sp) = granted_workspace("escape");
+        // A cd into scratch space does not make a `..` out of it free.
+        let r = bash("cd /tmp && cat ../etc/hosts", &ws, &sp);
+        assert!(matches!(r, PermissionCheckResult::NeedsPrompt(_)), "{r:?}");
+        // Walking up out of the grant with `cd ..` and then further.
+        let cmd = format!("cd {} && cd .. && ls ../..", ws.display());
+        let r = bash(&cmd, &ws, &sp);
+        assert!(matches!(r, PermissionCheckResult::NeedsPrompt(_)), "{r:?}");
+        // A cd that cannot be resolved (a quoted variable, a bare variable)
+        // is not trusted: the paths after it still ask.
+        for cmd in [
+            r#"cd "$HOME/x" && cat ../../etc/hosts"#,
+            "cd $SOME_DIR && cat ../../etc/hosts",
+            "cd ~root && cat ../etc/hosts",
+        ] {
+            let r = bash(cmd, &ws, &sp);
+            assert!(
+                matches!(r, PermissionCheckResult::NeedsPrompt(_)),
+                "{cmd}: {r:?}"
+            );
+        }
+    }
+
+    fn shellexpand_home(p: &str) -> std::path::PathBuf {
+        match p.strip_prefix("~/") {
+            Some(rest) => dirs::home_dir().unwrap().join(rest),
+            None => std::path::PathBuf::from(p),
+        }
+    }
 }

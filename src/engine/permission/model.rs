@@ -870,17 +870,16 @@ pub fn check_permission(
     // file it really reaches, not cwd.
     if tool == "Bash" {
         if let Some(cmd) = bash_command {
-            let path_args = extract_command_paths(cmd);
-            if !path_args.is_empty() {
-                for path_arg in &path_args {
-                    let arg_path = resolve_bash_arg(path_arg, session_cwd);
+            let targets = command_targets(cmd, session_cwd);
+            if !targets.is_empty() {
+                for arg_path in &targets {
                     // OS temp dir is always-available scratch — don't gate it.
-                    if is_under_temp(&arg_path) {
+                    if is_under_temp(arg_path) {
                         continue;
                     }
-                    let mode = effective_mode_for_path(&session_perms.path_modes, &arg_path);
+                    let mode = effective_mode_for_path(&session_perms.path_modes, arg_path);
                     if mode.is_none_or(|m| action_tier > m) {
-                        let grant_path = grant_path_for_prompt(tool, &arg_path, session_cwd);
+                        let grant_path = grant_path_for_prompt(tool, arg_path, session_cwd);
                         let path_str = display_path(&grant_path);
                         return PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling {
                             target_mode: action_tier,
@@ -957,36 +956,105 @@ pub fn check_permission(
 /// substitution (`$(…)`).
 pub(super) fn extract_command_paths(cmd: &str) -> Vec<String> {
     shell_words(cmd)
-        .into_iter()
-        // A fully-quoted word is a single string argument — unwrap it so a
-        // quoted path ARG (`cat "/etc/x"`) still counts, while a quoted
-        // string that merely CONTAINS path-like words (a `ling-mem search
-        // "... /usr/local/bin ..."` query, a jq program) stays one word
-        // and is not mistaken for a path the command touches.
-        .map(|w| {
-            let t = w.trim();
-            let quoted = t.len() >= 2
-                && ((t.starts_with('"') && t.ends_with('"'))
-                    || (t.starts_with('\'') && t.ends_with('\'')));
-            if quoted {
-                t[1..t.len() - 1].to_string()
-            } else {
-                t.to_string()
-            }
-        })
-        .filter(|t| t.starts_with('/') || t.starts_with("~/") || t == "~" || is_upward_relative(t))
-        // Strip trailing punctuation from compound shell syntax.
-        .map(|t| {
-            t.trim_end_matches(';')
-                .trim_end_matches('&')
-                .trim_end_matches('|')
-                .to_string()
-        })
-        .filter(|t| !t.is_empty())
-        // Reject all-slash tokens (`/`, `//`, `///`) — e.g. an unquoted jq
-        // `//` operator — which would otherwise demand admin on `//`.
-        .filter(|t| !t.trim_matches('/').is_empty())
+        .iter()
+        .filter_map(|w| path_token(w))
         .collect()
+}
+
+/// The path a single shell word names, when it is one the gate cares about:
+/// absolute, tilde-prefixed or upward-relative. A fully-quoted word is a
+/// single string argument — unwrapped so a quoted path ARG (`cat "/etc/x"`)
+/// still counts, while a quoted string that merely CONTAINS path-like words
+/// (a `ling-mem search "... /usr/local/bin ..."` query, a jq program) stays
+/// one word and is not mistaken for a path the command touches.
+fn path_token(word: &str) -> Option<String> {
+    let t = word.trim();
+    let quoted = t.len() >= 2
+        && ((t.starts_with('"') && t.ends_with('"')) || (t.starts_with('\'') && t.ends_with('\'')));
+    let t = if quoted { &t[1..t.len() - 1] } else { t };
+    if !(t.starts_with('/') || t.starts_with("~/") || t == "~" || is_upward_relative(t)) {
+        return None;
+    }
+    // Strip trailing punctuation from compound shell syntax.
+    let t = t.trim_end_matches([';', '&', '|']);
+    // Reject all-slash tokens (`/`, `//`, `///`) — e.g. an unquoted jq
+    // `//` operator — which would otherwise demand admin on `//`.
+    (!t.trim_matches('/').is_empty()).then(|| t.to_string())
+}
+
+/// Every path a Bash command reaches, each resolved where the shell would
+/// resolve it. A relative token (`../x`) after `cd <dir>` belongs to `<dir>`,
+/// not to the session's folder — `cd skills && ls ../other` reaches
+/// `linggen/other`, never the session folder's parent. Only a plain `cd`
+/// to a directory that exists, with no variable, glob or subshell syntax
+/// anywhere in the command, is followed; anything else resolves against the
+/// session's folder as before.
+pub(super) fn command_targets(cmd: &str, session_cwd: &Path) -> Vec<PathBuf> {
+    let words = shell_words(cmd);
+    let mut cwd = session_cwd.to_path_buf();
+    let mut following = !has_subshell_syntax(cmd);
+    let mut at_command = true;
+    let mut cd_pending = false;
+    let mut out = Vec::new();
+    for word in &words {
+        let w = word.trim();
+        if cd_pending && !is_cd_flag(w) {
+            cd_pending = false;
+            if let Some(token) = path_token(w) {
+                out.push(resolve_bash_arg(&token, &cwd));
+            }
+            if following {
+                match cd_destination(w, &cwd) {
+                    Some(dir) => cwd = dir,
+                    None => following = false,
+                }
+            }
+        } else if let Some(token) = path_token(w) {
+            out.push(resolve_bash_arg(&token, &cwd));
+        }
+        cd_pending = cd_pending && is_cd_flag(w) || (at_command && w == "cd");
+        at_command = is_command_separator(w);
+    }
+    out
+}
+
+fn is_cd_flag(w: &str) -> bool {
+    matches!(w, "-P" | "-L" | "-e" | "--")
+}
+
+fn is_command_separator(w: &str) -> bool {
+    matches!(w, "&&" | "||" | ";" | "|" | "&") || w.ends_with(';')
+}
+
+/// Parentheses, braces, backticks and `$(` open a scope the shell leaves
+/// again (a subshell's `cd` does not outlive it) — not worth following.
+fn has_subshell_syntax(cmd: &str) -> bool {
+    shell_words(cmd).iter().any(|w| {
+        let t = w.trim();
+        let quoted = t.starts_with('"') || t.starts_with('\'');
+        !quoted && t.contains(['(', ')', '{', '}', '`'])
+    })
+}
+
+/// Where `cd <word>` lands from `cwd` — the real directory, so a later `..`
+/// goes where the kernel sends it. `None` for what cannot be known before
+/// the command runs (a variable, a glob, `-`, a missing directory).
+fn cd_destination(word: &str, cwd: &Path) -> Option<PathBuf> {
+    let t = word.trim().trim_end_matches([';', '&', '|']);
+    let t = t.trim_matches(|c| c == '"' || c == '\'');
+    if t.is_empty()
+        || t == "-"
+        || t.contains(['$', '`', '*', '?', '['])
+        || t.starts_with("~") && t != "~" && !t.starts_with("~/")
+    {
+        return None;
+    }
+    let joined = if t == "~" || t.starts_with("~/") || t.starts_with('/') {
+        expand_path_arg(t)
+    } else {
+        cwd.join(t)
+    };
+    joined.canonicalize().ok().filter(|p| p.is_dir())
 }
 
 /// Split a command line into shell-ish words, keeping single/double quoted
@@ -1069,19 +1137,21 @@ fn is_upward_relative(token: &str) -> bool {
 }
 
 /// Compute the path to offer in the "Switch this folder to {mode}" option.
+/// Compared with every `..` collapsed: `<cwd>/../other` is not under the
+/// session's folder, so offering the folder (already granted, covering
+/// nothing new) would leave the same prompt to come back.
 fn grant_path_for_prompt(tool: &str, target: &Path, session_cwd: &Path) -> PathBuf {
     if matches!(tool, "Grep" | "Glob" | "Task") {
         return target.to_path_buf();
     }
-    if target.starts_with(session_cwd) {
+    let target = PathBuf::from(normalize_path(&target.to_string_lossy()));
+    let cwd = PathBuf::from(normalize_path(&session_cwd.to_string_lossy()));
+    if target.starts_with(&cwd) {
         session_cwd.to_path_buf()
     } else if target.is_dir() {
-        target.to_path_buf()
-    } else {
         target
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| target.to_path_buf())
+    } else {
+        target.parent().map(Path::to_path_buf).unwrap_or(target)
     }
 }
 
