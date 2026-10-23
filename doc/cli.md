@@ -58,6 +58,7 @@ ling skills add/remove/list/search
 | `account logout` | Remove account.toml | No |
 | `account status` | Show subscription + trial status | No |
 | `skills` | Manage skills (add/remove/list/search) | No |
+| `claude` | Run Claude Code on Linggen's models | No (needs the daemon) |
 
 "Needs full runtime" means the command initialises tracing, `AgentManager`, database, and skill loading. Lightweight commands only load `Config`.
 
@@ -264,6 +265,21 @@ online daemon; signing out takes it offline.
 The web UI does exactly the same thing through `/api/account*`, and is the
 normal way in — this command exists for terminals. See
 `linggensite/doc/entitlement-spec.md`.
+
+## claude
+
+```bash
+ling claude [claude args…]   # e.g. ling claude --continue, ling claude -p "…"
+```
+
+Starts Claude Code with its environment pointed at the engine's Anthropic
+gateway (`/anthropic/v1/messages`, `/count_tokens`, `/models`), so it runs on
+the Anthropic API-key models configured in Linggen instead of its own login.
+Only that process changes; a plain `claude` keeps its own subscription. The
+gateway serves `anthropic` models with an API key — never `claude_oauth` —
+and forwards the request unchanged except the model id. `/model` lists the
+served models (gateway model discovery). Non-Anthropic models are not served
+yet.
 
 ---
 

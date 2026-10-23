@@ -1,4 +1,5 @@
 pub mod account;
+pub mod claude;
 pub mod daemon;
 pub mod engine_restart;
 pub mod init;

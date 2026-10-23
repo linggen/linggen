@@ -1,4 +1,5 @@
 pub(crate) mod api;
+mod anthropic_gateway;
 mod app_pages;
 mod background;
 pub(crate) mod bridge;

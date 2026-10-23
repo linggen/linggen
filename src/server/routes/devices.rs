@@ -2,7 +2,7 @@
 //! sync, the browser bridge, MCP, and the companion's voice and events.
 
 use super::Routes;
-use crate::server::{api, bridge, mcp, rtc};
+use crate::server::{anthropic_gateway, api, bridge, mcp, rtc};
 use axum::routing::{get, patch, post};
 
 pub(super) fn routes() -> Routes {
@@ -17,6 +17,19 @@ pub(super) fn routes() -> Routes {
         .route("/api/bridge/call", post(bridge::call_handler))
         .route("/api/bridge/status", get(bridge::status_handler))
         .route("/mcp", post(mcp::post_handler).get(mcp::get_handler))
+        // Anthropic Messages API over the user's models (`ling claude`)
+        .route(
+            "/anthropic/v1/messages",
+            post(anthropic_gateway::messages_handler),
+        )
+        .route(
+            "/anthropic/v1/messages/count_tokens",
+            post(anthropic_gateway::count_tokens_handler),
+        )
+        .route(
+            "/anthropic/v1/models",
+            get(anthropic_gateway::models_handler),
+        )
         // WebRTC signaling
         .route("/api/rtc/whip", post(rtc::whip_handler))
         .route("/api/rtc/token", get(rtc::whip_token_handler))

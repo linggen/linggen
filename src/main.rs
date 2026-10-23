@@ -94,6 +94,11 @@ enum Command {
         #[command(subcommand)]
         action: SkillsAction,
     },
+    /// Run Claude Code on Linggen's models (args pass through to `claude`)
+    Claude {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Manage ChatGPT OAuth authentication
     Auth {
         #[command(subcommand)]
@@ -208,6 +213,9 @@ async fn main() -> Result<()> {
         Some(Command::Update { rollback }) => {
             let engine = (config.server.host(), config.server.port());
             return cli::self_update::run(*rollback, engine).await;
+        }
+        Some(Command::Claude { args }) => {
+            return cli::claude::run(config.server.port(), args).await;
         }
         Some(Command::Account { action }) => {
             return match action {
@@ -458,7 +466,8 @@ async fn main() -> Result<()> {
         | Some(Command::Update { .. })
         | Some(Command::Skills { .. })
         | Some(Command::Auth { .. })
-        | Some(Command::Account { .. }) => unreachable!(),
+        | Some(Command::Account { .. })
+        | Some(Command::Claude { .. }) => unreachable!(),
     }
 
     Ok(())
