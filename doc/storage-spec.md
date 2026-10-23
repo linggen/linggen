@@ -65,7 +65,7 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 │   └── {session_id}/
 │       ├── session.yaml              # Session metadata (includes creator, cwd, project)
 │       ├── messages.jsonl            # Chat messages, append-only (JSONL)
-│       ├── sdk-{agent}.json          # External runtime conversation ID, cwd and thread rewrite generation
+│       ├── claude.json               # Claude SDK session ID and working folder (Claude sessions only)
 │       ├── refs.jsonl                # Numbered sources and pictures tools returned (append-only)
 │       └── images/                   # Pictures a person's messages carried, pictures Read opened, and the ones answers showed (<sha256-16>.png|jpg|gif|webp)
 ├── memory/                           # Global memory

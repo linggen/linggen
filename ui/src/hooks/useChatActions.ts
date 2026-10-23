@@ -86,7 +86,8 @@ export function useChatActions(
     await newChatMade();
     const root = effectiveProjectRoot(projectRootRef.current);
     const { activeSessionId: sid } = useSessionStore.getState();
-    const picked = useServerStore.getState().selectedAgent;
+    const claude = useSessionStore.getState().allSessions.find((s) => s.id === sid)?.runtime === 'claude_agent_sdk';
+    const picked = claude ? 'claude' : useServerStore.getState().selectedAgent;
     // A message that opens with `@name` goes to that agent — also when it came
     // from a page through the embed bridge, not the input (`@银月 …`).
     // Only an agent a person may address: never an internal one.
@@ -94,7 +95,7 @@ export function useChatActions(
     // Only an agent the person named or picked is sent; with none, the
     // session's default responder answers (the server decides — this shows
     // who that is).
-    const addressed = targetAgent
+    const addressed = claude ? 'claude' : targetAgent
       || leadingAgentMention(userMessage, addressable)?.agent
       || picked
       || '';
@@ -109,7 +110,7 @@ export function useChatActions(
     const chat = useChatStore.getState();
 
     // A resend's bubble is already on screen from the first try.
-    if (!opts?.resend && trimmed !== '/help' && trimmed !== '/status' && trimmed !== '/clear' && trimmed !== '/compact' && !trimmed.startsWith('/compact ') && !trimmed.startsWith('/model') && !trimmed.startsWith('!')) {
+    if (!opts?.resend && (claude || trimmed !== '/help' && trimmed !== '/status' && trimmed !== '/clear' && trimmed !== '/compact' && !trimmed.startsWith('/compact ') && !trimmed.startsWith('/model') && !trimmed.startsWith('!'))) {
       chat.addMessage({
         role: 'user', from: 'user', to: agentToUse, text: userMessage, clientId,
         timestamp: now.toLocaleTimeString(), timestampMs: now.getTime(), isGenerating: false,
@@ -118,6 +119,7 @@ export function useChatActions(
       scrollToBottom();
     }
 
+    if (!claude) {
     // /model
     if (trimmed === '/model' || trimmed.startsWith('/model ')) {
       const modelArg = trimmed.slice('/model'.length).trim();
@@ -262,6 +264,8 @@ export function useChatActions(
     if (trimmed.startsWith('/user_story ')) {
       await sessionApi.task(root, agentToUse, trimmed.substring(12).trim());
       return;
+    }
+
     }
 
     try {

@@ -165,7 +165,6 @@ impl AgentEngine {
             args: &args,
             session_id,
             tool_call_id: &tool_call_id,
-            external_events: false,
         };
 
         if let Some(stop) = self.gate_pet_scoped(&t, allowed_tools, messages).await {
@@ -250,12 +249,6 @@ impl AgentEngine {
         messages: &mut Vec<ChatMessage>,
         msg: String,
     ) -> Option<PreExecOutcome> {
-        // An SDK hook already opened the call's block. Its runner also owns
-        // the one terminal event, including a denial. Reuse our decision
-        // without creating a second call or history row.
-        if t.external_events {
-            return self.refuse(t, messages, msg);
-        }
         let safe_args = sanitize_tool_args_for_display(t.canonical, t.args);
         let block_id = self.announce_tool_start(t, &safe_args).await;
         let _ = self
@@ -509,125 +502,6 @@ impl AgentEngine {
         t: &ToolTurn<'_>,
         messages: &mut Vec<ChatMessage>,
     ) -> Option<PreExecOutcome> {
-        let cwd = self.tools.builtins.cwd();
-        self.gate_permission_at(t, messages, &cwd, None).await
-    }
-
-    /// External runtimes use the same restrictions, path grants and AskUser
-    /// bridge. The hook's cwd matters after a shell changes directory.
-    pub(crate) async fn authorize_sdk_tool(
-        &mut self,
-        tool: &str,
-        args: &JsonValue,
-        cwd: &std::path::Path,
-    ) -> std::result::Result<(), String> {
-        let id = None;
-        let sid = self.session_id.clone();
-        let canonical = match tool {
-            "AskUserQuestion" => "AskUser",
-            "NotebookEdit" => "Edit",
-            _ => tool,
-        };
-        if self.is_withheld(tool)
-            || self.spec.as_ref().is_some_and(|spec| {
-                !spec
-                    .tools
-                    .iter()
-                    .any(|name| name == "*" || name == tool || name == canonical)
-            })
-        {
-            return Err(format!("Tool {tool} is not available in this session"));
-        }
-        // SDK names differ from Linggen's tools. Pass the real path to the
-        // shared checker, which resolves parent traversal and symlinks;
-        // never fall back to cwd when a file tool omitted its target.
-        let target = match tool {
-            "Read" | "Write" | "Edit" => args.get("file_path").and_then(|v| v.as_str()),
-            "NotebookEdit" => args.get("notebook_path").and_then(|v| v.as_str()),
-            "Glob" | "Grep" => args
-                .get("path")
-                .and_then(|v| v.as_str())
-                .filter(|p| !p.is_empty())
-                .or(Some(".")),
-            _ => None,
-        };
-        if matches!(canonical, "Read" | "Write" | "Edit") && target.is_none() {
-            return Err(format!("Tool {tool} omitted its target path"));
-        }
-        let mut display_args = args.clone();
-        if let Some(target) = target {
-            display_args["path"] = serde_json::json!(target);
-        }
-        let t = ToolTurn {
-            tool,
-            canonical,
-            args: &display_args,
-            session_id: sid.as_deref(),
-            tool_call_id: &id,
-            external_events: true,
-        };
-        let mut messages = Vec::new();
-        if self.gate_restrictions(&t, &mut messages).await.is_some() {
-            return Err(messages
-                .last()
-                .map(|message| message.content.clone())
-                .unwrap_or_else(|| "Tool is restricted".into()));
-        }
-        // SDK search paths use the Read tier, including an explicit target.
-        let permission_tool = if matches!(tool, "Glob" | "Grep") {
-            "Read"
-        } else {
-            canonical
-        };
-        let t = ToolTurn {
-            canonical: permission_tool,
-            ..t
-        };
-        if self
-            .gate_permission_at(&t, &mut messages, cwd, target)
-            .await
-            .is_some()
-        {
-            return Err(messages
-                .last()
-                .map(|message| message.content.clone())
-                .unwrap_or_else(|| "Permission denied".into()));
-        }
-        // Glob also accepts an absolute or parent-relative pattern, even
-        // without `path`. Its static directory prefix needs its own grant.
-        if tool == "Glob" {
-            if let Some(pattern) = args.get("pattern").and_then(|v| v.as_str()) {
-                let prefix = pattern
-                    .split(['*', '?', '[', '{'])
-                    .next()
-                    .unwrap_or_default();
-                let dir = prefix
-                    .rsplit_once('/')
-                    .map(|(dir, _)| if dir.is_empty() { "/" } else { dir });
-                if let Some(dir) = dir {
-                    if self
-                        .gate_permission_at(&t, &mut messages, cwd, Some(dir))
-                        .await
-                        .is_some()
-                    {
-                        return Err(messages
-                            .last()
-                            .map(|message| message.content.clone())
-                            .unwrap_or_else(|| "Permission denied".into()));
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    async fn gate_permission_at(
-        &mut self,
-        t: &ToolTurn<'_>,
-        messages: &mut Vec<ChatMessage>,
-        cwd: &std::path::Path,
-        target_path: Option<&str>,
-    ) -> Option<PreExecOutcome> {
         // Skill data tools (empty cmd, e.g. PageUpdate) pass their args
         // straight through as a content block — they don't read files, run
         // commands, or reach outside the process. Running them through the
@@ -645,15 +519,13 @@ impl AgentEngine {
         } else {
             None
         };
-        let file_path_arg = if let Some(path) = target_path {
-            Some(path.to_owned())
-        } else if matches!(t.canonical, "Write" | "Edit" | "Read") {
-            normalize_tool_path_arg(cwd, t.args)
+        let file_path_arg = if matches!(t.canonical, "Write" | "Edit" | "Read") {
+            normalize_tool_path_arg(&self.tools.builtins.cwd(), t.args)
         } else {
             // For tools without an explicit file path (Glob, Grep, Task, etc.),
             // use the agent's cwd so permission checks resolve against the
             // session's path_mode grants for the workspace.
-            Some(cwd.to_string_lossy().to_string())
+            Some(self.tools.builtins.cwd().to_string_lossy().to_string())
         };
 
         // Skill-declared tier wins over the built-in table. For HTTP and
@@ -672,7 +544,7 @@ impl AgentEngine {
             t.canonical,
             bash_command.as_deref(),
             file_path_arg.as_deref(),
-            cwd,
+            &self.tools.builtins.cwd(),
             &self.session_permissions,
             skill_tier_override,
         );
@@ -732,11 +604,7 @@ impl AgentEngine {
                 let msg = self
                     .prompt_store
                     .render_or_fallback(crate::prompts::keys::PERMISSION_TIMEOUT, &[]);
-                if !t.external_events {
-                    let _ = self.persist_assistant_message(&msg, t.session_id).await;
-                } else {
-                    messages.push(self.tool_result_msg(msg));
-                }
+                let _ = self.persist_assistant_message(&msg, t.session_id).await;
                 Some(PreExecOutcome::Blocked(LoopControl::Return(
                     AgentOutcome::None,
                 )))
@@ -1441,8 +1309,6 @@ impl AgentEngine {
 
 /// What one call to a tool is, as every pre-execution gate sees it.
 struct ToolTurn<'a> {
-    /// The external runtime owns this call's block and history events.
-    external_events: bool,
     /// The name as the model wrote it.
     tool: &'a str,
     canonical: &'a str,

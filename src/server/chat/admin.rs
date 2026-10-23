@@ -22,6 +22,20 @@ pub(crate) async fn clear_chat_history_api(
         .session_id
         .clone()
         .unwrap_or_else(|| "default".to_string());
+    // Clearing a Claude chat resets the SDK conversation under its turn lock,
+    // after cancellation has unwound widgets and saved the old transcript.
+    let claude = state
+        .manager
+        .global_sessions
+        .get_session_meta(&session_id)
+        .ok()
+        .flatten()
+        .is_some_and(|m| !m.runtime.is_linggen());
+    let _sdk_turn = if claude {
+        Some(crate::server::claude::quiesce(&state, &session_id).await)
+    } else {
+        None
+    };
     // project_root not needed — chat history is stored globally by session ID.
     // Skipping canonicalize avoids failures when the project directory is deleted.
     match state
@@ -30,6 +44,13 @@ pub(crate) async fn clear_chat_history_api(
         .clear_chat_history(&session_id)
     {
         Ok(removed) => {
+            let _ = std::fs::remove_file(
+                state
+                    .manager
+                    .global_sessions
+                    .session_dir(&session_id)
+                    .join("claude.json"),
+            );
             // Clear in-memory chat history for this session's engine.
             // Clone the engine out and drop the map guard before waiting on
             // it: the engine lock is held for a whole turn, and holding the
@@ -129,11 +150,13 @@ pub(crate) async fn get_system_prompt_api(
         engine.withheld_tools.extend(meta.withheld_tools.clone());
         // The same creator rule a real turn follows: a skill's or a
         // mission's session gets no core block and no memory protocol.
-        engine.prompt_profile.narrow_for_creator(super::handler::turn_creator(
-            meta.mission_id.as_deref(),
-            None,
-            meta.skill.as_deref(),
-        ));
+        engine
+            .prompt_profile
+            .narrow_for_creator(super::handler::turn_creator(
+                meta.mission_id.as_deref(),
+                None,
+                meta.skill.as_deref(),
+            ));
         if let Some(ref skill_name) = meta.skill {
             if let Some(skill) = state.manager.skills.reload_one(skill_name).await {
                 // The app's own memory index, as a real turn wires it.
@@ -255,6 +278,16 @@ pub(crate) async fn compact_chat_api(
         .session_id
         .clone()
         .unwrap_or_else(|| "default".to_string());
+    if state
+        .manager
+        .global_sessions
+        .get_session_meta(&session_id)
+        .ok()
+        .flatten()
+        .is_some_and(|m| !m.runtime.is_linggen())
+    {
+        return (StatusCode::BAD_REQUEST, "Claude manages its own context.").into_response();
+    }
     let root = match PathBuf::from(&req.project_root).canonicalize() {
         Ok(r) => r,
         Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()).into_response(),

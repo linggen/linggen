@@ -1,9 +1,10 @@
-pub(crate) mod api;
 mod anthropic_gateway;
+pub(crate) mod api;
 mod app_pages;
 mod background;
 pub(crate) mod bridge;
 mod chat;
+pub(crate) mod claude;
 mod event_log;
 mod facts;
 mod loopback_guard;

@@ -16,7 +16,7 @@ pub const COMPANION_AGENT_ID: &str = "yinyue";
 /// The agent an ordinary session seats, and the one that answers on the Mac
 /// when a message names nobody (`doc/shared-session-spec.md` § Who answers).
 pub const LEAD_AGENT_ID: &str = "ling";
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -211,38 +211,6 @@ impl AgentManager {
         auth_dead_default.ok_or_else(|| anyhow::anyhow!("No models configured"))
     }
 
-    fn resolve_runtime_model(
-        config: &Config,
-        models: &ModelManager,
-        agent_id: &str,
-        spec: &AgentSpec,
-    ) -> Result<String> {
-        use super::claude_sdk::supports_model;
-        if spec.runtime == record::AgentRuntime::Linggen {
-            return Self::resolve_model_id(config, models, agent_id, spec.model.clone());
-        }
-        let explicit =
-            Self::normalize_model_choice(Self::model_override_for_agent(config, agent_id))
-                .filter(|id| models.has_model(id))
-                .or_else(|| Self::normalize_model_choice(spec.model.clone()));
-        if let Some(id) = explicit {
-            return Ok(id);
-        }
-        let available = models.list_models();
-        config
-            .routing
-            .default_models
-            .iter()
-            .chain(config.models.iter().map(|m| &m.id))
-            .find(|id| {
-                available
-                    .iter()
-                    .any(|model| model.id == **id && supports_model(model))
-            })
-            .cloned()
-            .context("Add a Claude API-key model in Settings → Models to use Coder")
-    }
-
     /// `ling01-mh3k9x`: the agent's count this process, then the moment the
     /// process began (base 36). Rows keep a run's id (`ChatMsg::run_id`), so
     /// it must never repeat after a restart — the chat binds by it alone.
@@ -287,8 +255,12 @@ impl AgentManager {
 
         let config = self.config.read().await.clone();
         let models = self.models.read().await.clone();
-        let model_id =
-            Self::resolve_runtime_model(&config, &models, normalized_id, &agent_spec.spec)?;
+        let model_id = Self::resolve_model_id(
+            &config,
+            &models,
+            normalized_id,
+            agent_spec.spec.model.clone(),
+        )?;
 
         let mut engine = AgentEngine::new(
             EngineConfig::from_app_config(&config, project_root.to_path_buf(), self.interface_mode),
@@ -693,7 +665,7 @@ impl AgentManager {
         let spec = self.agents.find(project_root, &normalized).await.ok()??;
         let config = self.config.read().await.clone();
         let models = self.models.read().await.clone();
-        Self::resolve_runtime_model(&config, &models, &normalized, &spec.spec).ok()
+        Self::resolve_model_id(&config, &models, &normalized, spec.spec.model.clone()).ok()
     }
 
     pub async fn agent_exists(&self, project_root: &Path, agent_id: &str) -> bool {
@@ -988,30 +960,6 @@ impl AgentManager {
 #[cfg(test)]
 mod tests {
     use super::AgentManager;
-
-    #[test]
-    fn sdk_default_model_comes_from_compatible_models_only() {
-        use super::*;
-        let mut config = Config::default();
-        config.models = vec![
-            serde_json::from_value(serde_json::json!({"id":"general", "provider":"openai", "url":"http://unused", "model":"general"})).unwrap(),
-            serde_json::from_value(serde_json::json!({"id":"claude", "provider":"anthropic", "url":"http://unused", "model":"claude", "api_key":"test-only"})).unwrap(),
-        ];
-        config.routing.default_models = vec!["general".into()];
-        config.agents.clear();
-        let models = ModelManager::new_with_credentials(
-            config.models.clone(),
-            &crate::credentials::Credentials::default(),
-        );
-        let (spec, _) = crate::extensions::agents::parse_agent_markdown(include_str!(
-            "../../../agents/coder.md"
-        ))
-        .unwrap();
-        assert_eq!(
-            AgentManager::resolve_runtime_model(&config, &models, "coder", &spec).unwrap(),
-            "claude"
-        );
-    }
 
     #[test]
     fn normalize_model_choice_treats_inherit_as_none() {

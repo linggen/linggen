@@ -12,22 +12,11 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// Who supplies the agent loop, prompt and built-in tools.
-#[derive(Debug, Default, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentRuntime {
-    #[default]
-    Linggen,
-    ClaudeAgentSdk,
-}
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AgentSpec {
     pub name: String,
     pub description: String,
     pub tools: Vec<String>,
-    #[serde(default)]
-    pub runtime: AgentRuntime,
     #[serde(default)]
     pub model: Option<String>,
     #[serde(default)]
@@ -95,7 +84,6 @@ mod tests {
                 name: id.into(),
                 description: String::new(),
                 tools: Vec::new(),
-                runtime: AgentRuntime::Linggen,
                 model: None,
                 personality: None,
                 reasoning_effort: None,

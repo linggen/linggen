@@ -80,6 +80,7 @@ export const apiDelete = <T>(path: string, body?: unknown): Promise<T> =>
 // ---------------------------------------------------------------------------
 
 interface SessionCreateRequest {
+  runtime?: 'claude_agent_sdk';
   title: string;
   /** A skill-bound session (an app page's chat): binds the skill's rules and tools. */
   skill?: string;
@@ -87,6 +88,8 @@ interface SessionCreateRequest {
   params?: Record<string, string>;
 }
 interface SessionCreateResponse {
+  runtime?: 'claude_agent_sdk';
+  agents?: import('./sessionMembers.mts').SessionMember[];
   id: string;
   /** The folder the engine started the session in. */
   cwd?: string;

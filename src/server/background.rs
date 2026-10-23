@@ -253,6 +253,16 @@ fn idle_shutdown(state: &Arc<ServerState>, timeout: u64) {
 async fn bridge_agent_events(state: Arc<ServerState>, mut rx: AgentEvents) {
     while let Some((event, session_id)) = rx.recv().await {
         match event {
+            AgentEvent::StartSession {
+                session_id,
+                message,
+                from,
+            } => {
+                let state = state.clone();
+                tokio::spawn(async move {
+                    super::claude::start_task(state, session_id, message, from).await;
+                });
+            }
             // Special cases that need extra logic beyond a 1:1 mapping.
             AgentEvent::AgentStatus {
                 agent_id,

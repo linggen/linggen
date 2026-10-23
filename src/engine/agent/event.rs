@@ -13,6 +13,12 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentEvent {
+    /// Start a task in an already-created independent session.
+    StartSession {
+        session_id: String,
+        message: String,
+        from: String,
+    },
     /// The pet expresses on its avatar body — a sustained mood and/or a
     /// one-shot gesture. Emitted by the `Express` tool; carries no agent text.
     /// Generic across pets/mascots (Yinyue today, others later).

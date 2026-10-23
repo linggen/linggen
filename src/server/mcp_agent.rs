@@ -128,6 +128,9 @@ pub async fn run(
     let store =
         crate::state_fs::SessionStore::with_sessions_dir(crate::paths::global_sessions_dir());
     let meta = crate::state_fs::sessions::SessionMeta {
+        runtime: Default::default(),
+        claude_permission_mode: Default::default(),
+        parent_session_id: None,
         id: session_id.clone(),
         title: title.clone(),
         created_at: crate::util::now_ts_secs(),

@@ -1,3 +1,4 @@
+import { useUserStore } from '../stores/userStore';
 /**
  * Unified left panel — sessions and missions.
  *
@@ -110,6 +111,7 @@ export const SessionList: React.FC<{
   activeSessionId: string | null;
   onSelectSession: (session: SessionInfo) => void;
   onCreateSession: () => void;
+  onCreateClaudeSession?: () => void;
   onDeleteSession?: (id: string) => void;
   onOpenSettings?: (tab?: ManagementTab) => void;
   /** When provided, overrides the sessions from the store (used by consumer mode to filter). */
@@ -118,7 +120,8 @@ export const SessionList: React.FC<{
   hideMissions?: boolean;
   /** Hide the user/mission/skill/all filter tab row (skill iframes pin one creator). */
   hideFilters?: boolean;
-}> = ({ activeSessionId, onSelectSession, onCreateSession, onDeleteSession, onOpenSettings, filterSessions, hideMissions, hideFilters }) => {
+}> = ({ activeSessionId, onSelectSession, onCreateSession, onCreateClaudeSession, onDeleteSession, onOpenSettings, filterSessions, hideMissions, hideFilters }) => {
+  const owner = useUserStore((s) => s.userType !== 'consumer');
   const storeSessions = useSessionStore((s) => s.allSessions);
   const sessionsLoaded = useSessionStore((s) => s.allSessionsLoaded);
   const allSessions = filterSessions ?? storeSessions;
@@ -402,6 +405,11 @@ export const SessionList: React.FC<{
             title={selectMode ? 'Exit select mode' : 'Select sessions'}>
             <CheckSquare size={13} />
           </button>
+          {owner && onCreateClaudeSession && <button onClick={onCreateClaudeSession}
+            className="px-1.5 py-0.5 text-[11px] rounded hover:bg-slate-100 dark:hover:bg-white/5 text-slate-500 hover:text-orange-600 transition-colors"
+            title="New Claude session" aria-label="New Claude session" data-testid="new-claude-session">
+            + Claude
+          </button>}
           <button onClick={onCreateSession}
             className="p-1 rounded hover:bg-slate-100 dark:hover:bg-white/5 text-slate-400 hover:text-blue-500 transition-colors"
             title="New chat">
@@ -581,6 +589,7 @@ export const SessionList: React.FC<{
                       </span>
                     )}
                     <div className="flex items-center gap-1.5 mt-0.5">
+                      {session.runtime === 'claude_agent_sdk' && <span className="text-[10px] text-orange-600 dark:text-orange-400">Claude</span>}
                       {session.project_name && (
                         <span className="text-[10px] px-1 py-px rounded bg-slate-200/60 dark:bg-white/5 text-slate-500 truncate max-w-[80px]">
                           {session.project_name}

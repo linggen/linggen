@@ -4,11 +4,12 @@
  */
 import React from 'react';
 import { chatAgentOf, withMemberModel } from '../../lib/sessionMembers.mts';
-import { useServerStore } from '../../stores/serverStore';
+import { useServerStore, isSessionBusy } from '../../stores/serverStore';
 import { useUiStore } from '../../stores/uiStore';
 import { useUserStore } from '../../stores/userStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { suppressPermissionSync } from '../../lib/eventDispatcher';
+import { apiPatch } from '../../lib/api';
 import { sessionApi } from '../../lib/endpoints';
 import type { SessionInfo } from '../../types';
 
@@ -35,7 +36,10 @@ export const SessionStats: React.FC = () => {
 
 /** Compact per-session model selector shown in the run bar. */
 export const SessionModelSelector: React.FC = () => {
-  const models = useServerStore((s) => s.models);
+  const catalog = useServerStore((s) => s.models);
+  const session = useSessionStore((s) => s.allSessions.find((session) => session.id === s.activeSessionId));
+  const claude = session?.runtime === 'claude_agent_sdk';
+  const models = claude ? catalog.filter((model) => model.supports_claude_sdk) : catalog;
   const defaultModels = useServerStore((s) => s.defaultModels);
   const sessionModel = useUiStore((s) => s.sessionModel);
   const setSessionModel = useUiStore((s) => s.setSessionModel);
@@ -47,7 +51,9 @@ export const SessionModelSelector: React.FC = () => {
   // "owner default" available to them — the server picks the first shared
   // model when no override is sent. Use that as the Default label.
   const isConsumer = userType === 'consumer';
-  const defaultLabel = isConsumer
+  const defaultLabel = claude
+    ? (models.find((model) => defaultModels.includes(model.id))?.id ?? models[0]?.id ?? 'configure in Settings')
+    : isConsumer
     ? (models[0]?.id ?? 'shared')
     : (defaultModels.length > 0 ? defaultModels[0] : 'default');
 
@@ -102,6 +108,9 @@ export const SessionModeSelector: React.FC = () => {
   const userType = useUserStore((s) => s.userType);
   const sessionId = useSessionStore((s) => s.activeSessionId);
 
+  const session = useSessionStore((s) => s.allSessions.find((session) => session.id === sessionId));
+  if (session?.runtime === 'claude_agent_sdk') return <ClaudeModeSelector session={session} />;
+
   // Four modes. `chat` means no path-mode grant covers cwd → no tools.
   const modes = [
     { value: 'chat', label: 'chat', color: 'text-slate-500 dark:text-slate-400' },
@@ -150,4 +159,25 @@ export const SessionModeSelector: React.FC = () => {
       ))}
     </select>
   );
+};
+
+/** SDK modes belong to this Claude session, never to native path grants. */
+const ClaudeModeSelector: React.FC<{ session: SessionInfo }> = ({ session }) => {
+  const busy = useServerStore((s) => isSessionBusy(s, session.id));
+  const modes = [
+    { value: 'default', label: 'Ask before changes' },
+    { value: 'acceptEdits', label: 'Accept file edits' },
+    { value: 'plan', label: 'Plan' },
+  ] as const;
+  const change = async (value: string) => {
+    await apiPatch('/api/sessions', { session_id: session.id, claude_permission_mode: value });
+    useSessionStore.setState((s) => ({ allSessions: s.allSessions.map((item) => item.id === session.id
+      ? { ...item, claude_permission_mode: value as SessionInfo['claude_permission_mode'] } : item) }));
+  };
+  return <select value={session.claude_permission_mode ?? 'default'} disabled={busy}
+    onChange={(event) => { void change(event.target.value); }} onClick={(event) => event.stopPropagation()}
+    className="text-[11px] border border-slate-200 dark:border-white/10 rounded px-1.5 py-0.5 bg-white dark:bg-black/30"
+    title="Claude permission mode" aria-label="Claude permission mode">
+    {modes.map((mode) => <option key={mode.value} value={mode.value}>{mode.label}</option>)}
+  </select>;
 };

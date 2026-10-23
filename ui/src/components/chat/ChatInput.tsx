@@ -308,6 +308,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     inputRef.current?.focus();
   };
 
+  const claudeSession = useSessionStore((s) => s.allSessions.find((session) => session.id === s.activeSessionId)?.runtime === 'claude_agent_sdk');
   const skillSuggestions = useMemo(() => {
     const suggestions: {
       key: string;
@@ -318,7 +319,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       isBuiltin: boolean;
     }[] = [];
 
-    const builtinCommands: [string, string][] = [
+    const builtinCommands: [string, string][] = claudeSession ? [] : [
       ['/help', 'Show available commands'],
       ['/clear', 'Clear chat context'],
       ['/compact', 'Compact context (summarize old messages)'],
@@ -352,7 +353,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       });
 
     return suggestions;
-  }, [skills, skillFilter, yinyueHere]);
+  }, [skills, skillFilter, yinyueHere, claudeSession]);
 
   const applySuggestion = useCallback((suggestion: typeof skillSuggestions[number]) => {
     const beforeSlash = chatInput.substring(0, chatInput.lastIndexOf('/'));
@@ -822,7 +823,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 setShowFileDropdown(false);
               }
             }}
-            placeholder={hint ? `${hint}   ⇥ Tab / →` : mobile ? "Message..." : `Message... (${yinyueHere ? '@ Ling/银月, ' : ''}/f files, / skills, Shift+Enter newline)`}
+            placeholder={claudeSession ? "Message Claude… (Shift+Enter newline)" : hint ? `${hint}   ⇥ Tab / →` : mobile ? "Message..." : `Message... (${yinyueHere ? '@ Ling/银月, ' : ''}/f files, / skills, Shift+Enter newline)`}
             rows={1}
             className={cn(
               "flex-1 bg-transparent border-none outline-none resize-none leading-5 overflow-y-hidden",

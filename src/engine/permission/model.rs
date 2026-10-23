@@ -758,13 +758,6 @@ pub fn tool_action_tier(tool: &str) -> PermissionMode {
         return tier;
     }
     match tool {
-        // Trusted SDK bookkeeping tools only inspect tool metadata or the
-        // SDK's own task list. The discovered tools still pass this gate
-        // individually; discovery never grants permission to execute them.
-        "ToolSearch" | "TaskCreate" | "TaskUpdate" | "TaskList" | "TaskGet" | "TodoWrite" => {
-            PermissionMode::Chat
-        }
-        "Agent" | "TaskOutput" => PermissionMode::Read,
         "EnterPlanMode" | "ExitPlanMode" | "UpdatePlan" => PermissionMode::Read,
         _ => PermissionMode::Admin,
     }

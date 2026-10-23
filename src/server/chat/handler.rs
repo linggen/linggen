@@ -250,6 +250,9 @@ async fn ensure_session(
     let title = auto_session_title(words);
 
     let make_meta = |id: String| crate::state_fs::sessions::SessionMeta {
+        runtime: Default::default(),
+        claude_permission_mode: Default::default(),
+        parent_session_id: None,
         id,
         title: title.clone(),
         created_at: now,
@@ -381,7 +384,7 @@ fn busy_message(queue: QueueMode, question_open: bool) -> BusyMessage {
 /// then either leave the running turn alone (see [`busy_message`]) or forward
 /// the message through the interrupt channel. Returns the queued item (if
 /// any) so the spawned task can dequeue it once the lock is acquired.
-async fn enqueue_if_busy(
+pub(crate) async fn enqueue_if_busy(
     state: &Arc<ServerState>,
     was_busy: bool,
     project_root_str: &str,
@@ -441,7 +444,7 @@ async fn enqueue_if_busy(
 /// message's task is parked on the engine lock. Returns false when the item
 /// is gone by the time the lock is held — the caller must drop the turn,
 /// not run a message the user watched disappear.
-async fn dequeue_and_emit(
+pub(crate) async fn dequeue_and_emit(
     state: &Arc<ServerState>,
     events_tx: &tokio::sync::broadcast::Sender<ServerEvent>,
     queued_id: &str,
@@ -1062,6 +1065,9 @@ pub(crate) async fn start_turn(
             .ok()
             .flatten()
     });
+    if let Some(meta) = meta.as_ref().filter(|m| !m.runtime.is_linggen()) {
+        return crate::server::claude::start_turn(state, req, meta.clone()).await;
+    }
     let bound_skill = meta.as_ref().and_then(|m| m.skill.clone());
     let session_creator = turn_creator(
         req.mission_id.as_deref(),

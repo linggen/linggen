@@ -97,7 +97,7 @@ async fn before_she_is_met_she_is_nowhere_and_ling_covers() {
         ],
     ))
     .await;
-    assert_eq!(listed(&w).await, ["coder", "ling", "memory"].map(String::from));
+    assert_eq!(listed(&w).await, ["ling", "memory"].map(String::from));
     let entry = her(&w).await;
     assert_eq!(entry["present"], false);
     assert!(entry["met"].is_null());

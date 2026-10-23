@@ -34,14 +34,18 @@ mod runtime;
 mod skill_dispatch;
 mod structured;
 mod thread;
-mod types;
+pub(crate) mod types;
 
 pub(crate) use admin::{
     ask_user_response_handler, clear_chat_history_api, compact_chat_api, compact_config_api,
     get_system_prompt_api, pending_ask_user_handler,
 };
-pub(crate) use handler::{chat_handler, kickoff_in_session, run_session_turn, say_in_session};
+pub(crate) use handler::{
+    chat_handler, dequeue_and_emit, enqueue_if_busy, kickoff_in_session, run_session_turn,
+    say_in_session,
+};
 pub(crate) use plan_flow::{approve_plan_handler, edit_plan_handler, reject_plan_handler};
+pub(crate) use runtime::close_turn;
 
 use crate::engine::agent::AgentManager;
 use crate::server::{ServerEvent, ServerState};

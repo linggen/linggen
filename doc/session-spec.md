@@ -19,6 +19,19 @@ A session is the fundamental unit of interaction. Each session holds one context
 - `agentic-loop.md`: how the engine runs inside a context.
 - `shared-session-spec.md`: several agents at one table — members, the thread, who answers.
 
+## Execution runtime
+
+The existing New chat button creates a native Linggen session. A second
+**New Claude session** button creates a conversation with one Claude Agent.
+All messages in it go directly to the Claude Agent SDK; no `@` is needed and
+native agents cannot join. The runtime stays fixed for that session.
+
+Claude sessions use SDK tools, context and permissions. Linggen's widgets
+render their output and user interactions, but native persona, skill/mission
+injection, compaction and path authorization are not applied. The SDK owns
+its resume state independently of the visible chat log. A linked parent may
+start and track the task without entering its conversation.
+
 ## Core concept
 
 Session = Context. One session, one context. They are the same thing.

@@ -11,6 +11,80 @@ const SHARED: &str = "sess-1790000001-5a1ed001";
 const COMPACTED: &str = "sess-1790000002-c0ac7ed2";
 const INTERRUPTED: &str = "sess-1790000003-1e7e5ed3";
 
+/// Claude sessions have one execution owner and persist SDK settings without
+/// creating a native permission file or invoking the native model.
+#[tokio::test]
+async fn claude_session_creation_and_permissions_are_independent() {
+    let w = World::start(Setup::default()).await;
+    let native = w.api.create_session(json!({"title":"Native"})).await;
+    let sid = w
+        .api
+        .create_session(
+            json!({"title":"Claude", "runtime":"claude_agent_sdk", "project_root":w.work()}),
+        )
+        .await;
+    w.api
+        .patch(
+            "/api/sessions",
+            json!({"session_id":sid, "claude_permission_mode":"acceptEdits"}),
+        )
+        .await;
+    let dir = w.home.linggen_home().join("sessions").join(&sid);
+    let meta: serde_json::Value =
+        serde_norway::from_str(&std::fs::read_to_string(dir.join("session.yaml")).unwrap())
+            .unwrap();
+    assert_eq!(meta["runtime"], "claude_agent_sdk");
+    assert_eq!(meta["agents"], json!([{"id":"claude"}]));
+    assert_eq!(meta["claude_permission_mode"], "acceptEdits");
+    assert!(!dir.join("permission.json").exists());
+    let native_meta = std::fs::read_to_string(
+        w.home
+            .linggen_home()
+            .join("sessions")
+            .join(&native)
+            .join("session.yaml"),
+    )
+    .unwrap();
+    assert!(!native_meta.contains("claude"));
+    let client = reqwest::Client::new();
+    for (path, payload) in [
+        (
+            "/api/sessions/permission",
+            json!({"session_id":sid, "path":w.work(), "mode":"admin"}),
+        ),
+        (
+            "/api/sessions",
+            json!({"session_id":sid, "agent_id":"ling", "model_id":"test"}),
+        ),
+        (
+            "/api/sessions",
+            json!({"session_id":sid, "claude_permission_mode":"admin"}),
+        ),
+    ] {
+        let response = client
+            .patch(format!("{}{path}", w.engine.base_url()))
+            .json(&payload)
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            response.status().is_client_error(),
+            "{path} accepted native policy"
+        );
+    }
+    // Selecting a native member cannot turn a Claude session into a native run.
+    let response = client
+        .post(format!("{}/api/chat", w.engine.base_url()))
+        .json(&json!({
+            "session_id":sid, "project_root":w.work(), "agent_id":"ling", "message":"Hello"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 400);
+    w.assert_all_scripted();
+}
+
 /// Each member's thread, built from the one session thread: his own Look as
 /// native call/result pairs, hers as labelled dialogue — and for her, his
 /// Look as labelled text carrying only what it declares for others.

@@ -97,6 +97,7 @@ export const BareSessions: React.FC = () => {
         activeSessionId={effectiveActive}
         onSelectSession={handleSelect}
         onCreateSession={handleCreate}
+        onCreateClaudeSession={skillParam ? undefined : () => sessionStore.createSession('claude_agent_sdk')}
         onDeleteSession={(id) => sessionStore.removeSession(id)}
         onOpenSettings={skillParam ? undefined : openSettings}
         filterSessions={filtered}

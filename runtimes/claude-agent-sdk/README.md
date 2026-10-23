@@ -1,30 +1,22 @@
 # Claude Agent SDK runtime
 
-The engine launches `runner.ts` with its bundled Bun. The SDK supplies the
-official `claude_code` prompt, tools, loop and compaction; agent Markdown
-only registers the runtime and optionally appends product instructions.
+New Claude session starts one Claude Agent independently of native Linggen
+agents. No agent Markdown is required. `server/claude/` owns the hosting
+adapter; no native AgentEngine is created for these turns.
 
-The dependency version and transitive dependencies are pinned by
-`package.json` and `bun.lock`. On first use the engine installs them under
-`~/.linggen/runtimes/claude-agent-sdk/<version>/`. Credentials are passed
-through the child environment. The isolated Claude config and SDK
-transcripts live under `state/`; each Linggen session keeps its own resume
-pointer. Linggen's `messages.jsonl` remains the visible conversation log.
+The SDK owns its official `claude_code` prompt, tools, loop, project settings,
+context, compaction and permissions. Linggen owns the UI and process hosting.
+`PreToolUse` observes tools without allowing or denying them. `canUseTool`
+forwards SDK approval requests and AskUserQuestion to shared widgets, then
+returns the person's answer to the SDK. Native path grants are never consulted.
 
-The bridge uses JSON lines over stdin/stdout. Every SDK tool passes a
-`PreToolUse` hook through Linggen's restrictions and path permissions before
-execution. Questions use the existing AskUser bridge. MCP servers inherit
-Linggen's configuration, including disabled entries and remote-device
-headers; memory calls use the existing host context stamping and write
-guards. Stop aborts the SDK and bounds subprocess shutdown.
+Bun and pinned dependencies run the bridge. Credentials stay in the child
+environment; official product attribution is preserved. SDK state lives under
+`~/.linggen/runtimes/claude-agent-sdk/state/`. Each Claude session keeps a
+`claude.json` resume pointer. Its `messages.jsonl` is a display record and is
+never replayed into the SDK. Clearing the chat resets the pointer.
 
-Run the bridge tests with:
-
-```sh
-~/.linggen/bin/bun test runtimes/claude-agent-sdk/runner.test.ts
-cargo test --bin ling sdk
-```
-
-Live validation uses a disposable project on the normal 9527 engine:
-read/edit/test, follow-up resume, denied edit, cancellation, and reloading
-the resulting chat. Never use a real project as a destructive fixture.
+Run bridge tests with `bun test runtimes/claude-agent-sdk/runner.test.ts` and
+host tests with `cargo nextest run --bin ling -E 'test(server::claude)'`.
+Live validation uses a disposable folder on the normal 9527 engine: creation,
+read/edit/test, follow-up and restart resume, denial, AskUser, plan and stop.

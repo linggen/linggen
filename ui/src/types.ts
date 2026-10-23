@@ -214,6 +214,7 @@ export interface ModelInfo {
   /** Runtime reading from /api/models: credentials present right now.
    *  Absent on older payloads — treat undefined as usable. */
   auth_ok?: boolean;
+  supports_claude_sdk?: boolean;
 }
 
 /** A row of GET /api/models: what page_state sends plus the fields only the
@@ -277,6 +278,9 @@ export interface ModelConfigUI {
 }
 
 export interface SessionInfo {
+  runtime?: 'linggen' | 'claude_agent_sdk';
+  claude_permission_mode?: 'default' | 'acceptEdits' | 'plan';
+  parent_session_id?: string | null;
   id: string;
   repo_path: string;
   title: string;

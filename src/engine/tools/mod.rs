@@ -13,7 +13,7 @@ pub use read_picture::human_size;
 pub(crate) mod json_schema;
 pub(crate) mod memory_http;
 mod memory_mcp;
-pub(crate) use memory_mcp::{augment as augment_mcp_args, memory_root, place_of, MemoryPlace};
+pub(crate) use memory_mcp::{memory_root, place_of, MemoryPlace};
 mod delegation;
 mod drawing;
 mod search_exec;

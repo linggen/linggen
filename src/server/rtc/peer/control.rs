@@ -432,6 +432,7 @@ pub(super) async fn process_control_request_async(
             // Inject user_id into POST /api/sessions for session ownership tracking
             if url_path == "/api/sessions" && method == "POST" {
                 body_val["user_id"] = serde_json::Value::String(user_ctx.user_id.clone());
+                body_val["user_type"] = serde_json::Value::String(user_ctx.user_type_for(actor.lock_ok().is_some()).to_string());
             }
             // Carry the peer's identity into the loopback request. The phone
             // speaks only WebRTC, so without this a handler cannot tell which

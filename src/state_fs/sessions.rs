@@ -27,10 +27,49 @@ fn default_creator() -> String {
     "user".to_string()
 }
 
+/// A session has one execution owner. Native sessions may seat several agents;
+/// an SDK session keeps its own transcript and permission policy.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+#[serde(rename_all = "snake_case")]
+pub enum SessionRuntime {
+    #[default]
+    Linggen,
+    ClaudeAgentSdk,
+}
+
+impl SessionRuntime {
+    pub fn is_linggen(&self) -> bool {
+        *self == Self::Linggen
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum ClaudePermissionMode {
+    #[default]
+    Default,
+    AcceptEdits,
+    Plan,
+}
+
+impl ClaudePermissionMode {
+    pub fn is_default(&self) -> bool {
+        *self == Self::Default
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct SessionMeta {
     pub id: String,
+    #[serde(default, skip_serializing_if = "SessionRuntime::is_linggen")]
+    pub runtime: SessionRuntime,
+    #[serde(default, skip_serializing_if = "ClaudePermissionMode::is_default")]
+    pub claude_permission_mode: ClaudePermissionMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_session_id: Option<String>,
     pub title: String,
     pub created_at: u64,
     /// Last-activity timestamp (mtime of the session's messages.jsonl),
@@ -752,6 +791,9 @@ mod tests {
     fn test_session_crud() {
         let (store, _dir) = temp_store();
         let meta = SessionMeta {
+            runtime: Default::default(),
+            claude_permission_mode: Default::default(),
+            parent_session_id: None,
             id: "sess-1000-abcd1234".into(),
             title: "Test Session".into(),
             created_at: 1000,
@@ -837,6 +879,9 @@ mod tests {
         for (id, ts) in [("s1", 100u64), ("s2", 300), ("s3", 200)] {
             store
                 .add_session(&SessionMeta {
+                    runtime: Default::default(),
+                    claude_permission_mode: Default::default(),
+                    parent_session_id: None,
                     id: id.into(),
                     title: id.into(),
                     created_at: ts,
@@ -867,6 +912,9 @@ mod tests {
     fn test_chat_messages_roundtrip() {
         let (store, _dir) = temp_store();
         let meta = SessionMeta {
+            runtime: Default::default(),
+            claude_permission_mode: Default::default(),
+            parent_session_id: None,
             id: "s1".into(),
             title: "t".into(),
             created_at: 1000,
@@ -960,6 +1008,9 @@ mod tests {
         let (store, _dir) = temp_store();
         store
             .add_session(&SessionMeta {
+                runtime: Default::default(),
+                claude_permission_mode: Default::default(),
+                parent_session_id: None,
                 id: "s1".into(),
                 title: "t".into(),
                 created_at: 1000,
@@ -1032,6 +1083,9 @@ mod tests {
         let (store, _dir) = temp_store();
         store
             .add_session(&SessionMeta {
+                runtime: Default::default(),
+                claude_permission_mode: Default::default(),
+                parent_session_id: None,
                 id: "s1".into(),
                 title: "t".into(),
                 created_at: 1000,
@@ -1082,6 +1136,9 @@ mod tests {
         let (store, _dir) = temp_store();
         store
             .add_session(&SessionMeta {
+                runtime: Default::default(),
+                claude_permission_mode: Default::default(),
+                parent_session_id: None,
                 id: "s1".into(),
                 title: "t".into(),
                 created_at: 1000,
@@ -1132,6 +1189,9 @@ mod tests {
         let (store, _dir) = temp_store();
         assert!(store
             .add_session(&SessionMeta {
+                runtime: Default::default(),
+                claude_permission_mode: Default::default(),
+                parent_session_id: None,
                 id: "../escape".into(),
                 title: "t".into(),
                 created_at: 1000,
@@ -1154,6 +1214,9 @@ mod tests {
             .is_err());
         assert!(store
             .add_session(&SessionMeta {
+                runtime: Default::default(),
+                claude_permission_mode: Default::default(),
+                parent_session_id: None,
                 id: "a/b".into(),
                 title: "t".into(),
                 created_at: 1000,
@@ -1176,6 +1239,9 @@ mod tests {
             .is_err());
         assert!(store
             .add_session(&SessionMeta {
+                runtime: Default::default(),
+                claude_permission_mode: Default::default(),
+                parent_session_id: None,
                 id: "".into(),
                 title: "t".into(),
                 created_at: 1000,

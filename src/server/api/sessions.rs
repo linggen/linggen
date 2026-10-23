@@ -21,6 +21,10 @@ pub(crate) struct CreateSessionRequest {
     project_root: Option<String>,
     title: String,
     #[serde(default)]
+    runtime: crate::state_fs::sessions::SessionRuntime,
+    #[serde(default)]
+    user_type: String,
+    #[serde(default)]
     skill: Option<String>,
     /// User ID of the session creator (injected by peer.rs).
     #[serde(default)]
@@ -71,6 +75,33 @@ pub(crate) async fn create_session(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<CreateSessionRequest>,
 ) -> impl IntoResponse {
+    if !req.runtime.is_linggen() {
+        if req.user_type == "consumer" {
+            return StatusCode::FORBIDDEN.into_response();
+        }
+        if req.skill.is_some() || !req.params.is_empty() {
+            return (
+                StatusCode::BAD_REQUEST,
+                "Claude sessions cannot bind a Linggen skill.",
+            )
+                .into_response();
+        }
+        let mut meta = crate::server::claude::new_meta(
+            req.title,
+            session_cwd(None, req.project_root.as_deref()),
+            None,
+        );
+        meta.user_id = req.user_id;
+        meta.withheld_tools = req.withheld_tools;
+        if let Err(error) = state.manager.global_sessions.add_session(&meta) {
+            tracing::error!("Could not create Claude session: {error}");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+        let _ = state
+            .events_tx
+            .send(crate::server::ServerEvent::StateUpdated);
+        return Json(serde_json::json!({"id": meta.id, "cwd": meta.cwd, "runtime": meta.runtime, "agents": meta.agents})).into_response();
+    }
     let id = format!(
         "sess-{}-{}",
         crate::util::now_ts_secs(),
@@ -86,6 +117,9 @@ pub(crate) async fn create_session(
     let cwd = session_cwd(skill.as_ref(), req.project_root.as_deref());
     let is_skill = req.skill.is_some();
     let meta = crate::state_fs::sessions::SessionMeta {
+        runtime: Default::default(),
+        claude_permission_mode: Default::default(),
+        parent_session_id: None,
         id: id.clone(),
         title: req.title,
         created_at: crate::util::now_ts_secs(),
@@ -314,12 +348,63 @@ pub(crate) struct RenameSessionRequest {
     /// answers with by default (the one the model picker shows).
     #[serde(default)]
     agent_id: Option<String>,
+    #[serde(default)]
+    claude_permission_mode: Option<crate::state_fs::sessions::ClaudePermissionMode>,
 }
 
 pub(crate) async fn rename_session_api(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<RenameSessionRequest>,
 ) -> impl IntoResponse {
+    if let Ok(Some(mut meta)) = state
+        .manager
+        .global_sessions
+        .get_session_meta(&req.session_id)
+    {
+        if !meta.runtime.is_linggen() {
+            if req
+                .agent_id
+                .as_deref()
+                .is_some_and(|id| id != crate::server::claude::AGENT_ID)
+            {
+                return StatusCode::BAD_REQUEST;
+            }
+            if let Some(model) = &req.model_id {
+                if crate::server::claude::resolve_model(&state, Some(model))
+                    .await
+                    .is_err()
+                {
+                    return StatusCode::BAD_REQUEST;
+                }
+                meta.set_member_model(
+                    crate::server::claude::AGENT_ID,
+                    (!model.is_empty()).then(|| model.clone()),
+                );
+            }
+            if let Some(mode) = req.claude_permission_mode {
+                meta.claude_permission_mode = mode;
+            }
+            if let Some(title) = req.title {
+                meta.title = title;
+                meta.title_locked = true;
+            }
+            if state
+                .manager
+                .global_sessions
+                .update_session_meta(&meta)
+                .is_err()
+            {
+                return StatusCode::INTERNAL_SERVER_ERROR;
+            }
+            let _ = state
+                .events_tx
+                .send(crate::server::ServerEvent::StateUpdated);
+            return StatusCode::OK;
+        }
+        if req.claude_permission_mode.is_some() {
+            return StatusCode::BAD_REQUEST;
+        }
+    }
     if let Some(ref title) = req.title {
         if state
             .manager
@@ -388,6 +473,18 @@ pub(crate) async fn delete_unified_session(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<DeleteUnifiedSessionRequest>,
 ) -> impl IntoResponse {
+    let claude = state
+        .manager
+        .global_sessions
+        .get_session_meta(&req.session_id)
+        .ok()
+        .flatten()
+        .is_some_and(|m| !m.runtime.is_linggen());
+    let _sdk_turn = if claude {
+        Some(crate::server::claude::quiesce(&state, &req.session_id).await)
+    } else {
+        None
+    };
     state.manager.remove_session_engine(&req.session_id).await;
     match state
         .manager

@@ -4,37 +4,25 @@ import { createInterface } from 'node:readline';
 type Send = (message: Record<string, unknown>) => void;
 type Rpc = (kind: string, input: any) => Promise<any>;
 
-export function permissionHook(rpc: Rpc, send: Send) {
+// Observe calls without making permission decisions. The SDK's own rules and
+// modes run before canUseTool asks the host to render a widget.
+export function observeTool(send: Send) {
   return async (input: any) => {
-    const { tool_name: tool, tool_input: args, tool_use_id: id } = input;
-    send({ type: 'tool_start', tool, args, id });
-    const response = await rpc('permission', input);
-    if (!response.allow) {
-      send({ type: 'tool_end', id, tool, failed: true, result: response.reason });
-      return { hookSpecificOutput: {
-        hookEventName: 'PreToolUse', permissionDecision: 'deny',
-        permissionDecisionReason: response.reason || 'Linggen denied this tool call.',
-      } };
-    }
-    // AskUserQuestion must reach canUseTool, where Linggen supplies answers.
-    if (tool === 'AskUserQuestion' || tool === 'ExitPlanMode') return {};
-    return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow',
-      ...(response.updatedInput ? { updatedInput: response.updatedInput } : {}) } };
+    send({ type: 'tool_start', tool: input.tool_name, args: input.tool_input, id: input.tool_use_id });
+    return {};
   };
 }
 
-export async function userQuestion(tool: string, input: any, rpc: Rpc) {
-  if (tool === 'ExitPlanMode') {
-    const response = await rpc('exit_plan', input);
-    return response.allow ? { behavior: 'allow' as const, updatedInput: input }
-      : { behavior: 'deny' as const, message: 'The plan was not approved.' };
+export async function permissionRequest(tool: string, input: any, rpc: Rpc, options: any = {}) {
+  if (tool === 'AskUserQuestion') {
+    const response = await rpc('ask_user', input);
+    if (!response.answers) return { behavior: 'deny' as const, message: 'Question cancelled.' };
+    return { behavior: 'allow' as const, updatedInput: { ...input, answers: response.answers } };
   }
-  if (tool !== 'AskUserQuestion') {
-    return { behavior: 'deny' as const, message: 'Tool did not pass Linggen permission checks.' };
-  }
-  const response = await rpc('ask_user', input);
-  if (!response.answers) return { behavior: 'deny' as const, message: 'Question cancelled.' };
-  return { behavior: 'allow' as const, updatedInput: { ...input, answers: response.answers } };
+  const response = await rpc('permission', { tool, args: input,
+    title: options.title, description: options.description, reason: options.decisionReason });
+  return response.allow ? { behavior: 'allow' as const, updatedInput: input }
+    : { behavior: 'deny' as const, message: response.reason || 'User declined this tool call.' };
 }
 
 export function queryPrompt(input: any) {
@@ -90,29 +78,35 @@ async function main() {
     const conversation = query({
       prompt: queryPrompt(input),
       options: {
-        cwd: input.cwd, model: input.model, env, settingSources: [],
+        cwd: input.cwd, model: input.model, env, settingSources: ['project'],
         resume: input.resume || undefined,
-        systemPrompt: { type: 'preset', preset: 'claude_code',
-          ...(input.append ? { append: input.append } : {}) },
-        tools: !input.tools || input.tools.includes('*')
-          ? { type: 'preset', preset: 'claude_code' } : input.tools,
+        systemPrompt: { type: 'preset', preset: 'claude_code' },
+        tools: { type: 'preset', preset: 'claude_code' },
+        disallowedTools: input.disallowedTools || [],
         includePartialMessages: true, maxTurns: input.maxTurns,
         maxBudgetUsd: input.maxBudgetUsd,
-        permissionMode: input.planMode ? 'plan' : 'default',
+        permissionMode: input.permissionMode || 'default',
         abortController: controller,
         mcpServers: input.mcpServers || {},
         hooks: {
-          PreToolUse: [{ hooks: [permissionHook(rpc, send)], timeout: 28800 }],
+          PreToolUse: [{ hooks: [observeTool(send)] }],
           PostToolUse: [{ hooks: [endTool] }],
           PostToolUseFailure: [{ hooks: [endTool] }],
         },
-        canUseTool: (tool, args) => userQuestion(tool, args, rpc),
+        canUseTool: async (tool, args, options) => {
+          const result = await permissionRequest(tool, args, rpc, options);
+          if (result.behavior === 'deny') send({ type: 'tool_end', id: options.toolUseID,
+            tool, failed: true, result: result.message });
+          return result;
+        },
       },
     });
     for await (const message of conversation) {
       const m = message as any;
       if (m.type === 'system' && m.subtype === 'init') {
         send({ type: 'init', session_id: m.session_id, model: m.model });
+      } else if (m.type === 'system' && m.subtype === 'status') {
+        send({ type: 'status', status: m.status, permissionMode: m.permissionMode });
       } else if (m.type === 'stream_event' && m.event?.delta?.type === 'text_delta') {
         send({ type: 'token', text: m.event.delta.text });
       } else if (m.type === 'assistant') {

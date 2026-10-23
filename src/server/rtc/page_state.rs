@@ -284,6 +284,7 @@ pub async fn build_page_state(
                         "supports_tools": m.supports_tools,
                         "provided_by": m.provided_by,
                         "auth_ok": auth_ok,
+                        "supports_claude_sdk": crate::server::claude::supports_model(&m),
                     })
                 })
                 .collect(),

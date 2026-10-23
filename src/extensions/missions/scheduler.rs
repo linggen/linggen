@@ -359,6 +359,9 @@ fn mission_session_meta(
 ) -> crate::state_fs::sessions::SessionMeta {
     let mission_cwd = mission.cwd.clone().or_else(|| mission.project.clone());
     crate::state_fs::sessions::SessionMeta {
+        runtime: Default::default(),
+        claude_permission_mode: Default::default(),
+        parent_session_id: None,
         id: session_id.to_string(),
         title: mission_session_title(mission),
         created_at: crate::util::now_ts_secs(),

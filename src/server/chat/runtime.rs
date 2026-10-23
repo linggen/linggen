@@ -620,7 +620,7 @@ pub(super) async fn send_thinking_status(ctx: &ChatRunCtx, detail: impl Into<Str
 /// reply before its last block came: the block opened a second bubble and
 /// the message filled it (tests/e2e, 2026-10-05). Both carry the turn's last
 /// run (`run_id`), so the UI ends that run's bubble and no other.
-pub(super) async fn close_turn(
+pub(crate) async fn close_turn(
     state: &ServerState,
     agent_id: String,
     session_id: Option<String>,

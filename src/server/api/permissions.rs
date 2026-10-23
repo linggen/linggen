@@ -68,6 +68,16 @@ pub(crate) async fn update_session_permission(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<UpdatePermissionRequest>,
 ) -> impl IntoResponse {
+    if state
+        .manager
+        .global_sessions
+        .get_session_meta(&req.session_id)
+        .ok()
+        .flatten()
+        .is_some_and(|m| !m.runtime.is_linggen())
+    {
+        return StatusCode::BAD_REQUEST;
+    }
     use crate::engine::permission::{PermissionMode, SessionPermissions};
 
     let mode = match req.mode.as_str() {

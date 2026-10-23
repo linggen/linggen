@@ -32,7 +32,6 @@ Agents are discovered dynamically from `agents/*.md` markdown files. No hardcode
 | `name` | yes | Agent identity |
 | `description` | yes | What the agent does (used for discovery and delegation) |
 | `tools` | yes | Tool declarations (used for prompt assembly). The session's effective path mode controls actual access — see `permission-spec.md`. |
-| `runtime` | no | `linggen` (default) or `claude_agent_sdk`. The runtime supplies the execution loop, system prompt and built-in tools. |
 | `personality` | no | Response style guide — concise directive for HOW the agent communicates |
 | `aliases` | no | Other names a message may address it by at its start (`@银月 …`), beside its id |
 | `internal` | no | `true` = not addressable by a person: left out of the chat's `@` / `@@` lists and never the target of a leading `@name`. The engine still runs it (missions, delegation). |
@@ -40,27 +39,30 @@ Agents are discovered dynamically from `agents/*.md` markdown files. No hardcode
 
 Runtime configuration (model, effective tools, bound skill) is set at the session level. See `session-spec.md`.
 
-### Claude Agent SDK
+### Claude Agent SDK sessions
 
-Coder uses `runtime: claude_agent_sdk`. Its Markdown body may be empty:
-the SDK supplies the official `claude_code` prompt and built-in tools;
-an optional body adds Linggen-specific instructions after that preset.
-`tools: ["*"]` selects the SDK's default tools, while an explicit list
-narrows its tools. Linggen's existing agents keep their current runtime.
+Claude Agent is an external runtime, not a native Markdown agent. **New Claude
+session** creates a single-agent conversation using the official SDK prompt,
+tools, loop, context management and permission system. It cannot seat Ling or
+Yinyue. Native sessions and their New chat entry keep their existing behavior.
 
-The SDK runs under Linggen's bundled Bun, downloaded on first use with a
-pinned dependency lockfile. It requires a configured Anthropic API-key
-model; an explicit incompatible model fails visibly. With no explicit
-model, Coder uses the first compatible routing default or configured model.
+Linggen provides the chat, progress, question and approval widgets, plus
+process lifecycle, credentials and session links. SDK permission callbacks
+round-trip the person's choice; native path grants and permission tiers do
+not participate. The session exposes SDK modes: default, accept edits and plan.
 
-The SDK owns its context and compaction. Linggen keeps the visible messages
-and tool events in the session log, bridges questions and every tool's
-permission check to the existing session grants, and cancels the runner
-when the user stops or interrupts a task. Conversation IDs persist per
-session and agent, so follow-ups survive an engine restart. Clearing or
-rewriting a thread, or changing its working folder, starts from Linggen's
-current conversation instead of resuming stale SDK context. The shared
-memory server is connected through MCP.
+Ling can use `StartClaudeSession` to launch an independent linked coding task.
+The task receives an explicit brief and working folder; follow-ups and approvals
+stay in the Claude session. The parent receives a completion status and link.
+This does not create a native delegated worker or share a conversation history.
+
+A configured Anthropic API-key model is required. Only compatible models are
+offered; invalid choices fail visibly. The SDK runs on bundled Bun with pinned
+dependencies installed on first use. Its session ID persists across restarts;
+clearing the conversation resets it. SDK transcripts own execution context;
+Linggen's chat log is a display record, never a replacement SDK transcript.
+Project Claude configuration loads through the SDK itself. Configured MCP
+servers are passed to the SDK. Stop aborts the SDK and bounds process shutdown.
 
 ### Appearing only once met
 
@@ -112,7 +114,6 @@ When a skill sets `allowed-tools: []`, tool-related prompt sections (schemas, us
 | Agent | Role | Key tools |
 |:------|:-----|:----------|
 | `ling` | The universal user-facing agent — adapts to any context via skills | `["*"]` |
-| `coder` | Coding through Claude Agent SDK, with its official prompt and tools | SDK defaults |
 
 Memory consolidation is **not** done by a separate subagent anymore. `ling`
 itself writes durable rows inline (driven by the system prompt's memory

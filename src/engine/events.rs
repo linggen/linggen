@@ -622,7 +622,9 @@ impl ServerEvent {
                 parent_run_id,
             }),
             // AgentStatus and TaskUpdate need special handling — return None.
-            AgentEvent::AgentStatus { .. } | AgentEvent::TaskUpdate { .. } => None,
+            AgentEvent::AgentStatus { .. }
+            | AgentEvent::TaskUpdate { .. }
+            | AgentEvent::StartSession { .. } => None,
         }
     }
 }

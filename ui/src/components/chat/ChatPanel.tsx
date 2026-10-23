@@ -38,6 +38,7 @@ import { startNewChat } from '../../lib/newChat';
  * Hidden by default — only visible when the user clicks the session bar open.
  */
 const ChatDebugActions: React.FC<{ projectRoot?: string | null; sessionId?: string | null }> = ({ projectRoot, sessionId }) => {
+  const claude = useSessionStore((s) => s.allSessions.find((session) => session.id === sessionId)?.runtime === 'claude_agent_sdk');
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle');
   const [spStatus, setSpStatus] = useState<'idle' | 'copied' | 'error'>('idle');
   const { copyChat, clearChat } = useChatActions(() => {}, {}, projectRoot);
@@ -113,10 +114,10 @@ const ChatDebugActions: React.FC<{ projectRoot?: string | null; sessionId?: stri
         <Copy size={12} />
         <span>{labelFor(copyStatus, 'Chat')}</span>
       </button>
-      <button onClick={handleCopySystemPrompt} className={btnClass(spStatus)} title="Copy system prompt + tool schemas to clipboard">
+      {!claude && <button onClick={handleCopySystemPrompt} className={btnClass(spStatus)} title="Copy system prompt + tool schemas to clipboard">
         <FileText size={12} />
         <span>{labelFor(spStatus, 'System Prompt')}</span>
-      </button>
+      </button>}
       <button onClick={clearChat}
         className="px-1.5 py-1 rounded text-slate-500 dark:text-slate-400 hover:bg-red-500/10 hover:text-red-500 transition-colors shrink-0 flex items-center gap-1 text-[11px] font-medium"
         title="Clear chat messages">
@@ -294,7 +295,7 @@ export const ChatPanel: React.FC<{
                 const sessionMeta = useSessionStore.getState().allSessions.find(s => s.id === sessionId);
                 return (
                   <>
-                    <span className="font-semibold uppercase tracking-wider text-slate-500">Session</span>
+                    <span className="font-semibold uppercase tracking-wider text-slate-500">{sessionMeta?.runtime === 'claude_agent_sdk' ? 'Claude session' : 'Session'}</span>
                     <span className="font-mono truncate max-w-[160px]">{sessionId}</span>
                     {/* Paths are hidden from room consumers, not from this
                         machine's own devices — a paired peer is admin. */}
@@ -315,6 +316,7 @@ export const ChatPanel: React.FC<{
                         {sessionMeta.creator === 'mission' ? '🤖' : '✨'} {sessionMeta.creator}
                       </span>
                     )}
+                    {sessionMeta?.parent_session_id && <a href={`/?session=${sessionMeta.parent_session_id}`} className="text-blue-500" onClick={(event) => event.stopPropagation()}>Parent chat</a>}
                     {sessionMeta?.skill && sessionMeta.creator !== 'mission' && (
                       <span className="px-1.5 py-0.5 rounded bg-purple-50 dark:bg-purple-500/5 text-purple-500 text-[10px]">
                         {sessionMeta.skill}
