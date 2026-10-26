@@ -56,6 +56,9 @@ pub struct Setup {
     /// The memory the lane gate reads (`LINGGEN_MACHINE_MEMORY_GB`), so a
     /// lane's verdict does not depend on the machine the tests run on.
     pub machine_memory_gb: Option<u64>,
+    /// Text appended to the rendered config before the engine starts (an
+    /// extra `[[models]]` block, say). Rendered like the fixture files.
+    pub config_append: Option<&'static str>,
 }
 
 impl Setup {
@@ -87,6 +90,17 @@ impl World {
             guard::no_config(&home);
         } else {
             home.install_fixtures(setup.fixture.unwrap_or("home"), &vars);
+            if let Some(extra) = setup.config_append {
+                let mut file = std::fs::OpenOptions::new()
+                    .append(true)
+                    .open(home.config_path())
+                    .expect("config");
+                std::io::Write::write_all(
+                    &mut file,
+                    format!("\n{}\n", home::render(extra, &vars)).as_bytes(),
+                )
+                .expect("append config");
+            }
             let config = std::fs::read_to_string(home.config_path()).expect("config");
             guard::config_text(&config);
             guard::config_mem_url(&config, &memory.url);

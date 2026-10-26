@@ -601,24 +601,11 @@ impl AgentEngine {
             // is one fragment so the two heads can't drift apart. Where the
             // session stands (its cwd, read fresh each build, so a cd reloads
             // the index) adds the scope candidates and the index.
-            let place = crate::engine::tools::place_of(&self.tools.builtins.cwd());
-            match core_block::load_session_start(&self.cfg.ling_mem_url, place.as_ref(), true) {
-                Some(c) => stable.push_str(
-                    &self
-                        .prompt_store
-                        .render_or_fallback(keys::CORE_MEMORY_BLOCK, &[("core_facts", &c.facts)]),
-                ),
-                None => stable.push_str(
-                    &self
-                        .prompt_store
-                        .render_or_fallback(keys::CORE_MEMORY_BLOCK_EMPTY, &[]),
-                ),
-            }
-            stable.push_str(
-                &self
-                    .prompt_store
-                    .render_or_fallback(keys::CORE_MEMORY_SHARED, &[]),
-            );
+            stable.push_str(&core_block::owner_block(
+                &self.prompt_store,
+                &self.cfg.ling_mem_url,
+                &self.tools.builtins.cwd(),
+            ));
             // The memory *protocol* is no longer engine text: the memory
             // server ships it as MCP `initialize.instructions`, injected in
             // `prepare_loop_messages` alongside every other connected

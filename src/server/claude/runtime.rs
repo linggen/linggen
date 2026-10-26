@@ -1,4 +1,4 @@
-use super::{install, resolve_model, Control, AGENT_ID};
+use super::{install, resolve_model, state, Control, AGENT_ID};
 use crate::engine::agent::AgentEvent;
 use crate::server::{ServerEvent, ServerState};
 use crate::state_fs::sessions::SessionMeta;
@@ -51,14 +51,6 @@ impl ClaudeSession {
             .session_dir(&self.meta.id)
     }
 
-    pub fn checkpoint(&self) -> PathBuf {
-        self.state
-            .manager
-            .global_sessions
-            .session_dir(&self.meta.id)
-            .join("claude.json")
-    }
-
     pub async fn run(
         &mut self,
         prompt: String,
@@ -94,11 +86,8 @@ impl ClaudeSession {
         .await;
         let runner = self.unless_cancelled(install::ensure_installed()).await??;
         let trusted = self.interaction().folder_trust().await?;
-        let checkpoint: Value = std::fs::read(self.checkpoint())
-            .ok()
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .unwrap_or(Value::Null);
-        let resume = checkpoint["session_id"].as_str();
+        let resume = state::resume_id(&self.dir(), &self.meta.cwd);
+        let (session_memory, turn_memory) = self.memory(&prompt).await;
         let mut command = sdk_command(&runner, &self.meta.cwd, &model)?;
         let mut child = command
             .spawn()
@@ -110,10 +99,7 @@ impl ClaudeSession {
         let mut stdin = child.stdin.take().context("SDK stdin missing")?;
         let mut lines = BufReader::new(child.stdout.take().context("SDK stdout missing")?).lines();
         let stderr = child.stderr.take().context("SDK stderr missing")?;
-        let drain = tokio::spawn(async move {
-            let mut lines = BufReader::new(stderr).lines();
-            while let Ok(Some(_)) = lines.next_line().await {}
-        });
+        let drain = drain_stderr(stderr);
         // Session approvals live in engine memory, like Claude Code's own;
         // a file older builds wrote is not reloaded.
         let _ = std::fs::remove_file(self.dir().join(LEGACY_PERMISSIONS));
@@ -121,6 +107,7 @@ impl ClaudeSession {
         let start = json!({"type":"start", "prompt":prompt, "images":images, "cwd":self.meta.cwd,
             "model":model.model, "resume":resume, "permissionMode":self.meta.claude_permission_mode,
             "permissionUpdates":permission_updates, "settingSources":super::trust::setting_sources(trusted),
+            "sessionMemory":session_memory, "turnMemory":turn_memory,
             "disallowedTools":self.meta.withheld_tools, "mcpServers":self.mcp_servers().await});
         // Every post-spawn error goes through cleanup, including a broken stdin.
         let result = async {
@@ -142,7 +129,7 @@ impl ClaudeSession {
             }
             let _ = child.kill().await;
         }
-        drain.abort();
+        let result = with_stderr(result, drain).await;
         if let Some(pid) = pid {
             self.state.claude.runner_ended(&self.meta.id, pid);
         }
@@ -165,6 +152,28 @@ impl ClaudeSession {
             run_id: self.run_id.clone(),
             question_id: super::interaction::new_question_id(),
         }
+    }
+
+    /// Memory as a native owner session has it: the session-start block in
+    /// the system prompt, and this turn's recall and capture nudge beside
+    /// the prompt. A slash command goes to the SDK as-is, without recall.
+    async fn memory(&self, prompt: &str) -> (String, String) {
+        let config = self.state.manager.get_config_snapshot().await;
+        let store = self.state.prompt_store.clone();
+        let cwd = PathBuf::from(&self.meta.cwd);
+        let url = config.agent.ling_mem_url.clone();
+        let session = tokio::task::spawn_blocking(move || {
+            crate::engine::prompt::core_block::owner_block(&store, &url, &cwd)
+        })
+        .await
+        .unwrap_or_default();
+        if prompt.trim_start().starts_with('/') {
+            return (session, String::new());
+        }
+        let turn =
+            crate::server::chat::owner_turn_memory(&self.state, AGENT_ID, prompt, &self.meta.id)
+                .await;
+        (session, turn)
     }
 
     async fn mcp_servers(&self) -> Value {
@@ -289,10 +298,7 @@ pub(super) async fn validate_mode(
     let mut stdin = child.stdin.take().context("SDK stdin missing")?;
     let mut lines = BufReader::new(child.stdout.take().context("SDK stdout missing")?).lines();
     let stderr = child.stderr.take().context("SDK stderr missing")?;
-    let drain = tokio::spawn(async move {
-        let mut lines = BufReader::new(stderr).lines();
-        while let Ok(Some(_)) = lines.next_line().await {}
-    });
+    let drain = drain_stderr(stderr);
     let request = json!({"type":"start", "cwd":meta.cwd, "model":model.model, "validateOnly":true, "permissionMode":mode,
         "settingSources":super::trust::setting_sources(trusted)});
     let result = tokio::time::timeout(Duration::from_secs(20), async {
@@ -301,14 +307,11 @@ pub(super) async fn validate_mode(
             let event: Value = serde_json::from_str(&line)?;
             if event["type"] == "mode_result" {
                 if event["ok"] == true {
-                    crate::state_fs::devices::write_atomic(
-                        &state
-                            .manager
-                            .global_sessions
-                            .session_dir(&meta.id)
-                            .join("claude-capabilities.json"),
-                        &serde_json::to_vec(&json!({"commands":event["commands"]}))?,
-                    )?;
+                    let dir = state.manager.global_sessions.session_dir(&meta.id);
+                    state::save_capabilities(&dir, &event["commands"])?;
+                    if mode == crate::state_fs::sessions::ClaudePermissionMode::Auto {
+                        state::mark_auto_verified(&dir);
+                    }
                     return Ok(());
                 }
                 bail!("{}", event["error"].as_str().unwrap_or("Mode unavailable"));
@@ -336,6 +339,38 @@ pub(super) async fn validate_mode(
         }
         let _ = child.kill().await;
     }
-    drain.abort();
-    result
+    with_stderr(result, drain).await
+}
+
+/// Keep the last lines the bridge printed to stderr: the only clue when it
+/// dies before speaking the protocol.
+fn drain_stderr(stderr: tokio::process::ChildStderr) -> tokio::task::JoinHandle<String> {
+    tokio::spawn(async move {
+        let mut lines = BufReader::new(stderr).lines();
+        let mut tail = std::collections::VecDeque::new();
+        while let Ok(Some(line)) = lines.next_line().await {
+            if tail.len() == 8 {
+                tail.pop_front();
+            }
+            tail.push_back(line);
+        }
+        Vec::from(tail).join("\n")
+    })
+}
+
+/// Attach the stderr tail to a failure; the child has already been reaped.
+async fn with_stderr<T>(result: Result<T>, drain: tokio::task::JoinHandle<String>) -> Result<T> {
+    let abort = drain.abort_handle();
+    let tail = tokio::time::timeout(Duration::from_millis(500), drain)
+        .await
+        .ok()
+        .and_then(|joined| joined.ok())
+        .unwrap_or_default();
+    abort.abort();
+    match result {
+        Err(error) if !tail.trim().is_empty() && !error.to_string().contains("cancelled") => {
+            Err(anyhow::anyhow!("{error}\nSDK stderr: {}", tail.trim()))
+        }
+        other => other,
+    }
 }

@@ -1,5 +1,6 @@
 //! Widget transport only. The SDK decides when permission is needed; no
 //! native tool executor, permission tiers or path grants are consulted.
+use super::state;
 use crate::engine::tools::{AskUserAnswer, AskUserOption, AskUserQuestion, PendingAskUser};
 use crate::server::ServerEvent;
 use anyhow::{bail, Context, Result};
@@ -50,7 +51,7 @@ impl Interaction {
                 {
                     options.push(option("Allow for this session"));
                 }
-                if self.auto_available().await {
+                if self.auto_available(&input["suggestions"]).await {
                     options.push(option("Allow and switch to auto"));
                 }
                 for suggestion in input["suggestions"].as_array().into_iter().flatten() {
@@ -69,6 +70,8 @@ impl Interaction {
                     }
                 }
                 options.push(option("Deny"));
+                // Only an offered choice counts: a forged label never allows.
+                let offered: Vec<String> = options.iter().map(|o| o.label.clone()).collect();
                 let question = AskUserQuestion {
                     question: input["title"]
                         .as_str()
@@ -94,8 +97,9 @@ impl Interaction {
                         .is_ok()
                     });
                 let allow = answer.is_some_and(|a| {
-                    (matches!(selected, "Allow once" | "Allow for this session")
-                        || chosen_mode.is_some())
+                    offered.iter().any(|label| label == selected)
+                        && (matches!(selected, "Allow once" | "Allow for this session")
+                            || chosen_mode.is_some())
                         && a.custom_text.as_deref().unwrap_or_default().is_empty()
                 });
                 let reason = answer
@@ -150,11 +154,26 @@ impl Interaction {
         }
     }
 
-    /// Auto is offered only where the SDK accepts it for this session.
-    async fn auto_available(&self) -> bool {
+    /// Auto is offered only where the SDK accepts it for this session: it
+    /// suggested auto itself, accepted it here before, or a probe says so.
+    async fn auto_available(&self, suggestions: &Value) -> bool {
         let auto = crate::state_fs::sessions::ClaudePermissionMode::Auto;
-        self.meta.claude_permission_mode != auto
-            && super::probe::probe(&self.state, &self.meta, auto)
+        if self.meta.claude_permission_mode == auto {
+            return false;
+        }
+        let suggested = suggestions.as_array().is_some_and(|items| {
+            items
+                .iter()
+                .any(|item| item["type"] == "setMode" && item["mode"] == "auto")
+        });
+        let dir = self
+            .state
+            .manager
+            .global_sessions
+            .session_dir(&self.meta.id);
+        suggested
+            || state::auto_verified(&dir)
+            || super::probe::probe(&self.state, &self.meta, auto)
                 .await
                 .is_ok()
     }

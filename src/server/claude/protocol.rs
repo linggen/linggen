@@ -1,4 +1,4 @@
-use super::{runtime::ClaudeSession, AGENT_ID};
+use super::{runtime::ClaudeSession, state, AGENT_ID};
 use crate::engine::agent::AgentEvent;
 use crate::server::ServerEvent;
 use crate::state_fs::sessions::ChatMsg;
@@ -103,12 +103,11 @@ impl ClaudeSession {
             }
             match event["type"].as_str().unwrap_or_default() {
                 "init" => {
-                    std::fs::write(
-                        self.checkpoint(),
-                        serde_json::to_vec(
-                            &json!({"session_id":event["session_id"], "cwd":self.meta.cwd, "commands":event["commands"]}),
-                        )?,
-                    )?;
+                    state::update_checkpoint(&self.dir(), |checkpoint| {
+                        checkpoint["session_id"] = event["session_id"].clone();
+                        checkpoint["cwd"] = json!(self.meta.cwd);
+                        state::set_commands(checkpoint, &event["commands"]);
+                    })?;
                     self.sync_mode(&event).await?;
                 }
                 "token" => {
@@ -138,10 +137,9 @@ impl ClaudeSession {
                     }
                 }
                 "commands" => {
-                    let mut checkpoint: Value =
-                        serde_json::from_slice(&std::fs::read(self.checkpoint())?)?;
-                    checkpoint["commands"] = event["commands"].clone();
-                    std::fs::write(self.checkpoint(), serde_json::to_vec(&checkpoint)?)?;
+                    state::update_checkpoint(&self.dir(), |checkpoint| {
+                        state::set_commands(checkpoint, &event["commands"]);
+                    })?;
                 }
                 "text" => {
                     if let Some(text) = event["text"].as_str().filter(|s| !s.is_empty()) {
@@ -225,19 +223,10 @@ impl ClaudeSession {
                 }
                 "reset" => {
                     super::usage::clear(&self.dir())?;
-                    let _ = std::fs::remove_file(
-                        self.state
-                            .manager
-                            .global_sessions
-                            .session_dir(&self.meta.id)
-                            .join("claude-subagents.json"),
-                    );
-                    let mut checkpoint: Value = std::fs::read(self.checkpoint())
-                        .ok()
-                        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-                        .unwrap_or(json!({}));
-                    checkpoint["session_id"] = event["session_id"].clone();
-                    std::fs::write(self.checkpoint(), serde_json::to_vec(&checkpoint)?)?;
+                    let _ = std::fs::remove_file(self.dir().join("claude-subagents.json"));
+                    state::update_checkpoint(&self.dir(), |checkpoint| {
+                        checkpoint["session_id"] = event["session_id"].clone();
+                    })?;
                     self.state.claude.forget_session(&self.meta.id);
                     self.state
                         .manager
@@ -301,6 +290,9 @@ impl ClaudeSession {
             {
                 meta.claude_permission_mode = mode;
                 self.meta.claude_permission_mode = mode;
+                if mode == crate::state_fs::sessions::ClaudePermissionMode::Auto {
+                    state::mark_auto_verified(&self.dir());
+                }
                 self.state
                     .manager
                     .global_sessions

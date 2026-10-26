@@ -5,6 +5,7 @@ use tokio::process::Command;
 use tokio::sync::Mutex;
 
 pub(super) const VERSION: &str = "0.3.309";
+const INSTALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
 static INSTALL_LOCK: Mutex<()> = Mutex::const_new(());
 
 pub(super) fn runtime_dir() -> PathBuf {
@@ -58,7 +59,7 @@ pub(super) async fn ensure_installed() -> Result<PathBuf> {
     {
         return Ok(dir.join("runner.ts"));
     }
-    let output = Command::new(bun_path()?)
+    let install = Command::new(bun_path()?)
         .args([
             "install",
             "--production",
@@ -68,8 +69,10 @@ pub(super) async fn ensure_installed() -> Result<PathBuf> {
         .current_dir(&dir)
         .stdin(Stdio::null())
         .kill_on_drop(true)
-        .output()
-        .await?;
+        .output();
+    let output = tokio::time::timeout(INSTALL_TIMEOUT, install)
+        .await
+        .context("Claude Agent SDK installation timed out")??;
     if !output.status.success() {
         bail!(
             "Claude Agent SDK installation failed: {}",

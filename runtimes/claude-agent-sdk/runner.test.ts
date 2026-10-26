@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { modeSettles, observeTool, permissionRequest, queryPrompt, sessionPermissionSettings, settingSources } from './runner';
+import { modeSettles, observeTool, permissionRequest, queryPrompt, sessionPermissionSettings, settingSources, turnContext } from './runner';
 
 describe('SDK-owned permissions with Linggen widgets', () => {
   test('observing a tool cannot approve or deny it', async () => {
@@ -104,4 +104,11 @@ describe('mode changes and folder trust', () => {
     expect(settingSources({})).toEqual(['user']);
     expect(settingSources({ settingSources: ['user', 'project', 'local'] })).toEqual(['user', 'project', 'local']);
   });
+});
+
+test('the host\'s turn memory reaches the SDK as prompt context, and nothing when empty', async () => {
+  expect(await turnContext('From memory: tabs')()).toEqual({
+    hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: 'From memory: tabs' } });
+  expect(await turnContext('')()).toEqual({});
+  expect(await turnContext(undefined)()).toEqual({});
 });

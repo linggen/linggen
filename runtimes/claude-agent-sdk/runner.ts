@@ -50,6 +50,12 @@ export function settingSources(input: any) {
   return Array.isArray(input.settingSources) ? input.settingSources : ['user'];
 }
 
+// The host's per-turn memory (recall + capture nudge) reaches the model as
+// the SDK's own prompt context, never as text in the user's message.
+export function turnContext(text?: string) {
+  return async () => text ? { hookSpecificOutput: { hookEventName: 'UserPromptSubmit' as const, additionalContext: text } } : {};
+}
+
 export async function permissionRequest(tool: string, input: any, rpc: Rpc, options: any = {}) {
   if (tool === 'AskUserQuestion') {
     const response = await rpc('ask_user', { ...input, ...(options.agentID ? { agent_id: options.agentID } : {}) }, options.signal);
@@ -189,17 +195,18 @@ async function main() {
           return { content: [{ type: 'text' as const, text: shown.reference ? `Include [${shown.reference}] in your answer to show this image.` : shown.error || 'Image could not be displayed.' }], isError: !shown.reference };
         }),
     ] });
+    const sessionSettings = sessionPermissionSettings(input.permissionUpdates);
     conversation = query({
       prompt: queryPrompt(input.validateOnly ? { prompt: '/context' } : input, inputFinished),
       options: {
         cwd: input.cwd, model: input.model, env, settingSources: settingSources(input),
         resume: input.resume || undefined, persistSession: !input.validateOnly,
-        systemPrompt: { type: 'preset', preset: 'claude_code' },
+        systemPrompt: { type: 'preset', preset: 'claude_code', ...(input.sessionMemory ? { append: input.sessionMemory } : {}) },
         tools: { type: 'preset', preset: 'claude_code' },
         disallowedTools: input.disallowedTools || [],
-        settings: sessionPermissionSettings(input.permissionUpdates),
-        allowedTools: sessionPermissionSettings(input.permissionUpdates).permissions.allow,
-        additionalDirectories: sessionPermissionSettings(input.permissionUpdates).permissions.additionalDirectories,
+        settings: sessionSettings,
+        allowedTools: sessionSettings.permissions.allow,
+        additionalDirectories: sessionSettings.permissions.additionalDirectories,
         includePartialMessages: true, forwardSubagentText: true, maxTurns: input.maxTurns,
         maxBudgetUsd: input.maxBudgetUsd,
         permissionMode: input.validateOnly ? 'default' : input.permissionMode || 'default',
@@ -208,6 +215,7 @@ async function main() {
         hooks: {
           SubagentStart: [{ hooks: [subagents.start] }],
           SubagentStop: [{ hooks: [subagents.stop] }],
+          UserPromptSubmit: [{ hooks: [turnContext(input.turnMemory)] }],
           PreToolUse: [{ hooks: [observeTool(send)] }],
           PostToolUse: [{ hooks: [endTool] }],
           PostToolUseFailure: [{ hooks: [endTool] }],

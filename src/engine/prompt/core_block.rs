@@ -106,6 +106,23 @@ pub(crate) fn load_session_start(
     })
 }
 
+/// An owner session's memory section, for a session standing in `cwd`:
+/// core (or the empty-store bootstrap when there is none), then the shared
+/// tail. Native and Claude sessions start with the same text.
+pub(crate) fn owner_block(
+    store: &crate::prompts::PromptStore,
+    ling_mem_url: &str,
+    cwd: &std::path::Path,
+) -> String {
+    use crate::prompts::keys;
+    let place = crate::engine::tools::place_of(cwd);
+    let head = match load_session_start(ling_mem_url, place.as_ref(), true) {
+        Some(c) => store.render_or_fallback(keys::CORE_MEMORY_BLOCK, &[("core_facts", &c.facts)]),
+        None => store.render_or_fallback(keys::CORE_MEMORY_BLOCK_EMPTY, &[]),
+    };
+    head + &store.render_or_fallback(keys::CORE_MEMORY_SHARED, &[])
+}
+
 /// What an app's session loads: core (when `core`) and the index of the
 /// app's own dir (given its `place`) — read-only, so without the scope line
 /// or the reconcile footer, which speak to memory tools it doesn't have.
