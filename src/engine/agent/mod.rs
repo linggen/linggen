@@ -490,6 +490,10 @@ impl AgentManager {
             .get_session_meta(session_id)
             .ok()
             .flatten();
+        // The lowest point every native turn passes: a session hosted by
+        // another runtime (Claude Agent SDK) never gets a native engine, so
+        // no path can run a Linggen loop inside its transcript.
+        refuse_foreign_runtime(meta.as_ref())?;
         let pinned_root = meta
             .as_ref()
             .filter(|m| matches!(m.creator.as_str(), "mission" | "agent"))
@@ -957,9 +961,33 @@ impl AgentManager {
     }
 }
 
+/// A session hosted by another runtime (the Claude Agent SDK) has no
+/// native engine: this is the one check every native turn passes.
+fn refuse_foreign_runtime(meta: Option<&crate::state_fs::sessions::SessionMeta>) -> Result<()> {
+    if let Some(meta) = meta.filter(|m| !m.runtime.is_linggen()) {
+        anyhow::bail!(
+            "Session {} runs on another runtime; it has no native agents.",
+            meta.id
+        );
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::AgentManager;
+
+    #[test]
+    fn no_native_engine_is_built_for_a_claude_session() {
+        let claude = crate::state_fs::sessions::SessionMeta {
+            runtime: crate::state_fs::sessions::SessionRuntime::ClaudeAgentSdk,
+            ..Default::default()
+        };
+        assert!(super::refuse_foreign_runtime(Some(&claude)).is_err());
+        let native = crate::state_fs::sessions::SessionMeta::default();
+        assert!(super::refuse_foreign_runtime(Some(&native)).is_ok());
+        assert!(super::refuse_foreign_runtime(None).is_ok());
+    }
 
     #[test]
     fn normalize_model_choice_treats_inherit_as_none() {

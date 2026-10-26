@@ -97,6 +97,10 @@ pub(crate) async fn seat(manager: &AgentManager, session_id: &str, id: &str) -> 
     let Ok(Some(mut meta)) = store.get_session_meta(session_id) else {
         return false;
     };
+    // Another runtime's session keeps the members it was created with.
+    if !meta.runtime.is_linggen() {
+        return false;
+    }
     let current = of_session(manager, session_id).await;
     let Some(members) = seated(&current, id) else {
         return false;

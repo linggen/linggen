@@ -427,7 +427,11 @@ pub(super) async fn deliver_to_chat_agent(
     // user is viewing; else the agent's latest.
     let resolved = match app.as_deref() {
         Some(skill) => session_for_skill(&state, skill).await,
-        None => focused_session(&state).or_else(|| latest_session_for_agent(&state, &to)),
+        None => native_target(
+            focused_session(&state),
+            || latest_session_for_agent(&state, &to),
+            |sid| hosts_native_turns(&state, sid),
+        ),
     };
     let Some((session_id, root)) = resolved else {
         tracing::info!(
@@ -503,6 +507,30 @@ pub(super) async fn deliver_to_chat_agent(
     tracing::info!("[agent-chat] delivered '{from}'→'{to}' in {session_id}");
 }
 
+/// The viewed session, else the agent's latest — skipping any that cannot
+/// host a native turn, so a message never lands in a Claude transcript.
+pub(super) fn native_target<T: AsRef<str>, R>(
+    focused: Option<(T, R)>,
+    latest: impl FnOnce() -> Option<(T, R)>,
+    native: impl Fn(&str) -> bool,
+) -> Option<(T, R)> {
+    focused
+        .filter(|(sid, _)| native(sid.as_ref()))
+        .or_else(|| latest().filter(|(sid, _)| native(sid.as_ref())))
+}
+
+/// Whether a native agent's turn may run in this session: not when the
+/// session belongs to another runtime (a Claude session is the SDK's alone).
+pub(super) fn hosts_native_turns(state: &Arc<ServerState>, session_id: &str) -> bool {
+    state
+        .manager
+        .global_sessions
+        .get_session_meta(session_id)
+        .ok()
+        .flatten()
+        .is_none_or(|meta| meta.runtime.is_linggen())
+}
+
 /// The session the user is currently viewing (`set_view_context`), if any — so
 /// agent_chat lands in the chat they have open.
 pub(super) fn focused_session(state: &Arc<ServerState>) -> Option<(String, std::path::PathBuf)> {
@@ -571,4 +599,24 @@ pub(super) async fn session_for_skill(
         return None;
     }
     Some((sid, root))
+}
+
+#[cfg(test)]
+mod native_target_tests {
+    use super::native_target;
+
+    #[test]
+    fn agent_chat_skips_a_viewed_claude_session_for_the_agents_own() {
+        let native = |sid: &str| sid != "claude-session";
+        let picked = native_target(
+            Some(("claude-session", 1)),
+            || Some(("ling-session", 2)),
+            native,
+        );
+        assert_eq!(picked, Some(("ling-session", 2)));
+        let picked = native_target(Some(("viewed", 1)), || Some(("ling-session", 2)), native);
+        assert_eq!(picked, Some(("viewed", 1)));
+        let picked = native_target(None, || Some(("claude-session", 2)), native);
+        assert_eq!(picked, None);
+    }
 }
