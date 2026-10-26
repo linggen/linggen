@@ -61,6 +61,13 @@ export const RefChip: React.FC<{ id: string }> = ({ id }) => {
   );
 };
 
+/** The page a picture is from, by its site. */
+const PageLink: React.FC<{ page: string; title?: string }> = ({ page, title }) => (
+  <a href={page} target="_blank" rel="noopener noreferrer" title={title || page} className="text-[10px] leading-3 text-slate-400 dark:text-slate-500 no-underline hover:underline truncate">
+    {sourceLabel({ kind: 'source', url: page, title })}
+  </a>
+);
+
 const Picture: React.FC<{ id: string; answer: AnswerRef }> = ({ id, answer }) => {
   const src = useImageSrc(answer.src || '');
   const [open, setOpen] = useState(false);
@@ -73,6 +80,7 @@ const Picture: React.FC<{ id: string; answer: AnswerRef }> = ({ id, answer }) =>
         <img src={src} alt={caption} loading="lazy" className="w-full h-32 object-cover rounded border border-slate-200 dark:border-white/10" />
       </button>
       {caption && <figcaption className="text-[11px] leading-4 text-slate-500 dark:text-slate-400 line-clamp-2">{caption}</figcaption>}
+      {answer.page && <PageLink page={answer.page} title={answer.title} />}
       {open && <Lightbox src={src} caption={caption} href={href} onClose={() => setOpen(false)} />}
     </figure>
   );
