@@ -99,6 +99,7 @@ function loadSnapshot(sessionId: string, data: SessionState): LoadSnapshot {
   return {
     sessionId,
     messageCount: data?.messages?.length ?? 0,
+    estimatedCost: data?.claude_usage?.estimated_cost_usd,
     agentStatus: data?.agent_status,
     planStatus: data?.plan_status,
   };
@@ -142,7 +143,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     agentTracker.reset();
     const bySession = { ...get()._messagesBySession };
     delete bySession[sid];
-    set({ messages: [], displayMessages: [], _messagesBySession: bySession, ...(withCooldown ? { _chatClearTs: Date.now() } : {}) });
+    set({ messages: [], displayMessages: [], sessionState: null, _sessionStateLoad: null, _messagesBySession: bySession, ...(withCooldown ? { _chatClearTs: Date.now() } : {}) });
   },
 
   syncPersisted: (persisted) => set(mutate((msgs) => {
@@ -331,7 +332,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const next = [...state];
     const msg = next[targetIdx];
     const tree = msg.subagentTree ? [...msg.subagentTree] : [];
-    tree.push(entry);
+    const existing = tree.findIndex((item) => item.subagentId === entry.subagentId);
+    if (existing < 0) tree.push(entry);
+    else tree[existing] = { ...tree[existing], agentName:entry.agentName, task:entry.task || tree[existing].task };
     next[targetIdx] = { ...msg, subagentTree: tree };
     return next;
   })),
@@ -751,6 +754,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               timestampMs: Number(meta.ts || 0) * 1000,
               ...runId,
               ...(tools.length ? { content: tools, toolCount: tools.length } : {}),
+              ...(Array.isArray(meta.subagents) ? { subagentTree: meta.subagents as SubagentTreeEntry[] } : {}),
               ...(isError ? { isError: true } : {}),
               ...(meta.client_id ? { clientId: String(meta.client_id) } : {}),
               ...(meta.via ? { via: String(meta.via) } : {}),

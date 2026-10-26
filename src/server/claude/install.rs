@@ -41,6 +41,11 @@ pub(super) async fn ensure_installed() -> Result<PathBuf> {
     )
     .await?;
     write_asset(
+        dir.join("subagents.ts"),
+        include_str!("../../../runtimes/claude-agent-sdk/subagents.ts"),
+    )
+    .await?;
+    write_asset(
         dir.join("runner.ts"),
         include_str!("../../../runtimes/claude-agent-sdk/runner.ts"),
     )

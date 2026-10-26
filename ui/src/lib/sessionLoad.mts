@@ -19,6 +19,7 @@ export function stillOn(asked: string | null | undefined, open: string | null | 
 export type LoadSnapshot = {
   sessionId: string;
   messageCount: number;
+  estimatedCost?: number;
   agentStatus?: unknown;
   planStatus?: unknown;
 };
@@ -42,6 +43,7 @@ export function loadOutcome(
     previous
     && previous.sessionId === loaded.sessionId
     && previous.messageCount === loaded.messageCount
+    && previous.estimatedCost === loaded.estimatedCost
     && previous.agentStatus === loaded.agentStatus
     && previous.planStatus === loaded.planStatus
   ) return 'unchanged';

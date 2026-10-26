@@ -1,5 +1,6 @@
 // JSON-lines bridge. Only stdout carries protocol; credentials stay in env.
 import { createInterface } from 'node:readline';
+import { subagentEvents } from './subagents';
 
 type Send = (message: Record<string, unknown>) => void;
 type Rpc = (kind: string, input: any, signal?: AbortSignal) => Promise<any>;
@@ -28,20 +29,21 @@ export function sessionPermissionSettings(updates: any[] = []) {
 // modes run before canUseTool asks the host to render a widget.
 export function observeTool(send: Send) {
   return async (input: any) => {
-    send({ type: 'tool_start', tool: input.tool_name, args: input.tool_input, id: input.tool_use_id });
+    send({ type: 'tool_start', tool: input.tool_name, args: input.tool_input, id: input.tool_use_id,
+      ...(input.agent_id ? { agent_id: input.agent_id } : {}) });
     return {};
   };
 }
 
 export async function permissionRequest(tool: string, input: any, rpc: Rpc, options: any = {}) {
   if (tool === 'AskUserQuestion') {
-    const response = await rpc('ask_user', input, options.signal);
+    const response = await rpc('ask_user', { ...input, ...(options.agentID ? { agent_id: options.agentID } : {}) }, options.signal);
     if (!response.answers) return { behavior: 'deny' as const, message: 'Question cancelled.' };
     return { behavior: 'allow' as const, updatedInput: { ...input, answers: response.answers } };
   }
   const response = await rpc('permission', { tool, args: input,
     title: options.title, description: options.description, reason: options.decisionReason,
-    suggestions: options.suggestions || [] }, options.signal);
+    suggestions: options.suggestions || [], ...(options.agentID ? { agent_id: options.agentID } : {}) }, options.signal);
   if (!response.allow) return { behavior: 'deny' as const, message: response.reason || 'User declined this tool call.' };
   if (response.mode) {
     try { await options.changeMode(response.mode); }
@@ -75,6 +77,7 @@ async function main() {
   const { query, createSdkMcpServer, tool } = await import('@anthropic-ai/claude-agent-sdk');
   const { z } = await import('zod');
   const send: Send = message => process.stdout.write(`${JSON.stringify(message)}\n`);
+  const subagents = subagentEvents(send);
   const controller = new AbortController();
   const pending = new Map<number, { resolve: (response: any) => void; kind: string }>();
   let conversation: any;
@@ -120,6 +123,12 @@ async function main() {
         }
       });
     }
+    if (message.type === 'stop_task') {
+      void (async () => {
+        try { await ready; await conversation.stopTask(message.task_id); send({ type:'mode_result', id:message.id, ok:true }); }
+        catch (error) { send({ type:'mode_result', id:message.id, ok:false, error:String(error) }); }
+      })();
+    }
     if (message.type === 'cancel') controller.abort();
   });
   lines.on('close', () => controller.abort());
@@ -151,6 +160,7 @@ async function main() {
       }
     }
     send({ type: 'tool_end', id: event.tool_use_id, tool: event.tool_name,
+      ...(event.agent_id ? { agent_id: event.agent_id } : {}),
       failed: event.hook_event_name === 'PostToolUseFailure',
       result });
     return additionalContext ? { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext } } : {};
@@ -175,12 +185,14 @@ async function main() {
         settings: sessionPermissionSettings(input.permissionUpdates),
         allowedTools: sessionPermissionSettings(input.permissionUpdates).permissions.allow,
         additionalDirectories: sessionPermissionSettings(input.permissionUpdates).permissions.additionalDirectories,
-        includePartialMessages: true, maxTurns: input.maxTurns,
+        includePartialMessages: true, forwardSubagentText: true, maxTurns: input.maxTurns,
         maxBudgetUsd: input.maxBudgetUsd,
         permissionMode: input.validateOnly ? 'default' : input.permissionMode || 'default',
         abortController: controller,
         mcpServers: input.validateOnly ? {} : { ...(input.mcpServers || {}), 'linggen-display': hostTools },
         hooks: {
+          SubagentStart: [{ hooks: [subagents.start] }],
+          SubagentStop: [{ hooks: [subagents.stop] }],
           PreToolUse: [{ hooks: [observeTool(send)] }],
           PostToolUse: [{ hooks: [endTool] }],
           PostToolUseFailure: [{ hooks: [endTool] }],
@@ -188,6 +200,7 @@ async function main() {
         canUseTool: async (tool, args, options) => {
           const result = await permissionRequest(tool, args, rpc, { ...options, changeMode });
           if (result.behavior === 'deny') send({ type: 'tool_end', id: options.toolUseID,
+            ...(options.agentID ? { agent_id: options.agentID } : {}),
             tool, failed: true, result: result.message });
           return result;
         },
@@ -203,6 +216,7 @@ async function main() {
     }
     for await (const message of conversation) {
       const m = message as any;
+      if (subagents.route(m)) continue;
       if (m.type === 'system' && m.subtype === 'init') {
         mode = m.permissionMode;
         send({ type: 'init', session_id: m.session_id, model: m.model,

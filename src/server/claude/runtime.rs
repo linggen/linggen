@@ -1,4 +1,4 @@
-use super::{install, resolve_model, ModeChange, AGENT_ID};
+use super::{install, resolve_model, Control, AGENT_ID};
 use crate::engine::agent::AgentEvent;
 use crate::server::{ServerEvent, ServerState};
 use crate::state_fs::sessions::SessionMeta;
@@ -28,6 +28,13 @@ impl ClaudeSession {
         self.state.manager.is_run_cancelled(&self.run_id).await || self.interrupt.try_recv().is_ok()
     }
 
+    pub fn dir(&self) -> PathBuf {
+        self.state
+            .manager
+            .global_sessions
+            .session_dir(&self.meta.id)
+    }
+
     pub fn checkpoint(&self) -> PathBuf {
         self.state
             .manager
@@ -41,7 +48,7 @@ impl ClaudeSession {
         prompt: String,
         images: Vec<String>,
         chosen: Option<String>,
-        controls: tokio::sync::mpsc::UnboundedReceiver<ModeChange>,
+        controls: tokio::sync::mpsc::UnboundedReceiver<Control>,
     ) -> Result<()> {
         if self.cancelled().await {
             bail!("run cancelled");

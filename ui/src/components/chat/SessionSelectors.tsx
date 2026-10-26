@@ -4,6 +4,7 @@
  */
 import React, { useState } from 'react';
 import { chatAgentOf, withMemberModel } from '../../lib/sessionMembers.mts';
+import { useChatStore } from '../../stores/chatStore';
 import { useServerStore } from '../../stores/serverStore';
 import { useUiStore } from '../../stores/uiStore';
 import { useUserStore } from '../../stores/userStore';
@@ -19,17 +20,22 @@ const fmt = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 export const SessionStats: React.FC = () => {
   const sessionId = useSessionStore((s) => s.activeSessionId) || '';
   const ctx = useServerStore((s) => s.agentContext[sessionId]);
+  const claude = useSessionStore((s) => s.allSessions.find((item) => item.id === sessionId)?.runtime === 'claude_agent_sdk');
+  const cost = useChatStore((s) => s._sessionStateLoad?.sessionId === sessionId ? s.sessionState?.claude_usage?.estimated_cost_usd : undefined);
 
   const tokens = ctx?.tokens || 0;
   const limit = ctx?.tokenLimit && ctx.tokenLimit > 0 ? ctx.tokenLimit : 0;
   const pct = limit ? Math.round((tokens / limit) * 100) : 0;
 
-  if (!tokens) return null;
+  if (!tokens && !claude) return null;
 
   return (
     <span className="text-[10px] font-mono text-slate-400 ml-auto shrink-0" title={`Context: ${tokens} / ${limit || '?'} tokens (${pct}%)`}>
-      <span className={pct > 80 ? 'text-red-400' : pct > 50 ? 'text-amber-400' : ''}>{fmt(tokens)}</span>
-      {limit > 0 && <span className="text-slate-300 dark:text-slate-600">/{fmt(limit)}</span>}
+      {tokens > 0 && <><span className={pct > 80 ? 'text-red-400' : pct > 50 ? 'text-amber-400' : ''}>{fmt(tokens)}</span>
+      {limit > 0 && <span className="text-slate-300 dark:text-slate-600">/{fmt(limit)}</span>}</>}
+      {claude && <span className="text-[11px] text-slate-600 dark:text-slate-300" data-no-i18n title="Estimated USD cost recorded for this Claude conversation. Includes subagents; final charges follow Anthropic billing.">
+        {tokens > 0 ? ' · ' : ''}≈ ${cost === undefined ? '—' : cost.toFixed(2)}
+      </span>}
     </span>
   );
 };

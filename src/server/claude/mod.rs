@@ -5,8 +5,10 @@ mod interaction;
 mod media;
 mod protocol;
 mod runtime;
+pub(crate) mod subagents;
 #[cfg(test)]
 mod tests;
+pub(crate) mod usage;
 
 use super::{chat, ServerState};
 use crate::config::ModelConfig;
@@ -26,6 +28,14 @@ pub(crate) const AGENT_ID: &str = "claude";
 pub(crate) struct ModeChange {
     pub mode: crate::state_fs::sessions::ClaudePermissionMode,
     pub reply: tokio::sync::oneshot::Sender<std::result::Result<(), String>>,
+}
+
+pub(crate) enum Control {
+    Mode(ModeChange),
+    StopTask {
+        task_id: String,
+        reply: tokio::sync::oneshot::Sender<std::result::Result<(), String>>,
+    },
 }
 
 #[derive(serde::Deserialize)]
@@ -80,7 +90,7 @@ pub(crate) async fn set_mode(
     if let Some(sender) = sender {
         let (reply, response) = tokio::sync::oneshot::channel();
         sender
-            .send(ModeChange { mode, reply })
+            .send(Control::Mode(ModeChange { mode, reply }))
             .map_err(|_| anyhow::anyhow!("Claude turn ended; try changing the mode again."))?;
         tokio::time::timeout(std::time::Duration::from_secs(20), response)
             .await

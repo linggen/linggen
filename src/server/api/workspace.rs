@@ -274,6 +274,8 @@ pub(crate) async fn read_file_api(
 
 #[derive(Serialize)]
 struct WorkspaceStateResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    claude_usage: Option<crate::server::claude::usage::Usage>,
     active_task: Option<(crate::state_fs::StateFile, String)>,
     user_stories: Option<(crate::state_fs::StateFile, String)>,
     tasks: Vec<(crate::state_fs::StateFile, String)>,
@@ -323,7 +325,7 @@ pub(crate) async fn get_workspace_state(
     let running = !sid.is_empty() && run_calls::session_running(&state.manager, sid).await;
 
     let spoken = crate::engine::answer_refs::view::spoken_texts(&messages);
-    let mapped_messages = run_calls::with_run_calls(
+    let mut mapped_messages = run_calls::with_run_calls(
         messages,
         running,
         |mut m, calls| {
@@ -361,12 +363,24 @@ pub(crate) async fn get_workspace_state(
         |run| (run.meta(), String::new()),
     );
 
+    crate::server::claude::subagents::attach(
+        &state.manager.global_sessions,
+        sid,
+        running,
+        &mut mapped_messages,
+    );
     let refs = crate::engine::answer_refs::view::refs_for(
         &state.manager.global_sessions,
         sid,
         spoken.iter().map(String::as_str),
     );
+    let claude_usage = if !sid.is_empty() && !sid.contains('/') && !sid.contains("..") {
+        crate::server::claude::usage::read(&state.manager.global_sessions.session_dir(sid))
+    } else {
+        None
+    };
     Json(WorkspaceStateResponse {
+        claude_usage,
         active_task,
         user_stories,
         tasks,

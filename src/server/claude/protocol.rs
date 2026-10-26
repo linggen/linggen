@@ -13,10 +13,16 @@ impl ClaudeSession {
         &mut self,
         lines: &mut Lines<BufReader<ChildStdout>>,
         stdin: &mut ChildStdin,
-        controls: tokio::sync::mpsc::UnboundedReceiver<super::ModeChange>,
+        controls: tokio::sync::mpsc::UnboundedReceiver<super::Control>,
     ) -> Result<()> {
         let mut active = HashMap::new();
-        let result = self.read_events(lines, stdin, &mut active, controls).await;
+        let mut subagents = super::subagents::Subagents::default();
+        let result = self
+            .read_events(lines, stdin, &mut active, controls, &mut subagents)
+            .await;
+        if let Err(error) = subagents.finish(self).await {
+            tracing::warn!("Could not finish SDK child views: {error}");
+        }
         let ids: Vec<String> = self
             .state
             .pending_ask_user
@@ -24,7 +30,11 @@ impl ClaudeSession {
             .await
             .iter()
             .filter(|(_, item)| {
-                item.session_id.as_deref() == Some(&self.meta.id) && item.agent_id == AGENT_ID
+                item.session_id.as_deref() == Some(&self.meta.id)
+                    && (item.agent_id == AGENT_ID
+                        || item
+                            .agent_id
+                            .starts_with(&format!("sdk-sub-{}-", self.run_id)))
             })
             .map(|(id, _)| id.clone())
             .collect();
@@ -43,7 +53,8 @@ impl ClaudeSession {
         lines: &mut Lines<BufReader<ChildStdout>>,
         stdin: &mut ChildStdin,
         active: &mut HashMap<String, String>,
-        mut controls: tokio::sync::mpsc::UnboundedReceiver<super::ModeChange>,
+        mut controls: tokio::sync::mpsc::UnboundedReceiver<super::Control>,
+        subagents: &mut super::subagents::Subagents,
     ) -> Result<()> {
         let mut has_text = false;
         let mut last_text = String::new();
@@ -67,8 +78,11 @@ impl ClaudeSession {
                 change = controls.recv(), if controls_open => {
                     if let Some(change) = change {
                         next_change += 1;
-                        let message = json!({"type":"mode", "id":next_change, "mode":change.mode});
-                        changes.insert(next_change, change);
+                        let (message, reply) = match change {
+                            super::Control::Mode(change) => (json!({"type":"mode", "id":next_change, "mode":change.mode}), change.reply),
+                            super::Control::StopTask { task_id, reply } => (json!({"type":"stop_task", "id":next_change, "task_id":task_id}), reply),
+                        };
+                        changes.insert(next_change, reply);
                         stdin.write_all(format!("{message}\n").as_bytes()).await?;
                     } else { controls_open = false; }
                     continue;
@@ -79,6 +93,9 @@ impl ClaudeSession {
                 }
             };
             let event: Value = serde_json::from_str(&line).context("Invalid SDK bridge message")?;
+            if subagents.handle(self, &event).await? {
+                continue;
+            }
             match event["type"].as_str().unwrap_or_default() {
                 "init" => {
                     std::fs::write(
@@ -166,6 +183,10 @@ impl ClaudeSession {
                 }
                 "request" => {
                     let interaction = super::interaction::Interaction {
+                        agent_id: event["input"]["agent_id"]
+                            .as_str()
+                            .map(|id| super::subagents::tracking_id(&self.run_id, id))
+                            .unwrap_or_else(|| AGENT_ID.into()),
                         state: self.state.clone(),
                         meta: self.meta.clone(),
                         run_id: self.run_id.clone(),
@@ -186,7 +207,7 @@ impl ClaudeSession {
                 "mode_result" => {
                     if let Some(change) = changes.remove(&event["id"].as_i64().unwrap_or_default())
                     {
-                        let _ = change.reply.send(if event["ok"] == true {
+                        let _ = change.send(if event["ok"] == true {
                             Ok(())
                         } else {
                             Err(event["error"].as_str().unwrap_or("Mode unavailable").into())
@@ -194,6 +215,14 @@ impl ClaudeSession {
                     }
                 }
                 "reset" => {
+                    super::usage::clear(&self.dir())?;
+                    let _ = std::fs::remove_file(
+                        self.state
+                            .manager
+                            .global_sessions
+                            .session_dir(&self.meta.id)
+                            .join("claude-subagents.json"),
+                    );
                     let mut checkpoint: Value = std::fs::read(self.checkpoint())
                         .ok()
                         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
@@ -214,6 +243,7 @@ impl ClaudeSession {
                     last_text.clear();
                 }
                 "result" => {
+                    super::usage::record(&self.dir(), &event)?;
                     if !event["success"].as_bool().unwrap_or(false) {
                         bail!("Claude Agent SDK: {}", event["errors"]);
                     }

@@ -140,7 +140,8 @@ export function handleMessage(item: UiEventOf<'message'>): void {
       useChatStore.getState().updateSubagentTree(
         subagentParent,
         subagentTrackingId,
-        (entry) => ({ ...entry, resultText: content }),
+        (entry) => ({ ...entry, resultText: content,
+          ...(content.startsWith('Error:') ? { status:'failed' as const } : {}) }),
       );
       return;
     }
@@ -376,6 +377,11 @@ export function handleTurnComplete(item: UiEventOf<'turn_complete'>): void {
   }
 
   if (!sid) return;
+  // SDK turns emit turn_complete without a native run outcome. Reload their
+  // persisted estimate here as well, so it appears without a page refresh.
+  if (agentId === 'claude' && stillOn(sid, useSessionStore.getState().activeSessionId)) {
+    void useChatStore.getState().fetchSessionState({ sessionId: sid });
+  }
   const agentStore = useServerStore.getState();
   // Ensure status transitions to idle — the subsequent AgentStatus(idle)
   // event may arrive late or be missed, leaving the spinner stuck on

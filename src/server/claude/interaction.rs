@@ -1,6 +1,5 @@
 //! Widget transport only. The SDK decides when permission is needed; no
 //! native tool executor, permission tiers or path grants are consulted.
-use super::AGENT_ID;
 use crate::engine::tools::{AskUserAnswer, AskUserOption, AskUserQuestion, PendingAskUser};
 use crate::server::ServerEvent;
 use anyhow::{bail, Context, Result};
@@ -9,6 +8,7 @@ use std::sync::Arc;
 static PERMISSION_FILES: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 pub(super) struct Interaction {
+    pub agent_id: String,
     pub state: Arc<crate::server::ServerState>,
     pub meta: crate::state_fs::sessions::SessionMeta,
     pub run_id: String,
@@ -72,8 +72,14 @@ impl Interaction {
                 }
                 for suggestion in input["suggestions"].as_array().into_iter().flatten() {
                     if suggestion["type"] == "setMode" {
-                        if let Some(mode) = suggestion["mode"].as_str().filter(|mode| *mode != "auto") {
-                            if serde_json::from_value::<crate::state_fs::sessions::ClaudePermissionMode>(json!(mode)).is_ok() {
+                        if let Some(mode) =
+                            suggestion["mode"].as_str().filter(|mode| *mode != "auto")
+                        {
+                            if serde_json::from_value::<
+                                crate::state_fs::sessions::ClaudePermissionMode,
+                            >(json!(mode))
+                            .is_ok()
+                            {
                                 options.push(option(&format!("Allow and switch to {mode}")));
                             }
                         }
@@ -96,10 +102,17 @@ impl Interaction {
                     .and_then(|a| a.selected.first())
                     .map(String::as_str)
                     .unwrap_or_default();
-                let chosen_mode = selected.strip_prefix("Allow and switch to ").filter(|mode|
-                    serde_json::from_value::<crate::state_fs::sessions::ClaudePermissionMode>(json!(mode)).is_ok());
+                let chosen_mode = selected
+                    .strip_prefix("Allow and switch to ")
+                    .filter(|mode| {
+                        serde_json::from_value::<crate::state_fs::sessions::ClaudePermissionMode>(
+                            json!(mode),
+                        )
+                        .is_ok()
+                    });
                 let allow = answer.is_some_and(|a| {
-                    (matches!(selected, "Allow once" | "Allow for this session") || chosen_mode.is_some())
+                    (matches!(selected, "Allow once" | "Allow for this session")
+                        || chosen_mode.is_some())
                         && a.custom_text.as_deref().unwrap_or_default().is_empty()
                 });
                 let reason = answer
@@ -160,14 +173,14 @@ impl Interaction {
         self.state.pending_ask_user.lock().await.insert(
             id.clone(),
             PendingAskUser {
-                agent_id: AGENT_ID.into(),
+                agent_id: self.agent_id.clone(),
                 questions: questions.clone(),
                 sender: tx,
                 session_id: Some(self.meta.id.clone()),
             },
         );
         let _ = self.state.events_tx.send(ServerEvent::AskUser {
-            agent_id: AGENT_ID.into(),
+            agent_id: self.agent_id.clone(),
             question_id: id.clone(),
             questions,
             session_id: Some(self.meta.id.clone()),

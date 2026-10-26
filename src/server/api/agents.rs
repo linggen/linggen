@@ -71,6 +71,15 @@ pub(crate) async fn cancel_agent_run(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<CancelRunRequest>,
 ) -> impl IntoResponse {
+    if let Some(result) = crate::server::claude::subagents::cancel(&state, &req.run_id).await {
+        return match result {
+            Ok(()) => Json(CancelRunResponse {
+                status: "ok".into(),
+            })
+            .into_response(),
+            Err(error) => (StatusCode::CONFLICT, error.to_string()).into_response(),
+        };
+    }
     match state.manager.cancel_run_tree(&req.run_id).await {
         Ok(runs) => {
             // Cancel any pending AskUser questions for the cancelled runs so

@@ -171,7 +171,7 @@ function handleSubagentResult(item: RunEventOf<'subagent_result'>): void {
   useChatStore.getState().updateSubagentTree(parentId, trackingId,
     (entry) => ({
       ...entry,
-      status: 'done',
+      status: entry.status === 'failed' ? 'failed' : 'done',
       currentActivity: null,
       // Preserve any resultText already captured by handleMessage —
       // outcome is the fallback, not an overwrite.

@@ -147,6 +147,7 @@ export interface PersistedMeta {
 }
 
 export interface SessionState {
+  claude_usage?: { estimated_cost_usd: number };
   active_task: [PersistedMeta, string] | null;
   user_stories: [PersistedMeta, string] | null;
   tasks: [PersistedMeta, string][];

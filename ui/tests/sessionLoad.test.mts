@@ -39,3 +39,9 @@ test('a send without a session writes only while none is open', () => {
   assert.equal(stillOn('a', 'a'), true);
   assert.equal(stillOn('a', 'b'), false);
 });
+
+
+test('a new SDK estimate is applied even when message count is unchanged', () => {
+  const previous = { sessionId: 'claude', messageCount: 2, estimatedCost: 0.10 };
+  assert.equal(loadOutcome({ ...previous, estimatedCost: 0.12 }, 'claude', previous), 'apply');
+});
