@@ -192,6 +192,11 @@ pub(super) struct ResponsesStream {
     last_spoken: Option<(usize, usize)>,
     /// Drops the model's own citation markers; keeps url_citation links.
     citations: super::citations::CitationFilter,
+    /// Function-call item id → its output index, for an event that names
+    /// the item but not its index.
+    call_items: std::collections::HashMap<String, usize>,
+    /// Each function call's arguments as sent on so far, by output index.
+    call_args: std::collections::HashMap<usize, String>,
 }
 
 impl ResponsesStream {
@@ -211,38 +216,64 @@ impl ResponsesStream {
         if let Some(chunks) = self.common_event(&val) {
             return chunks;
         }
-        let str_at = |v: &Value, key: &str| v.get(key).and_then(|v| v.as_str()).map(String::from);
-        let output_index = output_index(&val);
-        let tool_call =
-            |id: Option<String>, name: Option<String>, arguments_delta: Option<String>| {
-                vec![Ok(StreamChunk::ToolCall(ToolCallChunk {
-                    index: output_index,
-                    id,
-                    name,
-                    arguments_delta,
-                    thought_signature: None,
-                }))]
-            };
+        let index = self.call_index(&val);
         match event_type(&val) {
-            "response.function_call_arguments.delta" => tool_call(
-                str_at(&val, "item_id"),
-                None,
-                Some(str_at(&val, "delta").unwrap_or_default()),
-            ),
-            // Emit name/id only — deltas already accumulated the full args.
-            "response.function_call_arguments.done" => {
-                tool_call(str_at(&val, "call_id"), str_at(&val, "name"), None)
+            "response.function_call_arguments.delta" => {
+                let delta = str_at(&val, "delta").unwrap_or_default();
+                self.call_args.entry(index).or_default().push_str(&delta);
+                tool_call(index, str_at(&val, "item_id"), None, Some(delta))
             }
-            "response.output_item.added" => match val.get("item") {
-                Some(item)
-                    if item.get("type").and_then(|v| v.as_str()) == Some("function_call") =>
-                {
-                    tool_call(str_at(item, "call_id"), str_at(item, "name"), None)
+            // The full arguments. Parallel calls stream no deltas at all —
+            // this is the only place their arguments come.
+            "response.function_call_arguments.done" => {
+                let rest = self.rest_of_args(index, str_at(&val, "arguments"));
+                tool_call(index, str_at(&val, "call_id"), str_at(&val, "name"), rest)
+            }
+            "response.output_item.added" => match function_call(&val) {
+                Some(item) => {
+                    if let Some(id) = str_at(item, "id") {
+                        self.call_items.insert(id, index);
+                    }
+                    tool_call(index, str_at(item, "call_id"), str_at(item, "name"), None)
                 }
-                _ => vec![],
+                None => vec![],
+            },
+            "response.output_item.done" => match function_call(&val) {
+                Some(item) => match self.rest_of_args(index, str_at(item, "arguments")) {
+                    Some(rest) => tool_call(index, None, None, Some(rest)),
+                    None => vec![],
+                },
+                None => vec![],
             },
             _ => vec![],
         }
+    }
+
+    /// The output index a tool event is about: its own `output_index`, else
+    /// the index its `item_id` was added at.
+    fn call_index(&self, val: &Value) -> usize {
+        if let Some(index) = val.get("output_index").and_then(|v| v.as_u64()) {
+            return index as usize;
+        }
+        str_at(val, "item_id")
+            .and_then(|id| self.call_items.get(&id).copied())
+            .unwrap_or(0)
+    }
+
+    /// What a call's full `arguments` add to what its deltas already sent:
+    /// all of it when none streamed, nothing when they sent it all.
+    fn rest_of_args(&mut self, index: usize, full: Option<String>) -> Option<String> {
+        let full = full.filter(|f| !f.is_empty())?;
+        let sent = self.call_args.entry(index).or_default();
+        let Some(rest) = full.strip_prefix(sent.as_str()) else {
+            tracing::warn!(
+                "Responses API: call {index}'s full arguments differ from its deltas; keeping the deltas"
+            );
+            return None;
+        };
+        let rest = rest.to_string();
+        *sent = full;
+        (!rest.is_empty()).then_some(rest)
     }
 
     /// The events text and tool turns read alike; `None` for any other.
@@ -312,6 +343,32 @@ impl ResponsesStream {
         }
         vec![Ok(StreamChunk::Token(text))]
     }
+}
+
+fn str_at(v: &Value, key: &str) -> Option<String> {
+    v.get(key).and_then(|v| v.as_str()).map(String::from)
+}
+
+/// One tool-call chunk for the engine's accumulator.
+fn tool_call(
+    index: usize,
+    id: Option<String>,
+    name: Option<String>,
+    arguments_delta: Option<String>,
+) -> Vec<Result<StreamChunk>> {
+    vec![Ok(StreamChunk::ToolCall(ToolCallChunk {
+        index,
+        id,
+        name,
+        arguments_delta,
+        thought_signature: None,
+    }))]
+}
+
+/// The event's `item`, when it is a function call.
+fn function_call(val: &Value) -> Option<&Value> {
+    val.get("item")
+        .filter(|item| item.get("type").and_then(|v| v.as_str()) == Some("function_call"))
 }
 
 fn event_type(val: &Value) -> &str {
@@ -579,5 +636,154 @@ mod tests {
             .filter_map(|c| c.arguments_delta.clone())
             .collect();
         assert_eq!(args, "{\"at\":1}");
+    }
+
+    /// Tool chunks folded by index the way the engine folds them:
+    /// index → (id, name, arguments).
+    fn assemble(calls: &[ToolCallChunk]) -> Vec<(usize, String, String, String)> {
+        let mut by_index = std::collections::BTreeMap::<usize, (String, String, String)>::new();
+        for c in calls {
+            let e = by_index.entry(c.index).or_default();
+            if let Some(id) = &c.id {
+                e.0 = id.clone();
+            }
+            if let Some(name) = &c.name {
+                e.1 = name.clone();
+            }
+            if let Some(d) = &c.arguments_delta {
+                e.2.push_str(d);
+            }
+        }
+        by_index
+            .into_iter()
+            .map(|(i, (id, name, args))| (i, id, name, args))
+            .collect()
+    }
+
+    fn call_added(index: u64, item: &str, call: &str, name: &str) -> Value {
+        json!({"type": "response.output_item.added", "output_index": index,
+               "item": {"type": "function_call", "id": item, "call_id": call,
+                        "name": name, "arguments": "", "status": "in_progress"}})
+    }
+
+    fn args_delta(index: u64, item: &str, delta: &str) -> Value {
+        json!({"type": "response.function_call_arguments.delta", "output_index": index,
+               "item_id": item, "delta": delta})
+    }
+
+    fn args_done(index: u64, item: &str, args: &str) -> Value {
+        json!({"type": "response.function_call_arguments.done", "output_index": index,
+               "item_id": item, "arguments": args})
+    }
+
+    fn call_done(index: u64, item: &str, call: &str, name: &str, args: &str) -> Value {
+        json!({"type": "response.output_item.done", "output_index": index,
+               "item": {"type": "function_call", "id": item, "call_id": call,
+                        "name": name, "arguments": args, "status": "completed"}})
+    }
+
+    /// Recorded from gpt-6.1-sol on the Codex backend (2026-10-26): parallel
+    /// calls stream no argument deltas — the arguments come only whole, in
+    /// each call's `.done` events. Reading only deltas gave both calls `{}`.
+    #[test]
+    fn parallel_calls_without_deltas_keep_their_own_arguments() {
+        let events = [
+            call_added(0, "fc_a", "call_a", "WebSearch"),
+            args_done(0, "fc_a", "{\"query\": \"pressurized portafilter basket\"}"),
+            call_done(
+                0,
+                "fc_a",
+                "call_a",
+                "WebSearch",
+                "{\"query\": \"pressurized portafilter basket\"}",
+            ),
+            call_added(1, "fc_b", "call_b", "ImageSearch"),
+            args_done(1, "fc_b", "{\"query\": \"pressurized basket photo\"}"),
+            call_done(
+                1,
+                "fc_b",
+                "call_b",
+                "ImageSearch",
+                "{\"query\": \"pressurized basket photo\"}",
+            ),
+        ];
+        let (_, calls) = read(&events, true);
+        assert_eq!(
+            assemble(&calls),
+            vec![
+                (
+                    0,
+                    "call_a".into(),
+                    "WebSearch".into(),
+                    "{\"query\": \"pressurized portafilter basket\"}".into()
+                ),
+                (
+                    1,
+                    "call_b".into(),
+                    "ImageSearch".into(),
+                    "{\"query\": \"pressurized basket photo\"}".into()
+                ),
+            ]
+        );
+    }
+
+    /// Three calls whose deltas interleave; one names its item but not its
+    /// index. Each keeps its own arguments, and the closing `.done` events
+    /// add nothing the deltas already sent.
+    #[test]
+    fn interleaved_parallel_deltas_keep_their_own_arguments() {
+        let events = [
+            call_added(0, "fc_a", "call_a", "memory_search"),
+            call_added(1, "fc_b", "call_b", "memory_search"),
+            call_added(2, "fc_c", "call_c", "WebSearch"),
+            args_delta(0, "fc_a", "{\"query\":"),
+            args_delta(2, "fc_c", "{\"query\":\"c"),
+            json!({"type": "response.function_call_arguments.delta",
+                   "item_id": "fc_b", "delta": "{\"query\":\"b\"}"}),
+            args_delta(0, "fc_a", "\"a\"}"),
+            args_done(1, "fc_b", "{\"query\":\"b\"}"),
+            args_done(0, "fc_a", "{\"query\":\"a\"}"),
+            // `c` stopped short in its deltas: its `.done` carries the rest.
+            args_done(2, "fc_c", "{\"query\":\"c\"}"),
+            call_done(0, "fc_a", "call_a", "memory_search", "{\"query\":\"a\"}"),
+            call_done(1, "fc_b", "call_b", "memory_search", "{\"query\":\"b\"}"),
+            call_done(2, "fc_c", "call_c", "WebSearch", "{\"query\":\"c\"}"),
+        ];
+        let (_, calls) = read(&events, true);
+        let args: Vec<String> = assemble(&calls).into_iter().map(|c| c.3).collect();
+        assert_eq!(
+            args,
+            vec![
+                "{\"query\":\"a\"}",
+                "{\"query\":\"b\"}",
+                "{\"query\":\"c\"}"
+            ]
+        );
+    }
+
+    /// A single streamed call reads exactly as before: the deltas, then the
+    /// `.done` events add nothing.
+    #[test]
+    fn a_single_streamed_call_is_not_doubled_by_its_done_events() {
+        let events = [
+            call_added(0, "fc_a", "call_a", "WebSearch"),
+            args_delta(0, "fc_a", "{\"query\":\"press"),
+            args_delta(0, "fc_a", "urized\"}"),
+            args_done(0, "fc_a", "{\"query\":\"pressurized\"}"),
+            call_done(
+                0,
+                "fc_a",
+                "call_a",
+                "WebSearch",
+                "{\"query\":\"pressurized\"}",
+            ),
+        ];
+        let (_, calls) = read(&events, true);
+        let deltas: Vec<_> = calls
+            .iter()
+            .filter_map(|c| c.arguments_delta.clone())
+            .collect();
+        assert_eq!(deltas, vec!["{\"query\":\"press", "urized\"}"]);
+        assert_eq!(assemble(&calls)[0].3, "{\"query\":\"pressurized\"}");
     }
 }

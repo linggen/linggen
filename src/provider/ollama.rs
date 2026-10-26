@@ -361,8 +361,12 @@ impl OllamaClient {
 
         // Use map + flat_map instead of filter_map so that a single Ollama
         // response line can yield multiple StreamChunks (e.g. parallel tool calls).
+        // Calls already read in earlier lines: a streaming Ollama can send
+        // parallel calls one per line, each array numbered from 0 — numbered
+        // per line, they would merge into one call.
+        let mut calls_seen = 0usize;
         let token_stream = lines
-            .map(|line_result| {
+            .map(move |line_result| {
                 let line = match line_result {
                     Ok(l) => l,
                     Err(e) => return vec![Err(crate::provider::stream_read_error(e))],
@@ -418,10 +422,11 @@ impl OllamaClient {
                 };
 
                 // Check for tool_calls in the message.
-                // Ollama emits all tool_calls at once in the final chunk,
-                // so we yield one StreamChunk per tool call.
+                // One StreamChunk per tool call, numbered across the stream.
                 if let Some(tool_calls) = message.get("tool_calls").and_then(|v| v.as_array()) {
                     let mut chunks = Vec::with_capacity(tool_calls.len());
+                    let first = calls_seen;
+                    calls_seen += tool_calls.len();
                     for (idx, tc) in tool_calls.iter().enumerate() {
                         let func = match tc.get("function") {
                             Some(f) => f,
@@ -437,7 +442,7 @@ impl OllamaClient {
                             &uuid::Uuid::new_v4().to_string().replace('-', "")[..24]
                         );
                         chunks.push(Ok(StreamChunk::ToolCall(ToolCallChunk {
-                            index: idx,
+                            index: first + idx,
                             id: Some(id),
                             name,
                             arguments_delta: arguments,
