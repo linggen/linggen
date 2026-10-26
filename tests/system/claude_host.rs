@@ -42,6 +42,7 @@ case "$start" in
  IFS= read -r saved
  finish ANSWERED;;
 *'"prompt":"wait"'*)
+ emit '{"type":"tool_start","id":"t1","tool":"Bash","args":{"command":"make"}}'
  emit '{"type":"request","kind":"permission","id":1,"input":{"tool":"Bash","args":{"command":"make"},"suggestions":[]}}'
  IFS= read -r reply
  finish WAITED;;
@@ -246,6 +247,16 @@ async fn a_follow_up_waits_for_the_running_turn_instead_of_cancelling_it() {
     let mark = w.mark();
     w.api.chat(&sid, &w.work(), "wait").await;
     let ask = asked(next(&w, &sid, mark).await);
+    // A page loaded now sees the live run's call so far, still running.
+    let history = w.api.history(&sid, &w.work()).await;
+    let live = history["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row[0]["run"] == "running")
+        .unwrap_or_else(|| panic!("no live run row in {history:#}"));
+    assert_eq!(live[0]["tools"][0]["tool"], "Bash");
+    assert_eq!(live[0]["tools"][0]["status"], "running");
     let queued = w.api.chat(&sid, &w.work(), "hello").await;
     assert_eq!(queued["status"], "queued");
     tokio::time::sleep(Duration::from_millis(500)).await;

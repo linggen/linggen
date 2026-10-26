@@ -109,3 +109,13 @@ test('rows of another run never bind to a bubble, whatever their words', () => {
   assert.equal(shown.length, 2);
   assert.deepEqual(shown.map((m) => m.runId), ['a', 'b']);
 });
+
+test('a page loaded mid-run shows the live run\'s saved calls, then its bubble after them', () => {
+  const row: ChatMessage = { role: 'agent', from: 'ling', text: '', timestamp: '', timestampMs: 2,
+    runId: 'r9', content: [call('Read', 'done', 'saved-0'), call('Bash', 'running', 'saved-1')] };
+  const msgs = [user('fix it', 1), row];
+  const bubble: ChatMessage = { role: 'agent', from: 'ling', text: '', timestamp: '', timestampMs: 3,
+    isGenerating: true, content: [call('Edit', 'running')], ...bubbleOfRun(msgs, 'r9') };
+  const shown = bindRuns([...msgs, bubble]);
+  assert.deepEqual(shown.map((m) => (m.content || []).map((b) => b.tool)), [[], ['Read', 'Bash'], ['Edit']]);
+});

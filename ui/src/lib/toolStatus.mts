@@ -21,20 +21,27 @@ export function toolStatus(status: unknown): ToolStatus | undefined {
   return status === 'running' || status === 'done' || status === 'failed' ? status : undefined;
 }
 
-/** A saved call's status. A saved call is over: one with no word never ended. */
-const savedStatus = (t: SavedTool): ToolStatus => {
+/** A saved call's status. A call of a finished run is over: one with no
+ *  word never ended. Only the live run's row (`live`) has calls running. */
+const savedStatus = (t: SavedTool, live: boolean): ToolStatus => {
   const s = toolStatus(t.status);
-  return s && s !== 'running' ? s : 'failed';
+  if (s === 'running') return live ? s : 'failed';
+  return s ?? 'failed';
 };
 
 /** A history row's calls as the tool blocks of its bubble; `key` keeps
- *  their ids apart from other rows'. */
-export function savedToolBlocks(tools: readonly SavedTool[] | undefined, key: string | number): ContentBlock[] {
+ *  their ids apart from other rows'. `live`: the row of the run still going
+ *  (`run: "running"`), read by a page loaded mid-run. */
+export function savedToolBlocks(
+  tools: readonly SavedTool[] | undefined,
+  key: string | number,
+  live = false,
+): ContentBlock[] {
   return (tools || []).map((t, i) => ({
     type: 'tool_use',
     id: `saved-${key}-${i}`,
     tool: t.tool,
     args: t.args || '',
-    status: savedStatus(t),
+    status: savedStatus(t, live),
   }));
 }

@@ -742,7 +742,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
               bodyStr = stripEmbeddedStructuredJson(bodyStr);
             }
             // The calls made before these words, with the status each ended in.
-            const tools = !isUser ? savedToolBlocks((meta as RunMeta).tools, `${meta.ts}-${idx}`) : [];
+            // The live run's row (a page loaded mid-run) keeps its calls running.
+            const live = (meta as RunMeta).run === 'running';
+            const tools = !isUser ? savedToolBlocks((meta as RunMeta).tools, `${meta.ts}-${idx}`, live) : [];
             if (!isUser && !bodyStr && !tools.length) return [];
             const isError = !isUser && bodyStr.startsWith('Error:');
             return [{

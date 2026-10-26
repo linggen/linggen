@@ -11,8 +11,10 @@
 //!   of its own (`"run": "interrupted"`, its calls in `tools`), placed after
 //!   the run's last row, so the chat can show the work and say it stopped. A
 //!   turn the user never saw open (a `[HIDDEN]` kickoff, which may end in
-//!   silence) leaves no such row. The last run of a session that is still
-//!   running is the live turn, which the chat already shows as it streams.
+//!   silence) leaves no such row.
+//! - The last run of a session still running is the live turn: its row says
+//!   `"run": "running"`, a call not yet back is `running`, so a page loaded
+//!   mid-run shows the work so far (a reload replays no live events).
 //!
 //! A call's status is its result row's: failed when the row says so
 //! (`ChatMsg::failed`, saved since 2026-10-06) or, on an older row, when its
@@ -40,19 +42,24 @@ impl RunCall {
         self.result.unwrap_or(true)
     }
 
-    /// The call as a history row carries it.
-    fn json(&self) -> Value {
+    /// The call as a history row carries it. In a run still going, a call
+    /// whose result has not come back is running, not failed.
+    fn json(&self, live: bool) -> Value {
+        let status = match (self.result, live) {
+            (None, true) => "running",
+            _ => tool_call_status(self.failed()),
+        };
         json!({
             "tool": self.tool,
             "args": serde_json::to_string(&self.args).unwrap_or_default(),
-            "status": tool_call_status(self.failed()),
+            "status": status,
         })
     }
 }
 
 /// The calls, as a row's `tools`.
-fn calls_json(calls: &[RunCall]) -> Value {
-    Value::Array(calls.iter().map(RunCall::json).collect())
+fn calls_json(calls: &[RunCall], live: bool) -> Value {
+    Value::Array(calls.iter().map(|c| c.json(live)).collect())
 }
 
 /// A spoken row's header, with the run that wrote it (`run_id`, when the
@@ -65,7 +72,7 @@ pub(crate) fn with_tools(mut meta: Value, run_id: Option<&str>, calls: &[RunCall
         m.insert("run_id".into(), run_id.into());
     }
     if !calls.is_empty() {
-        m.insert("tools".into(), calls_json(calls));
+        m.insert("tools".into(), calls_json(calls, false));
     }
     meta
 }
@@ -119,6 +126,10 @@ pub(crate) struct UnansweredRun {
     pub calls: Vec<RunCall>,
     /// The run, from its rows (`ChatMsg::run_id`); none on older rows.
     pub run_id: Option<String>,
+    /// Still in flight: the live turn, as far as its rows go. A page loaded
+    /// mid-run shows its calls so far; the run's live bubble takes over by
+    /// `run_id` once its next event arrives.
+    pub live: bool,
 }
 
 impl UnansweredRun {
@@ -132,8 +143,8 @@ impl UnansweredRun {
             "ts": self.started,
             "ended": self.ended,
             "task_id": null,
-            "run": "interrupted",
-            "tools": calls_json(&self.calls),
+            "run": if self.live { "running" } else { "interrupted" },
+            "tools": calls_json(&self.calls, self.live),
         });
         if let Some(run_id) = &self.run_id {
             meta["run_id"] = run_id.as_str().into();
@@ -167,6 +178,7 @@ impl Open {
                 ended: m.timestamp,
                 calls: Vec::new(),
                 run_id: m.run_id.clone(),
+                live: false,
             },
             hidden,
         }
@@ -260,9 +272,12 @@ pub(crate) fn run_calls(history: &[ChatMsg], running: bool) -> RunCalls {
             hidden_turn = crate::server::resident::is_engine_prompt(&m.from_id, &m.content);
         }
     }
-    if !running {
-        close(&mut open, &mut out);
+    if running {
+        if let Some(o) = open.as_mut() {
+            o.run.live = true;
+        }
     }
+    close(&mut open, &mut out);
     out
 }
 
@@ -414,6 +429,30 @@ mod tests {
     }
 
     #[test]
+    fn a_page_loaded_mid_run_sees_the_live_runs_calls_so_far() {
+        let h = vec![
+            user("Fix the build.", 1),
+            of_run(call("Read", 2), "r1"),
+            of_run(result("Read", 3), "r1"),
+            of_run(call("Bash", 4), "r1"),
+        ];
+        let runs = unanswered_runs(&h, true);
+        assert_eq!(runs.len(), 1);
+        let meta = runs[0].meta();
+        assert_eq!(meta["run"], "running");
+        assert_eq!(meta["run_id"], "r1");
+        assert_eq!(
+            statuses(&meta["tools"]),
+            [
+                ("Read".into(), "done".into()),
+                ("Bash".into(), "running".into())
+            ]
+        );
+        // Once it is over, the same rows read as a run cut off.
+        assert_eq!(unanswered_runs(&h, false)[0].meta()["run"], "interrupted");
+    }
+
+    #[test]
     fn an_answered_runs_calls_ride_on_its_words() {
         let h = vec![
             user("q", 1),
@@ -494,12 +533,18 @@ mod tests {
     fn a_live_run_is_not_cut_off_but_an_earlier_one_is() {
         let h = vec![user("a", 1), call("Read", 2), user("b", 3), call("Grep", 4)];
         let runs = unanswered_runs(&h, true);
+        let kinds: Vec<(String, Value)> = runs
+            .iter()
+            .map(|r| (r.calls[0].tool.clone(), r.meta()["run"].clone()))
+            .collect();
         assert_eq!(
-            runs.len(),
-            1,
+            kinds,
+            [
+                ("Read".into(), json!("interrupted")),
+                ("Grep".into(), json!("running"))
+            ],
             "the first run never replied; the second is live"
         );
-        assert_eq!(runs[0].calls[0].tool, "Read");
         assert_eq!(unanswered_runs(&h, false).len(), 2);
     }
 

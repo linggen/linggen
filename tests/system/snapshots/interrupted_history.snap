@@ -1,6 +1,5 @@
 ---
 source: tests/system/support/mod.rs
-assertion_line: 276
 expression: text
 ---
 [

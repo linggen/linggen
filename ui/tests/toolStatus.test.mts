@@ -39,3 +39,8 @@ test('a row with no calls has no tool blocks', () => {
   assert.deepEqual(savedToolBlocks(undefined, 'x'), []);
   assert.deepEqual(savedToolBlocks([], 'x'), []);
 });
+
+test('the live run\'s row, read mid-run, keeps a call still going as running', () => {
+  const blocks = savedToolBlocks([{ tool: 'Read', status: 'done' }, { tool: 'Bash', status: 'running' }], 'live', true);
+  assert.deepEqual(blocks.map((b) => b.status), ['done', 'running']);
+});
