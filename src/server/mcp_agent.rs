@@ -27,6 +27,8 @@ const AGENT_RUN_TOOLS: &[&str] = &[
     "Grep",
     "Glob",
     "WebSearch",
+    "ImageSearch",
+    "VideoSearch",
     "WebFetch",
     // The memory server by name, expanded to the tools it advertises — so
     // this list doesn't have to be re-edited when ling-mem gains a verb.

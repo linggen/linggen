@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fromMarkdown } from 'mdast-util-from-markdown';
-import { hidePartialRef, pictureCaption, remarkAnswerRefs, sourceLabel } from '../src/lib/answerRefs.mts';
+import { hidePartialRef, pictureCaption, remarkAnswerRefs, sourceLabel, videoByline } from '../src/lib/answerRefs.mts';
 
 type Node = { type: string; value?: string; children?: Node[]; data?: { hName?: string; hProperties?: Record<string, string> } };
 const tree = (md: string): Node => {
@@ -22,6 +22,17 @@ test("a paragraph's pictures follow it as one grid; every number stays in place 
     'lg-pictures:turn1image2 turn1image1',
     { paragraph: ['Next.'] },
   ]);
+});
+
+test("a video follows its paragraph in the same grid as pictures", () => {
+  const t = tree('Watch how [turn4video1], or see [turn3image1].');
+  assert.deepEqual(t.children!.map(shape), [
+    { paragraph: ['Watch how ', 'lg-ref:turn4video1', ', or see ', 'lg-ref:turn3image1', '.'] },
+    'lg-pictures:turn4video1 turn3image1',
+  ]);
+  assert.equal(hidePartialRef('Watch [turn4vid'), 'Watch ');
+  assert.equal(videoByline({ kind: 'video', url: '', channel: 'Bridge Coffee', duration: '2:17' }), 'Bridge Coffee · 2:17');
+  assert.equal(videoByline({ kind: 'video', url: '' }), '');
 });
 
 test('a list item keeps its pictures under its own words', () => {

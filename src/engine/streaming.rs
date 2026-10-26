@@ -70,7 +70,16 @@ fn extract_first_json_object(s: &str) -> Option<serde_json::Value> {
 pub(crate) fn can_parallel_tool(tool: &str) -> bool {
     matches!(
         tool,
-        "Read" | "Glob" | "Grep" | "WebSearch" | "WebFetch" | "Skill" | "Write" | "Edit"
+        "Read"
+            | "Glob"
+            | "Grep"
+            | "WebSearch"
+            | "WebFetch"
+            | "ImageSearch"
+            | "VideoSearch"
+            | "Skill"
+            | "Write"
+            | "Edit"
     )
 }
 

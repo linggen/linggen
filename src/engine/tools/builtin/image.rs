@@ -24,7 +24,7 @@ impl Tool for GenerateImageTool {
     }
     fn description(&self) -> &'static str {
         "Draw one picture from a prompt, when the person asks for a drawing, illustration or artwork. \
-         Never use it to show what a real product, place or person looks like: find a real photo with WebFetch. \
+         Never use it to show what a real product, place or person looks like: find a real photo with ImageSearch or WebFetch. \
          The result gives the picture a number such as [turn3image1]; write that number in the answer to show it. \
          Takes up to a minute."
     }

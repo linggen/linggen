@@ -1,8 +1,8 @@
 //! Sources and pictures in answers (`doc/chat-spec.md`).
 //!
-//! Every web result and picture a tool returns gets a number in the shape
-//! GPT models already write — `turn{N}search{i}` for a source,
-//! `turn{N}image{i}` for a picture — kept in a per-session table
+//! Every web result, picture and video a tool returns gets a number in the
+//! shape GPT models already write — `turn{N}search{i}` for a source,
+//! `turn{N}image{i}` for a picture, `turn{N}video{i}` for a video — kept in a per-session table
 //! ([`table`]). The model refers to one by writing `[turn2image1]` in its
 //! answer; it never writes its own picture URL. When the answer lands, the
 //! pictures it shows are downloaded once, scaled and kept with the session
@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 pub enum Kind {
     Source,
     Picture,
+    Video,
 }
 
 /// One numbered result, as the session's table keeps it.
@@ -29,7 +30,8 @@ pub enum Kind {
 pub struct Ref {
     pub id: String,
     pub kind: Kind,
-    /// A source's page; a picture's original address (the click-through).
+    /// A source's page; a picture's original address (the click-through);
+    /// a video's watch page.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub url: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -44,6 +46,16 @@ pub struct Ref {
     /// The page a picture was found on.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub page: String,
+    /// A video's still (kept like a picture), the address that plays it in
+    /// a page, its channel and length (`4:05`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub thumb: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub embed: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub channel: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub duration: String,
     /// The kept copy under the session's `images/`, once an answer showed it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
@@ -66,6 +78,12 @@ impl Ref {
         r
     }
 
+    pub fn video(id: String, url: &str, title: &str, thumb: &str) -> Self {
+        let mut r = Self::new(id, Kind::Video, url, title);
+        r.thumb = thumb.to_string();
+        r
+    }
+
     fn new(id: String, kind: Kind, url: &str, title: &str) -> Self {
         Self {
             id,
@@ -76,9 +94,27 @@ impl Ref {
             name: String::new(),
             price: String::new(),
             page: String::new(),
+            thumb: String::new(),
+            embed: String::new(),
+            channel: String::new(),
+            duration: String::new(),
             file: None,
             from_url: false,
             failed: false,
+        }
+    }
+
+    /// Whether it shows as a picture the answer cache keeps: a picture, or
+    /// a video's still.
+    pub fn drawn(&self) -> bool {
+        matches!(self.kind, Kind::Picture | Kind::Video)
+    }
+
+    /// The address its picture downloads from: a video's still, else its own.
+    pub fn picture_url(&self) -> &str {
+        match self.kind {
+            Kind::Video => &self.thumb,
+            _ => &self.url,
         }
     }
 
@@ -97,7 +133,11 @@ pub fn picture_id(turn: u32, i: usize) -> String {
     format!("turn{turn}image{i}")
 }
 
-/// `turn{N}search{i}` or `turn{N}image{i}`.
+pub fn video_id(turn: u32, i: usize) -> String {
+    format!("turn{turn}video{i}")
+}
+
+/// `turn{N}search{i}`, `turn{N}image{i}` or `turn{N}video{i}`.
 pub fn is_ref_id(s: &str) -> bool {
     parse_id(s).is_some()
 }
@@ -106,14 +146,19 @@ pub fn is_ref_id(s: &str) -> bool {
 pub fn parse_id(s: &str) -> Option<(u32, Kind, usize)> {
     let rest = s.strip_prefix("turn")?;
     let (turn, rest) = split_digits(rest)?;
-    let (kind, rest) = if let Some(r) = rest.strip_prefix("search") {
-        (Kind::Source, r)
-    } else {
-        (Kind::Picture, rest.strip_prefix("image")?)
-    };
+    let (kind, rest) = KINDS
+        .iter()
+        .find_map(|(word, kind)| rest.strip_prefix(word).map(|r| (*kind, r)))?;
     let (index, rest) = split_digits(rest)?;
     rest.is_empty().then_some((turn as u32, kind, index))
 }
+
+/// The word between an id's two numbers, for each kind.
+const KINDS: [(&str, Kind); 3] = [
+    ("search", Kind::Source),
+    ("image", Kind::Picture),
+    ("video", Kind::Video),
+];
 
 fn split_digits(s: &str) -> Option<(usize, &str)> {
     let n = s.bytes().take_while(u8::is_ascii_digit).count();
@@ -150,7 +195,7 @@ pub fn plain_refs(text: &str) -> std::borrow::Cow<'_, str> {
 }
 
 static LINKED_REF: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r"!?\[[^\]\n]*\]\(\s*<?(turn\d{1,6}(?:search|image)\d{1,6})>?\s*\)").unwrap()
+    regex::Regex::new(r"!?\[[^\]\n]*\]\(\s*<?(turn\d{1,6}(?:search|image|video)\d{1,6})>?\s*\)").unwrap()
 });
 
 /// `text` without its `[turn…]` numbers — the words alone, for a voice or a
@@ -182,11 +227,13 @@ mod tests {
     fn ids_parse_in_both_shapes_and_nothing_else() {
         assert_eq!(parse_id("turn2search1"), Some((2, Kind::Source, 1)));
         assert_eq!(parse_id("turn12image3"), Some((12, Kind::Picture, 3)));
+        assert_eq!(parse_id("turn4video2"), Some((4, Kind::Video, 2)));
         for bad in ["turn2search", "turnsearch1", "turn2news1", "turn2image1x", "Turn1image1", ""] {
             assert!(!is_ref_id(bad), "{bad}");
         }
         assert_eq!(source_id(3, 1), "turn3search1");
         assert_eq!(picture_id(3, 2), "turn3image2");
+        assert_eq!(video_id(3, 1), "turn3video1");
     }
 
     #[test]
@@ -207,6 +254,7 @@ mod tests {
             "看图：\n[turn2image1]\n[turn2image2] from [turn2search1], a \
              [real link](https://a.example/turn1image1) and [turn3image1] as is."
         );
+        assert_eq!(plain_refs("Watch [the video](turn4video1)."), "Watch [turn4video1].");
         assert!(matches!(plain_refs("no links"), std::borrow::Cow::Borrowed(_)));
     }
 

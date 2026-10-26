@@ -267,6 +267,23 @@ pub(crate) fn tool_status_line(
                     .unwrap_or_else(|| "Web search failed".to_string()),
             }
         }
+        "imagesearch" | "videosearch" => {
+            let query = first_string_arg(args, &["query", "q"]).map(|q| preview_value(&q, 140));
+            let (start, done, failed) = match name.as_str() {
+                "imagesearch" => (
+                    "Finding pictures",
+                    "Found pictures",
+                    "Picture search failed",
+                ),
+                _ => ("Finding videos", "Found videos", "Video search failed"),
+            };
+            let label = match phase {
+                ToolStatusPhase::Start => start,
+                ToolStatusPhase::Done => done,
+                ToolStatusPhase::Failed => failed,
+            };
+            query.map_or_else(|| label.to_string(), |q| format!("{label}: {q}"))
+        }
         "task" => match phase {
             ToolStatusPhase::Start => delegate_target
                 .map(|target| format!("Delegating to subagent: {target}"))

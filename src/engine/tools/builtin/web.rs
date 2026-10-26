@@ -22,8 +22,9 @@ impl Tool for WebSearchTool {
          otherwise Linggen Cloud, which needs linggen.dev sign-in and is \
          metered against the account's monthly pool). Returns titles, URLs \
          and snippets, each with a number such as [turn2search1]: writing a \
-         number in the answer shows that source as a link. Text only — a \
-         page's pictures come from WebFetch. If it reports a key, sign-in, \
+         number in the answer shows that source as a link. Text only — \
+         pictures come from ImageSearch (run it alongside), videos from \
+         VideoSearch, a known page's pictures from WebFetch. If it reports a key, sign-in, \
          or quota error, do not retry — tell the user instead."
     }
     fn tier(&self) -> PermissionMode {
@@ -64,7 +65,7 @@ impl Tool for WebSearchTool {
 
 /// Counts a failed search, and tells the model what still works when the
 /// search service could not be reached: a timeout is not the web being down.
-fn search_failed(err: anyhow::Error) -> anyhow::Error {
+pub(super) fn search_failed(err: anyhow::Error) -> anyhow::Error {
     let code = search_error_code(&err.to_string());
     crate::telemetry::global().error("search", code);
     match code {

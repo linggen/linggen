@@ -59,6 +59,9 @@ pub struct Setup {
     /// Text appended to the rendered config before the engine starts (an
     /// extra `[[models]]` block, say). Rendered like the fixture files.
     pub config_append: Option<&'static str>,
+    /// More of the engine's environment, set last (a stand-in service's
+    /// address, say).
+    pub env: Vec<(&'static str, String)>,
 }
 
 impl Setup {
@@ -120,6 +123,7 @@ impl World {
         if let Some(gb) = setup.machine_memory_gb {
             extra_env.push(("LINGGEN_MACHINE_MEMORY_GB".to_string(), gb.to_string()));
         }
+        extra_env.extend(setup.env.iter().map(|(k, v)| (k.to_string(), v.clone())));
         let engine = Engine::start(&home, port, &memory.url, !setup.no_config, &extra_env).await;
         let api = Api::new(engine.base_url());
         Self {

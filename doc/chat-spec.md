@@ -156,16 +156,27 @@ session, not only shopping. This lives in the engine (`engine/answer_refs`),
 not in a skill. A model only ever **refers to what a tool returned**; it
 never writes its own image URL.
 
-- **Numbered results.** Every web result and picture a tool returns gets a
-  number in the shape GPT models already write: `turn{N}search{i}` for a
-  source, `turn{N}image{i}` for a picture. N is the tool result's own number
+- **Numbered results.** Every web result, picture and video a tool returns
+  gets a number in the shape GPT models already write: `turn{N}search{i}`
+  for a source, `turn{N}image{i}` for a picture, `turn{N}video{i}` for a
+  video. N is the tool result's own number
   in the session (one past the highest so far), i counts from 1. The engine
   keeps a per-session table from number to source (url, title, and caption,
   plus name and price for a product) — `refs.jsonl`, see storage-spec. The
   model reads each number beside the thing it names; a picture's address
   stays out of what the model reads.
-- **Where pictures come from.** WebFetch, browser screenshots, pictures
-  `GenerateImage` draws, and picture files `Read` opens. WebFetch returns a
+- **Where pictures come from.** `ImageSearch`, WebFetch, browser
+  screenshots, pictures `GenerateImage` draws, and picture files `Read`
+  opens. `ImageSearch` (built 2026-10-26) is its own tool, run beside
+  WebSearch: one text search on the same path (own Tavily key, else Linggen
+  Cloud — no proxy change), then the top five result pages that are not
+  videos are read at once the way WebFetch reads them (5 s each; a slow page
+  is left out), up to three pictures a page and ten in all, taking turns
+  across pages. Each comes numbered with its caption and the page it is on
+  (title and site in what the model reads, the address in the table).
+  Measured 2026-10-26: 2.5–6 s, beside text search's 1.5–3.3 s; Tavily's
+  own images are bare URLs with no page, and with descriptions 2.4–6 s
+  but still no page, so they are not used. WebFetch returns a
   page's main image (`og:image`, captioned by the page title, with a
   declared product's name and price) and its in-text pictures with their
   captions (`<figcaption>`, else `alt`, else `title`, else the words of the
@@ -179,10 +190,25 @@ never writes its own image URL.
   search from ~2 s to 10–12 s, past the engine's 15 s timeout on a slow day
   (2026-10-22). So to show what something looks like, Ling fetches the
   maker's or a product page. A search that cannot reach its service says
-  WebFetch still opens a known page. Local files a session touched count
+  WebFetch still opens a known page. Asked what something looks like,
+  Ling runs ImageSearch alongside WebSearch (a guideline bullet, shown
+  when ImageSearch is offered). Local files a session touched count
   too: a picture file `Read` opens is kept and numbered the same way, its
   file name the caption, so the answer keeps showing it after the file
   changes or goes (built 2026-10-22; tool-spec `Read`).
+- **Videos.** `VideoSearch` (built 2026-10-26): one search on the same
+  path, narrowed by `site:youtube.com` in the query (the cloud proxy passes
+  only the query on), keeping YouTube watch, short-link and shorts
+  addresses. Each video's channel comes from YouTube's public oEmbed and its
+  length from its watch page (read only until `lengthSeconds` shows), both
+  within 4 s and optional; its still is YouTube's `hqdefault` for the id.
+  2.8–3.6 s measured; costs one search, like WebSearch. The table row keeps
+  the watch page (`url`), the still (`thumb`), `embed`
+  (`youtube-nocookie.com/embed/<id>`), `channel` and `duration`. The still
+  is kept like a picture once an answer shows the video. The chat draws a
+  card in the paragraph's grid — still, length, title, channel — that plays
+  in place on a click (the embed), and the title opens YouTube. Bilibili is
+  not searched: its API refuses an unsigned client (412).
 - **The model refers by number.** GPT models use their own citation
   markers; the Responses API stream turns each id inside one into the plain
   form (`\u{e200}i\u{e202}turn2image1\u{e201}` → `[turn2image1]`), so the
@@ -234,10 +260,14 @@ never writes its own image URL.
   text says.
 - **Lock.** `check.sh live` (case h) asks one shopping question and one
   how-to question. Each answer must show real pictures from a fetched page,
-  and every number it writes must resolve to a tool result. `tests/system/pictures.rs` covers
+  and every number it writes must resolve to a tool result. Case j asks
+  「加压粉碗和普通的有什么区别…」 and a steam-wand how-to on each model in
+  `--media-models` (Sonnet and a GPT model): the first must show found
+  photos each naming its page, the second a video card. `tests/system/pictures.rs` covers
   numbering, resolution, unmatched-renders-nothing, dedupe and delete on a
-  fake model; `tests/system/reading.rs` a picture file read by a seeing and
-  a blind model.
+  fake model, and a picture and a video search against a loopback cloud
+  search and YouTube; `tests/system/reading.rs` a picture file read by a
+  seeing and a blind model.
 
 ## Sessions
 

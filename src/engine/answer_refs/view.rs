@@ -1,8 +1,9 @@
 //! What the chat surfaces read of the table: for each number the answers
 //! write that resolves, what to draw. A source is a link; a picture is its
 //! kept copy's URL (`src`, fetched over the data channel), or past the cap
-//! its own address. A picture not kept yet, one whose download failed, and a
-//! number that matches nothing are left out — they show nothing.
+//! its own address; a video is its still's, plus where it plays. A picture
+//! not kept yet, one whose download failed, and a number that matches
+//! nothing are left out — they show nothing.
 
 use super::{table, Kind, Ref};
 use crate::state_fs::sessions::SessionStore;
@@ -50,6 +51,9 @@ fn shown(session_id: &str, r: &Ref) -> Option<Value> {
         ("name", &r.name),
         ("price", &r.price),
         ("page", &r.page),
+        ("embed", &r.embed),
+        ("channel", &r.channel),
+        ("duration", &r.duration),
     ] {
         if !value.is_empty() {
             obj.insert(key.into(), json!(value));
@@ -70,7 +74,7 @@ fn picture_src(session_id: &str, r: &Ref) -> Option<String> {
     if let Some(file) = &r.file {
         return Some(crate::state_fs::session_images::url(session_id, file));
     }
-    r.from_url.then(|| r.url.clone())
+    r.from_url.then(|| r.picture_url().to_string())
 }
 
 #[cfg(test)]
@@ -106,5 +110,37 @@ mod tests {
         );
         assert_eq!(refs["turn1image4"]["src"], "https://i.example/4.jpg");
         assert_eq!(refs["turn1search1"]["kind"], "source");
+    }
+
+    #[test]
+    fn a_video_draws_its_still_and_says_where_it_plays() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::with_sessions_dir(dir.path().to_path_buf());
+        let sess = store.session_dir("sess-1-a");
+        table::number(&sess, |t| {
+            let watch = "https://www.youtube.com/watch?v=jv_ZAQrKla8";
+            let still = "https://i.ytimg.com/vi/jv_ZAQrKla8/hqdefault.jpg";
+            let mut v = Ref::video(super::super::video_id(t, 1), watch, "Dial in", still);
+            v.embed = "https://www.youtube-nocookie.com/embed/jv_ZAQrKla8".into();
+            v.channel = "Bridge Coffee".into();
+            v.duration = "2:17".into();
+            v.from_url = true;
+            let unkept = Ref::video(super::super::video_id(t, 2), watch, "Again", still);
+            vec![v, unkept]
+        });
+        let refs = refs_for(&store, "sess-1-a", ["Watch [turn1video1] [turn1video2]"]);
+        assert_eq!(refs.len(), 1, "a still not kept yet shows nothing");
+        let v = &refs["turn1video1"];
+        assert_eq!(v["kind"], "video");
+        assert_eq!(v["src"], "https://i.ytimg.com/vi/jv_ZAQrKla8/hqdefault.jpg");
+        assert_eq!(v["url"], "https://www.youtube.com/watch?v=jv_ZAQrKla8");
+        assert_eq!(
+            v["embed"],
+            "https://www.youtube-nocookie.com/embed/jv_ZAQrKla8"
+        );
+        assert_eq!(
+            (v["channel"].as_str(), v["duration"].as_str()),
+            (Some("Bridge Coffee"), Some("2:17"))
+        );
     }
 }

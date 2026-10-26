@@ -19,6 +19,7 @@ mod delegate;
 mod exec;
 mod fs;
 mod image;
+mod media;
 mod pet;
 mod sense;
 mod web;
@@ -33,6 +34,7 @@ pub use delegate::*;
 pub use exec::*;
 pub use fs::*;
 pub use image::*;
+pub use media::*;
 pub use pet::*;
 pub use sense::*;
 pub use web::*;
@@ -140,6 +142,8 @@ pub(super) fn registry() -> &'static [Arc<dyn Tool>] {
             Arc::new(RunAppTool),
             Arc::new(WebSearchTool),
             Arc::new(WebFetchTool),
+            Arc::new(ImageSearchTool),
+            Arc::new(VideoSearchTool),
             Arc::new(ExpressTool),
             Arc::new(VoiceTool),
             Arc::new(SenseTool),

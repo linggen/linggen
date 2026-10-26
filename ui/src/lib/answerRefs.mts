@@ -1,28 +1,36 @@
 // Sources and pictures in answers (doc/chat-spec.md). An answer refers to a
 // tool result by its number — `[turn2search1]` a source, `[turn2image1]` a
-// picture — and the session state hands out what each number resolves to
+// picture, `[turn2video1]` a video — and the session state hands out what each number resolves to
 // (`refs`). This remark plugin turns the numbers into nodes the chat draws:
 // each becomes an inline `lg-ref` (a source chip, or a small thumbnail where
 // a picture's number stood), and the pictures of a paragraph or heading
-// follow it as one captioned `lg-pictures` grid (inside a table cell, the
+// follow it as one captioned `lg-pictures` grid (a video as a card that
+// plays in place) (inside a table cell, the
 // grid stays in the cell). A number that resolves to nothing
 // draws nothing — the components decide, from `refs`.
 
 export interface AnswerRef {
-  kind: 'source' | 'picture';
+  kind: 'source' | 'picture' | 'video';
   url: string;
   title?: string;
   caption?: string;
   name?: string;
   price?: string;
   page?: string;
-  /** A picture's drawable copy: the engine's kept file, or past the cap its address. */
+  /** A picture's (or a video's still's) drawable copy: the engine's kept file, or past the cap its address. */
   src?: string;
+  /** A video: the address that plays it in a page, its channel and length. */
+  embed?: string;
+  channel?: string;
+  duration?: string;
 }
 
-const REF = /\[(turn\d{1,6}(?:search|image)\d{1,6})\]/g;
+const REF = /\[(turn\d{1,6}(?:search|image|video)\d{1,6})\]/g;
 
 export const isPictureId = (id: string): boolean => /^turn\d+image\d+$/.test(id);
+export const isVideoId = (id: string): boolean => /^turn\d+video\d+$/.test(id);
+/** A number drawn in the grid after its block: a picture or a video. */
+export const isShownId = (id: string): boolean => isPictureId(id) || isVideoId(id);
 
 /** The text of a streaming answer without a number still being written. */
 export function hidePartialRef(text: string): string {
@@ -60,7 +68,7 @@ function splitText(value: string, pictures: string[]): MdNode[] {
     const before = value.slice(last, m.index);
     if (before) out.push({ type: 'text', value: before });
     out.push(refNode(id));
-    if (isPictureId(id) && !pictures.includes(id)) pictures.push(id);
+    if (isShownId(id) && !pictures.includes(id)) pictures.push(id);
     last = (m.index ?? 0) + m[0].length;
   }
   const rest = value.slice(last);
@@ -84,7 +92,7 @@ const FOLLOWED = new Set(['paragraph', 'heading']);
 
 function onlyPictures(block: MdNode): boolean {
   return (block.children ?? []).every((c) =>
-    c.type === 'text' ? !c.value?.trim() : c.type === 'lgRef' && isPictureId(c.data?.hProperties?.dataRef ?? ''),
+    c.type === 'text' ? !c.value?.trim() : c.type === 'lgRef' && isShownId(c.data?.hProperties?.dataRef ?? ''),
   );
 }
 
@@ -124,6 +132,11 @@ export function sourceLabel(ref: AnswerRef): string {
   } catch {
     return ref.title || ref.url;
   }
+}
+
+/** A video's line under its title: channel and length. */
+export function videoByline(ref: AnswerRef): string {
+  return [ref.channel, ref.duration].filter(Boolean).join(' · ');
 }
 
 /** What a picture's caption line says: a product's name and price, else its caption. */

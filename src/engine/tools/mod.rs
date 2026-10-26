@@ -110,6 +110,16 @@ pub enum ToolResult {
         query: String,
         results: Vec<super::web_search::WebSearchResult>,
     },
+    /// Pictures of a thing, each from a page a search found (`ImageSearch`).
+    PictureSearchResults {
+        query: String,
+        pictures: Vec<super::image_search::FoundPicture>,
+    },
+    /// Videos about a thing (`VideoSearch`).
+    VideoSearchResults {
+        query: String,
+        videos: Vec<super::video_search::FoundVideo>,
+    },
     WebFetchContent {
         url: String,
         content: String,

@@ -98,6 +98,12 @@ pub fn render_tool_result(r: &ToolResult) -> String {
             }
             out
         }
+        ToolResult::PictureSearchResults { query, pictures } => {
+            super::render_media::picture_search(query, pictures)
+        }
+        ToolResult::VideoSearchResults { query, videos } => {
+            super::render_media::video_search(query, videos)
+        }
         ToolResult::WebFetchContent {
             url,
             content,

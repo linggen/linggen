@@ -1,5 +1,5 @@
-//! Keeping the pictures an answer shows. When an answer lands, each picture
-//! it names that is not kept yet is downloaded once, scaled to about
+//! Keeping the pictures an answer shows (a video's still counts as one).
+//! When an answer lands, each picture it names that is not kept yet is downloaded once, scaled to about
 //! [`LONG_EDGE`] px and kept under the session's `images/` — named by its
 //! content, so one picture behind two addresses is kept once — beside the
 //! person's own pictures, served the same way (`GET /api/sessions/images`,
@@ -7,7 +7,7 @@
 //! address instead; a failed download is never shown. Pictures a search
 //! returned that no answer shows are never fetched.
 
-use super::{table, Kind, Ref};
+use super::{table, Ref};
 use crate::state_fs::sessions::SessionStore;
 use sha2::{Digest, Sha256};
 use std::path::Path;
@@ -54,7 +54,7 @@ pub async fn show(store: &SessionStore, session_id: &str, answer: &str) -> bool 
     let wanted: Vec<Ref> = ids
         .iter()
         .filter_map(|id| refs.get(id))
-        .filter(|r| r.kind == Kind::Picture && !r.settled())
+        .filter(|r| r.drawn() && !r.settled())
         .cloned()
         .collect();
     if wanted.is_empty() {
@@ -75,7 +75,7 @@ pub async fn show(store: &SessionStore, session_id: &str, answer: &str) -> bool 
 async fn download_all(wanted: &[Ref]) -> Vec<Option<Vec<u8>>> {
     use futures_util::stream::{self, StreamExt};
     let deadline = tokio::time::Instant::now() + ANSWER_BUDGET;
-    let urls: Vec<String> = wanted.iter().map(|r| r.url.clone()).collect();
+    let urls: Vec<String> = wanted.iter().map(|r| r.picture_url().to_string()).collect();
     stream::iter(urls.into_iter().map(move |url| download_by(url, deadline)))
         .buffered(PARALLEL)
         .collect()
@@ -111,7 +111,7 @@ fn settle(dir: &Path, r: &mut Ref, bytes: Option<Vec<u8>>, used: &mut u64) {
 fn kept_bytes(dir: &Path, refs: &std::collections::HashMap<String, Ref>) -> u64 {
     let mut files: Vec<&str> = refs
         .values()
-        .filter(|r| r.kind == Kind::Picture && !r.url.is_empty())
+        .filter(|r| r.drawn() && !r.picture_url().is_empty())
         .filter_map(|r| r.file.as_deref())
         .collect();
     files.sort_unstable();

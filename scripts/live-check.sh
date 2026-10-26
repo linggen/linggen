@@ -12,6 +12,8 @@
 #        --home DIR (the engine's state dir; default ~/.linggen, env LIVE_LINGGEN_HOME),
 #        --alt-model ID (Yinyue's model in the two-models case; default
 #          deepseek-flash, env LIVE_ALT_MODEL),
+#        --media-models "A B" (the models the picture/video search case runs
+#          on; default "claude-sonnet-5-5 gpt-6.1-sol", env LIVE_MEDIA_MODELS),
 #        --speak (also run the app-moment case — she SPEAKS one line aloud to
 #          any connected presenter; env LIVE_SPEAK=1),
 #        --no-presence (don't beat presence during model runs; see below),
@@ -42,6 +44,7 @@ API="${LIVE_URL:-http://127.0.0.1:9527}"
 MEM="${LIVE_MEM_URL:-http://127.0.0.1:9528}"
 LG="${LIVE_LINGGEN_HOME:-$HOME/.linggen}"
 ALT_MODEL="${LIVE_ALT_MODEL:-deepseek-flash}"
+MEDIA_MODELS="${LIVE_MEDIA_MODELS:-claude-sonnet-5-5 gpt-6.1-sol}"
 SOURCE_SKILL="${LIVE_SOURCE_SKILL:-lingjing}"
 MODEL=1
 [ "${LIVE_SKIP_MODEL:-0}" = 1 ] && MODEL=0
@@ -55,6 +58,7 @@ while [ $# -gt 0 ]; do
     --mem) MEM="$2"; shift ;;
     --home) LG="$2"; shift ;;
     --alt-model) ALT_MODEL="$2"; shift ;;
+    --media-models) MEDIA_MODELS="$2"; shift ;;
     --no-model) MODEL=0 ;;
     --speak) SPEAK=1 ;;
     --no-presence) PRESENCE=0 ;;
@@ -144,6 +148,7 @@ trap 'exit 130' INT TERM
 
 get() { curl -sS -m60 "$API$1" 2>&1; }
 post() { curl -sS -m60 -X POST -H 'content-type: application/json' -d "$2" "$API$1" 2>&1; }
+patch() { curl -sS -m60 -X PATCH -H 'content-type: application/json' -d "$2" "$API$1" 2>&1; }
 # A scratch session that runs a model: no member may write the real memory
 # store (SessionMeta::withheld_tools — the whole memory server).
 NO_MEMORY='{"withheld_tools":["mcp__memory"]}'
@@ -462,7 +467,8 @@ MODEL_CASES=("(a) shared table: Ling Looks, @银月 answers from it" "(b) @银�
   "(d) forced shared compaction" "(e) two members on two models" \
   "(g) plain chat: Ling answers in full, a greeting stays short" \
   "(h) pictures in answers: shopping + how-to show real, resolved pictures" \
-  "(i) plain chat: Ling checks the machine it runs on, and only when asked about it")
+  "(i) plain chat: Ling checks the machine it runs on, and only when asked about it" \
+  "(j) picture + video search: a visual question shows found photos, a how-to a video, on each model")
 if [ "$MODEL" = 0 ]; then
   section "Model cases"
   for c in "${MODEL_CASES[@]}" "(f) app moment at a table"; do skip "$c" "--no-model"; done
@@ -746,6 +752,67 @@ print("ok", len(shown), len(written))
     read -r VERDICT REST <<<"$(pictures_verdict "$SID_H")"
     [ "$VERDICT" = ok ]
     check "(h) real, resolved pictures: ${q:0:40}…" $? "$REST" "$REST (shown, written)"
+  done
+
+  # ── (j) ──────────────────────────────────────────────────────────────────
+  # Picture and video search (2026-10-26): a question about how things look
+  # and differ shows real photos inline — each from a page, numbered by
+  # ImageSearch or a fetch — and a how-to shows a video card. Each runs on
+  # every model in MEDIA_MODELS (Ling's model set per session), in a fresh
+  # plain session with memory withheld.
+  section "${MODEL_CASES[7]}"
+  media_turn() { # model message → "<sid>" of the finished session ("" when it did not finish)
+    local sid m
+    sid="$(new_session "$(jq -nc --argjson w "$NO_MEMORY" '{title:"live-check media"} + $w')")"
+    [ -n "$sid" ] || return 0
+    patch /api/sessions "$(jq -nc --arg s "$sid" --arg m "$1" '{session_id:$s, model_id:$m, agent_id:"ling"}')" >/dev/null
+    m="$(log_mark)"
+    chat "$sid" "" "$2" >/dev/null
+    finish_ling "$sid" "$m" || return 0
+    sleep 2
+    printf '%s' "$sid"
+  }
+  videos_verdict() { # sid → "ok <n shown> <n searched>" or "bad <reason>"
+    get "/api/workspace/state?project_root=&session_id=$1" | python3 -c '
+import json, os, re, sys
+state = json.load(sys.stdin)
+sid, lg = sys.argv[1], sys.argv[2]
+table = {}
+try:
+    for line in open(os.path.join(lg, "sessions", sid, "refs.jsonl")):
+        if line.strip():
+            r = json.loads(line); table[r["id"]] = r
+except FileNotFoundError:
+    pass
+said = " ".join(t for m, t in state.get("messages", []) if m.get("from") == "ling")
+found = [i for i, r in table.items() if r.get("kind") == "video"]
+refs = state.get("refs") or {}
+shown = [i for i, r in refs.items() if r.get("kind") == "video" and r.get("src") and r.get("embed")]
+if not found:
+    print("bad no video search ran (or it found nothing)"); sys.exit()
+if not shown:
+    written = sorted(set(re.findall(r"\[(turn\d+video\d+)\]", said)))
+    print("bad no video shown (written:", " ".join(written) or "none", ")"); sys.exit()
+print("ok", len(shown), len(found))
+' "$1" "$LG"
+  }
+  J_PICTURES="加压粉碗和普通的有什么区别, 咖啡口味 适用场景等?"
+  J_HOWTO="How do I steam milk for a latte with a home espresso machine's steam wand? Walk me through it."
+  for jm in $MEDIA_MODELS; do
+    if ! get /api/models | jq -e --arg m "$jm" 'any(.[]?; .id == $m)' >/dev/null 2>&1; then
+      skip "(j) $jm" "not a model on this engine (--media-models)"; continue
+    fi
+    SID_J="$(media_turn "$jm" "$J_PICTURES")"
+    if [ -z "$SID_J" ]; then fail "(j) $jm: found photos" "the turn did not finish"; else
+      read -r VERDICT REST <<<"$(pictures_verdict "$SID_J")"
+      [ "$VERDICT" = ok ]
+      check "(j) $jm: found photos, each from its page" $? "$REST" "$REST (shown, written)"
+    fi
+    SID_J="$(media_turn "$jm" "$J_HOWTO")"
+    if [ -z "$SID_J" ]; then fail "(j) $jm: a how-to video" "the turn did not finish"; continue; fi
+    read -r VERDICT REST <<<"$(videos_verdict "$SID_J")"
+    [ "$VERDICT" = ok ]
+    check "(j) $jm: a how-to shows a video" $? "$REST" "$REST (shown, found)"
   done
 
   # Ling runs on the person's own computer (2026-10-22): asked about it, it

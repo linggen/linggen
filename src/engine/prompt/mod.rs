@@ -674,6 +674,8 @@ impl AgentEngine {
                 "Glob",
                 "Grep",
                 "WebSearch",
+                "ImageSearch",
+                "VideoSearch",
                 "WebFetch",
                 "AskUser",
                 "ExitPlanMode",
@@ -766,6 +768,14 @@ impl AgentEngine {
                         if let Some(b) = self
                             .prompt_store
                             .get(crate::prompts::keys::RESPONSE_FORMAT_NATIVE_ASKUSER_BULLET)
+                        {
+                            system.push_str(b);
+                        }
+                    }
+                    if tool_allowed("ImageSearch") {
+                        if let Some(b) = self
+                            .prompt_store
+                            .get(crate::prompts::keys::RESPONSE_FORMAT_NATIVE_PICTURES_BULLET)
                         {
                             system.push_str(b);
                         }

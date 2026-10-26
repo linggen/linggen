@@ -75,6 +75,8 @@ pub mod keys {
     pub const RESPONSE_FORMAT: &str = "response-format.default";
     pub const RESPONSE_FORMAT_NATIVE: &str = "response-format.native";
     pub const RESPONSE_FORMAT_NATIVE_ASKUSER_BULLET: &str = "response-format.native_askuser_bullet";
+    pub const RESPONSE_FORMAT_NATIVE_PICTURES_BULLET: &str =
+        "response-format.native_pictures_bullet";
     pub const RESPONSE_FORMAT_NATIVE_CONVERSATIONAL: &str = "response-format.native_conversational";
     pub const RESPONSE_FORMAT_NATIVE_PLAN_MODE: &str = "response-format.native_plan_mode";
     pub const RESPONSE_FORMAT_NATIVE_UPDATE_PLAN: &str = "response-format.native_update_plan";
@@ -412,6 +414,7 @@ mod tests {
             keys::RESPONSE_FORMAT,
             keys::RESPONSE_FORMAT_NATIVE,
             keys::RESPONSE_FORMAT_NATIVE_ASKUSER_BULLET,
+            keys::RESPONSE_FORMAT_NATIVE_PICTURES_BULLET,
             keys::RESPONSE_FORMAT_NATIVE_CONVERSATIONAL,
             keys::RESPONSE_FORMAT_NATIVE_PLAN_MODE,
             keys::RESPONSE_FORMAT_NATIVE_UPDATE_PLAN,

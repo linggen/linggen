@@ -17,6 +17,8 @@ const TOOLS: ToolDef[] = [
   { name: 'Glob', description: 'Find files by pattern' },
   { name: 'Grep', description: 'Search file contents' },
   { name: 'WebSearch', description: 'Search the web', note: 'Requires sign-in' },
+  { name: 'ImageSearch', description: 'Find real pictures', note: 'Requires sign-in' },
+  { name: 'VideoSearch', description: 'Find videos', note: 'Requires sign-in' },
   { name: 'WebFetch', description: 'Fetch web page content' },
   { name: 'Skill', description: 'Run skills' },
   { name: 'AskUser', description: 'Ask user questions' },

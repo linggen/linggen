@@ -69,6 +69,12 @@ export const toolPrefixMap: [string, string][] = [
   ['Searching web: ', 'WebSearch'],
   ['Searched web: ', 'WebSearch'],
   ['Web search failed: ', 'WebSearch'],
+  ['Finding pictures: ', 'ImageSearch'],
+  ['Found pictures: ', 'ImageSearch'],
+  ['Picture search failed: ', 'ImageSearch'],
+  ['Finding videos: ', 'VideoSearch'],
+  ['Found videos: ', 'VideoSearch'],
+  ['Video search failed: ', 'VideoSearch'],
   ['Calling tool: ', 'Tool'],
   ['Used tool: ', 'Tool'],
   ['Tool failed: ', 'Tool'],
@@ -93,6 +99,8 @@ export function formatToolStartLine(toolName: string, argsStr: string): string {
         return `Delegating to subagent: ${args.agent_id || args.agent || argsStr}`;
       case 'WebFetch': return `Fetching URL: ${args.url || argsStr}`;
       case 'WebSearch': return `Searching web: ${args.query || argsStr}`;
+      case 'ImageSearch': return `Finding pictures: ${args.query || argsStr}`;
+      case 'VideoSearch': return `Finding videos: ${args.query || argsStr}`;
       default: return `Calling tool: ${toolName}`;
     }
   } catch {

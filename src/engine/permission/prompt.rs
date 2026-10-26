@@ -45,7 +45,7 @@ pub fn permission_target_summary(tool: &str, args: &serde_json::Value, cwd: &Pat
             .and_then(|v| v.as_str())
             .map(|url| truncate_for_prompt(url, 120))
             .unwrap_or_else(|| "<unknown URL>".to_string()),
-        "WebSearch" => args
+        "WebSearch" | "ImageSearch" | "VideoSearch" => args
             .get("query")
             .and_then(|v| v.as_str())
             .map(|q| truncate_for_prompt(q, 120))

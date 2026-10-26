@@ -1,17 +1,25 @@
 //! Sources and pictures in answers (doc/chat-spec.md): pictures come from a
-//! fetched page, never a search (search is text only, so it stays fast). A
-//! page fetched in a turn numbers its sources and pictures, the answer shows
-//! some by number, and the history view hands out exactly those that
-//! resolve — each picture kept once, scaled, with the session, and gone
-//! with it.
+//! fetched page or a picture search, never WebSearch (text only, so it stays
+//! fast); videos from a video search. A page fetched in a turn numbers its
+//! sources and pictures, the answer shows some by number, and the history
+//! view hands out exactly those that resolve — each picture kept once,
+//! scaled, with the session, and gone with it.
 
 use crate::support::model::Agent;
 use crate::support::{text, tool, Setup, World};
-use axum::{http::header, response::IntoResponse, routing::get, Router};
+use axum::{
+    http::header,
+    response::IntoResponse,
+    routing::{get, post},
+    Json, Router,
+};
 use serde_json::{json, Value};
 
 /// A product page on loopback: a main picture (2400 px wide), a step
 /// picture, the same step picture at a second address, and one that 404s.
+/// It also stands in for the cloud search (`/api/search`, finding the page,
+/// or a video for a `site:youtube.com` query) and for YouTube's oEmbed,
+/// watch page and stills.
 struct Site {
     url: String,
 }
@@ -43,16 +51,50 @@ impl Site {
             let bytes = bytes.clone();
             async move { ([(header::CONTENT_TYPE, "image/png")], bytes).into_response() }
         };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind site");
+        let url = format!("http://{}", listener.local_addr().expect("site addr"));
+        let page = format!("{url}/kettle");
+        let search = move |Json(body): Json<Value>| {
+            let page = page.clone();
+            async move { Json(search_results(&body, &page)) }
+        };
         let app = Router::new()
             .route("/kettle", get(html))
             .route("/big.png", get(picture(png(2400, 1200, 10))))
             .route("/step.png", get(picture(png(300, 200, 200))))
-            .route("/again/step.png", get(picture(png(300, 200, 200))));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind site");
-        let url = format!("http://{}", listener.local_addr().expect("site addr"));
+            .route("/again/step.png", get(picture(png(300, 200, 200))))
+            .route("/api/search", post(search))
+            .route(
+                "/oembed",
+                get(|| async { Json(json!({"author_name": "Kettle School"})) }),
+            )
+            .route(
+                "/watch",
+                get(|| async { r#"<script>var p = {"lengthSeconds":"245"};</script>"# }),
+            )
+            .route(
+                &format!("/vi/{VIDEO}/hqdefault.jpg"),
+                get(picture(png(480, 360, 60))),
+            );
         tokio::spawn(async move { axum::serve(listener, app).await });
         Self { url }
     }
+}
+
+const VIDEO: &str = "Kett1e_vid0";
+
+/// What the cloud search answers: the kettle page, or for a query narrowed
+/// to YouTube one video.
+fn search_results(body: &Value, page: &str) -> Value {
+    let query = body["query"].as_str().unwrap_or_default();
+    if query.starts_with("site:youtube.com ") {
+        let watch = format!("https://www.youtube.com/watch?v={VIDEO}");
+        return json!({"results": [
+            {"title": "How to fill a gooseneck - YouTube", "url": watch, "content": "Fill to the line."},
+            {"title": "A channel", "url": "https://www.youtube.com/@KettleSchool", "content": ""}
+        ]});
+    }
+    json!({"results": [{"title": "Kettle", "url": page, "content": "A kettle."}]})
 }
 
 const ANSWER: &str = "The Gooseneck [turn1image1] pours well [turn1search1].\n\n\
@@ -183,5 +225,95 @@ async fn gpt_citation_markers_resolve_like_plain_numbers() {
     let saved = history["messages"].to_string();
     assert!(saved.contains("Pick this one.[turn1image1] [turn1search1]"), "{saved}");
     assert!(!saved.contains('\u{e200}'), "a raw marker was saved");
+    w.assert_all_scripted();
+}
+
+/// A picture search and a video search, each numbered in what the model
+/// reads (no address in it), and the answer shows a found picture with the
+/// page it came from and a video card with its still kept like a picture.
+#[tokio::test]
+async fn found_pictures_and_videos_show_with_where_they_came_from() {
+    let site = Site::start().await;
+    let answer = "The Gooseneck [turn1image1].\n\nHow to fill it: [turn2video1]";
+    let mut setup = Setup::default().script(
+        Agent::Ling,
+        vec![
+            tool("ImageSearch", json!({"query": "gooseneck kettle"})),
+            tool("VideoSearch", json!({"query": "fill a gooseneck kettle"})),
+            text(answer),
+        ],
+    );
+    setup.env = vec![
+        ("LINGGEN_SITE_URL", site.url.clone()),
+        ("LINGGEN_YOUTUBE_URL", site.url.clone()),
+    ];
+    let w = World::start(setup).await;
+    std::fs::write(
+        w.home.linggen_home().join("account.toml"),
+        "api_token = \"test-token\"\n",
+    )
+    .expect("sign in");
+    let root = w.work();
+    let sid = w
+        .api
+        .create_session(json!({"title": "kettle", "project_root": root}))
+        .await;
+    let history = fetch_and_answer(&w, &sid).await;
+
+    // What the model was told, and what it read.
+    let calls = w.model.calls_of(Agent::Ling);
+    let first = &calls[0];
+    assert!(
+        first.text().contains("Show real pictures and videos"),
+        "no pictures rule"
+    );
+    assert!(first
+        .tool_description("ImageSearch")
+        .contains("[turn3image1]"));
+    let read = calls.last().expect("answer call").text();
+    assert!(
+        read.contains(
+            "[turn1image1] Gooseneck Kettle — 89.00 USD — from Gooseneck Kettle (127.0.0.1)"
+        ),
+        "{read}"
+    );
+    assert!(
+        read.contains("[turn2video1] How to fill a gooseneck — Kettle School · 4:05"),
+        "{read}"
+    );
+    for address in ["big.png", "hqdefault", "watch?v="] {
+        assert!(
+            !read.contains(address),
+            "the model read an address: {address}"
+        );
+    }
+
+    // What the chat reads.
+    let refs = history["refs"].as_object().expect("refs");
+    let picture = &refs["turn1image1"];
+    assert_eq!(picture["page"], format!("{}/kettle", site.url));
+    assert!(picture["src"]
+        .as_str()
+        .is_some_and(|s| s.starts_with("/api/sessions/images")));
+    let video = &refs["turn2video1"];
+    assert_eq!(video["kind"], "video");
+    assert_eq!(
+        video["url"],
+        format!("https://www.youtube.com/watch?v={VIDEO}")
+    );
+    assert_eq!(
+        video["embed"],
+        format!("https://www.youtube-nocookie.com/embed/{VIDEO}")
+    );
+    assert_eq!(
+        (video["channel"].as_str(), video["duration"].as_str()),
+        (Some("Kettle School"), Some("4:05"))
+    );
+    assert!(
+        video["src"]
+            .as_str()
+            .is_some_and(|s| s.starts_with("/api/sessions/images")),
+        "the still is kept with the session: {video}"
+    );
     w.assert_all_scripted();
 }

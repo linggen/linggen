@@ -37,11 +37,13 @@ Built-in tools are the kernel API. Skills are userspace.
 | `Write` | `path, content` | Create/overwrite file |
 | `Edit` | `path, old_string, new_string, replace_all?` | String replacement in file |
 | `Bash` | `cmd, timeout_ms?` | Shell command execution |
-| `GenerateImage` | `prompt, shape?, name?, reference?, seed?` | Draw one picture when the person asks for a drawing (never to show a real thing — that is a WebFetch photo). Kept with the session and numbered (`[turn3image1]`) like any picture an answer shows; in a skill also saved as `<skill>/data/pictures/<name>.png` |
+| `GenerateImage` | `prompt, shape?, name?, reference?, seed?` | Draw one picture when the person asks for a drawing (never to show a real thing — that is an ImageSearch or WebFetch photo). Kept with the session and numbered (`[turn3image1]`) like any picture an answer shows; in a skill also saved as `<skill>/data/pictures/<name>.png` |
 | `lock_paths` | `globs, ttl_ms?` | Acquire file locks (multi-agent) |
 | `unlock_paths` | `tokens` | Release file locks |
 | `Task` | `target_agent_id, task` | Spawn subagent |
 | `WebSearch` | `query, max_results?` | Web search (Tavily — your key from Settings first, else Linggen Cloud with sign-in; a failing key is reported, never swapped). Text only: results come numbered (`[turn2search1]`; chat-spec § Sources and pictures). Unreachable → the error says WebFetch still opens a known page |
+| `ImageSearch` | `query` | Real pictures of a thing: one search on WebSearch's path, then the top 5 non-video result pages read at once (5 s each, slow ones left out), up to 3 pictures a page and 10 in all, each numbered (`[turn3image1]`) with its caption and the page it is on. Run beside WebSearch, never inside it |
+| `VideoSearch` | `query` | YouTube videos: one search on WebSearch's path narrowed by `site:youtube.com`; title, channel (oEmbed) and length (watch page) within 4 s, each numbered (`[turn4video1]`); the answer shows a card that plays in place |
 | `WebFetch` | `url, max_bytes?` | Fetch URL content as text; the page and its pictures (`og:image` with a declared product's name and price, then `<figure>`/`<img>` with captions) come numbered (`[turn2image1]`) — the route to showing what something looks like |
 | `Skill` | `skill, args?` | Invoke a skill by name |
 | `RunApp` | `skill, args?` | Launch an app-enabled skill |

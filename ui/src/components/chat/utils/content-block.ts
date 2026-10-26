@@ -83,7 +83,10 @@ export const contentBlockSummary = (block: ContentBlock): string => {
       case 'delegate_to_agent':
         return args.agent_id || args.agent || raw;
       case 'WebFetch': return args.url || raw;
-      case 'WebSearch': return args.query || raw;
+      case 'WebSearch':
+      case 'ImageSearch':
+      case 'VideoSearch':
+        return args.query || raw;
       case 'Skill': return args.skill || raw;
       default: {
         const first = Object.values(args).find(v => typeof v === 'string' && (v as string).length < 80) as string | undefined;

@@ -2,9 +2,11 @@
 //! in the session's table, and the id is written into the result so the
 //! model reads it beside the thing it names.
 
-use super::{picture_id, source_id, table, Ref};
+use super::{picture_id, source_id, table, video_id, Ref};
+use crate::engine::image_search::FoundPicture;
 use crate::engine::page_pictures::WebPicture;
 use crate::engine::tools::ToolResult;
+use crate::engine::video_search::{clock, FoundVideo};
 use crate::engine::web_search::WebSearchResult;
 use crate::state_fs::sessions::SessionStore;
 
@@ -17,6 +19,8 @@ pub fn number(store: &SessionStore, session_id: &str, result: &mut ToolResult) {
     let dir = store.session_dir(session_id);
     match result {
         ToolResult::WebSearchResults { results, .. } => number_search(&dir, results),
+        ToolResult::PictureSearchResults { pictures, .. } => number_found(&dir, pictures),
+        ToolResult::VideoSearchResults { videos, .. } => number_videos(&dir, videos),
         ToolResult::WebFetchContent {
             url,
             title,
@@ -43,6 +47,8 @@ pub fn number(store: &SessionStore, session_id: &str, result: &mut ToolResult) {
 fn numberable(result: &ToolResult) -> bool {
     match result {
         ToolResult::WebSearchResults { results, .. } => !results.is_empty(),
+        ToolResult::PictureSearchResults { pictures, .. } => !pictures.is_empty(),
+        ToolResult::VideoSearchResults { videos, .. } => !videos.is_empty(),
         ToolResult::WebFetchContent { .. } => true,
         ToolResult::Screenshot { base64, .. } => !base64.is_empty(),
         ToolResult::Picture { base64, .. } => !base64.is_empty(),
@@ -68,6 +74,55 @@ fn number_search(dir: &std::path::Path, results: &mut [WebSearchResult]) {
     for (i, r) in results.iter_mut().enumerate() {
         r.id = source_id(turn, i + 1);
     }
+}
+
+/// Each found picture is numbered with its caption and the page it is on.
+fn number_found(dir: &std::path::Path, pictures: &mut [FoundPicture]) {
+    let turn = table::number(dir, |turn| {
+        pictures
+            .iter()
+            .enumerate()
+            .map(|(i, p)| found_row(picture_id(turn, i + 1), p))
+            .collect()
+    });
+    let Some(turn) = turn else { return };
+    for (i, p) in pictures.iter_mut().enumerate() {
+        p.picture.id = picture_id(turn, i + 1);
+    }
+}
+
+fn found_row(id: String, p: &FoundPicture) -> Ref {
+    let mut r = Ref::picture(id, &p.picture.url, &p.picture.caption);
+    r.name = p.picture.name.clone();
+    r.price = p.picture.price.clone();
+    r.page = p.page.clone();
+    r.title = p.page_title.clone();
+    r
+}
+
+/// A video is numbered with what its card shows; its still is kept like a
+/// picture once an answer shows it.
+fn number_videos(dir: &std::path::Path, videos: &mut [FoundVideo]) {
+    let turn = table::number(dir, |turn| {
+        videos
+            .iter()
+            .enumerate()
+            .map(|(i, v)| video_row(video_id(turn, i + 1), v))
+            .collect()
+    });
+    let Some(turn) = turn else { return };
+    for (i, v) in videos.iter_mut().enumerate() {
+        v.id = video_id(turn, i + 1);
+    }
+}
+
+fn video_row(id: String, v: &FoundVideo) -> Ref {
+    let mut r = Ref::video(id, &v.url, &v.title, &v.thumbnail);
+    r.page = v.url.clone();
+    r.embed = v.embed.clone();
+    r.channel = v.channel.clone();
+    r.duration = v.seconds.map(clock).unwrap_or_default();
+    r
 }
 
 fn number_page(
@@ -419,6 +474,63 @@ mod tests {
         let mut unkept = picture_file(&png());
         number(&store, "../x", &mut unkept);
         assert!(render_tool_result(&unkept).contains("Not kept in this conversation"));
+    }
+
+    #[test]
+    fn found_pictures_and_videos_are_numbered_with_their_page() {
+        use crate::engine::page_pictures::WebPicture;
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::with_sessions_dir(dir.path().to_path_buf());
+        let mut pictures = ToolResult::PictureSearchResults {
+            query: "basket".into(),
+            pictures: vec![FoundPicture {
+                picture: WebPicture {
+                    url: "https://img.example/b.jpg".into(),
+                    caption: "Dual-wall basket".into(),
+                    ..Default::default()
+                },
+                page: "https://shop.example/baskets".into(),
+                page_title: "Baskets".into(),
+            }],
+        };
+        number(&store, "sess-1-a", &mut pictures);
+        let mut videos = ToolResult::VideoSearchResults {
+            query: "dial in".into(),
+            videos: vec![FoundVideo {
+                url: "https://www.youtube.com/watch?v=jv_ZAQrKla8".into(),
+                title: "Dial in".into(),
+                channel: "Bridge Coffee".into(),
+                seconds: Some(137),
+                thumbnail: "https://i.ytimg.com/vi/jv_ZAQrKla8/hqdefault.jpg".into(),
+                embed: "https://www.youtube-nocookie.com/embed/jv_ZAQrKla8".into(),
+                ..Default::default()
+            }],
+        };
+        number(&store, "sess-1-a", &mut videos);
+        assert!(
+            render_tool_result(&pictures).contains("[turn1image1] Dual-wall basket — from Baskets")
+        );
+        assert!(
+            render_tool_result(&videos).contains("[turn2video1] Dial in — Bridge Coffee · 2:17")
+        );
+
+        let refs = table::load(&store.session_dir("sess-1-a"));
+        let p = &refs["turn1image1"];
+        assert_eq!(
+            (p.url.as_str(), p.page.as_str()),
+            ("https://img.example/b.jpg", "https://shop.example/baskets")
+        );
+        let v = &refs["turn2video1"];
+        assert_eq!(v.kind, super::super::Kind::Video);
+        assert_eq!(
+            v.picture_url(),
+            "https://i.ytimg.com/vi/jv_ZAQrKla8/hqdefault.jpg"
+        );
+        assert_eq!(
+            (v.channel.as_str(), v.duration.as_str()),
+            ("Bridge Coffee", "2:17")
+        );
+        assert!(!v.settled(), "its still downloads when an answer shows it");
     }
 
     #[test]
