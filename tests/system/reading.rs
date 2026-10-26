@@ -4,10 +4,10 @@
 //! numbered, kept with the session, and shown by number in the answer —
 //! still there after the file is gone.
 
-use crate::support::model::{Agent, Call};
+use crate::support::model::Agent;
 use crate::support::{text, tool, World};
 use base64::Engine as _;
-use serde_json::{json, Value};
+use serde_json::json;
 
 /// A noisy picture, so it is large on disk the way a screenshot is.
 fn png(w: u32, h: u32) -> Vec<u8> {
@@ -20,25 +20,6 @@ fn png(w: u32, h: u32) -> Vec<u8> {
         .write_to(&mut out, image::ImageFormat::Png)
         .expect("encode png");
     out.into_inner()
-}
-
-/// Every image the call carried, as its `data:` URL.
-fn images(call: &Call) -> Vec<String> {
-    fn walk(v: &Value, out: &mut Vec<String>) {
-        match v {
-            Value::Object(map) => {
-                if let Some(url) = map.get("image_url").and_then(|u| u["url"].as_str()) {
-                    out.push(url.to_string());
-                }
-                map.values().for_each(|v| walk(v, out));
-            }
-            Value::Array(items) => items.iter().for_each(|v| walk(v, out)),
-            _ => {}
-        }
-    }
-    let mut out = Vec::new();
-    walk(&call.body, &mut out);
-    out
 }
 
 /// A session reading `shot.png` (2000×1200) on `model`, answering with
@@ -114,7 +95,7 @@ async fn a_seeing_model_gets_the_picture_once_and_the_answer_shows_it() {
     assert!(read.contains("a picture (PNG, 2000×1200"), "{read}");
     assert!(read.contains("[turn1image1] shot.png"), "{read}");
     assert!(read.contains("attached below"), "{read}");
-    let sent = images(&calls[1]);
+    let sent = calls[1].images();
     assert_eq!(sent.len(), 1, "one picture in its turn");
     let b64 = sent[0]
         .strip_prefix("data:image/jpeg;base64,")
@@ -127,7 +108,7 @@ async fn a_seeing_model_gets_the_picture_once_and_the_answer_shows_it() {
 
     // The next turn: no picture rides back.
     let next = calls.last().expect("next turn");
-    assert!(images(next).is_empty(), "a picture was resent");
+    assert!(next.images().is_empty(), "a picture was resent");
     assert!(!next.text().contains("data:image"));
 
     assert_shown_after_the_file_is_gone(&w, &sid).await;
@@ -143,7 +124,7 @@ async fn a_blind_model_reads_the_facts_and_the_answer_still_shows_it() {
     assert!(read.contains("cannot see pictures"), "{read}");
     assert!(read.contains("[turn1image1] shot.png"), "{read}");
     assert!(
-        calls.iter().all(|c| images(c).is_empty()),
+        calls.iter().all(|c| c.images().is_empty()),
         "bytes reached a blind model"
     );
     assert!(

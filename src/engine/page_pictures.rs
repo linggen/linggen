@@ -1,9 +1,11 @@
-//! The pictures a fetched page carries: its main image (`og:image`, with
-//! the page's title and — when the page declares a product — its price),
-//! then the pictures in its text with their captions (`<figcaption>`, else
-//! `alt`, else `title`, else the words of the file's name, else the page's
-//! title). Read from the HTML before its tags are stripped. Nothing here
-//! knows any site: only the standard meta tags and elements.
+//! The pictures a fetched page carries: the pictures in its text with
+//! their own words as the caption (`<figcaption>`, else `alt`, else
+//! `title`, else the words of the file's name), then its cover (`og:image`,
+//! captioned by its file's words only, with a declared product's name and
+//! price). A caption never borrows the page's title: a cover is often a
+//! site-wide stock picture, and a model that cannot see trusts the caption.
+//! Read from the HTML before its tags are stripped. Nothing here knows any
+//! site: only the standard meta tags and elements.
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -44,6 +46,40 @@ pub struct WebPicture {
     /// Its number in the session (`turn2image1`), once numbered.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub id: String,
+    /// The page's cover (`og:image`), not a picture in its text.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub cover: bool,
+}
+
+impl WebPicture {
+    /// Its own words: caption and file name, never its page's.
+    pub fn own_words(&self) -> String {
+        format!("{} {}", self.caption, file_words(&self.url))
+    }
+
+    /// What the model reads of it: its caption, a cover marked as one, and
+    /// a declared product's name and price.
+    pub fn described(&self) -> String {
+        let caption = match (self.caption.as_str(), self.cover) {
+            ("", true) => "the page's cover picture".to_string(),
+            (c, true) => format!("{c} (the page's cover picture)"),
+            (c, false) => c.to_string(),
+        };
+        let product = [self.name.as_str(), self.price.as_str()]
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join(" · ");
+        let words = [caption.as_str(), product.as_str()]
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join(" — ");
+        match words.as_str() {
+            "" => "(no caption)".to_string(),
+            _ => words,
+        }
+    }
 }
 
 /// What a page says about itself: its title, and its pictures.
@@ -58,25 +94,32 @@ pub fn read(html: &str, page_url: &str) -> PageFacts {
     let meta = Meta::read(html);
     let title = first_non_empty(&[&meta.title, &title_tag(html)]);
     let mut pictures: Vec<WebPicture> = Vec::new();
-    if let Some(main) = main_picture(&meta, &title, base.as_ref()) {
-        pictures.push(main);
-    }
-    for mut pic in figures(html, base.as_ref())
+    let in_text = figures(html, base.as_ref())
         .into_iter()
-        .chain(images(html, base.as_ref()))
-    {
-        if pictures.len() >= MAX_PICTURES {
+        .chain(images(html, base.as_ref()));
+    for pic in in_text {
+        if pictures.len() + 1 >= MAX_PICTURES {
             break;
         }
-        if pictures.iter().any(|p| p.url == pic.url) {
-            continue;
+        if pictures.iter().all(|p| p.url != pic.url) {
+            pictures.push(pic);
         }
-        if pic.caption.is_empty() {
-            pic.caption = title.clone();
-        }
-        pictures.push(pic);
+    }
+    if let Some(cover) = cover_picture(&meta, &title, base.as_ref()) {
+        add_cover(&mut pictures, cover);
     }
     PageFacts { title, pictures }
+}
+
+/// The cover goes last; when it is also in the text, that picture keeps
+/// its place and its own caption and takes the product's name and price.
+fn add_cover(pictures: &mut Vec<WebPicture>, cover: WebPicture) {
+    let Some(same) = pictures.iter_mut().find(|p| p.url == cover.url) else {
+        pictures.push(cover);
+        return;
+    };
+    same.name = cover.name;
+    same.price = cover.price;
 }
 
 #[derive(Default)]
@@ -116,7 +159,7 @@ impl Meta {
     }
 }
 
-fn main_picture(meta: &Meta, title: &str, base: Option<&url::Url>) -> Option<WebPicture> {
+fn cover_picture(meta: &Meta, title: &str, base: Option<&url::Url>) -> Option<WebPicture> {
     let url = absolute(&meta.image, base)?;
     let price = match (meta.price.as_str(), meta.currency.as_str()) {
         ("", _) => String::new(),
@@ -125,11 +168,12 @@ fn main_picture(meta: &Meta, title: &str, base: Option<&url::Url>) -> Option<Web
     };
     let name = if price.is_empty() { "" } else { title };
     Some(WebPicture {
+        caption: file_words(&url),
         url,
-        caption: title.to_string(),
         name: name.to_string(),
         price,
         id: String::new(),
+        cover: true,
     })
 }
 
@@ -188,7 +232,9 @@ fn file_words(url: &str) -> String {
         return String::new();
     };
     let name = urlencoding::decode(&name).map_or(name.clone(), |n| n.into_owned());
-    let stem = name.rsplit_once('.').map_or(name.as_str(), |(stem, _)| stem);
+    let stem = name
+        .rsplit_once('.')
+        .map_or(name.as_str(), |(stem, _)| stem);
     stem.split(|c: char| matches!(c, '-' | '_' | '.' | ' ' | '+' | '@'))
         .flat_map(split_camel)
         .map(|w| w.to_lowercase())
@@ -199,14 +245,38 @@ fn file_words(url: &str) -> String {
 
 /// File-name filler: camera prefixes, CMS size and role words.
 const FILLER: &[&str] = &[
-    "img", "image", "images", "dsc", "dscn", "dscf", "pic", "photo", "picture", "thumb",
-    "thumbnail", "scaled", "crop", "cropped", "resized", "copy", "final", "web", "large",
-    "medium", "small", "default", "untitled", "jpg", "jpeg", "png", "webp",
+    "img",
+    "image",
+    "images",
+    "dsc",
+    "dscn",
+    "dscf",
+    "pic",
+    "photo",
+    "picture",
+    "thumb",
+    "thumbnail",
+    "scaled",
+    "crop",
+    "cropped",
+    "resized",
+    "copy",
+    "final",
+    "web",
+    "large",
+    "medium",
+    "small",
+    "default",
+    "untitled",
+    "jpg",
+    "jpeg",
+    "png",
+    "webp",
 ];
 
 fn is_word(w: &str) -> bool {
     let digits = w.chars().filter(char::is_ascii_digit).count();
-    let hexish = w.len() >= 6 && digits > 0 && w.chars().all(|c| c.is_ascii_hexdigit());
+    let hexish = w.len() >= 4 && digits > 0 && w.chars().all(|c| c.is_ascii_hexdigit());
     let sized = SIZE.is_match(w);
     w.chars().count() > 1
         && digits < w.len()
@@ -217,8 +287,7 @@ fn is_word(w: &str) -> bool {
 }
 
 /// `1024x768`, `800w`, `2x`, `300px` — a size, not a word.
-static SIZE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\d+(x\d+|w|h|x|px)?$").unwrap());
+static SIZE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\d+(x\d+|w|h|x|px)?$").unwrap());
 
 /// `MoveSchwarz` → `Move`, `Schwarz`; a run of capitals stays whole.
 fn split_camel(part: &str) -> Vec<String> {
@@ -327,23 +396,50 @@ mod tests {
         </body></html>"#;
 
     #[test]
-    fn a_product_page_gives_its_main_picture_then_its_captioned_ones() {
+    fn a_product_page_gives_its_pictures_in_text_then_its_cover() {
         let facts = read(PAGE, "https://shop.example/p/stagg");
         assert_eq!(facts.title, "Fellow Stagg EKG Kettle");
         let urls: Vec<&str> = facts.pictures.iter().map(|p| p.url.as_str()).collect();
         assert_eq!(
             urls,
             vec![
-                "https://shop.example/img/stagg.jpg?w=1200&q=80",
                 "https://shop.example/p/steps/1.jpg",
                 "https://shop.example/img/side.webp",
+                "https://shop.example/img/stagg.jpg?w=1200&q=80",
             ]
         );
-        let main = &facts.pictures[0];
+        assert_eq!(facts.pictures[0].caption, "Step 1: fill it");
+        assert_eq!(facts.pictures[1].caption, "Side view");
+        let main = &facts.pictures[2];
+        assert_eq!(main.caption, "dup of main", "its own alt, in the text");
         assert_eq!(main.name, "Fellow Stagg EKG Kettle");
         assert_eq!(main.price, "165.00 USD");
-        assert_eq!(facts.pictures[1].caption, "Step 1: fill it");
-        assert_eq!(facts.pictures[2].caption, "Side view");
+    }
+
+    /// Breville's blog page as it was on 2026-10-26: a stock cover about
+    /// vacuum sealing, the real picture uncaptioned in the text.
+    const STOCK_COVER: &str = r#"<html><head>
+        <meta property="og:title" content="Pressurized vs. non-pressurized baskets">
+        <meta property="og:image" content="https://assets.example/at/7wrm/everything-you-need-to-know-about-vacuum-sealingthumb800480.png?format=webp">
+        </head><body>
+        <img src="https://assets.example/at/bkbb/pressurized-vs-non-pressurized-baskets.jpeg?format=webp">
+        </body></html>"#;
+
+    #[test]
+    fn a_cover_never_borrows_the_page_title_and_comes_after_the_text() {
+        let facts = read(STOCK_COVER, "https://shop.example/blog/baskets");
+        let got: Vec<(&str, bool)> = facts
+            .pictures
+            .iter()
+            .map(|p| (p.caption.as_str(), p.cover))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("pressurized vs non pressurized baskets", false),
+                ("everything you need to know about vacuum", true),
+            ]
+        );
     }
 
     /// A maker's page as Profitec's is: no `og:image`, no `alt`.
@@ -356,8 +452,11 @@ mod tests {
         </body></html>"#;
 
     #[test]
-    fn an_uncaptioned_picture_is_named_by_its_file_else_the_page() {
-        let facts = read(BARE, "https://www.profitec-espresso.com/en/products/move-2-0");
+    fn an_uncaptioned_picture_is_named_by_its_file_else_nothing() {
+        let facts = read(
+            BARE,
+            "https://www.profitec-espresso.com/en/products/move-2-0",
+        );
         let captions: Vec<&str> = facts.pictures.iter().map(|p| p.caption.as_str()).collect();
         assert_eq!(
             captions,
@@ -365,17 +464,25 @@ mod tests {
                 "move schwarz frontal",
                 "move gelb schraeg",
                 "The drip tray",
-                "Profitec | MOVE",
-                "Profitec | MOVE",
+                "",
+                "",
             ]
         );
-        assert!(captions.iter().all(|c| !c.contains("media") && !c.contains('/')));
+        assert!(captions
+            .iter()
+            .all(|c| !c.contains("media") && !c.contains('/')));
     }
 
     #[test]
     fn file_words_drop_hashes_sizes_numbers_and_filler() {
-        assert_eq!(file_words("https://a.example/p/move-schwarz-fast_heat-up.jpg"), "move schwarz fast heat up");
-        assert_eq!(file_words("https://a.example/rav4-cabin%20filter@2x.png"), "rav4 cabin filter");
+        assert_eq!(
+            file_words("https://a.example/p/move-schwarz-fast_heat-up.jpg"),
+            "move schwarz fast heat up"
+        );
+        assert_eq!(
+            file_words("https://a.example/rav4-cabin%20filter@2x.png"),
+            "rav4 cabin filter"
+        );
         assert_eq!(file_words("https://a.example/img_9921-300x200.jpg"), "");
         assert_eq!(file_words("https://a.example/"), "");
     }

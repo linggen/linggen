@@ -114,6 +114,10 @@ pub enum ToolResult {
     PictureSearchResults {
         query: String,
         pictures: Vec<super::image_search::FoundPicture>,
+        /// The pictures as one contact sheet (base64 JPEG), for a model
+        /// that sees only; never kept.
+        #[serde(skip)]
+        sheet: String,
     },
     /// Videos about a thing (`VideoSearch`).
     VideoSearchResults {
@@ -194,6 +198,10 @@ impl ToolResult {
                 seen: true,
                 ..
             } if !base64.is_empty() => Some((format!("[picture {path}]"), base64)),
+            ToolResult::PictureSearchResults { query, sheet, .. } if !sheet.is_empty() => Some((
+                format!("[ImageSearch \"{query}\": contact sheet, each tile labelled by its picture's number]"),
+                sheet,
+            )),
             _ => None,
         }
     }

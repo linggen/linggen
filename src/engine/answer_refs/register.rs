@@ -492,6 +492,7 @@ mod tests {
                 page: "https://shop.example/baskets".into(),
                 page_title: "Baskets".into(),
             }],
+            sheet: String::new(),
         };
         number(&store, "sess-1-a", &mut pictures);
         let mut videos = ToolResult::VideoSearchResults {

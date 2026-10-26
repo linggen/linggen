@@ -98,9 +98,11 @@ pub fn render_tool_result(r: &ToolResult) -> String {
             }
             out
         }
-        ToolResult::PictureSearchResults { query, pictures } => {
-            super::render_media::picture_search(query, pictures)
-        }
+        ToolResult::PictureSearchResults {
+            query,
+            pictures,
+            sheet,
+        } => super::render_media::picture_search(query, pictures, !sheet.is_empty()),
         ToolResult::VideoSearchResults { query, videos } => {
             super::render_media::video_search(query, videos)
         }
@@ -223,23 +225,7 @@ fn render_pictures(pictures: &[crate::engine::page_pictures::WebPicture]) -> Str
         .iter()
         .filter(|p| !p.id.is_empty())
         .map(|p| {
-            let product = [p.name.as_str(), p.price.as_str()]
-                .iter()
-                .filter(|s| !s.is_empty() && **s != p.caption)
-                .copied()
-                .collect::<Vec<_>>()
-                .join(" · ");
-            let what = [p.caption.as_str(), product.as_str()]
-                .iter()
-                .filter(|s| !s.is_empty())
-                .copied()
-                .collect::<Vec<_>>()
-                .join(" — ");
-            let what = if what.is_empty() {
-                "(no caption)"
-            } else {
-                &what
-            };
+            let what = p.described();
             format!("[{}] {what}\n", p.id)
         })
         .collect();
@@ -251,7 +237,7 @@ fn render_pictures(pictures: &[crate::engine::page_pictures::WebPicture]) -> Str
         .find(|p| !p.id.is_empty())
         .map_or("", |p| p.id.as_str());
     format!(
-        "Pictures — each shows what its line says (the picture itself is not attached). The person sees one in your answer where you write its number, such as [{first}]. Worth it when they ask what something looks like, or a step is clearer seen than read.\n{}",
+        "Pictures — each line is the picture's own words, which can be wrong (the picture itself is not attached). The person sees one in your answer where you write its number, such as [{first}]. Worth it when they ask what something looks like, or a step is clearer seen than read.\n{}",
         numbered.concat()
     )
 }
@@ -317,6 +303,9 @@ pub fn render_tool_result_public(r: &ToolResult) -> String {
             )
         }
         ToolResult::PictureFile { .. } => render_picture_file(r, false),
+        ToolResult::PictureSearchResults {
+            query, pictures, ..
+        } => super::render_media::picture_search(query, pictures, false),
         ToolResult::WebSearchResults { .. } => render_tool_result(r),
         ToolResult::AskUserResponse { .. } => render_tool_result(r),
         other => render_tool_result(other),

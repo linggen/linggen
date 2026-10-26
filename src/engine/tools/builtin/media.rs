@@ -69,7 +69,11 @@ impl Tool for ImageSearchTool {
         let pictures = crate::engine::image_search::image_search(&query)
             .await
             .map_err(super::web::search_failed)?;
-        Ok(ToolResult::PictureSearchResults { query, pictures })
+        Ok(ToolResult::PictureSearchResults {
+            query,
+            pictures,
+            sheet: String::new(),
+        })
     }
 }
 

@@ -4,18 +4,23 @@
 //! One web search (the same own-key / Linggen Cloud path as `WebSearch`,
 //! text only, so it stays fast), then the top result pages are fetched at
 //! once and their pictures read the way `WebFetch` reads them
-//! (`page_pictures`: the main image, then captioned in-text pictures). A
-//! slow page is left out rather than waited for. No picture is downloaded
-//! here — only the ones an answer shows are, by the answer cache.
+//! (`page_pictures`: the pictures in the text, then the page's cover). A
+//! page whose title and address do not carry the query, and a picture
+//! whose own words share none with it, are left out (`image_relevance`).
+//! A slow page is left out rather than waited for. No picture is
+//! downloaded here; a model that sees gets a contact sheet of them
+//! (`picture_sheet`), and the answer cache keeps the ones an answer shows.
 
+use super::image_relevance::Query;
 use super::page_pictures::WebPicture;
 use super::web_search::WebSearchResult;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-/// Search results asked for; the top [`PAGES`] that are not videos are read.
-const SEARCHED: usize = 8;
+/// Search results asked for; the top [`PAGES`] that are about the query and
+/// are not videos are read.
+const SEARCHED: usize = 10;
 const PAGES: usize = 5;
 /// Pictures kept from one page, and in all.
 const PER_PAGE: usize = 3;
@@ -39,17 +44,24 @@ pub struct FoundPicture {
 /// Pictures for `query`, best page first.
 pub async fn image_search(query: &str) -> Result<Vec<FoundPicture>> {
     let results = super::web_search::web_search(query, SEARCHED).await?;
+    let judge = Query::new(query);
     let pages: Vec<WebSearchResult> = results
         .into_iter()
         .filter(|r| !super::video_search::is_video_page(&r.url))
+        .filter(|r| {
+            judge
+                .as_ref()
+                .is_none_or(|q| q.covers_page(&r.title, &r.url))
+        })
         .take(PAGES)
         .collect();
-    let read = futures_util::future::join_all(pages.iter().map(page_pictures)).await;
-    Ok(gather(read))
+    let read = pages.iter().map(|r| page_pictures(r, judge.as_ref()));
+    Ok(gather(futures_util::future::join_all(read).await))
 }
 
-/// One page's pictures, or none when it is slow, fails or is not HTML.
-async fn page_pictures(result: &WebSearchResult) -> Vec<FoundPicture> {
+/// One page's pictures about the query, or none when it is slow, fails or
+/// is not HTML.
+async fn page_pictures(result: &WebSearchResult, judge: Option<&Query>) -> Vec<FoundPicture> {
     let fetched = tokio::time::timeout(
         PAGES_BUDGET,
         super::web_fetch::fetch_url(&result.url, Some(PAGE_TEXT)),
@@ -61,6 +73,7 @@ async fn page_pictures(result: &WebSearchResult) -> Vec<FoundPicture> {
     let title = first_non_empty(&page.title, &result.title);
     page.pictures
         .into_iter()
+        .filter(|p| judge.is_none_or(|q| q.allows_picture(&p.own_words())))
         .take(PER_PAGE)
         .map(|picture| FoundPicture {
             picture,

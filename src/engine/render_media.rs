@@ -5,7 +5,9 @@
 use super::image_search::FoundPicture;
 use super::video_search::{clock, FoundVideo};
 
-pub fn picture_search(query: &str, pictures: &[FoundPicture]) -> String {
+/// `sheet`: the pictures ride below as one contact sheet (the model's copy
+/// for a model that sees; never the kept one).
+pub fn picture_search(query: &str, pictures: &[FoundPicture], sheet: bool) -> String {
     if pictures.is_empty() {
         return format!(
             "ImageSearch: \"{query}\" — no pictures found. WebFetch a page that shows it (the maker's or a product page)."
@@ -16,6 +18,9 @@ pub fn picture_search(query: &str, pictures: &[FoundPicture]) -> String {
         pictures.first().map_or("", |p| p.picture.id.as_str()),
         "that picture, in the paragraph it illustrates",
     ));
+    if sheet {
+        out.push_str(&sheet_note(pictures));
+    }
     for (i, p) in pictures.iter().enumerate() {
         out.push_str(&format!(
             "{} {} — from {}\n",
@@ -45,6 +50,20 @@ pub fn video_search(query: &str, videos: &[FoundVideo]) -> String {
     out
 }
 
+fn sheet_note(pictures: &[FoundPicture]) -> String {
+    let example = pictures
+        .iter()
+        .map(|p| p.picture.id.as_str())
+        .find_map(|id| Some((id, id.rsplit_once("image")?.1)));
+    let tile = match example {
+        Some((id, n)) => format!(" (tile {n} is [{id}])"),
+        None => String::new(),
+    };
+    format!(
+        "They are attached below as one contact sheet, each tile labelled by its picture's last number{tile}. Pick by what a picture shows; a caption can be wrong.\n"
+    )
+}
+
 fn how_to_show(first_id: &str, shows: &str) -> String {
     match first_id {
         "" => "\n".to_string(),
@@ -60,20 +79,7 @@ fn head(id: &str, i: usize) -> String {
 }
 
 fn picture_words(p: &FoundPicture) -> String {
-    let product = [p.picture.name.as_str(), p.picture.price.as_str()]
-        .into_iter()
-        .filter(|s| !s.is_empty() && *s != p.picture.caption)
-        .collect::<Vec<_>>()
-        .join(" · ");
-    let words = [p.picture.caption.as_str(), product.as_str()]
-        .into_iter()
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join(" — ");
-    if words.is_empty() {
-        return "(no caption)".to_string();
-    }
-    words
+    p.picture.described()
 }
 
 /// The page by its title and site: enough to say where a picture is from,
@@ -126,7 +132,7 @@ mod tests {
 
     #[test]
     fn a_picture_reads_as_its_number_caption_and_page() {
-        let text = picture_search("basket", &[picture("turn3image1")]);
+        let text = picture_search("basket", &[picture("turn3image1")], false);
         assert!(
             text.contains("write a number such as [turn3image1]"),
             "{text}"
@@ -139,11 +145,34 @@ mod tests {
             !text.contains("img.example") && !text.contains("https://"),
             "{text}"
         );
-        let unnumbered = picture_search("basket", &[picture("")]);
+        assert!(!text.contains("contact sheet"), "{text}");
+        let unnumbered = picture_search("basket", &[picture("")], false);
         assert!(
             unnumbered.contains("1. Dual-wall basket") && !unnumbered.contains("write a number")
         );
-        assert!(picture_search("x", &[]).contains("no pictures found"));
+        assert!(picture_search("x", &[], false).contains("no pictures found"));
+    }
+
+    #[test]
+    fn a_seeing_model_is_told_to_pick_by_the_sheet() {
+        let text = picture_search("basket", &[picture("turn3image1")], true);
+        assert!(
+            text.contains("contact sheet") && text.contains("tile 1 is [turn3image1]"),
+            "{text}"
+        );
+        assert!(text.contains("a caption can be wrong"), "{text}");
+    }
+
+    #[test]
+    fn a_cover_reads_as_the_page_cover_never_its_title() {
+        let mut p = picture("turn3image2");
+        p.picture.caption = String::new();
+        p.picture.cover = true;
+        let text = picture_search("basket", &[p], false);
+        assert!(
+            text.contains("[turn3image2] the page's cover picture — from Filter baskets"),
+            "{text}"
+        );
     }
 
     #[test]

@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- **Found pictures match the question.** Ling sees an image search's
+  pictures as one labelled contact sheet (on a model that sees) and picks by
+  what they show. A page's cover picture is no longer captioned by the page
+  title, and pages or pictures that share too few words with the search are
+  left out.
 - **Sources and pictures in answers** — in any session. Every web result and
   picture a tool returns (a search's sources, a fetched page's main picture
   and captioned pictures, a browser screenshot) gets a number such

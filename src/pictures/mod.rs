@@ -9,6 +9,7 @@ pub mod chatgpt;
 pub mod for_model;
 pub mod kind;
 pub mod local;
+pub mod sheet;
 
 use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};

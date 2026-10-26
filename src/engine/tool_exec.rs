@@ -764,22 +764,34 @@ impl AgentEngine {
         crate::engine::answer_refs::register::number(&manager.global_sessions, sid, result);
     }
 
-    /// A picture file goes to the model only when it can see one; for a
-    /// model that cannot, its bytes are dropped and the facts stay.
-    async fn settle_picture_file(&self, result: &mut tools::ToolResult) {
-        let tools::ToolResult::PictureFile { base64, seen, .. } = result else {
-            return;
+    /// Pictures go to the model only when it can see them: a picture file
+    /// read keeps its bytes, an `ImageSearch` gets its contact sheet. For a
+    /// model that cannot see, the bytes are dropped and the facts stay.
+    async fn settle_pictures(&self, result: &mut tools::ToolResult) {
+        let wants_eyes = match result {
+            tools::ToolResult::PictureFile { base64, .. } => !base64.is_empty(),
+            tools::ToolResult::PictureSearchResults { pictures, .. } => !pictures.is_empty(),
+            _ => false,
         };
-        if base64.is_empty() {
+        if !wants_eyes {
             return;
         }
-        *seen = self
+        let sees = self
             .model_manager
             .has_vision(&self.model_id)
             .await
             .unwrap_or(false);
-        if !*seen {
-            base64.clear();
+        match result {
+            tools::ToolResult::PictureFile { base64, seen, .. } => {
+                *seen = sees;
+                if !sees {
+                    base64.clear();
+                }
+            }
+            tools::ToolResult::PictureSearchResults {
+                pictures, sheet, ..
+            } if sees => attach_sheet(pictures, sheet).await,
+            _ => {}
         }
     }
 
@@ -809,7 +821,7 @@ impl AgentEngine {
             Ok(mut result) => {
                 self.note_closing_ask(&canonical_tool, &result);
                 self.number_answer_refs(&mut result, session_id);
-                self.settle_picture_file(&mut result).await;
+                self.settle_pictures(&mut result).await;
                 let rendered_model = render_tool_result(&result);
                 let rendered_public = render_tool_result_public(&result);
 
@@ -1330,6 +1342,20 @@ fn bash_command_arg(args: &JsonValue) -> Option<String> {
 /// timeout underneath, so a dream read a slow save as a refused one.
 fn tool_error_text(tool: &str, err: &anyhow::Error) -> String {
     format!("tool_error: tool={tool} error={err:#}")
+}
+
+/// The found pictures as one contact sheet; a picture that would not load
+/// is left out of the result too (the answer could not show it either).
+async fn attach_sheet(
+    pictures: &mut Vec<crate::engine::image_search::FoundPicture>,
+    sheet: &mut String,
+) {
+    let Some(built) = crate::engine::picture_sheet::build(pictures).await else {
+        return;
+    };
+    let mut on_sheet = built.on_sheet.into_iter();
+    pictures.retain(|_| on_sheet.next().unwrap_or(false));
+    *sheet = built.base64;
 }
 
 #[cfg(test)]

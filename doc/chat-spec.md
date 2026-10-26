@@ -174,15 +174,31 @@ never writes its own image URL.
   is left out), up to three pictures a page and ten in all, taking turns
   across pages. Each comes numbered with its caption and the page it is on
   (title and site in what the model reads, the address in the table).
+  Relevance (2026-10-26, after a stock "vacuum sealing" cover was shown for
+  a basket question): a search result whose title and address path carry
+  fewer than half the query's words is not read (a business listing that
+  shares one word by its name), and a picture whose own words (caption,
+  file name) share none with the query is left out; one with no words is
+  kept. Plain token overlap with stop-words and plural folding, no site
+  named; a CJK query is not filtered. A model that sees also gets the
+  candidates once as one contact sheet (JPEG, 4 tiles a row, ≤ 1020 px
+  wide, each tile labelled by its picture's last number), attached in the
+  turn that searched like a picture `Read` opens, and is told to pick by
+  what a picture shows since a caption can be wrong. Its downloads share a
+  4 s budget; a picture that does not load is left out of the result. A
+  blind model reads the text alone.
   Measured 2026-10-26: 2.5–6 s, beside text search's 1.5–3.3 s; Tavily's
   own images are bare URLs with no page, and with descriptions 2.4–6 s
-  but still no page, so they are not used. WebFetch returns a
-  page's main image (`og:image`, captioned by the page title, with a
-  declared product's name and price) and its in-text pictures with their
-  captions (`<figcaption>`, else `alt`, else `title`, else the words of the
-  file's name — `move-schwarz-frontal.jpg` → "move schwarz frontal",
-  without hashes, sizes, bare numbers or filler like `img`/`dsc` — else the
-  page title; never the address; icons, logos and vectors skipped). A drawn
+  but still no page, so they are not used. WebFetch (and
+  ImageSearch, which reads pages the same way) returns a page's in-text
+  pictures with their own words as captions (`<figcaption>`, else `alt`,
+  else `title`, else the words of the file's name —
+  `move-schwarz-frontal.jpg` → "move schwarz frontal", without hashes,
+  sizes, bare numbers or filler like `img`/`dsc`; never the address; icons,
+  logos and vectors skipped), then its cover (`og:image`), marked as the
+  page's cover, captioned by its file's words only, with a declared
+  product's name and price. No picture borrows the page title: a cover is
+  often a site-wide stock picture, and a blind model trusts the caption. A drawn
   picture (ChatGPT on the person's sign-in, else this Mac's FLUX lane) is
   kept in the session's `images/` at once, like a screenshot, numbered with
   its prompt as the caption, and has no click-through. WebSearch is text

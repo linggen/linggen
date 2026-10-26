@@ -161,6 +161,25 @@ fn parse_call(r: &CapturedRequest) -> Call {
 }
 
 impl Call {
+    /// Every image the call carried, as its `data:` URL.
+    pub fn images(&self) -> Vec<String> {
+        fn walk(v: &Value, out: &mut Vec<String>) {
+            match v {
+                Value::Object(map) => {
+                    if let Some(url) = map.get("image_url").and_then(|u| u["url"].as_str()) {
+                        out.push(url.to_string());
+                    }
+                    map.values().for_each(|v| walk(v, out));
+                }
+                Value::Array(items) => items.iter().for_each(|v| walk(v, out)),
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        walk(&self.body, &mut out);
+        out
+    }
+
     /// The model id the engine asked for.
     pub fn model(&self) -> &str {
         self.body["model"].as_str().unwrap_or("")

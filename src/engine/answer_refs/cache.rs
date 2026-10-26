@@ -73,9 +73,15 @@ pub async fn show(store: &SessionStore, session_id: &str, answer: &str) -> bool 
 /// Every wanted picture's bytes, in order; one still downloading when the
 /// answer's budget runs out counts as failed.
 async fn download_all(wanted: &[Ref]) -> Vec<Option<Vec<u8>>> {
-    use futures_util::stream::{self, StreamExt};
-    let deadline = tokio::time::Instant::now() + ANSWER_BUDGET;
     let urls: Vec<String> = wanted.iter().map(|r| r.picture_url().to_string()).collect();
+    fetch_all(urls, ANSWER_BUDGET).await
+}
+
+/// Each address's bytes, in order, [`PARALLEL`] at once; one still
+/// downloading when `budget` runs out counts as failed.
+pub(crate) async fn fetch_all(urls: Vec<String>, budget: Duration) -> Vec<Option<Vec<u8>>> {
+    use futures_util::stream::{self, StreamExt};
+    let deadline = tokio::time::Instant::now() + budget;
     stream::iter(urls.into_iter().map(move |url| download_by(url, deadline)))
         .buffered(PARALLEL)
         .collect()
