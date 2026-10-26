@@ -14,8 +14,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 /// Long enough that "recent" still means something late at night, short enough
-/// that this never becomes a second memory. What is durable about the person is
-/// promoted by the dream pass and lives in `ling-mem` instead.
+/// that this never becomes a second memory. Activities never reach `ling-mem`:
+/// what the person does is perceived live for these days, then swept.
 pub const KEEP_DAYS: i64 = 3;
 
 /// Who a record may name. Closed, because `by` is rendered as the subject of a
@@ -317,10 +317,8 @@ impl ActivityLog {
 
     /// Read the retained window into memory. **Never deletes.**
     ///
-    /// Sweeping is not a side effect of reading (§7). It was once, and the day
-    /// went to whoever touched the log first — which is never the rotation
-    /// loop, because reading the log is what starts it. A day handed to nobody
-    /// is a day the dream pass never judged.
+    /// Sweeping is not a side effect of reading (§7): rotation is the only
+    /// sweeper, so what a reader sees never depends on who read first.
     pub fn restore(&self) {
         let keep = kept_days();
         let mut fresh: Vec<Activity> = Vec::new();
@@ -342,37 +340,18 @@ impl ActivityLog {
         *guard = fresh;
     }
 
-    /// The days that have fallen out of the window, newest first — still on
-    /// disk, because a day is handed over *before* it is dropped (§7). The
-    /// caller drops it with [`forget`](Self::forget) once it is accounted for.
-    pub fn aged(&self) -> Vec<AgedDay> {
+    /// Delete the days that have fallen out of the window, and name them.
+    /// Only rotation calls this (§7): a day is gone when it ages out, and
+    /// nothing of it is handed anywhere.
+    pub fn sweep(&self) -> Vec<String> {
         let keep = kept_days();
-        let mut out: Vec<AgedDay> = self
-            .day_files()
+        self.day_files()
             .into_iter()
             .filter(|(day, _)| !keep.contains(day))
-            .map(|(day, path)| AgedDay {
-                rows: read_day(&path),
-                day,
-                path,
-            })
-            .collect();
-        out.sort_by(|a, b| b.day.cmp(&a.day));
-        out
+            .filter(|(_, path)| std::fs::remove_file(path).is_ok())
+            .map(|(day, _)| day)
+            .collect()
     }
-
-    /// This day has been accounted for. Until it is, it stays: a handoff that
-    /// failed and a day that never existed must not look the same next hour.
-    pub fn forget(&self, aged: &AgedDay) {
-        let _ = std::fs::remove_file(&aged.path);
-    }
-}
-
-/// A day on its way out: read, not yet dropped.
-pub struct AgedDay {
-    pub day: String,
-    pub rows: Vec<Activity>,
-    path: PathBuf,
 }
 
 /// A torn line is one lost entry, not a lost day.
@@ -469,7 +448,7 @@ mod tests {
     }
 
     #[test]
-    fn an_aged_day_is_handed_over_before_it_is_dropped() {
+    fn an_aged_day_is_swept_by_rotation_not_by_reading() {
         let dir = std::env::temp_dir().join(format!("ling-act-old-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -490,21 +469,10 @@ mod tests {
         assert!(old_file.exists(), "reading is not sweeping");
         assert_eq!(log.recent().len(), 1, "the window holds only today");
 
-        let aged = log.aged();
-        assert_eq!(aged.len(), 1, "the aged-out day is offered");
-        assert_eq!(aged[0].day, old_day);
-        assert_eq!(aged[0].rows.len(), 1);
-        assert!(
-            old_file.exists(),
-            "and still held — nobody has taken it yet"
-        );
-
-        // A handoff that failed and a day that never existed must not look the
-        // same next hour: the day is offered again until someone takes it.
-        assert_eq!(log.aged().len(), 1);
-        log.forget(&aged[0]);
+        assert_eq!(log.sweep(), vec![old_day], "rotation sweeps the aged day");
         assert!(!old_file.exists());
-        assert!(log.aged().is_empty());
+        assert!(log.sweep().is_empty(), "a swept day is gone");
+        assert_eq!(log.recent().len(), 1, "the window is untouched");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -522,7 +490,7 @@ mod tests {
         let log = ActivityLog::new(dir.clone());
         log.restore();
         assert!(log.recent().is_empty(), "not read");
-        assert!(log.aged().is_empty(), "not swept");
+        assert!(log.sweep().is_empty(), "not swept");
         assert!(stray.exists());
         let _ = std::fs::remove_dir_all(&dir);
     }

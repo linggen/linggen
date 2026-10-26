@@ -385,9 +385,7 @@ fn spawn_perception(state: &Arc<ServerState>) {
             api::topic::publish_topic(&topic_state, topic, op, payload);
         },
     ));
-    tokio::spawn(crate::perception::rotation::rotation_loop(
-        state.manager.clone(),
-    ));
+    tokio::spawn(crate::perception::rotation::rotation_loop());
 }
 
 /// The agent_run sweeper. Reaps `Running` rows older than the threshold

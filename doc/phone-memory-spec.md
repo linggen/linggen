@@ -24,8 +24,8 @@ core at all. Both are what this spec replaced.
    senses and hands; they expose facts through tools and the activity log, and
    she decides what is worth keeping. One writer, one voice in the file.
 2. **Facts, not events.** Every note is born long-term and tagged with the app
-   it serves. Events live in the activity log (three days) and reach the Mac's
-   dream as a day digest. The phone holds no short-term tier.
+   it serves. Events live in the activity log (three days) and are never
+   written to memory. The phone holds no short-term tier.
 3. **Few notes.** She writes what will still be true next month: who they are,
    the music they reach for, the budgets they watch, the conditions and goals
    they are working on, the devices they own. The dream throws away; she only

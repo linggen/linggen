@@ -249,27 +249,20 @@ to be hostile to end a bullet early and start reading as an instruction.
 
 ## 7. Rotation and lifecycle
 
-The log rotates daily. Rotation is one moment that produces two things:
+The log rotates daily. Rotation is one moment with two jobs:
 
 1. **A state sample** — the day's numbers appended to the trend series (§5).
-2. **The day's activities handed to the dream pass.** This is the same shape
-   memory already uses: activity is to long-term memory what episodic is to
-   semantic. The dream judges the day, promotes what is durable about the person
-   to `ling-mem`, and the raw rows are swept afterwards. Activities do not get a
-   second lifecycle of their own.
+2. **The sweep.** A day that falls out of the window is deleted. Activities
+   never become memory: what the person does is perceived live, for the last
+   three days only, and nothing of it is written to `ling-mem`.
 
-   One digest per day per host, never one row per activity — a memory store
-   filling with "you deleted a song" is the failure this design exists to
-   avoid. The phone's dream lives on the Mac, so a digest it could not hand
-   over is held and offered again on the next connection: a day ages out only
-   once.
+   Days are already remembered by the nightly dream from what the person said.
+   A digest written when a day aged out arrived days after that dream, re-opened
+   a dreamed day, and was never once promoted — so there is none.
 
-**Sweeping is not a side effect of reading.** A day is dropped by the rotation
-pass and only once its digest has been taken; until then it is offered again.
-Rotation cannot be the thing that reads the log first — reading the log is what
-starts it — so a log that swept on read handed every day to whoever happened to
-open it, which was never the pass that had somewhere to put it. A failed handoff
-and a day that never existed must not look the same an hour later.
+**Sweeping is not a side effect of reading.** Rotation is the only sweeper.
+Reading the log is what starts it, so a log that swept on read would make the
+window depend on whoever opened it first.
 
 Nothing is uploaded (§8).
 
@@ -289,8 +282,7 @@ records `screen_view` and `tap` with names only, capped at 64 characters and
 validated server-side so content cannot travel. Perception adds nothing to it and
 takes nothing from it. The two never meet.
 
-So rotation (§7) has no upload step. A day is sampled for trends, handed to the
-dream pass, and swept.
+So rotation (§7) has no upload step. A day is sampled for trends and swept.
 
 ---
 
@@ -314,7 +306,8 @@ Open:
 
 ---
 
-Related: [memory-spec](memory-spec.md) (where durable facts go after the dream),
+Related: [memory-spec](memory-spec.md) (where durable facts live — never
+activities),
 [yinyue-companion-spec](yinyue-companion-spec.md) (the resident, its gates, and
 what it does with a notice), [app-action-spec](app-action-spec.md) (the verbs a
 noticing can offer), [network-spec](network-spec.md) (how a host reads the
