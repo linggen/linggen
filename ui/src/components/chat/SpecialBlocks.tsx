@@ -26,6 +26,10 @@ export function tryRenderSpecialBlock(
       );
     }
 
+    if (parsed.type === 'session_status' && typeof parsed.session_id === 'string') {
+      return <SessionStatusCard status={parsed} />;
+    }
+
     if (parsed.type === 'finalize_task' && parsed.packet) {
       const packet = parsed.packet;
       const userStories: string[] = Array.isArray(packet.user_stories) ? packet.user_stories : [];
@@ -66,4 +70,24 @@ export function tryRenderSpecialBlock(
     if (textContent) return <MarkdownContent text={textContent} />;
   } catch { /* not JSON */ }
   return null;
+}
+
+const SESSION_STATUS_TONE: Record<string, string> = {
+  completed: 'text-emerald-600 dark:text-emerald-400',
+  failed: 'text-red-500',
+  stopped: 'text-amber-600 dark:text-amber-400',
+};
+
+/** A linked session's outcome, as the engine reports it: facts plus a link. */
+function SessionStatusCard({ status }: { status: { session_id: string; title?: string; status?: string } }) {
+  const state = status.status || 'completed';
+  return (
+    <a
+      href={`/?session=${encodeURIComponent(status.session_id)}`}
+      className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 dark:border-white/10 px-3 py-2 text-[13px] hover:bg-slate-50 dark:hover:bg-white/5"
+    >
+      <span className="truncate">{status.title || 'Claude session'}</span>
+      <span className={`shrink-0 text-[12px] capitalize ${SESSION_STATUS_TONE[state] || 'text-slate-500'}`}>{state}</span>
+    </a>
+  );
 }

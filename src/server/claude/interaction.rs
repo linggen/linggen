@@ -5,46 +5,31 @@ use crate::server::ServerEvent;
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 use std::sync::Arc;
-static PERMISSION_FILES: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 pub(super) struct Interaction {
     pub agent_id: String,
     pub state: Arc<crate::server::ServerState>,
     pub meta: crate::state_fs::sessions::SessionMeta,
     pub run_id: String,
+    /// Unguessable widget id; the host maps the SDK's request id onto it.
+    pub question_id: String,
+}
+
+/// A fresh widget id for one SDK request.
+pub(super) fn new_question_id() -> String {
+    format!("sdk-{}", uuid::Uuid::new_v4())
 }
 
 impl Interaction {
-    pub fn question_id(&self, event_id: i64) -> String {
-        format!("sdk-{}-{event_id}", self.run_id)
-    }
-
     pub async fn request(&self, event: &Value) -> Result<Value> {
         let input = &event["input"];
-        let question_id = self.question_id(event["id"].as_i64().unwrap_or_default());
+        let question_id = self.question_id.clone();
         match event["kind"].as_str() {
             Some("permission_updates") => {
-                let _guard = PERMISSION_FILES
-                    .lock()
-                    .map_err(|_| anyhow::anyhow!("SDK permission store unavailable"))?;
-                let path = self
-                    .state
-                    .manager
-                    .global_sessions
-                    .session_dir(&self.meta.id)
-                    .join("claude-permissions.json");
-                let mut saved: Vec<Value> = std::fs::read(&path)
-                    .ok()
-                    .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-                    .unwrap_or_default();
-                saved.extend(
-                    input["updates"]
-                        .as_array()
-                        .context("Missing SDK permission updates")?
-                        .iter()
-                        .cloned(),
-                );
-                std::fs::write(path, serde_json::to_vec(&saved)?)?;
+                let updates = input["updates"]
+                    .as_array()
+                    .context("Missing SDK permission updates")?;
+                self.state.claude.add_session_rules(&self.meta.id, updates);
                 Ok(json!({"saved":true}))
             }
             Some("permission") => {
@@ -65,9 +50,7 @@ impl Interaction {
                 {
                     options.push(option("Allow for this session"));
                 }
-                if self.meta.claude_permission_mode
-                    != crate::state_fs::sessions::ClaudePermissionMode::Auto
-                {
+                if self.auto_available().await {
                     options.push(option("Allow and switch to auto"));
                 }
                 for suggestion in input["suggestions"].as_array().into_iter().flatten() {
@@ -167,7 +150,20 @@ impl Interaction {
         }
     }
 
-    async fn ask(&self, questions: Vec<AskUserQuestion>, id: String) -> Result<Vec<AskUserAnswer>> {
+    /// Auto is offered only where the SDK accepts it for this session.
+    async fn auto_available(&self) -> bool {
+        let auto = crate::state_fs::sessions::ClaudePermissionMode::Auto;
+        self.meta.claude_permission_mode != auto
+            && super::probe::probe(&self.state, &self.meta, auto)
+                .await
+                .is_ok()
+    }
+
+    pub(super) async fn ask(
+        &self,
+        questions: Vec<AskUserQuestion>,
+        id: String,
+    ) -> Result<Vec<AskUserAnswer>> {
         let (tx, mut rx) = tokio::sync::oneshot::channel();
         // Register before publication, so a quick widget reply cannot race it.
         self.state.pending_ask_user.lock().await.insert(
@@ -185,10 +181,11 @@ impl Interaction {
             questions,
             session_id: Some(self.meta.id.clone()),
         });
+        let mut tick = super::runtime::cancel_tick();
         let result = loop {
             tokio::select! {
                 answer = &mut rx => break answer.context("Question cancelled"),
-                _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                _ = tick.tick() => {
                     if self.state.manager.is_run_cancelled(&self.run_id).await { break Err(anyhow::anyhow!("run cancelled")); }
                 }
             }

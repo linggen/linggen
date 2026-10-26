@@ -35,6 +35,21 @@ export function observeTool(send: Send) {
   };
 }
 
+const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
+
+// Whether the SDK decides this tool by itself under `mode`, so an open prompt
+// for it is moot. Moot prompts are withdrawn for the SDK to retry; the rest
+// stay open for the user, as Claude Code re-checks its queue on a mode change.
+export function modeSettles(mode: string, tool: string) {
+  if (mode === 'acceptEdits') return EDIT_TOOLS.has(tool);
+  return ['auto', 'bypassPermissions', 'dontAsk'].includes(mode);
+}
+
+// A folder's own settings load only once the owner trusted it.
+export function settingSources(input: any) {
+  return Array.isArray(input.settingSources) ? input.settingSources : ['user'];
+}
+
 export async function permissionRequest(tool: string, input: any, rpc: Rpc, options: any = {}) {
   if (tool === 'AskUserQuestion') {
     const response = await rpc('ask_user', { ...input, ...(options.agentID ? { agent_id: options.agentID } : {}) }, options.signal);
@@ -79,7 +94,7 @@ async function main() {
   const send: Send = message => process.stdout.write(`${JSON.stringify(message)}\n`);
   const subagents = subagentEvents(send);
   const controller = new AbortController();
-  const pending = new Map<number, { resolve: (response: any) => void; kind: string }>();
+  const pending = new Map<number, { resolve: (response: any) => void; kind: string; tool?: string }>();
   let conversation: any;
   let markReady: () => void;
   const ready = new Promise<void>((resolve) => { markReady = resolve; });
@@ -89,7 +104,7 @@ async function main() {
   let modeQueue = Promise.resolve();
   const cancelPermissions = () => {
     for (const [id, item] of pending) {
-      if (item.kind !== 'permission') continue;
+      if (item.kind !== 'permission' || !modeSettles(mode, item.tool || '')) continue;
       item.resolve({ allow: false, reason: 'Permission mode changed. Retry this operation under the new mode.' });
       pending.delete(id);
       send({ type: 'cancel_request', id });
@@ -141,7 +156,7 @@ async function main() {
     };
     if (signal?.aborted) { resolve({ allow:false }); return; }
     signal?.addEventListener('abort', cancel, { once:true });
-    pending.set(id, { resolve: (response) => { signal?.removeEventListener('abort', cancel); resolve(response); }, kind });
+    pending.set(id, { resolve: (response) => { signal?.removeEventListener('abort', cancel); resolve(response); }, kind, tool: input?.tool });
     send({ type: 'request', kind, id, input });
   });
   const input = await config;
@@ -177,7 +192,7 @@ async function main() {
     conversation = query({
       prompt: queryPrompt(input.validateOnly ? { prompt: '/context' } : input, inputFinished),
       options: {
-        cwd: input.cwd, model: input.model, env, settingSources: ['user', 'project', 'local'],
+        cwd: input.cwd, model: input.model, env, settingSources: settingSources(input),
         resume: input.resume || undefined, persistSession: !input.validateOnly,
         systemPrompt: { type: 'preset', preset: 'claude_code' },
         tools: { type: 'preset', preset: 'claude_code' },

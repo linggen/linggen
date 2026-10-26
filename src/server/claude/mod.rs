@@ -1,14 +1,19 @@
 //! Claude sessions are hosted here, outside the native AgentEngine pipeline.
 //! Only transport, run bookkeeping and UI events are shared with native chat.
+mod host;
 mod install;
 mod interaction;
 mod media;
+mod probe;
 mod protocol;
 mod runtime;
 pub(crate) mod subagents;
 #[cfg(test)]
 mod tests;
+mod trust;
 pub(crate) mod usage;
+
+pub(crate) use host::Host;
 
 use super::{chat, ServerState};
 use crate::config::ModelConfig;
@@ -68,7 +73,7 @@ pub(crate) async fn capabilities(
             }
         }
     }
-    match runtime::validate_mode(&state, &meta, meta.claude_permission_mode).await {
+    match probe::probe(&state, &meta, meta.claude_permission_mode).await {
         Ok(()) => match std::fs::read(dir.join("claude-capabilities.json"))
             .ok()
             .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
@@ -86,7 +91,7 @@ pub(crate) async fn set_mode(
     session: &SessionMeta,
     mode: crate::state_fs::sessions::ClaudePermissionMode,
 ) -> Result<()> {
-    let sender = state.claude_controls.lock().await.get(&session.id).cloned();
+    let sender = state.claude.controls.lock().await.get(&session.id).cloned();
     if let Some(sender) = sender {
         let (reply, response) = tokio::sync::oneshot::channel();
         sender
@@ -98,24 +103,40 @@ pub(crate) async fn set_mode(
             .context("Claude turn ended before applying the permission change")?
             .map_err(anyhow::Error::msg)?;
     } else if mode == crate::state_fs::sessions::ClaudePermissionMode::Auto {
-        runtime::validate_mode(state, session, mode).await?;
+        probe::probe(state, session, mode).await?;
     }
     Ok(())
 }
+
+/// How long Clear/Delete waits for a cancelled turn before killing its runner.
+const QUIESCE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Clear/delete owns the turn lock only after the old SDK process unwound.
 pub(crate) async fn quiesce(
     state: &ServerState,
     session: &str,
-) -> tokio::sync::OwnedMutexGuard<()> {
+) -> Result<tokio::sync::OwnedMutexGuard<()>> {
+    quiesce_within(state, session, QUIESCE_DEADLINE).await
+}
+
+/// Cancel until the turn lock frees. Past `deadline` the runner is killed,
+/// and the turn gets one more `deadline` to unwind before this gives up.
+pub(crate) async fn quiesce_within(
+    state: &ServerState,
+    session: &str,
+    deadline: std::time::Duration,
+) -> Result<tokio::sync::OwnedMutexGuard<()>> {
     state.queued_chats.lock().await.retain(|_, items| {
         items.retain(|item| item.session_id != session);
         !items.is_empty()
     });
     let turn = state.manager.session_turn(session);
+    let started = std::time::Instant::now();
+    let mut killed = false;
+    let mut tick = runtime::cancel_tick();
     loop {
         if let Ok(guard) = turn.clone().try_lock_owned() {
-            return guard;
+            return Ok(guard);
         }
         // A submitted turn can own the lock before its run record exists.
         // Keep cancelling until it unwinds, including that startup window.
@@ -127,7 +148,16 @@ pub(crate) async fn quiesce(
         {
             let _ = state.manager.cancel_run_tree(&run.run_id).await;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let waited = started.elapsed();
+        if !killed && waited >= deadline {
+            killed = true;
+            tracing::warn!("Claude turn in {session} did not stop in time; killing its runner");
+            state.claude.kill_runner(session);
+        }
+        if waited >= deadline * 2 {
+            bail!("The Claude turn is still stopping; try again in a moment.");
+        }
+        tick.tick().await;
     }
 }
 
@@ -237,7 +267,9 @@ pub(crate) async fn start_turn(
         &meta.id,
         AGENT_ID,
         &req.message,
-        crate::engine::skill::QueueMode::Steer,
+        // A follow-up waits for the running turn, as Claude Code queues it;
+        // only Stop cancels.
+        crate::engine::skill::QueueMode::AfterTurn,
     )
     .await;
     if !busy {
@@ -330,12 +362,10 @@ async fn execute_turn(state: Arc<ServerState>, req: chat::types::ChatRequest, me
             return;
         }
     };
-    let key = chat::helpers::queue_key(&meta.cwd, &meta.id, AGENT_ID);
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-    state.interrupt_tx.lock().await.insert(key.clone(), tx);
     let (control_tx, control_rx) = tokio::sync::mpsc::unbounded_channel();
     state
-        .claude_controls
+        .claude
+        .controls
         .lock()
         .await
         .insert(meta.id.clone(), control_tx);
@@ -343,13 +373,11 @@ async fn execute_turn(state: Arc<ServerState>, req: chat::types::ChatRequest, me
         state: state.clone(),
         meta,
         run_id: run_id.clone(),
-        interrupt: rx,
     };
     let result =
         crate::util::panic_as_error(host.run(req.message, req.images, req.model_id, control_rx))
             .await;
-    state.claude_controls.lock().await.remove(&host.meta.id);
-    state.interrupt_tx.lock().await.remove(&key);
+    state.claude.controls.lock().await.remove(&host.meta.id);
     let cancelled = state.manager.is_run_cancelled(&run_id).await
         || result
             .as_ref()
@@ -402,14 +430,19 @@ async fn execute_turn(state: Arc<ServerState>, req: chat::types::ChatRequest, me
             "ling",
             AGENT_ID,
             "user",
-            &format!(
-                "Claude task {result}. [Open session](/?session={})",
-                host.meta.id
-            ),
+            &session_status(&host.meta, result),
             Some(parent),
             false,
             None,
         )
         .await;
     }
+}
+
+/// A linked session's outcome as a fact the parent chat renders as a card
+/// and its agent can read; the words are never the engine's.
+pub(crate) fn session_status(meta: &SessionMeta, status: &str) -> String {
+    json!({"type":"session_status", "session_id":meta.id, "title":meta.title,
+        "runtime":"claude", "status":status})
+    .to_string()
 }

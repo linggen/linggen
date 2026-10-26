@@ -288,7 +288,7 @@ pub(crate) async fn cancel(state: &ServerState, run: &str) -> Option<Result<()>>
         {
             if let Some(entry) = entries.iter().find(|entry| entry["subagentId"] == run) {
                 let task = entry["sdkTaskId"].as_str()?.to_owned();
-                let sender = state.claude_controls.lock().await.get(&session.id).cloned();
+                let sender = state.claude.controls.lock().await.get(&session.id).cloned();
                 return Some(
                     async {
                         let sender = sender.context("Claude task is no longer running")?;

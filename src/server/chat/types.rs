@@ -114,4 +114,10 @@ pub(crate) struct SystemPromptQuery {
 pub(crate) struct AskUserResponseRequest {
     pub(super) question_id: String,
     pub(super) answers: Vec<crate::engine::tools::AskUserAnswer>,
+    /// Stamped by the RTC tunnel from the peer's identity, never trusted
+    /// from a client body; a direct (LAN-gated) call is the owner's.
+    #[serde(default = "default_user_type")]
+    pub(super) user_type: String,
+    #[serde(default)]
+    pub(super) user_id: Option<String>,
 }

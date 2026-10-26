@@ -39,6 +39,18 @@ impl Api {
         body(resp, path).await
     }
 
+    /// POST that may fail: the status code alone.
+    pub async fn post_status(&self, path: &str, payload: Value) -> u16 {
+        self.client
+            .post(format!("{}{path}", self.base))
+            .json(&payload)
+            .send()
+            .await
+            .unwrap_or_else(|e| panic!("POST {path}: {e}"))
+            .status()
+            .as_u16()
+    }
+
     pub async fn patch(&self, path: &str, payload: Value) -> Value {
         let resp = self
             .client

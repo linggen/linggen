@@ -31,10 +31,12 @@ pub(crate) async fn clear_chat_history_api(
         .ok()
         .flatten()
         .is_some_and(|m| !m.runtime.is_linggen());
-    let _sdk_turn = if claude {
-        Some(crate::server::claude::quiesce(&state, &session_id).await)
-    } else {
-        None
+    let _sdk_turn = match claude {
+        true => match crate::server::claude::quiesce(&state, &session_id).await {
+            Ok(guard) => Some(guard),
+            Err(error) => return (StatusCode::CONFLICT, error.to_string()).into_response(),
+        },
+        false => None,
     };
     // project_root not needed — chat history is stored globally by session ID.
     // Skipping canonicalize avoids failures when the project directory is deleted.
@@ -48,13 +50,7 @@ pub(crate) async fn clear_chat_history_api(
                 let dir = state.manager.global_sessions.session_dir(&session_id);
                 crate::server::claude::usage::clear(&dir).ok();
                 std::fs::remove_file(dir.join("claude-subagents.json")).ok();
-                let _ = std::fs::remove_file(
-                    state
-                        .manager
-                        .global_sessions
-                        .session_dir(&session_id)
-                        .join("claude-permissions.json"),
-                );
+                state.claude.forget_session(&session_id);
             }
             let _ = std::fs::remove_file(
                 state
@@ -475,34 +471,59 @@ pub(crate) async fn ask_user_response_handler(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<AskUserResponseRequest>,
 ) -> impl IntoResponse {
-    let sender = {
+    // Check and take under one lock: a question someone may not answer stays
+    // pending for the one who may, and looks exactly like an unknown id.
+    let entry = {
         let mut pending = state.pending_ask_user.lock().await;
-        pending.remove(&req.question_id)
+        let allowed = pending.get(&req.question_id).is_some_and(|entry| {
+            may_answer(
+                &state.manager.global_sessions,
+                entry.session_id.as_deref(),
+                &req.user_type,
+                req.user_id.as_deref(),
+            )
+        });
+        allowed.then(|| pending.remove(&req.question_id)).flatten()
     };
-
-    match sender {
-        Some(entry) => {
-            let session_id = entry.session_id.clone();
-            if entry.sender.send(req.answers).is_ok() {
-                // Broadcast so all clients (including remote) dismiss the widget.
-                let _ = state.events_tx.send(ServerEvent::WidgetResolved {
-                    widget_id: req.question_id,
-                    session_id,
-                });
-                Json(serde_json::json!({ "status": "ok" })).into_response()
-            } else {
-                (
-                    StatusCode::GONE,
-                    Json(serde_json::json!({ "error": "Question already expired" })),
-                )
-                    .into_response()
-            }
-        }
-        None => (
+    let Some(entry) = entry else {
+        return (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "Unknown question_id" })),
         )
-            .into_response(),
+            .into_response();
+    };
+    let session_id = entry.session_id.clone();
+    if entry.sender.send(req.answers).is_err() {
+        return (
+            StatusCode::GONE,
+            Json(serde_json::json!({ "error": "Question already expired" })),
+        )
+            .into_response();
+    }
+    // Broadcast so all clients (including remote) dismiss the widget.
+    let _ = state.events_tx.send(ServerEvent::WidgetResolved {
+        widget_id: req.question_id,
+        session_id,
+    });
+    Json(serde_json::json!({ "status": "ok" })).into_response()
+}
+
+/// One rule for every widget — native AskUser, SDK permission, folder trust:
+/// the owner and the owner's paired devices answer anything; a proxy-room
+/// consumer answers only in a session it created; nobody else answers.
+pub(super) fn may_answer(
+    sessions: &crate::state_fs::sessions::SessionStore,
+    session_id: Option<&str>,
+    user_type: &str,
+    user_id: Option<&str>,
+) -> bool {
+    match user_type {
+        "owner" | "paired" => true,
+        "consumer" => session_id
+            .and_then(|sid| sessions.get_session_meta(sid).ok().flatten())
+            .and_then(|meta| meta.user_id)
+            .is_some_and(|owner| Some(owner.as_str()) == user_id),
+        _ => false,
     }
 }
 
@@ -524,4 +545,43 @@ pub(crate) async fn pending_ask_user_handler(
         })
         .collect();
     Json(serde_json::json!(items))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::may_answer;
+
+    #[test]
+    fn only_the_owner_side_or_the_sessions_own_consumer_answers_a_widget() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = crate::state_fs::sessions::SessionStore::with_sessions_dir(dir.path().into());
+        let mut room = crate::server::claude::new_meta("room".into(), "/p".into(), None);
+        room.user_id = Some("room-user".into());
+        store.add_session(&room).unwrap();
+        let owners = crate::server::claude::new_meta("owner".into(), "/p".into(), None);
+        store.add_session(&owners).unwrap();
+        for who in ["owner", "paired"] {
+            assert!(may_answer(&store, Some(&owners.id), who, None));
+        }
+        assert!(may_answer(
+            &store,
+            Some(&room.id),
+            "consumer",
+            Some("room-user")
+        ));
+        assert!(!may_answer(
+            &store,
+            Some(&room.id),
+            "consumer",
+            Some("someone")
+        ));
+        assert!(!may_answer(
+            &store,
+            Some(&owners.id),
+            "consumer",
+            Some("room-user")
+        ));
+        assert!(!may_answer(&store, None, "consumer", Some("room-user")));
+        assert!(!may_answer(&store, Some(&owners.id), "pairing", None));
+    }
 }

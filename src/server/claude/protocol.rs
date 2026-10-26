@@ -60,14 +60,19 @@ impl ClaudeSession {
         let mut last_text = String::new();
         let mut requests = tokio::task::JoinSet::new();
         let mut request_tasks = HashMap::new();
+        let mut questions: HashMap<i64, String> = HashMap::new();
         let mut changes = HashMap::new();
         let mut next_change = 0_i64;
         let mut controls_open = true;
+        // One clock for the whole turn: a sleep made fresh each pass would
+        // never fire while tokens stream, and Stop would wait for a pause.
+        let mut tick = super::runtime::cancel_tick();
         loop {
             let line = tokio::select! {
                 response = requests.join_next(), if !requests.is_empty() => {
                     if let Some(Ok((id, response))) = response {
                         request_tasks.remove(&id);
+                        questions.remove(&id);
                         let response: Result<Value> = response;
                         let mut reply = response.unwrap_or_else(|error| json!({"allow":false,"error":error.to_string(),"reason":error.to_string()}));
                         reply["type"] = json!("reply"); reply["id"] = json!(id);
@@ -88,7 +93,7 @@ impl ClaudeSession {
                     continue;
                 }
                 line = lines.next_line() => line?.context("Claude Agent SDK exited without a result")?,
-                _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                _ = tick.tick() => {
                     if self.cancelled().await { bail!("run cancelled"); } continue;
                 }
             };
@@ -182,6 +187,9 @@ impl ClaudeSession {
                     }
                 }
                 "request" => {
+                    let id = event["id"].as_i64().context("SDK request has no id")?;
+                    let question_id = super::interaction::new_question_id();
+                    questions.insert(id, question_id.clone());
                     let interaction = super::interaction::Interaction {
                         agent_id: event["input"]["agent_id"]
                             .as_str()
@@ -190,8 +198,8 @@ impl ClaudeSession {
                         state: self.state.clone(),
                         meta: self.meta.clone(),
                         run_id: self.run_id.clone(),
+                        question_id,
                     };
-                    let id = event["id"].as_i64().context("SDK request has no id")?;
                     let task =
                         requests.spawn(async move { (id, interaction.request(&event).await) });
                     request_tasks.insert(id, task);
@@ -201,8 +209,9 @@ impl ClaudeSession {
                     if let Some(task) = request_tasks.remove(&id) {
                         task.abort();
                     }
-                    self.dismiss_question(&format!("sdk-{}-{id}", self.run_id))
-                        .await;
+                    if let Some(question) = questions.remove(&id) {
+                        self.dismiss_question(&question).await;
+                    }
                 }
                 "mode_result" => {
                     if let Some(change) = changes.remove(&event["id"].as_i64().unwrap_or_default())
@@ -229,9 +238,7 @@ impl ClaudeSession {
                         .unwrap_or(json!({}));
                     checkpoint["session_id"] = event["session_id"].clone();
                     std::fs::write(self.checkpoint(), serde_json::to_vec(&checkpoint)?)?;
-                    let _ = std::fs::remove_file(
-                        self.checkpoint().with_file_name("claude-permissions.json"),
-                    );
+                    self.state.claude.forget_session(&self.meta.id);
                     self.state
                         .manager
                         .global_sessions

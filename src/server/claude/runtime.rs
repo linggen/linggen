@@ -12,7 +12,6 @@ pub(super) struct ClaudeSession {
     pub state: Arc<ServerState>,
     pub meta: SessionMeta,
     pub run_id: String,
-    pub interrupt: tokio::sync::mpsc::UnboundedReceiver<String>,
 }
 
 impl ClaudeSession {
@@ -24,8 +23,25 @@ impl ClaudeSession {
             .await;
     }
 
-    pub async fn cancelled(&mut self) -> bool {
-        self.state.manager.is_run_cancelled(&self.run_id).await || self.interrupt.try_recv().is_ok()
+    /// Only a real cancel (Stop, Clear, Delete) ends a turn; a follow-up
+    /// message waits for the turn instead.
+    pub async fn cancelled(&self) -> bool {
+        self.state.manager.is_run_cancelled(&self.run_id).await
+    }
+
+    /// Await `work`, giving up promptly once the run is cancelled.
+    pub async fn unless_cancelled<T>(
+        &self,
+        work: impl std::future::Future<Output = T>,
+    ) -> Result<T> {
+        tokio::pin!(work);
+        let mut tick = cancel_tick();
+        loop {
+            tokio::select! {
+                value = &mut work => return Ok(value),
+                _ = tick.tick() => if self.cancelled().await { bail!("run cancelled"); }
+            }
+        }
     }
 
     pub fn dir(&self) -> PathBuf {
@@ -76,16 +92,8 @@ impl ClaudeSession {
             parent_run_id: None,
         })
         .await;
-        let runner = {
-            let install = install::ensure_installed();
-            tokio::pin!(install);
-            loop {
-                tokio::select! {
-                    result = &mut install => break result?,
-                    _ = tokio::time::sleep(Duration::from_millis(100)) => if self.cancelled().await { bail!("run cancelled"); }
-                }
-            }
-        };
+        let runner = self.unless_cancelled(install::ensure_installed()).await??;
+        let trusted = self.interaction().folder_trust().await?;
         let checkpoint: Value = std::fs::read(self.checkpoint())
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
@@ -96,6 +104,9 @@ impl ClaudeSession {
             .spawn()
             .context("Could not start Claude Agent SDK")?;
         let pid = child.id();
+        if let Some(pid) = pid {
+            self.state.claude.runner_started(&self.meta.id, pid);
+        }
         let mut stdin = child.stdin.take().context("SDK stdin missing")?;
         let mut lines = BufReader::new(child.stdout.take().context("SDK stdout missing")?).lines();
         let stderr = child.stderr.take().context("SDK stderr missing")?;
@@ -103,14 +114,13 @@ impl ClaudeSession {
             let mut lines = BufReader::new(stderr).lines();
             while let Ok(Some(_)) = lines.next_line().await {}
         });
-        let permission_updates: Value =
-            std::fs::read(self.checkpoint().with_file_name("claude-permissions.json"))
-                .ok()
-                .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-                .unwrap_or(json!([]));
+        // Session approvals live in engine memory, like Claude Code's own;
+        // a file older builds wrote is not reloaded.
+        let _ = std::fs::remove_file(self.dir().join(LEGACY_PERMISSIONS));
+        let permission_updates = self.state.claude.session_rules(&self.meta.id);
         let start = json!({"type":"start", "prompt":prompt, "images":images, "cwd":self.meta.cwd,
             "model":model.model, "resume":resume, "permissionMode":self.meta.claude_permission_mode,
-            "permissionUpdates":permission_updates,
+            "permissionUpdates":permission_updates, "settingSources":super::trust::setting_sources(trusted),
             "disallowedTools":self.meta.withheld_tools, "mcpServers":self.mcp_servers().await});
         // Every post-spawn error goes through cleanup, including a broken stdin.
         let result = async {
@@ -133,6 +143,9 @@ impl ClaudeSession {
             let _ = child.kill().await;
         }
         drain.abort();
+        if let Some(pid) = pid {
+            self.state.claude.runner_ended(&self.meta.id, pid);
+        }
         let _ = self.state.events_tx.send(ServerEvent::Token {
             agent_id: AGENT_ID.into(),
             token: String::new(),
@@ -142,6 +155,16 @@ impl ClaudeSession {
             run_id: Some(self.run_id.clone()),
         });
         result
+    }
+
+    pub fn interaction(&self) -> super::interaction::Interaction {
+        super::interaction::Interaction {
+            agent_id: AGENT_ID.into(),
+            state: self.state.clone(),
+            meta: self.meta.clone(),
+            run_id: self.run_id.clone(),
+            question_id: super::interaction::new_question_id(),
+        }
     }
 
     async fn mcp_servers(&self) -> Value {
@@ -172,6 +195,44 @@ impl ClaudeSession {
     }
 }
 
+pub(super) const LEGACY_PERMISSIONS: &str = "claude-permissions.json";
+
+/// One cancel check cadence for every wait on a running turn.
+pub(super) fn cancel_tick() -> tokio::time::Interval {
+    let mut tick = tokio::time::interval(Duration::from_millis(100));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    tick
+}
+
+/// The engine's environment the SDK may see: what a shell, bun and TLS need.
+/// Everything else the engine holds (other providers' keys, tokens) stays out.
+const INHERITED_ENV: [&str; 16] = [
+    "PATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "TERM",
+    "TMPDIR",
+    "LANG",
+    "TZ",
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "NO_PROXY",
+    "ALL_PROXY",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "NODE_EXTRA_CA_CERTS",
+];
+
+pub(super) fn inherited_env(vars: impl Iterator<Item = (String, String)>) -> Vec<(String, String)> {
+    vars.filter(|(key, _)| {
+        let upper = key.to_ascii_uppercase();
+        INHERITED_ENV.contains(&upper.as_str()) || upper.starts_with("LC_")
+    })
+    .collect()
+}
+
 fn sdk_command(
     runner: &std::path::Path,
     cwd: &str,
@@ -184,6 +245,11 @@ fn sdk_command(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .env_clear()
+        .envs(inherited_env(std::env::vars()))
+        // The SDK authenticates with this key. Claude Code passes its own
+        // environment to the Bash tool; its scrub switch would also force
+        // the default permission mode, so the key stays visible there.
         .env(
             "ANTHROPIC_API_KEY",
             model.api_key.as_deref().unwrap_or_default(),
@@ -211,6 +277,7 @@ pub(super) async fn validate_mode(
     state: &ServerState,
     meta: &SessionMeta,
     mode: crate::state_fs::sessions::ClaudePermissionMode,
+    trusted: bool,
 ) -> Result<()> {
     let runner = install::ensure_installed().await?;
     let model = resolve_model(
@@ -226,20 +293,21 @@ pub(super) async fn validate_mode(
         let mut lines = BufReader::new(stderr).lines();
         while let Ok(Some(_)) = lines.next_line().await {}
     });
-    let request = json!({"type":"start", "cwd":meta.cwd, "model":model.model, "validateOnly":true, "permissionMode":mode});
+    let request = json!({"type":"start", "cwd":meta.cwd, "model":model.model, "validateOnly":true, "permissionMode":mode,
+        "settingSources":super::trust::setting_sources(trusted)});
     let result = tokio::time::timeout(Duration::from_secs(20), async {
         stdin.write_all(format!("{request}\n").as_bytes()).await?;
         while let Some(line) = lines.next_line().await? {
             let event: Value = serde_json::from_str(&line)?;
             if event["type"] == "mode_result" {
                 if event["ok"] == true {
-                    std::fs::write(
-                        state
+                    crate::state_fs::devices::write_atomic(
+                        &state
                             .manager
                             .global_sessions
                             .session_dir(&meta.id)
                             .join("claude-capabilities.json"),
-                        serde_json::to_vec(&json!({"commands":event["commands"]}))?,
+                        &serde_json::to_vec(&json!({"commands":event["commands"]}))?,
                     )?;
                     return Ok(());
                 }

@@ -56,6 +56,7 @@ async fn world() -> (World, String) {
     std::fs::create_dir_all(bun.parent().unwrap()).unwrap();
     std::fs::write(&bun, BRIDGE).unwrap();
     std::fs::set_permissions(&bun, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    crate::claude_host::trust_folder(&w);
     let sid = w
         .api
         .create_session(

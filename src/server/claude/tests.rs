@@ -83,3 +83,57 @@ async fn sdk_images_reuse_persistent_session_images_and_resolvable_references() 
     assert_ne!(opened["reference"], shown["reference"]);
     assert!(!store.session_dir(&meta.id).join("permission.json").exists());
 }
+
+#[test]
+fn the_sdk_sees_only_what_a_shell_bun_and_tls_need() {
+    let vars = [
+        ("PATH", "/bin"),
+        ("HOME", "/h"),
+        ("LC_ALL", "C"),
+        ("LANG", "en"),
+        ("HTTPS_PROXY", "http://p"),
+        ("OPENAI_API_KEY", "sk-other"),
+        ("LINGGEN_HOME", "/h/.linggen"),
+        ("GITHUB_TOKEN", "t"),
+    ]
+    .map(|(k, v)| (k.to_string(), v.to_string()));
+    let kept: Vec<String> = runtime::inherited_env(vars.into_iter())
+        .into_iter()
+        .map(|(k, _)| k)
+        .collect();
+    assert_eq!(kept, ["PATH", "HOME", "LC_ALL", "LANG", "HTTPS_PROXY"]);
+}
+
+#[test]
+fn session_approvals_live_in_memory_until_the_conversation_ends() {
+    let host = Host::default();
+    let rule = json!({"type":"addRules","behavior":"allow","rules":[{"toolName":"Bash"}]});
+    host.add_session_rules("s", &[rule.clone()]);
+    host.add_session_rules("other", &[rule.clone()]);
+    host.decline_trust("s");
+    assert_eq!(host.session_rules("s"), [rule.clone()]);
+    host.forget_session("s");
+    assert!(host.session_rules("s").is_empty());
+    assert!(!host.declined_trust("s"));
+    assert_eq!(host.session_rules("other"), [rule]);
+}
+
+#[test]
+fn widget_ids_are_unguessable() {
+    let a = interaction::new_question_id();
+    let b = interaction::new_question_id();
+    assert_ne!(a, b);
+    assert!(uuid::Uuid::parse_str(a.strip_prefix("sdk-").unwrap()).is_ok());
+}
+
+#[test]
+fn a_parent_gets_the_outcome_as_facts_not_engine_words() {
+    let meta = new_meta("Fix tests".into(), "/project".into(), Some("parent".into()));
+    let status: serde_json::Value =
+        serde_json::from_str(&session_status(&meta, "completed")).unwrap();
+    assert_eq!(
+        status,
+        json!({"type":"session_status", "session_id":meta.id, "title":"Fix tests",
+            "runtime":"claude", "status":"completed"})
+    );
+}

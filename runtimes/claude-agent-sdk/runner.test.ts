@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { observeTool, permissionRequest, queryPrompt, sessionPermissionSettings } from './runner';
+import { modeSettles, observeTool, permissionRequest, queryPrompt, sessionPermissionSettings, settingSources } from './runner';
 
 describe('SDK-owned permissions with Linggen widgets', () => {
   test('observing a tool cannot approve or deny it', async () => {
@@ -88,4 +88,20 @@ test('remembering a tool does not silently upgrade the SDK permission mode', asy
   });
   expect(result.updatedPermissions).toHaveLength(1);
   expect(result.updatedPermissions![0].type).toBe('addRules');
+});
+
+describe('mode changes and folder trust', () => {
+  test('a mode change withdraws only the prompts the new mode decides itself', () => {
+    expect(modeSettles('acceptEdits', 'Edit')).toBe(true);
+    expect(modeSettles('acceptEdits', 'Bash')).toBe(false);
+    expect(modeSettles('auto', 'Bash')).toBe(true);
+    expect(modeSettles('dontAsk', 'Bash')).toBe(true);
+    expect(modeSettles('default', 'Edit')).toBe(false);
+    expect(modeSettles('plan', 'Bash')).toBe(false);
+  });
+
+  test('project and local settings load only when the host says the folder is trusted', () => {
+    expect(settingSources({})).toEqual(['user']);
+    expect(settingSources({ settingSources: ['user', 'project', 'local'] })).toEqual(['user', 'project', 'local']);
+  });
 });
