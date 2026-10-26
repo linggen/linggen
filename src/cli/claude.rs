@@ -6,19 +6,14 @@
 use anyhow::{bail, Context, Result};
 use std::os::unix::process::CommandExt;
 
-/// Told to every session this command starts: where its model lives, and
-/// how to restart that engine without cutting itself off.
-const SESSION_NOTE: &str = "\
-You run on Linggen: every model call goes through the local engine's \
-Anthropic gateway at 127.0.0.1:9527/anthropic, not Anthropic directly. \
-Stopping that engine stops you. To restart it, do the whole thing in ONE \
-Bash command: keep the current binary as ling.prev, swap the new one into \
-/usr/local/bin/ling and /Applications/Linggen.app/Contents/MacOS/ling \
-(cp to .new, then mv), stop only the process listening on 9527, start \
-`nohup /usr/local/bin/ling --web` with a log under ~/.linggen/logs, wait up \
-to 60 s for /api/health, and if it never answers put ling.prev back and \
-start that, all in the same command. Say so before restarting: the user \
-may be using the engine.";
+/// Told to every session this command starts: where its model lives.
+fn session_note(port: u16) -> String {
+    format!(
+        "You run on Linggen: every model call goes through the local engine's \
+         Anthropic gateway at 127.0.0.1:{port}/anthropic, not Anthropic directly. \
+         Stopping that engine stops you."
+    )
+}
 
 /// The picker's model families, each with its `ANTHROPIC_DEFAULT_*` slot.
 const FAMILIES: [&str; 4] = ["fable", "opus", "sonnet", "haiku"];
@@ -53,7 +48,7 @@ pub async fn run(port: u16, args: &[String]) -> Result<()> {
         .arg("--settings")
         .arg(settings.to_string())
         .arg("--append-system-prompt")
-        .arg(SESSION_NOTE)
+        .arg(session_note(port))
         .args(args)
         .env("ANTHROPIC_BASE_URL", &base)
         .env("ANTHROPIC_AUTH_TOKEN", "linggen")
@@ -85,4 +80,19 @@ async fn served_models(base: &str) -> Result<Vec<String>> {
 
 fn pick<'a>(ids: &'a [String], want: impl Fn(&str) -> bool) -> Option<&'a String> {
     ids.iter().find(|id| want(id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::session_note;
+
+    #[test]
+    fn the_note_names_the_configured_port_and_no_restart_recipe() {
+        let note = session_note(9631);
+        assert!(note.contains("127.0.0.1:9631/anthropic"));
+        assert!(!note.contains("9527"));
+        for recipe in ["/usr/local/bin", "Linggen.app", "mv", "nohup"] {
+            assert!(!note.contains(recipe), "{recipe}");
+        }
+    }
 }
