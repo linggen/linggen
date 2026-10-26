@@ -16,8 +16,27 @@ use axum::Json;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-/// Client headers worth carrying upstream; auth is always Linggen's own.
-const FORWARDED_HEADERS: [&str; 2] = ["anthropic-version", "anthropic-beta"];
+/// Client headers that never go upstream: auth is always Linggen's own, and
+/// hop-by-hop or body-framing headers belong to this connection, not the next.
+/// `accept-encoding` stays local because the body is relayed undecoded while
+/// its `content-encoding` is not. Everything else (User-Agent, x-app,
+/// anthropic-*) is the client's own attribution and travels as sent.
+const LOCAL_HEADERS: [&str; 14] = [
+    "x-api-key",
+    "authorization",
+    "host",
+    "content-length",
+    "content-type",
+    "accept-encoding",
+    "connection",
+    "keep-alive",
+    "proxy-connection",
+    "proxy-authorization",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+];
 const DEFAULT_VERSION: &str = "2023-06-01";
 
 pub(crate) async fn messages_handler(
@@ -78,14 +97,10 @@ async fn forward(state: &ServerState, headers: &HeaderMap, body: Bytes, path: &s
     let url = format!("{}{path}", upstream_base(&cfg.url));
     let mut rb = reqwest::Client::new()
         .post(url)
+        .headers(forwarded_headers(headers))
         .header("content-type", "application/json")
         .header("x-api-key", cfg.api_key.clone().unwrap_or_default())
         .body(body);
-    for name in FORWARDED_HEADERS {
-        if let Some(v) = headers.get(name).and_then(|v| v.to_str().ok()) {
-            rb = rb.header(name, v);
-        }
-    }
     if !headers.contains_key("anthropic-version") {
         rb = rb.header("anthropic-version", DEFAULT_VERSION);
     }
@@ -101,6 +116,24 @@ async fn forward(state: &ServerState, headers: &HeaderMap, body: Bytes, path: &s
             )
         }
     }
+}
+
+/// The client's headers minus auth and per-connection ones.
+fn forwarded_headers(headers: &HeaderMap) -> reqwest::header::HeaderMap {
+    let mut out = reqwest::header::HeaderMap::new();
+    for (name, value) in headers {
+        if LOCAL_HEADERS.contains(&name.as_str()) {
+            continue;
+        }
+        let (Ok(name), Ok(value)) = (
+            reqwest::header::HeaderName::from_bytes(name.as_str().as_bytes()),
+            reqwest::header::HeaderValue::from_bytes(value.as_bytes()),
+        ) else {
+            continue;
+        };
+        out.append(name, value);
+    }
+    out
 }
 
 /// Stream the upstream response back unchanged: status, the headers the
@@ -189,6 +222,41 @@ mod tests {
         assert!(is_relayed_header("retry-after"));
         assert!(is_relayed_header("anthropic-ratelimit-unified-status"));
         assert!(!is_relayed_header("set-cookie"));
+    }
+
+    #[test]
+    fn client_attribution_travels_but_auth_and_hop_headers_do_not() {
+        let mut headers = HeaderMap::new();
+        for (name, value) in [
+            ("user-agent", "claude-cli/2.1.0 (external, cli)"),
+            ("x-app", "cli"),
+            ("anthropic-beta", "oauth-2025"),
+            ("anthropic-version", "2023-06-01"),
+            ("x-stainless-lang", "js"),
+            ("x-api-key", "client-key"),
+            ("authorization", "Bearer linggen"),
+            ("host", "127.0.0.1:9527"),
+            ("content-length", "42"),
+            ("connection", "keep-alive"),
+            ("accept-encoding", "gzip"),
+        ] {
+            headers.insert(name, value.parse().unwrap());
+        }
+        let out = forwarded_headers(&headers);
+        assert_eq!(out["user-agent"], "claude-cli/2.1.0 (external, cli)");
+        assert_eq!(out["x-app"], "cli");
+        assert_eq!(out["anthropic-beta"], "oauth-2025");
+        assert_eq!(out["x-stainless-lang"], "js");
+        for gone in [
+            "x-api-key",
+            "authorization",
+            "host",
+            "content-length",
+            "connection",
+            "accept-encoding",
+        ] {
+            assert!(!out.contains_key(gone), "{gone} must not be forwarded");
+        }
     }
 
     #[test]
