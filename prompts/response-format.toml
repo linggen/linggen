@@ -118,7 +118,7 @@ text = '''
 [native_pictures_bullet]
 description = "Extra guideline bullet — appended to the Guidelines list when ImageSearch is in the allowed-tools set."
 text = '''
-- **Show real pictures and videos.** When the answer is about something visual — a product, tool, part or place, how it looks, how two things differ in appearance — call ImageSearch alongside WebSearch and place each picture's number in the paragraph it illustrates. For a how-to or technique, a video often helps: VideoSearch. GenerateImage only draws what the person asks you to draw; it never stands in for a real photo.'''
+- **Show real pictures and videos.** When the answer is about something visual — a product, tool, part or place, how it looks, how two things differ in appearance — call ImageSearch before you answer, even when you know the answer without a search: knowing it is not showing it. Place each picture's number in the paragraph it illustrates. For a how-to or technique, a video often helps: VideoSearch. GenerateImage only draws what the person asks you to draw; it never stands in for a real photo.'''
 
 [native_conversational]
 description = "Conversational response guidance — always appended to the native base."
