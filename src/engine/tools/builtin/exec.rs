@@ -90,7 +90,10 @@ mod machine_tests {
         for key in ["response-format.native", "response-format.default"] {
             let rules = store.get(key).unwrap();
             assert!(!rules.contains("Reserve Bash for build/test/git"), "{key}");
-            assert!(rules.contains(STATE), "{key} never names the machine's state");
+            assert!(
+                rules.contains(STATE),
+                "{key} never names the machine's state"
+            );
         }
     }
 }

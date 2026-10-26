@@ -542,9 +542,18 @@ mod tests {
     #[test]
     fn a_rebuilt_answer_reads_without_its_picture_numbers() {
         let agents = agents();
-        let m = row("ling", "ling", "user", "This one [turn1image1] from [turn1search2].", false);
+        let m = row(
+            "ling",
+            "ling",
+            "user",
+            "This one [turn1image1] from [turn1search2].",
+            false,
+        );
         let own = row_for_test(&m, "ling", &agents);
-        assert_eq!((own.role.as_str(), own.content.as_str()), ("assistant", "This one from."));
+        assert_eq!(
+            (own.role.as_str(), own.content.as_str()),
+            ("assistant", "This one from.")
+        );
         let theirs = row_for_test(&m, "yinyue", &agents);
         assert!(!theirs.content.contains("[turn1"), "{}", theirs.content);
     }

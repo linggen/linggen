@@ -182,7 +182,14 @@ mod tests {
     fn ids_parse_in_both_shapes_and_nothing_else() {
         assert_eq!(parse_id("turn2search1"), Some((2, Kind::Source, 1)));
         assert_eq!(parse_id("turn12image3"), Some((12, Kind::Picture, 3)));
-        for bad in ["turn2search", "turnsearch1", "turn2news1", "turn2image1x", "Turn1image1", ""] {
+        for bad in [
+            "turn2search",
+            "turnsearch1",
+            "turn2news1",
+            "turn2image1x",
+            "Turn1image1",
+            "",
+        ] {
             assert!(!is_ref_id(bad), "{bad}");
         }
         assert_eq!(source_id(3, 1), "turn3search1");
@@ -193,7 +200,10 @@ mod tests {
     fn an_answer_names_its_ids_in_order_once() {
         let text = "Kettle A [turn1image2] or B [turn1image1][turn1search1]; \
                     again [turn1image2], a [link](x) and [turn9news1].";
-        assert_eq!(ids_in(text), vec!["turn1image2", "turn1image1", "turn1search1"]);
+        assert_eq!(
+            ids_in(text),
+            vec!["turn1image2", "turn1image1", "turn1search1"]
+        );
         assert!(ids_in("[turn").is_empty());
     }
 
@@ -207,7 +217,10 @@ mod tests {
             "看图：\n[turn2image1]\n[turn2image2] from [turn2search1], a \
              [real link](https://a.example/turn1image1) and [turn3image1] as is."
         );
-        assert!(matches!(plain_refs("no links"), std::borrow::Cow::Borrowed(_)));
+        assert!(matches!(
+            plain_refs("no links"),
+            std::borrow::Cow::Borrowed(_)
+        ));
     }
 
     #[test]

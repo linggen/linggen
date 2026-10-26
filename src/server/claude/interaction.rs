@@ -1,5 +1,6 @@
 //! Widget transport only. The SDK decides when permission is needed; no
 //! native tool executor, permission tiers or path grants are consulted.
+use super::state;
 use crate::engine::tools::{AskUserAnswer, AskUserOption, AskUserQuestion, PendingAskUser};
 use crate::server::ServerEvent;
 use anyhow::{bail, Context, Result};
@@ -27,16 +28,20 @@ impl Interaction {
                 let _guard = PERMISSION_FILES
                     .lock()
                     .map_err(|_| anyhow::anyhow!("SDK permission store unavailable"))?;
-                let path = self
-                    .state
-                    .manager
-                    .global_sessions
-                    .session_dir(&self.meta.id)
-                    .join("claude-permissions.json");
-                let mut saved: Vec<Value> = std::fs::read(&path)
-                    .ok()
-                    .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-                    .unwrap_or_default();
+                let path = state::permissions_path(
+                    &self
+                        .state
+                        .manager
+                        .global_sessions
+                        .session_dir(&self.meta.id),
+                );
+                // An unreadable store is an error, never an empty one: saving
+                // over it would silently drop the grants it still holds.
+                let mut saved: Vec<Value> = match std::fs::read(&path) {
+                    Ok(bytes) => serde_json::from_slice(&bytes)
+                        .context("Saved SDK permissions are unreadable")?,
+                    Err(_) => Vec::new(),
+                };
                 saved.extend(
                     input["updates"]
                         .as_array()
@@ -44,7 +49,7 @@ impl Interaction {
                         .iter()
                         .cloned(),
                 );
-                std::fs::write(path, serde_json::to_vec(&saved)?)?;
+                state::write(&path, &json!(saved))?;
                 Ok(json!({"saved":true}))
             }
             Some("permission") => {
@@ -65,8 +70,19 @@ impl Interaction {
                 {
                     options.push(option("Allow for this session"));
                 }
+                let dir = self
+                    .state
+                    .manager
+                    .global_sessions
+                    .session_dir(&self.meta.id);
                 if self.meta.claude_permission_mode
                     != crate::state_fs::sessions::ClaudePermissionMode::Auto
+                    && (state::auto_verified(&dir)
+                        || input["suggestions"].as_array().is_some_and(|items| {
+                            items
+                                .iter()
+                                .any(|item| item["type"] == "setMode" && item["mode"] == "auto")
+                        }))
                 {
                     options.push(option("Allow and switch to auto"));
                 }
@@ -86,6 +102,8 @@ impl Interaction {
                     }
                 }
                 options.push(option("Deny"));
+                // Only an offered choice counts: a forged label never allows.
+                let offered: Vec<String> = options.iter().map(|o| o.label.clone()).collect();
                 let question = AskUserQuestion {
                     question: input["title"]
                         .as_str()
@@ -111,8 +129,9 @@ impl Interaction {
                         .is_ok()
                     });
                 let allow = answer.is_some_and(|a| {
-                    (matches!(selected, "Allow once" | "Allow for this session")
-                        || chosen_mode.is_some())
+                    offered.iter().any(|label| label == selected)
+                        && (matches!(selected, "Allow once" | "Allow for this session")
+                            || chosen_mode.is_some())
                         && a.custom_text.as_deref().unwrap_or_default().is_empty()
                 });
                 let reason = answer

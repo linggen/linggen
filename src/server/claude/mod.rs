@@ -5,10 +5,11 @@ mod interaction;
 mod media;
 mod protocol;
 mod runtime;
+mod state;
 pub(crate) mod subagents;
+pub(crate) mod usage;
 #[cfg(test)]
 mod tests;
-pub(crate) mod usage;
 
 use super::{chat, ServerState};
 use crate::config::ModelConfig;
@@ -32,10 +33,7 @@ pub(crate) struct ModeChange {
 
 pub(crate) enum Control {
     Mode(ModeChange),
-    StopTask {
-        task_id: String,
-        reply: tokio::sync::oneshot::Sender<std::result::Result<(), String>>,
-    },
+    StopTask { task_id: String, reply: tokio::sync::oneshot::Sender<std::result::Result<(), String>> },
 }
 
 #[derive(serde::Deserialize)]
@@ -58,24 +56,12 @@ pub(crate) async fn capabilities(
         return StatusCode::BAD_REQUEST.into_response();
     }
     let dir = state.manager.global_sessions.session_dir(&meta.id);
-    for name in ["claude.json", "claude-capabilities.json"] {
-        if let Some(value) = std::fs::read(dir.join(name))
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-        {
-            if value["commands"].is_array() {
-                return Json(json!({"commands":value["commands"]})).into_response();
-            }
-        }
+    if let Some(commands) = state::cached_commands(&dir) {
+        return Json(commands).into_response();
     }
     match runtime::validate_mode(&state, &meta, meta.claude_permission_mode).await {
-        Ok(()) => match std::fs::read(dir.join("claude-capabilities.json"))
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-        {
-            Some(value) => Json(value).into_response(),
-            None => Json(json!({"commands":[]})).into_response(),
-        },
+        Ok(()) => Json(state::cached_commands(&dir).unwrap_or_else(|| json!({"commands":[]})))
+            .into_response(),
         Err(error) => (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
     }
 }
@@ -97,6 +83,9 @@ pub(crate) async fn set_mode(
             .context("Claude permission change timed out")?
             .context("Claude turn ended before applying the permission change")?
             .map_err(anyhow::Error::msg)?;
+        if mode == crate::state_fs::sessions::ClaudePermissionMode::Auto {
+            state::mark_auto_verified(&state.manager.global_sessions.session_dir(&session.id));
+        }
     } else if mode == crate::state_fs::sessions::ClaudePermissionMode::Auto {
         runtime::validate_mode(state, session, mode).await?;
     }

@@ -45,9 +45,8 @@ pub(crate) async fn clear_chat_history_api(
     {
         Ok(removed) => {
             if claude {
-                let dir = state.manager.global_sessions.session_dir(&session_id);
-                crate::server::claude::usage::clear(&dir).ok();
-                std::fs::remove_file(dir.join("claude-subagents.json")).ok();
+                let _ = crate::server::claude::usage::clear(&state.manager.global_sessions.session_dir(&session_id));
+                let _ = std::fs::remove_file(state.manager.global_sessions.session_dir(&session_id).join("claude-subagents.json"));
                 let _ = std::fs::remove_file(
                     state
                         .manager
@@ -477,6 +476,32 @@ pub(crate) async fn ask_user_response_handler(
 ) -> impl IntoResponse {
     let sender = {
         let mut pending = state.pending_ask_user.lock().await;
+        let owner = pending
+            .get(&req.question_id)
+            .and_then(|entry| entry.session_id.as_deref())
+            .and_then(|sid| {
+                state
+                    .manager
+                    .global_sessions
+                    .get_session_meta(sid)
+                    .ok()
+                    .flatten()
+            })
+            .and_then(|meta| meta.user_id);
+        if pending.contains_key(&req.question_id)
+            && !may_answer(&req.user_type, req.user_id.as_deref(), owner.as_deref())
+        {
+            tracing::warn!(
+                "ask-user answer refused: {} may not answer {}",
+                req.user_type,
+                req.question_id
+            );
+            return (
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({ "error": "Not your question to answer" })),
+            )
+                .into_response();
+        }
         pending.remove(&req.question_id)
     };
 
@@ -506,6 +531,18 @@ pub(crate) async fn ask_user_response_handler(
     }
 }
 
+/// Who may answer a pending question. The owner (a loopback caller or the
+/// owner's own peer) and their paired devices answer anything; a room
+/// consumer answers only questions in a session it owns, never the owner's
+/// approvals; a peer still pairing answers nothing.
+fn may_answer(user_type: &str, user_id: Option<&str>, session_owner: Option<&str>) -> bool {
+    match user_type {
+        "" | "owner" | "paired" => true,
+        "consumer" => user_id.is_some_and(|id| session_owner == Some(id)),
+        _ => false,
+    }
+}
+
 /// Return any pending AskUser questions so the UI can restore the widget
 /// after navigating away and back, or after a page refresh.
 pub(crate) async fn pending_ask_user_handler(
@@ -524,4 +561,21 @@ pub(crate) async fn pending_ask_user_handler(
         })
         .collect();
     Json(serde_json::json!(items))
+}
+
+#[cfg(test)]
+mod answer_tests {
+    use super::may_answer;
+
+    #[test]
+    fn a_consumer_answers_only_its_own_sessions_questions() {
+        assert!(may_answer("", None, None), "loopback is the owner");
+        assert!(may_answer("owner", Some("o"), None));
+        assert!(may_answer("paired", Some("p"), Some("o")));
+        assert!(may_answer("consumer", Some("c"), Some("c")));
+        assert!(!may_answer("consumer", Some("c"), None), "an owner session");
+        assert!(!may_answer("consumer", Some("c"), Some("o")));
+        assert!(!may_answer("consumer", None, None));
+        assert!(!may_answer("pairing", Some("x"), None));
+    }
 }

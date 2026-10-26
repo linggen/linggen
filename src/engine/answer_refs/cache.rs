@@ -138,7 +138,10 @@ async fn download(url: &str) -> Option<Vec<u8>> {
     if !resp.status().is_success() {
         return None;
     }
-    if resp.content_length().is_some_and(|n| n as usize > MAX_DOWNLOAD) {
+    if resp
+        .content_length()
+        .is_some_and(|n| n as usize > MAX_DOWNLOAD)
+    {
         return None;
     }
     let bytes = resp.bytes().await.ok()?;
@@ -201,7 +204,11 @@ mod tests {
     use super::*;
 
     fn png(w: u32, h: u32) -> Vec<u8> {
-        let img = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(w, h, image::Rgb([200, 30, 30])));
+        let img = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            w,
+            h,
+            image::Rgb([200, 30, 30]),
+        ));
         let mut out = std::io::Cursor::new(Vec::new());
         img.write_to(&mut out, image::ImageFormat::Png).unwrap();
         out.into_inner()
@@ -219,7 +226,10 @@ mod tests {
         assert_eq!(small.bytes, small_png);
         assert!(crate::state_fs::session_images::valid_name(&small.name));
         assert!(scaled(b"<svg></svg>").is_none());
-        assert!(scaled(&[0x89, b'P', b'N', b'G', 0, 0]).is_none(), "a broken PNG");
+        assert!(
+            scaled(&[0x89, b'P', b'N', b'G', 0, 0]).is_none(),
+            "a broken PNG"
+        );
     }
 
     #[test]
@@ -232,12 +242,20 @@ mod tests {
         settle(dir.path(), &mut a, Some(bytes.clone()), &mut used);
         settle(dir.path(), &mut b, Some(bytes.clone()), &mut used);
         assert_eq!(a.file, b.file, "one picture behind two addresses");
-        assert_eq!(std::fs::read_dir(dir.path().join("images")).unwrap().count(), 1);
+        assert_eq!(
+            std::fs::read_dir(dir.path().join("images"))
+                .unwrap()
+                .count(),
+            1
+        );
 
         let mut c = Ref::picture("turn1image3".into(), "https://c.example/c.png", "");
         let mut over = cap();
         settle(dir.path(), &mut c, Some(png(60, 60)), &mut over);
-        assert!(c.from_url && c.file.is_none(), "past the cap it loads from its address");
+        assert!(
+            c.from_url && c.file.is_none(),
+            "past the cap it loads from its address"
+        );
 
         let mut d = Ref::picture("turn1image4".into(), "https://d.example/d.png", "");
         settle(dir.path(), &mut d, None, &mut used);

@@ -114,4 +114,9 @@ pub(crate) struct SystemPromptQuery {
 pub(crate) struct AskUserResponseRequest {
     pub(super) question_id: String,
     pub(super) answers: Vec<crate::engine::tools::AskUserAnswer>,
+    /// Stamped by the WebRTC proxy; empty for a loopback caller (the owner).
+    #[serde(default)]
+    pub(super) user_type: String,
+    #[serde(default)]
+    pub(super) user_id: Option<String>,
 }

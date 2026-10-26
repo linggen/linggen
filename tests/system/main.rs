@@ -8,8 +8,9 @@
 //! (`support::guard`). A failed test keeps its world and prints where;
 //! `LINGGEN_SYSTEM_KEEP=1` keeps every one. `LING_MEM_BIN` picks the ling-mem.
 
-mod claude_subagents;
+mod claude_bridge;
 mod drawing;
+mod claude_subagents;
 mod fixtures;
 mod met;
 mod pictures;

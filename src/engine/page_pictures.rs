@@ -188,7 +188,9 @@ fn file_words(url: &str) -> String {
         return String::new();
     };
     let name = urlencoding::decode(&name).map_or(name.clone(), |n| n.into_owned());
-    let stem = name.rsplit_once('.').map_or(name.as_str(), |(stem, _)| stem);
+    let stem = name
+        .rsplit_once('.')
+        .map_or(name.as_str(), |(stem, _)| stem);
     stem.split(|c: char| matches!(c, '-' | '_' | '.' | ' ' | '+' | '@'))
         .flat_map(split_camel)
         .map(|w| w.to_lowercase())
@@ -199,9 +201,33 @@ fn file_words(url: &str) -> String {
 
 /// File-name filler: camera prefixes, CMS size and role words.
 const FILLER: &[&str] = &[
-    "img", "image", "images", "dsc", "dscn", "dscf", "pic", "photo", "picture", "thumb",
-    "thumbnail", "scaled", "crop", "cropped", "resized", "copy", "final", "web", "large",
-    "medium", "small", "default", "untitled", "jpg", "jpeg", "png", "webp",
+    "img",
+    "image",
+    "images",
+    "dsc",
+    "dscn",
+    "dscf",
+    "pic",
+    "photo",
+    "picture",
+    "thumb",
+    "thumbnail",
+    "scaled",
+    "crop",
+    "cropped",
+    "resized",
+    "copy",
+    "final",
+    "web",
+    "large",
+    "medium",
+    "small",
+    "default",
+    "untitled",
+    "jpg",
+    "jpeg",
+    "png",
+    "webp",
 ];
 
 fn is_word(w: &str) -> bool {
@@ -217,8 +243,7 @@ fn is_word(w: &str) -> bool {
 }
 
 /// `1024x768`, `800w`, `2x`, `300px` — a size, not a word.
-static SIZE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\d+(x\d+|w|h|x|px)?$").unwrap());
+static SIZE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\d+(x\d+|w|h|x|px)?$").unwrap());
 
 /// `MoveSchwarz` → `Move`, `Schwarz`; a run of capitals stays whole.
 fn split_camel(part: &str) -> Vec<String> {
@@ -357,7 +382,10 @@ mod tests {
 
     #[test]
     fn an_uncaptioned_picture_is_named_by_its_file_else_the_page() {
-        let facts = read(BARE, "https://www.profitec-espresso.com/en/products/move-2-0");
+        let facts = read(
+            BARE,
+            "https://www.profitec-espresso.com/en/products/move-2-0",
+        );
         let captions: Vec<&str> = facts.pictures.iter().map(|p| p.caption.as_str()).collect();
         assert_eq!(
             captions,
@@ -369,13 +397,21 @@ mod tests {
                 "Profitec | MOVE",
             ]
         );
-        assert!(captions.iter().all(|c| !c.contains("media") && !c.contains('/')));
+        assert!(captions
+            .iter()
+            .all(|c| !c.contains("media") && !c.contains('/')));
     }
 
     #[test]
     fn file_words_drop_hashes_sizes_numbers_and_filler() {
-        assert_eq!(file_words("https://a.example/p/move-schwarz-fast_heat-up.jpg"), "move schwarz fast heat up");
-        assert_eq!(file_words("https://a.example/rav4-cabin%20filter@2x.png"), "rav4 cabin filter");
+        assert_eq!(
+            file_words("https://a.example/p/move-schwarz-fast_heat-up.jpg"),
+            "move schwarz fast heat up"
+        );
+        assert_eq!(
+            file_words("https://a.example/rav4-cabin%20filter@2x.png"),
+            "rav4 cabin filter"
+        );
         assert_eq!(file_words("https://a.example/img_9921-300x200.jpg"), "");
         assert_eq!(file_words("https://a.example/"), "");
     }

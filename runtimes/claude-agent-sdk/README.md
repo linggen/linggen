@@ -23,6 +23,13 @@ tool is `mcp__linggen-display__DisplayImage`, which reuses Linggen's image
 store, references, thumbnails and lightbox. SDK Read image results use that
 same store. Tool execution and approvals still belong to the SDK.
 
+Memory matches a native owner session: the same session-start block (core,
+scope candidates, index) is appended to the `claude_code` preset prompt, and
+each turn's recall and capture nudge reach the SDK as `UserPromptSubmit`
+context, with the same recall row in the chat. Slash commands get no recall.
+The SDK's own config dir is Linggen's, so plugin hooks from `~/.claude` do
+not run here; this host supplies memory instead.
+
 Linggen apps only use native Linggen sessions. They cannot create, bind or
 run a Claude session, or delegate to one through `StartClaudeSession`.
 An ordinary Ling chat can still start a separate Claude session.

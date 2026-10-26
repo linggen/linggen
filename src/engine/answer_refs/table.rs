@@ -101,7 +101,9 @@ mod tests {
             ]
         });
         assert_eq!(first, Some(1));
-        let second = number(&sess, |t| vec![Ref::source(source_id(t, 1), "https://b.example", "B")]);
+        let second = number(&sess, |t| {
+            vec![Ref::source(source_id(t, 1), "https://b.example", "B")]
+        });
         assert_eq!(second, Some(2));
 
         let mut kept = load(&sess)["turn1image1"].clone();
@@ -109,8 +111,15 @@ mod tests {
         assert!(update(&sess, &[kept]));
         let refs = load(&sess);
         assert_eq!(refs.len(), 3);
-        assert_eq!(refs["turn1image1"].file.as_deref(), Some("0123456789abcdef.jpg"));
+        assert_eq!(
+            refs["turn1image1"].file.as_deref(),
+            Some("0123456789abcdef.jpg")
+        );
         assert_eq!(refs["turn2search1"].title, "B");
-        assert_eq!(number(&sess, |_| Vec::new()), Some(3), "nothing kept, still the next");
+        assert_eq!(
+            number(&sess, |_| Vec::new()),
+            Some(3),
+            "nothing kept, still the next"
+        );
     }
 }

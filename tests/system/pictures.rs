@@ -39,16 +39,20 @@ const PAGE: &str = r#"<html><head><title>Kettle</title>
 impl Site {
     async fn start() -> Self {
         let html = || async { ([(header::CONTENT_TYPE, "text/html")], PAGE).into_response() };
-        let picture = |bytes: Vec<u8>| move || {
-            let bytes = bytes.clone();
-            async move { ([(header::CONTENT_TYPE, "image/png")], bytes).into_response() }
+        let picture = |bytes: Vec<u8>| {
+            move || {
+                let bytes = bytes.clone();
+                async move { ([(header::CONTENT_TYPE, "image/png")], bytes).into_response() }
+            }
         };
         let app = Router::new()
             .route("/kettle", get(html))
             .route("/big.png", get(picture(png(2400, 1200, 10))))
             .route("/step.png", get(picture(png(300, 200, 200))))
             .route("/again/step.png", get(picture(png(300, 200, 200))));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind site");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind site");
         let url = format!("http://{}", listener.local_addr().expect("site addr"));
         tokio::spawn(async move { axum::serve(listener, app).await });
         Self { url }
@@ -60,8 +64,13 @@ const ANSWER: &str = "The Gooseneck [turn1image1] pours well [turn1search1].\n\n
 
 async fn fetch_and_answer(w: &World, sid: &str) -> Value {
     let root = w.work();
-    w.turn(sid, &root, "Which kettle, and how do I use it?", Agent::Ling)
-        .await;
+    w.turn(
+        sid,
+        &root,
+        "Which kettle, and how do I use it?",
+        Agent::Ling,
+    )
+    .await;
     w.api.history(sid, &root).await
 }
 
@@ -78,7 +87,11 @@ async fn an_answer_shows_the_pictures_it_names_and_nothing_else() {
     let page = format!("{}/kettle", site.url);
     let w = World::start(Setup::default().script(
         Agent::Ling,
-        vec![tool("WebFetch", json!({"url": page})), text(ANSWER), text("Done.")],
+        vec![
+            tool("WebFetch", json!({"url": page})),
+            text(ANSWER),
+            text("Done."),
+        ],
     ))
     .await;
     let root = w.work();
@@ -91,7 +104,10 @@ async fn an_answer_shows_the_pictures_it_names_and_nothing_else() {
     // What the model was told: WebFetch brings pictures, WebSearch none.
     let first_call = &w.model.calls_of(Agent::Ling)[0];
     let fetch = first_call.tool_description("WebFetch");
-    assert!(fetch.contains("[turn2image1]") && fetch.contains("looks like"), "{fetch}");
+    assert!(
+        fetch.contains("[turn2image1]") && fetch.contains("looks like"),
+        "{fetch}"
+    );
     let search = first_call.tool_description("WebSearch");
     assert!(!search.is_empty() && !search.contains("image1"), "{search}");
 
@@ -100,8 +116,14 @@ async fn an_answer_shows_the_pictures_it_names_and_nothing_else() {
     let read = answer_call.text();
     assert!(read.contains("[turn1search1]"), "the page has no number");
     assert!(read.contains("[turn1image1] Gooseneck Kettle"), "{read}");
-    assert!(read.contains("[turn1image2] Step 1: fill to the line"), "{read}");
-    assert!(!read.contains("big.png"), "the model read a picture's address");
+    assert!(
+        read.contains("[turn1image2] Step 1: fill to the line"),
+        "{read}"
+    );
+    assert!(
+        !read.contains("big.png"),
+        "the model read a picture's address"
+    );
 
     // What the chat reads.
     let refs = history["refs"].as_object().expect("refs").clone();
@@ -119,11 +141,17 @@ async fn an_answer_shows_the_pictures_it_names_and_nothing_else() {
         "one picture behind two addresses is kept once"
     );
     let saved = history["messages"].to_string();
-    assert!(saved.contains("[turn1image1]"), "the answer lost its numbers");
+    assert!(
+        saved.contains("[turn1image1]"),
+        "the answer lost its numbers"
+    );
 
     // Kept with the session: two files, the big one scaled to 1000 px.
     let images = session_dir(&w, &sid).join("images");
-    let files: Vec<_> = std::fs::read_dir(&images).expect("images/").flatten().collect();
+    let files: Vec<_> = std::fs::read_dir(&images)
+        .expect("images/")
+        .flatten()
+        .collect();
     assert_eq!(files.len(), 2, "{files:?}");
     let src = refs["turn1image1"]["src"].as_str().expect("src");
     let bytes = reqwest::get(format!("{}{src}", w.engine.base_url()))
@@ -137,7 +165,12 @@ async fn an_answer_shows_the_pictures_it_names_and_nothing_else() {
 
     // The next turn: no picture rides back to the model.
     w.turn(&sid, &root, "Thanks", Agent::Ling).await;
-    let next = w.model.calls_of(Agent::Ling).pop().expect("next call").text();
+    let next = w
+        .model
+        .calls_of(Agent::Ling)
+        .pop()
+        .expect("next call")
+        .text();
     for wire in ["image_url", "input_image", "data:image"] {
         assert!(!next.contains(wire), "a picture was resent ({wire})");
     }
@@ -146,7 +179,10 @@ async fn an_answer_shows_the_pictures_it_names_and_nothing_else() {
     w.api
         .delete("/api/sessions/all", json!({"session_id": sid}))
         .await;
-    assert!(!session_dir(&w, &sid).exists(), "the session's pictures outlived it");
+    assert!(
+        !session_dir(&w, &sid).exists(),
+        "the session's pictures outlived it"
+    );
     w.assert_all_scripted();
 }
 
@@ -176,12 +212,21 @@ async fn gpt_citation_markers_resolve_like_plain_numbers() {
         .await;
     let history = fetch_and_answer(&w, &sid).await;
     let calls = w.model.calls_of(Agent::Ling);
-    assert!(calls.iter().all(|c| c.path == "/v1/responses"), "not the Responses API");
+    assert!(
+        calls.iter().all(|c| c.path == "/v1/responses"),
+        "not the Responses API"
+    );
 
     let refs = history["refs"].as_object().expect("refs");
-    assert!(refs.contains_key("turn1image1") && refs.contains_key("turn1search1"), "{refs:?}");
+    assert!(
+        refs.contains_key("turn1image1") && refs.contains_key("turn1search1"),
+        "{refs:?}"
+    );
     let saved = history["messages"].to_string();
-    assert!(saved.contains("Pick this one.[turn1image1] [turn1search1]"), "{saved}");
+    assert!(
+        saved.contains("Pick this one.[turn1image1] [turn1search1]"),
+        "{saved}"
+    );
     assert!(!saved.contains('\u{e200}'), "a raw marker was saved");
     w.assert_all_scripted();
 }

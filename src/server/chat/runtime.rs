@@ -543,29 +543,7 @@ pub(super) async fn push_user_turn_with_recall(
             model_text.clone(),
         ));
 
-        // What the user sees: persisted as a chat message with
-        // from_id="memory-recall" so the UI can render a collapsible
-        // widget and the chat export naturally includes the recall. A
-        // distinct pseudo-sender, NOT "memory": that's the memory
-        // agent's id, and the dream mission's replies were being
-        // swallowed into recall chips by the collision. Content is the
-        // same text the model received — no separate channel — so what
-        // the user sees is exactly what the model saw — and, a row of the
-        // session, what every member reads as a note (`chat::thread`).
-        crate::server::chat::helpers::persist_and_emit_to_store(
-            &ctx.manager.global_sessions,
-            &ctx.events_tx,
-            &ctx.agent_id,
-            "memory-recall",
-            &ctx.agent_id,
-            &model_text,
-            ctx.session_id.as_deref(),
-            false,
-            None,
-            None,
-            None,
-        )
-        .await;
+        persist_recall(ctx, &model_text).await;
     }
 
     // Always-on per-turn capture nudge — model-only, fires every owner turn
@@ -584,6 +562,84 @@ pub(super) async fn push_user_turn_with_recall(
     engine
         .chat_history
         .push(crate::message::ChatMessage::new("user", ctx.labeled_msg()));
+}
+
+/// What the user sees: persisted as a chat message with
+/// from_id="memory-recall" so the UI can render a collapsible widget and
+/// the chat export naturally includes the recall. A distinct pseudo-sender,
+/// NOT "memory": that's the memory agent's id, and the dream mission's
+/// replies were being swallowed into recall chips by the collision. Content
+/// is the same text the model received — no separate channel — so what the
+/// user sees is exactly what the model saw — and, a row of the session,
+/// what every member reads as a note (`chat::thread`).
+async fn persist_recall(ctx: &ChatRunCtx, model_text: &str) {
+    save_recall(
+        &ctx.manager.global_sessions,
+        &ctx.events_tx,
+        &ctx.agent_id,
+        model_text,
+        ctx.session_id.as_deref(),
+    )
+    .await;
+}
+
+async fn save_recall(
+    store: &crate::state_fs::SessionStore,
+    events_tx: &broadcast::Sender<ServerEvent>,
+    agent_id: &str,
+    model_text: &str,
+    session_id: Option<&str>,
+) {
+    crate::server::chat::helpers::persist_and_emit_to_store(
+        store,
+        events_tx,
+        agent_id,
+        "memory-recall",
+        agent_id,
+        model_text,
+        session_id,
+        false,
+        None,
+        None,
+        None,
+    )
+    .await;
+}
+
+/// One owner turn's memory for a session whose loop is not an AgentEngine
+/// (a Claude session): the same recall, recall row and capture nudge a
+/// native owner turn gets. Returns the model-only text.
+pub(crate) async fn owner_turn_memory(
+    state: &Arc<ServerState>,
+    agent_id: &str,
+    prompt: &str,
+    session_id: &str,
+) -> String {
+    let config = state.manager.get_config_snapshot().await;
+    let recalled = auto_recall_memory(
+        state,
+        prompt,
+        Some(session_id),
+        config.agent.memory_inject_min_score,
+        config.agent.memory_recall_count,
+        None,
+    )
+    .await;
+    let mut parts = Vec::new();
+    if let Some(rows) = recalled {
+        let model_text = format_recall_for_model(&rows);
+        save_recall(
+            &state.manager.global_sessions,
+            &state.events_tx,
+            agent_id,
+            &model_text,
+            Some(session_id),
+        )
+        .await;
+        parts.push(model_text);
+    }
+    parts.push(crate::engine::prompt::core_block::CAPTURE_REMINDER.to_string());
+    parts.join("\n\n")
 }
 
 /// Forward an engine's thinking-channel events to the SSE event bus.

@@ -19,7 +19,11 @@ pub fn refs_for<'a>(
         ids.extend(super::ids_in(text));
     }
     let mut out = Map::new();
-    if ids.is_empty() || session_id.is_empty() || session_id.contains('/') || session_id.contains("..") {
+    if ids.is_empty()
+        || session_id.is_empty()
+        || session_id.contains('/')
+        || session_id.contains("..")
+    {
         return out;
     }
     let refs = table::load(&store.session_dir(session_id));
@@ -91,12 +95,21 @@ mod tests {
             failed.failed = true;
             let mut remote = Ref::picture(picture_id(t, 4), "https://i.example/4.jpg", "remote");
             remote.from_url = true;
-            vec![Ref::source(source_id(t, 1), "https://a.example", "A"), kept, pending, failed, remote]
+            vec![
+                Ref::source(source_id(t, 1), "https://a.example", "A"),
+                kept,
+                pending,
+                failed,
+                remote,
+            ]
         });
         let refs = refs_for(
             &store,
             "sess-1-a",
-            ["See [turn1search1] [turn1image1] [turn1image2]", "[turn1image3][turn1image4] [turn7image1]"],
+            [
+                "See [turn1search1] [turn1image1] [turn1image2]",
+                "[turn1image3][turn1image4] [turn7image1]",
+            ],
         );
         let keys: Vec<&str> = refs.keys().map(String::as_str).collect();
         assert_eq!(keys, vec!["turn1search1", "turn1image1", "turn1image4"]);

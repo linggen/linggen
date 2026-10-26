@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { observeTool, permissionRequest, queryPrompt, sessionPermissionSettings } from './runner';
+import { observeTool, permissionRequest, queryPrompt, sessionPermissionSettings, turnContext } from './runner';
 
 describe('SDK-owned permissions with Linggen widgets', () => {
   test('observing a tool cannot approve or deny it', async () => {
@@ -88,4 +88,11 @@ test('remembering a tool does not silently upgrade the SDK permission mode', asy
   });
   expect(result.updatedPermissions).toHaveLength(1);
   expect(result.updatedPermissions![0].type).toBe('addRules');
+});
+
+test('the host\'s turn memory reaches the SDK as prompt context, and nothing when empty', async () => {
+  expect(await turnContext('From memory: tabs')()).toEqual({
+    hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: 'From memory: tabs' } });
+  expect(await turnContext('')()).toEqual({});
+  expect(await turnContext(undefined)()).toEqual({});
 });
