@@ -357,8 +357,6 @@ impl OllamaClient {
         let reader = tokio_util::io::StreamReader::new(stream);
         let lines = FramedRead::new(reader, LinesCodec::new());
 
-        use crate::provider::models::ToolCallChunk;
-
         // Use map + flat_map instead of filter_map so that a single Ollama
         // response line can yield multiple StreamChunks (e.g. parallel tool calls).
         // Calls already read in earlier lines: a streaming Ollama can send
@@ -424,32 +422,7 @@ impl OllamaClient {
                 // Check for tool_calls in the message.
                 // One StreamChunk per tool call, numbered across the stream.
                 if let Some(tool_calls) = message.get("tool_calls").and_then(|v| v.as_array()) {
-                    let mut chunks = Vec::with_capacity(tool_calls.len());
-                    let first = calls_seen;
-                    calls_seen += tool_calls.len();
-                    for (idx, tc) in tool_calls.iter().enumerate() {
-                        let func = match tc.get("function") {
-                            Some(f) => f,
-                            None => continue,
-                        };
-                        let name = func
-                            .get("name")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
-                        let arguments = func.get("arguments").map(|v| v.to_string());
-                        let id = format!(
-                            "call_{}",
-                            &uuid::Uuid::new_v4().to_string().replace('-', "")[..24]
-                        );
-                        chunks.push(Ok(StreamChunk::ToolCall(ToolCallChunk {
-                            index: first + idx,
-                            id: Some(id),
-                            name,
-                            arguments_delta: arguments,
-                            thought_signature: None,
-                        })));
-                    }
-                    return chunks;
+                    return tool_call_chunks(tool_calls, &mut calls_seen);
                 }
 
                 // Regular text content — only emit `content`, not `thinking`.
@@ -767,4 +740,84 @@ struct ChatStreamResponse {
     prompt_eval_count: Option<u64>,
     #[serde(default)]
     eval_count: Option<u64>,
+}
+
+/// One line's `tool_calls` → one chunk per call, numbered after the
+/// `calls_seen` earlier lines held. Ollama streams parallel calls one per
+/// line, each array starting at 0: numbered per line, the second call
+/// overwrote the first's name and appended to its arguments.
+fn tool_call_chunks(
+    tool_calls: &[serde_json::Value],
+    calls_seen: &mut usize,
+) -> Vec<Result<StreamChunk>> {
+    use crate::provider::models::ToolCallChunk;
+    let first = *calls_seen;
+    *calls_seen += tool_calls.len();
+    let mut chunks = Vec::with_capacity(tool_calls.len());
+    for (idx, tc) in tool_calls.iter().enumerate() {
+        let Some(func) = tc.get("function") else {
+            continue;
+        };
+        let name = func
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let arguments = func.get("arguments").map(|v| v.to_string());
+        let id = format!(
+            "call_{}",
+            &uuid::Uuid::new_v4().to_string().replace('-', "")[..24]
+        );
+        chunks.push(Ok(StreamChunk::ToolCall(ToolCallChunk {
+            index: first + idx,
+            id: Some(id),
+            name,
+            arguments_delta: arguments,
+            thought_signature: None,
+        })));
+    }
+    chunks
+}
+
+#[cfg(test)]
+mod tool_call_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// Recorded from qwen3.8 on Ollama (2026-10-26): two parallel calls, one
+    /// per streamed line, each line's array numbered from 0.
+    #[test]
+    fn parallel_calls_on_separate_lines_stay_separate() {
+        let lines = [
+            json!([{"id": "call_x", "function": {"index": 0, "name": "WebSearch",
+                    "arguments": {"query": "pressurized basket"}}}]),
+            json!([{"id": "call_y", "function": {"index": 1, "name": "ImageSearch",
+                    "arguments": {"query": "basket photo"}}}]),
+        ];
+        let mut seen = 0;
+        let calls: Vec<_> = lines
+            .iter()
+            .flat_map(|l| tool_call_chunks(l.as_array().unwrap(), &mut seen))
+            .map(|c| match c.unwrap() {
+                StreamChunk::ToolCall(tc) => {
+                    (tc.index, tc.name.unwrap(), tc.arguments_delta.unwrap())
+                }
+                _ => unreachable!(),
+            })
+            .collect();
+        assert_eq!(
+            calls,
+            vec![
+                (
+                    0,
+                    "WebSearch".into(),
+                    r#"{"query":"pressurized basket"}"#.into()
+                ),
+                (
+                    1,
+                    "ImageSearch".into(),
+                    r#"{"query":"basket photo"}"#.into()
+                ),
+            ]
+        );
+    }
 }
