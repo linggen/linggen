@@ -19,7 +19,7 @@ const isApp = (s: SkillInfoFull): s is AppSkill => !!s.app;
 
 
 /** Apps that ship a settings.html (others have no per-app settings to show). */
-const HAS_SETTINGS = new Set(['cfo', 'apple-shifu', 'mac-shifu', 'sys-doctor', 'pulse', 'dj']);
+const HAS_SETTINGS = new Set(['cfo', 'apple-shifu', 'mac-shifu', 'sys-doctor', 'pulse', 'dj', 'lingjing']);
 
 type Section = { id: string; label: string; kind: 'general' | 'account' | 'model' | 'yinyue' | 'app'; skill?: AppSkill };
 
