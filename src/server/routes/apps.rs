@@ -17,6 +17,11 @@ pub(super) fn routes() -> Routes {
             "/api/skill-cloud/{skill}/sync",
             post(api::skill_cloud::post_sync),
         )
+        // A paired phone of the same account keeping its own play in step (skill_save.rs).
+        .route(
+            "/api/skill-save/{skill}",
+            get(api::skill_save::get_save).put(api::skill_save::put_save),
+        )
         .route(
             "/apps/{skill_name}/capability/{tool_name}",
             post(capability_dispatch),

@@ -20,6 +20,7 @@ pub(super) mod permissions;
 pub(super) mod rooms;
 pub(super) mod sessions;
 pub(super) mod skill_cloud;
+pub(super) mod skill_save;
 pub(super) mod skill_sync;
 pub(super) mod skill_tools;
 pub(super) mod skills;

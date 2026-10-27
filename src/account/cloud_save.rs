@@ -19,6 +19,7 @@ use crate::engine::skill::{Skill, SkillSource};
 
 mod files;
 pub mod lock;
+pub mod peer;
 
 use files::{plain, Files, Layout};
 
