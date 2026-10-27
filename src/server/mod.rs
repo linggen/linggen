@@ -12,6 +12,7 @@ mod mac_tools;
 mod mcp;
 mod mcp_agent;
 mod met_watch;
+mod push;
 pub(crate) mod milestones;
 mod quests_watch;
 mod resident;

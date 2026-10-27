@@ -79,6 +79,14 @@ pub(super) fn routes() -> Routes {
             "/api/ling-mem/client/access/{id}",
             get(api::ling_mem_client::access_status),
         )
+        // Push: the phone registers and acks; the Mac raises (doc/phone-push-spec.md)
+        .route(
+            "/api/push/device",
+            post(crate::server::push::post_device).delete(crate::server::push::delete_device),
+        )
+        .route("/api/push/told", post(crate::server::push::post_told))
+        .route("/api/push/status", get(crate::server::push::get_status))
+        .route("/api/push/notice", post(crate::server::push::post_notice))
         // Topics and the activity log
         .route("/api/topic/publish", post(api::topic::publish))
         .route("/api/topic/latest", get(api::topic::latest))

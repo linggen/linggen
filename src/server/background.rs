@@ -36,6 +36,8 @@ pub(super) fn spawn_background_tasks(
     spawn_perception(state);
     // What this Mac's apps let another device's agent call (`mac/tools`).
     tokio::spawn(super::mac_tools::publish_loop(state.clone()));
+    // Lines a skill declared for a closed phone, rung through APNs (push/).
+    super::push::spawn(state);
     // Which agents are met (`mac/agents`), and the moment one is.
     tokio::spawn(super::met_watch::watch_loop(state.clone()));
     sweep_stale_runs(state);

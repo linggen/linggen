@@ -140,6 +140,51 @@ pub async fn stamp_quest(skill: &Skill, id: &str, at: &str) -> Result<(), Refusa
     }
 }
 
+/// Run a skill's `notices[].facts` command in its working folder and hand
+/// back what it printed: the notice the line says, or nothing. A read: it
+/// may look at the skill's data, never change it.
+pub async fn notice_facts(skill: &Skill, cmd: &str) -> Result<String, Refusal> {
+    let tool = SkillToolDef {
+        name: "notices.facts".into(),
+        description: "What a declared line would say.".into(),
+        cmd: cmd.to_string(),
+        endpoint: None,
+        tier: Some("read".into()),
+        args: Default::default(),
+        returns: None,
+        timeout_ms: STAMP_TIMEOUT_MS,
+        max_output_bytes: 16 * 1024,
+        page_only: true,
+        others_read: Vec::new(),
+        pet: false,
+        remote: false,
+        skill_name: Some(skill.name.clone()),
+        skill_dir: skill.skill_dir.clone(),
+        senses: skill.senses.clone(),
+        session_params: Default::default(),
+    };
+    let cwd = working_folder(skill);
+    let mut env: Vec<(String, String)> = crate::reach::tool_env().into_iter().collect();
+    if let Some(dir) = &skill.skill_dir {
+        env.push(("SKILL_DIR".into(), dir.to_string_lossy().into_owned()));
+    }
+    let ran = tokio::task::spawn_blocking(move || tool.execute(&serde_json::json!({}), &cwd, &env)).await;
+    match ran {
+        Ok(Ok(ToolResult::CommandOutput {
+            exit_code: Some(0),
+            stdout,
+            ..
+        })) => Ok(stdout),
+        Ok(Ok(other)) => Err(Refusal::BadCall(format!(
+            "'{}' notice facts failed: {}",
+            skill.name,
+            output(other)
+        ))),
+        Ok(Err(e)) => Err(Refusal::BadCall(format!("{e:#}"))),
+        Err(e) => Err(Refusal::Crashed(format!("{e}"))),
+    }
+}
+
 const STAMP_TIMEOUT_MS: u64 = 10_000;
 
 /// The skill's stamp command as a shell tool with two string arguments.

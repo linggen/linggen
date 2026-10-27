@@ -177,6 +177,34 @@ pub struct QuestsConfig {
     pub facts: std::collections::BTreeMap<String, String>,
 }
 
+/// A line the skill may have Yinyue tell a closed phone (`notices:`), pushed
+/// by the Mac — see `doc/phone-push-spec.md`. The engine names no app: it
+/// carries the declaration, runs `facts` when the skill's `after` mission
+/// ends, and hands her the skill's `prompt` with what `facts` printed.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct NoticeDecl {
+    /// The line's id; the herald knows it as `<skill>.<line>`.
+    pub line: String,
+    pub tier: NoticeTier,
+    /// Her job for this line, a file in the skill's folder.
+    pub prompt: String,
+    /// The skill's mission whose finishing raises the line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<String>,
+    /// Prints the notice (`{key, facts, route?, until?}`), or nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub facts: Option<String>,
+}
+
+/// How much a line may interrupt: the herald's three tiers.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum NoticeTier {
+    Warning,
+    Hand,
+    Record,
+}
+
 /// Where the skill's sessions stand for each agent: the text the engine puts
 /// under `## Where you are` when that agent speaks there, and whether the
 /// agent is there at all yet. Keyed by agent id. The engine names no app and
@@ -490,6 +518,9 @@ pub struct Skill {
     /// Which phone facts stamp which of the skill's quests, and how.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quests: Option<QuestsConfig>,
+    /// Lines it may push to a closed phone — see [`NoticeDecl`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notices: Vec<NoticeDecl>,
     /// Where the skill's sessions stand for each agent — see [`Places`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub place: Option<Places>,

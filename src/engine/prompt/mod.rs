@@ -226,6 +226,14 @@ impl Soul {
     }
 }
 
+/// An agent's soul alone — `## Identity` then the rest of its spec body, no
+/// place and no tools: what a one-shot line in its voice is written from
+/// (a push the Mac writes for a phone, `server/push`).
+pub(crate) fn soul_text(personality: &str, spec_body: &str) -> String {
+    let soul = Soul::of(personality, spec_body);
+    join_sections([soul.identity, soul.body])
+}
+
 fn join_sections(parts: impl IntoIterator<Item = String>) -> String {
     parts
         .into_iter()

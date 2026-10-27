@@ -332,6 +332,16 @@ quests:
 - The writer must never move `done_at` back, and must exit 0 once the file holds the stamp or a later one. Any other exit is a failure, and the engine tries again when the phone next connects.
 - The engine names no app: a kind stamps whatever declares it.
 
+## Notices
+
+A skill may declare the lines Yinyue may tell a closed phone, pushed by the
+Mac (`notices:`, a list of `{line, tier, prompt, after?, facts?}`). When the
+skill's `after` mission ends well the engine runs `facts`; what it prints
+(`{key, facts, route?, until?}`) is queued, and at the line's time, if the
+phone has not told it, she writes it from the skill's `prompt` and the Mac
+seals and pushes it. Code may also raise one with `POST /api/push/notice`.
+Wire, timing and dedupe: [phone-push-spec.md](phone-push-spec.md).
+
 ## Place
 
 An agent's soul is the same everywhere (`doc/persona-design.md`). A skill's sessions seat the agents it declares (`members: [ling, yinyue]`, the lead first; absent → the lead agent alone — `doc/shared-session-spec.md`). For the lead, the SKILL.md body already is its place. `place:` is for the other members at the skill's table, keyed by agent id:

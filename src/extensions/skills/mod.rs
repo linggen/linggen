@@ -381,6 +381,9 @@ struct SkillFrontmatter {
     /// Phone facts → the skill's quests — see `doc/skill-spec.md` § Quests.
     #[serde(default)]
     quests: Option<crate::engine::skill::QuestsConfig>,
+    /// Lines pushed to a closed phone — see `NoticeDecl`.
+    #[serde(default)]
+    notices: Vec<crate::engine::skill::NoticeDecl>,
     /// Where the skill's sessions stand for each agent, and whether an
     /// agent is there yet — see `doc/skill-spec.md` § Place.
     #[serde(default)]
@@ -650,6 +653,7 @@ pub fn parse_skill_text(text: &str, source: SkillSource) -> Result<Skill> {
         tool_defs.push(page_update_tool_def());
     }
     let cloud = cloud_if_allowed(frontmatter.cloud, &frontmatter.name, &source);
+    let notices = usable_notices(frontmatter.notices, &frontmatter.name);
     let senses = known_senses(frontmatter.senses, &frontmatter.name);
     let session_params =
         crate::engine::skill::params::usable(&frontmatter.name, frontmatter.session_params);
@@ -694,6 +698,7 @@ pub fn parse_skill_text(text: &str, source: SkillSource) -> Result<Skill> {
         closing_ask: frontmatter.closing_ask,
         queue: frontmatter.queue,
         quests: frontmatter.quests,
+        notices,
         place: frontmatter.place,
         members: frontmatter
             .members
@@ -718,6 +723,28 @@ fn known_senses(declared: Vec<String>, name: &str) -> Vec<String> {
                 tracing::warn!("skill '{name}': unknown sense '{s}'; ignored");
             }
             known
+        })
+        .collect()
+}
+
+/// The `notices:` that can work: a line id the herald can key on, and no
+/// prompt that climbs out of the skill's folder. The rest are logged and
+/// dropped; the skill still loads.
+fn usable_notices(
+    notices: Vec<crate::engine::skill::NoticeDecl>,
+    skill: &str,
+) -> Vec<crate::engine::skill::NoticeDecl> {
+    notices
+        .into_iter()
+        .filter(|n| {
+            let ok = crate::engine::skill::tools::valid_quest_id(&n.line)
+                && !n.prompt.trim().is_empty()
+                && !n.prompt.contains("..")
+                && !n.prompt.starts_with('/');
+            if !ok {
+                tracing::warn!("skill '{skill}': notice '{}' ignored (line id or prompt path)", n.line);
+            }
+            ok
         })
         .collect()
 }
@@ -1043,6 +1070,20 @@ Help commit."#;
         let plain =
             parse_skill_text("---\nname: zz\ndescription: d\n---\nB", SkillSource::Global).unwrap();
         assert!(plain.quests.is_none());
+    }
+
+    /// A skill declares the lines it may push to a closed phone; a line id
+    /// the herald can't key on, or a prompt outside its folder, is dropped.
+    #[test]
+    fn a_skill_declares_its_push_lines() {
+        let text = "---\nname: zz\ndescription: d\nnotices:\n  - line: watch\n    tier: record\n    prompt: notices/watch.md\n    after: watch\n    facts: perl scripts/x.pl notice\n  - line: Bad Id\n    tier: hand\n    prompt: p.md\n  - line: sneaky\n    tier: hand\n    prompt: ../../etc/passwd\n---\nBody.";
+        let skill = parse_skill_text(text, SkillSource::Global).unwrap();
+        assert_eq!(skill.notices.len(), 1);
+        let n = &skill.notices[0];
+        assert_eq!(n.line, "watch");
+        assert_eq!(n.tier, crate::engine::skill::NoticeTier::Record);
+        assert_eq!(n.after.as_deref(), Some("watch"));
+        assert_eq!(n.facts.as_deref(), Some("perl scripts/x.pl notice"));
     }
 
     /// A skill says where its sessions stand for each agent, and may keep one

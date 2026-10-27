@@ -37,6 +37,8 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "ti
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream", "cookies"] }
 uuid = { version = "1", features = ["v4"] }
 sha2 = "0.10"
+# AES-256-GCM for the sealed push note (already in the tree via rustls).
+ring = "0.17"
 qrcode = "0.14"
 # Answer pictures: decode and scale to ~1000 px before keeping (engine/answer_refs).
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
