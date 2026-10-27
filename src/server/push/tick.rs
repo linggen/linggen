@@ -16,6 +16,7 @@ use super::store::{self, LastPush, Pending, Phone};
 use super::{compose, seal, timing};
 
 const TICK_SECS: u64 = 60;
+const COMPOSE_CEILING_SECS: u64 = 90;
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum Step {
@@ -151,7 +152,14 @@ async fn her_words(
         .iter()
         .find(|n| n.line == p.line)
         .ok_or("line no longer declared")?;
-    let words = compose::write(state, &skill, decl, language, &p.facts).await?;
+    // Her model takes one stream at a time; a hung one must not hold every
+    // push behind it. Out of time is no words yet — the next try asks again.
+    let words = tokio::time::timeout(
+        Duration::from_secs(COMPOSE_CEILING_SECS),
+        compose::write(state, &skill, decl, language, &p.facts),
+    )
+    .await
+    .map_err(|_| "her model took too long".to_string())??;
     let told = p.told_key();
     store::modify(|s| {
         if let Some(q) = s.queue.iter_mut().find(|q| q.told_key() == told) {
