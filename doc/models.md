@@ -44,7 +44,7 @@ just sign in:
 ling account login  # Opens browser → sign in to linggen.dev
 ```
 
-The ChatGPT built-ins (`gpt-6.1-sol`, `gpt-6-luna` — Luna is the default) are also present in every install and
+The ChatGPT built-ins (`gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-luna` — Luna is the default) are also present in every install and
 need only a ChatGPT sign-in (Settings → Models → Sign in with ChatGPT).
 The same sign-in draws pictures: `GenerateImage` asks Luna with the
 Responses API's `image_generation` tool (about 30 s a picture, PNG). The

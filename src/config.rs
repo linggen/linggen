@@ -1049,7 +1049,11 @@ mod tests {
         cfg.migrate_retired_chatgpt_builtins();
         assert_eq!(
             cfg.routing.default_models,
-            vec!["gpt-6-luna".to_string(), "gpt-6.1-sol".to_string()]
+            vec![
+                "gpt-6.1-terra".to_string(),
+                "gpt-6-luna".to_string(),
+                "gpt-6.1-sol".to_string()
+            ]
         );
         assert_eq!(cfg.pet.model, "gpt-6-luna");
 
