@@ -227,15 +227,18 @@ pub(crate) fn asked_kickoff(moments: &[Moment]) -> String {
 }
 
 /// What one wake takes, and what stays queued. When the user asked for
-/// something, only the asked moments are answered now; the rest wait for
-/// the quiet as if nothing had been asked. Otherwise the wake takes all.
+/// something, the oldest ask is answered now — one ask, one answer: asks
+/// that came while another was being answered each get their own wake next,
+/// in order, never one line for several (2026-10-27: a page asking five
+/// times heard one or two). The unasked wait for the quiet as if nothing had
+/// been asked. Otherwise the wake takes all.
 fn take_for_wake(moments: Vec<Moment>) -> (Vec<Moment>, Vec<Moment>) {
-    let (asked, waiting): (Vec<Moment>, Vec<Moment>) = moments.into_iter().partition(|m| m.asked);
-    if asked.is_empty() {
-        (waiting, Vec::new())
-    } else {
-        (asked, waiting)
-    }
+    let Some(first) = moments.iter().position(|m| m.asked) else {
+        return (moments, Vec::new());
+    };
+    let mut stay = moments;
+    let ask = stay.remove(first);
+    (vec![ask], stay)
 }
 
 /// The mood to wear: the newest moment that named one.
@@ -260,12 +263,12 @@ fn room_now(state: &Arc<ServerState>, now: u64) -> Room {
 
 /// Asked moments nobody will answer — the pet is off. The page that asked
 /// hears so (`device_topic` yinyue/unanswered) instead of waiting on silence.
-pub(crate) fn tell_unanswered(state: &Arc<ServerState>, moments: &[Moment]) {
+pub(crate) fn tell_unanswered(state: &Arc<ServerState>, moments: &[Moment], reason: &str) {
     for m in moments.iter().filter(|m| m.asked) {
         let _ = state.events_tx.send(super::ServerEvent::DeviceTopic {
             topic: "yinyue".to_string(),
             op: "unanswered".to_string(),
-            payload: serde_json::json!({ "app": m.app, "text": m.text, "reason": "pet-off" }),
+            payload: serde_json::json!({ "app": m.app, "text": m.text, "reason": reason }),
             from_device: None,
         });
     }
@@ -416,7 +419,7 @@ pub async fn yinyue_moment_loop(state: Arc<ServerState>) {
         };
         let pet_on = state.manager.get_config_snapshot().await.pet.enabled;
         if !pet_on || !super::resident::here(&state).await {
-            tell_unanswered(&state, &taken);
+            tell_unanswered(&state, &taken, "pet-off");
             continue; // pet off, or not met: the moments are dropped, nobody to say them
         }
         LAST_WAKE_AT.store(now, Ordering::Relaxed);
@@ -445,6 +448,11 @@ pub async fn yinyue_moment_loop(state: Arc<ServerState>) {
             )
             .await;
             IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner()).clear();
+            // An ask that got no line (not there at that table any more, the run failed, or silence) is
+            // said to be unanswered, so the page that asked falls back at once instead of waiting it out.
+            if asked && line.is_none() {
+                tell_unanswered(&state, &taken, "no-line");
+            }
             land_in_chats(&state, &taken, line.as_deref(), table.as_deref()).await;
         });
     }
@@ -702,6 +710,25 @@ mod tests {
         let (taken, stay) = take_for_wake(vec![quiet.clone()]);
         assert_eq!(taken, vec![quiet]);
         assert!(stay.is_empty());
+    }
+
+    #[test]
+    fn asks_that_queued_up_are_answered_one_a_wake_in_order() {
+        let ask = |at: u64, text: &str| Moment {
+            text: text.into(),
+            asked: true,
+            ..m(at, false)
+        };
+        let quiet = m(1, false);
+        let (taken, stay) =
+            take_for_wake(vec![quiet.clone(), ask(2, "a"), ask(3, "b"), ask(4, "c")]);
+        assert_eq!(taken, vec![ask(2, "a")], "the oldest ask, alone");
+        assert_eq!(stay, vec![quiet.clone(), ask(3, "b"), ask(4, "c")]);
+        let (taken, stay) = take_for_wake(stay);
+        assert_eq!(taken, vec![ask(3, "b")]);
+        let (taken, stay) = take_for_wake(stay);
+        assert_eq!(taken, vec![ask(4, "c")]);
+        assert_eq!(stay, vec![quiet]);
     }
 
     fn in_chat(session: Option<&str>, converse: bool) -> Moment {
