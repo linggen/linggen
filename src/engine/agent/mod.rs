@@ -779,6 +779,7 @@ impl AgentManager {
         let new_models = Arc::new(ModelManager::new(new_config.models.clone()));
         *self.models.write().await = new_models;
         crate::language::set_setting(new_config.language.clone());
+        crate::provider::set_first_event_timeout(new_config.routing.first_event_timeout_secs);
         *self.config.write().await = new_config.clone();
         let was_muted = self
             .pet_muted

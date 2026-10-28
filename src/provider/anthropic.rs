@@ -214,7 +214,7 @@ impl AnthropicClient {
         );
 
         let rb = self.apply_auth(self.http.post(&url).json(&req))?;
-        let first = crate::provider::FirstEvent::start();
+        let first = crate::provider::FirstEvent::start(&self.base_url);
         let resp = first
             .within(rb.send())
             .await?

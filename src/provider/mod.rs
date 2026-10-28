@@ -34,8 +34,8 @@ pub(crate) fn stream_read_error(e: impl std::fmt::Display) -> anyhow::Error {
 }
 
 /// Seconds of total silence the first answer of a call may take: no response
-/// headers and no first stream event. Unset (`0` here) means the built-in
-/// default; `Some(0)` from config turns the guard off.
+/// headers and no first stream event. Holds `[routing].first_event_timeout_secs`
+/// (the built-in default when that is unset); `0` means the guard is off.
 static FIRST_EVENT_SECS: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(DEFAULT_FIRST_EVENT_SECS);
 const DEFAULT_FIRST_EVENT_SECS: u64 = 30;
@@ -70,8 +70,12 @@ pub(crate) struct FirstEvent {
 }
 
 impl FirstEvent {
-    pub(crate) fn start() -> Self {
-        let window = first_event_window();
+    /// The guard for one call to `base_url`. A backend on this machine
+    /// (Ollama, MLX, LM Studio) is exempt: its silence is a model loading or
+    /// a long prompt being read, and leaving it for the chain would leave
+    /// the machine.
+    pub(crate) fn start(base_url: &str) -> Self {
+        let window = first_event_window().filter(|_| !is_local_backend(base_url));
         Self {
             window,
             deadline: window.map(|w| tokio::time::Instant::now() + w),
@@ -97,6 +101,19 @@ impl FirstEvent {
             )
             .into()
         })
+    }
+}
+
+/// Whether `base_url` names this machine: `localhost` or a loopback address.
+pub(crate) fn is_local_backend(base_url: &str) -> bool {
+    let Ok(url) = url::Url::parse(base_url) else {
+        return false;
+    };
+    match url.host() {
+        Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
     }
 }
 
@@ -143,6 +160,27 @@ mod first_event_tests {
             .await
             .unwrap_err();
         assert_eq!(error::kind_of(&err), error::ProviderErrorKind::Stalled);
+    }
+
+    #[test]
+    fn a_local_backend_is_exempt_from_the_guard() {
+        for local in [
+            "http://127.0.0.1:11434/v1",
+            "http://localhost:8080",
+            "http://LOCALHOST:1234/v1",
+            "http://[::1]:11434",
+        ] {
+            assert!(is_local_backend(local), "{local}");
+            assert!(FirstEvent::start(local).window.is_none(), "{local}");
+        }
+        for remote in [
+            "https://api.openai.com/v1",
+            "https://linggen.dev/api/llm",
+            "http://192.168.1.20:11434",
+            "not a url",
+        ] {
+            assert!(!is_local_backend(remote), "{remote}");
+        }
     }
 
     #[test]

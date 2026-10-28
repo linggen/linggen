@@ -445,7 +445,7 @@ impl OpenAiClient {
                 }),
             )
         };
-        let first = crate::provider::FirstEvent::start();
+        let first = crate::provider::FirstEvent::start(&self.base_url);
         let resp = first.within(self.send_turn(rb, app)).await??;
         parse_sse(resp, parse, &first).await
     }
@@ -482,7 +482,7 @@ impl OpenAiClient {
                 Box::new(chat_completions::parse_tool_chunk),
             )
         };
-        let first = crate::provider::FirstEvent::start();
+        let first = crate::provider::FirstEvent::start(&self.base_url);
         let resp = first.within(self.send_turn(rb, app)).await??;
         parse_sse(resp, parse, &first).await
     }
@@ -497,7 +497,7 @@ mod first_event_wire_tests {
 
     /// A backend on a local socket: it reads the request, waits `delay`, then
     /// answers `reply` (headers and the first event in one write).
-    async fn backend(delay: Duration, reply: &'static str) -> String {
+    async fn backend(delay: Duration, reply: &'static str) -> std::net::SocketAddr {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
@@ -510,13 +510,30 @@ mod first_event_wire_tests {
             let _ = sock.write_all(reply.as_bytes()).await;
             tokio::time::sleep(Duration::from_secs(5)).await;
         });
-        format!("http://{addr}")
+        addr
     }
 
     const SSE: &str = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\ndata: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n";
 
-    async fn ask(base: String) -> Result<()> {
-        let client = OpenAiClient::new(base, Some("k".into()));
+    /// Ask the backend as a remote host would be asked: a non-loopback name
+    /// pointed at the local socket, so the local-backend exemption stays out.
+    async fn ask(addr: std::net::SocketAddr) -> Result<()> {
+        let host = "backend.example";
+        let mut client =
+            OpenAiClient::new(format!("http://{host}:{}", addr.port()), Some("k".into()));
+        client.http = Client::builder().resolve(host, addr).build().unwrap();
+        send(client).await
+    }
+
+    async fn ask_local(addr: std::net::SocketAddr) -> Result<()> {
+        send(OpenAiClient::new(
+            format!("http://{addr}"),
+            Some("k".into()),
+        ))
+        .await
+    }
+
+    async fn send(client: OpenAiClient) -> Result<()> {
         let msgs = vec![crate::message::ChatMessage::new("user", "hi".to_string())];
         client
             .chat_tool_stream("m", &msgs, vec![], None, None)
@@ -542,6 +559,13 @@ mod first_event_wire_tests {
         ask(prompt)
             .await
             .expect("an answer inside the window passes");
+
+        // The same silence from a model on this machine (Ollama, MLX) is a
+        // load, not a stall: it is waited out.
+        let loading = backend(Duration::from_millis(1500), SSE).await;
+        ask_local(loading)
+            .await
+            .expect("a local backend is exempt from the guard");
 
         crate::provider::set_first_event_timeout(None);
     }
