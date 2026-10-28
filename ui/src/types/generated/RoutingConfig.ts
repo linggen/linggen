@@ -10,4 +10,11 @@ default_models: Array<string>,
  * When true, automatically try the next model on transient errors
  * (timeout, rate limit, 502/503, connection failures). Default: true.
  */
-auto_fallback: boolean, };
+auto_fallback: boolean, 
+/**
+ * Seconds a model may say nothing at all — no response headers, no
+ * first stream event — before the call is abandoned and retried (then
+ * moved down the chain). Unset: 30. `0` turns the guard off. A backend
+ * on this machine (localhost, loopback) is exempt.
+ */
+first_event_timeout_secs: number | null, };

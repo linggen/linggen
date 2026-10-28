@@ -437,7 +437,8 @@ pub struct RoutingConfig {
     pub auto_fallback: bool,
     /// Seconds a model may say nothing at all — no response headers, no
     /// first stream event — before the call is abandoned and retried (then
-    /// moved down the chain). Unset: 30. `0` turns the guard off.
+    /// moved down the chain). Unset: 30. `0` turns the guard off. A backend
+    /// on this machine (localhost, loopback) is exempt.
     #[serde(default)]
     pub first_event_timeout_secs: Option<u64>,
 }
