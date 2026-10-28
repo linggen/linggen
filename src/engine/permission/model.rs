@@ -987,17 +987,40 @@ fn path_token(word: &str) -> Option<String> {
 /// not to the session's folder — `cd skills && ls ../other` reaches
 /// `linggen/other`, never the session folder's parent. Only a plain `cd`
 /// to a directory that exists, with no variable, glob or subshell syntax
-/// anywhere in the command, is followed; anything else resolves against the
-/// session's folder as before.
+/// anywhere in the command, is followed, and only across `&&`, `;` and a
+/// newline. After `|`, `||` or `&` the shell's own folder is not known to
+/// have moved (a pipeline stage is a subshell, `||` runs only when the cd
+/// failed, `&` backgrounds it), so the rest resolves from the session's
+/// folder as before.
 pub(super) fn command_targets(cmd: &str, session_cwd: &Path) -> Vec<PathBuf> {
-    let words = shell_words(cmd);
     let mut cwd = session_cwd.to_path_buf();
     let mut following = !has_subshell_syntax(cmd);
     let mut at_command = true;
     let mut cd_pending = false;
+    // A cd after `&&` may never have run; past the next `;` the folder is
+    // then unknown.
+    let mut after_and = false;
+    let mut moved_conditionally = false;
     let mut out = Vec::new();
-    for word in &words {
-        let w = word.trim();
+    for token in command_tokens(cmd) {
+        let w = match token {
+            Token::Op(joint) => {
+                // A bare `cd` goes home — not followed.
+                let unknown = cd_pending
+                    || joint == Joint::Break
+                    || joint == Joint::Seq && moved_conditionally;
+                if unknown {
+                    following = false;
+                    cwd = session_cwd.to_path_buf();
+                }
+                after_and = joint == Joint::And || (after_and && joint != Joint::Seq);
+                at_command = true;
+                cd_pending = false;
+                continue;
+            }
+            Token::Word(w) => w,
+        };
+        let w = w.as_str();
         if cd_pending && !is_cd_flag(w) {
             cd_pending = false;
             if let Some(token) = path_token(w) {
@@ -1005,7 +1028,10 @@ pub(super) fn command_targets(cmd: &str, session_cwd: &Path) -> Vec<PathBuf> {
             }
             if following {
                 match cd_destination(w, &cwd) {
-                    Some(dir) => cwd = dir,
+                    Some(dir) => {
+                        cwd = dir;
+                        moved_conditionally |= after_and;
+                    }
                     None => following = false,
                 }
             }
@@ -1013,7 +1039,7 @@ pub(super) fn command_targets(cmd: &str, session_cwd: &Path) -> Vec<PathBuf> {
             out.push(resolve_bash_arg(&token, &cwd));
         }
         cd_pending = cd_pending && is_cd_flag(w) || (at_command && w == "cd");
-        at_command = is_command_separator(w);
+        at_command = false;
     }
     out
 }
@@ -1022,8 +1048,76 @@ fn is_cd_flag(w: &str) -> bool {
     matches!(w, "-P" | "-L" | "-e" | "--")
 }
 
-fn is_command_separator(w: &str) -> bool {
-    matches!(w, "&&" | "||" | ";" | "|" | "&") || w.ends_with(';')
+/// How a control operator joins one command to the next.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Joint {
+    /// `;` or a newline: the next command runs in the same shell regardless.
+    Seq,
+    /// `&&`: the next command runs only when this one succeeded.
+    And,
+    /// `|`, `|&`, `||` or `&`: a cd before it does not move the shell.
+    Break,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Token {
+    Word(String),
+    Op(Joint),
+}
+
+/// Split a command into words and control operators, the way the shell
+/// does: quotes keep a span whole (and are retained), and an operator is
+/// its own token even when glued to a word (`x&`, `a|b`, `x;`). `>&`/`<&`
+/// (`2>&1`) and `&>` are redirections, not operators.
+fn command_tokens(cmd: &str) -> Vec<Token> {
+    fn flush(cur: &mut String, out: &mut Vec<Token>) {
+        if !cur.is_empty() {
+            out.push(Token::Word(std::mem::take(cur)));
+        }
+    }
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    let mut chars = cmd.chars().peekable();
+    while let Some(c) = chars.next() {
+        if let Some(q) = quote {
+            cur.push(c);
+            if c == q {
+                quote = None;
+            }
+            continue;
+        }
+        let op = match c {
+            '\'' | '"' => {
+                quote = Some(c);
+                cur.push(c);
+                continue;
+            }
+            ';' | '\n' => Joint::Seq,
+            '|' => {
+                chars.next_if(|&n| n == '|' || n == '&');
+                Joint::Break
+            }
+            '&' if cur.ends_with(['>', '<']) || chars.peek() == Some(&'>') => {
+                cur.push(c);
+                continue;
+            }
+            '&' if chars.next_if_eq(&'&').is_some() => Joint::And,
+            '&' => Joint::Break,
+            c if c.is_whitespace() => {
+                flush(&mut cur, &mut out);
+                continue;
+            }
+            c => {
+                cur.push(c);
+                continue;
+            }
+        };
+        flush(&mut cur, &mut out);
+        out.push(Token::Op(op));
+    }
+    flush(&mut cur, &mut out);
+    out
 }
 
 /// Parentheses, braces, backticks and `$(` open a scope the shell leaves

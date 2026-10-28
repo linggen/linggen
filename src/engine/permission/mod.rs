@@ -861,6 +861,49 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_cd_is_not_followed_past_a_pipe_an_or_or_a_background() {
+        let (ws, sp) = granted_workspace("joints");
+        // Session folder is `ws`; `skills/..` would be `ws`, but the shell
+        // never moved, so `..` really is ws's parent — outside the grant.
+        for cmd in [
+            "cd skills | cat ../other/secret",
+            "cd skills|cat ../other/secret",
+            "cd skills || ls ../other",
+            "cd skills||ls ../other",
+            "cd skills & ls ../other",
+            "cd skills& ls ../other",
+            "cd skills &ls ../other",
+            "cat x | cd skills && ls ../other",
+            "false && cd skills; ls ../other",
+            "cd; ls ../other",
+        ] {
+            let r = bash(cmd, &ws, &sp);
+            assert!(
+                matches!(r, PermissionCheckResult::NeedsPrompt(_)),
+                "{cmd}: {r:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_cd_is_followed_across_and_semicolon_and_newline() {
+        let (ws, sp) = granted_workspace("seq");
+        for cmd in [
+            "cd skills && ls ../other",
+            "cd skills&&ls ../other",
+            "cd skills; ls ../other",
+            "cd skills;ls ../other",
+            "cd skills\nls ../other",
+            "cd skills 2>&1 && ls ../other",
+            "cd skills && ls ../other | head",
+        ] {
+            // `../other` from `ws/skills` is `ws/other`, inside the grant.
+            let r = bash(cmd, &ws, &sp);
+            assert!(matches!(r, PermissionCheckResult::Allowed), "{cmd}: {r:?}");
+        }
+    }
+
     fn shellexpand_home(p: &str) -> std::path::PathBuf {
         match p.strip_prefix("~/") {
             Some(rest) => dirs::home_dir().unwrap().join(rest),
