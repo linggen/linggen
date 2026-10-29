@@ -36,9 +36,14 @@ export function subagentEvents(send: Send) {
       send({ type:'subagent_start', agent_id:id, ...value });
     return id;
   };
+  // The SDK's own helpers (the /compact summarizer) fire the Subagent hooks
+  // too, with no agent type and no task: no one asked for them, so they get
+  // no row. A real child has a type, or a task_started that registered it.
+  const internal = (event: any) => !event.agent_type && !tasks.has(event.agent_id);
   return {
-    start: async (event: any) => { ensure(event.agent_id, event.agent_type); return {}; },
+    start: async (event: any) => { if (!internal(event)) ensure(event.agent_id, event.agent_type); return {}; },
     stop: async (event: any) => {
+      if (internal(event)) return {};
       ensure(event.agent_id, event.agent_type);
       send({ type:'subagent_end', agent_id:event.agent_id, text:event.last_assistant_message, status:'completed' });
       return {};

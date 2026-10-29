@@ -15,6 +15,10 @@ pub(super) fn tracking_id(run: &str, agent: &str) -> String {
 #[derive(Default)]
 pub(super) struct Subagents {
     entries: BTreeMap<String, Value>,
+    /// The run each child was spawned in. One runner serves many runs and a
+    /// background child outlives the run that spawned it; it is saved under
+    /// that run alone, so history shows it once, on the turn that asked.
+    origins: BTreeMap<String, String>,
 }
 
 impl Subagents {
@@ -30,6 +34,7 @@ impl Subagents {
         if !self.entries.contains_key(raw) {
             let name = event["name"].as_str().unwrap_or("Claude subagent");
             let task = event["task"].as_str().unwrap_or_default();
+            self.origins.insert(raw.into(), host.run_id.clone());
             self.entries.insert(
                 raw.into(),
                 json!({"subagentId":id, "sdkTaskId":raw, "agentName":name, "task":task,
@@ -176,7 +181,7 @@ impl Subagents {
             }
             _ => {}
         }
-        save(host, &self.entries)?;
+        save(host, &self.entries, &self.origins)?;
         Ok(true)
     }
 
@@ -215,7 +220,30 @@ fn read(path: &Path) -> Value {
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
         .unwrap_or(json!({}))
 }
-fn save(host: &ClaudeSession, entries: &BTreeMap<String, Value>) -> Result<()> {
+/// Each child under the run that spawned it, never under every later run
+/// the runner serves: those copies froze at "running" and came back as a
+/// second, failed row for the same child.
+fn store_by_origin(
+    all: &mut Value,
+    entries: &BTreeMap<String, Value>,
+    origins: &BTreeMap<String, String>,
+    current: &str,
+) {
+    let mut by_run: BTreeMap<&str, Vec<&Value>> = BTreeMap::new();
+    for (raw, entry) in entries {
+        let run = origins.get(raw).map_or(current, String::as_str);
+        by_run.entry(run).or_default().push(entry);
+    }
+    for (run, list) in by_run {
+        all[run] = json!(list);
+    }
+}
+
+fn save(
+    host: &ClaudeSession,
+    entries: &BTreeMap<String, Value>,
+    origins: &BTreeMap<String, String>,
+) -> Result<()> {
     let path = host
         .state
         .manager
@@ -223,7 +251,7 @@ fn save(host: &ClaudeSession, entries: &BTreeMap<String, Value>) -> Result<()> {
         .session_dir(&host.meta.id)
         .join(FILE);
     let mut all = read(&path);
-    all[&host.run_id] = json!(entries.values().collect::<Vec<_>>());
+    store_by_origin(&mut all, entries, origins, &host.run_id);
     let temporary = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
     std::fs::write(&temporary, serde_json::to_vec(&all)?)?;
     std::fs::rename(temporary, path)?;
@@ -249,16 +277,38 @@ pub(crate) fn attach(
             }
         }
     }
-    for (run, i) in last {
-        if let Some(entries) = all[&run].as_array() {
-            let mut entries = entries.clone();
-            if !running {
-                for entry in &mut entries {
-                    if entry["status"] == "running" {
-                        entry["status"] = json!("failed");
-                    }
-                }
+    // Runs in the order they were said. A file written before children were
+    // saved by origin run holds a copy of each child under every later run of
+    // the same runner: the child goes once on the first run that has it, as
+    // the last run that has it last saw it.
+    let mut runs: Vec<(String, usize)> = last.into_iter().collect();
+    runs.sort_by_key(|(_, i)| *i);
+    let mut latest: BTreeMap<String, Value> = BTreeMap::new();
+    for (run, _) in &runs {
+        for entry in all[run].as_array().into_iter().flatten() {
+            if let Some(id) = entry["subagentId"].as_str() {
+                latest.insert(id.to_owned(), entry.clone());
             }
+        }
+    }
+    let mut placed = std::collections::HashSet::new();
+    for (run, i) in runs {
+        let Some(saved) = all[&run].as_array() else {
+            continue;
+        };
+        let mut entries = Vec::new();
+        for entry in saved {
+            let id = entry["subagentId"].as_str();
+            if id.is_some_and(|id| !placed.insert(id.to_owned())) {
+                continue;
+            }
+            let mut entry = id.and_then(|id| latest.get(id)).unwrap_or(entry).clone();
+            if !running && entry["status"] == "running" {
+                entry["status"] = json!("failed");
+            }
+            entries.push(entry);
+        }
+        if !entries.is_empty() {
             messages[i].0["subagents"] = json!(entries);
         }
     }
@@ -327,5 +377,52 @@ mod tests {
         assert_eq!(rows[1].0["subagents"][0]["resultText"], "private");
         assert_eq!(rows[1].0["subagents"][0]["status"], "failed");
         assert_eq!(rows[1].1, "parent answer");
+    }
+
+    #[test]
+    fn a_child_is_saved_under_the_run_that_spawned_it_only() {
+        // One runner, two runs: the child spawned in run a ends during run b.
+        let entries = BTreeMap::from([
+            ("old".to_owned(), json!({"subagentId":"sdk-sub-a-old", "status":"done"})),
+            ("new".to_owned(), json!({"subagentId":"sdk-sub-b-new", "status":"running"})),
+        ]);
+        let origins = BTreeMap::from([
+            ("old".to_owned(), "a".to_owned()),
+            ("new".to_owned(), "b".to_owned()),
+        ]);
+        let mut all = json!({"earlier":[{"subagentId":"kept"}]});
+        store_by_origin(&mut all, &entries, &origins, "b");
+        assert_eq!(all["a"], json!([{"subagentId":"sdk-sub-a-old", "status":"done"}]));
+        assert_eq!(all["b"], json!([{"subagentId":"sdk-sub-b-new", "status":"running"}]));
+        assert_eq!(all["earlier"][0]["subagentId"], "kept");
+    }
+
+    #[test]
+    fn a_child_copied_under_later_runs_attaches_once_as_last_seen() {
+        // The file older engines wrote: every run of a runner repeats each
+        // child, frozen at the state it had when that run ended.
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::with_sessions_dir(dir.path().into());
+        let session = store.session_dir("session");
+        std::fs::create_dir_all(&session).unwrap();
+        let child = |status: &str| json!({"subagentId":"sdk-sub-r1-x", "task":"Fix it", "status":status});
+        std::fs::write(
+            session.join(FILE),
+            json!({
+                "r1":[child("running")],
+                "r2":[{"subagentId":"sdk-sub-r2-y", "status":"done"}, child("running")],
+                "r3":[{"subagentId":"sdk-sub-r2-y", "status":"done"}, child("done")],
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let mut rows: Vec<(Value, String)> = ["r1", "r2", "r3"]
+            .iter()
+            .map(|run| (json!({"from":"claude", "run_id":run}), "answer".into()))
+            .collect();
+        attach(&store, "session", false, &mut rows);
+        assert_eq!(rows[0].0["subagents"], json!([child("done")]));
+        assert_eq!(rows[1].0["subagents"], json!([{"subagentId":"sdk-sub-r2-y", "status":"done"}]));
+        assert!(rows[2].0.get("subagents").is_none());
     }
 }

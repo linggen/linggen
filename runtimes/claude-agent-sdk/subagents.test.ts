@@ -22,6 +22,16 @@ test('unknown child frames stay out of main chat even before task registration',
   expect(bridge.route({type:'system', subtype:'task_notification', task_id:'bash', summary:'shell done'})).toBe(false);
 });
 
+test('the SDK compaction summarizer is no child', async () => {
+  const events: any[] = []; const bridge = subagentEvents(e => events.push(e));
+  await bridge.start({ hook_event_name:'SubagentStart', agent_id:'compact', agent_type:'' });
+  await bridge.stop({ hook_event_name:'SubagentStop', agent_id:'compact', agent_type:'', last_assistant_message:'<analysis>\nsummary' });
+  expect(events).toEqual([]);
+  await bridge.start({ hook_event_name:'SubagentStart', agent_id:'real', agent_type:'general-purpose' });
+  await bridge.stop({ hook_event_name:'SubagentStop', agent_id:'real', agent_type:'general-purpose', last_assistant_message:'done' });
+  expect(events.map(e => e.type)).toEqual(['subagent_start', 'subagent_end']);
+});
+
 test('background task frames become the session task list', () => {
   expect(taskEvent({ type:'system', subtype:'background_tasks_changed', tasks:[{ task_id:'t1', task_type:'local_bash', description:'npm test' }] }))
     .toEqual({ type:'tasks', tasks:[{ id:'t1', kind:'shell', title:'npm test' }] });
