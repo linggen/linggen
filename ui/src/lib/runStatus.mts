@@ -21,3 +21,10 @@ export function sessionStatusText(status: string, text: string): string {
     default: return 'Idle';
   }
 }
+
+/** What the spinner says for a session's status text. A spinner turns only
+ *  while a turn runs, so a leftover `Idle` (the last turn's end, before the
+ *  new turn's first status arrives) says nothing: the caller's verb shows. */
+export function spinnerLabel(text: string | undefined): string | undefined {
+  return text && text !== 'Idle' ? text : undefined;
+}

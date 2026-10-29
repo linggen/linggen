@@ -34,6 +34,7 @@ import { useChatActions } from '../../hooks/useChatActions';
 import { sessionApi } from '../../lib/endpoints';
 import { startNewChat } from '../../lib/newChat';
 import { sessionFolderLabel } from '../../lib/sessionRoot.mts';
+import { spinnerLabel } from '../../lib/runStatus.mts';
 
 /**
  * Debug action buttons shown inside the expanded session header.
@@ -502,7 +503,7 @@ export const ChatPanel: React.FC<{
       <RunStatusLine
         active={isAgentActive}
         reconnecting={reconnecting}
-        label={agentStatusText?.[sessionId || ''] || spinnerVerb || 'Thinking'}
+        label={spinnerLabel(agentStatusText?.[sessionId || '']) || spinnerVerb || 'Thinking'}
         elapsed={thinkingElapsed}
         tokensPerSec={tokensPerSec}
         context={agentContext?.[sessionId || '']}
