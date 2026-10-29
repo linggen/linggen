@@ -34,10 +34,13 @@ The same in a native Linggen session and in a Claude session.
    running task can be stopped from the list. Stopping one never stops the
    turn or the other tasks; Stop on the turn never stops background tasks.
 4. **One list, one surface.** Both runtimes feed one session task list. The
-   subagent pane shows it: a background subagent's tab keeps its rich view;
-   a shell or watch task shows its command and output tail. A long task
+   subagent pane shows it together with the session's subagents, each item
+   once (a background subagent is one row, not a task and a subagent):
+   running on top, ended folded below. A row opens its detail in the same
+   pane — a subagent's rich chat view, or a shell or watch task's command,
+   status and output tail — and back returns to the list. A long task
    does not hold the pane open; when the pane is closed, the chat header
-   shows how many tasks run and opens the pane.
+   shows how many run and opens the pane, at the list.
 5. **What ends them.** Finishing, the person's stop, the agent's own stop,
    Clear or delete of the session, an engine restart. A task the engine
    restart ended is listed as interrupted, not as failed.

@@ -315,9 +315,11 @@ export function mountSky(host, opts = {}) {
     }
   }
 
-  /* A clear sky: a sun (day) or a moon with a few stars (night) in the
-     top-right corner, beside the chat column, never over it. The disc and
-     its glow are one sprite; the sun's faint rays another, turned slowly. */
+  /* A clear sky: a sun (day) or a moon with a few stars (night), small, in
+     the empty middle of the header bar — between the logo on the left and
+     the button group on the right, never over a control. Too narrow a window
+     has no empty middle, so there it is left out. The disc and its glow are
+     one sprite; the sun's faint rays another, turned slowly. */
   function orbSprite(k, r, R) {
     const size = Math.ceil(R * 2), c = size / 2, sprite = document.createElement('canvas');
     sprite.width = sprite.height = size;
@@ -348,10 +350,14 @@ export function mountSky(host, opts = {}) {
     return sprite;
   }
 
-  const orbAt = (R) => ({ x: W - Math.min(120, W * 0.1), y: Math.min(64, H * 0.08), R });
+  // Header centre; the glow kept within the header's empty span.
+  const ORB_MIN_W = 768;
+  const orbR = (cap) => Math.min(cap, W * 0.05);
+  const orbAt = (R) => ({ x: W * 0.5, y: 26, R });
 
   function sun() {
-    const k = ink().sun, r = 22, R = Math.min(W, H) * 0.24;
+    if (W < ORB_MIN_W) return null;
+    const k = ink().sun, r = 14, R = orbR(44);
     return { ...orbAt(R), body: orbSprite(k, r, R), rays: rays(k, r, R), stars: [] };
   }
 
@@ -386,11 +392,13 @@ export function mountSky(host, opts = {}) {
   }
 
   function moon() {
-    const k = ink().moon, R = Math.min(W, H) * 0.16, at = orbAt(R);
-    const near = () => ({ x: at.x + rnd(-150, 40), y: rnd(10, at.y + 50), r: rnd(1.6, 2.6), ph: rnd(0, 6.3) });
-    const edge = () => ({ x: rnd(W * 0.55, W), y: rnd(6, H * 0.09), r: rnd(0.7, 1.3), ph: rnd(0, 6.3) });
+    if (W < ORB_MIN_W) return null;
+    const k = ink().moon, R = orbR(40), at = orbAt(R);
+    // Stars stay in the same empty span of the header as the moon.
+    const near = () => ({ x: at.x + rnd(-R * 2.2, R * 2.2), y: rnd(8, 44), r: rnd(1.6, 2.6), ph: rnd(0, 6.3) });
+    const edge = () => ({ x: at.x + rnd(-R * 2.2, R * 2.2), y: rnd(6, 46), r: rnd(0.7, 1.3), ph: rnd(0, 6.3) });
     const stars = k.sparkle ? Array.from({ length: 4 }, near) : Array.from({ length: 12 }, edge);
-    return { ...at, body: crescentSprite(k, 20, R), rays: null, stars, star: k.star, sparkle: k.sparkle };
+    return { ...at, body: crescentSprite(k, 14, R), rays: null, stars, star: k.star, sparkle: k.sparkle };
   }
 
   // A tiny four-point sparkle: two thin crossed diamonds.
@@ -524,7 +532,7 @@ export function mountSky(host, opts = {}) {
   }
 
   /* Frost breathing in from the corners and one bare ink twig at the top-left
-     corner (the sun and moon keep the right): painted once. */
+     corner (the sun and moon keep the header's middle): painted once. */
   function decoTexture(kinds) {
     const c = document.createElement('canvas');
     c.width = W; c.height = H;

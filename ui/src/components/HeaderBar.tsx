@@ -64,11 +64,14 @@ export const HeaderBar: React.FC<{
   onOpenSettings?: () => void;
   onToggleMobileMenu?: () => void;
   onToggleInfoPanel?: () => void;
+  /** The side panel ✦ opens is showing: the icon is lit. */
+  infoPanelOpen?: boolean;
 }> = ({
   isRunning,
   onOpenSettings,
   onToggleMobileMenu,
   onToggleInfoPanel,
+  infoPanelOpen,
 }) => {
   const connectionStatus = useUserStore((s) => s.connectionStatus);
   const userRoomName = useUserStore((s) => s.userRoomName);
@@ -181,7 +184,7 @@ export const HeaderBar: React.FC<{
             <div className="w-px h-3 bg-slate-300 dark:bg-white/10" />
             <button
               onClick={onToggleInfoPanel}
-              className="p-1 hover:text-purple-500 text-slate-500 transition-colors"
+              className={cn('p-1 hover:text-purple-500 transition-colors', infoPanelOpen ? 'text-purple-500' : 'text-slate-500')}
               title="Models & Skills"
             >
               <Sparkles size={14} />

@@ -1,13 +1,14 @@
-// The subagent pane beside the chat: shown while any message has a
-// subagent tree, forced open while one runs or asks the user something,
-// and auto-collapsed 10 minutes after the last one finishes. A background
-// task opens it when it starts but never holds it open: it can run for
-// hours, and the chat shows how many run while the pane is closed.
+// The subagent pane beside the chat. It opens when a subagent or background
+// task starts running, or a subagent asks the person something, and closes
+// itself a few seconds after the last one ends — unless a subagent still
+// waits on an answer or the person is reading an item's detail. Ended ones
+// alone never open it; the chat's tasks button does.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { BackgroundTask, ChatMessage, PendingAskUser, SubagentTreeEntry } from '../../types';
 import { normalizeAgentKey } from '../../lib/messageUtils';
+import { paneItems } from '../../lib/paneItems.mts';
 
-const COLLAPSE_AFTER_MS = 600_000;
+const CLOSE_AFTER_MS = 5_000;
 
 /** Is the pending AskUser for a subagent (the pane owns the widget) or for
  *  the main chat? Any member of the session asks in the main chat — a
@@ -26,37 +27,44 @@ function askIsForSubagent(ask: PendingAskUser | null | undefined, entries: Subag
 
 export function useSubagentPane(messages: ChatMessage[], pendingAskUser: PendingAskUser | null | undefined, selectedAgent: string, members: readonly string[] = [], tasks: BackgroundTask[] = []) {
   const entries = useMemo(() => messages.flatMap((m) => m.subagentTree ?? []), [messages]);
-  const anyRunning = entries.some((e) => e.status === 'running');
   const askUserBelongsToSubagent = useMemo(
     () => askIsForSubagent(pendingAskUser, entries, selectedAgent, members),
     [pendingAskUser, entries, selectedAgent, members],
   );
   const [paneVisible, setPaneVisible] = useState(false);
-  useEffect(() => {
-    if (entries.length === 0) {
-      // Only background tasks to show: the person opens and closes it.
-      if (tasks.length === 0) setPaneVisible(false);
-      return;
-    }
-    setPaneVisible(true);
-    // Running or waiting on the user: stay open. Else give ample time to read
-    // the subagent's chat before collapsing; a new spawn cancels it.
-    if (anyRunning || askUserBelongsToSubagent) return;
-    const t = setTimeout(() => setPaneVisible(false), COLLAPSE_AFTER_MS);
-    return () => clearTimeout(t);
-  }, [anyRunning, entries.length, askUserBelongsToSubagent, tasks.length]);
+  const [reading, setReading] = useState(false);
 
-  // A task that was not running before opens the pane, once.
+  // What runs, counted the way the pane lists it: a background subagent once.
+  const items = useMemo(() => paneItems(entries, tasks), [entries, tasks]);
+  const runningKeys = items.filter((i) => i.running).map((i) => i.key);
+  const runningCount = runningKeys.length;
+
+  // An item that was not running before opens the pane, once.
   const seenRunning = useRef<Set<string>>(new Set());
+  const runningSig = runningKeys.join('|');
   useEffect(() => {
-    const running = tasks.filter((t) => t.status === 'running').map((t) => t.id);
-    if (running.some((id) => !seenRunning.current.has(id))) setPaneVisible(true);
-    seenRunning.current = new Set(running);
-  }, [tasks]);
+    const keys = runningSig ? runningSig.split('|') : [];
+    if (keys.some((k) => !seenRunning.current.has(k))) setPaneVisible(true);
+    seenRunning.current = new Set(keys);
+  }, [runningSig]);
+
+  useEffect(() => {
+    if (askUserBelongsToSubagent) setPaneVisible(true);
+  }, [askUserBelongsToSubagent]);
+
+  // Nothing runs any more: close after a moment to read the last result.
+  useEffect(() => {
+    if (!paneVisible || runningCount > 0 || askUserBelongsToSubagent || reading) return;
+    const t = setTimeout(() => setPaneVisible(false), CLOSE_AFTER_MS);
+    return () => clearTimeout(t);
+  }, [paneVisible, runningCount, askUserBelongsToSubagent, reading]);
 
   return {
     askUserBelongsToSubagent,
+    runningCount,
+    hasItems: items.length > 0,
     paneVisible,
+    setReading,
     closePane: () => setPaneVisible(false),
     openPane: () => setPaneVisible(true),
   };

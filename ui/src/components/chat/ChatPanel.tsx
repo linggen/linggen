@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { chatAgentOf } from '../../lib/sessionMembers.mts';
-import { Sparkles, ArrowDown, Copy, FileText, Eraser, Plus } from 'lucide-react';
+import { Sparkles, ArrowDown, Copy, FileText, Eraser, Plus, ListTree } from 'lucide-react';
 import 'highlight.js/styles/github.css';
 import { cn } from '../../lib/cn';
 import { useSessionStore } from '../../stores/sessionStore';
@@ -33,6 +33,7 @@ import { SessionModelSelector, SessionModeSelector, SessionStats } from './Sessi
 import { useChatActions } from '../../hooks/useChatActions';
 import { sessionApi } from '../../lib/endpoints';
 import { startNewChat } from '../../lib/newChat';
+import { sessionFolderLabel } from '../../lib/sessionRoot.mts';
 
 /**
  * Debug action buttons shown inside the expanded session header.
@@ -129,6 +130,21 @@ const ChatDebugActions: React.FC<{ projectRoot?: string | null; sessionId?: stri
   );
 };
 
+/** Opens and closes the subagent & background-task pane; lit and counting
+ *  while anything runs. */
+const PaneButton: React.FC<{ open: boolean; running: number; onClick: () => void }> = ({ open, running, onClick }) => (
+  <button
+    onClick={onClick}
+    className={cn('relative shrink-0 inline-flex items-center gap-1 p-1 rounded text-[11px] hover:bg-white/70 dark:hover:bg-white/5',
+      open ? 'text-blue-500' : running > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-slate-400 hover:text-slate-700 dark:hover:text-slate-200')}
+    title={open ? 'Hide subagents and tasks' : 'Show subagents and tasks'}
+  >
+    <ListTree size={15} />
+    {running > 0 && <span className="font-semibold tabular-nums">{running}</span>}
+    {running > 0 && <span className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />}
+  </button>
+);
+
 export const ChatPanel: React.FC<{
   chatMessages: ChatMessage[];
   queuedMessages: QueuedChatItem[];
@@ -178,6 +194,9 @@ export const ChatPanel: React.FC<{
    *  consumers should pass `false` and let the inline SubagentTreeView
    *  inside each parent message handle subagent visibility instead. */
   showSubagentPane?: boolean;
+  /** The shell's right-sidebar toggle. It sits in the top row, never in a
+   *  column of its own: in the subagent pane's header while the sidebar is
+   *  open and the pane shows, else at the right end of the session row. */
 }> = ({
   chatMessages,
   queuedMessages,
@@ -267,8 +286,7 @@ export const ChatPanel: React.FC<{
   const floatingUserMsg = useFloatingUserMessage(chatScrollRef, userMsgRefs, filteredMainMessages, sessionId);
   const { from: windowFrom, loadEarlier } = useMessageWindow(historicalMessages.length, sessionId, chatScrollRef);
   const backgroundTasks = useInteractionStore((s) => s.backgroundTasks);
-  const runningTasks = backgroundTasks.filter((t) => t.status === 'running').length;
-  const { askUserBelongsToSubagent, paneVisible, closePane, openPane } = useSubagentPane(filteredMainMessages, pendingAskUser, selectedAgent, memberIds, backgroundTasks);
+  const { askUserBelongsToSubagent, runningCount, hasItems, paneVisible, setReading, closePane, openPane } = useSubagentPane(filteredMainMessages, pendingAskUser, selectedAgent, memberIds, backgroundTasks);
   const stopTask = (id: string) => {
     const sid = sessionId || useSessionStore.getState().activeSessionId;
     if (sid) sessionApi.stopTask(sid, id).catch(() => {});
@@ -294,7 +312,8 @@ export const ChatPanel: React.FC<{
 
   return (
     <section className={cn('h-full flex flex-col bg-white dark:bg-[#0f0f0f] overflow-hidden min-h-0 relative', !flush && 'rounded-xl border border-slate-200 dark:border-white/5')}>
-      <div className="px-1.5 py-1 border-b border-slate-200 dark:border-white/5 bg-slate-50/70 dark:bg-white/[0.02] space-y-1">
+      <div className="px-1.5 py-1 border-b border-slate-200 dark:border-white/5 bg-slate-50/70 dark:bg-white/[0.02] flex items-start gap-1">
+      <div className="flex-1 min-w-0 space-y-1">
         {sessionId && (
           <details className="rounded-md border border-slate-200 dark:border-white/10 bg-white/80 dark:bg-black/20 px-2 py-1 text-[11px] text-slate-600 dark:text-slate-300">
             <summary className="cursor-pointer flex flex-wrap items-center gap-2">
@@ -308,7 +327,7 @@ export const ChatPanel: React.FC<{
                         machine's own devices — a paired peer is admin. */}
                     {useUserStore.getState().userType !== 'consumer' && (sessionMeta?.project_name || sessionMeta?.cwd) && (() => {
                       const fullPath = sessionMeta?.cwd || sessionMeta?.project || '';
-                      const displayName = sessionMeta?.project_name || fullPath.split('/').filter(Boolean).pop() || fullPath;
+                      const displayName = sessionFolderLabel(sessionMeta);
                       return (
                         <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-white/5 text-slate-500 text-[10px] shrink-0" title={fullPath}>
                           📁 {displayName}
@@ -386,6 +405,10 @@ export const ChatPanel: React.FC<{
             </div>
           </details>
         )}
+      </div>
+      {showSubagentPane && hasItems && (
+        <PaneButton open={paneVisible} running={runningCount} onClick={paneVisible ? closePane : openPane} />
+      )}
       </div>
 
       <div className="relative flex-1 flex flex-col md:flex-row gap-0 min-h-0">
@@ -470,21 +493,12 @@ export const ChatPanel: React.FC<{
             onClose={closePane}
             tasks={backgroundTasks}
             onStopTask={stopTask}
+            onReadingChange={setReading}
           />
         </div>
       )}
       </div>
 
-      {showSubagentPane && !paneVisible && runningTasks > 0 && (
-        <button
-          onClick={openPane}
-          className="self-start mx-2 mb-1 inline-flex items-center gap-1.5 text-[11px] px-2 py-0.5 rounded-full border border-amber-300/50 bg-amber-50/80 dark:bg-amber-500/10 dark:border-amber-500/20 text-amber-700 dark:text-amber-300 hover:bg-amber-100/80 dark:hover:bg-amber-500/20"
-          title="Show background tasks"
-        >
-          <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-          {`${runningTasks} background task${runningTasks > 1 ? 's' : ''} running`}
-        </button>
-      )}
       <RunStatusLine
         active={isAgentActive}
         reconnecting={reconnecting}

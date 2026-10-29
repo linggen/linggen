@@ -97,6 +97,7 @@ While the agent is working, show a tree-structured view of current activity:
 - **Primary agent**: tool calls displayed as a grouped, collapsible list (e.g., "Read config.toml", "Edit main.rs") with status indicators (in-progress / done / failed).
 - **Subagents** nested under the parent: each delegated agent shown as a branch with its own tool steps, token count, and current status.
 - Updates in real time — new tool calls append, completed ones transition from active to done.
+- **Subagent pane**: beside the chat, one list of the session's subagents and background tasks (`background-tasks-spec.md`), each shown once with what it was asked, elapsed time and latest activity. Clicking one switches the pane to its full thread; a new subagent opens the pane at the list and never pulls the person out of a detail they are reading. The pane opens when something starts running (or a subagent asks a question) and closes itself a few seconds after nothing runs, unless a question waits or a detail is open; ended items alone never open it — the pane button at the right of the chat's top row does (it shows how many run). The header's ✦ shows and hides the right sidebar and is lit while it shows.
 
 ### 3. Turn completion summary
 
@@ -133,7 +134,7 @@ AgentMessage
   └─ TurnSummaryFooter (tool count, tokens, duration — shown when done)
 ```
 
-Tool calls are rendered inline as `ContentBlockView` items interspersed with text, not grouped into a separate section. Each block shows the tool name, arguments, and status (running / done / failed).
+Tool calls are rendered inline as `ContentBlockView` items interspersed with text, not grouped into a separate section. Each block shows the tool name, arguments, and status (running / done / failed); a running block appears at its `content_block` start with a blinking ⏺. The spinner line above the input (`✶ Thinking… (12s · 30 tok/s · 4.2k/200K ctx)`) only says that the agent works and in what state (thinking, working, loading a model, compacting), never which tool runs, as in Claude Code.
 
 ### Special block types
 

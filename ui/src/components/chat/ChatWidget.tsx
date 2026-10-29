@@ -24,6 +24,7 @@ export interface ChatWidgetProps {
   mode?: 'full' | 'compact' | 'mobile';
   /** Sit flush in the shell rather than as a card (ChatPanel `flush`). */
   flush?: boolean;
+  /** The shell's right-sidebar toggle, placed in the chat's top row. */
 }
 
 export const ChatWidget: React.FC<ChatWidgetProps> = ({

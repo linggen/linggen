@@ -4,7 +4,7 @@
  */
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { chatAgentOf, memberModel } from '../lib/sessionMembers.mts';
-import { PanelRightClose, PanelRightOpen, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import type { SessionInfo, SkillInfo } from '../types';
 import { SessionList } from '../components/SessionList';
 import { FilePreview } from '../components/FilePreview';
@@ -325,6 +325,7 @@ export const MainApp: React.FC = () => {
           onOpenSettings={() => openSettings('general')}
           onToggleMobileMenu={() => setMobileMenuOpen(!mobileMenuOpen)}
           onToggleInfoPanel={isMobile ? () => setMobileInfoOpen(!mobileInfoOpen) : toggleRight}
+          infoPanelOpen={isMobile ? mobileInfoOpen : !rightHidden}
         />
 
         {/* Main Layout */}
@@ -373,28 +374,9 @@ export const MainApp: React.FC = () => {
           </main>
 
           {/* Right sidebar (desktop only) */}
-          {!isMobile && rightHidden && (
-            <aside className="hidden lg:flex w-8 border-l border-slate-200 dark:border-white/5 flex-col items-center pt-2 bg-slate-100/40 dark:bg-[#0a0a0a]">
-              <button
-                onClick={toggleRight}
-                className="p-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-white/70 dark:hover:bg-white/5"
-                title="Show models, skills and Yinyue"
-              >
-                <PanelRightOpen size={15} />
-              </button>
-            </aside>
-          )}
+          {/* Shown and hidden by the header's ✦, lit while it shows. */}
           {!isMobile && !rightHidden && (
             <aside className="hidden lg:flex w-72 border-l border-slate-200 dark:border-white/5 flex-col bg-slate-100/40 dark:bg-[#0a0a0a] overflow-hidden">
-              <div className="flex justify-end px-2 pt-1.5 -mb-2 shrink-0">
-                <button
-                  onClick={toggleRight}
-                  className="p-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-white/70 dark:hover:bg-white/5"
-                  title="Hide this panel — more room for the chat"
-                >
-                  <PanelRightClose size={15} />
-                </button>
-              </div>
               {/* Models + skills scroll above; Yinyue is docked below. */}
               <div className="flex-1 min-h-0 overflow-y-auto p-3 flex flex-col gap-3">
                 <InfoPanel {...infoPanelProps} />
