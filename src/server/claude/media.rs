@@ -5,6 +5,23 @@ use anyhow::{Context, Result};
 use base64::Engine;
 use serde_json::{json, Value};
 
+/// A picture as the chat sends it (bare base64, or a `data:` URL) in the form
+/// the SDK bridge takes: a `data:` URL naming its media type from its bytes.
+pub(super) fn data_url(sent: &str) -> String {
+    let sent = sent.trim();
+    if sent.starts_with("data:") {
+        return sent.to_owned();
+    }
+    format!(
+        "data:{};base64,{sent}",
+        crate::pictures::kind::media_type_of_base64(sent)
+    )
+}
+
+pub(super) fn data_urls(sent: &[String]) -> Vec<String> {
+    sent.iter().map(|image| data_url(image)).collect()
+}
+
 pub(super) fn keep(
     store: &SessionStore,
     session: &str,

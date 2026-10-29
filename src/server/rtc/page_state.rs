@@ -60,6 +60,10 @@ pub struct PageState {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_models: Option<Vec<String>>,
 
+    /// The Claude sessions' default; empty when none is set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claude_default_model: Option<String>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skills: Option<Vec<serde_json::Value>>,
 
@@ -101,6 +105,10 @@ pub struct PageState {
     /// (re)connect.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub queued: Option<Vec<serde_json::Value>>,
+
+    /// The session's background tasks (doc/background-tasks-spec.md).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tasks: Option<Vec<crate::engine::events::BackgroundTask>>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sessions: Option<Vec<serde_json::Value>>,
@@ -172,6 +180,7 @@ pub async fn build_page_state(
         all_sessions: None,
         models: None,
         default_models: None,
+        claude_default_model: None,
         skills: None,
         missions: None,
         pending_ask_user: None,
@@ -181,6 +190,7 @@ pub async fn build_page_state(
         agents: None,
         agent_runs: None,
         queued: None,
+        tasks: None,
         sessions: None,
         session_permission: None,
         files: None,
@@ -294,6 +304,8 @@ pub async fn build_page_state(
         if is_admin {
             if let Ok((config, _)) = crate::config::Config::load_with_path() {
                 ps.default_models = Some(config.routing.default_models.clone());
+                ps.claude_default_model =
+                    Some(config.routing.claude_default_model.clone().unwrap_or_default());
             }
         }
 
@@ -421,6 +433,7 @@ pub async fn build_page_state(
                 queued_entries(&guard, session_id)
             };
             ps.queued = Some(queued);
+            ps.tasks = Some(state.tasks.list(session_id));
 
             let session_dir = crate::paths::global_sessions_dir().join(session_id);
             let perms = crate::engine::permission::SessionPermissions::load(&session_dir);
@@ -477,6 +490,8 @@ mod tests {
             session_id: session.into(),
             preview: "hello".into(),
             timestamp: 0,
+            text: "hello".into(),
+            images: Vec::new(),
         }
     }
 

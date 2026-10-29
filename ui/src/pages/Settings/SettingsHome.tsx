@@ -1,7 +1,7 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import type { AppConfig, ManagementTab } from '../../types';
+import type { ManagementTab } from '../../types';
 import { ModelsTab } from '../../components/ModelsTab';
 import { AgentsPage } from '../../components/AgentsPage';
 import { SessionTab } from '../../components/SessionTab';
@@ -15,9 +15,8 @@ import { RoomTab } from '../../components/RoomTab';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useServerStore } from '../../stores/serverStore';
 import type { SettingsLocationState } from '../../hooks/useOpenSettings';
-import { appConfig } from '../../lib/endpoints';
-import { rememberLanguage } from '../../lib/i18n';
-import { apiErrorMessage } from '../../lib/api';
+import { useAutoSaveConfig } from './useAutoSaveConfig';
+import { SaveStatus } from './SaveStatus';
 
 type TabKey = Exclude<ManagementTab, 'mcp'>;
 
@@ -45,9 +44,6 @@ const groups: { label?: string; tabs: { key: TabKey; label: string }[] }[] = [
 ];
 const tabs = groups.flatMap((g) => g.tabs);
 
-/** Tabs whose fields write the config file — the Save button's tabs. */
-const CONFIG_TABS: ReadonlySet<TabKey> = new Set(['general', 'agents', 'models', 'session', 'phone']);
-
 /** An old tab key (`mcp`) opens where that content lives now. */
 const toTab = (key: string | null | undefined): TabKey | undefined =>
   key === 'mcp' ? 'tools' : tabs.find((t) => t.key === key)?.key;
@@ -66,66 +62,11 @@ export const SettingsHome: React.FC = () => {
   const queryTab = new URLSearchParams(location.search).get('tab');
   const requestedTab = toTab((location.state as SettingsLocationState | null)?.tab ?? queryTab);
   const [activeTab, setActiveTab] = useState<TabKey>(requestedTab || 'general');
-  const [config, setConfig] = useState<AppConfig | null>(null);
-  const [originalConfig, setOriginalConfig] = useState<AppConfig | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
-  const [credsDirty, setCredsDirty] = useState(false);
-  const saveCredsRef = useRef<(() => Promise<void>) | null>(null);
+  const { config, setConfig, setCredsDirty, saveCredsRef, state: saveState, error } = useAutoSaveConfig();
 
   useEffect(() => {
     if (requestedTab) setActiveTab(requestedTab);
   }, [requestedTab]);
-
-  const configDirty = config !== null && originalConfig !== null && JSON.stringify(config) !== JSON.stringify(originalConfig);
-  const dirty = configDirty || credsDirty;
-
-  const fetchConfig = useCallback(async () => {
-    try {
-      const data = await appConfig.get();
-      setConfig(data);
-      setOriginalConfig(data);
-      setError(null);
-    } catch (e) {
-      setError(`Failed to load config: ${e}`);
-    }
-  }, []);
-
-  useEffect(() => { fetchConfig(); }, [fetchConfig]);
-
-  const saveConfig = async () => {
-    if (!config || saving) return;
-    setSaving(true);
-    setError(null);
-    setSuccess(false);
-    try {
-      if (configDirty) {
-        try {
-          await appConfig.save(config);
-        } catch (e) {
-          setError(apiErrorMessage(e) || 'Save failed');
-          return;
-        }
-        setOriginalConfig(config);
-        // A new language is the whole page's: reload it into the new words.
-        if (config.language !== originalConfig?.language) {
-          rememberLanguage(config.language ?? null);
-          (window.top ?? window).location.reload();
-          return;
-        }
-      }
-      if (credsDirty && saveCredsRef.current) {
-        await saveCredsRef.current();
-      }
-      setSuccess(true);
-      setTimeout(() => setSuccess(false), 2000);
-    } catch (e) {
-      setError(`Save failed: ${e}`);
-    } finally {
-      setSaving(false);
-    }
-  };
 
   const onBack = () => {
     const server = useServerStore.getState();
@@ -135,8 +76,6 @@ export const SettingsHome: React.FC = () => {
     navigate('/');
   };
 
-  // On a config tab, or with unsaved edits from one — never strand a change.
-  const showSaveButton = CONFIG_TABS.has(activeTab) || dirty;
 
   if (!config) {
     return (
@@ -154,21 +93,7 @@ export const SettingsHome: React.FC = () => {
             <ArrowLeft size={16} /> Back
           </button>
           <div className="flex items-center gap-2 min-h-[30px]">
-            {error && <span className="text-[11px] text-red-500 max-w-xl text-right" title={error}>{error}</span>}
-            {success && <span className="text-[11px] text-green-500">Saved</span>}
-            {showSaveButton && (
-              <button
-                onClick={saveConfig}
-                disabled={!dirty || saving}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
-                  dirty
-                    ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-lg shadow-blue-600/20'
-                    : 'bg-slate-200 dark:bg-white/10 text-slate-400 cursor-not-allowed'
-                }`}
-              >
-                {saving ? 'Saving...' : 'Save'}
-              </button>
-            )}
+            <SaveStatus state={saveState} error={error} />
           </div>
         </div>
         {/* Phone width: one scrolling row. Wider screens use the sidebar. */}

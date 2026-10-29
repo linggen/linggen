@@ -50,7 +50,11 @@ export const LingMemPrimary: React.FC = () => {
     return () => clearTimeout(t);
   }, [role]);
 
+  // Saved when the field is left (or on Enter), only when it changed: a
+  // switch of primary is a real move, never a side effect of a click away.
+  const current = role ? (role.role === 'primary' ? 'local' : role.upstream ?? '') : null;
   const save = async () => {
+    if (current === null || (text.trim() || 'local') === current) return;
     setNote('');
     try {
       show(await api({
@@ -73,15 +77,10 @@ export const LingMemPrimary: React.FC = () => {
           className={inputCls}
           value={text}
           onChange={(e) => setText(e.target.value)}
+          onBlur={save}
           onKeyDown={(e) => { if (e.key === 'Enter') save(); }}
           placeholder="local, or 192.168.1.5:9528"
         />
-        <button
-          className="px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700"
-          onClick={save}
-        >
-          Save
-        </button>
       </div>
       {role && <span className="text-xs text-slate-500 dark:text-slate-400">{fact(role)}</span>}
       {hint && <span className="text-xs text-slate-500 dark:text-slate-400">{hint}</span>}

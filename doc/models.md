@@ -126,7 +126,10 @@ All use their respective `provider` value (or `provider = "openai"` with their e
 
 ## Default model
 
-Star a model in **Settings → Models** to set it as the default. All new sessions use this model.
+Settings → Models sets one default per kind of session:
+
+- **Star** — the default for Linggen sessions (`routing.default_models`).
+- **Moon** — the default for Claude sessions (`routing.claude_default_model`). Only Anthropic API-key models can take it. Unset, or the model no longer usable, Claude sessions fall back to the star, then to the first Claude API-key model in the list.
 
 ## Auto-fallback
 

@@ -100,6 +100,8 @@ pub struct AgentManager {
     /// Which agents appear only once met, and which have been
     /// (`met.rs`) — the one gate every surface asks.
     pub met: met::MetGate,
+    /// Native sessions' background shells and subagents.
+    pub background: crate::engine::background::Background,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -338,6 +340,7 @@ impl AgentManager {
                 latest_session_by_agent: std::sync::Mutex::new(HashMap::new()),
                 pet_muted,
                 met: met::MetGate::new(crate::paths::met_dir()),
+                background: Default::default(),
             }),
             rx,
         )

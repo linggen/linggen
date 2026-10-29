@@ -27,6 +27,8 @@ import type { PetSpeakData } from './generated/PetSpeakData';
 import type { PetVoiceData } from './generated/PetVoiceData';
 import type { PlanUpdateData } from './generated/PlanUpdateData';
 import type { QueueData } from './generated/QueueData';
+import type { TasksData } from './generated/TasksData';
+import type { BackgroundTask } from './generated/BackgroundTask';
 import type { QueuedChatItem } from './generated/QueuedChatItem';
 import type { ResyncData } from './generated/ResyncData';
 import type { RoomChatData } from './generated/RoomChatData';
@@ -79,6 +81,7 @@ export interface PageState {
   all_sessions?: SessionInfo[];
   models?: ModelInfo[];
   default_models?: string[];
+  claude_default_model?: string;
   skills?: SkillInfo[];
   missions?: unknown[];
   pending_ask_user?: Array<{ question_id: string; agent_id?: string; questions?: AskUserQuestion[]; session_id?: string | null }>;
@@ -89,6 +92,7 @@ export interface PageState {
   agents?: AgentInfo[];
   agent_runs?: AgentRunInfo[];
   queued?: Array<{ agent_id?: string; items?: QueuedChatItem[] }>;
+  tasks?: BackgroundTask[];
   sessions?: SessionInfo[];
   session_permission?: { effective_mode?: string } | null;
 }
@@ -116,6 +120,7 @@ export interface UiEventByKind {
   followups: Ev<'followups', FollowupsData>;
   activity: Ev<'activity', ActivityData>;
   queue: Ev<'queue', QueueData>;
+  tasks: Ev<'tasks', TasksData>;
   run: RunEvent;
   ask_user: Ev<'ask_user', AskUserData>;
   widget_resolved: Ev<'widget_resolved', WidgetResolvedData>;

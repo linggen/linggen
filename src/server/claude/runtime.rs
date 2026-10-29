@@ -1,6 +1,7 @@
+use super::protocol::TurnRequest;
 use super::{install, resolve_model, state, Control, AGENT_ID};
 use crate::engine::agent::AgentEvent;
-use crate::server::{ServerEvent, ServerState};
+use crate::server::ServerState;
 use crate::state_fs::sessions::SessionMeta;
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
@@ -51,12 +52,36 @@ impl ClaudeSession {
             .session_dir(&self.meta.id)
     }
 
-    pub async fn run(
+    /// Start the session's runner on its first turn and serve it until it
+    /// ends (doc/background-tasks-spec.md): later turns arrive on `turns`.
+    /// A start that fails fails the first turn with it.
+    pub async fn serve(
         &mut self,
-        prompt: String,
-        images: Vec<String>,
+        first: TurnRequest,
         chosen: Option<String>,
+        turns: tokio::sync::mpsc::UnboundedReceiver<TurnRequest>,
         controls: tokio::sync::mpsc::UnboundedReceiver<Control>,
+        settings: Arc<std::sync::Mutex<String>>,
+    ) -> Result<()> {
+        let mut first = Some(first);
+        let result = self.start_and_serve(&mut first, chosen, turns, controls, settings).await;
+        if let Some(turn) = first {
+            let reason = match &result {
+                Ok(()) => "Claude Agent SDK did not start".to_string(),
+                Err(error) => error.to_string(),
+            };
+            let _ = turn.done.send(Err(reason));
+        }
+        result
+    }
+
+    async fn start_and_serve(
+        &mut self,
+        first: &mut Option<TurnRequest>,
+        chosen: Option<String>,
+        turns: tokio::sync::mpsc::UnboundedReceiver<TurnRequest>,
+        controls: tokio::sync::mpsc::UnboundedReceiver<Control>,
+        settings: Arc<std::sync::Mutex<String>>,
     ) -> Result<()> {
         if self.cancelled().await {
             bail!("run cancelled");
@@ -75,20 +100,15 @@ impl ClaudeSession {
                 .or_else(|| self.meta.member(AGENT_ID).and_then(|m| m.model.as_deref())),
         )
         .await?;
-        self.emit(AgentEvent::AgentStatus {
-            agent_id: AGENT_ID.into(),
-            status: "thinking".into(),
-            detail: Some("Thinking".into()),
-            parent_id: None,
-            run_id: None,
-            parent_run_id: None,
-        })
-        .await;
         let runner = self.unless_cancelled(install::ensure_installed()).await??;
         let trusted = self.interaction().folder_trust().await?;
+        *settings.lock().unwrap_or_else(|p| p.into_inner()) =
+            self.settings_key(&model.id, trusted).await;
         let resume = state::resume_id(&self.dir(), &self.meta.cwd);
-        let (session_memory, turn_memory) = self.memory(&prompt).await;
+        let session_memory = self.session_memory().await;
         let mut command = sdk_command(&runner, &self.meta.cwd, &model)?;
+        // The SDK's shells inherit it: `ling restart` knows who asked.
+        command.env(crate::paths::SESSION_ENV, &self.meta.id);
         let mut child = command
             .spawn()
             .context("Could not start Claude Agent SDK")?;
@@ -104,15 +124,18 @@ impl ClaudeSession {
         // a file older builds wrote is not reloaded.
         let _ = std::fs::remove_file(self.dir().join(LEGACY_PERMISSIONS));
         let permission_updates = self.state.claude.session_rules(&self.meta.id);
-        let start = json!({"type":"start", "prompt":prompt, "images":images, "cwd":self.meta.cwd,
-            "model":model.model, "resume":resume, "permissionMode":self.meta.claude_permission_mode,
+        let turn = first.take().context("The first turn was already taken")?;
+        let start = json!({"type":"start", "prompt":turn.prompt, "images":turn.images, "uuid":turn.uuid,
+            "cwd":self.meta.cwd, "model":model.model, "resume":resume,
+            "permissionMode":self.meta.claude_permission_mode,
             "permissionUpdates":permission_updates, "settingSources":super::trust::setting_sources(trusted),
-            "sessionMemory":session_memory, "turnMemory":turn_memory,
+            "sessionMemory":session_memory, "turnMemory":turn.turn_memory,
             "disallowedTools":self.meta.withheld_tools, "mcpServers":self.mcp_servers().await});
         // Every post-spawn error goes through cleanup, including a broken stdin.
+        let mut stranded = Vec::new();
         let result = async {
             stdin.write_all(format!("{start}\n").as_bytes()).await?;
-            self.consume(&mut lines, &mut stdin, controls).await
+            self.consume(&mut lines, &mut stdin, turn, turns, controls, &mut stranded).await
         }
         .await;
         let _ = stdin.write_all(b"{\"type\":\"cancel\"}\n").await;
@@ -133,14 +156,14 @@ impl ClaudeSession {
         if let Some(pid) = pid {
             self.state.claude.runner_ended(&self.meta.id, pid);
         }
-        let _ = self.state.events_tx.send(ServerEvent::Token {
-            agent_id: AGENT_ID.into(),
-            token: String::new(),
-            done: true,
-            thinking: false,
-            session_id: Some(self.meta.id.clone()),
-            run_id: Some(self.run_id.clone()),
-        });
+        let reason = match &result {
+            Ok(()) => "Claude Agent SDK ended before answering".to_string(),
+            Err(error) => error.to_string(),
+        };
+        for (run_id, done) in stranded {
+            self.end_stream(&run_id);
+            let _ = done.send(Err(reason.clone()));
+        }
         result
     }
 
@@ -155,25 +178,32 @@ impl ClaudeSession {
     }
 
     /// Memory as a native owner session has it: the session-start block in
-    /// the system prompt, and this turn's recall and capture nudge beside
-    /// the prompt. A slash command goes to the SDK as-is, without recall.
-    async fn memory(&self, prompt: &str) -> (String, String) {
+    /// the system prompt, once per runner.
+    async fn session_memory(&self) -> String {
         let config = self.state.manager.get_config_snapshot().await;
         let store = self.state.prompt_store.clone();
         let cwd = PathBuf::from(&self.meta.cwd);
         let url = config.agent.ling_mem_url.clone();
-        let session = tokio::task::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || {
             crate::engine::prompt::core_block::owner_block(&store, &url, &cwd)
         })
         .await
-        .unwrap_or_default();
+        .unwrap_or_default()
+    }
+
+    /// This turn's recall and capture nudge, beside its message. A slash
+    /// command goes to the SDK as-is, without recall.
+    pub async fn turn_memory(&self, prompt: &str) -> String {
         if prompt.trim_start().starts_with('/') {
-            return (session, String::new());
+            return String::new();
         }
-        let turn =
-            crate::server::chat::owner_turn_memory(&self.state, AGENT_ID, prompt, &self.meta.id)
-                .await;
-        (session, turn)
+        crate::server::chat::owner_turn_memory(&self.state, AGENT_ID, prompt, &self.meta.id).await
+    }
+
+    /// What a runner is started on and cannot change while it lives: the
+    /// model, folder trust, MCP servers, withheld tools.
+    pub async fn settings_key(&self, model: &str, trusted: bool) -> String {
+        json!([model, trusted, self.mcp_servers().await, self.meta.withheld_tools]).to_string()
     }
 
     async fn mcp_servers(&self) -> Value {

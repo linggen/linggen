@@ -31,7 +31,8 @@ impl Tool for BashTool {
             "type": "object",
             "properties": {
                 "cmd": {"type": "string", "description": "Shell command to execute"},
-                "timeout_ms": {"type": "integer", "description": "Timeout in milliseconds (default: 30000)"}
+                "timeout_ms": {"type": "integer", "description": "Timeout in milliseconds (default: 30000)"},
+                "run_in_background": {"type": "boolean", "description": "Start it beside the chat and return at once with a task id — for servers, watches and long builds. You are told in a new turn when it ends; TaskOutput reads its output, TaskStop stops it."}
             },
             "required": ["cmd"]
         })
@@ -39,7 +40,7 @@ impl Tool for BashTool {
     fn legacy_schema_entry(&self) -> Value {
         json!({
             "name": "Bash",
-            "args": {"cmd": "string", "timeout_ms": "number?"},
+            "args": {"cmd": "string", "timeout_ms": "number?", "run_in_background": "bool?"},
             "returns": "{exit_code,stdout,stderr}",
             "notes": "Runs shell commands via sh -c. Permission required in ask mode. Command alias accepted: command."
         })
@@ -47,10 +48,13 @@ impl Tool for BashTool {
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
         let mut args: RunCommandArgs = serde_json::from_value(call.args).map_err(|e| {
             anyhow::anyhow!(
-                "invalid args for Bash: {}. Expected keys: cmd|timeout_ms",
+                "invalid args for Bash: {}. Expected keys: cmd|timeout_ms|run_in_background",
                 e
             )
         })?;
+        if args.run_in_background {
+            return background_shell(tools, &args.cmd).await;
+        }
         // Bash is the only tool with mid-execution cancellation: register a
         // cancel flag against the block_id so an in-flight `kill` from the
         // UI can interrupt the child process.
@@ -63,6 +67,22 @@ impl Tool for BashTool {
         }
         result
     }
+}
+
+/// Start the command as a background task of the session and return at once.
+async fn background_shell(tools: &Tools, cmd: &str) -> Result<ToolResult> {
+    let (Some(manager), Some(session)) = (&tools.manager, &tools.session_id) else {
+        anyhow::bail!("run_in_background needs a session; run it in the foreground instead");
+    };
+    let agent = tools.agent_id.clone().unwrap_or_else(|| "ling".into());
+    let task = crate::engine::background::spawn_shell(manager, session, &agent, cmd, &tools.cwd()).await?;
+    Ok(ToolResult::Success(format!(
+        "Started in the background as task {}. Output: {}. It runs beside the chat; \
+         you will be told in a new turn when it ends. Read its output with TaskOutput, \
+         stop it with TaskStop.",
+        task.id,
+        task.output_file.as_deref().unwrap_or("")
+    )))
 }
 
 /// Ling runs on the person's own computer. Every text that frames Bash says

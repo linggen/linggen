@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Send, Square, X, FolderOpen, FileText } from 'lucide-react';
+import { Send, Square, X, FolderOpen, FileText, CornerDownRight, Pencil } from 'lucide-react';
 import { cn } from '../../lib/cn';
 import { useInteractionStore } from '../../stores/interactionStore';
 import { useSessionStore, effectiveProjectRoot } from '../../stores/sessionStore';
@@ -311,6 +311,20 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
   const currentSession = useSessionStore((s) => sessionId || s.activeSessionId);
   const claudeSession = useSessionStore((s) => s.allSessions.find((session) => session.id === currentSession)?.runtime === 'claude_agent_sdk');
+
+  /** Take one message off the server queue (it never runs); resolves to it. */
+  const takeQueued = async (item: QueuedChatItem) => {
+    const activeSessionId = sessionId || useSessionStore.getState().activeSessionId;
+    if (!activeSessionId) return null;
+    useInteractionStore.getState().setQueuedMessages(
+      useInteractionStore.getState().queuedMessages.filter((q) => q.id !== item.id),
+    );
+    try {
+      return await sessionApi.removeQueued(effectiveProjectRoot(projectRoot), activeSessionId, item.agent_id || selectedAgent, item.id);
+    } catch {
+      return null;
+    }
+  };
   const [sdkCommands, setSdkCommands] = useState<Array<{ name: string; description: string; argumentHint?: string; builtin?: boolean }>>([]);
   useEffect(() => {
     let live = true;
@@ -376,6 +390,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
     return suggestions;
   }, [skills, skillFilter, yinyueHere, claudeSession, sdkCommands]);
+  // The list is open only while something matches: with nothing to pick,
+  // Enter sends what was typed.
+  const slashOpen = showSkillDropdown && skillSuggestions.length > 0;
 
   const applySuggestion = useCallback((suggestion: typeof skillSuggestions[number]) => {
     const beforeSlash = chatInput.substring(0, chatInput.lastIndexOf('/'));
@@ -435,42 +452,47 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             <div className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 font-medium select-none">
               <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
               <span className="flex-1">{visibleQueued.length} message{visibleQueued.length > 1 ? 's' : ''} queued — agent is busy</span>
-              <button
-                onClick={async () => {
-                  // Authoritative drop on the server first. Without this, queued
-                  // messages survive the dismiss and fire when the agent frees up.
-                  // Guard before the optimistic clear — if any required id is
-                  // missing we skip both calls instead of clearing the local
-                  // store while leaving the server queue intact.
-                  // The root the queued sends used (useChatActions): the server
-                  // keys its queue by it.
-                  const root = effectiveProjectRoot(projectRoot);
-                  const activeSessionId = sessionId || useSessionStore.getState().activeSessionId;
-                  if (!activeSessionId) return;
-                  // Each member queues its own messages: clear every one's.
-                  const queuedFor = new Set(
-                    useInteractionStore.getState().queuedMessages.map((q) => q.agent_id).filter(Boolean),
-                  );
-                  if (queuedFor.size === 0 && selectedAgent) queuedFor.add(selectedAgent);
-                  useInteractionStore.getState().setQueuedMessages([]);
-                  for (const agent of queuedFor) {
-                    try {
-                      await sessionApi.clearQueue(root, activeSessionId, agent);
-                    } catch {
-                      // Best-effort clear; UI already reflects the empty queue.
-                    }
-                  }
-                }}
-                className="text-[11px] px-1.5 py-0.5 rounded bg-amber-200/50 dark:bg-amber-500/20 hover:bg-amber-300/60 dark:hover:bg-amber-500/30 transition-colors"
-                title="Dismiss queue"
-              >
-                <X size={10} />
-              </button>
             </div>
             <div className="mt-1 space-y-0.5 text-amber-700 dark:text-amber-300/80">
               {visibleQueued.map((item) => (
-                <div key={item.id} className="truncate pl-3">
-                  {item.preview}
+                <div key={item.id} className="group flex items-center gap-1 pl-3">
+                  <span className="flex-1 truncate">{item.preview}</span>
+                  {claudeSession && (
+                    <button
+                      onClick={() => {
+                        useInteractionStore.getState().setQueuedMessages(
+                          useInteractionStore.getState().queuedMessages.filter((q) => q.id !== item.id),
+                        );
+                        sessionApi.steerQueued(item.id).catch(() => {});
+                      }}
+                      className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-200/60 dark:bg-amber-500/20 hover:bg-amber-300/70 dark:hover:bg-amber-500/35 transition-colors"
+                      title="Send this message now, into the running turn"
+                    >
+                      <CornerDownRight size={10} /> Steer
+                    </button>
+                  )}
+                  <button
+                    onClick={async () => {
+                      const taken = await takeQueued(item);
+                      if (!taken) return;
+                      // Back in the input for the person to change and send again;
+                      // a draft already there is kept above it.
+                      setChatInput((draft) => (draft.trim() ? `${draft}\n\n${taken.message ?? ''}` : taken.message ?? ''));
+                      for (const image of taken.images ?? []) addImage(image);
+                      inputRef.current?.focus();
+                    }}
+                    className="shrink-0 p-0.5 rounded opacity-60 hover:opacity-100 hover:bg-amber-200/60 dark:hover:bg-amber-500/25 transition-opacity"
+                    title="Edit: take this message out of the queue and back into the input"
+                  >
+                    <Pencil size={10} />
+                  </button>
+                  <button
+                    onClick={() => { void takeQueued(item); }}
+                    className="shrink-0 p-0.5 rounded opacity-60 hover:opacity-100 hover:bg-amber-200/60 dark:hover:bg-amber-500/25 transition-opacity"
+                    title="Remove this message from the queue"
+                  >
+                    <X size={10} />
+                  </button>
                 </div>
               ))}
             </div>
@@ -499,7 +521,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             ))}
           </div>
         )}
-        {activeSkillHint && !showSkillDropdown && (() => {
+        {activeSkillHint && !slashOpen && (() => {
           const skillMatch = chatInput.match(/^\/([a-zA-Z0-9_-]+)\s*/);
           const skillName = skillMatch?.[1] || '';
           const subcommands = activeSkillHint.split('|').map(s => s.trim()).filter(Boolean);
@@ -539,7 +561,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         />
         <div data-testid="chat-input" data-busy={isRunning ? 'true' : 'false'}
           className="flex gap-2 bg-white dark:bg-black/20 p-1.5 rounded-xl border border-slate-300/80 dark:border-white/10 relative items-end">
-          {showSkillDropdown && (
+          {slashOpen && (
             <div className="absolute bottom-full left-0 right-0 mb-2 bg-white dark:bg-[#141414] border border-slate-200 dark:border-white/10 rounded-lg shadow-xl max-h-52 overflow-y-auto z-[70]">
               <div className="px-3 py-2 text-[11px] text-slate-500 border-b border-slate-200 dark:border-white/10">
                 Commands &amp; Skills • Type to filter
@@ -700,9 +722,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 return;
               }
 
-              // Skill dropdown: `/` trigger
-              if (val.includes('/') && !val.includes(' ', val.lastIndexOf('/'))) {
-                const lastSlash = val.lastIndexOf('/');
+              // Skill dropdown: a `/` that starts a word (input start or after a
+              // space) and has no space after it yet. A `/` inside a word — a
+              // URL, a file path — is just text.
+              const lastSlash = val.lastIndexOf('/');
+              if (lastSlash >= 0 && (lastSlash === 0 || /\s/.test(val[lastSlash - 1])) && !/\s/.test(val.slice(lastSlash))) {
                 // Only trigger skill dropdown if the `/` is not part of a file path (i.e. after `@`)
                 const atIdx = val.lastIndexOf('@');
                 if (atIdx < 0 || lastSlash < atIdx) {
@@ -749,7 +773,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 return;
               }
               // Skill dropdown keyboard nav
-              if (showSkillDropdown && skillSuggestions.length > 0) {
+              if (slashOpen) {
                 if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
                   e.preventDefault();
                   const delta = e.key === 'ArrowDown' ? 1 : -1;
@@ -757,8 +781,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                   return;
                 }
                 if (e.key === 'Enter') {
-                  const exactCommands = claudeSession ? sdkCommands.filter((command) => command.builtin).map((command) => `/${command.name}`) : ['/help', '/clear', '/compact', '/status', '/model'];
-                  if (exactCommands.includes(chatInput.trim())) {
+                  // Typed in full already: Enter runs it instead of completing it.
+                  const typed = chatInput.trim().split(/\s+/).pop();
+                  if (skillSuggestions.some((item) => item.label === typed)) {
                     e.preventDefault();
                     setShowSkillDropdown(false);
                     send();
@@ -832,7 +857,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               }
 
               // Send on Enter (only when no dropdown open)
-              if (e.key === 'Enter' && !e.shiftKey && !showSkillDropdown && !showAgentDropdown && !fileDropdownVisible) {
+              if (e.key === 'Enter' && !e.shiftKey && !slashOpen && !showAgentDropdown && !fileDropdownVisible) {
                 e.preventDefault();
                 send();
               }

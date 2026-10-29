@@ -250,6 +250,23 @@ pub(crate) fn queue_key(project_root: &str, session_id: &str, agent_id: &str) ->
     format!("{project_root}|{session_id}|{agent_id}")
 }
 
+/// A turn's place in its session's line, waited on by the turn's task.
+pub(crate) type TurnPlace =
+    std::pin::Pin<Box<dyn std::future::Future<Output = tokio::sync::OwnedMutexGuard<()>> + Send>>;
+
+/// Take a place in the session's turn line now, at submit, not when the
+/// turn's task first runs: the turn lock serves waiters in the order they
+/// asked, so turns run in the order they were sent however their tasks are
+/// scheduled. True when another turn holds the lock (the turn is queued).
+pub(crate) fn take_turn_place(turn: Arc<tokio::sync::Mutex<()>>) -> (bool, TurnPlace) {
+    let mut place: TurnPlace = Box::pin(turn.lock_owned());
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    match place.as_mut().poll(&mut cx) {
+        std::task::Poll::Ready(guard) => (false, Box::pin(std::future::ready(guard))),
+        std::task::Poll::Pending => (true, place),
+    }
+}
+
 pub(crate) fn queue_preview(message: &str) -> String {
     const LIMIT: usize = 100;
     let trimmed = message.trim();
@@ -472,5 +489,42 @@ mod via_tests {
             }
             _ => panic!("expected a message event"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Turns run in the order their places were taken, not the order their
+    /// tasks first run: here the last one sent is the first one polled.
+    #[tokio::test]
+    async fn turns_run_in_the_order_they_took_their_places() {
+        let turn = Arc::new(tokio::sync::Mutex::new(()));
+        let (busy, running) = take_turn_place(turn.clone());
+        assert!(!busy, "an idle session's turn holds the lock at once");
+        let running = running.await;
+        let ran = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut places: Vec<_> = (0..3)
+            .map(|n| {
+                let (busy, place) = take_turn_place(turn.clone());
+                assert!(busy);
+                (n, place)
+            })
+            .collect();
+        let mut tasks = Vec::new();
+        while let Some((n, place)) = places.pop() {
+            let ran = ran.clone();
+            tasks.push(tokio::spawn(async move {
+                let _turn = place.await;
+                ran.lock().unwrap().push(n);
+            }));
+            tokio::task::yield_now().await;
+        }
+        drop(running);
+        for task in tasks {
+            task.await.unwrap();
+        }
+        assert_eq!(*ran.lock().unwrap(), [0, 1, 2]);
     }
 }

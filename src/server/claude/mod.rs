@@ -11,7 +11,8 @@ mod state;
 pub(crate) mod subagents;
 #[cfg(test)]
 mod tests;
-mod trust;
+mod tasks;
+pub(crate) mod trust;
 pub(crate) mod usage;
 
 pub(crate) use host::Host;
@@ -42,6 +43,18 @@ pub(crate) enum Control {
         task_id: String,
         reply: tokio::sync::oneshot::Sender<std::result::Result<(), String>>,
     },
+    /// A queued message the person chose to send now, into the running turn.
+    Steer {
+        text: String,
+        images: Vec<String>,
+        reply: tokio::sync::oneshot::Sender<std::result::Result<(), String>>,
+    },
+    /// Stop on the turn: the turn ends; background tasks keep running.
+    Interrupt {
+        reply: tokio::sync::oneshot::Sender<std::result::Result<(), String>>,
+    },
+    /// The runner's settings changed: it exits once it has nothing to do.
+    End,
 }
 
 #[derive(serde::Deserialize)]
@@ -128,6 +141,8 @@ pub(crate) async fn quiesce_within(
     let mut tick = runtime::cancel_tick();
     loop {
         if let Ok(guard) = turn.clone().try_lock_owned() {
+            // An idle runner holds no turn, but it holds the conversation.
+            end_runner(state, session, false).await;
             return Ok(guard);
         }
         // A submitted turn can own the lock before its run record exists.
@@ -178,8 +193,9 @@ pub(crate) async fn resolve_model(
     }
     config
         .routing
-        .default_models
+        .claude_default_model
         .iter()
+        .chain(config.routing.default_models.iter())
         .chain(config.models.iter().map(|m| &m.id))
         .find_map(|id| available.iter().find(|m| m.id == *id && supports_model(m)))
         .cloned()
@@ -247,11 +263,9 @@ pub(crate) async fn start_turn(
     if let Err(error) = resolve_model(&state, chosen).await {
         return (StatusCode::BAD_REQUEST, error.to_string()).into_response();
     }
-    let turn = state.manager.session_turn(&meta.id);
-    // Reserve before spawning: two simultaneous first messages cannot both
-    // appear idle and write messages out of order.
-    let reservation = turn.clone().try_lock_owned().ok();
-    let busy = reservation.is_none();
+    // Take the turn's place before spawning: two simultaneous first messages
+    // cannot both appear idle, and queued ones run in the order they came.
+    let (busy, mut lock) = chat::helpers::take_turn_place(state.manager.session_turn(&meta.id));
     let queued = chat::enqueue_if_busy(
         &state,
         busy,
@@ -259,6 +273,7 @@ pub(crate) async fn start_turn(
         &meta.id,
         AGENT_ID,
         &req.message,
+        (&req.message, &req.images),
         // A follow-up waits for the running turn, as Claude Code queues it;
         // only Stop cancels.
         crate::engine::skill::QueueMode::AfterTurn,
@@ -268,12 +283,38 @@ pub(crate) async fn start_turn(
         persist_user(&state, &meta, &req).await;
     }
     let sid = meta.id.clone();
+    let queued_id = queued.as_ref().map(|item| item.id.clone());
     tokio::spawn(async move {
-        let _guard = match reservation {
-            Some(guard) => guard,
-            None => turn.lock_owned().await,
+        let mut steer = queued.as_ref().map(|item| state.claude.await_steer(&item.id));
+        let steered = match steer.as_mut() {
+            Some(rx) => tokio::select! {
+                guard = &mut lock => Err(guard),
+                result = rx => Ok(result.is_ok()),
+            },
+            None => Err(lock.as_mut().await),
+        };
+        let _guard = match steered {
+            Err(guard) => guard,
+            // The steer channel closed unsent: the message keeps its place.
+            Ok(false) => lock.as_mut().await,
+            Ok(true) => {
+                let item = queued.as_ref().expect("a steer is only armed for a queued message");
+                if !dequeue_user(&state, &req, &meta, &item.id).await {
+                    return;
+                }
+                if steer_into_turn(&state, &meta.id, &req).await {
+                    return;
+                }
+                // The turn ended as the person pressed Steer: the message,
+                // already shown, starts the next turn instead.
+                let guard = lock.as_mut().await;
+                execute_turn(state, req, meta).await;
+                drop(guard);
+                return;
+            }
         };
         if let Some(item) = queued {
+            state.claude.forget_steer(&item.id);
             if !chat::dequeue_and_emit(
                 &state,
                 &state.events_tx,
@@ -295,7 +336,246 @@ pub(crate) async fn start_turn(
         }
         execute_turn(state, req, meta).await;
     });
-    Json(json!({"status": if busy {"queued"} else {"started"}, "session_id": sid, "agent_id": AGENT_ID})).into_response()
+    Json(json!({"status": if busy {"queued"} else {"started"}, "session_id": sid, "agent_id": AGENT_ID, "queued_id": queued_id})).into_response()
+}
+
+/// Stop one SDK task of a live runner: a background shell, watch or subagent.
+pub(crate) async fn stop_task(state: &ServerState, session: &str, task_id: &str) -> Result<()> {
+    let sender = state
+        .claude
+        .controls
+        .lock()
+        .await
+        .get(session)
+        .cloned()
+        .context("Claude task is no longer running")?;
+    let (reply, response) = tokio::sync::oneshot::channel();
+    sender
+        .send(Control::StopTask { task_id: task_id.into(), reply })
+        .map_err(|_| anyhow::anyhow!("Claude task ended"))?;
+    tokio::time::timeout(std::time::Duration::from_secs(20), response)
+        .await??
+        .map_err(anyhow::Error::msg)
+}
+
+/// Take a queued message off the queue and show it in the chat; false when
+/// the person removed it meanwhile.
+async fn dequeue_user(
+    state: &Arc<ServerState>,
+    req: &chat::types::ChatRequest,
+    meta: &SessionMeta,
+    queued_id: &str,
+) -> bool {
+    chat::dequeue_and_emit(
+        state,
+        &state.events_tx,
+        queued_id,
+        &meta.cwd,
+        &meta.id,
+        AGENT_ID,
+        req.sender.as_deref().unwrap_or("user"),
+        &req.message,
+        Some(&meta.id),
+        req.via.as_deref(),
+        req.via_note.as_deref(),
+        &req.images,
+    )
+    .await
+}
+
+/// Hand a message to the running turn at priority `now`; false when no turn
+/// is running or it has already finished taking messages.
+async fn steer_into_turn(state: &ServerState, session: &str, req: &chat::types::ChatRequest) -> bool {
+    let Some(sender) = state.claude.controls.lock().await.get(session).cloned() else {
+        return false;
+    };
+    let (reply, response) = tokio::sync::oneshot::channel();
+    let control = Control::Steer { text: req.message.clone(), images: media::data_urls(&req.images), reply };
+    if sender.send(control).is_err() {
+        return false;
+    }
+    matches!(
+        tokio::time::timeout(std::time::Duration::from_secs(10), response).await,
+        Ok(Ok(Ok(())))
+    )
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct SteerRequest {
+    id: String,
+}
+
+/// POST /api/queue/steer — send one queued message into the running turn.
+pub(crate) async fn steer_queued(
+    axum::extract::State(state): axum::extract::State<Arc<ServerState>>,
+    Json(req): Json<SteerRequest>,
+) -> Response {
+    if state.claude.steer(&req.id) {
+        Json(json!({"status": "ok"})).into_response()
+    } else {
+        (StatusCode::NOT_FOUND, "That message is no longer waiting.").into_response()
+    }
+}
+
+/// Send one turn to the session's live runner, starting one when there is
+/// none (doc/background-tasks-spec.md), and wait for the SDK's answer to it.
+async fn deliver(
+    state: &Arc<ServerState>,
+    host: &runtime::ClaudeSession,
+    req: &chat::types::ChatRequest,
+) -> std::result::Result<(), String> {
+    let turn_memory = host.turn_memory(&req.message).await;
+    let chosen = req
+        .model_id
+        .clone()
+        .or_else(|| host.meta.member(AGENT_ID).and_then(|m| m.model.clone()));
+    let model = resolve_model(state, chosen.as_deref()).await.map_err(|e| e.to_string())?;
+    let trusted = trust::known(state, &host.meta.id, &host.meta.cwd);
+    let key = host.settings_key(&model.id, trusted).await;
+    for _ in 0..2 {
+        let (done, outcome) = tokio::sync::oneshot::channel();
+        let turn = protocol::TurnRequest {
+            run_id: host.run_id.clone(),
+            prompt: req.message.clone(),
+            images: media::data_urls(&req.images),
+            uuid: uuid::Uuid::new_v4().to_string(),
+            turn_memory: turn_memory.clone(),
+            done,
+        };
+        hand(state, &host.meta, turn, &key, chosen.clone()).await;
+        match wait_turn(state, host, outcome).await {
+            Err(error) if error == protocol::RETRY => continue,
+            outcome => return outcome,
+        }
+    }
+    Err("Claude runner kept ending; try again.".into())
+}
+
+/// The live runner takes the turn when it runs on these settings (or has
+/// background work it must not lose); otherwise it is ended and a fresh one
+/// starts on the turn.
+async fn hand(
+    state: &Arc<ServerState>,
+    meta: &SessionMeta,
+    mut turn: protocol::TurnRequest,
+    key: &str,
+    chosen: Option<String>,
+) {
+    let session = meta.id.clone();
+    let mut live = state.claude.live.lock().await;
+    if let Some(runner) = live.get(&session) {
+        let same = *runner.settings.lock().unwrap_or_else(|p| p.into_inner()) == key;
+        let busy = state.tasks.list(&session).iter().any(|t| t.is_running());
+        if same || busy {
+            match runner.turns.send(turn) {
+                Ok(()) => return,
+                Err(returned) => turn = returned.0,
+            }
+            live.remove(&session);
+        } else {
+            drop(live);
+            end_runner(state, &session, true).await;
+            live = state.claude.live.lock().await;
+        }
+    }
+    let (turns_tx, turns_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (control_tx, control_rx) = tokio::sync::mpsc::unbounded_channel();
+    let settings = Arc::new(std::sync::Mutex::new(key.to_owned()));
+    let ended = Arc::new(tokio::sync::Notify::new());
+    live.insert(
+        session.clone(),
+        host::Live { turns: turns_tx, settings: settings.clone(), ended: ended.clone() },
+    );
+    state.claude.controls.lock().await.insert(session.clone(), control_tx.clone());
+    drop(live);
+    let mut runner = runtime::ClaudeSession {
+        state: state.clone(),
+        meta: meta.clone(),
+        run_id: turn.run_id.clone(),
+    };
+    let state = state.clone();
+    tokio::spawn(async move {
+        let result = crate::util::panic_as_error(
+            runner.serve(turn, chosen, turns_rx, control_rx, settings),
+        )
+        .await;
+        if let Err(error) = result {
+            tracing::info!("Claude runner for {session} ended: {error}");
+        }
+        let mut live = state.claude.live.lock().await;
+        if live.get(&session).is_some_and(|l| Arc::ptr_eq(&l.ended, &ended)) {
+            live.remove(&session);
+        }
+        drop(live);
+        let mut controls = state.claude.controls.lock().await;
+        if controls.get(&session).is_some_and(|c| c.same_channel(&control_tx)) {
+            controls.remove(&session);
+        }
+        drop(controls);
+        ended.notify_waiters();
+    });
+}
+
+/// Wait for the turn's answer. Stop interrupts the SDK's turn, keeping the
+/// runner and its background tasks; a runner that does not answer the
+/// interrupt in time is killed.
+async fn wait_turn(
+    state: &ServerState,
+    host: &runtime::ClaudeSession,
+    outcome: tokio::sync::oneshot::Receiver<std::result::Result<(), String>>,
+) -> std::result::Result<(), String> {
+    tokio::pin!(outcome);
+    let mut interrupted: Option<std::time::Instant> = None;
+    let mut killed = false;
+    let mut tick = runtime::cancel_tick();
+    loop {
+        tokio::select! {
+            answer = &mut outcome => {
+                return answer.unwrap_or_else(|_| Err("Claude runner ended".into()));
+            }
+            _ = tick.tick() => {
+                if interrupted.is_none() && host.cancelled().await {
+                    interrupted = Some(std::time::Instant::now());
+                    if let Some(sender) = state.claude.controls.lock().await.get(&host.meta.id) {
+                        let (reply, _ack) = tokio::sync::oneshot::channel();
+                        let _ = sender.send(Control::Interrupt { reply });
+                    }
+                }
+                if !killed && interrupted.is_some_and(|at| at.elapsed() >= QUIESCE_DEADLINE) {
+                    killed = true;
+                    state.claude.kill_runner(&host.meta.id);
+                }
+            }
+        }
+    }
+}
+
+/// End the session's live runner: `gently` asks it to exit once idle, else
+/// it is killed. Returns once it is gone (or a deadline passed, then killed).
+pub(crate) async fn end_runner(state: &ServerState, session: &str, gently: bool) {
+    let gone = || async { !state.claude.live.lock().await.contains_key(session) };
+    if gone().await {
+        return;
+    }
+    if gently {
+        if let Some(sender) = state.claude.controls.lock().await.get(session) {
+            let _ = sender.send(Control::End);
+        }
+    } else {
+        state.claude.kill_runner(session);
+    }
+    let started = std::time::Instant::now();
+    let mut tick = runtime::cancel_tick();
+    while !gone().await {
+        if started.elapsed() >= QUIESCE_DEADLINE {
+            state.claude.kill_runner(session);
+            if started.elapsed() >= QUIESCE_DEADLINE * 2 {
+                tracing::warn!("Claude runner for {session} did not exit");
+                return;
+            }
+        }
+        tick.tick().await;
+    }
 }
 
 async fn persist_user(state: &ServerState, meta: &SessionMeta, req: &chat::types::ChatRequest) {
@@ -335,7 +615,10 @@ async fn persist_user(state: &ServerState, meta: &SessionMeta, req: &chat::types
 async fn execute_turn(state: Arc<ServerState>, req: chat::types::ChatRequest, meta: SessionMeta) {
     // Only the task Ling handed over reports back. Subsequent user chat
     // belongs entirely to the Claude session.
-    let notify_parent = req.sender.as_deref().is_some_and(|sender| sender != "user");
+    let notify_parent = req
+        .sender
+        .as_deref()
+        .is_some_and(|sender| sender != "user" && sender != "system");
     let root = Path::new(&meta.cwd);
     let run_id = match state
         .manager
@@ -354,22 +637,21 @@ async fn execute_turn(state: Arc<ServerState>, req: chat::types::ChatRequest, me
             return;
         }
     };
-    let (control_tx, control_rx) = tokio::sync::mpsc::unbounded_channel();
-    state
-        .claude
-        .controls
-        .lock()
-        .await
-        .insert(meta.id.clone(), control_tx);
-    let mut host = runtime::ClaudeSession {
+    let host = runtime::ClaudeSession {
         state: state.clone(),
         meta,
         run_id: run_id.clone(),
     };
-    let result =
-        crate::util::panic_as_error(host.run(req.message, req.images, req.model_id, control_rx))
-            .await;
-    state.claude.controls.lock().await.remove(&host.meta.id);
+    host.emit(crate::engine::agent::AgentEvent::AgentStatus {
+        agent_id: AGENT_ID.into(),
+        status: "thinking".into(),
+        detail: Some("Thinking".into()),
+        parent_id: None,
+        run_id: None,
+        parent_run_id: None,
+    })
+    .await;
+    let result = deliver(&state, &host, &req).await.map_err(anyhow::Error::msg);
     let cancelled = state.manager.is_run_cancelled(&run_id).await
         || result
             .as_ref()

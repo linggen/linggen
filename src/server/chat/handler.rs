@@ -1,7 +1,7 @@
 use crate::engine::agent::AgentManager;
 use crate::engine::skill::QueueMode;
 use crate::server::chat::helpers::{
-    emit_queue_updated, persist_and_emit_with_images, queue_key, queue_preview,
+    emit_queue_updated, persist_and_emit_with_images, queue_key, queue_preview, take_turn_place,
 };
 use crate::server::{AgentStatusKind, QueuedChatItem, ServerEvent, ServerState};
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
@@ -391,6 +391,7 @@ pub(crate) async fn enqueue_if_busy(
     effective_session_id: &str,
     target_id: &str,
     clean_msg: &str,
+    sent: (&str, &[String]),
     queue: QueueMode,
 ) -> Option<QueuedChatItem> {
     if !was_busy {
@@ -406,6 +407,8 @@ pub(crate) async fn enqueue_if_busy(
         session_id: effective_session_id.to_string(),
         preview: queue_preview(clean_msg),
         timestamp: crate::util::now_ts_secs(),
+        text: sent.0.to_string(),
+        images: sent.1.to_vec(),
     };
 
     let key = queue_key(project_root_str, effective_session_id, target_id);
@@ -440,7 +443,7 @@ pub(crate) async fn enqueue_if_busy(
 /// held) and persist+emit the user message that was held back at submit.
 ///
 /// The queue map is the authority on whether the message should still run:
-/// a dismiss (`/api/queue/clear`) or a run-cancel drains it while this
+/// a remove (`/api/queue/remove`) or a run-cancel drains it while this
 /// message's task is parked on the engine lock. Returns false when the item
 /// is gone by the time the lock is held — the caller must drop the turn,
 /// not run a message the user watched disappear.
@@ -923,6 +926,10 @@ pub(crate) enum TurnOrigin {
     /// presence, never interrupts a running turn — it waits behind it — and
     /// a SILENT reply leaves nothing in the chat.
     Kickoff,
+    /// A message the person had queued when the engine restarted, sent
+    /// again (`restart::spawn_resume`). It stamps no presence and waits
+    /// behind the turn the restart continues, never interrupting it.
+    Resumed,
 }
 
 pub(crate) async fn chat_handler(
@@ -1149,9 +1156,9 @@ pub(crate) async fn start_turn(
     // One agent speaks at a time in a session: a turn already running
     // there — anyone's — holds the session's turn lock.
     let turn = state.manager.session_turn(&effective_session_id);
-    let was_busy = turn.try_lock().is_err();
+    let (was_busy, place) = take_turn_place(turn);
     let queue = match bound_skill.as_deref() {
-        _ if origin == TurnOrigin::Kickoff => QueueMode::AfterTurn,
+        _ if origin != TurnOrigin::Person => QueueMode::AfterTurn,
         Some(name) if was_busy => state
             .manager
             .skills
@@ -1168,6 +1175,7 @@ pub(crate) async fn start_turn(
         &effective_session_id,
         &target_id,
         &clean_msg,
+        (&req.message, &req.images),
         queue,
     )
     .await;
@@ -1208,7 +1216,7 @@ pub(crate) async fn start_turn(
     let req_followups = req.followups;
 
     tokio::spawn(async move {
-        let _turn = turn.lock_owned().await;
+        let _turn = place.await;
         let mut engine = agent.lock().await;
 
         // Refresh the engine's model_manager from live state so it sees
@@ -1530,8 +1538,8 @@ mod tests {
         let body = &src[src
             .find(concat!("pub(crate) async fn ", "start_turn("))
             .unwrap()..];
-        assert!(body.contains(concat!("let was_busy = turn", ".try_lock().is_err();")));
-        let lock = body.find(concat!("turn.lock_owned", "().await")).unwrap();
+        assert!(body.contains(concat!("let (was_busy, place) = take_turn_place", "(turn);")));
+        let lock = body.find(concat!("let _turn = place", ".await;")).unwrap();
         let engine = body.find(concat!("agent.lock", "().await")).unwrap();
         assert!(lock < engine);
     }

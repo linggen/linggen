@@ -32,6 +32,14 @@ injection, compaction and path authorization are not applied. The SDK owns
 its resume state independently of the visible chat log. A linked parent may
 start and track the task without entering its conversation.
 
+A folder's own Claude configuration (`.claude/`, `CLAUDE.md`,
+`CLAUDE.local.md`, `.mcp.json`, in the folder or a parent short of `$HOME`)
+loads only after the person trusted that folder once, as Claude Code asks.
+A folder with none is never asked about: it runs on user settings until some
+appears. A "no" holds for that session and folder — kept in the session's
+directory, so an engine restart does not ask again — until Clear or an SDK
+reset ends the conversation.
+
 ## Core concept
 
 Session = Context. One session, one context. They are the same thing.

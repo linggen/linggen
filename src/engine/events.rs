@@ -46,7 +46,77 @@ pub struct QueuedChatItem {
     pub session_id: String,
     pub preview: String,
     pub timestamp: u64,
+    /// The message as sent and its pictures, kept on the engine so an Edit
+    /// can hand them back; never pushed with the queue.
+    #[serde(skip)]
+    #[cfg_attr(test, ts(skip))]
+    pub text: String,
+    #[serde(skip)]
+    #[cfg_attr(test, ts(skip))]
+    pub images: Vec<String>,
 }
+/// One background task of a session (doc/background-tasks-spec.md).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct BackgroundTask {
+    /// The runtime's own id for the task (the SDK's task_id, a native id).
+    pub id: String,
+    /// "shell", "subagent", "watch", "workflow" or the runtime's own label.
+    pub kind: String,
+    /// What it is: its command line or description.
+    pub title: String,
+    /// "running", "completed", "failed", "stopped" or "interrupted".
+    pub status: String,
+    /// Unix milliseconds.
+    pub started_at: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub ended_at: Option<u64>,
+    /// Its latest output line or activity while it runs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub activity: Option<String>,
+    /// How it ended, in a line.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub summary: Option<String>,
+    /// Where its whole output is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub output_file: Option<String>,
+    /// The subagent pane tab of a background subagent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub subagent_id: Option<String>,
+}
+
+impl BackgroundTask {
+    pub fn running(id: &str, kind: &str, title: &str) -> Self {
+        Self {
+            id: id.into(),
+            kind: kind.into(),
+            title: title.into(),
+            status: "running".into(),
+            started_at: crate::util::now_ts_ms(),
+            ended_at: None,
+            activity: None,
+            summary: None,
+            output_file: None,
+            subagent_id: None,
+        }
+    }
+
+    pub fn is_running(&self) -> bool {
+        self.status == "running"
+    }
+
+    pub(crate) fn end(&mut self, status: &str) {
+        self.status = status.into();
+        self.ended_at.get_or_insert_with(crate::util::now_ts_ms);
+        self.activity = None;
+    }
+}
+
 /// Discriminated payload for the Notification event.
 /// Add new variants here to introduce new notification types.
 #[derive(Debug, Clone, Serialize)]
@@ -197,6 +267,19 @@ pub enum ServerEvent {
         session_id: String,
         agent_id: String,
         items: Vec<QueuedChatItem>,
+    },
+    /// A native background task changed (internal: the server lists it and
+    /// answers its end with a turn; never a UI event itself).
+    BackgroundTask {
+        session_id: Option<String>,
+        agent_id: String,
+        task: BackgroundTask,
+        notice: Option<String>,
+    },
+    /// A session's background task list, whole, after any change.
+    TasksUpdated {
+        session_id: String,
+        tasks: Vec<BackgroundTask>,
     },
     ContextUsage {
         agent_id: String,
@@ -510,6 +593,12 @@ impl ServerEvent {
                 Some(Self::PetExpress { emotion, action })
             }
             AgentEvent::PetVoice { muted } => Some(Self::PetVoice { muted }),
+            AgentEvent::BackgroundTask { agent_id, task, notice } => Some(Self::BackgroundTask {
+                session_id,
+                agent_id,
+                task,
+                notice,
+            }),
             AgentEvent::TextSegment {
                 agent_id,
                 text,

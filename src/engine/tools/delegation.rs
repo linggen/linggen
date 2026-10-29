@@ -9,6 +9,10 @@ use std::sync::Arc;
 pub(crate) struct TaskArgs {
     pub(crate) target_agent_id: String,
     pub(crate) task: String,
+    /// Run it beside the chat: the call returns at once, the end comes as a
+    /// turn of its own (doc/background-tasks-spec.md).
+    #[serde(default)]
+    pub(crate) run_in_background: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -86,6 +90,7 @@ impl Tools {
             self.session_policy.clone(),
             self.parent_path_modes.clone(),
             self.parent_interactive,
+            None,
         ))
         .await
     }
@@ -268,6 +273,7 @@ pub(crate) async fn run_delegation(
     parent_policy: Option<crate::engine::session_policy::SessionPolicy>,
     parent_path_modes: Vec<crate::engine::permission::PathMode>,
     parent_interactive: bool,
+    started: Option<tokio::sync::oneshot::Sender<String>>,
 ) -> Result<ToolResult> {
     let run_id = manager
         .begin_agent_run(
@@ -278,6 +284,9 @@ pub(crate) async fn run_delegation(
             Some(format!("delegated by {}", caller_id)),
         )
         .await?;
+    if let Some(started) = started {
+        let _ = started.send(run_id.clone());
+    }
 
     manager
         .send_event(

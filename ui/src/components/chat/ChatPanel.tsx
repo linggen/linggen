@@ -4,6 +4,7 @@ import { Sparkles, ArrowDown, Copy, FileText, Eraser, Plus } from 'lucide-react'
 import 'highlight.js/styles/github.css';
 import { cn } from '../../lib/cn';
 import { useSessionStore } from '../../stores/sessionStore';
+import { useInteractionStore } from '../../stores/interactionStore';
 import { useServerStore } from '../../stores/serverStore';
 import { useUserStore } from '../../stores/userStore';
 import { useUiStore } from '../../stores/uiStore';
@@ -265,7 +266,13 @@ export const ChatPanel: React.FC<{
   } = useChatFilters({ chatMessages, queuedMessages, selectedAgent, mainAgentIds, subagents, openSubagentId, subagentMessageFilter });
   const floatingUserMsg = useFloatingUserMessage(chatScrollRef, userMsgRefs, filteredMainMessages, sessionId);
   const { from: windowFrom, loadEarlier } = useMessageWindow(historicalMessages.length, sessionId, chatScrollRef);
-  const { askUserBelongsToSubagent, paneVisible, closePane } = useSubagentPane(filteredMainMessages, pendingAskUser, selectedAgent, memberIds);
+  const backgroundTasks = useInteractionStore((s) => s.backgroundTasks);
+  const runningTasks = backgroundTasks.filter((t) => t.status === 'running').length;
+  const { askUserBelongsToSubagent, paneVisible, closePane, openPane } = useSubagentPane(filteredMainMessages, pendingAskUser, selectedAgent, memberIds, backgroundTasks);
+  const stopTask = (id: string) => {
+    const sid = sessionId || useSessionStore.getState().activeSessionId;
+    if (sid) sessionApi.stopTask(sid, id).catch(() => {});
+  };
 
   // What "stop" acts on. The selected agent's run when there is one, else
   // whatever is running in this session: the two disagree whenever the run
@@ -461,11 +468,23 @@ export const ChatPanel: React.FC<{
             onRespondToAskUser={onRespondToAskUser}
             onCancelAgentRun={onCancelAgentRun}
             onClose={closePane}
+            tasks={backgroundTasks}
+            onStopTask={stopTask}
           />
         </div>
       )}
       </div>
 
+      {showSubagentPane && !paneVisible && runningTasks > 0 && (
+        <button
+          onClick={openPane}
+          className="self-start mx-2 mb-1 inline-flex items-center gap-1.5 text-[11px] px-2 py-0.5 rounded-full border border-amber-300/50 bg-amber-50/80 dark:bg-amber-500/10 dark:border-amber-500/20 text-amber-700 dark:text-amber-300 hover:bg-amber-100/80 dark:hover:bg-amber-500/20"
+          title="Show background tasks"
+        >
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+          {`${runningTasks} background task${runningTasks > 1 ? 's' : ''} running`}
+        </button>
+      )}
       <RunStatusLine
         active={isAgentActive}
         reconnecting={reconnecting}

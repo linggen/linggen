@@ -115,8 +115,13 @@ export const sessionApi = {
     apiPatch<void>('/api/sessions/permission', { session_id: sessionId, path, mode }),
   pendingAskUser: () =>
     apiGet<Array<{ question_id: string; agent_id?: string; questions?: unknown[]; session_id?: string | null }>>('/api/pending-ask-user'),
-  clearQueue: (projectRoot: string, sessionId: string, agentId: string) =>
-    apiPost<void>('/api/queue/clear', { project_root: projectRoot, session_id: sessionId, agent_id: agentId }),
+  /** Drop one queued message; it comes back (text + pictures) for an Edit. */
+  removeQueued: (projectRoot: string, sessionId: string, agentId: string, id: string) =>
+    apiPost<{ message?: string; images?: string[] }>('/api/queue/remove', { project_root: projectRoot, session_id: sessionId, agent_id: agentId, id }),
+  /** Stop one background task of the session; never the turn or the others. */
+  stopTask: (sessionId: string, id: string) => apiPost<void>('/api/tasks/stop', { session_id: sessionId, id }),
+  /** Claude sessions: send one queued message into the running turn now. */
+  steerQueued: (id: string) => apiPost<void>('/api/queue/steer', { id }),
   systemPrompt: (projectRoot: string, agentId: string, sessionId?: string | null) =>
     apiGet<{ system_prompt?: string; tools?: unknown[] }>(
       `/api/chat/system-prompt?${q({ project_root: projectRoot, agent_id: agentId, session_id: sessionId || undefined })}`,

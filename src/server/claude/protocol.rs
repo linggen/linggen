@@ -1,24 +1,94 @@
 use super::{runtime::ClaudeSession, state, AGENT_ID};
-use crate::engine::agent::AgentEvent;
+use crate::engine::agent::{AgentEvent, AgentRunStatus};
 use crate::server::ServerEvent;
 use crate::state_fs::sessions::ChatMsg;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncWriteExt, BufReader, Lines};
 use tokio::process::{ChildStdin, ChildStdout};
+use tokio::sync::{mpsc, oneshot, OwnedMutexGuard};
+
+/// How long a runner with nothing to do stays up before it exits.
+fn idle_exit() -> Duration {
+    std::env::var("LINGGEN_CLAUDE_IDLE_EXIT_SECS")
+        .ok()
+        .and_then(|secs| secs.parse().ok())
+        .map(Duration::from_secs)
+        .unwrap_or(Duration::from_secs(20 * 60))
+}
+
+/// A turn sent where a runner that was ending could not take it: start a
+/// fresh runner for it instead.
+pub(super) const RETRY: &str = "retry on a fresh runner";
+
+/// One person's message for the session's runner: its run, and where the
+/// turn's outcome goes once the SDK answers it.
+pub(crate) struct TurnRequest {
+    pub run_id: String,
+    pub prompt: String,
+    pub images: Vec<String>,
+    pub uuid: String,
+    pub turn_memory: String,
+    pub done: oneshot::Sender<std::result::Result<(), String>>,
+}
+
+/// A turn the runner ended with: its run and where its outcome goes.
+pub(super) type Stranded = (String, oneshot::Sender<std::result::Result<(), String>>);
+
+/// A turn the SDK has, waiting for its result.
+struct Pending {
+    run_id: String,
+    uuid: String,
+    done: oneshot::Sender<std::result::Result<(), String>>,
+    /// The SDK started on it: a Steer may join it now.
+    begun: bool,
+}
+
+/// A turn the SDK started on its own (a background task's notification):
+/// its run, and the session's turn lock while it runs.
+struct Unprompted {
+    run_id: String,
+    _turn: Option<OwnedMutexGuard<()>>,
+}
+
+#[derive(Default)]
+struct Turns {
+    pending: VecDeque<Pending>,
+    unprompted: Option<Unprompted>,
+    goal: bool,
+}
+
+impl Turns {
+    fn idle(&self) -> bool {
+        self.pending.is_empty() && self.unprompted.is_none() && !self.goal
+    }
+}
 
 impl ClaudeSession {
+    /// Serve the runner until it ends: the first turn is already sent with
+    /// `start`; later turns come on `turns`.
     pub async fn consume(
         &mut self,
         lines: &mut Lines<BufReader<ChildStdout>>,
         stdin: &mut ChildStdin,
-        controls: tokio::sync::mpsc::UnboundedReceiver<super::Control>,
+        first: TurnRequest,
+        mut turns: mpsc::UnboundedReceiver<TurnRequest>,
+        controls: mpsc::UnboundedReceiver<super::Control>,
+        stranded: &mut Vec<Stranded>,
     ) -> Result<()> {
         let mut active = HashMap::new();
         let mut subagents = super::subagents::Subagents::default();
+        let mut state = Turns::default();
+        state.pending.push_back(Pending {
+            run_id: first.run_id,
+            uuid: first.uuid,
+            done: first.done,
+            begun: false,
+        });
         let result = self
-            .read_events(lines, stdin, &mut active, controls, &mut subagents)
+            .read_events(lines, stdin, &mut active, &mut state, &mut turns, controls, &mut subagents)
             .await;
         if let Err(error) = subagents.finish(self).await {
             tracing::warn!("Could not finish SDK child views: {error}");
@@ -31,10 +101,7 @@ impl ClaudeSession {
             .iter()
             .filter(|(_, item)| {
                 item.session_id.as_deref() == Some(&self.meta.id)
-                    && (item.agent_id == AGENT_ID
-                        || item
-                            .agent_id
-                            .starts_with(&format!("sdk-sub-{}-", self.run_id)))
+                    && (item.agent_id == AGENT_ID || item.agent_id.starts_with("sdk-sub-"))
             })
             .map(|(id, _)| id.clone())
             .collect();
@@ -45,15 +112,96 @@ impl ClaudeSession {
             self.tool_end(&id, &tool, true, &json!("Task stopped"))
                 .await;
         }
+        // The runner is gone, and the SDK's background tasks with it.
+        if self.state.tasks.interrupt_running(&self.meta.id) {
+            crate::server::tasks::emit(&self.state, &self.meta.id);
+        }
+        // The runner's turns still waiting fail once its stderr is known.
+        stranded.extend(state.pending.drain(..).map(|turn| (turn.run_id, turn.done)));
+        if let Some(turn) = state.unprompted.take() {
+            let ended = result.as_ref().err().map_or("Claude Agent SDK ended".into(), ToString::to_string);
+            self.finish_unprompted(turn, Err(ended)).await;
+        }
+        // Turns that reached a runner already ending: a fresh one takes them.
+        turns.close();
+        while let Ok(turn) = turns.try_recv() {
+            let _ = turn.done.send(Err(RETRY.into()));
+        }
         result
     }
 
+    /// This run's stream is over: the chat stops showing it as typing.
+    pub(super) fn end_stream(&self, run_id: &str) {
+        let _ = self.state.events_tx.send(ServerEvent::Token {
+            agent_id: AGENT_ID.into(),
+            token: String::new(),
+            done: true,
+            thinking: false,
+            session_id: Some(self.meta.id.clone()),
+            run_id: Some(run_id.into()),
+        });
+    }
+
+    /// Events belong to the oldest waiting turn, else to the SDK's own.
+    fn follow(&mut self, turns: &Turns) {
+        if let Some(turn) = turns.pending.front() {
+            self.run_id = turn.run_id.clone();
+        } else if let Some(turn) = &turns.unprompted {
+            self.run_id = turn.run_id.clone();
+        }
+    }
+
+    /// The SDK started a turn with no message of ours: a background task
+    /// ended. It gets a run of its own, and holds the turn lock while it runs
+    /// so the person's next message waits for it as for any turn.
+    async fn begin_unprompted(&mut self) -> Option<Unprompted> {
+        let turn = self
+            .state
+            .manager
+            .session_turn(&self.meta.id)
+            .try_lock_owned()
+            .ok();
+        let run_id = self
+            .state
+            .manager
+            .begin_agent_run(
+                std::path::Path::new(&self.meta.cwd),
+                Some(&self.meta.id),
+                AGENT_ID,
+                None,
+                Some("A background task ended".into()),
+            )
+            .await
+            .ok()?;
+        Some(Unprompted { run_id, _turn: turn })
+    }
+
+    async fn finish_unprompted(&self, turn: Unprompted, outcome: std::result::Result<(), String>) {
+        self.end_stream(&turn.run_id);
+        let status = if outcome.is_ok() { AgentRunStatus::Completed } else { AgentRunStatus::Failed };
+        let _ = self
+            .state
+            .manager
+            .finish_agent_run(&turn.run_id, status, outcome.err())
+            .await;
+        crate::server::chat::close_turn(
+            &self.state,
+            AGENT_ID.into(),
+            Some(self.meta.id.clone()),
+            Some(turn.run_id),
+        )
+        .await;
+    }
+
+    #[allow(clippy::too_many_arguments)]
     async fn read_events(
         &mut self,
         lines: &mut Lines<BufReader<ChildStdout>>,
         stdin: &mut ChildStdin,
         active: &mut HashMap<String, String>,
-        mut controls: tokio::sync::mpsc::UnboundedReceiver<super::Control>,
+        turns_state: &mut Turns,
+        turns: &mut mpsc::UnboundedReceiver<TurnRequest>,
+        mut controls: mpsc::UnboundedReceiver<super::Control>,
         subagents: &mut super::subagents::Subagents,
     ) -> Result<()> {
         let mut has_text = false;
@@ -64,8 +212,12 @@ impl ClaudeSession {
         let mut changes = HashMap::new();
         let mut next_change = 0_i64;
         let mut controls_open = true;
-        // One clock for the whole turn: a sleep made fresh each pass would
-        // never fire while tokens stream, and Stop would wait for a pause.
+        let mut turns_open = true;
+        let mut idle_since = Instant::now();
+        let mut ending = false;
+        self.follow(turns_state);
+        // One clock for the whole runner: a sleep made fresh each pass would
+        // never fire while tokens stream.
         let mut tick = super::runtime::cancel_tick();
         loop {
             let line = tokio::select! {
@@ -80,12 +232,47 @@ impl ClaudeSession {
                     }
                     continue;
                 }
+                turn = turns.recv(), if turns_open && !ending => {
+                    let Some(turn) = turn else { turns_open = false; continue; };
+                    next_change += 1;
+                    let (reply, _ack) = oneshot::channel();
+                    changes.insert(next_change, reply);
+                    let message = json!({"type":"prompt", "id":next_change, "text":turn.prompt,
+                        "images":turn.images, "uuid":turn.uuid, "turnMemory":turn.turn_memory});
+                    stdin.write_all(format!("{message}\n").as_bytes()).await?;
+                    turns_state.pending.push_back(Pending { run_id: turn.run_id, uuid: turn.uuid, done: turn.done, begun: false });
+                    if turns_state.pending.len() == 1 && turns_state.unprompted.is_none() {
+                        has_text = false;
+                        last_text.clear();
+                    }
+                    self.follow(turns_state);
+                    continue;
+                }
                 change = controls.recv(), if controls_open => {
                     if let Some(change) = change {
+                        // A steer whose sender gave up waiting already runs
+                        // as the next turn; sending it too would run it twice.
+                        // Before the SDK began the turn, a `now` message would
+                        // run ahead of it: it waits as the next turn instead.
+                        if let super::Control::Steer { reply, .. } = &change {
+                            if reply.is_closed() { continue; }
+                        }
+                        let begun = turns_state.pending.front().is_some_and(|turn| turn.begun);
                         next_change += 1;
                         let (message, reply) = match change {
                             super::Control::Mode(change) => (json!({"type":"mode", "id":next_change, "mode":change.mode}), change.reply),
                             super::Control::StopTask { task_id, reply } => (json!({"type":"stop_task", "id":next_change, "task_id":task_id}), reply),
+                            super::Control::Steer { reply, .. } if !begun => {
+                                let _ = reply.send(Err("The turn has not begun.".into()));
+                                continue;
+                            }
+                            super::Control::Steer { text, images, reply } => (json!({"type":"steer", "id":next_change, "text":text, "images":images}), reply),
+                            super::Control::Interrupt { reply } => (json!({"type":"interrupt", "id":next_change}), reply),
+                            super::Control::End => {
+                                ending = true;
+                                stdin.write_all(b"{\"type\":\"end\"}\n").await?;
+                                continue;
+                            }
                         };
                         changes.insert(next_change, reply);
                         stdin.write_all(format!("{message}\n").as_bytes()).await?;
@@ -94,14 +281,36 @@ impl ClaudeSession {
                 }
                 line = lines.next_line() => line?.context("Claude Agent SDK exited without a result")?,
                 _ = tick.tick() => {
-                    if self.cancelled().await { bail!("run cancelled"); } continue;
+                    // Nothing to do for a while: the runner exits. A running
+                    // background task, a waiting turn or a goal keeps it.
+                    let tasks_running = self.state.tasks.list(&self.meta.id).iter().any(|t| t.is_running());
+                    if !ending && turns_state.idle() && requests.is_empty() && !tasks_running
+                        && idle_since.elapsed() >= idle_exit()
+                    {
+                        ending = true;
+                        stdin.write_all(b"{\"type\":\"end\"}\n").await?;
+                    }
+                    if !turns_state.idle() || tasks_running { idle_since = Instant::now(); }
+                    continue;
                 }
             };
             let event: Value = serde_json::from_str(&line).context("Invalid SDK bridge message")?;
+            let kind = event["type"].as_str().unwrap_or_default().to_owned();
+            // Output with no turn of ours waiting: the SDK began one itself.
+            if matches!(kind.as_str(), "token" | "text" | "tool_start" | "request" | "subagent_start") {
+                if let Some(turn) = turns_state.pending.front_mut() {
+                    turn.begun = true;
+                } else if turns_state.unprompted.is_none() {
+                    turns_state.unprompted = self.begin_unprompted().await;
+                    has_text = false;
+                    last_text.clear();
+                    self.follow(turns_state);
+                }
+            }
             if subagents.handle(self, &event).await? {
                 continue;
             }
-            match event["type"].as_str().unwrap_or_default() {
+            match kind.as_str() {
                 "init" => {
                     state::update_checkpoint(&self.dir(), |checkpoint| {
                         checkpoint["session_id"] = event["session_id"].clone();
@@ -211,6 +420,11 @@ impl ClaudeSession {
                         self.dismiss_question(&question).await;
                     }
                 }
+                "task" | "tasks" => {
+                    if super::tasks::apply(&self.state.tasks, &self.meta.id, &self.run_id, &event) {
+                        crate::server::tasks::emit(&self.state, &self.meta.id);
+                    }
+                }
                 "mode_result" => {
                     if let Some(change) = changes.remove(&event["id"].as_i64().unwrap_or_default())
                     {
@@ -228,6 +442,7 @@ impl ClaudeSession {
                         checkpoint["session_id"] = event["session_id"].clone();
                     })?;
                     self.state.claude.forget_session(&self.meta.id);
+                    super::trust::forget_decline(&self.dir());
                     self.state
                         .manager
                         .global_sessions
@@ -240,10 +455,12 @@ impl ClaudeSession {
                 }
                 "result" => {
                     super::usage::record(&self.dir(), &event)?;
-                    if !event["success"].as_bool().unwrap_or(false) {
-                        bail!("Claude Agent SDK: {}", event["errors"]);
-                    }
-                    if !has_text {
+                    let outcome = if event["success"].as_bool().unwrap_or(false) {
+                        Ok(())
+                    } else {
+                        Err(format!("Claude Agent SDK: {}", event["errors"]))
+                    };
+                    if outcome.is_ok() && !has_text {
                         if let Some(text) = event["text"].as_str().filter(|s| !s.is_empty()) {
                             self.text(text).await;
                             last_text = text.into();
@@ -252,30 +469,57 @@ impl ClaudeSession {
                     if !last_text.is_empty() {
                         self.finalize_text(&last_text).await;
                     }
-                    let count = |key: &str| event["usage"][key].as_u64().unwrap_or(0) as usize;
-                    let input = count("input_tokens")
-                        + count("cache_creation_input_tokens")
-                        + count("cache_read_input_tokens");
+                    // The turns this result answered: the messages it took in.
+                    let answered: Vec<&str> = event["uuids"].as_array().into_iter().flatten()
+                        .filter_map(Value::as_str).collect();
+                    let mut completed = false;
+                    while let Some(at) = turns_state.pending.iter().position(|turn| answered.contains(&turn.uuid.as_str())) {
+                        let turn = turns_state.pending.remove(at).expect("position is in range");
+                        self.end_stream(&turn.run_id);
+                        let _ = turn.done.send(outcome.clone());
+                        completed = true;
+                    }
+                    if !completed {
+                        if let Some(turn) = turns_state.unprompted.take() {
+                            self.finish_unprompted(turn, outcome).await;
+                        } else if let Some(turn) = turns_state.pending.pop_front() {
+                            self.end_stream(&turn.run_id);
+                            let _ = turn.done.send(outcome);
+                        }
+                    }
+                    has_text = false;
+                    last_text.clear();
+                    idle_since = Instant::now();
+                    self.follow(turns_state);
+                }
+                // The context window as it stands, after a turn.
+                "context" => {
+                    let tokens = event["tokens"].as_u64().unwrap_or(0) as usize;
+                    let limit = event["limit"].as_u64().filter(|l| *l > 0).map(|l| l as usize);
                     self.emit(AgentEvent::ContextUsage {
                         agent_id: AGENT_ID.into(),
                         stage: "sdk".into(),
                         message_count: 0,
                         char_count: 0,
-                        estimated_tokens: input,
-                        token_limit: None,
-                        actual_prompt_tokens: Some(input),
-                        actual_completion_tokens: Some(count("output_tokens")),
+                        estimated_tokens: tokens,
+                        token_limit: limit,
+                        // The window, not spend: the chat sums these as usage.
+                        actual_prompt_tokens: None,
+                        actual_completion_tokens: None,
                         compressed: false,
                         summary_count: 0,
                     })
                     .await;
                 }
+                "goal" => {
+                    turns_state.goal = event["active"] == true;
+                }
                 "done" => return Ok(()),
-                "error" => bail!(
+                "error" => anyhow::bail!(
                     "Claude Agent SDK: {}",
                     event["message"].as_str().unwrap_or("runtime error")
                 ),
-                _ => bail!("Unknown SDK bridge message"),
+                _ => anyhow::bail!("Unknown SDK bridge message"),
             }
         }
     }

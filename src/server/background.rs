@@ -33,6 +33,12 @@ pub(super) fn spawn_background_tasks(
         crate::extensions::missions::scheduler::mission_scheduler_loop(state.scheduler_host()),
     );
     spawn_companion(state);
+    // Native background tasks: listed as they change, their ends told as turns.
+    // A previous engine's shells end with it.
+    tokio::task::spawn_blocking(crate::engine::background::end_leftovers);
+    tokio::spawn(super::tasks::native_watch(state.clone()));
+    // After a self-restart, the sessions it interrupted continue.
+    super::restart::spawn_resume(state.clone());
     spawn_perception(state);
     // What this Mac's apps let another device's agent call (`mac/tools`).
     tokio::spawn(super::mac_tools::publish_loop(state.clone()));

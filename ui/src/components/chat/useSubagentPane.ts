@@ -1,8 +1,10 @@
 // The subagent pane beside the chat: shown while any message has a
 // subagent tree, forced open while one runs or asks the user something,
-// and auto-collapsed 10 minutes after the last one finishes.
-import { useEffect, useMemo, useState } from 'react';
-import type { ChatMessage, PendingAskUser, SubagentTreeEntry } from '../../types';
+// and auto-collapsed 10 minutes after the last one finishes. A background
+// task opens it when it starts but never holds it open: it can run for
+// hours, and the chat shows how many run while the pane is closed.
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { BackgroundTask, ChatMessage, PendingAskUser, SubagentTreeEntry } from '../../types';
 import { normalizeAgentKey } from '../../lib/messageUtils';
 
 const COLLAPSE_AFTER_MS = 600_000;
@@ -22,7 +24,7 @@ function askIsForSubagent(ask: PendingAskUser | null | undefined, entries: Subag
   return id !== normalizeAgentKey(mainAgent);
 }
 
-export function useSubagentPane(messages: ChatMessage[], pendingAskUser: PendingAskUser | null | undefined, selectedAgent: string, members: readonly string[] = []) {
+export function useSubagentPane(messages: ChatMessage[], pendingAskUser: PendingAskUser | null | undefined, selectedAgent: string, members: readonly string[] = [], tasks: BackgroundTask[] = []) {
   const entries = useMemo(() => messages.flatMap((m) => m.subagentTree ?? []), [messages]);
   const anyRunning = entries.some((e) => e.status === 'running');
   const askUserBelongsToSubagent = useMemo(
@@ -32,7 +34,8 @@ export function useSubagentPane(messages: ChatMessage[], pendingAskUser: Pending
   const [paneVisible, setPaneVisible] = useState(false);
   useEffect(() => {
     if (entries.length === 0) {
-      setPaneVisible(false);
+      // Only background tasks to show: the person opens and closes it.
+      if (tasks.length === 0) setPaneVisible(false);
       return;
     }
     setPaneVisible(true);
@@ -41,7 +44,20 @@ export function useSubagentPane(messages: ChatMessage[], pendingAskUser: Pending
     if (anyRunning || askUserBelongsToSubagent) return;
     const t = setTimeout(() => setPaneVisible(false), COLLAPSE_AFTER_MS);
     return () => clearTimeout(t);
-  }, [anyRunning, entries.length, askUserBelongsToSubagent]);
+  }, [anyRunning, entries.length, askUserBelongsToSubagent, tasks.length]);
 
-  return { askUserBelongsToSubagent, paneVisible, closePane: () => setPaneVisible(false) };
+  // A task that was not running before opens the pane, once.
+  const seenRunning = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const running = tasks.filter((t) => t.status === 'running').map((t) => t.id);
+    if (running.some((id) => !seenRunning.current.has(id))) setPaneVisible(true);
+    seenRunning.current = new Set(running);
+  }, [tasks]);
+
+  return {
+    askUserBelongsToSubagent,
+    paneVisible,
+    closePane: () => setPaneVisible(false),
+    openPane: () => setPaneVisible(true),
+  };
 }

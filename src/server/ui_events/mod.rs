@@ -15,6 +15,7 @@ use crate::engine::events::{ServerEvent, UiEvent};
 pub(crate) const UI_KIND_MESSAGE: &str = "message";
 pub(crate) const UI_KIND_ACTIVITY: &str = "activity";
 pub(crate) const UI_KIND_QUEUE: &str = "queue";
+pub(crate) const UI_KIND_TASKS: &str = "tasks";
 pub(crate) const UI_KIND_RUN: &str = "run";
 pub(crate) const UI_KIND_TOKEN: &str = "token";
 pub(crate) const UI_KIND_TEXT_SEGMENT: &str = "text_segment";
@@ -121,6 +122,7 @@ pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Op
         | ToolProgress { .. } => chat::map(event, ui),
         AgentStatus { .. }
         | QueueUpdated { .. }
+        | TasksUpdated { .. }
         | StateUpdated
         | Outcome { .. }
         | ContextUsage { .. }
@@ -138,6 +140,8 @@ pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Op
         | DeviceTopic { .. } => global::map(event, ui),
         // Internal: consumed by Yinyue's watch loop, never a UI banner.
         AgentChat { .. } => None,
+        // Internal: the server folds it into `tasks` (server/tasks.rs).
+        BackgroundTask { .. } => None,
         // Per-peer — handled directly in forward.rs (the present flag depends on
         // the receiving peer's id), so it never goes through this shared mapping.
         YinyuePresenterChanged => None,

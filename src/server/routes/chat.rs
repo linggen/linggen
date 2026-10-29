@@ -2,7 +2,7 @@
 //! WebRTC RPCs).
 
 use super::Routes;
-use crate::server::api::agents::{cancel_agent_run, clear_queued_messages, set_task};
+use crate::server::api::agents::{cancel_agent_run, remove_queued_message, set_task};
 use crate::server::api::permissions::{get_session_permission, update_session_permission};
 use crate::server::api::sessions::{
     create_session, delete_unified_session, get_session_image, get_skill_session_state,
@@ -35,7 +35,10 @@ pub(super) fn routes() -> Routes {
         .route("/api/skill-sessions/state", get(get_skill_session_state))
         .route("/api/task", post(set_task))
         .route("/api/agent-cancel", post(cancel_agent_run))
-        .route("/api/queue/clear", post(clear_queued_messages))
+        .route("/api/queue/remove", post(remove_queued_message))
+        .route("/api/queue/steer", post(crate::server::claude::steer_queued))
+        .route("/api/tasks/stop", post(crate::server::tasks::stop))
+        .route("/api/engine/restart", post(crate::server::restart::restart))
         // Chat & plan
         .route("/api/chat", post(chat_handler))
         .route("/api/chat/clear", post(clear_chat_history_api))

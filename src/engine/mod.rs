@@ -1,6 +1,7 @@
 pub mod actions;
 pub mod agent;
 pub mod answer_refs;
+pub mod background;
 mod closing_ask;
 pub(crate) mod cloud_meter;
 mod context;

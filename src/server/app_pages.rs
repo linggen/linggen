@@ -263,6 +263,17 @@ pub(super) async fn static_handler(State(state): State<Arc<ServerState>>, uri: U
                 axum::body::Body::from(content.data),
             )
         }
+        None if path.rsplit('/').next().is_some_and(|name| name.contains('.')) => {
+            // A file that is not there is a 404, not the app: a page left open
+            // across an update asks for chunks the new build renamed, and
+            // answering with index.html makes the browser refuse it as a script.
+            build_response(
+                Response::builder()
+                    .status(404)
+                    .header("Content-Type", "text/plain"),
+                axum::body::Body::from("Not found"),
+            )
+        }
         None => {
             // Fallback to index.html for SPA routing
             match Assets::get("index.html") {

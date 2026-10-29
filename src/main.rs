@@ -89,6 +89,28 @@ enum Command {
         #[arg(long)]
         rollback: bool,
     },
+    /// Restart the running engine on a build; this session and every turn the
+    /// restart interrupts continue afterwards
+    Restart {
+        /// The ling binary to restart on (e.g. target/release/ling)
+        #[arg(long)]
+        binary: std::path::PathBuf,
+        /// Seconds to wait for other sessions' turns to finish first
+        #[arg(long, default_value_t = 120)]
+        wait: u64,
+    },
+    /// The detached helper `ling restart` asks the engine to start
+    #[command(hide = true)]
+    EngineRestart {
+        #[arg(long)]
+        binary: std::path::PathBuf,
+        #[arg(long)]
+        pid: u32,
+        #[arg(long)]
+        host: String,
+        #[arg(long)]
+        port: u16,
+    },
     /// Manage skills
     Skills {
         #[command(subcommand)]
@@ -216,6 +238,12 @@ async fn main() -> Result<()> {
         }
         Some(Command::Claude { args }) => {
             return cli::claude::run(config.server.port(), args).await;
+        }
+        Some(Command::Restart { binary, wait }) => {
+            return cli::restart::request(config.server.port(), binary, *wait).await;
+        }
+        Some(Command::EngineRestart { binary, pid, host, port }) => {
+            return cli::restart::helper(binary, *pid, host.clone(), *port).await;
         }
         Some(Command::Account { action }) => {
             return match action {
@@ -467,7 +495,9 @@ async fn main() -> Result<()> {
         | Some(Command::Skills { .. })
         | Some(Command::Auth { .. })
         | Some(Command::Account { .. })
-        | Some(Command::Claude { .. }) => unreachable!(),
+        | Some(Command::Claude { .. })
+        | Some(Command::Restart { .. })
+        | Some(Command::EngineRestart { .. }) => unreachable!(),
     }
 
     Ok(())

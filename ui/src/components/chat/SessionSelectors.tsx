@@ -32,7 +32,8 @@ export const SessionStats: React.FC = () => {
   return (
     <span className="text-[10px] font-mono text-slate-400 ml-auto shrink-0" title={`Context: ${tokens} / ${limit || '?'} tokens (${pct}%)`}>
       {tokens > 0 && <><span className={pct > 80 ? 'text-red-400' : pct > 50 ? 'text-amber-400' : ''}>{fmt(tokens)}</span>
-      {limit > 0 && <span className="text-slate-300 dark:text-slate-600">/{fmt(limit)}</span>}</>}
+      {limit > 0 && <span className="text-slate-300 dark:text-slate-600">/{fmt(limit)}</span>}
+      {limit > 0 && <span className={pct > 80 ? 'text-red-400' : pct > 50 ? 'text-amber-400' : ''}> {pct}%</span>}</>}
       {claude && <span className="text-[11px] text-slate-600 dark:text-slate-300" data-no-i18n title="Estimated USD cost recorded for this Claude conversation. Includes subagents; final charges follow Anthropic billing.">
         {tokens > 0 ? ' · ' : ''}≈ ${cost === undefined ? '—' : cost.toFixed(2)}
       </span>}
@@ -47,6 +48,7 @@ export const SessionModelSelector: React.FC = () => {
   const claude = session?.runtime === 'claude_agent_sdk';
   const models = claude ? catalog.filter((model) => model.supports_claude_sdk) : catalog;
   const defaultModels = useServerStore((s) => s.defaultModels);
+  const claudeDefault = useServerStore((s) => s.claudeDefaultModel);
   const sessionModel = useUiStore((s) => s.sessionModel);
   const setSessionModel = useUiStore((s) => s.setSessionModel);
   const sessionId = useSessionStore((s) => s.activeSessionId);
@@ -58,7 +60,8 @@ export const SessionModelSelector: React.FC = () => {
   // model when no override is sent. Use that as the Default label.
   const isConsumer = userType === 'consumer';
   const defaultLabel = claude
-    ? (models.find((model) => defaultModels.includes(model.id))?.id ?? models[0]?.id ?? 'configure in Settings')
+    ? ((claudeDefault && models.find((model) => model.id === claudeDefault)?.id)
+      || models.find((model) => defaultModels.includes(model.id))?.id || models[0]?.id || 'configure in Settings')
     : isConsumer
     ? (models[0]?.id ?? 'shared')
     : (defaultModels.length > 0 ? defaultModels[0] : 'default');

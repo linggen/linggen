@@ -16,10 +16,12 @@ mod push;
 pub(crate) mod milestones;
 mod quests_watch;
 mod resident;
+mod restart;
 mod routes;
 pub(crate) mod rtc;
 mod shared_pages;
 mod state;
+pub(crate) mod tasks;
 mod ui_events;
 mod yinyue_moments;
 
@@ -77,6 +79,7 @@ async fn prepare_server(
         queued_chats: Arc::new(Mutex::new(HashMap::new())),
         interrupt_tx: Arc::new(Mutex::new(HashMap::new())),
         claude: Default::default(),
+        tasks: Default::default(),
         pending_ask_user: Arc::new(Mutex::new(HashMap::new())),
         status_seq: AtomicU64::new(1),
         active_statuses: Arc::new(Mutex::new(HashMap::new())),

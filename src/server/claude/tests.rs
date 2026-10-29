@@ -110,11 +110,9 @@ fn session_approvals_live_in_memory_until_the_conversation_ends() {
     let rule = json!({"type":"addRules","behavior":"allow","rules":[{"toolName":"Bash"}]});
     host.add_session_rules("s", &[rule.clone()]);
     host.add_session_rules("other", &[rule.clone()]);
-    host.decline_trust("s");
     assert_eq!(host.session_rules("s"), [rule.clone()]);
     host.forget_session("s");
     assert!(host.session_rules("s").is_empty());
-    assert!(!host.declined_trust("s"));
     assert_eq!(host.session_rules("other"), [rule]);
 }
 
@@ -136,4 +134,13 @@ fn a_parent_gets_the_outcome_as_facts_not_engine_words() {
         json!({"type":"session_status", "session_id":meta.id, "title":"Fix tests",
             "runtime":"claude", "status":"completed"})
     );
+}
+
+#[test]
+fn chat_pictures_reach_the_bridge_as_data_urls() {
+    use super::media::data_url;
+    // A PNG's head, sent bare as the chat input sends it.
+    assert_eq!(data_url("iVBORw0KGgoAAAANSUhEUg=="), "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==");
+    assert_eq!(data_url("/9j/4AAQSkZJRgABAQ=="), "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ==");
+    assert_eq!(data_url("data:image/gif;base64,R0lGOD"), "data:image/gif;base64,R0lGOD");
 }

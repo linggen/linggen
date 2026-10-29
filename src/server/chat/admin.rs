@@ -46,11 +46,15 @@ pub(crate) async fn clear_chat_history_api(
         .clear_chat_history(&session_id)
     {
         Ok(removed) => {
+            if state.tasks.forget(&session_id) {
+                crate::server::tasks::emit(&state, &session_id);
+            }
             if claude {
                 let dir = state.manager.global_sessions.session_dir(&session_id);
                 crate::server::claude::usage::clear(&dir).ok();
                 std::fs::remove_file(dir.join("claude-subagents.json")).ok();
                 state.claude.forget_session(&session_id);
+                crate::server::claude::trust::forget_decline(&dir);
             }
             let _ = std::fs::remove_file(
                 state

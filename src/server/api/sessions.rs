@@ -528,6 +528,7 @@ pub(crate) async fn delete_unified_session(
         false => None,
     };
     state.claude.forget_session(&req.session_id);
+    state.tasks.forget(&req.session_id);
     state.manager.remove_session_engine(&req.session_id).await;
     match state
         .manager

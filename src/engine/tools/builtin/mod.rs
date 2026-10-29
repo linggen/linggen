@@ -22,6 +22,7 @@ mod image;
 mod media;
 mod pet;
 mod sense;
+mod tasks;
 mod web;
 mod write;
 
@@ -37,6 +38,7 @@ pub use image::*;
 pub use media::*;
 pub use pet::*;
 pub use sense::*;
+pub use tasks::*;
 pub use web::*;
 pub use write::*;
 
@@ -153,6 +155,8 @@ pub(super) fn registry() -> &'static [Arc<dyn Tool>] {
             Arc::new(ClaudeSessionTool),
             Arc::new(AppTool),
             Arc::new(AskUserTool),
+            Arc::new(TaskOutputTool),
+            Arc::new(TaskStopTool),
             // Memory is NOT here. ling-mem is an MCP server and the model
             // uses its tools directly (`mcp__memory__memory_*`), discovered
             // at runtime rather than compiled in — so there is one memory

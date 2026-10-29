@@ -16,7 +16,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { X, Copy, FileText, ArrowDown } from 'lucide-react';
 import { cn } from '../../lib/cn';
-import type { ChatMessage, ContentBlock, PendingAskUser, AskUserAnswer, SubagentTreeEntry } from '../../types';
+import type { BackgroundTask, ChatMessage, ContentBlock, PendingAskUser, AskUserAnswer, SubagentTreeEntry } from '../../types';
+import { BackgroundTasks } from './BackgroundTasks';
 import { MarkdownContent } from './MarkdownContent';
 import { ContentBlockView } from './ContentBlockView';
 import { AskUserCard } from '../AskUserCard';
@@ -39,6 +40,9 @@ interface Props {
   onCancelAgentRun?: (runId: string) => void | Promise<void>;
   /** Close the entire pane immediately (overrides auto-collapse). */
   onClose?: () => void;
+  /** The session's background tasks, listed above the subagent tabs. */
+  tasks?: BackgroundTask[];
+  onStopTask?: (id: string) => void;
 }
 
 /** Collect every subagent entry attached to any message in this session,
@@ -61,6 +65,8 @@ export const SubagentPane: React.FC<Props> = ({
   onRespondToAskUser,
   onCancelAgentRun,
   onClose,
+  tasks = [],
+  onStopTask,
 }) => {
   const entries = useMemo(() => collectEntries(messages), [messages]);
 
@@ -144,10 +150,17 @@ export const SubagentPane: React.FC<Props> = ({
     },
   );
 
-  if (!visible || entries.length === 0 || !active) return null;
+  if (!visible || ((entries.length === 0 || !active) && tasks.length === 0)) return null;
 
   return (
     <div className="flex flex-col h-full min-h-0 border-l border-slate-200 dark:border-white/10 bg-slate-50/60 dark:bg-[#0b0b0b]">
+      <BackgroundTasks
+        tasks={tasks}
+        onStop={(id) => onStopTask?.(id)}
+        onOpenSubagent={(id) => { if (entries.some((e) => e.subagentId === id)) setActiveId(id); }}
+        onClose={active ? undefined : onClose}
+      />
+      {active && (<>
       {/* Tab strip */}
       <div className="flex items-center gap-1 px-2 py-1.5 border-b border-slate-200 dark:border-white/10 overflow-x-auto custom-scrollbar shrink-0">
         <span className="text-[10px] uppercase tracking-wider text-slate-400 dark:text-slate-500 font-semibold mr-1 shrink-0">
@@ -374,6 +387,7 @@ export const SubagentPane: React.FC<Props> = ({
           </button>
         )}
       </div>
+      </>)}
     </div>
   );
 };

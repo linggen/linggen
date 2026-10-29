@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Eye, EyeOff, LogIn, LogOut, Plus, Star, Trash2 } from 'lucide-react';
+import { Eye, EyeOff, LogIn, LogOut, Moon, Plus, Star, Trash2 } from 'lucide-react';
 import type { AppConfig, ModelConfigUI, ModelHealthInfo, OllamaPsResponse } from '../types';
 import { UsageMeter } from './UsageMeter';
 import { useServerStore } from '../stores/serverStore';
@@ -104,6 +104,38 @@ const HealthDot: React.FC<{ health: ModelHealthInfo | undefined; ollamaStatus: '
   );
 };
 
+const TILE_TONES = {
+  amber: { box: 'border-amber-300/70 dark:border-amber-700/50 bg-amber-50/60 dark:bg-amber-500/[0.04]', icon: 'bg-amber-500/15 text-amber-500' },
+  indigo: { box: 'border-indigo-300/70 dark:border-indigo-700/50 bg-indigo-50/60 dark:bg-indigo-500/[0.05]', icon: 'bg-indigo-500/15 text-indigo-500' },
+} as const;
+
+/** One kind of session and the model its new sessions start on. */
+const DefaultTile: React.FC<{
+  icon: React.ReactNode;
+  label: string;
+  tone: keyof typeof TILE_TONES;
+  modelId: string | undefined;
+  emptyText?: string;
+  onClear: () => void;
+  children?: React.ReactNode;
+}> = ({ icon, label, tone, modelId, emptyText = 'Not set', onClear, children }) => (
+  <div className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border ${TILE_TONES[tone].box}`}>
+    <span className={`flex items-center justify-center w-8 h-8 rounded-lg shrink-0 ${TILE_TONES[tone].icon}`}>{icon}</span>
+    <div className="min-w-0 flex-1">
+      <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">{label}</div>
+      <div className="text-xs font-medium flex items-center flex-wrap">
+        {modelId ? <span className="truncate">{modelId}</span> : <span className="text-slate-400">{emptyText}</span>}
+        {children}
+      </div>
+    </div>
+    {modelId && (
+      <button onClick={onClear} className="p-0.5 text-slate-400 hover:text-red-500" title="Clear default">
+        <Trash2 size={12} />
+      </button>
+    )}
+  </div>
+);
+
 export const ModelsTab: React.FC<{
   config: AppConfig;
   onChange: (config: AppConfig) => void;
@@ -120,6 +152,7 @@ export const ModelsTab: React.FC<{
   const [codexAuthLoading, setCodexAuthLoading] = useState(false);
 
   const defaultModels = config.routing?.default_models ?? [];
+  const claudeDefault = config.routing?.claude_default_model ?? '';
 
   // Runtime model list — includes built-ins the engine injects (Linggen
   // Cloud, ChatGPT) regardless of what's in the config file. Shown read-only
@@ -234,6 +267,9 @@ export const ModelsTab: React.FC<{
       const newDefaults = defaultModels.map((id) => id === oldId ? value : id);
       routing = { ...routing, default_models: newDefaults };
     }
+    if (field === 'id' && oldId && typeof value === 'string' && value && oldId !== value && claudeDefault === oldId) {
+      routing = { ...routing, claude_default_model: value };
+    }
     onChange({ ...config, models, routing });
   };
 
@@ -249,7 +285,11 @@ export const ModelsTab: React.FC<{
     onChange({
       ...config,
       models: newModels,
-      routing: { ...config.routing, default_models: newDefaults },
+      routing: {
+        ...config.routing,
+        default_models: newDefaults,
+        claude_default_model: claudeDefault === modelId ? null : config.routing?.claude_default_model,
+      },
     });
   };
 
@@ -304,15 +344,29 @@ export const ModelsTab: React.FC<{
   // Default model selection helpers
   const isDefault = (modelId: string) => defaultModels.includes(modelId);
 
+  const changeRouting = (change: (routing: NonNullable<AppConfig['routing']>) => NonNullable<AppConfig['routing']>) => {
+    onChange({ ...config, routing: change(config.routing ?? {}) });
+  };
+
   const toggleDefault = (modelId: string) => {
     // Single-select: set as default, or deselect if already the default
-    const newDefaults = defaultModels.length === 1 && defaultModels[0] === modelId ? [] : [modelId];
-    onChange({
-      ...config,
-      routing: { ...config.routing, default_models: newDefaults },
+    changeRouting((routing) => {
+      const current = routing.default_models ?? [];
+      return { ...routing, default_models: current.length === 1 && current[0] === modelId ? [] : [modelId] };
     });
   };
 
+
+  // Claude sessions take only Anthropic API-key models (not a Claude login).
+  const claudeCapable = (model: ModelConfigUI) =>
+    model.provider === 'anthropic' && model.auth_mode !== 'claude_oauth';
+
+  const toggleClaudeDefault = (modelId: string) => {
+    changeRouting((routing) => ({
+      ...routing,
+      claude_default_model: routing.claude_default_model === modelId ? null : modelId,
+    }));
+  };
 
   const updateTags = (index: number, tagsStr: string) => {
     const tags = tagsStr.split(',').map((t) => t.trim()).filter(Boolean);
@@ -323,44 +377,48 @@ export const ModelsTab: React.FC<{
 
   return (
     <div className="space-y-6">
-      {/* Default Model section */}
-      {defaultModels.length > 0 && (
-        <section className={sectionCls}>
-          <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-3">
-            Default Model
-          </h2>
+      {/* Default models: one per kind of session */}
+      <section className={sectionCls}>
+        <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-3">
+          Default Models
+        </h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {(() => {
             const modelId = defaultModels[0];
             const model = config.models.find((m) => m.id === modelId);
             // A built-in default (e.g. Linggen Cloud) isn't in config.models —
-            // resolve it from the runtime list so the row keeps its provider
+            // resolve it from the runtime list so the tile keeps its provider
             // chip and doesn't read as an unknown model.
             const builtin = builtinModels.find((m) => m.id === modelId);
-            const health = healthMap[modelId];
+            const health = modelId ? healthMap[modelId] : undefined;
             return (
-              <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 dark:bg-white/[0.02] rounded-lg border border-slate-100 dark:border-white/5">
-                <span className="text-xs font-medium flex-1">
-                  {modelId}
-                  {model && model.model && <span className="text-[11px] text-slate-400 ml-1.5">({model.model})</span>}
-                  {builtin?.provided_by && (
-                    <span className="ml-1.5 px-1.5 py-0.5 text-[10px] font-bold rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-                      {builtin.provided_by}
-                    </span>
-                  )}
-                </span>
-                <HealthDot health={health} ollamaStatus={model ? getOllamaStatus(model) : 'na'} />
-                <button
-                  onClick={() => toggleDefault(modelId)}
-                  className="p-0.5 text-slate-400 hover:text-red-500"
-                  title="Clear default"
-                >
-                  <Trash2 size={12} />
-                </button>
-              </div>
+              <DefaultTile
+                icon={<Star size={14} fill="currentColor" />}
+                label="Linggen sessions"
+                tone="amber"
+                modelId={modelId}
+                onClear={() => toggleDefault(modelId)}
+              >
+                {model && model.model && <span className="text-[11px] text-slate-400 ml-1.5">({model.model})</span>}
+                {builtin?.provided_by && (
+                  <span className="ml-1.5 px-1.5 py-0.5 text-[10px] font-bold rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                    {builtin.provided_by}
+                  </span>
+                )}
+                {modelId && <HealthDot health={health} ollamaStatus={model ? getOllamaStatus(model) : 'na'} />}
+              </DefaultTile>
             );
           })()}
-        </section>
-      )}
+          <DefaultTile
+            icon={<Moon size={14} fill="currentColor" />}
+            label="Claude sessions"
+            tone="indigo"
+            modelId={claudeDefault}
+            emptyText="Auto — first Claude API-key model"
+            onClear={() => toggleClaudeDefault(claudeDefault)}
+          />
+        </div>
+      </section>
 
       {/* Built-in models — injected by the engine, not part of the config
           file. Read-only, but they can be starred as the default. */}
@@ -461,8 +519,9 @@ export const ModelsTab: React.FC<{
             if (builtinIds.has(model.id)) return null;
             const health = healthMap[model.id];
             const modelIsDefault = model.id ? isDefault(model.id) : false;
+            const isClaudeDefault = !!model.id && claudeDefault === model.id;
             return (
-              <div key={i} className={`bg-slate-50 dark:bg-white/[0.02] rounded-lg p-4 border relative ${modelIsDefault ? 'border-amber-300 dark:border-amber-700' : 'border-slate-100 dark:border-white/5'}`}>
+              <div key={i} className={`bg-slate-50 dark:bg-white/[0.02] rounded-lg p-4 border relative ${modelIsDefault ? 'border-amber-300 dark:border-amber-700' : isClaudeDefault ? 'border-indigo-300 dark:border-indigo-700' : 'border-slate-100 dark:border-white/5'}`}>
                 <div className="absolute top-3 right-3 flex items-center gap-3">
                   <HealthDot health={health} ollamaStatus={getOllamaStatus(model)} />
                   {model.id && (
@@ -472,6 +531,16 @@ export const ModelsTab: React.FC<{
                       title={modelIsDefault ? 'Remove from defaults' : 'Add to defaults'}
                     >
                       <Star size={14} fill={modelIsDefault ? 'currentColor' : 'none'} />
+                    </button>
+                  )}
+                  {model.id && claudeCapable(model) && (
+                    <button
+                      onClick={() => toggleClaudeDefault(model.id)}
+                      disabled={!hasKey(model) && !isClaudeDefault}
+                      className={`p-1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${isClaudeDefault ? 'text-indigo-500 hover:text-indigo-600' : 'text-slate-300 hover:text-indigo-500'}`}
+                      title={isClaudeDefault ? 'Remove as the Claude sessions default' : hasKey(model) ? 'Set as the Claude sessions default' : 'Add an API key to use this model in Claude sessions'}
+                    >
+                      <Moon size={14} fill={isClaudeDefault ? 'currentColor' : 'none'} />
                     </button>
                   )}
                   <button
@@ -661,7 +730,7 @@ export const ModelsTab: React.FC<{
         )}
         <p className="mt-3 text-[11px] text-slate-400">
           API keys are stored in <code className="text-[11px]">~/.linggen/credentials.json</code>, one per provider endpoint — every model on the same endpoint shares it; paste it once.
-          Click the <Star size={10} className="inline text-amber-500" /> icon on a model to add it to the default fallback chain.
+          Click <Star size={10} className="inline text-amber-500" /> to make a model the default for Linggen sessions, and <Moon size={10} className="inline text-indigo-500" /> for Claude sessions (Anthropic API-key models only).
         </p>
       </section>
     </div>

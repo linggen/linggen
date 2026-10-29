@@ -60,6 +60,12 @@ export function handleQueue(item: UiEventOf<'queue'>): void {
   useInteractionStore.getState().setQueuedMessages(items);
 }
 
+/** A session's background task list, whole, after any change. */
+export function handleTasks(item: UiEventOf<'tasks'>): void {
+  if (item.session_id !== useSessionStore.getState().activeSessionId) return;
+  useInteractionStore.getState().setBackgroundTasks(Array.isArray(item.data?.tasks) ? item.data.tasks : []);
+}
+
 // ---------------------------------------------------------------------------
 // Model fallback — preferred model failed, fell back to another
 // ---------------------------------------------------------------------------

@@ -1,6 +1,5 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React from 'react';
 import { useParams } from 'react-router-dom';
-import type { AppConfig } from '../../types';
 import { ModelsTab } from '../../components/ModelsTab';
 import { AgentsPage } from '../../components/AgentsPage';
 import { SessionTab } from '../../components/SessionTab';
@@ -9,9 +8,8 @@ import { ToolsTab } from '../../components/ToolsTab';
 import { GeneralTab } from '../../components/GeneralTab';
 import { RoomTab } from '../../components/RoomTab';
 import { useSessionStore } from '../../stores/sessionStore';
-import { appConfig } from '../../lib/endpoints';
-import { rememberLanguage } from '../../lib/i18n';
-import { apiErrorMessage } from '../../lib/api';
+import { useAutoSaveConfig } from './useAutoSaveConfig';
+import { SaveStatus } from './SaveStatus';
 
 // Only the truly form-shaped sections are exposed via bare routes. Mission
 // and Storage are full-page experiences with their own chrome — embedding
@@ -27,8 +25,8 @@ const NEEDS_CONFIG: ReadonlySet<BareTab> = new Set(['models', 'general', 'agents
 /**
  * Bare iframe target for /settings/:section. Renders just the section, no
  * back button or tab strip. Sections that mutate config (Models, General,
- * Agents, Session)
- * include a thin save bar; others manage their own persistence.
+ * Agents, Session) save themselves (useAutoSaveConfig) and show a thin
+ * status bar while they do; others manage their own persistence.
  *
  * See `linggen-app/doc/architecture.md` and `doc/ui-router-migration.md`.
  */
@@ -40,62 +38,7 @@ export const BareSection: React.FC = () => {
   const isKnown = !!tab && KNOWN_SECTIONS.has(tab);
   const needsConfig = !!tab && NEEDS_CONFIG.has(tab);
 
-  const [config, setConfig] = useState<AppConfig | null>(null);
-  const [originalConfig, setOriginalConfig] = useState<AppConfig | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
-  const [credsDirty, setCredsDirty] = useState(false);
-  const saveCredsRef = useRef<(() => Promise<void>) | null>(null);
-
-  const fetchConfig = useCallback(async () => {
-    try {
-      const data = await appConfig.get();
-      setConfig(data);
-      setOriginalConfig(data);
-      setError(null);
-    } catch (e) {
-      setError(`Failed to load config: ${e}`);
-    }
-  }, []);
-
-  useEffect(() => { if (needsConfig) fetchConfig(); }, [needsConfig, fetchConfig]);
-
-  const configDirty = config !== null && originalConfig !== null && JSON.stringify(config) !== JSON.stringify(originalConfig);
-  const dirty = configDirty || credsDirty;
-
-  const saveConfig = async () => {
-    if (!config || saving) return;
-    setSaving(true);
-    setError(null);
-    setSuccess(false);
-    try {
-      if (configDirty) {
-        try {
-          await appConfig.save(config);
-        } catch (e) {
-          setError(apiErrorMessage(e) || 'Save failed');
-          return;
-        }
-        setOriginalConfig(config);
-        // A new language is the whole page's: reload it into the new words.
-        if (config.language !== originalConfig?.language) {
-          rememberLanguage(config.language ?? null);
-          (window.top ?? window).location.reload();
-          return;
-        }
-      }
-      if (credsDirty && saveCredsRef.current) {
-        await saveCredsRef.current();
-      }
-      setSuccess(true);
-      setTimeout(() => setSuccess(false), 2000);
-    } catch (e) {
-      setError(`Save failed: ${e}`);
-    } finally {
-      setSaving(false);
-    }
-  };
+  const { config, setConfig, setCredsDirty, saveCredsRef, state: saveState, error } = useAutoSaveConfig(needsConfig);
 
   if (!isKnown) {
     return (
@@ -115,17 +58,9 @@ export const BareSection: React.FC = () => {
 
   return (
     <div className="flex flex-col h-screen bg-slate-100/70 dark:bg-[#0a0a0a] text-slate-900 dark:text-slate-200">
-      {needsConfig && dirty && (
-        <div className="flex items-center justify-end gap-2 px-3 md:px-6 py-2 border-b border-slate-200 dark:border-white/5 bg-white/90 dark:bg-[#0f0f0f]/90">
-          {error && <span className="text-[11px] text-red-500 max-w-40 truncate">{error}</span>}
-          {success && <span className="text-[11px] text-green-500">Saved</span>}
-          <button
-            onClick={saveConfig}
-            disabled={saving}
-            className="px-3 py-1 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
-          >
-            {saving ? 'Saving...' : 'Save'}
-          </button>
+      {needsConfig && (saveState !== 'idle' || error) && (
+        <div className="flex items-center justify-end gap-2 px-3 md:px-6 py-1.5 border-b border-slate-200 dark:border-white/5 bg-white/90 dark:bg-[#0f0f0f]/90">
+          <SaveStatus state={saveState} error={error} />
         </div>
       )}
 

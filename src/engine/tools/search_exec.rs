@@ -71,6 +71,10 @@ pub(super) struct SearchArgs {
 pub(super) struct RunCommandArgs {
     pub(super) cmd: String,
     pub(super) timeout_ms: Option<u64>,
+    /// Start it beside the chat and return at once
+    /// (doc/background-tasks-spec.md).
+    #[serde(default)]
+    pub(super) run_in_background: bool,
     #[serde(skip)]
     pub(super) cancel_flag: Option<Arc<AtomicBool>>,
 }
@@ -208,6 +212,8 @@ impl Tools {
                 .current_dir(&cwd)
                 .env("PATH", crate::util::shell_path())
                 .env(crate::language::ENV_KEY, crate::language::effective())
+                // Which session this shell runs for (`ling restart` reads it).
+                .env(crate::paths::SESSION_ENV, self.session_id.as_deref().unwrap_or_default())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .process_group(0)

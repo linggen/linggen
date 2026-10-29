@@ -1,9 +1,9 @@
 //! SDK children use the existing SubagentPane contract; no native agent loop.
-use super::{runtime::ClaudeSession, Control, AGENT_ID};
+use super::{runtime::ClaudeSession, AGENT_ID};
 use crate::engine::agent::AgentEvent;
 use crate::server::{ServerEvent, ServerState};
 use crate::state_fs::sessions::SessionStore;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, path::Path};
 
@@ -288,23 +288,7 @@ pub(crate) async fn cancel(state: &ServerState, run: &str) -> Option<Result<()>>
         {
             if let Some(entry) = entries.iter().find(|entry| entry["subagentId"] == run) {
                 let task = entry["sdkTaskId"].as_str()?.to_owned();
-                let sender = state.claude.controls.lock().await.get(&session.id).cloned();
-                return Some(
-                    async {
-                        let sender = sender.context("Claude task is no longer running")?;
-                        let (reply, response) = tokio::sync::oneshot::channel();
-                        sender
-                            .send(Control::StopTask {
-                                task_id: task,
-                                reply,
-                            })
-                            .map_err(|_| anyhow::anyhow!("Claude task ended"))?;
-                        tokio::time::timeout(std::time::Duration::from_secs(20), response)
-                            .await??
-                            .map_err(anyhow::Error::msg)
-                    }
-                    .await,
-                );
+                return Some(super::stop_task(state, &session.id, &task).await);
             }
         }
     }

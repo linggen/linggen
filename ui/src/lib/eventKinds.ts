@@ -24,6 +24,7 @@ export const EVENT_KINDS = [
   // Activity / lifecycle
   'activity',
   'queue',
+  'tasks',
   'run',
 
   // Interactive widgets

@@ -3,10 +3,10 @@
 
 use super::data::{
     ActivityData, ContextUsageData, OutcomeData, PlanUpdateData, QueueData, ResyncData,
-    SubagentResultData, SubagentSpawnedData,
+    SubagentResultData, SubagentSpawnedData, TasksData,
 };
 use super::{
-    Ui, UI_KIND_ACTIVITY, UI_KIND_QUEUE, UI_KIND_RUN, UI_PHASE_CONTEXT_USAGE, UI_PHASE_DOING,
+    Ui, UI_KIND_ACTIVITY, UI_KIND_QUEUE, UI_KIND_RUN, UI_KIND_TASKS, UI_PHASE_CONTEXT_USAGE, UI_PHASE_DOING,
     UI_PHASE_DONE, UI_PHASE_OUTCOME, UI_PHASE_PLAN_UPDATE, UI_PHASE_RESYNC,
     UI_PHASE_SUBAGENT_RESULT, UI_PHASE_SUBAGENT_SPAWNED, UI_PHASE_SYNC,
 };
@@ -91,6 +91,16 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
             .session(Some(session_id))
             .project_root(Some(project_root))
             .data(QueueData { items }),
+        ),
+        ServerEvent::TasksUpdated { session_id, tasks } => Some(
+            ui.event(format!("tasks-{session_id}"), UI_KIND_TASKS)
+                .text(format!(
+                    "{} background task{} running",
+                    tasks.iter().filter(|t| t.is_running()).count(),
+                    if tasks.iter().filter(|t| t.is_running()).count() == 1 { "" } else { "s" }
+                ))
+                .session(Some(session_id))
+                .data(TasksData { tasks }),
         ),
         ServerEvent::StateUpdated => Some(
             ui.event(format!("run-sync-{seq}"), UI_KIND_RUN)

@@ -46,8 +46,70 @@ case "$start" in
  emit '{"type":"request","kind":"permission","id":1,"input":{"tool":"Bash","args":{"command":"make"},"suggestions":[]}}'
  IFS= read -r reply
  finish WAITED;;
+*'"prompt":"steer"'*)
+ emit '{"type":"text","text":"WORKING"}'
+ while IFS= read -r line; do
+  case "$line" in *'"type":"steer"'*)
+   printf '%s\n' "$line" >> "$PWD/.sdk-steers.log"
+   id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+   emit "{\"type\":\"mode_result\",\"id\":$id,\"ok\":true}"
+   break;;
+  esac
+ done
+ finish STEERED;;
+*'"prompt":"late"'*)
+ while IFS= read -r -t 1 line; do
+  case "$line" in *'"type":"steer"'*) printf '%s\n' "$line" >> "$PWD/.sdk-steers.log";; esac
+ done
+ finish LATE;;
+*'"prompt":"bg"'*)
+ emit '{"type":"tasks","tasks":[{"id":"t1","kind":"shell","title":"sleep 600"}]}'
+ emit '{"type":"task","id":"t1","activity":"tick"}'
+ while IFS= read -r line; do
+  case "$line" in *'"type":"stop_task"'*)
+   printf '%s\n' "$line" >> "$PWD/.sdk-stops.log"
+   id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+   emit "{\"type\":\"mode_result\",\"id\":$id,\"ok\":true}"
+   emit '{"type":"task","id":"t1","status":"stopped","summary":"stopped by the person"}'
+   emit '{"type":"tasks","tasks":[]}'
+   break;;
+  esac
+ done
+ finish STOPPED;;
+*'"prompt":"live"'*)
+ uuid=$(printf '%s' "$start" | sed -n 's/.*"uuid":"\([^"]*\)".*/\1/p')
+ emit '{"type":"text","text":"FIRST"}'
+ emit "{\"type\":\"result\",\"success\":true,\"usage\":{},\"uuids\":[\"$uuid\"]}"
+ while IFS= read -r line; do
+  case "$line" in
+  *'"type":"prompt"'*)
+   u=$(printf '%s' "$line" | sed -n 's/.*"uuid":"\([^"]*\)".*/\1/p')
+   emit '{"type":"text","text":"SECOND"}'
+   emit "{\"type\":\"result\",\"success\":true,\"usage\":{},\"uuids\":[\"$u\"]}"
+   case "$line" in *'"text":"notify"'*)
+    emit '{"type":"text","text":"TASK ENDED"}'
+    emit '{"type":"result","success":true,"usage":{},"uuids":[]}';;
+   esac;;
+  *'"type":"end"'*)
+   printf 'end\n' >> "$PWD/.sdk-ends.log"
+   emit '{"type":"done"}'
+   exit 0;;
+  esac
+ done
+ exit 0;;
 *'"prompt":"stream"'*)
- while :; do emit '{"type":"token","text":"x"}'; sleep 0.02; done;;
+ while :; do
+  emit '{"type":"token","text":"x"}'
+  if IFS= read -r -t 1 line; then
+   case "$line" in *'"type":"interrupt"'*)
+    id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+    emit "{\"type\":\"mode_result\",\"id\":$id,\"ok\":true}"
+    emit '{"type":"result","success":false,"errors":["interrupted"],"usage":{}}'
+    emit '{"type":"done"}'
+    exit 0;;
+   esac
+  fi
+ done;;
 *) finish HELLO;;
 esac
 "#;
@@ -64,7 +126,11 @@ pub fn trust_folder(w: &World) {
 }
 
 async fn world() -> (World, String) {
-    let w = World::start(Setup::default()).await;
+    world_with(Setup::default()).await
+}
+
+async fn world_with(setup: Setup) -> (World, String) {
+    let w = World::start(setup).await;
     let mut config = w.api.get("/api/config").await;
     let extra: Value = toml::from_str(MODEL).unwrap();
     config["models"]
@@ -76,6 +142,8 @@ async fn world() -> (World, String) {
     std::fs::create_dir_all(bun.parent().unwrap()).unwrap();
     std::fs::write(&bun, BRIDGE).unwrap();
     std::fs::set_permissions(&bun, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    // The folder carries Claude configuration of its own, so trust is asked.
+    std::fs::write(std::path::Path::new(&w.work()).join("CLAUDE.md"), "project rules").unwrap();
     let sid = w
         .api
         .create_session(
@@ -238,6 +306,27 @@ async fn a_declined_folder_runs_on_user_settings_only() {
     w.api.chat(&sid, &w.work(), "hello").await;
     assert!(matches!(next(&w, &sid, mark).await, RunEnd::Finished));
     assert_eq!(starts(&w)[1]["settingSources"], json!(["user"]));
+    // Kept with the session, not in engine memory: a restart does not ask again.
+    let declined = w
+        .home
+        .linggen_home()
+        .join("sessions")
+        .join(&sid)
+        .join("claude-trust-declined.json");
+    assert!(declined.exists());
+    // Clear ends the conversation, and the answer with it.
+    w.api.post("/api/chat/clear", json!({"session_id":sid})).await;
+    assert!(!declined.exists());
+}
+
+#[tokio::test]
+async fn a_folder_without_claude_configuration_is_not_asked_about() {
+    let (w, sid) = world().await;
+    std::fs::remove_file(std::path::Path::new(&w.work()).join("CLAUDE.md")).unwrap();
+    let mark = w.mark();
+    w.api.chat(&sid, &w.work(), "hello").await;
+    assert!(matches!(next(&w, &sid, mark).await, RunEnd::Finished));
+    assert_eq!(starts(&w)[0]["settingSources"], json!(["user"]));
 }
 
 #[tokio::test]
@@ -273,6 +362,244 @@ async fn a_follow_up_waits_for_the_running_turn_instead_of_cancelling_it() {
     assert_eq!(finished_with(&w, mark, &sid), ["Completed", "Completed"]);
     let prompts: Vec<Value> = starts(&w).iter().map(|s| s["prompt"].clone()).collect();
     assert_eq!(prompts, [json!("wait"), json!("hello")]);
+}
+
+fn steers(w: &World) -> Vec<Value> {
+    std::fs::read_to_string(std::path::Path::new(&w.work()).join(".sdk-steers.log"))
+        .unwrap_or_default()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+
+#[tokio::test]
+async fn steer_sends_a_queued_message_into_the_running_turn() {
+    let (w, sid) = world().await;
+    trust_folder(&w);
+    let mark = w.mark();
+    w.api.chat(&sid, &w.work(), "steer").await;
+    let deadline = Instant::now() + Duration::from_secs(20);
+    // A steer joins a turn the SDK has begun (before that, it waits as the
+    // next turn): wait for the turn's first words.
+    while !w.rows_opt(&sid).unwrap_or_default().iter().any(|r| r.said_by("claude") == Some("WORKING")) {
+        assert!(Instant::now() < deadline, "the turn never began");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let queued = w.api.chat(&sid, &w.work(), "skip the tests").await;
+    assert_eq!(queued["status"], "queued");
+    let id = queued["queued_id"].as_str().expect("a queued send names its item");
+    w.api.post("/api/queue/steer", json!({"id": id})).await;
+    while finished_with(&w, mark, &sid).is_empty() && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(finished_with(&w, mark, &sid), ["Completed"], "the steer started its own turn");
+    let sent = steers(&w);
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0]["text"], "skip the tests");
+    assert_eq!(starts(&w).len(), 1);
+    assert_eq!(
+        w.api.post_status("/api/queue/steer", json!({"id": id})).await,
+        404,
+        "a steered message is no longer waiting"
+    );
+}
+
+#[tokio::test]
+async fn a_steer_the_turn_never_took_runs_once_as_the_next_turn() {
+    let (w, sid) = world().await;
+    let mark = w.mark();
+    w.api.chat(&sid, &w.work(), "late").await;
+    // The turn waits on folder trust: no runner reads the steer yet.
+    let trust = asked(next(&w, &sid, mark).await);
+    let queued = w.api.chat(&sid, &w.work(), "second").await;
+    let id = queued["queued_id"].as_str().unwrap();
+    w.api.post("/api/queue/steer", json!({"id": id})).await;
+    tokio::time::sleep(Duration::from_secs(11)).await;
+    w.api.answer(&trust, "Yes, trust this folder").await;
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while finished_with(&w, mark, &sid).len() < 2 && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(finished_with(&w, mark, &sid), ["Completed", "Completed"]);
+    assert!(steers(&w).is_empty(), "the abandoned steer still reached the SDK");
+    let prompts: Vec<Value> = starts(&w).iter().map(|s| s["prompt"].clone()).collect();
+    assert_eq!(prompts, [json!("late"), json!("second")]);
+}
+
+#[tokio::test]
+async fn a_picture_sent_as_bare_base64_reaches_the_sdk_as_a_data_url() {
+    let (w, sid) = world().await;
+    trust_folder(&w);
+    let mark = w.mark();
+    const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    w.api
+        .post(
+            "/api/chat",
+            json!({"session_id": sid, "project_root": w.work(), "message": "hello", "images": [PNG]}),
+        )
+        .await;
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while finished_with(&w, mark, &sid).is_empty() && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(starts(&w)[0]["images"], json!([format!("data:image/png;base64,{PNG}")]));
+}
+
+#[tokio::test]
+async fn a_background_task_is_listed_and_the_person_stops_it() {
+    let (w, sid) = world().await;
+    trust_folder(&w);
+    let mark = w.mark();
+    w.api.chat(&sid, &w.work(), "bg").await;
+    assert_eq!(
+        w.api.post_status("/api/tasks/stop", json!({"session_id": sid, "id": "nope"})).await,
+        404
+    );
+    let deadline = Instant::now() + Duration::from_secs(20);
+    // Listed once the SDK reports it; stopping it reaches the SDK.
+    while w.api.post_status("/api/tasks/stop", json!({"session_id": sid, "id": "t1"})).await != 200 {
+        assert!(Instant::now() < deadline, "the task was never listed");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    while finished_with(&w, mark, &sid).is_empty() && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(finished_with(&w, mark, &sid), ["Completed"], "stopping a task never stops the turn");
+    let stops = std::fs::read_to_string(std::path::Path::new(&w.work()).join(".sdk-stops.log")).unwrap();
+    assert!(stops.contains(r#""task_id":"t1""#), "{stops}");
+}
+
+async fn until_finished_runs(w: &World, mark: crate::support::engine::Mark, sid: &str, n: usize) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while finished_with(w, mark, sid).len() < n {
+        assert!(Instant::now() < deadline, "only {:?} finished", finished_with(w, mark, sid));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+#[tokio::test]
+async fn a_runner_outlives_its_turn_and_takes_the_next_message() {
+    let (w, sid) = world().await;
+    trust_folder(&w);
+    let mark = w.mark();
+    w.api.chat(&sid, &w.work(), "live").await;
+    until_finished_runs(&w, mark, &sid, 1).await;
+    w.api.chat(&sid, &w.work(), "again").await;
+    until_finished_runs(&w, mark, &sid, 2).await;
+    assert_eq!(finished_with(&w, mark, &sid), ["Completed", "Completed"]);
+    assert_eq!(starts(&w).len(), 1, "the second message reached the same runner");
+}
+
+#[tokio::test]
+async fn a_turn_the_sdk_starts_itself_gets_its_own_run() {
+    let (w, sid) = world().await;
+    trust_folder(&w);
+    let mark = w.mark();
+    w.api.chat(&sid, &w.work(), "live").await;
+    until_finished_runs(&w, mark, &sid, 1).await;
+    w.api.chat(&sid, &w.work(), "notify").await;
+    until_finished_runs(&w, mark, &sid, 3).await;
+    assert_eq!(finished_with(&w, mark, &sid), ["Completed", "Completed", "Completed"]);
+    let rows = w.rows(&sid);
+    assert!(rows.iter().any(|r| r.said_by("claude") == Some("TASK ENDED")));
+    assert_eq!(starts(&w).len(), 1);
+}
+
+#[tokio::test]
+async fn an_idle_runner_exits() {
+    let setup = Setup { env: vec![("LINGGEN_CLAUDE_IDLE_EXIT_SECS", "1".into())], ..Setup::default() };
+    let (w, sid) = world_with(setup).await;
+    trust_folder(&w);
+    let mark = w.mark();
+    w.api.chat(&sid, &w.work(), "live").await;
+    until_finished_runs(&w, mark, &sid, 1).await;
+    let ends = std::path::Path::new(&w.work()).join(".sdk-ends.log");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !ends.exists() {
+        assert!(Instant::now() < deadline, "the idle runner was never ended");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    // The next message starts a fresh runner on the saved conversation.
+    w.api.chat(&sid, &w.work(), "hello").await;
+    until_finished_runs(&w, mark, &sid, 2).await;
+    assert_eq!(starts(&w).len(), 2);
+}
+
+#[tokio::test]
+async fn a_claude_session_continues_after_a_restart_interrupted_it() {
+    let (mut w, sid) = world().await;
+    trust_folder(&w);
+    let mark = w.mark();
+    w.api.chat(&sid, &w.work(), "hello").await;
+    until_finished_runs(&w, mark, &sid, 1).await;
+    crate::restart::leave_plan(&w, json!([{"session_id": sid, "agent_id": "claude", "caller": false, "tasks": []}]));
+    w.engine.restart(&w.home).await;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while starts(&w).len() < 2 {
+        assert!(Instant::now() < deadline, "the Claude session never continued");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let prompt = starts(&w)[1]["prompt"].as_str().unwrap_or_default().to_string();
+    assert!(prompt.contains("The engine restarted (from 1.10.0 to ling 1.10.1"), "{prompt}");
+    assert!(prompt.contains("the restart interrupted it"), "{prompt}");
+    assert_eq!(starts(&w)[1]["resume"], "sdk-host", "it continues the same SDK conversation");
+}
+
+#[tokio::test]
+async fn messages_queued_in_a_claude_session_come_back_after_its_restart_turn() {
+    const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    let (mut w, sid) = world().await;
+    trust_folder(&w);
+    let mark = w.mark();
+    w.api.chat(&sid, &w.work(), "hello").await;
+    until_finished_runs(&w, mark, &sid, 1).await;
+    let queued = json!([
+        {"text": "first queued", "images": [], "agent_id": "claude", "project_root": w.work()},
+        {"text": "second queued", "images": [PNG], "agent_id": "claude", "project_root": w.work()},
+    ]);
+    crate::restart::leave_plan(&w, json!([{"session_id": sid, "agent_id": "claude", "caller": false, "tasks": [], "queued": queued}]));
+    w.engine.restart(&w.home).await;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while starts(&w).len() < 4 {
+        assert!(Instant::now() < deadline, "only {} turns ran", starts(&w).len());
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let started = starts(&w);
+    let prompt = |i: usize| started[i]["prompt"].as_str().unwrap_or_default().to_string();
+    assert!(prompt(1).contains("The engine restarted"), "the continue turn runs first: {}", prompt(1));
+    assert_eq!(prompt(2), "first queued");
+    assert_eq!(prompt(3), "second queued");
+    assert_eq!(started[3]["images"], json!([format!("data:image/png;base64,{PNG}")]));
+}
+
+#[tokio::test]
+async fn a_removed_queued_message_never_runs() {
+    let (w, sid) = world().await;
+    trust_folder(&w);
+    let mark = w.mark();
+    w.api.chat(&sid, &w.work(), "wait").await;
+    let ask = asked(next(&w, &sid, mark).await);
+    let queued = w.api.chat(&sid, &w.work(), "hello").await;
+    let id = queued["queued_id"].as_str().unwrap();
+    let taken = w
+        .api
+        .post(
+            "/api/queue/remove",
+            json!({"project_root": w.work(), "session_id": sid, "agent_id": "claude", "id": id}),
+        )
+        .await;
+    assert_eq!(taken["message"], "hello", "Edit gets the message back");
+    w.api.answer(&ask, "Allow once").await;
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while finished_with(&w, mark, &sid).is_empty() && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    assert_eq!(finished_with(&w, mark, &sid), ["Completed"]);
+    let prompts: Vec<Value> = starts(&w).iter().map(|s| s["prompt"].clone()).collect();
+    assert_eq!(prompts, [json!("wait")]);
 }
 
 #[tokio::test]

@@ -12,6 +12,9 @@ use std::time::{Duration, Instant};
 pub struct Engine {
     pub port: u16,
     proc: Owned,
+    mem_url: String,
+    has_config: bool,
+    extra_env: Vec<(String, String)>,
 }
 
 /// How a run the test waited on ended.
@@ -62,7 +65,19 @@ impl Engine {
         Self {
             port: server.port,
             proc: server.proc,
+            mem_url: mem_url.to_string(),
+            has_config,
+            extra_env: extra_env.to_vec(),
         }
+    }
+
+    /// Stop the engine and start it again on the same home, port and
+    /// environment, as a restart does.
+    pub async fn restart(&mut self, home: &Home) {
+        self.proc.stop();
+        let (port, mem, has_config, env) =
+            (self.port, self.mem_url.clone(), self.has_config, self.extra_env.clone());
+        *self = Engine::start(home, port, &mem, has_config, &env).await;
     }
 
     pub fn new_port() -> u16 {

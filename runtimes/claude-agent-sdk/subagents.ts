@@ -1,5 +1,28 @@
 type Send = (message: Record<string, unknown>) => void;
 
+const TASK_KINDS: Record<string, string> = {
+  local_bash: 'shell', local_agent: 'subagent', monitor: 'watch', mcp_task: 'watch', local_workflow: 'workflow',
+};
+
+export function taskKind(type?: string) {
+  return TASK_KINDS[type || ''] || type || 'task';
+}
+
+/** The SDK's background task frames, for the session task list: the live
+ *  set whenever it changes, and each task's start, progress and end. */
+export function taskEvent(m: any): Record<string, unknown> | null {
+  if (m?.type !== 'system') return null;
+  if (m.subtype === 'background_tasks_changed')
+    return { type:'tasks', tasks:(m.tasks || []).map((t: any) => ({ id:t.task_id, kind:taskKind(t.task_type), title:t.description || '' })) };
+  if (m.subtype === 'task_started')
+    return { type:'task', id:m.task_id, kind:taskKind(m.task_type), title:m.description || '', background:m.is_backgrounded === true };
+  if (m.subtype === 'task_progress')
+    return { type:'task', id:m.task_id, activity:m.summary || m.last_tool_name || m.description || '' };
+  if (m.subtype === 'task_notification')
+    return { type:'task', id:m.task_id, status:m.status, summary:m.summary || '', output_file:m.output_file || '' };
+  return null;
+}
+
 /** Preserve SDK ownership: this only translates identity and presentation events. */
 export function subagentEvents(send: Send) {
   const tasks = new Map<string, { name: string; task: string }>();

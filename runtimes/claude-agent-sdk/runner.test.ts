@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { modeSettles, observeTool, permissionRequest, queryPrompt, sessionPermissionSettings, settingSources, turnContext } from './runner';
+import { modeSettles, observeTool, staleAsk, permissionRequest, queryPrompt, userMessage, inbox, sessionPermissionSettings, settingSources, turnContext } from './runner';
 
 describe('SDK-owned permissions with Linggen widgets', () => {
   test('observing a tool cannot approve or deny it', async () => {
@@ -45,8 +45,24 @@ describe('SDK-owned permissions with Linggen widgets', () => {
 
   test('images reach the SDK as content blocks', async () => {
     const messages: any[] = [];
-    for await (const message of queryPrompt({ prompt: 'Inspect', images: ['data:image/png;base64,YWJj'] })) messages.push(message);
+    for await (const message of queryPrompt(userMessage({ prompt: 'Inspect', images: ['data:image/png;base64,YWJj'] }))) messages.push(message);
     expect(messages[0].message.content[1]).toEqual({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'YWJj' } });
+    expect(messages[0].origin).toEqual({ kind: 'human' });
+    expect(messages[0].priority).toBeUndefined();
+  });
+
+  test('a message sent now joins the running turn after its first, then input ends', async () => {
+    const later = inbox<any>();
+    const seen: any[] = [];
+    const reading = (async () => {
+      for await (const message of queryPrompt(userMessage({ prompt: 'Build it' }), later)) seen.push(message);
+    })();
+    later.push(userMessage({ prompt: 'Skip the tests' }, 'now'));
+    later.close();
+    await reading;
+    expect(seen.map((m) => m.message.content[0].text)).toEqual(['Build it', 'Skip the tests']);
+    expect(seen[1].priority).toBe('now');
+    expect(later.closed).toBe(true);
   });
 
   test('session approval returns SDK suggestions without writing global settings', async () => {
@@ -100,15 +116,32 @@ describe('mode changes and folder trust', () => {
     expect(modeSettles('plan', 'Bash')).toBe(false);
   });
 
+  test('an ask decided before the mode change is withdrawn; one decided after it stays', () => {
+    expect(staleAsk(0, 1, 'auto', 'Bash')).toBe(true);
+    expect(staleAsk(1, 1, 'auto', 'Bash')).toBe(false);
+    expect(staleAsk(0, 1, 'acceptEdits', 'Bash')).toBe(false);
+    expect(staleAsk(undefined, 1, 'auto', 'Bash')).toBe(false);
+  });
+
   test('project and local settings load only when the host says the folder is trusted', () => {
     expect(settingSources({})).toEqual(['user']);
     expect(settingSources({ settingSources: ['user', 'project', 'local'] })).toEqual(['user', 'project', 'local']);
   });
 });
 
-test('the host\'s turn memory reaches the SDK as prompt context, and nothing when empty', async () => {
-  expect(await turnContext('From memory: tabs')()).toEqual({
+test('each message\'s turn memory reaches the SDK as prompt context, in order, and nothing when empty', async () => {
+  const memories = ['From memory: tabs', '', 'From memory: dark mode'];
+  const hook = turnContext(memories);
+  expect(await hook()).toEqual({
     hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: 'From memory: tabs' } });
-  expect(await turnContext('')()).toEqual({});
-  expect(await turnContext(undefined)()).toEqual({});
+  expect(await hook()).toEqual({});
+  expect(((await hook()) as any).hookSpecificOutput.additionalContext).toBe('From memory: dark mode');
+  expect(await hook()).toEqual({});
+});
+
+test('a later message carries its own uuid, a steered one priority now', () => {
+  expect(userMessage({ prompt: 'next' }, undefined, 'u2').uuid).toBe('u2');
+  const steer = userMessage({ prompt: 'stop' }, 'now');
+  expect(steer.priority).toBe('now');
+  expect((steer as any).uuid).toBeUndefined();
 });

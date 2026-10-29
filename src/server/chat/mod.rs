@@ -43,7 +43,7 @@ pub(crate) use admin::{
 };
 pub(crate) use handler::{
     chat_handler, dequeue_and_emit, enqueue_if_busy, kickoff_in_session, run_session_turn,
-    say_in_session,
+    say_in_session, start_turn, TurnOrigin,
 };
 pub(crate) use plan_flow::{approve_plan_handler, edit_plan_handler, reject_plan_handler};
 pub(crate) use runtime::close_turn;

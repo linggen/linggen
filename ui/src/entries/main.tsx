@@ -45,11 +45,24 @@ installChannelHost();
 // Code-split: surfaces most loads never reach (the pet window, the desktop
 // launcher, settings, the mission editor) load on demand, so the chat shell
 // doesn't pay for their tabs and editors up front.
-const PetApp = lazy(() => import('../apps/PetApp').then((m) => ({ default: m.PetApp })));
-const LauncherApp = lazy(() => import('../apps/LauncherApp').then((m) => ({ default: m.LauncherApp })));
-const SettingsHome = lazy(() => import('../pages/Settings/SettingsHome').then((m) => ({ default: m.SettingsHome })));
-const BareSection = lazy(() => import('../pages/Settings/BareSection').then((m) => ({ default: m.BareSection })));
-const MissionEditorPage = lazy(() => import('../pages/Mission/MissionEditorPage').then((m) => ({ default: m.MissionEditorPage })));
+// A page left open across an engine update still names the old build's chunks,
+// which no longer exist. One reload fetches the new build; a second failure
+// within 10 s is a real error and is left to the ErrorBoundary.
+function lazyChunk<T extends React.ComponentType<any>>(load: () => Promise<{ default: T }>) {
+  return lazy(() => load().catch((error) => {
+    const last = Number(sessionStorage.getItem('chunk-reload-at') || 0);
+    if (Date.now() - last < 10_000) throw error;
+    sessionStorage.setItem('chunk-reload-at', String(Date.now()));
+    window.location.reload();
+    return new Promise<never>(() => {});
+  }));
+}
+
+const PetApp = lazyChunk(() => import('../apps/PetApp').then((m) => ({ default: m.PetApp })));
+const LauncherApp = lazyChunk(() => import('../apps/LauncherApp').then((m) => ({ default: m.LauncherApp })));
+const SettingsHome = lazyChunk(() => import('../pages/Settings/SettingsHome').then((m) => ({ default: m.SettingsHome })));
+const BareSection = lazyChunk(() => import('../pages/Settings/BareSection').then((m) => ({ default: m.BareSection })));
+const MissionEditorPage = lazyChunk(() => import('../pages/Mission/MissionEditorPage').then((m) => ({ default: m.MissionEditorPage })));
 
 /** Full-screen placeholder with the settings/editor page background, so the
  *  chunk load shows the same empty page rather than a flash of nothing. */

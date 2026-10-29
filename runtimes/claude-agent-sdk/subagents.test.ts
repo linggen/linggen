@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { subagentEvents } from './subagents';
+import { subagentEvents, taskEvent } from './subagents';
 
 test('parallel children keep separate identities and never become main-thread text', () => {
   const events: any[] = []; const bridge = subagentEvents(e => events.push(e));
@@ -20,4 +20,14 @@ test('unknown child frames stay out of main chat even before task registration',
   expect(bridge.route({type:'assistant', parent_tool_use_id:'early', message:{content:[{type:'text', text:'private'}]}})).toBe(true);
   expect(events.at(-1)).toMatchObject({type:'subagent_text', text:'private'});
   expect(bridge.route({type:'system', subtype:'task_notification', task_id:'bash', summary:'shell done'})).toBe(false);
+});
+
+test('background task frames become the session task list', () => {
+  expect(taskEvent({ type:'system', subtype:'background_tasks_changed', tasks:[{ task_id:'t1', task_type:'local_bash', description:'npm test' }] }))
+    .toEqual({ type:'tasks', tasks:[{ id:'t1', kind:'shell', title:'npm test' }] });
+  expect(taskEvent({ type:'system', subtype:'task_started', task_id:'t2', task_type:'local_agent', description:'review', is_backgrounded:true }))
+    .toEqual({ type:'task', id:'t2', kind:'subagent', title:'review', background:true });
+  expect(taskEvent({ type:'system', subtype:'task_notification', task_id:'t1', status:'failed', summary:'2 failed', output_file:'/tmp/o' }))
+    .toEqual({ type:'task', id:'t1', status:'failed', summary:'2 failed', output_file:'/tmp/o' });
+  expect(taskEvent({ type:'assistant' })).toBeNull();
 });

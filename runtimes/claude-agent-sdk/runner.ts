@@ -1,6 +1,6 @@
 // JSON-lines bridge. Only stdout carries protocol; credentials stay in env.
 import { createInterface } from 'node:readline';
-import { subagentEvents } from './subagents';
+import { subagentEvents, taskEvent } from './subagents';
 
 type Send = (message: Record<string, unknown>) => void;
 type Rpc = (kind: string, input: any, signal?: AbortSignal) => Promise<any>;
@@ -45,15 +45,28 @@ export function modeSettles(mode: string, tool: string) {
   return ['auto', 'bypassPermissions', 'dontAsk'].includes(mode);
 }
 
+export const MODE_CHANGED = 'Permission mode changed. Retry this operation under the new mode.';
+
+// An ask for a call that began before the latest mode change was decided
+// under the old mode; it can reach the host after the SDK acknowledged the
+// change. When the new mode settles it, it is withdrawn like an open prompt.
+export function staleAsk(startedEpoch: number | undefined, epoch: number, mode: string, tool: string) {
+  return startedEpoch !== undefined && startedEpoch < epoch && modeSettles(mode, tool);
+}
+
 // A folder's own settings load only once the owner trusted it.
 export function settingSources(input: any) {
   return Array.isArray(input.settingSources) ? input.settingSources : ['user'];
 }
 
 // The host's per-turn memory (recall + capture nudge) reaches the model as
-// the SDK's own prompt context, never as text in the user's message.
-export function turnContext(text?: string) {
-  return async () => text ? { hookSpecificOutput: { hookEventName: 'UserPromptSubmit' as const, additionalContext: text } } : {};
+// the SDK's own prompt context, never as text in the user's message. Each
+// message the host sends carries its own; the hook takes them in order.
+export function turnContext(memories: string[]) {
+  return async () => {
+    const text = memories.shift();
+    return text ? { hookSpecificOutput: { hookEventName: 'UserPromptSubmit' as const, additionalContext: text } } : {};
+  };
 }
 
 export async function permissionRequest(tool: string, input: any, rpc: Rpc, options: any = {}) {
@@ -80,17 +93,45 @@ export async function permissionRequest(tool: string, input: any, rpc: Rpc, opti
     ...(response.remember ? { updatedPermissions:updates } : {}) };
 }
 
-export function queryPrompt(input: any, hold?: Promise<void>) {
+// What the person typed reaches the SDK as theirs: `origin: human` is what
+// lets a `now` message move running work aside instead of cutting it off.
+export function userMessage(input: { prompt: string; images?: string[] }, priority?: 'now', uuid?: string) {
   const content: any[] = [{ type: 'text', text: input.prompt }];
   for (const image of input.images || []) {
     const match = /^data:(image\/[\w.+-]+);base64,(.+)$/s.exec(image);
     if (!match) throw new Error('Expected a base64 image data URL');
     content.push({ type: 'image', source: { type: 'base64', media_type: match[1], data: match[2] } });
   }
+  return { type: 'user' as const, session_id: '', parent_tool_use_id: null,
+    message: { role: 'user' as const, content }, origin: { kind: 'human' as const },
+    ...(priority ? { priority } : {}), ...(uuid ? { uuid } : {}) };
+}
+
+/** Messages a running turn takes in after its first: each one the person
+ *  chose to send now from the queue. Closed once the turn's work is done. */
+export function inbox<T>() {
+  const items: T[] = [];
+  let wake: (() => void) | undefined;
+  let closed = false;
+  return {
+    get closed() { return closed; },
+    push(item: T) { items.push(item); wake?.(); },
+    close() { closed = true; wake?.(); },
+    async *drain() {
+      while (true) {
+        while (items.length) yield items.shift()!;
+        if (closed) return;
+        await new Promise<void>((resolve) => { wake = resolve; });
+        wake = undefined;
+      }
+    },
+  };
+}
+
+export function queryPrompt(first: any, later?: ReturnType<typeof inbox<any>>) {
   return (async function* () {
-    yield { type: 'user' as const, session_id: '', parent_tool_use_id: null,
-      message: { role: 'user' as const, content } };
-    if (hold) await hold;
+    yield first;
+    if (later) yield* later.drain();
   })();
 }
 
@@ -104,14 +145,20 @@ async function main() {
   let conversation: any;
   let markReady: () => void;
   const ready = new Promise<void>((resolve) => { markReady = resolve; });
-  let finishInput: () => void;
-  const inputFinished = new Promise<void>((resolve) => { finishInput = resolve; });
+  // The session's messages after the first, for as long as the host keeps
+  // this runner (doc/background-tasks-spec.md): a turn's result does not end
+  // it; the host's `end` does, once the session is idle.
+  const later = inbox<any>();
+  const finishInput = () => later.close();
+  const memories: string[] = [];
   let mode = 'default';
+  let modeEpoch = 0;
+  const started = new Map<string, number>();
   let modeQueue = Promise.resolve();
   const cancelPermissions = () => {
     for (const [id, item] of pending) {
       if (item.kind !== 'permission' || !modeSettles(mode, item.tool || '')) continue;
-      item.resolve({ allow: false, reason: 'Permission mode changed. Retry this operation under the new mode.' });
+      item.resolve({ allow: false, reason: MODE_CHANGED });
       pending.delete(id);
       send({ type: 'cancel_request', id });
     }
@@ -120,6 +167,7 @@ async function main() {
     await ready;
     await conversation.setPermissionMode(value);
     mode = value;
+    modeEpoch++;
     cancelPermissions();
     send({ type: 'status', permissionMode: mode });
   };
@@ -129,7 +177,8 @@ async function main() {
   const lines = createInterface({ input: process.stdin });
   lines.on('line', line => {
     const message = JSON.parse(line);
-    if (message.type === 'start') start(message);
+    // The first message's memory, before any later one's.
+    if (message.type === 'start') { memories.push(message.turnMemory || ''); start(message); }
     if (message.type === 'reply') {
       pending.get(message.id)?.resolve(message);
       pending.delete(message.id);
@@ -144,6 +193,27 @@ async function main() {
         }
       });
     }
+    // A new turn, or (`steer`) a queued message the person sends into the
+    // running one now. The host decides which; this only delivers.
+    if (message.type === 'prompt' || message.type === 'steer') {
+      try {
+        if (later.closed) throw new Error('This runner has ended.');
+        const steer = message.type === 'steer';
+        later.push(userMessage({ prompt: message.text, images: message.images }, steer ? 'now' : undefined, message.uuid));
+        memories.push(message.turnMemory || '');
+        send({ type: 'mode_result', id: message.id, ok: true });
+      } catch (error) {
+        send({ type: 'mode_result', id: message.id, ok: false, error: String(error) });
+      }
+    }
+    // Stop on the turn: the turn ends, background tasks keep running.
+    if (message.type === 'interrupt') {
+      void (async () => {
+        try { await ready; await conversation.interrupt(); send({ type:'mode_result', id:message.id, ok:true }); }
+        catch (error) { send({ type:'mode_result', id:message.id, ok:false, error:String(error) }); }
+      })();
+    }
+    if (message.type === 'end') finishInput();
     if (message.type === 'stop_task') {
       void (async () => {
         try { await ready; await conversation.stopTask(message.task_id); send({ type:'mode_result', id:message.id, ok:true }); }
@@ -171,6 +241,7 @@ async function main() {
     'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY']) delete env[key];
   env.CLAUDE_AGENT_SDK_CLIENT_APP = 'linggen';
   const endTool = async (event: any) => {
+    started.delete(event.tool_use_id);
     let result = event.tool_response ?? event.error ?? '';
     let additionalContext: string | undefined;
     if (result?.type === 'image' && result.file?.base64) {
@@ -197,7 +268,9 @@ async function main() {
     ] });
     const sessionSettings = sessionPermissionSettings(input.permissionUpdates);
     conversation = query({
-      prompt: queryPrompt(input.validateOnly ? { prompt: '/context' } : input, inputFinished),
+      prompt: input.validateOnly
+        ? queryPrompt({ type: 'user', session_id: '', parent_tool_use_id: null, message: { role: 'user', content: '/context' } })
+        : queryPrompt(userMessage(input, undefined, input.uuid), later),
       options: {
         cwd: input.cwd, model: input.model, env, settingSources: settingSources(input),
         resume: input.resume || undefined, persistSession: !input.validateOnly,
@@ -215,13 +288,20 @@ async function main() {
         hooks: {
           SubagentStart: [{ hooks: [subagents.start] }],
           SubagentStop: [{ hooks: [subagents.stop] }],
-          UserPromptSubmit: [{ hooks: [turnContext(input.turnMemory)] }],
-          PreToolUse: [{ hooks: [observeTool(send)] }],
+          UserPromptSubmit: [{ hooks: [turnContext(memories)] }],
+          PreToolUse: [{ hooks: [observeTool(send), async (event: any) => {
+            started.set(event.tool_use_id, modeEpoch);
+            return {};
+          }] }],
           PostToolUse: [{ hooks: [endTool] }],
           PostToolUseFailure: [{ hooks: [endTool] }],
         },
         canUseTool: async (tool, args, options) => {
-          const result = await permissionRequest(tool, args, rpc, { ...options, changeMode });
+          const startedEpoch = started.get(options.toolUseID);
+          started.delete(options.toolUseID);
+          const result = staleAsk(startedEpoch, modeEpoch, mode, tool)
+            ? { behavior: 'deny' as const, message: MODE_CHANGED }
+            : await permissionRequest(tool, args, rpc, { ...options, changeMode });
           if (result.behavior === 'deny') send({ type: 'tool_end', id: options.toolUseID,
             ...(options.agentID ? { agent_id: options.agentID } : {}),
             tool, failed: true, result: result.message });
@@ -239,6 +319,8 @@ async function main() {
     }
     for await (const message of conversation) {
       const m = message as any;
+      const task = taskEvent(m);
+      if (task) send(task);
       if (subagents.route(m)) continue;
       if (m.type === 'system' && m.subtype === 'init') {
         mode = m.permissionMode;
@@ -261,10 +343,18 @@ async function main() {
           .map((b: any) => b.text).join('\n');
         if (text) send({ type: 'text', text });
       } else if (m.type === 'result') {
+        // Which of the host's messages this turn answered: it completes their runs.
+        const uuids = m.user_message_uuids || (m.user_message_uuid ? [m.user_message_uuid] : []);
         send({ type: 'result', success: m.subtype === 'success' && !m.is_error,
           text: m.result, errors: m.errors, cost: m.total_cost_usd,
-          session_id: m.session_id, usage: m.usage });
-        finishInput!();
+          session_id: m.session_id, usage: m.usage, uuids });
+        // The window as it stands now, from the last request's usage: a
+        // turn's summed usage counts the cache once per call and overshoots.
+        conversation.getContextUsage({ detail: 'summary' })
+          .then((c: any) => send({ type: 'context', tokens: c.totalTokens, limit: c.maxTokens }))
+          .catch(() => {});
+      } else if (m.type === 'active_goal') {
+        send({ type: 'goal', active: m.value != null });
       } else if (m.type === 'system' && m.subtype === 'task_notification') {
         send({ type: 'text', text: m.summary || `Task ${m.task_id}: ${m.status}` });
       }
@@ -274,7 +364,7 @@ async function main() {
     send({ type: 'error', message: error instanceof Error ? error.message : String(error) });
     process.exitCode = 1;
   } finally {
-    finishInput!();
+    finishInput();
     lines.close();
     for (const item of pending.values()) item.resolve({ allow: false });
   }

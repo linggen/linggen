@@ -35,6 +35,7 @@ ling auth status                  # Check auth status
 ling install                      # Install/update ling
 ling update                       # Update ling, restart a running engine (keeps ling.prev)
 ling update --rollback            # Swap back to ling.prev
+ling restart --binary PATH        # Restart the running engine on a build; interrupted sessions continue
 ling init                         # Bootstrap skills
 ling skills add/remove/list/search
 ```
@@ -176,6 +177,28 @@ ling update --rollback
   it gives no `/api/health` within 60 s, `ling.prev` is swapped back and the
   engine started on that. An engine from another path (Linggen.app's own
   `ling`) is left alone and named in the output. `install.sh` does the same.
+
+## restart
+
+Restart the running engine on a build, from inside one of its sessions
+(`background-tasks-spec.md` § Engine restart).
+
+```
+ling restart --binary target/release/ling [--wait 120]
+```
+
+- The engine first waits up to `--wait` seconds for other sessions' turns to
+  finish, then records every session whose turn is running (missions left
+  out) and starts a detached helper.
+- The helper swaps the build in where the engine runs from (and over
+  `/usr/local/bin/ling`), each keeping `ling.prev`; a build that does not
+  answer `--version` is refused before anything is touched. It restarts the
+  engine with its own arguments and rolls back to `ling.prev` when it gives
+  no `/api/health` within 60 s. How it went is in
+  `~/.linggen/restart/status.json`, its log in `restart/helper.log`.
+- The calling session is the one in `LINGGEN_SESSION_ID`, which Linggen sets
+  in its agents' shells. It, and every session the restart interrupted,
+  continues in a turn of its own once the engine is back.
 
 ## Release override
 

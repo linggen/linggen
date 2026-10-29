@@ -5,7 +5,7 @@
 //! `ui/src/types/generated/` (scripts/gen-types.sh), so the UI reads the same
 //! shapes the engine writes instead of `any`.
 
-use crate::engine::events::QueuedChatItem;
+use crate::engine::events::{BackgroundTask, QueuedChatItem};
 use crate::engine::tools::AskUserQuestion;
 use crate::engine::{AgentOutcome, Plan};
 use serde::Serialize;
@@ -155,6 +155,13 @@ pub(super) struct ActivityData {
 #[cfg_attr(test, derive(TS), ts(export))]
 pub(super) struct QueueData {
     pub items: Vec<QueuedChatItem>,
+}
+
+/// `tasks`.
+#[derive(Serialize)]
+#[cfg_attr(test, derive(TS), ts(export))]
+pub(super) struct TasksData {
+    pub tasks: Vec<BackgroundTask>,
 }
 
 /// `run` / `outcome`.

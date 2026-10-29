@@ -46,6 +46,13 @@ pub enum AgentEvent {
         agent_id: String,
         task: String,
     },
+    /// A native background task started, changed or ended. `notice`, on its
+    /// end, is what the agent that started it is told in a turn of its own.
+    BackgroundTask {
+        agent_id: String,
+        task: crate::engine::events::BackgroundTask,
+        notice: Option<String>,
+    },
     Outcome {
         agent_id: String,
         outcome: AgentOutcome,

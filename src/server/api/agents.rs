@@ -131,8 +131,8 @@ pub(crate) async fn cancel_agent_run(
             // interrupt): each queued send has a task parked on the engine
             // lock, and cancellation terminates the run promptly, so the
             // parked task acquires the lock and delivers its message as the
-            // next turn. Dropping the queue is a separate, explicit verb: the
-            // queue banner's dismiss (`/api/queue/clear`).
+            // next turn. Dropping a queued message is a separate, explicit verb:
+            // its remove button (`/api/queue/remove`).
             let _ = state.events_tx.send(ServerEvent::StateUpdated);
             Json(CancelRunResponse {
                 status: "ok".to_string(),
@@ -144,27 +144,37 @@ pub(crate) async fn cancel_agent_run(
 }
 
 #[derive(Deserialize)]
-pub(crate) struct ClearQueueRequest {
+pub(crate) struct RemoveQueuedRequest {
     project_root: String,
     session_id: String,
     agent_id: String,
+    id: String,
 }
 
-/// Drop all messages queued behind a busy agent without cancelling its
-/// in-flight run. Wired to the chat input's "Dismiss queue" button —
-/// previously that only cleared the local UI store, leaving the server
-/// queue intact and causing dismissed messages to fire later.
-pub(crate) async fn clear_queued_messages(
+/// Drop one queued message. Its parked turn finds it gone and never runs.
+/// The message and its pictures come back, for an Edit to put in the input.
+pub(crate) async fn remove_queued_message(
     State(state): State<Arc<ServerState>>,
-    Json(req): Json<ClearQueueRequest>,
+    Json(req): Json<RemoveQueuedRequest>,
 ) -> impl IntoResponse {
     let key = queue_key(&req.project_root, &req.session_id, &req.agent_id);
-    {
+    let removed = {
         let mut guard = state.queued_chats.lock().await;
-        guard.remove(&key);
-    }
+        let removed = guard.get_mut(&key).and_then(|items| {
+            let at = items.iter().position(|item| item.id == req.id)?;
+            Some(items.remove(at))
+        });
+        if guard.get(&key).is_some_and(|items| items.is_empty()) {
+            guard.remove(&key);
+        }
+        removed
+    };
     emit_queue_updated(&state, &req.project_root, &req.session_id, &req.agent_id).await;
-    Json(serde_json::json!({ "status": "ok" }))
+    let Some(item) = removed else {
+        return (StatusCode::NOT_FOUND, "That message is no longer waiting.").into_response();
+    };
+    Json(serde_json::json!({ "status": "ok", "message": item.text, "images": item.images }))
+        .into_response()
 }
 
 // ---------------------------------------------------------------------------

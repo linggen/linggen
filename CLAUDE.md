@@ -34,6 +34,7 @@ Read files under `doc/` and follow them. If you find wrong content in any doc fi
 - `doc/perception-spec.md` — what a resident agent knows without being told: world state, the activity log, and when to speak
 - `doc/phone-push-spec.md` — Mac → closed phone: skill-declared lines, her words, sealed per phone, rung through the linggen.dev APNs relay
 - `doc/app-action-spec.md` — app actions as tools: one writer per mutation, phone tool registry, typed cross-device calls, destructive confirms
+- `doc/background-tasks-spec.md` — background tasks: never block the chat, end as a turn, one session task list in the subagent pane, Claude runner lives while work does
 - `doc/test-design.md` — testing: unit, hermetic system tests on fixtures + fake model, plugin evals, the draft→publish release gate (clean Mac VM), real-data smoke
 
 ## Build, Test, Run
@@ -50,6 +51,13 @@ Full-stack dev = `cargo run -- --web --dev` alongside `cd ui && npm run dev`
 (HMR, proxies /api). Production: `cd ui && npm run build`, then `cargo run`
 (embeds `ui/dist/` via rust-embed — a release binary serves stale UI until
 you rebuild dist).
+
+Inside a session the engine hosts, restart the live engine on a fresh build
+with `target/release/ling restart --binary target/release/ling` (after
+`cd ui && npm run build` and `cargo build --release`). It waits for other
+turns, keeps `ling.prev`, rolls back if unhealthy, and this session continues
+in a new turn afterwards — do nothing else in the turn that calls it.
+`scripts/restart-engine.sh` does the builds and this in one go.
 
 ## Architecture
 

@@ -26,6 +26,7 @@ export function handlePageState(item: UiEventOf<'page_state'>): void {
   applyPendingAskUser(ps);
   applyBusySessions(ps);
   applyQueued(ps);
+  applyTasks(ps);
   applyScopedState(ps);
 }
 
@@ -63,6 +64,7 @@ function applyGlobalLists(ps: PageState): void {
   }
   if (ps.models) useServerStore.setState({ models: ps.models, modelsLoaded: true });
   if (ps.default_models) useServerStore.setState({ defaultModels: ps.default_models });
+  if (ps.claude_default_model !== undefined) useServerStore.setState({ claudeDefaultModel: ps.claude_default_model });
   if (ps.skills) useServerStore.setState({ skills: ps.skills, skillsLoaded: true });
   if (ps.missions) useUiStore.getState().bumpMissionRefreshKey();
 }
@@ -107,6 +109,12 @@ function applyQueued(ps: PageState): void {
     Array.isArray(entry?.items) ? entry.items : []
   );
   useInteractionStore.getState().setQueuedMessages(items);
+}
+
+/** The session's background tasks; an absent list on a scoped push is none. */
+function applyTasks(ps: PageState): void {
+  if (ps.queued === undefined) return;
+  useInteractionStore.getState().setBackgroundTasks(Array.isArray(ps.tasks) ? ps.tasks : []);
 }
 
 function applyScopedState(ps: PageState): void {

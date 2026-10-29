@@ -7,6 +7,12 @@ export type RoutingConfig = {
  */
 default_models: Array<string>, 
 /**
+ * Model for new Claude sessions (Settings → Models, the moon). Must be an
+ * Anthropic API-key model; unset or unusable falls back to
+ * `default_models`, then to the first usable Claude model.
+ */
+claude_default_model?: string | null, 
+/**
  * When true, automatically try the next model on transient errors
  * (timeout, rate limit, 502/503, connection failures). Default: true.
  */

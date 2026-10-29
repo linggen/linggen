@@ -431,6 +431,11 @@ pub struct RoutingConfig {
     /// The first model in the list is the primary default; others are fallbacks.
     #[serde(default)]
     pub default_models: Vec<String>,
+    /// Model for new Claude sessions (Settings → Models, the moon). Must be an
+    /// Anthropic API-key model; unset or unusable falls back to
+    /// `default_models`, then to the first usable Claude model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_default_model: Option<String>,
     /// When true, automatically try the next model on transient errors
     /// (timeout, rate limit, 502/503, connection failures). Default: true.
     #[serde(default = "default_true")]
@@ -803,6 +808,19 @@ mod tests {
         assert_eq!(cfg.pet.recall_count, 4);
         assert!((cfg.pet.recall_min_score - 0.6).abs() < 1e-6);
         assert!(!cfg.pet.muted);
+    }
+
+    /// The Claude sessions' default is its own key: absent until set, and it
+    /// leaves the Linggen default chain alone.
+    #[test]
+    fn claude_default_model_is_its_own_key() {
+        let mut cfg = Config::default();
+        let unset = toml::to_string(&cfg).unwrap();
+        assert!(!unset.contains("claude_default_model"));
+        cfg.routing.claude_default_model = Some("claude-sonnet-5-5".into());
+        let back: Config = toml::from_str(&toml::to_string(&cfg).unwrap()).unwrap();
+        assert_eq!(back.routing.claude_default_model.as_deref(), Some("claude-sonnet-5-5"));
+        assert_eq!(back.routing.default_models, cfg.routing.default_models);
     }
 
     /// Settings → Agents writes Ling's pick to the front of the default chain

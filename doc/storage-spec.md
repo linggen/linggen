@@ -66,6 +66,7 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 │       ├── session.yaml              # Session metadata (includes creator, cwd, project)
 │       ├── messages.jsonl            # Chat messages, append-only (JSONL)
 │       ├── claude.json               # Claude SDK session ID and working folder (Claude sessions only)
+│       ├── claude-trust-declined.json # The folder this Claude session was told not to trust (until Clear)
 │       ├── refs.jsonl                # Numbered sources, pictures and videos tools returned (append-only)
 │       └── images/                   # Pictures a person's messages carried, pictures Read opened, and the ones answers showed (<sha256-16>.png|jpg|gif|webp)
 ├── memory/                           # Global memory

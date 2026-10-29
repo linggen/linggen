@@ -82,6 +82,8 @@ impl AgentEngine {
             policy: Option<crate::engine::session_policy::SessionPolicy>,
             path_modes: Vec<crate::engine::permission::PathMode>,
             interactive: bool,
+            background: bool,
+            started: Option<tokio::sync::oneshot::Sender<String>>,
         }
         let mut spawns: Vec<DelegationSpawn> = Vec::new();
 
@@ -101,6 +103,8 @@ impl AgentEngine {
                         policy: self.tools.builtins.session_policy.clone(),
                         path_modes: self.session_permissions.path_modes.clone(),
                         interactive: self.session_permissions.interactive,
+                        background: da.run_in_background && self.tools.builtins.session_id.is_some(),
+                        started: None,
                     });
                 }
                 Err(e) => {
@@ -135,7 +139,54 @@ impl AgentEngine {
         // require bisecting every reachable await site. Until that audit
         // (see deferred task #12), the per-call runtime is the workaround.
         let mut join_set = tokio::task::JoinSet::new();
-        for spawn in spawns.into_iter() {
+        let mut foreground = Vec::new();
+        for mut spawn in spawns.into_iter() {
+            if !spawn.background {
+                foreground.push(spawn);
+                continue;
+            }
+            // Beside the chat: the subagent runs on its own thread like any
+            // delegation, the call returns now, its end comes as a turn.
+            let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+            spawn.started = Some(started_tx);
+            let (idx, manager, caller, target, task_text) = (
+                spawn.action_idx,
+                spawn.manager.clone(),
+                spawn.caller_id.clone(),
+                spawn.target_agent_id.clone(),
+                spawn.task.clone(),
+            );
+            let session = spawn.session_id.clone().unwrap_or_default();
+            let (ws, bridge) = (ws_root.clone(), ask_bridge.clone());
+            let handle = tokio::task::spawn_blocking(move || {
+                let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+                rt.block_on(tools::run_delegation(
+                    spawn.manager, ws, spawn.caller_id, spawn.target_agent_id, spawn.task,
+                    spawn.parent_run_id, spawn.depth, spawn.max_depth, bridge, spawn.session_id,
+                    spawn.policy, spawn.path_modes, spawn.interactive, spawn.started,
+                ))
+            });
+            let run = async move {
+                match handle.await {
+                    Ok(Ok(result)) => Ok(render_tool_result(&result)),
+                    Ok(Err(error)) => Err(error),
+                    Err(join) => Err(anyhow::anyhow!("background subagent panicked: {join}")),
+                }
+            };
+            let task = crate::engine::background::track_subagent(
+                &manager, &session, &caller, &target, &task_text, started_rx, run,
+            )
+            .await;
+            let rendered = format!(
+                "Started background subagent {target} as task {}. It runs beside the chat; you will be told \
+                 in a new turn when it ends. Check it with TaskOutput, stop it with TaskStop.",
+                task.id
+            );
+            let _ = self.persist_observation("Task", &rendered, false, session_id).await;
+            messages.push(tool_msg(self, self.observation_text("tool", &format!("Task({target})"), &rendered), idx));
+            self.upsert_observation("tool", "Task", rendered);
+        }
+        for spawn in foreground.into_iter() {
             let ws = ws_root.clone();
             let bridge = ask_bridge.clone();
             let action_idx = spawn.action_idx;
@@ -173,6 +224,7 @@ impl AgentEngine {
                         spawn.policy,
                         spawn.path_modes,
                         spawn.interactive,
+                        spawn.started,
                     )
                     .await
                 });

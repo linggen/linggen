@@ -382,7 +382,7 @@ fn set_executable(_path: &Path) -> Result<()> {
 
 /// Move `target` aside to `prev`, rename `new` into place, and keep it only
 /// if it answers `--version` in time; otherwise put `prev` back.
-fn commit_with_probe(
+pub(crate) fn commit_with_probe(
     new: &Path,
     target: &Path,
     prev: &Path,

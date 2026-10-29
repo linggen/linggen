@@ -5,6 +5,9 @@ static LINGGEN_HOME: OnceLock<PathBuf> = OnceLock::new();
 
 /// Returns the Linggen home directory (`~/.linggen/`).
 /// Supports `$LINGGEN_HOME` env override. Cached via `OnceLock`.
+/// Set in an agent's shells: the session they run for (`ling restart` reads it).
+pub const SESSION_ENV: &str = "LINGGEN_SESSION_ID";
+
 pub fn linggen_home() -> &'static PathBuf {
     LINGGEN_HOME.get_or_init(|| {
         if let Ok(val) = std::env::var("LINGGEN_HOME") {

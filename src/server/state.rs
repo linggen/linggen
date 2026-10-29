@@ -47,6 +47,8 @@ pub struct ServerState {
     pub interrupt_tx: Arc<Mutex<HashMap<String, mpsc::UnboundedSender<String>>>>,
     /// Live Claude sessions' in-memory host state.
     pub(crate) claude: super::claude::Host,
+    /// Every session's background tasks (doc/background-tasks-spec.md).
+    pub(crate) tasks: super::tasks::Tasks,
     /// Pending AskUser questions waiting for user responses.
     /// Keyed by unique question_id. The oneshot sender delivers the user's answer.
     pub pending_ask_user: Arc<Mutex<HashMap<String, crate::engine::tools::PendingAskUser>>>,

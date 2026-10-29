@@ -27,6 +27,7 @@ import {
   handleAskUser,
   handleWidgetResolved,
   handleQueue,
+  handleTasks,
   handleModelFallback,
 } from './interactive';
 import { handlePageState } from './pageState';
@@ -67,6 +68,7 @@ export const eventHandlers: { [K in EventKind]: (item: UiEventByKind[K]) => void
   // Activity / lifecycle
   activity: handleActivity,
   queue: handleQueue,
+  tasks: handleTasks,
   run: handleRun,
 
   // Interactive widgets

@@ -168,7 +168,7 @@ impl Drop for Owned {
 impl Owned {
     /// TERM the child's whole group; KILL whatever is left after
     /// [`STOP_GRACE`]. No grandchild outlives it.
-    fn stop(&mut self) {
+    pub fn stop(&mut self) {
         let group = -(self.child.id() as libc::pid_t);
         signal(group, libc::SIGTERM);
         let start = Instant::now();
