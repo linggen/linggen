@@ -177,6 +177,9 @@ const DetailHeader: React.FC<{
       >
         {item.title}
       </span>
+      {item.context && (
+        <span className="shrink-0 text-[10px] font-mono tabular-nums text-slate-400" title="Context window of its latest request">{item.context}</span>
+      )}
       {stop && (
         <StopButton
           onStop={stop}

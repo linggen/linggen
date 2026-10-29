@@ -203,6 +203,8 @@ pub(super) struct SubagentSpawnedData {
 pub(super) struct SubagentResultData {
     pub subagent_id: String,
     pub outcome: AgentOutcome,
+    /// The report the child handed back, when it sent one.
+    pub report: Option<String>,
     pub subagent_run_id: Option<String>,
     pub parent_run_id: Option<String>,
 }

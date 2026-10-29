@@ -366,7 +366,7 @@ pub(crate) async fn get_workspace_state(
     crate::server::claude::subagents::attach(
         &state.manager.global_sessions,
         sid,
-        running,
+        &state.claude.running_children(sid),
         &mut mapped_messages,
     );
     let refs = crate::engine::answer_refs::view::refs_for(

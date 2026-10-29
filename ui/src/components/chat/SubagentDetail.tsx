@@ -29,7 +29,7 @@ export const SubagentDetail: React.FC<{
     { length: entry.toolSteps?.length ?? 0 },
     {
       isGenerating: entry.status === 'running',
-      text: entry.resultText || '',
+      text: (entry.resultText || '') + (entry.report || ''),
       liveText: entry.currentActivity || '',
     },
   );
@@ -99,10 +99,22 @@ export const SubagentDetail: React.FC<{
       {entry.resultText && (
         <div className="self-start max-w-[92%]">
           <div className="text-[10px] uppercase tracking-wider text-slate-400 dark:text-slate-500 font-semibold mb-1">
-            {name} → main
+            {entry.report ? name : `${name} → main`}
           </div>
           <div className="text-slate-800 dark:text-slate-200 text-[13px]">
             <MarkdownContent text={entry.resultText} />
+          </div>
+        </div>
+      )}
+
+      {/* 6. The report it handed back to main — its real result. */}
+      {entry.report && (
+        <div className="self-stretch border-l-2 border-emerald-500/60 pl-2.5">
+          <div className="text-[10px] uppercase tracking-wider text-emerald-600 dark:text-emerald-400 font-semibold mb-1">
+            Report
+          </div>
+          <div className="text-slate-800 dark:text-slate-200 text-[13px]">
+            <MarkdownContent text={entry.report} />
           </div>
         </div>
       )}

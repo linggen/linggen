@@ -74,6 +74,9 @@ case "$start" in
   emit "{\"type\":\"text\",\"text\":\"resume=$resume\"}";;
 esac
 emit '{"type":"result","success":true,"text":"","usage":{"input_tokens":1,"output_tokens":1}}'
+case "$start" in
+*'"prompt":"hint"'*) emit '{"type":"suggestion","text":"run the tests"}';;
+esac
 emit '{"type":"done"}'
 "#;
 
@@ -203,6 +206,23 @@ async fn a_second_turn_resumes_the_sdk_conversation_and_commands_are_cached() {
         ))
         .await;
     assert_eq!(caps["commands"][0]["name"], "clear");
+}
+
+#[tokio::test]
+async fn the_sdks_guess_at_the_next_message_is_the_inputs_hint() {
+    let (w, sid) = world().await;
+    turn(&w, &sid, "hint").await;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let hint = loop {
+        let found = w.events().into_iter().find(|e| e["kind"] == "followups" && e["session_id"] == sid);
+        if let Some(event) = found {
+            break event;
+        }
+        assert!(std::time::Instant::now() < deadline, "no hint followed the turn");
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    };
+    assert_eq!(hint["data"]["items"], serde_json::json!(["run the tests"]));
+    assert!(hint["data"]["run_id"].is_string(), "the hint names the turn it follows: {hint}");
 }
 
 #[tokio::test]

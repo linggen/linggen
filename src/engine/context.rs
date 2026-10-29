@@ -409,6 +409,7 @@ impl AgentEngine {
             actual_completion_tokens: actual_completion,
             compressed: summary_count > 0,
             summary_count,
+            run_id: None,
         })
         .await;
     }

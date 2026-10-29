@@ -99,6 +99,9 @@ pub enum AgentEvent {
         parent_id: String,
         subagent_id: String,
         outcome: AgentOutcome,
+        /// The report the child handed back, when it sent one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        report: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         subagent_run_id: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -118,6 +121,9 @@ pub enum AgentEvent {
         actual_completion_tokens: Option<usize>,
         compressed: bool,
         summary_count: usize,
+        /// The run whose window this is: a subagent's is its own run.
+        #[serde(default)]
+        run_id: Option<String>,
     },
     TextSegment {
         agent_id: String,
@@ -210,7 +216,8 @@ impl AgentEvent {
             | Self::Message { run_id, .. }
             | Self::TextSegment { run_id, .. }
             | Self::ToolProgress { run_id, .. }
-            | Self::Followups { run_id, .. } => fill(run_id, run),
+            | Self::Followups { run_id, .. }
+            | Self::ContextUsage { run_id, .. } => fill(run_id, run),
             Self::AgentStatus {
                 run_id,
                 parent_run_id,

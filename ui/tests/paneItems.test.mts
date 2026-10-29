@@ -3,7 +3,7 @@
 // background subagent's task and tree entry are one row.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { firstLine, formatElapsed, paneItems } from '../src/lib/paneItems.mts';
+import { firstLine, formatElapsed, formatTokens, paneItems, reportLine, subagentTranscript } from '../src/lib/paneItems.mts';
 
 const entry = (subagentId: string, status: 'running' | 'done' | 'failed', extra = {}) => ({
   subagentId, agentName: 'general-purpose', task: `Look into ${subagentId}\nand more`, status,
@@ -54,10 +54,30 @@ test('shells, foreground subagents and unmatched tasks each stand alone, newest 
   assert.equal(items[3].status, 'failed');
 });
 
+test('a handed-back report is the subagent\'s summary line, ahead of the task\'s', () => {
+  const [item] = paneItems(
+    [entry('sub-a', 'done', { resultText: 'Mobile done. Now engine tests', report: '## Fixed the bug\nAll tests pass.' })],
+    [{ id: 't1', kind: 'subagent', title: 'a', status: 'completed', started_at: 1, ended_at: 5, summary: 'A done', subagent_id: 'sub-a' }],
+  );
+  assert.equal(item.line, 'Fixed the bug');
+  assert.match(subagentTranscript(item.entry!), /Report:\n## Fixed the bug/);
+  assert.equal(reportLine('**Summary**'), 'Summary');
+});
+
 test('first lines and elapsed times', () => {
   assert.equal(firstLine('  one\ntwo'), 'one');
   assert.equal(firstLine(undefined), '');
   assert.equal(formatElapsed(42_000), '42s');
   assert.equal(formatElapsed(125_000), '2m 5s');
   assert.equal(formatElapsed(3_720_000), '1h 2m');
+});
+
+test("a subagent's context reads like the session header's, and a task without one shows none", () => {
+  const items = paneItems(
+    [entry('sub-a', 'running', { timestampMs: 2, contextTokens: 45012 }), entry('sub-b', 'done', { timestampMs: 1, contextTokens: 850 })],
+    [{ id: 't1', kind: 'shell', title: 'npm test', status: 'running', started_at: 3 }],
+  );
+  assert.deepEqual(items.map((i) => i.context), [undefined, 'ctx 45.0k', 'ctx 850']);
+  assert.equal(formatTokens(200000), '200.0k');
+  assert.equal(paneItems([entry('sub-c', 'running')], [])[0].context, undefined, 'none before its first request');
 });

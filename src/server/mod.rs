@@ -363,6 +363,7 @@ mod tests {
                 parent_id: "ling".into(),
                 subagent_id: "coder".into(),
                 outcome: crate::engine::AgentOutcome::None,
+                report: None,
                 session_id: None,
                 subagent_run_id: None,
                 parent_run_id: None,
@@ -395,6 +396,7 @@ mod tests {
                 compressed: false,
                 summary_count: 0,
                 session_id: None,
+                run_id: None,
             },
             ServerEvent::Outcome {
                 agent_id: "ling".into(),

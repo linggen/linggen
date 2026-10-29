@@ -213,6 +213,8 @@ impl ClaudeSession {
     ) -> Result<()> {
         let mut has_text = false;
         let mut last_text = String::new();
+        // The run the last result ended: its next-prompt hint is stamped with it.
+        let mut finished_run: Option<String> = None;
         let mut requests = tokio::task::JoinSet::new();
         let mut request_tasks = HashMap::new();
         let mut questions: HashMap<i64, String> = HashMap::new();
@@ -505,14 +507,17 @@ impl ClaudeSession {
                     while let Some(at) = turns_state.pending.iter().position(|turn| answered.contains(&turn.uuid.as_str())) {
                         let turn = turns_state.pending.remove(at).expect("position is in range");
                         self.end_stream(&turn.run_id);
+                        finished_run = Some(turn.run_id.clone());
                         let _ = turn.done.send(outcome.clone());
                         completed = true;
                     }
                     if !completed {
                         if let Some(turn) = turns_state.unprompted.take() {
+                            finished_run = Some(turn.run_id.clone());
                             self.finish_unprompted(turn, outcome).await;
                         } else if let Some(turn) = turns_state.pending.pop_front() {
                             self.end_stream(&turn.run_id);
+                            finished_run = Some(turn.run_id.clone());
                             let _ = turn.done.send(outcome);
                         }
                     }
@@ -537,11 +542,25 @@ impl ClaudeSession {
                         actual_completion_tokens: None,
                         compressed: false,
                         summary_count: 0,
+                        run_id: None,
                     })
                     .await;
                 }
                 "goal" => {
                     turns_state.goal = event["active"] == true;
+                }
+                // The SDK's guess at the person's next message, after a
+                // result: the input's hint, as a native turn's would be.
+                "suggestion" => {
+                    let text = event["text"].as_str().unwrap_or_default().trim();
+                    if !text.is_empty() {
+                        self.emit(AgentEvent::Followups {
+                            agent_id: AGENT_ID.into(),
+                            items: vec![text.to_string()],
+                            run_id: finished_run.clone(),
+                        })
+                        .await;
+                    }
                 }
                 "done" => return Ok(()),
                 "error" => anyhow::bail!(

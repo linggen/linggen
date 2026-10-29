@@ -56,7 +56,8 @@ const TaskRow: React.FC<{
         </div>
         <div className="flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
           {elapsed && <span className="shrink-0 tabular-nums">{elapsed}</span>}
-          {item.line && <span className="truncate" data-no-i18n>{elapsed ? `· ${item.line}` : item.line}</span>}
+          {item.context && <span className="shrink-0 tabular-nums font-mono" title="Context window of its latest request">{item.context}</span>}
+          {item.line && <span className="truncate" data-no-i18n>{elapsed || item.context ? `· ${item.line}` : item.line}</span>}
         </div>
       </div>
       {item.running && item.task && (

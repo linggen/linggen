@@ -132,11 +132,13 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
             compressed,
             summary_count,
             session_id,
+            run_id,
         } => Some(
             ui.event(format!("run-context-{agent_id}"), UI_KIND_RUN)
                 .phase(UI_PHASE_CONTEXT_USAGE)
                 .agent(agent_id.clone())
                 .session(session_id)
+                .run(run_id)
                 .data(ContextUsageData {
                     agent_id,
                     stage,
@@ -180,6 +182,7 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
             parent_id,
             subagent_id,
             outcome,
+            report,
             session_id,
             subagent_run_id,
             parent_run_id,
@@ -198,6 +201,7 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
             .data(SubagentResultData {
                 subagent_id,
                 outcome,
+                report,
                 subagent_run_id,
                 parent_run_id,
             }),

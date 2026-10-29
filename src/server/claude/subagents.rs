@@ -5,7 +5,10 @@ use crate::server::{ServerEvent, ServerState};
 use crate::state_fs::sessions::SessionStore;
 use anyhow::Result;
 use serde_json::{json, Value};
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::{BTreeMap, HashSet},
+    path::Path,
+};
 
 const FILE: &str = "claude-subagents.json";
 pub(super) fn tracking_id(run: &str, agent: &str) -> String {
@@ -95,9 +98,11 @@ impl Subagents {
                 }
             }
             "subagent_progress" => {
-                entry["contextTokens"] =
-                    json!(event["usage"]["total_tokens"].as_u64().unwrap_or(0));
                 entry["currentActivity"] = event["activity"].clone();
+            }
+            "subagent_context" => {
+                let tokens = set_context(entry, event);
+                host.emit(context_event(&id, tokens)).await;
             }
             "tool_start" => {
                 let tool = event["tool"].as_str().unwrap_or("Tool");
@@ -151,20 +156,20 @@ impl Subagents {
                 })
                 .await;
             }
+            "subagent_report" => {
+                let Some(text) = event["text"].as_str().map(str::trim).filter(|s| !s.is_empty())
+                else {
+                    return Ok(true);
+                };
+                entry["report"] = json!(text);
+                // A report after the end still reaches the open pane.
+                if entry["status"] != "running" {
+                    host.emit(result_event(entry, &id, &origin)).await;
+                }
+            }
             "subagent_end" => {
                 let failed = matches!(event["status"].as_str(), Some("failed" | "stopped"));
-                let first_end =
-                    entry["status"] == "running" || failed && entry["status"] != "failed";
-                entry["status"] = json!(if failed { "failed" } else { "done" });
-                entry["currentActivity"] = Value::Null;
-                if entry["resultText"].as_str().unwrap_or_default().is_empty() {
-                    entry["resultText"] = json!(event["text"].as_str().unwrap_or_default());
-                }
-                for step in entry["toolSteps"].as_array_mut().unwrap() {
-                    if step["status"] == "running" {
-                        step["status"] = json!("failed");
-                    }
-                }
+                let first_end = end(entry, event, failed);
                 if first_end {
                     let text = entry["resultText"].as_str().unwrap_or_default();
                     child_message(
@@ -177,18 +182,13 @@ impl Subagents {
                         },
                     )
                     .await;
-                    host.emit(AgentEvent::SubagentResult {
-                        parent_id: AGENT_ID.into(),
-                        subagent_id: entry["agentName"].as_str().unwrap_or_default().into(),
-                        outcome: crate::engine::AgentOutcome::None,
-                        subagent_run_id: Some(id),
-                        parent_run_id: Some(origin.clone()),
-                    })
-                    .await;
+                    host.emit(result_event(entry, &id, &origin)).await;
                 }
             }
             _ => {}
         }
+        let running = entry["status"] == "running";
+        host.state.claude.child_running(&host.meta.id, &id, running);
         save(host, &self.entries, &self.origins)?;
         Ok(true)
     }
@@ -204,6 +204,64 @@ impl Subagents {
             self.handle(host, &json!({"type":"subagent_end", "agent_id":id, "status":"stopped", "text":"Task stopped"})).await?;
         }
         Ok(())
+    }
+}
+
+/// The SDK's stand-in for a report it delivered as a message: no result.
+const HANDED_BACK: &str = "report was delivered to you as a message";
+
+/// Mark a child ended; true the first time it ends (or first fails). Its
+/// end text is its result only when nothing better came: no text of its
+/// own, and never the SDK's stand-in for a handed-back report.
+fn end(entry: &mut Value, event: &Value, failed: bool) -> bool {
+    let first_end = entry["status"] == "running" || failed && entry["status"] != "failed";
+    entry["status"] = json!(if failed { "failed" } else { "done" });
+    entry["currentActivity"] = Value::Null;
+    let text = event["text"].as_str().unwrap_or_default();
+    if entry["resultText"].as_str().unwrap_or_default().is_empty() && !text.contains(HANDED_BACK) {
+        entry["resultText"] = json!(text);
+    }
+    for step in entry["toolSteps"].as_array_mut().unwrap() {
+        if step["status"] == "running" {
+            step["status"] = json!("failed");
+        }
+    }
+    first_end
+}
+
+fn result_event(entry: &Value, id: &str, origin: &str) -> AgentEvent {
+    AgentEvent::SubagentResult {
+        parent_id: AGENT_ID.into(),
+        subagent_id: entry["agentName"].as_str().unwrap_or_default().into(),
+        outcome: crate::engine::AgentOutcome::None,
+        report: entry["report"].as_str().map(str::to_owned),
+        subagent_run_id: Some(id.into()),
+        parent_run_id: Some(origin.into()),
+    }
+}
+
+/// The window the child's latest request filled, kept with the child.
+fn set_context(entry: &mut Value, event: &Value) -> usize {
+    let tokens = event["tokens"].as_u64().unwrap_or(0) as usize;
+    entry["contextTokens"] = json!(tokens);
+    tokens
+}
+
+/// A child's window, for its row and detail: its own agent and run, so it
+/// never reads as the main thread's.
+fn context_event(id: &str, tokens: usize) -> AgentEvent {
+    AgentEvent::ContextUsage {
+        agent_id: id.into(),
+        stage: "sdk".into(),
+        message_count: 0,
+        char_count: 0,
+        estimated_tokens: tokens,
+        token_limit: None,
+        actual_prompt_tokens: None,
+        actual_completion_tokens: None,
+        compressed: false,
+        summary_count: 0,
+        run_id: Some(id.into()),
     }
 }
 
@@ -267,10 +325,14 @@ fn save(
 }
 
 /// Attach the tree only to the last visible parent row of each SDK run.
+/// A child still marked running is running only when it is one of `live`:
+/// the tracking ids the session's live runner runs. Any other ended unseen
+/// (an engine restart took its runner), even while the session has a turn,
+/// and even when a later run resumed the same SDK task under a new id.
 pub(crate) fn attach(
     store: &SessionStore,
     sid: &str,
-    running: bool,
+    live: &HashSet<String>,
     messages: &mut [(Value, String)],
 ) {
     if sid.is_empty() || sid.contains('/') || sid.contains("..") {
@@ -299,7 +361,7 @@ pub(crate) fn attach(
             }
         }
     }
-    let mut placed = std::collections::HashSet::new();
+    let mut placed = HashSet::new();
     for (run, i) in runs {
         let Some(saved) = all[&run].as_array() else {
             continue;
@@ -311,7 +373,7 @@ pub(crate) fn attach(
                 continue;
             }
             let mut entry = id.and_then(|id| latest.get(id)).unwrap_or(entry).clone();
-            if !running && entry["status"] == "running" {
+            if entry["status"] == "running" && !id.is_some_and(|id| live.contains(id)) {
                 entry["status"] = json!("failed");
             }
             entries.push(entry);
@@ -357,6 +419,26 @@ pub(crate) async fn cancel(state: &ServerState, run: &str) -> Option<Result<()>>
 mod tests {
     use super::*;
     #[test]
+    fn a_handed_back_report_is_kept_and_the_placeholder_is_no_result() {
+        let mut entry = json!({"agentName":"general-purpose", "status":"running",
+            "resultText":"", "toolSteps":[]});
+        entry["report"] = json!("## Fixed\nAll tests pass.");
+        let placeholder = json!({"text":"This agent's report was delivered to you as a message from x"});
+        assert!(end(&mut entry, &placeholder, false));
+        assert_eq!(entry["resultText"], "");
+        assert_eq!(entry["status"], "done");
+        let AgentEvent::SubagentResult { report, .. } = result_event(&entry, "sdk-sub-r-x", "r") else {
+            panic!("not a result");
+        };
+        assert_eq!(report.as_deref(), Some("## Fixed\nAll tests pass."));
+        // A child without a report keeps its end text as its result.
+        let mut plain = json!({"status":"running", "resultText":"", "toolSteps":[]});
+        end(&mut plain, &json!({"text":"done"}), false);
+        assert_eq!(plain["resultText"], "done");
+        assert!(plain.get("report").is_none());
+    }
+
+    #[test]
     fn restored_children_attach_to_their_own_last_parent_row() {
         let dir = tempfile::tempdir().unwrap();
         let store = SessionStore::with_sessions_dir(dir.path().into());
@@ -379,7 +461,7 @@ mod tests {
                 "another turn".into(),
             ),
         ];
-        attach(&store, "session", false, &mut rows);
+        attach(&store, "session", &HashSet::new(), &mut rows);
         assert!(rows[0].0.get("subagents").is_none());
         assert!(rows[2].0.get("subagents").is_none());
         assert_eq!(rows[1].0["subagents"][0]["resultText"], "private");
@@ -406,6 +488,54 @@ mod tests {
     }
 
     #[test]
+    fn a_child_shows_running_only_while_the_live_runner_runs_it() {
+        // `gone` ran when an engine restart took its runner; run r2 resumed
+        // the same SDK task under a new tracking id, and that one still runs.
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::with_sessions_dir(dir.path().into());
+        let session = store.session_dir("session");
+        std::fs::create_dir_all(&session).unwrap();
+        std::fs::write(
+            session.join(FILE),
+            json!({
+                "r1":[
+                    {"subagentId":"sdk-sub-r1-live", "status":"running"},
+                    {"subagentId":"sdk-sub-r1-gone", "status":"running"},
+                ],
+                "r2":[{"subagentId":"sdk-sub-r2-gone", "status":"running"}],
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let mut rows = vec![
+            (json!({"from":"claude", "run_id":"r1"}), "answer".into()),
+            (json!({"from":"claude", "run_id":"r2"}), "resumed".into()),
+        ];
+        let live = HashSet::from(["sdk-sub-r1-live".to_owned(), "sdk-sub-r2-gone".to_owned()]);
+        attach(&store, "session", &live, &mut rows);
+        assert_eq!(rows[0].0["subagents"][0]["status"], "running");
+        assert_eq!(rows[0].0["subagents"][1]["status"], "failed");
+        assert_eq!(rows[1].0["subagents"][0]["status"], "running");
+    }
+
+    #[test]
+    fn a_childs_context_is_saved_and_comes_back_with_it() {
+        let mut entry = json!({"subagentId":"sdk-sub-r1-c", "status":"done", "contextTokens":0});
+        assert_eq!(set_context(&mut entry, &json!({"tokens":45012})), 45012);
+        let entries = BTreeMap::from([("c".to_owned(), entry)]);
+        let origins = BTreeMap::from([("c".to_owned(), "r1".to_owned())]);
+        let mut all = json!({});
+        store_by_origin(&mut all, &entries, &origins, "r1");
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::with_sessions_dir(dir.path().into());
+        std::fs::create_dir_all(store.session_dir("session")).unwrap();
+        std::fs::write(store.session_dir("session").join(FILE), all.to_string()).unwrap();
+        let mut rows = vec![(json!({"from":"claude", "run_id":"r1"}), "answer".into())];
+        attach(&store, "session", &HashSet::new(), &mut rows);
+        assert_eq!(rows[0].0["subagents"][0]["contextTokens"], 45012);
+    }
+
+    #[test]
     fn a_child_copied_under_later_runs_attaches_once_as_last_seen() {
         // The file older engines wrote: every run of a runner repeats each
         // child, frozen at the state it had when that run ended.
@@ -428,7 +558,7 @@ mod tests {
             .iter()
             .map(|run| (json!({"from":"claude", "run_id":run}), "answer".into()))
             .collect();
-        attach(&store, "session", false, &mut rows);
+        attach(&store, "session", &HashSet::new(), &mut rows);
         assert_eq!(rows[0].0["subagents"], json!([child("done")]));
         assert_eq!(rows[1].0["subagents"], json!([{"subagentId":"sdk-sub-r2-y", "status":"done"}]));
         assert!(rows[2].0.get("subagents").is_none());

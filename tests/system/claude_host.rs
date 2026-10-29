@@ -120,6 +120,29 @@ case "$start" in
   esac
  done
  exit 0;;
+*'"prompt":"kidshell"'*)
+ uuid=$(printf '%s' "$start" | sed -n 's/.*"uuid":"\([^"]*\)".*/\1/p')
+ emit '{"type":"subagent_start","agent_id":"c2","name":"builder","task":"build it"}'
+ emit '{"type":"tasks","tasks":[{"id":"c2","kind":"subagent","title":"build it"},{"id":"b9","kind":"shell","title":"cargo test"}]}'
+ emit '{"type":"text","text":"LAUNCHED"}'
+ emit "{\"type\":\"result\",\"success\":true,\"usage\":{},\"uuids\":[\"$uuid\"]}"
+ sleep 1
+ # The child's own background shell ends after the turn: all the runner
+ # forwards of the SDK's notification is the task list's change.
+ emit '{"type":"task","id":"b9","status":"completed","summary":"cargo test"}'
+ emit '{"type":"tasks","tasks":[{"id":"c2","kind":"subagent","title":"build it"}]}'
+ while IFS= read -r line; do
+  case "$line" in
+  *'"type":"prompt"'*)
+   u=$(printf '%s' "$line" | sed -n 's/.*"uuid":"\([^"]*\)".*/\1/p')
+   emit '{"type":"text","text":"SECOND"}'
+   emit "{\"type\":\"result\",\"success\":true,\"usage\":{},\"uuids\":[\"$u\"]}";;
+  *'"type":"end"'*)
+   emit '{"type":"done"}'
+   exit 0;;
+  esac
+ done
+ exit 0;;
 *'"prompt":"stream"'*)
  while :; do
   emit '{"type":"token","text":"x"}'
@@ -568,6 +591,25 @@ async fn a_background_subagent_never_holds_the_next_message() {
     assert_eq!(children[0]["subagentId"], json!(format!("sdk-sub-{run}-c1")));
     assert_eq!(children[0]["resultText"], "1\n\n2");
     assert_eq!(children[0]["toolCount"], 1);
+}
+
+#[tokio::test]
+async fn a_subagents_own_background_task_ending_never_holds_the_next_message() {
+    let (w, sid) = world().await;
+    trust_folder(&w);
+    let mark = w.mark();
+    w.api.chat(&sid, &w.work(), "kidshell").await;
+    until_finished_runs(&w, mark, &sid, 1).await;
+    // The child's shell has ended by now, after the turn's result.
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    w.api.chat(&sid, &w.work(), "again").await;
+    until_finished_runs(&w, mark, &sid, 2).await;
+    assert_eq!(finished_with(&w, mark, &sid), ["Completed", "Completed"]);
+    let begun = w.engine.log_since(mark).lines().filter(|l| l.contains("run/begin") && l.contains(&sid)).count();
+    assert_eq!(begun, 2, "the task's end began a run of its own");
+    let rows = w.rows(&sid);
+    assert!(rows.iter().any(|r| r.said_by("claude") == Some("SECOND")));
+    assert!(!rows.iter().any(|r| r.said_by("claude") == Some("cargo test")), "the task's end was said as Claude's");
 }
 
 #[tokio::test]

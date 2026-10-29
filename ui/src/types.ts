@@ -34,6 +34,9 @@ export interface SubagentTreeEntry {
    * from the subagent's terminal Message event so it can be revealed in the
    * expand-on-click view instead of leaking into the parent chat. */
   resultText?: string;
+  /** The final report a Claude child handed back (SubagentHandback); when
+   *  present it is the child's result, ahead of resultText. */
+  report?: string;
   /** Client-side stamp for ordering/diagnostics (set when subagent is spawned). */
   timestampMs?: number;
 }

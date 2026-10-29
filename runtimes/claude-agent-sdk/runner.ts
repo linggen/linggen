@@ -298,7 +298,7 @@ async function main() {
         settings: sessionSettings,
         allowedTools: sessionSettings.permissions.allow,
         additionalDirectories: sessionSettings.permissions.additionalDirectories,
-        includePartialMessages: true, forwardSubagentText: true, maxTurns: input.maxTurns,
+        includePartialMessages: true, forwardSubagentText: true, promptSuggestions: true, maxTurns: input.maxTurns,
         maxBudgetUsd: input.maxBudgetUsd,
         permissionMode: input.validateOnly ? 'default' : input.permissionMode || 'default',
         abortController: controller,
@@ -372,11 +372,14 @@ async function main() {
         conversation.getContextUsage({ detail: 'summary' })
           .then((c: any) => send({ type: 'context', tokens: c.totalTokens, limit: c.maxTokens }))
           .catch(() => {});
+      } else if (m.type === 'prompt_suggestion') {
+        if (m.suggestion) send({ type: 'suggestion', text: m.suggestion });
       } else if (m.type === 'active_goal') {
         send({ type: 'goal', active: m.value != null });
-      } else if (m.type === 'system' && m.subtype === 'task_notification') {
-        send({ type: 'text', text: m.summary || `Task ${m.task_id}: ${m.status}` });
       }
+      // A task's end is never main-thread text: the session task list shows
+      // it (`taskEvent`), and the SDK tells the agent that launched it in a
+      // turn of its own, whose output is what starts a run here.
     }
     send({ type: 'done' });
   } catch (error) {

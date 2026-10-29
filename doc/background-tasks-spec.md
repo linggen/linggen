@@ -27,7 +27,9 @@ The same in a native Linggen session and in a Claude session.
    turns as usual. The agent is not "busy" because a task is running.
 2. **Ends as a turn.** When a task finishes, fails or is stopped, the agent
    is told in a new turn of its own (who started it, how it ended, a short
-   summary, where the full output is). No person's message is needed.
+   summary, where the full output is). No person's message is needed. Only
+   the agent that started it is told: a subagent's own task never starts a
+   turn of the session, and its end is never said as the main agent's.
 3. **Visible and in the person's hands.** Every background task of the
    session is listed while it runs and for a while after: what it is, how
    long it has run, its latest output or activity, how it ended. Any
@@ -38,7 +40,9 @@ The same in a native Linggen session and in a Claude session.
    once (a background subagent is one row, not a task and a subagent):
    running on top, ended folded below. A row opens its detail in the same
    pane — a subagent's rich chat view, or a shell or watch task's command,
-   status and output tail — and back returns to the list. A long task
+   status and output tail — and back returns to the list. A subagent's row
+   and detail show its context window, as the chat header shows the main
+   one's. A long task
    does not hold the pane open; when the pane is closed, the chat header
    shows how many run and opens the pane, at the list.
 5. **What ends them.** Finishing, the person's stop, the agent's own stop,

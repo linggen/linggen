@@ -34,7 +34,8 @@ case "$start" in
  emit '{"type":"tool_end","agent_id":"a","id":"read-a","tool":"Read","result":"fixture data","failed":false}'
  emit '{"type":"subagent_text","agent_id":"b","text":"PRIVATE_B"}'
  emit '{"type":"subagent_end","agent_id":"a","status":"completed"}'
- emit '{"type":"subagent_end","agent_id":"b","status":"completed"}'
+ emit '{"type":"subagent_report","agent_id":"b","text":"REPORT_B"}'
+ emit '{"type":"subagent_end","agent_id":"b","status":"completed","text":"Its report was delivered to you as a message from b"}'
  ;;
 esac
 emit '{"type":"tool_end","id":"launch","tool":"Agent","result":"children complete","failed":false}'
@@ -102,7 +103,12 @@ async fn child_text_and_tools_stay_nested_live_and_after_reload() {
     assert_eq!(entries[0]["resultText"], "PRIVATE_A");
     assert_eq!(entries[0]["toolSteps"][0]["status"], "done");
     assert_eq!(entries[0]["status"], "done");
+    assert!(entries[0].get("report").is_none());
+    assert_eq!(entries[1]["report"], "REPORT_B");
+    assert_eq!(entries[1]["resultText"], "PRIVATE_B");
     let events = w.events();
+    assert!(events.iter().any(|event| event["phase"] == "subagent_result"
+        && event["data"]["report"] == "REPORT_B"));
     assert_eq!(
         events
             .iter()

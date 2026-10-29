@@ -20,12 +20,24 @@ export interface PaneItem {
   endedAt?: number;
   /** Latest activity while it runs, how it ended once it has. */
   line?: string;
+  /** A subagent's context window, as the session header shows its own: "ctx 45.0k". */
+  context?: string;
   entry?: SubagentTreeEntry;
   task?: BackgroundTask;
 }
 
 export function firstLine(text: string | null | undefined): string {
   return String(text ?? '').trim().split('\n')[0].trim();
+}
+
+/** A report's first line as a summary: without its markdown heading or bold. */
+export function reportLine(report: string | null | undefined): string {
+  return firstLine(report).replace(/^#+\s*/, '').replace(/^\*\*(.+)\*\*:?$/, '$1');
+}
+
+/** Tokens the way the session header shows its context: "850", "45.0k". */
+export function formatTokens(n: number): string {
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 }
 
 export function formatElapsed(ms: number): string {
@@ -73,6 +85,9 @@ export function subagentTranscript(entry: SubagentTreeEntry): string {
     lines.push(`${name} → main:`);
     lines.push(entry.resultText);
   }
+  if (entry.report) {
+    lines.push('', 'Report:', entry.report);
+  }
   return lines.join('\n');
 }
 
@@ -81,7 +96,7 @@ const ENTRY_STATUS: Record<SubagentTreeEntry['status'], string> = { running: 'ru
 function toItem(entry: SubagentTreeEntry | undefined, task: BackgroundTask | undefined): PaneItem {
   const status = task?.status ?? ENTRY_STATUS[entry?.status ?? 'done'];
   const running = status === 'running';
-  const ended = task?.summary || firstLine(entry?.resultText);
+  const ended = reportLine(entry?.report) || task?.summary || firstLine(entry?.resultText);
   return {
     key: entry?.subagentId ?? task!.id,
     kind: entry ? 'subagent' : task!.kind,
@@ -92,6 +107,7 @@ function toItem(entry: SubagentTreeEntry | undefined, task: BackgroundTask | und
     startedAt: task?.started_at ?? entry?.timestampMs,
     endedAt: task?.ended_at,
     line: (running ? entry?.currentActivity || task?.activity : ended) || undefined,
+    context: entry?.contextTokens ? `ctx ${formatTokens(entry.contextTokens)}` : undefined,
     entry,
     task,
   };

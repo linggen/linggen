@@ -7,7 +7,7 @@
 //! (`trust.rs`): it must hold across an engine restart.
 use super::Control;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex as SyncMutex};
 use tokio::sync::{mpsc, oneshot, Mutex};
 
@@ -30,6 +30,9 @@ pub(crate) struct Host {
     /// one into the running turn instead.
     steers: SyncMutex<HashMap<String, oneshot::Sender<()>>>,
     pub(super) probes: Mutex<HashMap<String, Arc<Mutex<Option<super::probe::Outcome>>>>>,
+    /// The children each session's live runner is running, by tracking id.
+    /// A saved child still marked running that is not here ended unseen.
+    children: SyncMutex<HashMap<String, HashSet<String>>>,
 }
 
 fn locked<T>(mutex: &SyncMutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -60,6 +63,20 @@ impl Host {
             libc::killpg(pid as i32, libc::SIGKILL);
         }
         true
+    }
+
+    pub fn child_running(&self, session: &str, child: &str, running: bool) {
+        let mut children = locked(&self.children);
+        let set = children.entry(session.into()).or_default();
+        if running {
+            set.insert(child.into());
+        } else {
+            set.remove(child);
+        }
+    }
+
+    pub fn running_children(&self, session: &str) -> HashSet<String> {
+        locked(&self.children).get(session).cloned().unwrap_or_default()
     }
 
     /// The SDK permission updates approved for this session's lifetime.

@@ -4,4 +4,8 @@ import type { AgentOutcome } from "./AgentOutcome";
 /**
  * `run` / `subagent_result`.
  */
-export type SubagentResultData = { subagent_id: string, outcome: AgentOutcome, subagent_run_id: string | null, parent_run_id: string | null, };
+export type SubagentResultData = { subagent_id: string, outcome: AgentOutcome, 
+/**
+ * The report the child handed back, when it sent one.
+ */
+report: string | null, subagent_run_id: string | null, parent_run_id: string | null, };

@@ -56,7 +56,6 @@ function handleContextUsage(item: RunEventOf<'context_usage'>): void {
 
   const sid = getSessionId(item);
   const estTokens = Number(data.estimated_tokens || 0);
-  if (sid) agentTracker.latestContextTokens[sid] = estTokens;
 
   // Accumulate session token usage from actual_prompt/completion_tokens
   const promptDelta = Number(data.actual_prompt_tokens || 0);
@@ -71,13 +70,16 @@ function handleContextUsage(item: RunEventOf<'context_usage'>): void {
     });
   }
 
-  const parentId = agentTracker.getParent(agentIdKey);
-  if (parentId) {
-    agentTracker.setSubagentContextTokens(agentIdKey, estTokens);
-    useChatStore.getState().updateSubagentTree(parentId, agentIdKey,
+  // A subagent's window is its own run's (a native child shares its agent id
+  // with the main one): it goes on its row, never on the session header.
+  const childKey = [runOf(item), agentIdKey].find((key) => key && agentTracker.getParent(key));
+  if (childKey) {
+    agentTracker.setSubagentContextTokens(childKey, estTokens);
+    useChatStore.getState().updateSubagentTree(agentTracker.getParent(childKey)!, childKey,
       (entry) => ({ ...entry, contextTokens: estTokens }));
     return;
   }
+  if (sid) agentTracker.latestContextTokens[sid] = estTokens;
 
   if (sid) {
     useServerStore.getState().setAgentContext((prev) => ({
@@ -97,7 +99,7 @@ function handleContextUsage(item: RunEventOf<'context_usage'>): void {
   // summary pass; without an on-screen line it's silent — and compaction can
   // drop tool results (e.g. fetched threads) the agent still needs. Rendered
   // as a divider via `from: 'compaction'` (see ChatPanel/CompactionMessage).
-  if (data.compressed && !parentId) {
+  if (data.compressed) {
     const tk = Math.round(estTokens / 1000);
     const limit = typeof data.token_limit === 'number' ? Number(data.token_limit) : 0;
     const limitTxt = limit > 0 ? ` / ${Math.round(limit / 1000)}k` : '';
@@ -176,6 +178,7 @@ function handleSubagentResult(item: RunEventOf<'subagent_result'>): void {
       // Preserve any resultText already captured by handleMessage —
       // outcome is the fallback, not an overwrite.
       resultText: entry.resultText ?? outcomeText ?? entry.resultText,
+      ...(item.data?.report ? { report: item.data.report } : {}),
     }));
 
   // Defer the unregister so a trailing Message event (the subagent's

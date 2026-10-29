@@ -403,6 +403,7 @@ pub(crate) async fn run_delegation(
                 parent_id: caller_id,
                 subagent_id: target_agent_id,
                 outcome: outcome.clone(),
+                report: None,
                 subagent_run_id: Some(run_id.clone()),
                 parent_run_id: parent_run_id.clone(),
             },

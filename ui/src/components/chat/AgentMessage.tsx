@@ -3,6 +3,7 @@ import type { ChatMessage, ContentBlock } from '../../types';
 import type { SpecialBlockProps } from './types';
 import { MarkdownContent } from './MarkdownContent';
 import { SubagentTreeView } from './SubagentTreeView';
+import { SubagentReports } from './SubagentReports';
 import { ContentBlockView, TurnSummaryFooter } from './ContentBlockView';
 import { tryRenderSpecialBlock } from './SpecialBlocks';
 import { AuthRequiredBlock } from './AuthRequiredBlock';
@@ -233,6 +234,7 @@ export const AgentMessage: React.FC<{
           compact
         />
       )}
+      {msg.subagentTree && <SubagentReports entries={msg.subagentTree} />}
     </>
   );
 });

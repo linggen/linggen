@@ -4,6 +4,24 @@ const TASK_KINDS: Record<string, string> = {
   local_bash: 'shell', local_agent: 'subagent', monitor: 'watch', mcp_task: 'watch', local_workflow: 'workflow',
 };
 
+/** The SDK's stand-in summary for a child that handed back its report as a
+ *  message: it says nothing of the result, so it is no summary. */
+const HANDED_BACK = 'report was delivered to you as a message';
+const placeholder = (text?: string) => !!text && text.includes(HANDED_BACK);
+
+/** A child's final report: the input of its SubagentHandback call. */
+function handback(content: any[] = []): string | undefined {
+  const call = content.find((block: any) => block.type === 'tool_use' && block.name === 'SubagentHandback');
+  return typeof call?.input?.message === 'string' ? call.input.message : undefined;
+}
+
+/** The window a child's latest request filled: its whole prompt, cached
+ *  or not. The SDK reports the three parts apart. */
+export function contextTokens(usage: any): number {
+  if (!usage) return 0;
+  return (usage.input_tokens || 0) + (usage.cache_read_input_tokens || 0) + (usage.cache_creation_input_tokens || 0);
+}
+
 export function taskKind(type?: string) {
   return TASK_KINDS[type || ''] || type || 'task';
 }
@@ -19,7 +37,7 @@ export function taskEvent(m: any): Record<string, unknown> | null {
   if (m.subtype === 'task_progress')
     return { type:'task', id:m.task_id, activity:m.summary || m.last_tool_name || m.description || '' };
   if (m.subtype === 'task_notification')
-    return { type:'task', id:m.task_id, status:m.status, summary:m.summary || '', output_file:m.output_file || '' };
+    return { type:'task', id:m.task_id, status:m.status, summary:placeholder(m.summary) ? '' : m.summary || '', output_file:m.output_file || '' };
   return null;
 }
 
@@ -27,6 +45,10 @@ export function taskEvent(m: any): Record<string, unknown> | null {
 export function subagentEvents(send: Send) {
   const tasks = new Map<string, { name: string; task: string }>();
   const tools = new Map<string, string>();
+  // Shells, watches and subagents a child launched: their ends are told to
+  // that child by the SDK, never to the main thread.
+  const launched = new Set<string>();
+  const windows = new Map<string, number>();
   const ensure = (id: string, name?: string, task = '', tool?: string) => {
     const previous = tasks.get(id);
     const value = { name: name || previous?.name || 'Claude subagent', task: previous?.task || task || '' };
@@ -55,6 +77,14 @@ export function subagentEvents(send: Send) {
         ensure(m.task_id, m.subagent_type, m.prompt || m.description, m.tool_use_id);
         return true;
       }
+      if (m.type === 'system' && m.subtype === 'task_started' && tasks.has(m.parent_task_id)) {
+        launched.add(m.task_id);
+        return true;
+      }
+      if (m.type === 'system' && launched.has(m.task_id)) {
+        if (m.subtype === 'task_notification') launched.delete(m.task_id);
+        return true;
+      }
       if (m.type === 'system' && m.subtype === 'task_progress' && tasks.has(m.task_id)) {
         send({ type:'subagent_progress', agent_id:m.task_id, usage:m.usage, activity:m.summary || m.last_tool_name });
         return true;
@@ -70,6 +100,13 @@ export function subagentEvents(send: Send) {
       if (m.type === 'assistant') {
         const text = (m.message?.content || []).filter((block: any) => block.type === 'text').map((block: any) => block.text).join('\n');
         if (text) send({ type:'subagent_text', agent_id:id, text });
+        const report = handback(m.message?.content);
+        if (report) send({ type:'subagent_report', agent_id:id, text:report });
+        const tokens = contextTokens(m.message?.usage);
+        if (tokens && windows.get(id) !== tokens) {
+          windows.set(id, tokens);
+          send({ type:'subagent_context', agent_id:id, tokens });
+        }
       }
       return true;
     },

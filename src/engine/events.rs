@@ -240,6 +240,8 @@ pub enum ServerEvent {
         parent_id: String,
         subagent_id: String,
         outcome: crate::engine::AgentOutcome,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        report: Option<String>,
         session_id: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         subagent_run_id: Option<String>,
@@ -295,6 +297,8 @@ pub enum ServerEvent {
         compressed: bool,
         summary_count: usize,
         session_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        run_id: Option<String>,
     },
     Outcome {
         agent_id: String,
@@ -528,12 +532,14 @@ impl ServerEvent {
                 parent_id,
                 subagent_id,
                 outcome,
+                report,
                 subagent_run_id,
                 parent_run_id,
             } => Some(Self::SubagentResult {
                 parent_id,
                 subagent_id,
                 outcome,
+                report,
                 session_id,
                 subagent_run_id,
                 parent_run_id,
@@ -559,6 +565,7 @@ impl ServerEvent {
                 actual_completion_tokens,
                 compressed,
                 summary_count,
+                run_id,
             } => Some(Self::ContextUsage {
                 agent_id,
                 stage,
@@ -571,6 +578,7 @@ impl ServerEvent {
                 compressed,
                 summary_count,
                 session_id,
+                run_id,
             }),
             AgentEvent::PlanUpdate { agent_id, plan } => Some(Self::PlanUpdate {
                 agent_id,

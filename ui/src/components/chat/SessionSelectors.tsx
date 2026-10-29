@@ -4,6 +4,7 @@
  */
 import React, { useState } from 'react';
 import { chatAgentOf, withMemberModel } from '../../lib/sessionMembers.mts';
+import { formatTokens as fmt } from '../../lib/paneItems.mts';
 import { useChatStore } from '../../stores/chatStore';
 import { useServerStore } from '../../stores/serverStore';
 import { useUiStore } from '../../stores/uiStore';
@@ -14,7 +15,6 @@ import { apiPatch, apiErrorMessage } from '../../lib/api';
 import { sessionApi } from '../../lib/endpoints';
 import type { SessionInfo } from '../../types';
 
-const fmt = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 
 /** Compact context usage display for the session top bar. */
 export const SessionStats: React.FC = () => {
