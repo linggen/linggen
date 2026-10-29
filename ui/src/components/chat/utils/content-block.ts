@@ -1,4 +1,5 @@
 import type { ContentBlock } from '../../../types';
+import { bashCommand, bashLabel } from '../../../lib/bashLabel.mts';
 
 /** Smart-truncate a string that looks like a file path: keep filename, collapse front. */
 export const truncatePath = (p: string, maxLen: number): string => {
@@ -73,10 +74,7 @@ export const contentBlockSummary = (block: ContentBlock): string => {
       case 'Read': return args.file_path || args.path || raw;
       case 'Write': return args.file_path || args.path || raw;
       case 'Edit': return args.file_path || args.path || raw;
-      case 'Bash': {
-        const cmd = args.command || args.cmd || '';
-        return cmd.length > 70 ? cmd.slice(0, 67) + '…' : cmd;
-      }
+      case 'Bash': return bashLabel(args, 70);
       case 'Grep': return args.pattern || raw;
       case 'Glob': return args.pattern || raw;
       case 'Task':
@@ -95,6 +93,17 @@ export const contentBlockSummary = (block: ContentBlock): string => {
     }
   } catch {
     return raw.length > 70 ? raw.slice(0, 67) + '…' : raw;
+  }
+};
+
+/** A Bash block's whole command (its row shows the short label; expanding
+ *  shows this). Empty for any other tool. */
+export const contentBlockCommand = (block: ContentBlock): string => {
+  if (block.tool !== 'Bash') return '';
+  try {
+    return bashCommand(JSON.parse(block.args || ''));
+  } catch {
+    return '';
   }
 };
 

@@ -8,6 +8,7 @@ import { agentTracker } from '../agentTracker';
 import { normalizeAgentStatus } from '../messageUtils';
 import { getSessionId, runOf, toolPrefixMap } from './_shared';
 import { otherAgentRunning } from '../agentTurns.mts';
+import { sessionStatusText } from '../runStatus.mts';
 
 export function handleActivity(item: UiEventOf<'activity'>): void {
   const agentId = String(item.agent_id || '');
@@ -136,7 +137,7 @@ function applyTopLevelActivity(opts: {
   if (statusRaw && sid && (phase !== 'done' || nextStatus === 'idle') && !othersRunning) {
     agentStore.setAgentStatusText((prev) => ({
       ...prev,
-      [sid]: resolveStatusText(nextStatus, statusText),
+      [sid]: sessionStatusText(nextStatus, statusText),
     }));
   }
 
@@ -161,17 +162,5 @@ function applyTopLevelActivity(opts: {
     const { elapsed, contextTokens: ctxTokens } = sid && !othersRunning ? agentTracker.clearRun(sid) : {};
     chatStore.finalizeOnIdle(agentId, elapsed, ctxTokens, runId);
     useInteractionStore.getState().setActivePlan(null);
-  }
-}
-
-function resolveStatusText(nextStatus: AgentStatusValue, statusText: string): string {
-  if (nextStatus === 'idle') return 'Idle';
-  if (statusText.length > 0) return statusText;
-  switch (nextStatus) {
-    case 'calling_tool': return 'Calling Tool';
-    case 'model_loading': return 'Model Loading';
-    case 'thinking': return 'Thinking';
-    case 'working': return 'Working';
-    default: return 'Idle';
   }
 }

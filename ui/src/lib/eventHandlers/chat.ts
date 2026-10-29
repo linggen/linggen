@@ -13,6 +13,7 @@ import {
   shouldHideInternalChatMessage,
 } from '../messageUtils';
 import { getSessionId, formatToolStartLine, runOf } from './_shared';
+import { WORKING } from '../runStatus.mts';
 import { askEndsWithTurn, completeAgentRuns, otherAgentRunning, sendEndsWithTurn } from '../agentTurns.mts';
 import { stillOn } from '../sessionLoad.mts';
 import { toolStatus } from '../toolStatus.mts';
@@ -309,7 +310,8 @@ function applyContentBlockStart(item: UiEvent, data: ContentBlockStartData): voi
   const sid = getSessionId(item);
   if (!sid) return;
   const agentStore = useServerStore.getState();
-  agentStore.setAgentStatusText((prev) => ({ ...prev, [sid]: activityLine }));
+  // The spinner says only that the agent works; the tool row says what.
+  agentStore.setAgentStatusText((prev) => ({ ...prev, [sid]: WORKING }));
   agentTracker.ensureRunStarted(sid);
 }
 

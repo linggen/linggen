@@ -31,6 +31,7 @@ impl Tool for BashTool {
             "type": "object",
             "properties": {
                 "cmd": {"type": "string", "description": "Shell command to execute"},
+                "description": {"type": "string", "description": "What the command does, in a few plain words (\"Build the UI\", \"Run the engine tests\") — the chat shows it while the command runs"},
                 "timeout_ms": {"type": "integer", "description": "Timeout in milliseconds (default: 30000)"},
                 "run_in_background": {"type": "boolean", "description": "Start it beside the chat and return at once with a task id — for servers, watches and long builds. You are told in a new turn when it ends; TaskOutput reads its output, TaskStop stops it."}
             },
@@ -40,7 +41,7 @@ impl Tool for BashTool {
     fn legacy_schema_entry(&self) -> Value {
         json!({
             "name": "Bash",
-            "args": {"cmd": "string", "timeout_ms": "number?", "run_in_background": "bool?"},
+            "args": {"cmd": "string", "description": "string?", "timeout_ms": "number?", "run_in_background": "bool?"},
             "returns": "{exit_code,stdout,stderr}",
             "notes": "Runs shell commands via sh -c. Permission required in ask mode. Command alias accepted: command."
         })
@@ -112,5 +113,22 @@ mod machine_tests {
             assert!(!rules.contains("Reserve Bash for build/test/git"), "{key}");
             assert!(rules.contains(STATE), "{key} never names the machine's state");
         }
+    }
+}
+
+/// Bash may say what its command does: the chat shows that while it runs
+/// (ui/src/lib/bashLabel.mts). It is for the chat only; the call still runs.
+#[cfg(test)]
+mod description_tests {
+    use super::*;
+
+    #[test]
+    fn bash_takes_an_optional_description() {
+        let schema = BashTool.args_schema();
+        assert_eq!(schema["properties"]["description"]["type"], "string");
+        assert_eq!(schema["required"], json!(["cmd"]));
+        let args: RunCommandArgs =
+            serde_json::from_value(json!({"cmd": "ls", "description": "List files"})).unwrap();
+        assert_eq!(args.cmd, "ls");
     }
 }

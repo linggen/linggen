@@ -64,12 +64,19 @@
   100% { opacity: 0; transform: translate(-50%, -44px) scale(1); }
 }
 
+/* A running tool row's dot blinks, as Claude Code's ⏺ does */
+@keyframes tool-blink {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.15; }
+}
+
 @theme {
   --animate-thinking-bounce: thinking-bounce 1.4s ease-in-out infinite;
   --animate-slide-in: slide-in 0.25s ease-out;
   --animate-slide-in-right: slide-in-right 0.25s ease-out;
   --animate-count-bump: count-bump 0.9s ease-out;
   --animate-plus-one-fly: plus-one-fly 2.2s ease-out forwards;
+  --animate-tool-blink: tool-blink 1s ease-in-out infinite;
 }
 
 :root {

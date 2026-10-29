@@ -3,6 +3,7 @@
  */
 import type { UiEvent } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
+import { bashLabel } from '../bashLabel.mts';
 
 // ---------------------------------------------------------------------------
 // Permission suppress — prevents page_state from overwriting optimistic mode changes
@@ -88,10 +89,7 @@ export function formatToolStartLine(toolName: string, argsStr: string): string {
       case 'Read': return `Reading file: ${args.file_path || args.path || argsStr}`;
       case 'Write': return `Writing file: ${args.file_path || args.path || argsStr}`;
       case 'Edit': return `Editing file: ${args.file_path || args.path || argsStr}`;
-      case 'Bash': {
-        const cmd = args.command || args.cmd || '';
-        return `Running command: ${cmd.length > 80 ? cmd.slice(0, 77) + '...' : cmd}`;
-      }
+      case 'Bash': return `Running command: ${bashLabel(args)}`;
       case 'Grep': return `Searching: ${args.pattern || argsStr}`;
       case 'Glob': return `Listing files: ${args.pattern || argsStr}`;
       case 'Task':

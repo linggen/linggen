@@ -3,7 +3,7 @@ import { cn } from '../../lib/cn';
 import DiffView from '../DiffView';
 import { diffStats } from '../../lib/diffStats';
 import type { ChatMessage, ContentBlock } from '../../types';
-import { truncateDetail, contentBlockSummary, buildInlineDiff } from './utils/content-block';
+import { truncateDetail, contentBlockSummary, contentBlockCommand, buildInlineDiff } from './utils/content-block';
 
 /** Compact footer showing turn stats: tool calls, tokens, duration. */
 export const TurnSummaryFooter: React.FC<{ msg: ChatMessage }> = ({ msg }) => {
@@ -56,6 +56,9 @@ export const ContentBlockView: React.FC<{
   const lineOpacity = isRunning || (isLast && !isDone) ? '' : isFailed ? '' : 'opacity-70';
 
   const detail = contentBlockSummary(block);
+  // A Bash row reads as its label; the whole command shows when expanded.
+  const fullCommand = contentBlockCommand(block);
+  const hasCommand = !!fullCommand && fullCommand !== detail;
 
   // Memoize diff computation to avoid recalculating on every parent re-render
   const memoizedDiff = useMemo(() => {
@@ -93,7 +96,7 @@ export const ContentBlockView: React.FC<{
   const showExpanded = isFailed || expanded;
 
   const handleClick = () => {
-    if (hasWidget || block.summary) {
+    if (hasWidget || block.summary || hasCommand) {
       setExpanded(!expanded);
     }
   };
@@ -239,7 +242,10 @@ export const ContentBlockView: React.FC<{
         className={cn('flex items-start gap-1.5 cursor-pointer select-none')}
         onClick={handleClick}
       >
-        <span className={cn('mt-px text-[11px] leading-none', iconColor, isRunning && 'animate-pulse')}>
+        <span
+          className={cn('mt-px text-[11px] leading-none', iconColor, isRunning && 'animate-tool-blink')}
+          title={isRunning ? 'Running' : isFailed ? 'Failed' : 'Done'}
+        >
           {icon}
         </span>
         <span className="text-[12px] min-w-0">
@@ -248,11 +254,16 @@ export const ContentBlockView: React.FC<{
           </span>
           {detail && (
             <span className={cn(isFailed ? 'text-red-400 dark:text-red-500' : 'text-slate-400 dark:text-slate-500')}>
-              (<span>{truncateDetail(detail, 60)}</span>)
+              (<span title={fullCommand || undefined}>{truncateDetail(detail, 60)}</span>)
             </span>
           )}
         </span>
       </div>
+      {showExpanded && hasCommand && (
+        <div className="pl-4 mt-0.5 text-[11px] font-mono whitespace-pre-wrap break-all text-slate-500 dark:text-slate-400">
+          <span className="text-slate-300 dark:text-slate-600 select-none">$ </span>{fullCommand}
+        </div>
+      )}
       {showExpanded && !hasWidget && block.summary && (
         <div className={cn(
           'pl-4 mt-0.5 text-[11px] whitespace-pre-wrap break-words max-h-32 overflow-y-auto',
