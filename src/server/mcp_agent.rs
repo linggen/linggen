@@ -129,7 +129,7 @@ pub async fn run(
     let root_str = root.to_string_lossy().to_string();
     let store =
         crate::state_fs::SessionStore::with_sessions_dir(crate::paths::global_sessions_dir());
-    let meta = crate::state_fs::sessions::SessionMeta {
+    let mut meta = crate::state_fs::sessions::SessionMeta {
         runtime: Default::default(),
         claude_permission_mode: Default::default(),
         parent_session_id: None,
@@ -139,9 +139,9 @@ pub async fn run(
         updated_at: 0,
         skill: None,
         creator: "agent".into(),
-        cwd: root_str.clone(),
-        project: Some(root_str.clone()),
-        project_name: root.file_name().map(|n| n.to_string_lossy().to_string()),
+        cwd: String::new(),
+        project: None,
+        project_name: None,
         mission_id: None,
         agents: vec![crate::state_fs::sessions::SessionMember::new(&agent_id)],
         legacy: Default::default(),
@@ -152,6 +152,7 @@ pub async fn run(
         withheld_tools: Vec::new(),
         params: Default::default(),
     };
+    meta.set_cwd(&root_str);
     if let Err(e) = store.add_session(&meta) {
         return Err(format!("failed to create session: {e}"));
     }
@@ -176,8 +177,8 @@ pub async fn run(
             session_id: session_id.clone(),
             title,
             creator: "agent".into(),
-            project: Some(root_str.clone()),
-            project_name: root.file_name().map(|n| n.to_string_lossy().to_string()),
+            project: meta.project.clone(),
+            project_name: meta.project_name.clone(),
             skill: None,
             mission_id: None,
         });

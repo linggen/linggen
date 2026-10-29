@@ -25,11 +25,12 @@ agents?: Array<SessionMember>,
  */
 cwd: string, 
 /**
- * Detected git root path when agent is inside a project. None in home mode.
+ * The git repo `cwd` is in, also from a subdirectory; None outside one.
+ * Follows `cwd` ([`SessionMeta::set_cwd`]).
  */
 project?: string | null, 
 /**
- * Display name — last segment of git root (e.g. "linggen"). None in home mode.
+ * The repo's name — last segment of `project` (e.g. "linggen").
  */
 project_name?: string | null, 
 /**

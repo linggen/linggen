@@ -296,17 +296,14 @@ async fn bridge_agent_events(state: Arc<ServerState>, mut rx: AgentEvents) {
                 let _ = state.events_tx.send(ServerEvent::StateUpdated);
             }
             // A tool moved the session's working folder: `__cwd_changed__`
-            // progress carries it (line = cwd, stream = "project|project_name").
-            // Recorded on the session, surfaced as WorkingFolderChanged, and
-            // never forwarded as ToolProgress.
+            // progress carries it (line = cwd; its project is derived here,
+            // not read from the stream). Recorded on the session, surfaced as
+            // WorkingFolderChanged, and never forwarded as ToolProgress.
             AgentEvent::ToolProgress {
-                ref tool,
-                ref line,
-                ref stream,
-                ..
+                ref tool, ref line, ..
             } if tool == "__cwd_changed__" => {
                 if let Some(sid) = session_id {
-                    note_working_folder(&state, sid, line.clone(), stream);
+                    note_working_folder(&state, sid, line.clone());
                 }
             }
             // All other variants have a 1:1 ServerEvent equivalent.
@@ -320,22 +317,21 @@ async fn bridge_agent_events(state: Arc<ServerState>, mut rx: AgentEvents) {
     }
 }
 
-fn note_working_folder(state: &Arc<ServerState>, session_id: String, cwd: String, stream: &str) {
-    let parts: Vec<&str> = stream.splitn(2, '|').collect();
-    let part = |i: usize| {
-        parts
-            .get(i)
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
-    };
-    let (project, project_name) = (part(0), part(1));
+/// Move session `session_id` to the folder `cwd`: recorded on the session
+/// with the project it falls in ([`SessionMeta::set_cwd`]), and surfaced as
+/// WorkingFolderChanged carrying the same values.
+///
+/// [`SessionMeta::set_cwd`]: crate::state_fs::sessions::SessionMeta::set_cwd
+pub(crate) fn note_working_folder(state: &ServerState, session_id: String, cwd: String) {
     let sessions = &state.manager.global_sessions;
-    if let Ok(Some(mut meta)) = sessions.get_session_meta(&session_id) {
-        meta.cwd = cwd.clone();
-        meta.project = project.clone();
-        meta.project_name = project_name.clone();
-        let _ = sessions.update_session_meta(&meta);
-    }
+    let (project, project_name) = match sessions.get_session_meta(&session_id) {
+        Ok(Some(mut meta)) => {
+            meta.set_cwd(&cwd);
+            let _ = sessions.update_session_meta(&meta);
+            (meta.project, meta.project_name)
+        }
+        _ => crate::state_fs::sessions::project_of(&cwd),
+    };
     let _ = state.events_tx.send(ServerEvent::WorkingFolderChanged {
         session_id,
         cwd,

@@ -4,7 +4,7 @@
 // replaces the previous chat's.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { afterNewChat, sessionRootOf } from '../src/lib/sessionRoot.mts';
+import { afterNewChat, sessionFolderLabel, sessionRootOf } from '../src/lib/sessionRoot.mts';
 import { newChatRequest } from '../src/lib/sessionBinding.mts';
 
 test('a plain New chat asks for no folder', () => {
@@ -32,4 +32,11 @@ test("a session's folder is its project, else its cwd", () => {
   assert.equal(sessionRootOf({ id: 'a', project: '/p', cwd: '/p/src' }), '/p');
   assert.equal(sessionRootOf({ id: 'a', cwd: '/c' }), '/c');
   assert.equal(sessionRootOf(null), '');
+});
+
+test("the header names the folder the session is in now, not its project", () => {
+  assert.equal(sessionFolderLabel({ project: '/w/rust/sanji', cwd: '/w/rust/sanji/src' }), 'src');
+  assert.equal(sessionFolderLabel({ cwd: '/Users/me/workspace/linggen/' }), 'linggen');
+  assert.equal(sessionFolderLabel({ project: '/w/sanji' }), 'sanji');
+  assert.equal(sessionFolderLabel({}), '');
 });

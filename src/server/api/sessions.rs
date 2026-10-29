@@ -116,7 +116,7 @@ pub(crate) async fn create_session(
     }
     let cwd = session_cwd(skill.as_ref(), req.project_root.as_deref());
     let is_skill = req.skill.is_some();
-    let meta = crate::state_fs::sessions::SessionMeta {
+    let mut meta = crate::state_fs::sessions::SessionMeta {
         runtime: Default::default(),
         claude_permission_mode: Default::default(),
         parent_session_id: None,
@@ -130,7 +130,7 @@ pub(crate) async fn create_session(
         } else {
             "user".into()
         },
-        cwd: cwd.clone(),
+        cwd: String::new(),
         project: None,
         project_name: None,
         mission_id: None,
@@ -147,6 +147,7 @@ pub(crate) async fn create_session(
         withheld_tools: req.withheld_tools,
         params: req.params,
     };
+    meta.set_cwd(&cwd);
 
     match state.manager.global_sessions.add_session(&meta) {
         Ok(_) => Json(serde_json::json!({ "id": id, "cwd": cwd })).into_response(),

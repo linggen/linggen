@@ -358,7 +358,9 @@ fn mission_session_meta(
     session_id: &str,
 ) -> crate::state_fs::sessions::SessionMeta {
     let mission_cwd = mission.cwd.clone().or_else(|| mission.project.clone());
-    crate::state_fs::sessions::SessionMeta {
+    // A mission with no `cwd:` works where a plain chat does.
+    let cwd = mission_cwd.unwrap_or_else(|| crate::state_fs::sessions::fallback_cwd(None));
+    let mut meta = crate::state_fs::sessions::SessionMeta {
         runtime: Default::default(),
         claude_permission_mode: Default::default(),
         parent_session_id: None,
@@ -370,16 +372,9 @@ fn mission_session_meta(
         // `creator: "mission"` alone distinguishes mission sessions.
         skill: None,
         creator: "mission".into(),
-        // A mission with no `cwd:` works where a plain chat does.
-        cwd: mission_cwd
-            .clone()
-            .unwrap_or_else(|| crate::state_fs::sessions::fallback_cwd(None)),
-        project: mission_cwd.clone(),
-        project_name: mission_cwd.as_ref().and_then(|p| {
-            std::path::Path::new(p)
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-        }),
+        cwd: String::new(),
+        project: None,
+        project_name: None,
         mission_id: Some(mission.id.clone()),
         // The mission's agent is the session's one member, on the mission's
         // model: the UI header shows it, and a follow-up chat turn runs on
@@ -396,7 +391,9 @@ fn mission_session_meta(
         title_locked: true,
         withheld_tools: Vec::new(),
         params: Default::default(),
-    }
+    };
+    meta.set_cwd(&cwd);
+    meta
 }
 
 /// Create a new session for a mission run in the global session store.
@@ -667,19 +664,16 @@ async fn dispatch_mission_prompt(
     // Emit session_created so the unified session list updates in real-time
     if !has_pre_session {
         if let Some(ref sid) = session_id {
-            let evt_cwd = mission
-                .cwd
-                .clone()
-                .or_else(|| mission.project.clone())
+            let made = manager.global_sessions.get_session_meta(sid).ok().flatten();
+            let (project, project_name) = made
+                .map(|m| (m.project, m.project_name))
                 .unwrap_or_default();
             let _ = events_tx.send(ServerEvent::SessionCreated {
                 session_id: sid.clone(),
                 title: mission_session_title(mission),
                 creator: "mission".into(),
-                project: Some(evt_cwd.clone()),
-                project_name: std::path::Path::new(&evt_cwd)
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string()),
+                project,
+                project_name,
                 skill: None,
                 mission_id: Some(mission.id.clone()),
             });

@@ -99,10 +99,11 @@ pub struct SessionMeta {
     /// read ([`SessionMeta::settle_cwd`]) and keeps it from its next write.
     #[serde(default)]
     pub cwd: String,
-    /// Detected git root path when agent is inside a project. None in home mode.
+    /// The git repo `cwd` is in, also from a subdirectory; None outside one.
+    /// Follows `cwd` ([`SessionMeta::set_cwd`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
-    /// Display name — last segment of git root (e.g. "linggen"). None in home mode.
+    /// The repo's name — last segment of `project` (e.g. "linggen").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_name: Option<String>,
     /// Originating mission ID (when creator is "mission").
@@ -203,6 +204,22 @@ impl SessionMeta {
         true
     }
 
+    /// Move the session to the folder `cwd`, its project following: the git
+    /// repo the folder is in, none outside one ([`project_of`]).
+    pub fn set_cwd(&mut self, cwd: &str) {
+        self.cwd = cwd.to_string();
+        (self.project, self.project_name) = project_of(cwd);
+    }
+
+    /// Give a session that has a folder but no project the repo its folder
+    /// is in — sessions made before the project followed the folder.
+    fn settle_project(&mut self) {
+        if self.project.is_some() || self.cwd.trim().is_empty() {
+            return;
+        }
+        (self.project, self.project_name) = project_of(&self.cwd);
+    }
+
     /// Move what the session recorded before it had members into `agents`:
     /// its pinned agent and model become a one-member list; a session that
     /// pinned neither seats the agents that answered there (`answered`, in
@@ -264,10 +281,24 @@ pub fn fallback_cwd(skill: Option<&str>) -> String {
         .to_string()
 }
 
-/// A session.yaml as read: its folder settled ([`SessionMeta::settle_cwd`]).
+/// The project a session working in `cwd` belongs to: the git repo the
+/// folder is in, even from a subdirectory — its root and its name. None
+/// outside any repo.
+pub fn project_of(cwd: &str) -> (Option<String>, Option<String>) {
+    let Some(root) = crate::engine::tools::search_exec_find_git_root(std::path::Path::new(cwd))
+    else {
+        return (None, None);
+    };
+    let name = root.file_name().map(|n| n.to_string_lossy().to_string());
+    (Some(root.to_string_lossy().to_string()), name)
+}
+
+/// A session.yaml as read: its folder and project settled
+/// ([`SessionMeta::settle_cwd`], [`SessionMeta::settle_project`]).
 fn parse_meta(content: &str) -> Result<SessionMeta> {
     let mut meta: SessionMeta = serde_norway::from_str(content)?;
     meta.settle_cwd();
+    meta.settle_project();
     Ok(meta)
 }
 
@@ -741,6 +772,34 @@ mod tests {
 
     fn yaml_of(store: &SessionStore, id: &str) -> String {
         fs::read_to_string(store.session_dir(id).join("session.yaml")).unwrap()
+    }
+
+    /// A session's project is the git repo its folder is in, also from a
+    /// subdirectory; a folder in no repo has none. One that was stored
+    /// without a project gets it when read.
+    #[test]
+    fn a_sessions_project_is_the_repo_its_folder_is_in() {
+        let (store, dir) = temp_store();
+        let repo = dir.path().join("sanji");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        fs::create_dir_all(repo.join("src")).unwrap();
+        let loose = dir.path().join("notes");
+        fs::create_dir_all(&loose).unwrap();
+        let path = |p: &std::path::Path| p.to_string_lossy().to_string();
+
+        let mut meta = SessionMeta::default();
+        meta.set_cwd(&path(&repo.join("src")));
+        assert_eq!(meta.project, Some(path(&repo)));
+        assert_eq!(meta.project_name.as_deref(), Some("sanji"));
+        meta.set_cwd(&path(&loose));
+        assert_eq!((meta.project, meta.project_name), (None, None));
+
+        let cwd = path(&repo.join("src"));
+        legacy_session(&store, "sess-1-old", &format!("cwd: {cwd}\n"));
+        let old = store.get_session_meta("sess-1-old").unwrap().unwrap();
+        assert_eq!(old.project_name.as_deref(), Some("sanji"));
+        let listed = store.list_sessions().unwrap();
+        assert_eq!(listed[0].project_name.as_deref(), Some("sanji"));
     }
 
     /// A session read without a folder gets one — a plain chat the default

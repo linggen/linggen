@@ -533,8 +533,6 @@ pub(crate) async fn run_bash_api(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<BashRequest>,
 ) -> impl IntoResponse {
-    use crate::engine::tools::search_exec_find_git_root;
-    use crate::server::ServerEvent;
     use std::process::Stdio;
     use std::time::Duration;
 
@@ -623,29 +621,13 @@ pub(crate) async fn run_bash_api(
                     guard.insert(sid.clone(), new_cwd.clone());
                 }
 
-                // Emit WorkingFolderChanged if cwd actually changed.
+                // Record the move (and its project) if cwd actually changed.
                 if old_cwd.as_ref() != Some(&new_cwd) {
-                    let git_root = search_exec_find_git_root(&new_cwd);
-                    let project = git_root.as_ref().map(|p| p.to_string_lossy().to_string());
-                    let project_name = git_root
-                        .as_ref()
-                        .and_then(|p| p.file_name())
-                        .map(|n| n.to_string_lossy().to_string());
-                    // Update session metadata
-                    let cwd_str = new_cwd.to_string_lossy().to_string();
-                    if let Ok(Some(mut meta)) = state.manager.global_sessions.get_session_meta(sid)
-                    {
-                        meta.cwd = cwd_str.clone();
-                        meta.project = project.clone();
-                        meta.project_name = project_name.clone();
-                        let _ = state.manager.global_sessions.update_session_meta(&meta);
-                    }
-                    let _ = state.events_tx.send(ServerEvent::WorkingFolderChanged {
-                        session_id: sid.clone(),
-                        cwd: cwd_str,
-                        project,
-                        project_name,
-                    });
+                    crate::server::background::note_working_folder(
+                        &state,
+                        sid.clone(),
+                        new_cwd.to_string_lossy().to_string(),
+                    );
                 }
             }
         }

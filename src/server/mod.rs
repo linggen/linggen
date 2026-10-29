@@ -1,7 +1,7 @@
 mod anthropic_gateway;
 pub(crate) mod api;
 mod app_pages;
-mod background;
+pub(crate) mod background;
 pub(crate) mod bridge;
 mod chat;
 pub(crate) mod claude;

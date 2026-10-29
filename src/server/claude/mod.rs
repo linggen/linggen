@@ -204,14 +204,13 @@ pub(crate) async fn resolve_model(
 }
 
 pub(crate) fn new_meta(title: String, cwd: String, parent: Option<String>) -> SessionMeta {
-    SessionMeta {
+    let mut meta = SessionMeta {
         id: format!(
             "sess-{}-{}",
             crate::util::now_ts_secs(),
             &uuid::Uuid::new_v4().to_string()[..8]
         ),
         title,
-        cwd,
         created_at: crate::util::now_ts_secs(),
         runtime: SessionRuntime::ClaudeAgentSdk,
         agents: vec![SessionMember::new(AGENT_ID)],
@@ -219,7 +218,9 @@ pub(crate) fn new_meta(title: String, cwd: String, parent: Option<String>) -> Se
         creator: "user".into(),
         title_locked: false,
         ..Default::default()
-    }
+    };
+    meta.set_cwd(&cwd);
+    meta
 }
 
 pub(crate) async fn start_task(state: Arc<ServerState>, id: String, message: String, from: String) {

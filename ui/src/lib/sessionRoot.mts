@@ -18,6 +18,16 @@ export function sessionRootOf(session: RootedSession | null | undefined): string
   return session.project || session.cwd || session.repo_path || '';
 }
 
+export interface LabeledSession { project?: string | null; cwd?: string | null }
+
+/** The folder a session works in right now, by name (chat header): it moves
+ *  with the agent's `cd`. The session list shows its git project instead. */
+export function sessionFolderLabel(session: LabeledSession | null | undefined): string {
+  if (!session) return '';
+  const path = session.cwd || session.project || '';
+  return path.split('/').filter(Boolean).pop() || path;
+}
+
 export interface MadeSession { id: string; title: string; cwd?: string | null }
 
 /** The list row a made session gets until page_state brings the full one. */

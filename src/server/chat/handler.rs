@@ -249,6 +249,7 @@ async fn ensure_session(
     let now = crate::util::now_ts_secs();
     let title = auto_session_title(words);
 
+    let (project, project_name) = crate::state_fs::sessions::project_of(project_root_str);
     let make_meta = |id: String| crate::state_fs::sessions::SessionMeta {
         runtime: Default::default(),
         claude_permission_mode: Default::default(),
@@ -260,8 +261,8 @@ async fn ensure_session(
         skill: req.skill_name.clone(),
         creator: session_creator.into(),
         cwd: project_root_str.to_string(),
-        project: None,
-        project_name: None,
+        project: project.clone(),
+        project_name: project_name.clone(),
         mission_id: req.mission_id.clone(),
         agents: members.to_vec(),
         legacy: Default::default(),
@@ -290,10 +291,8 @@ async fn ensure_session(
         session_id: new_id.clone(),
         title,
         creator: session_creator.into(),
-        project: Some(project_root_str.to_string()),
-        project_name: std::path::Path::new(project_root_str)
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string()),
+        project: project.clone(),
+        project_name: project_name.clone(),
         skill: req.skill_name.clone(),
         mission_id: req.mission_id.clone(),
     });
