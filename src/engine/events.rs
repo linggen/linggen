@@ -263,7 +263,6 @@ pub enum ServerEvent {
         parent_run_id: Option<String>,
     },
     QueueUpdated {
-        project_root: String,
         session_id: String,
         agent_id: String,
         items: Vec<QueuedChatItem>,

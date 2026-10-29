@@ -164,11 +164,13 @@ export const MainApp: React.FC = () => {
   }, []);
 
   // --- React to selected project changes ---
+  // The queue belongs to the session, not its folder: a cd mid-turn moves
+  // the folder and must not hide what is still queued (a session switch
+  // clears it below).
   useEffect(() => {
     if (selectedProjectRoot) {
       useChatStore.getState().fetchSessionState();
       sendViewContext();
-      useInteractionStore.getState().setQueuedMessages([]);
       useInteractionStore.getState().setActivePlan(null);
     }
   }, [selectedProjectRoot]);

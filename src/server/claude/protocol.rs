@@ -66,6 +66,13 @@ impl Turns {
     }
 }
 
+/// Output from the main thread, not from a subagent: a subagent's events
+/// carry its agent_id, its permission and question requests in their input.
+fn main_thread(event: &Value) -> bool {
+    event["agent_id"].as_str().is_none_or(str::is_empty)
+        && event["input"]["agent_id"].as_str().is_none_or(str::is_empty)
+}
+
 impl ClaudeSession {
     /// Serve the runner until it ends: the first turn is already sent with
     /// `start`; later turns come on `turns`.
@@ -296,8 +303,12 @@ impl ClaudeSession {
             };
             let event: Value = serde_json::from_str(&line).context("Invalid SDK bridge message")?;
             let kind = event["type"].as_str().unwrap_or_default().to_owned();
-            // Output with no turn of ours waiting: the SDK began one itself.
-            if matches!(kind.as_str(), "token" | "text" | "tool_start" | "request" | "subagent_start") {
+            // Main-thread output with no turn of ours waiting: the SDK began
+            // one itself. A subagent's output never does: a background child
+            // runs on after its turn and must not hold the person's next one.
+            if matches!(kind.as_str(), "token" | "text" | "tool_start" | "request")
+                && main_thread(&event)
+            {
                 if let Some(turn) = turns_state.pending.front_mut() {
                     turn.begun = true;
                 } else if turns_state.unprompted.is_none() {
@@ -313,6 +324,11 @@ impl ClaudeSession {
             match kind.as_str() {
                 "init" => {
                     state::update_checkpoint(&self.dir(), |checkpoint| {
+                        // Where an older conversation's shell went is not this one's.
+                        let new_id = Some(&event["session_id"]);
+                        if let Some(c) = checkpoint.as_object_mut().filter(|c| c.get("session_id") != new_id) {
+                            c.remove("followed");
+                        }
                         checkpoint["session_id"] = event["session_id"].clone();
                         checkpoint["cwd"] = json!(self.meta.cwd);
                         state::set_commands(checkpoint, &event["commands"]);
@@ -344,6 +360,19 @@ impl ClaudeSession {
                         })
                         .await;
                     }
+                }
+                // The main thread's shell moved: the session's folder follows,
+                // and the conversation resumes from there too.
+                "cwd" => {
+                    let cwd = event["cwd"].as_str().context("SDK cwd has no folder")?;
+                    state::update_checkpoint(&self.dir(), |checkpoint| {
+                        checkpoint["followed"] = json!(cwd);
+                    })?;
+                    crate::server::background::note_working_folder(
+                        &self.state,
+                        self.meta.id.clone(),
+                        cwd.into(),
+                    );
                 }
                 "commands" => {
                     state::update_checkpoint(&self.dir(), |checkpoint| {
@@ -400,7 +429,7 @@ impl ClaudeSession {
                     let interaction = super::interaction::Interaction {
                         agent_id: event["input"]["agent_id"]
                             .as_str()
-                            .map(|id| super::subagents::tracking_id(&self.run_id, id))
+                            .map(|id| subagents.tracking(id, &self.run_id))
                             .unwrap_or_else(|| AGENT_ID.into()),
                         state: self.state.clone(),
                         meta: self.meta.clone(),
@@ -635,5 +664,21 @@ impl ClaudeSession {
         })
         .await;
         self.save("system", format!("Tool {tool}: {rendered}"), true, failed);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::main_thread;
+    use serde_json::json;
+
+    #[test]
+    fn only_main_thread_output_counts_as_the_sdks_own_turn() {
+        assert!(main_thread(&json!({"type":"text","text":"hi"})));
+        assert!(main_thread(&json!({"type":"request","kind":"permission","input":{"tool":"Bash"}})));
+        assert!(!main_thread(&json!({"type":"tool_start","agent_id":"c1"})));
+        assert!(!main_thread(
+            &json!({"type":"request","kind":"permission","input":{"tool":"Bash","agent_id":"c1"}})
+        ));
     }
 }

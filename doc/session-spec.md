@@ -67,7 +67,8 @@ A `session.yaml` written before this rule with no `cwd` is read as its project, 
 1. **New chat** — starts in the default workspace. No project picker — just click `+` and go.
 2. **Agent or user runs `cd`** — after any bash command, the backend checks the new cwd.
 3. **Git detection** — if `.git/` exists in the cwd or any parent up to `$HOME` (never above it; home itself is never a project), the session enters **project mode** for that git root. The engine loads the project's `CLAUDE.md`, agents, permissions, and git context.
-4. **Leaving a project** — if the agent `cd`s to a directory outside any git repo, the session returns to **home mode**.
+4. **Leaving a project** — the project is sticky: a `cd` to a folder outside any git repo moves the working folder but keeps the last project (a shell bouncing out of the repo keeps it); a `cd` into another repo switches it. A session that has never been in a repo stays in **home mode**.
+5. **Claude sessions** — the SDK reports its main thread's `cd` (a subagent's is ignored), and the session moves the same way. The SDK conversation still resumes in the folder it started in.
 
 ### Home mode vs project mode
 
@@ -140,8 +141,8 @@ Each session carries:
 | `mission_id` | creation | no | Originating mission (if creator is `mission`) |
 | `agents` | creation | grows | The members `[{id, model}]`, the lead first; `@name` seats one for good. Old sessions' `agent_id`/`model_id` migrate to a one-member list. |
 | `cwd` | creation | yes | Current working folder — never empty. Set at creation (see § Default workspace). Updated on `cd`. |
-| `project` | runtime | yes | Detected git root path (if any). `null` in home mode. |
-| `project_name` | runtime | yes | Display name — last segment of git root (e.g. `linggen`). `null` in home mode. |
+| `project` | runtime | yes | The last git root the working folder was in; kept when the folder leaves every repo. `null` until the session is first in a repo. |
+| `project_name` | runtime | yes | Display name — last segment of git root (e.g. `linggen`). `null` with `project`. |
 | `messages` | runtime | append | Chat history (`messages.jsonl`) |
 
 ### What's dynamic (can change during chat)

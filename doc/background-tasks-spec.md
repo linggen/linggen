@@ -43,7 +43,10 @@ The same in a native Linggen session and in a Claude session.
    shows how many run and opens the pane, at the list.
 5. **What ends them.** Finishing, the person's stop, the agent's own stop,
    Clear or delete of the session, an engine restart. A task the engine
-   restart ended is listed as interrupted, not as failed.
+   restart ended is listed as interrupted, not as failed. Clear and delete
+   stop a native session's tasks before the session is cleared or removed,
+   and their ends are told to no agent; a Claude session's go with its
+   runner.
 
 ## Kinds
 

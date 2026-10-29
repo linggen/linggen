@@ -7,6 +7,7 @@
  *
  * Endpoint helpers (`sessions.*`, etc.) live below the generic core.
  */
+import type { RunningWork } from './runningWork.mts';
 
 export class ApiError extends Error {
   constructor(public readonly status: number, message: string) {
@@ -112,4 +113,7 @@ export const sessions = {
     apiDelete<void>('/api/sessions/all', req),
   rename: (req: SessionRenameRequest) =>
     apiPatch<void>('/api/sessions', req),
+  /** What deleting the session would stop. */
+  running: (sessionId: string) =>
+    apiGet<RunningWork>(`/api/sessions/running?session_id=${encodeURIComponent(sessionId)}`),
 };

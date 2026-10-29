@@ -99,8 +99,9 @@ pub struct SessionMeta {
     /// read ([`SessionMeta::settle_cwd`]) and keeps it from its next write.
     #[serde(default)]
     pub cwd: String,
-    /// The git repo `cwd` is in, also from a subdirectory; None outside one.
-    /// Follows `cwd` ([`SessionMeta::set_cwd`]).
+    /// The last git repo `cwd` was in, also from a subdirectory. Sticky: a
+    /// move to a folder in no repo keeps it ([`SessionMeta::set_cwd`]); None
+    /// only while the session has never been in a repo.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
     /// The repo's name — last segment of `project` (e.g. "linggen").
@@ -204,11 +205,14 @@ impl SessionMeta {
         true
     }
 
-    /// Move the session to the folder `cwd`, its project following: the git
-    /// repo the folder is in, none outside one ([`project_of`]).
+    /// Move the session to the folder `cwd`. Its project follows into the
+    /// git repo the folder is in ([`project_of`]); a folder in no repo keeps
+    /// the project it had, so a shell bouncing out of the repo keeps it.
     pub fn set_cwd(&mut self, cwd: &str) {
         self.cwd = cwd.to_string();
-        (self.project, self.project_name) = project_of(cwd);
+        if let (Some(project), name) = project_of(cwd) {
+            (self.project, self.project_name) = (Some(project), name);
+        }
     }
 
     /// Give a session that has a folder but no project the repo its folder
@@ -775,8 +779,9 @@ mod tests {
     }
 
     /// A session's project is the git repo its folder is in, also from a
-    /// subdirectory; a folder in no repo has none. One that was stored
-    /// without a project gets it when read.
+    /// subdirectory. A move out of every repo keeps it; a move into another
+    /// repo switches it; a session never in a repo has none. One that was
+    /// stored without a project gets it when read.
     #[test]
     fn a_sessions_project_is_the_repo_its_folder_is_in() {
         let (store, dir) = temp_store();
@@ -792,7 +797,16 @@ mod tests {
         assert_eq!(meta.project, Some(path(&repo)));
         assert_eq!(meta.project_name.as_deref(), Some("sanji"));
         meta.set_cwd(&path(&loose));
-        assert_eq!((meta.project, meta.project_name), (None, None));
+        assert_eq!(meta.cwd, path(&loose), "the folder follows every move");
+        assert_eq!(meta.project_name.as_deref(), Some("sanji"), "the project sticks");
+        let other = dir.path().join("zoro");
+        fs::create_dir_all(other.join(".git")).unwrap();
+        meta.set_cwd(&path(&other));
+        assert_eq!(meta.project, Some(path(&other)));
+        assert_eq!(meta.project_name.as_deref(), Some("zoro"));
+        let mut fresh = SessionMeta::default();
+        fresh.set_cwd(&path(&loose));
+        assert_eq!((fresh.project, fresh.project_name), (None, None));
 
         let cwd = path(&repo.join("src"));
         legacy_session(&store, "sess-1-old", &format!("cwd: {cwd}\n"));

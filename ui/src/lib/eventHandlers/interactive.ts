@@ -5,6 +5,7 @@ import { useServerStore } from '../../stores/serverStore';
 import { useInteractionStore } from '../../stores/interactionStore';
 import { useUiStore } from '../../stores/uiStore';
 import { getSessionId } from './_shared';
+import { withAgentQueue } from '../queuedList.mts';
 
 // ---------------------------------------------------------------------------
 // AskUser — model is asking the user a structured question
@@ -57,7 +58,9 @@ export function handleQueue(item: UiEventOf<'queue'>): void {
   const session = activeSessionId || 'default';
   if (item.session_id !== session) return;
   const items = Array.isArray(item.data?.items) ? item.data.items : [];
-  useInteractionStore.getState().setQueuedMessages(items);
+  // The event is one agent's queue: the session's other agents keep theirs.
+  const agent = item.agent_id ?? '';
+  useInteractionStore.getState().setQueuedMessages((list) => withAgentQueue(list, agent, items));
 }
 
 /** A session's background task list, whole, after any change. */

@@ -5,12 +5,24 @@ import { create } from 'zustand';
 import type { AskUserQuestion, SessionInfo } from '../types';
 import { sessions as sessionsApi } from '../lib/api';
 import { confirmDialog } from '../lib/confirmDialog';
+import { translate } from '../lib/i18n';
+import { addWork, NO_WORK, runningWorkMessage } from '../lib/runningWork.mts';
 import { useInteractionStore } from './interactionStore';
 import { sessionApi } from '../lib/endpoints';
 import { newChatRequest } from '../lib/sessionBinding.mts';
 import { afterNewChat } from '../lib/sessionRoot.mts';
 
 const ACTIVE_SESSION_STORAGE_KEY = 'linggen:active-session';
+
+const say = (en: string) => translate(en) ?? en;
+
+/** Ask before removing `ids`; when they still run work, the question says
+ *  what removing them stops. An engine that cannot tell asks as before. */
+async function confirmRemove(ids: string[], question: string): Promise<boolean> {
+  const work = await Promise.all(ids.map((id) => sessionsApi.running(id).catch(() => NO_WORK)));
+  const warning = runningWorkMessage(addWork(work), say);
+  return confirmDialog(warning ? `${warning} ${say(question)}` : question);
+}
 
 interface SessionState {
   /** The open session's folder (`lib/sessionRoot.mts`): in memory only, so
@@ -97,7 +109,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   removeSession: async (id) => {
     const { allSessions } = get();
-    if (!(await confirmDialog('Remove this session?'))) return;
+    if (!(await confirmRemove([id], 'Remove this session?'))) return;
     const session = allSessions.find(s => s.id === id);
     try {
       await sessionsApi.remove({
@@ -130,7 +142,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (ids.length === 0) return;
     const { allSessions } = get();
     const msg = ids.length === 1 ? 'Remove this session?' : `Remove ${ids.length} sessions?`;
-    if (!(await confirmDialog(msg))) return;
+    if (!(await confirmRemove(ids, msg))) return;
     const idSet = new Set(ids);
     const targets = allSessions.filter(s => idSet.has(s.id));
     await Promise.allSettled(targets.map(session =>

@@ -22,6 +22,13 @@ pub(super) struct Subagents {
 }
 
 impl Subagents {
+    /// A child's tracking id, under the run that spawned it; a child not seen
+    /// yet belongs to `current`. A background child's events keep arriving
+    /// after later runs began, and must not move it to them.
+    pub fn tracking(&self, raw: &str, current: &str) -> String {
+        tracking_id(self.origins.get(raw).map_or(current, String::as_str), raw)
+    }
+
     pub async fn handle(&mut self, host: &ClaudeSession, event: &Value) -> Result<bool> {
         let kind = event["type"].as_str().unwrap_or_default();
         let Some(raw) = event["agent_id"].as_str().filter(|id| !id.is_empty()) else {
@@ -30,7 +37,7 @@ impl Subagents {
         if !kind.starts_with("subagent_") && !matches!(kind, "tool_start" | "tool_end") {
             return Ok(false);
         }
-        let id = tracking_id(&host.run_id, raw);
+        let id = self.tracking(raw, &host.run_id);
         if !self.entries.contains_key(raw) {
             let name = event["name"].as_str().unwrap_or("Claude subagent");
             let task = event["task"].as_str().unwrap_or_default();
@@ -50,6 +57,7 @@ impl Subagents {
             })
             .await;
         }
+        let origin = self.origins.get(raw).cloned().unwrap_or_else(|| host.run_id.clone());
         let entry = self.entries.get_mut(raw).unwrap();
         match kind {
             "subagent_start" => {
@@ -65,7 +73,7 @@ impl Subagents {
                         subagent_id: entry["agentName"].as_str().unwrap_or_default().into(),
                         task: entry["task"].as_str().unwrap_or_default().into(),
                         subagent_run_id: Some(id.clone()),
-                        parent_run_id: Some(host.run_id.clone()),
+                        parent_run_id: Some(origin.clone()),
                     })
                     .await;
                 }
@@ -106,7 +114,7 @@ impl Subagents {
                     args: Some(args),
                     parent_id: Some(AGENT_ID.into()),
                     run_id: Some(id.clone()),
-                    parent_run_id: Some(host.run_id.clone()),
+                    parent_run_id: Some(origin.clone()),
                 })
                 .await;
             }
@@ -139,7 +147,7 @@ impl Subagents {
                     parent_id: Some(AGENT_ID.into()),
                     extra: None,
                     run_id: Some(id.clone()),
-                    parent_run_id: Some(host.run_id.clone()),
+                    parent_run_id: Some(origin.clone()),
                 })
                 .await;
             }
@@ -174,7 +182,7 @@ impl Subagents {
                         subagent_id: entry["agentName"].as_str().unwrap_or_default().into(),
                         outcome: crate::engine::AgentOutcome::None,
                         subagent_run_id: Some(id),
-                        parent_run_id: Some(host.run_id.clone()),
+                        parent_run_id: Some(origin.clone()),
                     })
                     .await;
                 }

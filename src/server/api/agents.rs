@@ -145,7 +145,6 @@ pub(crate) async fn cancel_agent_run(
 
 #[derive(Deserialize)]
 pub(crate) struct RemoveQueuedRequest {
-    project_root: String,
     session_id: String,
     agent_id: String,
     id: String,
@@ -157,7 +156,7 @@ pub(crate) async fn remove_queued_message(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<RemoveQueuedRequest>,
 ) -> impl IntoResponse {
-    let key = queue_key(&req.project_root, &req.session_id, &req.agent_id);
+    let key = queue_key(&req.session_id, &req.agent_id);
     let removed = {
         let mut guard = state.queued_chats.lock().await;
         let removed = guard.get_mut(&key).and_then(|items| {
@@ -169,7 +168,7 @@ pub(crate) async fn remove_queued_message(
         }
         removed
     };
-    emit_queue_updated(&state, &req.project_root, &req.session_id, &req.agent_id).await;
+    emit_queue_updated(&state, &req.session_id, &req.agent_id).await;
     let Some(item) = removed else {
         return (StatusCode::NOT_FOUND, "That message is no longer waiting.").into_response();
     };

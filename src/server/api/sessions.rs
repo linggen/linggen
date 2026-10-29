@@ -1,6 +1,8 @@
 //! Session CRUD: list/create/resolve/remove/rename, plus skill-session
 //! variants and the unified session list/delete endpoints.
 
+use crate::engine::agent::{AgentRunRecord, AgentRunStatus};
+use crate::engine::events::BackgroundTask;
 use crate::server::chat::run_calls;
 use crate::server::ServerState;
 use axum::{
@@ -8,7 +10,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::canonical_project_root;
@@ -528,6 +530,10 @@ pub(crate) async fn delete_unified_session(
         },
         false => None,
     };
+    end_native_work(&state, &req.session_id).await;
+    if claude {
+        crate::server::claude::forget_transcript(&state, &req.session_id);
+    }
     state.claude.forget_session(&req.session_id);
     state.tasks.forget(&req.session_id);
     state.manager.remove_session_engine(&req.session_id).await;
@@ -546,8 +552,113 @@ pub(crate) async fn delete_unified_session(
     }
 }
 
+/// A native session is being deleted: its turns are cancelled and its
+/// background shells and subagents stopped before it goes.
+async fn end_native_work(state: &ServerState, session: &str) {
+    let runs = state
+        .manager
+        .list_agent_runs(&std::path::PathBuf::new(), Some(session))
+        .await
+        .unwrap_or_default();
+    for run in runs.iter().filter(|r| r.parent_run_id.is_none() && r.status == AgentRunStatus::Running) {
+        let _ = state.manager.cancel_run_tree(&run.run_id).await;
+    }
+    crate::engine::background::end_session(&state.manager, session).await;
+}
+
+#[derive(Deserialize)]
+pub(crate) struct RunningWorkQuery {
+    session_id: String,
+}
+
+/// What a session still runs, for the confirm before it is deleted.
+#[derive(Debug, Default, PartialEq, Serialize)]
+pub(crate) struct RunningWork {
+    /// A reply is being written.
+    pub turn: bool,
+    /// Background shells, watches and other tasks.
+    pub tasks: usize,
+    /// Subagents, in the turn or in the background.
+    pub subagents: usize,
+}
+
+/// The work in `runs` and `tasks`, one session's. A background subagent
+/// that is also a running run counts once.
+pub(crate) fn running_work(runs: &[AgentRunRecord], tasks: &[BackgroundTask]) -> RunningWork {
+    let live: Vec<&AgentRunRecord> = runs.iter().filter(|r| r.status == AgentRunStatus::Running).collect();
+    let child_runs: Vec<&str> = live.iter().filter(|r| r.parent_run_id.is_some()).map(|r| r.run_id.as_str()).collect();
+    let running: Vec<&BackgroundTask> = tasks.iter().filter(|t| t.is_running()).collect();
+    let task_subagents = running
+        .iter()
+        .filter(|t| t.kind == "subagent")
+        .filter(|t| !t.subagent_id.as_deref().is_some_and(|id| child_runs.contains(&id)))
+        .count();
+    RunningWork {
+        turn: live.iter().any(|r| r.parent_run_id.is_none()),
+        tasks: running.iter().filter(|t| t.kind != "subagent").count(),
+        subagents: child_runs.len() + task_subagents,
+    }
+}
+
+/// GET /api/sessions/running — what deleting this session would stop.
+pub(crate) async fn running_work_api(
+    State(state): State<Arc<ServerState>>,
+    Query(query): Query<RunningWorkQuery>,
+) -> impl IntoResponse {
+    let runs = state
+        .manager
+        .list_agent_runs(&std::path::PathBuf::new(), Some(&query.session_id))
+        .await
+        .unwrap_or_default();
+    Json(running_work(&runs, &state.tasks.list(&query.session_id)))
+}
+
 #[cfg(test)]
 mod tests {
+    use super::{running_work, RunningWork};
+    use crate::engine::agent::{AgentRunRecord, AgentRunStatus};
+    use crate::engine::events::BackgroundTask;
+
+    fn run(id: &str, parent: Option<&str>, status: AgentRunStatus) -> AgentRunRecord {
+        AgentRunRecord {
+            run_id: id.into(),
+            repo_path: String::new(),
+            session_id: "s".into(),
+            agent_id: "ling".into(),
+            agent_kind: None,
+            parent_run_id: parent.map(Into::into),
+            status,
+            detail: None,
+            started_at: 0,
+            ended_at: None,
+        }
+    }
+
+    /// A delete names the reply, the background tasks and the subagents it
+    /// would stop; a background subagent that also runs as a run counts once.
+    #[test]
+    fn running_work_counts_what_a_delete_would_stop() {
+        assert_eq!(running_work(&[], &[]), RunningWork::default());
+        let runs = [
+            run("r1", None, AgentRunStatus::Running),
+            run("r2", Some("r1"), AgentRunStatus::Running),
+            run("r3", Some("r1"), AgentRunStatus::Completed),
+        ];
+        let mut bg_agent = BackgroundTask::running("ag-1", "subagent", "review");
+        bg_agent.subagent_id = Some("r2".into());
+        let mut ended = BackgroundTask::running("sh-2", "shell", "make");
+        ended.end("completed");
+        let tasks = [
+            BackgroundTask::running("sh-1", "shell", "sleep 60"),
+            BackgroundTask::running("w-1", "watch", "tail log"),
+            bg_agent,
+            BackgroundTask::running("t2", "subagent", "sdk review"),
+            ended,
+        ];
+        let work = running_work(&runs, &tasks);
+        assert_eq!(work, RunningWork { turn: true, tasks: 2, subagents: 2 });
+    }
+
     #[test]
     fn a_claude_rename_lands_on_the_meta_as_stored_after_the_mode_wait() {
         // While the mode change waited on the SDK, the running turn titled

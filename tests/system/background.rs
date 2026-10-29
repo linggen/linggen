@@ -84,3 +84,32 @@ async fn the_person_stops_a_background_shell_and_the_agent_is_told() {
     assert!(last_said(&w, 2).contains("ended: stopped"), "{}", last_said(&w, 2));
     w.assert_all_scripted();
 }
+
+fn running(marker: &str) -> bool {
+    std::process::Command::new("pgrep")
+        .args(["-f", marker])
+        .output()
+        .map(|out| !out.stdout.is_empty())
+        .unwrap_or(false)
+}
+
+#[tokio::test]
+async fn deleting_a_session_ends_its_background_shell_and_tells_no_one() {
+    let marker = format!("bg-delete-{}", uuid::Uuid::new_v4().simple());
+    let w = World::start(Setup::default().script(
+        Agent::Ling,
+        vec![
+            tool("Bash", json!({"cmd": format!("sleep 600; echo {marker}"), "run_in_background": true})),
+            text("Started it."),
+        ],
+    ))
+    .await;
+    let sid = w.api.create_session(json!({"title": "Chat"})).await;
+    first_turn(&w, &sid).await;
+    assert!(running(&marker), "the background shell never started");
+    w.api.delete("/api/sessions/all", json!({"session_id": sid})).await;
+    assert!(!running(&marker), "the shell outlived its session");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(w.model.calls_of(Agent::Ling).len(), 2, "the deleted session got a turn");
+    w.assert_all_scripted();
+}

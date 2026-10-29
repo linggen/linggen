@@ -6,7 +6,7 @@ use crate::server::api::agents::{cancel_agent_run, remove_queued_message, set_ta
 use crate::server::api::permissions::{get_session_permission, update_session_permission};
 use crate::server::api::sessions::{
     create_session, delete_unified_session, get_session_image, get_skill_session_state,
-    list_skill_sessions, remove_skill_session_api, rename_session_api,
+    list_skill_sessions, remove_skill_session_api, rename_session_api, running_work_api,
 };
 use crate::server::chat::{
     approve_plan_handler, ask_user_response_handler, chat_handler, clear_chat_history_api,
@@ -26,6 +26,7 @@ pub(super) fn routes() -> Routes {
             get(crate::server::claude::capabilities),
         )
         .route("/api/sessions/images", get(get_session_image))
+        .route("/api/sessions/running", get(running_work_api))
         .route(
             "/api/sessions/permission",
             get(get_session_permission).patch(update_session_permission),

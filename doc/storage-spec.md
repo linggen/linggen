@@ -27,7 +27,7 @@ Two-tier layout, aligned with Claude Code's `~/.claude/` + `{repo}/.claude/` con
 |-----------|---------|
 | `~/.linggen/` | Global home (override with `$LINGGEN_HOME`) |
 | `~/.linggen/sessions/` | All sessions (flat, creator/project tracked in metadata) |
-| `~/.linggen/runtimes/claude-agent-sdk/` | Versioned SDK dependencies and its isolated Claude config/transcripts (`state/`) |
+| `~/.linggen/runtimes/claude-agent-sdk/` | Versioned SDK dependencies and its isolated Claude config/transcripts (`state/`). A Claude session's SDK transcript (`state/projects/{encoded}/{sdk-id}.jsonl` and its `{sdk-id}/` subagents folder, the id from the session's `claude.json`) is removed when the session is deleted or cleared |
 | `~/.linggen/workspace/` | Default working folder of a new chat (`session-spec.md` § Default workspace) |
 | `~/.linggen/memory/` | Global memory |
 | `~/.linggen/missions/` | Mission definitions and run history |

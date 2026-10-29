@@ -25,8 +25,9 @@ agents?: Array<SessionMember>,
  */
 cwd: string, 
 /**
- * The git repo `cwd` is in, also from a subdirectory; None outside one.
- * Follows `cwd` ([`SessionMeta::set_cwd`]).
+ * The last git repo `cwd` was in, also from a subdirectory. Sticky: a
+ * move to a folder in no repo keeps it ([`SessionMeta::set_cwd`]); None
+ * only while the session has never been in a repo.
  */
 project?: string | null, 
 /**

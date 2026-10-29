@@ -246,8 +246,11 @@ pub(crate) async fn persist_message_only(
 // Queue management
 // ---------------------------------------------------------------------------
 
-pub(crate) fn queue_key(project_root: &str, session_id: &str, agent_id: &str) -> String {
-    format!("{project_root}|{session_id}|{agent_id}")
+/// A queue (and its interrupt channel) belongs to one agent in one session.
+/// Session ids are unique, so the working folder is no part of it: a `cd`
+/// mid-turn must not move the queue out from under a remove or a dequeue.
+pub(crate) fn queue_key(session_id: &str, agent_id: &str) -> String {
+    format!("{session_id}|{agent_id}")
 }
 
 /// A turn's place in its session's line, waited on by the turn's task.
@@ -284,19 +287,13 @@ pub(crate) fn queue_preview(message: &str) -> String {
     }
 }
 
-pub(crate) async fn emit_queue_updated(
-    state: &Arc<ServerState>,
-    project_root: &str,
-    session_id: &str,
-    agent_id: &str,
-) {
-    let key = queue_key(project_root, session_id, agent_id);
+pub(crate) async fn emit_queue_updated(state: &Arc<ServerState>, session_id: &str, agent_id: &str) {
+    let key = queue_key(session_id, agent_id);
     let items = {
         let guard = state.queued_chats.lock().await;
         guard.get(&key).cloned().unwrap_or_default()
     };
     let _ = state.events_tx.send(ServerEvent::QueueUpdated {
-        project_root: project_root.to_string(),
         session_id: session_id.to_string(),
         agent_id: agent_id.to_string(),
         items,

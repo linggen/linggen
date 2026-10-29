@@ -38,6 +38,12 @@ pub(crate) async fn clear_chat_history_api(
         },
         false => None,
     };
+    // Clear ends the session's background shells and subagents (silently).
+    crate::engine::background::end_session(&state.manager, &session_id).await;
+    // A cleared Claude chat starts a new SDK conversation: the old copy goes.
+    if claude {
+        crate::server::claude::forget_transcript(&state, &session_id);
+    }
     // project_root not needed — chat history is stored globally by session ID.
     // Skipping canonicalize avoids failures when the project directory is deleted.
     match state

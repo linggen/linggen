@@ -116,7 +116,6 @@ pub(super) async fn wire_interrupt_channel(
     engine.interrupt_rx = Some(interrupt_rx);
 
     let interrupt_key = crate::server::chat::helpers::queue_key(
-        &ctx.root.to_string_lossy(),
         ctx.session_id.as_deref().unwrap_or(""),
         &ctx.agent_id,
     );

@@ -130,13 +130,11 @@ fn queued_entries(
     all: &std::collections::HashMap<String, Vec<crate::engine::events::QueuedChatItem>>,
     session_id: &str,
 ) -> Vec<serde_json::Value> {
-    let marker = format!("|{session_id}|");
-    all.iter()
-        .filter(|(_, items)| !items.is_empty())
-        .filter_map(|(key, items)| {
-            let at = key.find(&marker)?;
+    all.values()
+        .filter_map(|items| {
+            let first = items.first().filter(|item| item.session_id == session_id)?;
             Some(serde_json::json!({
-                "agent_id": &key[at + marker.len()..],
+                "agent_id": first.agent_id,
                 "items": items,
             }))
         })
@@ -508,13 +506,9 @@ mod tests {
     }
 
     #[test]
-    fn extracts_the_agent_from_a_project_root_containing_a_pipe() {
-        // Splitting the key on '|' would read the agent as garbage here.
+    fn names_the_agent_its_items_are_for() {
         let mut all = HashMap::new();
-        all.insert(
-            "/tmp/od|d/proj|sess-1|ling".to_string(),
-            vec![item("sess-1", "ling")],
-        );
+        all.insert("sess-1|ling".to_string(), vec![item("sess-1", "ling")]);
         let out = queued_entries(&all, "sess-1");
         assert_eq!(out.len(), 1);
         assert_eq!(out[0]["agent_id"], "ling");
@@ -525,15 +519,15 @@ mod tests {
         // The snapshot must be able to say "nothing queued" — that is the state
         // a cancelled run leaves behind, and the one clients used to miss.
         let mut all = HashMap::new();
-        all.insert("/p|sess-1|ling".to_string(), Vec::new());
+        all.insert("sess-1|ling".to_string(), Vec::new());
         assert!(queued_entries(&all, "sess-1").is_empty());
     }
 
     #[test]
     fn other_sessions_are_not_leaked() {
         let mut all = HashMap::new();
-        all.insert("/p|sess-1|ling".to_string(), vec![item("sess-1", "ling")]);
-        all.insert("/p|sess-2|ling".to_string(), vec![item("sess-2", "ling")]);
+        all.insert("sess-1|ling".to_string(), vec![item("sess-1", "ling")]);
+        all.insert("sess-2|ling".to_string(), vec![item("sess-2", "ling")]);
         let out = queued_entries(&all, "sess-1");
         assert_eq!(out.len(), 1);
         assert_eq!(out[0]["items"][0]["session_id"], "sess-1");

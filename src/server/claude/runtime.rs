@@ -93,6 +93,12 @@ impl ClaudeSession {
             .global_sessions
             .get_session_meta(&self.meta.id)?
             .context("Session was removed")?;
+        // A resumed conversation runs in the folder it started in, wherever
+        // its shell moved the session since: this runner's folder.
+        let resume = state::resume(&self.dir(), &self.meta.cwd).map(|(id, started)| {
+            self.meta.cwd = started;
+            id
+        });
         let model = resolve_model(
             &self.state,
             chosen
@@ -104,7 +110,6 @@ impl ClaudeSession {
         let trusted = self.interaction().folder_trust().await?;
         *settings.lock().unwrap_or_else(|p| p.into_inner()) =
             self.settings_key(&model.id, trusted).await;
-        let resume = state::resume_id(&self.dir(), &self.meta.cwd);
         let session_memory = self.session_memory().await;
         let mut command = sdk_command(&runner, &self.meta.cwd, &model)?;
         // The SDK's shells inherit it: `ling restart` knows who asked.
@@ -272,6 +277,12 @@ pub(super) fn inherited_env(vars: impl Iterator<Item = (String, String)>) -> Vec
     .collect()
 }
 
+/// Where the SDK keeps its own state (`CLAUDE_CONFIG_DIR`), conversations
+/// included.
+pub(super) fn sdk_state_dir() -> PathBuf {
+    crate::paths::linggen_home().join("runtimes/claude-agent-sdk/state")
+}
+
 fn sdk_command(
     runner: &std::path::Path,
     cwd: &str,
@@ -301,10 +312,7 @@ fn sdk_command(
                 &model.url
             },
         )
-        .env(
-            "CLAUDE_CONFIG_DIR",
-            crate::paths::linggen_home().join("runtimes/claude-agent-sdk/state"),
-        )
+        .env("CLAUDE_CONFIG_DIR", sdk_state_dir())
         .kill_on_drop(true);
     #[cfg(unix)]
     command.process_group(0);

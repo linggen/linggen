@@ -16,6 +16,8 @@ model = "claude-test"
 api_key = "fixture-key"
 supports_tools = true
 "#;
+/// The conversation id the bridge fixture's SDK reports.
+const SDK_ID: &str = "5d1c2a9e-7b3f-4c1d-9e2a-0f6b8c4d2e10";
 const BRIDGE: &str = r#"#!/bin/sh
 [ "$1" = install ] && exit 0
 IFS= read -r start
@@ -28,11 +30,11 @@ printf '%s\n' "$start" >> "$PWD/.sdk-starts.log"
 env | cut -d= -f1 | sort > "$PWD/.sdk-env.log"
 finish() {
  emit "{\"type\":\"text\",\"text\":\"$1\"}"
- emit "{\"type\":\"result\",\"success\":true,\"text\":\"$1\",\"session_id\":\"sdk-host\",\"usage\":{}}"
+ emit "{\"type\":\"result\",\"success\":true,\"text\":\"$1\",\"session_id\":\"5d1c2a9e-7b3f-4c1d-9e2a-0f6b8c4d2e10\",\"usage\":{}}"
  emit '{"type":"done"}'
 }
 RULE='{"type":"addRules","behavior":"allow","destination":"session","rules":[{"toolName":"Bash","ruleContent":"env"}]}'
-emit '{"type":"init","session_id":"sdk-host","permissionMode":"default","commands":[]}'
+emit '{"type":"init","session_id":"5d1c2a9e-7b3f-4c1d-9e2a-0f6b8c4d2e10","permissionMode":"default","commands":[]}'
 case "$start" in
 *'"prompt":"ask"'*)
  emit "{\"type\":\"request\",\"kind\":\"permission\",\"id\":1,\"input\":{\"tool\":\"Bash\",\"args\":{\"command\":\"env\"},\"suggestions\":[$RULE]}}"
@@ -97,6 +99,27 @@ case "$start" in
   esac
  done
  exit 0;;
+*'"prompt":"child"'*)
+ uuid=$(printf '%s' "$start" | sed -n 's/.*"uuid":"\([^"]*\)".*/\1/p')
+ emit '{"type":"text","text":"LAUNCHED"}'
+ emit "{\"type\":\"result\",\"success\":true,\"usage\":{},\"uuids\":[\"$uuid\"]}"
+ sleep 1
+ emit '{"type":"subagent_start","agent_id":"c1","name":"counter","task":"count slowly"}'
+ emit '{"type":"subagent_text","agent_id":"c1","text":"1"}'
+ emit '{"type":"tool_start","agent_id":"c1","tool":"Bash","args":{"command":"sleep 2"},"id":"tc1"}'
+ while IFS= read -r line; do
+  case "$line" in
+  *'"type":"prompt"'*)
+   u=$(printf '%s' "$line" | sed -n 's/.*"uuid":"\([^"]*\)".*/\1/p')
+   emit '{"type":"subagent_text","agent_id":"c1","text":"2"}'
+   emit '{"type":"text","text":"SECOND"}'
+   emit "{\"type\":\"result\",\"success\":true,\"usage\":{},\"uuids\":[\"$u\"]}";;
+  *'"type":"end"'*)
+   emit '{"type":"done"}'
+   exit 0;;
+  esac
+ done
+ exit 0;;
 *'"prompt":"stream"'*)
  while :; do
   emit '{"type":"token","text":"x"}'
@@ -110,6 +133,17 @@ case "$start" in
    esac
   fi
  done;;
+*'"prompt":"move"'*)
+ emit '{"type":"request","kind":"permission","id":1,"input":{"tool":"Bash","args":{"command":"make"},"suggestions":[]}}'
+ IFS= read -r reply
+ emit "{\"type\":\"cwd\",\"cwd\":\"$PWD/notes\"}"
+ emit '{"type":"request","kind":"permission","id":2,"input":{"tool":"Bash","args":{"command":"make"},"suggestions":[]}}'
+ IFS= read -r reply
+ finish MOVED;;
+*'"prompt":"cd"'*)
+ emit "{\"type\":\"cwd\",\"cwd\":\"$PWD/repo/src\"}"
+ emit "{\"type\":\"cwd\",\"cwd\":\"$PWD/notes\"}"
+ finish MOVED;;
 *) finish HELLO;;
 esac
 "#;
@@ -508,6 +542,35 @@ async fn a_turn_the_sdk_starts_itself_gets_its_own_run() {
 }
 
 #[tokio::test]
+async fn a_background_subagent_never_holds_the_next_message() {
+    let (w, sid) = world().await;
+    trust_folder(&w);
+    let mark = w.mark();
+    w.api.chat(&sid, &w.work(), "child").await;
+    until_finished_runs(&w, mark, &sid, 1).await;
+    // The child's first output comes once the turn has fully closed.
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    // The child runs on after its turn's result; the person's next message
+    // starts at once instead of waiting for it.
+    w.api.chat(&sid, &w.work(), "again").await;
+    until_finished_runs(&w, mark, &sid, 2).await;
+    assert_eq!(finished_with(&w, mark, &sid), ["Completed", "Completed"]);
+    let begun = w.engine.log_since(mark).lines().filter(|l| l.contains("run/begin") && l.contains(&sid)).count();
+    assert_eq!(begun, 2, "the child's output began a run of its own");
+    let rows = w.rows(&sid);
+    assert!(rows.iter().any(|r| r.said_by("claude") == Some("SECOND")));
+    // The child is kept once, on the turn that spawned it.
+    let file = w.home.linggen_home().join("sessions").join(&sid).join("claude-subagents.json");
+    let saved: Value = serde_json::from_slice(&std::fs::read(file).unwrap()).unwrap();
+    let runs = saved.as_object().unwrap();
+    assert_eq!(runs.len(), 1, "{saved:#}");
+    let (run, children) = runs.iter().next().unwrap();
+    assert_eq!(children[0]["subagentId"], json!(format!("sdk-sub-{run}-c1")));
+    assert_eq!(children[0]["resultText"], "1\n\n2");
+    assert_eq!(children[0]["toolCount"], 1);
+}
+
+#[tokio::test]
 async fn an_idle_runner_exits() {
     let setup = Setup { env: vec![("LINGGEN_CLAUDE_IDLE_EXIT_SECS", "1".into())], ..Setup::default() };
     let (w, sid) = world_with(setup).await;
@@ -544,7 +607,7 @@ async fn a_claude_session_continues_after_a_restart_interrupted_it() {
     let prompt = starts(&w)[1]["prompt"].as_str().unwrap_or_default().to_string();
     assert!(prompt.contains("The engine restarted (from 1.10.0 to ling 1.10.1"), "{prompt}");
     assert!(prompt.contains("the restart interrupted it"), "{prompt}");
-    assert_eq!(starts(&w)[1]["resume"], "sdk-host", "it continues the same SDK conversation");
+    assert_eq!(starts(&w)[1]["resume"], SDK_ID, "it continues the same SDK conversation");
 }
 
 #[tokio::test]
@@ -602,6 +665,69 @@ async fn a_removed_queued_message_never_runs() {
     assert_eq!(prompts, [json!("wait")]);
 }
 
+/// The session's queue as the last queue event left it: each message's text.
+fn queued_now(w: &World, sid: &str) -> Vec<String> {
+    let events = w.events();
+    let Some(last) = events.iter().rev().find(|e| e["kind"] == "queue" && e["session_id"] == sid) else {
+        return Vec::new();
+    };
+    last["data"]["items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item["preview"].as_str().map(String::from))
+        .collect()
+}
+
+/// Wait for the event log to show the session's queue as `want`.
+async fn until_queued(w: &World, sid: &str, want: &[&str]) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while queued_now(w, sid) != want {
+        assert!(Instant::now() < deadline, "queue is {:?}, not {want:?}", queued_now(w, sid));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// A `cd` mid-turn moves the session's folder, never its queue: a remove
+/// sent from the new folder takes only its message, the rest stay listed
+/// and run in order with what is sent after.
+#[tokio::test]
+async fn a_queue_survives_a_cd_between_queueing_and_removing() {
+    let (w, sid) = world().await;
+    trust_folder(&w);
+    std::fs::create_dir_all(std::path::Path::new(&w.work()).join("notes")).unwrap();
+    let mark = w.mark();
+    w.api.chat(&sid, &w.work(), "move").await;
+    let first_ask = asked(next(&w, &sid, mark).await);
+    let one = w.api.chat(&sid, &w.work(), "one").await;
+    w.api.chat(&sid, &w.work(), "two").await;
+    until_queued(&w, &sid, &["one", "two"]).await;
+
+    let moved = w.mark();
+    w.api.answer(&first_ask, "Allow once").await;
+    let second_ask = asked(next(&w, &sid, moved).await);
+    let notes = format!("{}/notes", w.work());
+    assert_eq!(session_yaml(&w, &sid)["cwd"], json!(notes), "the session followed the cd");
+
+    // The page sends the folder it shows now: the one the session moved to.
+    let taken = w
+        .api
+        .post(
+            "/api/queue/remove",
+            json!({"project_root": notes, "session_id": sid, "agent_id": "claude", "id": one["queued_id"]}),
+        )
+        .await;
+    assert_eq!(taken["message"], "one");
+    until_queued(&w, &sid, &["two"]).await;
+    w.api.chat(&sid, &notes, "three").await;
+    until_queued(&w, &sid, &["two", "three"]).await;
+
+    w.api.answer(&second_ask, "Allow once").await;
+    until_finished_runs(&w, mark, &sid, 3).await;
+    let prompts: Vec<Value> = starts(&w).iter().map(|s| s["prompt"].clone()).collect();
+    assert_eq!(prompts, [json!("move"), json!("two"), json!("three")]);
+}
+
 #[tokio::test]
 async fn stop_lands_while_tokens_stream() {
     let (w, sid) = world().await;
@@ -635,4 +761,63 @@ async fn stop_lands_while_tokens_stream() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert_eq!(finished_with(&w, mark, &sid), ["Cancelled"]);
+}
+
+fn session_yaml(w: &World, sid: &str) -> Value {
+    let path = w.home.linggen_home().join("sessions").join(sid).join("session.yaml");
+    serde_norway::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+#[tokio::test]
+async fn a_claude_session_follows_the_sdks_cd_and_keeps_its_last_repo() {
+    let (w, sid) = world().await;
+    trust_folder(&w);
+    let work = std::path::PathBuf::from(w.work());
+    std::fs::create_dir_all(work.join("repo/.git")).unwrap();
+    std::fs::create_dir_all(work.join("repo/src")).unwrap();
+    std::fs::create_dir_all(work.join("notes")).unwrap();
+    let mark = w.mark();
+    w.api.chat(&sid, &w.work(), "cd").await;
+    until_finished_runs(&w, mark, &sid, 1).await;
+    // The folder follows each move; the project stays the last repo.
+    let meta = session_yaml(&w, &sid);
+    assert_eq!(meta["cwd"], json!(format!("{}/notes", w.work())));
+    assert_eq!(meta["project_name"], "repo");
+    // The next runner resumes the conversation in the folder it started in.
+    w.api.chat(&sid, &w.work(), "hello").await;
+    until_finished_runs(&w, mark, &sid, 2).await;
+    assert_eq!(starts(&w)[1]["resume"], SDK_ID);
+    assert_eq!(starts(&w)[1]["cwd"], starts(&w)[0]["cwd"]);
+}
+
+/// The SDK's own copy of the conversation, as it keeps it.
+fn sdk_transcript(w: &World) -> (std::path::PathBuf, std::path::PathBuf) {
+    let encoded: String = w.work().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+    let project = w.home.linggen_home().join("runtimes/claude-agent-sdk/state/projects").join(encoded);
+    std::fs::create_dir_all(project.join(SDK_ID).join("subagents")).unwrap();
+    std::fs::write(project.join(format!("{SDK_ID}.jsonl")), "{}").unwrap();
+    std::fs::write(project.join("other.jsonl"), "{}").unwrap();
+    (project.join(format!("{SDK_ID}.jsonl")), project)
+}
+
+#[tokio::test]
+async fn clear_and_delete_remove_the_sdks_transcript_of_the_session_only() {
+    let (w, sid) = world().await;
+    trust_folder(&w);
+    let mark = w.mark();
+    w.api.chat(&sid, &w.work(), "hello").await;
+    until_finished_runs(&w, mark, &sid, 1).await;
+    let (transcript, project) = sdk_transcript(&w);
+    w.api.post("/api/chat/clear", json!({"session_id": sid})).await;
+    assert!(!transcript.exists(), "Clear starts a new conversation; the old copy goes");
+    assert!(!project.join(SDK_ID).exists());
+    assert!(project.join("other.jsonl").exists());
+
+    w.api.chat(&sid, &w.work(), "hello").await;
+    until_finished_runs(&w, mark, &sid, 2).await;
+    let (transcript, project) = sdk_transcript(&w);
+    w.api.delete("/api/sessions/all", json!({"session_id": sid})).await;
+    assert!(!transcript.exists(), "the deleted session's transcript stayed");
+    assert!(!project.join(SDK_ID).exists());
+    assert!(project.join("other.jsonl").exists(), "another conversation was removed");
 }

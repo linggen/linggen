@@ -1,8 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Send, Square, X, FolderOpen, FileText, CornerDownRight, Pencil } from 'lucide-react';
 import { cn } from '../../lib/cn';
-import { useInteractionStore } from '../../stores/interactionStore';
-import { useSessionStore, effectiveProjectRoot } from '../../stores/sessionStore';
+import { useSessionStore } from '../../stores/sessionStore';
 import { useServerStore } from '../../stores/serverStore';
 import { MarkdownContent } from './MarkdownContent';
 import { TodoPanel } from './TodoPanel';
@@ -18,9 +17,10 @@ import type {
   QueuedChatItem,
   SkillInfo,
 } from '../../types';
-import { sessionApi, workspaceApi } from '../../lib/endpoints';
+import { workspaceApi } from '../../lib/endpoints';
 import { apiGet } from '../../lib/api';
 import { readImageForSend } from '../../lib/imageEncode';
+import { steerQueued, takeQueued as takeQueuedMessage } from './queuedActions';
 import { useYinyuePrefill } from '../../hooks/useYinyuePrefill';
 import { useAgentPresent } from '../../hooks/useAgentPresent';
 import { COMPANION_ID } from '../../lib/agentsMet.mts';
@@ -316,14 +316,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const takeQueued = async (item: QueuedChatItem) => {
     const activeSessionId = sessionId || useSessionStore.getState().activeSessionId;
     if (!activeSessionId) return null;
-    useInteractionStore.getState().setQueuedMessages(
-      useInteractionStore.getState().queuedMessages.filter((q) => q.id !== item.id),
-    );
-    try {
-      return await sessionApi.removeQueued(effectiveProjectRoot(projectRoot), activeSessionId, item.agent_id || selectedAgent, item.id);
-    } catch {
-      return null;
-    }
+    return takeQueuedMessage(activeSessionId, item.agent_id || selectedAgent, item);
   };
   const [sdkCommands, setSdkCommands] = useState<Array<{ name: string; description: string; argumentHint?: string; builtin?: boolean }>>([]);
   useEffect(() => {
@@ -459,12 +452,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                   <span className="flex-1 truncate">{item.preview}</span>
                   {claudeSession && (
                     <button
-                      onClick={() => {
-                        useInteractionStore.getState().setQueuedMessages(
-                          useInteractionStore.getState().queuedMessages.filter((q) => q.id !== item.id),
-                        );
-                        sessionApi.steerQueued(item.id).catch(() => {});
-                      }}
+                      onClick={() => steerQueued(item)}
                       className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-200/60 dark:bg-amber-500/20 hover:bg-amber-300/70 dark:hover:bg-amber-500/35 transition-colors"
                       title="Send this message now, into the running turn"
                     >

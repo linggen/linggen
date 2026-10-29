@@ -35,6 +35,21 @@ export function observeTool(send: Send) {
   };
 }
 
+// The main thread's shell moved: the host moves the session's folder with it.
+// The SDK runs CwdChanged only for settings-file hooks, never for a host's
+// callback hooks, so the folder is read off each tool hook's own `cwd`. The
+// first main-thread reading is the baseline (the SDK reports it resolved, e.g.
+// /private/tmp for /tmp); a later different reading is a cd. A subagent's
+// hooks (their input carries agent_id) are its own business.
+export function followCwd(send: Send) {
+  let known: string | undefined;
+  return (input: any) => {
+    if (input.agent_id || !input.cwd || input.cwd === known) return;
+    if (known !== undefined) send({ type: 'cwd', cwd: input.cwd });
+    known = input.cwd;
+  };
+}
+
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 
 // Whether the SDK decides this tool by itself under `mode`, so an open prompt
@@ -240,12 +255,15 @@ async function main() {
   for (const key of ['ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDECODE',
     'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY']) delete env[key];
   env.CLAUDE_AGENT_SDK_CLIENT_APP = 'linggen';
+  const cwd = followCwd(send);
   const endTool = async (event: any) => {
+    cwd(event);
     started.delete(event.tool_use_id);
     let result = event.tool_response ?? event.error ?? '';
     let additionalContext: string | undefined;
     if (result?.type === 'image' && result.file?.base64) {
-      const shown = await rpc('image', { base64: result.file.base64, caption: event.tool_input?.file_path || 'Image' });
+      const shown = await rpc('image', { base64: result.file.base64, caption: event.tool_input?.file_path || 'Image',
+        ...(event.agent_id ? { agent_id: event.agent_id } : {}) });
       result = { type:'image', reference:shown.reference, error:shown.error };
       if (shown.reference) {
         additionalContext = `Linggen kept this image for display. Include [${shown.reference}] in your answer to show it.`;
@@ -291,6 +309,7 @@ async function main() {
           UserPromptSubmit: [{ hooks: [turnContext(memories)] }],
           PreToolUse: [{ hooks: [observeTool(send), async (event: any) => {
             started.set(event.tool_use_id, modeEpoch);
+            cwd(event);
             return {};
           }] }],
           PostToolUse: [{ hooks: [endTool] }],

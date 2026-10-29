@@ -386,7 +386,6 @@ fn busy_message(queue: QueueMode, question_open: bool) -> BusyMessage {
 pub(crate) async fn enqueue_if_busy(
     state: &Arc<ServerState>,
     was_busy: bool,
-    project_root_str: &str,
     effective_session_id: &str,
     target_id: &str,
     clean_msg: &str,
@@ -410,12 +409,12 @@ pub(crate) async fn enqueue_if_busy(
         images: sent.1.to_vec(),
     };
 
-    let key = queue_key(project_root_str, effective_session_id, target_id);
+    let key = queue_key(effective_session_id, target_id);
     {
         let mut guard = state.queued_chats.lock().await;
-        guard.entry(key).or_default().push(item.clone());
+        guard.entry(key.clone()).or_default().push(item.clone());
     }
-    emit_queue_updated(state, project_root_str, effective_session_id, target_id).await;
+    emit_queue_updated(state, effective_session_id, target_id).await;
 
     // An open question is never cancelled by a message: cancelling it used
     // to swap the question for the message mid-turn (Lingjing, 2026-09-17:
@@ -430,8 +429,7 @@ pub(crate) async fn enqueue_if_busy(
     // Send through interrupt channel so the running loop sees the message.
     {
         let interrupt_guard = state.interrupt_tx.lock().await;
-        let ikey = queue_key(project_root_str, effective_session_id, target_id);
-        if let Some(tx) = interrupt_guard.get(&ikey) {
+        if let Some(tx) = interrupt_guard.get(&key) {
             let _ = tx.send(clean_msg.to_string());
         }
     }
@@ -450,7 +448,6 @@ pub(crate) async fn dequeue_and_emit(
     state: &Arc<ServerState>,
     events_tx: &tokio::sync::broadcast::Sender<ServerEvent>,
     queued_id: &str,
-    project_root: &str,
     session_id: &str,
     target_id: &str,
     from_id: &str,
@@ -460,7 +457,7 @@ pub(crate) async fn dequeue_and_emit(
     via_note: Option<&str>,
     images: &[String],
 ) -> bool {
-    let key = queue_key(project_root, session_id, target_id);
+    let key = queue_key(session_id, target_id);
     let was_queued = {
         let mut guard = state.queued_chats.lock().await;
         match guard.get_mut(&key) {
@@ -479,7 +476,7 @@ pub(crate) async fn dequeue_and_emit(
     if !was_queued {
         return false;
     }
-    emit_queue_updated(state, project_root, session_id, target_id).await;
+    emit_queue_updated(state, session_id, target_id).await;
     persist_and_emit_with_images(
         &state.manager.global_sessions,
         events_tx,
@@ -1170,7 +1167,6 @@ pub(crate) async fn start_turn(
     let queued_item = enqueue_if_busy(
         &state,
         was_busy,
-        &project_root_str,
         &effective_session_id,
         &target_id,
         &clean_msg,
@@ -1208,7 +1204,6 @@ pub(crate) async fn start_turn(
     let state_clone = state.clone();
     let queued_item_id = queued_item.as_ref().map(|q| q.id.clone());
     let session_id_for_queue = effective_session_id.clone();
-    let project_root_for_queue = project_root_str.clone();
     let req_user_type = req.user_type;
     let req_model_id = req.model_id.clone();
     let req_images = req.images.clone();
@@ -1228,7 +1223,6 @@ pub(crate) async fn start_turn(
                 &state_clone,
                 &events_tx_clone,
                 queued_id,
-                &project_root_for_queue,
                 &session_id_for_queue,
                 &target_id_clone,
                 &from_id,

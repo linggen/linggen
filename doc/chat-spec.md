@@ -295,6 +295,11 @@ A session is a single conversation thread scoped to a project. Each session has 
 - **Creation**: auto-created on first chat when `session_id` is not provided. Format: `sess-{timestamp}-{uuid8}`.
 - **Storage**: each session lives at `<project>/.linggen/sessions/<session_id>/` with `session.yaml` (metadata) and `messages.jsonl` (chat history).
 - **Persistence**: sessions survive server restarts. The web UI lists all sessions per project.
+- **Delete**: the UI always asks first, in-page. When the session still runs
+  work — a reply, background tasks, subagents (`GET /api/sessions/running`) —
+  the question names it ("2 background tasks and 1 subagent are still
+  running. Deleting stops them."). Delete stops that work, then removes the
+  session.
 - **What a turn saves**: every piece of text the agent writes — the final reply
   and the text it writes between tool calls — is its own `messages.jsonl` row;
   tool calls and results are observation rows. A reload shows the whole

@@ -116,8 +116,8 @@ export const sessionApi = {
   pendingAskUser: () =>
     apiGet<Array<{ question_id: string; agent_id?: string; questions?: unknown[]; session_id?: string | null }>>('/api/pending-ask-user'),
   /** Drop one queued message; it comes back (text + pictures) for an Edit. */
-  removeQueued: (projectRoot: string, sessionId: string, agentId: string, id: string) =>
-    apiPost<{ message?: string; images?: string[] }>('/api/queue/remove', { project_root: projectRoot, session_id: sessionId, agent_id: agentId, id }),
+  removeQueued: (sessionId: string, agentId: string, id: string) =>
+    apiPost<{ message?: string; images?: string[] }>('/api/queue/remove', { session_id: sessionId, agent_id: agentId, id }),
   /** Stop one background task of the session; never the turn or the others. */
   stopTask: (sessionId: string, id: string) => apiPost<void>('/api/tasks/stop', { session_id: sessionId, id }),
   /** Claude sessions: send one queued message into the running turn now. */

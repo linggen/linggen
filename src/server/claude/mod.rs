@@ -270,7 +270,6 @@ pub(crate) async fn start_turn(
     let queued = chat::enqueue_if_busy(
         &state,
         busy,
-        &meta.cwd,
         &meta.id,
         AGENT_ID,
         &req.message,
@@ -320,7 +319,6 @@ pub(crate) async fn start_turn(
                 &state,
                 &state.events_tx,
                 &item.id,
-                &meta.cwd,
                 &meta.id,
                 AGENT_ID,
                 req.sender.as_deref().unwrap_or("user"),
@@ -338,6 +336,13 @@ pub(crate) async fn start_turn(
         execute_turn(state, req, meta).await;
     });
     Json(json!({"status": if busy {"queued"} else {"started"}, "session_id": sid, "agent_id": AGENT_ID, "queued_id": queued_id})).into_response()
+}
+
+/// The session's conversation is over (Clear, delete): the SDK's own copy of
+/// it goes too. Call before the session's checkpoint is removed.
+pub(crate) fn forget_transcript(state: &ServerState, session: &str) {
+    let dir = state.manager.global_sessions.session_dir(session);
+    state::forget_transcript(&dir, &runtime::sdk_state_dir());
 }
 
 /// Stop one SDK task of a live runner: a background shell, watch or subagent.
@@ -371,7 +376,6 @@ async fn dequeue_user(
         state,
         &state.events_tx,
         queued_id,
-        &meta.cwd,
         &meta.id,
         AGENT_ID,
         req.sender.as_deref().unwrap_or("user"),
@@ -431,7 +435,8 @@ async fn deliver(
         .clone()
         .or_else(|| host.meta.member(AGENT_ID).and_then(|m| m.model.clone()));
     let model = resolve_model(state, chosen.as_deref()).await.map_err(|e| e.to_string())?;
-    let trusted = trust::known(state, &host.meta.id, &host.meta.cwd);
+    let folder = state::launch_folder(&host.dir(), &host.meta.cwd);
+    let trusted = trust::known(state, &host.meta.id, &folder);
     let key = host.settings_key(&model.id, trusted).await;
     for _ in 0..2 {
         let (done, outcome) = tokio::sync::oneshot::channel();

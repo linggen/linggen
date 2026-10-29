@@ -379,7 +379,6 @@ mod tests {
                 parent_run_id: None,
             },
             ServerEvent::QueueUpdated {
-                project_root: "/tmp".into(),
                 session_id: "s1".into(),
                 agent_id: "ling".into(),
                 items: vec![],

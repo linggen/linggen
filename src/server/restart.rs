@@ -64,20 +64,14 @@ fn sent_order(id: &str) -> u64 {
 /// were sent. Written out by hand: a queued item never serializes its text
 /// or pictures.
 fn queued_messages(all: &HashMap<String, Vec<QueuedChatItem>>) -> BTreeMap<String, Vec<Value>> {
-    let mut items: Vec<(&str, &QueuedChatItem)> = all
-        .iter()
-        .flat_map(|(key, items)| items.iter().map(move |item| (key.as_str(), item)))
-        .collect();
-    items.sort_by_key(|(_, item)| sent_order(&item.id));
+    let mut items: Vec<&QueuedChatItem> = all.values().flatten().collect();
+    items.sort_by_key(|item| sent_order(&item.id));
     let mut queued: BTreeMap<String, Vec<Value>> = BTreeMap::new();
-    for (key, item) in items {
-        let tail = format!("|{}|{}", item.session_id, item.agent_id);
-        let project_root = key.strip_suffix(&tail).unwrap_or_default();
+    for item in items {
         queued.entry(item.session_id.clone()).or_default().push(json!({
             "text": item.text,
             "images": item.images,
             "agent_id": item.agent_id,
-            "project_root": project_root,
         }));
     }
     queued
@@ -249,7 +243,7 @@ pub(crate) fn spawn_resume(state: Arc<ServerState>) {
                 let message = continue_message(&plan, session, outcome.as_ref());
                 continue_session(&state, &meta, agent, message).await;
             }
-            resend_queued(&state, sid, session).await;
+            resend_queued(&state, &meta, session).await;
         }
     });
 }
@@ -268,10 +262,13 @@ async fn continue_session(state: &Arc<ServerState>, meta: &SessionMeta, agent: &
 /// session when the engine restarted. Each goes the way a typed one does
 /// and takes its place in the turn line as it is sent, so they queue behind
 /// the continue turn in the order they were typed.
-async fn resend_queued(state: &Arc<ServerState>, sid: &str, session: &Value) {
+async fn resend_queued(state: &Arc<ServerState>, meta: &SessionMeta, session: &Value) {
+    let sid = &meta.id;
     for item in session["queued"].as_array().into_iter().flatten() {
+        // The session's folder now, not the one it was queued in: the queue
+        // never depended on it, and a `cd` may have moved the session since.
         let req = serde_json::from_value::<ChatRequest>(json!({
-            "project_root": item["project_root"],
+            "project_root": meta.cwd,
             "session_id": sid,
             "agent_id": item["agent_id"],
             "message": item["text"],
@@ -318,24 +315,23 @@ mod tests {
         }
     }
 
-    /// Each session's queue is kept whole — text, pictures, whom it was
-    /// for and the queue's root — in the order the messages were sent,
+    /// Each session's queue is kept whole — text, pictures and whom it was
+    /// for — in the order the messages were sent,
     /// across the members of a shared session.
     #[test]
     fn the_plan_keeps_each_sessions_queue_in_the_order_it_was_sent() {
         let mut all = HashMap::new();
         all.insert(
-            "/work|s1|ling".to_string(),
+            "s1|ling".to_string(),
             vec![item(10, "s1", "ling", "first"), item(12, "s1", "ling", "third")],
         );
-        all.insert("/work|s1|yinyue".to_string(), vec![item(11, "s1", "yinyue", "second")]);
-        all.insert("/other|s2|claude".to_string(), vec![item(9, "s2", "claude", "alone")]);
+        all.insert("s1|yinyue".to_string(), vec![item(11, "s1", "yinyue", "second")]);
+        all.insert("s2|claude".to_string(), vec![item(9, "s2", "claude", "alone")]);
         let queued = queued_messages(&all);
         let s1: Vec<&str> = queued["s1"].iter().filter_map(|m| m["text"].as_str()).collect();
         assert_eq!(s1, ["first", "second", "third"]);
         assert_eq!(queued["s1"][1]["agent_id"], "yinyue");
-        assert_eq!(queued["s1"][1]["project_root"], "/work");
         assert_eq!(queued["s1"][1]["images"], json!(["second.png"]));
-        assert_eq!(queued["s2"][0]["project_root"], "/other");
+        assert_eq!(queued["s2"][0]["text"], "alone");
     }
 }

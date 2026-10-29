@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { modeSettles, observeTool, staleAsk, permissionRequest, queryPrompt, userMessage, inbox, sessionPermissionSettings, settingSources, turnContext } from './runner';
+import { followCwd, modeSettles, observeTool, staleAsk, permissionRequest, queryPrompt, userMessage, inbox, sessionPermissionSettings, settingSources, turnContext } from './runner';
 
 describe('SDK-owned permissions with Linggen widgets', () => {
   test('observing a tool cannot approve or deny it', async () => {
@@ -144,4 +144,16 @@ test('a later message carries its own uuid, a steered one priority now', () => {
   const steer = userMessage({ prompt: 'stop' }, 'now');
   expect(steer.priority).toBe('now');
   expect((steer as any).uuid).toBeUndefined();
+});
+
+test('the main thread\'s cd, read off tool hooks, reaches the host; a subagent\'s does not', () => {
+  const events: any[] = [];
+  const follow = followCwd((event) => events.push(event));
+  follow({ hook_event_name: 'PreToolUse', cwd: '/repo' });
+  follow({ hook_event_name: 'PreToolUse', cwd: '/tmp', agent_id: 'sub-1' });
+  follow({ hook_event_name: 'PostToolUse', cwd: '/tmp', agent_id: 'sub-1' });
+  expect(events).toEqual([]);
+  follow({ hook_event_name: 'PostToolUse', cwd: '/repo/src' });
+  follow({ hook_event_name: 'PreToolUse', cwd: '/repo/src' });
+  expect(events).toEqual([{ type: 'cwd', cwd: '/repo/src' }]);
 });

@@ -73,13 +73,12 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
             )
         }
         ServerEvent::QueueUpdated {
-            project_root,
             session_id,
             agent_id,
             items,
         } => Some(
             ui.event(
-                format!("queue-{project_root}|{session_id}|{agent_id}"),
+                format!("queue-{session_id}|{agent_id}"),
                 UI_KIND_QUEUE,
             )
             .text(format!(
@@ -89,7 +88,6 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
             ))
             .agent(agent_id)
             .session(Some(session_id))
-            .project_root(Some(project_root))
             .data(QueueData { items }),
         ),
         ServerEvent::TasksUpdated { session_id, tasks } => Some(

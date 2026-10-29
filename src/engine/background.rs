@@ -24,6 +24,8 @@ struct Entry {
     stop: Option<oneshot::Sender<()>>,
     /// A background subagent's run, which a stop cancels.
     run_id: Option<String>,
+    /// Its session is ending (Clear, delete): its end is told to no one.
+    silent: bool,
 }
 
 /// What stopping a task takes.
@@ -70,10 +72,40 @@ impl Background {
             .context("Task cannot be stopped")
     }
 
+    /// Stop every running task of `session`, silently: their ends are told
+    /// to no agent. Returns what each stop takes and the stopped tasks' ids.
+    fn stop_session(&self, session: &str) -> (Vec<Stop>, Vec<String>) {
+        let mut entries = locked(&self.entries);
+        let mut stops = Vec::new();
+        let mut ids = Vec::new();
+        for entry in entries.values_mut().filter(|e| e.session == session && e.task.is_running()) {
+            entry.silent = true;
+            ids.push(entry.task.id.clone());
+            if let Some(stop) = entry.stop.take() {
+                let _ = stop.send(());
+                stops.push(Stop::Sent);
+            } else if let Some(run) = entry.run_id.clone() {
+                stops.push(Stop::CancelRun(run));
+            }
+        }
+        (stops, ids)
+    }
+
+    fn running(&self, ids: &[String]) -> bool {
+        let entries = locked(&self.entries);
+        ids.iter().any(|id| entries.get(id).is_some_and(|e| e.task.is_running()))
+    }
+
+    /// The task's end goes to the agent that started it, unless its session
+    /// is ending.
+    fn tells(&self, id: &str) -> bool {
+        locked(&self.entries).get(id).is_some_and(|e| !e.silent)
+    }
+
     fn put(&self, session: &str, task: BackgroundTask, stop: Option<oneshot::Sender<()>>, run_id: Option<String>) {
         locked(&self.entries).insert(
             task.id.clone(),
-            Entry { session: session.into(), task, stop, run_id },
+            Entry { session: session.into(), task, stop, run_id, silent: false },
         );
     }
 
@@ -195,14 +227,31 @@ pub async fn spawn_shell(
             if quoted.is_empty() { "(none)" } else { &quoted },
             output.display()
         );
+        let notice = manager.background.tells(&id).then_some(notice);
         if let Some(task) = manager.background.update(&id, |t| {
             t.end(state);
             t.summary = Some(summary);
         }) {
-            emit(&manager, &session, &agent, task, Some(notice)).await;
+            emit(&manager, &session, &agent, task, notice).await;
         }
     });
     Ok(task)
+}
+
+/// The session is ending (Clear, delete): stop every task it still runs and
+/// wait, a few seconds at most, until they have ended. Their ends are told to
+/// no agent.
+pub async fn end_session(manager: &AgentManager, session: &str) {
+    let (stops, ids) = manager.background.stop_session(session);
+    for stop in stops {
+        if let Stop::CancelRun(run) = stop {
+            let _ = manager.cancel_run_tree(&run).await;
+        }
+    }
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while manager.background.running(&ids) && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 }
 
 #[cfg(unix)]
@@ -250,11 +299,12 @@ pub async fn track_subagent(
         };
         let clipped: String = text.chars().take(4000).collect();
         let notice = format!("Background subagent {target} ({id2}) ended: {state}.\n{clipped}");
+        let notice = manager.background.tells(&id2).then_some(notice);
         if let Some(task) = manager.background.update(&id2, |t| {
             t.end(state);
             t.summary = Some(clipped.chars().take(200).collect());
         }) {
-            emit(&manager, &session, &agent, task, Some(notice)).await;
+            emit(&manager, &session, &agent, task, notice).await;
         }
     });
     task
@@ -332,5 +382,26 @@ mod tests {
         assert!(bg.stop("s", "sh-1").is_err(), "an ended task cannot be stopped");
         bg.put("s", BackgroundTask::running("ag-1", "subagent", "x"), None, Some("run9".into()));
         assert!(matches!(bg.stop("s", "ag-1"), Ok(Stop::CancelRun(r)) if r == "run9"));
+    }
+
+    #[test]
+    fn an_ending_session_stops_all_its_tasks_silently_and_no_others() {
+        let bg = Background::default();
+        let (tx, mut rx) = oneshot::channel();
+        let (other_tx, mut other_rx) = oneshot::channel();
+        bg.put("s", BackgroundTask::running("sh-1", "shell", "sleep 9"), Some(tx), None);
+        bg.put("s", BackgroundTask::running("ag-1", "subagent", "x"), None, Some("run9".into()));
+        bg.put("t", BackgroundTask::running("sh-2", "shell", "sleep 9"), Some(other_tx), None);
+        let (stops, ids) = bg.stop_session("s");
+        assert_eq!(stops.len(), 2);
+        assert!(stops.iter().any(|s| matches!(s, Stop::CancelRun(r) if r == "run9")));
+        assert!(rx.try_recv().is_ok());
+        assert!(other_rx.try_recv().is_err(), "another session's task was stopped");
+        assert!(bg.running(&ids));
+        assert!(!bg.tells("sh-1") && !bg.tells("ag-1"));
+        assert!(bg.tells("sh-2"));
+        bg.update("sh-1", |t| t.end("stopped"));
+        bg.update("ag-1", |t| t.end("stopped"));
+        assert!(!bg.running(&ids));
     }
 }

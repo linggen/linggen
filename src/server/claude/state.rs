@@ -65,13 +65,70 @@ pub(super) fn auto_verified(dir: &Path) -> bool {
     std::fs::read_to_string(dir.join(AUTO_VERIFIED)).is_ok_and(|v| v == VERSION)
 }
 
-/// Resume only the conversation that ran in this folder.
-pub(super) fn resume_id(dir: &Path, cwd: &str) -> Option<String> {
+/// The conversation to resume and the folder it started in. The SDK keeps a
+/// conversation under the folder it started in, so a resumed runner starts
+/// there again. Only the conversation of this folder resumes: the one that
+/// started here, or the one whose shell last moved here (`followed`).
+pub(super) fn resume(dir: &Path, cwd: &str) -> Option<(String, String)> {
     let checkpoint = read(&checkpoint_path(dir))?;
-    if checkpoint["cwd"].as_str().is_some_and(|saved| saved != cwd) {
-        return None;
+    let id = checkpoint["session_id"].as_str()?.to_owned();
+    let started = checkpoint["cwd"].as_str().unwrap_or(cwd).to_owned();
+    let followed = checkpoint["followed"].as_str();
+    (started == cwd || followed == Some(cwd)).then_some((id, started))
+}
+
+/// The folder a runner for a session now in `cwd` starts in.
+pub(super) fn launch_folder(dir: &Path, cwd: &str) -> String {
+    resume(dir, cwd).map_or_else(|| cwd.to_owned(), |(_, started)| started)
+}
+
+/// The SDK's own copy of the session's conversation under `sdk_state`
+/// (`CLAUDE_CONFIG_DIR`): its transcript and its subagents' folder, found by
+/// the checkpoint's conversation id. Nothing when the id is not a UUID.
+pub(super) fn transcript_paths(dir: &Path, sdk_state: &Path) -> Vec<PathBuf> {
+    let Some(checkpoint) = read(&checkpoint_path(dir)) else {
+        return Vec::new();
+    };
+    let Some(id) = checkpoint["session_id"].as_str().filter(|id| uuid::Uuid::parse_str(id).is_ok())
+    else {
+        return Vec::new();
+    };
+    let projects = sdk_state.join("projects");
+    let encoded = checkpoint["cwd"].as_str().map(encode_folder);
+    let folder = encoded
+        .map(|name| projects.join(name))
+        .filter(|folder| folder.join(format!("{id}.jsonl")).exists())
+        .or_else(|| folder_holding(&projects, id));
+    folder.map_or_else(Vec::new, |folder| {
+        vec![folder.join(format!("{id}.jsonl")), folder.join(id)]
+    })
+}
+
+/// Remove the SDK's copy of the session's conversation ([`transcript_paths`]).
+pub(super) fn forget_transcript(dir: &Path, sdk_state: &Path) {
+    for path in transcript_paths(dir, sdk_state) {
+        let _ = match path.is_dir() {
+            true => std::fs::remove_dir_all(&path),
+            false => std::fs::remove_file(&path),
+        };
     }
-    checkpoint["session_id"].as_str().map(str::to_owned)
+}
+
+/// The SDK names a project folder after its path, every character but a
+/// letter or digit a dash.
+fn encode_folder(cwd: &str) -> String {
+    cwd.chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect()
+}
+
+/// The project folder holding `<id>.jsonl`, for a path the SDK shortened.
+fn folder_holding(projects: &Path, id: &str) -> Option<PathBuf> {
+    std::fs::read_dir(projects)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|folder| folder.join(format!("{id}.jsonl")).is_file())
 }
 
 #[cfg(test)]
@@ -102,15 +159,53 @@ mod tests {
     }
 
     #[test]
-    fn resume_requires_the_same_folder() {
+    fn resume_requires_the_folder_it_started_in_or_last_moved_to() {
         let dir = tempfile::tempdir().unwrap();
         write(
             &checkpoint_path(dir.path()),
-            &json!({"session_id":"abc", "cwd":"/a"}),
+            &json!({"session_id":"abc", "cwd":"/a", "followed":"/a/src"}),
         )
         .unwrap();
-        assert_eq!(resume_id(dir.path(), "/a").as_deref(), Some("abc"));
-        assert_eq!(resume_id(dir.path(), "/b"), None);
+        let started = Some(("abc".to_string(), "/a".to_string()));
+        assert_eq!(resume(dir.path(), "/a"), started);
+        assert_eq!(resume(dir.path(), "/a/src"), started);
+        assert_eq!(launch_folder(dir.path(), "/a/src"), "/a");
+        assert_eq!(resume(dir.path(), "/b"), None);
+        assert_eq!(launch_folder(dir.path(), "/b"), "/b");
+    }
+
+    #[test]
+    fn only_the_sessions_own_transcript_is_forgotten() {
+        let dir = tempfile::tempdir().unwrap();
+        let sdk = tempfile::tempdir().unwrap();
+        let id = "6496888b-e6e3-40d4-8494-dc4fc8025ea5";
+        let project = sdk.path().join("projects/-work-my-repo");
+        std::fs::create_dir_all(project.join(id).join("subagents")).unwrap();
+        std::fs::write(project.join(format!("{id}.jsonl")), "{}").unwrap();
+        std::fs::write(project.join("other.jsonl"), "{}").unwrap();
+        write(&checkpoint_path(dir.path()), &json!({"session_id":id, "cwd":"/work/my.repo"})).unwrap();
+        forget_transcript(dir.path(), sdk.path());
+        assert!(!project.join(format!("{id}.jsonl")).exists());
+        assert!(!project.join(id).exists());
+        assert!(project.join("other.jsonl").exists(), "another conversation was touched");
+
+        // An id that is not a UUID names nothing, however it is spelled.
+        std::fs::write(project.join("x.jsonl"), "{}").unwrap();
+        write(&checkpoint_path(dir.path()), &json!({"session_id":"../x", "cwd":"/work/my.repo"})).unwrap();
+        assert!(transcript_paths(dir.path(), sdk.path()).is_empty());
+    }
+
+    #[test]
+    fn a_transcript_under_a_shortened_folder_name_is_still_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let sdk = tempfile::tempdir().unwrap();
+        let id = "19eed1ef-c68f-4e09-af6c-dd5becc3e1b6";
+        let project = sdk.path().join("projects/-very-long-abc123");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join(format!("{id}.jsonl")), "{}").unwrap();
+        write(&checkpoint_path(dir.path()), &json!({"session_id":id, "cwd":"/very/long/path"})).unwrap();
+        forget_transcript(dir.path(), sdk.path());
+        assert!(!project.join(format!("{id}.jsonl")).exists());
     }
 
     #[test]
