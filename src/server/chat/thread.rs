@@ -53,10 +53,16 @@ pub(crate) struct Reader<'a> {
 
 /// Bring the engine's thread up to the session's before a turn. The cached
 /// thread stands while only its own member has written since it was last
-/// marked; an empty one, or one another member (or a rewrite) has moved
-/// past, is rebuilt from the file — without the message this turn answers,
-/// which the turn adds itself. Returns whether it was rebuilt.
+/// marked; an empty one, one that another member or a rewrite has moved
+/// past, or one the in-loop compactor flagged with `reload_thread`, is
+/// rebuilt from the file —
+/// without the message this turn answers, which the turn adds itself.
+/// Returns whether it was rebuilt.
 pub(super) async fn sync(engine: &mut AgentEngine, ctx: &ChatRunCtx) -> bool {
+    if engine.reload_thread {
+        engine.reload_thread = false;
+        return rebuild(engine, ctx).await;
+    }
     let sid = ctx.session_id.as_deref().unwrap_or("default");
     let store = &ctx.manager.global_sessions;
     if !engine.chat_history.is_empty() {

@@ -41,6 +41,7 @@ pub(crate) use admin::{
     ask_user_response_handler, clear_chat_history_api, compact_chat_api, compact_config_api,
     get_system_prompt_api, pending_ask_user_handler,
 };
+pub(crate) use compact_rows::commit_compaction;
 pub(crate) use handler::{
     chat_handler, dequeue_and_emit, enqueue_if_busy, kickoff_in_session, run_session_turn,
     say_in_session, start_turn, TurnOrigin,

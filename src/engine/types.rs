@@ -301,6 +301,10 @@ pub struct AgentEngine {
     /// after this mark written by another member, or a rewrite since, make
     /// the cache stale and the thread is rebuilt from the file.
     pub thread_mark: Option<ThreadMark>,
+    /// The in-loop compactor wrote a summary into the session file. `mark`
+    /// would otherwise treat the cache as caught up — the rewrite happened
+    /// before it — so the next sync rebuilds from that summary.
+    pub reload_thread: bool,
     // Active skill if any
     pub active_skill: Option<Skill>,
     // Active mission frame, set when the scheduler dispatches a mission.
@@ -597,6 +601,7 @@ impl AgentEngine {
             next_context_id: 1,
             chat_history: Vec::new(),
             thread_mark: None,
+            reload_thread: false,
             active_skill: None,
             active_mission: None,
             available_skills_metadata: Vec::new(),

@@ -6,9 +6,9 @@ use futures_util::StreamExt;
 // Adaptive context window thresholds
 // ---------------------------------------------------------------------------
 //
-// chat_history is intentionally unbounded in memory — messages.jsonl is the
-// durable source of truth and context is bounded by compaction, not by a
-// blunt summary-less cap. See doc/compaction-spec.md.
+// The session file stays the scrollback. A compaction writes one summary row
+// into it; the next turn rebuilds its thread from that row. See
+// doc/session-spec.md.
 
 impl AgentEngine {
     pub(crate) fn context_soft_token_limit(&self) -> usize {
@@ -239,6 +239,23 @@ impl AgentEngine {
         } else {
             chars.div_ceil(4)
         }
+    }
+
+    /// Shorten `text` to about `max_tokens`, keeping its start. Already-short
+    /// text is returned unchanged.
+    pub(crate) fn truncate_to_tokens(text: &str, max_tokens: usize) -> String {
+        const NOTE: &str = "\n...[truncated to fit context]";
+        if Self::estimate_tokens_for_text(text) <= max_tokens {
+            return text.to_string();
+        }
+        let note_tokens = Self::estimate_tokens_for_text(NOTE).max(1);
+        let body_tokens = max_tokens.saturating_sub(note_tokens).max(1);
+        let mut out: String = text.chars().take(body_tokens.saturating_mul(4)).collect();
+        out.push_str(NOTE);
+        if out.chars().count() >= text.chars().count() {
+            return NOTE.trim().to_string();
+        }
+        out
     }
 
     pub(crate) fn estimate_chars_for_messages(messages: &[ChatMessage]) -> usize {
@@ -535,11 +552,15 @@ impl AgentEngine {
             tracing::info!("[compact] tier1 reclaimed ~{reclaimed} tokens, now {token_est}");
         }
 
-        // Tier 2: if still over budget, one structured-summary pass.
+        // Tier 2: if still over budget, one structured-summary pass. The
+        // summary is written into the session, so the next turn starts
+        // there instead of reloading the span this pass just dropped.
         let mut summary_count = 0usize;
+        let mut summary = None;
         if over(token_est, messages.len()) {
             let focus = self.compact_focus.clone();
-            if self.compact_once(messages, stage, focus).await.is_some() {
+            if let Some(text) = self.compact_once(messages, stage, focus).await {
+                summary = Some(text);
                 summary_count = 1;
                 token_est = Self::estimate_tokens_for_messages(messages);
                 tracing::info!(
@@ -549,8 +570,99 @@ impl AgentEngine {
             }
         }
 
+        // A kept tool result can be larger than the window by itself. Shorten
+        // those until the request fits; the same cut is applied to the file
+        // tail below so a reload does not bring the full body back.
+        let shrunk = Self::shrink_tool_messages(messages, soft_token_limit);
+        if shrunk {
+            token_est = Self::estimate_tokens_for_messages(messages);
+            tracing::info!("[compact] tail truncated; now tokens={token_est}");
+        }
+
+        // The summary goes into the file. This turn keeps sending
+        // `messages`; the next turn rebuilds from the summary, which also
+        // picks up tool rows written after this cut. Copying `messages`
+        // into `chat_history` here would drop those rows — `mark` then
+        // treats the cache as caught up.
+        if summary.is_some() {
+            let system = messages
+                .first()
+                .filter(|m| m.role == "system")
+                .map(|m| Self::estimate_tokens_for_text(&m.content))
+                .unwrap_or(0);
+            let live_budget = soft_token_limit.saturating_sub(system).max(1);
+            if self.commit_compacted_thread(summary, live_budget) {
+                self.reload_thread = true;
+            }
+        }
+
         self.accumulated_token_estimate = token_est;
         summary_count
+    }
+
+    /// Write this pass into the session file: the summary row where the
+    /// verbatim tail begins, then shorten tool rows that are still in the
+    /// live tail and larger than the budget. Rows before the summary stay
+    /// for scrollback. A subagent shares its parent's file and does not
+    /// write it.
+    fn commit_compacted_thread(&self, summary: Option<String>, live_budget: usize) -> bool {
+        if self.tools.builtins.delegation_depth() > 0 {
+            return false;
+        }
+        let Some(sid) = self.session_id.clone() else {
+            return false;
+        };
+        let Some(manager) = self.tools.get_manager() else {
+            return false;
+        };
+        let agent = self.agent_id.clone().unwrap_or_else(|| "ling".to_string());
+        let tail_budget = self.context_tail_token_budget();
+        let before = manager.global_sessions.rewrite_count(&sid);
+        if let Err(e) = manager.global_sessions.edit_chat_history(&sid, |rows| {
+            crate::server::commit_compaction(
+                rows,
+                summary.clone(),
+                &agent,
+                tail_budget,
+                live_budget,
+            )
+        }) {
+            tracing::warn!("[compact] could not write the summary into {sid}: {e}");
+            return false;
+        }
+        manager.global_sessions.rewrite_count(&sid) != before
+    }
+
+    /// Shorten the largest tool result, repeatedly, until `messages` fits
+    /// in `limit` or no tool result can shrink further. Returns whether
+    /// any body changed.
+    fn shrink_tool_messages(messages: &mut [ChatMessage], limit: usize) -> bool {
+        let floor = Self::estimate_tokens_for_text(Self::TOOL_EVICTED_PLACEHOLDER).max(8);
+        let mut changed = false;
+        loop {
+            let total = Self::estimate_tokens_for_messages(messages);
+            if total <= limit {
+                break;
+            }
+            let Some((idx, this)) = messages
+                .iter()
+                .enumerate()
+                .filter(|(_, m)| m.role == "tool")
+                .map(|(i, m)| (i, Self::estimate_tokens_for_text(&m.content)))
+                .filter(|(_, t)| *t > floor)
+                .max_by_key(|(_, t)| *t)
+            else {
+                break;
+            };
+            let keep = this.saturating_sub(total - limit).max(floor);
+            let next = Self::truncate_to_tokens(&messages[idx].content, keep);
+            if next == messages[idx].content {
+                break;
+            }
+            messages[idx].content = next;
+            changed = true;
+        }
+        changed
     }
 
     /// Tier 2 core: replace everything between the system prompt and the

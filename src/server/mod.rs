@@ -26,6 +26,7 @@ mod ui_events;
 mod yinyue_moments;
 
 pub use crate::engine::events::{AgentStatusKind, QueuedChatItem, ServerEvent};
+pub(crate) use chat::commit_compaction;
 pub use state::ServerState;
 pub(crate) use ui_events::{map_server_event_to_ui_message, UI_PHASE_DOING, UI_PHASE_DONE};
 

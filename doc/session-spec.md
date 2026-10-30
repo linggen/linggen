@@ -98,10 +98,11 @@ When a git root is detected for the first time, the project is automatically reg
 
 The thread is the session's, and so is its compaction: one summary row (pseudo-sender `compaction`), written into `messages.jsonl` where the verbatim tail begins and read by every member as a system note. The rows before it stay in the file for scrollback; no member's thread reaches past the newest summary. It runs before a turn when the thread outgrows the **smallest** member's context window × `compact_threshold`, and on `/compact`; the session's default member's model writes it. A member's window is read again when its model changes.
 
-Inside one long turn the engine still compacts its working messages in two tiers (aligned with Claude Code), for that turn only:
+Inside one long turn the engine compacts the same way, and writes the result back into the file so the next turn does not reload what this turn just dropped:
 
 1. **Evict** — replace old `tool_result` bodies with a placeholder in place (cheap, structure preserved).
-2. **Summarize** — if still over budget, replace everything between the system prompt and a recent verbatim tail with one model-written structured summary.
+2. **Summarize** — if still over budget, replace everything between the system prompt and a recent verbatim tail with one model-written structured summary, inserted as the `compaction` row above.
+3. **Fit the tail** — a tool result kept verbatim that is itself larger than the window is shortened in the live tail (the row stays; the body is cut). The next turn rebuilds its thread from that summary, so it does not clone the span this turn dropped.
 
 `compact_threshold` (fraction; per-session → `linggen.toml` → 0.95 default) and `compact_focus` (hint fed to the summary prompt) are per-session, set via `POST /api/chat/compact_config`, persisted in `session.yaml`, and re-read on every engine build — so they survive restart and apply to chat-only and mission sessions. `messages.jsonl` is the unbounded source of truth; there is no blunt history cap.
 

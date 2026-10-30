@@ -327,7 +327,7 @@ pub fn answering_agents(rows: &[ChatMsg]) -> Vec<String> {
     out
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChatMsg {
     pub agent_id: String,
     pub from_id: String,
@@ -676,7 +676,11 @@ impl SessionStore {
     ) -> Result<()> {
         let _guard = self.append_lock.lock().unwrap_or_else(|e| e.into_inner());
         let rows = self.get_chat_history(session_id)?;
-        self.rewrite_chat_history(session_id, &edit(rows))
+        let edited = edit(rows.clone());
+        if edited == rows {
+            return Ok(());
+        }
+        self.rewrite_chat_history(session_id, &edited)
     }
 
     /// Replace the entire chat history for a session with the given messages.
