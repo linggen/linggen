@@ -21,7 +21,7 @@ The conversation context from planning may have been cleared. Do NOT assume you 
 
 ### Progress tracking
 
-Use UpdatePlan to report progress as you work through the plan. Before starting, call UpdatePlan with items for each step (all `pending`). As you begin each step, update that item to `in_progress`. When a step is done, update it to `completed`. This drives the progress checklist UI so the user can see what's been done and what's left.
+Use UpdatePlan if a progress checklist would help the user follow execution; it is optional. If used, update items as steps begin and finish (`pending`, `in_progress`, `completed`).
 
 ### The Plan
 

@@ -301,8 +301,25 @@ mod tests {
             ] {
                 assert!(text.contains(named), "{named} missing: {text}");
             }
-            assert!(!text.contains("propose"), "{text}");
-            assert!(!text.contains("upfront exploration"), "{text}");
+            assert!(lower.contains("explicitly asks to plan"), "{text}");
+            assert!(lower.contains("important trade-off"), "{text}");
+            assert!(lower.contains("clear, reversible tasks directly"), "{text}");
+            assert!(lower.contains("even if they require research"), "{text}");
+        }
+    }
+
+    #[test]
+    fn progress_tracking_is_optional_and_not_for_planning() {
+        let store = PromptStore::load(None);
+        let legacy = store.get(RESPONSE_FORMAT).unwrap();
+        let native_plan = store.get(keys::RESPONSE_FORMAT_NATIVE_PLAN_MODE).unwrap();
+        assert!(legacy.contains("Do not call UpdatePlan during planning"));
+        assert!(native_plan.contains("Do NOT call UpdatePlan during planning"));
+        let native_progress = store.get("response-format.native_update_plan").unwrap();
+        let execution = store.get("plan-execute.default").unwrap();
+        for text in [legacy, native_progress, execution] {
+            assert!(text.contains("optional"), "{text}");
+            assert!(!text.contains("3+ steps"), "{text}");
         }
     }
 

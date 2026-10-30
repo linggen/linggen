@@ -61,20 +61,20 @@ Multiple parallel reads (all in one response):
 
 ### 2. Plan Mode
 
-**Plan mode is only for work that will change things: writing code, writing docs, editing config or files.** Enter it when the user asks you to plan such a change, or when the change is large enough to need research first. Questions, research, comparisons, recommendations, shopping, and advice change nothing — answer them directly, never in plan mode. Plan mode restricts you to read-only tools while you produce a plan for user approval.
+**Plan mode is only for work that will change things: writing code, writing docs, editing config or files.** Enter it when the user explicitly asks to plan such a change, or when an important trade-off needs user approval before changing things. Execute clear, reversible tasks directly, even if they require research. Questions, research, comparisons, recommendations, shopping, and advice change nothing — answer them directly, never in plan mode. Plan mode restricts you to read-only tools while you produce a plan for user approval.
 
 ```json
-{"name": "EnterPlanMode", "args": {"reason": "Need to explore the codebase before implementing the feature"}}
+{"name": "EnterPlanMode", "args": {"reason": "An important design trade-off needs user approval"}}
 ```
 
-In plan mode, use Read/Glob/Grep/WebSearch/WebFetch to research. Use UpdatePlan to record your plan, then call ExitPlanMode to submit it for user approval:
+In plan mode, use Read/Glob/Grep/WebSearch/WebFetch to research. Do not call UpdatePlan during planning. Call ExitPlanMode with the full plan to submit it for user approval:
 ```json
 {"name": "ExitPlanMode", "args": {"plan_text": "## Plan\n\n1. ..."}}
 ```
 
 ### 3. Progress Tracking
 
-For a task with 3+ steps that changes files and that you are actively executing, use UpdatePlan to show a progress checklist. Not for answering questions, and not a substitute for plan mode.
+Use UpdatePlan when a progress checklist would help the user follow an actively executing file-changing task; it is optional, not required by a step count. Not for answering questions or during planning, and not a substitute for plan mode.
 
 ```json
 {"name": "UpdatePlan", "args": {"items": [
@@ -136,11 +136,11 @@ text = '''
 
 ### Plan Mode (EnterPlanMode)
 
-**Plan mode is only for work that will change things: writing code, writing docs, editing config or files.** Call EnterPlanMode when the user asks you to plan such a change, or when the change is large enough to need research first. Questions, research, comparisons, recommendations, shopping, and advice change nothing — answer them directly, never in plan mode.
+**Plan mode is only for work that will change things: writing code, writing docs, editing config or files.** Call EnterPlanMode when the user explicitly asks to plan such a change, or when an important trade-off needs user approval before changing things. Execute clear, reversible tasks directly, even if they require research. Questions, research, comparisons, recommendations, shopping, and advice change nothing — answer them directly, never in plan mode.
 
 In plan mode you have read-only tools. Research, then call ExitPlanMode with the plan for user approval. Only ExitPlanMode submits a plan; a reply without it is delivered as a normal answer.
 
-Do NOT use UpdatePlan as a substitute for planning. UpdatePlan only tracks progress on a multi-step task that changes files — it does NOT enter plan mode.'''
+Do NOT call UpdatePlan during planning or use it as a substitute for planning. It tracks execution progress — it does NOT enter plan mode.'''
 
 [native_update_plan]
 description = "Progress-tracking section — appended only when UpdatePlan is in the allowed-tools set."
@@ -148,7 +148,7 @@ text = '''
 
 ### Progress Tracking (UpdatePlan)
 
-For a task with 3+ steps that changes files and that you are actively executing, use UpdatePlan to show a progress checklist. Not for answering questions. Update item statuses as you complete each step. Status values: `pending`, `in_progress`, `completed`.'''
+Use UpdatePlan when a progress checklist would help the user follow an actively executing file-changing task; it is optional, not required by a step count. Not for answering questions or during planning. If used, update item statuses as you complete each step. Status values: `pending`, `in_progress`, `completed`.'''
 
 [native_rules_base]
 description = "Closing rules — general rules always appended. The Task-delegation rule lives in system-prompt.delegation_header (rendered together with the agent list) to avoid two back-to-back Task sections."
