@@ -858,7 +858,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 setShowFileDropdown(false);
               }
             }}
-            placeholder={claudeSession ? "Message Claude… (Shift+Enter newline)" : hint ? `${hint}   ⇥ Tab / →` : mobile ? "Message..." : `Message... (${yinyueHere ? '@ Ling/银月, ' : ''}/f files, / skills, Shift+Enter newline)`}
+            placeholder={hint ? `${hint}   ⇥ Tab / →` : claudeSession ? "Message Claude… (Shift+Enter newline)" : mobile ? "Message..." : `Message... (${yinyueHere ? '@ Ling/银月, ' : ''}/f files, / skills, Shift+Enter newline)`}
             rows={1}
             className={cn(
               "flex-1 bg-transparent border-none outline-none resize-none leading-5 overflow-y-hidden",

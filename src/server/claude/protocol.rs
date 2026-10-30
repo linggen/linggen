@@ -553,6 +553,7 @@ impl ClaudeSession {
                 // result: the input's hint, as a native turn's would be.
                 "suggestion" => {
                     let text = event["text"].as_str().unwrap_or_default().trim();
+                    tracing::debug!("[claude] SDK next-prompt suggestion for {:?}: {text:?}", finished_run);
                     if !text.is_empty() {
                         self.emit(AgentEvent::Followups {
                             agent_id: AGENT_ID.into(),
