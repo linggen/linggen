@@ -17,6 +17,12 @@ use std::path::{Path, PathBuf};
 pub enum PermissionAction {
     AllowOnce,
     AllowSession,
+    AllowDirectory {
+        all: bool,
+        mode: PermissionMode,
+        /// Directory the user picked. `"*"` when `all` is set.
+        path: String,
+    },
     Deny,
     /// User denied with a custom message to relay to the model.
     DenyWithMessage(String),
@@ -75,7 +81,10 @@ pub enum PermissionCheckResult {
 pub enum PromptKind {
     ExceedsCeiling {
         target_mode: PermissionMode,
+        /// The file or directory the action touches, for the card.
         path: String,
+        /// Grant choices, broadest first: the repo root down to the file's directory.
+        directories: Vec<String>,
         tool_summary: String,
     },
 }
@@ -694,6 +703,14 @@ pub fn effective_mode_for_path(path_modes: &[PathMode], target: &Path) -> Option
     let mut best: Option<(&PathMode, usize)> = None;
 
     for pm in path_modes {
+        // The session-wide wildcard is the least-specific grant; a concrete
+        // path can still override it, including with a lower mode.
+        if pm.path == "*" {
+            if best.is_none() {
+                best = Some((pm, 0));
+            }
+            continue;
+        }
         let grant_path = normalize_path(&pm.path);
         if target_str.starts_with(&grant_path)
             && (target_str.len() == grant_path.len()
@@ -879,13 +896,12 @@ pub fn check_permission(
                     }
                     let mode = effective_mode_for_path(&session_perms.path_modes, arg_path);
                     if mode.is_none_or(|m| action_tier > m) {
-                        let grant_path = grant_path_for_prompt(tool, arg_path, session_cwd);
-                        let path_str = display_path(&grant_path);
-                        return PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling {
-                            target_mode: action_tier,
-                            path: path_str,
-                            tool_summary: format!("{} {}", tool, cmd),
-                        });
+                        return needs_prompt(
+                            arg_path,
+                            session_cwd,
+                            action_tier,
+                            format!("{} {}", tool, cmd),
+                        );
                     }
                 }
                 return PermissionCheckResult::Allowed;
@@ -929,15 +945,32 @@ pub fn check_permission(
     }
 
     // 5. Exceeds ceiling (or no grant) — needs upgrade prompt.
-    let grant_path = grant_path_for_prompt(tool, &target_path, session_cwd);
-    let path_str = display_path(&grant_path);
     let rule_arg = bash_command.or(file_path);
     let summary = rule_arg.unwrap_or(tool).to_string();
+    needs_prompt(
+        &target_path,
+        session_cwd,
+        action_tier,
+        format!("{} {}", tool, summary),
+    )
+}
 
+fn needs_prompt(
+    target: &Path,
+    session_cwd: &Path,
+    mode: PermissionMode,
+    summary: String,
+) -> PermissionCheckResult {
+    let target = PathBuf::from(normalize_path(&target.to_string_lossy()));
+    let directories = grant_directories(&target, session_cwd)
+        .iter()
+        .map(|dir| display_path(dir))
+        .collect();
     PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling {
-        target_mode: action_tier,
-        path: path_str,
-        tool_summary: format!("{} {}", tool, summary),
+        target_mode: mode,
+        path: display_path(&target),
+        directories,
+        tool_summary: summary,
     })
 }
 
@@ -1230,23 +1263,89 @@ fn is_upward_relative(token: &str) -> bool {
     token.split('/').any(|c| c == "..")
 }
 
-/// Compute the path to offer in the "Switch this folder to {mode}" option.
-/// Compared with every `..` collapsed: `<cwd>/../other` is not under the
-/// session's folder, so offering the folder (already granted, covering
-/// nothing new) would leave the same prompt to come back.
-fn grant_path_for_prompt(tool: &str, target: &Path, session_cwd: &Path) -> PathBuf {
-    if matches!(tool, "Grep" | "Glob" | "Task") {
-        return target.to_path_buf();
-    }
+/// Directories the user can grant, broadest first.
+///
+/// The chain runs from the file's directory up to the git repo root. With no
+/// repo root it stops before the home directory, so a path `a/b/c/file` can
+/// be granted at `a` without granting every directory. `/` and system
+/// directories such as `/dev` are not offered.
+fn grant_directories(target: &Path, _session_cwd: &Path) -> Vec<PathBuf> {
     let target = PathBuf::from(normalize_path(&target.to_string_lossy()));
-    let cwd = PathBuf::from(normalize_path(&session_cwd.to_string_lossy()));
-    if target.starts_with(&cwd) {
-        session_cwd.to_path_buf()
-    } else if target.is_dir() {
+    let start = if target.is_dir() {
         target
     } else {
-        target.parent().map(Path::to_path_buf).unwrap_or(target)
+        target
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or(target)
+    };
+    if ungrantable(&start) {
+        return Vec::new();
     }
+    let mut leaf_to_root = Vec::new();
+    let mut cur = start;
+    for _ in 0..12 {
+        leaf_to_root.push(cur.clone());
+        if cur.join(".git").exists() {
+            break;
+        }
+        let Some(parent) = cur.parent() else { break };
+        if parent.as_os_str().is_empty()
+            || parent == Path::new("/")
+            || ungrantable(parent)
+            || is_home(parent)
+        {
+            break;
+        }
+        cur = parent.to_path_buf();
+    }
+    thin_directories(leaf_to_root)
+}
+
+fn is_home(path: &Path) -> bool {
+    dirs::home_dir().is_some_and(|home| {
+        PathBuf::from(normalize_path(&home.to_string_lossy())) == path
+    })
+}
+
+/// A grant here is either the whole machine or a device path such as `/dev`.
+fn ungrantable(path: &Path) -> bool {
+    let text = path.to_string_lossy();
+    const ROOTS: &[&str] = &[
+        "/dev",
+        "/tmp",
+        "/private",
+        "/var",
+        "/usr",
+        "/bin",
+        "/sbin",
+        "/etc",
+        "/opt",
+        "/System",
+        "/Library",
+        "/Applications",
+    ];
+    text == "/"
+        || ROOTS
+            .iter()
+            .any(|root| text == *root || text.starts_with(&format!("{root}/")))
+}
+
+/// Keep the repo root and the directories closest to the file. The middle of
+/// a very deep path is dropped so the card stays short.
+fn thin_directories(leaf_to_root: Vec<PathBuf>) -> Vec<PathBuf> {
+    const MAX: usize = 6;
+    if leaf_to_root.len() <= MAX {
+        let mut dirs = leaf_to_root;
+        dirs.reverse();
+        return dirs;
+    }
+    let root = leaf_to_root.last().unwrap().clone();
+    let mut closest: Vec<PathBuf> = leaf_to_root[..MAX - 1].to_vec();
+    closest.reverse();
+    let mut out = vec![root.clone()];
+    out.extend(closest.into_iter().filter(|dir| *dir != root));
+    out
 }
 
 fn display_path(path: &Path) -> String {

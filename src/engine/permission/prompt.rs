@@ -4,10 +4,11 @@
 //! exceeds the session ceiling. Pure functions — no I/O, no state.
 
 use crate::engine::render::normalize_tool_path_arg;
-use crate::engine::tools::{AskUserOption, AskUserQuestion};
+use crate::engine::tools::{
+    AskUserAnswer, AskUserOption, AskUserQuestion, DirectoryPermissionMetadata,
+};
 use std::path::Path;
 
-#[cfg(test)]
 use super::model::PermissionAction;
 use super::model::PermissionMode;
 
@@ -78,42 +79,102 @@ pub fn build_exceeds_ceiling_question(
     tool_summary: &str,
     target_mode: &PermissionMode,
     path: &str,
+    directories: &[String],
 ) -> AskUserQuestion {
     AskUserQuestion {
         question: tool_summary.to_string(),
         header: "Permission".to_string(),
-        options: vec![
-            AskUserOption {
-                label: format!("Switch this folder to {}", target_mode),
-                description: Some(format!("Grants {} on {} and children", target_mode, path)),
+        permission: Some(DirectoryPermissionMetadata {
+            path: path.to_string(),
+            mode: *target_mode,
+        }),
+        options: {
+            // One button per directory, broadest first, so the repo root is a
+            // single click. Then the same level everywhere, admin everywhere
+            // when this ask is below admin, and Deny.
+            let mut options = Vec::new();
+            for dir in directories {
+                options.push(AskUserOption {
+                    label: format!("grant:at:{target_mode}:{dir}"),
+                    description: Some(format!(
+                        "{dir} and its children — {target_mode} for this session"
+                    )),
+                    preview: None,
+                });
+            }
+            options.push(AskUserOption {
+                label: format!("grant:all:{target_mode}"),
+                description: Some(format!(
+                    "All directories; replaces existing directory grants — {target_mode} for this session"
+                )),
                 preview: None,
-            },
-            AskUserOption {
-                label: "Allow once".to_string(),
-                description: Some("One-time approval, no persistence".to_string()),
+            });
+            if *target_mode != PermissionMode::Admin {
+                options.push(AskUserOption {
+                    label: "grant:all:admin".into(),
+                    description: Some(
+                        "All directories; replaces existing directory grants — admin for this session"
+                            .into(),
+                    ),
+                    preview: None,
+                });
+            }
+            options.push(AskUserOption {
+                label: "Deny".into(),
+                description: Some("Block this action".into()),
                 preview: None,
-            },
-            AskUserOption {
-                label: "Deny".to_string(),
-                description: Some("Block this action".to_string()),
-                preview: None,
-            },
-        ],
+            });
+            options
+        },
         multi_select: false,
     }
 }
 
-/// Parse user response to an ExceedsCeiling prompt.
-#[cfg(test)]
+/// A native permission answer must be exactly one offered option for question zero.
+/// A directory answer grants that offered path at the needed level. Anything
+/// that was not offered denies, so a client cannot name its own path.
 pub fn parse_exceeds_ceiling_answer(
-    selected: &str,
+    answers: &[AskUserAnswer],
     target_mode: &PermissionMode,
+    offered: &[String],
 ) -> PermissionAction {
-    if selected == "Allow once" {
-        PermissionAction::AllowOnce
-    } else if selected == format!("Switch this folder to {}", target_mode) {
-        PermissionAction::AllowSession
-    } else {
-        PermissionAction::Deny
+    if answers.len() != 1 || answers[0].question_index != 0 {
+        return PermissionAction::Deny;
     }
+    let answer = &answers[0];
+    if answer.custom_text.as_deref().is_some_and(|s| !s.is_empty()) {
+        return PermissionAction::Deny;
+    }
+    if answer.selected.len() != 1 {
+        return PermissionAction::Deny;
+    }
+    let selected = answer.selected[0].as_str();
+    if !offered.iter().any(|label| label == selected) {
+        return PermissionAction::Deny;
+    }
+    if let Some(dir) = selected
+        .strip_prefix(&format!("grant:at:{target_mode}:"))
+        .filter(|dir| !dir.is_empty())
+    {
+        return PermissionAction::AllowDirectory {
+            all: false,
+            mode: *target_mode,
+            path: dir.to_string(),
+        };
+    }
+    if selected == format!("grant:all:{target_mode}") {
+        return PermissionAction::AllowDirectory {
+            all: true,
+            mode: *target_mode,
+            path: "*".to_string(),
+        };
+    }
+    if selected == "grant:all:admin" {
+        return PermissionAction::AllowDirectory {
+            all: true,
+            mode: PermissionMode::Admin,
+            path: "*".to_string(),
+        };
+    }
+    PermissionAction::Deny
 }

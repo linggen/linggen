@@ -59,32 +59,41 @@ impl AgentEngine {
         let agent_id = self.agent_id.clone().unwrap_or_default();
 
         info!("Permission: awaiting user approval for '{}'", tool);
+        // The offered grants are for this level only; parse against it.
+        let target_mode = question.permission.as_ref().map(|meta| meta.mode);
+        let offered: Vec<String> = question.options.iter().map(|opt| opt.label.clone()).collect();
         let questions = vec![question];
-        let _ = bridge
-            .events_tx
-            .send(crate::engine::events::ServerEvent::AskUser {
-                agent_id: agent_id.clone(),
-                question_id: question_id.clone(),
-                questions: questions.clone(),
-                session_id: bridge.session_id.clone(),
-            });
-
         let (tx, rx) = tokio::sync::oneshot::channel();
         bridge.pending.lock().await.insert(
             question_id.clone(),
             tools::PendingAskUser {
-                agent_id,
-                questions,
+                agent_id: agent_id.clone(),
+                questions: questions.clone(),
                 sender: tx,
                 session_id: bridge.session_id.clone(),
             },
         );
+        let _ = bridge
+            .events_tx
+            .send(crate::engine::events::ServerEvent::AskUser {
+                agent_id,
+                question_id: question_id.clone(),
+                questions,
+                session_id: bridge.session_id.clone(),
+            });
 
         let response = tokio::time::timeout(std::time::Duration::from_secs(8 * 3600), rx).await;
         bridge.pending.lock().await.remove(&question_id);
 
         match response {
             Ok(Ok(answers)) => {
+                if let Some(target_mode) = target_mode {
+                    return Some(permission::parse_exceeds_ceiling_answer(
+                        &answers,
+                        &target_mode,
+                        &offered,
+                    ));
+                }
                 let answer = answers.first();
                 let custom = answer.and_then(|a| a.custom_text.as_deref()).unwrap_or("");
                 if !custom.is_empty() {
@@ -540,74 +549,106 @@ impl AgentEngine {
             .and_then(|def| def.tier.as_deref())
             .and_then(permission::parse_skill_tier);
 
-        let check_result = permission::check_permission(
-            t.canonical,
-            bash_command.as_deref(),
-            file_path_arg.as_deref(),
-            &self.tools.builtins.cwd(),
-            &self.session_permissions,
-            skill_tier_override,
-        );
+        let mut last_grant: Option<(String, permission::PermissionMode)> = None;
+        loop {
+            let check_result = permission::check_permission(
+                t.canonical,
+                bash_command.as_deref(),
+                file_path_arg.as_deref(),
+                &self.tools.builtins.cwd(),
+                &self.session_permissions,
+                skill_tier_override,
+            );
 
-        let prompt_kind = match check_result {
-            permission::PermissionCheckResult::Allowed => return None,
-            permission::PermissionCheckResult::Blocked(reason) => {
-                info!("Permission blocked: {} — {}", t.canonical, reason);
+            let prompt_kind = match check_result {
+                permission::PermissionCheckResult::Allowed => return None,
+                permission::PermissionCheckResult::Blocked(reason) => {
+                    info!("Permission blocked: {} — {}", t.canonical, reason);
+                    let msg = self.permission_denied_msg(t);
+                    return self.refuse_saved(t, messages, msg).await;
+                }
+                permission::PermissionCheckResult::NeedsPrompt(prompt_kind) => prompt_kind,
+            };
+
+            // Non-interactive sessions (mission, proxy consumer) cannot prompt —
+            // return permission-needed immediately.
+            if !self.session_permissions.interactive {
                 let msg = self.permission_denied_msg(t);
                 return self.refuse_saved(t, messages, msg).await;
             }
-            permission::PermissionCheckResult::NeedsPrompt(prompt_kind) => prompt_kind,
-        };
 
-        // Non-interactive sessions (mission, proxy consumer) cannot prompt —
-        // return permission-needed immediately.
-        if !self.session_permissions.interactive {
-            let msg = self.permission_denied_msg(t);
-            return self.refuse_saved(t, messages, msg).await;
-        }
-
-        let permission::PromptKind::ExceedsCeiling {
-            target_mode,
-            path,
-            tool_summary,
-        } = prompt_kind;
-        let question =
-            permission::build_exceeds_ceiling_question(&tool_summary, &target_mode, &path);
-        match self.ask_permission_raw(t.canonical, question).await {
-            Some(permission::PermissionAction::AllowOnce) => None,
-            Some(permission::PermissionAction::AllowSession) => {
-                // Switch mode — update path_modes and save.
-                self.session_permissions.set_path_mode(&path, target_mode);
-                if let Some(ref sdir) = self.session_dir {
-                    self.session_permissions.save(sdir);
-                }
-                // Notify UI so the mode badge updates.
-                if self.tools.get_manager().is_some() {
-                    self.emit(crate::engine::agent::AgentEvent::StateUpdated)
-                        .await;
-                }
-                None
-            }
-            Some(permission::PermissionAction::Deny) => {
+            let permission::PromptKind::ExceedsCeiling {
+                target_mode,
+                path,
+                directories,
+                tool_summary,
+            } = prompt_kind;
+            if last_grant
+                .as_ref()
+                .is_some_and(|(previous, _)| previous == &path)
+            {
                 let msg = self.permission_denied_msg(t);
-                self.refuse_saved(t, messages, msg).await
+                return self.refuse_saved(t, messages, msg).await;
             }
-            Some(permission::PermissionAction::DenyWithMessage(user_msg)) => {
-                let summary = self.permission_summary(t);
-                let msg = format!(
-                    "Permission denied by user for {} '{}'. User says: {}",
-                    t.canonical, summary, user_msg
-                );
-                self.refuse_saved(t, messages, msg).await
-            }
-            None => {
-                let msg = self
-                    .prompt_store
-                    .render_or_fallback(crate::prompts::keys::PERMISSION_TIMEOUT, &[]);
-                let _ = self.persist_assistant_message(&msg, t.session_id).await;
-                Some(PreExecOutcome::Blocked(LoopControl::Return(
-                    AgentOutcome::None,
-                )))
+            let question = permission::build_exceeds_ceiling_question(
+                &tool_summary,
+                &target_mode,
+                &path,
+                &directories,
+            );
+            match self.ask_permission_raw(t.canonical, question).await {
+                Some(permission::PermissionAction::AllowOnce) => return None,
+                Some(permission::PermissionAction::AllowDirectory { all, mode, path: chosen }) => {
+                    // Do not use a session grant when persisting it failed.
+                    let mut updated = self.session_permissions.clone();
+                    let grant_path = if all { "*" } else { chosen.as_str() };
+                    updated.set_path_mode(grant_path, mode);
+                    if let Some(ref sdir) = self.session_dir {
+                        if let Err(error) = updated.try_save(sdir) {
+                            warn!("Permission grant could not be saved: {}", error);
+                            let msg = format!(
+                                "Permission denied: unable to save directory grant: {}",
+                                error
+                            );
+                            return self.refuse_saved(t, messages, msg).await;
+                        }
+                    }
+                    self.session_permissions = updated;
+                    last_grant = Some((path.clone(), mode));
+                    // Notify UI so the mode badge updates.
+                    if self.tools.get_manager().is_some() {
+                        self.emit(crate::engine::agent::AgentEvent::StateUpdated)
+                            .await;
+                    }
+                    if mode < target_mode {
+                        let msg = self.permission_denied_msg(t);
+                        return self.refuse_saved(t, messages, msg).await;
+                    }
+                    continue;
+                }
+                Some(
+                    permission::PermissionAction::AllowSession | permission::PermissionAction::Deny,
+                ) => {
+                    let msg = self.permission_denied_msg(t);
+                    return self.refuse_saved(t, messages, msg).await;
+                }
+                Some(permission::PermissionAction::DenyWithMessage(user_msg)) => {
+                    let summary = self.permission_summary(t);
+                    let msg = format!(
+                        "Permission denied by user for {} '{}'. User says: {}",
+                        t.canonical, summary, user_msg
+                    );
+                    return self.refuse_saved(t, messages, msg).await;
+                }
+                None => {
+                    let msg = self
+                        .prompt_store
+                        .render_or_fallback(crate::prompts::keys::PERMISSION_TIMEOUT, &[]);
+                    let _ = self.persist_assistant_message(&msg, t.session_id).await;
+                    return Some(PreExecOutcome::Blocked(LoopControl::Return(
+                        AgentOutcome::None,
+                    )));
+                }
             }
         }
     }

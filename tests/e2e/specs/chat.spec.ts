@@ -119,7 +119,7 @@ test.describe('a live run', () => {
     await page.getByRole('button', { name: 'New chat', exact: true }).click();
     await send(page, 'Wait a while.');
     const c = chat(page);
-    await c.getByTestId('permission-card').getByRole('button', { name: /^Allow once/ }).click();
+    await c.getByTestId('permission-card').getByTestId('permission-directory').last().click();
     await expect(c.locator('[data-testid="tool-call"][data-tool="Bash"]')).toHaveAttribute('data-status', 'running');
     await expect(c.getByTestId('chat-input')).toHaveAttribute('data-busy', 'true');
     await c.getByRole('button', { name: 'Stop agent' }).click();
@@ -187,7 +187,7 @@ test.describe('a stopped run, then a turn with a tool', () => {
     await page.getByRole('button', { name: 'New chat', exact: true }).click();
     await send(page, 'Draw a half-auto one.');
     const c = chat(page);
-    await c.getByTestId('permission-card').getByRole('button', { name: /^Allow once/ }).click();
+    await c.getByTestId('permission-card').getByTestId('permission-directory').last().click();
     const bash = c.locator('[data-testid="tool-call"][data-tool="Bash"]');
     await expect(bash.first()).toHaveAttribute('data-status', 'running');
     await c.getByRole('button', { name: 'Stop agent' }).click();
@@ -244,7 +244,7 @@ test.describe('a mid-turn switch to another session and back', () => {
     await page.getByRole('button', { name: 'New chat', exact: true }).click();
     await send(page, 'Take a nap.');
     const c = chat(page);
-    await c.getByTestId('permission-card').getByRole('button', { name: /^Allow once/ }).click();
+    await c.getByTestId('permission-card').getByTestId('permission-directory').last().click();
     const bash = c.locator('[data-testid="tool-call"][data-tool="Bash"]');
     await expect(bash).toHaveAttribute('data-status', 'running');
 

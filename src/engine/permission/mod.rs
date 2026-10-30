@@ -23,7 +23,9 @@ pub use model::{
     check_permission, effective_mode_for_path, parse_skill_tier, PathMode, PermissionAction,
     PermissionCheckResult, PermissionMode, PromptKind,
 };
-pub use prompt::{build_exceeds_ceiling_question, permission_target_summary};
+pub use prompt::{
+    build_exceeds_ceiling_question, parse_exceeds_ceiling_answer, permission_target_summary,
+};
 pub use store::SessionPermissions;
 
 #[cfg(test)]
@@ -32,7 +34,6 @@ mod tests {
         classify_bash_command, extract_command_paths, is_hardcoded_deny, tool_action_tier,
         BashClass,
     };
-    use super::prompt::parse_exceeds_ceiling_answer;
     use super::*;
     use std::fs;
     use std::path::Path;
@@ -106,6 +107,105 @@ mod tests {
         sp.set_path_mode("~/workspace/linggen", PermissionMode::Edit);
         assert_eq!(sp.path_modes.len(), 1);
         assert_eq!(sp.path_modes[0].path, "~/workspace/linggen");
+    }
+
+    #[test]
+    fn wildcard_matches_every_path_but_concrete_grants_are_more_specific() {
+        for modes in [
+            vec![
+                PathMode {
+                    path: "*".into(),
+                    mode: PermissionMode::Admin,
+                },
+                PathMode {
+                    path: "/wildcard-test/private".into(),
+                    mode: PermissionMode::Read,
+                },
+            ],
+            vec![
+                PathMode {
+                    path: "/wildcard-test/private".into(),
+                    mode: PermissionMode::Read,
+                },
+                PathMode {
+                    path: "*".into(),
+                    mode: PermissionMode::Admin,
+                },
+            ],
+        ] {
+            assert_eq!(
+                effective_mode_for_path(&modes, Path::new("/unrelated/file")),
+                Some(PermissionMode::Admin)
+            );
+            assert_eq!(
+                effective_mode_for_path(&modes, Path::new("/wildcard-test/private/file")),
+                Some(PermissionMode::Read)
+            );
+            assert_eq!(
+                effective_mode_for_path(&modes, Path::new("/wildcard-test/private-other")),
+                Some(PermissionMode::Admin)
+            );
+        }
+    }
+
+    #[test]
+    fn setting_wildcard_replaces_concrete_grants_and_can_be_overridden() {
+        let mut sp = SessionPermissions::default();
+        sp.set_path_mode("/wildcard-test/a", PermissionMode::Admin);
+        sp.set_path_mode("/wildcard-test/b", PermissionMode::Read);
+        sp.set_path_mode("*", PermissionMode::Edit);
+        assert_eq!(sp.path_modes.len(), 1);
+        assert_eq!(sp.path_modes[0].path, "*");
+        assert_eq!(sp.path_modes[0].mode, PermissionMode::Edit);
+
+        sp.set_path_mode("/wildcard-test/a", PermissionMode::Read);
+        assert_eq!(
+            effective_mode_for_path(&sp.path_modes, Path::new("/wildcard-test/a/file")),
+            Some(PermissionMode::Read)
+        );
+        assert_eq!(
+            effective_mode_for_path(&sp.path_modes, Path::new("/wildcard-test/b/file")),
+            Some(PermissionMode::Edit)
+        );
+        sp.set_path_mode("*", PermissionMode::Chat);
+        assert_eq!(sp.path_modes.len(), 1);
+        assert_eq!(sp.path_modes[0].mode, PermissionMode::Chat);
+    }
+
+    #[test]
+    fn regression_bash_mutations_are_not_read() {
+        let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut sp = SessionPermissions::default();
+        sp.set_path_mode("*", PermissionMode::Read);
+        for cmd in [
+            "echo hello > out.txt && true",
+            "echo \"$(touch out.txt)\"",
+            "git branch example",
+            "find . -delete",
+            "docker system prune",
+            "ls > /dev/null-output",
+        ] {
+            let result = check_permission("Bash", Some(cmd), None, cwd, &sp, None);
+            assert!(matches!(result, PermissionCheckResult::NeedsPrompt(_)), "{cmd}: {result:?}");
+        }
+    }
+
+    #[test]
+    fn regression_quoted_pipe_is_not_a_command_separator() {
+        let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut sp = SessionPermissions::default();
+        sp.set_path_mode("*", PermissionMode::Read);
+        let result = check_permission("Bash", Some("echo 'a|b'"), None, cwd, &sp, None);
+        assert!(matches!(result, PermissionCheckResult::Allowed), "{result:?}");
+    }
+
+    #[test]
+    fn regression_copy_from_temp_checks_relative_output() {
+        let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut sp = SessionPermissions::default();
+        sp.set_path_mode(&cwd.to_string_lossy(), PermissionMode::Read);
+        let result = check_permission("Bash", Some("cp /tmp/source ./out"), None, cwd, &sp, None);
+        assert!(matches!(result, PermissionCheckResult::NeedsPrompt(_)), "{result:?}");
     }
 
     #[test]
@@ -720,26 +820,159 @@ mod tests {
 
     #[test]
     fn test_build_exceeds_ceiling_question() {
-        let q = build_exceeds_ceiling_question("Edit src/main.rs", &PermissionMode::Edit, "~/work");
-        assert_eq!(q.options.len(), 3);
-        assert_eq!(q.options[0].label, "Switch this folder to edit");
-        assert_eq!(q.options[1].label, "Allow once");
-        assert_eq!(q.options[2].label, "Deny");
+        let dirs = vec!["~/repo".to_string(), "~/repo/a".to_string(), "~/repo/a/b".to_string()];
+        let labels = |mode: PermissionMode| -> Vec<String> {
+            build_exceeds_ceiling_question("x", &mode, "~/repo/a/b/aaa.rs", &dirs)
+                .options
+                .into_iter()
+                .map(|o| o.label)
+                .collect()
+        };
+        // Below admin: each directory, the level everywhere, admin everywhere, Deny.
+        assert_eq!(
+            labels(PermissionMode::Read),
+            [
+                "grant:at:read:~/repo",
+                "grant:at:read:~/repo/a",
+                "grant:at:read:~/repo/a/b",
+                "grant:all:read",
+                "grant:all:admin",
+                "Deny"
+            ]
+        );
+        // Admin request: the directories, admin everywhere, Deny.
+        assert_eq!(
+            labels(PermissionMode::Admin),
+            [
+                "grant:at:admin:~/repo",
+                "grant:at:admin:~/repo/a",
+                "grant:at:admin:~/repo/a/b",
+                "grant:all:admin",
+                "Deny"
+            ]
+        );
+        let q = build_exceeds_ceiling_question(
+            "Edit src/main.rs",
+            &PermissionMode::Edit,
+            "~/repo/a/b/aaa.rs",
+            &dirs,
+        );
+        let metadata = q.permission.unwrap();
+        assert_eq!(metadata.path, "~/repo/a/b/aaa.rs");
+        assert_eq!(metadata.mode, PermissionMode::Edit);
     }
 
     #[test]
     fn test_parse_exceeds_ceiling_answer() {
-        let mode = PermissionMode::Edit;
+        use crate::engine::tools::AskUserAnswer;
+        let answer = |index, selections: Vec<&str>| AskUserAnswer {
+            question_index: index,
+            selected: selections.into_iter().map(str::to_owned).collect(),
+            custom_text: None,
+        };
+        let owned = |labels: &[&str]| labels.iter().map(|s| (*s).to_string()).collect::<Vec<_>>();
+        let admin = PermissionMode::Admin;
+        let admin_offer = owned(&[
+            "grant:at:admin:~/repo",
+            "grant:at:admin:~/repo/a",
+            "grant:all:admin",
+            "Deny",
+        ]);
         assert_eq!(
-            parse_exceeds_ceiling_answer("Switch this folder to edit", &mode),
-            PermissionAction::AllowSession,
+            parse_exceeds_ceiling_answer(
+                &[answer(0, vec!["grant:at:admin:~/repo/a"])],
+                &admin,
+                &admin_offer
+            ),
+            PermissionAction::AllowDirectory {
+                all: false,
+                mode: PermissionMode::Admin,
+                path: "~/repo/a".to_string(),
+            }
         );
         assert_eq!(
-            parse_exceeds_ceiling_answer("Allow once", &mode),
-            PermissionAction::AllowOnce,
+            parse_exceeds_ceiling_answer(&[answer(0, vec!["grant:all:admin"])], &admin, &admin_offer),
+            PermissionAction::AllowDirectory {
+                all: true,
+                mode: PermissionMode::Admin,
+                path: "*".to_string(),
+            }
         );
         assert_eq!(
-            parse_exceeds_ceiling_answer("Deny", &mode),
+            parse_exceeds_ceiling_answer(&[answer(0, vec!["Deny"])], &admin, &admin_offer),
+            PermissionAction::Deny
+        );
+        // A path that was not on the card cannot be granted.
+        assert_eq!(
+            parse_exceeds_ceiling_answer(
+                &[answer(0, vec!["grant:at:admin:/"])],
+                &admin,
+                &admin_offer
+            ),
+            PermissionAction::Deny
+        );
+        let read = PermissionMode::Read;
+        let read_offer = owned(&[
+            "grant:at:read:~/repo",
+            "grant:all:read",
+            "grant:all:admin",
+            "Deny",
+        ]);
+        assert_eq!(
+            parse_exceeds_ceiling_answer(&[answer(0, vec!["grant:all:admin"])], &read, &read_offer),
+            PermissionAction::AllowDirectory {
+                all: true,
+                mode: PermissionMode::Admin,
+                path: "*".to_string(),
+            }
+        );
+        assert_eq!(
+            parse_exceeds_ceiling_answer(
+                &[answer(0, vec!["grant:at:read:~/repo"])],
+                &read,
+                &read_offer
+            ),
+            PermissionAction::AllowDirectory {
+                all: false,
+                mode: PermissionMode::Read,
+                path: "~/repo".to_string(),
+            }
+        );
+        assert_eq!(
+            parse_exceeds_ceiling_answer(
+                &[answer(0, vec!["grant:at:admin:~/repo"])],
+                &read,
+                &read_offer
+            ),
+            PermissionAction::Deny
+        );
+        for label in [
+            "grant:directory:edit",
+            "grant:all:read",
+            "grant:all:root",
+            "Allow once",
+            "Switch this folder to admin",
+        ] {
+            assert_eq!(
+                parse_exceeds_ceiling_answer(&[answer(0, vec![label])], &admin, &admin_offer),
+                PermissionAction::Deny,
+                "{label} must deny"
+            );
+        }
+        assert_eq!(
+            parse_exceeds_ceiling_answer(
+                &[answer(0, vec!["grant:all:admin", "Deny"])],
+                &admin,
+                &admin_offer
+            ),
+            PermissionAction::Deny
+        );
+        assert_eq!(
+            parse_exceeds_ceiling_answer(&[answer(1, vec!["grant:all:admin"])], &admin, &admin_offer),
+            PermissionAction::Deny
+        );
+        assert_eq!(
+            parse_exceeds_ceiling_answer(&[], &admin, &admin_offer),
             PermissionAction::Deny
         );
     }
@@ -751,6 +984,42 @@ mod tests {
             permission_target_summary("Bash", &args, Path::new("/tmp")),
             "cargo build"
         );
+    }
+
+    #[test]
+    fn directory_buttons_run_from_the_repo_root_to_the_file() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join(format!("perm-ancestors-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let repo = root.join("repo");
+        std::fs::create_dir_all(repo.join("a/b/c")).unwrap();
+        std::fs::create_dir(repo.join(".git")).unwrap();
+        let file = repo.join("a/b/c/aaa.rs");
+        std::fs::write(&file, "x").unwrap();
+        let sp = SessionPermissions::default();
+        let result = check_permission(
+            "Write",
+            None,
+            Some(file.to_str().unwrap()),
+            &repo,
+            &sp,
+            None,
+        );
+        match result {
+            PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling {
+                directories,
+                path,
+                ..
+            }) => {
+                assert!(path.ends_with("aaa.rs"), "{path}");
+                assert!(directories[0].ends_with("/repo"), "{}", directories[0]);
+                assert!(directories.iter().any(|dir| dir.ends_with("/repo/a")));
+                assert!(directories.last().unwrap().ends_with("/c"), "{directories:?}");
+            }
+            other => panic!("expected a prompt, got {other:?}"),
+        }
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// A granted workspace `ws/` with `ws/skills/` inside it and a sibling

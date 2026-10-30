@@ -86,7 +86,7 @@ export const SubagentDetail: React.FC<{
       {/* 4. AskUser widget — same card main chat uses. */}
       {pendingAskUser && onRespondToAskUser && (
         <div>
-          {pendingAskUser.questions[0]?.header === 'Permission' ? (
+          {(pendingAskUser.questions[0]?.permission || pendingAskUser.questions[0]?.header === 'Permission') ? (
             <ToolPermissionCard pending={pendingAskUser} onRespond={onRespondToAskUser} />
           ) : (
             <AskUserCard pending={pendingAskUser} onRespond={onRespondToAskUser} />

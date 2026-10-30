@@ -73,9 +73,26 @@ impl SessionPermissions {
         }
     }
 
+    /// Persist an approval, reporting failure to the caller before it is used.
+    pub fn try_save(&self, session_dir: &Path) -> std::io::Result<()> {
+        fs::create_dir_all(session_dir)?;
+        let json = serde_json::to_vec_pretty(self).map_err(std::io::Error::other)?;
+        fs::write(session_dir.join("permission.json"), json)
+    }
+
     /// Add or update a path-mode grant. If a grant for the exact path exists, update it.
     /// Prunes child entries that are now redundant or that conflict with a downgrade.
     pub fn set_path_mode(&mut self, path: &str, mode: PermissionMode) {
+        // A session-wide change replaces all prior, more-specific grants.
+        // Later concrete grants may still override this baseline.
+        if path == "*" {
+            self.path_modes.clear();
+            self.path_modes.push(PathMode {
+                path: path.to_string(),
+                mode,
+            });
+            return;
+        }
         let expanded = expand_tilde(path);
 
         self.path_modes.retain(|pm| {

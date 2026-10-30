@@ -1,6 +1,6 @@
 // A write outside the session's grant asks. Deny writes nothing and the run
-// goes on to its reply; Allow once writes; switching the folder to edit
-// writes, and the next write in it does not ask.
+// goes on to its reply; Edit on this folder writes; granting that same
+// folder lets the next write in it proceed without asking.
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { Page } from '@playwright/test';
@@ -44,12 +44,12 @@ test.describe('Deny', () => {
   });
 });
 
-test.describe('Allow once', () => {
+test.describe('Edit on this folder', () => {
   test.use({ scenario: { scripts: { ling: [write('probe.txt'), { text: 'Wrote it.' }] } } });
 
   test('writes the file in the workspace', async ({ page, world, httpRequests }) => {
     await askToWrite(page, httpRequests, world.url, 'probe.txt');
-    await card(page).getByRole('button', { name: /^Allow once/ }).click();
+    await card(page).getByTestId('permission-directory').last().click();
 
     const call = chat(page).locator('[data-testid="tool-call"][data-tool="Write"]');
     await expect(call).toHaveAttribute('data-status', 'done');
@@ -70,7 +70,7 @@ test.describe('always allow', () => {
 
   test('switching the folder to edit: the next write does not ask', async ({ page, world, httpRequests }) => {
     await askToWrite(page, httpRequests, world.url, 'one.txt');
-    await card(page).getByRole('button', { name: /^Switch this folder to edit/ }).click();
+    await card(page).getByTestId('permission-directory').last().click();
     await expect(shown(page, 'Wrote one.')).toHaveCount(1);
     await expectTurnOver(page);
     expect(readFileSync(path.join(world.work, 'one.txt'), 'utf8')).toBe('hello');

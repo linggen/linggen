@@ -466,7 +466,7 @@ export const ChatPanel: React.FC<{
         )}
         {pendingAskUser && onRespondToAskUser && !askUserBelongsToSubagent && (
           <div className="px-3 py-2">
-            {pendingAskUser.questions[0]?.header === 'Permission'
+            {(pendingAskUser.questions[0]?.permission || pendingAskUser.questions[0]?.header === 'Permission')
               ? <ToolPermissionCard pending={pendingAskUser} onRespond={onRespondToAskUser} />
               : <AskUserCard pending={pendingAskUser} onRespond={onRespondToAskUser} />}
           </div>
@@ -524,7 +524,7 @@ export const ChatPanel: React.FC<{
         visibleQueued={visibleQueued}
         chatMessages={chatMessages}
         sessionId={sessionId}
-        openQuestion={pendingAskUser && !askUserBelongsToSubagent && pendingAskUser.questions[0]?.header !== 'Permission' ? pendingAskUser : null}
+        openQuestion={pendingAskUser && !askUserBelongsToSubagent && !pendingAskUser.questions[0]?.permission && pendingAskUser.questions[0]?.header !== 'Permission' ? pendingAskUser : null}
         onAnswerQuestion={onRespondToAskUser}
         overlay={overlay}
         onDismissOverlay={onDismissOverlay}

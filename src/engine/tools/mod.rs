@@ -230,10 +230,20 @@ impl ToolResult {
 pub struct AskUserQuestion {
     pub question: String,
     pub header: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission: Option<DirectoryPermissionMetadata>,
     pub options: Vec<AskUserOption>,
     #[serde(default)]
     #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub multi_select: bool,
+}
+
+/// Context for a native directory permission question; absent for ordinary AskUser prompts.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct DirectoryPermissionMetadata {
+    pub path: String,
+    pub mode: crate::engine::permission::PermissionMode,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -624,27 +634,25 @@ impl Tools {
         let agent_id = self.agent_id.clone().unwrap_or_default();
         let questions_clone = args.questions.clone();
 
-        // Emit event to push the question to the UI.
-        let _ = bridge
-            .events_tx
-            .send(crate::engine::events::ServerEvent::AskUser {
-                agent_id: agent_id.clone(),
-                question_id: question_id.clone(),
-                questions: args.questions,
-                session_id: bridge.session_id.clone(),
-            });
-
-        // Register a oneshot channel for the response endpoint to deliver into.
+        // Register before publishing so an immediate response cannot race registration.
         let (tx, rx) = tokio::sync::oneshot::channel();
         bridge.pending.lock().await.insert(
             question_id.clone(),
             PendingAskUser {
-                agent_id,
+                agent_id: agent_id.clone(),
                 questions: questions_clone,
                 sender: tx,
                 session_id: bridge.session_id.clone(),
             },
         );
+        let _ = bridge
+            .events_tx
+            .send(crate::engine::events::ServerEvent::AskUser {
+                agent_id,
+                question_id: question_id.clone(),
+                questions: args.questions,
+                session_id: bridge.session_id.clone(),
+            });
 
         // Wait up to 5 minutes for a response.
         let response = tokio::time::timeout(Duration::from_secs(300), rx).await;

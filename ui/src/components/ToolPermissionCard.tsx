@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import type { PendingAskUser, AskUserAnswer } from '../types';
 import { useUserStore } from '../stores/userStore';
+import { DirectoryPermissionChoices } from './DirectoryPermissionChoices';
 
 interface ToolPermissionCardProps {
   pending: PendingAskUser;
@@ -39,7 +40,7 @@ export const ToolPermissionCard: React.FC<ToolPermissionCardProps> = ({ pending,
 
   // Blanket allow options — style them muted.
   const isBlanketOption = (label: string) =>
-    label.startsWith('Allow all ') || label === 'Allow for this session';
+    label.startsWith('Allow all ') || label === 'Allow for this session' || label.startsWith('grant:');
 
   // Project-persisted option (legacy — no longer generated but kept for compat).
   const isPersistedOption = (label: string) =>
@@ -69,7 +70,7 @@ export const ToolPermissionCard: React.FC<ToolPermissionCardProps> = ({ pending,
         </div>
       </div>
 
-      {/* Options */}
+      {question.permission ? <DirectoryPermissionChoices question={question} onChoose={handleClick} canGrant={userType !== 'consumer'} /> :
       <div className="px-3 py-3 space-y-3">
 
         {/* Vertical button list */}
@@ -96,7 +97,7 @@ export const ToolPermissionCard: React.FC<ToolPermissionCardProps> = ({ pending,
                       : 'bg-white text-slate-600 border-slate-200 hover:border-amber-300 hover:text-amber-700 hover:bg-amber-50/50 dark:bg-white/5 dark:text-slate-300 dark:border-white/10 dark:hover:border-amber-500/40 dark:hover:bg-amber-500/5'
               }`}
             >
-              <span className="font-medium">{opt.label}</span>
+              <span className="font-medium">{opt.label.startsWith('grant:') ? `Session: ${opt.label.split(':')[1] === 'all' ? 'all directories' : 'this directory'} · ${opt.label.split(':')[2]}` : opt.label}</span>
               {isPersistedOption(opt.label) && (
                 <svg className="inline-block w-3 h-3 ml-1 -mt-0.5 text-slate-400 dark:text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
@@ -151,7 +152,7 @@ export const ToolPermissionCard: React.FC<ToolPermissionCardProps> = ({ pending,
             </button>
           </div>
         )}
-      </div>
+      </div>}
     </section>
   );
 };

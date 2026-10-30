@@ -106,11 +106,16 @@ impl Interaction {
         if is_trusted_in(&trust_file(), cwd) {
             return Ok(true);
         }
-        let dir = self.state.manager.global_sessions.session_dir(&self.meta.id);
+        let dir = self
+            .state
+            .manager
+            .global_sessions
+            .session_dir(&self.meta.id);
         if !has_own_config(cwd) || declined_in(&dir, cwd) {
             return Ok(false);
         }
         let question = AskUserQuestion {
+            permission: None,
             question: format!(
                 "Trust {}? Claude will load this folder's own settings, hooks and CLAUDE.md.",
                 self.meta.cwd
@@ -191,7 +196,10 @@ mod tests {
         }
         assert!(!declined_in(&session, &folder));
         decline_in(&session, &folder).unwrap();
-        assert!(declined_in(&session, &folder), "kept on disk, across a restart");
+        assert!(
+            declined_in(&session, &folder),
+            "kept on disk, across a restart"
+        );
         assert!(!declined_in(&session, &other), "another folder asks again");
         forget_decline(&session);
         assert!(!declined_in(&session, &folder));

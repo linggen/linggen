@@ -73,6 +73,7 @@ impl Interaction {
                 // Only an offered choice counts: a forged label never allows.
                 let offered: Vec<String> = options.iter().map(|o| o.label.clone()).collect();
                 let question = AskUserQuestion {
+                    permission: None,
                     question: input["title"]
                         .as_str()
                         .filter(|s| !s.is_empty())
