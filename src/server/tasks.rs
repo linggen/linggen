@@ -12,25 +12,9 @@ const KEEP_ENDED: usize = 20;
 #[derive(Default)]
 pub(crate) struct Tasks {
     by_session: Mutex<HashMap<String, Vec<BackgroundTask>>>,
-    /// Task ends told while the agent's plan waited for approval, by session
-    /// and agent: they wait with it, as Claude Code holds them behind its
-    /// plan prompt, and are told once the plan is approved or rejected.
-    held: Mutex<HashMap<(String, String), Vec<String>>>,
 }
 
 impl Tasks {
-    fn held(&self) -> std::sync::MutexGuard<'_, HashMap<(String, String), Vec<String>>> {
-        self.held.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
-    pub fn hold(&self, session: &str, agent: &str, notice: String) {
-        self.held().entry((session.into(), agent.into())).or_default().push(notice);
-    }
-
-    pub fn release(&self, session: &str, agent: &str) -> Vec<String> {
-        self.held().remove(&(session.into(), agent.into())).unwrap_or_default()
-    }
-
     fn with<T>(&self, f: impl FnOnce(&mut HashMap<String, Vec<BackgroundTask>>) -> T) -> T {
         let mut guard = self
             .by_session
@@ -156,13 +140,7 @@ pub(crate) async fn stop(
         Some(runtime) if !runtime.is_linggen() => {
             super::claude::stop_task(&state, &req.session_id, &req.id).await
         }
-        _ => match state.manager.background.stop(&req.session_id, &req.id) {
-            Ok(crate::engine::background::Stop::Sent) => Ok(()),
-            Ok(crate::engine::background::Stop::CancelRun(run)) => {
-                state.manager.cancel_run_tree(&run).await.map(|_| ())
-            }
-            Err(error) => Err(error),
-        },
+        _ => state.manager.background.stop(&req.session_id, &req.id),
     };
     match stopped {
         Ok(()) => axum::Json(serde_json::json!({"status": "ok"})).into_response(),
@@ -192,18 +170,24 @@ pub(crate) async fn native_watch(state: std::sync::Arc<super::ServerState>) {
         let (true, Some(notice)) = (ended, notice) else {
             continue;
         };
-        if state.manager.plan_pending(&session, &agent_id).await {
-            state.tasks.hold(&session, &agent_id, notice);
+        // While the agent's plan waits for the person, its task ends wait
+        // behind it, as Claude Code holds them behind its plan prompt.
+        let Some(notice) = state.manager.hold_behind_plan(&session, &agent_id, notice).await else {
             continue;
-        }
+        };
         tokio::spawn(tell(state.clone(), session, agent_id, notice));
     }
 }
 
-/// The agent's plan was approved or rejected: tell it the task ends that
-/// waited behind it, in order, after the turn the decision started.
-pub(crate) fn release_held(state: &std::sync::Arc<super::ServerState>, session: &str, agent: &str) {
-    for notice in state.tasks.release(session, agent) {
+/// Tell `agent` each of `notices` in a turn of its own, in order: their
+/// places in the turn line are taken now, one after another.
+pub(crate) fn tell_all(
+    state: &std::sync::Arc<super::ServerState>,
+    session: &str,
+    agent: &str,
+    notices: Vec<String>,
+) {
+    for notice in notices {
         tokio::spawn(tell(state.clone(), session.into(), agent.into(), notice));
     }
 }
@@ -243,6 +227,10 @@ async fn tell_in_place(
         }
     };
     let _turn = place.await;
+    // A plan proposed while this waited for its turn holds it too.
+    let Some(notice) = state.manager.hold_behind_plan(&session, &agent, notice).await else {
+        return;
+    };
     super::chat::helpers::persist_and_emit_message(
         &state.manager,
         &state.events_tx,
@@ -287,18 +275,6 @@ pub(crate) fn emit(state: &super::ServerState, session: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Ends held behind a plan come out in order, once, for that agent only.
-    #[test]
-    fn held_task_ends_are_released_in_order_once() {
-        let tasks = Tasks::default();
-        tasks.hold("s", "ling", "first".into());
-        tasks.hold("s", "yinyue", "hers".into());
-        tasks.hold("s", "ling", "second".into());
-        assert_eq!(tasks.release("s", "ling"), ["first", "second"]);
-        assert!(tasks.release("s", "ling").is_empty());
-        assert_eq!(tasks.release("s", "yinyue"), ["hers"]);
-    }
 
     #[test]
     fn running_tasks_lead_and_ended_ones_follow_newest_first() {

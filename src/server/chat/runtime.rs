@@ -20,6 +20,7 @@ pub(super) async fn run_loop_with_tracking(
         .begin_agent_run(root, session_id, agent_id, None, Some(detail.to_string()))
         .await
         .ok();
+    let _life = run_id.as_deref().map(|run| manager.run_life(run));
 
     engine.set_run_id(run_id.clone());
     engine.last_run_id = run_id.clone();

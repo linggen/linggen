@@ -696,6 +696,7 @@ async fn dispatch_mission_prompt(
             return;
         }
     };
+    let _life = manager.run_life(&run_id);
 
     // The mission body is injected into the system prompt via active_mission
     // (below). The kickoff list seeds the user side of the conversation:

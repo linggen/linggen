@@ -72,6 +72,7 @@ pub(super) async fn run_structured_loop(ctx: &ChatRunCtx, engine: &mut crate::en
             engine.plan = None;
         }
     }
+    release_plan_on_move_on(ctx).await;
     let task_for_loop = ctx.clean_msg.trim().to_string();
     engine.task = Some(task_for_loop);
     push_user_turn_with_recall(ctx, engine).await;
@@ -191,4 +192,16 @@ pub(super) async fn run_structured_loop(ctx: &ChatRunCtx, engine: &mut crate::en
         .await;
     }
     let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
+}
+
+/// The person wrote on without deciding the agent's plan: the task ends held
+/// behind it are told after this turn. The plan card still decides the plan,
+/// from the session's history. A told end (`system`) is no moving on.
+async fn release_plan_on_move_on(ctx: &ChatRunCtx) {
+    if ctx.sender.as_deref() == Some("system") {
+        return;
+    }
+    let session = ctx.session_id.as_deref().unwrap_or("default");
+    let held = ctx.manager.drop_pending_plans(session, &ctx.agent_id).await;
+    crate::server::tasks::tell_all(&ctx.state, session, &ctx.agent_id, held);
 }

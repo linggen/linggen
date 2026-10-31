@@ -47,9 +47,10 @@ struct Pending {
 }
 
 /// A turn the SDK started on its own (a background task's notification):
-/// its run, and the session's turn lock while it runs.
+/// its run, its life, and the session's turn lock while it runs.
 struct Unprompted {
     run_id: String,
+    _life: crate::engine::agent::runs_api::RunLife,
     _turn: Option<OwnedMutexGuard<()>>,
 }
 
@@ -180,7 +181,8 @@ impl ClaudeSession {
             )
             .await
             .ok()?;
-        Some(Unprompted { run_id, _turn: turn })
+        let _life = self.state.manager.run_life(&run_id);
+        Some(Unprompted { run_id, _life, _turn: turn })
     }
 
     async fn finish_unprompted(&self, turn: Unprompted, outcome: std::result::Result<(), String>) {

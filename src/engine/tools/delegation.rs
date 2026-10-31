@@ -372,6 +372,7 @@ pub(crate) async fn run_delegation(
             started.is_some(),
         )
         .await?;
+    let _life = manager.run_life(&run_id);
     if let Some(started) = started {
         let _ = started.send(run_id.clone());
     }

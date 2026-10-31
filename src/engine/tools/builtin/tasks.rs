@@ -3,7 +3,7 @@
 
 use super::super::{ToolCall, ToolResult, Tools};
 use super::Tool;
-use crate::engine::background::{self, Stop};
+use crate::engine::background;
 use crate::engine::permission::PermissionMode;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -117,12 +117,7 @@ impl Tool for TaskStopTool {
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
         let id = task_id(&call)?;
         let (manager, session) = scope(tools)?;
-        match manager.background.stop_owned(&session, tools.task_owner(), &id)? {
-            Stop::Sent => {}
-            Stop::CancelRun(run) => {
-                manager.cancel_run_tree(&run).await?;
-            }
-        }
+        manager.background.stop_owned(&session, tools.task_owner(), &id)?;
         Ok(ToolResult::Success(format!("Stopping task {id}; you will be told once it has ended.")))
     }
 }

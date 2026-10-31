@@ -220,6 +220,7 @@ pub async fn run(
         )
         .await
         .map_err(|e| format!("failed to begin run: {e}"))?;
+    let _life = state.manager.run_life(&run_id);
 
     // Browser + memory bridges (no AskUser — a headless MCP delegate has no
     // Linggen-side user to answer a prompt; a blocked run would hang).

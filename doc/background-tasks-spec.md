@@ -32,7 +32,8 @@ The same in a native Linggen session and in a Claude session.
    turn of the session, and its end is never said as the main agent's. Each
    end is told once. While the agent's plan waits for the person's approval,
    its task ends wait too, and are told after the plan is approved or
-   rejected — as Claude Code holds them behind its plan prompt.
+   rejected, or once the person writes on without deciding — as Claude Code
+   holds them behind its plan prompt.
 3. **Visible and in the person's hands.** Every background task of the
    session is listed while it runs and for a while after: what it is, how
    long it has run, its latest output or activity, how it ended. Any

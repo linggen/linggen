@@ -88,6 +88,8 @@ Web UI approval (via `/api/plan/approve`):
 - Passes `clear_context: bool` to choose whether to clear conversation history.
 - Clear context → plan is sole context for execution. Keep context → full conversation retained.
 
+While a plan waits, its agent's background-task ends wait behind it (`background-tasks-spec.md`). A message from the person that does not decide the plan lets them go; the plan card still approves or rejects the plan from the session's history.
+
 ### Execution
 
 Plan text injected into system prompt. Model executes with full tools. The model reports progress with `update_plan` as it works through the plan's steps. Context compaction is skipped during execution to preserve tool-result context.

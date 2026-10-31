@@ -14,8 +14,48 @@ use crate::engine::agent::{AgentEvent, AgentManager, AgentRunRecord, AgentRunSta
 use anyhow::Result;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+/// A top run's life: the run lives, for the run sweeper, while its starter
+/// holds this. Dropped with the starter's future, even when it is cancelled.
+pub struct RunLife {
+    _life: Arc<()>,
+}
 
 impl AgentManager {
+    /// Tie `run_id`'s life to the returned token.
+    pub fn run_life(&self, run_id: &str) -> RunLife {
+        let life = Arc::new(());
+        self.run_lives
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(run_id.to_string(), Arc::downgrade(&life));
+        RunLife { _life: life }
+    }
+
+    /// Something still holds the run's life.
+    pub fn run_lives_on(&self, run_id: &str) -> bool {
+        self.run_lives
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(run_id)
+            .is_some_and(|life| life.strong_count() > 0)
+    }
+
+    /// Close `Running` rows nothing runs any more, with their mailboxes and
+    /// lives; lives nothing holds are pruned. Returns the closed ids.
+    pub fn reap_runs(&self, ids: &[String], now_secs: u64) -> Vec<String> {
+        let reaped = self.run_store.reap(ids, now_secs);
+        let mut queues = self.run_messages.lock().unwrap_or_else(|e| e.into_inner());
+        let mut lives = self.run_lives.lock().unwrap_or_else(|e| e.into_inner());
+        for id in &reaped {
+            queues.remove(id);
+            lives.remove(id);
+        }
+        lives.retain(|_, life| life.strong_count() > 0);
+        reaped
+    }
+
     pub async fn begin_agent_run(
         &self,
         project_root: &Path,
@@ -142,6 +182,7 @@ impl AgentManager {
             }
         }
         self.run_messages.lock().unwrap_or_else(|e| e.into_inner()).remove(run_id);
+        self.run_lives.lock().unwrap_or_else(|e| e.into_inner()).remove(run_id);
         self.run_store.remove_run(run_id);
         tracing::info!(
             run_id = %run_id,
@@ -263,7 +304,6 @@ impl AgentManager {
 #[cfg(test)]
 mod message_tests {
     use super::*;
-    use std::sync::Arc;
 
     #[tokio::test]
     async fn cancellation_serializes_child_registration() {
@@ -306,5 +346,27 @@ mod message_tests {
         assert!(manager.send_run_message("s", &root, &child, "after close").is_err());
         manager.finish_agent_run(&child, AgentRunStatus::Completed, None).await.unwrap();
         assert!(manager.send_run_message("s", &root, &child, "late").is_err());
+    }
+
+    /// A run lives while its life is held; reaping takes its row, mailbox
+    /// and life together.
+    #[tokio::test]
+    async fn a_run_lives_while_held_and_reaping_clears_its_mailbox() {
+        let manager = AgentManager::new(
+            crate::config::Config::default(), None,
+            Arc::new(crate::engine::test_registries::Empty),
+            Arc::new(crate::engine::test_registries::Empty),
+            Arc::new(crate::engine::test_registries::Empty),
+            crate::engine::InterfaceMode::Web,
+        ).0;
+        let run = manager.begin_agent_run(Path::new("."), Some("s"), "root", None, None).await.unwrap();
+        assert!(!manager.run_lives_on(&run), "nothing holds it yet");
+        let life = manager.run_life(&run);
+        assert!(manager.run_lives_on(&run));
+        drop(life);
+        assert!(!manager.run_lives_on(&run));
+        assert_eq!(manager.reap_runs(&[run.clone()], 0), [run.clone()]);
+        assert!(!manager.run_messages.lock().unwrap().contains_key(&run));
+        assert!(manager.run_lives.lock().unwrap().is_empty());
     }
 }

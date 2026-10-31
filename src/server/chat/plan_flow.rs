@@ -237,22 +237,9 @@ pub(crate) async fn approve_plan_handler(
     Json(req): Json<PlanActionRequest>,
 ) -> impl IntoResponse {
     let root = resolve_request_root(&req.project_root);
-    let root_str = root.to_string_lossy().to_string();
     let session_id = req.session_id.clone();
-
-    // Fallback: after server restart the in-memory pending_plans map is empty.
-    // Reconstruct from the last persisted plan message in the session.
-    let plan = match state
-        .manager
-        .take_pending_plan(&root_str, &req.agent_id, session_id.as_deref())
-        .await
-    {
-        Some(p) => Some(p),
-        None => {
-            recover_plan_from_session(&state, &root, &req.agent_id, session_id.as_deref()).await
-        }
-    };
-    let Some(mut plan) = plan else {
+    let sid = session_id.as_deref().unwrap_or("default").to_string();
+    let Some((mut plan, held)) = take_plan(&state, &root, &req.agent_id, session_id.as_deref()).await else {
         return (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "No pending plan" })),
@@ -261,14 +248,14 @@ pub(crate) async fn approve_plan_handler(
     };
     plan.status = PlanStatus::Approved;
 
-    let sid = session_id.as_deref().unwrap_or("default");
     let agent = match state
         .manager
-        .get_or_create_session_agent(sid, &root, &req.agent_id)
+        .get_or_create_session_agent(&sid, &root, &req.agent_id)
         .await
     {
         Ok(a) => a,
         Err(_) => {
+            crate::server::tasks::tell_all(&state, &sid, &req.agent_id, held);
             return (
                 StatusCode::NOT_FOUND,
                 Json(serde_json::json!({ "error": "Agent not found" })),
@@ -277,6 +264,9 @@ pub(crate) async fn approve_plan_handler(
         }
     };
 
+    // The plan's run takes its place in the turn line now, ahead of the
+    // background-task ends held while the plan waited and any told later.
+    let (_, place) = super::helpers::take_turn_place(state.manager.session_turn(&sid));
     persist_and_emit_message(
         &state.manager,
         &state.events_tx,
@@ -291,10 +281,6 @@ pub(crate) async fn approve_plan_handler(
     )
     .await;
 
-    // The plan's run takes its place in the turn line now, ahead of the
-    // background-task ends held while the plan waited.
-    let sid_turn = session_id.as_deref().unwrap_or("default").to_string();
-    let (_, place) = super::helpers::take_turn_place(state.manager.session_turn(&sid_turn));
     let agent_id = req.agent_id.clone();
     tokio::spawn(run_approved_plan_task(
         state.clone(),
@@ -305,9 +291,26 @@ pub(crate) async fn approve_plan_handler(
         session_id,
         place,
     ));
-    crate::server::tasks::release_held(&state, &sid_turn, &agent_id);
+    crate::server::tasks::tell_all(&state, &sid, &agent_id, held);
 
     Json(serde_json::json!({ "status": "approved" })).into_response()
+}
+
+/// The plan for the person's decision and the ends held behind it. After a
+/// restart, or once the person moved on, the plan comes from the session's
+/// history and nothing is held.
+async fn take_plan(
+    state: &Arc<ServerState>,
+    root: &Path,
+    agent_id: &str,
+    session_id: Option<&str>,
+) -> Option<(Plan, Vec<String>)> {
+    let root_str = root.to_string_lossy();
+    if let Some(pending) = state.manager.take_pending_plan(&root_str, agent_id, session_id).await {
+        return Some((pending.plan, pending.held));
+    }
+    let plan = recover_plan_from_session(state, root, agent_id, session_id).await?;
+    Some((plan, Vec::new()))
 }
 
 /// Drive an approved plan from "Approved" through execution to "Completed".
@@ -425,28 +428,15 @@ pub(crate) async fn reject_plan_handler(
     Json(req): Json<PlanActionRequest>,
 ) -> impl IntoResponse {
     let root = resolve_request_root(&req.project_root);
-    let root_str = root.to_string_lossy().to_string();
-
-    let removed = state
-        .manager
-        .take_pending_plan(&root_str, &req.agent_id, req.session_id.as_deref())
-        .await;
-    let removed = match removed {
-        Some(p) => Some(p),
-        None => {
-            recover_plan_from_session(&state, &root, &req.agent_id, req.session_id.as_deref()).await
-        }
-    };
-
-    if removed.is_none() {
+    let Some((mut rejected_plan, held)) =
+        take_plan(&state, &root, &req.agent_id, req.session_id.as_deref()).await
+    else {
         return (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "No pending plan" })),
         )
             .into_response();
-    }
-
-    let mut rejected_plan = removed.unwrap();
+    };
     rejected_plan.status = crate::engine::PlanStatus::Rejected;
     let _ = state.events_tx.send(ServerEvent::PlanUpdate {
         agent_id: req.agent_id.clone(),
@@ -470,10 +460,11 @@ pub(crate) async fn reject_plan_handler(
         None,
     )
     .await;
-    crate::server::tasks::release_held(
+    crate::server::tasks::tell_all(
         &state,
         req.session_id.as_deref().unwrap_or("default"),
         &req.agent_id,
+        held,
     );
 
     Json(serde_json::json!({ "status": "rejected" })).into_response()

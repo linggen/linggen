@@ -25,16 +25,8 @@ struct Entry {
     result: Option<String>,
     /// A running shell's stop.
     stop: Option<oneshot::Sender<()>>,
-    /// A background subagent's run, which a stop cancels.
-    run_id: Option<String>,
     /// Its session is ending (Clear, delete): its end is told to no one.
     silent: bool,
-}
-
-/// What stopping a task takes.
-pub enum Stop {
-    Sent,
-    CancelRun(String),
 }
 
 #[derive(Default)]
@@ -71,7 +63,7 @@ impl Background {
             .map(|e| (e.task.clone(), e.result.clone()))
     }
 
-    pub fn stop_owned(&self, session: &str, owner: Option<&str>, id: &str) -> Result<Stop> {
+    pub fn stop_owned(&self, session: &str, owner: Option<&str>, id: &str) -> Result<()> {
         let mut entries = locked(&self.entries);
         let entry = entries.get_mut(id)
             .filter(|e| e.session == session && e.owner.as_deref() == owner)
@@ -79,7 +71,7 @@ impl Background {
         stop_entry(entry, id)
     }
 
-    pub fn stop(&self, session: &str, id: &str) -> Result<Stop> {
+    pub fn stop(&self, session: &str, id: &str) -> Result<()> {
         let mut entries = locked(&self.entries);
         let entry = entries
             .get_mut(id)
@@ -89,22 +81,18 @@ impl Background {
     }
 
     /// Stop every running task of `session`, silently: their ends are told
-    /// to no agent. Returns what each stop takes and the stopped tasks' ids.
-    fn stop_session(&self, session: &str) -> (Vec<Stop>, Vec<String>) {
+    /// to no agent. Returns the stopped tasks' ids.
+    fn stop_session(&self, session: &str) -> Vec<String> {
         let mut entries = locked(&self.entries);
-        let mut stops = Vec::new();
         let mut ids = Vec::new();
         for entry in entries.values_mut().filter(|e| e.session == session && e.task.is_running()) {
             entry.silent = true;
             ids.push(entry.task.id.clone());
             if let Some(stop) = entry.stop.take() {
                 let _ = stop.send(());
-                stops.push(Stop::Sent);
-            } else if let Some(run) = entry.run_id.clone() {
-                stops.push(Stop::CancelRun(run));
             }
         }
-        (stops, ids)
+        ids
     }
 
     fn running(&self, ids: &[String]) -> bool {
@@ -126,10 +114,10 @@ impl Background {
         Some(notice)
     }
 
-    fn put(&self, session: &str, owner: Option<&str>, child_owner: bool, task: BackgroundTask, stop: Option<oneshot::Sender<()>>, run_id: Option<String>) {
+    fn put(&self, session: &str, owner: Option<&str>, child_owner: bool, task: BackgroundTask, stop: Option<oneshot::Sender<()>>) {
         locked(&self.entries).insert(
             task.id.clone(),
-            Entry { session: session.into(), owner: owner.map(str::to_owned), child_owner, task, result: None, stop, run_id, silent: false },
+            Entry { session: session.into(), owner: owner.map(str::to_owned), child_owner, task, result: None, stop, silent: false },
         );
     }
 
@@ -141,19 +129,13 @@ impl Background {
     }
 }
 
-fn stop_entry(entry: &mut Entry, id: &str) -> Result<Stop> {
-        if !entry.task.is_running() {
-            bail!("Task {id} already ended ({})", entry.task.status);
-        }
-        if let Some(stop) = entry.stop.take() {
-            let _ = stop.send(());
-            return Ok(Stop::Sent);
-        }
-        entry
-            .run_id
-            .clone()
-            .map(Stop::CancelRun)
-            .context("Task cannot be stopped")
+fn stop_entry(entry: &mut Entry, id: &str) -> Result<()> {
+    if !entry.task.is_running() {
+        bail!("Task {id} already ended ({})", entry.task.status);
+    }
+    let stop = entry.stop.take().context("Task cannot be stopped")?;
+    let _ = stop.send(());
+    Ok(())
 }
 
 async fn emit(manager: &AgentManager, session: &str, agent: &str, task: BackgroundTask, notice: Option<String>) {
@@ -224,7 +206,7 @@ pub async fn spawn_shell(
     let mut task = BackgroundTask::running(&id, "shell", cmd);
     task.output_file = Some(output.to_string_lossy().into_owned());
     let (stop_tx, mut stop_rx) = oneshot::channel();
-    manager.background.put(session, owner, child_owner, task.clone(), Some(stop_tx), None);
+    manager.background.put(session, owner, child_owner, task.clone(), Some(stop_tx));
     emit(manager, session, agent, task.clone(), None).await;
 
     let (manager, session, agent, cmd) = (manager.clone(), session.to_owned(), agent.to_owned(), cmd.to_owned());
@@ -286,12 +268,7 @@ pub async fn spawn_shell(
 /// wait, a few seconds at most, until they have ended. Their ends are told to
 /// no agent.
 pub async fn end_session(manager: &AgentManager, session: &str) {
-    let (stops, ids) = manager.background.stop_session(session);
-    for stop in stops {
-        if let Stop::CancelRun(run) = stop {
-            let _ = manager.cancel_run_tree(&run).await;
-        }
-    }
+    let ids = manager.background.stop_session(session);
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     while manager.background.running(&ids) && tokio::time::Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -327,7 +304,7 @@ pub async fn track_subagent(
     let title: String = task_text.chars().take(200).collect();
     let task = BackgroundTask::running(&id, "subagent", &format!("{target}: {title}"));
     let (stop_tx, mut stop_rx) = oneshot::channel();
-    manager.background.put(session, owner, child_owner, task.clone(), Some(stop_tx), None);
+    manager.background.put(session, owner, child_owner, task.clone(), Some(stop_tx));
     let (manager, session, agent, target, id2) =
         (manager.clone(), session.to_owned(), agent.to_owned(), target.to_owned(), id.clone());
     let initial = task.clone();
@@ -457,7 +434,7 @@ mod tests {
             let _ = end_rx.await;
             Err(crate::engine::tools::DelegationCancelled.into())
         }).await;
-        assert!(matches!(manager.background.stop("s", &task.id), Ok(Stop::Sent)));
+        assert!(manager.background.stop("s", &task.id).is_ok());
         let run = manager.begin_delegated_run(Path::new("."), Some("s"), "worker", Some("parent".into()), None, true).await.unwrap();
         started_tx.send(run.clone()).unwrap();
         tokio::time::timeout(Duration::from_secs(2), async {
@@ -478,9 +455,9 @@ mod tests {
     #[test]
     fn task_tools_are_scoped_to_session_and_creator() {
         let bg = Background::default();
-        bg.put("s", None, false, BackgroundTask::running("root", "shell", "x"), None, None);
-        bg.put("s", Some("child"), true, BackgroundTask::running("child-task", "shell", "x"), None, None);
-        bg.put("other", None, false, BackgroundTask::running("other", "shell", "x"), None, None);
+        bg.put("s", None, false, BackgroundTask::running("root", "shell", "x"), None);
+        bg.put("s", Some("child"), true, BackgroundTask::running("child-task", "shell", "x"), None);
+        bg.put("other", None, false, BackgroundTask::running("other", "shell", "x"), None);
         assert_eq!(bg.list_owned("s", None).len(), 1);
         assert_eq!(bg.list_owned("s", Some("child"))[0].id, "child-task");
         assert!(bg.get_owned("s", None, "child-task").is_none());
@@ -493,7 +470,7 @@ mod tests {
         let manager = manager();
         let owner = manager.begin_delegated_run(Path::new("."), Some("s"), "child", None, None, true).await.unwrap();
         let bg = Background::default();
-        bg.put("s", Some(&owner), true, BackgroundTask::running("child-task", "shell", "x"), None, None);
+        bg.put("s", Some(&owner), true, BackgroundTask::running("child-task", "shell", "x"), None);
         assert!(bg.notice(&manager, "child-task", "finished".into()).is_none());
         assert_eq!(manager.drain_run_messages(&owner), vec!["finished"]);
         manager.finish_agent_run(&owner, crate::engine::agent::AgentRunStatus::Completed, None).await.unwrap();
@@ -514,15 +491,14 @@ mod tests {
     fn a_task_belongs_to_its_session_and_stops_once() {
         let bg = Background::default();
         let (tx, mut rx) = oneshot::channel();
-        bg.put("s", None, false, BackgroundTask::running("sh-1", "shell", "sleep 9"), Some(tx), None);
+        bg.put("s", None, false, BackgroundTask::running("sh-1", "shell", "sleep 9"), Some(tx));
         assert!(bg.get("other", "sh-1").is_none());
         assert!(bg.stop("other", "sh-1").is_err());
-        assert!(matches!(bg.stop("s", "sh-1"), Ok(Stop::Sent)));
+        assert!(bg.stop("s", "sh-1").is_ok());
         assert!(rx.try_recv().is_ok());
+        assert!(bg.stop("s", "sh-1").is_err(), "a sent stop is not sent twice");
         bg.update("sh-1", |t| t.end("stopped"));
         assert!(bg.stop("s", "sh-1").is_err(), "an ended task cannot be stopped");
-        bg.put("s", None, false, BackgroundTask::running("ag-1", "subagent", "x"), None, Some("run9".into()));
-        assert!(matches!(bg.stop("s", "ag-1"), Ok(Stop::CancelRun(r)) if r == "run9"));
     }
 
     #[test]
@@ -530,13 +506,14 @@ mod tests {
         let bg = Background::default();
         let (tx, mut rx) = oneshot::channel();
         let (other_tx, mut other_rx) = oneshot::channel();
-        bg.put("s", None, false, BackgroundTask::running("sh-1", "shell", "sleep 9"), Some(tx), None);
-        bg.put("s", None, false, BackgroundTask::running("ag-1", "subagent", "x"), None, Some("run9".into()));
-        bg.put("t", None, false, BackgroundTask::running("sh-2", "shell", "sleep 9"), Some(other_tx), None);
-        let (stops, ids) = bg.stop_session("s");
-        assert_eq!(stops.len(), 2);
-        assert!(stops.iter().any(|s| matches!(s, Stop::CancelRun(r) if r == "run9")));
+        bg.put("s", None, false, BackgroundTask::running("sh-1", "shell", "sleep 9"), Some(tx));
+        let (ag_tx, mut ag_rx) = oneshot::channel();
+        bg.put("s", None, false, BackgroundTask::running("ag-1", "subagent", "x"), Some(ag_tx));
+        bg.put("t", None, false, BackgroundTask::running("sh-2", "shell", "sleep 9"), Some(other_tx));
+        let ids = bg.stop_session("s");
+        assert_eq!(ids.len(), 2);
         assert!(rx.try_recv().is_ok());
+        assert!(ag_rx.try_recv().is_ok());
         assert!(other_rx.try_recv().is_err(), "another session's task was stopped");
         assert!(bg.running(&ids));
         assert!(bg.notice(&manager(), "sh-1", "end".into()).is_none());

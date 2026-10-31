@@ -411,7 +411,7 @@ fn sweep_stale_runs(state: &Arc<ServerState>) {
             let runs = sweep_state.manager.run_store.list_runs(None);
             let orphans: HashSet<String> = orphaned_runs(
                 &runs,
-                |session| sweep_state.manager.session_turn(session).try_lock().is_err(),
+                |run| sweep_state.manager.run_lives_on(run),
                 |session, run| {
                     sweep_state.tasks.list(session).iter().any(|task| {
                         task.is_running() && task.subagent_id.as_deref() == Some(run)
@@ -426,7 +426,7 @@ fn sweep_stale_runs(state: &Arc<ServerState>) {
                 continue;
             }
             let now = crate::util::now_ts_secs();
-            let reaped = sweep_state.manager.run_store.reap(&due, now);
+            let reaped = sweep_state.manager.reap_runs(&due, now);
             if !reaped.is_empty() {
                 tracing::warn!(
                     count = reaped.len(),
@@ -439,13 +439,13 @@ fn sweep_stale_runs(state: &Arc<ServerState>) {
     });
 }
 
-/// `Running` rows with nothing alive behind them. A session's top run lives
-/// while that session's turn is held — every top run holds it for its whole
-/// turn. A child lives while its parent does, or while it runs on as a
+/// `Running` rows with nothing alive behind them. A run lives while its
+/// starter holds its life — every top run's starter does, for the whole run.
+/// A child also lives while its parent does, or while it runs on as a
 /// background subagent. A run of no session is left alone.
 fn orphaned_runs(
     runs: &[crate::engine::agent::AgentRunRecord],
-    turn_held: impl Fn(&str) -> bool,
+    held: impl Fn(&str) -> bool,
     background: impl Fn(&str, &str) -> bool,
 ) -> Vec<String> {
     use crate::engine::agent::AgentRunStatus;
@@ -456,7 +456,7 @@ fn orphaned_runs(
         .collect();
     running
         .values()
-        .filter(|run| !run_alive(run, &running, &turn_held, &background))
+        .filter(|run| !run_alive(run, &running, &held, &background))
         .map(|run| run.run_id.clone())
         .collect()
 }
@@ -464,15 +464,15 @@ fn orphaned_runs(
 fn run_alive<'a>(
     mut run: &'a crate::engine::agent::AgentRunRecord,
     running: &HashMap<&str, &'a crate::engine::agent::AgentRunRecord>,
-    turn_held: &impl Fn(&str) -> bool,
+    held: &impl Fn(&str) -> bool,
     background: &impl Fn(&str, &str) -> bool,
 ) -> bool {
     loop {
-        if run.session_id.is_empty() {
+        if run.session_id.is_empty() || held(&run.run_id) {
             return true;
         }
         let Some(parent) = run.parent_run_id.as_deref() else {
-            return turn_held(&run.session_id);
+            return false;
         };
         if background(&run.session_id, &run.run_id) {
             return true;
@@ -585,22 +585,26 @@ mod sweep_tests {
     }
 
     /// An hour-long plan and the subagent it waits on are alive while the
-    /// session's turn is held; age never makes a run stale (2026-10-31: a
-    /// plan run and its subagent were closed at 15 min while working).
+    /// plan's starter holds its life; age never makes a run stale (2026-10-31:
+    /// a plan run and its subagent were closed at 15 min while working). A
+    /// top run that never takes the session's turn (an MCP `agent_run`, a
+    /// mission) lives the same way.
     #[test]
     fn only_runs_with_nothing_alive_behind_them_are_orphaned() {
         let runs = [
             run("plan", "busy", None, 0),
             run("child", "busy", Some("plan"), 0),
             run("grandchild", "busy", Some("child"), 0),
-            run("leaked", "idle", None, 0),
+            run("mission", "busy", None, 0),
+            run("leaked", "busy", None, 0),
             run("left-behind", "idle", Some("gone"), 0),
             run("background", "idle", Some("gone"), 0),
+            run("delegated", "idle", Some("gone"), 0),
             run("headless", "", None, 0),
         ];
         let mut orphans = orphaned_runs(
             &runs,
-            |session| session == "busy",
+            |run| ["plan", "mission", "delegated"].contains(&run),
             |_, run| run == "background",
         );
         orphans.sort();

@@ -70,7 +70,7 @@ pub struct AgentManager {
     tool_cancel_flags: std::sync::Mutex<HashMap<String, Arc<AtomicBool>>>,
     events: mpsc::UnboundedSender<(AgentEvent, Option<String>)>,
     /// Pending plans awaiting user approval, keyed by "{project_root}|{session_id}|{agent_id}".
-    pending_plans: Mutex<HashMap<String, Plan>>,
+    pending_plans: Mutex<HashMap<String, PendingPlan>>,
     /// In-memory run store — replaces file-based RunStore. Shared across all operations.
     pub run_store: Arc<crate::engine::agent::RunStore>,
     /// Last activity time per agent, keyed by "{project_root}|{agent_id}".
@@ -103,6 +103,19 @@ pub struct AgentManager {
     /// Native sessions' background shells and subagents.
     pub background: crate::engine::background::Background,
     pub(crate) run_messages: std::sync::Mutex<std::collections::HashMap<String, Vec<String>>>,
+    /// Top runs' liveness: a run lives while its starter holds its `RunLife`.
+    pub(crate) run_lives: std::sync::Mutex<HashMap<String, std::sync::Weak<()>>>,
+}
+
+/// A plan waiting for the person's decision, and the background-task ends
+/// told to its agent meanwhile: they wait behind it, in order.
+pub struct PendingPlan {
+    pub plan: Plan,
+    pub held: Vec<String>,
+}
+
+fn plan_key(project_root: &str, session_id: Option<&str>, agent_id: &str) -> String {
+    format!("{}|{}|{}", project_root, session_id.unwrap_or("default"), agent_id)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -343,6 +356,7 @@ impl AgentManager {
                 met: met::MetGate::new(crate::paths::met_dir()),
                 background: Default::default(),
                 run_messages: Default::default(),
+                run_lives: Default::default(),
             }),
             rx,
         )
@@ -861,6 +875,7 @@ impl AgentManager {
         let _ = self.events.send((event, session_id));
     }
 
+    /// A new plan replaces the old one; ends already held keep waiting.
     pub async fn set_pending_plan(
         &self,
         project_root: &str,
@@ -868,26 +883,52 @@ impl AgentManager {
         session_id: Option<&str>,
         plan: Plan,
     ) {
-        let sid = session_id.unwrap_or("default");
-        let key = format!("{}|{}|{}", project_root, sid, agent_id);
-        self.pending_plans.lock().await.insert(key, plan);
+        let key = plan_key(project_root, session_id, agent_id);
+        let mut plans = self.pending_plans.lock().await;
+        match plans.get_mut(&key) {
+            Some(pending) => pending.plan = plan,
+            None => {
+                plans.insert(key, PendingPlan { plan, held: Vec::new() });
+            }
+        }
     }
 
-    /// The agent's plan in this session waits for the person's decision.
-    pub async fn plan_pending(&self, session_id: &str, agent_id: &str) -> bool {
+    /// Hold `notice` behind the agent's pending plan in this session. Gives
+    /// it back when no plan waits, so the caller tells it now.
+    pub async fn hold_behind_plan(&self, session_id: &str, agent_id: &str, notice: String) -> Option<String> {
         let suffix = format!("|{session_id}|{agent_id}");
-        self.pending_plans.lock().await.keys().any(|key| key.ends_with(&suffix))
+        let mut plans = self.pending_plans.lock().await;
+        let Some(pending) = plans.iter_mut().find(|(key, _)| key.ends_with(&suffix)) else {
+            return Some(notice);
+        };
+        pending.1.held.push(notice);
+        None
     }
 
+    /// Take the plan for the person's decision, with the ends held behind it.
     pub async fn take_pending_plan(
         &self,
         project_root: &str,
         agent_id: &str,
         session_id: Option<&str>,
-    ) -> Option<Plan> {
-        let sid = session_id.unwrap_or("default");
-        let key = format!("{}|{}|{}", project_root, sid, agent_id);
+    ) -> Option<PendingPlan> {
+        let key = plan_key(project_root, session_id, agent_id);
         self.pending_plans.lock().await.remove(&key)
+    }
+
+    /// The person moved on without deciding: the agent's plans in this
+    /// session stop waiting. Returns the ends they held, in order.
+    pub async fn drop_pending_plans(&self, session_id: &str, agent_id: &str) -> Vec<String> {
+        let suffix = format!("|{session_id}|{agent_id}");
+        let mut plans = self.pending_plans.lock().await;
+        let keys: Vec<String> = plans.keys().filter(|key| key.ends_with(&suffix)).cloned().collect();
+        keys.iter().filter_map(|key| plans.remove(key)).flat_map(|p| p.held).collect()
+    }
+
+    /// The session is gone: its plans and what they held go with it.
+    pub async fn forget_session_plans(&self, session_id: &str) {
+        let infix = format!("|{session_id}|");
+        self.pending_plans.lock().await.retain(|key, _| !key.contains(&infix));
     }
 
     /// Edit the plan_text and summary of a pending plan in-place.
@@ -901,10 +942,9 @@ impl AgentManager {
         session_id: Option<&str>,
         text: &str,
     ) -> Option<Plan> {
-        let sid = session_id.unwrap_or("default");
-        let key = format!("{}|{}|{}", project_root, sid, agent_id);
+        let key = plan_key(project_root, session_id, agent_id);
         let mut plans = self.pending_plans.lock().await;
-        let plan = plans.get_mut(&key)?;
+        let plan = &mut plans.get_mut(&key)?.plan;
         plan.plan_text = text.to_string();
         plan.summary = crate::engine::AgentEngine::extract_plan_summary(text);
         Some(plan.clone())
@@ -1016,6 +1056,72 @@ mod tests {
             AgentManager::normalize_model_choice(Some(" local_ollama ".to_string())),
             Some("local_ollama".to_string())
         );
+    }
+}
+
+#[cfg(test)]
+mod plan_hold_tests {
+    use super::*;
+
+    fn manager() -> Arc<AgentManager> {
+        AgentManager::new(
+            Config::default(),
+            None,
+            Arc::new(crate::engine::test_registries::Empty),
+            Arc::new(crate::engine::test_registries::Empty),
+            Arc::new(crate::engine::test_registries::Empty),
+            InterfaceMode::Web,
+        )
+        .0
+    }
+
+    fn plan(summary: &str) -> Plan {
+        Plan {
+            summary: summary.into(),
+            status: crate::engine::PlanStatus::Planned,
+            plan_text: String::new(),
+            items: Vec::new(),
+        }
+    }
+
+    /// Ends wait behind a pending plan in order, for that agent only; a new
+    /// plan keeps them; the take hands them over with the plan, and an end
+    /// after the take is told at once — never stranded.
+    #[tokio::test]
+    async fn held_task_ends_are_released_in_order_once() {
+        let m = manager();
+        assert_eq!(m.hold_behind_plan("s", "ling", "early".into()).await.as_deref(), Some("early"));
+        m.set_pending_plan("/r", "ling", Some("s"), plan("one")).await;
+        assert!(m.hold_behind_plan("s", "ling", "first".into()).await.is_none());
+        assert_eq!(m.hold_behind_plan("s", "yinyue", "hers".into()).await.as_deref(), Some("hers"));
+        assert_eq!(m.hold_behind_plan("t", "ling", "elsewhere".into()).await.as_deref(), Some("elsewhere"));
+        m.set_pending_plan("/r", "ling", Some("s"), plan("two")).await;
+        assert!(m.hold_behind_plan("s", "ling", "second".into()).await.is_none());
+        let taken = m.take_pending_plan("/r", "ling", Some("s")).await.unwrap();
+        assert_eq!(taken.plan.summary, "two");
+        assert_eq!(taken.held, ["first", "second"]);
+        assert!(m.take_pending_plan("/r", "ling", Some("s")).await.is_none());
+        assert_eq!(m.hold_behind_plan("s", "ling", "late".into()).await.as_deref(), Some("late"));
+    }
+
+    /// Moving on drops the agent's plan and hands back what it held; a
+    /// deleted session's plans go untold.
+    #[tokio::test]
+    async fn moving_on_or_deleting_lets_go_of_the_plan() {
+        let m = manager();
+        m.set_pending_plan("/r", "ling", Some("s"), plan("one")).await;
+        m.hold_behind_plan("s", "ling", "first".into()).await;
+        assert_eq!(m.drop_pending_plans("s", "ling").await, ["first"]);
+        assert!(m.drop_pending_plans("s", "ling").await.is_empty());
+        assert_eq!(m.hold_behind_plan("s", "ling", "next".into()).await.as_deref(), Some("next"));
+
+        m.set_pending_plan("/r", "ling", Some("s"), plan("a")).await;
+        m.set_pending_plan("/r", "yinyue", Some("s"), plan("b")).await;
+        m.set_pending_plan("/r", "ling", Some("t"), plan("c")).await;
+        m.forget_session_plans("s").await;
+        assert!(m.take_pending_plan("/r", "ling", Some("s")).await.is_none());
+        assert!(m.take_pending_plan("/r", "yinyue", Some("s")).await.is_none());
+        assert!(m.take_pending_plan("/r", "ling", Some("t")).await.is_some());
     }
 }
 

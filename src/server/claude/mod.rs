@@ -653,6 +653,7 @@ async fn execute_turn(state: Arc<ServerState>, req: chat::types::ChatRequest, me
             return;
         }
     };
+    let _life = state.manager.run_life(&run_id);
     let host = runtime::ClaudeSession {
         state: state.clone(),
         meta,

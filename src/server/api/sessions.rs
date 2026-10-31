@@ -564,6 +564,7 @@ async fn end_native_work(state: &ServerState, session: &str) {
         let _ = state.manager.cancel_run_tree(&run.run_id).await;
     }
     crate::engine::background::end_session(&state.manager, session).await;
+    state.manager.forget_session_plans(session).await;
 }
 
 #[derive(Deserialize)]
