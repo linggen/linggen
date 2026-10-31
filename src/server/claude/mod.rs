@@ -291,9 +291,12 @@ pub(crate) async fn start_turn(
     tokio::spawn(async move {
         let mut delivery = queued.as_ref().map(|item| state.claude.await_delivery(&meta.id, &item.id));
         let delivered = match delivery.as_mut() {
+            // A delivery wins over the place freeing at the same moment: a
+            // round that woke this message must hear back from it.
             Some(rx) => tokio::select! {
-                guard = &mut lock => Err(guard),
+                biased;
                 result = rx => Ok(result.ok()),
+                guard = &mut lock => Err(guard),
             },
             None => Err(lock.as_mut().await),
         };
@@ -303,10 +306,12 @@ pub(crate) async fn start_turn(
             Ok(None) => lock.as_mut().await,
             Ok(Some(how)) => {
                 let item = queued.as_ref().expect("a delivery is only armed for a queued message");
-                if !dequeue_user(&state, &req, &meta, &item.id).await {
-                    return;
+                let went_in = !dequeue_user(&state, &req, &meta, &item.id).await
+                    || steer_into_turn(&state, &meta.id, &req, how).await;
+                if how == host::Delivery::Next {
+                    state.claude.delivered(&meta.id, went_in);
                 }
-                if steer_into_turn(&state, &meta.id, &req, how).await {
+                if went_in {
                     return;
                 }
                 // The turn ended as it was sent: the message, already

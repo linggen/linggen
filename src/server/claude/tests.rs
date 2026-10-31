@@ -145,8 +145,9 @@ fn chat_pictures_reach_the_bridge_as_data_urls() {
     assert_eq!(data_url("data:image/gif;base64,R0lGOD"), "data:image/gif;base64,R0lGOD");
 }
 
-/// What is typed while a turn runs joins it at the next tool round, in the
-/// order it came and only into its own session; Steer sends one at once.
+/// What is typed while a turn runs joins it at the next tool round, one at
+/// a time in the order it came and only into its own session; Steer sends
+/// one at once.
 #[test]
 fn queued_messages_join_the_turn_at_its_tool_round() {
     use host::Delivery;
@@ -155,14 +156,25 @@ fn queued_messages_join_the_turn_at_its_tool_round() {
     let mut other = host.await_delivery("t", "q2");
     let mut second = host.await_delivery("s", "q3");
     let mut steered = host.await_delivery("s", "q4");
+    let mut third = host.await_delivery("s", "q5");
     assert!(host.steer("q4"));
     assert_eq!(steered.try_recv(), Ok(Delivery::Now));
     assert!(!host.steer("q4"), "a message goes in once");
-    assert_eq!(host.deliver_waiting("s"), 2);
+    assert!(host.deliver_waiting("s"));
     assert_eq!(first.try_recv(), Ok(Delivery::Next));
+    assert!(second.try_recv().is_err(), "the next waits for the first to be in");
+    assert!(!host.deliver_waiting("s"), "a round already runs");
+    host.delivered("s", true);
     assert_eq!(second.try_recv(), Ok(Delivery::Next));
+    // The turn ended before the second went in: the third keeps its place.
+    host.delivered("s", false);
+    assert!(third.try_recv().is_err());
     assert!(other.try_recv().is_err(), "another session's message keeps waiting");
-    assert_eq!(host.deliver_waiting("s"), 0);
+    // The next turn's tool round takes it.
+    assert!(host.deliver_waiting("s"));
+    assert_eq!(third.try_recv(), Ok(Delivery::Next));
+    host.delivered("s", true);
+    assert!(!host.deliver_waiting("s"));
     host.forget_waiting("q2");
-    assert_eq!(host.deliver_waiting("t"), 0);
+    assert!(!host.deliver_waiting("t"));
 }

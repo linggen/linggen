@@ -54,6 +54,8 @@ pub(crate) struct Host {
     /// Queued messages waiting for the running turn, in the order they came:
     /// each goes in at the turn's next tool round, or at once on Steer.
     waiting: SyncMutex<Vec<Waiting>>,
+    /// Sessions whose waiting messages are going in, one at a time.
+    rounds: SyncMutex<HashSet<String>>,
     pub(super) probes: Mutex<HashMap<String, Arc<Mutex<Option<super::probe::Outcome>>>>>,
     /// The children each session's live runner is running, by tracking id.
     /// A saved child still marked running that is not here ended unseen.
@@ -154,16 +156,37 @@ impl Host {
         waiting.remove(at).deliver.send(Delivery::Now).is_ok()
     }
 
-    /// A main-thread tool round ended: everything waiting for this session
-    /// goes into the turn, in order. Returns how many went.
-    pub fn deliver_waiting(&self, session: &str) -> usize {
+    /// A main-thread tool round ended: the first message waiting for this
+    /// session goes in. Each passes the round on once it is in
+    /// (`delivered`), so they reach the turn in the order sent. False when
+    /// nothing went (none waiting, or a round already runs).
+    pub fn deliver_waiting(&self, session: &str) -> bool {
+        let mut rounds = locked(&self.rounds);
+        if rounds.contains(session) || !self.wake_next(session) {
+            return false;
+        }
+        rounds.insert(session.into());
+        true
+    }
+
+    /// The message a round woke is done: in the turn (or removed), so the
+    /// next one goes; or the turn ended first, so the round is over and the
+    /// rest keep their places for the next turn.
+    pub fn delivered(&self, session: &str, went_in: bool) {
+        let mut rounds = locked(&self.rounds);
+        if went_in && self.wake_next(session) {
+            return;
+        }
+        rounds.remove(session);
+    }
+
+    fn wake_next(&self, session: &str) -> bool {
         let mut waiting = locked(&self.waiting);
-        let (due, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut *waiting)
-            .into_iter()
-            .partition(|w| w.session == session);
-        *waiting = keep;
-        due.into_iter()
-            .filter_map(|w| w.deliver.send(Delivery::Next).ok())
-            .count()
+        while let Some(at) = waiting.iter().position(|w| w.session == session) {
+            if waiting.remove(at).deliver.send(Delivery::Next).is_ok() {
+                return true;
+            }
+        }
+        false
     }
 }
