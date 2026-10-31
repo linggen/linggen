@@ -6,7 +6,7 @@
  */
 import { create } from 'zustand';
 import type { AgentRunInfo, ChatMessage, ContentBlock, SubagentTreeEntry, SessionState } from '../types';
-import { rowForRun, settleTree, unshownChildren } from '../lib/subagentRuns.mts';
+import { rowForRun, settleTree, subagentHostIndex, unshownChildren } from '../lib/subagentRuns.mts';
 import { isToolStatusText } from '../components/chat/MessagePhase';
 import { dedupFetch } from '../lib/dedupFetch';
 import {
@@ -75,7 +75,8 @@ interface ChatState {
   addTextSegment: (agentId: string, text: string, runId?: string) => void;
   upsertPlan: (agentId: string, planText: string) => void;
   updateSubagentTree: (parentId: string, subagentId: string, updater: (entry: SubagentTreeEntry) => SubagentTreeEntry) => void;
-  addSubagentToTree: (parentId: string, entry: SubagentTreeEntry) => void;
+  /** A child's row, in its parent run's bubble (by run id, else by name). */
+  addSubagentToTree: (parentId: string, entry: SubagentTreeEntry, parentRunId?: string | null) => void;
   /** The person's message joined `agentId`'s running turn: the work so far
    *  stays above it as its own block; the run goes on in a new bubble. */
   sealRunBubble: (agentId: string) => void;
@@ -316,24 +317,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   updateSubagentTree: (parentId, subagentId, updater) =>
     set(mutate((msgs) => updateParentSubagentTree(msgs, parentId, subagentId, updater))),
 
-  addSubagentToTree: (parentId, entry) => set(mutate((state) => {
-    let targetIdx = -1;
-    for (let i = state.length - 1; i >= 0; i--) {
-      const m = state[i];
-      if ((m.from || '').toLowerCase() === parentId && m.isGenerating) {
-        targetIdx = i;
-        break;
-      }
-    }
-    if (targetIdx < 0) {
-      for (let i = state.length - 1; i >= 0; i--) {
-        const m = state[i];
-        if ((m.from || '').toLowerCase() === parentId && m.role === 'agent') {
-          targetIdx = i;
-          break;
-        }
-      }
-    }
+  addSubagentToTree: (parentId, entry, parentRunId) => set(mutate((state) => {
+    const targetIdx = subagentHostIndex(state, parentId, parentRunId);
     if (targetIdx < 0) return state;
     const next = [...state];
     const msg = next[targetIdx];
@@ -371,7 +356,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
     for (const child of unshownChildren(runs, shown)) {
       const parent = runs.find((run) => run.run_id === child.parent_run_id);
-      get().addSubagentToTree((parent?.agent_id ?? child.agent_id).toLowerCase(), rowForRun(child));
+      get().addSubagentToTree((parent?.agent_id ?? child.agent_id).toLowerCase(), rowForRun(child), child.parent_run_id);
     }
   },
 

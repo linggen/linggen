@@ -15,7 +15,7 @@ import { interruptedResend, INTERRUPTED_TEXT } from '../interruptedTurn.mts';
 import { stillOn } from '../sessionLoad.mts';
 import { sessionRootOf } from '../sessionRoot.mts';
 import { isPermissionSuppressed } from './_shared';
-import { noteUiBuild } from '../uiBuild.mts';
+import { noteUiBuild, type PageFacts } from '../uiBuild.mts';
 
 
 export function handlePageState(item: UiEventOf<'page_state'>): void {
@@ -29,7 +29,19 @@ export function handlePageState(item: UiEventOf<'page_state'>): void {
   applyQueued(ps);
   applyTasks(ps);
   applyScopedState(ps);
-  noteUiBuild(ps.ui_build, () => !isSessionBusy(useServerStore.getState(), useSessionStore.getState().activeSessionId));
+  noteUiBuild(ps.ui_build, pageFacts);
+}
+
+/** What would be cut short or lost if the page reloaded now. */
+function pageFacts(): PageFacts {
+  const sid = useSessionStore.getState().activeSessionId;
+  const { pendingPlan, askQueues } = useInteractionStore.getState();
+  const ui = useUiStore.getState();
+  return {
+    replying: isSessionBusy(useServerStore.getState(), sid),
+    awaitingAnswer: !!pendingPlan || (!!sid && (askQueues[sid]?.length ?? 0) > 0),
+    dialogOpen: ui.modelPickerOpen || ui.showAgentSpecEditor || !!ui.openApp || !!ui.selectedFilePath,
+  };
 }
 
 function applyPermission(ps: PageState): void {
@@ -133,10 +145,7 @@ function applyScopedState(ps: PageState): void {
       useServerStore.setState({ agentRuns: data });
     }
     reconcileStreamingState(data);
-    // A Claude session's children are the SDK's, not engine runs.
-    const sid = useSessionStore.getState().activeSessionId;
-    const claude = useSessionStore.getState().allSessions.find((s) => s.id === sid)?.runtime === 'claude_agent_sdk';
-    if (sid && !claude) useChatStore.getState().reconcileSubagents(data.filter((run) => run.session_id === sid));
+    if (reconcilesSubagents(ps)) useChatStore.getState().reconcileSubagents(data.filter((run) => run.session_id === ps.session_id));
   }
   if (ps.sessions) useSessionStore.setState({ sessions: ps.sessions });
 
@@ -148,6 +157,16 @@ function applyScopedState(ps: PageState): void {
   if (perm.effective_mode && !isPermissionSuppressed()) {
     useUiStore.getState().setSessionMode(perm.effective_mode);
   }
+}
+
+/** The runs settle the visible session's subagent rows only when the push
+ *  is for that session, and the session is known to run on the engine — a
+ *  Claude session's children are the SDK's, not engine runs. */
+function reconcilesSubagents(ps: PageState): boolean {
+  const { activeSessionId, allSessions, allSessionsLoaded } = useSessionStore.getState();
+  if (!activeSessionId || ps.session_id !== activeSessionId || !allSessionsLoaded) return false;
+  const session = allSessions.find((s) => s.id === activeSessionId);
+  return !!session && session.runtime !== 'claude_agent_sdk';
 }
 
 /** Grace before server-authoritative "idle" may retire optimistic client

@@ -92,6 +92,8 @@ export interface PageState {
   /** Agents that appear only once met (engine `agent/met.rs`): hide the
    *  ones with `present: false` — the lists above already leave them out. */
   agents_met?: Array<{ id: string; present: boolean; met: { at: string; reason: 'trigger' | 'history' } | null }>;
+  /** The session the scoped fields below are for. */
+  session_id?: string;
   agents?: AgentInfo[];
   agent_runs?: AgentRunInfo[];
   queued?: Array<{ agent_id?: string; items?: QueuedChatItem[] }>;

@@ -156,7 +156,7 @@ function handleSubagentSpawned(item: RunEventOf<'subagent_spawned'>): void {
     toolSteps: [],
     timestampMs: Date.now(),
   };
-  useChatStore.getState().addSubagentToTree(parentId, newEntry);
+  useChatStore.getState().addSubagentToTree(parentId, newEntry, item.data.parent_run_id);
 }
 
 function handleSubagentResult(item: RunEventOf<'subagent_result'>): void {

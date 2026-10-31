@@ -7,7 +7,7 @@ import type {
   SubagentTreeEntry,
 } from '../types';
 import { liveBubbleOfRun } from './interruptedRun.mts';
-import { bubbleOfRun, claimForRun, isRunBubble, isRunRow, runBubbleIndex } from './runBinding.mts';
+import { afterSealed, bindSealed, bubbleOfRun, claimForRun, isRunBubble, isRunRow, isSealed, runBubbleIndex } from './runBinding.mts';
 import { sameSentMessage } from './sentMessage.mts';
 import { dropLiveEchoes, idsDecide, normalizeFrom, normalizeMessageTextForDedup, sameMessageContent } from './rowIdentity.mts';
 import { dedupeActivityEntries, isProgressLineText, summarizeCollapsedActivity } from '../components/chat/utils/activity';
@@ -551,13 +551,16 @@ const transferRichContent = (persisted: ChatMessage, live: ChatMessage): ChatMes
  * matching below.
  */
 export const mergeChatMessages = (persisted: ChatMessage[], live: ChatMessage[]): ChatMessage[] => {
-  const runRows = persisted.filter(isRunRow);
-  const bubbles = live.filter((m) => isRunBubble(m));
+  // A block sealed by a message the run took in stays until its rows hold it.
+  const sealed = live.filter(isSealed);
+  const bound = bindSealed(persisted, sealed);
+  const runRows = bound.rows.filter(isRunRow);
+  const bubbles = live.filter((m) => isRunBubble(m)).map((m) => afterSealed(m, sealed));
   const legacy = mergeLegacyMessages(
-    persisted.filter((m) => !isRunRow(m)),
+    bound.rows.filter((m) => !isRunRow(m)),
     live.filter((m) => !isRunBubble(m) && !isRunRow(m)),
   );
-  return [...legacy, ...runRows, ...bubbles];
+  return [...legacy, ...runRows, ...bound.sealed, ...bubbles];
 };
 
 // ---------------------------------------------------------------------------

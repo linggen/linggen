@@ -5,7 +5,7 @@
  * would otherwise show "running" forever; and a page opened while children
  * run would show none. Each page_state's runs settle both.
  */
-import type { AgentRunInfo, SubagentTreeEntry } from '../types';
+import type { AgentRunInfo, ChatMessage, SubagentTreeEntry } from '../types';
 
 /** A row this young may be ahead of the runs list it is checked against. */
 export const SETTLE_GRACE_MS = 15_000;
@@ -44,4 +44,23 @@ export function rowForRun(run: AgentRunInfo): SubagentTreeEntry {
     toolSteps: [],
     timestampMs: run.started_at * 1000,
   };
+}
+
+/**
+ * The bubble a child's row goes in: its parent run's, found by run id — a
+ * `ling` child under `ling` has bubbles of the same name. Without a parent
+ * run id, or no bubble of it here: the parent agent's newest generating
+ * bubble, else its newest. -1: none.
+ */
+export function subagentHostIndex(msgs: readonly ChatMessage[], parentName: string, parentRunId?: string | null): number {
+  if (parentRunId) {
+    const live = msgs.findLastIndex((m) => m.runId === parentRunId && m.live);
+    if (live >= 0) return live;
+    const saved = msgs.findLastIndex((m) => m.runId === parentRunId && m.role === 'agent');
+    if (saved >= 0) return saved;
+  }
+  const named = (m: ChatMessage) => (m.from || '').toLowerCase() === parentName;
+  const generating = msgs.findLastIndex((m) => named(m) && !!m.isGenerating);
+  if (generating >= 0) return generating;
+  return msgs.findLastIndex((m) => named(m) && m.role === 'agent');
 }

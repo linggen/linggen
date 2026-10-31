@@ -5,7 +5,7 @@
 // subagents showed "running 16m" after the channel dropped).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { SETTLE_GRACE_MS, rowForRun, settleTree, unshownChildren } from '../src/lib/subagentRuns.mts';
+import { SETTLE_GRACE_MS, rowForRun, settleTree, subagentHostIndex, unshownChildren } from '../src/lib/subagentRuns.mts';
 
 const row = (subagentId: string, status: 'running' | 'done' | 'failed', timestampMs?: number) => ({
   subagentId, agentName: 'ling', task: 'look', status, toolCount: 0, contextTokens: 0,
@@ -40,4 +40,18 @@ test('a running child no row shows gets one; top runs and shown ones do not', ()
   assert.equal(entry.task, 'task of child');
   assert.equal(entry.status, 'running');
   assert.equal(entry.timestampMs, 100_000);
+});
+
+// 2026-10-31: a `ling` child under `ling` has a bubble of the same name; the
+// second child's row landed in the first child's bubble.
+test("a child's row goes in its parent run's bubble, not the newest of the parent's name", () => {
+  const bubble = (runId: string) => ({
+    role: 'agent' as const, from: 'ling', to: 'user', text: '', timestamp: '', runId, live: true, isGenerating: true,
+  });
+  const msgs = [bubble('parent'), bubble('child-1')];
+  assert.equal(subagentHostIndex(msgs, 'ling', 'parent'), 0);
+  // No parent run id (an older event), or none of its bubbles here: by name.
+  assert.equal(subagentHostIndex(msgs, 'ling'), 1);
+  assert.equal(subagentHostIndex(msgs, 'ling', 'gone'), 1);
+  assert.equal(subagentHostIndex(msgs, 'coder', 'gone'), -1);
 });

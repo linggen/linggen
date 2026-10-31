@@ -80,16 +80,21 @@ pub struct PageState {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub busy_sessions: Option<std::collections::HashMap<String, String>>,
 
-    /// The agents that appear only once met, and whether each has been
-    /// (`engine::agent::met`): `{id, present, met: {at, reason} | null}`.
     /// The web UI build the engine serves now (`app_pages::ui_build`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ui_build: Option<String>,
 
+    /// The agents that appear only once met, and whether each has been
+    /// (`engine::agent::met`): `{id, present, met: {at, reason} | null}`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agents_met: Option<Vec<crate::engine::agent::met::AgentMet>>,
 
     // -- Scoped (based on ViewContext, Admin only) --
+    /// The session the scoped fields below are for. During a switch a push
+    /// may still describe the previous one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agents: Option<Vec<serde_json::Value>>,
 
@@ -190,6 +195,7 @@ pub async fn build_page_state(
         busy_sessions: None,
         agents_met: None,
         ui_build: None,
+        session_id: None,
         agents: None,
         agent_runs: None,
         queued: None,
@@ -419,6 +425,7 @@ pub async fn build_page_state(
         }
 
         if let Some(ref session_id) = ctx.session_id {
+            ps.session_id = Some(session_id.clone());
             let root_buf = PathBuf::from(ctx.project_root.as_deref().unwrap_or(""));
             if let Ok(runs) = state
                 .manager

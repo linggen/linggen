@@ -16,16 +16,18 @@ import type { ChatMessage } from '../types.ts';
 export const isRunBubble = (m: ChatMessage, runId?: string): boolean =>
   !!m.live && !!m.runId && (runId == null || m.runId === runId);
 
+const SEALED = '~before-message';
+
 /**
  * A run bubble's work up to a message the run took in mid-turn (`fold.rs`):
  * a finished block of its own, bound to no live run, so it stays above the
- * message while the run's later events open a new bubble below it. The next
- * load's saved rows replace it (`continued` row, chat-spec § Message queue).
+ * message while the run's later events open a new bubble below it. A load
+ * binds it to the run's saved rows before that message (`bindSealed`).
  */
 export function sealedSegment(bubble: ChatMessage): ChatMessage {
   return {
     ...bubble,
-    runId: `${bubble.runId}~before-message`,
+    runId: `${bubble.runId}${SEALED}`,
     live: false,
     isGenerating: false,
     isThinking: false,
@@ -34,8 +36,74 @@ export function sealedSegment(bubble: ChatMessage): ChatMessage {
   };
 }
 
-/** A saved row of a run (from the history view). */
+/** A saved row of a run (from the history view), or a sealed block. */
 export const isRunRow = (m: ChatMessage): boolean => !!m.runId && !m.live;
+
+/** The run a sealed block was cut from; undefined for anything else. */
+const sealedRunOf = (m: ChatMessage): string | undefined =>
+  !m.live && m.runId?.endsWith(SEALED) ? m.runId.slice(0, -SEALED.length) : undefined;
+
+export const isSealed = (m: ChatMessage): boolean => sealedRunOf(m) != null;
+
+const isPersonRow = (m: ChatMessage) => m.role === 'user' || m.from === 'user';
+
+/** Run `runId`'s saved rows, split at each message the person sent while it
+ *  ran: part k is the run's work before the (k+1)-th such message. */
+function rowsByMessage(persisted: readonly ChatMessage[], runId: string): ChatMessage[][] {
+  const parts: ChatMessage[][] = [[]];
+  for (const m of persisted) {
+    const last = parts[parts.length - 1];
+    if (isRunRow(m) && m.runId === runId) last.push(m);
+    else if (isPersonRow(m) && last.length > 0) parts.push([]);
+  }
+  return parts;
+}
+
+/**
+ * A load's saved rows against this page's sealed blocks. The k-th sealed
+ * block of a run is that run's rows before the k-th message it took in: it
+ * shows as the block when the block holds them, else as those rows. Either
+ * way it is the run going on — never a run cut off — and it stays above the
+ * message, apart from the run's live bubble below it.
+ */
+export function bindSealed(
+  persisted: readonly ChatMessage[],
+  sealed: readonly ChatMessage[],
+): { rows: ChatMessage[]; sealed: ChatMessage[] } {
+  const dropped = new Set<ChatMessage>();
+  const retagged = new Map<ChatMessage, ChatMessage>();
+  const kept: ChatMessage[] = [];
+  const runs = new Set(sealed.map(sealedRunOf));
+  for (const run of runs) {
+    const blocks = sealed.filter((m) => sealedRunOf(m) === run);
+    const parts = rowsByMessage(persisted, run!);
+    blocks.forEach((block, k) => {
+      const rows = parts[k] || [];
+      // The last part is the work after the newest message: the live bubble's.
+      if (rows.length === 0 || k >= parts.length - 1) {
+        kept.push(block);
+        return;
+      }
+      if (holdsRun(block, rows)) {
+        kept.push(block);
+        rows.forEach((r) => dropped.add(r));
+        return;
+      }
+      for (const r of rows) {
+        retagged.set(r, { ...r, runId: block.runId, interrupted: undefined, runEndedMs: undefined });
+      }
+    });
+  }
+  const rows = persisted.filter((m) => !dropped.has(m)).map((m) => retagged.get(m) ?? m);
+  return { rows, sealed: kept };
+}
+
+/** A live bubble of a run that took a message in sees only rows after it;
+ *  the rows before are its sealed block's. */
+export function afterSealed(bubble: ChatMessage, sealed: readonly ChatMessage[]): ChatMessage {
+  const cut = sealed.some((m) => sealedRunOf(m) === bubble.runId);
+  return cut && bubble.seenSaved ? { ...bubble, seenSaved: 0 } : bubble;
+}
 
 /**
  * Where an event of `agentId`'s run `runId` lands: that run's bubble; else a

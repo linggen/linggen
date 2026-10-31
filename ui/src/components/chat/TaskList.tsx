@@ -17,9 +17,8 @@ export const StatusDot: React.FC<{ status: string; needsUser?: boolean; classNam
   status === 'running' && !needsUser ? <RunningSpinner className={className} /> :
   <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', className,
     needsUser ? 'bg-blue-500 animate-pulse'
-      : status === 'running' ? 'bg-amber-500 animate-pulse'
-        : status === 'failed' ? 'bg-red-500'
-          : status === 'completed' ? 'bg-emerald-500' : 'bg-slate-400')} />
+      : status === 'failed' ? 'bg-red-500'
+        : status === 'completed' ? 'bg-emerald-500' : 'bg-slate-400')} />
 );
 
 export const KindBadge: React.FC<{ kind: string }> = ({ kind }) => (

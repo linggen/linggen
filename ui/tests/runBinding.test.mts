@@ -4,7 +4,7 @@
 // never moves one run's calls or words under another message.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bindRuns, bubbleOfRun, claimForRun, runBubbleIndex, sealedSegment } from '../src/lib/runBinding.mts';
+import { afterSealed, bindRuns, bindSealed, bubbleOfRun, claimForRun, runBubbleIndex, sealedSegment } from '../src/lib/runBinding.mts';
 import type { ChatMessage, ContentBlock } from '../src/types.ts';
 
 const call = (tool: string, status: ContentBlock['status'], id = tool): ContentBlock =>
@@ -134,4 +134,58 @@ test('a message the run took in sits between the work before it and after it', (
   const shown = bindRuns([...msgs, after]);
   assert.deepEqual(shown.map((m) => m.text || (m.content || []).map((b) => b.id).join(',')),
     ['Glob five patterns.', 'g1', 'Answer in Chinese.', 'g2,五次都没有文件。']);
+});
+
+// A load mid-run (a subagent ended) after a message joined the run: the
+// saved rows still end the run's first part at the message, as interrupted.
+const shownIds = (msgs: ChatMessage[]) =>
+  bindRuns(msgs).map((m) => m.text || (m.content || []).map((b) => b.id).join(','));
+
+test('a load mid-run keeps the sealed block above the message, never interrupted', () => {
+  const sealed = sealedSegment(bubble('r1', [call('Glob', 'done', 'g1')], { isGenerating: true, timestampMs: 1 }));
+  const live = bubble('r1', [call('Read', 'running', 'r')], { isGenerating: true, timestampMs: 3, seenSaved: 0 });
+  const persisted = [
+    user('Glob five patterns.', 1),
+    row('r1', '', [call('Glob', 'done', 'g1')], { interrupted: true, runEndedMs: 2, timestampMs: 1 }),
+    user('Answer in Chinese.', 2),
+  ];
+  const bound = bindSealed(persisted, [sealed]);
+  assert.deepEqual(bound.sealed, [sealed], 'the block holds the rows before the message');
+  assert.ok(!bound.rows.some((m) => m.interrupted));
+  const merged = [...bound.rows, ...bound.sealed, afterSealed(live, bound.sealed)];
+  assert.deepEqual(shownIds(merged).sort(), ['Answer in Chinese.', 'Glob five patterns.', 'g1', 'r'].sort());
+});
+
+test("a sealed block that missed part of the run gives way to its rows, which stay the run's first part", () => {
+  // The page was away for part of the run: the rows hold more than the block.
+  const sealed = sealedSegment(bubble('r1', [call('Glob', 'done', 'g2')], { isGenerating: true, timestampMs: 1 }));
+  const persisted = [
+    user('Glob five patterns.', 1),
+    row('r1', '', [call('Glob', 'done', 'g1'), call('Glob', 'done', 'g2')], { interrupted: true, timestampMs: 1 }),
+    user('Answer in Chinese.', 2),
+    row('r1', 'Done.', [call('Read', 'done', 'r')], { timestampMs: 3 }),
+  ];
+  // The run's live bubble took it after a load that showed its first part.
+  const live = bubble('r1', [call('Read', 'done', 'r'), words('Done.')], { isGenerating: true, timestampMs: 3, seenSaved: 1 });
+  const bound = bindSealed(persisted, [sealed]);
+  assert.deepEqual(bound.sealed, []);
+  const first = bound.rows[1];
+  assert.equal(first.interrupted, undefined);
+  assert.notEqual(first.runId, 'r1', 'the first part is not the live bubble\'s');
+  const shown = shownIds([...bound.rows, afterSealed(live, [sealed])]);
+  assert.deepEqual(shown, ['Glob five patterns.', 'g1,g2', 'Answer in Chinese.', 'r,Done.']);
+});
+
+test('a reply after the run ends: the sealed block and the reply, each once', () => {
+  const sealed = sealedSegment(bubble('r1', [call('Glob', 'done', 'g1')], { isGenerating: true, timestampMs: 1 }));
+  const done = bubble('r1', [call('Glob', 'done', 'g2'), words('五次。')], { text: '五次。', timestampMs: 3 });
+  const persisted = [
+    user('Glob five patterns.', 1),
+    row('r1', '', [call('Glob', 'done', 'g1')], { timestampMs: 1 }),
+    user('Answer in Chinese.', 2),
+    row('r1', '五次。', [call('Glob', 'done', 'g2')], { timestampMs: 3 }),
+  ];
+  const bound = bindSealed(persisted, [sealed]);
+  const shown = shownIds([...bound.rows, ...bound.sealed, afterSealed(done, bound.sealed)]);
+  assert.deepEqual(shown.sort(), ['Answer in Chinese.', 'Glob five patterns.', 'g1', '五次。'].sort());
 });
