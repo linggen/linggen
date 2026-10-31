@@ -1,9 +1,10 @@
-//! Permission model: types, bash classification, path matching, tier mapping,
+//! Permission model: types, path matching, tier mapping,
 //! and the `check_permission` decision function.
 //!
 //! All pure logic — no I/O, no UI prompts. The store layer lives in
 //! [`super::store`]; prompt construction in [`super::prompt`].
 
+use super::classify::{classify_bash_command, dequote};
 use super::store::SessionPermissions;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -60,7 +61,7 @@ pub struct PathMode {
 }
 
 /// Bash command classification for permission tier mapping.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum BashClass {
     Read,
     Write,
@@ -124,7 +125,8 @@ pub fn is_hardcoded_deny(cmd: &str) -> bool {
 }
 
 fn segment_is_hardcoded_deny(seg: &str) -> bool {
-    let tokens: Vec<&str> = seg.split_whitespace().collect();
+    let words: Vec<String> = seg.split_whitespace().map(dequote).collect();
+    let tokens: Vec<&str> = words.iter().map(String::as_str).collect();
     if tokens.is_empty() {
         return false;
     }
@@ -242,523 +244,6 @@ fn split_command_segments(cmd: &str) -> Vec<String> {
         segments.push(cmd[start..].to_string());
     }
     segments
-}
-
-// ---------------------------------------------------------------------------
-// Bash command classifier
-// ---------------------------------------------------------------------------
-
-/// Best-effort risk classification, not a shell parser or filesystem sandbox.
-/// Unknown dynamic shell syntax is deliberately treated as admin.
-pub fn classify_bash_command(cmd: &str) -> BashClass {
-    let mut quote = None;
-    let mut escaped = false;
-    for c in cmd.chars() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if c == '\\' && quote != Some('\'') {
-            escaped = true;
-            continue;
-        }
-        if c == '`' && quote != Some('\'') {
-            return BashClass::Admin;
-        }
-        if c == '$' && quote != Some('\'') {
-            // Variables and substitutions can change both the command and its targets.
-            return BashClass::Admin;
-        }
-        if c == '\'' || c == '"' {
-            if quote == Some(c) {
-                quote = None;
-            } else if quote.is_none() {
-                quote = Some(c);
-            }
-        }
-    }
-    if quote.is_some() || escaped {
-        return BashClass::Admin;
-    }
-    let mut highest = BashClass::Read;
-    let mut words = Vec::new();
-    for token in command_tokens(cmd)
-        .into_iter()
-        .chain(std::iter::once(Token::Op(Joint::Seq)))
-    {
-        match token {
-            Token::Word(w) => words.push(w),
-            Token::Op(_) if !words.is_empty() => {
-                highest = highest.max(classify_segment(&words));
-                words.clear();
-            }
-            Token::Op(_) => {}
-        }
-    }
-    if cmd.trim().is_empty() {
-        BashClass::Admin
-    } else {
-        highest
-    }
-}
-
-/// `<(…)` and `>(…)` run a command of their own, unseen here.
-fn has_process_substitution(words: &[String]) -> bool {
-    words.iter().any(|word| {
-        let mut quote = None;
-        let mut escaped = false;
-        let mut prev = None;
-        for c in word.chars() {
-            if escaped {
-                escaped = false;
-            } else if c == '\\' && quote != Some('\'') {
-                escaped = true;
-            } else if c == '\'' || c == '"' {
-                quote = match quote {
-                    Some(q) if q == c => None,
-                    None => Some(c),
-                    q => q,
-                };
-            } else if c == '(' && quote.is_none() && matches!(prev, Some('<' | '>')) {
-                return true;
-            }
-            prev = Some(c);
-        }
-        false
-    })
-}
-
-/// `env [-flags] [NAME=value…] command…` runs that command: it is what is
-/// classified. `env` alone only prints.
-fn env_command(args: &[String]) -> Option<&[String]> {
-    let start = args
-        .iter()
-        .position(|a| !a.starts_with('-') && !a.contains('='))?;
-    Some(&args[start..])
-}
-
-fn classify_segment(words: &[String]) -> BashClass {
-    if has_process_substitution(words) {
-        return BashClass::Admin;
-    }
-    let mut clean = Vec::new();
-    let mut redirect = false;
-    let mut awaiting_target = false;
-    for word in words {
-        let mut quote = None;
-        let mut escaped = false;
-        let mut redirect_at = None;
-        for (i, c) in word.char_indices() {
-            if escaped {
-                escaped = false;
-                continue;
-            }
-            if c == '\\' && quote != Some('\'') {
-                escaped = true;
-                continue;
-            }
-            if c == '\'' || c == '"' {
-                if quote == Some(c) {
-                    quote = None;
-                } else if quote.is_none() {
-                    quote = Some(c);
-                }
-            } else if c == '>' && quote.is_none() {
-                redirect_at = Some(i);
-                break;
-            }
-        }
-        if awaiting_target {
-            if word != "/dev/null" && word != "&1" && word != "&2" {
-                redirect = true;
-            }
-            awaiting_target = false;
-        } else if let Some(i) = redirect_at {
-            let before = &word[..i];
-            if !before.is_empty() && !before.chars().all(|c| c.is_ascii_digit() || c == '&') {
-                clean.push(before.to_string());
-            }
-            let target = word[i..].trim_start_matches(['>', '|']);
-            if target.is_empty() {
-                awaiting_target = true;
-            } else if target != "/dev/null" && target != "&1" && target != "&2" {
-                redirect = true;
-            }
-        } else {
-            clean.push(word.clone());
-        }
-    }
-    if clean.is_empty() {
-        return BashClass::Admin;
-    }
-    let program = clean[0].as_str();
-    if program == "env" {
-        if let Some(command) = env_command(&clean[1..]) {
-            let class = classify_segment(command);
-            return if redirect || awaiting_target {
-                class.max(BashClass::Write)
-            } else {
-                class
-            };
-        }
-    }
-    let sub = clean.get(1).map(String::as_str).unwrap_or("");
-    let args: Vec<&str> = clean.iter().skip(2).map(String::as_str).collect();
-    let class = match (program, sub) {
-        ("find", _)
-            if clean.iter().any(|a| {
-                matches!(
-                    a.as_str(),
-                    "-delete"
-                        | "-exec"
-                        | "-execdir"
-                        | "-ok"
-                        | "-okdir"
-                        | "-fprint"
-                        | "-fprintf"
-                        | "-fls"
-                )
-            }) =>
-        {
-            BashClass::Admin
-        }
-        ("git", "branch" | "tag" | "remote" | "stash") => {
-            let read = match sub {
-                "branch" | "tag" => {
-                    args.is_empty()
-                        || args.iter().all(|a| {
-                            matches!(
-                                *a,
-                                "-a" | "-r"
-                                    | "-v"
-                                    | "-vv"
-                                    | "-l"
-                                    | "--list"
-                                    | "--all"
-                                    | "--verbose"
-                            )
-                        })
-                }
-                "remote" => {
-                    args.is_empty()
-                        || args == ["-v"]
-                        || matches!(args.first(), Some(&"show" | &"get-url"))
-                }
-                "stash" => matches!(args.first(), Some(&"list" | &"show")),
-                _ => false,
-            };
-            if read {
-                BashClass::Read
-            } else {
-                BashClass::Write
-            }
-        }
-        ("docker" | "podman", "system") => {
-            if matches!(args.first(), Some(&"df" | &"events" | &"info")) {
-                BashClass::Read
-            } else {
-                BashClass::Admin
-            }
-        }
-        _ => classify_single_command(program, sub),
-    };
-    if redirect || awaiting_target {
-        class.max(BashClass::Write)
-    } else {
-        class
-    }
-}
-
-fn classify_single_command(program: &str, subcommand: &str) -> BashClass {
-    const READ_PROGRAMS: &[&str] = &[
-        "ls",
-        "cat",
-        "head",
-        "tail",
-        "less",
-        "more",
-        "wc",
-        "file",
-        "stat",
-        "du",
-        "df",
-        "pwd",
-        "env",
-        "printenv",
-        "echo",
-        "printf",
-        "which",
-        "whereis",
-        "type",
-        "find",
-        "grep",
-        "rg",
-        "ag",
-        "ack",
-        "fd",
-        "tree",
-        "bat",
-        "jq",
-        "yq",
-        "uname",
-        "hostname",
-        "date",
-        "id",
-        "whoami",
-        "realpath",
-        "dirname",
-        "basename",
-        "ping",
-        "dig",
-        "nslookup",
-        "host",
-        "test",
-        "true",
-        "false",
-        "seq",
-        "sort",
-        "uniq",
-        "tr",
-        "cut",
-        "paste",
-        "diff",
-        "comm",
-        // Read-only system diagnostics (used by apple-shifu and similar inspection
-        // skills). These programs only display info — they don't mutate state.
-        "uptime",
-        "sw_vers",
-        "vm_stat",
-        "netstat",
-        "ifconfig",
-        "ipconfig",
-        "scutil",
-        "ps",
-        "lsof",
-        "vmmap",
-        "iostat",
-        // macOS system / security inspection. Bare invocations are read-only;
-        // mutating forms (sysctl -w, csrutil disable, spctl --add, fdesetup
-        // enable, etc.) all require sudo, which the hardcoded deny floor blocks.
-        "sysctl",
-        "spctl",
-        "csrutil",
-        "fdesetup",
-        "socketfilterfw",
-        "systemsetup",
-    ];
-
-    const GIT_READ: &[&str] = &[
-        "status",
-        "log",
-        "diff",
-        "show",
-        "branch",
-        "tag",
-        "remote",
-        "rev-parse",
-        "blame",
-        "stash",
-        "describe",
-        "shortlog",
-        "ls-files",
-        "ls-tree",
-    ];
-
-    const CARGO_READ: &[&str] = &[
-        "check",
-        "clippy",
-        "doc",
-        "metadata",
-        "tree",
-        "verify-project",
-    ];
-    const NPM_READ: &[&str] = &[
-        "list", "ls", "outdated", "view", "info", "audit", "why", "explain",
-    ];
-    const PIP_READ: &[&str] = &["list", "show", "freeze", "check"];
-    const GO_READ: &[&str] = &["vet", "list", "doc", "env", "version"];
-
-    const ADMIN_PROGRAMS: &[&str] = &[
-        "rm",
-        "sudo",
-        "su",
-        "kill",
-        "killall",
-        "pkill",
-        "chmod",
-        "chown",
-        "chgrp",
-        "systemctl",
-        "launchctl",
-        "service",
-        "mount",
-        "umount",
-        "mkfs",
-        "fdisk",
-        "dd",
-        "apt",
-        "apt-get",
-        "yum",
-        "dnf",
-        "pacman",
-        "reboot",
-        "shutdown",
-        "halt",
-        "poweroff",
-        "iptables",
-        "ufw",
-        "firewall-cmd",
-        "crontab",
-        "at",
-    ];
-
-    const WRITE_PROGRAMS: &[&str] = &[
-        "mkdir", "cp", "mv", "touch", "sed", "awk", "patch", "ln", "install", "rsync", "tee",
-    ];
-
-    const GIT_WRITE: &[&str] = &[
-        "add",
-        "commit",
-        "push",
-        "pull",
-        "merge",
-        "rebase",
-        "checkout",
-        "switch",
-        "fetch",
-        "clone",
-        "init",
-        "reset",
-        "cherry-pick",
-        "am",
-        "apply",
-    ];
-
-    const CARGO_WRITE: &[&str] = &["build", "test", "run", "fmt", "install", "publish", "bench"];
-    const NPM_WRITE: &[&str] = &[
-        "install", "ci", "run", "start", "test", "build", "publish", "exec",
-    ];
-    const PIP_WRITE: &[&str] = &["install", "uninstall"];
-    const GO_WRITE: &[&str] = &["build", "test", "run", "install", "get", "mod"];
-
-    // brew and docker have read subcommands worth carving out so inspection
-    // skills (apple-shifu) don't have to admin-prompt for `brew list` /
-    // `docker images`.
-    const BREW_READ: &[&str] = &[
-        "list",
-        "info",
-        "search",
-        "outdated",
-        "deps",
-        "leaves",
-        "doctor",
-        "config",
-        "--version",
-        "-v",
-        "--prefix",
-        "tap-info",
-    ];
-    const DOCKER_READ: &[&str] = &[
-        "ps", "images", "logs", "inspect", "version", "info", "system", "history", "port", "top",
-        "stats", "diff", "events",
-    ];
-
-    if ADMIN_PROGRAMS.contains(&program) {
-        return BashClass::Admin;
-    }
-    if READ_PROGRAMS.contains(&program) {
-        return BashClass::Read;
-    }
-    if WRITE_PROGRAMS.contains(&program) {
-        return BashClass::Write;
-    }
-
-    match program {
-        "git" => {
-            if GIT_READ.contains(&subcommand) {
-                BashClass::Read
-            } else if GIT_WRITE.contains(&subcommand) {
-                BashClass::Write
-            } else {
-                BashClass::Admin
-            }
-        }
-        "cargo" => {
-            if CARGO_READ.contains(&subcommand) {
-                BashClass::Read
-            } else if CARGO_WRITE.contains(&subcommand) {
-                BashClass::Write
-            } else {
-                BashClass::Admin
-            }
-        }
-        "npm" | "npx" | "yarn" | "pnpm" => {
-            if NPM_READ.contains(&subcommand) {
-                BashClass::Read
-            } else if NPM_WRITE.contains(&subcommand) {
-                BashClass::Write
-            } else {
-                BashClass::Admin
-            }
-        }
-        "pip" | "pip3" => {
-            if PIP_READ.contains(&subcommand) {
-                BashClass::Read
-            } else if PIP_WRITE.contains(&subcommand) {
-                BashClass::Write
-            } else {
-                BashClass::Admin
-            }
-        }
-        "go" => {
-            if GO_READ.contains(&subcommand) {
-                BashClass::Read
-            } else if GO_WRITE.contains(&subcommand) {
-                BashClass::Write
-            } else {
-                BashClass::Admin
-            }
-        }
-        "python" | "python3" | "node" => {
-            if subcommand == "--version" || subcommand == "--help" || subcommand == "-V" {
-                BashClass::Read
-            } else {
-                BashClass::Admin
-            }
-        }
-        "curl" => {
-            if subcommand == "-I" || subcommand == "--head" {
-                BashClass::Read
-            } else {
-                BashClass::Admin
-            }
-        }
-        "wget" => {
-            if subcommand == "--spider" {
-                BashClass::Read
-            } else {
-                BashClass::Admin
-            }
-        }
-        "make" | "cmake" | "ninja" | "mvn" | "gradle" | "pytest" | "jest" | "vitest" => {
-            BashClass::Write
-        }
-        "brew" => {
-            if BREW_READ.contains(&subcommand) {
-                BashClass::Read
-            } else {
-                BashClass::Admin
-            }
-        }
-        "docker" | "podman" => {
-            if DOCKER_READ.contains(&subcommand) {
-                BashClass::Read
-            } else {
-                BashClass::Admin
-            }
-        }
-        _ => BashClass::Admin,
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1234,7 +719,7 @@ fn is_cd_flag(w: &str) -> bool {
 
 /// How a control operator joins one command to the next.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Joint {
+pub(super) enum Joint {
     /// `;` or a newline: the next command runs in the same shell regardless.
     Seq,
     /// `&&`: the next command runs only when this one succeeded.
@@ -1244,7 +729,7 @@ enum Joint {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-enum Token {
+pub(super) enum Token {
     Word(String),
     Op(Joint),
 }
@@ -1253,7 +738,7 @@ enum Token {
 /// does: quotes keep a span whole (and are retained), and an operator is
 /// its own token even when glued to a word (`x&`, `a|b`, `x;`). `>&`/`<&`
 /// (`2>&1`) and `&>` are redirections, not operators.
-fn command_tokens(cmd: &str) -> Vec<Token> {
+pub(super) fn command_tokens(cmd: &str) -> Vec<Token> {
     fn flush(cur: &mut String, out: &mut Vec<Token>) {
         if !cur.is_empty() {
             out.push(Token::Word(std::mem::take(cur)));

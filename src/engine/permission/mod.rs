@@ -8,14 +8,17 @@
 //!
 //! Layers
 //! ------
-//! - [`model`]  — types, bash classification, path matching, tier mapping,
+//! - [`classify`] — bash command classification (which tier a command needs).
+//! - [`model`]  — types, path matching, tier mapping,
 //!   and `check_permission` (the core decision function).
 //! - [`store`]  — `SessionPermissions` (load/save permission.json, set_path_mode).
 //! - [`prompt`] — AskUser widget construction and answer parsing.
 
+mod classify;
 mod manifest;
 mod model;
 mod prompt;
+mod scripts;
 mod store;
 
 pub use manifest::{apply_grants, Grants, PathGrant};
@@ -30,10 +33,8 @@ pub use store::SessionPermissions;
 
 #[cfg(test)]
 mod tests {
-    use super::model::{
-        classify_bash_command, extract_command_paths, is_hardcoded_deny, tool_action_tier,
-        BashClass,
-    };
+    use super::classify::classify_bash_command;
+    use super::model::{extract_command_paths, is_hardcoded_deny, tool_action_tier, BashClass};
     use super::*;
     use std::fs;
     use std::path::Path;
@@ -240,6 +241,128 @@ mod tests {
         ] {
             assert_eq!(classify_bash_command(cmd), expected, "{cmd}");
         }
+    }
+
+    #[test]
+    fn quoted_flags_are_judged_dequoted() {
+        for (cmd, expected) in [
+            (r"find . '-exec' rm -rf {} +", BashClass::Admin),
+            (r"find . -ex''ec rm {} \;", BashClass::Admin),
+            (r"find . \-delete", BashClass::Admin),
+            (r#"find . "-execdir" ls \;"#, BashClass::Admin),
+            ("find . -fprint0 out", BashClass::Write),
+            ("find . -fprint out", BashClass::Write),
+            ("find . -name '*.rs'", BashClass::Read),
+            (r"\rm x", BashClass::Admin),
+            ("'git' 'push'", BashClass::Write),
+            ("g''it status", BashClass::Read),
+            (r"git branch '-D' x", BashClass::Write),
+            (r#"echo "a\"b""#, BashClass::Read),
+        ] {
+            assert_eq!(classify_bash_command(cmd), expected, "{cmd}");
+        }
+    }
+
+    #[test]
+    fn env_flags_never_read_below_their_reach() {
+        for (cmd, expected) in [
+            ("env -S'rm -rf x'", BashClass::Admin),
+            ("env -S 'rm -rf x'", BashClass::Admin),
+            ("env --split-string='rm -rf x'", BashClass::Admin),
+            ("env --split-string 'ls'", BashClass::Admin),
+            ("env -C /etc ls", BashClass::Admin),
+            ("env -P /bin ls", BashClass::Admin),
+            ("env --frobnicate ls", BashClass::Admin),
+            ("env -u HOME ls", BashClass::Read),
+            ("env -uHOME --unset=PATH ls", BashClass::Read),
+            ("env -i FOO=1 git push", BashClass::Write),
+            ("env -i", BashClass::Read),
+        ] {
+            assert_eq!(classify_bash_command(cmd), expected, "{cmd}");
+        }
+    }
+
+    #[test]
+    fn read_programs_that_write_or_execute() {
+        use BashClass::{Admin, Read, Write};
+        for (cmd, expected) in [
+            ("fd -x rm", Admin),
+            ("fd -X rm", Admin),
+            ("fd -Hx rm", Admin),
+            ("fd --exec rm", Admin),
+            ("fd --exec-batch rm", Admin),
+            ("fd -e rs", Read),
+            ("rg --pre ./run x", Admin),
+            ("rg --pre=./run x", Admin),
+            ("rg --pre-glob '*.gz' x", Read),
+            ("bat --pager 'rm -rf x' f", Admin),
+            ("bat --paging=never f", Read),
+            ("git diff --output=x", Write),
+            ("git log --output x", Write),
+            ("git show --outp=x HEAD", Write),
+            ("git log --oneline", Read),
+            ("sort -o out in", Write),
+            ("sort -nro out in", Write),
+            ("sort --output=out in", Write),
+            ("sort --o=out in", Write),
+            ("sort --compress-program=sh in", Admin),
+            ("sort -n in", Read),
+            ("uniq in out", Write),
+            ("uniq -c in", Read),
+            ("uniq -f 1 in", Read),
+            ("tree -o out", Write),
+            ("tree -L 2", Read),
+            ("yq -i '.a = 1' f.yaml", Write),
+            ("yq '.a' f.yaml", Read),
+            ("go env -w GOFLAGS=x", Write),
+            ("go env GOPATH", Read),
+            ("go vet -vettool=/bin/sh ./...", Admin),
+            ("npm audit fix", Write),
+            ("pnpm audit --fix", Write),
+            ("npm audit", Read),
+            ("npx ls", Write),
+            ("cargo clippy --fix", Write),
+            ("cargo clippy", Read),
+            ("curl -I -o out https://x", Admin),
+            ("curl -I https://x -O", Admin),
+            ("curl --head --remote-name https://x", Admin),
+            ("curl -sSI https://x", Read),
+            ("curl -I -X DELETE https://x", Admin),
+            ("curl -H 'X-I: 1' https://x", Admin),
+            ("curl https://x", Admin),
+            ("wget --spider https://x", Read),
+            ("wget --spider -O out https://x", Admin),
+            ("sed -n 's/a/b/p' f", Write),
+            ("sed 's/a/b/e' f", Admin),
+            ("sed '1e rm -rf x' f", Admin),
+            ("sed -e 'p' -e 'e ls' f", Admin),
+            ("sed -ne 's/x/y/e' f", Admin),
+            ("sed --expression='e ls' f", Admin),
+            ("sed --exp 'e ls' f", Admin),
+            ("sed -f script.sed f", Admin),
+            ("sed -i '' 's/a/b/' f", Write),
+            ("sed -i '' 's/a/b/e' f", Admin),
+            ("sed '/x/{s/a/b/;p}' f", Write),
+            ("sed '/exec/d' f", Write),
+            ("sed 's|a|b|g;y/ab/cd/' f", Write),
+            ("awk '{print $1}' f", Write),
+            ("awk '{system(\"rm x\")}' f", Admin),
+            ("awk '{print | \"sh\"}' f", Admin),
+            ("awk 'BEGIN{\"date\" | getline d}'", Admin),
+            ("awk -F, '/a|b/ {print}' f", Write),
+            ("awk '$1 == \"a|b\" || $2 {print}' f", Write),
+            ("awk -f prog.awk f", Admin),
+            ("awk -v x=1 '{print x}' f", Write),
+        ] {
+            assert_eq!(classify_bash_command(cmd), expected, "{cmd}");
+        }
+    }
+
+    #[test]
+    fn deny_floor_sees_through_quotes() {
+        assert!(is_hardcoded_deny("'sudo' ls"));
+        assert!(is_hardcoded_deny(r"s\udo ls"));
+        assert!(is_hardcoded_deny("rm -rf '/'"));
     }
 
     #[test]
