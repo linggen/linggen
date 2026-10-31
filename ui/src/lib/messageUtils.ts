@@ -399,8 +399,17 @@ export const updateParentSubagentTree = (
   subagentId: string,
   updater: (entry: SubagentTreeEntry) => SubagentTreeEntry,
 ): ChatMessage[] => {
+  // The message that holds this subagent's row: a subagent of the same name
+  // as its parent ("ling" under "ling") can have its own generating bubble
+  // newer than the one its row is in, so the newest bubble is not it.
   let targetIdx = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].subagentTree?.some((e) => e.subagentId === subagentId)) {
+      targetIdx = i;
+      break;
+    }
+  }
+  for (let i = messages.length - 1; i >= 0 && targetIdx < 0; i--) {
     const m = messages[i];
     if ((m.from || '').toLowerCase() === parentId.toLowerCase() && m.isGenerating) {
       targetIdx = i;
