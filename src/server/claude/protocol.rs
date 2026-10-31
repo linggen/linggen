@@ -44,6 +44,8 @@ struct Pending {
     /// Where its outcome goes; none for a steered message the SDK answers
     /// as a turn of its own: the runner finishes that run itself.
     done: Option<oneshot::Sender<std::result::Result<(), String>>>,
+    /// The run's life, when the runner finishes the run itself.
+    life: Option<crate::engine::agent::runs_api::RunLife>,
     /// The SDK started on it: a Steer may join it now.
     begun: bool,
 }
@@ -104,6 +106,7 @@ impl ClaudeSession {
             run_id: first.run_id,
             uuid: first.uuid,
             done: Some(first.done),
+            life: None,
             begun: false,
         });
         let result = self
@@ -233,14 +236,16 @@ impl ClaudeSession {
             )
             .await
             .ok()?;
-        Some(Pending { run_id, uuid: steer.uuid, done: None, begun: true })
+        let life = Some(self.state.manager.run_life(&run_id));
+        Some(Pending { run_id, uuid: steer.uuid, done: None, life, begun: true })
     }
 
     /// A result answered this turn: its outcome goes to whoever waits for
     /// it, or the runner finishes the run itself.
     async fn finish_pending(&self, turn: Pending, outcome: std::result::Result<(), String>) {
         let Some(done) = turn.done else {
-            let turn = Unprompted { run_id: turn.run_id, _turn: None };
+            let _life = turn.life.unwrap_or_else(|| self.state.manager.run_life(&turn.run_id));
+            let turn = Unprompted { run_id: turn.run_id, _life, _turn: None };
             return self.finish_unprompted(turn, outcome).await;
         };
         self.end_stream(&turn.run_id);
@@ -298,7 +303,7 @@ impl ClaudeSession {
                     let message = json!({"type":"prompt", "id":next_change, "text":turn.prompt,
                         "images":turn.images, "uuid":turn.uuid, "turnMemory":turn.turn_memory});
                     stdin.write_all(format!("{message}\n").as_bytes()).await?;
-                    turns_state.pending.push_back(Pending { run_id: turn.run_id, uuid: turn.uuid, done: Some(turn.done), begun: false });
+                    turns_state.pending.push_back(Pending { run_id: turn.run_id, uuid: turn.uuid, done: Some(turn.done), life: None, begun: false });
                     if turns_state.pending.len() == 1 && turns_state.unprompted.is_none() {
                         has_text = false;
                         last_text.clear();
