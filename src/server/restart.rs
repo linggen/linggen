@@ -310,6 +310,7 @@ mod tests {
             session_id: session.into(),
             preview: text.into(),
             timestamp: 0,
+            steerable: false,
             text: text.into(),
             images: vec![format!("{text}.png")],
         }

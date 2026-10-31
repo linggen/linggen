@@ -48,7 +48,8 @@ export function takeQueued(sessionId: string, agentId: string, item: QueuedChatI
 }
 
 /** Send one queued message into the running turn: a Claude session's at
- *  once, a native one's at the turn's next step. */
+ *  once, a native one that waits for the whole turn at the turn's next
+ *  step. Offered only where `steerable`. */
 export function steerQueued(item: QueuedChatItem): void {
   void hideWhile(item, () => sessionApi.steerQueued(item.id), true);
 }

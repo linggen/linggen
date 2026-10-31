@@ -508,6 +508,7 @@ mod tests {
             session_id: session.into(),
             preview: "hello".into(),
             timestamp: 0,
+            steerable: false,
             text: "hello".into(),
             images: Vec::new(),
         }

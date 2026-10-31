@@ -396,6 +396,13 @@ pub(crate) async fn enqueue_if_busy(
     if !was_busy {
         return None;
     }
+    // An open question is never cancelled by a message: cancelling it used
+    // to swap the question for the message mid-turn (Lingjing, 2026-09-17:
+    // a tap on the page replaced the riddle's answer). The message waits.
+    let question_open = state.pending_ask_user.lock().await.values().any(|entry| {
+        entry.agent_id == target_id && entry.session_id.as_deref() == Some(effective_session_id)
+    });
+    let joins = busy_message(queue, question_open) == BusyMessage::JoinTurn;
     let item = QueuedChatItem {
         id: format!(
             "{}-{}",
@@ -406,6 +413,7 @@ pub(crate) async fn enqueue_if_busy(
         session_id: effective_session_id.to_string(),
         preview: queue_preview(clean_msg),
         timestamp: crate::util::now_ts_secs(),
+        steerable: !joins,
         text: sent.0.to_string(),
         images: sent.1.to_vec(),
     };
@@ -416,15 +424,22 @@ pub(crate) async fn enqueue_if_busy(
         guard.entry(key.clone()).or_default().push(item.clone());
     }
     emit_queue_updated(state, effective_session_id, target_id).await;
-
-    // An open question is never cancelled by a message: cancelling it used
-    // to swap the question for the message mid-turn (Lingjing, 2026-09-17:
-    // a tap on the page replaced the riddle's answer). The message waits.
-    let question_open = state.pending_ask_user.lock().await.values().any(|entry| {
-        entry.agent_id == target_id && entry.session_id.as_deref() == Some(effective_session_id)
-    });
-    let joins = busy_message(queue, question_open) == BusyMessage::JoinTurn;
     Some((item, joins))
+}
+
+/// A steered native message now joins at the next step: Steer no longer
+/// changes anything for it.
+pub(crate) async fn mark_steered(state: &Arc<ServerState>, queued_id: &str) {
+    let found = {
+        let mut guard = state.queued_chats.lock().await;
+        guard.values_mut().flatten().find(|item| item.id == queued_id).map(|item| {
+            item.steerable = false;
+            (item.session_id.clone(), item.agent_id.clone())
+        })
+    };
+    if let Some((session_id, agent_id)) = found {
+        emit_queue_updated(state, &session_id, &agent_id).await;
+    }
 }
 
 /// Pop the queued item out of the chat queue (now that the engine lock is

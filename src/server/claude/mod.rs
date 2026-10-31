@@ -433,15 +433,26 @@ pub(crate) struct SteerRequest {
 }
 
 /// POST /api/queue/steer — send one queued message into the running turn:
-/// a Claude session's at once, a native one's at the turn's next step.
+/// a Claude session's at once, a native one that waits for the whole turn
+/// at the turn's next step.
 pub(crate) async fn steer_queued(
     axum::extract::State(state): axum::extract::State<Arc<ServerState>>,
     Json(req): Json<SteerRequest>,
 ) -> Response {
-    if state.claude.steer(&req.id) || state.fold.steer(&req.id) {
-        Json(json!({"status": "ok"})).into_response()
-    } else {
-        (StatusCode::NOT_FOUND, "That message is no longer waiting.").into_response()
+    if state.claude.steer(&req.id) {
+        return Json(json!({"status": "ok"})).into_response();
+    }
+    match state.fold.steer(&req.id) {
+        chat::fold::Steered::Joins => {
+            chat::mark_steered(&state, &req.id).await;
+            Json(json!({"status": "ok"})).into_response()
+        }
+        chat::fold::Steered::AlreadyJoins => {
+            (StatusCode::CONFLICT, "It joins the running turn at its next step already.").into_response()
+        }
+        chat::fold::Steered::Gone => {
+            (StatusCode::NOT_FOUND, "That message is no longer waiting.").into_response()
+        }
     }
 }
 

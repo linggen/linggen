@@ -26,6 +26,17 @@ struct Waiting {
     call: oneshot::Sender<Reply>,
 }
 
+/// What a Steer did to a native queued message.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Steered {
+    /// It waited for the whole turn; now it joins at the next step.
+    Joins,
+    /// It joins at the next step already: Steer changes nothing.
+    AlreadyJoins,
+    /// It no longer waits here.
+    Gone,
+}
+
 #[derive(Default)]
 pub(crate) struct Fold {
     waiting: Mutex<Vec<Waiting>>,
@@ -62,14 +73,17 @@ impl Fold {
     }
 
     /// Steer: a message that would wait for the whole turn joins it at the
-    /// next step. False when it is no longer waiting here.
-    pub fn steer(&self, id: &str) -> bool {
+    /// next step.
+    pub fn steer(&self, id: &str) -> Steered {
         let mut waiting = self.waiting();
         let Some(entry) = waiting.iter_mut().find(|w| w.id == id) else {
-            return false;
+            return Steered::Gone;
         };
+        if entry.ready {
+            return Steered::AlreadyJoins;
+        }
         entry.ready = true;
-        true
+        Steered::Joins
     }
 
     /// A step of the turn for `key`: every ready message, in the order sent.
@@ -167,14 +181,16 @@ mod tests {
             "a message is taken once"
         );
 
-        assert!(fold.steer("3"));
+        answer(fold.wait("s/ling", "6", true), Some("third"));
+        assert_eq!(fold.steer("6"), Steered::AlreadyJoins);
+        assert_eq!(fold.steer("3"), Steered::Joins);
         let words: Vec<String> = fold
             .take("s/ling")
             .await
             .into_iter()
             .map(|m| m.text)
             .collect();
-        assert_eq!(words, ["waits for the turn"]);
-        assert!(!fold.steer("3"), "a taken message no longer waits");
+        assert_eq!(words, ["waits for the turn", "third"]);
+        assert_eq!(fold.steer("3"), Steered::Gone, "a taken message no longer waits");
     }
 }
