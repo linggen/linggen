@@ -83,7 +83,7 @@ fn plan_mode_schemas() -> impl Iterator<Item = Value> {
         ),
         tool_def(
             "EnterPlanMode",
-            "Enter plan mode to research and produce an implementation plan for user approval. Only for work that will change things: writing code, writing docs, editing config or files. Use it when the user explicitly asks to plan such a change, or an important trade-off needs user approval before changing things. Execute clear, reversible tasks directly, even if they require research. Never for questions, research, comparisons, recommendations, shopping, or advice — answer those directly. In plan mode you have read-only tools until you call ExitPlanMode.",
+            "Enter plan mode to research and produce an implementation plan for user approval. Only for work that will change things: writing code, writing docs, editing config or files. Use it proactively before a non-trivial implementation: a new feature, a change to existing behavior, several valid approaches, an architectural choice, edits likely to touch more than 2-3 files, or unclear requirements. Skip it for simple work: a few-line fix, one function with clear requirements, or a task the user has spelled out in detail. Never for questions, research, comparisons, recommendations, shopping, or advice — answer those directly. In plan mode you have read-only tools until you call ExitPlanMode.",
             json!({
                 "type": "object",
                 "properties": {
@@ -97,7 +97,7 @@ fn plan_mode_schemas() -> impl Iterator<Item = Value> {
         ),
         tool_def(
             "UpdatePlan",
-            "Optionally track execution progress when a checklist helps the user follow a task that changes files (code, docs, config): items is the checklist, plan_text optionally updates the approved plan. Not for answering questions, and not for planning — submit a plan with ExitPlanMode.",
+            "Track execution progress on a task of 3 or more distinct steps that changes files (code, docs, config); use it proactively so the user sees what is done and left: items is the checklist, plan_text optionally updates the approved plan. Skip it for a single simple step and for answering questions. Not available while planning — submit a plan with ExitPlanMode.",
             json!({
                 "type": "object",
                 "properties": {

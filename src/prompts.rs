@@ -301,26 +301,28 @@ mod tests {
             ] {
                 assert!(text.contains(named), "{named} missing: {text}");
             }
-            assert!(lower.contains("explicitly asks to plan"), "{text}");
-            assert!(lower.contains("important trade-off"), "{text}");
-            assert!(lower.contains("clear, reversible tasks directly"), "{text}");
-            assert!(lower.contains("even if they require research"), "{text}");
+            // Claude Code's rule: proactive before non-trivial work, skipped for simple work.
+            assert!(lower.contains("proactively"), "{text}");
+            assert!(lower.contains("non-trivial implementation"), "{text}");
+            assert!(lower.contains("spelled out in detail"), "{text}");
         }
     }
 
     #[test]
-    fn progress_tracking_is_optional_and_not_for_planning() {
+    fn progress_tracking_is_proactive_and_not_while_planning() {
         let store = PromptStore::load(None);
         let legacy = store.get(RESPONSE_FORMAT).unwrap();
         let native_plan = store.get(keys::RESPONSE_FORMAT_NATIVE_PLAN_MODE).unwrap();
-        assert!(legacy.contains("Do not call UpdatePlan during planning"));
-        assert!(native_plan.contains("Do NOT call UpdatePlan during planning"));
         let native_progress = store.get("response-format.native_update_plan").unwrap();
-        let execution = store.get("plan-execute.default").unwrap();
-        for text in [legacy, native_progress, execution] {
-            assert!(text.contains("optional"), "{text}");
-            assert!(!text.contains("3+ steps"), "{text}");
+        for text in [legacy, native_plan, native_progress] {
+            assert!(text.contains("not available while planning"), "{text}");
         }
+        for text in [legacy, native_progress] {
+            assert!(text.contains("3 or more distinct steps"), "{text}");
+            assert!(text.contains("proactively"), "{text}");
+        }
+        let execution = store.get("plan-execute.default").unwrap();
+        assert!(execution.contains("Before starting"), "{execution}");
     }
 
     #[test]

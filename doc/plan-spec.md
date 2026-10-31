@@ -11,7 +11,9 @@ guide: |
 
 Redesign of the plan feature, aligned with Claude Code. Separates planning (read-only research) from execution, with user approval gates. Multi-model compatible.
 
-**Plan mode is only for work that will change things** — writing code, writing docs, editing config or files. Questions, research, comparisons, recommendations, shopping and advice change nothing: they are answered directly, never planned. The prompt sections and the `EnterPlanMode` / `UpdatePlan` tool descriptions state this rule.
+**Plan mode is only for work that will change things** — writing code, writing docs, editing config or files. Questions, research, comparisons, recommendations, shopping and advice change nothing: they are answered directly, never planned.
+
+**When to plan — as Claude Code does.** The model enters plan mode on its own before non-trivial implementation work: a new feature, a change to existing behavior, several valid approaches, an architectural choice, edits likely to touch more than two or three files, or unclear requirements. It skips plan mode for simple work: a few-line fix, one function with clear requirements, or a task the person has spelled out in detail. The prompt sections and the `EnterPlanMode` / `UpdatePlan` tool descriptions state these rules.
 
 ## Related docs
 
@@ -69,7 +71,7 @@ Redesign of the plan feature, aligned with Claude Code. Separates planning (read
 
 ### Research phase
 
-Tools available: `Read`, `Glob`, `Grep`, `WebSearch`, `WebFetch`, `AskUser`, `ExitPlanMode`, `UpdatePlan`, `Task`.
+Tools available: `Read`, `Glob`, `Grep`, `WebSearch`, `WebFetch`, `AskUser`, `ExitPlanMode`, `Task`. `UpdatePlan` is not among them: the steps belong in the plan `ExitPlanMode` submits (its `items` become the plan's checklist). A model that calls it anyway is told it is not available while planning, and nothing shows.
 
 Tools blocked (removed from API call): `Write`, `Edit`, `Bash`, `lock_paths`, `unlock_paths`, `Skill`.
 
@@ -88,7 +90,7 @@ Web UI approval (via `/api/plan/approve`):
 
 ### Execution
 
-Plan text injected into system prompt. Model executes with full tools. Progress tracking via `update_plan` is optional and independent. Context compaction is skipped during execution to preserve tool-result context.
+Plan text injected into system prompt. Model executes with full tools. The model reports progress with `update_plan` as it works through the plan's steps. Context compaction is skipped during execution to preserve tool-result context.
 
 ### Completion
 
@@ -96,7 +98,7 @@ Not yet implemented. Future: on `done`, mark remaining tracked items as `Skipped
 
 ## Progress tracking
 
-`update_plan` remains as an independent feature — not coupled to plan mode. Used during execution or spontaneously for a multi-step task that changes files; never for answering questions. Drives the sidebar task list UI. Both `plan_text` and `items` are optional — the model can update either or both.
+`update_plan` remains as an independent feature — not coupled to plan mode. The model uses it proactively while executing a task of three or more distinct steps that changes files, as Claude Code uses its todo list: one item in progress at a time, each marked done as soon as it is. Skipped for a single simple step and for answering questions; not available while planning. Drives the sidebar task list UI. Both `plan_text` and `items` are optional — the model can update either or both.
 
 ## Storage
 

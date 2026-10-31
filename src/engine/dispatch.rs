@@ -528,6 +528,22 @@ impl AgentEngine {
                 return Some(AgentOutcome::PlanModeRequested { reason });
             }
             "UpdatePlan" => {
+                // Planning has no progress to track: the steps belong in the
+                // plan ExitPlanMode submits. A model that calls it anyway
+                // (text-protocol models can) is told so, and nothing shows.
+                let planning = self.plan_mode
+                    && self
+                        .plan
+                        .as_ref()
+                        .is_none_or(|p| p.status == PlanStatus::Planned);
+                if planning {
+                    state.messages.push(self.tool_result_msg_for(
+                        "UpdatePlan is not available while planning. Put the steps in the plan and submit it with ExitPlanMode.".to_string(),
+                        &tc_id,
+                        "UpdatePlan",
+                    ));
+                    return None;
+                }
                 let plan_text = action
                     .args
                     .get("plan_text")
@@ -539,70 +555,14 @@ impl AgentEngine {
                     .and_then(|v| v.as_array())
                     .cloned()
                     .unwrap_or_default();
-                // During planning (before approval), store items silently
-                // without emitting PlanUpdate to the UI. The PlanBlock is
-                // only created when ExitPlanMode fires. This avoids the
-                // premature PlanBlock + duplicate content bug.
-                if self.plan_mode
-                    && self
-                        .plan
-                        .as_ref()
-                        .map(|p| p.status == PlanStatus::Planned)
-                        .unwrap_or(true)
-                {
-                    let mut plan_items = Vec::new();
-                    for item in &items {
-                        let id = item
-                            .get("id")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let title = item
-                            .get("title")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("?")
-                            .to_string();
-                        let status = item
-                            .get("status")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("pending")
-                            .to_string();
-                        plan_items.push(PlanItem { id, title, status });
-                    }
-                    let plan = self.plan.get_or_insert_with(|| Plan {
-                        summary: String::new(),
-                        status: PlanStatus::Planned,
-                        plan_text: String::new(),
-                        items: Vec::new(),
-                    });
-                    if !plan_items.is_empty() {
-                        plan.items = plan_items;
-                    }
-                    if let Some(text) = plan_text.filter(|s| !s.trim().is_empty()) {
-                        plan.plan_text = text;
-                    }
-                    info!(
-                        "[plan] UpdatePlan (planning phase): stored {} items silently, no event",
-                        plan.items.len()
-                    );
-                    state.messages.push(self.tool_result_msg_for(
-                        self.prompt_store.render_or_fallback(
-                            crate::prompts::keys::PLAN_UPDATED,
-                            &[("count", &items.len().to_string())],
-                        ),
-                        &tc_id,
-                        "UpdatePlan",
-                    ));
-                } else {
-                    self.handle_update_plan_action(
-                        plan_text,
-                        items,
-                        &mut state.messages,
-                        session_id,
-                        &tc_id,
-                    )
-                    .await;
-                }
+                self.handle_update_plan_action(
+                    plan_text,
+                    items,
+                    &mut state.messages,
+                    session_id,
+                    &tc_id,
+                )
+                .await;
                 return None;
             }
             _ => {}

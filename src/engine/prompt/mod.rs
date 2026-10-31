@@ -687,7 +687,6 @@ impl AgentEngine {
                 "WebFetch",
                 "AskUser",
                 "ExitPlanMode",
-                "UpdatePlan",
                 "Task",
             ]
             .iter()

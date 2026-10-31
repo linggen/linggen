@@ -21,7 +21,7 @@ The conversation context from planning may have been cleared. Do NOT assume you 
 
 ### Progress tracking
 
-Use UpdatePlan if a progress checklist would help the user follow execution; it is optional. If used, update items as steps begin and finish (`pending`, `in_progress`, `completed`).
+Use UpdatePlan to report progress as you work through the plan. Before starting, call it with one item per step (all `pending`); mark each `in_progress` as you begin it and `completed` as soon as it is done. This drives the checklist the user watches.
 
 ### The Plan
 

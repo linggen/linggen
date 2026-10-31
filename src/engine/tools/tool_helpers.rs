@@ -257,13 +257,13 @@ pub(crate) fn full_tool_schema_entries() -> Vec<Value> {
         "name": "EnterPlanMode",
         "args": {"reason": "string?"},
         "returns": "success",
-        "notes": "Enter plan mode to research and produce an implementation plan. Only for work that will change code, docs, config, or files. Use it when the user explicitly asks to plan such a change, or an important trade-off needs user approval before changing things. Execute clear, reversible tasks directly, even if they require research. Never for questions, research, comparisons, recommendations, or advice. Restricts you to read-only tools until you call ExitPlanMode."
+        "notes": "Enter plan mode to research and produce an implementation plan. Only for work that will change code, docs, config, or files. Use it proactively before a non-trivial implementation: a new feature, a change to existing behavior, several valid approaches, an architectural choice, edits likely to touch more than 2-3 files, or unclear requirements. Skip it for simple work: a few-line fix, one function with clear requirements, or a task the user has spelled out in detail. Never for questions, research, comparisons, recommendations, or advice. Restricts you to read-only tools until you call ExitPlanMode."
     }));
     out.push(serde_json::json!({
         "name": "UpdatePlan",
         "args": {"plan_text": "string?", "items": "[{id: string, title: string, status: string}]?"},
         "returns": "success",
-        "notes": "Optionally track execution progress when a checklist helps the user follow a task that changes files. Update item status: pending → in_progress → completed. Not for answering questions. Do NOT call this during planning — use ExitPlanMode instead."
+        "notes": "Track execution progress on a task of 3 or more distinct steps that changes files; use it proactively, skip it for a single simple step. Update item status: pending → in_progress → completed. Not for answering questions. Not available while planning — use ExitPlanMode instead."
     }));
     out
 }
