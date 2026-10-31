@@ -3,12 +3,18 @@
  *  ones folded below. A row opens the item's detail; a running background
  *  task can be stopped from its row. */
 import React, { useState } from 'react';
-import { ChevronRight, Square } from 'lucide-react';
+import { ChevronRight, Loader2, Square } from 'lucide-react';
 import { cn } from '../../lib/cn';
 import { KIND_LABEL, elapsedOf, type PaneItem } from '../../lib/paneItems.mts';
 import { useNow } from '../../hooks/useNow';
 
+/** What a running subagent or task shows wherever it is listed: a spinner, never a still dot. */
+export const RunningSpinner: React.FC<{ size?: number; className?: string }> = ({ size = 11, className }) => (
+  <Loader2 size={size} className={cn('shrink-0 animate-spin text-amber-500', className)} aria-label="running" />
+);
+
 export const StatusDot: React.FC<{ status: string; needsUser?: boolean; className?: string }> = ({ status, needsUser, className }) => (
+  status === 'running' && !needsUser ? <RunningSpinner className={className} /> :
   <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', className,
     needsUser ? 'bg-blue-500 animate-pulse'
       : status === 'running' ? 'bg-amber-500 animate-pulse'

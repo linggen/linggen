@@ -20,15 +20,40 @@ pub(crate) struct Live {
     pub ended: Arc<tokio::sync::Notify>,
 }
 
+/// How a queued message joins the running turn — the SDK's priorities.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Delivery {
+    /// The person pressed Steer: the SDK takes it up at once.
+    Now,
+    /// A tool round ended: the SDK folds it in before its next request,
+    /// as Claude Code does with what was typed while it worked.
+    Next,
+}
+
+impl Delivery {
+    pub fn priority(self) -> &'static str {
+        match self {
+            Delivery::Now => "now",
+            Delivery::Next => "next",
+        }
+    }
+}
+
+struct Waiting {
+    id: String,
+    session: String,
+    deliver: oneshot::Sender<Delivery>,
+}
+
 #[derive(Default)]
 pub(crate) struct Host {
     pub controls: Mutex<HashMap<String, mpsc::UnboundedSender<Control>>>,
     pub live: Mutex<HashMap<String, Live>>,
     runners: SyncMutex<HashMap<String, u32>>,
     rules: SyncMutex<HashMap<String, Vec<Value>>>,
-    /// Queued messages waiting for the turn, by queue item id: a Steer sends
-    /// one into the running turn instead.
-    steers: SyncMutex<HashMap<String, oneshot::Sender<()>>>,
+    /// Queued messages waiting for the running turn, in the order they came:
+    /// each goes in at the turn's next tool round, or at once on Steer.
+    waiting: SyncMutex<Vec<Waiting>>,
     pub(super) probes: Mutex<HashMap<String, Arc<Mutex<Option<super::probe::Outcome>>>>>,
     /// The children each session's live runner is running, by tracking id.
     /// A saved child still marked running that is not here ended unseen.
@@ -76,7 +101,10 @@ impl Host {
     }
 
     pub fn running_children(&self, session: &str) -> HashSet<String> {
-        locked(&self.children).get(session).cloned().unwrap_or_default()
+        locked(&self.children)
+            .get(session)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// The SDK permission updates approved for this session's lifetime.
@@ -100,23 +128,42 @@ impl Host {
         locked(&self.rules).remove(session);
     }
 
-    /// A queued message waits here until its turn comes or the person
-    /// steers it into the running one.
-    pub fn await_steer(&self, queued_id: &str) -> oneshot::Receiver<()> {
-        let (tx, rx) = oneshot::channel();
-        locked(&self.steers).insert(queued_id.into(), tx);
+    /// A queued message waits here until the running turn takes it in or
+    /// the turn ends.
+    pub fn await_delivery(&self, session: &str, queued_id: &str) -> oneshot::Receiver<Delivery> {
+        let (deliver, rx) = oneshot::channel();
+        locked(&self.waiting).push(Waiting {
+            id: queued_id.into(),
+            session: session.into(),
+            deliver,
+        });
         rx
     }
 
-    pub fn forget_steer(&self, queued_id: &str) {
-        locked(&self.steers).remove(queued_id);
+    pub fn forget_waiting(&self, queued_id: &str) {
+        locked(&self.waiting).retain(|w| w.id != queued_id);
     }
 
-    /// False when the message is no longer waiting (already sent or dropped).
+    /// Steer: one message goes in now. False when it is no longer waiting
+    /// (already sent or dropped).
     pub fn steer(&self, queued_id: &str) -> bool {
-        locked(&self.steers)
-            .remove(queued_id)
-            .is_some_and(|tx| tx.send(()).is_ok())
+        let mut waiting = locked(&self.waiting);
+        let Some(at) = waiting.iter().position(|w| w.id == queued_id) else {
+            return false;
+        };
+        waiting.remove(at).deliver.send(Delivery::Now).is_ok()
     }
 
+    /// A main-thread tool round ended: everything waiting for this session
+    /// goes into the turn, in order. Returns how many went.
+    pub fn deliver_waiting(&self, session: &str) -> usize {
+        let mut waiting = locked(&self.waiting);
+        let (due, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut *waiting)
+            .into_iter()
+            .partition(|w| w.session == session);
+        *waiting = keep;
+        due.into_iter()
+            .filter_map(|w| w.deliver.send(Delivery::Next).ok())
+            .count()
+    }
 }

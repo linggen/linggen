@@ -43,10 +43,12 @@ pub(crate) enum Control {
         task_id: String,
         reply: tokio::sync::oneshot::Sender<std::result::Result<(), String>>,
     },
-    /// A queued message the person chose to send now, into the running turn.
+    /// A queued message going into the running turn: at once (Steer) or at
+    /// its next tool round.
     Steer {
         text: String,
         images: Vec<String>,
+        delivery: host::Delivery,
         reply: tokio::sync::oneshot::Sender<std::result::Result<(), String>>,
     },
     /// Stop on the turn: the turn ends; background tasks keep running.
@@ -274,8 +276,9 @@ pub(crate) async fn start_turn(
         AGENT_ID,
         &req.message,
         (&req.message, &req.images),
-        // A follow-up waits for the running turn, as Claude Code queues it;
-        // only Stop cancels.
+        // A follow-up joins the running turn at its next tool round, as
+        // Claude Code folds in what is typed while it works; Steer sends it
+        // at once. Until then it can be edited or removed. Only Stop cancels.
         crate::engine::skill::QueueMode::AfterTurn,
     )
     .await;
@@ -285,28 +288,28 @@ pub(crate) async fn start_turn(
     let sid = meta.id.clone();
     let queued_id = queued.as_ref().map(|item| item.id.clone());
     tokio::spawn(async move {
-        let mut steer = queued.as_ref().map(|item| state.claude.await_steer(&item.id));
-        let steered = match steer.as_mut() {
+        let mut delivery = queued.as_ref().map(|item| state.claude.await_delivery(&meta.id, &item.id));
+        let delivered = match delivery.as_mut() {
             Some(rx) => tokio::select! {
                 guard = &mut lock => Err(guard),
-                result = rx => Ok(result.is_ok()),
+                result = rx => Ok(result.ok()),
             },
             None => Err(lock.as_mut().await),
         };
-        let _guard = match steered {
+        let _guard = match delivered {
             Err(guard) => guard,
-            // The steer channel closed unsent: the message keeps its place.
-            Ok(false) => lock.as_mut().await,
-            Ok(true) => {
-                let item = queued.as_ref().expect("a steer is only armed for a queued message");
+            // The channel closed unsent: the message keeps its place.
+            Ok(None) => lock.as_mut().await,
+            Ok(Some(how)) => {
+                let item = queued.as_ref().expect("a delivery is only armed for a queued message");
                 if !dequeue_user(&state, &req, &meta, &item.id).await {
                     return;
                 }
-                if steer_into_turn(&state, &meta.id, &req).await {
+                if steer_into_turn(&state, &meta.id, &req, how).await {
                     return;
                 }
-                // The turn ended as the person pressed Steer: the message,
-                // already shown, starts the next turn instead.
+                // The turn ended as it was sent: the message, already
+                // shown, starts the next turn instead.
                 let guard = lock.as_mut().await;
                 execute_turn(state, req, meta).await;
                 drop(guard);
@@ -314,7 +317,7 @@ pub(crate) async fn start_turn(
             }
         };
         if let Some(item) = queued {
-            state.claude.forget_steer(&item.id);
+            state.claude.forget_waiting(&item.id);
             if !chat::dequeue_and_emit(
                 &state,
                 &state.events_tx,
@@ -388,14 +391,19 @@ async fn dequeue_user(
     .await
 }
 
-/// Hand a message to the running turn at priority `now`; false when no turn
-/// is running or it has already finished taking messages.
-async fn steer_into_turn(state: &ServerState, session: &str, req: &chat::types::ChatRequest) -> bool {
+/// Hand a message to the running turn at the delivery's SDK priority; false
+/// when no turn is running or it has already finished taking messages.
+async fn steer_into_turn(
+    state: &ServerState,
+    session: &str,
+    req: &chat::types::ChatRequest,
+    delivery: host::Delivery,
+) -> bool {
     let Some(sender) = state.claude.controls.lock().await.get(session).cloned() else {
         return false;
     };
     let (reply, response) = tokio::sync::oneshot::channel();
-    let control = Control::Steer { text: req.message.clone(), images: media::data_urls(&req.images), reply };
+    let control = Control::Steer { text: req.message.clone(), images: media::data_urls(&req.images), delivery, reply };
     if sender.send(control).is_err() {
         return false;
     }

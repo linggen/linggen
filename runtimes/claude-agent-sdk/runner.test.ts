@@ -144,6 +144,8 @@ test('a later message carries its own uuid, a steered one priority now', () => {
   const steer = userMessage({ prompt: 'stop' }, 'now');
   expect(steer.priority).toBe('now');
   expect((steer as any).uuid).toBeUndefined();
+  // Typed while Claude worked, delivered at a tool round: folded in next.
+  expect(userMessage({ prompt: 'also the docs' }, 'next').priority).toBe('next');
 });
 
 test('the main thread\'s cd, read off tool hooks, reaches the host; a subagent\'s does not', () => {

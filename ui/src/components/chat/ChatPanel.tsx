@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { chatAgentOf } from '../../lib/sessionMembers.mts';
 import { Sparkles, ArrowDown, Copy, FileText, Eraser, Plus, ListTree } from 'lucide-react';
+import { RunningSpinner } from './TaskList';
 import 'highlight.js/styles/github.css';
 import { cn } from '../../lib/cn';
 import { useSessionStore } from '../../stores/sessionStore';
@@ -141,8 +142,8 @@ const PaneButton: React.FC<{ open: boolean; running: number; onClick: () => void
     title={open ? 'Hide subagents and tasks' : 'Show subagents and tasks'}
   >
     <ListTree size={15} />
+    {running > 0 && <RunningSpinner />}
     {running > 0 && <span className="font-semibold tabular-nums">{running}</span>}
-    {running > 0 && <span className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />}
   </button>
 );
 

@@ -275,7 +275,7 @@ impl ClaudeSession {
                                 let _ = reply.send(Err("The turn has not begun.".into()));
                                 continue;
                             }
-                            super::Control::Steer { text, images, reply } => (json!({"type":"steer", "id":next_change, "text":text, "images":images}), reply),
+                            super::Control::Steer { text, images, delivery, reply } => (json!({"type":"steer", "id":next_change, "text":text, "images":images, "priority":delivery.priority()}), reply),
                             super::Control::Interrupt { reply } => (json!({"type":"interrupt", "id":next_change}), reply),
                             super::Control::End => {
                                 ending = true;
@@ -422,6 +422,11 @@ impl ClaudeSession {
                             &event["result"],
                         )
                         .await;
+                    }
+                    // The main thread's tool round is over: what the person
+                    // typed meanwhile goes in before Claude's next request.
+                    if active.is_empty() && main_thread(&event) {
+                        self.state.claude.deliver_waiting(&self.meta.id);
                     }
                 }
                 "request" => {

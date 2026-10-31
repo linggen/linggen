@@ -16,7 +16,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { X, Copy, FileText, ArrowLeft } from 'lucide-react';
 import type { BackgroundTask, ChatMessage, PendingAskUser, AskUserAnswer } from '../../types';
 import { paneItems, subagentTranscript, type PaneItem } from '../../lib/paneItems.mts';
-import { TaskList, StopButton } from './TaskList';
+import { TaskList, StopButton, RunningSpinner } from './TaskList';
 import { TaskDetail } from './TaskDetail';
 import { SubagentDetail } from './SubagentDetail';
 
@@ -170,6 +170,7 @@ const DetailHeader: React.FC<{
       >
         <ArrowLeft size={12} /> Back
       </button>
+      {item.running && <RunningSpinner size={12} />}
       <span
         className="flex-1 min-w-0 truncate text-[12px] font-medium text-slate-800 dark:text-slate-200"
         title={entry?.task || item.task?.title}

@@ -3,6 +3,7 @@ import { cn } from '../../lib/cn';
 import type { SubagentTreeEntry } from '../../types';
 import { formatCompactTokens } from './utils/activity';
 import { truncateDetail } from './utils/content-block';
+import { RunningSpinner } from './TaskList';
 import { useInteractionStore } from '../../stores/interactionStore';
 
 /** Subagent tree view — Claude Code-style per-entry Task() blocks.
@@ -69,7 +70,9 @@ export const SubagentTreeView: React.FC<{
           <div key={`${entry.subagentId}-${entryIdx}`} className="mb-0.5">
             <div className="flex items-start gap-0">
               <span className="shrink-0">&nbsp;&nbsp;</span>
-              <span className={cn('text-[11px] mr-0.5', bulletColor, (isRunning || needsUser) && 'animate-pulse')}>{bulletGlyph}</span>
+              {isRunning && !needsUser
+                ? <RunningSpinner className="mt-[3px] mr-1" />
+                : <span className={cn('text-[11px] mr-0.5', bulletColor, needsUser && 'animate-pulse')}>{bulletGlyph}</span>}
               <span className="text-cyan-600 dark:text-cyan-400 font-semibold">{entry.agentName || entry.subagentId || 'Task'}</span>
               <span className={cn('text-[11px] ml-1', statusColor)}>{statusSuffix}</span>
             </div>

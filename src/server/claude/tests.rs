@@ -144,3 +144,25 @@ fn chat_pictures_reach_the_bridge_as_data_urls() {
     assert_eq!(data_url("/9j/4AAQSkZJRgABAQ=="), "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ==");
     assert_eq!(data_url("data:image/gif;base64,R0lGOD"), "data:image/gif;base64,R0lGOD");
 }
+
+/// What is typed while a turn runs joins it at the next tool round, in the
+/// order it came and only into its own session; Steer sends one at once.
+#[test]
+fn queued_messages_join_the_turn_at_its_tool_round() {
+    use host::Delivery;
+    let host = Host::default();
+    let mut first = host.await_delivery("s", "q1");
+    let mut other = host.await_delivery("t", "q2");
+    let mut second = host.await_delivery("s", "q3");
+    let mut steered = host.await_delivery("s", "q4");
+    assert!(host.steer("q4"));
+    assert_eq!(steered.try_recv(), Ok(Delivery::Now));
+    assert!(!host.steer("q4"), "a message goes in once");
+    assert_eq!(host.deliver_waiting("s"), 2);
+    assert_eq!(first.try_recv(), Ok(Delivery::Next));
+    assert_eq!(second.try_recv(), Ok(Delivery::Next));
+    assert!(other.try_recv().is_err(), "another session's message keeps waiting");
+    assert_eq!(host.deliver_waiting("s"), 0);
+    host.forget_waiting("q2");
+    assert_eq!(host.deliver_waiting("t"), 0);
+}

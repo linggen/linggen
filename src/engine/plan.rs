@@ -89,6 +89,11 @@ impl AgentEngine {
     }
 
     /// Store the plan in memory and emit a PlanUpdate event.
+    /// Only the session's own agent shows a plan; a delegated run does not.
+    fn owns_session_plan(&self) -> bool {
+        self.tools.builtins.delegation_depth() == 0
+    }
+
     pub(crate) async fn persist_and_emit_plan(&mut self, plan: Plan) {
         info!(
             "[plan] persist_and_emit_plan: status={:?} items={}",
@@ -97,6 +102,12 @@ impl AgentEngine {
         );
         self.plan = Some(plan);
 
+        // The session's plan block and checklist are the main agent's. A
+        // subagent's progress stays in its own run, as a Claude Code
+        // subagent's todos do; its UpdatePlan call still shows in its pane.
+        if !self.owns_session_plan() {
+            return;
+        }
         if self.tools.get_manager().is_some() {
             let agent_id = self
                 .agent_id
@@ -186,6 +197,26 @@ impl AgentEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_session_agent_owns_the_plan_block() {
+        let root = tempfile::tempdir().unwrap();
+        let cfg = crate::engine::EngineConfig::from_app_config(
+            &crate::config::Config::default(),
+            root.path().into(),
+            crate::engine::InterfaceMode::Web,
+        );
+        let models =
+            std::sync::Arc::new(crate::provider::models::ModelManager::new_with_credentials(
+                vec![],
+                &crate::credentials::Credentials::default(),
+            ));
+        let mut engine =
+            AgentEngine::new(cfg, models, "m".into(), crate::engine::AgentRole::Lead).unwrap();
+        assert!(engine.owns_session_plan());
+        engine.set_delegation_depth(1, 2);
+        assert!(!engine.owns_session_plan());
+    }
 
     #[test]
     fn extract_plan_summary_examples() {

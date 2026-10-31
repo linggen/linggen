@@ -110,7 +110,7 @@ export async function permissionRequest(tool: string, input: any, rpc: Rpc, opti
 
 // What the person typed reaches the SDK as theirs: `origin: human` is what
 // lets a `now` message move running work aside instead of cutting it off.
-export function userMessage(input: { prompt: string; images?: string[] }, priority?: 'now', uuid?: string) {
+export function userMessage(input: { prompt: string; images?: string[] }, priority?: 'now' | 'next', uuid?: string) {
   const content: any[] = [{ type: 'text', text: input.prompt }];
   for (const image of input.images || []) {
     const match = /^data:(image\/[\w.+-]+);base64,(.+)$/s.exec(image);
@@ -214,7 +214,8 @@ async function main() {
       try {
         if (later.closed) throw new Error('This runner has ended.');
         const steer = message.type === 'steer';
-        later.push(userMessage({ prompt: message.text, images: message.images }, steer ? 'now' : undefined, message.uuid));
+        const priority = steer ? (message.priority === 'next' ? 'next' : 'now') : undefined;
+        later.push(userMessage({ prompt: message.text, images: message.images }, priority, message.uuid));
         memories.push(message.turnMemory || '');
         send({ type: 'mode_result', id: message.id, ok: true });
       } catch (error) {
