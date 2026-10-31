@@ -165,9 +165,14 @@ async fn silence_keeps_nothing() {
 }
 
 #[test]
-fn a_long_tail_line_is_cut_and_the_ask_comes_last() {
+fn a_long_tail_line_is_cut_recall_is_dropped_and_the_ask_comes_last() {
     let long = "x".repeat(TAIL_CHARS + 50);
-    let msgs = light_messages("P".into(), vec![ChatMessage::new("user", long)], "ASK");
+    let tail = vec![
+        ChatMessage::new("system", "From memory (preference, …): RECALL"),
+        ChatMessage::new("user", long),
+    ];
+    let msgs = light_messages("P".into(), tail, "ASK");
+    assert_eq!(msgs.len(), 3, "persona, the line, the ask — no recall note");
     assert_eq!(msgs[1].content.chars().count(), TAIL_CHARS + 1);
     assert_eq!(
         (msgs[2].role.as_str(), msgs[2].content.as_str()),

@@ -13,7 +13,8 @@ use crate::message::ChatMessage;
 /// How much of each tail message the light turn reads.
 pub(crate) const TAIL_CHARS: usize = 280;
 
-/// The messages a light turn sends: its persona, the tail, then the ask.
+/// The messages a light turn sends: its persona, the tail's spoken lines,
+/// then the ask.
 pub(crate) fn light_messages(
     persona: String,
     tail: Vec<ChatMessage>,
@@ -21,10 +22,15 @@ pub(crate) fn light_messages(
 ) -> Vec<ChatMessage> {
     let mut msgs = Vec::with_capacity(tail.len() + 2);
     msgs.push(ChatMessage::new("system", persona));
-    msgs.extend(tail.into_iter().map(|mut m| {
-        m.content = cut(&m.content, TAIL_CHARS);
-        m
-    }));
+    // Recall and compaction notes are memory, not the chat's words.
+    msgs.extend(
+        tail.into_iter()
+            .filter(|m| m.role != "system")
+            .map(|mut m| {
+                m.content = cut(&m.content, TAIL_CHARS);
+                m
+            }),
+    );
     msgs.push(ChatMessage::new("user", ask.to_string()));
     msgs
 }
