@@ -204,8 +204,42 @@ mod tests {
         let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
         let mut sp = SessionPermissions::default();
         sp.set_path_mode(&cwd.to_string_lossy(), PermissionMode::Read);
-        let result = check_permission("Bash", Some("cp /tmp/source ./out"), None, cwd, &sp, None);
-        assert!(matches!(result, PermissionCheckResult::NeedsPrompt(_)), "{result:?}");
+        for cmd in ["cp /tmp/source ./out", "cp /tmp/source out"] {
+            let result = check_permission("Bash", Some(cmd), None, cwd, &sp, None);
+            assert!(matches!(result, PermissionCheckResult::NeedsPrompt(_)), "{cmd}: {result:?}");
+        }
+    }
+
+    #[test]
+    fn bash_classification_regressions() {
+        for (cmd, expected) in [
+            ("echo 'a|b'", BashClass::Read),
+            ("echo '>'", BashClass::Read),
+            ("ls && echo hi > out", BashClass::Write),
+            ("echo $(rm x)", BashClass::Admin),
+            ("echo `touch x`", BashClass::Admin),
+            ("ls > /dev/null-output", BashClass::Write),
+            ("ls 2>/dev/null", BashClass::Read),
+            ("git tag v1", BashClass::Write),
+            ("git stash drop", BashClass::Write),
+            ("find . -exec rm {} +", BashClass::Admin),
+            ("docker system prune", BashClass::Admin),
+            ("docker system df", BashClass::Read),
+            (r"echo \' ; rm -rf x ; echo \'", BashClass::Admin),
+            (r"echo a\;rm -rf x", BashClass::Read),
+            ("cat <(rm -rf x)", BashClass::Admin),
+            ("tee >(rm -rf x)", BashClass::Admin),
+            ("echo '<(x)'", BashClass::Read),
+            ("env rm -rf x", BashClass::Admin),
+            ("env -i FOO=1 ls", BashClass::Read),
+            ("env", BashClass::Read),
+            ("env > out", BashClass::Write),
+            ("echo hi >| out", BashClass::Write),
+            ("git tag -l", BashClass::Read),
+            ("git remote get-url origin", BashClass::Read),
+        ] {
+            assert_eq!(classify_bash_command(cmd), expected, "{cmd}");
+        }
     }
 
     #[test]

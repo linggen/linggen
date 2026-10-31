@@ -1229,6 +1229,7 @@ impl AgentEngine {
                 // delegation spawned inside this call inherits them. Grants can
                 // change during a run (user approves mid-turn), so re-sync here
                 // rather than at engine construction time.
+                self.tools.builtins.parent_allowed_tools = allowed_tools.clone();
                 self.tools.builtins.parent_path_modes = self.session_permissions.path_modes.clone();
                 self.tools.builtins.parent_interactive = self.session_permissions.interactive;
                 let tools_clone = self.tools.clone();

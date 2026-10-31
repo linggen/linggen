@@ -76,7 +76,16 @@ async fn background_shell(tools: &Tools, cmd: &str) -> Result<ToolResult> {
         anyhow::bail!("run_in_background needs a session; run it in the foreground instead");
     };
     let agent = tools.agent_id.clone().unwrap_or_else(|| "ling".into());
-    let task = crate::engine::background::spawn_shell(manager, session, &agent, cmd, &tools.cwd()).await?;
+    let task = crate::engine::background::spawn_shell(
+        manager,
+        session,
+        &agent,
+        tools.task_owner(),
+        tools.delegation_depth() > 0,
+        cmd,
+        &tools.cwd(),
+    )
+    .await?;
     Ok(ToolResult::Success(format!(
         "Started in the background as task {}. Output: {}. It runs beside the chat; \
          you will be told in a new turn when it ends. Read its output with TaskOutput, \

@@ -27,7 +27,7 @@ async fn first_turn(w: &World, sid: &str) {
     let mark = w.mark();
     w.api.chat(sid, &w.work(), "Run the tests in the background").await;
     if let RunEnd::Asked(ask) = w.wait_run(sid, Agent::Ling, mark).await {
-        w.api.answer(&ask, "allow once").await;
+        w.api.answer(&ask, "grant:all").await;
         w.finish_run(sid, Agent::Ling, mark).await;
     }
 }

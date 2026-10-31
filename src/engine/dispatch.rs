@@ -80,6 +80,7 @@ impl AgentEngine {
             max_depth: usize,
             session_id: Option<String>,
             policy: Option<crate::engine::session_policy::SessionPolicy>,
+            allowed_tools: Option<HashSet<String>>,
             path_modes: Vec<crate::engine::permission::PathMode>,
             interactive: bool,
             background: bool,
@@ -101,9 +102,10 @@ impl AgentEngine {
                         max_depth: self.tools.builtins.max_delegation_depth(),
                         session_id: self.tools.builtins.session_id.clone(),
                         policy: self.tools.builtins.session_policy.clone(),
+                        allowed_tools: allowed_tools.clone(),
                         path_modes: self.session_permissions.path_modes.clone(),
                         interactive: self.session_permissions.interactive,
-                        background: da.run_in_background && self.tools.builtins.session_id.is_some(),
+                        background: da.run_in_background,
                         started: None,
                     });
                 }
@@ -157,13 +159,15 @@ impl AgentEngine {
                 spawn.task.clone(),
             );
             let session = spawn.session_id.clone().unwrap_or_default();
+            let child_owner = spawn.depth > 0;
+            let owner = if child_owner { spawn.parent_run_id.clone() } else { Some(caller.clone()) };
             let (ws, bridge) = (ws_root.clone(), ask_bridge.clone());
             let handle = tokio::task::spawn_blocking(move || {
                 let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
                 rt.block_on(tools::run_delegation(
                     spawn.manager, ws, spawn.caller_id, spawn.target_agent_id, spawn.task,
                     spawn.parent_run_id, spawn.depth, spawn.max_depth, bridge, spawn.session_id,
-                    spawn.policy, spawn.path_modes, spawn.interactive, spawn.started,
+                    spawn.policy, spawn.allowed_tools, spawn.path_modes, spawn.interactive, spawn.started,
                 ))
             });
             let run = async move {
@@ -174,7 +178,7 @@ impl AgentEngine {
                 }
             };
             let task = crate::engine::background::track_subagent(
-                &manager, &session, &caller, &target, &task_text, started_rx, run,
+                &manager, &session, &caller, &target, owner.as_deref(), child_owner, &task_text, started_rx, run,
             )
             .await;
             let rendered = format!(
@@ -222,6 +226,7 @@ impl AgentEngine {
                         bridge,
                         spawn.session_id,
                         spawn.policy,
+                        spawn.allowed_tools,
                         spawn.path_modes,
                         spawn.interactive,
                         spawn.started,

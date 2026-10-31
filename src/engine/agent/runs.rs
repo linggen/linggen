@@ -34,7 +34,7 @@ pub struct AgentRunRecord {
 /// that exist only while the server is running.
 pub struct RunStore {
     runs: Mutex<HashMap<String, AgentRunRecord>>,
-    /// Parent run_id → list of child run_ids, for cancel cascade.
+    /// Parent run_id → foreground child run_ids, for cancel cascade.
     children: Mutex<HashMap<String, Vec<String>>>,
 }
 
@@ -46,17 +46,21 @@ impl RunStore {
         }
     }
 
+    #[cfg(test)]
     pub fn add_run(&self, record: &AgentRunRecord) {
-        if let Some(ref parent_id) = record.parent_run_id {
+        self.add_run_with_cascade(record, true);
+    }
+
+    pub fn add_run_with_cascade(&self, record: &AgentRunRecord, cascade: bool) {
+        let mut runs = self.runs.lock_ok();
+        if let Some(parent_id) = record.parent_run_id.as_ref().filter(|_| cascade) {
             self.children
                 .lock_ok()
                 .entry(parent_id.clone())
                 .or_default()
                 .push(record.run_id.clone());
         }
-        self.runs
-            .lock_ok()
-            .insert(record.run_id.clone(), record.clone());
+        runs.insert(record.run_id.clone(), record.clone());
     }
 
     pub fn update_run(
@@ -117,28 +121,18 @@ impl RunStore {
         result
     }
 
-    /// Sweep stale `Running` rows that have been alive longer than
-    /// `max_age_secs` since `started_at`. Returns the run_ids that were
-    /// reaped so the caller can log + emit a state update. Used by the
-    /// periodic sweeper to recover from any code path that began a run
-    /// but never finished it (panics, dropped futures, missing
-    /// `finish_agent_run` on a new exit path).
-    pub fn sweep_stale_running(&self, now_secs: u64, max_age_secs: u64) -> Vec<String> {
+    /// Close `Running` rows the sweeper found nothing alive behind (a path
+    /// that began a run and never finished it). Returns the ids it closed.
+    pub fn reap(&self, ids: &[String], now_secs: u64) -> Vec<String> {
         let mut runs = self.runs.lock_ok();
         let mut reaped = Vec::new();
         for (run_id, run) in runs.iter_mut() {
-            if run.status != AgentRunStatus::Running {
-                continue;
-            }
-            if now_secs.saturating_sub(run.started_at) < max_age_secs {
+            if run.status != AgentRunStatus::Running || !ids.contains(run_id) {
                 continue;
             }
             run.status = AgentRunStatus::Failed;
             run.ended_at = Some(now_secs);
-            run.detail = Some(format!(
-                "sweeper: stale run reaped after {}s without finish_agent_run",
-                max_age_secs
-            ));
+            run.detail = Some("sweeper: nothing was running it any more".into());
             reaped.push(run_id.clone());
         }
         // Remove reaped runs entirely so they stop showing in `agent_runs`
@@ -263,6 +257,18 @@ mod tests {
         assert_eq!(children.len(), 2);
         assert_eq!(children[0].run_id, "child1");
         assert_eq!(children[1].run_id, "child2");
+    }
+
+    #[test]
+    fn background_child_keeps_parent_without_joining_cancel_tree() {
+        let store = RunStore::new();
+        store.add_run(&make_run("parent", "s1", None, 1));
+        store.add_run(&make_run("foreground", "s1", Some("parent"), 2));
+        store.add_run_with_cascade(&make_run("background", "s1", Some("parent"), 3), false);
+        assert_eq!(store.get_run("background").unwrap().parent_run_id.as_deref(), Some("parent"));
+        let children = store.list_children("parent");
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].run_id, "foreground");
     }
 
     #[test]

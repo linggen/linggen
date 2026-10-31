@@ -281,7 +281,8 @@ pub(crate) async fn start_turn(
         // at once. Until then it can be edited or removed. Only Stop cancels.
         crate::engine::skill::QueueMode::AfterTurn,
     )
-    .await;
+    .await
+    .map(|(item, _)| item);
     if !busy {
         persist_user(&state, &meta, &req).await;
     }
@@ -418,12 +419,13 @@ pub(crate) struct SteerRequest {
     id: String,
 }
 
-/// POST /api/queue/steer — send one queued message into the running turn.
+/// POST /api/queue/steer — send one queued message into the running turn:
+/// a Claude session's at once, a native one's at the turn's next step.
 pub(crate) async fn steer_queued(
     axum::extract::State(state): axum::extract::State<Arc<ServerState>>,
     Json(req): Json<SteerRequest>,
 ) -> Response {
-    if state.claude.steer(&req.id) {
+    if state.claude.steer(&req.id) || state.fold.steer(&req.id) {
         Json(json!({"status": "ok"})).into_response()
     } else {
         (StatusCode::NOT_FOUND, "That message is no longer waiting.").into_response()

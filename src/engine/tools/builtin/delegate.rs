@@ -33,7 +33,8 @@ impl Tool for TaskTool {
             "type": "object",
             "properties": {
                 "target_agent_id": {"type": "string", "description": "ID of the agent to delegate to"},
-                "task": {"type": "string", "description": "Task description for the target agent"}
+                "task": {"type": "string", "description": "Task description for the target agent"},
+                "run_in_background": {"type": "boolean", "description": "Run beside the chat and return a task id; you will be told in a new turn when it ends. Use TaskOutput and TaskStop to manage it."}
             },
             "required": ["target_agent_id", "task"]
         })
@@ -41,7 +42,7 @@ impl Tool for TaskTool {
     fn legacy_schema_entry(&self) -> Value {
         json!({
             "name": "Task",
-            "args": {"target_agent_id": "string", "task": "string"},
+            "args": {"target_agent_id": "string", "task": "string", "run_in_background": "bool?"},
             "returns": "{agent_outcome}",
             "notes": "Delegates a task to another agent. Subject to max delegation depth."
         })
@@ -50,6 +51,21 @@ impl Tool for TaskTool {
         let args: TaskArgs = serde_json::from_value(call.args)
             .map_err(|e| anyhow::anyhow!("invalid args for Task: {}", e))?;
         tools.task(args).await
+    }
+}
+
+#[cfg(test)]
+mod task_tests {
+    use super::*;
+
+    #[test]
+    fn background_is_an_optional_task_argument_in_both_schemas() {
+        let schema = TaskTool.args_schema();
+        assert_eq!(schema["properties"]["run_in_background"]["type"], "boolean");
+        assert_eq!(schema["required"], json!(["target_agent_id", "task"]));
+        assert_eq!(TaskTool.legacy_schema_entry()["args"]["run_in_background"], "bool?");
+        let args: TaskArgs = serde_json::from_value(json!({"target_agent_id": "ling", "task": "test"})).unwrap();
+        assert!(!args.run_in_background);
     }
 }
 

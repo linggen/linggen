@@ -5,7 +5,8 @@
  * The auto-scroll logic stays in React (needs DOM refs).
  */
 import { create } from 'zustand';
-import type { ChatMessage, ContentBlock, SubagentTreeEntry, SessionState } from '../types';
+import type { AgentRunInfo, ChatMessage, ContentBlock, SubagentTreeEntry, SessionState } from '../types';
+import { rowForRun, settleTree, unshownChildren } from '../lib/subagentRuns.mts';
 import { isToolStatusText } from '../components/chat/MessagePhase';
 import { dedupFetch } from '../lib/dedupFetch';
 import {
@@ -75,6 +76,8 @@ interface ChatState {
   upsertPlan: (agentId: string, planText: string) => void;
   updateSubagentTree: (parentId: string, subagentId: string, updater: (entry: SubagentTreeEntry) => SubagentTreeEntry) => void;
   addSubagentToTree: (parentId: string, entry: SubagentTreeEntry) => void;
+  /** A native session's subagent rows against its runs (`subagentRuns.mts`). */
+  reconcileSubagents: (runs: AgentRunInfo[]) => void;
   finalizeMessage: (agentId: string, content: string, to: string, tsMs: number, elapsed?: number, ctxTokens?: number, isError?: boolean, via?: string, viaNote?: string, clientId?: string, images?: string[], runId?: string) => void;
   /** The engine kept a message this surface sent (its bubble's `clientId`):
    *  the bubble takes the kept words. False when no bubble has that id. */
@@ -338,6 +341,28 @@ export const useChatStore = create<ChatState>((set, get) => ({
     next[targetIdx] = { ...msg, subagentTree: tree };
     return next;
   })),
+
+  reconcileSubagents: (runs) => {
+    const live = new Set(runs.filter((run) => run.status === 'running').map((run) => run.run_id));
+    const now = Date.now();
+    const shown = new Set<string>();
+    set(mutate((msgs) => {
+      let changed = false;
+      const next = msgs.map((msg) => {
+        if (!msg.subagentTree?.length) return msg;
+        for (const entry of msg.subagentTree) shown.add(entry.subagentId);
+        const tree = settleTree(msg.subagentTree, live, now);
+        if (tree === msg.subagentTree) return msg;
+        changed = true;
+        return { ...msg, subagentTree: tree };
+      });
+      return changed ? next : msgs;
+    }));
+    for (const child of unshownChildren(runs, shown)) {
+      const parent = runs.find((run) => run.run_id === child.parent_run_id);
+      get().addSubagentToTree((parent?.agent_id ?? child.agent_id).toLowerCase(), rowForRun(child));
+    }
+  },
 
   finalizeMessage: (agentId, content, to, tsMs, elapsed, ctxTokens, isError, via, viaNote, clientId, images, runId) => set(mutate((state) => {
     const generatingIdx = findLastGeneratingMessageIndex(state, agentId, runId);

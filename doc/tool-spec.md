@@ -41,8 +41,10 @@ Built-in tools are the kernel API. Skills are userspace.
 | `lock_paths` | `globs, ttl_ms?` | Acquire file locks (multi-agent) |
 | `unlock_paths` | `tokens` | Release file locks |
 | `Task` | `target_agent_id, task, run_in_background?` | Spawn subagent. `run_in_background` returns at once; the subagent's end comes back as a turn |
-| `TaskOutput` | `task_id, lines?` | A background task of this session: status, how it ended, its output's last lines |
-| `TaskStop` | `task_id` | Stop a background task of this session; its end is told as a turn |
+| `TaskList` | — | The background tasks the caller started (the session's agent: any of its turns'; a subagent: its own) |
+| `TaskOutput` | `task_id, lines?` | One of the caller's background tasks: status, how it ended, its output's last lines, a subagent's full result |
+| `TaskStop` | `task_id` | Stop one of the caller's background tasks; its end is told as a turn |
+| `SendMessage` | `to, message` | A message to a running subagent the caller started (task id or run id), or to its own parent run; read at the receiver's next step. No pause: stopping is `TaskStop` |
 | `WebSearch` | `query, max_results?` | Web search (Tavily — your key from Settings first, else Linggen Cloud with sign-in; a failing key is reported, never swapped). Text only: results come numbered (`[turn2search1]`; chat-spec § Sources and pictures). Unreachable → the error says WebFetch still opens a known page |
 | `ImageSearch` | `query` | Real pictures of a thing: one search on WebSearch's path, then the top 5 non-video result pages about the query read at once (5 s each, slow ones left out), up to 3 pictures a page whose own words touch the query and 10 in all, each numbered (`[turn3image1]`) with its caption and the page it is on. A model that sees also gets them as one labelled contact sheet. Run beside WebSearch, never inside it |
 | `VideoSearch` | `query` | YouTube videos: one search on WebSearch's path narrowed by `site:youtube.com`; title, channel (oEmbed) and length (watch page) within 4 s, each numbered (`[turn4video1]`); the answer shows a card that plays in place |

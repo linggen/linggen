@@ -9,7 +9,7 @@ use crate::util::LockExt;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc, Mutex};
+use tokio::sync::{broadcast, Mutex};
 
 use super::{UI_PHASE_DOING, UI_PHASE_DONE};
 use crate::engine::events::{AgentStatusKind, QueuedChatItem, ServerEvent};
@@ -42,9 +42,8 @@ pub struct ServerState {
     pub missions: Arc<crate::extensions::missions::MissionLoader>,
     pub prompt_store: Arc<crate::prompts::PromptStore>,
     pub queued_chats: Arc<Mutex<HashMap<String, Vec<QueuedChatItem>>>>,
-    /// Senders for interrupt messages keyed by queue_key. Used to inject user
-    /// messages into a running agent loop so the model can adapt mid-run.
-    pub interrupt_tx: Arc<Mutex<HashMap<String, mpsc::UnboundedSender<String>>>>,
+    /// Queued messages waiting for a native turn's next step to take them in.
+    pub(crate) fold: Arc<super::chat::fold::Fold>,
     /// Live Claude sessions' in-memory host state.
     pub(crate) claude: super::claude::Host,
     /// Every session's background tasks (doc/background-tasks-spec.md).

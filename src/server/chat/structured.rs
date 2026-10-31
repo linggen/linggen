@@ -6,8 +6,8 @@ use crate::server::ServerEvent;
 use super::plan_flow::{run_plan_dispatch, run_plan_execution};
 use super::runtime::{
     persist_and_emit_last_assistant_text, push_user_turn_with_recall, run_loop_with_tracking,
-    send_thinking_status, spawn_thinking_forwarder, unwire_interrupt_channel, wire_engine_bridges,
-    wire_interrupt_channel,
+    send_thinking_status, spawn_thinking_forwarder, unwire_inbox, wire_engine_bridges,
+    wire_inbox,
 };
 use super::ChatRunCtx;
 
@@ -84,7 +84,7 @@ pub(super) async fn run_structured_loop(ctx: &ChatRunCtx, engine: &mut crate::en
         engine.thinking_tx = Some(thinking_tx);
     }
 
-    let interrupt_key = wire_interrupt_channel(ctx, engine).await;
+    wire_inbox(ctx, engine);
     wire_engine_bridges(&ctx.state, engine, ctx.session_id.clone());
 
     spawn_thinking_forwarder(
@@ -108,7 +108,7 @@ pub(super) async fn run_structured_loop(ctx: &ChatRunCtx, engine: &mut crate::en
     // Drop the thinking sender so the forwarder task exits.
     engine.thinking_tx = None;
     engine.silence_ok = false;
-    unwire_interrupt_channel(ctx, engine, &interrupt_key).await;
+    unwire_inbox(engine);
 
     // Agent requested plan mode — re-dispatch using existing plan machinery.
     if let Ok(ref asked @ crate::engine::AgentOutcome::PlanModeRequested { ref reason }) = outcome {

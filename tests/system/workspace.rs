@@ -137,7 +137,7 @@ async fn a_turn_with_another_sessions_folder_runs_in_the_sessions_own() {
     let mark = w.mark();
     w.api.chat(&sid, &w.work(), "Where are we?").await;
     if let RunEnd::Asked(ask) = w.wait_run(&sid, Agent::Ling, mark).await {
-        w.api.answer(&ask, "allow once").await;
+        w.api.answer(&ask, "grant:all").await;
         w.finish_run(&sid, Agent::Ling, mark).await;
     }
     assert_eq!(cwd_of(&w, &sid), workspace(&w).display().to_string());

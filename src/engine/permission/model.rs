@@ -248,65 +248,225 @@ fn split_command_segments(cmd: &str) -> Vec<String> {
 // Bash command classifier
 // ---------------------------------------------------------------------------
 
-fn is_compound_command(cmd: &str) -> bool {
-    let bytes = cmd.as_bytes();
-    let len = bytes.len();
-    for i in 0..len {
-        match bytes[i] {
-            b';' | b'|' => return true,
-            b'&' if i + 1 < len && bytes[i + 1] == b'&' => return true,
-            b'`' => return true,
-            b'$' if i + 1 < len && bytes[i + 1] == b'(' => return true,
-            _ => {}
-        }
-    }
-    false
-}
-
-fn has_output_redirect(cmd: &str) -> bool {
-    let bytes = cmd.as_bytes();
-    for i in 0..bytes.len() {
-        if bytes[i] == b'>' {
-            if i > 0 && bytes[i - 1] == b'-' {
-                continue;
-            }
-            if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
-                continue;
-            }
-            let after = cmd[i..].trim_start_matches('>').trim();
-            if after.starts_with("/dev/null") {
-                continue;
-            }
-            return true;
-        }
-    }
-    false
-}
-
-/// Classify a bash command into read/write/admin tier.
+/// Best-effort risk classification, not a shell parser or filesystem sandbox.
+/// Unknown dynamic shell syntax is deliberately treated as admin.
 pub fn classify_bash_command(cmd: &str) -> BashClass {
-    if is_compound_command(cmd) {
-        return classify_compound_command(cmd);
+    let mut quote = None;
+    let mut escaped = false;
+    for c in cmd.chars() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if c == '\\' && quote != Some('\'') {
+            escaped = true;
+            continue;
+        }
+        if c == '`' && quote != Some('\'') {
+            return BashClass::Admin;
+        }
+        if c == '$' && quote != Some('\'') {
+            // Variables and substitutions can change both the command and its targets.
+            return BashClass::Admin;
+        }
+        if c == '\'' || c == '"' {
+            if quote == Some(c) {
+                quote = None;
+            } else if quote.is_none() {
+                quote = Some(c);
+            }
+        }
     }
-
-    let tokens: Vec<&str> = cmd.split_whitespace().collect();
-    if tokens.is_empty() {
+    if quote.is_some() || escaped {
         return BashClass::Admin;
     }
-
-    let program = tokens[0];
-    let subcommand = tokens.get(1).copied().unwrap_or("");
-
-    if has_output_redirect(cmd) {
-        let base = classify_single_command(program, subcommand);
-        return if base == BashClass::Admin {
-            BashClass::Admin
-        } else {
-            BashClass::Write
-        };
+    let mut highest = BashClass::Read;
+    let mut words = Vec::new();
+    for token in command_tokens(cmd)
+        .into_iter()
+        .chain(std::iter::once(Token::Op(Joint::Seq)))
+    {
+        match token {
+            Token::Word(w) => words.push(w),
+            Token::Op(_) if !words.is_empty() => {
+                highest = highest.max(classify_segment(&words));
+                words.clear();
+            }
+            Token::Op(_) => {}
+        }
     }
+    if cmd.trim().is_empty() {
+        BashClass::Admin
+    } else {
+        highest
+    }
+}
 
-    classify_single_command(program, subcommand)
+/// `<(…)` and `>(…)` run a command of their own, unseen here.
+fn has_process_substitution(words: &[String]) -> bool {
+    words.iter().any(|word| {
+        let mut quote = None;
+        let mut escaped = false;
+        let mut prev = None;
+        for c in word.chars() {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' && quote != Some('\'') {
+                escaped = true;
+            } else if c == '\'' || c == '"' {
+                quote = match quote {
+                    Some(q) if q == c => None,
+                    None => Some(c),
+                    q => q,
+                };
+            } else if c == '(' && quote.is_none() && matches!(prev, Some('<' | '>')) {
+                return true;
+            }
+            prev = Some(c);
+        }
+        false
+    })
+}
+
+/// `env [-flags] [NAME=value…] command…` runs that command: it is what is
+/// classified. `env` alone only prints.
+fn env_command(args: &[String]) -> Option<&[String]> {
+    let start = args
+        .iter()
+        .position(|a| !a.starts_with('-') && !a.contains('='))?;
+    Some(&args[start..])
+}
+
+fn classify_segment(words: &[String]) -> BashClass {
+    if has_process_substitution(words) {
+        return BashClass::Admin;
+    }
+    let mut clean = Vec::new();
+    let mut redirect = false;
+    let mut awaiting_target = false;
+    for word in words {
+        let mut quote = None;
+        let mut escaped = false;
+        let mut redirect_at = None;
+        for (i, c) in word.char_indices() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if c == '\\' && quote != Some('\'') {
+                escaped = true;
+                continue;
+            }
+            if c == '\'' || c == '"' {
+                if quote == Some(c) {
+                    quote = None;
+                } else if quote.is_none() {
+                    quote = Some(c);
+                }
+            } else if c == '>' && quote.is_none() {
+                redirect_at = Some(i);
+                break;
+            }
+        }
+        if awaiting_target {
+            if word != "/dev/null" && word != "&1" && word != "&2" {
+                redirect = true;
+            }
+            awaiting_target = false;
+        } else if let Some(i) = redirect_at {
+            let before = &word[..i];
+            if !before.is_empty() && !before.chars().all(|c| c.is_ascii_digit() || c == '&') {
+                clean.push(before.to_string());
+            }
+            let target = word[i..].trim_start_matches(['>', '|']);
+            if target.is_empty() {
+                awaiting_target = true;
+            } else if target != "/dev/null" && target != "&1" && target != "&2" {
+                redirect = true;
+            }
+        } else {
+            clean.push(word.clone());
+        }
+    }
+    if clean.is_empty() {
+        return BashClass::Admin;
+    }
+    let program = clean[0].as_str();
+    if program == "env" {
+        if let Some(command) = env_command(&clean[1..]) {
+            let class = classify_segment(command);
+            return if redirect || awaiting_target {
+                class.max(BashClass::Write)
+            } else {
+                class
+            };
+        }
+    }
+    let sub = clean.get(1).map(String::as_str).unwrap_or("");
+    let args: Vec<&str> = clean.iter().skip(2).map(String::as_str).collect();
+    let class = match (program, sub) {
+        ("find", _)
+            if clean.iter().any(|a| {
+                matches!(
+                    a.as_str(),
+                    "-delete"
+                        | "-exec"
+                        | "-execdir"
+                        | "-ok"
+                        | "-okdir"
+                        | "-fprint"
+                        | "-fprintf"
+                        | "-fls"
+                )
+            }) =>
+        {
+            BashClass::Admin
+        }
+        ("git", "branch" | "tag" | "remote" | "stash") => {
+            let read = match sub {
+                "branch" | "tag" => {
+                    args.is_empty()
+                        || args.iter().all(|a| {
+                            matches!(
+                                *a,
+                                "-a" | "-r"
+                                    | "-v"
+                                    | "-vv"
+                                    | "-l"
+                                    | "--list"
+                                    | "--all"
+                                    | "--verbose"
+                            )
+                        })
+                }
+                "remote" => {
+                    args.is_empty()
+                        || args == ["-v"]
+                        || matches!(args.first(), Some(&"show" | &"get-url"))
+                }
+                "stash" => matches!(args.first(), Some(&"list" | &"show")),
+                _ => false,
+            };
+            if read {
+                BashClass::Read
+            } else {
+                BashClass::Write
+            }
+        }
+        ("docker" | "podman", "system") => {
+            if matches!(args.first(), Some(&"df" | &"events" | &"info")) {
+                BashClass::Read
+            } else {
+                BashClass::Admin
+            }
+        }
+        _ => classify_single_command(program, sub),
+    };
+    if redirect || awaiting_target {
+        class.max(BashClass::Write)
+    } else {
+        class
+    }
 }
 
 fn classify_single_command(program: &str, subcommand: &str) -> BashClass {
@@ -428,7 +588,6 @@ fn classify_single_command(program: &str, subcommand: &str) -> BashClass {
         "chmod",
         "chown",
         "chgrp",
-        "podman",
         "systemctl",
         "launchctl",
         "service",
@@ -600,32 +759,6 @@ fn classify_single_command(program: &str, subcommand: &str) -> BashClass {
         }
         _ => BashClass::Admin,
     }
-}
-
-fn classify_compound_command(cmd: &str) -> BashClass {
-    let mut highest = BashClass::Read;
-    let segments: Vec<&str> = cmd
-        .split([';', '|', '&'])
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .collect();
-
-    for segment in segments {
-        let tokens: Vec<&str> = segment.split_whitespace().collect();
-        if tokens.is_empty() {
-            continue;
-        }
-        let program = tokens[0];
-        let sub = tokens.get(1).copied().unwrap_or("");
-        let class = classify_single_command(program, sub);
-        if class > highest {
-            highest = class.clone();
-        }
-        if highest == BashClass::Admin {
-            return BashClass::Admin;
-        }
-    }
-    highest
 }
 
 // ---------------------------------------------------------------------------
@@ -1035,6 +1168,9 @@ pub(super) fn command_targets(cmd: &str, session_cwd: &Path) -> Vec<PathBuf> {
     let mut after_and = false;
     let mut moved_conditionally = false;
     let mut out = Vec::new();
+    // Relative operands of common file operations are targets too, even when
+    // another operand is an absolute or exempt scratch path.
+    let mut file_operands = false;
     for token in command_tokens(cmd) {
         let w = match token {
             Token::Op(joint) => {
@@ -1048,6 +1184,7 @@ pub(super) fn command_targets(cmd: &str, session_cwd: &Path) -> Vec<PathBuf> {
                 }
                 after_and = joint == Joint::And || (after_and && joint != Joint::Seq);
                 at_command = true;
+                file_operands = false;
                 cd_pending = false;
                 continue;
             }
@@ -1068,8 +1205,22 @@ pub(super) fn command_targets(cmd: &str, session_cwd: &Path) -> Vec<PathBuf> {
                     None => following = false,
                 }
             }
-        } else if let Some(token) = path_token(w) {
+        } else if let Some(token) = path_token(w).or_else(|| {
+            let t = w.trim_matches(|c| c == '"' || c == '\'');
+            (t.starts_with("./")
+                || t == "."
+                || (file_operands
+                    && !t.starts_with('-')
+                    && !t.contains(['$', '`', '*', '?', '[', '>', '<'])))
+            .then(|| t.to_string())
+        }) {
             out.push(resolve_bash_arg(&token, &cwd));
+        }
+        if at_command {
+            file_operands = matches!(
+                w,
+                "cp" | "mv" | "ln" | "install" | "rsync" | "cat" | "touch" | "mkdir" | "rm"
+            );
         }
         cd_pending = cd_pending && is_cd_flag(w) || (at_command && w == "cd");
         at_command = false;
@@ -1113,6 +1264,16 @@ fn command_tokens(cmd: &str) -> Vec<Token> {
     let mut quote: Option<char> = None;
     let mut chars = cmd.chars().peekable();
     while let Some(c) = chars.next() {
+        // A backslash outside single quotes takes the next character
+        // literally — `\'` opens no quote and `\;` ends no command, as the
+        // shell reads them.
+        if c == '\\' && quote != Some('\'') {
+            cur.push(c);
+            if let Some(next) = chars.next() {
+                cur.push(next);
+            }
+            continue;
+        }
         if let Some(q) = quote {
             cur.push(c);
             if c == q {
@@ -1127,6 +1288,11 @@ fn command_tokens(cmd: &str) -> Vec<Token> {
                 continue;
             }
             ';' | '\n' => Joint::Seq,
+            // `>|` is a redirect that overwrites, not a pipe.
+            '|' if cur.ends_with('>') => {
+                cur.push(c);
+                continue;
+            }
             '|' => {
                 chars.next_if(|&n| n == '|' || n == '&');
                 Joint::Break
@@ -1274,10 +1440,7 @@ fn grant_directories(target: &Path, _session_cwd: &Path) -> Vec<PathBuf> {
     let start = if target.is_dir() {
         target
     } else {
-        target
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or(target)
+        target.parent().map(Path::to_path_buf).unwrap_or(target)
     };
     if ungrantable(&start) {
         return Vec::new();
@@ -1303,9 +1466,8 @@ fn grant_directories(target: &Path, _session_cwd: &Path) -> Vec<PathBuf> {
 }
 
 fn is_home(path: &Path) -> bool {
-    dirs::home_dir().is_some_and(|home| {
-        PathBuf::from(normalize_path(&home.to_string_lossy())) == path
-    })
+    dirs::home_dir()
+        .is_some_and(|home| PathBuf::from(normalize_path(&home.to_string_lossy())) == path)
 }
 
 /// A grant here is either the whole machine or a device path such as `/dev`.

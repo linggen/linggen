@@ -56,7 +56,7 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
   const queuedMessages = useInteractionStore((s) => s.queuedMessages);
   const pendingPlan = useInteractionStore((s) => s.pendingPlan);
   const pendingPlanAgentId = useInteractionStore((s) => s.pendingPlanAgentId);
-  const pendingAskUser = useInteractionStore((s) => s.pendingAskUser);
+  const pendingAskUser = useInteractionStore((s) => sessionId ? s.askQueues[sessionId]?.[0] ?? null : null);
   const activePlan = useInteractionStore((s) => s.activePlan);
   const verboseMode = useUiStore((s) => s.verboseMode);
   const overlay = useUiStore((s) => s.overlay);
@@ -139,7 +139,9 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
       onEditPlan={editPlan}
       onResend={resendMessage}
       pendingAskUser={pendingAskUser}
-      onRespondToAskUser={respondToAskUser}
+      onRespondToAskUser={(questionId, answers) => {
+        if (sessionId === useSessionStore.getState().activeSessionId) void respondToAskUser(questionId, answers);
+      }}
       verboseMode={verboseMode}
       overlay={overlay}
       onDismissOverlay={() => { useUiStore.getState().setOverlay(null); useUiStore.getState().setModelPickerOpen(false); }}

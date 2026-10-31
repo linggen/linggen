@@ -425,6 +425,7 @@ impl AgentEngine {
         let preferred = self.model_id.clone();
         let mut tried: Vec<String> = Vec::new();
         let mut model_id = preferred.clone();
+        let mut fallback_reason = String::new();
 
         // A model that has already told us it is rate-limited is not worth a
         // round trip: spend the turn on something that can answer. Only when
@@ -433,8 +434,7 @@ impl AgentEngine {
         if self.auto_fallback && crate::provider::models::in_cooldown(&model_id) {
             if let Some(next) = self.next_fallback_model(&[model_id.clone()]) {
                 warn!("model '{model_id}' is still rate-limited; starting on '{next}'");
-                self.emit_model_fallback_event(&model_id, &next, "still rate-limited")
-                    .await;
+                fallback_reason = "still rate-limited".to_string();
                 tried.push(model_id.clone());
                 model_id = next;
             }
@@ -468,10 +468,14 @@ impl AgentEngine {
                     crate::engine::cloud_meter::after_call(self, result.token_usage.as_ref());
                     if model_id != preferred {
                         self.model_id = model_id.clone();
+                        self.refresh_context_window().await;
                         // Show the model that actually answered. The picker is
                         // the user's only view of which one is running, and a
                         // switch it doesn't show is a switch they can't undo.
                         self.pin_session_model(&model_id).await;
+                        self.emit_model_fallback_event(&preferred, &model_id, &fallback_reason)
+                            .await;
+                        self.emit_context_usage_event("fallback", messages, 0).await;
                     }
                     return Ok(result);
                 }
@@ -498,8 +502,9 @@ impl AgentEngine {
                         "model '{model_id}' failed with fallback-worthy error ({e}); \
                          falling back to '{next}'"
                     );
-                    self.emit_model_fallback_event(&preferred, &next, &e.to_string())
-                        .await;
+                    if fallback_reason.is_empty() {
+                        fallback_reason = e.to_string();
+                    }
                     model_id = next;
                 }
             }
@@ -672,5 +677,170 @@ mod stall_tests {
     #[test]
     fn a_stall_is_a_reason_to_try_the_next_model() {
         assert!(ProviderErrorKind::Stalled.is_fallback_worthy());
+    }
+}
+
+#[cfg(test)]
+mod fallback_window_tests {
+    use super::*;
+    use crate::engine::agent::{AgentEvent, AgentManager};
+    use crate::engine::{AgentEngine, AgentRole, EngineConfig, InterfaceMode};
+    use crate::provider::models::ModelManager;
+    use axum::{
+        extract::State,
+        http::StatusCode,
+        routing::{get, post},
+        Json, Router,
+    };
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone)]
+    struct Fake {
+        requests: Arc<Mutex<Vec<serde_json::Value>>>,
+        backup_fails: bool,
+        window_fails: bool,
+    }
+
+    async fn chat(
+        State(fake): State<Fake>,
+        Json(body): Json<serde_json::Value>,
+    ) -> (StatusCode, String) {
+        fake.requests.lock().unwrap().push(body.clone());
+        if body["model"] == "primary" || fake.backup_fails {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "server error".into());
+        }
+        (StatusCode::OK, concat!(
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"done\":false}\n",
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":true,\"prompt_eval_count\":20,\"eval_count\":2}\n"
+        ).into())
+    }
+
+    async fn show(State(fake): State<Fake>) -> (StatusCode, &'static str) {
+        if fake.window_fails {
+            (StatusCode::INTERNAL_SERVER_ERROR, "unavailable")
+        } else {
+            (StatusCode::OK, "{}")
+        }
+    }
+
+    fn model(id: &str, url: &str, window: Option<usize>) -> crate::config::ModelConfig {
+        crate::config::ModelConfig {
+            id: id.into(),
+            provider: "ollama".into(),
+            url: url.into(),
+            model: id.into(),
+            api_key: None,
+            keep_alive: None,
+            context_window: window,
+            tags: vec![],
+            supports_tools: Some(true),
+            auth_mode: None,
+            reasoning_effort: None,
+            provided_by: None,
+            is_builtin: false,
+        }
+    }
+
+    async fn run_case(window: Option<usize>, backup_fails: bool, window_fails: bool) {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let fake = Fake {
+            requests: requests.clone(),
+            backup_fails,
+            window_fails,
+        };
+        let app = Router::new()
+            .route("/api/chat", post(chat))
+            .route(
+                "/api/ps",
+                get(|| async { Json(serde_json::json!({"models": []})) }),
+            )
+            .route("/api/show", post(show))
+            .with_state(fake);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let root = tempfile::tempdir().unwrap();
+        let config = crate::config::Config::default();
+        let cfg = EngineConfig::from_app_config(&config, root.path().into(), InterfaceMode::Web);
+        let primary = format!("fallback-test-primary-{}", url.rsplit(':').next().unwrap());
+        let backup = format!("fallback-test-backup-{}", url.rsplit(':').next().unwrap());
+        let mut primary_model = model("primary", &url, Some(128_000));
+        primary_model.id = primary.clone();
+        let mut backup_model = model("backup", &url, window);
+        backup_model.id = backup.clone();
+        let models = Arc::new(ModelManager::new_with_credentials(
+            vec![primary_model, backup_model],
+            &crate::credentials::Credentials::default(),
+        ));
+        let mut engine = AgentEngine::new(cfg, models, primary.clone(), AgentRole::Lead).unwrap();
+        // The manager is wired only to an engine with an agent id.
+        engine.agent_id = Some("ling".into());
+        engine.default_models = vec![primary.clone(), backup.clone()];
+        engine.context_window_tokens = Some(128_000);
+        engine.context_window_model = Some(primary.clone());
+        let (manager, mut events) = AgentManager::new(
+            config,
+            None,
+            Arc::new(crate::engine::test_registries::Empty),
+            Arc::new(crate::engine::test_registries::Empty),
+            Arc::new(crate::engine::test_registries::Empty),
+            InterfaceMode::Web,
+        );
+        engine.set_manager_context(manager);
+        let messages = vec![ChatMessage::new("user", "unchanged input")];
+        // Hermetic: the always-injected Linggen Cloud model would answer from
+        // this machine's own account once the backup fails. Bench it here.
+        let cloud = crate::provider::models::LINGGEN_CLOUD_MODEL_ID;
+        if backup_fails {
+            crate::provider::models::note_unavailable(cloud, &anyhow::anyhow!("429 Too Many Requests: rate limit"));
+            assert!(crate::provider::models::in_cooldown(cloud));
+        }
+        let result = engine.stream_with_fallback(&messages, None).await;
+        if backup_fails {
+            crate::provider::models::note_healthy(cloud);
+        }
+        let calls = requests.lock().unwrap().clone();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0]["model"], "primary");
+        assert_eq!(calls[1]["model"], "backup");
+        assert_eq!(calls[0]["messages"], calls[1]["messages"]);
+        let events: Vec<_> = std::iter::from_fn(|| events.try_recv().ok())
+            .map(|(event, _)| event)
+            .collect();
+        if backup_fails {
+            assert!(result.is_err());
+            assert_eq!(engine.model_id, primary);
+            assert_eq!(engine.context_window_tokens, Some(128_000));
+            assert_eq!(engine.context_window_model.as_deref(), Some(primary.as_str()));
+            assert!(!events.iter().any(|e| matches!(
+                e,
+                AgentEvent::ModelFallback { .. } | AgentEvent::ContextUsage { .. }
+            )));
+        } else {
+            assert_eq!(result.unwrap().full_text, "ok");
+            assert_eq!(engine.model_id, backup);
+            assert_eq!(engine.context_window_tokens, window);
+            assert_eq!(engine.context_window_model.as_deref(), Some(backup.as_str()));
+            assert!(events.iter().any(|e| matches!(e, AgentEvent::ModelFallback { preferred_model, actual_model, reason, .. } if preferred_model == &primary && actual_model == &backup && !reason.is_empty())));
+            assert!(events.iter().any(|e| matches!(e, AgentEvent::ContextUsage { stage, token_limit, actual_prompt_tokens: None, actual_completion_tokens: None, compressed: false, message_count: 1, .. } if stage == "fallback" && *token_limit == window)));
+        }
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn fallback_refreshes_window_and_emits_events() {
+        run_case(Some(32_000), false, false).await;
+    }
+    #[tokio::test]
+    async fn fallback_clears_unknown_window() {
+        run_case(None, false, false).await;
+    }
+    #[tokio::test]
+    async fn fallback_clears_window_when_lookup_fails() {
+        run_case(None, false, true).await;
+    }
+    #[tokio::test]
+    async fn failed_backup_keeps_primary_window_and_emits_no_switch() {
+        run_case(Some(32_000), true, false).await;
     }
 }

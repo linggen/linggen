@@ -260,7 +260,7 @@ async fn a_message_without_a_folder_runs_in_the_sessions_own() {
     let RunEnd::Asked(ask) = w.wait_run(COMPACTED, Agent::Ling, mark).await else {
         panic!("the Write ran without a permission prompt");
     };
-    w.api.answer(&ask, "allow once").await;
+    w.api.answer(&ask, "grant:all").await;
     w.finish_run(COMPACTED, Agent::Ling, mark).await;
 
     let written = std::fs::read_to_string(w.home.work().join("probe.txt"));

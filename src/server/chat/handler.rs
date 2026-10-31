@@ -363,9 +363,10 @@ async fn route_target(
 /// How a message sent while the agent is busy meets the running turn.
 #[derive(Debug, PartialEq, Eq)]
 enum BusyMessage {
-    /// Break the loop at its next step and take the message up (steering).
-    Interrupt,
-    /// Leave the turn alone; the message runs once the run is over.
+    /// The running turn takes it in at its next step (`fold.rs`).
+    JoinTurn,
+    /// Leave the turn alone; the message runs once the run is over, unless
+    /// the person steers it in.
     WaitForRun,
 }
 
@@ -376,13 +377,13 @@ fn busy_message(queue: QueueMode, question_open: bool) -> BusyMessage {
     if queue == QueueMode::AfterTurn || question_open {
         return BusyMessage::WaitForRun;
     }
-    BusyMessage::Interrupt
+    BusyMessage::JoinTurn
 }
 
-/// When the agent is busy, enqueue this turn and broadcast the queue update;
-/// then either leave the running turn alone (see [`busy_message`]) or forward
-/// the message through the interrupt channel. Returns the queued item (if
-/// any) so the spawned task can dequeue it once the lock is acquired.
+/// When the agent is busy, enqueue this turn and broadcast the queue update.
+/// Returns the queued item (if any), and whether the running turn may take
+/// it in at its next step (see [`busy_message`]); otherwise the spawned task
+/// dequeues it once the turn lock is its.
 pub(crate) async fn enqueue_if_busy(
     state: &Arc<ServerState>,
     was_busy: bool,
@@ -391,7 +392,7 @@ pub(crate) async fn enqueue_if_busy(
     clean_msg: &str,
     sent: (&str, &[String]),
     queue: QueueMode,
-) -> Option<QueuedChatItem> {
+) -> Option<(QueuedChatItem, bool)> {
     if !was_busy {
         return None;
     }
@@ -422,18 +423,8 @@ pub(crate) async fn enqueue_if_busy(
     let question_open = state.pending_ask_user.lock().await.values().any(|entry| {
         entry.agent_id == target_id && entry.session_id.as_deref() == Some(effective_session_id)
     });
-    if busy_message(queue, question_open) == BusyMessage::WaitForRun {
-        return Some(item);
-    }
-
-    // Send through interrupt channel so the running loop sees the message.
-    {
-        let interrupt_guard = state.interrupt_tx.lock().await;
-        if let Some(tx) = interrupt_guard.get(&key) {
-            let _ = tx.send(clean_msg.to_string());
-        }
-    }
-    Some(item)
+    let joins = busy_message(queue, question_open) == BusyMessage::JoinTurn;
+    Some((item, joins))
 }
 
 /// Pop the queued item out of the chat queue (now that the engine lock is
@@ -1202,7 +1193,14 @@ pub(crate) async fn start_turn(
     let root_clone = root.clone();
     let manager = state.manager.clone();
     let state_clone = state.clone();
-    let queued_item_id = queued_item.as_ref().map(|q| q.id.clone());
+    let queued_item_id = queued_item.as_ref().map(|(q, _)| q.id.clone());
+    // A queued message waits for its own turn, or for a step of the running
+    // one to take it in (`fold.rs`).
+    let fold_call = queued_item.as_ref().map(|(q, joins)| {
+        state
+            .fold
+            .wait(&queue_key(&effective_session_id, &target_id), &q.id, *joins)
+    });
     let session_id_for_queue = effective_session_id.clone();
     let req_user_type = req.user_type;
     let req_model_id = req.model_id.clone();
@@ -1210,7 +1208,52 @@ pub(crate) async fn start_turn(
     let req_followups = req.followups;
 
     tokio::spawn(async move {
-        let _turn = place.await;
+        let mut place = place;
+        // Shown in the chat already: a step took it off the queue.
+        let mut shown = false;
+        let _turn = match fold_call {
+            None => place.await,
+            Some(call) => tokio::select! {
+                guard = &mut place => guard,
+                asked = call => match asked {
+                    // The running turn takes it in: show it, hand it the words.
+                    Ok(reply) => {
+                        shown = dequeue_and_emit(
+                            &state_clone,
+                            &events_tx_clone,
+                            queued_item_id.as_deref().unwrap_or_default(),
+                            &session_id_for_queue,
+                            &target_id_clone,
+                            &from_id,
+                            &clean_msg_clone,
+                            session_id.as_deref(),
+                            via.as_deref(),
+                            via_note.as_deref(),
+                            &req_images,
+                        )
+                        .await;
+                        if !shown {
+                            let _ = reply.send(None);
+                            return;
+                        }
+                        let words = crate::engine::InboxMessage {
+                            text: clean_msg_clone.clone(),
+                            images: req_images.clone(),
+                        };
+                        if reply.send(Some(words)).is_ok() {
+                            return;
+                        }
+                        // The step gave up waiting: it runs as its own turn.
+                        place.await
+                    }
+                    Err(_) => place.await,
+                },
+            },
+        };
+        if let Some(queued_id) = queued_item_id.as_deref() {
+            state_clone.fold.forget(queued_id);
+        }
+        let queued_item_id = queued_item_id.filter(|_| !shown);
         let mut engine = agent.lock().await;
 
         // Refresh the engine's model_manager from live state so it sees
@@ -1388,7 +1431,7 @@ mod tests {
     fn a_busy_message_steers_unless_a_question_is_open_or_the_skill_waits() {
         assert_eq!(
             busy_message(QueueMode::Steer, false),
-            BusyMessage::Interrupt
+            BusyMessage::JoinTurn
         );
         assert_eq!(
             busy_message(QueueMode::Steer, true),
@@ -1532,7 +1575,9 @@ mod tests {
             .find(concat!("pub(crate) async fn ", "start_turn("))
             .unwrap()..];
         assert!(body.contains(concat!("let (was_busy, place) = take_turn_place", "(turn);")));
-        let lock = body.find(concat!("let _turn = place", ".await;")).unwrap();
+        // The turn place is awaited (or a running turn took the message in)
+        // before the engine is locked.
+        let lock = body.find(concat!("None => place", ".await,")).unwrap();
         let engine = body.find(concat!("agent.lock", "().await")).unwrap();
         assert!(lock < engine);
     }

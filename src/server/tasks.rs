@@ -12,9 +12,25 @@ const KEEP_ENDED: usize = 20;
 #[derive(Default)]
 pub(crate) struct Tasks {
     by_session: Mutex<HashMap<String, Vec<BackgroundTask>>>,
+    /// Task ends told while the agent's plan waited for approval, by session
+    /// and agent: they wait with it, as Claude Code holds them behind its
+    /// plan prompt, and are told once the plan is approved or rejected.
+    held: Mutex<HashMap<(String, String), Vec<String>>>,
 }
 
 impl Tasks {
+    fn held(&self) -> std::sync::MutexGuard<'_, HashMap<(String, String), Vec<String>>> {
+        self.held.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    pub fn hold(&self, session: &str, agent: &str, notice: String) {
+        self.held().entry((session.into(), agent.into())).or_default().push(notice);
+    }
+
+    pub fn release(&self, session: &str, agent: &str) -> Vec<String> {
+        self.held().remove(&(session.into(), agent.into())).unwrap_or_default()
+    }
+
     fn with<T>(&self, f: impl FnOnce(&mut HashMap<String, Vec<BackgroundTask>>) -> T) -> T {
         let mut guard = self
             .by_session
@@ -167,13 +183,28 @@ pub(crate) async fn native_watch(state: std::sync::Arc<super::ServerState>) {
         let ServerEvent::BackgroundTask { session_id: Some(session), agent_id, task, notice } = event else {
             continue;
         };
-        let ended = !task.is_running();
+        // A task's end is told once: on the change from running to ended.
+        let was_running = state.tasks.get(&session, &task.id).is_none_or(|t| t.is_running());
+        let ended = was_running && !task.is_running();
         if state.tasks.upsert(&session, task) {
             emit(&state, &session);
         }
-        if let (true, Some(notice)) = (ended, notice) {
-            tokio::spawn(tell(state.clone(), session, agent_id, notice));
+        let (true, Some(notice)) = (ended, notice) else {
+            continue;
+        };
+        if state.manager.plan_pending(&session, &agent_id).await {
+            state.tasks.hold(&session, &agent_id, notice);
+            continue;
         }
+        tokio::spawn(tell(state.clone(), session, agent_id, notice));
+    }
+}
+
+/// The agent's plan was approved or rejected: tell it the task ends that
+/// waited behind it, in order, after the turn the decision started.
+pub(crate) fn release_held(state: &std::sync::Arc<super::ServerState>, session: &str, agent: &str) {
+    for notice in state.tasks.release(session, agent) {
+        tokio::spawn(tell(state.clone(), session.into(), agent.into(), notice));
     }
 }
 
@@ -256,6 +287,18 @@ pub(crate) fn emit(state: &super::ServerState, session: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Ends held behind a plan come out in order, once, for that agent only.
+    #[test]
+    fn held_task_ends_are_released_in_order_once() {
+        let tasks = Tasks::default();
+        tasks.hold("s", "ling", "first".into());
+        tasks.hold("s", "yinyue", "hers".into());
+        tasks.hold("s", "ling", "second".into());
+        assert_eq!(tasks.release("s", "ling"), ["first", "second"]);
+        assert!(tasks.release("s", "ling").is_empty());
+        assert_eq!(tasks.release("s", "yinyue"), ["hers"]);
+    }
 
     #[test]
     fn running_tasks_lead_and_ended_ones_follow_newest_first() {

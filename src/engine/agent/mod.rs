@@ -102,6 +102,7 @@ pub struct AgentManager {
     pub met: met::MetGate,
     /// Native sessions' background shells and subagents.
     pub background: crate::engine::background::Background,
+    pub(crate) run_messages: std::sync::Mutex<std::collections::HashMap<String, Vec<String>>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -341,6 +342,7 @@ impl AgentManager {
                 pet_muted,
                 met: met::MetGate::new(crate::paths::met_dir()),
                 background: Default::default(),
+                run_messages: Default::default(),
             }),
             rx,
         )
@@ -869,6 +871,12 @@ impl AgentManager {
         let sid = session_id.unwrap_or("default");
         let key = format!("{}|{}|{}", project_root, sid, agent_id);
         self.pending_plans.lock().await.insert(key, plan);
+    }
+
+    /// The agent's plan in this session waits for the person's decision.
+    pub async fn plan_pending(&self, session_id: &str, agent_id: &str) -> bool {
+        let suffix = format!("|{session_id}|{agent_id}");
+        self.pending_plans.lock().await.keys().any(|key| key.ends_with(&suffix))
     }
 
     pub async fn take_pending_plan(

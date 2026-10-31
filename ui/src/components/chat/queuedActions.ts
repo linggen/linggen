@@ -47,7 +47,8 @@ export function takeQueued(sessionId: string, agentId: string, item: QueuedChatI
   return hideWhile(item, () => sessionApi.removeQueued(sessionId, agentId, item.id), false);
 }
 
-/** Claude sessions: send one queued message into the running turn now. */
+/** Send one queued message into the running turn: a Claude session's at
+ *  once, a native one's at the turn's next step. */
 export function steerQueued(item: QueuedChatItem): void {
   void hideWhile(item, () => sessionApi.steerQueued(item.id), true);
 }

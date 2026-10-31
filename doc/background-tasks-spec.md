@@ -29,7 +29,10 @@ The same in a native Linggen session and in a Claude session.
    is told in a new turn of its own (who started it, how it ended, a short
    summary, where the full output is). No person's message is needed. Only
    the agent that started it is told: a subagent's own task never starts a
-   turn of the session, and its end is never said as the main agent's.
+   turn of the session, and its end is never said as the main agent's. Each
+   end is told once. While the agent's plan waits for the person's approval,
+   its task ends wait too, and are told after the plan is approved or
+   rejected — as Claude Code holds them behind its plan prompt.
 3. **Visible and in the person's hands.** Every background task of the
    session is listed while it runs and for a while after: what it is, how
    long it has run, its latest output or activity, how it ended. Any
@@ -60,8 +63,12 @@ The same in a native Linggen session and in a Claude session.
 | Subagent | `Task` with `run_in_background` | SDK background subagent |
 | Watch | — | SDK Monitor / MCP task |
 
-A native agent reads a task's output and stops it with tools of its own
-(`TaskOutput`, `TaskStop`); a Claude agent uses the SDK's.
+A native agent lists, reads, messages and stops what it started with tools
+of its own (`TaskList`, `TaskOutput`, `SendMessage`, `TaskStop`); a Claude
+agent uses the SDK's. The session's agent owns its tasks by name, so a later
+turn still reaches them; a subagent owns its own, and their ends are told to
+it alone. A subagent starts with its parent's path grants and asks the
+person for more only when its parent could.
 
 ## Claude sessions: the runner lives while work does
 

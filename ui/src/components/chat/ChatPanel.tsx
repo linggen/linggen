@@ -466,10 +466,10 @@ export const ChatPanel: React.FC<{
           />
         )}
         {pendingAskUser && onRespondToAskUser && !askUserBelongsToSubagent && (
-          <div className="px-3 py-2">
+          <div key={JSON.stringify([sessionId, pendingAskUser.questionId])} className="px-3 py-2">
             {(pendingAskUser.questions[0]?.permission || pendingAskUser.questions[0]?.header === 'Permission')
-              ? <ToolPermissionCard pending={pendingAskUser} onRespond={onRespondToAskUser} />
-              : <AskUserCard pending={pendingAskUser} onRespond={onRespondToAskUser} />}
+              ? <ToolPermissionCard key={pendingAskUser.questionId} pending={pendingAskUser} onRespond={onRespondToAskUser} />
+              : <AskUserCard key={pendingAskUser.questionId} pending={pendingAskUser} onRespond={onRespondToAskUser} />}
           </div>
         )}
         <div ref={chatEndRef} />

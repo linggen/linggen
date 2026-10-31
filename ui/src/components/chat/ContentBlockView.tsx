@@ -214,7 +214,7 @@ export const ContentBlockView: React.FC<{
       );
     }
 
-    // Edit diffs: always show inline (like CC)
+    // Keep the edit summary visible, but show code only when opened.
     if (!d.old_string || !d.new_string) return null;
     const diffText = memoizedDiff.text;
     const { added, deleted } = memoizedDiff.stats;
@@ -230,7 +230,7 @@ export const ContentBlockView: React.FC<{
             <span className="text-slate-300 dark:text-slate-600 select-none">⎿  </span>{summary}
           </div>
         )}
-        <DiffView diff={diffText} />
+        {expanded && <DiffView diff={diffText} />}
       </div>
     );
   };

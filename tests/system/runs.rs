@@ -151,7 +151,7 @@ async fn stop_a_sleeping_run(w: &World, sid: &str, root: &str) {
     let RunEnd::Asked(ask) = w.wait_run(sid, Agent::Ling, mark).await else {
         panic!("the Bash ran without a permission prompt");
     };
-    w.api.answer(&ask, "allow once").await;
+    w.api.answer(&ask, "grant:all").await;
     let run_id = running_bash_run(w).await;
     w.api
         .post("/api/agent-cancel", json!({ "run_id": run_id }))

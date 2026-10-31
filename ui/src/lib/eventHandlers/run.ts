@@ -90,7 +90,7 @@ function handleContextUsage(item: RunEventOf<'context_usage'>): void {
         tokenLimit:
           typeof data.token_limit === 'number'
             ? Number(data.token_limit)
-            : prev[sid]?.tokenLimit,
+            : undefined,
       },
     }));
   }

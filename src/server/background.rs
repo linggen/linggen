@@ -5,6 +5,7 @@ use super::{api, milestones, resident, rtc, yinyue_moments, ServerState};
 use crate::engine::agent::AgentEvent;
 use crate::engine::events::{AgentStatusKind, ServerEvent};
 use crate::mcp_client::McpServerConfig;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -392,35 +393,95 @@ fn spawn_perception(state: &Arc<ServerState>) {
     tokio::spawn(crate::perception::rotation::rotation_loop());
 }
 
-/// The agent_run sweeper. Reaps `Running` rows older than the threshold
-/// that never got `finish_agent_run` called (panic, dropped future, missing
-/// finish on a new exit path). Without this, a stale row keeps the UI
-/// spinner stuck on the affected session forever.
+/// The agent_run sweeper: closes `Running` rows nothing runs any more (a
+/// path that began a run and never finished it), so a leaked row cannot hold
+/// a session's spinner forever. It judges by what is alive, never by age: a
+/// plan that executes for an hour is as alive as a one-line answer. A row is
+/// closed only when found orphaned on two sweeps in a row, so a run between
+/// its begin and taking its turn is never caught.
 fn sweep_stale_runs(state: &Arc<ServerState>) {
     const SWEEP_INTERVAL_SECS: u64 = 60;
-    const STALE_THRESHOLD_SECS: u64 = 15 * 60; // 15 min — well beyond any normal turn
     let sweep_state = state.clone();
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(SWEEP_INTERVAL_SECS));
         tick.tick().await; // skip the immediate first tick
+        let mut suspects: HashSet<String> = HashSet::new();
         loop {
             tick.tick().await;
+            let runs = sweep_state.manager.run_store.list_runs(None);
+            let orphans: HashSet<String> = orphaned_runs(
+                &runs,
+                |session| sweep_state.manager.session_turn(session).try_lock().is_err(),
+                |session, run| {
+                    sweep_state.tasks.list(session).iter().any(|task| {
+                        task.is_running() && task.subagent_id.as_deref() == Some(run)
+                    })
+                },
+            )
+            .into_iter()
+            .collect();
+            let due: Vec<String> = orphans.intersection(&suspects).cloned().collect();
+            suspects = orphans;
+            if due.is_empty() {
+                continue;
+            }
             let now = crate::util::now_ts_secs();
-            let reaped = sweep_state
-                .manager
-                .run_store
-                .sweep_stale_running(now, STALE_THRESHOLD_SECS);
+            let reaped = sweep_state.manager.run_store.reap(&due, now);
             if !reaped.is_empty() {
                 tracing::warn!(
                     count = reaped.len(),
                     run_ids = ?reaped,
-                    threshold_secs = STALE_THRESHOLD_SECS,
-                    "run/sweep: reaped stale Running rows"
+                    "run/sweep: closed Running rows nothing runs any more"
                 );
                 let _ = sweep_state.events_tx.send(ServerEvent::StateUpdated);
             }
         }
     });
+}
+
+/// `Running` rows with nothing alive behind them. A session's top run lives
+/// while that session's turn is held — every top run holds it for its whole
+/// turn. A child lives while its parent does, or while it runs on as a
+/// background subagent. A run of no session is left alone.
+fn orphaned_runs(
+    runs: &[crate::engine::agent::AgentRunRecord],
+    turn_held: impl Fn(&str) -> bool,
+    background: impl Fn(&str, &str) -> bool,
+) -> Vec<String> {
+    use crate::engine::agent::AgentRunStatus;
+    let running: HashMap<&str, &crate::engine::agent::AgentRunRecord> = runs
+        .iter()
+        .filter(|r| r.status == AgentRunStatus::Running)
+        .map(|r| (r.run_id.as_str(), r))
+        .collect();
+    running
+        .values()
+        .filter(|run| !run_alive(run, &running, &turn_held, &background))
+        .map(|run| run.run_id.clone())
+        .collect()
+}
+
+fn run_alive<'a>(
+    mut run: &'a crate::engine::agent::AgentRunRecord,
+    running: &HashMap<&str, &'a crate::engine::agent::AgentRunRecord>,
+    turn_held: &impl Fn(&str) -> bool,
+    background: &impl Fn(&str, &str) -> bool,
+) -> bool {
+    loop {
+        if run.session_id.is_empty() {
+            return true;
+        }
+        let Some(parent) = run.parent_run_id.as_deref() else {
+            return turn_held(&run.session_id);
+        };
+        if background(&run.session_id, &run.run_id) {
+            return true;
+        }
+        match running.get(parent) {
+            Some(up) => run = up,
+            None => return false,
+        }
+    }
 }
 
 /// Auto-connect to joined proxy rooms (linggen server consumer mode)
@@ -500,5 +561,49 @@ mod tests {
         let quiet = crate::runtime::always_quiet();
         fetch_voice_weights(&voice, &quiet, POLL).await;
         assert_eq!(voice.fetches.load(Ordering::SeqCst), 0);
+    }
+}
+
+#[cfg(test)]
+mod sweep_tests {
+    use super::orphaned_runs;
+    use crate::engine::agent::{AgentRunRecord, AgentRunStatus};
+
+    fn run(id: &str, session: &str, parent: Option<&str>, started_at: u64) -> AgentRunRecord {
+        AgentRunRecord {
+            run_id: id.into(),
+            repo_path: String::new(),
+            session_id: session.into(),
+            agent_id: "ling".into(),
+            agent_kind: None,
+            parent_run_id: parent.map(Into::into),
+            status: AgentRunStatus::Running,
+            detail: None,
+            started_at,
+            ended_at: None,
+        }
+    }
+
+    /// An hour-long plan and the subagent it waits on are alive while the
+    /// session's turn is held; age never makes a run stale (2026-10-31: a
+    /// plan run and its subagent were closed at 15 min while working).
+    #[test]
+    fn only_runs_with_nothing_alive_behind_them_are_orphaned() {
+        let runs = [
+            run("plan", "busy", None, 0),
+            run("child", "busy", Some("plan"), 0),
+            run("grandchild", "busy", Some("child"), 0),
+            run("leaked", "idle", None, 0),
+            run("left-behind", "idle", Some("gone"), 0),
+            run("background", "idle", Some("gone"), 0),
+            run("headless", "", None, 0),
+        ];
+        let mut orphans = orphaned_runs(
+            &runs,
+            |session| session == "busy",
+            |_, run| run == "background",
+        );
+        orphans.sort();
+        assert_eq!(orphans, ["leaked", "left-behind"]);
     }
 }

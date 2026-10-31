@@ -24,6 +24,18 @@ impl AgentManager {
         parent_run_id: Option<String>,
         detail: Option<String>,
     ) -> Result<String> {
+        self.begin_delegated_run(project_root, session_id, agent_id, parent_run_id, detail, false).await
+    }
+
+    pub async fn begin_delegated_run(
+        &self,
+        project_root: &Path,
+        session_id: Option<&str>,
+        agent_id: &str,
+        parent_run_id: Option<String>,
+        detail: Option<String>,
+        background: bool,
+    ) -> Result<String> {
         let project_root = project_root
             .canonicalize()
             .unwrap_or_else(|_| project_root.to_path_buf());
@@ -43,7 +55,20 @@ impl AgentManager {
             started_at,
             ended_at: None,
         };
-        self.run_store.add_run(&record);
+        // Serialize registration with cancellation's tree snapshot. A foreground
+        // child cannot be registered after its parent was cancelled or retired.
+        let cancelled = self.cancelled_runs.lock().await;
+        if !background {
+            if let Some(parent) = record.parent_run_id.as_deref() {
+                if cancelled.contains(parent) || !self.run_store.get_run(parent)
+                    .is_some_and(|run| run.status == AgentRunStatus::Running) {
+                    return Err(crate::engine::tools::DelegationCancelled.into());
+                }
+            }
+        }
+        self.run_messages.lock().unwrap_or_else(|e| e.into_inner()).insert(run_id.clone(), Vec::new());
+        self.run_store.add_run_with_cascade(&record, !background);
+        drop(cancelled);
         // A new run is new page state, same as its finish below. Without this
         // the run only reached a page when something else happened to refresh
         // it — a new chat's first-message rename did, a follow-up turn did not
@@ -58,7 +83,6 @@ impl AgentManager {
         }
         self.clear_working_place_for_agent(&repo_path, agent_id)
             .await;
-        self.cancelled_runs.lock().await.remove(&run_id);
         tracing::info!(
             run_id = %run_id,
             agent_id = %agent_id,
@@ -74,13 +98,12 @@ impl AgentManager {
         run_id: &str,
         status: AgentRunStatus,
         detail: Option<String>,
-    ) -> Result<()> {
+    ) -> Result<AgentRunStatus> {
         // Invariant: a run the user cancelled can never finish "Completed".
         // Some loop exits surface a cancel as a normal outcome (a checkpoint
         // returning AgentOutcome::None); the flag is the ground truth.
-        let status = if status == AgentRunStatus::Completed
-            && self.cancelled_runs.lock().await.contains(run_id)
-        {
+        let mut cancelled = self.cancelled_runs.lock().await;
+        let status = if cancelled.contains(run_id) {
             AgentRunStatus::Cancelled
         } else {
             status
@@ -88,9 +111,10 @@ impl AgentManager {
         let ended_at = Some(crate::util::now_ts_secs());
         self.run_store
             .update_run(run_id, status, detail.clone(), ended_at);
+        cancelled.remove(run_id);
+        drop(cancelled);
         self.clear_working_place_for_run(run_id).await;
         let _ = self.events.send((AgentEvent::StateUpdated, None));
-        self.cancelled_runs.lock().await.remove(run_id);
         let run_snapshot = self.run_store.get_run(run_id);
         if let Some(ref run) = run_snapshot {
             self.update_agent_activity(&run.repo_path, &run.agent_id)
@@ -117,6 +141,7 @@ impl AgentManager {
                 ));
             }
         }
+        self.run_messages.lock().unwrap_or_else(|e| e.into_inner()).remove(run_id);
         self.run_store.remove_run(run_id);
         tracing::info!(
             run_id = %run_id,
@@ -126,7 +151,7 @@ impl AgentManager {
             detail = ?detail,
             "run/finish"
         );
-        Ok(())
+        Ok(status)
     }
 
     /// Any top-level (user-visible) run currently executing. Cheap sync
@@ -151,7 +176,46 @@ impl AgentManager {
         self.cancelled_runs.lock().await.contains(run_id)
     }
 
+    /// Deliver only between live direct parent and child runs in the same session.
+    pub(crate) fn send_run_message(&self, session: &str, sender: &str, target: &str, message: &str) -> Result<()> {
+        let mut queues = self.run_messages.lock().unwrap_or_else(|e| e.into_inner());
+        let from = self.run_store.get_run(sender).ok_or_else(|| anyhow::anyhow!("Sender is not running"))?;
+        let to = self.run_store.get_run(target).ok_or_else(|| anyhow::anyhow!("Recipient is not running"))?;
+        if from.session_id != session || to.session_id != session ||
+            from.status != AgentRunStatus::Running || to.status != AgentRunStatus::Running ||
+            !(from.parent_run_id.as_deref() == Some(target) || to.parent_run_id.as_deref() == Some(sender)) {
+            anyhow::bail!("Recipient must be a running direct parent or child in this session");
+        }
+        let queue = queues.get_mut(target).ok_or_else(|| anyhow::anyhow!("Recipient is not running"))?;
+        queue.push(format!("Message from {} (run {}): {}", from.agent_id, sender, message));
+        Ok(())
+    }
+
+    pub(crate) fn queue_run_notice(&self, run: &str, notice: String) -> bool {
+        let mut queues = self.run_messages.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(queue) = queues.get_mut(run) {
+            queue.push(notice);
+            return true;
+        }
+        false
+    }
+
+    /// Atomically close an empty mailbox, or take pending messages and keep it open.
+    pub(crate) fn close_or_drain_run_messages(&self, run: &str) -> Vec<String> {
+        let mut queues = self.run_messages.lock().unwrap_or_else(|e| e.into_inner());
+        match queues.get_mut(run) {
+            Some(queue) if !queue.is_empty() => std::mem::take(queue),
+            _ => { queues.remove(run); Vec::new() }
+        }
+    }
+
+    pub(crate) fn drain_run_messages(&self, run: &str) -> Vec<String> {
+        self.run_messages.lock().unwrap_or_else(|e| e.into_inner())
+            .get_mut(run).map(std::mem::take).unwrap_or_default()
+    }
+
     pub async fn cancel_run_tree(&self, run_id: &str) -> Result<Vec<AgentRunRecord>> {
+        let mut cancelled = self.cancelled_runs.lock().await;
         let mut stack = vec![run_id.to_string()];
         let mut seen = HashSet::new();
         let mut runs = Vec::new();
@@ -169,25 +233,23 @@ impl AgentManager {
             runs.push(run);
         }
 
+        let now = crate::util::now_ts_secs();
         let to_cancel: Vec<AgentRunRecord> = runs
             .into_iter()
-            .filter(|run| run.status == AgentRunStatus::Running)
+            .filter(|run| self.run_store.get_run(&run.run_id)
+                .is_some_and(|current| current.status == AgentRunStatus::Running))
             .collect();
-
-        let now = crate::util::now_ts_secs();
-        {
-            let mut cancelled = self.cancelled_runs.lock().await;
-            for run in &to_cancel {
-                cancelled.insert(run.run_id.clone());
-            }
-        }
         for run in &to_cancel {
+            cancelled.insert(run.run_id.clone());
             self.run_store.update_run(
                 &run.run_id,
                 AgentRunStatus::Cancelled,
                 Some("cancelled by user".to_string()),
                 Some(now),
             );
+        }
+        drop(cancelled);
+        for run in &to_cancel {
             self.clear_working_place_for_run(&run.run_id).await;
         }
         if !to_cancel.is_empty() {
@@ -195,5 +257,54 @@ impl AgentManager {
         }
 
         Ok(to_cancel)
+    }
+}
+
+#[cfg(test)]
+mod message_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn cancellation_serializes_child_registration() {
+        let manager = AgentManager::new(
+            crate::config::Config::default(), None,
+            Arc::new(crate::engine::test_registries::Empty), Arc::new(crate::engine::test_registries::Empty),
+            Arc::new(crate::engine::test_registries::Empty), crate::engine::InterfaceMode::Web,
+        ).0;
+        let parent = manager.begin_agent_run(Path::new("."), Some("s"), "root", None, None).await.unwrap();
+        let child = manager.begin_agent_run(Path::new("."), Some("s"), "child", Some(parent.clone()), None).await.unwrap();
+        manager.cancel_run_tree(&parent).await.unwrap();
+        assert!(manager.is_run_cancelled(&child).await);
+        assert!(manager.begin_agent_run(Path::new("."), Some("s"), "late", Some(parent.clone()), None).await.is_err());
+        assert!(manager.begin_delegated_run(Path::new("."), Some("s"), "background", Some(parent), None, true).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn messages_require_live_direct_relatives_in_same_session() {
+        let manager = AgentManager::new(
+            crate::config::Config::default(), None,
+            Arc::new(crate::engine::test_registries::Empty),
+            Arc::new(crate::engine::test_registries::Empty),
+            Arc::new(crate::engine::test_registries::Empty),
+            crate::engine::InterfaceMode::Web,
+        ).0;
+        let root = manager.begin_agent_run(Path::new("."), Some("s"), "root", None, None).await.unwrap();
+        let child = manager.begin_agent_run(Path::new("."), Some("s"), "child", Some(root.clone()), None).await.unwrap();
+        let sibling = manager.begin_agent_run(Path::new("."), Some("s"), "sibling", Some(root.clone()), None).await.unwrap();
+        let grandchild = manager.begin_agent_run(Path::new("."), Some("s"), "grandchild", Some(child.clone()), None).await.unwrap();
+        assert!(manager.send_run_message("s", &root, &child, "hello").is_ok());
+        assert!(manager.send_run_message("s", &child, &root, "reply").is_ok());
+        assert!(manager.send_run_message("s", &child, &sibling, "no").is_err());
+        assert!(manager.send_run_message("s", &root, &grandchild, "no").is_err());
+        assert!(manager.send_run_message("other", &root, &child, "no").is_err());
+        assert!(manager.drain_run_messages(&child)[0].contains("hello"));
+        assert!(manager.drain_run_messages(&child).is_empty());
+        assert!(manager.send_run_message("s", &root, &child, "during model call").is_ok());
+        assert!(manager.close_or_drain_run_messages(&child)[0].contains("during model call"));
+        assert!(manager.close_or_drain_run_messages(&child).is_empty());
+        assert!(manager.send_run_message("s", &root, &child, "after close").is_err());
+        manager.finish_agent_run(&child, AgentRunStatus::Completed, None).await.unwrap();
+        assert!(manager.send_run_message("s", &root, &child, "late").is_err());
     }
 }

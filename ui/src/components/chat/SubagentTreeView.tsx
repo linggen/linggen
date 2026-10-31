@@ -5,6 +5,7 @@ import { formatCompactTokens } from './utils/activity';
 import { truncateDetail } from './utils/content-block';
 import { RunningSpinner } from './TaskList';
 import { useInteractionStore } from '../../stores/interactionStore';
+import { useSessionStore } from '../../stores/sessionStore';
 
 /** Subagent tree view — Claude Code-style per-entry Task() blocks.
  *
@@ -29,7 +30,8 @@ export const SubagentTreeView: React.FC<{
   // line in the parent bubble doesn't look "running normally" while a
   // widget is waiting in the SubagentPane. Reads the same single
   // pendingAskUser slot the routing predicate uses.
-  const pendingAskUser = useInteractionStore((s) => s.pendingAskUser);
+  const sessionId = useSessionStore((s) => s.activeSessionId);
+  const pendingAskUser = useInteractionStore((s) => sessionId ? s.askQueues[sessionId]?.[0] : null);
   const needsUserAgentId = pendingAskUser?.agentId ?? null;
   const entryNeedsUser = (entry: SubagentTreeEntry): boolean =>
     !!needsUserAgentId &&

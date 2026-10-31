@@ -217,26 +217,18 @@ async function makeSession(set: (fn: (s: SessionState) => Partial<SessionState>)
   }
 }
 
-// An AskUser raised while its session wasn't on screen is dropped by the
-// live event filter (eventHandlers/interactive.ts) — so entering a session
-// must pull the server's pending list, or the ask stays invisible until it
-// times out (observed on an attended dream-mission run, 2026-08-18). The
-// stale slot from the previous session is cleared either way.
 async function refreshPendingAskFor(sessionId: string | null): Promise<void> {
-  useInteractionStore.getState().setPendingAskUser(null);
   if (!sessionId) return;
+  const revision = useInteractionStore.getState().askRevision;
   try {
     const items = await sessionApi.pendingAskUser();
-    const mine = items.find((it) => !it.session_id || it.session_id === sessionId);
-    // The user may have switched again while the fetch ran.
-    if (useSessionStore.getState().activeSessionId !== sessionId) return;
-    if (!mine) return;
-    useInteractionStore.getState().setPendingAskUser({
-      questionId: mine.question_id,
-      agentId: String(mine.agent_id || ''),
-      questions: (mine.questions || []) as AskUserQuestion[],
-    });
+    if (useSessionStore.getState().activeSessionId !== sessionId || useInteractionStore.getState().askRevision !== revision) return;
+    useInteractionStore.getState().replaceAsks(sessionId, items.filter((it) => it.session_id === sessionId).map((it) => ({
+      questionId: it.question_id,
+      agentId: String(it.agent_id || ''),
+      questions: (it.questions || []) as AskUserQuestion[],
+    })));
   } catch {
-    // Daemon unreachable — the live event path still covers new asks.
+    // Daemon unreachable — live events and page state can still restore asks.
   }
 }

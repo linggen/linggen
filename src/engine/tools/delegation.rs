@@ -15,6 +15,61 @@ pub(crate) struct TaskArgs {
     pub(crate) run_in_background: bool,
 }
 
+#[cfg(test)]
+mod task_tests {
+    use super::*;
+
+    #[test]
+    fn inherited_snapshot_replaces_defaults_preserves_overrides_and_cannot_escalate() {
+        use crate::engine::permission::{check_permission, PathMode, PermissionCheckResult, PermissionMode, SessionPermissions};
+        use std::path::Path;
+
+        let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let private = cwd.join("private");
+        for modes in [
+            vec![
+                PathMode { path: "*".into(), mode: PermissionMode::Admin },
+                PathMode { path: private.to_string_lossy().into_owned(), mode: PermissionMode::Read },
+            ],
+            vec![
+                PathMode { path: private.to_string_lossy().into_owned(), mode: PermissionMode::Read },
+                PathMode { path: "*".into(), mode: PermissionMode::Admin },
+            ],
+        ] {
+            let mut child = SessionPermissions::default();
+            child.set_path_mode(&private.to_string_lossy(), PermissionMode::Admin);
+            inherit_permissions(&mut child, &modes, false);
+            assert!(!child.interactive);
+            assert!(matches!(check_permission("Write", None, Some(private.join("x").to_str().unwrap()), cwd, &child, None), PermissionCheckResult::NeedsPrompt(_)));
+            assert!(matches!(check_permission("Read", None, Some(private.join("x").to_str().unwrap()), cwd, &child, None), PermissionCheckResult::Allowed));
+            let mut grandchild = SessionPermissions::default();
+            inherit_permissions(&mut grandchild, &child.path_modes, child.interactive);
+            assert!(!grandchild.interactive);
+            assert!(matches!(check_permission("Write", None, Some(private.join("x").to_str().unwrap()), cwd, &grandchild, None), PermissionCheckResult::NeedsPrompt(_)));
+        }
+        let mut child = SessionPermissions::default();
+        child.set_path_mode("*", PermissionMode::Admin);
+        inherit_permissions(&mut child, &[], true);
+        assert!(child.path_modes.is_empty());
+        assert!(child.interactive, "a subagent of a person's session may ask");
+        assert!(matches!(check_permission("Read", None, Some(cwd.join("x").to_str().unwrap()), cwd, &child, None), PermissionCheckResult::NeedsPrompt(_)));
+    }
+
+    #[tokio::test]
+    async fn background_without_session_fails_before_spawning() {
+        let tools = Tools::new(std::env::temp_dir()).unwrap();
+        let args = TaskArgs {
+            target_agent_id: "ling".into(),
+            task: "test".into(),
+            run_in_background: true,
+        };
+        let error = tools.validate_delegation(&args).err().unwrap().to_string();
+        assert!(error.contains("run_in_background needs a session"), "{error}");
+        let error = tools.task(args).await.unwrap_err().to_string();
+        assert!(error.contains("run_in_background needs a session"), "{error}");
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct WebSearchArgs {
     #[serde(alias = "q")]
@@ -47,8 +102,11 @@ impl Tools {
     /// Returns the manager and caller agent id on success.
     pub(crate) fn validate_delegation(
         &self,
-        _args: &TaskArgs,
+        args: &TaskArgs,
     ) -> Result<(Arc<AgentManager>, String)> {
+        if args.run_in_background && self.session_id.as_deref().is_none_or(str::is_empty) {
+            anyhow::bail!("run_in_background needs a session; run it in the foreground instead");
+        }
         let manager = self
             .manager
             .as_ref()
@@ -70,6 +128,9 @@ impl Tools {
 
     pub(super) async fn task(&self, args: TaskArgs) -> Result<ToolResult> {
         let (manager, caller_id) = self.validate_delegation(&args)?;
+        if args.run_in_background {
+            anyhow::bail!("run_in_background requires the session delegation dispatcher");
+        }
         // Box::pin breaks the async-fn type cycle:
         // Tools::execute -> Tools::task -> run_delegation -> engine.run_agent_loop
         // -> ToolRegistry::execute -> Tools::execute. The recursion is real
@@ -88,6 +149,7 @@ impl Tools {
             self.ask_user_bridge.clone(),
             self.session_id.clone(),
             self.session_policy.clone(),
+            self.parent_allowed_tools.clone(),
             self.parent_path_modes.clone(),
             self.parent_interactive,
             None,
@@ -253,6 +315,30 @@ impl Tools {
     }
 }
 
+/// A delegated run starts with exactly the parent's path grants at dispatch
+/// time. Beyond them it asks the person, as a Claude Code subagent's
+/// permission prompt reaches the main view — only when the parent could ask:
+/// with no one attached (a mission, a proxy consumer) a prompt would hang.
+fn inherit_permissions(
+    permissions: &mut crate::engine::permission::SessionPermissions,
+    parent_path_modes: &[crate::engine::permission::PathMode],
+    parent_interactive: bool,
+) {
+    permissions.path_modes = parent_path_modes.to_vec();
+    permissions.interactive = parent_interactive;
+}
+
+#[derive(Debug)]
+pub(crate) struct DelegationCancelled;
+
+impl std::fmt::Display for DelegationCancelled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Subagent cancelled")
+    }
+}
+
+impl std::error::Error for DelegationCancelled {}
+
 /// Execute a single delegation on a fresh, ephemeral engine.
 ///
 /// This is a standalone async function (not a method) so it can be spawned onto
@@ -271,17 +357,19 @@ pub(crate) async fn run_delegation(
     ask_user_bridge: Option<Arc<AskUserBridge>>,
     session_id: Option<String>,
     parent_policy: Option<crate::engine::session_policy::SessionPolicy>,
+    parent_allowed_tools: Option<std::collections::HashSet<String>>,
     parent_path_modes: Vec<crate::engine::permission::PathMode>,
     parent_interactive: bool,
     started: Option<tokio::sync::oneshot::Sender<String>>,
 ) -> Result<ToolResult> {
     let run_id = manager
-        .begin_agent_run(
+        .begin_delegated_run(
             &ws_root,
             session_id.as_deref(),
             &target_agent_id,
             parent_run_id.clone(),
             Some(format!("delegated by {}", caller_id)),
+            started.is_some(),
         )
         .await?;
     if let Some(started) = started {
@@ -324,13 +412,16 @@ pub(crate) async fn run_delegation(
     let mut engine = match engine_result {
         Ok(e) => e,
         Err(err) => {
-            let _ = manager
+            let status = manager
                 .finish_agent_run(
                     &run_id,
                     crate::engine::agent::AgentRunStatus::Failed,
                     Some(err.to_string()),
                 )
-                .await;
+                .await?;
+            if status == crate::engine::agent::AgentRunStatus::Cancelled {
+                return Err(DelegationCancelled.into());
+            }
             return Err(err);
         }
     };
@@ -347,27 +438,21 @@ pub(crate) async fn run_delegation(
     if let Some(ref policy) = parent_policy {
         policy.apply(&mut engine);
     }
+    // A separate ceiling survives policy and skill changes in the child.
+    engine.cfg.delegated_allowed_tools = parent_allowed_tools;
     // A delegated run is a task whatever the parent's session was: the
     // parent's policy carries a person's-session profile (turns verbatim),
     // but the bootstrap message is the subagent's only delivery of its task.
     engine.prompt_profile.task_bootstrap = true;
 
-    // Inherit parent's path-mode grants so skill-approved paths (e.g. `~/.linggen`,
-    // `~/.claude` for the memory skill) don't re-prompt inside delegated runs. The
-    // parent is the authority: subagents cannot see anything the parent couldn't.
-    for pm in &parent_path_modes {
-        engine.session_permissions.set_path_mode(&pm.path, pm.mode);
-    }
-    // Also propagate so that *further* nested delegations keep the grants.
+    // Replace, rather than merge, the fresh engine's grants. Preserve the
+    // snapshot verbatim: set_path_mode prunes more-specific entries and can
+    // turn a wildcard or parent grant into an unintended elevation.
+    inherit_permissions(&mut engine.session_permissions, &parent_path_modes, parent_interactive);
     engine.tools.builtins.parent_path_modes = parent_path_modes;
     engine.tools.builtins.parent_interactive = parent_interactive;
-    // A non-interactive parent (mission, proxy consumer) means the subagent
-    // also cannot prompt — surfacing a prompt with no human attached deadlocks.
-    if !parent_interactive {
-        engine.session_permissions.interactive = false;
-    }
 
-    // Wire AskUser bridge so the subagent can prompt for permissions and user questions.
+    // Wire AskUser bridge so the subagent can ask for permissions and questions.
     if let Some(bridge) = ask_user_bridge {
         engine.tools.set_ask_user_bridge(bridge);
     }
@@ -389,13 +474,19 @@ pub(crate) async fn run_delegation(
             } else {
                 crate::engine::agent::AgentRunStatus::Failed
             };
-            let _ = manager
+            let final_status = manager
                 .finish_agent_run(&run_id, status, Some(msg.clone()))
-                .await;
+                .await?;
+            if final_status == crate::engine::agent::AgentRunStatus::Cancelled {
+                return Err(DelegationCancelled.into());
+            }
             return Err(err);
         }
     };
-    let _ = manager.finish_agent_run(&run_id, status, detail).await;
+    let final_status = manager.finish_agent_run(&run_id, status, detail).await?;
+    if final_status == crate::engine::agent::AgentRunStatus::Cancelled {
+        return Err(DelegationCancelled.into());
+    }
 
     manager
         .send_event(

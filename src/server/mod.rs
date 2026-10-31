@@ -78,7 +78,7 @@ async fn prepare_server(
         missions,
         prompt_store,
         queued_chats: Arc::new(Mutex::new(HashMap::new())),
-        interrupt_tx: Arc::new(Mutex::new(HashMap::new())),
+        fold: Default::default(),
         claude: Default::default(),
         tasks: Default::default(),
         pending_ask_user: Arc::new(Mutex::new(HashMap::new())),

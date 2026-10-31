@@ -87,9 +87,9 @@ export const SubagentDetail: React.FC<{
       {pendingAskUser && onRespondToAskUser && (
         <div>
           {(pendingAskUser.questions[0]?.permission || pendingAskUser.questions[0]?.header === 'Permission') ? (
-            <ToolPermissionCard pending={pendingAskUser} onRespond={onRespondToAskUser} />
+            <ToolPermissionCard key={pendingAskUser.questionId} pending={pendingAskUser} onRespond={onRespondToAskUser} />
           ) : (
-            <AskUserCard pending={pendingAskUser} onRespond={onRespondToAskUser} />
+            <AskUserCard key={pendingAskUser.questionId} pending={pendingAskUser} onRespond={onRespondToAskUser} />
           )}
         </div>
       )}

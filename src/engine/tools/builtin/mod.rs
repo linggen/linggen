@@ -23,6 +23,7 @@ mod media;
 mod pet;
 mod sense;
 mod tasks;
+mod send_message;
 mod web;
 mod write;
 
@@ -39,6 +40,7 @@ pub use media::*;
 pub use pet::*;
 pub use sense::*;
 pub use tasks::*;
+pub use send_message::*;
 pub use web::*;
 pub use write::*;
 
@@ -155,6 +157,8 @@ pub(super) fn registry() -> &'static [Arc<dyn Tool>] {
             Arc::new(ClaudeSessionTool),
             Arc::new(AppTool),
             Arc::new(AskUserTool),
+            Arc::new(TaskListTool),
+            Arc::new(SendMessageTool),
             Arc::new(TaskOutputTool),
             Arc::new(TaskStopTool),
             // Memory is NOT here. ling-mem is an MCP server and the model

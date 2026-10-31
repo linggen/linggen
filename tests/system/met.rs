@@ -140,7 +140,7 @@ async fn before_she_is_met_she_is_nowhere_and_ling_covers() {
     let RunEnd::Asked(ask) = w.wait_run(&sid, Agent::Ling, mark).await else {
         panic!("the Write ran without a permission prompt");
     };
-    w.api.answer(&ask, "allow once").await;
+    w.api.answer(&ask, "grant:all").await;
     w.finish_run(&sid, Agent::Ling, mark).await;
     assert!(w.home.work().join("probe.txt").exists());
     assert!(latch(&w).is_none());

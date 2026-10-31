@@ -106,35 +106,23 @@ pub(super) async fn run_loop_with_tracking(
     result
 }
 
-/// Wire the interrupt channel into the engine and store the sender in ServerState.
-/// Returns the interrupt_key used to look up the sender later for cleanup.
-pub(super) async fn wire_interrupt_channel(
-    ctx: &ChatRunCtx,
-    engine: &mut crate::engine::AgentEngine,
-) -> String {
-    let (interrupt_tx, interrupt_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-    engine.interrupt_rx = Some(interrupt_rx);
-
-    let interrupt_key = crate::server::chat::helpers::queue_key(
+/// Give the engine this turn's inbox: each step takes in what the person
+/// sent meanwhile (`fold.rs`).
+pub(super) fn wire_inbox(ctx: &ChatRunCtx, engine: &mut crate::engine::AgentEngine) {
+    let key = crate::server::chat::helpers::queue_key(
         ctx.session_id.as_deref().unwrap_or(""),
         &ctx.agent_id,
     );
-    {
-        let mut guard = ctx.state.interrupt_tx.lock().await;
-        guard.insert(interrupt_key.clone(), interrupt_tx);
-    }
-    interrupt_key
+    let fold = ctx.state.fold.clone();
+    engine.inbox = Some(std::sync::Arc::new(move || {
+        let (fold, key) = (fold.clone(), key.clone());
+        Box::pin(async move { fold.take(&key).await })
+    }));
 }
 
-/// Remove the interrupt channel from both the engine and ServerState.
-pub(super) async fn unwire_interrupt_channel(
-    ctx: &ChatRunCtx,
-    engine: &mut crate::engine::AgentEngine,
-    interrupt_key: &str,
-) {
-    engine.interrupt_rx = None;
-    let mut guard = ctx.state.interrupt_tx.lock().await;
-    guard.remove(interrupt_key);
+/// The turn is over: nothing more joins it.
+pub(super) fn unwire_inbox(engine: &mut crate::engine::AgentEngine) {
+    engine.inbox = None;
 }
 
 /// Wire server-backed bridges into the engine: the AskUser bridge (emit

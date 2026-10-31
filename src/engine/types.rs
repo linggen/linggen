@@ -151,6 +151,8 @@ pub struct EngineConfig {
     /// (inherit ling's full set). Applied on session-entering skill
     /// activation; see `skill_activation::apply_skill_tool_scope`.
     pub skill_allowed_tools: Option<std::collections::HashSet<String>>,
+    /// Immutable tool ceiling captured from the delegating loop.
+    pub delegated_allowed_tools: Option<std::collections::HashSet<String>>,
     /// When set, restricts available skills for proxy room consumers.
     pub consumer_allowed_skills: Option<std::collections::HashSet<String>>,
     /// Global default auto-compaction trigger as a fraction of context_window_tokens.
@@ -193,6 +195,7 @@ impl EngineConfig {
             mission_allowed_tools: None,
             consumer_allowed_tools: None,
             skill_allowed_tools: None,
+            delegated_allowed_tools: None,
             consumer_allowed_skills: None,
             compact_threshold_default: config.agent.compact_threshold,
             memory_inject_min_score: config.agent.memory_inject_min_score,
@@ -209,6 +212,7 @@ impl EngineConfig {
             self.mission_allowed_tools.as_ref(),
             self.consumer_allowed_tools.as_ref(),
             self.skill_allowed_tools.as_ref(),
+            self.delegated_allowed_tools.as_ref(),
         ];
         let mut acc: Option<std::collections::HashSet<String>> = None;
         for set in sets.into_iter().flatten() {
@@ -269,6 +273,20 @@ pub struct ContextRecord {
     pub content: String,
     pub meta: JsonValue,
 }
+
+/// A message a person sent while the turn ran, taken into it at a step.
+pub struct InboxMessage {
+    pub text: String,
+    pub images: Vec<String>,
+}
+
+/// Hands the turn the messages waiting for it — the ones the person did not
+/// remove meanwhile, shown in the chat as they are taken.
+pub type Inbox = std::sync::Arc<
+    dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<InboxMessage>> + Send>>
+        + Send
+        + Sync,
+>;
 
 pub struct AgentEngine {
     pub cfg: EngineConfig,
@@ -335,8 +353,9 @@ pub struct AgentEngine {
     /// silence marker (`SILENT`) is neither shown nor kept. Set per turn by
     /// whoever woke the agent with a kickoff that offers silence.
     pub silence_ok: bool,
-    /// Receiver for user interrupt messages injected while the agent loop is running.
-    pub interrupt_rx: Option<mpsc::UnboundedReceiver<String>>,
+    /// Where a person's messages sent during this turn wait: each step takes
+    /// them in, so they join the running turn instead of ending it.
+    pub inbox: Option<Inbox>,
     // Plan mode
     pub plan_mode: bool,
     pub plan: Option<Plan>,
@@ -613,7 +632,7 @@ impl AgentEngine {
             session_id: None,
             thinking_tx: None,
             silence_ok: false,
-            interrupt_rx: None,
+            inbox: None,
             plan_mode: false,
             plan: None,
             pending_images: Vec::new(),

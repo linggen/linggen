@@ -40,7 +40,7 @@ pub mod web_search;
 // Re-export public API types
 pub use types::{
     ActiveMission, AgentEngine, AgentOutcome, AgentRole, ContextType, EngineConfig, InterfaceMode,
-    Plan, PlanStatus, StreamedToken, ThreadMark,
+    InboxMessage, Plan, PlanStatus, StreamedToken, ThreadMark,
 };
 
 pub use actions::{
@@ -233,7 +233,9 @@ impl AgentEngine {
         self.session_id = session_id.map(|s| s.to_string());
 
         if let Some(sid) = session_id {
-            self.load_session_permissions(sid);
+            if self.tools.builtins.delegation_depth() == 0 {
+                self.load_session_permissions(sid);
+            }
         }
 
         if self.is_cancelled().await {
@@ -338,13 +340,7 @@ impl AgentEngine {
         if self.context_window_tokens.is_none()
             || self.context_window_model.as_deref() != Some(self.model_id.as_str())
         {
-            self.context_window_tokens = self
-                .model_manager
-                .context_window(&self.model_id)
-                .await
-                .ok()
-                .flatten();
-            self.context_window_model = Some(self.model_id.clone());
+            self.refresh_context_window().await;
             if let Some(cw) = self.context_window_tokens {
                 debug!(
                     "Context window: {}t, soft_limit={}, tail_budget={}t",
@@ -403,23 +399,29 @@ impl AgentEngine {
         self.last_ask_answered = false;
         let log_run = self.run_id.clone().unwrap_or_else(|| "root".to_string());
 
-        let mut interrupted_by_user = false;
-        for _ in 0..self.cfg.max_iters {
+        let mut iterations = 0;
+        loop {
+            if iterations >= self.cfg.max_iters {
+                if self.close_or_receive_run_messages(&mut state.messages, None) {
+                    iterations = self.cfg.max_iters.saturating_sub(1);
+                } else {
+                    break;
+                }
+            }
+            iterations += 1;
+            if let (Some(manager), Some(run)) = (self.tools.get_manager(), self.run_id.as_deref()) {
+                for message in manager.drain_run_messages(run) {
+                    self.push_tracked_message(&mut state.messages, ChatMessage::new("user", message));
+                }
+            }
             if self.is_cancelled().await {
                 anyhow::bail!("run cancelled");
             }
 
-            // If the user sent a new message while we were working, break the
-            // loop and let the queued message start a fresh chat round. The
-            // model will see the full conversation history and decide whether
-            // to continue the previous task or handle the new request.
-            if let Some(rx) = &mut self.interrupt_rx {
-                if rx.try_recv().is_ok() {
-                    info!("Breaking loop: user sent a new message");
-                    interrupted_by_user = true;
-                    break;
-                }
-            }
+            // What the person sent while we worked joins this turn here, at
+            // the step boundary, as Claude Code folds queued input between
+            // tool rounds — the turn goes on with it instead of ending.
+            self.take_inbox(&mut state.messages).await;
 
             if self.tools.get_manager().is_some() {
                 let agent_id = self
@@ -630,6 +632,10 @@ impl AgentEngine {
                     if self.try_drain_kickoff(&mut state, session_id, &raw).await {
                         continue;
                     }
+                    if self.close_or_receive_run_messages(&mut state.messages, None) {
+                        iterations = iterations.min(self.cfg.max_iters.saturating_sub(1));
+                        continue;
+                    }
                     self.active_skill = None;
                     return Ok(AgentOutcome::None);
                 }
@@ -713,6 +719,10 @@ impl AgentEngine {
                     if self.try_drain_kickoff(&mut state, session_id, &raw).await {
                         continue;
                     }
+                    if self.close_or_receive_run_messages(&mut state.messages, Some(&raw)) {
+                        iterations = iterations.min(self.cfg.max_iters.saturating_sub(1));
+                        continue;
+                    }
                     self.active_skill = None;
                     return Ok(AgentOutcome::None);
                 }
@@ -780,6 +790,10 @@ impl AgentEngine {
                         if self.try_drain_kickoff(&mut state, session_id, &raw).await {
                             continue;
                         }
+                        if self.close_or_receive_run_messages(&mut state.messages, Some(&raw)) {
+                        iterations = iterations.min(self.cfg.max_iters.saturating_sub(1));
+                        continue;
+                    }
                         return Ok(AgentOutcome::None);
                     }
                     // Either malformed JSON or short/incomplete plain text — nudge.
@@ -798,6 +812,10 @@ impl AgentEngine {
                             .try_drain_kickoff(&mut state, session_id, &message)
                             .await
                         {
+                            continue;
+                        }
+                        if self.close_or_receive_run_messages(&mut state.messages, Some(&message)) {
+                            iterations = iterations.min(self.cfg.max_iters.saturating_sub(1));
                             continue;
                         }
                         self.active_skill = None;
@@ -831,27 +849,44 @@ impl AgentEngine {
             }
         }
 
-        self.emit_loop_limit_bailout(interrupted_by_user, session_id)
-            .await;
+        self.emit_loop_limit_bailout(session_id).await;
         Ok(AgentOutcome::None)
     }
 
-    /// Tail of `run_agent_loop`: clear `active_skill` and (unless the
-    /// user pre-empted the run with a new message) emit the
-    /// loop-limit bailout message + context record.
-    async fn emit_loop_limit_bailout(
-        &mut self,
-        interrupted_by_user: bool,
-        session_id: Option<&str>,
-    ) {
-        self.active_skill = None;
-
-        // Only emit the bailout message when we actually hit the iteration
-        // limit.  If the loop exited because the user sent a new message,
-        // silently yield so the next chat round can start cleanly.
-        if interrupted_by_user {
-            return;
+    fn close_or_receive_run_messages(&mut self, messages: &mut Vec<ChatMessage>, response: Option<&str>) -> bool {
+        let (Some(manager), Some(run)) = (self.tools.get_manager(), self.run_id.as_deref()) else {
+            return false;
+        };
+        let pending = manager.close_or_drain_run_messages(run);
+        let received = !pending.is_empty();
+        if received {
+            if let Some(response) = response.filter(|text| !text.is_empty()) {
+                self.push_tracked_message(messages, ChatMessage::new("assistant", response));
+            }
         }
+        for message in pending {
+            self.push_tracked_message(messages, ChatMessage::new("user", message));
+        }
+        received
+    }
+
+    /// Take in what the person sent while the turn ran, as user messages.
+    async fn take_inbox(&mut self, messages: &mut Vec<ChatMessage>) {
+        let Some(inbox) = self.inbox.clone() else {
+            return;
+        };
+        for sent in inbox().await {
+            info!("Taking in a message the person sent during the turn");
+            let mut message = ChatMessage::new("user", sent.text);
+            message.images = sent.images;
+            self.push_tracked_message(messages, message);
+        }
+    }
+
+    /// Tail of `run_agent_loop`: the loop ran out of steps — clear
+    /// `active_skill` and emit the loop-limit bailout message + context record.
+    async fn emit_loop_limit_bailout(&mut self, session_id: Option<&str>) {
+        self.active_skill = None;
         let fallback = self
             .prompt_store
             .render_or_fallback(crate::prompts::keys::BAILOUT_LOOP_LIMIT, &[]);
@@ -1239,12 +1274,72 @@ mod member_tests {
         AgentEngine::new(cfg, models, "m".to_string(), AgentRole::Lead).unwrap()
     }
 
+    /// What the person sent during the turn joins it as user messages, with
+    /// their pictures, in order — the turn goes on rather than ending.
+    #[tokio::test]
+    async fn a_step_takes_the_persons_messages_into_the_turn() {
+        let root = tempfile::tempdir().unwrap();
+        let mut engine = engine_at(root.path());
+        let mut messages = vec![crate::message::ChatMessage::new("user", "build it")];
+        engine.take_inbox(&mut messages).await;
+        assert_eq!(messages.len(), 1, "no inbox, nothing taken");
+        engine.inbox = Some(std::sync::Arc::new(|| {
+            Box::pin(async {
+                vec![
+                    super::InboxMessage { text: "skip the tests".into(), images: vec![] },
+                    super::InboxMessage { text: "this one".into(), images: vec!["IMG".into()] },
+                ]
+            })
+        }));
+        engine.take_inbox(&mut messages).await;
+        let added: Vec<(&str, &str, usize)> = messages[1..]
+            .iter()
+            .map(|m| (m.role.as_str(), m.content.as_str(), m.images.len()))
+            .collect();
+        assert_eq!(added, [("user", "skip the tests", 0), ("user", "this one", 1)]);
+    }
+
     fn spec_engine(agent: &str, md: &str) -> AgentEngine {
         let root = tempfile::tempdir().unwrap();
         let mut engine = engine_at(root.path());
         let (spec, body) = crate::extensions::agents::parse_agent_markdown(md).unwrap();
         engine.set_spec(agent.to_string(), spec, body);
         engine
+    }
+
+    #[test]
+    fn delegated_loop_inherits_plan_mission_skill_and_nested_ceiling() {
+        use std::collections::HashSet;
+        use crate::engine::prompt::PromptPurpose;
+        let set = |names: &[&str]| -> HashSet<String> {
+            names.iter().map(|s| s.to_string()).collect()
+        };
+        let effective = |engine: &mut AgentEngine| {
+            engine.prepare_loop_messages("test", true, PromptPurpose::Turn).1
+        };
+        let root = tempfile::tempdir().unwrap();
+        for source in ["plan", "mission", "skill"] {
+            let mut parent = engine_at(root.path());
+            match source {
+                "plan" => parent.plan_mode = true,
+                "mission" => parent.cfg.mission_allowed_tools = Some(set(&["Read", "Task"])),
+                _ => parent.cfg.skill_allowed_tools = Some(set(&["Read", "Task"])),
+            }
+            let ceiling = effective(&mut parent);
+            assert!(ceiling.as_ref().unwrap().contains("Read"));
+            assert!(!ceiling.as_ref().unwrap().contains("Write"));
+            let mut child = engine_at(root.path());
+            child.cfg.delegated_allowed_tools = ceiling;
+            child.cfg.skill_allowed_tools = Some(set(&["Read", "Write", "Task"]));
+            let child_set = effective(&mut child).unwrap();
+            assert_eq!(child_set, set(&["Read", "Task"]));
+            let mut grandchild = engine_at(root.path());
+            grandchild.cfg.delegated_allowed_tools = Some(child_set);
+            assert_eq!(effective(&mut grandchild).unwrap(), set(&["Read", "Task"]));
+        }
+        let mut child = engine_at(root.path());
+        child.cfg.delegated_allowed_tools = Some(HashSet::new());
+        assert!(effective(&mut child).unwrap().is_empty());
     }
 
     /// Her real spec, on an engine — leading her own thread.

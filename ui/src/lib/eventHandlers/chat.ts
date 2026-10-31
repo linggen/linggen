@@ -374,8 +374,10 @@ export function handleTurnComplete(item: UiEventOf<'turn_complete'>): void {
 
   useChatStore.getState().turnComplete(agentId, elapsed, ctxTokens, runOf(item));
   const interaction = useInteractionStore.getState();
-  if (askEndsWithTurn(interaction.pendingAskUser?.agentId, agentId, (id) => agentTracker.getParent(id))) {
-    interaction.setPendingAskUser(null);
+  if (sid) {
+    for (const ask of interaction.askQueues[sid] ?? []) {
+      if (askEndsWithTurn(ask.agentId, agentId, (id) => agentTracker.getParent(id))) interaction.removeAsk(sid, ask.questionId);
+    }
   }
 
   if (!sid) return;

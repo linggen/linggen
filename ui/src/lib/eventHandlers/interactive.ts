@@ -6,6 +6,8 @@ import { useInteractionStore } from '../../stores/interactionStore';
 import { useUiStore } from '../../stores/uiStore';
 import { getSessionId } from './_shared';
 import { withAgentQueue } from '../queuedList.mts';
+import { chatAgentOf, withMemberModel } from '../sessionMembers.mts';
+import { agentTracker } from '../agentTracker';
 
 // ---------------------------------------------------------------------------
 // AskUser — model is asking the user a structured question
@@ -15,15 +17,10 @@ export function handleAskUser(item: UiEventOf<'ask_user'>): void {
   const { question_id, questions } = item.data || {};
   if (!question_id || !questions) return;
 
-  // Only show the prompt when it belongs to the UI's currently-displayed
-  // session. Without this filter, a permission prompt raised by the memory
-  // skill's session leaks into unrelated user-chat windows that happen to be
-  // open in another tab, because `pendingAskUser` is a single global slot.
   const evtSid = item.session_id ? String(item.session_id) : null;
-  const activeSid = useSessionStore.getState().activeSessionId;
-  if (evtSid && activeSid && evtSid !== activeSid) return;
+  if (!evtSid) return;
 
-  useInteractionStore.getState().setPendingAskUser({
+  useInteractionStore.getState().enqueueAsk(evtSid, {
     questionId: question_id,
     agentId: String(item.agent_id || ''),
     questions,
@@ -38,10 +35,8 @@ export function handleWidgetResolved(item: UiEventOf<'widget_resolved'>): void {
   const widgetId = item.data?.widget_id as string | undefined;
   if (!widgetId) return;
   const interaction = useInteractionStore.getState();
-  // Dismiss AskUser permission widget
-  if (interaction.pendingAskUser?.questionId === widgetId) {
-    interaction.setPendingAskUser(null);
-  }
+  // A resolution only removes the matching question in its session.
+  if (item.session_id) interaction.removeAsk(String(item.session_id), widgetId);
   // Dismiss plan widget (defensive — plan normally syncs via PlanUpdate)
   if (interaction.pendingPlanAgentId === widgetId) {
     interaction.setPendingPlan(null);
@@ -90,12 +85,17 @@ export function handleModelFallback(item: UiEventOf<'model_fallback'>): void {
     ...prev,
     [sid]: `Fallback: ${item.data?.actual_model || 'alternate model'}`,
   }));
-  // Move the picker onto the model that is actually running. The server has
-  // already pinned it to the session; a picker still naming the model that
-  // just refused is showing state the server no longer holds, and the user
-  // cannot undo a switch they cannot see.
   const actual = item.data?.actual_model;
-  if (typeof actual === 'string' && actual && sid === useSessionStore.getState().activeSessionId) {
-    useUiStore.getState().setSessionModel(actual);
-  }
+  const agent = (item.agent_id ?? '').toLowerCase();
+  if (typeof actual !== 'string' || !actual || !agent || agentTracker.getParent(agent)) return;
+  const sessions = useSessionStore.getState();
+  const update = (session: typeof sessions.allSessions[number]) => session.id === sid
+    ? { ...session, agents: withMemberModel(session.agents, agent, actual) }
+    : session;
+  useSessionStore.setState({ allSessions: sessions.allSessions.map(update), sessions: sessions.sessions.map(update) });
+  if (sid !== sessions.activeSessionId) return;
+  const ui = useUiStore.getState();
+  const selected = chatAgentOf(useServerStore.getState().selectedAgent, ui.sessionMembers);
+  ui.setSessionMembers(withMemberModel(ui.sessionMembers, agent, actual));
+  if (selected === agent) ui.setSessionModel(actual);
 }

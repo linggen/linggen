@@ -11,6 +11,16 @@ use futures_util::StreamExt;
 // doc/session-spec.md.
 
 impl AgentEngine {
+    pub(crate) async fn refresh_context_window(&mut self) {
+        self.context_window_tokens = self
+            .model_manager
+            .context_window(&self.model_id)
+            .await
+            .ok()
+            .flatten();
+        self.context_window_model = Some(self.model_id.clone());
+    }
+
     pub(crate) fn context_soft_token_limit(&self) -> usize {
         // Three layers, highest to lowest:
         //   1. Per-session override (POST /api/chat/compact_config)
@@ -408,9 +418,9 @@ impl AgentEngine {
             // Fallback: not cached yet (shouldn't happen after loop start).
             None
         });
-        let (actual_prompt, actual_completion) = match &self.last_token_usage {
-            Some(u) => (u.prompt_tokens, u.completion_tokens),
-            None => (None, None),
+        let (actual_prompt, actual_completion) = match (&self.last_token_usage, stage) {
+            (Some(u), stage) if stage != "fallback" => (u.prompt_tokens, u.completion_tokens),
+            _ => (None, None),
         };
         self.emit(crate::engine::agent::AgentEvent::ContextUsage {
             agent_id: self
@@ -836,6 +846,60 @@ pub(crate) fn is_silence(reply: &str) -> bool {
         .trim()
         .trim_matches(|c: char| c.is_ascii_punctuation() || c == '\u{2026}')
         .eq_ignore_ascii_case("silent")
+}
+
+#[cfg(test)]
+mod window_tests {
+    use crate::engine::{AgentEngine, AgentRole, EngineConfig, InterfaceMode};
+    use crate::provider::models::ModelManager;
+    use std::sync::Arc;
+
+    fn model(id: &str, window: usize) -> crate::config::ModelConfig {
+        crate::config::ModelConfig {
+            id: id.into(),
+            provider: "openai".into(),
+            url: "http://localhost:1".into(),
+            model: id.into(),
+            api_key: None,
+            keep_alive: None,
+            context_window: Some(window),
+            tags: vec![],
+            supports_tools: Some(true),
+            auth_mode: None,
+            reasoning_effort: None,
+            provided_by: None,
+            is_builtin: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn refresh_tracks_model_switches_and_clears_unknown_windows() {
+        let root = tempfile::tempdir().unwrap();
+        let cfg = EngineConfig::from_app_config(
+            &crate::config::Config::default(),
+            root.path().into(),
+            InterfaceMode::Web,
+        );
+        let models = Arc::new(ModelManager::new_with_credentials(
+            vec![model("large", 128_000), model("small", 32_000)],
+            &crate::credentials::Credentials::default(),
+        ));
+        let mut engine = AgentEngine::new(cfg, models, "large".into(), AgentRole::Lead).unwrap();
+        for (id, limit) in [("large", 128_000), ("small", 32_000), ("large", 128_000)] {
+            engine.model_id = id.into();
+            engine.refresh_context_window().await;
+            assert_eq!(engine.context_window_model.as_deref(), Some(id));
+            assert_eq!(engine.context_window_tokens, Some(limit));
+            assert_eq!(
+                engine.context_soft_token_limit(),
+                (limit as f64 * 0.95) as usize
+            );
+        }
+        engine.model_id = "missing".into();
+        engine.refresh_context_window().await;
+        assert_eq!(engine.context_window_tokens, None);
+        assert_eq!(engine.context_window_model.as_deref(), Some("missing"));
+    }
 }
 
 #[cfg(test)]

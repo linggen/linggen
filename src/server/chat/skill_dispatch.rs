@@ -4,7 +4,7 @@ use crate::server::ServerEvent;
 
 use super::runtime::{
     push_user_turn_with_recall, run_loop_with_tracking, send_thinking_status,
-    unwire_interrupt_channel, wire_engine_bridges, wire_interrupt_channel,
+    unwire_inbox, wire_engine_bridges, wire_inbox,
 };
 use super::ChatRunCtx;
 
@@ -53,7 +53,7 @@ pub(super) async fn run_skill_dispatch(ctx: &ChatRunCtx, engine: &mut crate::eng
     // Wire control channels before activation: activate_skill may prompt
     // the user (SlashCommand mode) and that flows through ask_permission_raw,
     // which needs the AskUser bridge in place.
-    let interrupt_key = wire_interrupt_channel(ctx, engine).await;
+    wire_inbox(ctx, engine);
     wire_engine_bridges(&ctx.state, engine, ctx.session_id.clone());
 
     if let Some(skill) = resolved_skill {
@@ -100,7 +100,7 @@ pub(super) async fn run_skill_dispatch(ctx: &ChatRunCtx, engine: &mut crate::eng
     )
     .await;
 
-    unwire_interrupt_channel(ctx, engine, &interrupt_key).await;
+    unwire_inbox(engine);
 
     if let Err(e) = outcome {
         tracing::warn!("Skill loop failed: {}", e);
@@ -410,7 +410,7 @@ pub(super) async fn run_trigger_dispatch(
 
     send_thinking_status(ctx, format!("Running skill: {}", skill_name)).await;
 
-    let interrupt_key = wire_interrupt_channel(ctx, engine).await;
+    wire_inbox(ctx, engine);
     wire_engine_bridges(&ctx.state, engine, ctx.session_id.clone());
 
     let outcome = run_loop_with_tracking(
@@ -424,7 +424,7 @@ pub(super) async fn run_trigger_dispatch(
     )
     .await;
 
-    unwire_interrupt_channel(ctx, engine, &interrupt_key).await;
+    unwire_inbox(engine);
 
     if let Err(e) = outcome {
         tracing::warn!("Trigger skill loop failed: {}", e);

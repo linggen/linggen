@@ -20,7 +20,7 @@ mod search_exec;
 mod tool_helpers;
 mod write_tools;
 
-pub(crate) use delegation::{run_delegation, TaskArgs};
+pub(crate) use delegation::{run_delegation, DelegationCancelled, TaskArgs};
 pub use search_exec::find_git_root as search_exec_find_git_root;
 pub(crate) use search_exec::kill_process_group;
 pub use search_exec::project_ancestors;
@@ -324,6 +324,8 @@ pub struct Tools {
     /// Session policy propagated to subagents via delegation.
     /// Set by the parent engine; applied to subagent engines after spawn.
     pub(crate) session_policy: Option<super::session_policy::SessionPolicy>,
+    /// Effective tool set of the loop dispatching the current call.
+    pub(crate) parent_allowed_tools: Option<std::collections::HashSet<String>>,
     /// Parent engine's path-mode grants, propagated to subagents via delegation.
     /// Mirrors `engine.session_permissions.path_modes` and is re-synced by the
     /// caller before each tool dispatch. Subagents inherit these so skill-
@@ -365,6 +367,7 @@ impl Tools {
             prompt_store: None,
             session_id: None,
             session_policy: None,
+            parent_allowed_tools: None,
             parent_path_modes: Vec::new(),
             parent_interactive: true,
             last_ask_user: Arc::new(std::sync::Mutex::new(None)),
@@ -398,6 +401,16 @@ impl Tools {
 
     pub fn delegation_depth(&self) -> usize {
         self.delegation_depth
+    }
+
+    /// Who owns the background tasks this caller starts: the session's own
+    /// agent by name, so they outlive its turn; a subagent by its run.
+    pub(crate) fn task_owner(&self) -> Option<&str> {
+        if self.delegation_depth > 0 {
+            self.run_id.as_deref()
+        } else {
+            self.agent_id.as_deref()
+        }
     }
 
     pub fn max_delegation_depth(&self) -> usize {

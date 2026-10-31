@@ -71,19 +71,18 @@ function applyGlobalLists(ps: PageState): void {
 
 function applyPendingAskUser(ps: PageState): void {
   if (ps.pending_ask_user === undefined) return;
-  // Restore pending ask-user from server state — only for the active session.
-  // Without session filtering, prompts from other sessions leak into skill iframes.
-  const activeSessionId = useSessionStore.getState().activeSessionId;
-  const items = (Array.isArray(ps.pending_ask_user) ? ps.pending_ask_user : [])
-    .filter((it) => !it.session_id || it.session_id === activeSessionId);
+  const items = Array.isArray(ps.pending_ask_user) ? ps.pending_ask_user : [];
   const interaction = useInteractionStore.getState();
-  if (items.length > 0 && !interaction.pendingAskUser) {
-    const first = items[0];
-    interaction.setPendingAskUser({
-      questionId: first.question_id,
-      agentId: first.agent_id || '',
-      questions: first.questions || [],
-    });
+  const sessions = new Set([...Object.keys(interaction.askQueues), ...items.flatMap((it) => it.session_id ? [it.session_id] : [])]);
+  for (const sid of sessions) {
+    const incoming = items.filter((it) => it.session_id === sid).map((it) => ({
+      questionId: it.question_id, agentId: it.agent_id || '', questions: it.questions || [],
+    }));
+    // Server iteration order is arbitrary; retain the order already displayed.
+    const old = interaction.askQueues[sid] ?? [];
+    const ordered = [...old.flatMap((ask) => incoming.filter((it) => it.questionId === ask.questionId)),
+      ...incoming.filter((it) => !old.some((ask) => ask.questionId === it.questionId))];
+    interaction.replaceAsks(sid, ordered);
   }
 }
 
@@ -132,6 +131,10 @@ function applyScopedState(ps: PageState): void {
       useServerStore.setState({ agentRuns: data });
     }
     reconcileStreamingState(data);
+    // A Claude session's children are the SDK's, not engine runs.
+    const sid = useSessionStore.getState().activeSessionId;
+    const claude = useSessionStore.getState().allSessions.find((s) => s.id === sid)?.runtime === 'claude_agent_sdk';
+    if (sid && !claude) useChatStore.getState().reconcileSubagents(data.filter((run) => run.session_id === sid));
   }
   if (ps.sessions) useSessionStore.setState({ sessions: ps.sessions });
 

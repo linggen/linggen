@@ -12,8 +12,8 @@ use tokio::sync::Mutex;
 use super::handler::resolve_request_root;
 use super::runtime::{
     push_user_turn_with_recall, run_loop_with_tracking, send_thinking_status,
-    spawn_thinking_forwarder, unwire_interrupt_channel, wire_engine_bridges,
-    wire_interrupt_channel,
+    spawn_thinking_forwarder, unwire_inbox, wire_engine_bridges,
+    wire_inbox,
 };
 use super::types::{EditPlanRequest, PlanActionRequest};
 use super::ChatRunCtx;
@@ -44,7 +44,7 @@ pub(super) async fn run_plan_dispatch(ctx: &ChatRunCtx, engine: &mut crate::engi
     let (thinking_tx, thinking_rx) = tokio::sync::mpsc::unbounded_channel();
     engine.thinking_tx = Some(thinking_tx);
 
-    let interrupt_key = wire_interrupt_channel(ctx, engine).await;
+    wire_inbox(ctx, engine);
     wire_engine_bridges(&ctx.state, engine, ctx.session_id.clone());
 
     spawn_thinking_forwarder(
@@ -66,7 +66,7 @@ pub(super) async fn run_plan_dispatch(ctx: &ChatRunCtx, engine: &mut crate::engi
     .await;
 
     engine.thinking_tx = None;
-    unwire_interrupt_channel(ctx, engine, &interrupt_key).await;
+    unwire_inbox(engine);
     engine.plan_mode = false;
 
     match outcome {
@@ -125,7 +125,7 @@ pub(super) async fn run_plan_dispatch(ctx: &ChatRunCtx, engine: &mut crate::engi
 pub(super) async fn run_plan_execution(ctx: &ChatRunCtx, engine: &mut crate::engine::AgentEngine) {
     let (thinking_tx, thinking_rx) = tokio::sync::mpsc::unbounded_channel();
     engine.thinking_tx = Some(thinking_tx);
-    let interrupt_key = wire_interrupt_channel(ctx, engine).await;
+    wire_inbox(ctx, engine);
     wire_engine_bridges(&ctx.state, engine, ctx.session_id.clone());
 
     spawn_thinking_forwarder(
@@ -149,7 +149,7 @@ pub(super) async fn run_plan_execution(ctx: &ChatRunCtx, engine: &mut crate::eng
     .await;
 
     engine.thinking_tx = None;
-    unwire_interrupt_channel(ctx, engine, &interrupt_key).await;
+    unwire_inbox(engine);
 
     match exec_outcome {
         Ok(ref out) => {
@@ -291,6 +291,11 @@ pub(crate) async fn approve_plan_handler(
     )
     .await;
 
+    // The plan's run takes its place in the turn line now, ahead of the
+    // background-task ends held while the plan waited.
+    let sid_turn = session_id.as_deref().unwrap_or("default").to_string();
+    let (_, place) = super::helpers::take_turn_place(state.manager.session_turn(&sid_turn));
+    let agent_id = req.agent_id.clone();
     tokio::spawn(run_approved_plan_task(
         state.clone(),
         agent,
@@ -298,7 +303,9 @@ pub(crate) async fn approve_plan_handler(
         root,
         req.agent_id,
         session_id,
+        place,
     ));
+    crate::server::tasks::release_held(&state, &sid_turn, &agent_id);
 
     Json(serde_json::json!({ "status": "approved" })).into_response()
 }
@@ -312,9 +319,9 @@ async fn run_approved_plan_task(
     root: PathBuf,
     agent_id: String,
     session_id: Option<String>,
+    place: super::helpers::TurnPlace,
 ) {
-    let sid_turn = session_id.as_deref().unwrap_or("default").to_string();
-    let _turn = state.manager.session_turn(&sid_turn).lock_owned().await;
+    let _turn = place.await;
     let mut engine = agent.lock().await;
     let manager = state.manager.clone();
     let events_tx = state.events_tx.clone();
@@ -463,6 +470,11 @@ pub(crate) async fn reject_plan_handler(
         None,
     )
     .await;
+    crate::server::tasks::release_held(
+        &state,
+        req.session_id.as_deref().unwrap_or("default"),
+        &req.agent_id,
+    );
 
     Json(serde_json::json!({ "status": "rejected" })).into_response()
 }
