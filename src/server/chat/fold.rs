@@ -7,7 +7,7 @@
 //! showing it needs (sender, via, pictures). A step asks every message ready
 //! for its turn, in order; each one takes itself off the queue, shows in the
 //! chat, and hands its words back — or nothing, when the person removed it.
-//! One that is not ready (a question is open, or the skill has every message
+//! One that is not ready (the skill has every message
 //! wait for the whole turn) joins only on Steer.
 use crate::engine::InboxMessage;
 use std::sync::Mutex;

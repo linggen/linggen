@@ -370,11 +370,12 @@ enum BusyMessage {
     WaitForRun,
 }
 
-/// A message never cancels an open question — the question stays on screen
-/// until it is answered or skipped, and the message waits behind it. A skill
-/// declaring `queue: after-turn` has every message wait for the whole turn.
-fn busy_message(queue: QueueMode, question_open: bool) -> BusyMessage {
-    if queue == QueueMode::AfterTurn || question_open {
+/// A message never cancels an open question: the turn stands still on it,
+/// so the message joins at the step after it is answered, as in Claude Code.
+/// A skill declaring `queue: after-turn` has every message wait for the
+/// whole turn.
+fn busy_message(queue: QueueMode) -> BusyMessage {
+    if queue == QueueMode::AfterTurn {
         return BusyMessage::WaitForRun;
     }
     BusyMessage::JoinTurn
@@ -396,13 +397,7 @@ pub(crate) async fn enqueue_if_busy(
     if !was_busy {
         return None;
     }
-    // An open question is never cancelled by a message: cancelling it used
-    // to swap the question for the message mid-turn (Lingjing, 2026-09-17:
-    // a tap on the page replaced the riddle's answer). The message waits.
-    let question_open = state.pending_ask_user.lock().await.values().any(|entry| {
-        entry.agent_id == target_id && entry.session_id.as_deref() == Some(effective_session_id)
-    });
-    let joins = busy_message(queue, question_open) == BusyMessage::JoinTurn;
+    let joins = busy_message(queue) == BusyMessage::JoinTurn;
     let item = QueuedChatItem {
         id: format!(
             "{}-{}",
@@ -1447,22 +1442,8 @@ mod tests {
 
     #[test]
     fn a_busy_message_steers_unless_a_question_is_open_or_the_skill_waits() {
-        assert_eq!(
-            busy_message(QueueMode::Steer, false),
-            BusyMessage::JoinTurn
-        );
-        assert_eq!(
-            busy_message(QueueMode::Steer, true),
-            BusyMessage::WaitForRun
-        );
-        assert_eq!(
-            busy_message(QueueMode::AfterTurn, false),
-            BusyMessage::WaitForRun
-        );
-        assert_eq!(
-            busy_message(QueueMode::AfterTurn, true),
-            BusyMessage::WaitForRun
-        );
+        assert_eq!(busy_message(QueueMode::Steer), BusyMessage::JoinTurn);
+        assert_eq!(busy_message(QueueMode::AfterTurn), BusyMessage::WaitForRun);
     }
 
     #[test]
