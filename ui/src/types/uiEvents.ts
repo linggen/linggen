@@ -94,7 +94,7 @@ export interface PageState {
   queued?: Array<{ agent_id?: string; items?: QueuedChatItem[] }>;
   tasks?: BackgroundTask[];
   sessions?: SessionInfo[];
-  session_permission?: { effective_mode?: string } | null;
+  session_permission?: { effective_mode?: string; path_modes?: { path: string; mode: string }[] } | null;
 }
 
 /** Who this peer is (server/rtc/peer `user_info_msg`), sent when the control

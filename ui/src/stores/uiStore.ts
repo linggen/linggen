@@ -73,6 +73,8 @@ interface UiState {
 
   // Session permission mode (chat/read/edit/admin — pushed by server page_state)
   sessionMode: string | null;
+  /** The mode of the session's all-folders grant (`*`), or null when it has none. */
+  sessionAllMode: string | null;
 
   // Chat UI
   verboseMode: boolean;
@@ -118,6 +120,7 @@ interface UiState {
   setSessionModel: (model: string | null) => void;
   setSessionMembers: (members: SessionMember[]) => void;
   setSessionMode: (mode: string | null) => void;
+  setSessionAllMode: (mode: string | null) => void;
   setShowAgentSpecEditor: (show: boolean) => void;
   setOpenApp: (app: AppPanelState | null) => void;
 
@@ -141,6 +144,7 @@ export const useUiStore = create<UiState>((set) => ({
   sessionModel: null,
   sessionMembers: [],
   sessionMode: null,
+  sessionAllMode: null,
   showAgentSpecEditor: false,
   openApp: null,
   selectedFileContent: null,
@@ -233,6 +237,7 @@ export const useUiStore = create<UiState>((set) => ({
   setSessionModel: (model) => set({ sessionModel: model }),
   setSessionMembers: (members) => set({ sessionMembers: members }),
   setSessionMode: (mode: string | null) => set({ sessionMode: mode }),
+  setSessionAllMode: (mode: string | null) => set({ sessionAllMode: mode }),
   setShowAgentSpecEditor: (show) => set({ showAgentSpecEditor: show }),
   setOpenApp: (app) => set({ openApp: app }),
 

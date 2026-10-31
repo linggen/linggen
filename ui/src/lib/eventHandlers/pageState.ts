@@ -137,6 +137,8 @@ function applyScopedState(ps: PageState): void {
 
   if (!ps.session_permission) return;
   const perm = ps.session_permission;
+  const all = perm.path_modes?.find((grant) => grant.path === '*');
+  useUiStore.getState().setSessionAllMode(all?.mode ?? null);
   // A mode the user just picked wins until its PATCH has propagated.
   if (perm.effective_mode && !isPermissionSuppressed()) {
     useUiStore.getState().setSessionMode(perm.effective_mode);

@@ -116,6 +116,7 @@ export const SessionModeSelector: React.FC = () => {
   const userPermission = useUserStore((s) => s.userPermission);
   const userType = useUserStore((s) => s.userType);
   const sessionId = useSessionStore((s) => s.activeSessionId);
+  const allMode = useUiStore((s) => s.sessionAllMode);
 
   const session = useSessionStore((s) => s.allSessions.find((session) => session.id === sessionId));
   if (session?.runtime === 'claude_agent_sdk') return <ClaudeModeSelector session={session} />;
@@ -156,19 +157,34 @@ export const SessionModeSelector: React.FC = () => {
   const current = modes.find((m) => m.value === effective);
 
   return (
-    <select
-      value={effective}
-      onChange={handleChange}
-      onClick={(e) => e.stopPropagation()}
-      className={`text-[11px] border border-slate-200 dark:border-white/10 rounded px-1.5 py-0.5 outline-none font-semibold bg-white dark:bg-black/30 ${current?.color || ''}`}
-      title="Permission mode for this folder"
-    >
-      {modes.map((m) => (
-        <option key={m.value} value={m.value}>{m.label}</option>
-      ))}
-    </select>
+    <>
+      <select
+        value={effective}
+        onChange={handleChange}
+        onClick={(e) => e.stopPropagation()}
+        className={`text-[11px] border border-slate-200 dark:border-white/10 rounded px-1.5 py-0.5 outline-none font-semibold bg-white dark:bg-black/30 ${current?.color || ''}`}
+        title="Permission mode for this folder"
+      >
+        {modes.map((m) => (
+          <option key={m.value} value={m.value}>{m.label}</option>
+        ))}
+      </select>
+      <AllFoldersBadge mode={allMode} color={modes.find((m) => m.value === allMode)?.color} />
+    </>
   );
 };
+
+/** Lit when the session holds a grant on every folder (`*`); its colour is that grant's mode. */
+const AllFoldersBadge: React.FC<{ mode: string | null; color?: string }> = ({ mode, color }) => (
+  <span
+    className={`text-[11px] border rounded px-1.5 py-0.5 font-semibold ${mode
+      ? `border-current bg-white dark:bg-black/30 ${color || ''}`
+      : 'border-slate-200 dark:border-white/10 text-slate-300 dark:text-slate-600'}`}
+    title={mode ? `All folders: ${mode}` : 'No grant on all folders'}
+  >
+    all
+  </span>
+);
 
 /** SDK modes belong to this Claude session, never to native path grants. */
 const ClaudeModeSelector: React.FC<{ session: SessionInfo }> = ({ session }) => {
