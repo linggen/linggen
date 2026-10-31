@@ -328,8 +328,9 @@ async fn answering_agent(state: &Arc<ServerState>, session_id: &str) -> Option<S
     (lead != crate::engine::agent::COMPANION_AGENT_ID).then_some(lead)
 }
 
-/// The hidden kickoff the session's agent gets after her line. Her words are
-/// already in his context (the chat's newest line from her).
+/// The hidden ask of the light turn the session's agent gets after her line
+/// (`chat::reply_in_session`). Her words are the newest line of the tail it
+/// reads; the ask itself is never kept.
 pub(crate) fn converse_kickoff() -> String {
     "Yinyue just spoke in this chat — her line is the newest one from her, above. \
      If a reply from you fits, answer her in ONE line, in-world and in your role here, in \
@@ -340,7 +341,7 @@ pub(crate) fn converse_kickoff() -> String {
 
 /// Her spoken line in each app chat the moments named: a row there already
 /// where her turn ran (`table`); a message from her in any other. Then — for
-/// a `converse` moment, when the session is due — one kickoff for its lead.
+/// a `converse` moment, when the session is due — one light turn for its lead.
 async fn land_in_chats(
     state: &Arc<ServerState>,
     moments: &[Moment],
@@ -382,8 +383,11 @@ async fn land_in_chats(
             continue;
         };
         tracing::info!("[yinyue-moments] one exchange: {agent} answers her in {sid}");
-        crate::server::chat::kickoff_in_session(state.clone(), sid, &agent, &converse_kickoff())
-            .await;
+        // A light turn: his soul, the chat's tail and the ask — no tools.
+        let (state, sid) = (state.clone(), sid.to_string());
+        tokio::spawn(async move {
+            crate::server::chat::reply_in_session(state, &sid, &agent, &converse_kickoff()).await;
+        });
     }
 }
 

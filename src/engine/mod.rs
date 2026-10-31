@@ -10,6 +10,7 @@ pub mod events;
 pub mod mission;
 pub mod image_relevance;
 pub mod image_search;
+pub(crate) mod light_turn;
 pub mod picture_sheet;
 pub mod page_pictures;
 pub mod permission;

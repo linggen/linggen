@@ -26,6 +26,7 @@ pub(crate) mod fold;
 mod compact_rows;
 mod handler;
 pub(super) mod helpers;
+mod light;
 pub(crate) mod members;
 mod plan_flow;
 pub(crate) mod presence;
@@ -44,9 +45,10 @@ pub(crate) use admin::{
 };
 pub(crate) use compact_rows::commit_compaction;
 pub(crate) use handler::{
-    chat_handler, dequeue_and_emit, enqueue_if_busy, kickoff_in_session, mark_steered,
-    run_session_turn, say_in_session, start_turn, TurnOrigin,
+    chat_handler, dequeue_and_emit, enqueue_if_busy, mark_steered, run_session_turn,
+    say_in_session, start_turn, TurnOrigin,
 };
+pub(crate) use light::reply_in_session;
 pub(crate) use plan_flow::{approve_plan_handler, edit_plan_handler, reject_plan_handler};
 pub(crate) use runtime::close_turn;
 

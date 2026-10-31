@@ -184,6 +184,8 @@ Layers 5-7 are sensitive to the working folder. When the session transitions bet
 
 A zero-tool session (e.g., game-table skill with `allowed-tools: []`) gets layers 1-7 only — a minimal, focused prompt for pure conversation.
 
+A **light turn** (`engine::light_turn` — the one line an agent gives after the companion speaks in its chat) is not a turn of this assembly: one model call with the soul, a short place (layer 2's place, else the skill's description), the language line, the thread's last few spoken lines and a hidden ask. No tool schemas; a `SILENT` reply keeps nothing.
+
 ## Effective tools and permissions
 
 The session's effective permission mode for the current working folder controls which tools are available. See `permission-spec.md` for the full model.

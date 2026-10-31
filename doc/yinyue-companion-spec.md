@@ -166,10 +166,13 @@ SILENT leaves nothing, and nothing runs in a chat whose skill keeps her away
 skill's `place.yinyue` (else the member place), her tools what the skill names
 for her (`place.yinyue.tools`). A moment with no `session` runs on her own
 thread. `converse: true` (with `session`, for big moments) then gives the
-session's lead **one** hidden kickoff to answer her in a line, in-world, or
-`SILENT` (nothing shown, nothing kept). It waits behind a running turn, never
-interrupts, never wakes her back, and a session gets at most one exchange per
-**2 min**.
+session's lead **one** light turn to answer her in a line, in-world, or
+`SILENT` (nothing shown, nothing kept). A light turn (`engine::light_turn`)
+is one model call on the member's model and fallback chain: his soul, a short
+place (the skill's description, not its SKILL.md), the chat's last few lines
+and the ask — no tools, no memory, no loop; the ask is never kept, his line is
+a row like any reply. It waits behind a running turn, never interrupts, never
+wakes her back, and a session gets at most one exchange per **2 min**.
 
 **Her line is all she gives.** A moment turn is *sealed*: `agent_chat` is
 withheld (not offered, refused if called — `engine.withheld_tools`), so she

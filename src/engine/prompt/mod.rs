@@ -293,6 +293,40 @@ impl AgentEngine {
         prompt
     }
 
+    /// The persona for a light turn (`engine::light_turn`): the soul, where
+    /// the agent is in one short block — its place, else the active skill's
+    /// one-paragraph description — and the language line. No skills
+    /// listing, no SKILL.md body, no environment, memory or tools.
+    pub(crate) fn light_system_prompt(&self) -> String {
+        let personality = self
+            .spec
+            .as_ref()
+            .and_then(|s| s.personality.as_deref())
+            .unwrap_or("");
+        let spec_body = self
+            .spec_system_prompt
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or("");
+        let mut soul = Soul::of(personality, spec_body);
+        soul.addition = self.soul_addition();
+        join_sections([
+            soul.identity.clone(),
+            self.soul_body(&soul),
+            self.place_section()
+                .or_else(|| self.skill_description())
+                .unwrap_or_default(),
+            self.language_line(),
+        ])
+    }
+
+    /// `## Where you are` from the active skill's description alone.
+    fn skill_description(&self) -> Option<String> {
+        let skill = self.active_skill.as_ref()?;
+        let about = skill.description.trim();
+        (!about.is_empty()).then(|| format!("## Where you are\n\n{about}"))
+    }
+
     /// The one line on language: a mission (no person present) writes in
     /// the Linggen language; a chat answers in the person's own and writes
     /// page/report content in the Linggen language.

@@ -105,6 +105,31 @@ pub(super) async fn rebuild(engine: &mut AgentEngine, ctx: &ChatRunCtx) -> bool 
     true
 }
 
+/// The newest `keep` messages of the session's thread as `ctx`'s agent reads
+/// it, words only: tool rows are left out, so nothing in it asks for a tool
+/// the turn doesn't offer. The engine's cached thread is not touched.
+pub(super) async fn spoken_tail(ctx: &ChatRunCtx, keep: usize) -> Vec<ChatMessage> {
+    let sid = ctx.session_id.as_deref().unwrap_or("default");
+    let Ok(rows) = ctx.manager.global_sessions.get_chat_history(sid) else {
+        return Vec::new();
+    };
+    let words: Vec<ChatMsg> = since_compaction(&rows)
+        .iter()
+        .filter(|r| !r.is_observation)
+        .cloned()
+        .collect();
+    let agents = speaking_agents(ctx, &words).await;
+    let reader = Reader {
+        id: &ctx.agent_id,
+        agents: &agents,
+        native: false,
+        others_read: &HashMap::new(),
+    };
+    let thread = build(&words, &reader);
+    let from = thread.len().saturating_sub(keep);
+    thread[from..].to_vec()
+}
+
 /// Mark how far the engine's thread has read the session's file — after
 /// its turn, everything on file is what it knows.
 pub(super) fn mark(engine: &mut AgentEngine, ctx: &ChatRunCtx) {

@@ -512,7 +512,7 @@ fn allowed_model(
 
 /// Where the model a turn asks for comes from.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum TurnModel {
+pub(super) enum TurnModel {
     /// The surface's picker — kept as the member's model once it runs.
     Request(String),
     /// The model the session keeps for the member.
@@ -535,7 +535,7 @@ impl TurnModel {
 /// The model `target`'s turn asks for. The request's model is the picker's,
 /// which shows the member the surface answers with by default — a message
 /// addressed to another member runs on that member's own model.
-fn turn_model(
+pub(super) fn turn_model(
     req_model: Option<&str>,
     target: &str,
     members: &[crate::state_fs::sessions::SessionMember],
@@ -567,7 +567,7 @@ fn turn_model(
 /// Consumers (proxy room) MUST be restricted to the room's `shared_models` —
 /// never fall back to the owner's default, which would leak access to a
 /// model the consumer isn't allowed to use.
-async fn resolve_effective_model(
+pub(super) async fn resolve_effective_model(
     engine: &mut crate::engine::AgentEngine,
     (is_consumer, shared_models): (bool, &[String]),
     asked: &TurnModel,
@@ -663,7 +663,7 @@ async fn promote_mission_session_to_user(
 /// skill name doesn't resolve, or when one is already active. The
 /// permission grants are applied only when the session is interactive —
 /// non-interactive (mission/consumer) sessions don't auto-elevate.
-async fn apply_session_bound_skill(engine: &mut crate::engine::AgentEngine, ctx: &ChatRunCtx) {
+pub(super) async fn apply_session_bound_skill(engine: &mut crate::engine::AgentEngine, ctx: &ChatRunCtx) {
     if engine.active_skill.is_some() {
         return;
     }
@@ -859,7 +859,7 @@ fn trim_capped(engine: &mut crate::engine::AgentEngine, cap: Option<usize>) {
 
 /// Where this member sits this turn: the session's lead when that is
 /// someone else — its tools are the session's set — or the lead itself.
-async fn seat_member(engine: &mut crate::engine::AgentEngine, ctx: &ChatRunCtx) {
+pub(super) async fn seat_member(engine: &mut crate::engine::AgentEngine, ctx: &ChatRunCtx) {
     let Some(sid) = ctx.session_id.as_deref() else {
         return;
     };
@@ -918,11 +918,6 @@ pub(super) fn turn_creator(
 pub(crate) enum TurnOrigin {
     /// Someone sent it — the user at a surface, or an agent relayed in.
     Person,
-    /// The engine woke the session's agent with a hidden kickoff that offers
-    /// silence (the one exchange after an app moment). It stamps no
-    /// presence, never interrupts a running turn — it waits behind it — and
-    /// a SILENT reply leaves nothing in the chat.
-    Kickoff,
     /// A message the person had queued when the engine restarted, sent
     /// again (`restart::spawn_resume`). It stamps no presence and waits
     /// behind the turn the restart continues, never interrupting it.
@@ -936,21 +931,6 @@ pub(crate) async fn chat_handler(
     start_turn(state, req, TurnOrigin::Person).await
 }
 
-/// Wake `agent_id` in an existing session with a hidden kickoff that offers
-/// silence (`TurnOrigin::Kickoff`). Runs through the same pipeline as a sent
-/// message — the session's bound skill, its queue — without being one: it
-/// stamps no presence and waits behind a running turn. False when the session
-/// is unknown.
-pub(crate) async fn kickoff_in_session(
-    state: Arc<ServerState>,
-    session_id: &str,
-    agent_id: &str,
-    text: &str,
-) -> bool {
-    let message = format!("[HIDDEN] {text}");
-    turn_in_session(state, session_id, agent_id, message, TurnOrigin::Kickoff).await
-}
-
 /// The person's words to `agent_id` in an existing session, said somewhere
 /// else (to her avatar while an app chat holds her): a message there like
 /// one typed into that chat. False when the session is unknown.
@@ -960,14 +940,7 @@ pub(crate) async fn say_in_session(
     agent_id: &str,
     text: &str,
 ) -> bool {
-    turn_in_session(
-        state,
-        session_id,
-        agent_id,
-        text.to_string(),
-        TurnOrigin::Person,
-    )
-    .await
+    turn_in_session(state, session_id, agent_id, text.to_string()).await
 }
 
 /// A turn for `agent_id` in an existing session, through the chat pipeline.
@@ -976,7 +949,6 @@ async fn turn_in_session(
     session_id: &str,
     agent_id: &str,
     message: String,
-    origin: TurnOrigin,
 ) -> bool {
     let Ok(Some(meta)) = state.manager.global_sessions.get_session_meta(session_id) else {
         return false;
@@ -998,7 +970,7 @@ async fn turn_in_session(
         followups: false,
         client_id: None,
     };
-    start_turn(state, req, origin).await;
+    start_turn(state, req, TurnOrigin::Person).await;
     true
 }
 
@@ -1384,7 +1356,7 @@ pub(crate) async fn start_turn(
             policy,
             sender,
             via: via.clone(),
-            silence_ok: origin == TurnOrigin::Kickoff,
+            silence_ok: false,
         };
 
         run_session_turn(&ctx, &mut engine, &manager, None).await;
