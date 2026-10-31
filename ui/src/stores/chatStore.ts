@@ -29,7 +29,7 @@ import { savedToolBlocks } from '../lib/toolStatus.mts';
 import { agentTracker } from '../lib/agentTracker';
 import { confirmSent } from '../lib/sentMessage.mts';
 import { isEventEcho } from '../lib/rowIdentity.mts';
-import { bubbleOfRun, claimForRun, runBubbleIndex } from '../lib/runBinding.mts';
+import { bubbleOfRun, claimForRun, isRunBubble, runBubbleIndex, sealedSegment } from '../lib/runBinding.mts';
 import { loadOutcome, stillOn, type LoadSnapshot } from '../lib/sessionLoad.mts';
 import { computeDisplay, mutate, mutateLast } from './chatMutationHelpers';
 import { useSessionStore } from './sessionStore';
@@ -76,6 +76,9 @@ interface ChatState {
   upsertPlan: (agentId: string, planText: string) => void;
   updateSubagentTree: (parentId: string, subagentId: string, updater: (entry: SubagentTreeEntry) => SubagentTreeEntry) => void;
   addSubagentToTree: (parentId: string, entry: SubagentTreeEntry) => void;
+  /** The person's message joined `agentId`'s running turn: the work so far
+   *  stays above it as its own block; the run goes on in a new bubble. */
+  sealRunBubble: (agentId: string) => void;
   /** A native session's subagent rows against its runs (`subagentRuns.mts`). */
   reconcileSubagents: (runs: AgentRunInfo[]) => void;
   finalizeMessage: (agentId: string, content: string, to: string, tsMs: number, elapsed?: number, ctxTokens?: number, isError?: boolean, via?: string, viaNote?: string, clientId?: string, images?: string[], runId?: string) => void;
@@ -339,6 +342,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (existing < 0) tree.push(entry);
     else tree[existing] = { ...tree[existing], agentName:entry.agentName, task:entry.task || tree[existing].task };
     next[targetIdx] = { ...msg, subagentTree: tree };
+    return next;
+  })),
+
+  sealRunBubble: (agentId) => set(mutate((msgs) => {
+    const idx = msgs.findIndex((m) => isRunBubble(m) && m.isGenerating && m.from === agentId);
+    if (idx < 0) return msgs;
+    const next = [...msgs];
+    next[idx] = sealedSegment(next[idx]);
     return next;
   })),
 

@@ -130,6 +130,9 @@ pub(crate) struct UnansweredRun {
     /// mid-run shows its calls so far; the run's live bubble takes over by
     /// `run_id` once its next event arrives.
     pub live: bool,
+    /// The person's message joined the run here and it went on (`fold.rs`):
+    /// these calls are its work so far, not a run cut off.
+    pub continued: bool,
 }
 
 impl UnansweredRun {
@@ -143,7 +146,7 @@ impl UnansweredRun {
             "ts": self.started,
             "ended": self.ended,
             "task_id": null,
-            "run": if self.live { "running" } else { "interrupted" },
+            "run": if self.live { "running" } else if self.continued { "continued" } else { "interrupted" },
             "tools": calls_json(&self.calls, self.live),
         });
         if let Some(run_id) = &self.run_id {
@@ -179,6 +182,7 @@ impl Open {
                 calls: Vec::new(),
                 run_id: m.run_id.clone(),
                 live: false,
+                continued: false,
             },
             hidden,
         }
@@ -265,6 +269,13 @@ pub(crate) fn run_calls(history: &[ChatMsg], running: bool) -> RunCalls {
                 let calls = open.take().map(|o| o.run.calls).unwrap_or_default();
                 out.answered.insert(i, calls);
             } else if m.from_id == "user" || m.to_id == agent {
+                // A message the run took in mid-turn: the same run has rows
+                // after it, so it went on rather than stopping here.
+                if let Some(o) = open.as_mut() {
+                    o.run.continued = o.run.run_id.as_ref().is_some_and(|run| {
+                        history[i + 1..].iter().any(|r| r.run_id.as_ref() == Some(run))
+                    });
+                }
                 close(&mut open, &mut out);
             }
         }
@@ -574,6 +585,29 @@ mod tests {
             |r| format!("run:{}", r.calls.len()),
         );
         assert_eq!(rows, ["q", "run:1", "again"]);
+    }
+
+    /// A message the person sent mid-turn joined the run, which went on:
+    /// the calls before it are the run's work so far, not a run cut off.
+    #[test]
+    fn calls_before_a_message_the_run_took_in_are_continued() {
+        let h = vec![
+            user("Glob five patterns.", 1),
+            of_run(call("Glob", 2), "r1"),
+            of_run(result("Glob", 3), "r1"),
+            user("Answer in Chinese.", 4),
+            of_run(call("Glob", 5), "r1"),
+            of_run(result("Glob", 6), "r1"),
+            of_run(reply("五次都没有文件。", 7), "r1"),
+        ];
+        let rc = run_calls(&h, false);
+        assert_eq!(rc.unanswered.len(), 1);
+        assert_eq!(rc.unanswered[0].meta()["run"], "continued");
+        assert_eq!(rc.answered[&6].len(), 1, "the reply carries the calls after the message");
+
+        // The same run with nothing after the message did stop there.
+        let cut = run_calls(&h[..4], false);
+        assert_eq!(cut.unanswered[0].meta()["run"], "interrupted");
     }
 
     /// Two runs of one agent back to back, the first stopped with no reply

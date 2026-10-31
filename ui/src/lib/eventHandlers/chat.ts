@@ -177,7 +177,10 @@ export function handleMessage(item: UiEventOf<'message'>): void {
 
   const tsMs = Number(item.ts_ms || Date.now());
   const sid = getSessionId(item);
-  const { elapsed: msgElapsed, contextTokens: msgCtxTokens } = sid ? agentTracker.clearRun(sid) : {};
+  // The person's row ends no run: one sent mid-turn joins it (fold.rs), and
+  // the work so far stays above it.
+  if (from === 'user' && to) chatStore.sealRunBubble(to);
+  const { elapsed: msgElapsed, contextTokens: msgCtxTokens } = sid && from !== 'user' ? agentTracker.clearRun(sid) : {};
 
   // The contract's silence: the turn ends with no words — its bubble keeps
   // its calls and is marked, and a turn with no bubble on screen adds none.

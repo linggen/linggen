@@ -4,7 +4,7 @@
 // never moves one run's calls or words under another message.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bindRuns, bubbleOfRun, claimForRun, runBubbleIndex } from '../src/lib/runBinding.mts';
+import { bindRuns, bubbleOfRun, claimForRun, runBubbleIndex, sealedSegment } from '../src/lib/runBinding.mts';
 import type { ChatMessage, ContentBlock } from '../src/types.ts';
 
 const call = (tool: string, status: ContentBlock['status'], id = tool): ContentBlock =>
@@ -118,4 +118,20 @@ test('a page loaded mid-run shows the live run\'s saved calls, then its bubble a
     isGenerating: true, content: [call('Edit', 'running')], ...bubbleOfRun(msgs, 'r9') };
   const shown = bindRuns([...msgs, bubble]);
   assert.deepEqual(shown.map((m) => (m.content || []).map((b) => b.tool)), [[], ['Read', 'Bash'], ['Edit']]);
+});
+
+// 2026-10-31: a message sent mid-turn joins the run (fold.rs). The work so far
+// stays above the message; the run's later events open a bubble below it.
+test('a message the run took in sits between the work before it and after it', () => {
+  const first = bubble('r1', [call('Glob', 'done', 'g1')], { isGenerating: true });
+  const sealed = sealedSegment(first);
+  assert.equal(sealed.isGenerating, false);
+  assert.notEqual(sealed.runId, 'r1');
+  const msgs = [user('Glob five patterns.', 1), sealed, user('Answer in Chinese.', 2)];
+  // The run's next event finds no bubble of its own: it opens a new one.
+  assert.equal(runBubbleIndex(msgs, 'ling', 'r1'), -1);
+  const after = bubble('r1', [call('Glob', 'done', 'g2'), words('五次都没有文件。')]);
+  const shown = bindRuns([...msgs, after]);
+  assert.deepEqual(shown.map((m) => m.text || (m.content || []).map((b) => b.id).join(',')),
+    ['Glob five patterns.', 'g1', 'Answer in Chinese.', 'g2,五次都没有文件。']);
 });

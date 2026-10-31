@@ -16,6 +16,24 @@ import type { ChatMessage } from '../types.ts';
 export const isRunBubble = (m: ChatMessage, runId?: string): boolean =>
   !!m.live && !!m.runId && (runId == null || m.runId === runId);
 
+/**
+ * A run bubble's work up to a message the run took in mid-turn (`fold.rs`):
+ * a finished block of its own, bound to no live run, so it stays above the
+ * message while the run's later events open a new bubble below it. The next
+ * load's saved rows replace it (`continued` row, chat-spec § Message queue).
+ */
+export function sealedSegment(bubble: ChatMessage): ChatMessage {
+  return {
+    ...bubble,
+    runId: `${bubble.runId}~before-message`,
+    live: false,
+    isGenerating: false,
+    isThinking: false,
+    text: bubble.text || bubble.liveText || '',
+    liveText: undefined,
+  };
+}
+
 /** A saved row of a run (from the history view). */
 export const isRunRow = (m: ChatMessage): boolean => !!m.runId && !m.live;
 
