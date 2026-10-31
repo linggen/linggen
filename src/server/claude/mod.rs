@@ -49,6 +49,8 @@ pub(crate) enum Control {
         text: String,
         images: Vec<String>,
         delivery: host::Delivery,
+        /// Its own SDK uuid: a result names the messages it answered.
+        uuid: String,
         reply: tokio::sync::oneshot::Sender<std::result::Result<(), String>>,
     },
     /// Stop on the turn: the turn ends; background tasks keep running.
@@ -409,7 +411,13 @@ async fn steer_into_turn(
         return false;
     };
     let (reply, response) = tokio::sync::oneshot::channel();
-    let control = Control::Steer { text: req.message.clone(), images: media::data_urls(&req.images), delivery, reply };
+    let control = Control::Steer {
+        text: req.message.clone(),
+        images: media::data_urls(&req.images),
+        delivery,
+        uuid: uuid::Uuid::new_v4().to_string(),
+        reply,
+    };
     if sender.send(control).is_err() {
         return false;
     }

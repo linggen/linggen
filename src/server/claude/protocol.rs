@@ -41,7 +41,9 @@ pub(super) type Stranded = (String, oneshot::Sender<std::result::Result<(), Stri
 struct Pending {
     run_id: String,
     uuid: String,
-    done: oneshot::Sender<std::result::Result<(), String>>,
+    /// Where its outcome goes; none for a steered message the SDK answers
+    /// as a turn of its own: the runner finishes that run itself.
+    done: Option<oneshot::Sender<std::result::Result<(), String>>>,
     /// The SDK started on it: a Steer may join it now.
     begun: bool,
 }
@@ -54,9 +56,18 @@ struct Unprompted {
     _turn: Option<OwnedMutexGuard<()>>,
 }
 
+/// A message steered into a running turn, until a result names it.
+struct Steered {
+    uuid: String,
+    text: String,
+}
+
 #[derive(Default)]
 struct Turns {
     pending: VecDeque<Pending>,
+    /// Steered messages no result has answered yet. One still here when
+    /// its turn ended missed it: the SDK answers it as a turn of its own.
+    steered: Vec<Steered>,
     unprompted: Option<Unprompted>,
     goal: bool,
 }
@@ -92,7 +103,7 @@ impl ClaudeSession {
         state.pending.push_back(Pending {
             run_id: first.run_id,
             uuid: first.uuid,
-            done: first.done,
+            done: Some(first.done),
             begun: false,
         });
         let result = self
@@ -125,9 +136,14 @@ impl ClaudeSession {
             crate::server::tasks::emit(&self.state, &self.meta.id);
         }
         // The runner's turns still waiting fail once its stderr is known.
-        stranded.extend(state.pending.drain(..).map(|turn| (turn.run_id, turn.done)));
+        let ended = result.as_ref().err().map_or("Claude Agent SDK ended".into(), ToString::to_string);
+        for turn in state.pending.drain(..) {
+            match turn.done {
+                Some(done) => stranded.push((turn.run_id, done)),
+                None => self.finish_pending(turn, Err(ended.clone())).await,
+            }
+        }
         if let Some(turn) = state.unprompted.take() {
-            let ended = result.as_ref().err().map_or("Claude Agent SDK ended".into(), ToString::to_string);
             self.finish_unprompted(turn, Err(ended)).await;
         }
         // Turns that reached a runner already ending: a fresh one takes them.
@@ -202,6 +218,35 @@ impl ClaudeSession {
         .await;
     }
 
+    /// A steered message the turn ended without: the SDK answers it as a
+    /// turn of its own, under a run of its own named by its words.
+    async fn begin_missed_steer(&self, steer: Steered) -> Option<Pending> {
+        let run_id = self
+            .state
+            .manager
+            .begin_agent_run(
+                std::path::Path::new(&self.meta.cwd),
+                Some(&self.meta.id),
+                AGENT_ID,
+                None,
+                Some(steer.text),
+            )
+            .await
+            .ok()?;
+        Some(Pending { run_id, uuid: steer.uuid, done: None, begun: true })
+    }
+
+    /// A result answered this turn: its outcome goes to whoever waits for
+    /// it, or the runner finishes the run itself.
+    async fn finish_pending(&self, turn: Pending, outcome: std::result::Result<(), String>) {
+        let Some(done) = turn.done else {
+            let turn = Unprompted { run_id: turn.run_id, _turn: None };
+            return self.finish_unprompted(turn, outcome).await;
+        };
+        self.end_stream(&turn.run_id);
+        let _ = done.send(outcome);
+    }
+
     #[allow(clippy::too_many_arguments)]
     async fn read_events(
         &mut self,
@@ -221,6 +266,8 @@ impl ClaudeSession {
         let mut request_tasks = HashMap::new();
         let mut questions: HashMap<i64, String> = HashMap::new();
         let mut changes = HashMap::new();
+        // Steers sent, by change id, until the runner says it has them.
+        let mut steers: HashMap<i64, Steered> = HashMap::new();
         let mut next_change = 0_i64;
         let mut controls_open = true;
         let mut turns_open = true;
@@ -251,7 +298,7 @@ impl ClaudeSession {
                     let message = json!({"type":"prompt", "id":next_change, "text":turn.prompt,
                         "images":turn.images, "uuid":turn.uuid, "turnMemory":turn.turn_memory});
                     stdin.write_all(format!("{message}\n").as_bytes()).await?;
-                    turns_state.pending.push_back(Pending { run_id: turn.run_id, uuid: turn.uuid, done: turn.done, begun: false });
+                    turns_state.pending.push_back(Pending { run_id: turn.run_id, uuid: turn.uuid, done: Some(turn.done), begun: false });
                     if turns_state.pending.len() == 1 && turns_state.unprompted.is_none() {
                         has_text = false;
                         last_text.clear();
@@ -277,7 +324,12 @@ impl ClaudeSession {
                                 let _ = reply.send(Err("The turn has not begun.".into()));
                                 continue;
                             }
-                            super::Control::Steer { text, images, delivery, reply } => (json!({"type":"steer", "id":next_change, "text":text, "images":images, "priority":delivery.priority()}), reply),
+                            super::Control::Steer { text, images, delivery, uuid, reply } => {
+                                let message = json!({"type":"steer", "id":next_change, "text":text, "images":images,
+                                    "priority":delivery.priority(), "uuid":uuid});
+                                steers.insert(next_change, Steered { uuid, text });
+                                (message, reply)
+                            }
                             super::Control::Interrupt { reply } => (json!({"type":"interrupt", "id":next_change}), reply),
                             super::Control::End => {
                                 ending = true;
@@ -313,6 +365,19 @@ impl ClaudeSession {
             if matches!(kind.as_str(), "token" | "text" | "tool_start" | "request")
                 && main_thread(&event)
             {
+                // A new SDK turn while a steered message no result named
+                // waits: the SDK takes those first, so the turn is its.
+                let ongoing = turns_state.unprompted.is_some()
+                    || turns_state.pending.front().is_some_and(|turn| turn.begun);
+                if !ongoing && !turns_state.steered.is_empty() {
+                    let steer = turns_state.steered.remove(0);
+                    if let Some(turn) = self.begin_missed_steer(steer).await {
+                        turns_state.pending.push_front(turn);
+                        has_text = false;
+                        last_text.clear();
+                        self.follow(turns_state);
+                    }
+                }
                 if let Some(turn) = turns_state.pending.front_mut() {
                     turn.begun = true;
                 } else if turns_state.unprompted.is_none() {
@@ -464,8 +529,11 @@ impl ClaudeSession {
                     }
                 }
                 "mode_result" => {
-                    if let Some(change) = changes.remove(&event["id"].as_i64().unwrap_or_default())
-                    {
+                    let id = event["id"].as_i64().unwrap_or_default();
+                    if let Some(steer) = steers.remove(&id).filter(|_| event["ok"] == true) {
+                        turns_state.steered.push(steer);
+                    }
+                    if let Some(change) = changes.remove(&id) {
                         let _ = change.send(if event["ok"] == true {
                             Ok(())
                         } else {
@@ -510,12 +578,12 @@ impl ClaudeSession {
                     // The turns this result answered: the messages it took in.
                     let answered: Vec<&str> = event["uuids"].as_array().into_iter().flatten()
                         .filter_map(Value::as_str).collect();
+                    turns_state.steered.retain(|steer| !answered.contains(&steer.uuid.as_str()));
                     let mut completed = false;
                     while let Some(at) = turns_state.pending.iter().position(|turn| answered.contains(&turn.uuid.as_str())) {
                         let turn = turns_state.pending.remove(at).expect("position is in range");
-                        self.end_stream(&turn.run_id);
                         finished_run = Some(turn.run_id.clone());
-                        let _ = turn.done.send(outcome.clone());
+                        self.finish_pending(turn, outcome.clone()).await;
                         completed = true;
                     }
                     if !completed {
@@ -523,9 +591,8 @@ impl ClaudeSession {
                             finished_run = Some(turn.run_id.clone());
                             self.finish_unprompted(turn, outcome).await;
                         } else if let Some(turn) = turns_state.pending.pop_front() {
-                            self.end_stream(&turn.run_id);
                             finished_run = Some(turn.run_id.clone());
-                            let _ = turn.done.send(outcome);
+                            self.finish_pending(turn, outcome).await;
                         }
                     }
                     has_text = false;
