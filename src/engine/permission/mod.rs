@@ -205,7 +205,13 @@ mod tests {
         let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
         let mut sp = SessionPermissions::default();
         sp.set_path_mode(&cwd.to_string_lossy(), PermissionMode::Read);
-        for cmd in ["cp /tmp/source ./out", "cp /tmp/source out"] {
+        for cmd in [
+            "cp /tmp/source ./out",
+            "cp /tmp/source out",
+            r"\rm /tmp/x keep",
+            "'cp' /tmp/source out",
+            "c''p /tmp/source out",
+        ] {
             let result = check_permission("Bash", Some(cmd), None, cwd, &sp, None);
             assert!(matches!(result, PermissionCheckResult::NeedsPrompt(_)), "{cmd}: {result:?}");
         }

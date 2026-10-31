@@ -676,7 +676,7 @@ pub(super) fn command_targets(cmd: &str, session_cwd: &Path) -> Vec<PathBuf> {
             Token::Word(w) => w,
         };
         let w = w.as_str();
-        if cd_pending && !is_cd_flag(w) {
+        if cd_pending && !is_cd_flag(&dequote(w)) {
             cd_pending = false;
             if let Some(token) = path_token(w) {
                 out.push(resolve_bash_arg(&token, &cwd));
@@ -701,13 +701,15 @@ pub(super) fn command_targets(cmd: &str, session_cwd: &Path) -> Vec<PathBuf> {
         }) {
             out.push(resolve_bash_arg(&token, &cwd));
         }
+        // Program names and cd flags as the shell passes them (`\rm`, `'cp'`).
+        let word = dequote(w);
         if at_command {
             file_operands = matches!(
-                w,
+                word.as_str(),
                 "cp" | "mv" | "ln" | "install" | "rsync" | "cat" | "touch" | "mkdir" | "rm"
             );
         }
-        cd_pending = cd_pending && is_cd_flag(w) || (at_command && w == "cd");
+        cd_pending = cd_pending && is_cd_flag(&word) || (at_command && word == "cd");
         at_command = false;
     }
     out
