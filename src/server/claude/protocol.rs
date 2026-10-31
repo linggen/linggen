@@ -548,6 +548,7 @@ impl ClaudeSession {
                         checkpoint["session_id"] = event["session_id"].clone();
                     })?;
                     self.state.claude.forget_session(&self.meta.id);
+                    turns_state.steered.clear();
                     super::trust::forget_decline(&self.dir());
                     self.state
                         .manager
@@ -582,6 +583,14 @@ impl ClaudeSession {
                     let mut completed = false;
                     while let Some(at) = turns_state.pending.iter().position(|turn| answered.contains(&turn.uuid.as_str())) {
                         let turn = turns_state.pending.remove(at).expect("position is in range");
+                        finished_run = Some(turn.run_id.clone());
+                        self.finish_pending(turn, outcome.clone()).await;
+                        completed = true;
+                    }
+                    // The SDK runs one turn at a time: a steered message's
+                    // own turn ends with any result, named or not.
+                    if turns_state.pending.front().is_some_and(|turn| turn.begun && turn.done.is_none()) {
+                        let turn = turns_state.pending.pop_front().expect("front exists");
                         finished_run = Some(turn.run_id.clone());
                         self.finish_pending(turn, outcome.clone()).await;
                         completed = true;
