@@ -233,6 +233,8 @@ Buffered events are not a substitute: the per-session buffer only covers the win
 
 State that only matters at its latest value therefore belongs in the snapshot, not only in an event stream. `queued` is in `page_state` for exactly this reason: there is no endpoint to re-read the queue, so a client that missed the drain showed a queue the server had already discarded and refused new messages as "agent is busy". State-carrying kinds (`agent_status`, `queue`) also fall back to the control channel when a peer has no session channel.
 
+`ui_build` names the web UI build the engine serves. A page treats the first one it sees as the build it loaded; once a later one differs, it reloads as soon as no reply is being written in its session and no field holds typed text — so a page left open across an update stops running the old bundle.
+
 ### Embed isolation
 
 Embed peers are pinned to a single session. The server enforces:

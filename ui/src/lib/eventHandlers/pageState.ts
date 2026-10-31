@@ -5,7 +5,7 @@
 import type { AgentRunInfo } from '../../types';
 import type { UiEventOf, PageState } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
-import { useServerStore } from '../../stores/serverStore';
+import { useServerStore, isSessionBusy } from '../../stores/serverStore';
 import { useUserStore } from '../../stores/userStore';
 import { useUiStore } from '../../stores/uiStore';
 import { useInteractionStore } from '../../stores/interactionStore';
@@ -15,6 +15,7 @@ import { interruptedResend, INTERRUPTED_TEXT } from '../interruptedTurn.mts';
 import { stillOn } from '../sessionLoad.mts';
 import { sessionRootOf } from '../sessionRoot.mts';
 import { isPermissionSuppressed } from './_shared';
+import { noteUiBuild } from '../uiBuild.mts';
 
 
 export function handlePageState(item: UiEventOf<'page_state'>): void {
@@ -28,6 +29,7 @@ export function handlePageState(item: UiEventOf<'page_state'>): void {
   applyQueued(ps);
   applyTasks(ps);
   applyScopedState(ps);
+  noteUiBuild(ps.ui_build, () => !isSessionBusy(useServerStore.getState(), useSessionStore.getState().activeSessionId));
 }
 
 function applyPermission(ps: PageState): void {

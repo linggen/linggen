@@ -86,6 +86,9 @@ export interface PageState {
   missions?: unknown[];
   pending_ask_user?: Array<{ question_id: string; agent_id?: string; questions?: AskUserQuestion[]; session_id?: string | null }>;
   busy_sessions?: Record<string, string>;
+  /** The web UI build the engine serves now; a page that loaded another
+   *  reloads when idle (`lib/uiBuild.mts`). */
+  ui_build?: string;
   /** Agents that appear only once met (engine `agent/met.rs`): hide the
    *  ones with `present: false` — the lists above already leave them out. */
   agents_met?: Array<{ id: string; present: boolean; met: { at: string; reason: 'trigger' | 'history' } | null }>;

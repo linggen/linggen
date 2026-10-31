@@ -14,6 +14,17 @@ use std::sync::Arc;
 #[folder = "ui/dist/"]
 struct Assets;
 
+/// The web UI build this engine serves: its index.html's hash, which names
+/// every chunk. A page left open across an update compares it with the one
+/// it loaded and reloads when idle. None in dev mode, where Vite serves.
+pub(crate) fn ui_build(dev_mode: bool) -> Option<String> {
+    if dev_mode {
+        return None;
+    }
+    let hash = Assets::get("index.html")?.metadata.sha256_hash();
+    Some(hash[..6].iter().map(|b| format!("{b:02x}")).collect())
+}
+
 /// Dispatch a Memory_* tool on behalf of a skill's webpage.
 /// Route: POST /apps/{skill_name}/capability/{tool_name}
 ///

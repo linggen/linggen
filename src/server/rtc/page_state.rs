@@ -82,6 +82,10 @@ pub struct PageState {
 
     /// The agents that appear only once met, and whether each has been
     /// (`engine::agent::met`): `{id, present, met: {at, reason} | null}`.
+    /// The web UI build the engine serves now (`app_pages::ui_build`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ui_build: Option<String>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agents_met: Option<Vec<crate::engine::agent::met::AgentMet>>,
 
@@ -185,6 +189,7 @@ pub async fn build_page_state(
         session_counts_by_project: None,
         busy_sessions: None,
         agents_met: None,
+        ui_build: None,
         agents: None,
         agent_runs: None,
         queued: None,
@@ -255,6 +260,7 @@ pub async fn build_page_state(
 
     // Models + skills + pending ask-user + busy sessions
     if include_global {
+        ps.ui_build = crate::server::app_pages::ui_build(state.dev_mode);
         ps.agents_met = Some(state.manager.met.status());
         // Models — admin sees all, others see shared_models only
         let models_guard = state.manager.models.read().await;
