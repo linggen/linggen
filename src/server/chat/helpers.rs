@@ -253,6 +253,12 @@ pub(crate) fn queue_key(session_id: &str, agent_id: &str) -> String {
     format!("{session_id}|{agent_id}")
 }
 
+/// The running turn a queued message waits to join (`fold.rs`): the same
+/// key on both sides, a sessionless chat's included.
+pub(crate) fn fold_key(session_id: Option<&str>, agent_id: &str) -> String {
+    queue_key(session_id.unwrap_or("default"), agent_id)
+}
+
 /// A turn's place in its session's line, waited on by the turn's task.
 pub(crate) type TurnPlace =
     std::pin::Pin<Box<dyn std::future::Future<Output = tokio::sync::OwnedMutexGuard<()>> + Send>>;

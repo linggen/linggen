@@ -278,6 +278,9 @@ pub struct ContextRecord {
 pub struct InboxMessage {
     pub text: String,
     pub images: Vec<String>,
+    /// Told once the turn has it. Dropped untold, the message runs as its
+    /// own turn instead.
+    pub taken: tokio::sync::oneshot::Sender<()>,
 }
 
 /// Hands the turn the messages waiting for it — the ones the person did not

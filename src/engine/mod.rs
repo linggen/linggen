@@ -421,7 +421,9 @@ impl AgentEngine {
             // What the person sent while we worked joins this turn here, at
             // the step boundary, as Claude Code folds queued input between
             // tool rounds — the turn goes on with it instead of ending.
-            self.take_inbox(&mut state.messages).await;
+            if self.take_inbox(&mut state.messages).await {
+                anyhow::bail!("run cancelled");
+            }
 
             if self.tools.get_manager().is_some() {
                 let agent_id = self
@@ -871,16 +873,24 @@ impl AgentEngine {
     }
 
     /// Take in what the person sent while the turn ran, as user messages.
-    async fn take_inbox(&mut self, messages: &mut Vec<ChatMessage>) {
+    /// True when Stop landed while the messages were handed over: then
+    /// none is taken, and each runs as its own turn once this one ends.
+    async fn take_inbox(&mut self, messages: &mut Vec<ChatMessage>) -> bool {
         let Some(inbox) = self.inbox.clone() else {
-            return;
+            return false;
         };
-        for sent in inbox().await {
+        let sent = inbox().await;
+        if !sent.is_empty() && self.is_cancelled().await {
+            return true;
+        }
+        for sent in sent {
             info!("Taking in a message the person sent during the turn");
             let mut message = ChatMessage::new("user", sent.text);
             message.images = sent.images;
             self.push_tracked_message(messages, message);
+            let _ = sent.taken.send(());
         }
+        false
     }
 
     /// Tail of `run_agent_loop`: the loop ran out of steps — clear
@@ -1281,22 +1291,68 @@ mod member_tests {
         let root = tempfile::tempdir().unwrap();
         let mut engine = engine_at(root.path());
         let mut messages = vec![crate::message::ChatMessage::new("user", "build it")];
-        engine.take_inbox(&mut messages).await;
+        assert!(!engine.take_inbox(&mut messages).await);
         assert_eq!(messages.len(), 1, "no inbox, nothing taken");
-        engine.inbox = Some(std::sync::Arc::new(|| {
-            Box::pin(async {
-                vec![
-                    super::InboxMessage { text: "skip the tests".into(), images: vec![] },
-                    super::InboxMessage { text: "this one".into(), images: vec!["IMG".into()] },
-                ]
-            })
+        let (first, mut first_taken) = inbox_message("skip the tests", vec![]);
+        let (second, _) = inbox_message("this one", vec!["IMG".into()]);
+        let sent = std::sync::Mutex::new(Some(vec![first, second]));
+        engine.inbox = Some(std::sync::Arc::new(move || {
+            let batch = sent.lock().unwrap().take().unwrap_or_default();
+            Box::pin(async move { batch })
         }));
-        engine.take_inbox(&mut messages).await;
+        assert!(!engine.take_inbox(&mut messages).await);
         let added: Vec<(&str, &str, usize)> = messages[1..]
             .iter()
             .map(|m| (m.role.as_str(), m.content.as_str(), m.images.len()))
             .collect();
         assert_eq!(added, [("user", "skip the tests", 0), ("user", "this one", 1)]);
+        assert_eq!(first_taken.try_recv(), Ok(()), "its sender learns it was taken");
+    }
+
+    fn inbox_message(
+        text: &str,
+        images: Vec<String>,
+    ) -> (super::InboxMessage, tokio::sync::oneshot::Receiver<()>) {
+        let (taken, rx) = tokio::sync::oneshot::channel();
+        (super::InboxMessage { text: text.into(), images, taken }, rx)
+    }
+
+    /// Stop lands while a message is handed over: the turn does not take it,
+    /// and its sender learns so — it runs as its own turn, never lost.
+    #[tokio::test]
+    async fn a_message_taken_as_stop_lands_is_left_for_its_own_turn() {
+        let root = tempfile::tempdir().unwrap();
+        let mut engine = engine_at(root.path());
+        engine.agent_id = Some("ling".into());
+        let (manager, _events) = crate::engine::agent::AgentManager::new(
+            crate::config::Config::default(),
+            None,
+            std::sync::Arc::new(crate::engine::test_registries::Empty),
+            std::sync::Arc::new(crate::engine::test_registries::Empty),
+            std::sync::Arc::new(crate::engine::test_registries::Empty),
+            crate::engine::InterfaceMode::Web,
+        );
+        let run = manager
+            .begin_agent_run(root.path(), Some("s"), "ling", None, None)
+            .await
+            .unwrap();
+        engine.set_manager_context(manager.clone());
+        engine.run_id = Some(run.clone());
+        let (message, mut taken) = inbox_message("one more thing", vec![]);
+        let sent = std::sync::Mutex::new(Some(message));
+        engine.inbox = Some(std::sync::Arc::new(move || {
+            let message = sent.lock().unwrap().take();
+            let (manager, run) = (manager.clone(), run.clone());
+            Box::pin(async move {
+                // Stop lands during the handover.
+                manager.cancel_run_tree(&run).await.unwrap();
+                message.into_iter().collect()
+            })
+        }));
+        let mut messages = vec![crate::message::ChatMessage::new("user", "build it")];
+        assert!(engine.take_inbox(&mut messages).await, "the run was stopped");
+        assert_eq!(messages.len(), 1, "the stopped turn did not take it");
+        assert!(taken.try_recv().is_err(), "its sender runs it as its own turn");
     }
 
     fn spec_engine(agent: &str, md: &str) -> AgentEngine {

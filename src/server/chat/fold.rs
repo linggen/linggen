@@ -15,6 +15,7 @@ use std::time::Duration;
 use tokio::sync::oneshot;
 
 /// The reply a waiting message sends back to the step that asked for it.
+/// The message carries its own ack: only a step that takes it tells it so.
 pub(crate) type Reply = oneshot::Sender<Option<InboxMessage>>;
 
 struct Waiting {
@@ -31,7 +32,10 @@ pub(crate) struct Fold {
 }
 
 /// How long a step waits for one message to show itself before going on.
+#[cfg(not(test))]
 const HANDOVER: Duration = Duration::from_secs(10);
+#[cfg(test)]
+const HANDOVER: Duration = Duration::from_millis(200);
 
 impl Fold {
     fn waiting(&self) -> std::sync::MutexGuard<'_, Vec<Waiting>> {
@@ -84,8 +88,14 @@ impl Fold {
             if waiting.call.send(reply).is_err() {
                 continue;
             }
-            if let Ok(Ok(Some(message))) = tokio::time::timeout(HANDOVER, answer).await {
-                taken.push(message);
+            match tokio::time::timeout(HANDOVER, answer).await {
+                Ok(Ok(Some(message))) => taken.push(message),
+                // Removed meanwhile, or its task is gone.
+                Ok(_) => {}
+                // Too slow: it runs as its own turn; words that arrive now
+                // drop with their ack untold. The rest are let go too, to
+                // run after it as their own turns, so none overtakes it.
+                Err(_) => break,
             }
         }
         taken
@@ -100,12 +110,41 @@ mod tests {
     fn answer(rx: oneshot::Receiver<Reply>, text: Option<&'static str>) {
         tokio::spawn(async move {
             if let Ok(reply) = rx.await {
-                let _ = reply.send(text.map(|t| InboxMessage {
-                    text: t.into(),
-                    images: Vec::new(),
-                }));
+                let _ = reply.send(text.map(|t| words(t).0));
             }
         });
+    }
+
+    fn words(text: &str) -> (InboxMessage, oneshot::Receiver<()>) {
+        let (taken, accepted) = oneshot::channel();
+        let message = InboxMessage {
+            text: text.into(),
+            images: Vec::new(),
+            taken,
+        };
+        (message, accepted)
+    }
+
+    /// A message whose words come after the step stopped waiting is not
+    /// taken, and its task learns so: it runs as its own turn. The ones
+    /// behind it are let go too, so none runs ahead of it.
+    #[tokio::test]
+    async fn a_late_handover_runs_as_its_own_turn_first() {
+        let fold = Fold::default();
+        let slow = fold.wait("s/ling", "1", true);
+        let behind = fold.wait("s/ling", "2", true);
+        let late = tokio::spawn(async move {
+            let reply = slow.await.unwrap();
+            tokio::time::sleep(HANDOVER * 2).await;
+            let (message, accepted) = words("late");
+            // The step's receiver is gone, or holds it unread and drops it.
+            let sent = reply.send(Some(message)).is_ok();
+            (sent, accepted.await.is_ok())
+        });
+        assert!(fold.take("s/ling").await.is_empty());
+        assert!(behind.await.is_err(), "the one behind is let go to run as its own turn");
+        let (_, taken) = late.await.unwrap();
+        assert!(!taken, "a late message is never taken");
     }
 
     #[tokio::test]

@@ -1199,7 +1199,7 @@ pub(crate) async fn start_turn(
     let fold_call = queued_item.as_ref().map(|(q, joins)| {
         state
             .fold
-            .wait(&queue_key(&effective_session_id, &target_id), &q.id, *joins)
+            .wait(&super::helpers::fold_key(session_id.as_deref(), &target_id), &q.id, *joins)
     });
     let session_id_for_queue = effective_session_id.clone();
     let req_user_type = req.user_type;
@@ -1236,14 +1236,17 @@ pub(crate) async fn start_turn(
                             let _ = reply.send(None);
                             return;
                         }
+                        let (taken, accepted) = tokio::sync::oneshot::channel();
                         let words = crate::engine::InboxMessage {
                             text: clean_msg_clone.clone(),
                             images: req_images.clone(),
+                            taken,
                         };
-                        if reply.send(Some(words)).is_ok() {
+                        if reply.send(Some(words)).is_ok() && accepted.await.is_ok() {
                             return;
                         }
-                        // The step gave up waiting: it runs as its own turn.
+                        // The step did not take it (it gave up waiting, or
+                        // the turn was stopped): it runs as its own turn.
                         place.await
                     }
                     Err(_) => place.await,
