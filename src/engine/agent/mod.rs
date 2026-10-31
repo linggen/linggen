@@ -103,7 +103,7 @@ pub struct AgentManager {
     /// Native sessions' background shells and subagents.
     pub background: crate::engine::background::Background,
     pub(crate) run_messages: std::sync::Mutex<std::collections::HashMap<String, Vec<String>>>,
-    /// Top runs' liveness: a run lives while its starter holds its `RunLife`.
+    /// Runs' liveness: a run lives while its starter holds its `RunLife`.
     pub(crate) run_lives: std::sync::Mutex<HashMap<String, std::sync::Weak<()>>>,
 }
 

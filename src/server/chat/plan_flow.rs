@@ -297,8 +297,9 @@ pub(crate) async fn approve_plan_handler(
 }
 
 /// The plan for the person's decision and the ends held behind it. After a
-/// restart, or once the person moved on, the plan comes from the session's
-/// history and nothing is held.
+/// restart, once the person moved on, or when the plan was kept under
+/// another root, the plan comes from the session's history; whatever the
+/// agent's plans in the session still held is let go with it.
 async fn take_plan(
     state: &Arc<ServerState>,
     root: &Path,
@@ -310,7 +311,8 @@ async fn take_plan(
         return Some((pending.plan, pending.held));
     }
     let plan = recover_plan_from_session(state, root, agent_id, session_id).await?;
-    Some((plan, Vec::new()))
+    let held = state.manager.drop_pending_plans(session_id.unwrap_or("default"), agent_id).await;
+    Some((plan, held))
 }
 
 /// Drive an approved plan from "Approved" through execution to "Completed".

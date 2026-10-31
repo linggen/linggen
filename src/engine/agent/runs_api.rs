@@ -16,7 +16,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// A top run's life: the run lives, for the run sweeper, while its starter
+/// A run's life: the run lives, for the run sweeper, while its starter
 /// holds this. Dropped with the starter's future, even when it is cancelled.
 pub struct RunLife {
     _life: Arc<()>,
