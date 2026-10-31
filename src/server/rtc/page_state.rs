@@ -95,6 +95,10 @@ pub struct PageState {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
 
+    /// That session's runtime; absent when the session is not known yet.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_runtime: Option<crate::state_fs::sessions::SessionRuntime>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agents: Option<Vec<serde_json::Value>>,
 
@@ -196,6 +200,7 @@ pub async fn build_page_state(
         agents_met: None,
         ui_build: None,
         session_id: None,
+        session_runtime: None,
         agents: None,
         agent_runs: None,
         queued: None,
@@ -425,7 +430,14 @@ pub async fn build_page_state(
         }
 
         if let Some(ref session_id) = ctx.session_id {
+            let meta = state
+                .manager
+                .global_sessions
+                .get_session_meta(session_id)
+                .ok()
+                .flatten();
             ps.session_id = Some(session_id.clone());
+            ps.session_runtime = meta.as_ref().map(|m| m.runtime);
             let root_buf = PathBuf::from(ctx.project_root.as_deref().unwrap_or(""));
             if let Ok(runs) = state
                 .manager
@@ -454,12 +466,7 @@ pub async fn build_page_state(
             // ctx.project_root. Skill-embed sessions send empty project_root;
             // without falling back to session.cwd, effective_mode and zone
             // would always be computed against an empty path.
-            let effective_root: Option<String> = state
-                .manager
-                .global_sessions
-                .get_session_meta(session_id)
-                .ok()
-                .flatten()
+            let effective_root: Option<String> = meta
                 .map(|m| m.cwd)
                 .or_else(|| ctx.project_root.clone().filter(|s| !s.is_empty()));
 

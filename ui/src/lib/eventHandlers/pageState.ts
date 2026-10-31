@@ -144,7 +144,7 @@ function applyScopedState(ps: PageState): void {
     ) {
       useServerStore.setState({ agentRuns: data });
     }
-    reconcileStreamingState(data);
+    reconcileStreamingState(data, ps.session_id);
     if (reconcilesSubagents(ps)) useChatStore.getState().reconcileSubagents(data.filter((run) => run.session_id === ps.session_id));
   }
   if (ps.sessions) useSessionStore.setState({ sessions: ps.sessions });
@@ -163,10 +163,14 @@ function applyScopedState(ps: PageState): void {
  *  is for that session, and the session is known to run on the engine — a
  *  Claude session's children are the SDK's, not engine runs. */
 function reconcilesSubagents(ps: PageState): boolean {
-  const { activeSessionId, allSessions, allSessionsLoaded } = useSessionStore.getState();
-  if (!activeSessionId || ps.session_id !== activeSessionId || !allSessionsLoaded) return false;
-  const session = allSessions.find((s) => s.id === activeSessionId);
-  return !!session && session.runtime !== 'claude_agent_sdk';
+  return isForActiveSession(ps) && ps.session_runtime === 'linggen';
+}
+
+/** The push's scoped part describes the session on screen (not the one
+ *  being left during a switch). */
+function isForActiveSession(ps: PageState): boolean {
+  const sid = useSessionStore.getState().activeSessionId;
+  return !!sid && ps.session_id === sid;
 }
 
 /** Grace before server-authoritative "idle" may retire optimistic client
@@ -200,7 +204,7 @@ export function armInterruptCheck(): void {
  * server-authoritative, so use each push to retire streaming state that the
  * runs say cannot still be live.
  */
-function reconcileStreamingState(runs: AgentRunInfo[]): void {
+function reconcileStreamingState(runs: AgentRunInfo[], runsFor: string | undefined): void {
   const running = new Set(
     runs
       .filter((r) => !r.parent_run_id && r.status === 'running')
@@ -209,7 +213,8 @@ function reconcileStreamingState(runs: AgentRunInfo[]): void {
   // The first runs list after a reconnect settles the turn that was busy when
   // the link dropped: still running means it survived a blip; absent means it
   // died, and the persisted thread decides whether anything answered.
-  if (busyBeforeReconnect) {
+  // Runs listed for another session say nothing about this one.
+  if (busyBeforeReconnect && busyBeforeReconnect === runsFor) {
     const sid = busyBeforeReconnect;
     busyBeforeReconnect = null;
     if (!running.has(sid)) void markInterruptedIfUnanswered(sid);
@@ -230,7 +235,7 @@ function reconcileStreamingState(runs: AgentRunInfo[]): void {
   // fresh timestampMs and is left alone.
   const chatStore = useChatStore.getState();
   const activeSessionId = useSessionStore.getState().activeSessionId;
-  if (!activeSessionId || running.has(activeSessionId)) return;
+  if (!activeSessionId || activeSessionId !== runsFor || running.has(activeSessionId)) return;
   const pendingTs = serverStore.pendingSends[activeSessionId];
   if (pendingTs && now - pendingTs <= STREAM_STATE_STALE_MS) return;
   chatStore.finalizeAllGenerating(STREAM_STATE_STALE_MS);

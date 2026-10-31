@@ -61,41 +61,42 @@ function rowsByMessage(persisted: readonly ChatMessage[], runId: string): ChatMe
 
 /**
  * A load's saved rows against this page's sealed blocks. The k-th sealed
- * block of a run is that run's rows before the k-th message it took in: it
- * shows as the block when the block holds them, else as those rows. Either
- * way it is the run going on — never a run cut off — and it stays above the
- * message, apart from the run's live bubble below it.
+ * block of a run is that run's rows before the k-th message it took in, and
+ * stays the one entry for them: as it is when it holds them, else rebuilt
+ * from them. Either way it is the run going on — never a run cut off — and
+ * it stays above the message, apart from the run's live bubble below it.
  */
 export function bindSealed(
   persisted: readonly ChatMessage[],
   sealed: readonly ChatMessage[],
 ): { rows: ChatMessage[]; sealed: ChatMessage[] } {
   const dropped = new Set<ChatMessage>();
-  const retagged = new Map<ChatMessage, ChatMessage>();
   const kept: ChatMessage[] = [];
-  const runs = new Set(sealed.map(sealedRunOf));
-  for (const run of runs) {
-    const blocks = sealed.filter((m) => sealedRunOf(m) === run);
+  for (const run of new Set(sealed.map(sealedRunOf))) {
     const parts = rowsByMessage(persisted, run!);
-    blocks.forEach((block, k) => {
+    sealed.filter((m) => sealedRunOf(m) === run).forEach((block, k) => {
       const rows = parts[k] || [];
       // The last part is the work after the newest message: the live bubble's.
       if (rows.length === 0 || k >= parts.length - 1) {
         kept.push(block);
         return;
       }
-      if (holdsRun(block, rows)) {
-        kept.push(block);
-        rows.forEach((r) => dropped.add(r));
-        return;
-      }
-      for (const r of rows) {
-        retagged.set(r, { ...r, runId: block.runId, interrupted: undefined, runEndedMs: undefined });
-      }
+      rows.forEach((r) => dropped.add(r));
+      kept.push(holdsRun(block, rows) ? block : blockOfRows(block, rows));
     });
   }
-  const rows = persisted.filter((m) => !dropped.has(m)).map((m) => retagged.get(m) ?? m);
-  return { rows, sealed: kept };
+  return { rows: persisted.filter((m) => !dropped.has(m)), sealed: kept };
+}
+
+/** A sealed block rebuilt from the saved rows it missed: each row's calls,
+ *  then the words said after them. */
+function blockOfRows(block: ChatMessage, rows: readonly ChatMessage[]): ChatMessage {
+  const content = rows.flatMap((r, i) => [
+    ...(r.content || []),
+    ...(r.text.trim() ? [{ type: 'text' as const, id: `${block.runId}-${i}`, text: r.text }] : []),
+  ]);
+  const last = [...rows].reverse().find((r) => r.text.trim());
+  return { ...block, content, text: last?.text ?? '', interrupted: undefined, runEndedMs: undefined };
 }
 
 /** A live bubble of a run that took a message in sees only rows after it;

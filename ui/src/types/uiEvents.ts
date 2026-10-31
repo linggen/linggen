@@ -94,6 +94,8 @@ export interface PageState {
   agents_met?: Array<{ id: string; present: boolean; met: { at: string; reason: 'trigger' | 'history' } | null }>;
   /** The session the scoped fields below are for. */
   session_id?: string;
+  /** That session's runtime; absent while the session is not known. */
+  session_runtime?: 'linggen' | 'claude_agent_sdk';
   agents?: AgentInfo[];
   agent_runs?: AgentRunInfo[];
   queued?: Array<{ agent_id?: string; items?: QueuedChatItem[] }>;
