@@ -21,11 +21,16 @@
 //! calls [`saw`] (or the event watch below sees them go by), and the next
 //! tick records it. A sighting is a general fact (agent, tool, app); only
 //! this table names which ones are milestones.
+//!
+//! Beside them, a few **recurring** rows ([`RECURRING`], 人间功课 — Hanli
+//! 2026-11-02): a chore done again and again, its `done_at` the latest time
+//! seen (later wins, never back). 问安 is a person's message to Yinyue that
+//! day. Same file, same lock.
 
 use super::ServerState;
 use crate::engine::events::ServerEvent;
 use serde_json::{json, Value};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -231,6 +236,73 @@ const MILESTONES: &[Milestone] = &[
     },
 ];
 
+/// A recurring row: done again each `period`; `done_at` is the latest time
+/// its agent heard a person's message, or its phone fact said so.
+pub(super) struct Recurring {
+    id: &'static str,
+    kind: &'static str,
+    period: &'static str,
+    device: &'static str,
+    zh: &'static str,
+    en: &'static str,
+    how_zh: &'static str,
+    how_en: &'static str,
+    open: &'static str,
+    reward: u32,
+    stamina: u32,
+    /// The agent a person's message to counts.
+    agent: &'static str,
+    fact: Option<&'static str>,
+}
+
+const RECURRING: &[Recurring] = &[Recurring {
+    id: "linggen-greet",
+    kind: "greet",
+    period: "day",
+    device: "both",
+    zh: "问安 · 跟银月道声早或晚安",
+    en: "Pay respects · a good morning or good night to Yinyue",
+    how_zh: "在聊天里跟银月说句话",
+    how_en: "Say a word to Yinyue in the chat",
+    open: "/",
+    reward: 15,
+    stamina: 10,
+    agent: YINYUE,
+    fact: Some("yinyue-chat"),
+}];
+
+/// agent → the latest time a person's message reached it (RFC 3339, UTC).
+static LAST_HEARD: Mutex<BTreeMap<String, String>> = Mutex::new(BTreeMap::new());
+
+fn heard(agent: &str, at: &str) {
+    let mut last = LAST_HEARD.lock().unwrap_or_else(|e| e.into_inner());
+    if last.len() < 256 || last.contains_key(agent) {
+        let next = later(last.get(agent).map(String::as_str), Some(at))
+            .unwrap_or(at)
+            .to_string();
+        last.insert(agent.to_string(), next);
+    }
+}
+
+fn last_heard(agent: &str) -> Option<String> {
+    LAST_HEARD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(agent)
+        .cloned()
+}
+
+/// The later of two times; an unreadable one gives way.
+fn later<'a>(a: Option<&'a str>, b: Option<&'a str>) -> Option<&'a str> {
+    let t = |v: Option<&str>| v.and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok());
+    match (t(a), t(b)) {
+        (Some(x), Some(y)) => Some(if y > x { b.unwrap() } else { a.unwrap() }),
+        (Some(_), None) => a,
+        (None, Some(_)) => b,
+        (None, None) => None,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Moments the code that handles them reports
 // ---------------------------------------------------------------------------
@@ -310,7 +382,15 @@ async fn watch_events(state: Arc<ServerState>) {
     let mut rx = state.events_tx.subscribe();
     loop {
         match rx.recv().await {
-            Ok(ev) => sighting_of(&ev).into_iter().for_each(saw),
+            Ok(ev) => {
+                let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+                for s in sighting_of(&ev) {
+                    if let Sighting::UserMessage { agent } = s {
+                        heard(agent, &now);
+                    }
+                    saw(s);
+                }
+            }
             Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
             Err(_) => return,
         }
@@ -389,6 +469,14 @@ pub(super) async fn milestone_loop(state: Arc<ServerState>) {
     loop {
         let opens = app_opens(&state, MILESTONES).await;
         tick(&path, MILESTONES, &opens, |m| probe(state.clone(), m)).await;
+        let heard: Vec<(&str, String)> = RECURRING
+            .iter()
+            .filter_map(|r| last_heard(r.agent).map(|at| (r.id, at)))
+            .collect();
+        let stamps: Vec<(&str, &str)> = heard.iter().map(|(id, at)| (*id, at.as_str())).collect();
+        if let Err(e) = recur(&path, RECURRING, &stamps) {
+            tracing::warn!("[milestones] could not write {}: {e}", path.display());
+        }
         tokio::time::sleep(TICK).await;
     }
 }
@@ -466,20 +554,89 @@ fn update(
     Ok(doc)
 }
 
-/// The milestones a phone fact of `kind` does.
+/// The milestones and recurring rows a phone fact of `kind` does.
 pub(crate) fn for_fact(kind: &str) -> Vec<&'static str> {
-    MILESTONES
+    let once = MILESTONES
         .iter()
         .filter(|m| m.fact == Some(kind))
-        .map(|m| m.id)
-        .collect()
+        .map(|m| m.id);
+    let again = RECURRING
+        .iter()
+        .filter(|r| r.fact == Some(kind))
+        .map(|r| r.id);
+    once.chain(again).collect()
 }
 
 /// A phone fact did milestone `id` at `at`: stamp it then — not at the tick —
-/// when it is still open. A done milestone stays as it is (set once). Ok
-/// once the file holds a `done_at` for it.
+/// when it is still open. A done milestone stays as it is (set once); a
+/// recurring row takes the later time. Ok once the file holds a `done_at`.
 pub(crate) fn stamp_fact(id: &str, at: &str) -> std::io::Result<()> {
+    if RECURRING.iter().any(|r| r.id == id) {
+        let doc = recur(&quests_file(), RECURRING, &[(id, at)])?;
+        return if is_done(&doc, id) {
+            Ok(())
+        } else {
+            Err(std::io::Error::other(format!("'{id}' not stamped")))
+        };
+    }
     stamp_fact_in(&quests_file(), MILESTONES, id, at)
+}
+
+/// Bring the recurring rows up to their table, each `done_at` the later of
+/// the file's and `stamps` (id → time); under the file's one lock. Returns
+/// what the file now holds.
+fn recur(path: &Path, table: &[Recurring], stamps: &[(&str, &str)]) -> std::io::Result<Value> {
+    let _one = FILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut doc = load(path)?;
+    let mut changed = false;
+    for r in table {
+        let stamp = stamps.iter().find(|(id, _)| *id == r.id).map(|(_, at)| *at);
+        let Some(quests) = doc["quests"].as_array_mut() else {
+            break;
+        };
+        let fresh = recurring_words(r);
+        let Some(q) = quests.iter_mut().find(|q| q["id"] == r.id) else {
+            let mut q = fresh;
+            q["id"] = json!(r.id);
+            q["done_at"] = json!(later(None, stamp));
+            quests.push(q);
+            changed = true;
+            continue;
+        };
+        for (key, value) in fresh.as_object().into_iter().flatten() {
+            if q.get(key) != Some(value) {
+                q[key.as_str()] = value.clone();
+                changed = true;
+            }
+        }
+        let held = q["done_at"].as_str().map(str::to_string);
+        let next = later(held.as_deref(), stamp).map(str::to_string);
+        if next != held {
+            q["done_at"] = json!(next);
+            changed = true;
+        }
+    }
+    if changed {
+        let bytes = serde_json::to_vec_pretty(&doc).unwrap_or_default();
+        crate::state_fs::devices::write_atomic(path, &bytes)?;
+    }
+    Ok(doc)
+}
+
+/// What a recurring row says, beside its id and `done_at`.
+fn recurring_words(r: &Recurring) -> Value {
+    json!({
+        "kind": r.kind,
+        "period": r.period,
+        "device": r.device,
+        "due": true,
+        "reward": r.reward,
+        "stamina": r.stamina,
+        "open": r.open,
+        "title": { "zh": r.zh, "en": r.en },
+        "how": { "zh": r.how_zh, "en": r.how_en },
+        "ask": { "zh": "", "en": "" },
+    })
 }
 
 fn stamp_fact_in(path: &Path, table: &[Milestone], id: &str, at: &str) -> std::io::Result<()> {
@@ -827,7 +984,10 @@ mod tests {
     fn a_fact_stamps_its_milestone_at_the_facts_time() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("linggen.json");
-        assert_eq!(for_fact("yinyue-chat"), vec!["linggen-chat"]);
+        assert_eq!(
+            for_fact("yinyue-chat"),
+            vec!["linggen-chat", "linggen-greet"]
+        );
         assert_eq!(for_fact("dj-play"), vec!["dj-play"]);
         assert_eq!(for_fact("linggen-notify"), vec!["linggen-notify"]);
         assert!(for_fact("zz-other").is_empty());
@@ -925,5 +1085,85 @@ mod tests {
         assert!(quest_ever_done(dir.path(), "apple-shifu", "shifu-scan"));
         assert!(!quest_ever_done(dir.path(), "apple-shifu", "shifu-backup"));
         assert!(!quest_ever_done(dir.path(), "dj", "dj-fetch"));
+    }
+
+    #[test]
+    fn a_recurring_row_takes_the_later_time_and_keeps_the_once_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("linggen.json");
+        stamp_fact_in(&path, MILESTONES, "linggen-chat", "2026-09-20T08:00:00Z").unwrap();
+        let doc = recur(
+            &path,
+            RECURRING,
+            &[("linggen-greet", "2026-11-02T08:00:00.000Z")],
+        )
+        .unwrap();
+        let q = entry(&doc, "linggen-greet").unwrap();
+        assert_eq!(q["done_at"], "2026-11-02T08:00:00.000Z");
+        assert_eq!(q["period"], "day");
+        assert_eq!(q["kind"], "greet");
+        assert_eq!(q["due"], true);
+        assert!(q["how"]["zh"].as_str().is_some_and(|h| !h.is_empty()));
+        // older never moves it back; newer moves it on
+        let doc = recur(
+            &path,
+            RECURRING,
+            &[("linggen-greet", "2026-11-01T08:00:00Z")],
+        )
+        .unwrap();
+        assert_eq!(
+            entry(&doc, "linggen-greet").unwrap()["done_at"],
+            "2026-11-02T08:00:00.000Z"
+        );
+        let doc = recur(
+            &path,
+            RECURRING,
+            &[("linggen-greet", "2026-11-03T07:00:00Z")],
+        )
+        .unwrap();
+        assert_eq!(
+            entry(&doc, "linggen-greet").unwrap()["done_at"],
+            "2026-11-03T07:00:00Z"
+        );
+        assert_eq!(
+            entry(&doc, "linggen-chat").unwrap()["done_at"],
+            "2026-09-20T08:00:00Z"
+        );
+        // the milestones' tick leaves it as it is
+        let doc = update(&path, MILESTONES, &[], &[]).unwrap();
+        assert_eq!(
+            entry(&doc, "linggen-greet").unwrap()["done_at"],
+            "2026-11-03T07:00:00Z"
+        );
+        // nothing heard yet: a row, not done
+        let other = dir.path().join("fresh.json");
+        let doc = recur(&other, RECURRING, &[]).unwrap();
+        assert!(entry(&doc, "linggen-greet").unwrap()["done_at"].is_null());
+    }
+
+    #[test]
+    fn the_chat_fact_does_both_the_milestone_and_the_greeting() {
+        let ids = for_fact("yinyue-chat");
+        assert!(
+            ids.contains(&"linggen-chat") && ids.contains(&"linggen-greet"),
+            "{ids:?}"
+        );
+        assert!(RECURRING
+            .iter()
+            .all(|r| !MILESTONES.iter().any(|m| m.id == r.id)));
+    }
+
+    #[test]
+    fn heard_keeps_the_latest() {
+        heard("test-agent", "2026-11-02T08:00:00Z");
+        heard("test-agent", "2026-11-01T08:00:00Z");
+        assert_eq!(
+            last_heard("test-agent").as_deref(),
+            Some("2026-11-02T08:00:00Z")
+        );
+        assert_eq!(
+            later(Some("junk"), Some("2026-11-02T08:00:00Z")),
+            Some("2026-11-02T08:00:00Z")
+        );
     }
 }
