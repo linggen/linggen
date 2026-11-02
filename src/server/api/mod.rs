@@ -17,6 +17,7 @@ pub(super) mod missions;
 /// device exists at all.
 pub(crate) mod pair;
 pub(super) mod permissions;
+pub(super) mod quests;
 pub(super) mod rooms;
 pub(super) mod sessions;
 pub(super) mod skill_cloud;

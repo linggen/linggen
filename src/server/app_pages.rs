@@ -181,6 +181,7 @@ pub(super) async fn serve_app_file(
     if !canonical_full.starts_with(&canonical_dir) {
         return build_err(403, "Path traversal not allowed");
     }
+    note_served(&skill_name, file_path_clean, &app.entry);
 
     // Delegate to tower-http's ServeFile: it speaks Range/206 (video seeking
     // in skill pages needs partial content), conditional requests, and HEAD.
@@ -274,7 +275,11 @@ pub(super) async fn static_handler(State(state): State<Arc<ServerState>>, uri: U
                 axum::body::Body::from(content.data),
             )
         }
-        None if path.rsplit('/').next().is_some_and(|name| name.contains('.')) => {
+        None if path
+            .rsplit('/')
+            .next()
+            .is_some_and(|name| name.contains('.')) =>
+        {
             // A file that is not there is a 404, not the app: a page left open
             // across an update asks for chunks the new build renamed, and
             // answering with index.html makes the browser refuse it as a script.
@@ -301,4 +306,23 @@ pub(super) async fn static_handler(State(state): State<Arc<ServerState>>, uri: U
             }
         }
     }
+}
+
+/// What serving an app file tells the setup milestones: its page opened
+/// (the entry itself), or a page of it playing sound (an audio file).
+fn note_served(app: &str, file: &str, entry: &str) {
+    use super::milestones::{saw, Sighting};
+    if file == entry.trim_start_matches('/') {
+        saw(Sighting::AppPage { app });
+    } else if is_audio(file) {
+        saw(Sighting::AppAudio { app });
+    }
+}
+
+fn is_audio(file: &str) -> bool {
+    const AUDIO: &[&str] = &["mp3", "m4a", "aac", "ogg", "oga", "opus", "wav", "flac"];
+    std::path::Path::new(file)
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| AUDIO.contains(&e.to_ascii_lowercase().as_str()))
 }

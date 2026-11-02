@@ -101,23 +101,6 @@ pub fn install_default_agents() -> Result<()> {
     Ok(())
 }
 
-/// Ids of the missions this build ships (each `missions/<id>/…` folder).
-#[cfg(test)]
-pub fn builtin_mission_ids() -> Vec<String> {
-    let mut ids: Vec<String> = MissionAssets::iter()
-        .filter_map(|f| f.split('/').next().map(str::to_string))
-        .collect();
-    ids.dedup();
-    ids
-}
-
-/// The `mission.md` this build ships for built-in mission `id` — its
-/// defaults, before the user's edits to the installed copy.
-pub fn builtin_mission_md(id: &str) -> Option<String> {
-    let file = MissionAssets::get(&format!("{id}/mission.md"))?;
-    Some(String::from_utf8_lossy(file.data.as_ref()).into_owned())
-}
-
 /// Seed built-in missions (the memory `dream` consolidation pass) into
 /// `~/.linggen/missions/`. **Install-once, then user-owned:** a sentinel
 /// (`.builtin-missions-installed`) records that seeding has happened, so

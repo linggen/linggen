@@ -414,7 +414,7 @@ mod tests {
         );
         assert_eq!(
             targets("yinyue-chat", &[]),
-            vec![Target::Milestone("linggen-phone-chat")]
+            vec![Target::Milestone("linggen-chat")]
         );
     }
 

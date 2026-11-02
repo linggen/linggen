@@ -17,7 +17,7 @@ Related: `perception-spec.md` (activity log, retained `perception`), `app-action
   - **app op logs** drained over `http_request` on the data channel (DJ `phone-ops`, CFO LWW sync).
   - **ActionQueue**: Mac asks, phone does.
 - The phone's activity log (`services/perception/activity_log.dart`) stays on the phone by design (perception §8).
-- `milestones.rs` only sees `PhoneChat` when a chat rides the Mac's channel (`rtc/peer/control.rs:126`). Yinyue on the phone's own model never gets there.
+- (Superseded 2026-11-02: the `PhoneChat` sighting is gone; a person's message to Yinyue is read off the event stream, and the phone's own model reports `yinyue-chat`.)
 - DJ's `track-played` op *is* queued (`dj_player.dart:132` → `dj_library.dart:162`), but `dj/scripts/actions.mjs` doesn't know it and skips it. The phone then treats it as a spent fact (`dj_sync.dart:52`).
 - One precedent already works: Health's letters screen stamps `opened_at` on a synced letter, and `health/scripts/quest.mjs` derives `health-report` from it. **Rule:** where an app already syncs a record its quest writer can read, use that record. Phone facts are for moments that leave no synced trace, such as views, chats and PhotoKit deletes.
 
@@ -68,7 +68,7 @@ quests:
 
 | kind | Emit point (linggen-mobile/lib) | Stamps |
 |---|---|---|
-| `yinyue-chat` | `screens/chat/yinyue_chat_controller.dart:379`, in `send()` after the user entry. A person's typed turn only; never `wake()` or `retryLast()` | `linggen.json` `linggen-phone-chat` (engine table) |
+| `yinyue-chat` | `screens/chat/yinyue_chat_controller.dart:379`, in `send()` after the user entry. A person's typed turn only; never `wake()` or `retryLast()` | `linggen.json` `linggen-chat` (engine table; was `linggen-phone-chat`, retired 2026-11-02) |
 | `cfo-import` | `services/cfo/cfo_repo_sync.dart:546` `_recordImport` (n > 0). Covers the button and the share sheet, since both go through `cfo_screen.dart:311` `_import`. Skip the dev `AUTO_IMPORT` (`sync:false`) | `cfo.json` `cfo-import` |
 | `cfo-trends` | `screens/cfo/cfo_screen.dart:152` `_showSection(sectionTrends)`. Not from the dev auto-sections at `:127`/`:145` | `cfo.json` `cfo-review` |
 | `cfo-invest` | same place, `sectionInvest` | new `cfo-invest` (week, pool) in CFO's menu |
@@ -112,3 +112,7 @@ Out of scope: `health-report` already works through letters. The `track-played` 
 3. **Reuse quest ids or add new ones?** *Recommend reuse when it is the same chore on another screen:* cfo-trends → `cfo-review`, photos-clean → `shifu-clear`. Add new ids only for new acts: `cfo-invest`, `dj-listen`, `dj-karaoke`, `health-doctor`. Each skill's menu grows, and nothing is added to the engine.
 4. **Does opening a view count?** *Recommend a 10-second dwell* for view facts (trends, investments, doctor). A tap-through then doesn't farm a quest, and a real read still counts.
 5. **Keep the in-memory `PhoneChat` sighting?** *Recommend keeping it and adding `yinyue-chat`.* Both stamp `linggen-phone-chat`: one sees Mac-model chats, the other sees phone-model chats.
+
+## 开府 kinds (2026-11-02)
+
+New phone kinds for the setup milestones (`milestones.rs`): `yinyue-search` (her turn ran web_search → `linggen-ask-news`), `cfo-open` (the CFO tab opened), `health-open` (the Health tab opened), `dj-play` (a song counted as played), `linggen-notify` (iOS notifications allowed). `yinyue-chat` now stamps `linggen-chat`.

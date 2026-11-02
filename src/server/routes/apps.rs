@@ -32,6 +32,8 @@ pub(super) fn routes() -> Routes {
             "/api/senses/weather",
             get(crate::senses::weather::get_api).put(crate::senses::weather::put_api),
         )
+        // One app's quest file, read (a paired phone's 开府 list).
+        .route("/api/quests/{app}", get(api::quests::get_quests))
         .route("/shared/{file}", get(shared_pages::serve))
         .route("/apps/{skill_name}/{*file_path}", get(serve_app_file))
 }

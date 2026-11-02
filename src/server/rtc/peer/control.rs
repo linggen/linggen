@@ -96,10 +96,6 @@ pub(super) fn handle_control_message(
             // it too. Idempotent, and silent for peers that are not devices.
             if let Some(a) = &resolved {
                 crate::perception::devices::arrived(&a.device, peer_id);
-                // Relay-signalled peers are the only `Paired` kind: home, reached from away.
-                if user_ctx.kind == crate::server::rtc::PeerKind::Paired {
-                    crate::server::milestones::saw(crate::server::milestones::Sighting::RemotePeer);
-                }
             }
             *actor.lock_ok() = resolved;
 
@@ -121,10 +117,6 @@ pub(super) fn handle_control_message(
 
         "http_request" | "chat" | "clear" | "compact" | "plan_approve" | "plan_reject"
         | "plan_edit" | "ask_user_response" | "inference" | "list_models" => {
-            // A paired device talking — to Ling, or to Yinyue on a Mac model.
-            if matches!(msg_type.as_str(), "chat" | "inference") && actor.lock_ok().is_some() {
-                crate::server::milestones::saw(crate::server::milestones::Sighting::PhoneChat);
-            }
             // These need async processing — return as pending request
             Some(ControlRequest {
                 request_id,
@@ -432,7 +424,11 @@ pub(super) async fn process_control_request_async(
             // Inject user_id into POST /api/sessions for session ownership tracking
             if url_path == "/api/sessions" && method == "POST" {
                 body_val["user_id"] = serde_json::Value::String(user_ctx.user_id.clone());
-                body_val["user_type"] = serde_json::Value::String(user_ctx.user_type_for(actor.lock_ok().is_some()).to_string());
+                body_val["user_type"] = serde_json::Value::String(
+                    user_ctx
+                        .user_type_for(actor.lock_ok().is_some())
+                        .to_string(),
+                );
             }
             // Carry the peer's identity into the loopback request. The phone
             // speaks only WebRTC, so without this a handler cannot tell which
