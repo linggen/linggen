@@ -254,3 +254,50 @@ test('a call that reached the engine is never sent again — only "not connected
   assert.equal(asked, 1);
   assert.equal(opened(), 1);
 });
+
+test('two calls waiting on one stuck frame both settle — the frame goes only once neither waits in it', async () => {
+  // A frame whose own gate gives up on each call after a while; removing the
+  // frame would kill its timers and leave a waiting call hanging for ever.
+  let removedAt = -1;
+  let settled = 0;
+  const pending = [];
+  const stuck = {
+    isOpen: () => false,
+    request: () => new Promise((_, reject) => pending.push(reject)),
+  };
+  const host = fakeHost();
+  let opened = 0;
+  const channel = createChannel({
+    win: fakeWin(),
+    doc: noMeta,
+    waitMs: 50,
+    fetch: async () => new Response(''),
+    openFrame: () => {
+      const i = opened++;
+      if (i === 0) {
+        return Promise.resolve({
+          host: stuck,
+          alive: () => removedAt < 0,
+          remove: () => {
+            removedAt = settled;
+            pending.splice(0); // its calls' timers die with it
+          },
+        });
+      }
+      return Promise.resolve({ host, alive: () => true, remove() {} });
+    },
+  });
+  const a = channel.fetch('/api/skills/lingjing/tools/Verb', { method: 'POST', body: '{}' }).then(() => settled++);
+  const b = channel.fetch('/api/skill-cloud/lingjing').then(() => settled++);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(pending.length, 2);
+  // The first call's wait runs out: the frame is retired, but the second still waits inside it.
+  pending.shift()(new NotConnectedError('Not connected to Linggen: waited 20 s'));
+  await a;
+  assert.equal(removedAt, -1, 'not removed while a call waits in it');
+  pending.shift()(new NotConnectedError('Not connected to Linggen: waited 20 s'));
+  await b;
+  assert.equal(settled, 2);
+  assert.equal(removedAt, 1, 'removed once its last call ended');
+  assert.equal(host.asked.length, 2, 'both went on the fresh frame');
+});

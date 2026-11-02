@@ -254,11 +254,27 @@
      *  False when there is none to drop: a frame above holds the channel. */
     function retireOwn() {
       if (ancestorHost(env.win)) return false;
-      const frame = ownReady || own;
-      if (!frame) return false;
-      if (frame.remove) frame.remove();
-      own = ownReady = null;
+      const ready = ownReady;
+      const loading = own;
+      if (!ready && !loading) return false;
+      own = ownReady = null; // no new call is handed this frame
+      if (ready) {
+        // Another call may still wait inside it; removing the frame would
+        // leave that call hanging for ever. It goes when its last call ends.
+        ready.retired = true;
+        dropIfIdle(ready);
+      } else if (loading.remove) {
+        loading.remove(); // still loading: its waiters time out on their own
+      }
       return true;
+    }
+
+    const inFlight = new Map(); // a ready frame → its calls not yet answered
+
+    function dropIfIdle(frame) {
+      if (!frame.retired || inFlight.get(frame)) return;
+      inFlight.delete(frame);
+      if (frame.remove) frame.remove();
     }
 
     function openOwn() {
@@ -330,11 +346,18 @@
       const what = `${req.method} ${req.path}`;
       if (wait && !isOpen()) setState('connecting');
       const host = await hostFor(what, wait);
+      const frame = ownReady && ownReady.host === host ? ownReady : null;
+      if (frame) inFlight.set(frame, (inFlight.get(frame) || 0) + 1);
       let r;
       try {
         r = await host.request(req);
       } catch (e) {
         throw localError(e);
+      } finally {
+        if (frame) {
+          inFlight.set(frame, inFlight.get(frame) - 1);
+          dropIfIdle(frame);
+        }
       }
       setState('open');
       return { status: r.status, content_type: r.content_type, body: r.body, body_encoding: r.body_encoding };

@@ -64,6 +64,20 @@ test('a call a skill page makes before its channel is up waits for it', async ({
   await expect(page.getByText(/^Chats: \d+$/)).toBeVisible();
 });
 
+test('a dial that never comes up is abandoned and redialled — the call still lands inside its 20 s', async ({ page, world }) => {
+  // The first offer is never answered (a starved or wedged dial); later ones go.
+  let whips = 0;
+  await page.route('**/api/rtc/whip', async (route) => {
+    whips += 1;
+    if (whips === 1) return; // left hanging: the dial's own deadline must end it
+    await route.continue();
+  });
+  await page.goto(world.url + DICE);
+  await expect(page.getByText(/^Models: \d+$/)).toBeVisible({ timeout: 20_000 });
+  expect(whips).toBeGreaterThanOrEqual(2);
+  expect(channelFrames(page)).toHaveLength(1); // the same frame redialled
+});
+
 test('a skill page framed by the launcher rides its channel — no peer of its own', async ({ page, world }) => {
   await page.addInitScript(watchAsked);
   await page.goto(`${world.url}/?launcher=1`);
