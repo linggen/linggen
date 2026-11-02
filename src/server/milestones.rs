@@ -39,7 +39,6 @@ use std::time::Duration;
 
 const APP: &str = "linggen";
 const REWARD: u32 = 50;
-const STAMINA: u32 = 20;
 const FIRST_TICK: Duration = Duration::from_secs(30);
 const TICK: Duration = Duration::from_secs(60);
 /// Yinyue's agent id — the engine's own companion (`config.pet.pet`).
@@ -249,7 +248,6 @@ pub(super) struct Recurring {
     how_en: &'static str,
     open: &'static str,
     reward: u32,
-    stamina: u32,
     /// The agent a person's message to counts.
     agent: &'static str,
     fact: Option<&'static str>,
@@ -266,7 +264,6 @@ const RECURRING: &[Recurring] = &[Recurring {
     how_en: "Say a word to Yinyue in the chat",
     open: "/",
     reward: 15,
-    stamina: 10,
     agent: YINYUE,
     fact: Some("yinyue-chat"),
 }];
@@ -631,7 +628,6 @@ fn recurring_words(r: &Recurring) -> Value {
         "device": r.device,
         "due": true,
         "reward": r.reward,
-        "stamina": r.stamina,
         "open": r.open,
         "title": { "zh": r.zh, "en": r.en },
         "how": { "zh": r.how_zh, "en": r.how_en },
@@ -759,7 +755,6 @@ fn new_entry(m: &Milestone, done_at: Option<&str>, open: Option<&str>) -> Value 
         "due": true,
         "done_at": done_at,
         "reward": REWARD,
-        "stamina": STAMINA,
     });
     for (k, v) in words(m, open).as_object().into_iter().flatten() {
         q[k.as_str()] = v.clone();
@@ -846,7 +841,8 @@ mod tests {
         assert_eq!(pair["device"], "pair");
         assert_eq!(pair["due"], true);
         assert_eq!(pair["reward"], REWARD);
-        assert_eq!(pair["stamina"], STAMINA);
+        // No quest pays 体力 (Lingjing, 2026-11-02): the rows carry none.
+        assert!(pair.get("stamina").is_none());
         assert_eq!(pair["title"]["zh"], "结缘 · 手机和 Mac 结契");
         assert_eq!(pair["how"]["zh"], "扫一下二维码");
         assert!(pair.get("ask").is_none());
