@@ -1,11 +1,11 @@
 # Yinyue — the living companion
 
-Yinyue is the user's spirit companion and the face on the desktop. This spec
+Yinyue is the user's companion — 银月, the proud fox 妖王 of 《九鼎录》 (persona: `agents/yinyue.md`) — and the face on the desktop. This spec
 covers making her *proactive* and *interactive*: she reacts to what's happening,
 reads whether the user is present, speaks and emotes in her own voice, and relays
 between the user and the worker agents.
 
-Ling and Yinyue are **separate agents** (extensible to more). Yinyue is the
+Ling and Yinyue are **separate, peer agents** (extensible to more). Yinyue is the
 herald / front-of-house voice for the whole roster; Ling and future workers do
 the technical work.
 

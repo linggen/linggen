@@ -167,7 +167,7 @@ fn a_consumer_frame_and_a_delegate_have_no_place() {
 /// What Ling's soul says of the companion — moved out of `agents/ling.md` so
 /// it is there only once she is met.
 const SOUL_FRIEND: &str =
-    "Yinyue is the friend. She lives with them; you\nrun everything underneath.";
+    "Yinyue is the companion — 银月, the proud fox 妖王 of the story — and\nyour peer.";
 const SOUL_MEMORY: &str = "One memory, shared with Yinyue.";
 
 /// A manager that knows Yinyue as unmet (`met_when`, nothing latched) or met.

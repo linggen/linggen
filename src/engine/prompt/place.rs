@@ -232,13 +232,13 @@ mod tests {
     #[test]
     fn a_soul_addition_follows_its_agent_and_is_no_surface() {
         let with = soul_additions("ling", &|a| a == "yinyue");
-        assert!(with.contains("Yinyue is the friend."));
+        assert!(with.contains("Yinyue is the companion"));
         assert!(with.contains("One memory, shared with Yinyue."));
         assert_eq!(soul_additions("ling", &|_| false), "");
         assert_eq!(soul_additions("yinyue", &|_| true), "");
         for surface in [Surface::Home, Surface::App, Surface::Member] {
             let block = place_text("ling", surface, None, &|_| true).unwrap_or_default();
-            assert!(!block.contains("Yinyue is the friend."), "{surface:?}");
+            assert!(!block.contains("Yinyue is the companion"), "{surface:?}");
         }
     }
 

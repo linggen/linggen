@@ -35,7 +35,7 @@ impl Agent {
     fn marker(self) -> &'static str {
         match self {
             Agent::Ling => "You are Ling — Linggen itself",
-            Agent::Yinyue => "You are Yinyue — the user's friend",
+            Agent::Yinyue => "You are Yinyue — 银月",
         }
     }
 }

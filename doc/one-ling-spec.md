@@ -25,8 +25,9 @@ shape: two agents at one table, Ling answering. Settled with Hanli 2026-10-08.
 - **Ling** — the keeper of the Linggen engine. Does every task, runs the apps,
   owns performance, safety and critical jobs, on whichever device has the
   tools. The Ling on the Mac and the Ling on the phone are the same Ling.
-- **Yinyue** — the user's companion and emotional friend. Greets, warms up,
-  notices, comforts; speaks on her own moments. She runs no tasks and never
+- **Yinyue** — the user's companion: 银月, the proud fox 妖王 of the story
+  (`agents/yinyue.md`). Greets, notices, steadies them in her own haughty way;
+  speaks on her own moments. She runs no tasks and never
   hands work across devices.
 
 One persona source for each. The phone's Yinyue already loads her soul from
