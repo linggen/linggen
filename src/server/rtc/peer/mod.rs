@@ -50,6 +50,14 @@ fn stall_deadline(since: &mut Option<Instant>, now: Instant) -> Option<Instant> 
     (now.duration_since(started) > SPIN_LIMIT).then_some(started)
 }
 
+/// What a peer does once its control channel closes: it ends. The page closed
+/// it (a reload, a closed tab, a redial), every call rides it, and no client
+/// reopens it on the same peer connection.
+fn exit_on_control_close() -> Flow {
+    tracing::info!("Control channel closed — the page left; ending its peer");
+    Flow::Exit
+}
+
 /// The identity a peer claimed via `identify`, or `None` while it is anonymous
 /// (the web UI, the app shell, a phone that hasn't identified yet). Records
 /// written by an anonymous peer carry no `by` — unattributed beats wrong.
@@ -215,7 +223,10 @@ async fn create_peer_inner(
     // is a transition, and transitions belong in the activity log.
     let peer_actor: PeerActor = Arc::new(std::sync::Mutex::new(None));
     let departing = peer_actor.clone();
-    tokio::spawn(async move {
+    // Every line a peer logs names it: str0m's ICE lines and ours alike, so
+    // concurrent peers (a reload's old and new) can be told apart.
+    let span = tracing::info_span!("peer", id = peer_id, port);
+    let task = async move {
         if let Err(e) = run_peer(
             rtc,
             socket,
@@ -237,7 +248,8 @@ async fn create_peer_inner(
         // Release the Yinyue presenter lock on disconnect (no-op if this peer
         // never subscribed); if it held the lock, the next subscriber is promoted.
         cleanup_state.yinyue_release(peer_id);
-    });
+    };
+    tokio::spawn(tracing::Instrument::instrument(task, span));
 
     Ok(answer_sdp)
 }
@@ -307,6 +319,9 @@ struct PeerLoop {
     /// 2026-09-21 six of sixteen such peers were still running an hour later,
     /// one of them holding Yinyue's presenter lock away from every live page.
     last_heard: Instant,
+    /// When the answer went out — how long the control channel took to open
+    /// is logged against it (a page's connect time, as the engine sees it).
+    born: Instant,
     /// Track which session IDs belong to this user (for event filtering).
     /// Populated from session store on connect, updated on SessionCreated events.
     user_session_ids: HashSet<String>,
@@ -547,6 +562,7 @@ impl PeerLoop {
             dc_write_paused: false,
             disconnected_since: None,
             last_heard: Instant::now(),
+            born: Instant::now(),
             user_session_ids,
             view_ctx: super::page_state::ViewContext::default(),
             dirty_flags: 0,
@@ -635,7 +651,12 @@ impl PeerLoop {
             }
             Event::ChannelOpen(id, label) => self.on_channel_open(id, &label),
             Event::ChannelData(data) => self.on_channel_data(data).await,
-            Event::ChannelClose(id) => self.on_channel_close(id),
+            Event::ChannelClose(id) => {
+                if let Flow::Exit = self.on_channel_close(id) {
+                    media_channel::abandon(&mut self.media_transfer).await;
+                    return Flow::Exit;
+                }
+            }
             _ => {}
         }
         Flow::Continue
@@ -647,6 +668,10 @@ impl PeerLoop {
             self.media_channel_id = Some(id);
         } else if label == "control" {
             self.control_channel_id = Some(id);
+            tracing::info!(
+                "Control channel open {} ms after the answer",
+                self.born.elapsed().as_millis()
+            );
             // Send connection metadata: user info + room info.
             // A LAN peer has not identified yet, so this says
             // "owner" for a phone; `identify` corrects it with
@@ -956,7 +981,7 @@ impl PeerLoop {
             });
     }
 
-    fn on_channel_close(&mut self, id: str0m::channel::ChannelId) {
+    fn on_channel_close(&mut self, id: str0m::channel::ChannelId) -> Flow {
         if let Some(session_id) = self.channel_sessions.remove(&id) {
             self.session_channels.remove(&session_id);
             tracing::info!("Session channel closed: {session_id}");
@@ -967,11 +992,16 @@ impl PeerLoop {
         }
         if Some(id) == self.control_channel_id {
             self.control_channel_id = None;
-            tracing::info!("Control channel closed");
             // A half-sent transfer must not outlive the
             // channel that started it.
             self.inbound.clear();
+            // The page closed its peer (a reload, a closed tab): every call
+            // rides this channel and nothing reopens it on the same peer, so
+            // the peer is done. Waiting for ICE to time out kept each reload's
+            // old peer running 30–45 s longer (2026-11-02).
+            return exit_on_control_close();
         }
+        Flow::Continue
     }
 
     /// Exit when the peer has gone silent, or stayed disconnected too long.
@@ -1185,5 +1215,29 @@ fn summarize_sdp(sdp: &str) -> String {
         format!("{bytes}B/{lines}L ufrag={ufrag} setup={setup}")
     } else {
         format!("{bytes}B/{lines}L ufrag={ufrag} setup={setup} candidate={candidate}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A reload closes the old page's control channel at once; its peer must
+    /// not run on for the 30 s ICE takes to call it disconnected.
+    #[test]
+    fn a_closed_control_channel_ends_the_peer() {
+        assert!(matches!(exit_on_control_close(), Flow::Exit));
+    }
+
+    #[test]
+    fn a_stall_counts_only_past_the_spin_limit() {
+        let t0 = Instant::now();
+        let mut since = None;
+        assert_eq!(stall_deadline(&mut since, t0), None);
+        assert_eq!(stall_deadline(&mut since, t0 + SPIN_LIMIT), None);
+        assert_eq!(
+            stall_deadline(&mut since, t0 + SPIN_LIMIT + Duration::from_millis(1)),
+            Some(t0)
+        );
     }
 }

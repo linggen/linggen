@@ -185,3 +185,72 @@ test('remotely, the tunnel worker already carries every call: fetch goes as it i
   assert.deepEqual(http, ['/api/models']);
   assert.equal(opened(), 0);
 });
+
+/** A channel whose frames are scripted: each openFrame() takes the next one. */
+function scriptedChannel(frames, waitMs = 50) {
+  const states = [];
+  const http = [];
+  let opened = 0;
+  const removed = [];
+  const channel = createChannel({
+    win: fakeWin(),
+    doc: noMeta,
+    waitMs,
+    fetch: async (input) => {
+      http.push(String(input));
+      return new Response('');
+    },
+    openFrame: () => {
+      const i = opened++;
+      const make = frames[i];
+      const p = make ? make() : new Promise(() => {});
+      p.remove = () => removed.push(i);
+      return p;
+    },
+    onState: (s) => states.push(s),
+  });
+  return { channel, states, http, removed, opened: () => opened };
+}
+
+const upFrame = (host) => () => Promise.resolve({ host, alive: () => true, remove() {} });
+
+test('a channel frame that never connects is dropped and the call goes on a fresh one', async () => {
+  const host = fakeHost();
+  const { channel, states, http, removed, opened } = scriptedChannel([
+    () => new Promise(() => {}), // the stuck one: its page never comes up
+    upFrame(host),
+  ]);
+  const res = await channel.fetch('/api/skills/lingjing/tools/Verb', { method: 'POST', body: '{"verb":"look"}' });
+  assert.equal(res.status, 200);
+  assert.equal(opened(), 2);
+  assert.deepEqual(removed, [0], 'the stuck frame is taken out of the page');
+  assert.equal(host.asked.length, 1, 'sent once');
+  assert.deepEqual(http, [], 'never HTTP');
+  assert.deepEqual(states, ['connecting', 'open']);
+});
+
+test("a frame whose own channel gave up (the host's NotConnectedError) is redialled", async () => {
+  const dead = { isOpen: () => false, async request() { throw new NotConnectedError('Not connected to Linggen: waited 20 s'); } };
+  const host = fakeHost();
+  const { channel, opened } = scriptedChannel([upFrame(dead), upFrame(host)]);
+  await channel.fetch('/api/models');
+  assert.equal(opened(), 2);
+  assert.equal(host.asked.length, 1);
+});
+
+test('when the fresh frame fails too, the call fails as not connected and the state says down', async () => {
+  const { channel, states, opened } = scriptedChannel([]);
+  await assert.rejects(channel.fetch('/api/models'), { name: 'NotConnectedError' });
+  assert.equal(opened(), 2, 'one redial, not a loop');
+  assert.equal(channel.state(), 'down');
+  assert.deepEqual(states, ['connecting', 'down']);
+});
+
+test('a call that reached the engine is never sent again — only "not connected" is retried', async () => {
+  let asked = 0;
+  const flaky = { isOpen: () => true, async request() { asked++; throw new Error('Control channel request timeout'); } };
+  const { channel, opened } = scriptedChannel([upFrame(flaky), upFrame(fakeHost())]);
+  await assert.rejects(channel.fetch('/api/skills/lingjing/tools/Verb', { method: 'POST', body: '{}' }), /timeout/);
+  assert.equal(asked, 1);
+  assert.equal(opened(), 1);
+});

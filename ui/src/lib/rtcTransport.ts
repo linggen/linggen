@@ -21,6 +21,7 @@ import { connection } from './transport';
 import type { ProxyReply } from './channelFetch.mts';
 import { WhipSignaling, type SignalingStrategy } from './signaling';
 import { gatherNeed, waitForIceGathering } from './iceGather.mts';
+import { dialDeadlineMs, dialOnVisible, redialDelayMs } from './dialPolicy.mts';
 
 /** Configuration for the WebRTC transport. */
 export interface RtcTransportConfig {
@@ -109,10 +110,49 @@ export class RtcTransport implements Transport {
   private pendingSubscriptions = new Set<string>();
   // Abort controller for in-flight signaling (cancelled on cleanup/disconnect)
   private signalingAbort: AbortController | null = null;
+  // One dial's own deadline: a dial whose control channel never opens is
+  // abandoned and redialled, not left to the browser's ICE 'failed' (dialPolicy).
+  private dialTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(callbacks: TransportCallbacks, config: RtcTransportConfig = {}) {
     this.callbacks = callbacks;
     this.config = config;
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') this.dialNowIfWaiting();
+      });
+    }
+    if (typeof window !== 'undefined') window.addEventListener('online', () => this.dialNowIfWaiting());
+  }
+
+  private get remote(): boolean {
+    return this.config.signaling?.remote ?? false;
+  }
+
+  /** Back in view (or online) while waiting out a redial: dial now. A hidden
+   *  tab under load can sit through its whole backoff without running. */
+  private dialNowIfWaiting(): void {
+    if (!dialOnVisible(this._status, this.intentionalDisconnect)) return;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    this.reconnectAttempt = 0;
+    console.log('[WebRTC] back in view — dialling now');
+    this.doConnect();
+  }
+
+  private armDialDeadline(): void {
+    this.clearDialDeadline();
+    const ms = dialDeadlineMs(this.remote);
+    this.dialTimer = setTimeout(() => {
+      this.dialTimer = null;
+      console.warn(`[WebRTC] control channel not open ${ms} ms into the dial — redialling`);
+      this.handleDisconnect();
+    }, ms);
+  }
+
+  private clearDialDeadline(): void {
+    if (this.dialTimer) clearTimeout(this.dialTimer);
+    this.dialTimer = null;
   }
 
   // --- Transport interface ---
@@ -243,10 +283,12 @@ export class RtcTransport implements Transport {
   private async doConnect(): Promise<void> {
     if (this._status === 'connecting') return; // already in progress
     this.setStatus('connecting');
+    this.armDialDeadline();
 
+    let pc: RTCPeerConnection | null = null;
     try {
       const iceServers = this.config.iceServers || DEFAULT_ICE_SERVERS;
-      this.pc = new RTCPeerConnection({ iceServers });
+      pc = this.pc = new RTCPeerConnection({ iceServers });
 
       // Create control channel before offer (so it's in the SDP)
       this.controlChannel = this.pc.createDataChannel('control', { ordered: true });
@@ -286,11 +328,13 @@ export class RtcTransport implements Transport {
       // Create offer, bundle ICE candidates (full ICE, no trickle). The wait
       // is armed before setLocalDescription so no candidate slips past it.
       const signaling = this.config.signaling ?? new WhipSignaling();
-      const pc = this.pc;
       const offer = await pc.createOffer();
       const gathered = waitForIceGathering(pc, { need: gatherNeed(iceServers, signaling.remote) });
       await pc.setLocalDescription(offer);
       const g = await gathered;
+      // A dial past its deadline was torn down and another one started: the
+      // late steps of this one must not touch the new peer.
+      if (this.pc !== pc) return;
       const inSdp = (pc.localDescription?.sdp.match(/^a=candidate:/gm) ?? []).length;
       console.log(`[WebRTC] ICE gathered in ${g.ms} ms (${g.end}, ${g.candidates} candidates, ${inSdp} in offer), exchanging SDP...`);
 
@@ -298,14 +342,16 @@ export class RtcTransport implements Transport {
       const controller = new AbortController();
       this.signalingAbort = controller;
       const answerSdp = await signaling.exchange(
-        this.pc.localDescription!.sdp,
+        pc.localDescription!.sdp,
         controller.signal,
       );
+      if (this.pc !== pc) return;
       this.signalingAbort = null;
       console.log('[WebRTC] got SDP answer, setting remote description...');
-      await this.pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+      await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
       console.log('[WebRTC] remote description set, waiting for control channel...');
     } catch (err) {
+      if (this.pc !== pc) return; // an abandoned dial's own failure
       console.error('WebRTC connection failed:', err);
       this.handleDisconnect();
     }
@@ -322,6 +368,7 @@ export class RtcTransport implements Transport {
       // IMPORTANT: setStatus('connected') MUST come before onReconnect.
       // Connected opens the gate (`connection`), releasing every call that
       // waited for the channel — so status first, then onReconnect's resync.
+      this.clearDialDeadline();
       this.reconnectAttempt = 0;
       this.setStatus('connected');
       this.flushPendingViewContext();
@@ -579,8 +626,8 @@ export class RtcTransport implements Transport {
     this.cleanup();
     this.setStatus('reconnecting');
 
-    // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s max
-    const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempt), 30000);
+    // Exponential backoff: quick and short for a local dial (dialPolicy).
+    const delay = redialDelayMs(this.reconnectAttempt, this.remote);
     this.reconnectAttempt++;
 
     this.reconnectTimer = setTimeout(() => {
@@ -589,6 +636,7 @@ export class RtcTransport implements Transport {
   }
 
   private cleanup(): void {
+    this.clearDialDeadline();
     this.stopHeartbeat();
     this.clearIceGrace();
 

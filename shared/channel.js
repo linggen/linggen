@@ -20,9 +20,17 @@
 //     or a skill page around its settings overlay — is asked directly.
 //  3. Otherwise the page opens its own: a hidden engine frame (`/?channel=1`)
 //     brings up one peer, the way the chat embed does, and carries the calls.
-// A call made before the channel is open waits for it (20 s, then a
-// NotConnectedError); nothing falls back to HTTP. Byte replies (audio,
-// images) come as base64 and are handed back as the bytes they were.
+// A call made before the channel is open waits for it (20 s); nothing falls
+// back to HTTP. When the page's own channel frame did not connect in that
+// time, the frame is dropped and the call goes once more on a fresh one —
+// safe, since a NotConnectedError means nothing was sent. Only then does the
+// call fail with NotConnectedError. Byte replies (audio, images) come as
+// base64 and are handed back as the bytes they were.
+//
+// How the channel stands — 'connecting' (a call waits), 'open', 'down' (a
+// call gave up) — is `LinggenChannel.state()`, and each change is a
+// `linggen-channel` event on the window ({ detail: { state } }), so a page can
+// say "connecting…" rather than sit blank.
 //
 // The page offers its channel to its own frames as `window.__linggenChannel`
 // (`request`, `isOpen`) — the same face the engine's UI shows its frames.
@@ -160,8 +168,9 @@
   /** The page's own channel: a hidden engine frame, which opens one peer.
    *  Kept outside <body>, so a page that rewrites its body keeps it. */
   function openFrame(doc) {
-    return new Promise((resolve, reject) => {
-      const frame = doc.createElement('iframe');
+    let frame;
+    const opening = new Promise((resolve, reject) => {
+      frame = doc.createElement('iframe');
       frame.src = FRAME_URL;
       frame.title = 'Linggen channel';
       frame.tabIndex = -1;
@@ -172,11 +181,13 @@
         try {
           host = frame.contentWindow[HOST_KEY] || null;
         } catch { /* not the engine's page */ }
-        if (host) resolve({ host, alive: () => frame.isConnected });
+        if (host) resolve({ host, alive: () => frame.isConnected, remove: () => frame.remove() });
         else reject(new NotConnectedError('Not connected to Linggen: its channel page did not load'));
       }, { once: true });
       doc.documentElement.appendChild(frame);
     });
+    opening.remove = () => frame.remove(); // retire it while it still loads
+    return opening;
   }
 
   function toBase64(buf) {
@@ -223,25 +234,51 @@
 
   /**
    * One page's channel. `env`: `win`, `doc`, `fetch` (the browser's own),
-   * `openFrame()` → Promise<{ host, alive() }>, `waitMs`. Tests pass fakes.
+   * `openFrame()` → Promise<{ host, alive(), remove() }> (the promise may
+   * carry `remove()` too), `waitMs`, `onState(state)`. Tests pass fakes.
    */
   function createChannel(env) {
     const waitMs = env.waitMs ?? CONNECT_WAIT_MS;
     const remote = isRemote(env.doc);
     let own = null; // Promise<{ host, alive }> of the page's channel frame
     let ownReady = null; // that frame, once it is up
+    let state = remote ? 'open' : 'idle';
+
+    function setState(next) {
+      if (state === next) return;
+      state = next;
+      if (env.onState) env.onState(next);
+    }
+
+    /** Drop the page's own channel frame, so the next call opens a fresh one.
+     *  False when there is none to drop: a frame above holds the channel. */
+    function retireOwn() {
+      if (ancestorHost(env.win)) return false;
+      const frame = ownReady || own;
+      if (!frame) return false;
+      if (frame.remove) frame.remove();
+      own = ownReady = null;
+      return true;
+    }
 
     function openOwn() {
       if (ownReady && !ownReady.alive()) own = ownReady = null; // removed: open again
       if (!own) {
-        own = env.openFrame().then(
-          (f) => (ownReady = f),
+        const opening = env.openFrame();
+        // A frame retired while it loaded must not come back as the page's.
+        const mine = opening.then(
+          (f) => {
+            if (own === mine) ownReady = f;
+            return f;
+          },
           (e) => {
-            own = null;
+            if (own === mine) own = null;
             throw e;
           },
         );
-        own.catch(() => {}); // a caller that stopped waiting still hears it
+        mine.catch(() => {}); // a caller that stopped waiting still hears it
+        mine.remove = opening.remove; // retire it while it still loads
+        own = mine;
       }
       return own;
     }
@@ -266,14 +303,41 @@
      *  (a reading, like the presence beat, is skipped, never queued). */
     async function request(req) {
       if (remote) return viaTunnel(env.fetch, req);
-      const what = `${req.method} ${req.path}`;
-      const host = await hostFor(what, req.wait !== false);
+      const wait = req.wait !== false;
+      if (!wait) return ask(req, false);
       try {
-        const r = await host.request(req);
-        return { status: r.status, content_type: r.content_type, body: r.body, body_encoding: r.body_encoding };
+        return await ask(req, true);
+      } catch (e) {
+        if (e.name !== 'NotConnectedError') throw e;
+        // Nothing was sent: dial a fresh channel frame and go once more.
+        if (!retireOwn()) throw down(e);
+        try {
+          return await ask(req, true);
+        } catch (again) {
+          if (again.name === 'NotConnectedError') retireOwn();
+          throw again.name === 'NotConnectedError' ? down(again) : again;
+        }
+      }
+    }
+
+    function down(e) {
+      setState('down');
+      return e;
+    }
+
+    /** One try: the host now (or once its frame is up), then its reply. */
+    async function ask(req, wait) {
+      const what = `${req.method} ${req.path}`;
+      if (wait && !isOpen()) setState('connecting');
+      const host = await hostFor(what, wait);
+      let r;
+      try {
+        r = await host.request(req);
       } catch (e) {
         throw localError(e);
       }
+      setState('open');
+      return { status: r.status, content_type: r.content_type, body: r.body, body_encoding: r.body_encoding };
     }
 
     async function send(route, input, init) {
@@ -296,13 +360,18 @@
       return !!host && !!host.isOpen();
     }
 
-    return { fetch: channelFetch, request, isOpen, remote };
+    return { fetch: channelFetch, request, isOpen, remote, state: () => state };
   }
 
   /** Route this page's `fetch` and offer its channel to its own frames. */
   function install(win, doc) {
     const native = win.fetch.bind(win);
-    const channel = createChannel({ win, doc, fetch: native, openFrame: () => openFrame(doc) });
+    const onState = (state) => {
+      try {
+        win.dispatchEvent(new CustomEvent('linggen-channel', { detail: { state } }));
+      } catch { /* no CustomEvent: nothing listens */ }
+    };
+    const channel = createChannel({ win, doc, fetch: native, openFrame: () => openFrame(doc), onState });
     if (!channel.remote) {
       win.fetch = channel.fetch;
       win[HOST_KEY] = { request: channel.request, isOpen: channel.isOpen };
