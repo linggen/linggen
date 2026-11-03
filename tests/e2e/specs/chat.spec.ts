@@ -1,7 +1,7 @@
 // A new chat: the message goes over the data channel, the fake model's
 // scripted reply renders.
 import {
-  test, expect, expectWebRtc, expectScriptedCalls, expectTurnOver, chat, send, shown,
+  test, expect, expectWebRtc, expectScriptedCalls, expectTurnOver, chat, send, shown, newChat,
   holdReplies, held, heldEvents, release,
 } from '../support/world';
 import type { Page } from '@playwright/test';
@@ -11,7 +11,7 @@ test.use({ scenario: { scripts: { ling: [{ text: 'Hello from the fake model.' }]
 test('a sent message gets the scripted reply', async ({ page, world, httpRequests }) => {
   await page.goto(world.url);
   await expectWebRtc(page, httpRequests);
-  await page.getByRole('button', { name: 'New chat', exact: true }).click();
+  await newChat(page).click();
   await send(page, 'Say hello.');
 
   await expect(shown(page, 'Hello from the fake model.')).toHaveCount(1);
@@ -37,7 +37,7 @@ test('a late load of the previous session never lands in a new chat', async ({ p
   await expect.poll(() => held(page)).not.toEqual([]);
   const [previous] = await held(page);
 
-  await page.getByRole('button', { name: 'New chat', exact: true }).click();
+  await newChat(page).click();
   await expect.poll(async () => (await held(page)).some((s) => s !== previous)).toBe(true);
   const fresh = (await held(page)).find((s) => s !== previous)!;
   await release(page, [fresh, previous]);
@@ -63,7 +63,7 @@ test('a message sent while New chat is being made goes to the new chat', async (
   await expectWebRtc(page, httpRequests);
   await expect(shown(page, 'Harbor Table. Alex rolled a 4.')).toHaveCount(1);
 
-  await page.getByRole('button', { name: 'New chat', exact: true }).click();
+  await newChat(page).click();
   await expect.poll(() => held(page)).toEqual(['/api/sessions']);
   await send(page, 'Say hello.');
   await release(page);
@@ -86,7 +86,7 @@ test('a turn ends after its reply', async ({ page, world, httpRequests }) => {
   await page.addInitScript(holdReplies, { events: true });
   await page.goto(world.url);
   await expectWebRtc(page, httpRequests);
-  await page.getByRole('button', { name: 'New chat', exact: true }).click();
+  await newChat(page).click();
   await send(page, 'Say hello.');
   await expect.poll(() => heldEvents(page)).toContain('turn_complete');
 
@@ -116,7 +116,7 @@ test.describe('a live run', () => {
 
   /** A new chat whose run sits in a two-minute Bash, stopped from the box. */
   async function stopLiveRun(page: Page) {
-    await page.getByRole('button', { name: 'New chat', exact: true }).click();
+    await newChat(page).click();
     await send(page, 'Wait a while.');
     const c = chat(page);
     await c.getByTestId('permission-card').getByTestId('permission-directory').last().click();
@@ -184,7 +184,7 @@ test.describe('a stopped run, then a turn with a tool', () => {
   test("each message keeps its own reply, and the stopped call stays failed", async ({ page, world, httpRequests }) => {
     await page.goto(world.url);
     await expectWebRtc(page, httpRequests);
-    await page.getByRole('button', { name: 'New chat', exact: true }).click();
+    await newChat(page).click();
     await send(page, 'Draw a half-auto one.');
     const c = chat(page);
     await c.getByTestId('permission-card').getByTestId('permission-directory').last().click();
@@ -241,7 +241,7 @@ test.describe('a mid-turn switch to another session and back', () => {
   test('the run keeps its call and answer under its own message', async ({ page, world, httpRequests }) => {
     await page.goto(world.url);
     await expectWebRtc(page, httpRequests);
-    await page.getByRole('button', { name: 'New chat', exact: true }).click();
+    await newChat(page).click();
     await send(page, 'Take a nap.');
     const c = chat(page);
     await c.getByTestId('permission-card').getByTestId('permission-directory').last().click();

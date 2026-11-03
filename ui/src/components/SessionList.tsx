@@ -412,7 +412,7 @@ export const SessionList: React.FC<{
           </button>}
           <button onClick={onCreateSession}
             className="px-1.5 py-0.5 text-[11px] rounded hover:bg-slate-100 dark:hover:bg-white/5 text-slate-400 hover:text-blue-500 transition-colors"
-            title="New chat">
+            title="New chat" aria-label="New chat" data-testid="new-chat">
             +L
           </button>
         </div>

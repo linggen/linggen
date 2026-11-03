@@ -6,7 +6,7 @@
 // Every test also checks, when it ends, that the page sent nothing over
 // plain HTTP beyond what loads the page and signals WebRTC (`HTTP_ALLOWED`):
 // the UI's data rides the data channel.
-import { test as base, expect, type Frame, type Page, type Request } from '@playwright/test';
+import { test as base, expect, type Frame, type Locator, type Page, type Request } from '@playwright/test';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { readFileSync } from 'node:fs';
@@ -259,9 +259,20 @@ export function chat(page: Page) {
   return page.locator('main');
 }
 
+/** The chat box. Its placeholder names who answers ("To Ling", "Message…"),
+ *  so it is found by its test id. */
+export function composer(within: Page | Locator) {
+  return within.getByTestId('chat-textarea');
+}
+
+/** The session list's New chat button (+L). */
+export function newChat(page: Page) {
+  return page.getByTestId('new-chat');
+}
+
 /** Type a message in the chat box and send it with Enter. */
 export async function send(page: Page, text: string) {
-  const box = page.getByPlaceholder(/^Message/);
+  const box = composer(page);
   await box.fill(text);
   await box.press('Enter');
 }

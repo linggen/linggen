@@ -4,7 +4,7 @@
 // over it as well.
 import type { Page } from '@playwright/test';
 import {
-  test, expect, expectWebRtc, expectScriptedCalls, expectTurnOver, send, shown, watchAsked, asked,
+  test, expect, expectWebRtc, expectScriptedCalls, expectTurnOver, send, shown, watchAsked, asked, composer,
 } from '../support/world';
 
 test.describe('before the channel connects', () => {
@@ -20,7 +20,7 @@ test.describe('before the channel connects', () => {
     });
     await page.addInitScript(watchAsked);
     await page.goto(world.url);
-    await expect(page.getByPlaceholder(/^Message/)).toBeVisible();
+    await expect(composer(page)).toBeVisible();
     await send(page, 'Say hello.');
     const connected = () => page.evaluate(() =>
       ((window as unknown as { __pcs?: RTCPeerConnection[] }).__pcs ?? []).some((pc) => pc.connectionState === 'connected'));

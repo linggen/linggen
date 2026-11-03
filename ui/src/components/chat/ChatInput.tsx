@@ -731,6 +731,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           )}
           <textarea
             ref={inputRef}
+            data-testid="chat-textarea"
             value={chatInput}
             onPaste={handlePaste}
             onDrop={handleDrop}
