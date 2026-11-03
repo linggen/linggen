@@ -6,15 +6,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SETTLE_GRACE_MS, rowForRun, settleTree, subagentHostIndex, unshownChildren } from '../src/lib/subagentRuns.mts';
+import type { AgentRunInfo } from '../src/types.ts';
 
 const row = (subagentId: string, status: 'running' | 'done' | 'failed', timestampMs?: number) => ({
   subagentId, agentName: 'ling', task: 'look', status, toolCount: 0, contextTokens: 0,
   currentActivity: 'Grep', toolSteps: [], ...(timestampMs === undefined ? {} : { timestampMs }),
 });
-const run = (run_id: string, parent_run_id: string | null, status = 'running') => ({
+const run = (run_id: string, parent_run_id: string | null, status: AgentRunInfo['status'] = 'running'): AgentRunInfo => ({
   run_id, parent_run_id, status, repo_path: '', session_id: 's', agent_id: 'ling', detail: `task of ${run_id}`,
   started_at: 100, ended_at: null,
-}) as any;
+});
 
 test('a running row whose run ended settles; live, young and ended rows stay', () => {
   const now = 1_000_000;

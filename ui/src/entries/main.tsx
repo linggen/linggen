@@ -48,7 +48,7 @@ installChannelHost();
 // A page left open across an engine update still names the old build's chunks,
 // which no longer exist. One reload fetches the new build; a second failure
 // within 10 s is a real error and is left to the ErrorBoundary.
-function lazyChunk<T extends React.ComponentType<any>>(load: () => Promise<{ default: T }>) {
+function lazyChunk(load: () => Promise<{ default: React.ComponentType }>) {
   return lazy(() => load().catch((error) => {
     const last = Number(sessionStorage.getItem('chunk-reload-at') || 0);
     if (Date.now() - last < 10_000) throw error;
