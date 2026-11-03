@@ -958,7 +958,21 @@ fn is_home(path: &Path) -> bool {
 }
 
 /// A grant here is either the whole machine or a device path such as `/dev`.
+/// A folder inside the home directory never is, wherever the home lives.
 fn ungrantable(path: &Path) -> bool {
+    let home = dirs::home_dir().map(|home| PathBuf::from(normalize_path(&home.to_string_lossy())));
+    ungrantable_with_home(path, home.as_deref())
+}
+
+/// A home of `/` or a bare root such as `/var` exempts nothing.
+fn ungrantable_with_home(path: &Path, home: Option<&Path>) -> bool {
+    let in_home = home.is_some_and(|home| {
+        home.components().count() > 2 && path != home && path.starts_with(home)
+    });
+    !in_home && system_path(path)
+}
+
+fn system_path(path: &Path) -> bool {
     let text = path.to_string_lossy();
     const ROOTS: &[&str] = &[
         "/dev",
@@ -1006,4 +1020,26 @@ fn display_path(path: &Path) -> String {
         }
     }
     path.to_string_lossy().to_string()
+}
+
+#[cfg(test)]
+mod grantable_tests {
+    use super::ungrantable_with_home;
+    use std::path::Path;
+
+    #[test]
+    fn a_folder_in_a_home_under_a_system_root_is_grantable() {
+        let home = Some(Path::new("/private/var/tmp/w/home"));
+        assert!(!ungrantable_with_home(Path::new("/private/var/tmp/w/home/work"), home));
+        assert!(ungrantable_with_home(Path::new("/private/var/tmp/w/home"), home));
+        assert!(ungrantable_with_home(Path::new("/private/var/tmp/w/homework"), home));
+        assert!(ungrantable_with_home(Path::new("/dev/null"), home));
+    }
+
+    #[test]
+    fn a_bare_root_home_exempts_nothing() {
+        assert!(ungrantable_with_home(Path::new("/var/x"), Some(Path::new("/var"))));
+        assert!(ungrantable_with_home(Path::new("/dev"), Some(Path::new("/"))));
+        assert!(!ungrantable_with_home(Path::new("/Users/alex/repo"), Some(Path::new("/Users/alex"))));
+    }
 }
