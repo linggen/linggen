@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-11-03 — Linggen 2.0：灵境
+
+- **灵境 (Lingjing), the cultivation game, ships with Linggen.** Play it on the
+  Mac beside the chat, with Ling telling the story and 银月 at your side, and
+  on the iPhone with no Mac needed. One save, carried between them.
+- Engine, Linggen.app and the iPhone app move to 2.0 together. The 1.10.0
+  changes below (one memory across machines) were never published on their
+  own and ship in this release.
+
 - **Found pictures match the question.** Ling sees an image search's
   pictures as one labelled contact sheet (on a model that sees) and picks by
   what they show. A page's cover picture is no longer captioned by the page
@@ -45,7 +54,7 @@
   moves one turn's calls or answer under another. Sessions saved before keep
   the old matching. `LINGGEN_EVENT_LOG` tees UI events to a file for tests.
 
-## [1.10.0] - 2026-10-21 — one memory across machines
+### From 1.10.0 (2026-10-21, never published) — one memory across machines
 
 - **Memory across machines** (ling-mem 1.13.0). When a LAN machine asks to
   share this Mac's memory, Allow / Deny shows in the web UI; only someone
