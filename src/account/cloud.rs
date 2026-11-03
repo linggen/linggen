@@ -122,23 +122,54 @@ pub enum PutOutcome {
     Saved(u64),
     /// Another device wrote since this one read.
     Stale,
+    /// The account keeps no cloud save (not subscribed).
+    Refused(Refusal),
+}
+
+/// linggen.dev's 402 `not_subscribed`: saves are for subscribers. `kept`: a
+/// copy from an earlier subscription is still there, last written `updated_at`.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Refusal {
+    #[serde(default)]
+    pub kept: bool,
+    #[serde(default)]
+    pub updated_at: Option<String>,
+}
+
+/// What a read of the account's save found.
+pub enum Fetched {
+    Save(CloudSave),
+    Refused(Refusal),
+}
+
+fn refusal(status: reqwest::StatusCode, body: &serde_json::Value) -> Option<Refusal> {
+    let not_subscribed = body.get("error").and_then(|e| e.as_str()) == Some("not_subscribed");
+    if status != reqwest::StatusCode::PAYMENT_REQUIRED || !not_subscribed {
+        return None;
+    }
+    Some(serde_json::from_value(body.clone()).unwrap_or_default())
 }
 
 fn save_url(name: &str) -> Result<String> {
     Ok(format!("{}/api/saves/{}", site_url(), named(name)?))
 }
 
-pub async fn save_get(name: &str) -> Result<CloudSave> {
+pub async fn save_get(name: &str) -> Result<Fetched> {
     let resp = http()
         .get(save_url(name)?)
         .bearer_auth(token()?)
         .send()
         .await
         .context("connect to linggen.dev")?;
-    if !resp.status().is_success() {
-        bail!("save: {}", resp.status());
+    let status = resp.status();
+    if status.is_success() {
+        return Ok(Fetched::Save(resp.json().await.context("cloud save")?));
     }
-    resp.json().await.context("cloud save")
+    let body: serde_json::Value = resp.json().await.unwrap_or_default();
+    match refusal(status, &body) {
+        Some(r) => Ok(Fetched::Refused(r)),
+        None => bail!("save: {status}"),
+    }
 }
 
 /// Write `body` as the version after `read_version`.
@@ -163,12 +194,30 @@ pub async fn save_put(
     if status == reqwest::StatusCode::CONFLICT {
         return Ok(PutOutcome::Stale);
     }
-    bail!("save: {status}")
+    match refusal(status, &body) {
+        Some(r) => Ok(PutOutcome::Refused(r)),
+        None => bail!("save: {status}"),
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::valid_cloud_name;
+    use super::{refusal, valid_cloud_name};
+    use reqwest::StatusCode;
+
+    #[test]
+    fn only_a_402_not_subscribed_is_a_refusal() {
+        let body = serde_json::json!({"error": "not_subscribed", "kept": true, "updated_at": "2026-11-03T10:00:00Z"});
+        let r = refusal(StatusCode::PAYMENT_REQUIRED, &body).unwrap();
+        assert!(r.kept);
+        assert_eq!(r.updated_at.as_deref(), Some("2026-11-03T10:00:00Z"));
+        assert!(refusal(
+            StatusCode::PAYMENT_REQUIRED,
+            &serde_json::json!({"error": "x"})
+        )
+        .is_none());
+        assert!(refusal(StatusCode::FORBIDDEN, &body).is_none());
+    }
 
     #[test]
     fn only_site_shaped_names_reach_a_url() {

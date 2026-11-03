@@ -168,9 +168,10 @@ impl Layout {
         Ok(())
     }
 
-    /// Before a pull replaces changes made here, each file it would change or
-    /// remove is copied beside itself as `<file>.conflict-<unix secs>`.
-    /// Returns the copies made.
+    /// Before `current` loses to `incoming`, each file of it that `incoming`
+    /// would change or lack is copied beside itself as
+    /// `<file>.conflict-<unix secs>` — the files here before a pull, or the
+    /// account's copy before this machine's replaces it. Returns the copies.
     pub fn keep_conflicts(&self, current: &Files, incoming: &Files) -> Result<Vec<PathBuf>> {
         let stamp = crate::util::now_ts_secs();
         let mut kept = Vec::new();
@@ -182,6 +183,10 @@ impl Layout {
             let mut name = file.file_name().unwrap_or_default().to_os_string();
             name.push(format!(".conflict-{stamp}"));
             let copy = file.with_file_name(name);
+            if let Some(dir) = copy.parent() {
+                std::fs::create_dir_all(dir)
+                    .with_context(|| format!("create {}", dir.display()))?;
+            }
             std::fs::write(&copy, bytes).with_context(|| format!("write {}", copy.display()))?;
             kept.push(copy);
         }

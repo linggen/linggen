@@ -261,6 +261,9 @@ impl SkillToolDef {
                 .env("PATH", crate::util::shell_path())
                 .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
                 .envs(crate::senses::tool_env(&self.senses))
+                .envs(crate::account::cloud_save::state::tool_env(
+                    self.skill_name.as_deref(),
+                ))
                 .env(crate::language::ENV_KEY, crate::language::effective())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());

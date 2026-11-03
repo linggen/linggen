@@ -3,23 +3,32 @@
 //! the version this machine last agreed on and the save's fingerprint then,
 //! so a sync can tell "changed here" from "another device moved on".
 //!
-//! The account's copy wins every disagreement — but a pull never destroys a
-//! change made here: each file it replaces is first copied beside itself
-//! (`<file>.conflict-<unix secs>`). Pulls happen only at a turn's edges and
-//! when the page asks; mid-turn, after a model call, the save is only pushed.
-//! Every read and write of the save's files holds the save's lockfile
-//! (`lock.rs`), the one the skill's own scripts take.
+//! One side moved: it is taken whole. Both moved: the copy further on wins by
+//! the rule the skill declares (`cloud.further`, `further.rs`) — the same rule
+//! a phone decides by — and without one the account's copy wins; a tie goes
+//! to the account's. The loser is never destroyed: each file it had is kept
+//! beside the save as `<file>.conflict-<unix secs>` (the account's copy too,
+//! when this machine's wins). Pulls happen only at a turn's edges and when the
+//! page asks; mid-turn, after a model call, the save is only pushed. Every
+//! read and write of the save's files holds the save's lockfile (`lock.rs`),
+//! the one the skill's own scripts take.
+//!
+//! linggen.dev keeps saves for subscribers only: a 402 makes the save
+//! local-only, quietly and for a while (`state.rs`) — the ledger is left as it
+//! was, so a resubscribe carries on from it.
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use super::cloud::{save_get, save_put, valid_cloud_name, CloudSave, PutOutcome};
+use super::cloud::{save_get, save_put, valid_cloud_name, CloudSave, Fetched, PutOutcome};
 use crate::engine::skill::{Skill, SkillSource};
 
 mod files;
+pub mod further;
 pub mod lock;
 pub mod peer;
+pub mod state;
 
 use files::{plain, Files, Layout};
 
@@ -32,42 +41,61 @@ pub struct Ledger {
     pub hash: u64,
 }
 
+/// What a sync did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(tag = "action", rename_all = "lowercase")]
 pub enum Action {
     Nothing,
     Pull,
-    Push { version: u64 },
+    Push {
+        version: u64,
+    },
+    /// The account keeps no cloud save: nothing asked of the site.
+    Local,
+}
+
+/// What a sync must do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Step {
+    Nothing,
+    Pull,
+    Push {
+        version: u64,
+    },
+    /// Both moved since they last agreed (or never agreed): the rule decides.
+    Both,
 }
 
 /// What a sync must do. `local`: the save's fingerprint (None = no files);
 /// `ledger`: what this machine last agreed on; `cloud`: the account's version.
-pub fn decide(local: Option<u64>, ledger: Option<Ledger>, cloud: u64) -> Action {
+pub fn decide(local: Option<u64>, ledger: Option<Ledger>, cloud: u64) -> Step {
     if cloud == 0 {
         return if local.is_some() {
-            Action::Push { version: 0 }
+            Step::Push { version: 0 }
         } else {
-            Action::Nothing
+            Step::Nothing
         };
     }
-    let (Some(hash), Some(agreed)) = (local, ledger) else {
-        // No file here, or this machine never synced: the account's save is the game.
-        return Action::Pull;
+    let Some(hash) = local else {
+        return Step::Pull; // no file here: the account's save is the game
     };
-    if cloud != agreed.version {
-        return Action::Pull;
+    let Some(agreed) = ledger else {
+        return Step::Both; // a save here that never met the account's
+    };
+    match (cloud != agreed.version, hash != agreed.hash) {
+        (false, false) => Step::Nothing,
+        (false, true) => Step::Push { version: cloud },
+        (true, false) => Step::Pull,
+        (true, true) => Step::Both,
     }
-    if hash != agreed.hash {
-        return Action::Push { version: cloud };
-    }
-    Action::Nothing
 }
 
-/// A skill's save: its name on the site and its files here.
+/// A skill's save: its name on the site, its files here, and its rule.
 #[derive(Debug, Clone)]
 pub struct SaveTarget {
     pub skill: String,
     layout: Layout,
+    further: Option<further::Rule>,
 }
 
 impl SaveTarget {
@@ -77,13 +105,13 @@ impl SaveTarget {
     }
 }
 
-/// What one sync did.
 #[derive(Debug, Clone, Serialize)]
 pub struct Synced {
     #[serde(flatten)]
     pub action: Action,
     pub version: u64,
-    /// Copies of changes made here that a pull replaced.
+    /// Copies kept of what lost: changes made here a pull replaced, or the
+    /// account's copy this machine's replaced.
     pub conflicts: Vec<PathBuf>,
 }
 
@@ -96,6 +124,10 @@ impl Synced {
         }
     }
 
+    fn local() -> Self {
+        Self::plain(Action::Local, 0)
+    }
+
     pub fn pulled(&self) -> bool {
         self.action == Action::Pull
     }
@@ -104,7 +136,8 @@ impl Synced {
 /// The save an installed skill declares, if every path stays inside its
 /// directory and its name can stand in a URL.
 pub fn target(skill: &Skill) -> Option<SaveTarget> {
-    let paths = skill.cloud.as_ref()?.save.as_ref()?;
+    let cloud = skill.cloud.as_ref()?;
+    let paths = cloud.save.as_ref()?;
     if !matches!(skill.source, SkillSource::Global) || !valid_cloud_name(&skill.name) {
         tracing::warn!(
             "skill '{}': only an installed skill named [a-z0-9-] keeps a cloud save",
@@ -124,14 +157,20 @@ pub fn target(skill: &Skill) -> Option<SaveTarget> {
         );
         return None;
     }
+    let root = skill.skill_dir.clone()?;
+    let further = cloud
+        .further
+        .as_ref()
+        .and_then(|v| further::rule(&skill.name, &root, v));
     Some(SaveTarget {
         skill: skill.name.clone(),
         layout: Layout {
-            root: skill.skill_dir.clone()?,
+            root,
             entries,
             one: paths.is_one(),
-            skip: skill.cloud.as_ref()?.skip.clone(),
+            skip: cloud.skip.clone(),
         },
+        further,
     })
 }
 
@@ -146,23 +185,93 @@ async fn read_locked(t: &SaveTarget) -> Result<(Files, u64)> {
 /// Bring the files and the account's copy into step.
 pub async fn sync(t: &SaveTarget) -> Result<Synced> {
     let _one = SYNC_LOCK.lock().await;
-    let cloud = save_get(&t.skill).await?;
+    let now = crate::util::now_ts_secs();
     let (files, hash) = read_locked(t).await?;
+    note_rise(t, &files, now);
+    if state::backed_off(&state::read(&t.skill), now, state::who()) {
+        return Ok(Synced::local());
+    }
+    let cloud = match save_get(&t.skill).await? {
+        Fetched::Save(c) => c,
+        Fetched::Refused(r) => {
+            state::refused(&t.skill, &r, now);
+            return Ok(Synced::local());
+        }
+    };
     let local = (!files.is_empty()).then_some(hash);
-    let action = decide(local, read_ledger(&t.skill), cloud.version);
-    match action {
-        Action::Nothing => Ok(Synced::plain(action, cloud.version)),
-        Action::Pull => pull(t, &cloud).await,
-        Action::Push { version } => match push_files(t, version, &files, hash).await? {
-            Some(v) => Ok(Synced::plain(action, v)),
-            None => {
-                tracing::info!(
-                    "save '{}' moved on elsewhere; taking the account's copy",
-                    t.skill
-                );
-                pull(t, &save_get(&t.skill).await?).await
+    let done = match decide(local, read_ledger(&t.skill), cloud.version) {
+        Step::Nothing => Synced::plain(Action::Nothing, cloud.version),
+        Step::Pull => pull(t, &cloud).await?,
+        Step::Push { version } => push_or_pull(t, version, &files, hash).await?,
+        Step::Both => both(t, &cloud, &files, hash).await?,
+    };
+    if done.action != Action::Local {
+        state::reached(&t.skill, now);
+    }
+    Ok(done)
+}
+
+/// A change made here, pushed; a save that moved on meanwhile is taken.
+async fn push_or_pull(t: &SaveTarget, version: u64, files: &Files, hash: u64) -> Result<Synced> {
+    match push_files(t, version, files, hash).await? {
+        Pushed::At(v) => Ok(Synced::plain(Action::Push { version }, v)),
+        Pushed::Refused => Ok(Synced::local()),
+        Pushed::Stale => {
+            tracing::info!("save '{}' moved on elsewhere; deciding again", t.skill);
+            match save_get(&t.skill).await? {
+                Fetched::Save(c) => both(t, &c, files, hash).await,
+                Fetched::Refused(r) => {
+                    state::refused(&t.skill, &r, crate::util::now_ts_secs());
+                    Ok(Synced::local())
+                }
             }
-        },
+        }
+    }
+}
+
+/// Both moved: the same files agree at once; else the copy further on wins,
+/// and the other is kept beside the save.
+async fn both(t: &SaveTarget, cloud: &CloudSave, files: &Files, hash: u64) -> Result<Synced> {
+    let body = cloud.body.as_ref().context("the account's save is empty")?;
+    let theirs = t.layout.decode(body)?;
+    if t.layout.fingerprint(&theirs) == hash {
+        write_ledger(
+            &t.skill,
+            Ledger {
+                version: cloud.version,
+                hash,
+            },
+        )?;
+        return Ok(Synced::plain(Action::Nothing, cloud.version));
+    }
+    let here_wins = t
+        .further
+        .as_ref()
+        .is_some_and(|r| r.further(files, &theirs));
+    if !here_wins {
+        return pull(t, cloud).await;
+    }
+    let action = Action::Push {
+        version: cloud.version,
+    };
+    match push_files(t, cloud.version, files, hash).await? {
+        Pushed::At(v) => {
+            let _held = lock::acquire(&t.file()).await?;
+            let conflicts = t.layout.keep_conflicts(&theirs, files)?;
+            tracing::info!(
+                "save '{}': this machine's copy was further on and replaced the account's; kept as {:?}",
+                t.skill,
+                conflicts
+            );
+            Ok(Synced {
+                action,
+                version: v,
+                conflicts,
+            })
+        }
+        // Written again meanwhile: the next edge decides on what it is then.
+        Pushed::Stale => Ok(Synced::plain(Action::Nothing, cloud.version)),
+        Pushed::Refused => Ok(Synced::local()),
     }
 }
 
@@ -171,6 +280,10 @@ pub async fn sync(t: &SaveTarget) -> Result<Synced> {
 /// save that moved on elsewhere is left for the turn's edge to reconcile.
 pub async fn push(t: &SaveTarget) -> Result<Action> {
     let _one = SYNC_LOCK.lock().await;
+    let now = crate::util::now_ts_secs();
+    if state::backed_off(&state::read(&t.skill), now, state::who()) {
+        return Ok(Action::Local);
+    }
     let Some(agreed) = read_ledger(&t.skill) else {
         return Ok(Action::Nothing); // never synced here: the turn's edge pulls first
     };
@@ -178,28 +291,66 @@ pub async fn push(t: &SaveTarget) -> Result<Action> {
     if files.is_empty() || hash == agreed.hash {
         return Ok(Action::Nothing);
     }
-    let action = Action::Push {
-        version: agreed.version,
-    };
-    if push_files(t, agreed.version, &files, hash).await?.is_none() {
-        tracing::info!(
-            "save '{}' moved on elsewhere; the turn's edge will reconcile",
-            t.skill
-        );
-        return Ok(Action::Nothing);
+    match push_files(t, agreed.version, &files, hash).await? {
+        Pushed::At(_) => {
+            state::reached(&t.skill, now);
+            Ok(Action::Push {
+                version: agreed.version,
+            })
+        }
+        Pushed::Refused => Ok(Action::Local),
+        Pushed::Stale => {
+            tracing::info!(
+                "save '{}' moved on elsewhere; the turn's edge will reconcile",
+                t.skill
+            );
+            Ok(Action::Nothing)
+        }
     }
-    Ok(action)
 }
 
-/// Write the files as the version after `version`; `None` when stale.
-async fn push_files(t: &SaveTarget, version: u64, files: &Files, hash: u64) -> Result<Option<u64>> {
+enum Pushed {
+    At(u64),
+    Stale,
+    Refused,
+}
+
+/// Write the files as the version after `version`.
+async fn push_files(t: &SaveTarget, version: u64, files: &Files, hash: u64) -> Result<Pushed> {
     match save_put(&t.skill, version, &t.layout.encode(files)).await? {
         PutOutcome::Saved(v) => {
             write_ledger(&t.skill, Ledger { version: v, hash })?;
-            Ok(Some(v))
+            Ok(Pushed::At(v))
         }
-        PutOutcome::Stale => Ok(None),
+        PutOutcome::Stale => Ok(Pushed::Stale),
+        PutOutcome::Refused(r) => {
+            state::refused(&t.skill, &r, crate::util::now_ts_secs());
+            Ok(Pushed::Refused)
+        }
     }
+}
+
+/// Keep the save's standing on its rule's `rise` entries; the first move up
+/// while the save is local-only is noted (`rose_local_at`), a fact for the
+/// page and the agent.
+fn note_rise(t: &SaveTarget, files: &Files, now: u64) {
+    let Some(rule) = &t.further else { return };
+    let Some(standing) = rule.standing(files) else {
+        return;
+    };
+    let mut s = state::read(&t.skill);
+    if s.seen.as_ref() == Some(&standing) {
+        return;
+    }
+    let rose = s
+        .seen
+        .as_ref()
+        .is_some_and(|seen| rule.rose(seen, &standing));
+    if rose && s.local_only() && s.rose_local_at.is_none() {
+        s.rose_local_at = Some(now);
+    }
+    s.seen = Some(standing);
+    state::write(&t.skill, &s);
 }
 
 /// Take the account's copy. Under the lock, the files are read again: a
@@ -269,26 +420,55 @@ mod tests {
 
     #[test]
     fn nothing_saved_anywhere_does_nothing_and_a_first_file_creates() {
-        assert_eq!(decide(None, None, 0), Action::Nothing);
-        assert_eq!(decide(Some(7), None, 0), Action::Push { version: 0 });
+        assert_eq!(decide(None, None, 0), Step::Nothing);
+        assert_eq!(decide(Some(7), None, 0), Step::Push { version: 0 });
     }
 
     #[test]
-    fn a_machine_that_never_synced_takes_the_accounts_save() {
-        assert_eq!(decide(Some(9), None, 3), Action::Pull);
-        assert_eq!(decide(None, Some(L), 3), Action::Pull);
+    fn no_file_here_takes_the_accounts_and_a_save_that_never_met_it_is_decided() {
+        assert_eq!(decide(None, Some(L), 3), Step::Pull);
+        assert_eq!(decide(None, None, 3), Step::Pull);
+        assert_eq!(decide(Some(9), None, 3), Step::Both);
     }
 
     #[test]
     fn a_change_here_is_pushed_from_the_agreed_version() {
-        assert_eq!(decide(Some(8), Some(L), 3), Action::Push { version: 3 });
-        assert_eq!(decide(Some(7), Some(L), 3), Action::Nothing);
+        assert_eq!(decide(Some(8), Some(L), 3), Step::Push { version: 3 });
+        assert_eq!(decide(Some(7), Some(L), 3), Step::Nothing);
     }
 
     #[test]
-    fn another_device_moving_on_wins_even_over_a_change_here() {
-        assert_eq!(decide(Some(7), Some(L), 4), Action::Pull);
-        assert_eq!(decide(Some(8), Some(L), 4), Action::Pull);
+    fn another_device_moving_on_is_taken_and_both_moving_is_decided() {
+        assert_eq!(decide(Some(7), Some(L), 4), Step::Pull);
+        assert_eq!(decide(Some(8), Some(L), 4), Step::Both);
+    }
+
+    #[test]
+    fn a_further_rule_declared_as_a_json_flow_in_the_frontmatter_is_read() {
+        let root = std::env::temp_dir().join(format!("cloud-further-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("ladder.json"),
+            r#"{"tiers": [{"id": "a"}, {"id": "b"}]}"#,
+        )
+        .unwrap();
+        // The shape skills/lingjing/SKILL.md declares: a JSON flow across lines under `further:`.
+        let md = "---\nname: g\ndescription: d\ncloud:\n  save: [data/state.json]\n  skip: [art]\n  further:\n    {\"file\": \"data/state.json\", \"by\": [\n      {\"count\": \"done\"},\n      {\"rank\": \"tier\", \"order\": {\"file\": \"ladder.json\", \"list\": \"tiers\", \"key\": \"id\"}, \"rise\": true}\n    ]}\n---\nbody";
+        let mut skill =
+            crate::extensions::skills::parse_skill_text(md, SkillSource::Global).unwrap();
+        skill.skill_dir = Some(root.clone());
+        let t = target(&skill).unwrap();
+        let rule = t.further.as_ref().expect("the rule is read");
+        let at = |tier: &str| {
+            let mut f = Files::new();
+            f.insert(
+                "data/state.json".into(),
+                format!(r#"{{"done": [], "tier": "{tier}"}}"#).into_bytes(),
+            );
+            f
+        };
+        assert!(rule.further(&at("b"), &at("a")));
+        assert!(!rule.further(&at("a"), &at("b")));
     }
 
     #[test]
@@ -307,6 +487,7 @@ mod tests {
                 save: Some(bad.into()),
                 meter: None,
                 skip: Vec::new(),
+                further: None,
             });
             assert!(target(&skill).is_none(), "{bad}");
         }

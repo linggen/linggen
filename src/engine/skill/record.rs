@@ -127,6 +127,12 @@ pub struct CloudConfig {
     /// removed by a pull (`skip: [art]`: pictures stay on the device).
     #[serde(default)]
     pub skip: Vec<String>,
+    /// Which of two copies of the save is further on, when both moved: an
+    /// ordered list of comparisons over one JSON file of the save
+    /// (`account/cloud_save/further.rs`). Read at use, so a shape the engine
+    /// cannot read only warns, and the other copy wins as without it.
+    #[serde(default)]
+    pub further: Option<serde_json::Value>,
     /// A rolling token window on linggen.dev, named by the site. Each turn's
     /// tokens are reported to it; a spent window refuses the next turn.
     #[serde(default)]

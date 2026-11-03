@@ -1,9 +1,13 @@
 //! A skill page's view of its cloud (`CloudConfig`):
 //!
-//!   GET  /api/skill-cloud/{skill}       signed in?, the meter's reading
+//!   GET  /api/skill-cloud/{skill}       signed in?, the meter's reading, and
+//!                                       the save's cloud facts (`save`:
+//!                                       `{cloud: on|off|lapsed|unknown,
+//!                                       kept_at, synced_at, rose_local_at}`)
 //!   POST /api/skill-cloud/{skill}/sync  keep the save in step now — the
 //!                                       page calls it on open and after a
-//!                                       change it made itself (a board won)
+//!                                       change it made itself (a board won);
+//!                                       answers the same `save` facts
 
 use axum::{
     extract::{Path, State},
@@ -14,7 +18,7 @@ use axum::{
 use std::sync::Arc;
 
 use crate::account::cloud::{last_reading, meter_reading};
-use crate::account::cloud_save::{sync, target, Synced};
+use crate::account::cloud_save::{state, sync, target, Synced};
 use crate::engine::skill::Skill;
 use crate::server::{ServerEvent, ServerState};
 
@@ -66,7 +70,9 @@ pub async fn get_cloud(
         (Some(m), true) => meter_reading(m).await.ok().or_else(|| last_reading(m)),
         _ => None,
     };
-    Json(serde_json::json!({ "signed_in": signed_in, "meter": meter })).into_response()
+    let save = target(&skill).map(|t| state::read(&t.skill).view());
+    Json(serde_json::json!({ "signed_in": signed_in, "meter": meter, "save": save }))
+        .into_response()
 }
 
 pub async fn post_sync(
@@ -90,6 +96,7 @@ pub async fn post_sync(
                 "done": done.action,
                 "version": done.version,
                 "conflicts": done.conflicts,
+                "save": state::read(&save.skill).view(),
             }))
             .into_response()
         }
