@@ -96,7 +96,11 @@ export function mentionInProgress(val: string): MentionInProgress | null {
   if (lastAt < 0 || val.includes(' ', lastAt)) return null;
   const after = val.substring(lastAt + 1);
   if (lastAt > 0 && val[lastAt - 1] === '@') return { kind: 'agent', filter: after.toLowerCase() };
-  if (after.startsWith('@') || val.substring(0, lastAt).trim() !== '') return null;
+  if (after.startsWith('@')) return null;
+  // At the start, or ending the words after a space or mark (`好。@银`) —
+  // never inside a word (`a@b`).
+  const before = val.substring(0, lastAt);
+  if (before.trim() !== '' && /[A-Za-z0-9_]$/.test(before)) return null;
   return { kind: 'lead-agent', filter: after };
 }
 
@@ -104,9 +108,86 @@ export function mentionInProgress(val: string): MentionInProgress | null {
  *  prefix-free substring of its id or any alias. Plain `includes`, so CJK
  *  (`@银` → 银月) matches as well as Latin (`@yin` → yinyue). */
 export function agentMatches(agent: MentionableAgent, filter: string): boolean {
-  const f = filter.trim().toLowerCase();
+  const f = fold(filter);
   if (!f) return true;
-  return [agent.name, ...(agent.aliases ?? [])].some((n) => n.trim().toLowerCase().includes(f));
+  return namesOf(agent).some((n) => n.includes(f) || near(n, f));
+}
+
+/** A name folded for matching: lower case, tone marks and tone digits gone
+ *  (`Yínyuè`, `yin2yue4` → `yinyue`). */
+function fold(s: string): string {
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/([a-z])[1-5]/g, '$1').trim();
+}
+
+/** An agent's names, folded: its id and every declared alias (display name,
+ *  pinyin, …). */
+function namesOf(a: MentionableAgent): string[] {
+  return [a.name, ...(a.aliases ?? [])].map(fold).filter(Boolean);
+}
+
+/** Edits from `a` to `b` (insert, delete, change one letter). */
+function editDistance(a: string, b: string): number {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j++) {
+      row[j] = Math.min(prev[j] + 1, row[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = row;
+  }
+  return prev[b.length];
+}
+
+/** A near spelling of a Latin name: one slip in five letters or more, two in
+ *  eight or more (`yingyue` → `yinyue`). A short name must be exact — `@long`
+ *  is never Ling. CJK names are always exact. */
+function near(name: string, typed: string): boolean {
+  if (CJK.test(name) || CJK.test(typed)) return false;
+  const slack = name.length >= 8 ? 2 : name.length >= 5 ? 1 : 0;
+  return slack > 0 && Math.abs(name.length - typed.length) <= slack && editDistance(name, typed) <= slack;
+}
+
+/** The agent an `@token` names: its id or an alias exactly (any case, tones
+ *  or not), else the one agent the token is a near spelling of. Undefined
+ *  when nobody, or more than one, is near. */
+export function agentNamed(token: string, agents: MentionableAgent[]): string | undefined {
+  const t = fold(token);
+  if (!t) return undefined;
+  const exact = agents.find((a) => namesOf(a).includes(t));
+  if (exact) return exact.name.toLowerCase();
+  const close = agents.filter((a) => namesOf(a).some((n) => near(n, t)));
+  return close.length === 1 ? close[0].name.toLowerCase() : undefined;
+}
+
+/** What an `@token` may be: letters (any script, tone marks), digits, `_`
+ *  `-`. A path (`@src/main.rs`) never is one — the `/` or `.` breaks it. */
+const TOKEN = '[\\p{L}\\p{M}\\p{N}_-]+';
+const LEAD_TOKEN = new RegExp(`^@(${TOKEN})(?=$|[\\s,:，：、])`, 'u');
+/** An `@token` that ends the message — after a space, a mark or the start,
+ *  never inside a word (`a@b`) — with only marks after it. */
+const TRAIL_TOKEN = new RegExp(`(^|[^A-Za-z0-9_])@(${TOKEN})[\\s\\p{P}]*$`, 'u');
+
+/** Whom the words address by an `@name` at their start or their end
+ *  (`@银月 你好`, `提示一下。@yingyue`), and the words without it. An `@token`
+ *  there that names nobody is `{ unknown }`: the words stay as they are and
+ *  the chat's default answers — the box shows whom. `@@` is not read here. */
+export function addressIn(
+  text: string,
+  agents: MentionableAgent[],
+): { agent: string; words: string } | { unknown: string } | undefined {
+  const t = text.trim();
+  if (t.startsWith('@@')) return undefined;
+  const lead = leadingAgentMention(t, agents);
+  if (lead) return { agent: lead.agent, words: lead.body };
+  const head = LEAD_TOKEN.exec(t);
+  if (head) {
+    const agent = agentNamed(head[1], agents);
+    return agent ? { agent, words: t.slice(head[0].length).replace(NAME_ENDS, '').trim() } : { unknown: head[1] };
+  }
+  const tail = TRAIL_TOKEN.exec(t);
+  if (!tail) return undefined;
+  const agent = agentNamed(tail[2], agents);
+  return agent ? { agent, words: (t.slice(0, tail.index) + tail[1]).trim() } : { unknown: tail[2] };
 }
 
 /** CJK script: a name in it needs no space before the words (`@银月你好`). */
@@ -161,7 +242,11 @@ export function typedAddress(
       if (whole && n.length > (best?.len ?? 0)) best = { agent: a.name.toLowerCase(), len: n.length };
     }
   }
-  return best && { agent: best.agent, rest: rest.slice(best.len).replace(NAME_ENDS, '') };
+  if (best) return { agent: best.agent, rest: rest.slice(best.len).replace(NAME_ENDS, '') };
+  // A tone-marked or near spelling, closed by a space or mark (`@yingyue `).
+  const head = new RegExp(`^(${TOKEN})[\\s,:，：、]+`, 'u').exec(rest);
+  const agent = head ? agentNamed(head[1], agents) : undefined;
+  return agent && head ? { agent, rest: rest.slice(head[0].length) } : undefined;
 }
 
 // The composer's pre-fill (one-ling-spec § Who answers; the phone's

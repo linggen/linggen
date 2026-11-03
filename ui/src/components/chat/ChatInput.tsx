@@ -39,6 +39,7 @@ import {
   mentionLanguage,
   mentionInProgress,
   typedAddress,
+  addressIn,
 } from '../../lib/chatMentions.mts';
 
 /** Her voice switches — offered only once she is there. */
@@ -149,7 +150,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     return agent ? agentMentionLabel(agent, mentionLang) : id.charAt(0).toUpperCase() + id.slice(1);
   };
   const members = useUiStore((s) => s.sessionMembers);
-  const defaultName = labelOf(chatAgentOf(selectedAgent, members));
+  const defaultId = chatAgentOf(selectedAgent, members);
+  const defaultName = labelOf(defaultId);
   const zh = language() === 'zh-Hans';
   // After the person addresses Yinyue, or she replies, the box opens with
   // her chip — for ~10 minutes (see useYinyuePrefill).
@@ -163,6 +165,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     setAddressee,
   );
   const manyAddressable = mainAgents.length > 1;
+  // An `@name` still in the words — at their start or end, a near spelling
+  // too (`提示一下。@yingyue`) — and whom the message so goes to. One that
+  // names nobody is no address: the default's chip shows who answers.
+  const inWords = addressee ? undefined : addressIn(chatInput, mainAgents);
+  const inferred = !manyAddressable || !inWords ? '' : 'agent' in inWords ? inWords.agent : defaultId;
   /** The words as typed, with a finished leading `@name ` taken into the
    *  chip; returns the words the box now holds. */
   const setWords = (val: string): string => {
@@ -194,11 +201,15 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
   const send = () => {
     if (!chatInput.trim() && pendingImages.length === 0) return;
-    const userMessage = chatInput.trim();
+    // An address in the words is taken out of them, as the chip's is.
+    const named = inWords && 'agent' in inWords ? inWords : undefined;
+    const userMessage = named ? named.words : chatInput.trim();
     // An address with nothing said: keep it, send nothing.
     if (pendingImages.length === 0 && (!userMessage || isBareMention(userMessage, mainAgents))) return;
     const imagesToSend = pendingImages.length > 0 ? pendingImages.map((img) => img.data) : undefined;
-    const chip = addressee;
+    // The chip, else whom the words name; an `@token` naming nobody goes
+    // to the default by name, so it never passes as addressed.
+    const chip = addressee || named?.agent || (inWords ? defaultId : '');
     setChatInput('');
     setAddressee('');
     prefillSpent(); // the next floor state refills the box
@@ -699,6 +710,13 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 ))
               )}
             </div>
+          )}
+          {!addressee && inferred && (
+            <span data-testid="chat-addressee" data-inferred="true" data-no-i18n
+              title={zh ? `发给 ${labelOf(inferred)}` : `To ${labelOf(inferred)}`}
+              className={cn('shrink-0 self-end mb-1.5 inline-flex items-center rounded-full border border-dashed border-purple-400/50 text-purple-600/80 dark:text-purple-300/80 px-2 py-0.5 font-medium', mobile ? 'text-[14px]' : 'text-[12px]')}>
+              @{labelOf(inferred)}
+            </span>
           )}
           {addressee && (
             <span data-testid="chat-addressee" data-no-i18n

@@ -41,9 +41,10 @@ test('no words after the name, a path, or a mid-text @ is no mention', () => {
 
 import { completeFileMention, mentionInProgress, isBareMention, floorOf, prefillAfter, PREFILL_QUIET_MS, typedAddress, dropLeadingAgentMention } from '../src/lib/chatMentions.mts';
 
-test('@ opens agents only at the start; /f opens files', () => {
+test('@ opens agents at the start or ending the words, never inside a word; /f opens files', () => {
   assert.deepEqual(mentionInProgress('@y'), { kind: 'lead-agent', filter: 'y' });
-  assert.equal(mentionInProgress('hi @y'), null);
+  assert.deepEqual(mentionInProgress('hi @y'), { kind: 'lead-agent', filter: 'y' });
+  assert.equal(mentionInProgress('hi@y'), null);
   assert.equal(mentionInProgress('@Yinyue '), null);
   assert.deepEqual(mentionInProgress('/f'), { kind: 'file-search', query: '' });
   assert.deepEqual(mentionInProgress('see /f ab'), { kind: 'file-search', query: 'ab' });
@@ -94,12 +95,14 @@ test('a finished @name becomes the chip; the default is a chip too', () => {
   assert.deepEqual(typedAddress('@Ling 你好', AGENTS), { agent: 'ling', rest: '你好' });
   assert.deepEqual(typedAddress('@银月 ', AGENTS), { agent: 'yinyue', rest: '' });
   assert.deepEqual(typedAddress('@yinyue, hi', AGENTS), { agent: 'yinyue', rest: 'hi' });
+  assert.deepEqual(typedAddress('@yingyue hi', AGENTS), { agent: 'yinyue', rest: 'hi' });
+  assert.deepEqual(typedAddress('@Yínyuè ', AGENTS), { agent: 'yinyue', rest: '' });
 });
 
 test('an unfinished name, a longer word, @@ or a path stays in the words', () => {
   assert.equal(typedAddress('@lin', AGENTS), undefined);
   assert.equal(typedAddress('@ling', AGENTS), undefined);
-  assert.equal(typedAddress('@lingx ', AGENTS), undefined);
+  assert.equal(typedAddress('@lingxyz ', AGENTS), undefined);
   assert.equal(typedAddress('@@ling ', AGENTS), undefined);
   assert.equal(typedAddress('@src/main.rs ', AGENTS), undefined);
   assert.equal(typedAddress('hi @ling ', AGENTS), undefined);
@@ -108,4 +111,40 @@ test('an unfinished name, a longer word, @@ or a path stays in the words', () =>
 test('picking from the @ list drops the typed partial', () => {
   assert.equal(dropLeadingAgentMention('@yi'), '');
   assert.equal(dropLeadingAgentMention('@'), '');
+});
+
+import { addressIn, agentNamed, agentMatches } from '../src/lib/chatMentions.mts';
+
+test('an @token names an agent by id, alias or pinyin, tones or not, or a near spelling', () => {
+  const two = [{ name: 'ling' }, { name: 'yinyue', aliases: ['银月'] }];
+  assert.equal(agentNamed('yinyue', two), 'yinyue');
+  assert.equal(agentNamed('银月', two), 'yinyue');
+  assert.equal(agentNamed('Yínyuè', two), 'yinyue');
+  assert.equal(agentNamed('yin2yue4', two), 'yinyue');
+  assert.equal(agentNamed('yingyue', two), 'yinyue');
+  assert.equal(agentNamed('ling', two), 'ling');
+  assert.equal(agentNamed('Líng', two), 'ling');
+  assert.equal(agentNamed('long', two), undefined, 'a short name is exact');
+  assert.equal(agentNamed('hanli', two), undefined);
+  assert.equal(agentMatches(two[1], 'yingyue'), true);
+});
+
+test('the address may end the words; one naming nobody is not an address', () => {
+  const two = [{ name: 'ling' }, { name: 'yinyue', aliases: ['银月'] }];
+  assert.deepEqual(addressIn('提示一下。@yingyue', two), { agent: 'yinyue', words: '提示一下。' });
+  assert.deepEqual(addressIn('look at this @ling', two), { agent: 'ling', words: 'look at this' });
+  assert.deepEqual(addressIn('@yingyue 你好', two), { agent: 'yinyue', words: '你好' });
+  assert.deepEqual(addressIn('@银月你好', two), { agent: 'yinyue', words: '你好' });
+  assert.deepEqual(addressIn('提示一下。@xyz', two), { unknown: 'xyz' });
+  assert.deepEqual(addressIn('@xyz hi', two), { unknown: 'xyz' });
+  assert.equal(addressIn('mail a@ling', two), undefined, 'inside a word');
+  assert.equal(addressIn('see @src/main.rs', two), undefined, 'a path');
+  assert.equal(addressIn('@@ling hi', two), undefined);
+  assert.equal(addressIn('just words', two), undefined);
+});
+
+test('an @ ending the words after a mark opens the agent list', () => {
+  assert.deepEqual(mentionInProgress('提示一下。@yin'), { kind: 'lead-agent', filter: 'yin' });
+  assert.deepEqual(mentionInProgress('hi @'), { kind: 'lead-agent', filter: '' });
+  assert.equal(mentionInProgress('mail a@b'), null);
 });
