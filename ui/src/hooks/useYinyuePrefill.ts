@@ -35,11 +35,13 @@ export function useYinyuePrefill(
     return () => window.clearInterval(timer);
   }, []);
 
+  // Also on each new exchange (`floor.at`): after a send spent the chip,
+  // her next line refills it though `want` stayed the same.
   useEffect(() => {
     if (want === written.current) return;
     if (input === '' && (chip === '' || chip === written.current)) setChip(want);
     written.current = want;
-  }, [want]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [want, floor.at]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return () => { written.current = ''; };
 }

@@ -172,8 +172,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const inferred = !manyAddressable || !inWords ? '' : 'agent' in inWords ? inWords.agent : defaultId;
   /** The words as typed, with a finished leading `@name ` taken into the
    *  chip; returns the words the box now holds. */
-  const setWords = (val: string): string => {
-    const typed = typedAddress(val, mainAgents);
+  const setWords = (val: string, composing = false): string => {
+    // Never mid-composition (a pinyin IME): the next change after it commits.
+    const typed = composing ? undefined : typedAddress(val, mainAgents);
     if (typed) setAddressee(typed.agent);
     const words = typed ? typed.rest : val;
     setChatInput(words);
@@ -735,7 +736,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             onDrop={handleDrop}
             onDragOver={handleDragOver}
             onChange={(e) => {
-              const val = setWords(e.target.value);
+              const val = setWords(e.target.value, (e.nativeEvent as InputEvent).isComposing);
 
               const mention = mentionInProgress(val);
               if (mention) {
