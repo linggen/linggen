@@ -484,7 +484,13 @@ async fn deliver(
         };
         hand(state, &host.meta, turn, &key, chosen.clone()).await;
         match wait_turn(state, host, outcome).await {
-            Err(error) if error == protocol::RETRY => continue,
+            // A stopped turn never moves to a fresh runner.
+            Err(error) if error == protocol::RETRY => {
+                if state.manager.is_run_cancelled(&host.run_id).await {
+                    return Err("cancelled".into());
+                }
+                continue;
+            }
             outcome => return outcome,
         }
     }

@@ -48,6 +48,8 @@ struct Pending {
     life: Option<crate::engine::agent::runs_api::RunLife>,
     /// The SDK started on it: a Steer may join it now.
     begun: bool,
+    /// Handed to a runner already running, not the one it started with.
+    handed: bool,
 }
 
 /// A turn the SDK started on its own (a background task's notification):
@@ -108,6 +110,7 @@ impl ClaudeSession {
             done: Some(first.done),
             life: None,
             begun: false,
+            handed: false,
         });
         let result = self
             .read_events(lines, stdin, &mut active, &mut state, &mut turns, controls, &mut subagents)
@@ -142,6 +145,11 @@ impl ClaudeSession {
         let ended = result.as_ref().err().map_or("Claude Agent SDK ended".into(), ToString::to_string);
         for turn in state.pending.drain(..) {
             match turn.done {
+                // Handed over as the runner ended on its own, never begun:
+                // the SDK never took it, so a fresh runner does.
+                Some(done) if turn.handed && !turn.begun => {
+                    let _ = done.send(Err(RETRY.into()));
+                }
                 Some(done) => stranded.push((turn.run_id, done)),
                 None => self.finish_pending(turn, Err(ended.clone())).await,
             }
@@ -237,7 +245,7 @@ impl ClaudeSession {
             .await
             .ok()?;
         let life = Some(self.state.manager.run_life(&run_id));
-        Some(Pending { run_id, uuid: steer.uuid, done: None, life, begun: true })
+        Some(Pending { run_id, uuid: steer.uuid, done: None, life, begun: true, handed: true })
     }
 
     /// A result answered this turn: its outcome goes to whoever waits for
@@ -302,8 +310,10 @@ impl ClaudeSession {
                     changes.insert(next_change, reply);
                     let message = json!({"type":"prompt", "id":next_change, "text":turn.prompt,
                         "images":turn.images, "uuid":turn.uuid, "turnMemory":turn.turn_memory});
+                    // Pending before the write: a runner gone mid-handover
+                    // still hands the turn on (`consume`'s cleanup).
+                    turns_state.pending.push_back(Pending { run_id: turn.run_id, uuid: turn.uuid, done: Some(turn.done), life: None, begun: false, handed: true });
                     stdin.write_all(format!("{message}\n").as_bytes()).await?;
-                    turns_state.pending.push_back(Pending { run_id: turn.run_id, uuid: turn.uuid, done: Some(turn.done), life: None, begun: false });
                     if turns_state.pending.len() == 1 && turns_state.unprompted.is_none() {
                         has_text = false;
                         last_text.clear();

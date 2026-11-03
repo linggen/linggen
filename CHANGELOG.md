@@ -38,6 +38,7 @@
   line, never swapped for another source. Fixed: the tool was offered in
   plain chats where it could only fail; a tool that cannot run is no longer
   offered.
+- Fixed: in a Claude session, a queued message handed to a runner that ended right after its last answer failed instead of running on a fresh one.
 
 - **Read opens pictures.** A PNG, JPEG, GIF, WebP or HEIC file (known by
   its bytes, not its name) is no longer read as garbage text. A model that

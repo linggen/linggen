@@ -162,7 +162,12 @@ case "$start" in
  emit "{\"type\":\"cwd\",\"cwd\":\"$PWD/notes\"}"
  emit '{"type":"request","kind":"permission","id":2,"input":{"tool":"Bash","args":{"command":"make"},"suggestions":[]}}'
  IFS= read -r reply
- finish MOVED;;
+ # The runner ends on its own a moment after its result: the next queued
+ # message may be handed to it before it is gone.
+ emit "{\"type\":\"text\",\"text\":\"MOVED\"}"
+ emit "{\"type\":\"result\",\"success\":true,\"text\":\"MOVED\",\"session_id\":\"5d1c2a9e-7b3f-4c1d-9e2a-0f6b8c4d2e10\",\"usage\":{}}"
+ sleep 1
+ emit '{"type":"done"}';;
 *'"prompt":"cd"'*)
  emit "{\"type\":\"cwd\",\"cwd\":\"$PWD/repo/src\"}"
  emit "{\"type\":\"cwd\",\"cwd\":\"$PWD/notes\"}"
