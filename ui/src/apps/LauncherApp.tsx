@@ -186,7 +186,7 @@ export const LauncherApp: React.FC = () => {
               title={appLabel(a)}
               className={activeName === name ? 'absolute inset-0 w-full h-full' : 'hidden'}
               style={{ border: 'none' }}
-              sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+              sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-downloads"
               allow={frameAllow(a.app.allow)}
             />
           );

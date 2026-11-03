@@ -38,7 +38,7 @@ export const AppPanel: React.FC<{
           src={app.url}
           title={app.title}
           style={{ width: '100%', height: '100%', border: 'none' }}
-          sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+          sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-downloads"
           allow={frameAllow()}
         />
       </div>
