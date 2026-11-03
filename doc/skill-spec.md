@@ -260,6 +260,7 @@ sync:
     - { name: lrc,           exts: [lrc] }
     - { name: cover,         exts: [webp, jpg, png] }
     - { name: karaoke_audio, subdir: karaoke, suffix: " (Karaoke)", exts: [mp3] }
+  on-list: bash $SKILL_DIR/scripts/chase.sh   # optional — run in the background on each listing
 ```
 
 The engine then serves four generic routes, keyed by skill name — it never learns what the files mean:
@@ -272,6 +273,8 @@ The engine then serves four generic routes, keyed by skill name — it never lea
 | `POST /api/skill-sync/{skill}/have` | A device reports its full inventory, replacing its ledger row |
 
 The ledger lives at `~/.linggen/sync/{skill}.json` and tracks only primary items — companions are extras, not coverage. Serving is read-only and plain-name-only: anything path-like is rejected, and subdirs are chosen by parameter, never by a path inside the name. `topic` additionally starts a debounced watcher so devices are pushed to instead of polling.
+
+`on-list` is a shell command the engine runs each time a device asks for `/items`, so a skill can bring its folder up to date while none of its pages is open (DJ chases missing lyrics). It never delays the listing: the run starts in the background, at most one per skill — a listing that arrives during a run starts nothing. It runs like a declared edit-tier tool in the skill's working folder (`$SKILL_DIR`, the grant check, a process-group kill after 30 minutes), outside the per-skill tool lock, so it keeps its own lock if it writes. No model is involved.
 
 Ingest (a device writing *into* the Mac) is not covered — that still needs a skill's own server half.
 

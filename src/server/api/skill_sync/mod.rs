@@ -13,6 +13,7 @@
 
 mod ledger;
 mod listing;
+mod on_list;
 
 use axum::{
     body::Body,
@@ -99,6 +100,9 @@ pub(crate) async fn get_items(
     // A skill installed (or a dir created) after startup gets its watcher
     // the first time a device asks.
     arm_watcher(&state, &s.cfg);
+    if s.cfg.on_list.is_some() {
+        on_list::kick(&state, &s.skill);
+    }
     let items = tokio::task::spawn_blocking(move || build_items(&s, listing::list))
         .await
         .unwrap_or_default();

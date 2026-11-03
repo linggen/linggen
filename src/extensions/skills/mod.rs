@@ -742,7 +742,10 @@ fn usable_notices(
                 && !n.prompt.contains("..")
                 && !n.prompt.starts_with('/');
             if !ok {
-                tracing::warn!("skill '{skill}': notice '{}' ignored (line id or prompt path)", n.line);
+                tracing::warn!(
+                    "skill '{skill}': notice '{}' ignored (line id or prompt path)",
+                    n.line
+                );
             }
             ok
         })
@@ -1070,6 +1073,21 @@ Help commit."#;
         let plain =
             parse_skill_text("---\nname: zz\ndescription: d\n---\nB", SkillSource::Global).unwrap();
         assert!(plain.quests.is_none());
+    }
+
+    /// A synced folder may name the command a device's listing starts.
+    #[test]
+    fn a_sync_declares_its_on_list_command() {
+        let text = "---\nname: zz\ndescription: d\nsync:\n  dir: ~/X\n  items: [mp3]\n  on-list: bash $SKILL_DIR/scripts/chase.sh\n---\nBody.";
+        let skill = parse_skill_text(text, SkillSource::Global).unwrap();
+        let sync = skill.sync.expect("sync parsed");
+        assert_eq!(
+            sync.on_list.as_deref(),
+            Some("bash $SKILL_DIR/scripts/chase.sh")
+        );
+        let plain = "---\nname: zz\ndescription: d\nsync:\n  dir: ~/X\n  items: [mp3]\n---\nB";
+        let plain = parse_skill_text(plain, SkillSource::Global).unwrap();
+        assert!(plain.sync.unwrap().on_list.is_none());
     }
 
     /// A skill declares the lines it may push to a closed phone; a line id

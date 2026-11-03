@@ -108,6 +108,12 @@ pub struct SyncConfig {
     /// so devices sync on push instead of polling.
     #[serde(default)]
     pub topic: Option<String>,
+    /// A command the engine runs in the background each time a device lists
+    /// the items (`GET …/items`), at most one run per skill at a time — the
+    /// skill's chance to bring its folder up to date while no page of it is
+    /// open. Never delays the listing; a run already going means no new one.
+    #[serde(rename = "on-list", alias = "on_list", default)]
+    pub on_list: Option<String>,
 }
 
 /// What a skill keeps on linggen.dev for the signed-in account. Declaring it

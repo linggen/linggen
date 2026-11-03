@@ -168,7 +168,8 @@ pub async fn notice_facts(skill: &Skill, cmd: &str) -> Result<String, Refusal> {
     if let Some(dir) = &skill.skill_dir {
         env.push(("SKILL_DIR".into(), dir.to_string_lossy().into_owned()));
     }
-    let ran = tokio::task::spawn_blocking(move || tool.execute(&serde_json::json!({}), &cwd, &env)).await;
+    let ran =
+        tokio::task::spawn_blocking(move || tool.execute(&serde_json::json!({}), &cwd, &env)).await;
     match ran {
         Ok(Ok(ToolResult::CommandOutput {
             exit_code: Some(0),
@@ -186,6 +187,66 @@ pub async fn notice_facts(skill: &Skill, cmd: &str) -> Result<String, Refusal> {
 }
 
 const STAMP_TIMEOUT_MS: u64 = 10_000;
+
+/// How long a `sync.on-list` run may take before its process group is killed.
+const ON_LIST_TIMEOUT_MS: u64 = 30 * 60 * 1000;
+
+/// Run the skill's `sync.on-list` command in its working folder: an edit
+/// tier its grant must cover, `$SKILL_DIR` set. Not under the skill lock — a
+/// run may take minutes, and pages and quest stamps must not wait on it; the
+/// command keeps its own lock if it writes. Ok only on exit 0.
+pub async fn run_on_list(skill: &Skill) -> Result<(), Refusal> {
+    let Some(cmd) = skill.sync.as_ref().and_then(|s| s.on_list.clone()) else {
+        return Err(Refusal::NoTool(format!(
+            "'{}' declares no sync.on-list",
+            skill.name
+        )));
+    };
+    let tool = on_list_tool(skill, cmd);
+    let cwd = working_folder(skill);
+    within_grant(skill, &tool, &cwd)?;
+    let mut env: Vec<(String, String)> = crate::reach::tool_env().into_iter().collect();
+    if let Some(dir) = &skill.skill_dir {
+        env.push(("SKILL_DIR".into(), dir.to_string_lossy().into_owned()));
+    }
+    let ran =
+        tokio::task::spawn_blocking(move || tool.execute(&serde_json::json!({}), &cwd, &env)).await;
+    match ran {
+        Ok(Ok(ToolResult::CommandOutput {
+            exit_code: Some(0), ..
+        })) => Ok(()),
+        Ok(Ok(other)) => Err(Refusal::BadCall(format!(
+            "'{}' sync.on-list failed: {}",
+            skill.name,
+            output(other)
+        ))),
+        Ok(Err(e)) => Err(Refusal::BadCall(format!("{e:#}"))),
+        Err(e) => Err(Refusal::Crashed(format!("{e}"))),
+    }
+}
+
+/// The `sync.on-list` command as an argument-less shell tool.
+fn on_list_tool(skill: &Skill, cmd: String) -> SkillToolDef {
+    SkillToolDef {
+        name: "sync.on-list".into(),
+        description: "Bring the synced folder up to date.".into(),
+        cmd,
+        endpoint: None,
+        tier: Some("edit".into()),
+        args: Default::default(),
+        returns: None,
+        timeout_ms: ON_LIST_TIMEOUT_MS,
+        max_output_bytes: 16 * 1024,
+        page_only: true,
+        others_read: Vec::new(),
+        pet: false,
+        remote: false,
+        skill_name: Some(skill.name.clone()),
+        skill_dir: skill.skill_dir.clone(),
+        senses: skill.senses.clone(),
+        session_params: Default::default(),
+    }
+}
 
 /// The skill's stamp command as a shell tool with two string arguments.
 fn stamp_tool(skill: &Skill, id: &str, at: &str) -> Result<SkillToolDef, Refusal> {
