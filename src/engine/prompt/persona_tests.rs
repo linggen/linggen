@@ -272,3 +272,62 @@ fn a_mission_writes_in_the_linggen_language_and_a_chat_follows_the_person() {
         "Write everything meant for the user in Simplified Chinese."
     );
 }
+
+/// The system message a turn with `task` is sent with.
+fn turn_system(engine: &mut AgentEngine, task: &str) -> String {
+    let (messages, _, _) =
+        engine.prepare_loop_messages(task, true, crate::engine::prompt::PromptPurpose::Preview);
+    messages
+        .iter()
+        .filter(|m| m.role == "system")
+        .map(|m| m.content.as_str())
+        .collect()
+}
+
+#[test]
+fn a_turn_the_person_did_not_type_answers_in_the_linggen_language() {
+    // A page's report is code words (`[scene] won …`): following "the language
+    // the person writes in" answered 中-set players in English (Hanli 11-02).
+    let mut engine = engine_as("ling", LING);
+    let hidden = turn_system(&mut engine, "[HIDDEN] [scene] won fetch-water (lang zh)");
+    at(&hidden, "The person did not type this turn");
+    let typed = turn_system(&mut engine, "hi, how are you?");
+    assert!(!typed.contains("The person did not type this turn"));
+    // The person's own turn keeps the chat rule.
+    at(&typed, "Reply in the language the person writes in");
+    assert_eq!(
+        engine.unprompted_language_line_in("zh-Hans"),
+        "The person did not type this turn: a page, an app or the engine wrote it, and its words say nothing about the person's language. Reply in Simplified Chinese."
+    );
+}
+
+#[test]
+fn an_app_event_kickoff_is_engine_authored_and_a_typed_message_is_not() {
+    use crate::engine::prompt::engine_authored;
+    // 银月's event turns (`/api/yinyue/event` → resident::spoken::with_contract)
+    // and a page's sendHidden both carry the marker.
+    assert!(engine_authored("[HIDDEN] the bread is done … SILENT."));
+    assert!(engine_authored("  [HIDDEN] [scene] recap"));
+    assert!(!engine_authored("你好"));
+    assert!(!engine_authored("[scene] typed by hand"));
+}
+
+#[test]
+fn a_mission_keeps_its_own_line_on_a_hidden_kickoff() {
+    let mut engine = engine_as("ling", LING);
+    engine.active_mission = Some(crate::engine::types::ActiveMission {
+        body: "Check the books.".to_string(),
+        mission_dir: None,
+    });
+    let system = turn_system(&mut engine, "[HIDDEN] run");
+    assert!(!system.contains("The person did not type this turn"));
+    at(&system, "Write everything meant for the user in");
+}
+
+#[test]
+fn a_light_turn_answers_its_hidden_ask_in_the_linggen_language() {
+    let engine = engine_as("yinyue", LING);
+    let light = engine.light_system_prompt();
+    at(&light, "The person did not type this turn");
+    assert!(!light.contains("Reply in the language the person writes in"));
+}

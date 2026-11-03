@@ -193,3 +193,8 @@ text = "Write everything meant for the user in {language}."
 description = "Language line for an interactive session: replies follow the person; content written for pages and reports follows the effective Linggen language"
 vars = ["language"]
 text = "Reply in the language the person writes in. Content you write for pages or reports is in {language}."
+
+[language_unprompted]
+description = "Language line for a turn the person did not type (a page's report, an app's event, any hidden kickoff): its words are code or a prompt, not the person's language, so the reply follows the effective Linggen language"
+vars = ["language"]
+text = "The person did not type this turn: a page, an app or the engine wrote it, and its words say nothing about the person's language. Reply in {language}."

@@ -247,6 +247,12 @@ fn join_sections(parts: impl IntoIterator<Item = String>) -> String {
 /// custom mission agent (e.g. `memory`, whose body carries the judgment rules
 /// and status-line format) stripping it leaves the mission pointing at
 /// instructions the model never sees (the 2026-07-06 dream run failure).
+/// A turn the engine, an app or a page wrote rather than the person: it
+/// carries the hidden marker (`[HIDDEN]`, `doc/chat-spec.md` hidden rows).
+pub(crate) fn engine_authored(task: &str) -> bool {
+    task.contains("[HIDDEN]")
+}
+
 fn mission_prompt(soul: Soul, mission: &ActiveMission, language: String) -> String {
     let body = match &mission.mission_dir {
         Some(dir) => mission.body.replace("$MISSION_DIR", &dir.to_string_lossy()),
@@ -316,7 +322,8 @@ impl AgentEngine {
             self.place_section()
                 .or_else(|| self.skill_description())
                 .unwrap_or_default(),
-            self.language_line(),
+            // A light turn answers a hidden ask, never the person's typing.
+            self.unprompted_language_line(),
         ])
     }
 
@@ -332,6 +339,23 @@ impl AgentEngine {
     /// page/report content in the Linggen language.
     fn language_line(&self) -> String {
         self.language_line_in(&crate::language::effective())
+    }
+
+    /// The language line for a turn the person did not type (a page's
+    /// report, an app's event, any `[HIDDEN]` kickoff): its words are code
+    /// or a prompt, never the person's language, so the reply is in the
+    /// Linggen language — "the language the person writes in" would follow
+    /// the English of a page's code words.
+    pub(crate) fn unprompted_language_line(&self) -> String {
+        self.unprompted_language_line_in(&crate::language::effective())
+    }
+
+    pub(crate) fn unprompted_language_line_in(&self, tag: &str) -> String {
+        let name = crate::language::display_name(tag);
+        self.prompt_store.render_or_fallback(
+            crate::prompts::keys::SYSTEM_LANGUAGE_UNPROMPTED,
+            &[("language", &name)],
+        )
     }
 
     pub(crate) fn language_line_in(&self, tag: &str) -> String {
@@ -767,6 +791,13 @@ impl AgentEngine {
             .any(|t| allowed_tools.as_ref().is_none_or(|s| s.contains(*t)));
 
         // Dynamic content appended after cached stable prefix.
+
+        // A turn the person did not type answers in the Linggen language
+        // (a mission's line already says so for all of it).
+        if self.active_mission.is_none() && engine_authored(task) {
+            system.push_str("\n\n");
+            system.push_str(&self.unprompted_language_line());
+        }
 
         // Check if tools are available — skip all tool-related prompt sections when empty.
         let has_tools = allowed_tools.as_ref().is_none_or(|s| !s.is_empty());
