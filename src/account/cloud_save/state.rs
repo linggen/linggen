@@ -30,7 +30,8 @@ pub enum Cloud {
     On,
     /// Not subscribed, and no copy is kept.
     Off,
-    /// Not subscribed now; a copy from before is kept (`kept_at`).
+    /// Not subscribed now; a copy from before is kept (`kept_at`) — it may
+    /// predate the subscriber gate: no claim the account ever subscribed.
     Lapsed,
 }
 
