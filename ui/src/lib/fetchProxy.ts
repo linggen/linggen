@@ -12,6 +12,7 @@
  */
 import { connection, getTransport } from './transport';
 import { channelBody, ridesChannel, toPath, toResponse } from './channelFetch.mts';
+import { BUDGET_HEADER, budgetMs } from './requestBudget.mts';
 
 /** The browser's own fetch — plain HTTP. Only for what brings the channel
  *  up (signaling) and the page's static files; never for data. */
@@ -27,16 +28,17 @@ function methodOf(input: RequestInfo | URL, init?: RequestInit): string {
   return method.toUpperCase();
 }
 
-function contentTypeOf(headers: HeadersInit | undefined): string | null {
+function headerOf(headers: HeadersInit | undefined, name: string): string | null {
   if (!headers) return null;
-  return new Headers(headers).get('content-type');
+  return new Headers(headers).get(name);
 }
 
 /** One call over the data channel, waiting for it to open first. */
 async function channelFetch(path: string, method: string, init?: RequestInit): Promise<Response> {
   await connection.whenOpen(`${method} ${path}`);
-  const body = channelBody(init?.body, contentTypeOf(init?.headers));
-  const reply = await getTransport().httpProxy(method, path, body);
+  const body = channelBody(init?.body, headerOf(init?.headers, 'content-type'));
+  const budget = budgetMs(headerOf(init?.headers, BUDGET_HEADER), body);
+  const reply = await getTransport().httpProxy(method, path, body, budget);
   return toResponse(reply);
 }
 

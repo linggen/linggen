@@ -11,6 +11,7 @@
 import { connection, getTransport, setTransport } from './transport';
 import { RtcTransport } from './rtcTransport';
 import { channelBody, NotConnectedError, ridesChannel, type ProxyReply } from './channelFetch.mts';
+import { budgetMs } from './requestBudget.mts';
 
 /** One call a framed page asks for (shared/channel.js `request`). */
 export interface ChannelRequest {
@@ -20,6 +21,9 @@ export interface ChannelRequest {
   contentType?: string;
   /** false: fail at once when the channel is not open (a reading). */
   wait?: boolean;
+  /** How long the call may wait for its reply, as the page declared it
+   *  (requestBudget.mts); none: derived from the body, else 30 s. */
+  budgetMs?: number;
 }
 
 /** What a framed page finds at `window.__linggenChannel`. */
@@ -42,7 +46,8 @@ async function request(req: ChannelRequest): Promise<ProxyReply> {
   if (!ridesChannel(req.path)) throw new Error(`${what}: not a data call`);
   if (req.wait === false && !connection.isOpen()) throw new NotConnectedError(what, 0);
   await connection.whenOpen(what);
-  return getTransport().httpProxy(method, req.path, channelBody(req.body, req.contentType));
+  const body = channelBody(req.body, req.contentType);
+  return getTransport().httpProxy(method, req.path, body, budgetMs(req.budgetMs, body));
 }
 
 /** Offer this page's channel to the skill pages it frames. */

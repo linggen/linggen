@@ -301,3 +301,18 @@ test('two calls waiting on one stuck frame both settle — the frame goes only o
   assert.equal(removedAt, 1, 'removed once its last call ended');
   assert.equal(host.asked.length, 2, 'both went on the fresh frame');
 });
+
+test("a call's declared budget reaches the host; one that declares none carries none", async () => {
+  const above = fakeHost();
+  const top = { __linggenChannel: above };
+  top.parent = top;
+  const { channel } = pageChannel({ win: fakeWin(top) });
+  const { BUDGET_HEADER } = globalThis.LinggenChannel;
+  await channel.fetch('/api/bash', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', [BUDGET_HEADER]: '255000' },
+    body: JSON.stringify({ command: 'du -sk ~/Library', timeout_ms: 240000 }),
+  });
+  await channel.fetch('/api/models');
+  assert.deepEqual(above.asked.map((r) => r.budgetMs), [255000, undefined]);
+});

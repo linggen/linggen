@@ -22,6 +22,7 @@ import type { ProxyReply } from './channelFetch.mts';
 import { WhipSignaling, type SignalingStrategy } from './signaling';
 import { gatherNeed, waitForIceGathering } from './iceGather.mts';
 import { dialDeadlineMs, dialOnVisible, redialDelayMs } from './dialPolicy.mts';
+import { createLiveness, DEFAULT_BUDGET_MS, PING_EVERY_MS } from './requestBudget.mts';
 
 /** Configuration for the WebRTC transport. */
 export interface RtcTransportConfig {
@@ -90,6 +91,8 @@ export class RtcTransport implements Transport {
   private sessionChannels = new Map<string, RTCDataChannel>();
   private _status: TransportStatus = 'disconnected';
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+  // Whether the link lives: the heartbeat's answer, never a slow request.
+  private liveness = createLiveness();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempt = 0;
   private intentionalDisconnect = false;
@@ -218,8 +221,8 @@ export class RtcTransport implements Transport {
     return this.controlRequest<{ compacted?: boolean; referenced_files?: string[] }>({ type: 'compact', project_root: projectRoot, session_id: sessionId, agent_id: agentId, focus });
   }
 
-  async httpProxy(method: string, url: string, body?: unknown): Promise<ProxyReply> {
-    return this.controlRequest<ProxyReply>({ type: 'http_request', method, url, body });
+  async httpProxy(method: string, url: string, body?: unknown, budgetMs?: number): Promise<ProxyReply> {
+    return this.controlRequest<ProxyReply>({ type: 'http_request', method, url, body }, budgetMs);
   }
 
   // Sticky — re-sent on every (re)connect, like the Yinyue subscription.
@@ -385,6 +388,7 @@ export class RtcTransport implements Transport {
     };
 
     dc.onmessage = (event) => {
+      this.liveness.heard(); // anything from the engine: the link lives
       try {
         const msg = JSON.parse(event.data);
 
@@ -505,8 +509,10 @@ export class RtcTransport implements Transport {
 
   /** One request/response over the control channel. `T` is the reply's shape.
    *  A request made before the channel is open (boot, a reconnect) waits for
-   *  it, and fails if it does not open in time. */
-  private async controlRequest<T = void>(msg: Record<string, unknown>): Promise<T> {
+   *  it, and fails if it does not open in time. Once sent it waits `budgetMs`
+   *  for its reply; past that it fails alone — a slow reply is not a dead
+   *  link (the heartbeat judges that, `checkLiveness`). */
+  private async controlRequest<T = void>(msg: Record<string, unknown>, budgetMs = DEFAULT_BUDGET_MS): Promise<T> {
     await connection.whenOpen(String(msg.type));
     return new Promise((resolve, reject) => {
       if (!this.controlChannel || this.controlChannel.readyState !== 'open') {
@@ -516,17 +522,12 @@ export class RtcTransport implements Transport {
 
       const requestId = `req-${++this.requestIdCounter}`;
 
-      // Timeout after 30s — timer is cancelled on success/failure
       const timer = setTimeout(() => {
-        if (this.pendingRequests.has(requestId)) {
-          this.pendingRequests.delete(requestId);
-          reject(new Error('Control channel request timeout'));
-          // A control request unanswered for 30 s means the channel is dead
-          // even if the browser still reports it open — reconnect now
-          // instead of waiting for ICE to reach 'failed'.
-          this.handleDisconnect();
-        }
-      }, 30000);
+        if (!this.pendingRequests.has(requestId)) return;
+        this.pendingRequests.delete(requestId);
+        this.gzipTransfers.delete(requestId);
+        reject(new Error(`Control channel request timeout (${Math.round(budgetMs / 1000)} s)`));
+      }, budgetMs);
 
       this.pendingRequests.set(requestId, {
         resolve: (v) => { clearTimeout(timer); resolve(v as T); },
@@ -579,13 +580,25 @@ export class RtcTransport implements Transport {
 
   // --- Internal: heartbeat ---
 
+  /** Ping every PING_EVERY_MS; the engine answers each one. A ping left
+   *  unanswered too long means the channel is dead even if the browser still
+   *  reports it open — reconnect then instead of waiting for ICE 'failed'. */
   private startHeartbeat(): void {
     this.stopHeartbeat();
-    this.heartbeatInterval = setInterval(() => {
-      if (this.controlChannel?.readyState === 'open') {
-        this.controlChannel.send(JSON.stringify({ type: 'heartbeat', ts: Date.now() }));
-      }
-    }, 15000);
+    this.liveness = createLiveness();
+    this.heartbeatInterval = setInterval(() => this.beat(), PING_EVERY_MS);
+  }
+
+  private beat(): void {
+    const now = Date.now();
+    if (this.liveness.dead(now)) {
+      console.warn('[WebRTC] heartbeat unanswered — reconnecting');
+      this.handleDisconnect();
+      return;
+    }
+    if (this.controlChannel?.readyState !== 'open') return;
+    this.controlChannel.send(JSON.stringify({ type: 'heartbeat', ts: now }));
+    this.liveness.pinged(now);
   }
 
   private stopHeartbeat(): void {

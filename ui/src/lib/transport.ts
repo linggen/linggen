@@ -115,8 +115,9 @@ export interface Transport {
   sendCompact(projectRoot: string, sessionId: string | null, agentId: string, focus?: string): Promise<{ compacted?: boolean; referenced_files?: string[] }>;
 
   /** Send one `/api/*` request over the data channel. The reply carries its
-   *  status, content type and body (base64 when the body is bytes). */
-  httpProxy(method: string, url: string, body?: unknown): Promise<ProxyReply>;
+   *  status, content type and body (base64 when the body is bytes).
+   *  `budgetMs`: how long it may wait for that reply (requestBudget.mts). */
+  httpProxy(method: string, url: string, body?: unknown, budgetMs?: number): Promise<ProxyReply>;
 
   /** Tell the server which session/project the frontend has active.
    *  The server uses this to scope its page_state push. */

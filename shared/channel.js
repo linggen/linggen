@@ -27,6 +27,13 @@
 // call fail with NotConnectedError. Byte replies (audio, images) come as
 // base64 and are handed back as the bytes they were.
 //
+// A call waits for its reply as long as it declares: the page names its
+// budget in milliseconds in the `X-Linggen-Budget-Ms` header of its fetch
+// (or `budgetMs` on a `request`). One that declares nothing waits as long as
+// its JSON body's `timeout_ms` asks the engine to work, plus a margin, else
+// 30 s (the host applies it: ui/src/lib/requestBudget.mts). A call past its
+// budget fails alone; it never takes the channel down.
+//
 // How the channel stands — 'connecting' (a call waits), 'open', 'down' (a
 // call gave up) — is `LinggenChannel.state()`, and each change is a
 // `linggen-channel` event on the window ({ detail: { state } }), so a page can
@@ -44,6 +51,8 @@
   const HOST_KEY = '__linggenChannel';
   /** The engine's UI as a bare channel: one peer, nothing rendered. */
   const FRAME_URL = '/?channel=1';
+  /** The fetch header a page names its call's budget in (milliseconds). */
+  const BUDGET_HEADER = 'X-Linggen-Budget-Ms';
   /** Statuses a Response may not carry a body with. */
   const NO_BODY = new Set([101, 204, 205, 304]);
 
@@ -105,8 +114,15 @@
     }
   }
 
-  /** `{ body, contentType }` of a fetch: the type it names, or JSON when the
-   *  text is JSON (the engine re-sends a JSON body as JSON). */
+  /** The budget a fetch declares in its headers, in ms, if any. */
+  function declaredBudget(headers) {
+    const ms = Number(headers.get(BUDGET_HEADER));
+    return Number.isFinite(ms) && ms > 0 ? ms : undefined;
+  }
+
+  /** `{ body, contentType, budgetMs }` of a fetch: the type it names, or JSON
+   *  when the text is JSON (the engine re-sends a JSON body as JSON), and the
+   *  budget it declares. */
   async function bodyOf(input, init, what) {
     const own = init && init.body !== undefined;
     const raw = own ? init.body : isRequest(input) ? await input.text() : undefined;
@@ -114,7 +130,7 @@
     const headers = new Headers((init && init.headers) || (isRequest(input) ? input.headers : undefined));
     const named = headers.get('content-type');
     const contentType = named || (body !== undefined && isJson(body) ? 'application/json' : undefined);
-    return { body, contentType };
+    return { body, contentType, budgetMs: declaredBudget(headers) };
   }
 
   function fromBase64(b64) {
@@ -202,7 +218,9 @@
   /** One `request` on a remote page: its fetch, which the tunnel worker
    *  answers over the connect page's data channel — as the engine's reply. */
   async function viaTunnel(fetchFn, req) {
-    const headers = req.contentType ? { 'Content-Type': req.contentType } : undefined;
+    const headers = {};
+    if (req.contentType) headers['Content-Type'] = req.contentType;
+    if (req.budgetMs) headers[BUDGET_HEADER] = String(req.budgetMs);
     const res = await fetchFn(req.path, { method: req.method, headers, body: req.body });
     const contentType = res.headers.get('content-type') || '';
     if (/^(text\/|application\/(json|javascript)|image\/svg)/.test(contentType) || !contentType) {
@@ -314,9 +332,10 @@
     }
 
     /** One call over the channel: `{ method, path, body?, contentType?,
-     *  wait? }` → the engine's reply `{ status, content_type, body,
+     *  wait?, budgetMs? }` → the engine's reply `{ status, content_type, body,
      *  body_encoding? }`. `wait: false` fails at once when it is not open
-     *  (a reading, like the presence beat, is skipped, never queued). */
+     *  (a reading, like the presence beat, is skipped, never queued).
+     *  `budgetMs`: how long it may wait for the reply once sent. */
     async function request(req) {
       if (remote) return viaTunnel(env.fetch, req);
       const wait = req.wait !== false;
@@ -365,8 +384,10 @@
 
     async function send(route, input, init) {
       const what = `${route.method} ${route.path}`;
-      const { body, contentType } = await bodyOf(input, init, what);
-      const reply = await request({ method: route.method, path: route.path, body, contentType });
+      const { body, contentType, budgetMs } = await bodyOf(input, init, what);
+      const req = { method: route.method, path: route.path, body, contentType };
+      if (budgetMs) req.budgetMs = budgetMs;
+      const reply = await request(req);
       return toResponse(reply);
     }
 
@@ -404,6 +425,7 @@
 
   const api = {
     CONNECT_WAIT_MS,
+    BUDGET_HEADER,
     NotConnectedError,
     ridesChannel,
     routeOf,
