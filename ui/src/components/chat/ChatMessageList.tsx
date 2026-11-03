@@ -71,6 +71,8 @@ export const ChatMessageRow = React.memo<{
   msgKey: string;
   isUser: boolean;
   senderTag?: string | null;
+  /** Whom the person's line went to (`→ 银月`); absent in a one-agent chat. */
+  recipient?: string;
   isExpanded: boolean;
   /** Absent for the streaming row: it has nothing to expand yet. */
   onToggle?: (msgKey: string) => void;
@@ -87,7 +89,7 @@ export const ChatMessageRow = React.memo<{
     onResend?: (failed: ChatMessage) => void;
     inputRef: React.RefObject<HTMLTextAreaElement | null>;
   };
-}>(({ msg, msgKey, isUser, senderTag, isExpanded, onToggle, userMsgIndex, userMsgRefs, showInterrupted, planProps }) => {
+}>(({ msg, msgKey, isUser, senderTag, recipient, isExpanded, onToggle, userMsgIndex, userMsgRefs, showInterrupted, planProps }) => {
   const toggle = useCallback(() => onToggle?.(msgKey), [onToggle, msgKey]);
   const registerRef = useCallback((el: HTMLDivElement | null) => {
     if (userMsgIndex == null || !userMsgRefs?.current) return;
@@ -134,6 +136,11 @@ export const ChatMessageRow = React.memo<{
           <>
             {/* The person's own words: never mistaken for the page's English. */}
             <span data-no-i18n>{msg.text}</span>
+            {recipient && (
+              <span data-testid="chat-recipient" data-no-i18n className="ml-1.5 text-[11px] text-slate-400 dark:text-slate-500 whitespace-nowrap">
+                → {recipient}
+              </span>
+            )}
             <ChatImages images={msg.images} />
           </>
         ) : (
@@ -180,6 +187,8 @@ export const ChatMessageList = React.memo<{
   verboseMode?: boolean;
   userMsgRefs: React.RefObject<Map<number, HTMLDivElement>>;
   selectedAgent: string;
+  /** Agent id → its name, when more than one agent can be addressed. */
+  recipients?: Record<string, string>;
   pendingPlanAgentId?: string | null;
   agentContext?: Record<string, { tokens: number; messages: number; tokenLimit?: number }>;
   onApprovePlan?: () => void;
@@ -187,7 +196,7 @@ export const ChatMessageList = React.memo<{
   onEditPlan?: (text: string) => void;
   onResend?: (failed: ChatMessage) => void;
   inputRef: React.RefObject<HTMLTextAreaElement | null>;
-}>(({ messages, from, onLoadEarlier, expandedMessages, setExpandedMessages, verboseMode, userMsgRefs, selectedAgent, pendingPlanAgentId, agentContext, onApprovePlan, onRejectPlan, onEditPlan, onResend, inputRef }) => {
+}>(({ messages, from, onLoadEarlier, expandedMessages, setExpandedMessages, verboseMode, userMsgRefs, selectedAgent, recipients, pendingPlanAgentId, agentContext, onApprovePlan, onRejectPlan, onEditPlan, onResend, inputRef }) => {
   const planProps = useMemo(() => ({ pendingPlanAgentId, agentContext, onApprovePlan, onRejectPlan, onEditPlan, onResend, inputRef }), [pendingPlanAgentId, agentContext, onApprovePlan, onRejectPlan, onEditPlan, onResend, inputRef]);
   // The user's name, as core memory states it — labels their bubbles. Until
   // the real name is learned, the placeholder "Hanli" stands in (Yinyue's
@@ -253,6 +262,7 @@ export const ChatMessageList = React.memo<{
                 ? (coreName ?? 'Hanli')
                 : agentLabel(msg, selectedAgent)
             }
+            recipient={isUser ? recipients?.[(msg.to || '').toLowerCase()] : undefined}
             isExpanded={isExpanded}
             onToggle={toggleExpanded}
             userMsgIndex={userMsgIndex}

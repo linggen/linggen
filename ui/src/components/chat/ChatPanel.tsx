@@ -18,6 +18,8 @@ import type {
   SkillInfo,
   SubagentInfo,
 } from '../../types';
+import { useAddressable } from '../../hooks/useAddressable';
+import { agentMentionLabel, mentionLanguage } from '../../lib/chatMentions.mts';
 import { normalizeAgentKey } from '../../lib/messageUtils';
 import { ChatMessageList, ChatMessageRow } from './ChatMessageList';
 import { TrialLowNotice } from './TrialLowNotice';
@@ -282,6 +284,14 @@ export const ChatPanel: React.FC<{
   const { isAgentActive, spinnerVerb, thinkingElapsed, lastRunSummary } = useRunSpinner(sessionId);
 
   const mainAgentIds = useMemo(() => mainAgents.map((agent) => normalizeAgentKey(agent.name)), [mainAgents]);
+  // Whom each of the person's lines went to — only where more than one
+  // agent can be addressed; a chat with one has nothing to tell apart.
+  const addressable = useAddressable(mainAgents);
+  const recipients = useMemo(() => {
+    if (addressable.length < 2) return undefined;
+    const lang = mentionLanguage();
+    return Object.fromEntries(addressable.map((a) => [a.name.toLowerCase(), agentMentionLabel(a, lang)]));
+  }, [addressable]);
 
   const {
     filteredMainMessages, historicalMessages, streamingMessage, visibleQueued, selectedSubagent, filteredSubagentMessages,
@@ -449,6 +459,7 @@ export const ChatPanel: React.FC<{
           verboseMode={verboseMode}
           userMsgRefs={userMsgRefs}
           selectedAgent={selectedAgent}
+          recipients={recipients}
           pendingPlanAgentId={pendingPlanAgentId}
           agentContext={agentContext}
           onApprovePlan={onApprovePlan}

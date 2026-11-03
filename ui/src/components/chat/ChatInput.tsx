@@ -23,17 +23,22 @@ import { readImageForSend } from '../../lib/imageEncode';
 import { steerQueued, takeQueued as takeQueuedMessage } from './queuedActions';
 import { useYinyuePrefill } from '../../hooks/useYinyuePrefill';
 import { useAgentPresent } from '../../hooks/useAgentPresent';
+import { useAddressable } from '../../hooks/useAddressable';
 import { COMPANION_ID } from '../../lib/agentsMet.mts';
+import { language } from '../../lib/i18n';
+import { useUiStore } from '../../stores/uiStore';
+import { chatAgentOf } from '../../lib/sessionMembers.mts';
 import {
   agentMatches,
   agentMentionLabel,
   completeAgentMention,
   completeFileMention,
-  completeLeadingAgentMention,
+  dropLeadingAgentMention,
   isBareMention,
   leadingAgentMention,
   mentionLanguage,
   mentionInProgress,
+  typedAddress,
 } from '../../lib/chatMentions.mts';
 
 /** Her voice switches — offered only once she is there. */
@@ -131,22 +136,42 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
   // The agents a person may address — main agents, less any the spec marks
   // `internal` (run by the engine only).
-  const mainAgents = useMemo(
-    () => agents.filter((a) => !a.internal && mainAgentIds.includes(normalizeAgentKey(a.name))),
+  const mainAgents = useAddressable(useMemo(
+    () => agents.filter((a) => mainAgentIds.includes(normalizeAgentKey(a.name))),
     [agents, mainAgentIds],
-  );
+  ));
   const mentionLang = useMemo(() => mentionLanguage(), []);
+  // Whom this message goes to, shown as a chip before the words; empty, the
+  // chat's default answers (the placeholder names who).
+  const [addressee, setAddressee] = useState('');
+  const labelOf = (id: string) => {
+    const agent = mainAgents.find((a) => a.name.toLowerCase() === id);
+    return agent ? agentMentionLabel(agent, mentionLang) : id.charAt(0).toUpperCase() + id.slice(1);
+  };
+  const members = useUiStore((s) => s.sessionMembers);
+  const defaultName = labelOf(chatAgentOf(selectedAgent, members));
+  const zh = language() === 'zh-Hans';
   // After the person addresses Yinyue, or she replies, the box opens with
-  // her mention — for ~10 minutes (see useYinyuePrefill).
+  // her chip — for ~10 minutes (see useYinyuePrefill).
   const yinyueHere = useAgentPresent(COMPANION_ID);
-  const yinyue = yinyueHere ? mainAgents.find((a) => a.name.toLowerCase() === COMPANION_ID) : undefined;
   const prefillSpent = useYinyuePrefill(
     chatMessages ?? [],
     mainAgents.map((a) => a.name),
-    yinyue ? agentMentionLabel(yinyue, mentionLang) : '',
+    yinyueHere && mainAgents.some((a) => a.name.toLowerCase() === COMPANION_ID),
     chatInput,
-    setChatInput,
+    addressee,
+    setAddressee,
   );
+  const manyAddressable = mainAgents.length > 1;
+  /** The words as typed, with a finished leading `@name ` taken into the
+   *  chip; returns the words the box now holds. */
+  const setWords = (val: string): string => {
+    const typed = typedAddress(val, mainAgents);
+    if (typed) setAddressee(typed.agent);
+    const words = typed ? typed.rest : val;
+    setChatInput(words);
+    return words;
+  };
 
   const resizeInput = () => {
     if (!inputRef.current) return;
@@ -170,10 +195,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const send = () => {
     if (!chatInput.trim() && pendingImages.length === 0) return;
     const userMessage = chatInput.trim();
-    // The pre-fill alone is an address with nothing said: keep it, send nothing.
-    if (pendingImages.length === 0 && isBareMention(userMessage, mainAgents)) return;
+    // An address with nothing said: keep it, send nothing.
+    if (pendingImages.length === 0 && (!userMessage || isBareMention(userMessage, mainAgents))) return;
     const imagesToSend = pendingImages.length > 0 ? pendingImages.map((img) => img.data) : undefined;
+    const chip = addressee;
     setChatInput('');
+    setAddressee('');
     prefillSpent(); // the next floor state refills the box
     setPendingImages([]);
     setShowSkillDropdown(false);
@@ -187,15 +214,16 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     // `@@agent` moves the chat to that agent; `@agent` / `@银月` addresses it
     // for this message only — the chat stays with whom it was with.
     const mention = leadingAgentMention(userMessage, mainAgents);
-    const mentionAgent = mention?.agent;
-    if (mention?.sticky) setSelectedAgent(mention.agent);
+    const mentionAgent = chip || mention?.agent;
+    if (!chip && mention?.sticky) setSelectedAgent(mention.agent);
 
     // Who the message is for, as this chat shows it — but only an agent the
     // person named or picked goes to the server; otherwise the session's
     // default responder answers there.
     const shownAgent = mentionAgent || selectedAgent;
     const targetAgent = mentionAgent || useServerStore.getState().selectedAgent || undefined;
-    if (openQuestion && onAnswerQuestion && userMessage && !imagesToSend && !mentionAgent
+    if (openQuestion && onAnswerQuestion && userMessage && !imagesToSend
+        && (!mentionAgent || chip === normalizeAgentKey(openQuestion.agentId))
         && normalizeAgentKey(openQuestion.agentId) === normalizeAgentKey(shownAgent)) {
       onAnswerQuestion(openQuestion.questionId, openQuestion.questions.map((_, i) => ({
         question_index: i, selected: [], custom_text: i === 0 ? userMessage : null,
@@ -301,10 +329,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   };
 
   const applyLeadAgent = (agent: AgentInfo) => {
-    // Ling is the default responder: choosing her just drops the mention.
-    const isDefault = agent.name.toLowerCase() === 'ling';
-    const label = agent.name.charAt(0).toUpperCase() + agent.name.slice(1);
-    setChatInput(isDefault ? chatInput.substring(0, chatInput.lastIndexOf('@')) : completeLeadingAgentMention(chatInput, label));
+    // Whoever is picked — the default too — becomes the chip, so the box
+    // always shows whom the message goes to.
+    setAddressee(agent.name.toLowerCase());
+    setChatInput(dropLeadingAgentMention(chatInput));
     closeFileDropdown();
     inputRef.current?.focus();
   };
@@ -672,6 +700,16 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               )}
             </div>
           )}
+          {addressee && (
+            <span data-testid="chat-addressee" data-no-i18n
+              className={cn('shrink-0 self-end mb-1.5 inline-flex items-center gap-0.5 rounded-full bg-purple-500/10 text-purple-600 dark:text-purple-300 pl-2 pr-1 py-0.5 font-medium', mobile ? 'text-[14px]' : 'text-[12px]')}>
+              @{labelOf(addressee)}
+              <button type="button" onClick={() => { setAddressee(''); inputRef.current?.focus(); }}
+                className="rounded-full p-0.5 opacity-60 hover:opacity-100 hover:bg-purple-500/15" title={zh ? '移除' : 'Remove'} aria-label={zh ? '移除' : 'Remove'}>
+                <X size={11} />
+              </button>
+            </span>
+          )}
           <textarea
             ref={inputRef}
             value={chatInput}
@@ -679,8 +717,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             onDrop={handleDrop}
             onDragOver={handleDragOver}
             onChange={(e) => {
-              const val = e.target.value;
-              setChatInput(val);
+              const val = setWords(e.target.value);
 
               const mention = mentionInProgress(val);
               if (mention) {
@@ -759,6 +796,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               if (hint && ((e.key === 'Tab' && !e.shiftKey) || e.key === 'ArrowRight')) {
                 e.preventDefault();
                 setChatInput(hint);
+                return;
+              }
+              // Backspace at the very start of the words takes the chip off.
+              if (e.key === 'Backspace' && addressee && e.currentTarget.selectionStart === 0 && e.currentTarget.selectionEnd === 0) {
+                e.preventDefault();
+                setAddressee('');
                 return;
               }
               // Skill dropdown keyboard nav
@@ -859,7 +902,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 setShowFileDropdown(false);
               }
             }}
-            placeholder={hint ? `${hint}   ⇥ Tab / →` : claudeSession ? "Message Claude… (Shift+Enter newline)" : mobile ? "Message..." : `Message... (${yinyueHere ? '@ Ling/银月, ' : ''}/f files, / skills, Shift+Enter newline)`}
+            placeholder={hint ? `${hint}   ⇥ Tab / →` : claudeSession ? "Message Claude… (Shift+Enter newline)"
+              : manyAddressable && !addressee ? (zh ? `发给 ${defaultName}` : `To ${defaultName}`)
+              : mobile || addressee ? "Message..." : "Message... (/f files, / skills, Shift+Enter newline)"}
             rows={1}
             className={cn(
               "flex-1 bg-transparent border-none outline-none resize-none leading-5 overflow-y-hidden",

@@ -39,7 +39,7 @@ test('no words after the name, a path, or a mid-text @ is no mention', () => {
   assert.equal(leadingAgentMention('hello @银月', AGENTS), undefined);
 });
 
-import { completeFileMention, mentionInProgress, isBareMention, floorOf, prefillAfter, PREFILL_QUIET_MS } from '../src/lib/chatMentions.mts';
+import { completeFileMention, mentionInProgress, isBareMention, floorOf, prefillAfter, PREFILL_QUIET_MS, typedAddress, dropLeadingAgentMention } from '../src/lib/chatMentions.mts';
 
 test('@ opens agents only at the start; /f opens files', () => {
   assert.deepEqual(mentionInProgress('@y'), { kind: 'lead-agent', filter: 'y' });
@@ -56,15 +56,15 @@ test('completing a file writes @path, a directory stays in /f', () => {
   assert.equal(completeFileMention('/f a', 'src/', false), '/f src/');
 });
 
-test('pre-fill: her mention while she holds the floor, cleared after 10 minutes', () => {
+test('pre-fill: her chip while she holds the floor, cleared after 10 minutes', () => {
   const table = ['ling', 'yinyue'];
   const toHer = [{ role: 'user' as const, from: 'user', to: 'yinyue', timestampMs: 1000 }];
   const floor = floorOf(toHer, table);
   assert.deepEqual(floor, { speaker: 'yinyue', at: 1000 });
-  assert.equal(prefillAfter(floor, 1000 + 60_000, 'Yinyue'), '@Yinyue ');
-  assert.equal(prefillAfter(floor, 1000 + PREFILL_QUIET_MS - 1, 'Yinyue'), '@Yinyue ');
-  assert.equal(prefillAfter(floor, 1000 + PREFILL_QUIET_MS, 'Yinyue'), '');
-  assert.equal(prefillAfter({}, 1000, 'Yinyue'), '');
+  assert.equal(prefillAfter(floor, 1000 + 60_000), 'yinyue');
+  assert.equal(prefillAfter(floor, 1000 + PREFILL_QUIET_MS - 1), 'yinyue');
+  assert.equal(prefillAfter(floor, 1000 + PREFILL_QUIET_MS), '');
+  assert.equal(prefillAfter({}, 1000), '');
 });
 
 test('pre-fill: a line to Ling hands the floor back; other rows are not at the table', () => {
@@ -78,7 +78,7 @@ test('pre-fill: a line to Ling hands the floor back; other rows are not at the t
   ];
   assert.deepEqual(floorOf(rows, table), { speaker: 'ling', at: 3 });
   assert.deepEqual(floorOf(rows.slice(0, 2), table), { speaker: 'yinyue', at: 2 });
-  assert.equal(prefillAfter(floorOf(rows, table), 4, 'Yinyue'), '');
+  assert.equal(prefillAfter(floorOf(rows, table), 4), '');
 });
 
 test('a bare mention is an address with nothing said', () => {
@@ -86,4 +86,26 @@ test('a bare mention is an address with nothing said', () => {
   assert.equal(isBareMention('@@银月', AGENTS), true);
   assert.equal(isBareMention('@Yinyue hi', AGENTS), false);
   assert.equal(isBareMention('@src/main.rs', AGENTS), false);
+});
+
+test('a finished @name becomes the chip; the default is a chip too', () => {
+  assert.deepEqual(typedAddress('@lingo ', AGENTS), { agent: 'lingo', rest: '' });
+  assert.deepEqual(typedAddress('@ling ', AGENTS), { agent: 'ling', rest: '' });
+  assert.deepEqual(typedAddress('@Ling 你好', AGENTS), { agent: 'ling', rest: '你好' });
+  assert.deepEqual(typedAddress('@银月 ', AGENTS), { agent: 'yinyue', rest: '' });
+  assert.deepEqual(typedAddress('@yinyue, hi', AGENTS), { agent: 'yinyue', rest: 'hi' });
+});
+
+test('an unfinished name, a longer word, @@ or a path stays in the words', () => {
+  assert.equal(typedAddress('@lin', AGENTS), undefined);
+  assert.equal(typedAddress('@ling', AGENTS), undefined);
+  assert.equal(typedAddress('@lingx ', AGENTS), undefined);
+  assert.equal(typedAddress('@@ling ', AGENTS), undefined);
+  assert.equal(typedAddress('@src/main.rs ', AGENTS), undefined);
+  assert.equal(typedAddress('hi @ling ', AGENTS), undefined);
+});
+
+test('picking from the @ list drops the typed partial', () => {
+  assert.equal(dropLeadingAgentMention('@yi'), '');
+  assert.equal(dropLeadingAgentMention('@'), '');
 });

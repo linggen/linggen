@@ -5,22 +5,22 @@ import { floorOf, prefillAfter, type TableMessage } from '../lib/chatMentions.mt
 const RECHECK_MS = 30_000;
 
 /**
- * The composer's `@Yinyue` pre-fill (the phone's chat_screen `_syncPrefill`):
- * when who holds the table changes, or the quiet window ends, the box takes
- * the wanted mention — but only over an empty box or the mention it wrote
- * itself, never over the person's own words, and a mention they deleted stays
- * deleted until the floor changes again.
+ * The composer's Yinyue pre-fill (the phone's chat_screen `_syncPrefill`):
+ * when who holds the table changes, or the quiet window ends, the box's
+ * addressee chip takes the wanted agent — but only over an empty box whose
+ * chip is empty or the one it set itself, never over the person's own pick,
+ * and a chip they cleared stays cleared until the floor changes again.
  *
- * `label` is how her name is written after `@`; empty when she is not at this
- * table. Returns `spent()` — call it when the box is emptied by a send, so the
- * next floor state refills it.
+ * `here` says she is at this table. Returns `spent()` — call it when the box
+ * is emptied by a send, so the next floor state refills it.
  */
 export function useYinyuePrefill(
   messages: TableMessage[],
   tableIds: string[],
-  label: string,
+  here: boolean,
   input: string,
-  setInput: (value: string) => void,
+  chip: string,
+  setChip: (agent: string) => void,
 ): () => void {
   const [now, setNow] = useState(() => Date.now());
   const written = useRef('');
@@ -28,7 +28,7 @@ export function useYinyuePrefill(
   // contents, and read the ids back from that key so the deps are exact.
   const tableKey = tableIds.join(',');
   const floor = useMemo(() => floorOf(messages, tableKey.split(',')), [messages, tableKey]);
-  const want = label ? prefillAfter(floor, now, label) : '';
+  const want = here ? prefillAfter(floor, now) : '';
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), RECHECK_MS);
@@ -37,7 +37,7 @@ export function useYinyuePrefill(
 
   useEffect(() => {
     if (want === written.current) return;
-    if (input === '' || input === written.current) setInput(want);
+    if (input === '' && (chip === '' || chip === written.current)) setChip(want);
     written.current = want;
   }, [want]); // eslint-disable-line react-hooks/exhaustive-deps
 

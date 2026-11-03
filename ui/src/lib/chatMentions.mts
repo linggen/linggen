@@ -138,15 +138,36 @@ export function agentMentionLabel(agent: MentionableAgent, lang: string): string
   return alias?.trim() || agent.name.charAt(0).toUpperCase() + agent.name.slice(1);
 }
 
-/** The input with its leading `@partial` replaced by `@Label `. */
-export function completeLeadingAgentMention(input: string, label: string): string {
-  return `${input.substring(0, input.lastIndexOf('@'))}@${label} `;
+/** The input with its leading `@partial` taken out — the agent it named
+ *  goes to the box's chip, not into the words. */
+export function dropLeadingAgentMention(input: string): string {
+  return input.substring(0, input.lastIndexOf('@'));
+}
+
+/** A finished address the box takes as a chip: the text opens with `@` and a
+ *  whole id or alias closed by a space or mark (`@ling `, `@银月 `). The
+ *  longest name wins, as on the server. `@@` (the chat stays with the agent)
+ *  stays in the words. `rest` is what follows. */
+export function typedAddress(
+  text: string,
+  agents: MentionableAgent[],
+): { agent: string; rest: string } | undefined {
+  if (!text.startsWith('@') || text.startsWith('@@')) return undefined;
+  const rest = text.slice(1);
+  let best: { agent: string; len: number } | undefined;
+  for (const a of agents) {
+    for (const n of [a.name, ...(a.aliases ?? [])].map((x) => x.trim())) {
+      const whole = n && rest.slice(0, n.length).toLowerCase() === n.toLowerCase() && NAME_END.test(rest.charAt(n.length));
+      if (whole && n.length > (best?.len ?? 0)) best = { agent: a.name.toLowerCase(), len: n.length };
+    }
+  }
+  return best && { agent: best.agent, rest: rest.slice(best.len).replace(NAME_ENDS, '') };
 }
 
 // The composer's pre-fill (one-ling-spec § Who answers; the phone's
 // screens/chat/dispatch.dart is the reference): once the user addresses
-// Yinyue, or she replies, the box opens with her mention so the talk stays
-// with her. Deleting it hands the next line back to Ling. It clears after
+// Yinyue, or she replies, the box opens with her chip so the talk stays
+// with her. Clearing it hands the next line back to Ling. It clears after
 // PREFILL_QUIET_MS without a word from her.
 
 /** How long the pre-filled mention outlives the last exchange with her. */
@@ -179,9 +200,9 @@ export function floorOf(messages: TableMessage[], tableIds: string[]): Floor {
   return {};
 }
 
-/** The box's pre-fill: `@Label ` while Yinyue holds the floor and it is
- *  fresher than PREFILL_QUIET_MS, else empty. */
-export function prefillAfter(floor: Floor, now: number, label: string): string {
+/** The box's pre-filled addressee: `yinyue` while she holds the floor and
+ *  it is fresher than PREFILL_QUIET_MS, else empty. */
+export function prefillAfter(floor: Floor, now: number): string {
   if (floor.speaker !== 'yinyue' || floor.at === undefined) return '';
-  return now - floor.at >= PREFILL_QUIET_MS ? '' : `@${label} `;
+  return now - floor.at >= PREFILL_QUIET_MS ? '' : 'yinyue';
 }
