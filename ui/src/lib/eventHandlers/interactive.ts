@@ -24,6 +24,7 @@ export function handleAskUser(item: UiEventOf<'ask_user'>): void {
     questionId: question_id,
     agentId: String(item.agent_id || ''),
     questions,
+    receivedAtMs: Date.now(),
   });
 }
 

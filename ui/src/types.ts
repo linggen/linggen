@@ -451,4 +451,6 @@ export interface PendingAskUser {
   questionId: string;
   agentId: string;
   questions: AskUserQuestion[];
+  /** When its live event came; a restored ask has none. */
+  receivedAtMs?: number;
 }
