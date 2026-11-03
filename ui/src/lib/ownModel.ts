@@ -82,13 +82,20 @@ export async function adoptOwnModel(modelId: string, sessionId?: string | null, 
   if (sessionId) await sessionApi.setModel('', sessionId, modelId, agentId).catch(() => {});
 }
 
-/** The newest refusal row in this chat (`BILLING_REQUIRED:`), or null. */
+/** The chat's newest row, when it is a refusal (`BILLING_REQUIRED:`) — an
+ *  older one is a turn since answered, never one to send again. */
 export function lastRefusal(): ChatMessage | null {
   const rows = useChatStore.getState().messages;
-  for (let i = rows.length - 1; i >= 0; i--) {
-    if (rows[i].role !== 'user' && billingBody(rows[i].text)) return rows[i];
-  }
-  return null;
+  const last = rows[rows.length - 1];
+  return last && last.role !== 'user' && billingBody(last.text) ? last : null;
+}
+
+/** The first own model that is usable but not yet first in the default chain:
+ *  a model already there, which the spent cloud stood in front of. */
+async function standingOwnModel(owned: string[]): Promise<string | null> {
+  if (!owned.length) return null;
+  const chain = (await appConfig.get().catch(() => null))?.routing?.default_models ?? [];
+  return chain[0] && owned.includes(chain[0]) ? null : owned[0];
 }
 
 /** The person's message the refusal `row` answered: the last user row before
@@ -112,7 +119,9 @@ export function resendOnOwnModel(row: ChatMessage, resend: (failed: ChatMessage)
   waiting = (async () => {
     const text = refusedText(row);
     if (!text) return false;
-    const added = await waitForOwnModel(await ownModels(), signal);
+    // A usable own model already there goes to work now; else wait for one added.
+    const owned = await ownModels();
+    const added = (await standingOwnModel(owned)) ?? await waitForOwnModel(owned, signal);
     if (!added) return false;
     const agentId = row.from || 'ling';
     await adoptOwnModel(added, useSessionStore.getState().activeSessionId, agentId);
