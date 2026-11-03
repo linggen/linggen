@@ -41,6 +41,12 @@ import '/shared/channel.js'; // the page's data channel (api.js loads it too)
  *   onConnectionChange?: (status: 'connected' | 'reconnecting' | 'disconnected') => void,
  *   onSkillEvent?: (event: string, payload: any) => void,
  * }} options
+ *
+ * onSkillEvent hears what the engine relays beyond the stream, among them
+ * `allowance_spent` ({ reason: 'trial' | 'monthly', agent, sessionId }): a
+ * turn of this chat's session was refused because the account's Linggen
+ * Cloud allowance is spent — a hidden turn shows nothing in the chat, so the
+ * page shows its own way on (subscribe, or `chat.useOwnModel()`).
  * @returns {Promise<ChatInstance>}
  */
 // One app chat holds the skill's own agent (`agentId`) and a guest addressed
@@ -48,6 +54,19 @@ import '/shared/channel.js'; // the page's data channel (api.js loads it too)
 // agent's turns only — a guest's line never ends the page's turn. A page that
 // wants her lines too passes `guestStreams: true`; each call then says whose
 // (`info.agent`, `info.own`).
+/** Open Settings → Models (a ChatGPT or Claude sign-in, or an API key) on the
+ *  nearest host that has it — the launcher, the dev console (ui/src/lib/ownModel.ts
+ *  sets `__linggenOpenSettings` there) — else in a new tab. */
+export function openModels() {
+  let w = window;
+  for (;;) {
+    try { if (typeof w.__linggenOpenSettings === 'function') { w.__linggenOpenSettings('models'); return; } } catch { break; }
+    if (!w.parent || w.parent === w) break;
+    w = w.parent;
+  }
+  window.open('/settings?tab=models', '_blank', 'noopener');
+}
+
 export async function mount(el, options) {
   const { skillName, onSessionCreated, onStreamToken, onStreamEnd } = options;
   const lazy = !!options.lazy;
@@ -286,6 +305,13 @@ export async function mount(el, options) {
     post({ type: 'linggen-skill', action: 'add_message', payload: { role: mappedRole, text, ...extra } });
   }
 
+  /** The page's card for a refused turn: Settings → Models, and once a model
+   *  is added the chat sends the refused turn again on it (the embed does). */
+  function useOwnModel() {
+    ensureMounted();
+    post({ type: 'linggen-skill', action: 'use_own_model', payload: {} });
+  }
+
   /** The buttons above the chat for what the page shows; [] hands the row back to the skill's starters. */
   function setSuggestions(items) {
     post({ type: 'linggen-skill', action: 'set_suggestions', payload: { items: Array.isArray(items) ? items : [] } });
@@ -296,6 +322,8 @@ export async function mount(el, options) {
     sendHidden,
     addMessage,
     setSuggestions,
+    openModels,
+    useOwnModel,
     destroy() {
       window.removeEventListener('message', handleMessage);
       window.removeEventListener('message', onStageAsks);
@@ -334,7 +362,7 @@ export async function mount(el, options) {
   };
 }
 
-window.LinggenUI = { mount };
+window.LinggenUI = { mount, openModels };
 
 // ── Presence beat ───────────────────────────────────────────────────────────
 // Somebody reading an app page is present. Same beat as the main UI's

@@ -31,6 +31,7 @@ import { useRunInfo } from '../hooks/useRunInfo';
 import { useChatActions } from '../hooks/useChatActions';
 import { sendViewContext, useYinyuePresenter } from '../hooks/useTransport';
 import { useOpenSettings } from '../hooks/useOpenSettings';
+import '../lib/ownModel';
 import { useLocation } from 'react-router-dom';
 import { useShallow } from 'zustand/react/shallow';
 
@@ -101,6 +102,11 @@ export const MainApp: React.FC = () => {
   const showYinyue = useYinyuePresenter(!isAppMode);
 
   const openSettings = useOpenSettings();
+  // A chat framed under this page (an embed) opens Settings → Models here (lib/ownModel.ts).
+  useEffect(() => {
+    window.__linggenOpenSettings = (tab) => openSettings(tab);
+    return () => { delete window.__linggenOpenSettings; };
+  }, [openSettings]);
 
   // Presence beat — tell the server whether the user is here (typing / reading /
   // away) so Yinyue's `sense` can read the room. Owner UI only; mounts once.

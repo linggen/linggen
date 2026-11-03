@@ -52,13 +52,14 @@ impl AgentEngine {
     /// One light turn in `session_id`: the agent answers `ask` after `tail`
     /// in one line, or is silent. The line is kept and shown as the agent's
     /// reply; silence leaves nothing. No tool schemas are sent, and the
-    /// engine's cached thread is left as it is.
+    /// engine's cached thread is left as it is. A failed model call is the
+    /// `Err`, so the caller can tell its session why (a spent allowance).
     pub(crate) async fn light_reply(
         &mut self,
         tail: Vec<ChatMessage>,
         ask: &str,
         session_id: &str,
-    ) -> Option<String> {
+    ) -> anyhow::Result<Option<String>> {
         self.session_id = Some(session_id.to_string());
         let msgs = light_messages(self.light_system_prompt(), tail, ask);
         // No run of its own: a stale one would read as stopped, and nothing
@@ -72,14 +73,16 @@ impl AgentEngine {
             Ok(r) => r.full_text,
             Err(e) => {
                 tracing::warn!("light turn in {session_id} failed: {e:#}");
-                return None;
+                return Err(e);
             }
         };
-        let line = kept_line(&reply)?;
+        let Some(line) = kept_line(&reply) else {
+            return Ok(None);
+        };
         let _ = self
             .persist_assistant_message(&line, Some(session_id))
             .await;
-        Some(line)
+        Ok(Some(line))
     }
 }
 

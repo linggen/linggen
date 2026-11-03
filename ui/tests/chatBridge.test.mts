@@ -132,3 +132,10 @@ test('a mount bound to params hands them to the chat, so its New chat stays boun
   await mount(plain, { skillName: 'demo', sessionId: 'sess-1' });
   assert.equal(new URL(plainSrcs[0], 'http://engine').searchParams.get('params'), null);
 });
+
+test('a refused turn on a spent allowance reaches the page as a fact', async () => {
+  const facts: [string, unknown][] = [];
+  const { emit } = await mountWith({ onSkillEvent: (event: string, payload: unknown) => facts.push([event, payload]) });
+  emit('allowance_spent', { reason: 'trial', agent: 'ling', sessionId: 'sess-1' });
+  assert.deepEqual(facts, [['allowance_spent', { reason: 'trial', agent: 'ling', sessionId: 'sess-1' }]]);
+});

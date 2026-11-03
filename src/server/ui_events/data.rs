@@ -288,6 +288,14 @@ pub(super) struct QuestsChangedData {
     pub app: String,
 }
 
+/// `allowance_spent`.
+#[derive(Serialize)]
+#[cfg_attr(test, derive(TS), ts(export))]
+pub(super) struct AllowanceSpentData {
+    /// `"trial"` or `"monthly"`.
+    pub reason: String,
+}
+
 /// `device_topic`.
 #[derive(Serialize)]
 #[cfg_attr(test, derive(TS), ts(export))]

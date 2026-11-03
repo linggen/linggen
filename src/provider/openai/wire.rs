@@ -82,6 +82,12 @@ pub(super) fn extract_error_message(text: &str) -> Option<String> {
     v.get("error")?.get("message")?.as_str().map(String::from)
 }
 
+/// The OpenAI-shaped error's `code` (`trial_exhausted`, …), when it has one.
+pub(super) fn extract_error_code(text: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(text).ok()?;
+    v.get("error")?.get("code")?.as_str().map(String::from)
+}
+
 // --- Wire types ---
 
 #[derive(Debug, Serialize)]

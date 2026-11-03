@@ -24,6 +24,7 @@ pub(crate) const UI_KIND_TURN_COMPLETE: &str = "turn_complete";
 pub(crate) const UI_KIND_DEVICE_TOPIC: &str = "device_topic";
 pub(crate) const UI_KIND_SKILL_SAVE_CHANGED: &str = "skill_save_changed";
 pub(crate) const UI_KIND_QUESTS_CHANGED: &str = "quests_changed";
+pub(crate) const UI_KIND_ALLOWANCE_SPENT: &str = "allowance_spent";
 
 pub(crate) const UI_PHASE_SYNC: &str = "sync";
 pub(crate) const UI_PHASE_OUTCOME: &str = "outcome";
@@ -137,6 +138,7 @@ pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Op
         | RoomChat { .. }
         | SkillSaveChanged { .. }
         | QuestsChanged { .. }
+        | AllowanceSpent { .. }
         | DeviceTopic { .. } => global::map(event, ui),
         // Internal: consumed by Yinyue's watch loop, never a UI banner.
         AgentChat { .. } => None,

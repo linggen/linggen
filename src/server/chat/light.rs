@@ -48,7 +48,18 @@ pub(crate) async fn reply_in_session(
     };
     ready(&ctx, &mut engine).await;
     let tail = super::thread::spoken_tail(&ctx, TAIL_MESSAGES).await;
-    engine.light_reply(tail, ask, session_id).await
+    match engine.light_reply(tail, ask, session_id).await {
+        Ok(line) => line,
+        Err(e) => {
+            super::helpers::announce_allowance_spent(
+                &state.events_tx,
+                agent,
+                Some(session_id),
+                &e.to_string(),
+            );
+            None
+        }
+    }
 }
 
 /// The engine as a turn of this member's would have it: live models, the

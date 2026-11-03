@@ -61,6 +61,10 @@ export const EVENT_KINDS = [
   // An app's quest facts changed (global). An embed chat relays it to its
   // skill page as `quests_changed`; the console shows no quests.
   'quests_changed',
+  // A turn was refused on a spent Linggen Cloud allowance (session-scoped).
+  // The chat shows the refusal's own row; an embed relays this fact to its
+  // skill page as `allowance_spent`, for turns the page ran unseen.
+  'allowance_spent',
 ] as const;
 
 export type EventKind = (typeof EVENT_KINDS)[number];

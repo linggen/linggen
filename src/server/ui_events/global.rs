@@ -3,10 +3,13 @@
 //! device topics.
 
 use super::data::{
-    AppLaunchedData, DeviceTopicData, QuestsChangedData, RoomChatData, SessionCreatedData,
-    SkillSaveChangedData, WorkingFolderData,
+    AllowanceSpentData, AppLaunchedData, DeviceTopicData, QuestsChangedData, RoomChatData,
+    SessionCreatedData, SkillSaveChangedData, WorkingFolderData,
 };
-use super::{Ui, UI_KIND_DEVICE_TOPIC, UI_KIND_QUESTS_CHANGED, UI_KIND_SKILL_SAVE_CHANGED};
+use super::{
+    Ui, UI_KIND_ALLOWANCE_SPENT, UI_KIND_DEVICE_TOPIC, UI_KIND_QUESTS_CHANGED,
+    UI_KIND_SKILL_SAVE_CHANGED,
+};
 use crate::engine::events::{NotificationPayload, ServerEvent, UiEvent};
 
 pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
@@ -110,6 +113,19 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
         ServerEvent::QuestsChanged { app } => Some(
             ui.event(format!("quests-{seq}"), UI_KIND_QUESTS_CHANGED)
                 .data(QuestsChangedData { app }),
+        ),
+        // The session's: its chat and its skill page (the embed relays it).
+        ServerEvent::AllowanceSpent {
+            agent_id,
+            session_id,
+            reason,
+        } => Some(
+            ui.event(format!("allowance-spent-{seq}"), UI_KIND_ALLOWANCE_SPENT)
+                .agent(agent_id)
+                .session(Some(
+                    session_id.unwrap_or_else(|| super::GLOBAL.to_string()),
+                ))
+                .data(AllowanceSpentData { reason }),
         ),
         // User-level: reaches every surface over the control channel.
         ServerEvent::DeviceTopic {

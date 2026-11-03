@@ -40,6 +40,7 @@ import {
   handleDeviceTopic,
   handleSkillSaveChanged,
   handleQuestsChanged,
+  handleAllowanceSpent,
 } from './misc';
 import { handlePetSpeak, handlePetVoice, handlePetExpress, handleYinyuePresent } from './yinyue';
 
@@ -89,6 +90,7 @@ export const eventHandlers: { [K in EventKind]: (item: UiEventByKind[K]) => void
   device_topic: handleDeviceTopic,
   skill_save_changed: handleSkillSaveChanged,
   quests_changed: handleQuestsChanged,
+  allowance_spent: handleAllowanceSpent,
 
   // Pet (Yinyue today)
   pet_speak: handlePetSpeak,

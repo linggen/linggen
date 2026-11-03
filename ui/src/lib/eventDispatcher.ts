@@ -158,6 +158,16 @@ function relayGlobal(item: UiEvent): boolean {
     postToParent({ type: 'linggen-skill-event', event: 'device_topic', payload: item.data ?? {} });
     return true;
   }
+  // The session's turn was refused on a spent allowance: the page learns it
+  // as a fact (its hidden turns show nothing in the chat) and shows its way on.
+  if (item.kind === 'allowance_spent') {
+    postToParent({
+      type: 'linggen-skill-event',
+      event: 'allowance_spent',
+      payload: { ...(item.data ?? {}), agent: item.agent_id ?? null, sessionId: item.session_id ?? null },
+    });
+    return true;
+  }
   return false;
 }
 

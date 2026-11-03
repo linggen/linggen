@@ -88,6 +88,9 @@ pub(super) async fn run_loop_with_tracking(
                 // Let Yinyue surface it in her own voice (her watch loop reacts).
                 // Only genuine failures — a user cancel isn't something to apologize for.
                 if matches!(status, crate::engine::agent::AgentRunStatus::Failed) {
+                    crate::server::chat::helpers::announce_allowance_spent(
+                        events_tx, agent_id, session_id, &msg,
+                    );
                     crate::telemetry::global().error(
                         "model",
                         crate::server::chat::helpers::model_error_code(&msg),

@@ -110,7 +110,7 @@ async fn run(reply: &'static str) -> (serde_json::Value, Vec<crate::state_fs::se
         ChatMessage::new("assistant", "The pass is quiet under snow."),
         ChatMessage::new("user", "[Yinyue]: 本王赢了。"),
     ];
-    engine
+    let _ = engine
         .light_reply(tail, "Answer her in ONE line, or SILENT.", "s-light")
         .await;
     served.abort();

@@ -45,6 +45,26 @@ pub(crate) fn format_turn_error(msg: &str) -> String {
     format!("Error: {line}")
 }
 
+/// A turn refused on a spent Linggen Cloud allowance tells its session as a
+/// fact (`AllowanceSpent`), so a page whose turn ran unseen — a hidden
+/// kickoff, a light turn — can show the way on instead of waiting. Anything
+/// else sends nothing.
+pub(crate) fn announce_allowance_spent(
+    events_tx: &broadcast::Sender<crate::server::ServerEvent>,
+    agent_id: &str,
+    session_id: Option<&str>,
+    msg: &str,
+) {
+    let Some(reason) = crate::provider::error::billing_reason(msg) else {
+        return;
+    };
+    let _ = events_tx.send(crate::server::ServerEvent::AllowanceSpent {
+        agent_id: agent_id.to_string(),
+        session_id: session_id.map(str::to_string),
+        reason: reason.to_string(),
+    });
+}
+
 /// Coarse telemetry bucket for a failed model turn. Buckets only — the
 /// message text itself never leaves the machine (see telemetry/mod.rs).
 pub(crate) fn model_error_code(msg: &str) -> &'static str {

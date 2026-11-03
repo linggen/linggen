@@ -479,6 +479,15 @@ pub enum ServerEvent {
     QuestsChanged {
         app: String,
     },
+    /// A turn was refused because the account's Linggen Cloud allowance is
+    /// spent (`reason`: `"trial"` or `"monthly"`). Session-scoped, so a page
+    /// whose turns run unseen (hidden kickoffs, light turns) learns it as a
+    /// fact; the embed chat relays it to its skill page as `allowance_spent`.
+    AllowanceSpent {
+        agent_id: String,
+        session_id: Option<String>,
+        reason: String,
+    },
     /// A device-to-device control message on a named topic (`dj`, `media`, …).
     /// The daemon is the hub: any peer publishes, every other surface of the
     /// same user receives. `from_device` lets a publisher ignore its own echo.
@@ -604,7 +613,11 @@ impl ServerEvent {
                 Some(Self::PetExpress { emotion, action })
             }
             AgentEvent::PetVoice { muted } => Some(Self::PetVoice { muted }),
-            AgentEvent::BackgroundTask { agent_id, task, notice } => Some(Self::BackgroundTask {
+            AgentEvent::BackgroundTask {
+                agent_id,
+                task,
+                notice,
+            } => Some(Self::BackgroundTask {
                 session_id,
                 agent_id,
                 task,

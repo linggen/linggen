@@ -181,6 +181,20 @@ fn status_in(msg: &str) -> Option<u16> {
     (digits.len() == 3).then(|| digits.parse().ok()).flatten()
 }
 
+/// Which Linggen Cloud allowance a `BILLING_REQUIRED:` error spent:
+/// `"monthly"` (a subscriber's pool) or `"trial"` (the free tokens). `None`
+/// when the error is not a spent allowance.
+pub(crate) fn billing_reason(msg: &str) -> Option<&'static str> {
+    if !msg.contains("BILLING_REQUIRED") {
+        return None;
+    }
+    Some(if msg.contains("monthly_cap_exceeded") {
+        "monthly"
+    } else {
+        "trial"
+    })
+}
+
 /// The one reading of an error's words, for errors that arrive as text.
 fn classify_message(msg: &str) -> ProviderErrorKind {
     use ProviderErrorKind::*;
@@ -332,6 +346,23 @@ mod tests {
         let key = http(401, r#"{"error":{"message":"Incorrect API key provided"}}"#);
         assert_eq!(kind_of(&key), Auth);
         assert!(!kind_of(&key).is_fallback_worthy());
+    }
+
+    #[test]
+    fn a_spent_allowance_names_which_one() {
+        assert_eq!(
+            billing_reason("BILLING_REQUIRED: trial_exhausted: x"),
+            Some("trial")
+        );
+        assert_eq!(
+            billing_reason("Error: BILLING_REQUIRED: monthly_cap_exceeded: x"),
+            Some("monthly")
+        );
+        assert_eq!(
+            billing_reason("BILLING_REQUIRED: Your free tokens are used up"),
+            Some("trial")
+        );
+        assert_eq!(billing_reason("HTTP error (429)"), None);
     }
 
     #[test]

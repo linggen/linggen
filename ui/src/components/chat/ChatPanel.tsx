@@ -20,6 +20,7 @@ import type {
 } from '../../types';
 import { normalizeAgentKey } from '../../lib/messageUtils';
 import { ChatMessageList, ChatMessageRow } from './ChatMessageList';
+import { TrialLowNotice } from './TrialLowNotice';
 import { RunStatusLine } from './RunStatusLine';
 import { useChatFilters } from './useChatFilters';
 import { useFloatingUserMessage } from './useFloatingUserMessage';
@@ -501,6 +502,7 @@ export const ChatPanel: React.FC<{
       )}
       </div>
 
+      <TrialLowNotice busy={!!isAgentActive} />
       <RunStatusLine
         active={isAgentActive}
         reconnecting={reconnecting}

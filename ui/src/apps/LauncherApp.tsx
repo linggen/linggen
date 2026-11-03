@@ -10,6 +10,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Settings } from 'lucide-react';
 import logoUrl from '../assets/logo.svg';
 import { LauncherSettings } from './LauncherSettings';
+import '../lib/ownModel';
 import { AccountAvatar } from '../components/AccountAvatar';
 import { WeatherChip } from '../components/WeatherChip';
 import { skillsApi } from '../lib/endpoints';
@@ -98,7 +99,7 @@ export const LauncherApp: React.FC = () => {
   // {type:'linggen:show-settings'} to the main window — open the merged settings.
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
-      if (e.data && e.data.type === 'linggen:show-settings') setSettingsOpen(true);
+      if (e.data && e.data.type === 'linggen:show-settings') setSettingsOpen(typeof e.data.section === 'string' ? e.data.section : true);
       if (e.data?.type === 'linggen:companion' && e.origin === window.location.origin) {
         const name = [...frames.current].find(([, f]) => f.contentWindow === e.source)?.[0];
         const want = e.data.companion === 'hidden' ? 'hidden' : 'shown';
@@ -106,7 +107,13 @@ export const LauncherApp: React.FC = () => {
       }
     };
     window.addEventListener('message', onMsg);
-    return () => window.removeEventListener('message', onMsg);
+    // A chat framed anywhere under the launcher opens Settings → Models here
+    // (lib/ownModel.ts): its section id is `model`.
+    window.__linggenOpenSettings = (tab) => setSettingsOpen(tab === 'models' ? 'model' : tab);
+    return () => {
+      window.removeEventListener('message', onMsg);
+      delete window.__linggenOpenSettings;
+    };
   }, []);
 
   const open = (name: string) => {

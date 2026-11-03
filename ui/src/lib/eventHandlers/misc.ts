@@ -148,3 +148,7 @@ export function handleSkillSaveChanged(_item: UiEventOf<'skill_save_changed'>): 
 /** An app's quest facts changed — only a skill page showing quests redraws
  *  (the embed relays it there before this handler runs). */
 export function handleQuestsChanged(_item: UiEventOf<'quests_changed'>): void {}
+
+/** A turn was refused on a spent allowance — the chat already holds the
+ *  refusal's row; only a skill page acts on this fact (relayed before this). */
+export function handleAllowanceSpent(_item: UiEventOf<'allowance_spent'>): void {}

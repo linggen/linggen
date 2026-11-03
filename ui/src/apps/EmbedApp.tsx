@@ -26,6 +26,7 @@ import type { SessionInfo } from '../types';
 import { useChatActions } from '../hooks/useChatActions';
 import { useRunInfo } from '../hooks/useRunInfo';
 import { postToParent, fromParent } from '../lib/parentFrame';
+import { lastRefusal, openModelsSettings, resendOnOwnModel } from '../lib/ownModel';
 import { pageAgent, setPageAgent } from '../lib/pageAgent';
 import { boundTo, parseBinding } from '../lib/sessionBinding.mts';
 import { startNewChat } from '../lib/newChat';
@@ -248,6 +249,19 @@ export const EmbedApp: React.FC = () => {
         case 'clear':
           clearChatRef.current();
           break;
+        case 'use_own_model': {
+          // The page's card for a refused turn (chat.useOwnModel): Settings →
+          // Models, and once a model is added the refused turn goes again.
+          openModelsSettings();
+          const row = lastRefusal();
+          if (row) {
+            void resendOnOwnModel(row, (failed) => {
+              useChatStore.getState().removeMessage(failed);
+              if (failed.resend) sendChatMessageRef.current(failed.resend.text, failed.resend.agentId);
+            }, new AbortController().signal);
+          }
+          break;
+        }
         case 'set_suggestions': {
           // The page's buttons for what is on screen (chat.setSuggestions).
           const sid = useSessionStore.getState().activeSessionId;

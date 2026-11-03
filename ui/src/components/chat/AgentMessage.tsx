@@ -12,6 +12,7 @@ import { BudgetEmptyBlock } from './BudgetEmptyBlock';
 import { parseBudgetEmpty } from '../../lib/budgetEmpty';
 import { getMessagePhase, isTransientStatus, isToolStatusText } from './MessagePhase';
 import { mayBecomeSilence } from '../../lib/hiddenRows.mts';
+import { billingBody } from '../../lib/billing.mts';
 import { visibleMessageText } from './MessageHelpers';
 import { INTERRUPTED_RUN_TEXT } from '../../lib/interruptedRun.mts';
 import { hidePartialRef } from '../../lib/answerRefs.mts';
@@ -58,11 +59,10 @@ function renderAuthRequired(text?: string): React.ReactNode | null {
 /** Render the inline subscribe CTA when a turn fails on a spent allowance —
  *  the engine surfaces Linggen Cloud 402s as `BILLING_REQUIRED: <msg>`
  *  (optionally `Error:`-prefixed). Returns null for anything else. */
-function renderBillingRequired(text?: string): React.ReactNode | null {
-  if (!text) return null;
-  const body = text.trim().replace(/^Error:\s*/i, '');
-  if (!body.startsWith('BILLING_REQUIRED:')) return null;
-  return <BillingRequiredBlock message={body.slice('BILLING_REQUIRED:'.length).trim()} />;
+function renderBillingRequired(msg: ChatMessage, onResend?: (failed: ChatMessage) => void): React.ReactNode | null {
+  const body = billingBody(msg.text);
+  if (!body) return null;
+  return <BillingRequiredBlock body={body} msg={msg} onResend={onResend} />;
 }
 
 /** Top-level agent message renderer — unified widget-list model.
@@ -140,7 +140,7 @@ export const AgentMessage: React.FC<{
   if (authBlock) return <>{authBlock}</>;
 
   // A spent-allowance turn (trial/monthly 402) surfaces a subscribe card.
-  const billingBlock = renderBillingRequired(msg.text);
+  const billingBlock = renderBillingRequired(msg, planProps.onResend);
   if (billingBlock) return <>{billingBlock}</>;
 
   // A skill's play window is spent: say when it frees up, not "error".

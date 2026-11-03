@@ -10,8 +10,8 @@ mod strict_schema;
 mod wire;
 
 pub use image_gen::PictureRequest;
-use wire::extract_error_message;
 pub use wire::wire_tool_def;
+use wire::{extract_error_code, extract_error_message};
 
 use crate::provider::models::StreamChunk;
 use anyhow::Result;
@@ -217,13 +217,16 @@ impl OpenAiClient {
             )
             .into();
         }
+        // A spent Linggen Cloud allowance: the trial's 402, or the monthly
+        // pool's 429 (`monthly_cap_exceeded`). The proxy's code leads the
+        // line after the marker, so every surface reads which one it was.
+        if self.linggen_account_live {
+            if let Some(line) = billing_line(status, &text) {
+                return ProviderError::new(ProviderErrorKind::QuotaExhausted, line).into();
+            }
+        }
         if status == reqwest::StatusCode::PAYMENT_REQUIRED {
             if let Some(msg) = extract_error_message(&text) {
-                let msg = if self.linggen_account_live {
-                    format!("BILLING_REQUIRED: {msg}")
-                } else {
-                    msg
-                };
                 return ProviderError::new(ProviderErrorKind::QuotaExhausted, msg).into();
             }
         }
@@ -485,6 +488,69 @@ impl OpenAiClient {
         let first = crate::provider::FirstEvent::start(&self.base_url);
         let resp = first.within(self.send_turn(rb, app)).await??;
         parse_sse(resp, parse, &first).await
+    }
+}
+
+/// The chat's line for a Linggen Cloud refusal on a spent allowance:
+/// `BILLING_REQUIRED: <code>: <proxy message>`. `None` for anything else —
+/// a 429 that is a plain rate limit stays a rate limit.
+fn billing_line(status: reqwest::StatusCode, text: &str) -> Option<String> {
+    let code = extract_error_code(text).unwrap_or_default();
+    let spent = match status.as_u16() {
+        402 => true,
+        429 => code == "monthly_cap_exceeded",
+        _ => false,
+    };
+    if !spent {
+        return None;
+    }
+    let code = if code.is_empty() {
+        "trial_exhausted"
+    } else {
+        code.as_str()
+    };
+    let msg = extract_error_message(text).unwrap_or_default();
+    Some(format!("BILLING_REQUIRED: {code}: {msg}"))
+}
+
+#[cfg(test)]
+mod billing_line_tests {
+    use super::billing_line;
+    use reqwest::StatusCode;
+
+    fn body(code: &str, msg: &str) -> String {
+        format!(r#"{{"error":{{"message":"{msg}","type":"x","code":"{code}"}}}}"#)
+    }
+
+    #[test]
+    fn trial_and_monthly_pool_both_read_as_billing() {
+        let trial = billing_line(
+            StatusCode::PAYMENT_REQUIRED,
+            &body("trial_exhausted", "Your free tokens are used up for now."),
+        );
+        assert_eq!(
+            trial.as_deref(),
+            Some("BILLING_REQUIRED: trial_exhausted: Your free tokens are used up for now.")
+        );
+        let pool = billing_line(
+            StatusCode::TOO_MANY_REQUESTS,
+            &body("monthly_cap_exceeded", "Monthly token limit reached"),
+        );
+        assert!(pool
+            .unwrap()
+            .starts_with("BILLING_REQUIRED: monthly_cap_exceeded:"));
+    }
+
+    #[test]
+    fn a_plain_rate_limit_is_not_billing() {
+        assert_eq!(
+            billing_line(
+                StatusCode::TOO_MANY_REQUESTS,
+                &body("rate_limited", "slow down")
+            ),
+            None
+        );
+        assert_eq!(billing_line(StatusCode::BAD_GATEWAY, "oops"), None);
     }
 }
 
