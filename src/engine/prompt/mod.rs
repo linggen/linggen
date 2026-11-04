@@ -345,9 +345,14 @@ impl AgentEngine {
     /// report, an app's event, any `[HIDDEN]` kickoff): its words are code
     /// or a prompt, never the person's language, so the reply is in the
     /// Linggen language — "the language the person writes in" would follow
-    /// the English of a page's code words.
+    /// the English of a page's code words. A turn whose caller names its
+    /// language (`turn_language`: an app in another language than Linggen's)
+    /// answers in that one instead.
     pub(crate) fn unprompted_language_line(&self) -> String {
-        self.unprompted_language_line_in(&crate::language::effective())
+        match self.turn_language.as_deref() {
+            Some(tag) => self.unprompted_language_line_in(tag),
+            None => self.unprompted_language_line_in(&crate::language::effective()),
+        }
     }
 
     pub(crate) fn unprompted_language_line_in(&self, tag: &str) -> String {

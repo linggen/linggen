@@ -19,7 +19,7 @@ pub(crate) async fn run_yinyue_turn(
     task: String,
     trigger_source: &str,
 ) -> Option<String> {
-    run_home(state, task, trigger_source, Reach::Open).await
+    run_home(state, task, trigger_source, Reach::Open, None).await
 }
 
 /// Her turn woken by an app moment: her line is all she gives — spoken — or
@@ -27,15 +27,16 @@ pub(crate) async fn run_yinyue_turn(
 /// the app chat the moment names — her turn runs there, a member at its
 /// table, reading its whole thread, and her line is a row of it (a moment is
 /// a turn like any other, `doc/shared-session-spec.md`). `None`: on her own
-/// thread.
+/// thread. `language`: the app's own, when it named one — her line is in it.
 pub(crate) async fn run_moment_turn(
     state: &Arc<ServerState>,
     (task, table): (String, Option<String>),
     trigger_source: &str,
+    language: Option<String>,
 ) -> Option<String> {
     match table {
-        Some(session_id) => run_at_table(state, session_id, task, trigger_source).await,
-        None => run_home(state, task, trigger_source, Reach::Sealed).await,
+        Some(session_id) => run_at_table(state, session_id, task, trigger_source, language).await,
+        None => run_home(state, task, trigger_source, Reach::Sealed, language).await,
     }
 }
 
@@ -69,6 +70,7 @@ async fn run_home(
     task: String,
     trigger_source: &str,
     reach: Reach,
+    language: Option<String>,
 ) -> Option<String> {
     let root = her_root();
 
@@ -90,6 +92,7 @@ async fn run_home(
         root,
         reach,
         home: true,
+        language,
     };
     run_at(state, &turn, &pet, task, trigger_source).await
 }
@@ -102,6 +105,7 @@ async fn run_at_table(
     session_id: String,
     task: String,
     trigger_source: &str,
+    language: Option<String>,
 ) -> Option<String> {
     let pet = state.manager.get_config_snapshot().await.pet;
     if !pet.enabled {
@@ -128,6 +132,7 @@ async fn run_at_table(
         root,
         reach: Reach::Sealed,
         home: false,
+        language,
     };
     run_at(state, &turn, &pet, task, trigger_source).await
 }
@@ -145,6 +150,9 @@ struct Turn {
     /// Her own rolling thread (kept short, seeded across a roll) — else an
     /// app chat's table.
     home: bool,
+    /// The language this turn answers in, when its caller names one (an app
+    /// moment's `lang`); `None` is the Linggen language.
+    language: Option<String>,
 }
 
 /// One turn of hers, through the shared turn-core, on her model. Returns
@@ -298,6 +306,8 @@ fn ready_for_turn(
 ) -> crate::engine::session_policy::SessionPolicy {
     engine.set_parent_agent(None);
     engine.withheld_tools = withheld_for(turn.reach);
+    // Per turn, like the tools: a moment's language never outlives it.
+    engine.turn_language = turn.language.clone();
     // Clear so we read THIS turn's final line — the engine is reused across
     // turns and would otherwise hold the prior one.
     engine.last_assistant_text = None;
@@ -390,6 +400,7 @@ mod tests {
             root: std::env::temp_dir(),
             reach: Reach::Sealed,
             home,
+            language: None,
         }
     }
 
@@ -421,6 +432,31 @@ mod tests {
         assert!(!messages
             .iter()
             .any(|m| m.content.contains("Autonomous agent loop")));
+    }
+
+    /// A moment that names its app's language has her answer in it — the
+    /// engine-authored kickoff's language line says so — and the next turn,
+    /// naming none, is back in the Linggen language (2026-11-04: an app played
+    /// in English, Linggen set to Chinese, and every line of hers came in Chinese).
+    #[test]
+    fn a_moment_in_its_apps_language_has_her_answer_in_it_for_that_turn_only() {
+        let mut engine = her_engine();
+        let english = Turn {
+            language: Some("en".to_string()),
+            ..turn(false)
+        };
+        ready_for_turn(&mut engine, &english, &Default::default());
+        let task = "[HIDDEN] While the user was in the app, this happened: lost.";
+        let (messages, _, _) =
+            engine.prepare_loop_messages(task, true, crate::engine::prompt::PromptPurpose::Preview);
+        let system: String = messages
+            .iter()
+            .filter(|m| m.role == "system")
+            .map(|m| m.content.as_str())
+            .collect();
+        assert!(system.contains("Reply in English."), "{system}");
+        ready_for_turn(&mut engine, &turn(false), &Default::default());
+        assert_eq!(engine.turn_language, None);
     }
 
     /// At a table her memory tools act for that session — its skill's

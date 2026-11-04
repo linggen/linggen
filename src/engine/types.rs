@@ -406,6 +406,10 @@ pub struct AgentEngine {
     /// companion woken by an app moment speaks its own line and reaches no
     /// other agent); empty for an ordinary turn.
     pub withheld_tools: std::collections::HashSet<String>,
+    /// The language a turn the person did not type answers in, when its caller
+    /// knows it — an app moment that names its own (`/api/yinyue/event` `lang`).
+    /// Set per turn by whoever drives it; `None` is the Linggen language.
+    pub turn_language: Option<String>,
     /// Prompt profile — which system prompt sections to include (owner vs consumer).
     pub prompt_profile: super::prompt::profile::PromptProfile,
     /// Directory for the current session (for persisting permission.json).
@@ -651,6 +655,7 @@ impl AgentEngine {
             session_tools: None,
             skill_bound: false,
             withheld_tools: Default::default(),
+            turn_language: None,
             prompt_profile: super::prompt::profile::PromptProfile::default(),
             session_dir: None,
             default_models: Vec::new(),

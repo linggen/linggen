@@ -133,6 +133,31 @@ test('a mount bound to params hands them to the chat, so its New chat stays boun
   assert.equal(new URL(plainSrcs[0], 'http://engine').searchParams.get('params'), null);
 });
 
+test("a mount in its app's own language has the chat's words in it, and follows a change", async () => {
+  const el = fakeElement();
+  let frame: (ReturnType<typeof fakeElement> & { src?: string }) | null = null;
+  el.appendChild = (child: ReturnType<typeof fakeElement> & { src?: string }) => {
+    frame = child;
+    setTimeout(() => child.fire('load'), 0);
+  };
+  const chat = await mount(el, { skillName: 'demo', sessionId: 'sess-1', language: 'en' });
+  const lang = () => new URL(String(frame!.src), 'http://engine').searchParams.get('lang');
+  assert.equal(lang(), 'en');
+  const moved = chat.setLanguage('zh-Hans');
+  frame!.fire('load');
+  await moved;
+  assert.equal(lang(), 'zh-Hans');
+  const src = frame!.src;
+  await chat.setLanguage('zh-Hans');
+  assert.equal(frame!.src, src, 'the same language reloads nothing');
+
+  const plain = fakeElement();
+  let plainFrame: (ReturnType<typeof fakeElement> & { src?: string }) | null = null;
+  plain.appendChild = (child: ReturnType<typeof fakeElement> & { src?: string }) => { plainFrame = child; setTimeout(() => child.fire('load'), 0); };
+  await mount(plain, { skillName: 'demo', sessionId: 'sess-1' });
+  assert.equal(new URL(String(plainFrame!.src), 'http://engine').searchParams.get('lang'), null, 'none named: the Linggen language');
+});
+
 test('a refused turn on a spent allowance reaches the page as a fact', async () => {
   const facts: [string, unknown][] = [];
   const { emit } = await mountWith({ onSkillEvent: (event: string, payload: unknown) => facts.push([event, payload]) });

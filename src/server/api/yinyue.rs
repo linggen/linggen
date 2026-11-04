@@ -84,9 +84,25 @@ pub(crate) struct EventRequest {
     /// With `session`: after her line, the session's agent answers her once.
     #[serde(default)]
     pub converse: bool,
+    /// The app's own language (a BCP-47 tag: `en`, `zh-Hans`…), when it plays
+    /// in another than Linggen's: her line for this moment is in it.
+    #[serde(default)]
+    pub lang: Option<String>,
 }
 
 const EVENT_TEXT_MAX: usize = 300;
+
+/// An app's language tag, cut to what Linggen writes by (`language::normalize`);
+/// anything that is not a short tag is dropped, not refused.
+fn event_language(tag: Option<&str>) -> Option<String> {
+    let tag = tag?.trim();
+    let shaped = !tag.is_empty()
+        && tag.len() <= 16
+        && tag
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    shaped.then(|| crate::language::normalize(tag))
+}
 
 /// POST /api/yinyue/event — `{ app, text, big?, asked?, mood?, session?,
 /// converse? }`. An app tells Yinyue what just happened, as a plain fact.
@@ -143,6 +159,7 @@ pub(crate) async fn event_handler(
         at: crate::util::now_ts_secs(),
         converse: req.converse && session.is_some(),
         session,
+        lang: event_language(req.lang.as_deref()),
     });
     (StatusCode::OK, "ok").into_response()
 }
@@ -329,5 +346,21 @@ mod voice_tests {
         ] {
             assert_eq!(voice_command(other), None, "{other:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod event_language_tests {
+    use super::event_language;
+
+    #[test]
+    fn an_event_names_its_language_as_a_short_tag_or_not_at_all() {
+        assert_eq!(event_language(Some("en")).as_deref(), Some("en"));
+        assert_eq!(event_language(Some("zh")).as_deref(), Some("zh-Hans"));
+        assert_eq!(event_language(Some(" en-CA ")).as_deref(), Some("en"));
+        assert_eq!(event_language(None), None);
+        assert_eq!(event_language(Some("")), None);
+        assert_eq!(event_language(Some("Reply in French please")), None);
+        assert_eq!(event_language(Some("x".repeat(40).as_str())), None);
     }
 }

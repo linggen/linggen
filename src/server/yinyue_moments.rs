@@ -73,6 +73,14 @@ pub(crate) struct Moment {
     pub session: Option<String>,
     /// After her line lands, the session's agent answers her once.
     pub converse: bool,
+    /// The app's language for her line, when it named one (normalized tag).
+    pub lang: Option<String>,
+}
+
+/// The language her wake answers in: the newest moment that names one — an
+/// app switched mid-play speaks as it is now. `None`: the Linggen language.
+pub(crate) fn language_of(moments: &[Moment]) -> Option<String> {
+    moments.iter().rev().find_map(|m| m.lang.clone())
 }
 
 static MOMENTS: Mutex<VecDeque<Moment>> = Mutex::new(VecDeque::new());
@@ -449,6 +457,7 @@ pub async fn yinyue_moment_loop(state: Arc<ServerState>) {
                 (words, table.clone()),
                 &emotion,
                 asked,
+                language_of(&taken),
             )
             .await;
             IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner()).clear();
@@ -477,6 +486,7 @@ mod tests {
             at,
             session: None,
             converse: false,
+            lang: None,
         }
     }
     const HERE: Room = Room {
@@ -592,6 +602,7 @@ mod tests {
                 at: 1,
                 session: None,
                 converse: false,
+                lang: None,
             },
             Moment {
                 app: "game".into(),
@@ -603,6 +614,7 @@ mod tests {
                 at: 2,
                 session: None,
                 converse: false,
+                lang: None,
             },
         ]);
         assert!(k.starts_with("While the user was in game,"));
@@ -733,6 +745,24 @@ mod tests {
         let (taken, stay) = take_for_wake(stay);
         assert_eq!(taken, vec![ask(4, "c")]);
         assert_eq!(stay, vec![quiet]);
+    }
+
+    #[test]
+    fn her_wake_answers_in_the_newest_language_a_moment_names() {
+        assert_eq!(language_of(&[m(1, false), m(2, false)]), None);
+        let en = Moment {
+            lang: Some("en".into()),
+            ..m(1, false)
+        };
+        let zh = Moment {
+            lang: Some("zh-Hans".into()),
+            ..m(2, false)
+        };
+        assert_eq!(
+            language_of(&[en.clone(), m(3, false)]).as_deref(),
+            Some("en")
+        );
+        assert_eq!(language_of(&[en, zh]).as_deref(), Some("zh-Hans"));
     }
 
     fn in_chat(session: Option<&str>, converse: bool) -> Moment {

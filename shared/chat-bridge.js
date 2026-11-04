@@ -30,6 +30,7 @@ import '/shared/channel.js'; // the page's data channel (api.js loads it too)
  *   params?: Record<string, string>,
  *   placeholder?: string,
  *   lazy?: boolean,
+ *   language?: string,
  *   deleteOnLeave?: boolean,
  *   onSessionCreated?: (sid: string) => void,
  *   onStreamToken?: (fullText: string, info: { agent: string, own: boolean }) => void,
@@ -41,6 +42,11 @@ import '/shared/channel.js'; // the page's data channel (api.js loads it too)
  *   onConnectionChange?: (status: 'connected' | 'reconnecting' | 'disconnected') => void,
  *   onSkillEvent?: (event: string, payload: any) => void,
  * }} options
+ *
+ * `language` (a BCP-47 tag — `en`, `zh-Hans`): the app's own language, when it
+ * plays in another than Linggen's. The chat's own words — an AskUser card's
+ * header, its buttons — are in it (the embed's `?lang=`); `setLanguage` moves
+ * a mounted chat to another.
  *
  * onSkillEvent hears what the engine relays beyond the stream, among them
  * `allowance_spent` ({ reason: 'trial' | 'monthly', agent, sessionId }): a
@@ -73,6 +79,7 @@ export async function mount(el, options) {
 
   let modelId = options.modelId || '';
   let sessionId = options.sessionId || null;
+  let language = options.language || '';
   const streamBuffers = new Map(); // agent → its turn's text so far
   let iframe = null;
   let mounting = null; // ensureMounted's promise — mount exactly once
@@ -101,6 +108,7 @@ export async function mount(el, options) {
     const p = new URLSearchParams({ skill: skillName, session: sid, hide_toolbar: '1' });
     if (modelId) p.set('model', modelId);
     if (options.agentId) p.set('agent', options.agentId);
+    if (language) p.set('lang', language);
     // The values this page's sessions are bound to: the chat's own New chat
     // carries them and its list shows only sessions bound the same way, so a
     // page on a test save never starts a chat on the main one.
@@ -354,6 +362,19 @@ export async function mount(el, options) {
       embedAlive = false;
       const done = loaded();
       iframe.src = buildSrc(sid);
+      await done;
+      armGracePeriod();
+    },
+    /** The app's language changed: the chat's own words follow, its iframe
+     *  reloading in place (the thread and any open question come back with it). */
+    async setLanguage(tag) {
+      const next = String(tag || '');
+      if (next === language) return;
+      language = next;
+      if (!iframe || !sessionId) return; // not yet mounted: the first mount uses it
+      embedAlive = false;
+      const done = loaded();
+      iframe.src = buildSrc(sessionId);
       await done;
       armGracePeriod();
     },

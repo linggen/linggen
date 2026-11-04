@@ -45,7 +45,9 @@ function apply(tag: string) {
   document.documentElement.lang = lang;
 }
 
-/** At start, before the first render: `?lang=` for a check, else the language
+/** At start, before the first render: `?lang=` — a check, or an app chat's own
+ *  language (shared/chat-bridge.js `language`: an app played in another than
+ *  Linggen's, its AskUser card in its words) — else the language
  *  this page last had, else the browser's. Synchronous — the engine is only
  *  reachable over the data channel, and that opens after the page renders. */
 export function startLanguage(): Language {

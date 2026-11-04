@@ -368,7 +368,7 @@ pub(crate) async fn wake_herald(
     kickoff: String,
     emotion: &str,
 ) -> Option<String> {
-    wake_and_speak(state, (kickoff, None), emotion, "event", Reach::Open).await
+    wake_and_speak(state, (kickoff, None), emotion, "event", Reach::Open, None).await
 }
 
 /// Wake her for an app moment. `asked`: the user asked her for this — the
@@ -380,9 +380,10 @@ pub(crate) async fn wake_for_moment(
     moment: (String, Option<String>),
     emotion: &str,
     asked: bool,
+    language: Option<String>,
 ) -> Option<String> {
     let source = if asked { "asked" } else { "event" };
-    wake_and_speak(state, moment, emotion, source, Reach::Sealed).await
+    wake_and_speak(state, moment, emotion, source, Reach::Sealed, language).await
 }
 
 /// Wake her, and speak her line. Returns the line she said aloud — `None`
@@ -393,11 +394,12 @@ pub(super) async fn wake_and_speak(
     emotion: &str,
     trigger_source: &str,
     reach: Reach,
+    language: Option<String>,
 ) -> Option<String> {
     // `None`: the run failed or she produced nothing.
     let reply = match reach {
         Reach::Open => run_yinyue_turn(&state, kickoff, trigger_source).await,
-        Reach::Sealed => run_moment_turn(&state, (kickoff, table), trigger_source).await,
+        Reach::Sealed => run_moment_turn(&state, (kickoff, table), trigger_source, language).await,
     }?;
     let Some(line) = spoken_line(&reply) else {
         tracing::info!("[yinyue-watch] Yinyue chose silence");
