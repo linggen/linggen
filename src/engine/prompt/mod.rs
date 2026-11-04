@@ -253,6 +253,22 @@ pub(crate) fn engine_authored(task: &str) -> bool {
     task.contains("[HIDDEN]")
 }
 
+/// The language a page's own message names for itself — `(lang <tag>)`, the
+/// last one in it (`[scene] arrived … (lang en)`): an app played in another
+/// language than Linggen's says so on what it sends. A short tag only,
+/// normalized; anything else names nothing.
+pub(crate) fn named_language(task: &str) -> Option<String> {
+    let at = task.rfind("(lang ")?;
+    let rest = &task[at + "(lang ".len()..];
+    let tag = rest[..rest.find(')')?].trim();
+    let shaped = !tag.is_empty()
+        && tag.len() <= 16
+        && tag
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    shaped.then(|| crate::language::normalize(tag))
+}
+
 fn mission_prompt(soul: Soul, mission: &ActiveMission, language: String) -> String {
     let body = match &mission.mission_dir {
         Some(dir) => mission.body.replace("$MISSION_DIR", &dir.to_string_lossy()),
@@ -799,9 +815,17 @@ impl AgentEngine {
 
         // A turn the person did not type answers in the Linggen language
         // (a mission's line already says so for all of it).
+        // The turn's caller names its language first (`turn_language`), then
+        // the page's message itself (`(lang en)`): an app in English answers
+        // in English while Linggen is set to Chinese (2026-11-04: a road's
+        // arrival told in Chinese under an English page).
         if self.active_mission.is_none() && engine_authored(task) {
             system.push_str("\n\n");
-            system.push_str(&self.unprompted_language_line());
+            let line = match (self.turn_language.as_deref(), named_language(task)) {
+                (None, Some(tag)) => self.unprompted_language_line_in(&tag),
+                _ => self.unprompted_language_line(),
+            };
+            system.push_str(&line);
         }
 
         // Check if tools are available — skip all tool-related prompt sections when empty.

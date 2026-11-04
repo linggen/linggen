@@ -302,6 +302,38 @@ fn a_turn_the_person_did_not_type_answers_in_the_linggen_language() {
 }
 
 #[test]
+fn a_page_message_that_names_its_language_is_answered_in_it() {
+    use crate::engine::prompt::named_language;
+    // 2026-11-04: an English page's `[scene] arrived … (lang en)` was told in
+    // Chinese — the Linggen language — under a Chinese thread.
+    assert_eq!(
+        named_language("[HIDDEN] [scene] arrived huaidu (lang en)").as_deref(),
+        Some("en")
+    );
+    assert_eq!(
+        named_language("[HIDDEN] [scene] recap (lang zh)").as_deref(),
+        Some("zh-Hans")
+    );
+    assert_eq!(named_language("[HIDDEN] [scene] recap"), None);
+    assert_eq!(
+        named_language("[HIDDEN] (lang please answer in French)"),
+        None
+    );
+    let mut engine = engine_as("ling", LING);
+    let en = turn_system(&mut engine, "[HIDDEN] [scene] arrived huaidu (lang en)");
+    at(&en, "The person did not type this turn");
+    at(&en, "Reply in English.");
+    // A caller's own language still comes first (her moment turn).
+    engine.turn_language = Some("zh-Hans".to_string());
+    let theirs = turn_system(&mut engine, "[HIDDEN] [scene] arrived huaidu (lang en)");
+    at(&theirs, "Reply in Simplified Chinese.");
+    engine.turn_language = None;
+    // A person's own typing names nothing: the chat rule stands.
+    let typed = turn_system(&mut engine, "where now (lang en)");
+    assert!(!typed.contains("The person did not type this turn"));
+}
+
+#[test]
 fn an_app_event_kickoff_is_engine_authored_and_a_typed_message_is_not() {
     use crate::engine::prompt::engine_authored;
     // 银月's event turns (`/api/yinyue/event` → resident::spoken::with_contract)
