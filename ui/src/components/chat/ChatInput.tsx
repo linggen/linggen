@@ -498,7 +498,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                     <button
                       onClick={() => steerQueued(item)}
                       className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-200/60 dark:bg-amber-500/20 hover:bg-amber-300/70 dark:hover:bg-amber-500/35 transition-colors"
-                      title={claudeSession ? 'Send this message now, into the running turn' : 'Send this message now: running Bash and subagents move to the background'}
+                      title="Send this message now, into the running turn"
                     >
                       <CornerDownRight size={10} /> Steer
                     </button>
