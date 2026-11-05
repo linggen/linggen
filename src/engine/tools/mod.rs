@@ -8,6 +8,7 @@ pub(crate) use builtin::RightNow;
 
 pub(crate) mod browser_tool;
 mod file_tools;
+mod foreground_shell;
 mod read_picture;
 pub use read_picture::human_size;
 pub(crate) mod json_schema;
@@ -349,6 +350,9 @@ pub struct Tools {
     /// write a skill's own files (pictures) resolve the folder here and
     /// build the `/apps/<name>/...` URL the web UI and phone can load.
     pub(crate) active_skill: Option<(String, PathBuf)>,
+    /// The running turn's Steer (`engine/steer.rs`), wired by the server for
+    /// a person's turn: a foreground Bash moves to the background on it.
+    pub(crate) steer: Option<Arc<crate::engine::steer::SteerSignal>>,
 }
 
 impl Tools {
@@ -373,6 +377,7 @@ impl Tools {
             last_ask_user: Arc::new(std::sync::Mutex::new(None)),
             browser_bridge: None,
             active_skill: None,
+            steer: None,
         })
     }
 
@@ -442,6 +447,16 @@ impl Tools {
 
     pub fn set_session_id(&mut self, session_id: Option<String>) {
         self.session_id = session_id;
+    }
+
+    pub fn set_steer(&mut self, steer: Option<Arc<crate::engine::steer::SteerSignal>>) {
+        self.steer = steer;
+    }
+
+    /// A steer no step has taken in yet, for this top-level turn only: a
+    /// subagent's own work never hands off on its parent's Steer.
+    pub(crate) fn steer_pending(&self) -> bool {
+        self.delegation_depth == 0 && self.steer.as_ref().is_some_and(|s| s.pending())
     }
 
     pub fn set_active_skill(&mut self, name: String, dir: Option<PathBuf>) {

@@ -166,6 +166,7 @@ impl AgentEngine {
         let mut thinking_ended = false;
         let mut token_usage: Option<crate::provider::models::TokenUsage> = None;
         let mut first_action: Option<(actions::ModelAction, usize)> = None;
+        let mut steered = false;
 
         'stream: loop {
             // A user cancel must not wait out the rest of the stream — a long
@@ -175,6 +176,10 @@ impl AgentEngine {
             let chunk_result = loop {
                 if self.is_cancelled().await {
                     anyhow::bail!("run cancelled");
+                }
+                if self.tools.builtins.steer_pending() {
+                    steered = true;
+                    break 'stream;
                 }
                 match tokio::time::timeout(
                     std::time::Duration::from_millis(250),
@@ -231,8 +236,9 @@ impl AgentEngine {
         Ok(StreamResult {
             full_text: accumulated,
             token_usage,
-            first_action,
+            first_action: first_action.filter(|_| !steered),
             tool_calls: Vec::new(),
+            steered,
         })
     }
 
@@ -269,6 +275,7 @@ impl AgentEngine {
         let mut tc_names: Vec<Option<String>> = Vec::new();
         let mut tc_args: Vec<String> = Vec::new();
         let mut tc_thought_sigs: Vec<Option<String>> = Vec::new();
+        let mut steered = false;
 
         'stream: loop {
             // Same cancel-poll as stream_with_thinking_model: a stop must not
@@ -276,6 +283,10 @@ impl AgentEngine {
             let chunk_result = loop {
                 if self.is_cancelled().await {
                     anyhow::bail!("run cancelled");
+                }
+                if self.tools.builtins.steer_pending() {
+                    steered = true;
+                    break 'stream;
                 }
                 match tokio::time::timeout(
                     std::time::Duration::from_millis(250),
@@ -350,8 +361,10 @@ impl AgentEngine {
         // Build ParsedToolCall objects from accumulated deltas.
         // Skip phantom entries (empty name + empty args) caused by Responses API
         // output_index gaps (text blocks occupy indices before function calls).
+        // A steered stream keeps none: a call with no result breaks history.
         let mut tool_calls = Vec::new();
-        for i in 0..tc_ids.len() {
+        let begun_calls = if steered { 0 } else { tc_ids.len() };
+        for i in 0..begun_calls {
             let name = tc_names[i].clone().unwrap_or_default();
             let args_str = &tc_args[i];
             if name.is_empty() && args_str.is_empty() {
@@ -401,6 +414,7 @@ impl AgentEngine {
             token_usage,
             first_action: None,
             tool_calls,
+            steered,
         })
     }
 

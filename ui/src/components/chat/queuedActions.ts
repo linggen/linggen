@@ -47,9 +47,10 @@ export function takeQueued(sessionId: string, agentId: string, item: QueuedChatI
   return hideWhile(item, () => sessionApi.removeQueued(sessionId, agentId, item.id), false);
 }
 
-/** Send one queued message into the running turn: a Claude session's at
- *  once, a native one that waits for the whole turn at the turn's next
- *  step. Offered only where `steerable`. */
+/** Send one queued message into the running turn now: a native turn hands
+ *  off what it waits on (its reply so far is kept; a running Bash or subagent
+ *  moves to the background). Offered where `steerable`, never while a native
+ *  question is open. */
 export function steerQueued(item: QueuedChatItem): void {
   void hideWhile(item, () => sessionApi.steerQueued(item.id), true);
 }

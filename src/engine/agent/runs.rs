@@ -86,6 +86,21 @@ impl RunStore {
         self.runs.lock_ok().get(run_id).cloned()
     }
 
+    /// The run no longer ends with its parent: a foreground subagent Steer
+    /// moved to the background outlives the turn that started it.
+    pub fn detach(&self, run_id: &str) {
+        let Some(parent_id) = self.get_run(run_id).and_then(|run| run.parent_run_id) else {
+            return;
+        };
+        let mut children = self.children.lock_ok();
+        if let Some(siblings) = children.get_mut(&parent_id) {
+            siblings.retain(|id| id != run_id);
+            if siblings.is_empty() {
+                children.remove(&parent_id);
+            }
+        }
+    }
+
     pub fn remove_run(&self, run_id: &str) {
         let mut runs = self.runs.lock_ok();
         if let Some(run) = runs.remove(run_id) {
@@ -243,6 +258,18 @@ mod tests {
 
         let empty = store.list_runs(Some("nonexistent"));
         assert_eq!(empty.len(), 0);
+    }
+
+    #[test]
+    fn a_detached_child_no_longer_ends_with_its_parent() {
+        let store = RunStore::new();
+        store.add_run(&make_run("parent", "s1", None, 1));
+        store.add_run(&make_run("child", "s1", Some("parent"), 2));
+        store.add_run(&make_run("sibling", "s1", Some("parent"), 3));
+        store.detach("child");
+        let left: Vec<_> = store.list_children("parent").into_iter().map(|r| r.run_id).collect();
+        assert_eq!(left, ["sibling"]);
+        assert!(store.get_run("child").is_some(), "it still runs");
     }
 
     #[test]

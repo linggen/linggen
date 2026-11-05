@@ -2,8 +2,8 @@
 
 export type QueuedChatItem = { id: string, agent_id: string, session_id: string, preview: string, timestamp: number, 
 /**
- * Steer would change when it goes in: true while it waits for the
- * whole turn (native), and always in a Claude session (Steer sends it
- * at once).
+ * Steer is offered: it sends the message in now (a native turn hands
+ * off what it waits on; a Claude one gets it at priority `now`). False
+ * once steered. The chat hides it while a native question is open.
  */
 steerable: boolean, };

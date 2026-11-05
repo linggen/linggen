@@ -1,6 +1,6 @@
+use super::foreground_shell::Ran;
 use super::tool_helpers::{build_globset, to_rel_string};
 use super::{SearchMatch, ToolResult, Tools};
-use crate::util::LockExt;
 use anyhow::Result;
 use grep::regex::RegexMatcher;
 use grep::searcher::sinks::UTF8;
@@ -8,11 +8,9 @@ use grep::searcher::Searcher;
 use ignore::WalkBuilder;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tracing::warn;
+use std::time::Duration;
 
 /// Walk up from `path` looking for a `.git` directory or file (worktrees),
 /// never above `$HOME` (see [`project_ancestors`]). Home itself is never a
@@ -107,9 +105,16 @@ impl Tools {
             .await
     }
 
+    /// A foreground Bash; one Steer moved is watched as a background task
+    /// (`foreground_shell.rs`).
     pub(super) async fn run_command(&self, args: RunCommandArgs) -> Result<ToolResult> {
-        self.run_blocking("run_command", move |tools| tools.run_command_inner(args))
-            .await
+        let ran = self
+            .run_blocking("run_command", move |tools| tools.run_foreground_shell(args))
+            .await?;
+        match ran {
+            Ran::Done(result) => Ok(result),
+            Ran::Moved(moved) => self.watch_moved(moved).await,
+        }
     }
 
     fn search_rg_inner(&self, args: SearchArgs) -> Result<ToolResult> {
@@ -171,228 +176,6 @@ impl Tools {
         }
 
         Ok(ToolResult::SearchMatches(matches))
-    }
-
-    fn run_command_inner(&self, args: RunCommandArgs) -> Result<ToolResult> {
-        use std::io::BufRead;
-
-        use crate::util::CWD_SENTINEL;
-
-        let timeout = Duration::from_millis(args.timeout_ms.unwrap_or(30000));
-        let cwd = {
-            let c = self.cwd();
-            if c.is_dir() {
-                c
-            } else {
-                tracing::warn!(
-                    "Bash cwd {:?} does not exist, falling back to root {:?}",
-                    c,
-                    self.root
-                );
-                self.root.clone()
-            }
-        };
-
-        // Wrap the user command to capture the final working directory.
-        // Preserves the original exit code while appending a sentinel + pwd.
-        let wrapped_cmd = crate::util::wrap_with_cwd_sentinel(&args.cmd);
-
-        let mut child = if cfg!(target_os = "windows") {
-            Command::new("cmd")
-                .args(["/C", &args.cmd])
-                .current_dir(&cwd)
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()?
-        } else {
-            use std::os::unix::process::CommandExt;
-            Command::new("sh")
-                .arg("-c")
-                .arg(&wrapped_cmd)
-                .current_dir(&cwd)
-                .env("PATH", crate::util::shell_path())
-                .env(crate::language::ENV_KEY, crate::language::effective())
-                // Which session this shell runs for (`ling restart` reads it).
-                .env(crate::paths::SESSION_ENV, self.session_id.as_deref().unwrap_or_default())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .process_group(0)
-                .spawn()?
-        };
-
-        // Take stdout/stderr handles for line-by-line streaming.
-        let child_stdout = child.stdout.take();
-        let child_stderr = child.stderr.take();
-        let progress_tx = self.progress_tx.clone();
-
-        // Spawn reader threads that accumulate output and optionally send
-        // progress lines through the channel.
-        let stdout_handle = std::thread::spawn({
-            let tx = progress_tx.clone();
-            move || {
-                let mut acc = String::new();
-                if let Some(stdout) = child_stdout {
-                    let reader = std::io::BufReader::new(stdout);
-                    for line in reader.lines() {
-                        match line {
-                            Ok(l) => {
-                                if let Some(tx) = &tx {
-                                    let _ = tx.send((
-                                        "Bash".to_string(),
-                                        "stdout".to_string(),
-                                        l.clone(),
-                                    ));
-                                }
-                                acc.push_str(&l);
-                                acc.push('\n');
-                            }
-                            Err(_) => break,
-                        }
-                    }
-                }
-                acc
-            }
-        });
-        let stderr_handle = std::thread::spawn({
-            let tx = progress_tx;
-            move || {
-                let mut acc = String::new();
-                if let Some(stderr) = child_stderr {
-                    let reader = std::io::BufReader::new(stderr);
-                    for line in reader.lines() {
-                        match line {
-                            Ok(l) => {
-                                if let Some(tx) = &tx {
-                                    let _ = tx.send((
-                                        "Bash".to_string(),
-                                        "stderr".to_string(),
-                                        l.clone(),
-                                    ));
-                                }
-                                acc.push_str(&l);
-                                acc.push('\n');
-                            }
-                            Err(_) => break,
-                        }
-                    }
-                }
-                acc
-            }
-        });
-
-        // Wait for the process with timeout.
-        let start = Instant::now();
-        let mut timed_out = false;
-        let mut interrupted = false;
-        loop {
-            if let Some(_status) = child.try_wait()? {
-                break;
-            }
-            if start.elapsed() >= timeout {
-                timed_out = true;
-                kill_process_group(&child);
-                break;
-            }
-            if let Some(flag) = &args.cancel_flag {
-                if flag.load(std::sync::atomic::Ordering::Relaxed) {
-                    interrupted = true;
-                    kill_process_group(&child);
-                    break;
-                }
-            }
-            std::thread::sleep(Duration::from_millis(25));
-        }
-
-        let exit_status = child.wait()?;
-
-        // Join reader threads and collect accumulated output.
-        let stdout = stdout_handle.join().unwrap_or_else(|_| {
-            warn!("stdout reader thread panicked for command");
-            String::new()
-        });
-        let mut stderr = stderr_handle.join().unwrap_or_else(|_| {
-            warn!("stderr reader thread panicked for command");
-            "linggen: internal error reading command output\n".to_string()
-        });
-
-        // Strip the cwd sentinel from stdout and update persistent cwd. Use
-        // substring match (not whole-line) so commands whose final line of
-        // output lacks a trailing newline — e.g. `cat file_without_final_nl`
-        // — still strip cleanly; otherwise the sentinel glues onto the user
-        // content (`}__LINGGEN_CWD__`) and leaks into the tool result.
-        let stdout = {
-            let mut s = stdout;
-            let sentinel_with_nl = format!("{}\n", CWD_SENTINEL);
-            if let Some(sent_pos) = s.rfind(&sentinel_with_nl) {
-                let after_sent = sent_pos + sentinel_with_nl.len();
-                let pwd_end = s[after_sent..]
-                    .find('\n')
-                    .map(|i| after_sent + i)
-                    .unwrap_or(s.len());
-                let new_cwd = PathBuf::from(s[after_sent..pwd_end].to_string());
-                if new_cwd.is_absolute() && new_cwd.exists() {
-                    if let Some(sid) = &self.session_id {
-                        let old_cwd = self.cwd_by_session.lock_ok().get(sid).cloned();
-                        self.cwd_by_session
-                            .lock_ok()
-                            .insert(sid.clone(), new_cwd.clone());
-                        // Emit working folder change if cwd actually changed
-                        if old_cwd.as_ref() != Some(&new_cwd) {
-                            if let Some(ref tx) = self.progress_tx {
-                                let git_root = find_git_root(&new_cwd);
-                                let project = git_root
-                                    .as_ref()
-                                    .map(|p| p.to_string_lossy().to_string())
-                                    .unwrap_or_default();
-                                let project_name = git_root
-                                    .as_ref()
-                                    .and_then(|p| p.file_name())
-                                    .map(|n| n.to_string_lossy().to_string())
-                                    .unwrap_or_default();
-                                let _ = tx.send((
-                                    "__cwd_changed__".to_string(),
-                                    format!("{}|{}", project, project_name),
-                                    new_cwd.to_string_lossy().to_string(),
-                                ));
-                            }
-                        }
-                    }
-                }
-                // Strip [sentinel, end-of-pwd-line] inclusive of trailing \n.
-                let strip_end = (pwd_end + 1).min(s.len());
-                s.replace_range(sent_pos..strip_end, "");
-            }
-            let mut cleaned = s;
-            // Restore trailing newline if original had one.
-            if !cleaned.is_empty() {
-                cleaned.push('\n');
-            }
-            cleaned
-        };
-
-        if timed_out {
-            if !stderr.is_empty() && !stderr.ends_with('\n') {
-                stderr.push('\n');
-            }
-            stderr.push_str(&format!(
-                "linggen: command timed out after {}ms\n",
-                timeout.as_millis()
-            ));
-        }
-
-        if interrupted {
-            if !stderr.is_empty() && !stderr.ends_with('\n') {
-                stderr.push('\n');
-            }
-            stderr.push_str("linggen: command interrupted by user\n");
-        }
-
-        Ok(ToolResult::command_output(
-            exit_status.code(),
-            &stdout,
-            &stderr,
-            super::DEFAULT_MAX_TOOL_OUTPUT_BYTES,
-        ))
     }
 }
 

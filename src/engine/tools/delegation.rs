@@ -152,6 +152,7 @@ impl Tools {
             self.parent_allowed_tools.clone(),
             self.parent_path_modes.clone(),
             self.parent_interactive,
+            false,
             None,
         ))
         .await
@@ -360,6 +361,7 @@ pub(crate) async fn run_delegation(
     parent_allowed_tools: Option<std::collections::HashSet<String>>,
     parent_path_modes: Vec<crate::engine::permission::PathMode>,
     parent_interactive: bool,
+    background: bool,
     started: Option<tokio::sync::oneshot::Sender<String>>,
 ) -> Result<ToolResult> {
     let run_id = manager
@@ -369,7 +371,7 @@ pub(crate) async fn run_delegation(
             &target_agent_id,
             parent_run_id.clone(),
             Some(format!("delegated by {}", caller_id)),
-            started.is_some(),
+            background,
         )
         .await?;
     let _life = manager.run_life(&run_id);

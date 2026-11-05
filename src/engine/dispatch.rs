@@ -6,7 +6,7 @@ use crate::engine::tools::{self, ToolCall};
 use crate::message::ChatMessage;
 use std::collections::HashSet;
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 impl AgentEngine {
     /// Handle a batch of consecutive `Task` (delegation) actions.
@@ -140,7 +140,6 @@ impl AgentEngine {
         // temporary across an `.await` somewhere, and identifying it would
         // require bisecting every reachable await site. Until that audit
         // (see deferred task #12), the per-call runtime is the workaround.
-        let mut join_set = tokio::task::JoinSet::new();
         let mut foreground = Vec::new();
         for mut spawn in spawns.into_iter() {
             if !spawn.background {
@@ -160,14 +159,33 @@ impl AgentEngine {
             );
             let session = spawn.session_id.clone().unwrap_or_default();
             let child_owner = spawn.depth > 0;
-            let owner = if child_owner { spawn.parent_run_id.clone() } else { Some(caller.clone()) };
+            let owner = if child_owner {
+                spawn.parent_run_id.clone()
+            } else {
+                Some(caller.clone())
+            };
             let (ws, bridge) = (ws_root.clone(), ask_bridge.clone());
             let handle = tokio::task::spawn_blocking(move || {
-                let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()?;
                 rt.block_on(tools::run_delegation(
-                    spawn.manager, ws, spawn.caller_id, spawn.target_agent_id, spawn.task,
-                    spawn.parent_run_id, spawn.depth, spawn.max_depth, bridge, spawn.session_id,
-                    spawn.policy, spawn.allowed_tools, spawn.path_modes, spawn.interactive, spawn.started,
+                    spawn.manager,
+                    ws,
+                    spawn.caller_id,
+                    spawn.target_agent_id,
+                    spawn.task,
+                    spawn.parent_run_id,
+                    spawn.depth,
+                    spawn.max_depth,
+                    bridge,
+                    spawn.session_id,
+                    spawn.policy,
+                    spawn.allowed_tools,
+                    spawn.path_modes,
+                    spawn.interactive,
+                    true,
+                    spawn.started,
                 ))
             });
             let run = async move {
@@ -178,7 +196,15 @@ impl AgentEngine {
                 }
             };
             let task = crate::engine::background::track_subagent(
-                &manager, &session, &caller, &target, owner.as_deref(), child_owner, &task_text, started_rx, run,
+                &manager,
+                &session,
+                &caller,
+                &target,
+                owner.as_deref(),
+                child_owner,
+                &task_text,
+                started_rx,
+                run,
             )
             .await;
             let rendered = format!(
@@ -186,78 +212,65 @@ impl AgentEngine {
                  in a new turn when it ends. Check it with TaskOutput, stop it with TaskStop.",
                 task.id
             );
-            let _ = self.persist_observation("Task", &rendered, false, session_id).await;
-            messages.push(tool_msg(self, self.observation_text("tool", &format!("Task({target})"), &rendered), idx));
+            let _ = self
+                .persist_observation("Task", &rendered, false, session_id)
+                .await;
+            messages.push(tool_msg(
+                self,
+                self.observation_text("tool", &format!("Task({target})"), &rendered),
+                idx,
+            ));
             self.upsert_observation("tool", "Task", rendered);
         }
+        // A foreground subagent runs as its own task, so Steer can hand it
+        // to the background still running (`foreground_task.rs`).
+        let mut running = Vec::new();
         for spawn in foreground.into_iter() {
-            let ws = ws_root.clone();
-            let bridge = ask_bridge.clone();
-            let action_idx = spawn.action_idx;
-            join_set.spawn_blocking(move || {
-                let rt = match tokio::runtime::Builder::new_current_thread()
+            let (ws, bridge) = (ws_root.clone(), ask_bridge.clone());
+            let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+            let (idx, target, task_text) = (
+                spawn.action_idx,
+                spawn.target_agent_id.clone(),
+                spawn.task.clone(),
+            );
+            let handle = tokio::task::spawn_blocking(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
-                {
-                    Ok(rt) => rt,
-                    Err(e) => {
-                        let target = spawn.target_agent_id.clone();
-                        return (
-                            action_idx,
-                            target,
-                            Err(anyhow::anyhow!(
-                                "failed to create delegation runtime: {}",
-                                e
-                            )),
-                        );
-                    }
-                };
-                let target = spawn.target_agent_id.clone();
-                let result = rt.block_on(async move {
-                    tools::run_delegation(
-                        spawn.manager,
-                        ws,
-                        spawn.caller_id,
-                        spawn.target_agent_id,
-                        spawn.task,
-                        spawn.parent_run_id,
-                        spawn.depth,
-                        spawn.max_depth,
-                        bridge,
-                        spawn.session_id,
-                        spawn.policy,
-                        spawn.allowed_tools,
-                        spawn.path_modes,
-                        spawn.interactive,
-                        spawn.started,
-                    )
-                    .await
-                });
-                (action_idx, target, result)
+                    .map_err(|e| anyhow::anyhow!("failed to create delegation runtime: {}", e))?;
+                rt.block_on(tools::run_delegation(
+                    spawn.manager,
+                    ws,
+                    spawn.caller_id,
+                    spawn.target_agent_id,
+                    spawn.task,
+                    spawn.parent_run_id,
+                    spawn.depth,
+                    spawn.max_depth,
+                    bridge,
+                    spawn.session_id,
+                    spawn.policy,
+                    spawn.allowed_tools,
+                    spawn.path_modes,
+                    spawn.interactive,
+                    false,
+                    Some(started_tx),
+                ))
+            });
+            running.push(super::foreground_task::ForegroundTask {
+                idx,
+                target,
+                task_text,
+                handle,
+                started: started_rx,
             });
         }
 
-        // Await all and collect results, checking cancellation between joins.
-        let mut results: Vec<(usize, String, anyhow::Result<tools::ToolResult>)> = Vec::new();
-        while let Some(join_result) = join_set.join_next().await {
-            match join_result {
-                Ok((idx, target, result)) => results.push((idx, target, result)),
-                Err(join_err) => {
-                    warn!("Delegation task panicked: {}", join_err);
-                    results.push((
-                        usize::MAX,
-                        "unknown".to_string(),
-                        Err(anyhow::anyhow!("delegation task panicked: {}", join_err)),
-                    ));
-                }
-            }
-            // Check cancellation after each delegation completes so we
-            // stop collecting results promptly (spec: agentic-loop.md).
-            if self.is_cancelled().await {
-                join_set.abort_all();
-                return Some(AgentOutcome::None);
-            }
-        }
+        let results = match self.await_foreground_tasks(running).await {
+            Some(results) => results,
+            None => return Some(AgentOutcome::None),
+        };
+        let mut results = results;
         results.sort_by_key(|(idx, _, _)| *idx);
 
         // Merge results into messages.

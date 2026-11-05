@@ -408,7 +408,9 @@ pub(crate) async fn enqueue_if_busy(
         session_id: effective_session_id.to_string(),
         preview: queue_preview(clean_msg),
         timestamp: crate::util::now_ts_secs(),
-        steerable: !joins,
+        // Steer means now (`fold.rs`); the chat hides it while a question
+        // is open, and the engine refuses it then.
+        steerable: true,
         text: sent.0.to_string(),
         images: sent.1.to_vec(),
     };
@@ -422,8 +424,27 @@ pub(crate) async fn enqueue_if_busy(
     Some((item, joins))
 }
 
-/// A steered native message now joins at the next step: Steer no longer
-/// changes anything for it.
+/// Whether the session a queued message waits in has a question open
+/// (AskUser or a permission prompt, its subagents' too): Steer then waits.
+pub(crate) async fn question_open_for_queued(state: &Arc<ServerState>, queued_id: &str) -> bool {
+    let session = {
+        let guard = state.queued_chats.lock().await;
+        let item = guard.values().flatten().find(|item| item.id == queued_id);
+        let Some(item) = item else {
+            return false;
+        };
+        item.session_id.clone()
+    };
+    let pending = state.pending_ask_user.lock().await;
+    question_open(pending.values().map(|entry| entry.session_id.as_deref()), &session)
+}
+
+fn question_open<'a>(mut asks: impl Iterator<Item = Option<&'a str>>, session: &str) -> bool {
+    asks.any(|asked| asked == Some(session))
+}
+
+/// A steered native message goes in now: Steer no longer changes anything
+/// for it.
 pub(crate) async fn mark_steered(state: &Arc<ServerState>, queued_id: &str) {
     let found = {
         let mut guard = state.queued_chats.lock().await;
@@ -1416,6 +1437,16 @@ mod tests {
     fn a_busy_message_steers_unless_a_question_is_open_or_the_skill_waits() {
         assert_eq!(busy_message(QueueMode::Steer), BusyMessage::JoinTurn);
         assert_eq!(busy_message(QueueMode::AfterTurn), BusyMessage::WaitForRun);
+    }
+
+    /// Steer waits while a question is open anywhere in the message's
+    /// session — a subagent's permission prompt too — and only there.
+    #[test]
+    fn steer_waits_while_the_sessions_question_is_open() {
+        use super::question_open;
+        assert!(question_open([None, Some("s")].into_iter(), "s"));
+        assert!(!question_open([Some("t"), None].into_iter(), "s"));
+        assert!(!question_open(std::iter::empty(), "s"));
     }
 
     #[test]

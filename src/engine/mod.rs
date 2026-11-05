@@ -6,6 +6,7 @@ mod closing_ask;
 pub(crate) mod cloud_meter;
 mod context;
 mod dispatch;
+mod foreground_task;
 pub mod events;
 pub mod mission;
 pub mod image_relevance;
@@ -24,6 +25,9 @@ pub mod shown_images;
 pub mod skill;
 pub mod skill_activation;
 pub mod skill_tool;
+pub mod steer;
+#[cfg(test)]
+mod steer_loop_tests;
 mod streaming;
 pub mod suggestion;
 #[cfg(test)]
@@ -469,6 +473,13 @@ impl AgentEngine {
             let stream_result = self
                 .stream_with_fallback(&state.messages, native_tools.clone())
                 .await?;
+            if stream_result.steered {
+                // Steer: keep what was said, then the loop top takes the
+                // message in and the turn goes on.
+                self.keep_steered_reply(stream_result.full_text, &mut state.messages, session_id)
+                    .await;
+                continue;
+            }
             let raw = stream_result.full_text;
             let stream_first_action = stream_result.first_action;
             let native_tool_calls = stream_result.tool_calls;
@@ -873,6 +884,23 @@ impl AgentEngine {
         received
     }
 
+    /// A reply cut short by Steer: what it said so far stays, shown and
+    /// saved, as an assistant message (any JSON action it began is dropped).
+    async fn keep_steered_reply(
+        &mut self,
+        raw: String,
+        messages: &mut Vec<ChatMessage>,
+        session_id: Option<&str>,
+    ) {
+        let text = text_before_first_json(&raw);
+        if text.trim().is_empty() {
+            return;
+        }
+        info!("Steer: the reply so far is kept and the queued message goes in");
+        self.emit_text_segment(text.clone(), session_id).await;
+        self.push_tracked_message(messages, ChatMessage::new("assistant", text));
+    }
+
     /// Take in what the person sent while the turn ran, as user messages.
     /// True when Stop landed while the messages were handed over: then
     /// none is taken, and each runs as its own turn once this one ends.
@@ -880,6 +908,9 @@ impl AgentEngine {
         let Some(inbox) = self.inbox.clone() else {
             return false;
         };
+        if let Some(steer) = &self.tools.builtins.steer {
+            steer.settle();
+        }
         let sent = inbox().await;
         if !sent.is_empty() && self.is_cancelled().await {
             return true;

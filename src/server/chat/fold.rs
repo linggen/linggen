@@ -9,8 +9,13 @@
 //! chat, and hands its words back — or nothing, when the person removed it.
 //! One that is not ready (the skill has every message
 //! wait for the whole turn) joins only on Steer.
+//!
+//! Steer means now: the message is made ready and the running turn's steer
+//! signal fires, so what the turn waits on hands off (`engine/steer.rs`).
+use crate::engine::steer::SteerSignal;
 use crate::engine::InboxMessage;
-use std::sync::Mutex;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::oneshot;
 
@@ -29,10 +34,8 @@ struct Waiting {
 /// What a Steer did to a native queued message.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Steered {
-    /// It waited for the whole turn; now it joins at the next step.
-    Joins,
-    /// It joins at the next step already: Steer changes nothing.
-    AlreadyJoins,
+    /// It is ready, and the running turn was told to take it in now.
+    Now,
     /// It no longer waits here.
     Gone,
 }
@@ -40,6 +43,8 @@ pub(crate) enum Steered {
 #[derive(Default)]
 pub(crate) struct Fold {
     waiting: Mutex<Vec<Waiting>>,
+    /// The running turn's steer signal, by its `key`, while it runs.
+    signals: Mutex<HashMap<String, Arc<SteerSignal>>>,
 }
 
 /// How long a step waits for one message to show itself before going on.
@@ -72,18 +77,39 @@ impl Fold {
         self.waiting().retain(|w| w.id != id);
     }
 
-    /// Steer: a message that would wait for the whole turn joins it at the
-    /// next step.
+    /// Steer: the message joins the running turn now — ready for its next
+    /// step, and the turn's signal fired so it gets there without waiting.
     pub fn steer(&self, id: &str) -> Steered {
-        let mut waiting = self.waiting();
-        let Some(entry) = waiting.iter_mut().find(|w| w.id == id) else {
-            return Steered::Gone;
+        let key = {
+            let mut waiting = self.waiting();
+            let Some(entry) = waiting.iter_mut().find(|w| w.id == id) else {
+                return Steered::Gone;
+            };
+            entry.ready = true;
+            entry.key.clone()
         };
-        if entry.ready {
-            return Steered::AlreadyJoins;
+        if let Some(signal) = self.signals().get(&key) {
+            signal.fire();
         }
-        entry.ready = true;
-        Steered::Joins
+        Steered::Now
+    }
+
+    fn signals(&self) -> std::sync::MutexGuard<'_, HashMap<String, Arc<SteerSignal>>> {
+        self.signals
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// The turn for `key` starts: a fresh steer signal for it.
+    pub fn open_turn(&self, key: &str) -> Arc<SteerSignal> {
+        let signal = Arc::new(SteerSignal::default());
+        self.signals().insert(key.into(), signal.clone());
+        signal
+    }
+
+    /// The turn for `key` is over: nothing steers it any more.
+    pub fn close_turn(&self, key: &str) {
+        self.signals().remove(key);
     }
 
     /// A step of the turn for `key`: every ready message, in the order sent.
@@ -156,7 +182,10 @@ mod tests {
             (sent, accepted.await.is_ok())
         });
         assert!(fold.take("s/ling").await.is_empty());
-        assert!(behind.await.is_err(), "the one behind is let go to run as its own turn");
+        assert!(
+            behind.await.is_err(),
+            "the one behind is let go to run as its own turn"
+        );
         let (_, taken) = late.await.unwrap();
         assert!(!taken, "a late message is never taken");
     }
@@ -182,8 +211,8 @@ mod tests {
         );
 
         answer(fold.wait("s/ling", "6", true), Some("third"));
-        assert_eq!(fold.steer("6"), Steered::AlreadyJoins);
-        assert_eq!(fold.steer("3"), Steered::Joins);
+        assert_eq!(fold.steer("6"), Steered::Now);
+        assert_eq!(fold.steer("3"), Steered::Now);
         let words: Vec<String> = fold
             .take("s/ling")
             .await
@@ -191,6 +220,37 @@ mod tests {
             .map(|m| m.text)
             .collect();
         assert_eq!(words, ["waits for the turn", "third"]);
-        assert_eq!(fold.steer("3"), Steered::Gone, "a taken message no longer waits");
+        assert_eq!(
+            fold.steer("3"),
+            Steered::Gone,
+            "a taken message no longer waits"
+        );
+    }
+
+    /// Steer fires the running turn's signal, whether the message waited
+    /// for the whole turn or for the next step; a turn not running has none.
+    #[test]
+    fn steer_tells_the_running_turn_to_take_it_now() {
+        let fold = Fold::default();
+        let _ready = fold.wait("s/ling", "1", true);
+        let _waits = fold.wait("s/ling", "2", false);
+        assert_eq!(
+            fold.steer("1"),
+            Steered::Now,
+            "no turn running: it is just ready"
+        );
+        let signal = fold.open_turn("s/ling");
+        let other = fold.open_turn("s/yinyue");
+        assert_eq!(fold.steer("1"), Steered::Now);
+        assert!(signal.pending());
+        signal.settle();
+        assert_eq!(fold.steer("2"), Steered::Now);
+        assert!(
+            signal.pending(),
+            "a message that waited for the turn steers too"
+        );
+        assert!(!other.pending(), "another member's turn is left alone");
+        fold.close_turn("s/ling");
+        assert_eq!(fold.steer("9"), Steered::Gone);
     }
 }

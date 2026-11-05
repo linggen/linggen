@@ -66,7 +66,7 @@ pub(super) async fn run_plan_dispatch(ctx: &ChatRunCtx, engine: &mut crate::engi
     .await;
 
     engine.thinking_tx = None;
-    unwire_inbox(engine);
+    unwire_inbox(ctx, engine);
     engine.plan_mode = false;
 
     match outcome {
@@ -149,7 +149,7 @@ pub(super) async fn run_plan_execution(ctx: &ChatRunCtx, engine: &mut crate::eng
     .await;
 
     engine.thinking_tx = None;
-    unwire_inbox(engine);
+    unwire_inbox(ctx, engine);
 
     match exec_outcome {
         Ok(ref out) => {

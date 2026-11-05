@@ -113,3 +113,15 @@ A background shell is a child process of the engine, owned by the session.
 Its output goes to a file in the session's directory; the list shows the
 tail. A background subagent runs on its own engine like any delegation,
 but the parent's tool call returns at once with the task's id.
+
+### Moved by Steer
+
+Steer on a queued message (`chat-spec.md` § Message queue) moves the turn's
+running foreground work here, as the SDK does in a Claude session. A
+foreground `Bash` that does not end within a second of the Steer is not
+killed: it becomes a shell task, its output from then on going to its task
+file (what it printed so far opens the file). A running foreground `Task`
+becomes a subagent task, no longer stopped by Stop on the turn. Each call
+returns at once with the task's id and output file, and the task ends as a
+turn like any other. Nothing else moves; a subagent's own work never moves on
+its parent's Steer.

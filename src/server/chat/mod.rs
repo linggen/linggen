@@ -45,7 +45,8 @@ pub(crate) use admin::{
 };
 pub(crate) use compact_rows::commit_compaction;
 pub(crate) use handler::{
-    chat_handler, dequeue_and_emit, enqueue_if_busy, mark_steered, run_session_turn,
+    chat_handler, dequeue_and_emit, enqueue_if_busy, mark_steered, question_open_for_queued,
+    run_session_turn,
     say_in_session, start_turn, TurnOrigin,
 };
 pub(crate) use light::reply_in_session;

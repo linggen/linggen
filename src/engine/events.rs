@@ -46,9 +46,9 @@ pub struct QueuedChatItem {
     pub session_id: String,
     pub preview: String,
     pub timestamp: u64,
-    /// Steer would change when it goes in: true while it waits for the
-    /// whole turn (native), and always in a Claude session (Steer sends it
-    /// at once).
+    /// Steer is offered: it sends the message in now (a native turn hands
+    /// off what it waits on; a Claude one gets it at priority `now`). False
+    /// once steered. The chat hides it while a native question is open.
     pub steerable: bool,
     /// The message as sent and its pictures, kept on the engine so an Edit
     /// can hand them back; never pushed with the queue.

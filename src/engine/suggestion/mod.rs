@@ -295,6 +295,7 @@ mod tests {
             }),
             first_action: None,
             tool_calls: Vec::new(),
+            steered: false,
         }
     }
 

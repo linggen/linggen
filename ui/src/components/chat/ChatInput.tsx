@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Send, Square, X, FolderOpen, FileText, CornerDownRight, Pencil } from 'lucide-react';
 import { cn } from '../../lib/cn';
 import { useSessionStore } from '../../stores/sessionStore';
+import { useInteractionStore } from '../../stores/interactionStore';
 import { useServerStore } from '../../stores/serverStore';
 import { MarkdownContent } from './MarkdownContent';
 import { TodoPanel } from './TodoPanel';
@@ -351,6 +352,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
   const currentSession = useSessionStore((s) => sessionId || s.activeSessionId);
   const claudeSession = useSessionStore((s) => s.allSessions.find((session) => session.id === currentSession)?.runtime === 'claude_agent_sdk');
+  // A message never cancels an open question: Steer waits until it is answered.
+  const questionOpen = useInteractionStore((s) => (s.askQueues[currentSession ?? '']?.length ?? 0) > 0);
+  const offerSteer = (item: QueuedChatItem) => item.steerable && (claudeSession || !questionOpen);
 
   /** Take one message off the server queue (it never runs); resolves to it. */
   const takeQueued = async (item: QueuedChatItem) => {
@@ -490,12 +494,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               {visibleQueued.map((item) => (
                 <div key={item.id} className="group flex items-center gap-1 pl-3">
                   <span className="flex-1 truncate">{item.preview}</span>
-                  {/* Only where it changes when the message goes in. */}
-                  {item.steerable && (
+                  {offerSteer(item) && (
                     <button
                       onClick={() => steerQueued(item)}
                       className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-200/60 dark:bg-amber-500/20 hover:bg-amber-300/70 dark:hover:bg-amber-500/35 transition-colors"
-                      title={claudeSession ? 'Send this message now, into the running turn' : 'Send this message into the running turn at its next step'}
+                      title={claudeSession ? 'Send this message now, into the running turn' : 'Send this message now: running Bash and subagents move to the background'}
                     >
                       <CornerDownRight size={10} /> Steer
                     </button>

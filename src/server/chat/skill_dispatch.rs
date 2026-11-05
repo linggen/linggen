@@ -100,7 +100,7 @@ pub(super) async fn run_skill_dispatch(ctx: &ChatRunCtx, engine: &mut crate::eng
     )
     .await;
 
-    unwire_inbox(engine);
+    unwire_inbox(ctx, engine);
 
     if let Err(e) = outcome {
         tracing::warn!("Skill loop failed: {}", e);
@@ -424,7 +424,7 @@ pub(super) async fn run_trigger_dispatch(
     )
     .await;
 
-    unwire_inbox(engine);
+    unwire_inbox(ctx, engine);
 
     if let Err(e) = outcome {
         tracing::warn!("Trigger skill loop failed: {}", e);

@@ -109,7 +109,7 @@ pub(super) async fn run_structured_loop(ctx: &ChatRunCtx, engine: &mut crate::en
     // Drop the thinking sender so the forwarder task exits.
     engine.thinking_tx = None;
     engine.silence_ok = false;
-    unwire_inbox(engine);
+    unwire_inbox(ctx, engine);
 
     // Agent requested plan mode — re-dispatch using existing plan machinery.
     if let Ok(ref asked @ crate::engine::AgentOutcome::PlanModeRequested { ref reason }) = outcome {

@@ -537,6 +537,9 @@ pub(crate) struct StreamResult {
     pub first_action: Option<(super::actions::ModelAction, usize)>,
     /// Tool calls from native function calling (empty in legacy mode).
     pub tool_calls: Vec<ParsedToolCall>,
+    /// Steer stopped the stream: `full_text` is what came so far, and no
+    /// tool call it began is kept.
+    pub steered: bool,
 }
 
 /// Cached system prompt with hash for quick staleness checks.

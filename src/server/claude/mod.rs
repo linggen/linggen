@@ -432,9 +432,10 @@ pub(crate) struct SteerRequest {
     id: String,
 }
 
-/// POST /api/queue/steer — send one queued message into the running turn:
-/// a Claude session's at once, a native one that waits for the whole turn
-/// at the turn's next step.
+/// POST /api/queue/steer — send one queued message into the running turn
+/// now: a Claude session's at SDK priority `now`; a native one's makes the
+/// running turn hand off what it waits on (`fold.rs`). Never while a
+/// question is open: the message joins at the step after it is answered.
 pub(crate) async fn steer_queued(
     axum::extract::State(state): axum::extract::State<Arc<ServerState>>,
     Json(req): Json<SteerRequest>,
@@ -442,13 +443,17 @@ pub(crate) async fn steer_queued(
     if state.claude.steer(&req.id) {
         return Json(json!({"status": "ok"})).into_response();
     }
+    if chat::question_open_for_queued(&state, &req.id).await {
+        return (
+            StatusCode::CONFLICT,
+            "A question is open: the message joins once it is answered.",
+        )
+            .into_response();
+    }
     match state.fold.steer(&req.id) {
-        chat::fold::Steered::Joins => {
+        chat::fold::Steered::Now => {
             chat::mark_steered(&state, &req.id).await;
             Json(json!({"status": "ok"})).into_response()
-        }
-        chat::fold::Steered::AlreadyJoins => {
-            (StatusCode::CONFLICT, "It joins the running turn at its next step already.").into_response()
         }
         chat::fold::Steered::Gone => {
             (StatusCode::NOT_FOUND, "That message is no longer waiting.").into_response()
