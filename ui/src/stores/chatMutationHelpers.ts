@@ -10,6 +10,7 @@ import {
   dedupPlanMessages,
 } from '../lib/messageUtils';
 import { bindRuns } from '../lib/runBinding.mts';
+import { sortByTime } from '../lib/timeOrder.mts';
 
 /**
  * Subset of ChatMutationState used by mutation helpers.
@@ -54,20 +55,6 @@ export function computeDisplay(messages: ChatMessage[]): ChatMessage[] {
   return sortByTime([...nonPlans, ...plans]);
 }
 
-function sortByTime(messages: ChatMessage[]): ChatMessage[] {
-  return messages
-    .map((msg, index) => ({ msg, index }))
-    .sort((a, b) => {
-      const ta = a.msg.timestampMs ?? 0;
-      const tb = b.msg.timestampMs ?? 0;
-      if (ta <= 0 && tb <= 0) return a.index - b.index;
-      if (ta <= 0) return 1;
-      if (tb <= 0) return -1;
-      if (ta !== tb) return ta - tb;
-      return a.index - b.index;
-    })
-    .map((entry) => entry.msg);
-}
 
 /** Apply a mutation to the active session's messages and recompute displayMessages. */
 export function mutate(fn: (msgs: ChatMessage[]) => ChatMessage[]): (s: ChatMutationState) => Partial<ChatMutationState> {

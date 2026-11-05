@@ -734,7 +734,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           .filter(([_meta, body]) => !isPersistedToolOnlyMessage(String(body || '')))
           .flatMap(([meta, body], idx) => {
             // A run that stopped before it replied: its calls, marked interrupted.
-            if (isInterruptedRunMeta(meta as RunMeta)) return [interruptedRunMessage(meta as RunMeta)];
+            if (isInterruptedRunMeta(meta as RunMeta)) return [{ ...interruptedRunMessage(meta as RunMeta), rowOrder: idx }];
             // The run that wrote the row: it binds to that run's bubble by it.
             const runId = typeof meta.run_id === 'string' ? { runId: meta.run_id } : {};
             const isUser = meta.from === 'user' || meta.from === 'system';
@@ -755,6 +755,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                   text: String(body || ''),
                   timestamp: new Date(meta.ts * 1000).toLocaleTimeString(),
                   timestampMs: Number(meta.ts || 0) * 1000,
+                  rowOrder: idx,
                 }];
               }
             } catch { /* not pure JSON */ }
@@ -775,6 +776,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               text: bodyStr,
               timestamp: new Date(meta.ts * 1000).toLocaleTimeString(),
               timestampMs: Number(meta.ts || 0) * 1000,
+              rowOrder: idx,
               ...runId,
               ...(tools.length ? { content: tools, toolCount: tools.length } : {}),
               ...(Array.isArray(meta.subagents) ? { subagentTree: meta.subagents as SubagentTreeEntry[] } : {}),

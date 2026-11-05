@@ -79,6 +79,9 @@ export interface ChatMessage {
   text: string;
   timestamp: string;
   timestampMs?: number;
+  /** A saved row's place in the session's history, as loaded: same-second
+   *  rows keep this order (lib/timeOrder.mts). */
+  rowOrder?: number;
   isGenerating?: boolean;
   isThinking?: boolean;
   /** Finalized from a frozen mid-stream bubble (terminal events lost while

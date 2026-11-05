@@ -9,6 +9,7 @@ import type {
 import { liveBubbleOfRun } from './interruptedRun.mts';
 import { afterSealed, bindSealed, bubbleOfRun, claimForRun, isRunBubble, isRunRow, isSealed, runBubbleIndex } from './runBinding.mts';
 import { sameSentMessage } from './sentMessage.mts';
+import { sortByTime } from './timeOrder.mts';
 import { dropLiveEchoes, idsDecide, normalizeFrom, normalizeMessageTextForDedup, sameMessageContent } from './rowIdentity.mts';
 import { dedupeActivityEntries, isProgressLineText, summarizeCollapsedActivity } from '../components/chat/utils/activity';
 
@@ -752,19 +753,7 @@ export const isPersistedToolOnlyMessage = (text: string): boolean =>
 
 export const normalizeAgentKey = (value?: string) => (value || '').trim().toLowerCase();
 
-export const sortMessagesByTime = (messages: ChatMessage[]) =>
-  messages
-    .map((msg, index) => ({ msg, index }))
-    .sort((a, b) => {
-      const ta = a.msg.timestampMs ?? 0;
-      const tb = b.msg.timestampMs ?? 0;
-      if (ta <= 0 && tb <= 0) return a.index - b.index;
-      if (ta <= 0) return 1;
-      if (tb <= 0) return -1;
-      if (ta !== tb) return ta - tb;
-      return a.index - b.index;
-    })
-    .map((entry) => entry.msg);
+export const sortMessagesByTime = (messages: ChatMessage[]) => sortByTime(messages);
 
 const START_AUTONOMOUS_LINE_RE = /^Starting autonomous loop for task:/i;
 const CONTENT_OMITTED_LINE_RE = /^\(content omitted in chat; open the file viewer for full text\)$/i;
