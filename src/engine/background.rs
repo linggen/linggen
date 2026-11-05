@@ -528,7 +528,7 @@ pub fn end_leftovers() {
                 .output()
                 .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
                 .unwrap_or_default();
-            if running == format!("sh -c {cmd}") {
+            if running == ps_form(&cmd) {
                 tracing::info!(
                     "[tasks] ending background shell {pid} a previous engine left: {cmd}"
                 );
@@ -536,6 +536,21 @@ pub fn end_leftovers() {
             }
         }
     });
+}
+
+/// How `ps -o command=` shows `sh -c cmd`: control characters as octal
+/// escapes (a moved foreground Bash's command ends in a newline-joined
+/// cwd sentinel).
+fn ps_form(cmd: &str) -> String {
+    let mut shown = String::from("sh -c ");
+    for c in cmd.chars() {
+        if c.is_ascii_control() {
+            shown.push_str(&format!("\\{:03o}", c as u32));
+        } else {
+            shown.push(c);
+        }
+    }
+    shown
 }
 
 /// Where a task's output is, when it has a file.
@@ -676,6 +691,30 @@ mod tests {
             .await
             .unwrap();
         assert!(bg.notice(&manager, "child-task", "late".into()).is_none());
+    }
+
+    /// A later engine finds a moved shell by the command line `ps` shows,
+    /// newline and all.
+    #[test]
+    fn a_multi_line_command_is_matched_as_ps_shows_it() {
+        let wrapped = crate::util::wrap_with_cwd_sentinel("sleep 5");
+        let mut child = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&wrapped)
+            .spawn()
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        let out = std::process::Command::new("ps")
+            .args(["-o", "command=", "-p", &child.id().to_string()])
+            .output()
+            .unwrap();
+        let _ = child.kill();
+        let _ = child.wait();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            ps_form(&wrapped)
+        );
+        assert_eq!(ps_form("npm run dev"), "sh -c npm run dev");
     }
 
     #[test]

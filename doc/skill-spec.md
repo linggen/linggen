@@ -320,7 +320,7 @@ closing-ask: true
 A message sent while a session's agent is mid-turn is queued. What happens to the running turn:
 
 - **`steer`** (default) — the turn stops at its next step and the message is taken up next (ordinary chat: the user redirects the agent).
-- **`after-turn`** — the turn plays out: its tools, its words, its question. The message runs when the run ends.
+- **`after-turn`** — the turn plays out: its tools, its words, its question. The message runs when the run ends, unless the person presses Steer on it (`chat-spec.md` § Message queue).
 - Either way, **a message never cancels an open question**: an AskUser (or a permission prompt) stays on screen until it is answered or skipped, and the message waits behind it.
 
 ## Quests
