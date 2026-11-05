@@ -28,8 +28,9 @@
 .DS_Store
 pkg/
 
-# AI tool configs
-.claude/
+# AI tool configs — except the repo's own Claude Code skills (.claude/skills/: playtest)
+.claude/*
+!.claude/skills/
 .antigravity/
 .codex/
 .cursor/

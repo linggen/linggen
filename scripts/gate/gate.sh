@@ -15,6 +15,9 @@
 #   --prev <vm>                     also upgrade this frozen old-user VM (repeatable,
 #                                   or GATE_PREV_VMS="a b"); never rolled forward
 #   --skip-host-checks              don't run check.sh all + e2e first (a GAP)
+#   --skip-playbot                  don't play 灵境 on the released skills (a GAP)
+#   --verdict <run dir>             re-read that run's play-bot reviews (review.json)
+#                                   and re-draw its table; exit 0 only when green
 #   --keep                          leave the scratch VMs (stopped) for a look
 #
 # Exit 0 only when no check FAILs; the table at the end lists every check.
@@ -24,11 +27,12 @@
 set -uo pipefail
 . "$(dirname "$0")/lib.sh"
 . "$GATE_SRC/mirror.sh"
+. "$GATE_SRC/playbot.sh"
 
-usage() { echo "release-gate: $*" >&2; sed -n '2,22p' "$0" >&2; exit 2; }
+usage() { echo "release-gate: $*" >&2; sed -n '2,25p' "$0" >&2; exit 2; }
 needs_arg() { [ $# -ge 2 ] && [ -n "$2" ] && [ "${2#--}" = "$2" ] || usage "$1 needs a value"; }
 
-SOURCE=local SPECS="" FIRST=1 UPGRADE=1 REBUILD_PREV=0 SAVE_PREV="" KEEP=0 HOST_CHECKS=1
+SOURCE=local SPECS="" FIRST=1 UPGRADE=1 REBUILD_PREV=0 SAVE_PREV="" KEEP=0 HOST_CHECKS=1 PLAYBOT_RUN=1
 read -ra EXTRA_PREVS <<<"${GATE_PREV_VMS:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -36,13 +40,15 @@ while [ $# -gt 0 ]; do
     --draft) needs_arg "$@"; SOURCE=draft; SPECS="$2"; shift 2 ;;
     --prev) needs_arg "$@"; EXTRA_PREVS+=("$2"); shift 2 ;;
     --skip-host-checks) HOST_CHECKS=0; shift ;;
+    --skip-playbot) PLAYBOT_RUN=0; shift ;;
+    --verdict) needs_arg "$@"; verdict_of "$2"; exit $? ;;
     --public) SOURCE=public; UPGRADE=0; shift ;;
     --first-only) UPGRADE=0; shift ;;
     --upgrade-only) FIRST=0; shift ;;
     --rebuild-prev) REBUILD_PREV=1; shift ;;
     --save-prev) SAVE_PREV=1; shift ;;
     --keep) KEEP=1; shift ;;
-    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
     *) usage "unknown flag $1" ;;
   esac
 done
@@ -113,6 +119,17 @@ else
     else record FAIL "host: check.sh $suite" "$(grep -m3 '^FAILED' "$RUN/host-check-$suite.log" | tr '\n' ' ') (see $RUN/host-check-$suite.log)"; fi
   done
   # A red host suite fails the gate: no VM time spent on it.
+  [ "$(awk -F'\t' '$3=="FAIL"' "$RESULTS" | wc -l | tr -d ' ')" = 0 ] || { PHASE=summary; summary; exit 1; }
+fi
+
+# ── 灵境 played on the skills being released (scripts/gate/playbot.sh) ────
+if [ "$SOURCE" = public ]; then
+  record INFO "host: play bot" "not run — --public gates what is already published"
+elif [ "$PLAYBOT_RUN" = 0 ]; then
+  record GAP "host: play bot" "skipped (--skip-playbot)"
+else
+  playbot_checks
+  # A hard finding fails the gate before the VMs; a pending review does not stop it (the VMs run while it is read).
   [ "$(awk -F'\t' '$3=="FAIL"' "$RESULTS" | wc -l | tr -d ' ')" = 0 ] || { PHASE=summary; summary; exit 1; }
 fi
 

@@ -35,6 +35,13 @@ Before any VM boots, the gate runs `./scripts/check.sh all` and
 the commit the engine draft is cut from (a sha target that differs FAILs; a
 branch target — `main`, cut at publish — that has moved WARNs).
 
+It then plays 灵境 on the skills being released (`scripts/gate/playbot.sh`, `just playbot`): the commit
+`linggen-app/vendor/skills` holds and the phone pack's (`GATE_PHONE_SKILLS_REF`, else the same). The phone's
+灵境 assets are built from it in a scratch worktree (`tool/lingjing_assets.sh`) and its `lingjing_*` tests run — one
+that still skips is a GAP. A play-bot hard finding FAILs; its vision review shows REVIEW PENDING until the
+reviewer (the deployer Claude via the `playtest` skill, or Hanli) answers the run's `checklist.md` and writes
+`review.json` for that run id, then `just release-gate --verdict <run dir>`. `--skip-playbot` is a GAP.
+
 One-time setup, by hand:
 - **Gate image** `linggen-gate-base` — without it a quarantined Developer ID
   launch is a GAP (the vanilla image allows App Store apps only, and macOS

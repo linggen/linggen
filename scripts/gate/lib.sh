@@ -29,8 +29,9 @@ VM_MIRROR="http://127.0.0.1:$VM_MIRROR_PORT"
 VM_MODEL="http://127.0.0.1:$VM_MODEL_PORT"
 
 # ── Results ──────────────────────────────────────────────────────────────────
-# One TSV row per check: phase, check, status (PASS FAIL WARN GAP INFO), detail.
-# FAIL fails the gate; WARN/GAP/INFO are read by a person.
+# One TSV row per check: phase, check, status (PASS FAIL WARN GAP INFO REVIEW), detail.
+# FAIL fails the gate; REVIEW (a vision review not yet answered for this run) keeps it from green;
+# WARN/GAP/INFO are read by a person.
 
 RESULTS=""   # set by gate.sh to $RUN/results.tsv
 PHASE="setup"
@@ -46,15 +47,18 @@ die() { record FAIL "$1" "${2:-}"; exit 1; }
 
 summary() {
   local fails
-  printf '\n%-14s %-5s %-52s %s\n' PHASE STATUS CHECK DETAIL
+  printf '\n%-14s %-6s %-52s %s\n' PHASE STATUS CHECK DETAIL
   printf '%s\n' "$(printf '%.0s─' {1..120})"
-  awk -F'\t' '{ d=$4; if (length(d) > 60) d = substr(d, 1, 57) "..."; printf "%-14s %-5s %-52s %s\n", $1, $3, substr($2, 1, 52), d }' "$RESULTS"
+  awk -F'\t' '{ d=$4; if (length(d) > 60) d = substr(d, 1, 57) "..."; printf "%-14s %-6s %-52s %s\n", $1, $3, substr($2, 1, 52), d }' "$RESULTS"
   fails=$(awk -F'\t' '$3=="FAIL"' "$RESULTS" | wc -l | tr -d ' ')
-  printf '\n%s checks, %s failed, %s warn, %s gap  (%s)\n' \
+  local pending
+  pending=$(awk -F'\t' '$3=="REVIEW"' "$RESULTS" | wc -l | tr -d ' ')
+  printf '\n%s checks, %s failed, %s warn, %s gap, %s review pending  (%s)\n' \
     "$(wc -l <"$RESULTS" | tr -d ' ')" "$fails" \
     "$(awk -F'\t' '$3=="WARN"' "$RESULTS" | wc -l | tr -d ' ')" \
-    "$(awk -F'\t' '$3=="GAP"' "$RESULTS" | wc -l | tr -d ' ')" "$RESULTS"
-  [ "$fails" = 0 ]
+    "$(awk -F'\t' '$3=="GAP"' "$RESULTS" | wc -l | tr -d ' ')" "$pending" "$RESULTS"
+  [ "$pending" = 0 ] || printf 'REVIEW PENDING: not green until each review is answered — then: just release-gate --verdict %s\n' "$(dirname "$RESULTS")"
+  [ "$fails" = 0 ] && [ "$pending" = 0 ]
 }
 
 # ── Host servers ─────────────────────────────────────────────────────────────

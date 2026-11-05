@@ -148,7 +148,13 @@ local builds) — `scripts/gate/`. Image: `linggen-gate-base` when it exists —
 `check.sh e2e` on the engine HEAD it records (red stops it;
 `--skip-host-checks` is a GAP), and for `--draft` compares HEAD to the commit
 the engine draft is cut from: a sha target that differs FAILs, a moved branch
-WARNs. Every VM script ends with an exit line; one that dies early or exits
+WARNs. Then 灵境 is played on the released skills — Linggen.app's vendored commit and the phone pack's — by
+the play bot (`skills/lingjing/tools/playbot`, `just playbot`; scratch install and saves, headless): hard checks
+on every tap, a layout lint and pixel baselines at phone and Mac sizes, and a review pack (`checklist.md`,
+`review.json`) a reviewer answers per screenshot. A hard finding FAILs; an unanswered review (or one for another
+run id) is REVIEW and keeps the gate from green; the phone's `lingjing_*` tests run on assets built from the same
+commit, a skip is a GAP; `--skip-playbot` is a GAP. `just playbot --selftest` must catch every seeded bug.
+Every VM script ends with an exit line; one that dies early or exits
 nonzero FAILs ("ran to the end"). The VM reaches the host's mirror and llmposter through SSH reverse
 tunnels, so nothing on the host listens beyond loopback.
 
