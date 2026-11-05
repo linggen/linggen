@@ -28,6 +28,7 @@ import { useAddressable } from '../../hooks/useAddressable';
 import { COMPANION_ID } from '../../lib/agentsMet.mts';
 import { language } from '../../lib/i18n';
 import { useUiStore } from '../../stores/uiStore';
+import { replyAddressee } from '../../lib/replyTo.mts';
 import { chatAgentOf } from '../../lib/sessionMembers.mts';
 import {
   agentMatches,
@@ -166,6 +167,16 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     setAddressee,
   );
   const manyAddressable = mainAgents.length > 1;
+  // A tap on a speaker's name in the thread (ChatMessageList): their chip, the box focused.
+  const replyTo = useUiStore((s) => s.replyTo);
+  useEffect(() => {
+    if (!replyTo) return;
+    useUiStore.getState().setReplyTo(null);
+    const to = replyAddressee(replyTo, mainAgents);
+    if (!to) return;
+    setAddressee(to);
+    inputRef.current?.focus();
+  }, [replyTo]); // eslint-disable-line react-hooks/exhaustive-deps
   // An `@name` still in the words — at their start or end, a near spelling
   // too (`提示一下。@yingyue`) — and whom the message so goes to. One that
   // names nobody is no address: the default's chip shows who answers.

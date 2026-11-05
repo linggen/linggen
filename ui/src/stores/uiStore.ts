@@ -70,6 +70,9 @@ interface UiState {
   sessionModel: string | null;
   // The active session's members (`agents`), the lead first
   sessionMembers: SessionMember[];
+  /** A tap on a speaker's name above their line: the composer's next line goes
+   *  to them (ChatInput takes it into its chip, then clears it). */
+  replyTo: string | null;
 
   // Session permission mode (chat/read/edit/admin — pushed by server page_state)
   sessionMode: string | null;
@@ -119,6 +122,7 @@ interface UiState {
   setModelPickerOpen: (open: boolean) => void;
   setSessionModel: (model: string | null) => void;
   setSessionMembers: (members: SessionMember[]) => void;
+  setReplyTo: (agent: string | null) => void;
   setSessionMode: (mode: string | null) => void;
   setSessionAllMode: (mode: string | null) => void;
   setShowAgentSpecEditor: (show: boolean) => void;
@@ -143,6 +147,7 @@ export const useUiStore = create<UiState>((set) => ({
   modelPickerOpen: false,
   sessionModel: null,
   sessionMembers: [],
+  replyTo: null,
   sessionMode: null,
   sessionAllMode: null,
   showAgentSpecEditor: false,
@@ -236,6 +241,7 @@ export const useUiStore = create<UiState>((set) => ({
   setModelPickerOpen: (open) => set({ modelPickerOpen: open }),
   setSessionModel: (model) => set({ sessionModel: model }),
   setSessionMembers: (members) => set({ sessionMembers: members }),
+  setReplyTo: (agent) => set({ replyTo: agent }),
   setSessionMode: (mode: string | null) => set({ sessionMode: mode }),
   setSessionAllMode: (mode: string | null) => set({ sessionAllMode: mode }),
   setShowAgentSpecEditor: (show) => set({ showAgentSpecEditor: show }),

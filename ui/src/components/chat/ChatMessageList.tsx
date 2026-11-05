@@ -8,6 +8,7 @@ import { useUserStore } from '../../stores/userStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useChatStore } from '../../stores/chatStore';
 import { useServerStore } from '../../stores/serverStore';
+import { useUiStore } from '../../stores/uiStore';
 import { SkeletonBar } from '../Skeleton';
 import type { ChatMessage } from '../../types';
 import { getMessagePhase } from './MessagePhase';
@@ -127,11 +128,24 @@ export const ChatMessageRow = React.memo<{
           indentation are how a list, an address block or a pasted email
           reads. Rendering it raw collapsed all of it into one paragraph. */}
       <div className={cn(isUser ? 'max-w-[96%] whitespace-pre-wrap break-words' : 'max-w-full', 'text-[14px] leading-relaxed', messageClass)}>
-        {senderTag && (
+        {senderTag && !isUser ? (
+          // An agent's name above its words is a reply target (Hanli 11-05: 「点Yinyue头像, 自动发给Yinyue」):
+          // a tap puts the composer's chip on them, as the phone's face does.
+          <button
+            type="button"
+            data-testid="chat-speaker"
+            data-speaker={senderTag.toLowerCase()}
+            title={`@${senderTag}`}
+            onClick={() => useUiStore.getState().setReplyTo(senderTag.toLowerCase())}
+            className="font-semibold text-emerald-600 dark:text-emerald-400 mr-1.5 hover:underline cursor-pointer"
+          >
+            [{senderTag}]
+          </button>
+        ) : senderTag ? (
           <span className="font-semibold text-emerald-600 dark:text-emerald-400 mr-1.5">
             [{senderTag}]
           </span>
-        )}
+        ) : null}
         {isUser ? (
           <>
             {/* The person's own words: never mistaken for the page's English. */}
