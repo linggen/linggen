@@ -64,7 +64,7 @@ phone_lingjing_tests() { # ref
   if (cd "$mob" && tool/lingjing_assets.sh "$sk") >"$RUN/phone-assets.log" 2>&1; then record PASS "phone: 灵境 assets" "built from skills ${ref:0:12}"
   else record FAIL "phone: 灵境 assets" "tool/lingjing_assets.sh failed (see $RUN/phone-assets.log)"; fi
   json="$RUN/phone-lingjing-tests.json"
-  (cd "$mob" && "$flutter" pub get >/dev/null 2>&1 && "$flutter" test --reporter json $(cd "$mob" && ls test/lingjing_*_test.dart)) >"$json" 2>"$RUN/phone-lingjing-tests.err"
+  (cd "$mob" && "$flutter" pub get >/dev/null 2>&1 && "$flutter" test --reporter json --concurrency="${GATE_FLUTTER_CONCURRENCY:-2}" $(cd "$mob" && ls test/lingjing_*_test.dart)) >"$json" 2>"$RUN/phone-lingjing-tests.err"
   skipped="$(grep '"type":"testDone"' "$json" | grep -c '"skipped":true')"
   failed="$(grep '"type":"testDone"' "$json" | grep -c '"result":"\(failure\|error\)"')"
   passed="$(grep '"type":"testDone"' "$json" | grep '"hidden":false' | grep '"skipped":false' | grep -c '"result":"success"')"
