@@ -28,6 +28,8 @@ struct Waiting {
     /// The running turn it is for (`queue_key` of session and agent).
     key: String,
     ready: bool,
+    /// Steered and not yet taken: the turn's steer stands for it.
+    steered: bool,
     call: oneshot::Sender<Reply>,
 }
 
@@ -68,6 +70,7 @@ impl Fold {
             id: id.into(),
             key: key.into(),
             ready,
+            steered: false,
             call,
         });
         rx
@@ -75,6 +78,28 @@ impl Fold {
 
     pub fn forget(&self, id: &str) {
         self.waiting().retain(|w| w.id != id);
+    }
+
+    /// The person removed (or took back to edit) a queued message: it stops
+    /// waiting, and a Steer it made is withdrawn unless another steered
+    /// message still waits for the same turn — else the next step would cut
+    /// the reply or move a Bash with nothing to take in.
+    pub fn withdraw(&self, id: &str) {
+        let key = {
+            let mut waiting = self.waiting();
+            let Some(at) = waiting.iter().position(|w| w.id == id) else {
+                return;
+            };
+            let gone = waiting.remove(at);
+            let still_steered = waiting.iter().any(|w| w.key == gone.key && w.steered);
+            if !gone.steered || still_steered {
+                return;
+            }
+            gone.key
+        };
+        if let Some(signal) = self.signals().get(&key) {
+            signal.settle();
+        }
     }
 
     /// Steer: the message joins the running turn now — ready for its next
@@ -86,6 +111,7 @@ impl Fold {
                 return Steered::Gone;
             };
             entry.ready = true;
+            entry.steered = true;
             entry.key.clone()
         };
         if let Some(signal) = self.signals().get(&key) {
@@ -252,5 +278,29 @@ mod tests {
         assert!(!other.pending(), "another member's turn is left alone");
         fold.close_turn("s/ling");
         assert_eq!(fold.steer("9"), Steered::Gone);
+    }
+
+    /// A removed steered message withdraws its Steer; one still waiting
+    /// keeps it, and removing an unsteered one changes nothing.
+    #[test]
+    fn removing_a_steered_message_withdraws_its_steer_unless_another_waits() {
+        let fold = Fold::default();
+        let signal = fold.open_turn("s/ling");
+        let _a = fold.wait("s/ling", "a", true);
+        let _b = fold.wait("s/ling", "b", true);
+        let _c = fold.wait("s/ling", "c", true);
+        fold.steer("a");
+        fold.steer("b");
+        fold.withdraw("a");
+        assert!(signal.pending(), "b is still steered and waiting");
+        fold.withdraw("c");
+        assert!(signal.pending(), "an unsteered message leaves the steer be");
+        fold.withdraw("b");
+        assert!(!signal.pending(), "nothing steered waits any more");
+        assert_eq!(
+            fold.steer("a"),
+            Steered::Gone,
+            "a withdrawn message no longer waits"
+        );
     }
 }

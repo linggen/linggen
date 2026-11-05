@@ -168,6 +168,8 @@ pub(crate) async fn remove_queued_message(
         }
         removed
     };
+    // A Steer it made goes with it (`fold.rs`).
+    state.fold.withdraw(&req.id);
     emit_queue_updated(&state, &req.session_id, &req.agent_id).await;
     let Some(item) = removed else {
         return (StatusCode::NOT_FOUND, "That message is no longer waiting.").into_response();
