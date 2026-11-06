@@ -60,14 +60,12 @@ const UserAvatar: React.FC = () => {
 };
 
 export const HeaderBar: React.FC<{
-  isRunning: boolean;
   onOpenSettings?: () => void;
   onToggleMobileMenu?: () => void;
   onToggleInfoPanel?: () => void;
   /** The side panel ✦ opens is showing: the icon is lit. */
   infoPanelOpen?: boolean;
 }> = ({
-  isRunning,
   onOpenSettings,
   onToggleMobileMenu,
   onToggleInfoPanel,
@@ -171,17 +169,15 @@ export const HeaderBar: React.FC<{
       {/* Right: Status + Info + Settings + Avatar */}
       <div className="flex items-center gap-2 bg-slate-100 dark:bg-white/5 px-2.5 py-1.5 rounded-full border border-slate-200 dark:border-white/10 shadow-sm">
         <WeatherChip onOpen={onOpenSettings} className="pr-2 border-r border-slate-300 dark:border-white/10" />
-        {connectionStatus === 'reconnecting' ? (
-          <div className="flex items-center gap-1.5">
+        {/* Which session is running shows in the session list; only a lost link shows here. */}
+        {connectionStatus === 'reconnecting' && (
+          <div className="flex items-center gap-1.5 pr-2 border-r border-slate-300 dark:border-white/10">
             <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
             <span className="text-[11px] font-bold uppercase tracking-widest text-amber-500">Reconnecting</span>
           </div>
-        ) : (
-          <div className={cn('w-2 h-2 rounded-full', isRunning ? 'bg-green-500 animate-pulse' : 'bg-slate-400')} title={isRunning ? 'Running' : 'Idle'} />
         )}
         {onToggleInfoPanel && (
           <>
-            <div className="w-px h-3 bg-slate-300 dark:bg-white/10" />
             <button
               onClick={onToggleInfoPanel}
               className={cn('p-1 hover:text-purple-500 transition-colors', infoPanelOpen ? 'text-purple-500' : 'text-slate-500')}

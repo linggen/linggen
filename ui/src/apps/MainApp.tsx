@@ -22,7 +22,7 @@ import { recordSkillUsage } from '../lib/skillUsage';
 import { buildAgentWorkInfo } from '../lib/messageUtils';
 import { startPresenceBeat } from '../lib/presence';
 import { useSessionStore } from '../stores/sessionStore';
-import { useServerStore, isSessionBusy } from '../stores/serverStore';
+import { useServerStore } from '../stores/serverStore';
 import { useChatStore } from '../stores/chatStore';
 import { useUiStore } from '../stores/uiStore';
 import { useUserStore } from '../stores/userStore';
@@ -131,7 +131,6 @@ export const MainApp: React.FC = () => {
     return !hidden;
   }), []);
 
-  const isRunning = useServerStore((s) => isSessionBusy(s, activeSessionId));
   const mainAgents = agents;
 
   // Session-change tracking (for clear-on-switch)
@@ -329,7 +328,6 @@ export const MainApp: React.FC = () => {
       <div className={`flex flex-col h-screen bg-slate-100/70 dark:bg-[#0a0a0a] text-slate-900 dark:text-slate-200 font-sans overflow-hidden${isOverlayRoute ? ' hidden' : ''}`}>
         {/* Header */}
         <HeaderBar
-          isRunning={isRunning}
           onOpenSettings={() => openSettings('general')}
           onToggleMobileMenu={() => setMobileMenuOpen(!mobileMenuOpen)}
           onToggleInfoPanel={isMobile ? () => setMobileInfoOpen(!mobileInfoOpen) : toggleRight}
