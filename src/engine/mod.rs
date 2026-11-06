@@ -32,7 +32,7 @@ mod streaming;
 pub mod suggestion;
 #[cfg(test)]
 pub(crate) mod test_registries;
-mod tool_exec;
+pub(crate) mod tool_exec;
 pub mod tool_registry;
 pub(crate) mod tool_render;
 pub mod tool_scope;

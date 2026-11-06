@@ -129,12 +129,13 @@ pub async fn run(
         let agent_id = agent.map(str::to_string)
             .or_else(|| meta.agents.first().map(|m| m.id.clone()))
             .unwrap_or_else(|| "ling".into());
+        clear_denials(session);
         let turn = super::tasks::tell_from(state.clone(), session.into(), agent_id,
             prompt.into(), "claude-code".into());
         let task = tokio::spawn(turn);
         return match tokio::time::timeout(std::time::Duration::from_secs(WAIT_SECS), task).await {
             Ok(Ok(())) => {
-                Ok(final_reply(session).unwrap_or_else(|| "(the agent finished without a textual reply)".into()))
+                Ok(with_denials(session, final_reply(session).unwrap_or_else(|| "(the agent finished without a textual reply)".into())))
             }
             Ok(Err(e)) => Err(format!("agent run failed: {e}")),
             Err(_) => Ok(still_running(session)),
@@ -272,6 +273,7 @@ pub async fn run(
     // halfway (2026-11-06: a write run died at Claude Code's ~1 min limit
     // and left its session spinning). Wait a while, else hand back where
     // the answer will be.
+    clear_denials(&session_id);
     let run = tokio::spawn(drive(
         state.clone(),
         session_id.clone(),
@@ -377,8 +379,8 @@ async fn drive(
 
     let _ = state.events_tx.send(crate::server::ServerEvent::StateUpdated);
     match result {
-        Ok(_) => Ok(final_reply(&session_id)
-            .unwrap_or_else(|| "(the agent finished without a textual reply)".to_string())),
+        Ok(_) => Ok(with_denials(&session_id, final_reply(&session_id)
+            .unwrap_or_else(|| "(the agent finished without a textual reply)".to_string()))),
         Err(e) => Err(format!("agent run failed: {e}")),
     }
 }
@@ -401,7 +403,7 @@ fn seed_first_prompt(history: &mut Vec<crate::message::ChatMessage>, prompt: &st
 }
 
 fn still_running(session: &str) -> String {
-    format!("Still running in Linggen session {session} (it keeps going). Poll agent_status for the reply.")
+    format!("Still running in Linggen session {session}. Watch ws://127.0.0.1:9527/api/agent/wait?session_id={session}")
 }
 
 fn validate_options(session: Option<&str>, write: Option<&str>, model: Option<&str>) -> Result<(), String> {
@@ -428,7 +430,77 @@ pub async fn status(state: &Arc<ServerState>, session: &str) -> Result<String, S
     session_meta(state, session)?;
     let work = super::api::sessions::session_running_work(state, session).await;
     Ok(serde_json::json!({"running": work.turn, "tasks": work.tasks,
-        "subagents": work.subagents, "reply": if work.turn { None } else { final_reply(session) }}).to_string())
+        "subagents": work.subagents, "denied": denials(session), "reply": if work.turn { None } else { final_reply(session) }}).to_string())
+}
+
+fn denials(session: &str) -> Vec<crate::engine::tool_exec::DeniedAction> {
+    crate::engine::tool_exec::DENIALS.lock().unwrap_or_else(|e| e.into_inner()).get(session)
+}
+fn clear_denials(session: &str) {
+    crate::engine::tool_exec::DENIALS.lock().unwrap_or_else(|e| e.into_inner()).clear(session);
+}
+fn with_denials(session: &str, mut reply: String) -> String {
+    let rows = denials(session);
+    if !rows.is_empty() {
+        reply.push_str("\n\nDenied:");
+        for row in rows { reply.push_str(&format!("\n- {} {} ({}): {}", row.tool, row.summary, row.mode, row.reason)); }
+    }
+    reply
+}
+
+fn wait_ready(work: &super::api::sessions::RunningWork) -> bool {
+    !work.turn && work.tasks == 0 && work.subagents == 0
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct WaitQuery { session_id: String }
+
+pub(crate) async fn wait_socket(
+    axum::extract::State(state): axum::extract::State<Arc<ServerState>>,
+    axum::extract::Query(query): axum::extract::Query<WaitQuery>,
+    headers: axum::http::HeaderMap,
+    ws: axum::extract::ws::WebSocketUpgrade,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if headers.get(axum::http::header::ORIGIN).is_some_and(|v| !v.to_str().map(super::loopback_guard::origin_is_loopback_page).unwrap_or(false)) {
+        return (axum::http::StatusCode::FORBIDDEN, "origin not allowed").into_response();
+    }
+    if session_meta(&state, &query.session_id).is_err() {
+        return (axum::http::StatusCode::NOT_FOUND, "unknown session").into_response();
+    }
+    let mut events = state.events_tx.subscribe();
+    ws.on_upgrade(move |mut socket| async move {
+        loop {
+            let work = super::api::sessions::session_running_work(&state, &query.session_id).await;
+            if wait_ready(&work) {
+                let frame = serde_json::json!({"session_id": query.session_id, "reply": final_reply(&query.session_id), "denied": denials(&query.session_id)});
+                let _ = socket.send(axum::extract::ws::Message::Text(frame.to_string().into())).await;
+                let _ = socket.send(axum::extract::ws::Message::Close(None)).await;
+                break;
+            }
+            tokio::select! {
+                event = events.recv() => match event {
+                    Ok(super::ServerEvent::TurnComplete { .. } | super::ServerEvent::StateUpdated | super::ServerEvent::TasksUpdated { .. }) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {},
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    _ => continue,
+                },
+                incoming = socket.recv() => if incoming.is_none() || matches!(incoming, Some(Err(_)) | Some(Ok(axum::extract::ws::Message::Close(_)))) { break; },
+            }
+        }
+    })
+}
+
+#[cfg(test)]
+mod wait_ready_tests {
+    use super::*;
+    use crate::server::api::sessions::RunningWork;
+    #[test]
+    fn wait_ready_requires_all_work_to_finish() {
+        assert!(wait_ready(&RunningWork::default()));
+        assert!(!wait_ready(&RunningWork { turn: true, ..Default::default() }));
+        assert!(!wait_ready(&RunningWork { tasks: 1, ..Default::default() }));
+        assert!(!wait_ready(&RunningWork { subagents: 1, ..Default::default() }));
+    }
 }
 
 pub async fn stop(state: &Arc<ServerState>, session: &str) -> Result<String, String> {

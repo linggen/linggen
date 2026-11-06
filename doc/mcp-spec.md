@@ -148,7 +148,9 @@ The capability no generic tool server can copy: it runs the user's own agent.
 `agent_run` accepts `session_id` to continue an existing session, including the
 person's chat, without changing its permissions or tools. New sessions can pin
 `model`; `write_dir` is only for new sessions. `agent_status` reports running
-work and the final reply; `agent_stop` cancels the turn and its subagents.
+work, denied actions and the final reply; `agent_stop` cancels the turn and its subagents.
+Connect to `ws://127.0.0.1:9527/api/agent/wait?session_id=…` to wait without polling.
+When the turn, tasks and subagents finish, it sends one JSON frame with `session_id`, `reply` and `denied`, then closes.
 
 External runs record their host and appear under User. New runs accept a
 `permission_mode`: plan is read-only; default/acceptEdits grant edit in

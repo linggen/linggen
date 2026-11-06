@@ -12,6 +12,47 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::{info, warn};
 
+#[derive(Clone, serde::Serialize)]
+pub(crate) struct DeniedAction {
+    pub tool: String,
+    pub summary: String,
+    pub mode: String,
+    pub reason: String,
+}
+
+#[derive(Default)]
+pub(crate) struct DenialStore(std::collections::HashMap<String, Vec<DeniedAction>>);
+impl DenialStore {
+    fn record(&mut self, session: &str, action: DeniedAction) {
+        if !self.0.contains_key(session) && self.0.len() >= 100 {
+            if let Some(key) = self.0.keys().next().cloned() { self.0.remove(&key); }
+        }
+        let rows = self.0.entry(session.into()).or_default();
+        if rows.len() == 50 { rows.remove(0); }
+        rows.push(action);
+    }
+    pub(crate) fn clear(&mut self, session: &str) { self.0.remove(session); }
+    pub(crate) fn get(&self, session: &str) -> Vec<DeniedAction> {
+        self.0.get(session).cloned().unwrap_or_default()
+    }
+}
+pub(crate) static DENIALS: std::sync::LazyLock<std::sync::Mutex<DenialStore>> =
+    std::sync::LazyLock::new(Default::default);
+
+#[cfg(test)]
+mod denial_store_tests {
+    use super::*;
+    #[test]
+    fn denial_store_record_cap_clear() {
+        let mut store = DenialStore::default();
+        for i in 0..55 { store.record("s", DeniedAction { tool: i.to_string(), summary: "x".into(), mode: "edit".into(), reason: "denied".into() }); }
+        assert_eq!(store.get("s").len(), 50);
+        assert_eq!(store.get("s")[0].tool, "5");
+        store.clear("s");
+        assert!(store.get("s").is_empty());
+    }
+}
+
 impl AgentEngine {
     /// Create a message with the correct role for tool results.
     /// In native tool calling mode, uses `role: "tool"` (required by Ollama).
@@ -567,6 +608,12 @@ impl AgentEngine {
                 permission::PermissionCheckResult::Allowed => return None,
                 permission::PermissionCheckResult::Blocked(reason) => {
                     info!("Permission blocked: {} — {}", t.canonical, reason);
+                    if let Some(session) = t.session_id {
+                        DENIALS.lock().unwrap_or_else(|e| e.into_inner()).record(session, DeniedAction {
+                            tool: t.canonical.to_string(), summary: self.permission_summary(t),
+                            mode: "blocked".into(), reason: reason.to_string(),
+                        });
+                    }
                     let msg = self.permission_denied_msg(t);
                     return self.refuse_saved(t, messages, msg).await;
                 }
@@ -576,6 +623,13 @@ impl AgentEngine {
             // Non-interactive sessions (mission, proxy consumer) cannot prompt —
             // return permission-needed immediately.
             if !self.session_permissions.interactive {
+                let permission::PromptKind::ExceedsCeiling { target_mode, .. } = &prompt_kind;
+                if let Some(session) = t.session_id {
+                    DENIALS.lock().unwrap_or_else(|e| e.into_inner()).record(session, DeniedAction {
+                        tool: t.canonical.to_string(), summary: self.permission_summary(t),
+                        mode: target_mode.to_string(), reason: "Action exceeds session grants (non-interactive)".into(),
+                    });
+                }
                 let msg = self.permission_denied_msg(t);
                 return self.refuse_saved(t, messages, msg).await;
             }
