@@ -9,6 +9,49 @@ use crate::support::{text, tool, World};
 use base64::Engine as _;
 use serde_json::json;
 
+/// A recovered queued picture must reach the continuing agent as a picture,
+/// not merely as an opaque base64 string in its instructions.
+#[tokio::test]
+async fn recovered_queued_picture_is_readable_by_the_agent() {
+    let mut w = World::start(crate::support::Setup::default().script(
+        Agent::Ling,
+        vec![tool("Read", json!({"path": "queued.png"})), text("Continuing.")],
+    ))
+    .await;
+    let root = w.work();
+    let sid = w.api.create_session(json!({"title": "Recovery", "project_root": root})).await;
+    w.api.patch(
+        "/api/sessions",
+        json!({"session_id": sid, "agent_id": "ling", "model_id": "fake-eye"}),
+    ).await;
+    let picture = png(20, 10);
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&picture);
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(&picture);
+    let name: String = digest[..8].iter().map(|b| format!("{b:02x}")).collect();
+    let kept = w.home.linggen_home().join("sessions").join(&sid).join("images").join(format!("{name}.png"));
+    std::os::unix::fs::symlink(&kept, std::path::Path::new(&root).join("queued.png")).unwrap();
+    crate::restart::leave_plan(&w, json!([{
+        "session_id": sid, "agent_id": "ling", "caller": false, "tasks": [],
+        "queued": [{"text": "What is in this picture?", "images": [encoded], "agent_id": "ling"}]
+    }]));
+    let mark = w.mark();
+    w.engine.restart(&w.home).await;
+    if let crate::support::engine::RunEnd::Asked(ask) = w.wait_run(&sid, Agent::Ling, mark).await {
+        w.api.answer(&ask, "grant:all").await;
+        w.finish_run(&sid, Agent::Ling, mark).await;
+    }
+    let calls = w.model.calls_of(Agent::Ling);
+    let call = calls.first().expect("continuing agent called");
+    assert!(call.text().contains("What is in this picture?"));
+    assert!(call.text().contains(&kept.to_string_lossy().to_string()), "the message names the kept image");
+    assert!(!call.text().contains(&encoded), "the message must not contain opaque image bytes");
+    assert!(calls.iter().any(|call| call.text().contains("PNG, 20×10")), "Read must return image facts to a blind model");
+    let bytes = std::fs::read(&kept).expect("kept image");
+    let recovered = image::load_from_memory(&bytes).expect("readable picture");
+    assert_eq!((recovered.width(), recovered.height()), (20, 10));
+}
+
 /// A noisy picture, so it is large on disk the way a screenshot is.
 fn png(w: u32, h: u32) -> Vec<u8> {
     let img = image::RgbImage::from_fn(w, h, |x, y| {

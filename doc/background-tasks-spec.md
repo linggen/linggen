@@ -101,11 +101,12 @@ afterwards, not only the one that asked:
    the state before redoing anything that changes things, and which
    background tasks the restart ended. A Claude session continues the same
    SDK conversation. Idle sessions are not touched. Each plan runs once.
-4. **Keep the queue.** Messages the person had queued in a session (their
-   text and pictures) are kept in the plan and sent again, in their order,
-   behind that session's continue turn (if it has one), back in the queue
-   like typed ones. A native one waits for that turn rather than cutting it
-   short.
+4. **Judge the queue.** Messages the person had queued in a session (their
+   text, pictures and intended agent) are recorded in order and given to the
+   continuing agent. Whether each was already processed is unknown: the agent
+   checks the conversation and current state, judges whether any work needs
+   retrying, and continues. It does not blindly replay the messages or pause
+   for the person to decide.
 
 ## Native sessions
 
