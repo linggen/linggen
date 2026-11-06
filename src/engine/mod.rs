@@ -224,6 +224,28 @@ impl AgentEngine {
         self.session_dir = Some(sdir);
     }
 
+    /// One chat, one permission set: re-read the session's grant table, so
+    /// a grant the person makes in any of the chat's runs — the main chat or
+    /// a subagent at any depth — holds in all of them at once. `interactive`
+    /// stays this run's own (a policy or a mission may have locked it).
+    pub(crate) fn sync_session_grants(&mut self) {
+        if let Some(modes) = self
+            .session_dir
+            .as_deref()
+            .and_then(permission::SessionPermissions::read_path_modes)
+        {
+            self.session_permissions.path_modes = modes;
+        }
+    }
+
+    /// A subagent runs under the chat's permissions, not a copy: it reads
+    /// the session's grant table live and saves what the person grants on
+    /// its prompt there, where the main chat and the badge see it.
+    pub(crate) fn join_session_permissions(&mut self, sid: &str) {
+        self.session_dir = Some(crate::paths::global_sessions_dir().join(sid));
+        self.sync_session_grants();
+    }
+
     /// Pre-loop setup: load session permissions, emit "working" status,
     /// sync world state, validate the task, push the start-of-loop
     /// context record, prime context-window/token estimates, and
@@ -1620,6 +1642,46 @@ mod member_tests {
             her.session_permissions.interactive,
             "her turn asks the person"
         );
+        let _ = std::fs::remove_dir_all(&sdir);
+    }
+
+    /// One chat, one permission set: a subagent reads the chat's grants, and
+    /// what the person grants on its prompt reaches the main chat (and the
+    /// session file the badge reads) — 2026-11-06, a depth-2 grant of admin
+    /// on all paths stayed in the subagent while the chat still showed chat.
+    #[test]
+    fn a_subagents_grant_is_the_chats_grant() {
+        let root = dirs::home_dir().unwrap().join(".linggen");
+        let sid = format!("sess-perm-test-{}", uuid::Uuid::new_v4());
+        let sdir = crate::paths::global_sessions_dir().join(&sid);
+        let mut perms = SessionPermissions::default();
+        perms.set_path_mode("~/Projects/x", PermissionMode::Read);
+        perms.save(&sdir);
+
+        let mut chat = engine_at(&root);
+        chat.load_session_permissions(&sid);
+        let mut sub = engine_at(&root);
+        sub.join_session_permissions(&sid);
+        assert_eq!(
+            format!("{:?}", sub.session_permissions.path_modes),
+            format!("{:?}", chat.session_permissions.path_modes),
+            "the subagent starts on the chat's grants"
+        );
+
+        // What gate_permission does when the person grants on its prompt.
+        let mut granted = sub.session_permissions.clone();
+        granted.set_path_mode("*", PermissionMode::Admin);
+        granted
+            .try_save(sub.session_dir.as_deref().unwrap())
+            .unwrap();
+
+        chat.sync_session_grants();
+        let saved = SessionPermissions::load(&sdir);
+        for modes in [&chat.session_permissions.path_modes, &saved.path_modes] {
+            assert_eq!(modes.len(), 1);
+            assert_eq!(modes[0].path, "*");
+            assert_eq!(modes[0].mode, PermissionMode::Admin);
+        }
         let _ = std::fs::remove_dir_all(&sdir);
     }
 

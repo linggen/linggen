@@ -57,6 +57,17 @@ impl SessionPermissions {
         }
     }
 
+    /// The grant table saved in `{session_dir}/permission.json`, or `None`
+    /// when there is no readable file — a caller keeps what it holds rather
+    /// than mistaking a missing or broken file for "no grants".
+    pub fn read_path_modes(session_dir: &Path) -> Option<Vec<PathMode>> {
+        let content = fs::read_to_string(session_dir.join("permission.json")).ok()?;
+        serde_json::from_str::<Self>(&content)
+            .map(|p| p.path_modes)
+            .map_err(|e| warn!("Failed to parse session permission.json: {}", e))
+            .ok()
+    }
+
     /// Save to `{session_dir}/permission.json`.
     pub fn save(&self, session_dir: &Path) {
         let file = session_dir.join("permission.json");

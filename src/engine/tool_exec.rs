@@ -551,6 +551,9 @@ impl AgentEngine {
 
         let mut last_grant: Option<(String, permission::PermissionMode)> = None;
         loop {
+            // A grant made in another run of this chat (a subagent's prompt,
+            // the main chat's, the badge) holds here too.
+            self.sync_session_grants();
             let check_result = permission::check_permission(
                 t.canonical,
                 bash_command.as_deref(),

@@ -56,7 +56,7 @@ The chat shows the effective level for the current working directory. Changing t
 - Skills and some chat-tier or explicitly ungated MCP tools can operate outside the ordinary path-mode gate. A skill may request its own grants. The owner should not assume that `chat` alone is a complete isolation boundary.
 - Browser actions use site trust and separate confirmations for sensitive actions; see `browser-control-spec.md`.
 - Agent permissions do not gate the owner's own typed commands or deterministic skill interface actions. This is not a substitute for enforcing identity and access boundaries on remote interfaces.
-- Subagents inherit a snapshot of their parent session's grants and cannot independently raise them.
+- A chat has one set of grants. Subagents at every depth use it live instead of keeping their own copy. A subagent's permission prompt asks the person for the chat, and a grant made there applies at once to the main chat, the badge and every subagent. A subagent can never raise a grant without the person. A delegated run with no session to share runs on a copy of its parent's grants.
 
 ## Related documents
 

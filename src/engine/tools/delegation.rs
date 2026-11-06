@@ -452,6 +452,12 @@ pub(crate) async fn run_delegation(
     // snapshot verbatim: set_path_mode prunes more-specific entries and can
     // turn a wildcard or parent grant into an unintended elevation.
     inherit_permissions(&mut engine.session_permissions, &parent_path_modes, parent_interactive);
+    // One chat, one permission set: a subagent of a session uses the chat's
+    // own grants, read live — the snapshot above stands only for a run with
+    // no session to share.
+    if let Some(ref sid) = session_id {
+        engine.join_session_permissions(sid);
+    }
     engine.tools.builtins.parent_path_modes = parent_path_modes;
     engine.tools.builtins.parent_interactive = parent_interactive;
 
