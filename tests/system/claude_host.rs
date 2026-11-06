@@ -672,16 +672,29 @@ async fn messages_queued_in_a_claude_session_come_back_after_its_restart_turn() 
     crate::restart::leave_plan(&w, json!([{"session_id": sid, "agent_id": "claude", "caller": false, "tasks": [], "queued": queued}]));
     w.engine.restart(&w.home).await;
     let deadline = Instant::now() + Duration::from_secs(30);
-    while starts(&w).len() < 4 {
-        assert!(Instant::now() < deadline, "only {} turns ran", starts(&w).len());
+    while starts(&w).len() < 2 {
+        assert!(Instant::now() < deadline, "the continue turn never started");
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !w.engine.log().lines().any(|line| line.contains("run/finish") && line.contains(&sid)) {
+        assert!(Instant::now() < deadline, "the continue turn never finished");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(800)).await;
     let started = starts(&w);
-    let prompt = |i: usize| started[i]["prompt"].as_str().unwrap_or_default().to_string();
-    assert!(prompt(1).contains("The engine restarted"), "the continue turn runs first: {}", prompt(1));
-    assert_eq!(prompt(2), "first queued");
-    assert_eq!(prompt(3), "second queued");
-    assert_eq!(started[3]["images"], json!([format!("data:image/png;base64,{PNG}")]));
+    assert_eq!(started.len(), 2, "queued messages must not be replayed as turns: {started:#?}");
+    assert_eq!(started[1]["resume"], SDK_ID);
+    let continuation = started[1]["prompt"].as_str().unwrap();
+    assert!(continuation.contains("The engine restarted"), "{continuation}");
+    assert!(continuation.contains("Its last step may not have finished"), "{continuation}");
+    assert!(continuation.contains("check the current state before redoing anything that changes things"), "{continuation}");
+    assert!(continuation.contains("Whether each was already processed is unknown"), "{continuation}");
+    assert!(continuation.contains("Check the conversation and current state before deciding whether any work needs retrying; do not replay them blindly"), "{continuation}");
+    let recorded = continuation.split_once("Queued messages recorded at restart, in order (JSON; text, images and intended agent): ")
+        .and_then(|(_, rest)| rest.split_once(". Whether each was already processed is unknown"))
+        .expect("continuation contains the recorded queue").0;
+    assert_eq!(serde_json::from_str::<Value>(recorded).unwrap(), queued);
 }
 
 #[tokio::test]
