@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Eye, EyeOff, LogIn, LogOut, Moon, Plus, Star, Trash2 } from 'lucide-react';
 import type { AppConfig, ModelConfigUI, ModelHealthInfo, OllamaPsResponse } from '../types';
 import { UsageMeter } from './UsageMeter';
+import { CodexUsage } from './CodexUsage';
 import { useServerStore } from '../stores/serverStore';
 import { account as accountApi, modelsApi, providerAuth } from '../lib/endpoints';
 
@@ -451,6 +452,7 @@ export const ModelsTab: React.FC<{
                       </span>
                     )}
                   </span>
+                  {isChatgptOauth && codexAuthStatus?.authenticated && <span className="text-[11px] text-slate-500">{healthMap[m.id]?.context_window ? `Context ${Math.round(healthMap[m.id].context_window! / 1000)}K` : 'Context unavailable'} <CodexUsage /></span>}
                   {isChatgptOauth ? (
                     codexAuthStatus?.authenticated ? (
                       <div className="flex items-center gap-2">

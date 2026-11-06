@@ -12,7 +12,7 @@ use crate::server::api::agents::{
     upsert_agent_file_api,
 };
 use crate::server::api::config::{
-    codex_auth_logout, get_claude_auth_status, get_codex_auth_status, get_config_api,
+    codex_auth_logout, get_claude_auth_status, get_codex_auth_status, get_codex_usage, get_config_api,
     get_credentials_api, get_models_health, start_codex_auth_login, update_config_api,
     update_credentials_api,
 };
@@ -63,6 +63,7 @@ pub(super) fn routes() -> Routes {
             get(get_credentials_api).put(update_credentials_api),
         )
         .route("/api/auth/codex/status", get(get_codex_auth_status))
+        .route("/api/auth/codex/usage", get(get_codex_usage))
         .route("/api/auth/codex/login", post(start_codex_auth_login))
         .route("/api/auth/codex/logout", post(codex_auth_logout))
         .route("/api/auth/claude/status", get(get_claude_auth_status))

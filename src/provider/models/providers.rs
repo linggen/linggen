@@ -208,21 +208,21 @@ impl Provider for OpenAiClient {
         cache: &OnceCell<Option<usize>>,
     ) -> Result<Option<usize>> {
         let model_name = &cfg.model;
+        if self.uses_responses_api() {
+            // Cache successful lookups only, so a transient failure can recover.
+            return match cache.get_or_try_init(|| async {
+                self.codex_context_window(model_name).await.map(Some)
+            }).await {
+                Ok(value) => Ok(*value),
+                Err(_) => Ok(None),
+            };
+        }
         let value = cache
             .get_or_try_init(|| async move {
-                // The ChatGPT-OAuth (Responses API) backend has no /models
-                // endpoint — the probe just hangs until the request timeout
-                // and stalls the first agent turn on this model. Guess from
-                // the name instead.
-                if self.uses_responses_api() {
-                    return Ok::<_, anyhow::Error>(Some(ModelManager::guess_context_window(
-                        model_name,
-                    )));
-                }
                 // Try dynamic API query first, fall back to guess.
                 if let Some(cw) = self.get_context_window(model_name).await {
                     tracing::debug!("Got context window from API for {model_name}: {cw}");
-                    return Ok(Some(cw));
+                    return Ok::<_, anyhow::Error>(Some(cw));
                 }
                 let guess = ModelManager::guess_context_window(model_name);
                 tracing::debug!("Using guessed context window for {model_name}: {guess}");

@@ -76,11 +76,10 @@ pub(crate) async fn get_models_health(State(state): State<Arc<ServerState>>) -> 
     let health_map: std::collections::HashMap<String, _> = health_records.into_iter().collect();
 
     // Return health for all configured models
-    let config = state.manager.get_config_snapshot().await;
     let models_ref = &*models_guard;
 
     let mut result: Vec<serde_json::Value> = Vec::new();
-    for m in &config.models {
+    for m in models_ref.list_models() {
         let cw = models_ref.context_window(&m.id).await.ok().flatten();
         let mut entry = if let Some(rec) = health_map.get(&m.id) {
             serde_json::json!({
@@ -263,6 +262,24 @@ pub(crate) async fn get_codex_auth_status() -> impl IntoResponse {
         "last_refresh": tokens.last_refresh,
     }))
     .into_response()
+}
+
+/// Account-level Codex quota; credentials never leave the engine.
+pub(crate) async fn get_codex_usage() -> impl IntoResponse {
+    if !codex_auth::chatgpt_signed_in() {
+        return (StatusCode::UNAUTHORIZED, "Not signed in").into_response();
+    }
+    let tokens = codex_auth::CodexAuthTokens::load(&codex_auth::codex_auth_file());
+    let client = crate::provider::openai::OpenAiClient::new_chatgpt_oauth(
+        codex_auth::CHATGPT_API_BASE.to_string(), tokens.access_token.unwrap_or_default(), tokens.account_id,
+    );
+    match client.codex_metadata("../wham/usage").await {
+        Ok(value) => Json(serde_json::json!({
+            "rate_limit": value.get("rate_limit"),
+            "credits": value.get("credits"),
+        })).into_response(),
+        Err(_) => (StatusCode::BAD_GATEWAY, "Usage unavailable").into_response(),
+    }
 }
 
 /// Start ChatGPT OAuth browser login flow.

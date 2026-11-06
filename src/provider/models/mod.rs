@@ -383,6 +383,9 @@ impl ModelManager {
         // would 401 and look like a network hang. Prefer the name-based
         // guess in that case so engine startup keeps moving.
         if Self::check_provider_auth(&instance.config).is_err() {
+            if instance.config.auth_mode.as_deref() == Some("chatgpt_oauth") {
+                return Ok(None);
+            }
             let guess = Self::guess_context_window(&instance.config.model);
             return Ok(Some(guess));
         }

@@ -302,6 +302,23 @@ impl OpenAiClient {
         self.chatgpt_account_id.is_some()
     }
 
+    /// Read the signed-in ChatGPT account's Codex metadata.
+    pub(crate) async fn codex_metadata(&self, path: &str) -> anyhow::Result<serde_json::Value> {
+        let url = format!("{}/{}", self.base_url.trim_end_matches('/'), path);
+        let request = self.http.get(url).timeout(std::time::Duration::from_secs(5));
+        let response = self.send_with_oauth_retry(request).await?.error_for_status()?;
+        Ok(response.json().await?)
+    }
+
+    pub(crate) async fn codex_context_window(&self, model: &str) -> anyhow::Result<usize> {
+        let json = self.codex_metadata("models?client_version=0.159.2").await?;
+        json.get("models").and_then(|v| v.as_array())
+            .and_then(|models| models.iter().find(|m| m.get("slug").and_then(|v| v.as_str()) == Some(model)))
+            .and_then(|m| m.get("context_window")).and_then(|v| v.as_u64())
+            .filter(|v| *v > 0).map(|v| v as usize)
+            .ok_or_else(|| anyhow::anyhow!("context window unavailable for model"))
+    }
+
     /// Try to fetch context window size from the provider's models endpoint.
     /// Works for: Gemini (`inputTokenLimit`), OpenAI (`context_window` if present).
     /// Returns None if not available.

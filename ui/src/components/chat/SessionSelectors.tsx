@@ -14,6 +14,7 @@ import { suppressPermissionSync } from '../../lib/eventDispatcher';
 import { apiPatch, apiErrorMessage } from '../../lib/api';
 import { sessionApi } from '../../lib/endpoints';
 import type { SessionInfo } from '../../types';
+import { CodexUsage } from '../CodexUsage';
 
 
 /** Compact context usage display for the session top bar. */
@@ -27,8 +28,6 @@ export const SessionStats: React.FC = () => {
   const limit = ctx?.tokenLimit && ctx.tokenLimit > 0 ? ctx.tokenLimit : 0;
   const pct = limit ? Math.round((tokens / limit) * 100) : 0;
 
-  if (!tokens && !claude) return null;
-
   return (
     <span className="text-[10px] font-mono text-slate-400 ml-auto shrink-0" title={`Context: ${tokens} / ${limit || '?'} tokens (${pct}%)`}>
       {tokens > 0 && <><span className={pct > 80 ? 'text-red-400' : pct > 50 ? 'text-amber-400' : ''}>{fmt(tokens)}</span>
@@ -37,6 +36,7 @@ export const SessionStats: React.FC = () => {
       {claude && <span className="text-[11px] text-slate-600 dark:text-slate-300" data-no-i18n title="Estimated USD cost recorded for this Claude conversation. Includes subagents; final charges follow Anthropic billing.">
         {tokens > 0 ? ' · ' : ''}≈ ${cost === undefined ? '—' : cost.toFixed(2)}
       </span>}
+      <CodexUsage />
     </span>
   );
 };
