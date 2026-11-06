@@ -9,6 +9,14 @@ export type BackgroundTask = {
  */
 id: string, 
 /**
+ * Session agent that started the task, if known.
+ */
+owner_agent?: string, 
+/**
+ * Work started inside a delegated run does not wake a session agent.
+ */
+child_owner: boolean, 
+/**
  * "shell", "subagent", "watch", "workflow" or the runtime's own label.
  */
 kind: string, 
