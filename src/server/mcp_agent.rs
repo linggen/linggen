@@ -279,7 +279,10 @@ pub async fn run(
     let run = tokio::spawn(drive(
         state.clone(),
         session_id.clone(),
-        root,
+        // The agent stands where it may write: a relative path then lands in
+        // the grant (2026-11-06: Write review.json resolved against the
+        // daemon's launch dir and was refused).
+        write.unwrap_or(root),
         agent_id,
         prompt.to_string(),
         mode.is_some(),
