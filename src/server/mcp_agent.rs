@@ -349,6 +349,7 @@ async fn drive(
     // reloads them at the top of the run.
     let result = engine.run_agent_loop(Some(&session_id)).await;
     engine.set_run_id(None);
+    seed_first_prompt(&mut engine.chat_history, &prompt);
     drop(engine);
 
     match result {
@@ -379,6 +380,11 @@ async fn drive(
             Err(format!("agent run failed: {e}"))
         }
     }
+}
+
+/// Keep the bootstrap task in the cached thread, before the agent's replies.
+fn seed_first_prompt(history: &mut Vec<crate::message::ChatMessage>, prompt: &str) {
+    history.insert(0, crate::message::ChatMessage::new("user", prompt.to_string()));
 }
 
 fn still_running(session: &str) -> String {
@@ -433,15 +439,17 @@ fn permission_mapping(mode: Option<&str>, has_dir: bool) -> Result<Option<Permis
     Ok(has_dir.then_some(grant))
 }
 
-fn format_models(models: &[crate::config::ModelConfig], default: Option<&str>) -> String {
-    serde_json::json!({"models": models.iter().map(|m| serde_json::json!({
-        "id": m.id, "provider": m.provider, "default": Some(m.id.as_str()) == default
+fn format_models(models: &crate::provider::models::ModelManager, default: Option<&str>) -> String {
+    let default = default.and_then(|id| models.resolve_id(id));
+    serde_json::json!({"models": models.list_models().iter().map(|m| serde_json::json!({
+        "id": m.id, "provider": m.provider, "default": Some(m.id.as_str()) == default.as_deref()
     })).collect::<Vec<_>>()}).to_string()
 }
 
 pub async fn models(state: &Arc<ServerState>) -> String {
     let config = state.manager.get_config_snapshot().await;
-    format_models(&config.models, config.routing.default_models.first().map(String::as_str))
+    let models = state.manager.models.read().await;
+    format_models(&models, config.routing.default_models.first().map(String::as_str))
 }
 
 fn worktree_decision(linked: bool, clean: bool, merged: bool) -> Result<(), String> {
@@ -503,10 +511,25 @@ mod tests {
     }
     #[test]
     fn mcp_agent_models_format() {
-        let model: crate::config::ModelConfig = serde_json::from_value(serde_json::json!({"id":"a", "provider":"openai", "url":"", "model":"a"})).unwrap();
-        let result: serde_json::Value = serde_json::from_str(&format_models(&[model], Some("a"))).unwrap();
-        assert_eq!(result["models"][0]["default"], true);
-        assert_eq!(result["models"][0]["provider"], "openai");
+        let manager = crate::provider::models::ModelManager::new_with_credentials(
+            vec![], &crate::credentials::Credentials::default(),
+        );
+        let builtin = manager.list_models().first().unwrap().id.clone();
+        let result: serde_json::Value = serde_json::from_str(&format_models(&manager, Some(&builtin))).unwrap();
+        let rows = result["models"].as_array().unwrap();
+        assert_eq!(rows.len(), manager.list_models().len());
+        let selected = rows.iter().find(|m| m["id"] == builtin).unwrap();
+        assert_eq!(selected["default"], true);
+        assert_eq!(selected["provider"], manager.provider_kind(&builtin).unwrap());
+        assert_eq!(rows.iter().filter(|m| m["default"] == true).count(), 1);
+        assert!(rows.iter().any(|m| m["id"] == "deepseek-flash"));
+    }
+    #[test]
+    fn mcp_agent_first_prompt_enters_cached_thread() {
+        let mut history = vec![crate::message::ChatMessage::new("assistant", "first reply")];
+        seed_first_prompt(&mut history, "first prompt");
+        assert_eq!((history[0].role.as_str(), history[0].content.as_str()), ("user", "first prompt"));
+        assert_eq!(history[1].content, "first reply");
     }
     #[test]
     fn mcp_agent_rejects_incompatible_options() {
