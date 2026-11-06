@@ -606,12 +606,13 @@ pub(crate) async fn running_work_api(
     State(state): State<Arc<ServerState>>,
     Query(query): Query<RunningWorkQuery>,
 ) -> impl IntoResponse {
-    let runs = state
-        .manager
-        .list_agent_runs(&std::path::PathBuf::new(), Some(&query.session_id))
-        .await
-        .unwrap_or_default();
-    Json(running_work(&runs, &state.tasks.list(&query.session_id)))
+    Json(session_running_work(&state, &query.session_id).await)
+}
+
+pub(crate) async fn session_running_work(state: &ServerState, session: &str) -> RunningWork {
+    let runs = state.manager.list_agent_runs(&std::path::PathBuf::new(), Some(session))
+        .await.unwrap_or_default();
+    running_work(&runs, &state.tasks.list(session))
 }
 
 #[cfg(test)]

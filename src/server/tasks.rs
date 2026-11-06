@@ -201,8 +201,18 @@ pub(crate) fn tell(
     agent: String,
     notice: String,
 ) -> impl std::future::Future<Output = ()> + Send + 'static {
+    tell_from(state, session, agent, notice, "system".into())
+}
+
+pub(crate) fn tell_from(
+    state: std::sync::Arc<super::ServerState>,
+    session: String,
+    agent: String,
+    notice: String,
+    sender: String,
+) -> impl std::future::Future<Output = ()> + Send + 'static {
     let (_, place) = super::chat::helpers::take_turn_place(state.manager.session_turn(&session));
-    tell_in_place(state, session, agent, notice, place)
+    tell_in_place(state, session, agent, notice, sender, place)
 }
 
 async fn tell_in_place(
@@ -210,6 +220,7 @@ async fn tell_in_place(
     session: String,
     agent: String,
     notice: String,
+    sender: String,
     place: super::chat::helpers::TurnPlace,
 ) {
     let Some(meta) = state.manager.global_sessions.get_session_meta(&session).ok().flatten() else {
@@ -236,7 +247,7 @@ async fn tell_in_place(
         &state.events_tx,
         &root,
         &agent,
-        "system",
+        &sender,
         &agent,
         &notice,
         Some(&session),
@@ -258,7 +269,7 @@ async fn tell_in_place(
         clean_msg: notice,
         images: Vec::new(),
         policy: crate::engine::session_policy::SessionPolicy::owner(),
-        sender: Some("system".into()),
+        sender: Some(sender),
         silence_ok: false,
     };
     super::chat::run_session_turn(&ctx, &mut engine, &state.manager, None).await;

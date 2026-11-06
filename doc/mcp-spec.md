@@ -145,6 +145,11 @@ The capability no generic tool server can copy: it runs the user's own agent.
   worked around via a shell redirect. Browser mutations still pass the
   extension's own gate. Widening to a write mode is a future opt-in.
 
+`agent_run` accepts `session_id` to continue an existing session, including the
+person's chat, without changing its permissions or tools. New sessions can pin
+`model`; `write_dir` is only for new sessions. `agent_status` reports running
+work and the final reply; `agent_stop` cancels the turn and its subagents.
+
 ## Later
 
 - A `write` mode on `agent_run` (opt-in Bash/Write/Edit for trusted callers).

@@ -97,7 +97,7 @@ fn final_reply(session_id: &str) -> Option<String> {
     let msgs = store.get_chat_history(session_id).ok()?;
     msgs.into_iter()
         .rev()
-        .find(|m| !m.is_observation && m.from_id != "user" && !m.content.trim().is_empty())
+        .find(|m| !m.is_observation && m.from_id != "user" && m.from_id != "claude-code" && !m.content.trim().is_empty())
         .map(|m| m.content)
 }
 
@@ -108,11 +108,41 @@ pub async fn run(
     agent: Option<&str>,
     prompt: &str,
     write_dir: Option<&str>,
+    session: Option<&str>,
+    model: Option<&str>,
 ) -> Result<String, String> {
     let prompt = prompt.trim();
     if prompt.is_empty() {
         return Err("agent_run requires a non-empty prompt".to_string());
     }
+
+    validate_options(session, write_dir, model)?;
+    if let Some(session) = session {
+        let meta = session_meta(state, session)?;
+        if !meta.runtime.is_linggen() {
+            return Err("session is not a Linggen session".into());
+        }
+        let agent_id = agent.map(str::to_string)
+            .or_else(|| meta.agents.first().map(|m| m.id.clone()))
+            .unwrap_or_else(|| "ling".into());
+        let turn = super::tasks::tell_from(state.clone(), session.into(), agent_id,
+            prompt.into(), "claude-code".into());
+        let task = tokio::spawn(turn);
+        return match tokio::time::timeout(std::time::Duration::from_secs(WAIT_SECS), task).await {
+            Ok(Ok(())) => {
+                Ok(final_reply(session).unwrap_or_else(|| "(the agent finished without a textual reply)".into()))
+            }
+            Ok(Err(e)) => Err(format!("agent run failed: {e}")),
+            Err(_) => Ok(still_running(session)),
+        };
+    }
+    let model = if let Some(model) = model {
+        let models = state.manager.models.read().await;
+        let resolved = models.resolve_id(model);
+        drop(models);
+        let config = state.manager.get_config_snapshot().await;
+        Some(validate_model(model, resolved, &config.models.iter().map(|m| m.id.clone()).collect::<Vec<_>>())?)
+    } else { None };
 
     let root = workspace_root();
     let write = write_dir.map(write_root).transpose()?;
@@ -178,6 +208,7 @@ pub async fn run(
         params: Default::default(),
     };
     meta.set_cwd(&root_str);
+    meta.set_member_model(&agent_id, model.clone());
     if let Err(e) = store.add_session(&meta) {
         return Err(format!("failed to create session: {e}"));
     }
@@ -244,13 +275,12 @@ pub async fn run(
         agent_id,
         prompt.to_string(),
         write.is_some(),
+        model,
     ));
     match tokio::time::timeout(std::time::Duration::from_secs(WAIT_SECS), run).await {
         Ok(Ok(result)) => result,
         Ok(Err(e)) => Err(format!("agent run failed: {e}")),
-        Err(_) => Ok(format!(
-            "Still running in Linggen session {session_id} (it keeps going). Its final reply will be the last assistant message in ~/.linggen/sessions/{session_id}/messages.jsonl; GET /api/sessions/running?session_id={session_id} reads turn=false when done."
-        )),
+        Err(_) => Ok(still_running(&session_id)),
     }
 }
 
@@ -266,6 +296,7 @@ async fn drive(
     agent_id: String,
     prompt: String,
     write: bool,
+    model: Option<String>,
 ) -> Result<String, String> {
     let agent = state
         .manager
@@ -273,6 +304,7 @@ async fn drive(
         .await
         .map_err(|e| format!("failed to create agent '{agent_id}': {e}"))?;
     let mut engine = agent.lock().await;
+    if let Some(model) = model { engine.model_id = model; }
 
     let run_id = state
         .manager
@@ -342,5 +374,65 @@ async fn drive(
                 .await;
             Err(format!("agent run failed: {e}"))
         }
+    }
+}
+
+fn still_running(session: &str) -> String {
+    format!("Still running in Linggen session {session} (it keeps going). Poll agent_status for the reply.")
+}
+
+fn validate_options(session: Option<&str>, write: Option<&str>, model: Option<&str>) -> Result<(), String> {
+    if session.is_some() && write.is_some() { return Err("write_dir cannot be used with session_id".into()); }
+    if session.is_some() && model.is_some() { return Err("model cannot be used with session_id".into()); }
+    Ok(())
+}
+
+fn validate_model(model: &str, resolved: Option<String>, ids: &[String]) -> Result<String, String> {
+    resolved.ok_or_else(|| format!("unknown model '{model}'. Available: {}", ids.join(", ")))
+}
+
+fn session_meta(state: &ServerState, session: &str) -> Result<crate::state_fs::sessions::SessionMeta, String> {
+    let meta = state.manager.global_sessions.get_session_meta(session)
+        .map_err(|e| format!("cannot read session: {e}"))?;
+    require_session(session, meta)
+}
+
+fn require_session<T>(session: &str, meta: Option<T>) -> Result<T, String> {
+    meta.ok_or_else(|| format!("unknown session '{session}'"))
+}
+
+pub async fn status(state: &Arc<ServerState>, session: &str) -> Result<String, String> {
+    session_meta(state, session)?;
+    let work = super::api::sessions::session_running_work(state, session).await;
+    Ok(serde_json::json!({"running": work.turn, "tasks": work.tasks,
+        "subagents": work.subagents, "reply": if work.turn { None } else { final_reply(session) }}).to_string())
+}
+
+pub async fn stop(state: &Arc<ServerState>, session: &str) -> Result<String, String> {
+    session_meta(state, session)?;
+    let runs = state.manager.list_agent_runs(&PathBuf::new(), Some(session)).await.map_err(|e| e.to_string())?;
+    let mut stopped = Vec::new();
+    for run in runs.iter().filter(|r| r.status == crate::engine::agent::AgentRunStatus::Running && r.parent_run_id.is_none()) {
+        let cancelled = state.manager.cancel_run_tree(&run.run_id).await.map_err(|e| e.to_string())?;
+        stopped.extend(cancelled.into_iter().map(|r| r.run_id));
+    }
+    Ok(serde_json::json!({"stopped": stopped}).to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn mcp_agent_rejects_incompatible_options() {
+        assert!(validate_options(Some("s"), Some("/tmp"), None).is_err());
+        assert!(validate_options(Some("s"), None, Some("m")).is_err());
+    }
+    #[test]
+    fn mcp_agent_rejects_unknown_session() {
+        assert!(require_session::<()>("missing", None).unwrap_err().contains("unknown session"));
+    }
+    #[test]
+    fn mcp_agent_rejects_unknown_model() {
+        assert!(validate_model("bad", None, &["good".into()]).unwrap_err().contains("good"));
     }
 }

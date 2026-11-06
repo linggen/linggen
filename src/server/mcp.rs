@@ -347,16 +347,30 @@ const TOOLS: &[McpTool] = &[
     McpTool {
         name: "agent_run",
         backend: Backend::Agent,
-        description: "Delegate a task to a local Linggen agent — one with this machine's skills, memory, and configured models — and get its final answer back. Runs headless in a fresh session, safe-by-default (read-only on the workspace, non-interactive; it can read/search/analyze, use the user's memory, and drive the browser, but not silently write files). Use for research, analysis, memory questions, or browser tasks you want handled by the user's own agent. Pass write_dir (its own git worktree) to let it change code there: admin in that folder, read-only elsewhere; review its diff after.",
+        description: "Run a local agent. Use session_id to continue a session or message the person’s own session.",
         schema: || json!({
             "type": "object",
             "properties": {
                 "prompt": {"type": "string", "description": "The task or question for the agent"},
+                "session_id": {"type": "string", "description": "Existing session to continue"},
+                "model": {"type": "string", "description": "Configured model for a new session"},
                 "agent": {"type": "string", "description": "Agent to run (default: ling). Unknown names return the available list."},
                 "write_dir": {"type": "string", "description": "Opt in to writing: an absolute folder (give it its own git worktree) where the agent gets admin — Bash, Write, Edit. Every other path stays read-only; the run never prompts. Omit for a read-only run."}
             },
             "required": ["prompt"]
         }),
+        timeout_ms: 0,
+    },
+    McpTool {
+        name: "agent_status", backend: Backend::Agent,
+        description: "Check a session's running work and final reply.",
+        schema: || json!({"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"]}),
+        timeout_ms: 0,
+    },
+    McpTool {
+        name: "agent_stop", backend: Backend::Agent,
+        description: "Cancel a session's running turn and subagents.",
+        schema: || json!({"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"]}),
         timeout_ms: 0,
     },
 ];
@@ -508,7 +522,13 @@ async fn call_tool(deps: &McpDeps<'_>, name: &str, args: Value) -> Result<Value,
                 .unwrap_or_default();
             let agent = args.get("agent").and_then(Value::as_str);
             let write_dir = args.get("write_dir").and_then(Value::as_str);
-            match super::mcp_agent::run(state, agent, prompt, write_dir).await {
+            let session = args.get("session_id").and_then(Value::as_str);
+            let result = match name {
+                "agent_status" => super::mcp_agent::status(state, session.unwrap_or_default()).await,
+                "agent_stop" => super::mcp_agent::stop(state, session.unwrap_or_default()).await,
+                _ => super::mcp_agent::run(state, agent, prompt, write_dir, session, args.get("model").and_then(Value::as_str)).await,
+            };
+            match result {
                 Ok(text) => Ok(tool_content(text, false)),
                 Err(msg) => Ok(tool_content(msg, true)),
             }
@@ -768,7 +788,7 @@ mod tests {
         let msg = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" });
         let res = handle_rpc(&deps(&hub()), &msg).await.unwrap();
         let tools = res["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 19);
+        assert_eq!(tools.len(), 21);
         assert!(tools.iter().any(|t| t["name"] == "browser_navigate"));
         assert!(tools.iter().any(|t| t["name"] == "x_search"));
         assert!(tools.iter().any(|t| t["name"] == "x_mentions"));
