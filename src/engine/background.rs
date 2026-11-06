@@ -314,6 +314,8 @@ pub async fn watch_shell(
         ledger_edit(|rows| rows.push((pid, started)));
     }
     let mut task = BackgroundTask::running(&id, "shell", cmd);
+    task.owner_agent = if child_owner { None } else { owner.or(Some(agent)).map(str::to_owned) };
+    task.child_owner = child_owner;
     task.output_file = Some(output.to_string_lossy().into_owned());
     let (stop_tx, mut stop_rx) = oneshot::channel();
     manager
@@ -421,7 +423,9 @@ pub async fn track_subagent(
 ) -> BackgroundTask {
     let id = short_id("ag");
     let title: String = task_text.chars().take(200).collect();
-    let task = BackgroundTask::running(&id, "subagent", &format!("{target}: {title}"));
+    let mut task = BackgroundTask::running(&id, "subagent", &format!("{target}: {title}"));
+    task.owner_agent = if child_owner { None } else { owner.or(Some(agent)).map(str::to_owned) };
+    task.child_owner = child_owner;
     let (stop_tx, mut stop_rx) = oneshot::channel();
     manager
         .background

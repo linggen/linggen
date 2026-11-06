@@ -182,19 +182,28 @@ async fn perform_restart(state: Arc<ServerState>, req: Option<RestartRequest>, g
             turns.push((sid.clone(), agent));
         }
     }
+    // A session can be idle while its background work is still running.
+    for sid in state.tasks.sessions_running() {
+        if turns.iter().any(|(s, _)| s == &sid) {
+            continue;
+        }
+        let Some(meta) = state.manager.global_sessions.get_session_meta(&sid).ok().flatten() else { continue };
+        if meta.creator == "mission" { continue; }
+        let agent = state.tasks.list(&sid).into_iter()
+            .find(|task| task.is_running() && !task.child_owner && task.owner_agent.is_some())
+            .and_then(|task| task.owner_agent);
+        if let Some(agent) = agent {
+            turns.push((sid, agent));
+        }
+    }
+    let running = running_turns(&state);
     let mut queued = queued_messages(&queue_guard);
     let mut sessions: Vec<Value> = turns
         .iter()
         .map(|(sid, agent)| {
-            let tasks: Vec<String> = state
-                .tasks
-                .list(sid)
-                .into_iter()
-                .filter(|t| t.is_running())
-                .map(|t| format!("{} ({})", t.title, t.id))
-                .collect();
+            let tasks: Vec<_> = state.tasks.list(sid).into_iter().filter(|t| t.is_running()).collect();
             let waiting = queued.remove(sid).unwrap_or_default();
-            json!({"session_id": sid, "agent_id": agent, "caller": Some(sid) == caller.as_ref(), "tasks": tasks, "queued": waiting})
+            json!({"session_id": sid, "agent_id": agent, "caller": Some(sid) == caller.as_ref(), "turn_interrupted": running.iter().any(|(s, _)| s == sid), "tasks": tasks, "queued": waiting})
         })
         .collect();
     // A session with messages queued and no turn to continue (a mission's,
@@ -265,16 +274,22 @@ pub(crate) fn continue_message(plan: &Value, session: &Value, outcome: Option<&V
     };
     let who = if session["caller"] == true {
         "You asked for this restart, and your turn ended with it."
+    } else if session["turn_interrupted"] == false {
+        "Your background work was running and the restart interrupted it."
     } else if session["agent_id"].is_string() {
         "Your turn was running and the restart interrupted it."
     } else {
         "This session had messages queued at the restart."
     };
-    let tasks: Vec<&str> = session["tasks"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+    let tasks: Vec<String> = session["tasks"].as_array().into_iter().flatten().filter_map(|task| {
+        task.as_str().map(str::to_owned).or_else(|| {
+            Some(format!("{}: {} ({})", task["kind"].as_str().unwrap_or("task"), task["title"].as_str()?, task["id"].as_str()?))
+        })
+    }).collect();
     let tasks = if tasks.is_empty() {
         String::new()
     } else {
-        format!(" Background tasks that ended with the restart: {}.", tasks.join("; "))
+        format!(" Background tasks that ended with the restart: {}. Check their state and decide whether to relaunch them; do not relaunch blindly or wait for the user to decide.", tasks.join("; "))
     };
     let queued = session["queued"].as_array().filter(|q| !q.is_empty()).map(|q| {
         format!(" Queued messages recorded at restart, in order (JSON; text, image file paths and intended agent): {}. \
@@ -378,11 +393,36 @@ pub(crate) fn spawn_resume(state: Arc<ServerState>) {
                 session["queued"].as_array().and_then(|items| items.first())
                     .and_then(|item| item["agent_id"].as_str())
             }).unwrap_or(if meta.runtime.is_linggen() { "ling" } else { "claude" });
-            tracing::info!("[restart] {sid} continues");
-            let message = continue_message(&plan, session, outcome.as_ref());
-            continue_session(&state, &meta, agent, message).await;
+            let tasks: Vec<crate::engine::events::BackgroundTask> = session["tasks"].as_array()
+                .into_iter().flatten().filter_map(|value| serde_json::from_value(value.clone()).ok()).collect();
+            restore_interrupted_tasks(&state.tasks, sid, &tasks);
+            if !tasks.is_empty() { super::tasks::emit(&state, sid); }
+            let mut owners = std::collections::BTreeSet::new();
+            owners.insert(agent.to_owned());
+            for task in &tasks {
+                if !task.child_owner {
+                    if let Some(owner) = &task.owner_agent { owners.insert(owner.clone()); }
+                }
+            }
+            for owner in owners {
+                let mut scoped = session.clone();
+                scoped["tasks"] = Value::Array(session["tasks"].as_array().into_iter().flatten().filter(|task| {
+                    task.is_string() && owner == agent || task["owner_agent"].as_str() == Some(owner.as_str()) && task["child_owner"] != true
+                }).cloned().collect());
+                if owner != agent { scoped["caller"] = json!(false); scoped["turn_interrupted"] = json!(false); scoped["queued"] = json!([]); }
+                tracing::info!("[restart] {sid}/{owner} continues");
+                let message = continue_message(&plan, &scoped, outcome.as_ref());
+                continue_session(&state, &meta, &owner, message).await;
+            }
         }
     });
+}
+
+fn restore_interrupted_tasks(store: &super::tasks::Tasks, session: &str, tasks: &[crate::engine::events::BackgroundTask]) {
+    for mut task in tasks.iter().cloned() {
+        task.end("interrupted");
+        store.upsert(session, task);
+    }
 }
 
 /// Start a session's continue turn. On return it holds its place in the
@@ -398,6 +438,18 @@ async fn continue_session(state: &Arc<ServerState>, meta: &SessionMeta, agent: &
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recovered_tasks_are_interrupted_and_keep_their_owner() {
+        let store = super::super::tasks::Tasks::default();
+        let mut task = crate::engine::events::BackgroundTask::running("sh-1", "shell", "make");
+        task.owner_agent = Some("yinyue".into());
+        restore_interrupted_tasks(&store, "s", &[task]);
+        let recovered = store.get("s", "sh-1").unwrap();
+        assert_eq!(recovered.status, "interrupted");
+        assert_eq!(recovered.owner_agent.as_deref(), Some("yinyue"));
+        assert!(recovered.ended_at.is_some());
+    }
 
     #[test]
     fn recovery_accepts_readable_queues_but_refuses_invalid_plans() {
