@@ -15,6 +15,8 @@ import {
 import { cn } from '../lib/cn';
 import type { SessionInfo, CronMission, ManagementTab } from '../types';
 import { useSessionStore } from '../stores/sessionStore';
+import { useInteractionStore } from '../stores/interactionStore';
+import { HistoryFilters, readHistoryTypes, readArchived, saveArchived, type SessionType } from './SessionListFilters';
 import { SkeletonRows } from './Skeleton';
 import { useServerStore, isSessionBusy } from '../stores/serverStore';
 import { useShallow } from 'zustand/react/shallow';
@@ -25,7 +27,6 @@ import { fetchMissions, triggerMission, updateMission } from '../lib/missions-ap
 // Helpers
 // ---------------------------------------------------------------------------
 
-type CreatorFilter = 'all' | 'user' | 'mission' | 'skill';
 
 /** A row's identity. `creator` records who opened the session, but a session
  *  bound to a mission is a mission session regardless of opener — an attended
@@ -157,7 +158,12 @@ export const SessionList: React.FC<{
   const openMissionEditor = useOpenMissionEditor();
   // When filters are hidden the consumer is pre-filtering via filterSessions,
   // so default to 'all' to avoid the 'user'-only default clipping the list.
-  const [filter, setFilter] = useState<CreatorFilter>(hideFilters ? 'all' : 'user');
+  const [view, setView] = useState<'active' | 'history'>('active');
+  const [historyTypes, setHistoryTypes] = useState<SessionType[]>(readHistoryTypes);
+  const [archived, setArchived] = useState<Set<string>>(readArchived);
+  const askQueues = useInteractionStore((s) => s.askQueues);
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 60000); return () => clearInterval(timer); }, []);
   const [search, setSearch] = useState('');
   const [showSearch, setShowSearch] = useState(false);
   const [missionsOpen, setMissionsOpen] = useState(false);
@@ -224,63 +230,26 @@ export const SessionList: React.FC<{
     }
   }, [allSessions]);
 
-  // Per-creator counts (computed before search/filter so tab counts reflect the full set)
-  const counts = useMemo(() => {
-    let user = 0, mission = 0, skill = 0;
-    for (const s of allSessions) {
-      const k = sessionKind(s);
-      if (k === 'mission') mission++;
-      else if (k === 'skill') skill++;
-      else user++;
-    }
-    return { user, mission, skill, all: allSessions.length };
-  }, [allSessions]);
-
-  // Animate the tab count (e.g. "Mission (3)") with a +1 badge when it grows.
-  // bumpKey is a counter that re-mounts the animation node so consecutive
-  // increments still trigger fresh keyframes.
-  const [bumpKey, setBumpKey] = useState<Record<CreatorFilter, number>>({ all: 0, user: 0, mission: 0, skill: 0 });
-  const prevCountsRef = useRef(counts);
-  // Sessions load asynchronously after mount via the page_state event. The first
-  // populated update would otherwise look like growth on every tab. Re-baseline
-  // silently until we've observed real data at least once.
-  const didInitCountsRef = useRef(false);
-  useEffect(() => {
-    if (!didInitCountsRef.current) {
-      if (counts.all > 0) didInitCountsRef.current = true;
-      prevCountsRef.current = counts;
-      return;
-    }
-    const prev = prevCountsRef.current;
-    const grew: CreatorFilter[] = [];
-    (['user', 'mission', 'skill', 'all'] as CreatorFilter[]).forEach((k) => {
-      if (counts[k] > prev[k]) grew.push(k);
-    });
-    if (grew.length > 0) {
-      setBumpKey((b) => {
-        const next = { ...b };
-        for (const k of grew) next[k] = b[k] + 1;
-        return next;
-      });
-    }
-    prevCountsRef.current = counts;
-  }, [counts]);
-
-  // Filter and search
+  // External and automated sessions need an ongoing run or unanswered question.
+  const isActiveSession = (s: SessionInfo) => {
+    if (archived.has(s.id)) return false;
+    const kind = sessionKind(s);
+    const working = runningSessionIds.has(s.id) || !!askQueues[s.id]?.length;
+    if (kind !== 'user') return working;
+    return now / 1000 - lastActive(s) < 86400;
+  };
   const filtered = useMemo(() => {
     let list = allSessions;
-    if (filter === 'user') list = list.filter((s) => ['user', 'external'].includes(sessionKind(s)));
-    else if (filter !== 'all') list = list.filter((s) => sessionKind(s) === filter);
+    if (!hideFilters) {
+      list = list.filter((s) => view === 'active' ? isActiveSession(s) : !isActiveSession(s) && historyTypes.includes(sessionKind(s) as SessionType));
+    }
     if (search.trim()) {
-      const q = search.toLowerCase();
-      list = list.filter((s) =>
-        s.title.toLowerCase().includes(q) ||
-        (s.project_name || '').toLowerCase().includes(q) ||
-        (s.skill || '').toLowerCase().includes(q)
-      );
+      const q = search.trim().toLowerCase();
+      list = list.filter((s) => s.title.toLowerCase().includes(q) ||
+        (s.project_name || '').toLowerCase().includes(q) || (s.skill || '').toLowerCase().includes(q));
     }
     return list;
-  }, [allSessions, filter, search]);
+  }, [allSessions, view, historyTypes, search, hideFilters, archived, runningSessionIds, askQueues, now]);
 
   // Group by time
   const groups = useMemo(() => {
@@ -435,38 +404,19 @@ export const SessionList: React.FC<{
         </div>
       )}
 
-      {/* Filter tabs */}
-      {!hideFilters && (
-      <div className="flex items-center gap-0.5 px-2 py-1.5 border-b border-slate-100 dark:border-white/[0.03]">
-        {(['user', 'mission', 'skill', 'all'] as const).map((f) => {
-          const k = bumpKey[f];
-          return (
-            <button key={f} onClick={() => setFilter(f)}
-              className={cn('relative px-2 py-0.5 text-[11px] font-semibold rounded-full transition-colors capitalize whitespace-nowrap',
-                filter === f
-                  ? 'bg-blue-100 dark:bg-blue-500/15 text-blue-600 dark:text-blue-400'
-                  : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/5')}>
-              {f === 'all' ? 'All' : f}
-              {sessionsLoaded && (
-                <>
-                  {' ('}
-                  <span key={k} className={cn('inline-block tabular-nums', k > 0 && 'animate-count-bump')}>
-                    {counts[f]}
-                  </span>
-                  {')'}
-                </>
-              )}
-              {k > 0 && (
-                <span key={`plus-${k}`}
-                  className="absolute left-1/2 -top-2 text-[16px] font-extrabold text-emerald-500 drop-shadow-[0_1px_2px_rgba(16,185,129,0.45)] pointer-events-none animate-plus-one-fly">
-                  +1
-                </span>
-              )}
+      {!hideFilters && <>
+        <div className="flex gap-1 px-3 pt-2 border-b border-slate-200 dark:border-white/5" role="tablist">
+          {(['active', 'history'] as const).map((item) => (
+            <button key={item} role="tab" aria-selected={view === item} onClick={() => { setView(item); exitSelectMode(); }}
+              className={cn('px-3 pb-2 text-xs font-semibold border-b-2 transition-colors', view === item
+                ? 'border-blue-500 text-blue-600 dark:text-blue-400' : 'border-transparent text-slate-400 hover:text-slate-600 dark:hover:text-slate-300')}>
+              {item === 'active' ? 'Active' : 'History'}
             </button>
-          );
-        })}
-      </div>
-      )}
+          ))}
+        </div>
+        {view === 'history' && <HistoryFilters types={historyTypes} onChange={setHistoryTypes}
+          selectMode={selectMode} onSelectType={(type) => toggleGroupSelected(filtered.filter((s) => sessionKind(s) === type).map((s) => s.id))} />}
+      </>}
 
       {/* Select-mode action bar */}
       {selectMode && (
@@ -603,7 +553,7 @@ export const SessionList: React.FC<{
                           {session.project_name}
                         </span>
                       )}
-                      {session.creator === 'external' && <span className="text-[10px] px-1 rounded bg-blue-500/10 text-blue-600">{session.params?.host === 'claude-code' ? 'CC' : '外部'}</span>}
+                      {sessionKind(session) === 'external' && <span className="text-[10px] px-1 rounded bg-blue-500/10 text-blue-600">{session.params?.host === 'claude-code' ? 'CC' : '外部'}</span>}
                       {sessionKind(session) !== 'user' && sessionKind(session) !== 'external' && (
                         <span className={cn('text-[10px] px-1 py-px rounded font-medium', creatorBadge(sessionKind(session)))}>
                           {sessionKind(session)}
@@ -639,6 +589,14 @@ export const SessionList: React.FC<{
                           <Pencil size={11} />
                           Rename
                         </button>
+                        {!hideFilters && view === 'active' && ['user', 'external'].includes(sessionKind(session)) && (
+                          <button role="menuitem" onClick={() => {
+                            const next = new Set(archived); next.add(session.id);
+                            setArchived(next); saveArchived(next); setMenuOpenId(null);
+                          }} className="w-full flex items-center gap-2 px-2.5 py-1 text-[11px] text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-white/5">
+                            移到历史
+                          </button>
+                        )}
                         {onDeleteSession && (
                           <button
                             role="menuitem"
