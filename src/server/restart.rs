@@ -3,7 +3,6 @@
 //! remembers every session whose turn the restart interrupts, and hands the
 //! swap to a detached helper (`ling engine-restart`). The next engine tells
 //! each of those sessions what happened, in a turn of its own.
-use super::chat::{types::ChatRequest, TurnOrigin};
 use super::ServerState;
 use crate::engine::agent::AgentRunStatus;
 use crate::engine::events::QueuedChatItem;
@@ -184,12 +183,6 @@ async fn perform_restart(state: Arc<ServerState>, req: Option<RestartRequest>, g
         }
     }
     let mut queued = queued_messages(&queue_guard);
-    // The in-memory queue cannot be acknowledged durably or replayed with
-    // its original authenticated principal. Refuse the handoff rather than
-    // lose messages or replay them with owner privileges.
-    if !queued.is_empty() {
-        return (StatusCode::CONFLICT, "Cannot restart while messages are queued; wait for them to finish").into_response();
-    }
     let mut sessions: Vec<Value> = turns
         .iter()
         .map(|(sid, agent)| {
@@ -281,19 +274,26 @@ pub(crate) fn continue_message(plan: &Value, session: &Value, outcome: Option<&V
     } else {
         format!(" Background tasks that ended with the restart: {}.", tasks.join("; "))
     };
+    let queued = session["queued"].as_array().filter(|q| !q.is_empty()).map(|q| {
+        format!(" Queued messages recorded at restart, in order (JSON; text, images and intended agent): {}. \
+                 Whether each was already processed is unknown. Check the conversation and current state before deciding \
+                 whether any work needs retrying; do not replay them blindly or wait for the user to decide.",
+                Value::Array(q.clone()))
+    }).unwrap_or_default();
     format!(
         "The engine restarted (from {from} to {to}; {how}). {who} Its last step may not have finished: \
-         check the current state before redoing anything that changes things.{tasks} Then continue where you left off."
+         check the current state before redoing anything that changes things.{tasks}{queued} Then continue where you left off."
     )
 }
 
-/// Old plans do not contain authenticated sender identities or durable replay
-/// acknowledgements. Never dispatch their queued messages as an owner.
+/// Reject malformed plans rather than silently dropping queued content.
 fn safe_to_resume(plan: &Value) -> bool {
     plan["sessions"].as_array().is_some_and(|sessions| sessions.iter().all(|session| {
         session["session_id"].as_str().is_some_and(|id| !id.is_empty())
-            && (session.get("queued").is_none()
-                || session["queued"].as_array().is_some_and(Vec::is_empty))
+            && (session.get("queued").is_none() || session["queued"].as_array().is_some_and(|items| {
+                items.iter().all(|item| item["text"].is_string()
+                    && item.get("images").is_none_or(|images| images.as_array().is_some_and(|a| a.iter().all(Value::is_string))))
+            }))
     }))
 }
 
@@ -318,7 +318,7 @@ pub(crate) fn spawn_resume(state: Arc<ServerState>) {
             return;
         }
         if !safe_to_resume(&plan) {
-            tracing::error!("[restart] recovery plan contains queued messages or invalid sessions; preserving it for manual recovery");
+            tracing::error!("[restart] recovery plan contains invalid sessions or queued messages; preserving it for manual recovery");
             return;
         }
         for session in plan["sessions"].as_array().unwrap() {
@@ -350,12 +350,13 @@ pub(crate) fn spawn_resume(state: Arc<ServerState>) {
             let Some(meta) = state.manager.global_sessions.get_session_meta(sid).ok().flatten() else {
                 continue;
             };
-            if let Some(agent) = session["agent_id"].as_str() {
-                tracing::info!("[restart] {sid} continues");
-                let message = continue_message(&plan, session, outcome.as_ref());
-                continue_session(&state, &meta, agent, message).await;
-            }
-            resend_queued(&state, &meta, session).await;
+            let agent = session["agent_id"].as_str().or_else(|| {
+                session["queued"].as_array().and_then(|items| items.first())
+                    .and_then(|item| item["agent_id"].as_str())
+            }).unwrap_or(if meta.runtime.is_linggen() { "ling" } else { "claude" });
+            tracing::info!("[restart] {sid} continues");
+            let message = continue_message(&plan, session, outcome.as_ref());
+            continue_session(&state, &meta, agent, message).await;
         }
     });
 }
@@ -370,39 +371,16 @@ async fn continue_session(state: &Arc<ServerState>, meta: &SessionMeta, agent: &
     super::claude::start_task(state.clone(), meta.id.clone(), message, "system".into()).await;
 }
 
-/// Send again, in their order, the messages the person had queued in a
-/// session when the engine restarted. Each goes the way a typed one does
-/// and takes its place in the turn line as it is sent, so they queue behind
-/// the continue turn in the order they were typed.
-async fn resend_queued(state: &Arc<ServerState>, meta: &SessionMeta, session: &Value) {
-    let sid = &meta.id;
-    for item in session["queued"].as_array().into_iter().flatten() {
-        // The session's folder now, not the one it was queued in: the queue
-        // never depended on it, and a `cd` may have moved the session since.
-        let req = serde_json::from_value::<ChatRequest>(json!({
-            "project_root": meta.cwd,
-            "session_id": sid,
-            "agent_id": item["agent_id"],
-            "message": item["text"],
-            "images": item["images"],
-        }));
-        let Ok(req) = req else {
-            tracing::warn!("[restart] a queued message in {sid} could not be read back");
-            continue;
-        };
-        super::chat::start_turn(state.clone(), req, TurnOrigin::Resumed).await;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn recovery_refuses_queued_or_invalid_plans_without_guessing_identity() {
+    fn recovery_accepts_readable_queues_but_refuses_invalid_plans() {
         assert!(safe_to_resume(&json!({"sessions": [{"session_id": "s", "queued": []}]})));
         assert!(safe_to_resume(&json!({"sessions": [{"session_id": "s"}]})));
-        assert!(!safe_to_resume(&json!({"sessions": [{"session_id": "s", "queued": [{"text": "hello"}]}]})));
+        assert!(safe_to_resume(&json!({"sessions": [{"session_id": "s", "queued": [{"text": "hello"}]}]})));
+        assert!(!safe_to_resume(&json!({"sessions": [{"session_id": "s", "queued": [{}]}]})));
         assert!(!safe_to_resume(&json!({"sessions": [{"session_id": "s", "queued": null}]})));
         assert!(!safe_to_resume(&json!({"sessions": [{}]})));
         assert!(!safe_to_resume(&json!({})));
