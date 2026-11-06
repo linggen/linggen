@@ -347,17 +347,17 @@ const TOOLS: &[McpTool] = &[
     McpTool {
         name: "agent_run",
         backend: Backend::Agent,
-        description: "Run a local agent. Use session_id to continue a session or message the person’s own session.",
+        description: "Delegate to a local Linggen agent; only its final reply returns, while working steps stay visible in the web UI. If still running, watch the wait WebSocket, then use agent_status for details.",
         schema: || json!({
             "type": "object",
             "properties": {
-                "prompt": {"type": "string", "description": "The task or question for the agent"},
-                "session_id": {"type": "string", "description": "Existing session to continue"},
-                "model": {"type": "string", "description": "Configured model for a new session"},
+                "prompt": {"type": "string", "description": "Self-contained brief: files, cause, tests to run, and ask for a short reply"},
+                "session_id": {"type": "string", "description": "Continue an existing session with its context; omit write_dir, permission_mode and model"},
+                "model": {"type": "string", "description": "Model for a new session; use agent_models to list choices"},
                 "agent": {"type": "string", "description": "Agent to run (default: ling). Unknown names return the available list."},
-                "host": {"type": "string", "description": "Calling host (default claude-code)"},
-                "permission_mode": {"type": "string", "enum": ["plan", "default", "acceptEdits", "auto", "bypassPermissions"]},
-                "write_dir": {"type": "string", "description": "Opt in to writing: an absolute folder (give it its own git worktree) where the agent gets admin — Bash, Write, Edit. Every other path stays read-only; the run never prompts. Omit for a read-only run."}
+                "host": {"type": "string", "description": "Calling host, e.g. claude-code, codex or cursor (default claude-code)"},
+                "permission_mode": {"type": "string", "enum": ["plan", "default", "acceptEdits", "auto", "bypassPermissions"], "description": "Your current permission mode; plan is read-only, default/acceptEdits grant edit, auto/bypassPermissions grant admin in write_dir only. New sessions only."},
+                "write_dir": {"type": "string", "description": "For code changes, create a git worktree first and pass its existing absolute path. The grant follows permission_mode; other paths stay read-only and the run never prompts. Omit for read-only; new sessions only."}
             },
             "required": ["prompt"]
         }),
@@ -365,25 +365,25 @@ const TOOLS: &[McpTool] = &[
     },
     McpTool {
         name: "agent_status", backend: Backend::Agent,
-        description: "Check a session's running work and final reply.",
-        schema: || json!({"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"]}),
+        description: "Get running work, final reply and denied actions with reasons. After the wait WebSocket closes, use this for details; do not poll.",
+        schema: || json!({"type": "object", "properties": {"session_id": {"type": "string", "description": "Linggen session ID"}}, "required": ["session_id"]}),
         timeout_ms: 0,
     },
     McpTool {
         name: "agent_stop", backend: Backend::Agent,
         description: "Cancel a session's running turn and subagents.",
-        schema: || json!({"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"]}),
+        schema: || json!({"type": "object", "properties": {"session_id": {"type": "string", "description": "Linggen session ID"}}, "required": ["session_id"]}),
         timeout_ms: 0,
     },
     McpTool {
         name: "agent_models", backend: Backend::Agent,
-        description: "List configured models and the default.",
+        description: "List configured models and the default; pass a model ID to agent_run for a new session.",
         schema: || json!({"type": "object", "properties": {}}), timeout_ms: 0,
     },
     McpTool {
         name: "agent_session_close", backend: Backend::Agent,
-        description: "Stop a session; optionally remove its clean, merged linked worktree.",
-        schema: || json!({"type": "object", "properties": {"session_id": {"type": "string"}, "remove_worktree": {"type": "boolean"}}, "required": ["session_id"]}), timeout_ms: 0,
+        description: "Stop a session; after reviewing and merging, optionally remove its linked worktree. Removal requires a clean worktree with HEAD contained in a remote branch.",
+        schema: || json!({"type": "object", "properties": {"session_id": {"type": "string", "description": "Linggen session ID"}, "remove_worktree": {"type": "boolean", "description": "Remove the clean, remote-contained linked worktree after work stops (default false)"}}, "required": ["session_id"]}), timeout_ms: 0,
     },
 ];
 
@@ -427,7 +427,20 @@ fn initialize_result() -> Value {
             memory_add + replace_ids, close via memory_issue_resolve. Ask the \
             user only when evidence cannot settle it or a user-voice row is \
             involved: one simple fact question at a time, plain words, with a \
-            recommendation."
+            recommendation. agent_* delegates to local Linggen agents: for code changes, \
+            first create a git worktree and pass its absolute path as write_dir. \
+            Pass your current permission_mode: plan is read-only, default/acceptEdits \
+            grant edit, auto/bypassPermissions grant admin there; other paths stay read-only. \
+            The run never prompts. Give a self-contained brief: files, cause, tests, \
+            and reply short. Only the final reply returns; working steps stay in the web UI. \
+            If still running, do not poll: watch ws://127.0.0.1:9527/api/agent/wait?session_id=… \
+            (Claude Code's Monitor can open a WebSocket); one JSON frame has session_id, \
+            reply, denied, then closes. Use agent_status for details; read denied for what \
+            and why, widen write_dir, change mode, or do the step yourself. Follow up \
+            with agent_run(session_id=…), without write_dir, permission_mode or model. \
+            agent_models lists models for new sessions. Review the diff before merging; \
+            then agent_session_close(session_id, remove_worktree=true) removes only a \
+            clean linked worktree whose HEAD is contained in a remote branch."
     })
 }
 
@@ -795,6 +808,10 @@ mod tests {
         assert_eq!(res["result"]["protocolVersion"], PROTOCOL_VERSION);
         assert_eq!(res["result"]["serverInfo"]["name"], "linggen");
         assert!(res["result"]["capabilities"]["tools"].is_object());
+        let instructions = res["result"]["instructions"].as_str().unwrap();
+        for text in ["git worktree", "permission_mode", "do not poll", "agent_session_close"] {
+            assert!(instructions.contains(text), "missing {text}");
+        }
     }
 
     #[tokio::test]

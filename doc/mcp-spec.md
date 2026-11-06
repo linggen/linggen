@@ -131,36 +131,27 @@ deprecation window:
 
 ## agent_* group
 
-`agent_run(prompt, agent?)` — delegate a task to a **local Linggen agent** (this
-machine's skills, memory, and configured models) and return its final reply.
-The capability no generic tool server can copy: it runs the user's own agent.
-
-- One-shot, headless: a fresh visible session, the agent loop runs to
-  completion, the last assistant message is returned. Unknown `agent` returns
-  the available list.
-- **Safe by default.** The delegate is non-interactive (a headless MCP caller
-  can't answer a Linggen-side prompt, so a permission-needed action silently
-  denies and the agent continues) and runs a **read/memory/browser toolset
-  only** — no Bash, Write, Edit, or Task, so the read-only boundary can't be
-  worked around via a shell redirect. Browser mutations still pass the
-  extension's own gate. Widening to a write mode is a future opt-in.
-
-`agent_run` accepts `session_id` to continue an existing session, including the
-person's chat, without changing its permissions or tools. New sessions can pin
-`model`; `write_dir` is only for new sessions. `agent_status` reports running
-work, denied actions and the final reply; `agent_stop` cancels the turn and its subagents.
-Connect to `ws://127.0.0.1:9527/api/agent/wait?session_id=…` to wait without polling.
-When the turn, tasks and subagents finish, it sends one JSON frame with `session_id`, `reply` and `denied`, then closes.
-
-External runs record their host and appear under User. New runs accept a
-`permission_mode`: plan is read-only; default/acceptEdits grant edit in
-`write_dir`; auto/bypassPermissions grant admin there. `agent_models` lists
-configured models. `agent_session_close` stops work and can remove a clean,
-remote-contained linked worktree; it refuses unsafe removals.
+- For code changes, create a git worktree first and pass its absolute path as
+  `write_dir` to `agent_run`. Pass the host's current `permission_mode`: `plan`
+  is read-only; `default`/`acceptEdits` grant edit there; `auto`/
+  `bypassPermissions` grant admin there. Other paths stay read-only. Runs never
+  prompt for Linggen permissions; browser mutations have their own gate.
+- Give a self-contained brief: files, cause, tests to run, and “reply short”.
+  Only the final reply returns; working steps remain visible in the web UI.
+- If still running, don't poll. Watch
+  `ws://127.0.0.1:9527/api/agent/wait?session_id=…` (Claude Code's Monitor
+  can open a WebSocket): one JSON frame contains `session_id`, `reply`, and
+  `denied`, then it closes. Use `agent_status` for details. Read denials for
+  what was refused and why; widen `write_dir`, change mode, or do it yourself.
+- Follow up with `agent_run(session_id=…)` to retain context; omit `write_dir`,
+  `permission_mode`, and `model`. `agent_models` lists models for new sessions;
+  `agent_stop` cancels a running turn and its subagents.
+- Review the diff before merging. When done, call
+  `agent_session_close(session_id, remove_worktree=true)`; removal requires a
+  clean linked worktree whose HEAD is contained in a remote branch.
 
 ## Later
 
-- A `write` mode on `agent_run` (opt-in Bash/Write/Edit for trusted callers).
 - Group toggles in daemon config for hosts that want a narrower surface.
 
 ## Phasing
