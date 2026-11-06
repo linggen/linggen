@@ -96,7 +96,9 @@ afterwards, not only the one that asked:
    background work (missions excepted: their catch-up covers them), the
    owner of each background task and
    the messages queued in any session, then a detached helper swaps the
-   build, restarts, and rolls back if the new engine is not healthy.
+   build, restarts, and rolls back if the new engine is not healthy. A
+   message sent after that record joins its queue instead of a turn.
+   A queued message is kept in the chat before it leaves the queue.
 3. **Say what happened.** Once the helper has said how it went, the engine
    gives each recorded session a turn: the old and new version, healthy or
    rolled back, that its last step may not have finished and it should check
@@ -104,7 +106,9 @@ afterwards, not only the one that asked:
    background tasks the restart ended, addressed to the agent that started
    them. Child-owned tasks do not wake a session agent. Interrupted tasks
    remain in the session list marked interrupted. A Claude session continues
-   the same SDK conversation. Idle sessions are not touched. Each plan runs once.
+   the same SDK conversation. Idle sessions are not touched. Each plan runs
+   once: it is removed only after every turn's message is in its chat, and a
+   plan replayed after a crash skips the messages already there.
 4. **Judge the queue.** Messages the person had queued in a session (their
    text, pictures and intended agent) are recorded in order and given to the
    continuing agent. Whether each was already processed is unknown: the agent

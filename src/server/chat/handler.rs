@@ -458,8 +458,10 @@ pub(crate) async fn mark_steered(state: &Arc<ServerState>, queued_id: &str) {
     }
 }
 
-/// Pop the queued item out of the chat queue (now that the engine lock is
-/// held) and persist+emit the user message that was held back at submit.
+/// Show the queued item in the chat (now that the engine lock is held) and
+/// take it off the chat queue, in that order, under the queue's lock: a
+/// restart's snapshot of the queue finds the message queued or kept, never
+/// neither. `client_id` is the row's mark, if any.
 ///
 /// The queue map is the authority on whether the message should still run:
 /// a remove (`/api/queue/remove`) or a run-cancel drains it while this
@@ -472,7 +474,7 @@ pub(crate) async fn dequeue_and_emit(
     queued_id: &str,
     session_id: &str,
     target_id: &str,
-    from_id: &str,
+    (from_id, client_id): (&str, Option<&str>),
     clean_msg: &str,
     response_session_id: Option<&str>,
     via: Option<&str>,
@@ -480,37 +482,48 @@ pub(crate) async fn dequeue_and_emit(
     images: &[String],
 ) -> bool {
     let key = queue_key(session_id, target_id);
-    let was_queued = {
-        let mut guard = state.queued_chats.lock().await;
-        match guard.get_mut(&key) {
-            Some(items) => {
-                let before = items.len();
-                items.retain(|item| item.id != queued_id);
-                let found = items.len() < before;
-                if items.is_empty() {
-                    guard.remove(&key);
-                }
-                found
-            }
-            None => false,
-        }
-    };
-    if !was_queued {
+    let shown = persist_then_dequeue(&state.queued_chats, &key, queued_id, || {
+        persist_and_emit_with_images(
+            &state.manager.global_sessions,
+            events_tx,
+            target_id,
+            (from_id, target_id, clean_msg),
+            response_session_id,
+            false,
+            client_id,
+            (via, via_note),
+            images,
+        )
+    })
+    .await;
+    if shown {
+        emit_queue_updated(state, session_id, target_id).await;
+    }
+    shown
+}
+
+/// Keep `queued_id` (`persist`), then take it off the queue `key`, the
+/// queue locked throughout. False, and nothing kept, when it is gone.
+async fn persist_then_dequeue<F: std::future::Future>(
+    queue: &tokio::sync::Mutex<std::collections::HashMap<String, Vec<QueuedChatItem>>>,
+    key: &str,
+    queued_id: &str,
+    persist: impl FnOnce() -> F,
+) -> bool {
+    let mut guard = queue.lock().await;
+    let queued = guard
+        .get(key)
+        .is_some_and(|items| items.iter().any(|item| item.id == queued_id));
+    if !queued {
         return false;
     }
-    emit_queue_updated(state, session_id, target_id).await;
-    persist_and_emit_with_images(
-        &state.manager.global_sessions,
-        events_tx,
-        target_id,
-        (from_id, target_id, clean_msg),
-        response_session_id,
-        false,
-        None,
-        (via, via_note),
-        images,
-    )
-    .await;
+    persist().await;
+    if let Some(items) = guard.get_mut(key) {
+        items.retain(|item| item.id != queued_id);
+        if items.is_empty() {
+            guard.remove(key);
+        }
+    }
     true
 }
 
@@ -1151,6 +1164,26 @@ pub(crate) async fn start_turn(
 
     // One agent speaks at a time in a session: a turn already running
     // there — anyone's — holds the session's turn lock.
+    // Past a restart's snapshot the message waits in its plan instead.
+    let gate = match crate::server::restart::admit(
+        &state.admission,
+        &effective_session_id,
+        &target_id,
+        (&req.message, &req.images),
+    )
+    .await
+    {
+        Ok(Some(gate)) => gate,
+        Ok(None) => {
+            return Json(serde_json::json!({
+                "status": "queued",
+                "session_id": session_id,
+                "agent_id": target_id,
+            }))
+            .into_response()
+        }
+        Err(error) => return (StatusCode::SERVICE_UNAVAILABLE, error).into_response(),
+    };
     let turn = state.manager.session_turn(&effective_session_id);
     let (was_busy, place) = take_turn_place(turn);
     let queue = match bound_skill.as_deref() {
@@ -1193,6 +1226,7 @@ pub(crate) async fn start_turn(
     }
     // Queued messages are persisted when dequeued so they don't appear in
     // chat before the agent picks them up.
+    drop(gate);
 
     let session_id_response = session_id.clone();
     let target_id_response = target_id.clone();
@@ -1233,7 +1267,7 @@ pub(crate) async fn start_turn(
                             queued_item_id.as_deref().unwrap_or_default(),
                             &session_id_for_queue,
                             &target_id_clone,
-                            &from_id,
+                            (&from_id, None),
                             &clean_msg_clone,
                             session_id.as_deref(),
                             via.as_deref(),
@@ -1280,7 +1314,7 @@ pub(crate) async fn start_turn(
                 queued_id,
                 &session_id_for_queue,
                 &target_id_clone,
-                &from_id,
+                (&from_id, None),
                 &clean_msg_clone,
                 session_id.as_deref(),
                 via.as_deref(),
@@ -1417,6 +1451,60 @@ pub(crate) async fn start_turn(
 
 #[cfg(test)]
 mod tests {
+    /// A queued message is kept before it leaves the queue, the queue locked
+    /// throughout: a restart's snapshot (which takes the same lock) never
+    /// finds it neither queued nor kept. A message removed meanwhile is not
+    /// kept at all.
+    #[tokio::test]
+    async fn a_queued_message_is_kept_before_it_leaves_the_queue() {
+        use super::{persist_then_dequeue, QueuedChatItem};
+        use std::collections::HashMap;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        let item = QueuedChatItem {
+            id: "1-1".into(),
+            agent_id: "ling".into(),
+            session_id: "s".into(),
+            preview: "hi".into(),
+            timestamp: 0,
+            steerable: true,
+            text: "hi".into(),
+            images: Vec::new(),
+        };
+        let queue = Arc::new(tokio::sync::Mutex::new(HashMap::from([(
+            "s|ling".to_string(),
+            vec![item],
+        )])));
+        let kept = Arc::new(AtomicBool::new(false));
+        let snapshot = {
+            let (queue, kept) = (queue.clone(), kept.clone());
+            move || {
+                let (queue, kept) = (queue.clone(), kept.clone());
+                tokio::spawn(async move {
+                    let queued = queue.lock().await.contains_key("s|ling");
+                    queued || kept.load(Ordering::SeqCst)
+                })
+            }
+        };
+        let during = std::sync::Mutex::new(None);
+        let shown = persist_then_dequeue(&queue, "s|ling", "1-1", || async {
+            // A snapshot asked for while the message is being kept.
+            *during.lock().unwrap() = Some(snapshot());
+            tokio::task::yield_now().await;
+            kept.store(true, Ordering::SeqCst);
+        })
+        .await;
+        assert!(shown);
+        let during = during.lock().unwrap().take().unwrap();
+        assert!(during.await.unwrap(), "the snapshot found the message nowhere");
+        assert!(queue.lock().await.is_empty());
+        let again = persist_then_dequeue(&queue, "s|ling", "1-1", || async {
+            panic!("a message gone from the queue is not kept again")
+        })
+        .await;
+        assert!(!again);
+    }
+
     #[test]
     fn a_server_driven_turn_binds_its_session() {
         use crate::engine::{AgentEngine, AgentRole, EngineConfig, InterfaceMode};

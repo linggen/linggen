@@ -238,6 +238,19 @@ pub(crate) async fn start_task(state: Arc<ServerState>, id: String, message: Str
     let _ = start_turn(state, req, meta).await;
 }
 
+/// [`start_task`] from the engine, its message kept under `mark` (the
+/// row's `client_id`). On return the message is kept or queued.
+pub(crate) async fn start_marked_task(state: Arc<ServerState>, id: String, message: String, mark: String) {
+    let Ok(Some(meta)) = state.manager.global_sessions.get_session_meta(&id) else {
+        return;
+    };
+    let req: chat::types::ChatRequest =
+        serde_json::from_value(json!({"project_root":"", "session_id":id,
+        "agent_id":AGENT_ID, "message":message, "sender":"system", "client_id":mark}))
+        .expect("host task request");
+    let _ = start_turn(state, req, meta).await;
+}
+
 pub(crate) async fn start_turn(
     state: Arc<ServerState>,
     req: chat::types::ChatRequest,
@@ -270,6 +283,12 @@ pub(crate) async fn start_turn(
     }
     // Take the turn's place before spawning: two simultaneous first messages
     // cannot both appear idle, and queued ones run in the order they came.
+    // Past a restart's snapshot the message waits in its plan instead.
+    let gate = match crate::server::restart::admit(&state.admission, &meta.id, AGENT_ID, (&req.message, &req.images)).await {
+        Ok(Some(gate)) => gate,
+        Ok(None) => return Json(json!({"status": "queued", "session_id": meta.id, "agent_id": AGENT_ID})).into_response(),
+        Err(error) => return (StatusCode::SERVICE_UNAVAILABLE, error).into_response(),
+    };
     let (busy, mut lock) = chat::helpers::take_turn_place(state.manager.session_turn(&meta.id));
     let queued = chat::enqueue_if_busy(
         &state,
@@ -288,6 +307,7 @@ pub(crate) async fn start_turn(
     if !busy {
         persist_user(&state, &meta, &req).await;
     }
+    drop(gate);
     let sid = meta.id.clone();
     let queued_id = queued.as_ref().map(|item| item.id.clone());
     tokio::spawn(async move {
@@ -332,7 +352,7 @@ pub(crate) async fn start_turn(
                 &item.id,
                 &meta.id,
                 AGENT_ID,
-                req.sender.as_deref().unwrap_or("user"),
+                (req.sender.as_deref().unwrap_or("user"), req.client_id.as_deref()),
                 &req.message,
                 Some(&meta.id),
                 req.via.as_deref(),
@@ -389,7 +409,7 @@ async fn dequeue_user(
         queued_id,
         &meta.id,
         AGENT_ID,
-        req.sender.as_deref().unwrap_or("user"),
+        (req.sender.as_deref().unwrap_or("user"), req.client_id.as_deref()),
         &req.message,
         Some(&meta.id),
         req.via.as_deref(),

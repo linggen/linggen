@@ -40,6 +40,59 @@ fn plan_file() -> PathBuf {
     crate::paths::linggen_home().join("restart/resume.json")
 }
 
+/// Keep the plan whole: a torn plan would not parse, and its sessions and
+/// queues would be lost with it.
+fn write_plan(path: &std::path::Path, plan: &Value) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let staged = path.with_extension("json.new");
+    std::fs::write(&staged, plan.to_string())?;
+    std::fs::rename(&staged, path)
+}
+
+/// Who admits a person's message (`ServerState::admission`). The restart
+/// snapshot holds it while it reads the turns and queues, so no message is
+/// half admitted then; once the plan is kept (`frozen`), every new message
+/// joins the plan's queue instead of a turn the restart would end.
+#[derive(Default)]
+pub(crate) struct Admission {
+    frozen: Option<PathBuf>,
+}
+
+/// Admit a message to `agent` in `session`. `Ok(Some(gate))`: it goes on;
+/// hold the gate until it is queued or kept in the transcript. `Ok(None)`:
+/// a restart is under way and the message was kept in its plan.
+pub(crate) async fn admit(
+    admission: &Arc<tokio::sync::Mutex<Admission>>,
+    session: &str,
+    agent: &str,
+    (text, images): (&str, &[String]),
+) -> Result<Option<tokio::sync::OwnedMutexGuard<Admission>>, String> {
+    let gate = admission.clone().lock_owned().await;
+    let Some(path) = gate.frozen.as_deref() else {
+        return Ok(Some(gate));
+    };
+    keep_in_plan(path, session, json!({"text": text, "images": images, "agent_id": agent}))
+        .map_err(|error| format!("Could not keep the message for after the restart: {error}"))?;
+    Ok(None)
+}
+
+/// Add one message to `session`'s queue in the plan, after the ones there:
+/// a session with no entry gets a queue-only one.
+fn keep_in_plan(path: &std::path::Path, session: &str, item: Value) -> std::io::Result<()> {
+    let mut plan: Value = serde_json::from_slice(&std::fs::read(path)?)?;
+    let sessions = plan["sessions"].as_array_mut().ok_or(std::io::ErrorKind::InvalidData)?;
+    match sessions.iter_mut().find(|s| s["session_id"] == session) {
+        Some(entry) => match entry["queued"].as_array_mut() {
+            Some(queued) => queued.push(item),
+            None => entry["queued"] = json!([item]),
+        },
+        None => sessions.push(json!({"session_id": session, "queued": [item]})),
+    }
+    write_plan(path, &plan)
+}
+
 #[derive(serde::Deserialize)]
 pub(crate) struct RestartRequest {
     binary: String,
@@ -167,8 +220,24 @@ async fn perform_restart(state: Arc<ServerState>, req: Option<RestartRequest>, g
     // Freeze every queue mutation before taking the snapshot and keep it frozen
     // until the helper has stopped this process (or the takeover times out).
     // Otherwise a later enqueue is lost, or a removed/dequeued item reappears.
+    let mut admission = state.admission.clone().lock_owned().await;
     let queue_guard = state.queued_chats.clone().lock_owned().await;
     let mut turns = running_turns(&state);
+    // A message admitted just before holds its session's turn place, its run
+    // not on record yet: that turn is interrupted too.
+    for sid in state.manager.sessions_with_pending_turn() {
+        if turns.iter().any(|(s, _)| *s == sid) {
+            continue;
+        }
+        let Some(meta) = state.manager.global_sessions.get_session_meta(&sid).ok().flatten() else { continue };
+        if meta.creator == "mission" { continue; }
+        let agent = if meta.runtime.is_linggen() {
+            super::chat::members::default_responder(&super::chat::members::of_session(&state.manager, &sid).await)
+        } else {
+            "claude".to_string()
+        };
+        turns.push((sid, agent));
+    }
     if let Some(sid) = &caller {
         if !turns.iter().any(|(s, _)| s == sid) {
             let agent = state
@@ -196,14 +265,15 @@ async fn perform_restart(state: Arc<ServerState>, req: Option<RestartRequest>, g
             turns.push((sid, agent));
         }
     }
-    let running = running_turns(&state);
+    let mut running: Vec<String> = running_turns(&state).into_iter().map(|(sid, _)| sid).collect();
+    running.extend(state.manager.sessions_with_pending_turn());
     let mut queued = queued_messages(&queue_guard);
     let mut sessions: Vec<Value> = turns
         .iter()
         .map(|(sid, agent)| {
             let tasks: Vec<_> = state.tasks.list(sid).into_iter().filter(|t| t.is_running()).collect();
             let waiting = queued.remove(sid).unwrap_or_default();
-            json!({"session_id": sid, "agent_id": agent, "caller": Some(sid) == caller.as_ref(), "turn_interrupted": running.iter().any(|(s, _)| s == sid), "tasks": tasks, "queued": waiting})
+            json!({"session_id": sid, "agent_id": agent, "caller": Some(sid) == caller.as_ref(), "turn_interrupted": running.contains(sid), "tasks": tasks, "queued": waiting})
         })
         .collect();
     // A session with messages queued and no turn to continue (a mission's,
@@ -217,10 +287,7 @@ async fn perform_restart(state: Arc<ServerState>, req: Option<RestartRequest>, g
         "sessions": sessions,
     });
     let path = plan_file();
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    if let Err(error) = std::fs::write(&path, plan.to_string()) {
+    if let Err(error) = write_plan(&path, &plan) {
         return (StatusCode::INTERNAL_SERVER_ERROR, format!("Could not keep the plan: {error}")).into_response();
     }
     // A previous status can have the same second-level timestamp. Never let
@@ -243,10 +310,15 @@ async fn perform_restart(state: Arc<ServerState>, req: Option<RestartRequest>, g
         let _ = std::fs::remove_file(&path);
         return (StatusCode::INTERNAL_SERVER_ERROR, format!("{error:#}")).into_response();
     }
+    // From here every new message joins the plan's queue (`admit`).
+    admission.frozen = Some(path);
+    drop(admission);
     // Keep the lock while the helper takes over. If the helper fails before
     // stopping this process, release it so the owner can retry.
+    let admission = state.admission.clone();
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_secs(180)).await;
+        admission.lock().await.frozen = None;
         drop(queue_guard);
         drop(guard);
     });
@@ -381,7 +453,10 @@ pub(crate) fn spawn_resume(state: Arc<ServerState>) {
                 }
             }
         }
-        let _ = std::fs::remove_file(&path);
+        // Each continue turn is kept in its session's transcript under a mark
+        // of its own before the plan goes: a plan replayed after a crash or
+        // a second restart tells only those not told yet.
+        let mut deliveries = Vec::new();
         for session in readable["sessions"].as_array().into_iter().flatten() {
             let Some(sid) = session["session_id"].as_str() else {
                 continue;
@@ -405,6 +480,11 @@ pub(crate) fn spawn_resume(state: Arc<ServerState>) {
                 }
             }
             for owner in owners {
+                let mark = delivery_mark(requested, &owner);
+                if told(&state.manager.global_sessions, sid, &mark) {
+                    tracing::info!("[restart] {sid}/{owner} was already told");
+                    continue;
+                }
                 let mut scoped = session.clone();
                 scoped["tasks"] = Value::Array(session["tasks"].as_array().into_iter().flatten().filter(|task| {
                     task.is_string() && owner == agent || task["owner_agent"].as_str() == Some(owner.as_str()) && task["child_owner"] != true
@@ -412,10 +492,26 @@ pub(crate) fn spawn_resume(state: Arc<ServerState>) {
                 if owner != agent { scoped["caller"] = json!(false); scoped["turn_interrupted"] = json!(false); scoped["queued"] = json!([]); }
                 tracing::info!("[restart] {sid}/{owner} continues");
                 let message = continue_message(&plan, &scoped, outcome.as_ref());
-                continue_session(&state, &meta, &owner, message).await;
+                deliveries.push(continue_session(state.clone(), meta.clone(), owner, message, mark));
             }
         }
+        let delivered = futures_util::future::join_all(deliveries).await;
+        if delivered.iter().all(|told| *told) {
+            let _ = std::fs::remove_file(&path);
+        } else {
+            tracing::error!("[restart] a continue turn was not kept; preserving recovery plan");
+        }
     });
+}
+
+/// The mark a continue turn is kept under: one per plan and agent.
+fn delivery_mark(requested_at: u64, agent: &str) -> String {
+    format!("restart-{requested_at}-{agent}")
+}
+
+/// Whether the session's transcript holds the continue turn marked `mark`.
+fn told(store: &crate::state_fs::SessionStore, session: &str, mark: &str) -> bool {
+    store.get_chat_history(session).is_ok_and(|rows| rows.iter().any(|row| row.client_id.as_deref() == Some(mark)))
 }
 
 fn restore_interrupted_tasks(store: &super::tasks::Tasks, session: &str, tasks: &[crate::engine::events::BackgroundTask]) {
@@ -425,14 +521,46 @@ fn restore_interrupted_tasks(store: &super::tasks::Tasks, session: &str, tasks: 
     }
 }
 
-/// Start a session's continue turn. On return it holds its place in the
-/// session's turn line, so what is sent next waits behind it.
-async fn continue_session(state: &Arc<ServerState>, meta: &SessionMeta, agent: &str, message: String) {
-    if meta.runtime.is_linggen() {
-        tokio::spawn(super::tasks::tell(state.clone(), meta.id.clone(), agent.into(), message));
-        return;
+/// Start a session's continue turn, marked `mark`; true once it is kept in
+/// the transcript. It holds its place in the session's turn line from the
+/// call on, so what is sent next waits behind it.
+fn continue_session(
+    state: Arc<ServerState>,
+    meta: SessionMeta,
+    agent: String,
+    message: String,
+    mark: String,
+) -> impl std::future::Future<Output = bool> + Send + 'static {
+    let place = meta.runtime.is_linggen().then(|| {
+        let (kept, was_kept) = tokio::sync::oneshot::channel();
+        tokio::spawn(super::tasks::tell_marked(state.clone(), meta.id.clone(), agent.clone(), message.clone(), (mark.clone(), kept)));
+        was_kept
+    });
+    async move {
+        let kept = match place {
+            Some(was_kept) => was_kept.await.is_ok(),
+            None => {
+                super::claude::start_marked_task(state.clone(), meta.id.clone(), message.clone(), mark.clone()).await;
+                wait_until_shown(&state, &meta.id, &message).await;
+                told(&state.manager.global_sessions, &meta.id, &mark)
+            }
+        };
+        // A session deleted meanwhile has no one left to tell.
+        kept || !matches!(state.manager.global_sessions.get_session_meta(&meta.id), Ok(Some(_)))
     }
-    super::claude::start_task(state.clone(), meta.id.clone(), message, "system".into()).await;
+}
+
+/// A queued continue turn waits behind the running one: it is shown (kept)
+/// as it leaves the queue, never after.
+async fn wait_until_shown(state: &ServerState, session: &str, message: &str) {
+    loop {
+        let queued = state.queued_chats.lock().await.values().flatten()
+            .any(|item| item.session_id == session && item.text == message);
+        if !queued {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
 }
 
 #[cfg(test)]
@@ -489,6 +617,32 @@ mod tests {
         drop(guard);
         mutation.await.unwrap();
         assert_eq!(queued_messages(&*queue.lock().await)["s"][0]["text"], "second");
+    }
+
+    /// Once the plan is kept, a message admitted later joins the plan's
+    /// queue — after what was queued, or as a queue-only session — and never
+    /// a turn the restart would end. Until then, the snapshot waits for a
+    /// message being admitted.
+    #[tokio::test]
+    async fn a_message_after_the_snapshot_waits_in_the_plan() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("restart/resume.json");
+        let plan = json!({"sessions": [{"session_id": "s", "agent_id": "ling", "queued": [{"text": "before", "images": [], "agent_id": "ling"}]}]});
+        write_plan(&path, &plan).unwrap();
+        let admission = Arc::new(tokio::sync::Mutex::new(Admission::default()));
+        let gate = admit(&admission, "s", "ling", ("open", &[])).await.unwrap();
+        assert!(gate.is_some(), "no restart yet: the message goes on");
+        assert!(admission.try_lock().is_err(), "the snapshot waits while a message is admitted");
+        drop(gate);
+        admission.lock().await.frozen = Some(path.clone());
+        assert!(admit(&admission, "s", "ling", ("after", &["p.png".to_string()])).await.unwrap().is_none());
+        assert!(admit(&admission, "t", "yinyue", ("elsewhere", &[])).await.unwrap().is_none());
+        let kept: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let texts: Vec<&str> = kept["sessions"][0]["queued"].as_array().unwrap().iter().filter_map(|m| m["text"].as_str()).collect();
+        assert_eq!(texts, ["before", "after"]);
+        assert_eq!(kept["sessions"][0]["queued"][1]["images"], json!(["p.png"]));
+        assert_eq!(kept["sessions"][1], json!({"session_id": "t", "queued": [{"text": "elsewhere", "images": [], "agent_id": "yinyue"}]}));
+        assert!(safe_to_resume(&kept));
     }
 
     #[test]

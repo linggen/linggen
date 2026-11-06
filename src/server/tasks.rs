@@ -245,7 +245,20 @@ pub(crate) fn tell_from(
     sender: String,
 ) -> impl std::future::Future<Output = ()> + Send + 'static {
     let (_, place) = super::chat::helpers::take_turn_place(state.manager.session_turn(&session));
-    tell_in_place(state, session, agent, notice, sender, place)
+    tell_in_place(state, session, agent, notice, sender, place, None)
+}
+
+/// [`tell`], its notice kept under `mark` (the row's `client_id`); `kept`
+/// hears once the notice is in the transcript, and is dropped if it never is.
+pub(crate) fn tell_marked(
+    state: std::sync::Arc<super::ServerState>,
+    session: String,
+    agent: String,
+    notice: String,
+    mark: (String, tokio::sync::oneshot::Sender<()>),
+) -> impl std::future::Future<Output = ()> + Send + 'static {
+    let (_, place) = super::chat::helpers::take_turn_place(state.manager.session_turn(&session));
+    tell_in_place(state, session, agent, notice, "system".into(), place, Some(mark))
 }
 
 async fn tell_in_place(
@@ -255,6 +268,7 @@ async fn tell_in_place(
     notice: String,
     sender: String,
     place: super::chat::helpers::TurnPlace,
+    mark: Option<(String, tokio::sync::oneshot::Sender<()>)>,
 ) {
     let Some(meta) = state.manager.global_sessions.get_session_meta(&session).ok().flatten() else {
         return; // the session was deleted meanwhile
@@ -275,19 +289,40 @@ async fn tell_in_place(
     let Some(notice) = state.manager.hold_behind_plan(&session, &agent, notice).await else {
         return;
     };
-    super::chat::helpers::persist_and_emit_message(
-        &state.manager,
-        &state.events_tx,
-        &root,
-        &agent,
-        &sender,
-        &agent,
-        &notice,
-        Some(&session),
-        false,
-        None,
-    )
-    .await;
+    match mark {
+        Some((mark, kept)) => {
+            let persisted = super::chat::helpers::persist_and_emit_with_images(
+                &state.manager.global_sessions,
+                &state.events_tx,
+                &agent,
+                (&sender, &agent, &notice),
+                Some(&session),
+                false,
+                Some(&mark),
+                (None, None),
+                &[],
+            )
+            .await;
+            if persisted {
+                let _ = kept.send(());
+            }
+        }
+        None => {
+            super::chat::helpers::persist_and_emit_message(
+                &state.manager,
+                &state.events_tx,
+                &root,
+                &agent,
+                &sender,
+                &agent,
+                &notice,
+                Some(&session),
+                false,
+                None,
+            )
+            .await;
+        }
+    }
     let mut engine = engine.lock().await;
     engine.set_parent_agent(None);
     engine.last_assistant_text = None;

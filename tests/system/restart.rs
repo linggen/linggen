@@ -13,9 +13,14 @@ const PICTURE: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42
 
 /// What the restarting engine leaves for the next one, and how the helper said it went.
 pub fn leave_plan(w: &World, sessions: serde_json::Value) {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+    leave_plan_at(w, now, sessions);
+}
+
+/// [`leave_plan`] as a restart asked for at `now` left it.
+pub fn leave_plan_at(w: &World, now: u64, sessions: serde_json::Value) {
     let dir = w.home.linggen_home().join("restart");
     std::fs::create_dir_all(&dir).unwrap();
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
     let plan = json!({"requested_at": now, "from_version": "1.10.0", "to_version": "ling 1.10.1", "sessions": sessions});
     std::fs::write(dir.join("resume.json"), plan.to_string()).unwrap();
     std::fs::write(dir.join("status.json"), json!({"state": "ok", "at": now}).to_string()).unwrap();
@@ -211,4 +216,42 @@ async fn a_restart_on_a_build_that_does_not_run_is_refused_and_plans_nothing() {
         .await;
     assert_eq!(status, 400);
     assert!(!w.home.linggen_home().join("restart/resume.json").exists());
+}
+
+/// A plan replayed — the engine went down after telling a session but
+/// before the plan was gone — tells nobody twice: each continue turn is kept
+/// in the transcript under its mark, and the plan goes only once all are.
+#[tokio::test]
+async fn a_replayed_plan_does_not_tell_a_session_twice() {
+    let mut w = World::start(
+        Setup::default().script(Agent::Ling, vec![text("Checking where I was."), text("Told twice.")]),
+    )
+    .await;
+    let sid = w.api.create_session(json!({"title": "Chat"})).await;
+    let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+    let plan = json!([{"session_id": sid, "agent_id": "ling", "caller": false, "tasks": [],
+                       "queued": [{"text": "kept for later", "images": [], "agent_id": "ling"}]}]);
+    leave_plan_at(&w, at, plan.clone());
+    let mark = w.mark();
+    w.engine.restart(&w.home).await;
+    assert!(matches!(w.wait_run(&sid, Agent::Ling, mark).await, RunEnd::Finished));
+    let told = |w: &World| {
+        crate::support::rows::read_raw(&w.home.linggen_home(), &sid)
+            .into_iter()
+            .filter(|row| row["client_id"] == format!("restart-{at}-ling"))
+            .count()
+    };
+    assert_eq!(told(&w), 1, "the continue turn is kept under its mark");
+    assert!(!w.home.linggen_home().join("restart/resume.json").exists());
+    // The same plan again, as an engine that died before removing it left it.
+    leave_plan_at(&w, at, plan);
+    w.engine.restart(&w.home).await;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while w.home.linggen_home().join("restart/resume.json").exists() {
+        assert!(Instant::now() < deadline, "a replayed plan that told everyone is retired");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(w.model.calls_of(Agent::Ling).len(), 1, "the session was told twice");
+    assert_eq!(told(&w), 1);
 }

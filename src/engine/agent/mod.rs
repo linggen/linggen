@@ -579,6 +579,16 @@ impl AgentManager {
         turns.get(session_id).is_some_and(|turn| turn.try_lock().is_err())
     }
 
+    /// Every session whose turn line is not empty now.
+    pub fn sessions_with_pending_turn(&self) -> Vec<String> {
+        let turns = self.session_turns.lock_ok();
+        turns
+            .iter()
+            .filter(|(_, turn)| turn.try_lock().is_err())
+            .map(|(sid, _)| sid.clone())
+            .collect()
+    }
+
     /// Fraction of its soft context limit a session's **live** thread is
     /// using — the fullest member's — or `None` when no member has a cached
     /// engine idle enough to read (mid-turn engines are locked). Yinyue's

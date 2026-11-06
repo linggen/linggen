@@ -42,6 +42,10 @@ pub struct ServerState {
     pub missions: Arc<crate::extensions::missions::MissionLoader>,
     pub prompt_store: Arc<crate::prompts::PromptStore>,
     pub queued_chats: Arc<Mutex<HashMap<String, Vec<QueuedChatItem>>>>,
+    /// Who admits a person's message: the restart snapshot takes it before
+    /// the queue, and once the plan is kept new messages go into the plan
+    /// (`restart::admit`).
+    pub(crate) admission: Arc<Mutex<super::restart::Admission>>,
     /// Queued messages waiting for a native turn's next step to take them in.
     pub(crate) fold: Arc<super::chat::fold::Fold>,
     /// Live Claude sessions' in-memory host state.

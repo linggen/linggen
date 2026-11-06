@@ -173,7 +173,7 @@ pub(crate) async fn persist_and_emit_to_store(
         (via, via_note),
         &[],
     )
-    .await
+    .await;
 }
 
 /// [`persist_and_emit_to_store`] for a person's message that carried
@@ -191,7 +191,7 @@ pub(crate) async fn persist_and_emit_with_images(
     client_id: Option<&str>,
     (via, via_note): (Option<&str>, Option<&str>),
     sent: &[String],
-) {
+) -> bool {
     let client_id = client_id.map(str::to_string);
     let sid = session_id.unwrap_or("default");
     // Kept first, so the live event names the same copies a reload shows.
@@ -227,7 +227,9 @@ pub(crate) async fn persist_and_emit_with_images(
     };
     if let Err(e) = store.add_chat_message(sid, &msg) {
         tracing::warn!("Failed to persist chat message to mission store: {}", e);
+        return false;
     }
+    true
 }
 
 /// Persist to the global flat-file session store without emitting an SSE event.
