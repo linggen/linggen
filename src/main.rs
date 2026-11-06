@@ -102,8 +102,10 @@ enum Command {
     /// The detached helper `ling restart` asks the engine to start
     #[command(hide = true)]
     EngineRestart {
-        #[arg(long)]
-        binary: std::path::PathBuf,
+        #[arg(long, required_unless_present = "current", conflicts_with = "current")]
+        binary: Option<std::path::PathBuf>,
+        #[arg(long, conflicts_with = "binary")]
+        current: bool,
         #[arg(long)]
         pid: u32,
         #[arg(long)]
@@ -242,8 +244,8 @@ async fn main() -> Result<()> {
         Some(Command::Restart { binary, wait }) => {
             return cli::restart::request(config.server.port(), binary, *wait).await;
         }
-        Some(Command::EngineRestart { binary, pid, host, port }) => {
-            return cli::restart::helper(binary, *pid, host.clone(), *port).await;
+        Some(Command::EngineRestart { binary, current: _, pid, host, port }) => {
+            return cli::restart::helper(binary.as_deref(), *pid, host.clone(), *port).await;
         }
         Some(Command::Account { action }) => {
             return match action {

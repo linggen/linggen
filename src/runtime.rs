@@ -174,11 +174,6 @@ pub fn lane_verdict(lane: &Lane) -> Result<(), String> {
     verdict
 }
 
-/// [`lane_verdict`] as a yes or no.
-pub fn lane_supported(lane: &Lane) -> bool {
-    lane_verdict(lane).is_ok()
-}
-
 /// Every lane with its verdict — what Settings and the progress topic show.
 pub fn lanes_status() -> serde_json::Value {
     let m = Machine::this();

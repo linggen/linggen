@@ -29,6 +29,7 @@ import { COMPANION_ID } from '../../lib/agentsMet.mts';
 import { language } from '../../lib/i18n';
 import { useUiStore } from '../../stores/uiStore';
 import { replyAddressee } from '../../lib/replyTo.mts';
+import { isRestartCommand, restartSuggestion } from '../../lib/restartCommand.mts';
 import { chatAgentOf } from '../../lib/sessionMembers.mts';
 import {
   agentMatches,
@@ -216,7 +217,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     if (!chatInput.trim() && pendingImages.length === 0) return;
     // An address in the words is taken out of them, as the chip's is.
     const named = inWords && 'agent' in inWords ? inWords : undefined;
-    const userMessage = named ? named.words : chatInput.trim();
+    const userMessage = named && !isRestartCommand(named.words) ? named.words : chatInput.trim();
     // An address with nothing said: keep it, send nothing.
     if (pendingImages.length === 0 && (!userMessage || isBareMention(userMessage, mainAgents))) return;
     const imagesToSend = pendingImages.length > 0 ? pendingImages.map((img) => img.data) : undefined;
@@ -246,7 +247,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     // default responder answers there.
     const shownAgent = mentionAgent || selectedAgent;
     const targetAgent = mentionAgent || useServerStore.getState().selectedAgent || undefined;
-    if (openQuestion && onAnswerQuestion && userMessage && !imagesToSend
+    if (!isRestartCommand(chatInput, imagesToSend) && openQuestion && onAnswerQuestion && userMessage && !imagesToSend
         && (!mentionAgent || chip === normalizeAgentKey(openQuestion.agentId))
         && normalizeAgentKey(openQuestion.agentId) === normalizeAgentKey(shownAgent)) {
       onAnswerQuestion(openQuestion.questionId, openQuestion.questions.map((_, i) => ({
@@ -404,8 +405,13 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       ['/image', 'Attach an image file'],
     ];
 
+    if (!skillFilter || restartSuggestion.label.slice(1).includes(skillFilter) || restartSuggestion.description.toLowerCase().includes(skillFilter)) {
+      suggestions.push(restartSuggestion);
+    }
+
     if (claudeSession) {
       for (const command of sdkCommands) {
+        if (command.name.toLowerCase() === 'restart') continue;
         if (!command.name.toLowerCase().includes(skillFilter) && !command.description?.toLowerCase().includes(skillFilter)) continue;
         suggestions.push({ key:`sdk-${command.name}`, label:`/${command.name}`, description:command.description,
           argumentHint:command.argumentHint, isBuiltin:command.builtin === true });

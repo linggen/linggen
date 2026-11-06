@@ -13,7 +13,8 @@ import { getTransport } from '../lib/transport';
 import { contentBlockSummary } from '../components/chat/utils/content-block';
 import type { AskUserAnswer, ChatMessage, ContentBlock } from '../types';
 import { appConfig, sessionApi, workspaceApi } from '../lib/endpoints';
-import { ApiError, apiErrorMessage } from '../lib/api';
+import { ApiError, apiErrorMessage, apiPost } from '../lib/api';
+import { isRestartCommand, requestRestart } from '../lib/restartCommand.mts';
 import { postToParent } from '../lib/parentFrame';
 import { agentMentionLabel, leadingAgentMention, mentionLanguage } from '../lib/chatMentions.mts';
 import { turnlessReply } from '../lib/agentTurns.mts';
@@ -85,6 +86,16 @@ export function useChatActions(
 
   const sendChatMessage = useCallback(async (userMessage: string, targetAgent?: string, images?: string[], opts?: { resend?: boolean; clientId?: string }) => {
     if (!userMessage.trim() && !(images && images.length > 0)) return;
+    if (isRestartCommand(userMessage, images)) {
+      const ui = useUiStore.getState();
+      try {
+        await requestRestart(apiPost);
+        ui.addToast({ message: 'Restart requested. The connection will drop while the engine restarts; reconnecting automatically.', variant: 'info' });
+      } catch (e) {
+        ui.addToast({ message: `Restart request failed — ${apiErrorMessage(e)}`, variant: 'error' });
+      }
+      return;
+    }
     await newChatMade();
     const root = effectiveProjectRoot(projectRootRef.current);
     const { activeSessionId: sid } = useSessionStore.getState();
@@ -179,6 +190,7 @@ export function useChatActions(
     if (trimmed === '/help') {
       ui.setOverlay([
         '**Commands:**', '- `/help` — Show available commands', '- `/clear` — Clear chat context',
+        '- `/restart` — Restart the engine and reconnect',
         '- `/compact [focus]` — Compact context (summarize old messages)',
         '- `/status` — Show project status', '- `/model` — List models; `/model <id>` — Switch default model',
         ...(isAgentPresent(useServerStore.getState().agentsMet, COMPANION_ID)

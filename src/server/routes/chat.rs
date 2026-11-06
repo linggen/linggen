@@ -41,6 +41,7 @@ pub(super) fn routes() -> Routes {
         .route("/api/queue/steer", post(crate::server::claude::steer_queued))
         .route("/api/tasks/stop", post(crate::server::tasks::stop))
         .route("/api/engine/restart", post(crate::server::restart::restart))
+        .route("/api/restart/current", post(crate::server::restart::restart_current))
         // Chat & plan
         .route("/api/chat", post(chat_handler))
         .route("/api/chat/clear", post(clear_chat_history_api))

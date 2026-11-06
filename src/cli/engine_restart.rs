@@ -318,6 +318,14 @@ pub async fn restart(
     }
 }
 
+/// Relaunch one existing engine without changing any executable or backup.
+pub async fn restart_current(target: &Path, engine: &ProcessInfo, opts: &Opts) -> Result<()> {
+    match relaunch(target, std::slice::from_ref(engine), opts).await {
+        Ok(_) => Ok(()),
+        Err(failure) => anyhow::bail!("{}", failure.why),
+    }
+}
+
 fn report_up(binary_name: &str, engines: &[ProcessInfo], pids: &[u32], opts: &Opts) {
     for (e, pid) in engines.iter().zip(pids) {
         println!(
@@ -725,6 +733,34 @@ mod tests {
         let back = rig.engine_pid();
         assert_ne!(back, old.pid);
         assert!(wait_health(back, "127.0.0.1", rig.port, Duration::from_secs(2)).await);
+    }
+
+    #[tokio::test]
+    async fn current_restart_preserves_binary_and_backup() {
+        if !have_python() { return; }
+        let rig = Rig::new();
+        fake(&rig.target(), "1.0.0", SERVES);
+        std::fs::write(rig.bin.path().join("ling.prev"), "untouched").unwrap();
+        let before = std::fs::read(rig.target()).unwrap();
+        let old = rig.running().await;
+        restart_current(&rig.target(), &old, &rig.opts).await.unwrap();
+        assert_eq!(std::fs::read(rig.target()).unwrap(), before);
+        assert_eq!(std::fs::read(rig.bin.path().join("ling.prev")).unwrap(), b"untouched");
+        assert_ne!(rig.engine_pid(), old.pid);
+    }
+
+    #[tokio::test]
+    async fn current_restart_failure_never_rolls_back() {
+        if !have_python() { return; }
+        let mut rig = Rig::new();
+        fake(&rig.target(), "1.0.0", SERVES);
+        let old = rig.running().await;
+        fake(&rig.target(), "1.0.0", "exit 1");
+        std::fs::write(rig.bin.path().join("ling.prev"), "untouched").unwrap();
+        rig.opts.health_timeout = Duration::from_secs(2);
+        let err = restart_current(&rig.target(), &old, &rig.opts).await.unwrap_err();
+        assert!(!format!("{err:#}").contains("rolled back"));
+        assert_eq!(std::fs::read(rig.bin.path().join("ling.prev")).unwrap(), b"untouched");
     }
 
     #[tokio::test]

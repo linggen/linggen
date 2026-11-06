@@ -47,7 +47,8 @@ impl Tool for GenerateImageTool {
                 "shape": {"type": "string", "enum": ["square", "landscape"], "description": "square (default) or landscape"},
                 "name": {"type": "string", "description": "In a skill only: file name without extension for the skill's copy, e.g. fuzhu"},
                 "reference": {"type": "string", "description": "In a skill only: path inside the skill folder of a picture to keep the pose and shape of"},
-                "seed": {"type": "integer", "description": "Optional; on the local picture model the same prompt and seed draw the same picture"}
+                "seed": {"type": "integer", "description": "Optional; on the local picture model the same prompt and seed draw the same picture"},
+                "model": {"type": "string", "enum": ["auto", "chatgpt", "local"], "description": "Drawing source: auto (default), chatgpt, or local. An explicit choice never falls back."}
             },
             "required": ["prompt"]
         })
@@ -55,7 +56,7 @@ impl Tool for GenerateImageTool {
     fn legacy_schema_entry(&self) -> Value {
         json!({
             "name": "GenerateImage",
-            "args": {"prompt": "string", "shape": "square|landscape?", "name": "string?", "reference": "string?", "seed": "number?"},
+            "args": {"prompt": "string", "shape": "square|landscape?", "name": "string?", "reference": "string?", "seed": "number?", "model": "auto|chatgpt|local?"},
             "returns": "the picture's number, e.g. [turn3image1]",
             "notes": "Only when the person asks for a drawing; never to show a real thing. Show it by writing its number."
         })
@@ -78,4 +79,6 @@ pub struct GenerateImageArgs {
     pub reference: Option<String>,
     #[serde(default)]
     pub seed: Option<u64>,
+    #[serde(default)]
+    pub model: Option<String>,
 }

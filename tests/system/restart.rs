@@ -46,7 +46,7 @@ async fn a_native_session_continues_after_the_restart_it_asked_for() {
 }
 
 #[tokio::test]
-async fn messages_queued_behind_the_interrupted_turn_come_back_after_it_in_order() {
+async fn legacy_queued_messages_are_preserved_without_unverified_replay() {
     let mut w = World::start(Setup::default().script(
         Agent::Ling,
         vec![text("Building it now."), text("Back; checking."), text("First answered."), text("Second answered.")],
@@ -62,15 +62,12 @@ async fn messages_queued_behind_the_interrupted_turn_come_back_after_it_in_order
         "queued": [queued("first queued message"), queued("second queued message")],
     }]));
     w.engine.restart(&w.home).await;
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while w.model.calls_of(Agent::Ling).len() < 4 {
-        assert!(Instant::now() < deadline, "only {} turns ran", w.model.calls_of(Agent::Ling).len());
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    let last = |i: usize| w.model.calls_of(Agent::Ling)[i].thread().last().map(|(_, t)| t.clone()).unwrap_or_default();
-    assert!(last(1).contains("The engine restarted"), "the continue turn runs first: {}", last(1));
-    assert!(last(2).contains("first queued message"), "{}", last(2));
-    assert!(last(3).contains("second queued message"), "{}", last(3));
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let path = w.home.linggen_home().join("restart/resume.json");
+    let retained: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert_eq!(retained["sessions"][0]["queued"][0]["text"], "first queued message");
+    assert_eq!(retained["sessions"][0]["queued"][1]["text"], "second queued message");
+    assert_eq!(w.model.calls_of(Agent::Ling).len(), 1, "unverified messages must not be replayed");
 }
 
 #[tokio::test]
