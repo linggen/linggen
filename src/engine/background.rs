@@ -434,7 +434,18 @@ pub async fn track_subagent(
         id.clone(),
     );
     let initial = task.clone();
-    tokio::spawn(async move {
+    // A nested delegation runs on its parent's temporary runtime. Its tracker
+    // must outlive that runtime when the parent finishes first.
+    static TRACKERS: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+    let runtime = TRACKERS.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .thread_name("background-subagents")
+            .build()
+            .expect("background subagent runtime")
+    });
+    runtime.spawn(async move {
         emit(&manager, &session, &agent, initial, None).await;
         // The stop channel exists before the worker starts. A stop during startup
         // is remembered and applied as soon as its run id becomes available.
@@ -630,6 +641,30 @@ mod tests {
             .finish_agent_run(&run, crate::engine::agent::AgentRunStatus::Completed, None)
             .await
             .unwrap();
+    }
+
+    #[test]
+    fn nested_tracker_outlives_parent_runtime() {
+        let manager = manager();
+        let (end_tx, end_rx) = oneshot::channel::<()>();
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let task = runtime.block_on(async {
+            let (started_tx, started_rx) = oneshot::channel();
+            started_tx.send("child-run".to_string()).unwrap();
+            track_subagent(&manager, "s", "parent", "child", Some("parent-run"), true,
+                "work", started_rx, async move {
+                    let _ = end_rx.await;
+                    Ok("done".into())
+                }).await
+        });
+        drop(runtime);
+        end_tx.send(()).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while manager.background.get("s", &task.id).unwrap().is_running() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(manager.background.get("s", &task.id).unwrap().status, "completed");
     }
 
     #[test]

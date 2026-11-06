@@ -104,6 +104,29 @@ impl Tasks {
         })
     }
 
+    /// Interrupt native subagent tasks whose recorded run is no longer running.
+    pub fn interrupt_stale_subagents(&self, running: impl Fn(&str, &str) -> bool) -> Vec<String> {
+        self.with(|all| {
+            let mut changed = Vec::new();
+            for (session, tasks) in all.iter_mut() {
+                let mut dirty = false;
+                for task in tasks.iter_mut().filter(|t| t.is_running() && t.kind == "subagent") {
+                    if let Some(run) = task.subagent_id.as_deref() {
+                        if !running(session, run) {
+                            task.end("interrupted");
+                            dirty = true;
+                        }
+                    }
+                }
+                if dirty {
+                    tidy(tasks);
+                    changed.push(session.clone());
+                }
+            }
+            changed
+        })
+    }
+
     /// The conversation ended (Clear, delete): its tasks leave the list.
     pub fn forget(&self, session: &str) -> bool {
         self.with(|all| all.remove(session).is_some())
@@ -297,6 +320,26 @@ pub(crate) fn emit(state: &super::ServerState, session: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stale_subagent_task_is_interrupted() {
+        let tasks = Tasks::default();
+        let mut stale = BackgroundTask::running("stale", "subagent", "review");
+        stale.subagent_id = Some("ended".into());
+        let mut live = BackgroundTask::running("live", "subagent", "review");
+        live.subagent_id = Some("running".into());
+        tasks.upsert("s", stale);
+        tasks.upsert("s", live);
+        tasks.upsert("s", BackgroundTask::running("starting", "subagent", "starting"));
+        tasks.upsert("s", BackgroundTask::running("shell", "shell", "work"));
+        assert_eq!(tasks.interrupt_stale_subagents(|_, run| run == "running"), vec!["s"]);
+        assert_eq!(tasks.get("s", "stale").unwrap().status, "interrupted");
+        assert!(tasks.get("s", "stale").unwrap().ended_at.is_some());
+        assert!(tasks.get("s", "live").unwrap().is_running());
+        assert!(tasks.get("s", "starting").unwrap().is_running());
+        assert!(tasks.get("s", "shell").unwrap().is_running());
+        assert!(tasks.interrupt_stale_subagents(|_, run| run == "running").is_empty());
+    }
 
     #[test]
     fn running_tasks_lead_and_ended_ones_follow_newest_first() {

@@ -422,9 +422,6 @@ fn sweep_stale_runs(state: &Arc<ServerState>) {
             .collect();
             let due: Vec<String> = orphans.intersection(&suspects).cloned().collect();
             suspects = orphans;
-            if due.is_empty() {
-                continue;
-            }
             let now = crate::util::now_ts_secs();
             let reaped = sweep_state.manager.reap_runs(&due, now);
             if !reaped.is_empty() {
@@ -434,6 +431,15 @@ fn sweep_stale_runs(state: &Arc<ServerState>) {
                     "run/sweep: closed Running rows nothing runs any more"
                 );
                 let _ = sweep_state.events_tx.send(ServerEvent::StateUpdated);
+            }
+            let changed = sweep_state.tasks.interrupt_stale_subagents(|session, run| {
+                let native = sweep_state.manager.global_sessions.get_session_meta(session)
+                    .ok().flatten().is_some_and(|meta| meta.runtime.is_linggen());
+                !native || sweep_state.manager.run_store.get_run(run).is_some_and(|r|
+                    r.session_id == session && r.status == crate::engine::agent::AgentRunStatus::Running)
+            });
+            for session in changed {
+                crate::server::tasks::emit(&sweep_state, &session);
             }
         }
     });
