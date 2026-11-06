@@ -45,3 +45,33 @@ export function savedToolBlocks(
     status: savedStatus(t, live),
   }));
 }
+
+/** A turn that ended has no call running: one whose update never came is
+ *  over, failed — the rule a saved call follows (`savedStatus`), live. The
+ *  same array when no call was left running. */
+export function endedCalls(blocks: ContentBlock[] | undefined): ContentBlock[] | undefined {
+  if (!blocks?.some((b) => b.type === 'tool_use' && b.status === 'running')) return blocks;
+  return blocks.map((b) => (b.type === 'tool_use' && b.status === 'running' ? { ...b, status: 'failed' as const } : b));
+}
+
+const callsOf = (blocks: readonly ContentBlock[]) => blocks.filter((b) => b.type === 'tool_use');
+
+/** A finished bubble's calls, each with the status the run's saved rows
+ *  give it when the rows hold the same calls in the same order (an update
+ *  the page missed cost it nothing); otherwise as `endedCalls` leaves them. */
+export function callsFromRows(
+  blocks: ContentBlock[] | undefined,
+  rowBlocks: readonly ContentBlock[],
+): ContentBlock[] | undefined {
+  const mine = callsOf(blocks || []);
+  const saved = callsOf(rowBlocks);
+  const same = mine.length === saved.length && mine.every((b, i) => b.tool === saved[i].tool);
+  if (!same) return endedCalls(blocks);
+  let i = 0;
+  const out = (blocks || []).map((b) => {
+    if (b.type !== 'tool_use') return b;
+    const status = saved[i++].status;
+    return status && status !== b.status ? { ...b, status } : b;
+  });
+  return endedCalls(out);
+}

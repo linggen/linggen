@@ -388,6 +388,9 @@ pub struct AgentEngine {
     pub(crate) closing_ask: Option<serde_json::Value>,
     /// Whether this run's latest AskUser came back with an answer.
     pub(crate) last_ask_answered: bool,
+    /// The tool blocks this run opened in the chat and has not ended yet;
+    /// the run's end settles any left (`run_scope::OpenCalls`).
+    pub(crate) open_calls: super::run_scope::OpenCalls,
     /// Session-scoped permissions (path modes, allows, denied sigs). See permission-spec.md.
     pub session_permissions: permission::SessionPermissions,
     /// The session's lead member, when it isn't this engine's agent: then
@@ -653,6 +656,7 @@ impl AgentEngine {
             kickoff_then: Default::default(),
             closing_ask: None,
             last_ask_answered: false,
+            open_calls: Default::default(),
             session_permissions: permission::SessionPermissions::default(),
             session_lead: None,
             session_tools: None,

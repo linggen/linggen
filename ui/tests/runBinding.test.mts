@@ -4,7 +4,7 @@
 // never moves one run's calls or words under another message.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { afterSealed, bindRuns, bindSealed, bubbleOfRun, claimForRun, isSealed, runBubbleIndex, sealedSegment } from '../src/lib/runBinding.mts';
+import { absorbRows, afterSealed, bindRuns, bindSealed, bubbleOfRun, claimForRun, isSealed, runBubbleIndex, sealedSegment } from '../src/lib/runBinding.mts';
 import type { ChatMessage, ContentBlock } from '../src/types.ts';
 
 const call = (tool: string, status: ContentBlock['status'], id = tool): ContentBlock =>
@@ -210,4 +210,18 @@ test('a reply after the run ends: the sealed block and the reply, each once', ()
   const bound = bindSealed(persisted, [sealed]);
   const shown = shownIds([...bound.rows, ...bound.sealed, afterSealed(done, bound.sealed)]);
   assert.deepEqual(shown.sort(), ['Answer in Chinese.', 'Glob five patterns.', 'g1', '五次。'].sort());
+});
+
+test("a finished run's call the page never heard end takes its saved status", () => {
+  // The Bash's done update was missed; the run spoke ("Incomplete") and ended.
+  const ended = bubble('a', [call('Read', 'done'), call('Bash', 'running'), words('Incomplete.')], { isGenerating: false });
+  const rows = [row('a', 'Incomplete.', [call('Read', 'done', 's0'), call('Bash', 'done', 's1')])];
+  const [shown] = bindRuns([user('Go.', 1), ended, ...rows]).slice(1);
+  assert.deepEqual(shown.content?.map((b) => b.status), ['done', 'done', undefined]);
+});
+
+test("a finished run's call with no saved match is over: failed, never running", () => {
+  const ended = bubble('a', [call('Bash', 'running'), words('Timed out.')], { isGenerating: false });
+  const out = absorbRows(ended, [row('a', 'Timed out.', [])]);
+  assert.deepEqual(out.content?.map((b) => b.status), ['failed', undefined]);
 });

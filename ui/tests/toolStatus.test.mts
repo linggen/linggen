@@ -3,7 +3,7 @@
 // word, from its block update or from the calls a history row carries.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { savedToolBlocks, toolStatus } from '../src/lib/toolStatus.mts';
+import { endedCalls, savedToolBlocks, toolStatus } from '../src/lib/toolStatus.mts';
 
 test('live: the engine words a block update with its status', () => {
   assert.equal(toolStatus('running'), 'running');
@@ -43,4 +43,15 @@ test('a row with no calls has no tool blocks', () => {
 test('the live run\'s row, read mid-run, keeps a call still going as running', () => {
   const blocks = savedToolBlocks([{ tool: 'Read', status: 'done' }, { tool: 'Bash', status: 'running' }], 'live', true);
   assert.deepEqual(blocks.map((b) => b.status), ['done', 'running']);
+});
+
+test('a turn that ended has no call running: a call left open is failed', () => {
+  const blocks = [
+    { type: 'tool_use' as const, id: 'a', tool: 'Bash', status: 'running' as const },
+    { type: 'tool_use' as const, id: 'b', tool: 'Read', status: 'done' as const },
+    { type: 'text' as const, id: 't', text: 'Incomplete.' },
+  ];
+  assert.deepEqual(endedCalls(blocks)?.map((b) => b.status), ['failed', 'done', undefined]);
+  const settled = endedCalls(blocks)!;
+  assert.equal(endedCalls(settled), settled);
 });

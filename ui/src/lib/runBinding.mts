@@ -11,6 +11,7 @@
  * can hold it.
  */
 import type { ChatMessage } from '../types.ts';
+import { callsFromRows } from './toolStatus.mts';
 
 /** A bubble this page built from a run's events (not a saved row). */
 export const isRunBubble = (m: ChatMessage, runId?: string): boolean =>
@@ -156,21 +157,15 @@ export function holdsRun(bubble: ChatMessage, rows: readonly ChatMessage[]): boo
   return callBlocks(bubble) >= calls(rows) && textBlocks(bubble) >= spoken(rows);
 }
 
-/** The finished bubble with what only its rows know: that the run stopped
- *  (its calls left running are failed — they never came back), and its
- *  words when the bubble lost them. */
+/** The finished bubble with what only its rows know: how each call ended
+ *  (an update the page missed; a call left running never came back, and is
+ *  failed), that the run stopped, and its words when the bubble lost them. */
 export function absorbRows(bubble: ChatMessage, rows: readonly ChatMessage[]): ChatMessage {
   const cut = rows.find((r) => r.interrupted);
   const last = [...rows].reverse().find((r) => !r.interrupted && r.text.trim());
-  let out = bubble;
-  if (cut) {
-    out = {
-      ...out,
-      interrupted: true,
-      runEndedMs: cut.runEndedMs,
-      content: (out.content || []).map((b) => (b.status === 'running' ? { ...b, status: 'failed' as const } : b)),
-    };
-  }
+  const content = callsFromRows(bubble.content, rows.flatMap((r) => r.content || []));
+  let out = content === bubble.content ? bubble : { ...bubble, content };
+  if (cut) out = { ...out, interrupted: true, runEndedMs: cut.runEndedMs };
   if (last && !out.text.trim()) out = { ...out, text: last.text, isError: last.isError || out.isError };
   return out;
 }

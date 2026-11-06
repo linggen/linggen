@@ -25,7 +25,7 @@ import {
 } from '../lib/messageUtils';
 import { cacheImages, restoreImages, clearImageCache } from '../lib/imageCache';
 import { interruptedRunMessage, isInterruptedRunMeta, type RunMeta } from '../lib/interruptedRun.mts';
-import { savedToolBlocks } from '../lib/toolStatus.mts';
+import { endedCalls, savedToolBlocks } from '../lib/toolStatus.mts';
 import { agentTracker } from '../lib/agentTracker';
 import { confirmSent } from '../lib/sentMessage.mts';
 import { isEventEcho } from '../lib/rowIdentity.mts';
@@ -471,6 +471,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       isGenerating: false,
       isThinking: false,
       liveText: undefined,
+      content: endedCalls(msg.content),
       activitySummary: summarizeActivityEntries(entries, false) || msg.activitySummary,
       toolCount: toolCountOf(msg),
       durationMs: elapsed || msg.durationMs,
@@ -529,7 +530,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   })),
 
   contentBlockUpdate: (agentId, blockId, status, summary, isError, diffData, bashOutput, runId) => set(mutate((state) => {
-    const idx = findLastGeneratingMessageIndex(state, agentId, runId);
+    // The bubble that holds the block — a sealed segment or one already
+    // ended, too: an update that missed its block left it running for good.
+    const holder = blockId ? state.findLastIndex((m) => (m.content || []).some((b) => b.id === blockId)) : -1;
+    const idx = holder >= 0 ? holder : findLastGeneratingMessageIndex(state, agentId, runId);
     if (idx < 0) return state;
     const next = [...state];
     const msg = { ...next[idx] };
@@ -630,7 +634,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (!hasContent) return [];
       // wasFrozenStream keeps the bubble claimable by its persisted row in
       // mergeChatMessages even though it's no longer isGenerating.
-      return [{ ...m, text, isGenerating: false, isThinking: false, liveText: undefined, wasFrozenStream: true }];
+      return [{ ...m, text, isGenerating: false, isThinking: false, liveText: undefined, content: endedCalls(m.content), wasFrozenStream: true }];
     });
   })),
 
@@ -675,6 +679,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       isGenerating: false,
       isThinking: false,
       liveText: undefined,
+      content: endedCalls(msg.content),
       activitySummary: summarizeActivityEntries(entries, false) || msg.activitySummary,
       toolCount: totalTools,
       durationMs: durationMs || msg.durationMs,

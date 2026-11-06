@@ -415,7 +415,9 @@ impl AgentEngine {
     /// error, so chat, missions, delegation and `agent_run` each end the run
     /// through their own failure handling instead of hanging on a dead task.
     pub async fn run_agent_loop(&mut self, session_id: Option<&str>) -> Result<AgentOutcome> {
-        crate::util::panic_as_error(self.run_agent_loop_unguarded(session_id)).await
+        let outcome = crate::util::panic_as_error(self.run_agent_loop_unguarded(session_id)).await;
+        self.settle_open_calls().await;
+        outcome
     }
 
     async fn run_agent_loop_unguarded(&mut self, session_id: Option<&str>) -> Result<AgentOutcome> {
