@@ -72,10 +72,15 @@ fn install(binary: &Path, target: &Path) -> Result<()> {
 /// The detached helper: swap `binary` in where the engine `pid` runs from
 /// (and into the CLI install), restart it with its own arguments, roll back
 /// to `.prev` when it does not come up healthy.
-pub async fn helper(binary: &Path, pid: u32, host: String, port: u16) -> Result<()> {
+pub async fn helper(binary: Option<&Path>, pid: u32, host: String, port: u16) -> Result<()> {
     let result = async {
         let engine = engine_restart::process_info(pid).context("The engine process is gone")?;
         let target = engine.exe.clone().context("The engine's binary is unknown")?;
+        let Some(binary) = binary else {
+            // Allow the accepting HTTP/WebRTC response to leave the old engine.
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            return engine_restart::restart_current(&target, &engine, &engine_restart::Opts::new(host, port)).await;
+        };
         install(binary, &target)?;
         let cli = PathBuf::from("/usr/local/bin/ling");
         if cli.exists() && cli.canonicalize().ok() != target.canonicalize().ok() {
@@ -89,7 +94,7 @@ pub async fn helper(binary: &Path, pid: u32, host: String, port: u16) -> Result<
     }
     .await;
     match &result {
-        Ok(()) => write_status("ok", "the new build is up and healthy"),
+        Ok(()) => write_status("ok", if binary.is_some() { "the new build is up and healthy" } else { "the current engine is up and healthy" }),
         Err(error) if error.to_string().contains("rolled back") => write_status("rolled_back", &format!("{error:#}")),
         Err(error) => write_status("failed", &format!("{error:#}")),
     }
@@ -99,6 +104,14 @@ pub async fn helper(binary: &Path, pid: u32, host: String, port: u16) -> Result<
 /// Start the helper detached from the engine (its own process group), so it
 /// outlives the engine it stops.
 pub fn spawn_helper(binary: &Path, host: &str, port: u16) -> Result<()> {
+    spawn_mode(Some(binary), host, port)
+}
+
+pub fn spawn_current_helper(host: &str, port: u16) -> Result<()> {
+    spawn_mode(None, host, port)
+}
+
+fn spawn_mode(binary: Option<&Path>, host: &str, port: u16) -> Result<()> {
     let exe = std::env::current_exe().context("Cannot find the running binary")?;
     let log = crate::paths::linggen_home().join("restart/helper.log");
     if let Some(dir) = log.parent() {
@@ -106,10 +119,12 @@ pub fn spawn_helper(binary: &Path, host: &str, port: u16) -> Result<()> {
     }
     let out = std::fs::OpenOptions::new().create(true).append(true).open(&log)?;
     let mut command = std::process::Command::new(exe);
+    command.arg("engine-restart");
+    match binary {
+        Some(binary) => { command.arg("--binary").arg(binary); }
+        None => { command.arg("--current"); }
+    }
     command
-        .arg("engine-restart")
-        .arg("--binary")
-        .arg(binary)
         .arg("--pid")
         .arg(std::process::id().to_string())
         .arg("--host")

@@ -31,12 +31,19 @@ impl Source {
         lane_ok.then_some(Source::ThisMac)
     }
 
-    /// The source on this machine, right now.
-    pub fn here() -> Option<Self> {
-        Self::pick(
-            crate::provider::codex_auth::chatgpt_signed_in(),
-            crate::runtime::lane_supported(&crate::runtime::PICTURES_LANE),
-        )
+    /// Select a requested source without silently substituting another.
+    pub fn select(model: Option<&str>, signed_in: bool, lane: Result<(), String>) -> Result<Self> {
+        match model.unwrap_or("auto") {
+            "auto" => Self::pick(signed_in, lane.is_ok())
+                .ok_or_else(|| anyhow::anyhow!(offer(signed_in, lane).unwrap_err())),
+            "chatgpt" if signed_in => Ok(Self::ChatGpt),
+            "chatgpt" => bail!("ChatGPT drawing requires a ChatGPT sign-in in Settings → Models."),
+            "local" => {
+                lane.map_err(|reason| anyhow::anyhow!("this Mac cannot draw pictures: {reason}"))?;
+                Ok(Self::ThisMac)
+            }
+            other => bail!("model must be auto, chatgpt, or local, not {other:?}"),
+        }
     }
 
     /// How a result names it.
@@ -161,6 +168,34 @@ mod tests {
             None,
             "nothing draws: not offered"
         );
+    }
+
+    #[test]
+    fn explicit_selection_never_falls_back() {
+        let unavailable = || Err("insufficient memory".to_string());
+        assert_eq!(Source::select(None, true, Ok(())).unwrap(), Source::ChatGpt);
+        assert_eq!(
+            Source::select(Some("auto"), false, Ok(())).unwrap(),
+            Source::ThisMac
+        );
+        assert!(Source::select(None, false, unavailable()).is_err());
+        assert_eq!(
+            Source::select(Some("local"), true, Ok(())).unwrap(),
+            Source::ThisMac
+        );
+        assert_eq!(
+            Source::select(Some("chatgpt"), true, unavailable()).unwrap(),
+            Source::ChatGpt
+        );
+        assert!(Source::select(Some("chatgpt"), false, Ok(()))
+            .unwrap_err()
+            .to_string()
+            .contains("sign-in"));
+        assert!(Source::select(Some("local"), true, unavailable())
+            .unwrap_err()
+            .to_string()
+            .contains("insufficient memory"));
+        assert!(Source::select(Some("unknown"), true, Ok(())).is_err());
     }
 
     #[test]

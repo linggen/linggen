@@ -37,7 +37,7 @@ Built-in tools are the kernel API. Skills are userspace.
 | `Write` | `path, content` | Create/overwrite file |
 | `Edit` | `path, old_string, new_string, replace_all?` | String replacement in file |
 | `Bash` | `cmd, timeout_ms?, run_in_background?` | Shell command execution. `run_in_background` starts it beside the chat and returns its task id at once; its end comes back as a turn (`background-tasks-spec.md`) |
-| `GenerateImage` | `prompt, shape?, name?, reference?, seed?` | Draw one picture when the person asks for a drawing (never to show a real thing — that is an ImageSearch or WebFetch photo). Kept with the session and numbered (`[turn3image1]`) like any picture an answer shows; in a skill also saved as `<skill>/data/pictures/<name>.png` |
+| `GenerateImage` | `prompt, shape?, name?, reference?, seed?, model?` | Draw one picture when the person asks for a drawing (never to show a real thing — that is an ImageSearch or WebFetch photo). Kept with the session and numbered (`[turn3image1]`) like any picture an answer shows; in a skill also saved as `<skill>/data/pictures/<name>.png` |
 | `lock_paths` | `globs, ttl_ms?` | Acquire file locks (multi-agent) |
 | `unlock_paths` | `tokens` | Release file locks |
 | `Task` | `target_agent_id, task, run_in_background?` | Spawn subagent. `run_in_background` returns at once; the subagent's end comes back as a turn |
@@ -74,7 +74,10 @@ something can draw, else its line reads:
 ```
 
 (the numbers are the `pictures` lane's; the tail is the lane gate's own
-reason). The sources, in order:
+reason). `model` selects `auto` (the default), `chatgpt`, or `local`.
+Auto picks the first available source below. An explicit choice requires that
+source to be available and never falls back to another; an unknown value is
+an error. The sources, in order:
 
 - **ChatGPT** first, when the person is signed in to ChatGPT: the Responses
   API's `image_generation` tool through the default built-in model (Luna),

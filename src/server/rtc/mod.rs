@@ -362,6 +362,15 @@ mod tests {
     }
 
     #[test]
+    fn only_admin_peers_can_restart_the_engine() {
+        for perm in [UserPermission::Chat, UserPermission::Read, UserPermission::Edit] {
+            assert!(!perm.can_access_endpoint("POST", "/api/restart/current"));
+            assert!(!perm.can_access_endpoint("POST", "/api/engine/restart"));
+        }
+        assert!(UserPermission::Admin.can_access_endpoint("POST", "/api/restart/current"));
+    }
+
+    #[test]
     fn any_peer_may_read_the_language_but_not_the_config() {
         for perm in [UserPermission::Read, UserPermission::Chat] {
             assert!(perm.can_access_endpoint("GET", "/api/user/language"));

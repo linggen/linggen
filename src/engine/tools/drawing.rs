@@ -6,7 +6,7 @@
 use super::builtin::GenerateImageArgs;
 use super::{ToolResult, Tools};
 use crate::pictures::{self, Ask, Source};
-use anyhow::{anyhow, bail, Result};
+use anyhow::{bail, Result};
 use base64::Engine as _;
 use std::path::{Path, PathBuf};
 
@@ -15,9 +15,11 @@ const CAPTION_CHARS: usize = 120;
 
 impl Tools {
     pub(crate) async fn generate_image(&self, args: GenerateImageArgs) -> Result<ToolResult> {
-        let source = Source::here().ok_or_else(|| {
-            anyhow!("Nothing here can draw: sign in to ChatGPT in Settings → Models.")
-        })?;
+        let source = Source::select(
+            args.model.as_deref(),
+            crate::provider::codex_auth::chatgpt_signed_in(),
+            crate::runtime::lane_verdict(&crate::runtime::PICTURES_LANE),
+        )?;
         let skill = self.active_skill().cloned();
         if skill.is_none() && self.session_id.is_none() {
             bail!("GenerateImage needs a conversation to keep the picture in.");
