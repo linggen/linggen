@@ -515,7 +515,7 @@ impl AgentManager {
         refuse_foreign_runtime(meta.as_ref())?;
         let pinned_root = meta
             .as_ref()
-            .filter(|m| matches!(m.creator.as_str(), "mission" | "agent"))
+            .filter(|m| matches!(m.creator.as_str(), "mission" | "agent" | "external"))
             .map(|m| m.cwd.as_str())
             .map(|cwd| crate::util::resolve_path(std::path::Path::new(cwd)));
         let project_root =

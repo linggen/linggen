@@ -110,6 +110,8 @@ pub async fn run(
     write_dir: Option<&str>,
     session: Option<&str>,
     model: Option<&str>,
+    permission_mode: Option<&str>,
+    host: Option<&str>,
 ) -> Result<String, String> {
     let prompt = prompt.trim();
     if prompt.is_empty() {
@@ -117,6 +119,8 @@ pub async fn run(
     }
 
     validate_options(session, write_dir, model)?;
+    if session.is_some() && permission_mode.is_some() { return Err("permission_mode cannot be used with session_id".into()); }
+    let mode = permission_mapping(permission_mode, write_dir.is_some())?;
     if let Some(session) = session {
         let meta = session_meta(state, session)?;
         if !meta.runtime.is_linggen() {
@@ -193,7 +197,7 @@ pub async fn run(
         created_at: crate::util::now_ts_secs(),
         updated_at: 0,
         skill: None,
-        creator: "agent".into(),
+        creator: "external".into(),
         cwd: String::new(),
         project: None,
         project_name: None,
@@ -207,6 +211,7 @@ pub async fn run(
         withheld_tools: Vec::new(),
         params: Default::default(),
     };
+    meta.params.insert("host".into(), host.unwrap_or("claude-code").into());
     meta.set_cwd(&root_str);
     meta.set_member_model(&agent_id, model.clone());
     if let Err(e) = store.add_session(&meta) {
@@ -224,12 +229,11 @@ pub async fn run(
             interactive: false,
             ..Default::default()
         };
-        match write {
-            Some(_) => {
-                perms.set_path_mode("*", PermissionMode::Read);
-                perms.set_path_mode(&root_str, PermissionMode::Admin);
-            }
-            None => perms.set_path_mode(&root_str, PermissionMode::Read),
+        if permission_mode.is_none() && write.is_none() {
+            perms.set_path_mode(&root_str, PermissionMode::Read);
+        } else {
+            perms.set_path_mode("*", PermissionMode::Read);
+            if let Some(grant) = mode { perms.set_path_mode(&root_str, grant); }
         }
         perms.save(&crate::paths::global_sessions_dir().join(&session_id));
     }
@@ -238,7 +242,7 @@ pub async fn run(
         .send(crate::server::ServerEvent::SessionCreated {
             session_id: session_id.clone(),
             title,
-            creator: "agent".into(),
+            creator: "external".into(),
             project: meta.project.clone(),
             project_name: meta.project_name.clone(),
             skill: None,
@@ -274,7 +278,7 @@ pub async fn run(
         root,
         agent_id,
         prompt.to_string(),
-        write.is_some(),
+        mode.is_some(),
         model,
     ));
     match tokio::time::timeout(std::time::Duration::from_secs(WAIT_SECS), run).await {
@@ -419,9 +423,91 @@ pub async fn stop(state: &Arc<ServerState>, session: &str) -> Result<String, Str
     Ok(serde_json::json!({"stopped": stopped}).to_string())
 }
 
+fn permission_mapping(mode: Option<&str>, has_dir: bool) -> Result<Option<PermissionMode>, String> {
+    let grant = match mode {
+        None | Some("auto") | Some("bypassPermissions") => PermissionMode::Admin,
+        Some("default") | Some("acceptEdits") => PermissionMode::Edit,
+        Some("plan") => return Ok(None),
+        Some(other) => return Err(format!("unknown permission_mode: {other}")),
+    };
+    Ok(has_dir.then_some(grant))
+}
+
+fn format_models(models: &[crate::config::ModelConfig], default: Option<&str>) -> String {
+    serde_json::json!({"models": models.iter().map(|m| serde_json::json!({
+        "id": m.id, "provider": m.provider, "default": Some(m.id.as_str()) == default
+    })).collect::<Vec<_>>()}).to_string()
+}
+
+pub async fn models(state: &Arc<ServerState>) -> String {
+    let config = state.manager.get_config_snapshot().await;
+    format_models(&config.models, config.routing.default_models.first().map(String::as_str))
+}
+
+fn worktree_decision(linked: bool, clean: bool, merged: bool) -> Result<(), String> {
+    if !linked { return Err("worktree check failed: not a linked worktree root".into()); }
+    if !clean { return Err("clean check failed: worktree has changes".into()); }
+    if !merged { return Err("merged check failed: HEAD is not contained in a remote branch".into()); }
+    Ok(())
+}
+
+fn git(cwd: &std::path::Path, args: &[&str]) -> Result<String, String> {
+    let output = std::process::Command::new("git").current_dir(cwd).args(args).output()
+        .map_err(|e| format!("git failed: {e}"))?;
+    if !output.status.success() { return Err(format!("git {} failed: {}", args.join(" "), String::from_utf8_lossy(&output.stderr))); }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+pub async fn close(state: &Arc<ServerState>, session: &str, remove: bool) -> Result<String, String> {
+    let meta = session_meta(state, session)?;
+    let stopped = stop(state, session).await?;
+    if !remove { return Ok(stopped); }
+    let work = super::api::sessions::session_running_work(state, session).await;
+    if work.turn || work.tasks > 0 || work.subagents > 0 {
+        return Err("running check failed: work is still stopping; retry".into());
+    }
+    let cwd = std::path::Path::new(&meta.cwd);
+    let root = git(cwd, &["rev-parse", "--show-toplevel"])?;
+    let root_path = std::fs::canonicalize(&root).map_err(|e| e.to_string())?;
+    let cwd_path = std::fs::canonicalize(cwd).map_err(|e| e.to_string())?;
+    let dotgit = root_path.join(".git");
+    let linked = root_path == cwd_path && dotgit.is_file();
+    let clean = git(cwd, &["status", "--porcelain", "--untracked-files=all"])?.is_empty();
+    let merged = !git(cwd, &["branch", "-r", "--contains", "HEAD"])?.is_empty();
+    worktree_decision(linked, clean, merged)?;
+    // git refuses to remove the worktree it runs in: run from the main checkout.
+    let common = git(cwd, &["rev-parse", "--path-format=absolute", "--git-common-dir"])?;
+    let main = std::path::Path::new(&common).parent().ok_or("no main checkout")?;
+    git(main, &["worktree", "remove", "--", &root])?;
+    Ok(serde_json::json!({"stopped": stopped, "removed_worktree": root}).to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn mcp_agent_permission_mapping() {
+        for (mode, expected) in [("plan", None), ("default", Some(PermissionMode::Edit)), ("acceptEdits", Some(PermissionMode::Edit)), ("auto", Some(PermissionMode::Admin)), ("bypassPermissions", Some(PermissionMode::Admin))] {
+            assert_eq!(permission_mapping(Some(mode), true).unwrap(), expected);
+            assert_eq!(permission_mapping(Some(mode), false).unwrap(), None);
+        }
+        assert!(permission_mapping(Some("bad"), true).is_err());
+        assert_eq!(permission_mapping(None, true).unwrap(), Some(PermissionMode::Admin));
+    }
+    #[test]
+    fn mcp_agent_worktree_safety() {
+        assert!(worktree_decision(true, true, true).is_ok());
+        assert!(worktree_decision(false, true, true).unwrap_err().contains("worktree"));
+        assert!(worktree_decision(true, false, true).unwrap_err().contains("clean"));
+        assert!(worktree_decision(true, true, false).unwrap_err().contains("merged"));
+    }
+    #[test]
+    fn mcp_agent_models_format() {
+        let model: crate::config::ModelConfig = serde_json::from_value(serde_json::json!({"id":"a", "provider":"openai", "url":"", "model":"a"})).unwrap();
+        let result: serde_json::Value = serde_json::from_str(&format_models(&[model], Some("a"))).unwrap();
+        assert_eq!(result["models"][0]["default"], true);
+        assert_eq!(result["models"][0]["provider"], "openai");
+    }
     #[test]
     fn mcp_agent_rejects_incompatible_options() {
         assert!(validate_options(Some("s"), Some("/tmp"), None).is_err());

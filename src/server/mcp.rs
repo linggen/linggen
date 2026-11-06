@@ -355,6 +355,8 @@ const TOOLS: &[McpTool] = &[
                 "session_id": {"type": "string", "description": "Existing session to continue"},
                 "model": {"type": "string", "description": "Configured model for a new session"},
                 "agent": {"type": "string", "description": "Agent to run (default: ling). Unknown names return the available list."},
+                "host": {"type": "string", "description": "Calling host (default claude-code)"},
+                "permission_mode": {"type": "string", "enum": ["plan", "default", "acceptEdits", "auto", "bypassPermissions"]},
                 "write_dir": {"type": "string", "description": "Opt in to writing: an absolute folder (give it its own git worktree) where the agent gets admin — Bash, Write, Edit. Every other path stays read-only; the run never prompts. Omit for a read-only run."}
             },
             "required": ["prompt"]
@@ -372,6 +374,16 @@ const TOOLS: &[McpTool] = &[
         description: "Cancel a session's running turn and subagents.",
         schema: || json!({"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"]}),
         timeout_ms: 0,
+    },
+    McpTool {
+        name: "agent_models", backend: Backend::Agent,
+        description: "List configured models and the default.",
+        schema: || json!({"type": "object", "properties": {}}), timeout_ms: 0,
+    },
+    McpTool {
+        name: "agent_session_close", backend: Backend::Agent,
+        description: "Stop a session; optionally remove its clean, merged linked worktree.",
+        schema: || json!({"type": "object", "properties": {"session_id": {"type": "string"}, "remove_worktree": {"type": "boolean"}}, "required": ["session_id"]}), timeout_ms: 0,
     },
 ];
 
@@ -526,7 +538,9 @@ async fn call_tool(deps: &McpDeps<'_>, name: &str, args: Value) -> Result<Value,
             let result = match name {
                 "agent_status" => super::mcp_agent::status(state, session.unwrap_or_default()).await,
                 "agent_stop" => super::mcp_agent::stop(state, session.unwrap_or_default()).await,
-                _ => super::mcp_agent::run(state, agent, prompt, write_dir, session, args.get("model").and_then(Value::as_str)).await,
+                "agent_models" => Ok(super::mcp_agent::models(state).await),
+                "agent_session_close" => super::mcp_agent::close(state, session.unwrap_or_default(), args.get("remove_worktree").and_then(Value::as_bool).unwrap_or(false)).await,
+                _ => super::mcp_agent::run(state, agent, prompt, write_dir, session, args.get("model").and_then(Value::as_str), args.get("permission_mode").and_then(Value::as_str), args.get("host").and_then(Value::as_str)).await,
             };
             match result {
                 Ok(text) => Ok(tool_content(text, false)),
@@ -788,7 +802,7 @@ mod tests {
         let msg = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" });
         let res = handle_rpc(&deps(&hub()), &msg).await.unwrap();
         let tools = res["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 21);
+        assert_eq!(tools.len(), 23);
         assert!(tools.iter().any(|t| t["name"] == "browser_navigate"));
         assert!(tools.iter().any(|t| t["name"] == "x_search"));
         assert!(tools.iter().any(|t| t["name"] == "x_mentions"));

@@ -150,6 +150,12 @@ person's chat, without changing its permissions or tools. New sessions can pin
 `model`; `write_dir` is only for new sessions. `agent_status` reports running
 work and the final reply; `agent_stop` cancels the turn and its subagents.
 
+External runs record their host and appear under User. New runs accept a
+`permission_mode`: plan is read-only; default/acceptEdits grant edit in
+`write_dir`; auto/bypassPermissions grant admin there. `agent_models` lists
+configured models. `agent_session_close` stops work and can remove a clean,
+remote-contained linked worktree; it refuses unsafe removals.
+
 ## Later
 
 - A `write` mode on `agent_run` (opt-in Bash/Write/Edit for trusted callers).

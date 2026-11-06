@@ -269,7 +269,7 @@ export const SessionList: React.FC<{
   // Filter and search
   const filtered = useMemo(() => {
     let list = allSessions;
-    if (filter === 'user') list = list.filter((s) => sessionKind(s) === 'user');
+    if (filter === 'user') list = list.filter((s) => ['user', 'external'].includes(sessionKind(s)));
     else if (filter !== 'all') list = list.filter((s) => sessionKind(s) === filter);
     if (search.trim()) {
       const q = search.toLowerCase();
@@ -603,7 +603,8 @@ export const SessionList: React.FC<{
                           {session.project_name}
                         </span>
                       )}
-                      {sessionKind(session) !== 'user' && (
+                      {session.creator === 'external' && <span className="text-[10px] px-1 rounded bg-blue-500/10 text-blue-600">{session.params?.host === 'claude-code' ? 'CC' : '外部'}</span>}
+                      {sessionKind(session) !== 'user' && sessionKind(session) !== 'external' && (
                         <span className={cn('text-[10px] px-1 py-px rounded font-medium', creatorBadge(sessionKind(session)))}>
                           {sessionKind(session)}
                         </span>
