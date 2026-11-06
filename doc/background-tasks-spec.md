@@ -30,7 +30,8 @@ The same in a native Linggen session and in a Claude session.
    summary, where the full output is). No person's message is needed. Only
    the agent that started it is told: a subagent's own task never starts a
    turn of the session, and its end is never said as the main agent's. Each
-   end is told once. While the agent's plan waits for the person's approval,
+   end is told once, when the task's own work ends — never later for work it
+   started that runs on, and never lost to the list marking it interrupted. While the agent's plan waits for the person's approval,
    its task ends wait too, and are told after the plan is approved or
    rejected, or once the person writes on without deciding — as Claude Code
    holds them behind its plan prompt.

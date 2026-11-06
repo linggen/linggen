@@ -104,18 +104,17 @@ impl Tasks {
         })
     }
 
-    /// Interrupt native subagent tasks whose recorded run is no longer running.
-    pub fn interrupt_stale_subagents(&self, running: impl Fn(&str, &str) -> bool) -> Vec<String> {
+    /// Interrupt subagent tasks nothing follows any more. `alive` says
+    /// whether a task (with its recorded run) of a session still is.
+    pub fn interrupt_stale_subagents(&self, alive: impl Fn(&str, &BackgroundTask) -> bool) -> Vec<String> {
         self.with(|all| {
             let mut changed = Vec::new();
             for (session, tasks) in all.iter_mut() {
                 let mut dirty = false;
                 for task in tasks.iter_mut().filter(|t| t.is_running() && t.kind == "subagent") {
-                    if let Some(run) = task.subagent_id.as_deref() {
-                        if !running(session, run) {
-                            task.end("interrupted");
-                            dirty = true;
-                        }
+                    if task.subagent_id.is_some() && !alive(session, task) {
+                        task.end("interrupted");
+                        dirty = true;
                     }
                 }
                 if dirty {
@@ -332,13 +331,13 @@ mod tests {
         tasks.upsert("s", live);
         tasks.upsert("s", BackgroundTask::running("starting", "subagent", "starting"));
         tasks.upsert("s", BackgroundTask::running("shell", "shell", "work"));
-        assert_eq!(tasks.interrupt_stale_subagents(|_, run| run == "running"), vec!["s"]);
+        assert_eq!(tasks.interrupt_stale_subagents(|_, t| t.subagent_id.as_deref() == Some("running")), vec!["s"]);
         assert_eq!(tasks.get("s", "stale").unwrap().status, "interrupted");
         assert!(tasks.get("s", "stale").unwrap().ended_at.is_some());
         assert!(tasks.get("s", "live").unwrap().is_running());
         assert!(tasks.get("s", "starting").unwrap().is_running());
         assert!(tasks.get("s", "shell").unwrap().is_running());
-        assert!(tasks.interrupt_stale_subagents(|_, run| run == "running").is_empty());
+        assert!(tasks.interrupt_stale_subagents(|_, t| t.subagent_id.as_deref() == Some("running")).is_empty());
     }
 
     #[test]

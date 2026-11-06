@@ -432,17 +432,32 @@ fn sweep_stale_runs(state: &Arc<ServerState>) {
                 );
                 let _ = sweep_state.events_tx.send(ServerEvent::StateUpdated);
             }
-            let changed = sweep_state.tasks.interrupt_stale_subagents(|session, run| {
+            let changed = sweep_state.tasks.interrupt_stale_subagents(|session, task| {
                 let native = sweep_state.manager.global_sessions.get_session_meta(session)
                     .ok().flatten().is_some_and(|meta| meta.runtime.is_linggen());
-                !native || sweep_state.manager.run_store.get_run(run).is_some_and(|r|
-                    r.session_id == session && r.status == crate::engine::agent::AgentRunStatus::Running)
+                !native || subagent_task_alive(&sweep_state.manager, session, task)
             });
             for session in changed {
                 crate::server::tasks::emit(&sweep_state, &session);
             }
         }
     });
+}
+
+/// A native session's subagent task still has something behind it: its run
+/// is running, or its tracker has not told its end yet. A run's row ends
+/// before its tracker does (a nested child can hold the tracker for minutes);
+/// interrupting the task then would swallow the real end's notice, since an
+/// end is told only on the change from running.
+fn subagent_task_alive(
+    manager: &crate::engine::agent::AgentManager,
+    session: &str,
+    task: &crate::engine::events::BackgroundTask,
+) -> bool {
+    manager.background.tracks_running(&task.id)
+        || task.subagent_id.as_deref().and_then(|run| manager.run_store.get_run(run)).is_some_and(|r| {
+            r.session_id == session && r.status == crate::engine::agent::AgentRunStatus::Running
+        })
 }
 
 /// `Running` rows with nothing alive behind them. A run lives while its
@@ -615,5 +630,61 @@ mod sweep_tests {
         );
         orphans.sort();
         assert_eq!(orphans, ["leaked", "left-behind"]);
+    }
+
+    /// 2026-11-06, sess-1793970673: a background subagent's run finished
+    /// while its tracker still waited (a nested child held it). The sweep
+    /// interrupted its row from the run's status, so the real end that came
+    /// after was no change from running and its notice was never told.
+    #[tokio::test]
+    async fn a_finished_run_whose_tracker_still_follows_it_is_not_interrupted() {
+        use crate::engine::agent::{AgentManager, AgentRunStatus};
+        let manager = AgentManager::new(
+            crate::config::Config::default(),
+            None,
+            std::sync::Arc::new(crate::engine::test_registries::Empty),
+            std::sync::Arc::new(crate::engine::test_registries::Empty),
+            std::sync::Arc::new(crate::engine::test_registries::Empty),
+            crate::engine::InterfaceMode::Web,
+        )
+        .0;
+        let session = "s";
+        let run = manager
+            .begin_delegated_run(std::path::Path::new("."), Some(session), "worker", None, None, true)
+            .await
+            .unwrap();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (end_tx, end_rx) = tokio::sync::oneshot::channel::<()>();
+        let task = crate::engine::background::track_subagent(
+            &manager, session, "ling", "worker", None, false, "work", started_rx,
+            async move {
+                let _ = end_rx.await;
+                Ok("the result".to_string())
+            },
+        )
+        .await;
+        started_tx.send(run.clone()).unwrap();
+        manager.finish_agent_run(&run, AgentRunStatus::Completed, None).await.unwrap();
+
+        // The list's row, as the bridge has it: running, with its run.
+        let tasks = super::super::tasks::Tasks::default();
+        let mut row = task.clone();
+        row.subagent_id = Some(run.clone());
+        tasks.upsert(session, row.clone());
+        let sweep = |tasks: &super::super::tasks::Tasks| {
+            tasks.interrupt_stale_subagents(|s, t| super::subagent_task_alive(&manager, s, t))
+        };
+        assert!(sweep(&tasks).is_empty(), "the tracker still follows it");
+        assert!(tasks.get(session, &task.id).unwrap().is_running(), "its end is still to be told");
+
+        end_tx.send(()).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while manager.background.tracks_running(&task.id) {
+            assert!(std::time::Instant::now() < deadline);
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        // Once the tracker has ended it, nothing follows the row any more.
+        assert!(!super::subagent_task_alive(&manager, session, &row));
+        assert_eq!(sweep(&tasks), vec![session.to_string()]);
     }
 }

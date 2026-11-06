@@ -107,6 +107,13 @@ impl Background {
         ids
     }
 
+    /// This engine still follows the task: its tracker has not ended it.
+    /// A run's row says how the run went, not whether its end is told yet —
+    /// that comes after, from the tracker.
+    pub fn tracks_running(&self, id: &str) -> bool {
+        locked(&self.entries).get(id).is_some_and(|e| e.task.is_running())
+    }
+
     fn running(&self, ids: &[String]) -> bool {
         let entries = locked(&self.entries);
         ids.iter()
@@ -450,6 +457,9 @@ pub async fn track_subagent(
             .expect("background subagent runtime")
     });
     runtime.spawn(async move {
+        // A tracker that dies before its end (a panic) leaves no running
+        // entry behind, so the run sweep can end the listed row.
+        let _guard = EndOnDrop(manager.clone(), id2.clone());
         emit(&manager, &session, &agent, initial, None).await;
         // The stop channel exists before the worker starts. A stop during startup
         // is remembered and applied as soon as its run id becomes available.
@@ -506,6 +516,20 @@ pub async fn track_subagent(
         }
     });
     task
+}
+
+/// Marks a still-running task interrupted when its tracker goes away
+/// without ending it.
+struct EndOnDrop(Arc<AgentManager>, String);
+
+impl Drop for EndOnDrop {
+    fn drop(&mut self) {
+        self.0.background.update(&self.1, |t| {
+            if t.is_running() {
+                t.end("interrupted");
+            }
+        });
+    }
 }
 
 /// The shells this engine started and that still run: their process groups

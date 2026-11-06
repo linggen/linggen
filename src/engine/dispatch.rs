@@ -8,6 +8,24 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::{debug, info};
 
+/// Run one delegation to its end on a runtime of its own, on the calling
+/// (blocking-pool) thread. Returns when the run ends: the runtime is shut
+/// down without waiting on blocking work the run left behind — a background
+/// subagent it started runs on one of those threads, and dropping the
+/// runtime would hold this run's end (and its own tracker's notice) until
+/// that grandchild ends too.
+fn on_own_runtime<T>(
+    run: impl std::future::Future<Output = anyhow::Result<T>>,
+) -> anyhow::Result<T> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| anyhow::anyhow!("failed to create delegation runtime: {}", e))?;
+    let out = rt.block_on(run);
+    rt.shutdown_background();
+    out
+}
+
 impl AgentEngine {
     /// Handle a batch of consecutive `Task` (delegation) actions.
     /// Returns `Some(outcome)` if the loop should exit early.
@@ -166,10 +184,7 @@ impl AgentEngine {
             };
             let (ws, bridge) = (ws_root.clone(), ask_bridge.clone());
             let handle = tokio::task::spawn_blocking(move || {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()?;
-                rt.block_on(tools::run_delegation(
+                on_own_runtime(tools::run_delegation(
                     spawn.manager,
                     ws,
                     spawn.caller_id,
@@ -234,11 +249,7 @@ impl AgentEngine {
                 spawn.task.clone(),
             );
             let handle = tokio::task::spawn_blocking(move || {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .map_err(|e| anyhow::anyhow!("failed to create delegation runtime: {}", e))?;
-                rt.block_on(tools::run_delegation(
+                on_own_runtime(tools::run_delegation(
                     spawn.manager,
                     ws,
                     spawn.caller_id,
@@ -714,5 +725,31 @@ impl AgentEngine {
         let _ = self
             .persist_observation("UpdatePlan", &ack, false, session_id)
             .await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::on_own_runtime;
+    use std::time::{Duration, Instant};
+
+    /// A run that left a background child running on its runtime's blocking
+    /// pool still ends when its own work does.
+    #[test]
+    fn a_delegation_ends_without_waiting_for_its_background_child() {
+        let (release, wait) = std::sync::mpsc::channel::<()>();
+        let begun = Instant::now();
+        let out = on_own_runtime(async move {
+            tokio::task::spawn_blocking(move || {
+                let _ = wait.recv_timeout(Duration::from_secs(10));
+            });
+            Ok("parent done")
+        });
+        assert_eq!(out.unwrap(), "parent done");
+        assert!(
+            begun.elapsed() < Duration::from_secs(5),
+            "the end waited on the child"
+        );
+        let _ = release.send(());
     }
 }
