@@ -345,41 +345,54 @@ async fn drive(
         .collect();
     engine.cfg.mission_allowed_tools = crate::engine::tool_scope::compute_tool_scope(&declared);
 
-    // Permissions come from the permission.json written above — initialize_loop
-    // reloads them at the top of the run.
-    let result = engine.run_agent_loop(Some(&session_id)).await;
+    // Register the turn just as typed chat does, including its terminal event.
+    let model_label = engine.model_id.clone();
+    let result = with_turn_status(
+        async {
+            state.send_agent_status(
+                agent_id.clone(),
+                crate::server::AgentStatusKind::ModelLoading,
+                Some(format!("Loading model: {model_label}")),
+                None,
+                Some(session_id.clone()),
+            ).await;
+            let _ = state.events_tx.send(crate::server::ServerEvent::StateUpdated);
+        },
+        async {
+            let result = engine.run_agent_loop(Some(&session_id)).await;
+            let (status, error) = match &result {
+                Ok(_) => (crate::engine::agent::AgentRunStatus::Completed, None),
+                Err(e) => (crate::engine::agent::AgentRunStatus::Failed, Some(e.to_string())),
+            };
+            let _ = state.manager.finish_agent_run(&run_id, status, error).await;
+            result
+        },
+        || crate::server::chat::close_turn(
+            &state, agent_id.clone(), Some(session_id.clone()), Some(run_id.clone()),
+        ),
+    ).await;
     engine.set_run_id(None);
     seed_first_prompt(&mut engine.chat_history, &prompt);
     drop(engine);
 
+    let _ = state.events_tx.send(crate::server::ServerEvent::StateUpdated);
     match result {
-        Ok(_) => {
-            let _ = state
-                .manager
-                .finish_agent_run(
-                    &run_id,
-                    crate::engine::agent::AgentRunStatus::Completed,
-                    None,
-                )
-                .await;
-            let _ = state
-                .events_tx
-                .send(crate::server::ServerEvent::StateUpdated);
-            Ok(final_reply(&session_id)
-                .unwrap_or_else(|| "(the agent finished without a textual reply)".to_string()))
-        }
-        Err(e) => {
-            let _ = state
-                .manager
-                .finish_agent_run(
-                    &run_id,
-                    crate::engine::agent::AgentRunStatus::Failed,
-                    Some(e.to_string()),
-                )
-                .await;
-            Err(format!("agent run failed: {e}"))
-        }
+        Ok(_) => Ok(final_reply(&session_id)
+            .unwrap_or_else(|| "(the agent finished without a textual reply)".to_string())),
+        Err(e) => Err(format!("agent run failed: {e}")),
     }
+}
+
+/// Open and close the UI turn around every outcome of the driven loop.
+async fn with_turn_status<T, F: std::future::Future<Output = ()>>(
+    start: impl std::future::Future<Output = ()>,
+    run: impl std::future::Future<Output = T>,
+    close: impl FnOnce() -> F,
+) -> T {
+    start.await;
+    let result = run.await;
+    close().await;
+    result
 }
 
 /// Keep the bootstrap task in the cached thread, before the agent's replies.
@@ -493,6 +506,23 @@ pub async fn close(state: &Arc<ServerState>, session: &str, remove: bool) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn mcp_driven_turn_status_clears_on_success_and_failure() {
+        use std::cell::Cell;
+        for fail in [false, true] {
+            let busy = Cell::new(false);
+            let result: Result<(), &str> = with_turn_status(
+                async { busy.set(true) },
+                async {
+                    assert!(busy.get());
+                    if fail { Err("failed") } else { Ok(()) }
+                },
+                || async { busy.set(false) },
+            ).await;
+            assert_eq!(result.is_err(), fail);
+            assert!(!busy.get());
+        }
+    }
     #[test]
     fn mcp_agent_permission_mapping() {
         for (mode, expected) in [("plan", None), ("default", Some(PermissionMode::Edit)), ("acceptEdits", Some(PermissionMode::Edit)), ("auto", Some(PermissionMode::Admin)), ("bypassPermissions", Some(PermissionMode::Admin))] {
