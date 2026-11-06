@@ -143,7 +143,15 @@ export const SessionList: React.FC<{
       ...Object.keys(busyInputs.busySessions),
       ...busyInputs.agentRuns.map((r) => r.session_id).filter((x): x is string => !!x),
     ]);
-    for (const sid of candidates) if (isSessionBusy(busyInputs, sid)) out.add(sid);
+    // A row spins while anything of its session runs. The open session's
+    // agentRuns detail only counts its top-level turn (that is what the chat
+    // box needs), so its subagents and tasks come from busySessions — as for
+    // every other row.
+    const working = (sid: string) => {
+      const busy = busyInputs.busySessions[sid];
+      return !!busy && busy !== 'idle';
+    };
+    for (const sid of candidates) if (isSessionBusy(busyInputs, sid) || working(sid)) out.add(sid);
     return out;
   }, [busyInputs]);
   const openMissionEditor = useOpenMissionEditor();
