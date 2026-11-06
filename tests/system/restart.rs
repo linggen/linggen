@@ -182,6 +182,24 @@ async fn queue_only_session_continues_with_the_first_queued_agent() {
 }
 
 #[tokio::test]
+async fn idle_background_work_is_reported_and_listed_as_interrupted() {
+    let mut w = World::start(Setup::default().script(Agent::Ling, vec![text("Checking the interrupted work.")])).await;
+    let sid = w.api.create_session(json!({"title": "Background work"})).await;
+    leave_plan(&w, json!([{
+        "session_id": sid, "agent_id": "ling", "caller": false, "turn_interrupted": false,
+        "tasks": [{"id":"sh-1", "kind":"shell", "title":"make", "status":"running",
+                   "started_at":1, "owner_agent":"ling", "child_owner":false}], "queued": []
+    }]));
+    let mark = w.mark();
+    w.engine.restart(&w.home).await;
+    assert!(matches!(w.wait_run(&sid, Agent::Ling, mark).await, RunEnd::Finished));
+    let calls = w.model.calls_of(Agent::Ling);
+    let told = calls[0].thread().last().unwrap().1.clone();
+    assert!(told.contains("background work was running"), "{told}");
+    assert!(told.contains("make (sh-1)"), "{told}");
+}
+
+#[tokio::test]
 async fn a_restart_on_a_build_that_does_not_run_is_refused_and_plans_nothing() {
     let w = World::start(Setup::default()).await;
     let bogus = w.home.root.join("not-a-build");

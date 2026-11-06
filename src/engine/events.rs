@@ -65,6 +65,13 @@ pub struct QueuedChatItem {
 pub struct BackgroundTask {
     /// The runtime's own id for the task (the SDK's task_id, a native id).
     pub id: String,
+    /// Session agent that started the task, if known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub owner_agent: Option<String>,
+    /// Work started inside a delegated run does not wake a session agent.
+    #[serde(default)]
+    pub child_owner: bool,
     /// "shell", "subagent", "watch", "workflow" or the runtime's own label.
     pub kind: String,
     /// What it is: its command line or description.
@@ -98,6 +105,8 @@ impl BackgroundTask {
     pub fn running(id: &str, kind: &str, title: &str) -> Self {
         Self {
             id: id.into(),
+            owner_agent: None,
+            child_owner: false,
             kind: kind.into(),
             title: title.into(),
             status: "running".into(),

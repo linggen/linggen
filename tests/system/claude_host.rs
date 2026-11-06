@@ -691,10 +691,16 @@ async fn messages_queued_in_a_claude_session_come_back_after_its_restart_turn() 
     assert!(continuation.contains("check the current state before redoing anything that changes things"), "{continuation}");
     assert!(continuation.contains("Whether each was already processed is unknown"), "{continuation}");
     assert!(continuation.contains("Check the conversation and current state before deciding whether any work needs retrying; do not replay them blindly"), "{continuation}");
-    let recorded = continuation.split_once("Queued messages recorded at restart, in order (JSON; text, images and intended agent): ")
-        .and_then(|(_, rest)| rest.split_once(". Whether each was already processed is unknown"))
+    let recorded = continuation.split_once("Queued messages recorded at restart, in order (JSON; text, image file paths and intended agent): ")
+        .and_then(|(_, rest)| rest.split_once(". Use Read to inspect an image file"))
         .expect("continuation contains the recorded queue").0;
-    assert_eq!(serde_json::from_str::<Value>(recorded).unwrap(), queued);
+    let recorded: Value = serde_json::from_str(recorded).unwrap();
+    assert_eq!(recorded[0], queued[0]);
+    assert_eq!(recorded[1]["text"], queued[1]["text"]);
+    assert_eq!(recorded[1]["agent_id"], queued[1]["agent_id"]);
+    assert_eq!(recorded[1]["project_root"], queued[1]["project_root"]);
+    let image = recorded[1]["images"][0].as_str().expect("persisted image path");
+    assert!(std::path::Path::new(image).is_file(), "image is readable: {image}");
 }
 
 #[tokio::test]

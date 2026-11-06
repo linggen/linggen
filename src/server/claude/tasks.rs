@@ -13,6 +13,7 @@ fn text(event: &Value, key: &str) -> Option<String> {
 pub(super) fn apply(tasks: &crate::server::tasks::Tasks, session: &str, run: &str, event: &Value) -> bool {
     let start = |id: &str, kind: &str, title: &str| {
         let mut task = BackgroundTask::running(id, kind, title);
+        task.owner_agent = Some("claude".into());
         if kind == "subagent" {
             task.subagent_id = Some(super::subagents::tracking_id(run, id));
         }

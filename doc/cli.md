@@ -188,8 +188,8 @@ ling restart --binary target/release/ling [--wait 120]
 ```
 
 - The engine first waits up to `--wait` seconds for other sessions' turns to
-  finish, then records every session whose turn is running (missions left
-  out) and starts a detached helper.
+  finish, then records sessions with a running turn or background work
+  (missions left out) and starts a detached helper.
 - The helper swaps the build in where the engine runs from (and over
   `/usr/local/bin/ling`), each keeping `ling.prev`; a build that does not
   answer `--version` is refused before anything is touched. It restarts the
