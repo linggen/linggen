@@ -265,8 +265,10 @@ pub(crate) fn continue_message(plan: &Value, session: &Value, outcome: Option<&V
     };
     let who = if session["caller"] == true {
         "You asked for this restart, and your turn ended with it."
-    } else {
+    } else if session["agent_id"].is_string() {
         "Your turn was running and the restart interrupted it."
+    } else {
+        "This session had messages queued at the restart."
     };
     let tasks: Vec<&str> = session["tasks"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
     let tasks = if tasks.is_empty() {
@@ -275,8 +277,8 @@ pub(crate) fn continue_message(plan: &Value, session: &Value, outcome: Option<&V
         format!(" Background tasks that ended with the restart: {}.", tasks.join("; "))
     };
     let queued = session["queued"].as_array().filter(|q| !q.is_empty()).map(|q| {
-        format!(" Queued messages recorded at restart, in order (JSON; text, images and intended agent): {}. \
-                 Whether each was already processed is unknown. Check the conversation and current state before deciding \
+        format!(" Queued messages recorded at restart, in order (JSON; text, image file paths and intended agent): {}. \
+                 Use Read to inspect an image file when needed. Whether each was already processed is unknown. Check the conversation and current state before deciding \
                  whether any work needs retrying; do not replay them blindly or wait for the user to decide.",
                 Value::Array(q.clone()))
     }).unwrap_or_default();
@@ -342,8 +344,30 @@ pub(crate) fn spawn_resume(state: Arc<ServerState>) {
             }
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
+        // Keep each queued picture as a file before retiring the handoff. Both
+        // runtimes can inspect the same paths with their ordinary Read tool.
+        let mut readable = plan.clone();
+        for session in readable["sessions"].as_array_mut().unwrap() {
+            let sid = session["session_id"].as_str().unwrap().to_owned();
+            if let Some(items) = session["queued"].as_array_mut() {
+                for item in items {
+                    if let Some(images) = item["images"].as_array_mut() {
+                        for image in images {
+                            let sent = image.as_str().unwrap();
+                            let store = &state.manager.global_sessions;
+                            let name = store.keep_images(&sid, &[sent.to_owned()]).pop();
+                            let Some(file) = name.and_then(|n| store.image_path(&sid, &n)) else {
+                                tracing::error!("[restart] could not keep queued picture for {sid}; preserving recovery plan");
+                                return;
+                            };
+                            *image = Value::String(file.to_string_lossy().into_owned());
+                        }
+                    }
+                }
+            }
+        }
         let _ = std::fs::remove_file(&path);
-        for session in plan["sessions"].as_array().into_iter().flatten() {
+        for session in readable["sessions"].as_array().into_iter().flatten() {
             let Some(sid) = session["session_id"].as_str() else {
                 continue;
             };
