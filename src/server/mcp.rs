@@ -347,12 +347,13 @@ const TOOLS: &[McpTool] = &[
     McpTool {
         name: "agent_run",
         backend: Backend::Agent,
-        description: "Delegate a task to a local Linggen agent — one with this machine's skills, memory, and configured models — and get its final answer back. Runs headless in a fresh session, safe-by-default (read-only on the workspace, non-interactive; it can read/search/analyze, use the user's memory, and drive the browser, but not silently write files). Use for research, analysis, memory questions, or browser tasks you want handled by the user's own agent.",
+        description: "Delegate a task to a local Linggen agent — one with this machine's skills, memory, and configured models — and get its final answer back. Runs headless in a fresh session, safe-by-default (read-only on the workspace, non-interactive; it can read/search/analyze, use the user's memory, and drive the browser, but not silently write files). Use for research, analysis, memory questions, or browser tasks you want handled by the user's own agent. Pass write_dir (its own git worktree) to let it change code there: admin in that folder, read-only elsewhere; review its diff after.",
         schema: || json!({
             "type": "object",
             "properties": {
                 "prompt": {"type": "string", "description": "The task or question for the agent"},
-                "agent": {"type": "string", "description": "Agent to run (default: ling). Unknown names return the available list."}
+                "agent": {"type": "string", "description": "Agent to run (default: ling). Unknown names return the available list."},
+                "write_dir": {"type": "string", "description": "Opt in to writing: an absolute folder (give it its own git worktree) where the agent gets admin — Bash, Write, Edit. Every other path stays read-only; the run never prompts. Omit for a read-only run."}
             },
             "required": ["prompt"]
         }),
@@ -506,7 +507,8 @@ async fn call_tool(deps: &McpDeps<'_>, name: &str, args: Value) -> Result<Value,
                 .and_then(Value::as_str)
                 .unwrap_or_default();
             let agent = args.get("agent").and_then(Value::as_str);
-            match super::mcp_agent::run(state, agent, prompt).await {
+            let write_dir = args.get("write_dir").and_then(Value::as_str);
+            match super::mcp_agent::run(state, agent, prompt, write_dir).await {
                 Ok(text) => Ok(tool_content(text, false)),
                 Err(msg) => Ok(tool_content(msg, true)),
             }

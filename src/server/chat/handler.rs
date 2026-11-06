@@ -849,6 +849,8 @@ pub(crate) async fn run_session_turn(
     manager: &Arc<AgentManager>,
     max_live_msgs: Option<usize>,
 ) {
+    // Delegated tasks must inherit the session, regardless of the turn's driver.
+    bind_turn_session(engine, ctx.session_id.clone());
     // What closes this turn names this turn's run, never the last one's.
     engine.last_run_id = None;
     seat_member(engine, ctx).await;
@@ -867,6 +869,10 @@ pub(crate) async fn run_session_turn(
     }
     dispatch_turn(ctx, engine, manager, &ctx.clean_msg).await;
     super::thread::mark(engine, ctx);
+}
+
+fn bind_turn_session(engine: &mut crate::engine::AgentEngine, session_id: Option<String>) {
+    engine.tools.builtins.set_session_id(session_id);
 }
 
 /// Keep a capped session's live thread near its cap (`trim_live_history`),
@@ -1411,6 +1417,27 @@ pub(crate) async fn start_turn(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_server_driven_turn_binds_its_session() {
+        use crate::engine::{AgentEngine, AgentRole, EngineConfig, InterfaceMode};
+
+        let root = tempfile::tempdir().unwrap();
+        let cfg = EngineConfig::from_app_config(
+            &crate::config::Config::default(),
+            root.path().to_path_buf(),
+            InterfaceMode::Web,
+        );
+        let models = std::sync::Arc::new(
+            crate::provider::models::ModelManager::new_with_credentials(
+                Vec::new(),
+                &crate::credentials::Credentials::default(),
+            ),
+        );
+        let mut engine = AgentEngine::new(cfg, models, "m".to_string(), AgentRole::Lead).unwrap();
+        super::bind_turn_session(&mut engine, Some("sess-x".into()));
+        assert_eq!(engine.tools.builtins.session_id.as_deref(), Some("sess-x"));
+    }
+
     #[test]
     fn a_client_id_is_kept_only_as_a_short_token() {
         use super::client_id_of;

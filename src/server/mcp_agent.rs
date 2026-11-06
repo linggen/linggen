@@ -10,7 +10,12 @@
 //! non-interactive (no Linggen-side prompt can block an MCP caller who can't
 //! see it) and granted Read on the workspace, so the delegate can read,
 //! search, use memory, and drive the (separately-gated) browser, but can't
-//! silently write files. Widening to write is a future opt-in.
+//! silently write files.
+//!
+//! With `write_dir` the caller opts in to writing: that one folder gets admin
+//! (Bash, Write, Edit), every other path stays Read, and the run still never
+//! prompts. The caller's own approval of the tool call is the grant — a coding
+//! host hands its delegate a worktree and reviews the diff after.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -45,6 +50,23 @@ const AGENT_RUN_TOOLS: &[&str] = &[
     "Browser_readConsole",
     "Browser_tabs",
 ];
+
+/// What a write run adds to the read-only toolset.
+const WRITE_TOOLS: &[&str] = &["Bash", "Write", "Edit"];
+
+/// The folder a write run may change: an existing directory, absolute, and
+/// never `/` or the home folder itself — a task gets a checkout, not a disk.
+fn write_root(dir: &str) -> Result<PathBuf, String> {
+    let path = crate::util::resolve_path(std::path::Path::new(dir.trim()));
+    if !path.is_absolute() || !path.is_dir() {
+        return Err(format!("write_dir must be an existing absolute folder: {dir}"));
+    }
+    let home = dirs::home_dir().unwrap_or_default();
+    if path.parent().is_none() || path == home {
+        return Err(format!("write_dir is too wide: {dir} — pass the task's own checkout"));
+    }
+    Ok(path)
+}
 
 /// Truncate a prompt to a session title.
 fn title_from_prompt(prompt: &str) -> String {
@@ -85,6 +107,7 @@ pub async fn run(
     state: &Arc<ServerState>,
     agent: Option<&str>,
     prompt: &str,
+    write_dir: Option<&str>,
 ) -> Result<String, String> {
     let prompt = prompt.trim();
     if prompt.is_empty() {
@@ -92,6 +115,7 @@ pub async fn run(
     }
 
     let root = workspace_root();
+    let write = write_dir.map(write_root).transpose()?;
     let agent_id = agent
         .map(|a| a.trim().to_lowercase())
         .unwrap_or_else(|| "ling".to_string());
@@ -126,7 +150,8 @@ pub async fn run(
         &uuid::Uuid::new_v4().to_string()[..8]
     );
     let title = title_from_prompt(prompt);
-    let root_str = root.to_string_lossy().to_string();
+    // A write run lives in its folder; a read run in the workspace.
+    let root_str = write.as_ref().unwrap_or(&root).to_string_lossy().to_string();
     let store =
         crate::state_fs::SessionStore::with_sessions_dir(crate::paths::global_sessions_dir());
     let mut meta = crate::state_fs::sessions::SessionMeta {
@@ -168,7 +193,13 @@ pub async fn run(
             interactive: false,
             ..Default::default()
         };
-        perms.set_path_mode(&root_str, PermissionMode::Read);
+        match write {
+            Some(_) => {
+                perms.set_path_mode("*", PermissionMode::Read);
+                perms.set_path_mode(&root_str, PermissionMode::Admin);
+            }
+            None => perms.set_path_mode(&root_str, PermissionMode::Read),
+        }
         perms.save(&crate::paths::global_sessions_dir().join(&session_id));
     }
     let _ = state
@@ -202,6 +233,40 @@ pub async fn run(
         },
     );
 
+    // The run outlives the call: a caller's tool timeout must not drop it
+    // halfway (2026-11-06: a write run died at Claude Code's ~1 min limit
+    // and left its session spinning). Wait a while, else hand back where
+    // the answer will be.
+    let run = tokio::spawn(drive(
+        state.clone(),
+        session_id.clone(),
+        root,
+        agent_id,
+        prompt.to_string(),
+        write.is_some(),
+    ));
+    match tokio::time::timeout(std::time::Duration::from_secs(WAIT_SECS), run).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(e)) => Err(format!("agent run failed: {e}")),
+        Err(_) => Ok(format!(
+            "Still running in Linggen session {session_id} (it keeps going). Its final reply will be the last assistant message in ~/.linggen/sessions/{session_id}/messages.jsonl; GET /api/sessions/running?session_id={session_id} reads turn=false when done."
+        )),
+    }
+}
+
+/// How long a call waits for the run before handing back its session.
+const WAIT_SECS: u64 = 45;
+
+/// One headless run in its own task, to completion whether or not anyone
+/// still waits for it.
+async fn drive(
+    state: Arc<ServerState>,
+    session_id: String,
+    root: PathBuf,
+    agent_id: String,
+    prompt: String,
+    write: bool,
+) -> Result<String, String> {
     let agent = state
         .manager
         .get_or_create_session_agent(&session_id, &root, &agent_id)
@@ -236,7 +301,12 @@ pub async fn run(
     // Bash stops the `echo > file` end-run around it. cfg isn't reloaded by
     // initialize_loop, so this sticks. (It also flips the session
     // non-interactive on load, matching the permission.json.)
-    let declared: Vec<String> = AGENT_RUN_TOOLS.iter().map(|s| s.to_string()).collect();
+    let extra: &[&str] = if write { WRITE_TOOLS } else { &[] };
+    let declared: Vec<String> = AGENT_RUN_TOOLS
+        .iter()
+        .chain(extra)
+        .map(|s| s.to_string())
+        .collect();
     engine.cfg.mission_allowed_tools = crate::engine::tool_scope::compute_tool_scope(&declared);
 
     // Permissions come from the permission.json written above — initialize_loop
