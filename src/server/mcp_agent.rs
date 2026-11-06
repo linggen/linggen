@@ -89,15 +89,17 @@ fn workspace_root() -> PathBuf {
     crate::util::resolve_path(&cwd)
 }
 
-/// Read the final assistant reply from a finished session — the last
-/// non-observation message not authored by "user".
+/// Read the last agent-authored reply from a finished session.
 fn final_reply(session_id: &str) -> Option<String> {
     let store =
         crate::state_fs::SessionStore::with_sessions_dir(crate::paths::global_sessions_dir());
-    let msgs = store.get_chat_history(session_id).ok()?;
+    last_agent_reply(store.get_chat_history(session_id).ok()?)
+}
+
+fn last_agent_reply(msgs: Vec<crate::state_fs::sessions::ChatMsg>) -> Option<String> {
     msgs.into_iter()
         .rev()
-        .find(|m| !m.is_observation && m.from_id != "user" && m.from_id != "claude-code" && !m.content.trim().is_empty())
+        .find(|m| !m.is_observation && !matches!(m.from_id.as_str(), "user" | "claude-code" | "system") && !m.content.trim().is_empty())
         .map(|m| m.content)
 }
 
@@ -448,8 +450,8 @@ fn with_denials(session: &str, mut reply: String) -> String {
     reply
 }
 
-fn wait_ready(work: &super::api::sessions::RunningWork) -> bool {
-    !work.turn && work.tasks == 0 && work.subagents == 0
+fn wait_ready(work: &super::api::sessions::RunningWork, pending_turn: bool) -> bool {
+    !work.turn && work.tasks == 0 && work.subagents == 0 && !pending_turn
 }
 
 #[derive(serde::Deserialize)]
@@ -470,19 +472,28 @@ pub(crate) async fn wait_socket(
     }
     let mut events = state.events_tx.subscribe();
     ws.on_upgrade(move |mut socket| async move {
+        let mut ready_since = None;
         loop {
             let work = super::api::sessions::session_running_work(&state, &query.session_id).await;
-            if wait_ready(&work) {
+            let ready = wait_ready(&work, state.manager.has_pending_turn(&query.session_id));
+            let deadline = if ready {
+                *ready_since.get_or_insert_with(|| tokio::time::Instant::now() + std::time::Duration::from_secs(3))
+            } else {
+                ready_since = None;
+                tokio::time::Instant::now()
+            };
+            if ready && tokio::time::Instant::now() >= deadline {
                 let frame = serde_json::json!({"session_id": query.session_id, "reply": final_reply(&query.session_id), "denied": denials(&query.session_id)});
                 let _ = socket.send(axum::extract::ws::Message::Text(frame.to_string().into())).await;
                 let _ = socket.send(axum::extract::ws::Message::Close(None)).await;
                 break;
             }
             tokio::select! {
+                _ = tokio::time::sleep_until(deadline), if ready => {},
                 event = events.recv() => match event {
                     Ok(super::ServerEvent::TurnComplete { .. } | super::ServerEvent::StateUpdated | super::ServerEvent::TasksUpdated { .. }) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {},
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                    _ => continue,
+                    _ => {},
                 },
                 incoming = socket.recv() => if incoming.is_none() || matches!(incoming, Some(Err(_)) | Some(Ok(axum::extract::ws::Message::Close(_)))) { break; },
             }
@@ -496,10 +507,24 @@ mod wait_ready_tests {
     use crate::server::api::sessions::RunningWork;
     #[test]
     fn wait_ready_requires_all_work_to_finish() {
-        assert!(wait_ready(&RunningWork::default()));
-        assert!(!wait_ready(&RunningWork { turn: true, ..Default::default() }));
-        assert!(!wait_ready(&RunningWork { tasks: 1, ..Default::default() }));
-        assert!(!wait_ready(&RunningWork { subagents: 1, ..Default::default() }));
+        assert!(wait_ready(&RunningWork::default(), false));
+        assert!(!wait_ready(&RunningWork::default(), true));
+        assert!(!wait_ready(&RunningWork { turn: true, ..Default::default() }, false));
+        assert!(!wait_ready(&RunningWork { tasks: 1, ..Default::default() }, false));
+        assert!(!wait_ready(&RunningWork { subagents: 1, ..Default::default() }, false));
+    }
+
+    #[test]
+    fn final_reply_skips_system_notice() {
+        let row = |from: &str, content: &str, observation| crate::state_fs::sessions::ChatMsg {
+            agent_id: "ling".into(), from_id: from.into(), to_id: "ling".into(),
+            content: content.into(), timestamp: 0, is_observation: observation,
+            client_id: None, failed: false, via: None, via_note: None,
+            images: vec![], run_id: None,
+        };
+        let messages = vec![row("ling", "agent answer", false),
+            row("system", "Background task sh-1 ended: failed", false)];
+        assert_eq!(last_agent_reply(messages).as_deref(), Some("agent answer"));
     }
 }
 

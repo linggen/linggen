@@ -573,6 +573,12 @@ impl AgentManager {
             .clone()
     }
 
+    /// A held or reserved turn lock means the session's turn line is not empty.
+    pub fn has_pending_turn(&self, session_id: &str) -> bool {
+        let turns = self.session_turns.lock_ok();
+        turns.get(session_id).is_some_and(|turn| turn.try_lock().is_err())
+    }
+
     /// Fraction of its soft context limit a session's **live** thread is
     /// using — the fullest member's — or `None` when no member has a cached
     /// engine idle enough to read (mid-turn engines are locked). Yinyue's
