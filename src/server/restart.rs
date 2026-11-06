@@ -451,7 +451,7 @@ mod tests {
     fn the_caller_and_the_interrupted_are_told_what_happened() {
         let plan = json!({"from_version": "1.10.0", "to_version": "ling 1.10.1"});
         let caller = json!({"caller": true, "tasks": []});
-        let other = json!({"caller": false, "tasks": ["npm run dev (sh-1)"]});
+        let other = json!({"caller": false, "agent_id": "ling", "tasks": ["npm run dev (sh-1)"]});
         let ok = json!({"state": "ok"});
         let said = continue_message(&plan, &caller, Some(&ok));
         assert!(said.contains("from 1.10.0 to ling 1.10.1; the new build is up and healthy"), "{said}");
