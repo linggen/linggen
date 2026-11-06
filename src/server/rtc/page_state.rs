@@ -401,6 +401,11 @@ pub async fn build_page_state(
             }
         }
         drop(active);
+        // A session whose turn ended still works while its background
+        // subagents or tasks run.
+        for sid in state.tasks.sessions_running().into_iter().filter(|sid| scope_check(sid)) {
+            busy.entry(sid).or_insert_with(|| "working".into());
+        }
         ps.busy_sessions = Some(busy);
     }
 

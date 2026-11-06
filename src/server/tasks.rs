@@ -23,6 +23,17 @@ impl Tasks {
         f(&mut guard)
     }
 
+    /// Sessions with background work still running — the session list's
+    /// spinner reads them, cheaply, from memory.
+    pub fn sessions_running(&self) -> Vec<String> {
+        self.with(|all| {
+            all.iter()
+                .filter(|(_, tasks)| tasks.iter().any(|t| t.is_running()))
+                .map(|(sid, _)| sid.clone())
+                .collect()
+        })
+    }
+
     /// Running first in start order, then ended ones, newest first.
     pub fn list(&self, session: &str) -> Vec<BackgroundTask> {
         self.with(|all| all.get(session).cloned().unwrap_or_default())
@@ -328,5 +339,21 @@ mod tests {
         let list = tasks.list("s");
         assert_eq!(list.len(), KEEP_ENDED + 1);
         assert_eq!(list[0].id, "live");
+    }
+}
+
+#[cfg(test)]
+mod running_sessions_tests {
+    use super::*;
+
+    #[test]
+    fn a_session_with_running_background_work_is_listed_until_it_ends() {
+        let tasks = Tasks::default();
+        tasks.upsert("s", BackgroundTask::running("a", "subagent", "review"));
+        tasks.upsert("t", BackgroundTask::running("b", "shell", "make"));
+        assert!(tasks.finish("t", "b", "completed", None));
+        assert_eq!(tasks.sessions_running(), vec!["s".to_string()]);
+        assert!(tasks.finish("s", "a", "completed", None));
+        assert!(tasks.sessions_running().is_empty());
     }
 }

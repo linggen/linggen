@@ -50,6 +50,11 @@ pub(super) fn forward_event_to_channels(
         return;
     }
 
+    // Task changes also affect the session list's busy indicator.
+    if matches!(event, crate::server::ServerEvent::TasksUpdated { .. }) {
+        *dirty_flags |= crate::server::rtc::page_state::DIRTY_ALL;
+    }
+
     // The session's cwd moved (agent cd) — effective_mode is computed from it,
     // so schedule a scoped page_state push alongside the forwarded event or the
     // permission chip keeps showing the previous folder's mode.
