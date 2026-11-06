@@ -62,12 +62,22 @@ async fn legacy_queued_messages_are_preserved_without_unverified_replay() {
         "queued": [queued("first queued message"), queued("second queued message")],
     }]));
     w.engine.restart(&w.home).await;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while w.model.calls_of(Agent::Ling).len() < 2 {
+        assert!(Instant::now() < deadline, "the session never continued");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let calls = w.model.calls_of(Agent::Ling);
+    let told = calls[1].thread().last().map(|(_, t)| t.clone()).unwrap_or_default();
+    assert!(told.contains("first queued message"), "{told}");
+    assert!(told.contains("second queued message"), "{told}");
+    assert!(told.find("first queued message") < told.find("second queued message"), "{told}");
+    assert!(told.contains("already processed is unknown"), "{told}");
+    assert!(told.contains("Check the conversation and current state"), "{told}");
+    assert!(told.contains("do not replay them blindly"), "{told}");
     tokio::time::sleep(Duration::from_secs(2)).await;
-    let path = w.home.linggen_home().join("restart/resume.json");
-    let retained: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-    assert_eq!(retained["sessions"][0]["queued"][0]["text"], "first queued message");
-    assert_eq!(retained["sessions"][0]["queued"][1]["text"], "second queued message");
-    assert_eq!(w.model.calls_of(Agent::Ling).len(), 1, "unverified messages must not be replayed");
+    assert_eq!(w.model.calls_of(Agent::Ling).len(), 2, "queued messages must not run as separate turns");
+    assert!(!w.home.linggen_home().join("restart/resume.json").exists());
 }
 
 #[tokio::test]
