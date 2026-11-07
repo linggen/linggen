@@ -11,6 +11,35 @@
   changes below (one memory across machines) were never published on their
   own and ship in this release.
 
+Since the 11-03 draft:
+
+- **Let Claude Code and Codex hand work to Ling.** Through the MCP front door,
+  `agent_run` starts a Ling session, optionally in a folder Ling may write to.
+  The run outlives the call and ends only when its own background work is done.
+  `agent_status`, `agent_stop` and `agent_models` round it out, and
+  `ws /api/agent/wait` pushes the end of a run. A delegated run keeps its
+  checklist and can draw pictures. External sessions show in the session list.
+- **One chat, one permission set.** A subagent uses the chat's grants live and
+  saves new ones there. A folder inside the home directory can be granted
+  wherever the home lives.
+- **Session list: Active / History.** It replaces the creator tabs. A row spins
+  while its subagents or background tasks run, and the header's running dot is
+  gone.
+- **Plans and todos work the way Claude Code's do.** Each step has an
+  "in progress" wording, plans are short, and a session shows one checklist.
+- **Restarts lose nothing.** A message queued, steered or half-delivered
+  during an engine restart is handed to the new engine. Interrupted background
+  work is listed in a continue turn. A tool block always ends with its turn,
+  and a subagent's end always reaches the agent that started it.
+- **Chat.** Steer works on a queued message, as in Claude Code. Tap an agent's
+  name to reply to it. An app in its own language gets the chat's words and
+  银月's lines in that language. Picture thumbnails show the whole picture.
+  The weather chip turns the weather animation on and off. The chat bar shows
+  the model's context limit and, on a ChatGPT model only, Codex's 5h/7d
+  allowance.
+- **Release gate plays 灵境.** The play bot runs on the skills being released,
+  and the phone's 灵境 tests run on assets built from the same commit.
+
 - **Found pictures match the question.** Ling sees an image search's
   pictures as one labelled contact sheet (on a model that sees) and picks by
   what they show. A page's cover picture is no longer captioned by the page
