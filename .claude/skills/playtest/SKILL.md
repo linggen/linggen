@@ -30,7 +30,7 @@ Never point it at `~/.linggen/skills/lingjing/data`, never `--headed` on his scr
 ## Selftest — the seeded bugs
 
 `just playbot --selftest` replays `seeded-bugs.json`: each a skills ref (or a ref + a patch under `seeded/`) that
-holds one of the bugs of 2026-11-04/05, and the finding the bot must raise for it:
+holds one of the bugs found since 2026-11-04, and the finding the bot must raise for it:
 
 | id | where | must raise |
 |---|---|---|
@@ -38,6 +38,12 @@ holds one of the bugs of 2026-11-04/05, and the finding the bot must raise for i
 | hand-overlaps-at-six | 48f0b83c (before 4b14bd09) | `layout` · covered · a card / cost |
 | yangzhen-on-empty-rank | 48f0b83c | `mana-waste` |
 | win-without-spoils | 4b14bd09 + seeded/no-spoils.patch | `no-spoils` |
+| spoils-dropped-after-a-win | 4b14bd09 + seeded/winnable-control.patch | `no-spoils` |
+| spoils-shown-control | dcab26ad + seeded/winnable-control.patch | control: no `no-spoils` |
+| hand-squeezed | 94b26505 + seeded/hand-squeezed.patch | `layout` · hand-too-small (centre card < 120 px) |
+| hand-floor-control | 94b26505 | control: no hand-too-small |
+
+A control (`absent: true`) is the same play without the bug; it must NOT raise the finding.
 
 A seeded bug it misses (exit 3) means **the bot is broken** — fix the bot before trusting any run of it. When a new
 bug slips past it, add it here: the ref before its fix, and the finding that should have caught it.
