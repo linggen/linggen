@@ -23,6 +23,11 @@ export const SessionStats: React.FC = () => {
   const ctx = useServerStore((s) => s.agentContext[sessionId]);
   const claude = useSessionStore((s) => s.allSessions.find((item) => item.id === sessionId)?.runtime === 'claude_agent_sdk');
   const cost = useChatStore((s) => s._sessionStateLoad?.sessionId === sessionId ? s.sessionState?.claude_usage?.estimated_cost_usd : undefined);
+  // The Codex allowance is the ChatGPT account's: shown only while this chat runs on a ChatGPT model.
+  const chosen = useUiStore((s) => s.sessionModel);
+  const fallback = useServerStore((s) => s.defaultModels[0]);
+  const modelId = chosen || fallback;
+  const onCodex = useServerStore((s) => s.models.find((m) => m.id === modelId)?.provider === 'chatgpt');
 
   const tokens = ctx?.tokens || 0;
   const limit = ctx?.tokenLimit && ctx.tokenLimit > 0 ? ctx.tokenLimit : 0;
@@ -36,7 +41,7 @@ export const SessionStats: React.FC = () => {
       {claude && <span className="text-[11px] text-slate-600 dark:text-slate-300" data-no-i18n title="Estimated USD cost recorded for this Claude conversation. Includes subagents; final charges follow Anthropic billing.">
         {tokens > 0 ? ' · ' : ''}≈ ${cost === undefined ? '—' : cost.toFixed(2)}
       </span>}
-      <CodexUsage />
+      {!claude && onCodex && <CodexUsage />}
     </span>
   );
 };
