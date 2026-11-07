@@ -471,27 +471,11 @@ impl AgentEngine {
                     if !plan_text.is_empty() {
                         self.last_assistant_text = Some(plan_text.clone());
                     }
-                    // Merge items from ExitPlanMode args into stored plan items.
+                    // Legacy `items` (no longer advertised) still seed the checklist;
+                    // without them finalize_plan_mode extracts it from the plan steps.
                     if let Some(items_arr) = action.args.get("items").and_then(|v| v.as_array()) {
-                        let mut plan_items = Vec::new();
-                        for item in items_arr {
-                            let id = item
-                                .get("id")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            let title = item
-                                .get("title")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("?")
-                                .to_string();
-                            let status = item
-                                .get("status")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("pending")
-                                .to_string();
-                            plan_items.push(PlanItem { id, title, status });
-                        }
+                        let plan_items: Vec<PlanItem> =
+                            items_arr.iter().map(PlanItem::from_json).collect();
                         if !plan_items.is_empty() {
                             // Store items so finalize_plan_mode picks them up.
                             let plan = self.plan.get_or_insert_with(|| Plan {
@@ -634,22 +618,9 @@ impl AgentEngine {
         let mut plan_items = Vec::new();
         let mut lines = Vec::new();
         for item in &items {
-            let id = item
-                .get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let title = item
-                .get("title")
-                .and_then(|v| v.as_str())
-                .unwrap_or("?")
-                .to_string();
-            let status = item
-                .get("status")
-                .and_then(|v| v.as_str())
-                .unwrap_or("pending")
-                .to_string();
-            let checkbox = match status.as_str() {
+            let item = PlanItem::from_json(item);
+            let status = item.status.as_str();
+            let checkbox = match status {
                 "completed" | "done" => "- [x]",
                 "in_progress" | "working" => "- [~]",
                 _ => "- [ ]",
@@ -659,8 +630,8 @@ impl AgentEngine {
             } else {
                 ""
             };
-            lines.push(format!("{} {}{}", checkbox, title, suffix));
-            plan_items.push(PlanItem { id, title, status });
+            lines.push(format!("{} {}{}", checkbox, item.title, suffix));
+            plan_items.push(item);
         }
         // Use existing plan_text if it has substantial content (from planning
         // phase). Only replace if the model provides something longer, or if

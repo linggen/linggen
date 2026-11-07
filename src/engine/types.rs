@@ -39,8 +39,14 @@ pub struct ActiveMission {
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct PlanItem {
     pub id: String,
+    /// Imperative title: "Run tests".
     pub title: String,
     pub status: String,
+    /// Present-progressive phrasing shown while the item is in progress:
+    /// "Running tests". Plans saved before it existed load without it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub active_form: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

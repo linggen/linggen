@@ -961,8 +961,7 @@ impl AgentManager {
         let key = plan_key(project_root, session_id, agent_id);
         let mut plans = self.pending_plans.lock().await;
         let plan = &mut plans.get_mut(&key)?.plan;
-        plan.plan_text = text.to_string();
-        plan.summary = crate::engine::AgentEngine::extract_plan_summary(text);
+        plan.set_plan_text(text);
         Some(plan.clone())
     }
 

@@ -74,14 +74,18 @@ export const PlanBlock: React.FC<{
       {Array.isArray(plan.items) && plan.items.length > 0 && !editing && (
         <div className="space-y-1">
           <div className="text-sm font-semibold text-slate-600 dark:text-slate-300">Task List</div>
-          {plan.items.map((item) => (
-            <div key={item.id} className="flex items-start gap-2 text-sm">
-              <span className={`mt-0.5 shrink-0 ${item.status === 'done' ? 'text-emerald-500' : item.status === 'in_progress' ? 'text-blue-500' : 'text-slate-400'}`}>
-                {item.status === 'done' ? '\u2611' : '\u2610'}
-              </span>
-              <span className={item.status === 'done' ? 'line-through opacity-60' : ''}>{item.title}</span>
-            </div>
-          ))}
+          {plan.items.map((item) => {
+            const done = item.status === 'completed' || item.status === 'done';
+            const working = item.status === 'in_progress';
+            return (
+              <div key={item.id} className="flex items-start gap-2 text-sm">
+                <span className={`mt-0.5 shrink-0 ${done ? 'text-emerald-500' : working ? 'text-blue-500' : 'text-slate-400'}`}>
+                  {done ? '\u2611' : '\u2610'}
+                </span>
+                <span className={done ? 'line-through opacity-60' : ''}>{(working && item.active_form) || item.title}</span>
+              </div>
+            );
+          })}
         </div>
       )}
       {plan.status === 'planned' && onApprovePlan && onRejectPlan && !editing && (

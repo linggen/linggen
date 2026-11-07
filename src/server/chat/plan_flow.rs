@@ -501,8 +501,7 @@ pub(crate) async fn edit_plan_handler(
                 )
                     .into_response();
             };
-            plan.plan_text = req.text.clone();
-            plan.summary = crate::engine::AgentEngine::extract_plan_summary(&req.text);
+            plan.set_plan_text(&req.text);
             state
                 .manager
                 .set_pending_plan(&root_str, &agent_id, session_id.as_deref(), plan.clone())

@@ -322,8 +322,49 @@ mod tests {
             assert!(text.contains("3 or more distinct steps"), "{text}");
             assert!(text.contains("proactively"), "{text}");
         }
+        // Claude Code's todo rules: one in progress, completed at once, never while failing.
+        let schema = crate::engine::tools::json_schema::oai_tool_definitions(None)
+            .into_iter()
+            .find(|d| d["function"]["name"] == "UpdatePlan")
+            .map(|d| {
+                d["function"]["description"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_string()
+            })
+            .expect("UpdatePlan schema");
+        for text in [legacy, native_progress, schema.as_str()] {
+            assert!(text.contains("ONE item"), "{text}");
+            assert!(text.contains("tests fail"), "{text}");
+            assert!(text.contains("never batch"), "{text}");
+        }
+        // The checklist comes from the approved plan's steps; execution updates it.
         let execution = store.get("plan-execute.default").unwrap();
-        assert!(execution.contains("Before starting"), "{execution}");
+        assert!(
+            execution.contains("checklist already exists"),
+            "{execution}"
+        );
+        assert!(execution.contains("{items}"), "{execution}");
+        assert!(execution.contains("ONE item"), "{execution}");
+    }
+
+    /// Plans are short, Claude Code style: one approach, steps, Verification;
+    /// ExitPlanMode no longer asks for a second list of items.
+    #[test]
+    fn plan_mode_asks_for_short_plans_without_items() {
+        let store = PromptStore::load(None);
+        let plan = store.get(PLAN_MODE).unwrap();
+        for needed in [
+            "## Steps",
+            "## Verification",
+            "ExitPlanMode",
+            "same response",
+            "clear the conversation",
+        ] {
+            assert!(plan.contains(needed), "{needed} missing: {plan}");
+        }
+        assert!(!plan.contains("`items`"), "{plan}");
+        assert!(!plan.contains("old code and the new code"), "{plan}");
     }
 
     #[test]

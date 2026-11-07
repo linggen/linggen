@@ -984,7 +984,10 @@ impl AgentEngine {
             if plan.status == PlanStatus::Approved || plan.status == PlanStatus::Executing {
                 if let Some(rendered) = self.prompt_store.render(
                     crate::prompts::PLAN_EXECUTE,
-                    &[("plan_text", &plan.plan_text)],
+                    &[
+                        ("plan_text", &plan.plan_text),
+                        ("items", &plan.checklist_text()),
+                    ],
                 ) {
                     system.push_str("\n\n");
                     system.push_str(&rendered);

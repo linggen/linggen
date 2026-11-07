@@ -28,7 +28,7 @@ Redesign of the plan feature, aligned with Claude Code. Separates planning (read
 2. **Plans are free-form markdown, not structured JSON.** Any model can write text. No JSON parsing for plan creation.
 3. **Progress tracking is separate from planning.** `update_plan` is for execution-time task tracking, decoupled from plan mode.
 4. **Session-inlined persistence.** Plans are stored as JSON messages in the session's `messages.jsonl`. No separate plan files — the session is the single source of truth. Context compaction handles token cost; compaction is skipped during plan execution.
-5. **Self-contained plans.** Plans must include file paths, line numbers, and code snippets so they work as the sole context after clearing.
+5. **Short, self-contained plans.** Claude Code style: one recommended approach, a sentence or two of context, the files to change and functions to reuse, short numbered steps under a Steps heading, and a Verification section. No code listings or line numbers by default; real paths and names so the plan still works after the context is cleared.
 6. **Unified flow.** No `PlanOrigin` enum — all plans use the same approval flow. Plan mode requires user initiation and approval.
 
 ## Changes from previous design
@@ -59,7 +59,7 @@ Redesign of the plan feature, aligned with Claude Code. Separates planning (read
 - **Reply without `ExitPlanMode` is an answer** — the engine leaves plan mode, drops any unsubmitted draft, and shows and saves the text like any reply. Only `ExitPlanMode` submits a plan (CC-aligned).
 - **Direct plan editing** — user can edit plan markdown before approving (Web UI: inline editor).
 - **Approval UI** — inline: "Start building" / "Reject" / custom feedback. Web UI: approve endpoint with `clear_context` option.
-- **Self-contained plan prompts** — plan-mode prompt emphasizes code snippets and line numbers.
+- **Short plan prompts** — plan-mode prompt asks for a scannable plan: context, files, steps, Verification.
 - **Compaction guard** — context compaction is skipped when plan status is `Approved` or `Executing`, ensuring the model retains full tool-result context during plan execution.
 
 ## Lifecycle
@@ -71,13 +71,15 @@ Redesign of the plan feature, aligned with Claude Code. Separates planning (read
 
 ### Research phase
 
-Tools available: `Read`, `Glob`, `Grep`, `WebSearch`, `WebFetch`, `AskUser`, `ExitPlanMode`, `Task`. `UpdatePlan` is not among them: the steps belong in the plan `ExitPlanMode` submits (its `items` become the plan's checklist). A model that calls it anyway is told it is not available while planning, and nothing shows.
+Tools available: `Read`, `Glob`, `Grep`, `WebSearch`, `WebFetch`, `AskUser`, `ExitPlanMode`, `Task`. `UpdatePlan` is not among them: the steps belong in the plan `ExitPlanMode` submits. A model that calls it anyway is told it is not available while planning, and nothing shows.
 
 Tools blocked (removed from API call): `Write`, `Edit`, `Bash`, `lock_paths`, `unlock_paths`, `Skill`.
 
 Model researches the codebase (directly or by delegating to a subagent via Task for complex tasks), then writes a self-contained markdown plan and calls `ExitPlanMode`. If the request turns out to change nothing, the model just answers; that reply ends plan mode. Delegation keeps the main agent's context clean — research results stay in the subagent's context, and only the analysis is returned.
 
 ### Approval
+
+On submit the plan's checklist is extracted from its numbered step headings or its Steps list, so the model never writes the steps twice (`ExitPlanMode` still accepts a legacy `items` list, unadvertised). Editing the plan before approval rebuilds the checklist.
 
 Inline approval (via AskUser bridge):
 - **Start building** — approves the plan and begins execution.
@@ -92,7 +94,7 @@ While a plan waits, its agent's background-task ends wait behind it (`background
 
 ### Execution
 
-Plan text injected into system prompt. Model executes with full tools. The model reports progress with `update_plan` as it works through the plan's steps. Context compaction is skipped during execution to preserve tool-result context.
+Plan text and its checklist are injected into the system prompt. Model executes with full tools and updates the existing checklist with `update_plan` as it goes, one item in progress at a time. Context compaction is skipped during execution to preserve tool-result context.
 
 ### Completion
 
@@ -100,7 +102,14 @@ Not yet implemented. Future: on `done`, mark remaining tracked items as `Skipped
 
 ## Progress tracking
 
-`update_plan` remains as an independent feature — not coupled to plan mode. The model uses it proactively while executing a task of three or more distinct steps that changes files, as Claude Code uses its todo list: one item in progress at a time, each marked done as soon as it is. Skipped for a single simple step and for answering questions; not available while planning. Drives the sidebar task list UI. Both `plan_text` and `items` are optional — the model can update either or both.
+`update_plan` remains as an independent feature — not coupled to plan mode. It follows Claude Code's todo rules:
+
+- **Use** for file-changing work of three or more distinct steps, several tasks given at once, or other non-trivial changes. **Skip** for a single trivial step or a question.
+- Exactly one item in progress; each marked completed the moment it is done, never batched; never completed while tests fail or work is partial — a new item names the blocker.
+- Items are specific; stale ones are removed. Not available while planning.
+- Each item has a title ("Run tests") and an optional **active form** ("Running tests"). While a plan is approved or executing, the in-progress item's active form is the run status line under the chat and its label in the checklist. Plans saved before the active form existed load unchanged.
+
+Drives the task list UI. Both `plan_text` and `items` are optional — the model can update either or both.
 
 ## Storage
 

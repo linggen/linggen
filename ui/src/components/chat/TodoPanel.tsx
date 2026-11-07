@@ -1,6 +1,11 @@
 import React, { useState } from 'react';
 import { ChevronDown, ChevronRight, CheckCircle2, Circle, Loader2 } from 'lucide-react';
-import type { Plan } from '../../types';
+import type { Plan, PlanItem } from '../../types';
+
+const isWorking = (status: string) => status === 'in_progress' || status === 'working';
+
+/** The item in progress reads as what is happening ("Running tests"). */
+const itemLabel = (item: PlanItem) => (isWorking(item.status) && item.active_form) || item.title;
 
 const StatusIcon: React.FC<{ status: string }> = ({ status }) => {
   switch (status) {
@@ -65,11 +70,11 @@ export const TodoPanel: React.FC<{
                 <span className={`text-[12px] ${
                   item.status === 'completed' || item.status === 'done'
                     ? 'text-slate-400 dark:text-slate-500 line-through'
-                    : item.status === 'in_progress' || item.status === 'working'
+                    : isWorking(item.status)
                     ? 'text-blue-600 dark:text-blue-400 font-medium'
                     : 'text-slate-600 dark:text-slate-300'
                 }`}>
-                  {item.title}
+                  {itemLabel(item)}
                 </span>
               </div>
             ))}

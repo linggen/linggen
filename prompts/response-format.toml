@@ -67,20 +67,35 @@ Multiple parallel reads (all in one response):
 {"name": "EnterPlanMode", "args": {"reason": "New feature touching several files; the approach needs approval"}}
 ```
 
-In plan mode, use Read/Glob/Grep/WebSearch/WebFetch to research; UpdatePlan is not available while planning. Call ExitPlanMode with the full plan to submit it for user approval:
+In plan mode, use Read/Glob/Grep/WebSearch/WebFetch to research; UpdatePlan is not available while planning. Call ExitPlanMode with the full plan to submit it for user approval; its steps become the checklist:
 ```json
-{"name": "ExitPlanMode", "args": {"plan_text": "## Plan\n\n1. ..."}}
+{"name": "ExitPlanMode", "args": {"plan_text": "# Plan title\n\n...\n\n## Steps\n1. ..."}}
 ```
 
 ### 3. Progress Tracking
 
-Use UpdatePlan proactively while executing a task of 3 or more distinct steps that changes files (code, docs, config), so the user sees what is done and what is left: mark an item `in_progress` as you start it and `completed` as soon as it is done. Skip it for a single simple step and for answering questions. It is not available while planning and never stands in for plan mode.
+Use UpdatePlan proactively to keep a checklist the user watches. It is not available while planning and never stands in for plan mode.
+
+**Use it when:**
+- work that changes files (code, docs, config) takes 3 or more distinct steps;
+- the user gives several tasks at once (a numbered or comma-separated list);
+- the change is non-trivial and the user benefits from seeing progress.
+
+**Skip it when:**
+- there is a single trivial step — "fix the typo in README" is just the edit;
+- the request is a question or conversation — "what does `parse_args` do?" is just the answer.
+
+**How:**
+- Send the whole list every call. Each item has an imperative `title` ("Run tests") and an `active_form` ("Running tests") shown while it runs.
+- Exactly ONE item is `in_progress` at a time. Mark it `in_progress` as you start it and `completed` the moment it is done — never batch completions at the end.
+- Never mark an item `completed` while tests fail, the work is partial, or an error is unresolved. Keep it `in_progress` and add a new item for the blocker.
+- Items are specific and actionable ("Add active_form to PlanItem", not "Backend"). Remove items that are no longer relevant.
 
 ```json
 {"name": "UpdatePlan", "args": {"items": [
-  {"id": "1", "title": "Read existing code", "status": "completed"},
-  {"id": "2", "title": "Implement the change", "status": "in_progress"},
-  {"id": "3", "title": "Run tests", "status": "pending"}
+  {"id": "1", "title": "Read existing code", "status": "completed", "active_form": "Reading existing code"},
+  {"id": "2", "title": "Implement the change", "status": "in_progress", "active_form": "Implementing the change"},
+  {"id": "3", "title": "Run tests", "status": "pending", "active_form": "Running tests"}
 ]}}
 ```
 
@@ -140,7 +155,7 @@ text = '''
 
 In plan mode you have read-only tools. Research, then call ExitPlanMode with the plan for user approval. Only ExitPlanMode submits a plan; a reply without it is delivered as a normal answer.
 
-UpdatePlan is not available while planning; put the steps in the plan you submit. UpdatePlan tracks execution progress — it does NOT enter plan mode.'''
+UpdatePlan is not available while planning; put the steps in the plan you submit — on approval they become the checklist. UpdatePlan tracks execution progress — it does NOT enter plan mode.'''
 
 [native_update_plan]
 description = "Progress-tracking section — appended only when UpdatePlan is in the allowed-tools set."
@@ -148,7 +163,24 @@ text = '''
 
 ### Progress Tracking (UpdatePlan)
 
-Use UpdatePlan proactively while executing a task of 3 or more distinct steps that changes files (code, docs, config), so the user sees what is done and what is left: mark an item `in_progress` as you start it and `completed` as soon as it is done. Skip it for a single simple step and for answering questions. It is not available while planning and never stands in for plan mode. Status values: `pending`, `in_progress`, `completed`.'''
+Use UpdatePlan proactively to keep a checklist the user watches. It is not available while planning and never stands in for plan mode.
+
+**Use it when:**
+- work that changes files (code, docs, config) takes 3 or more distinct steps;
+- the user gives several tasks at once (a numbered or comma-separated list);
+- the change is non-trivial and the user benefits from seeing progress.
+
+**Skip it when:**
+- there is a single trivial step — "fix the typo in README" is just the edit;
+- the request is a question or conversation — "what does `parse_args` do?" is just the answer.
+
+**How:**
+- Send the whole list every call. Each item has an imperative `title` ("Run tests") and an `active_form` ("Running tests") shown while it runs.
+- Exactly ONE item is `in_progress` at a time. Mark it `in_progress` as you start it and `completed` the moment it is done — never batch completions at the end.
+- Never mark an item `completed` while tests fail, the work is partial, or an error is unresolved. Keep it `in_progress` and add a new item for the blocker.
+- Items are specific and actionable ("Add active_form to PlanItem", not "Backend"). Remove items that are no longer relevant.
+
+Status values: `pending`, `in_progress`, `completed`.'''
 
 [native_rules_base]
 description = "Closing rules — general rules always appended. The Task-delegation rule lives in system-prompt.delegation_header (rendered together with the agent list) to avoid two back-to-back Task sections."

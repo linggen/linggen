@@ -75,7 +75,7 @@ fn plan_mode_schemas() -> impl Iterator<Item = Value> {
                 "properties": {
                     "plan_text": {
                         "type": "string",
-                        "description": "The full markdown plan text to submit for user review. Include all steps, file paths, and implementation details."
+                        "description": "The full markdown plan to submit for user review: context, files to change, numbered steps under a Steps heading, and Verification."
                     }
                 },
                 "required": ["plan_text"]
@@ -97,13 +97,13 @@ fn plan_mode_schemas() -> impl Iterator<Item = Value> {
         ),
         tool_def(
             "UpdatePlan",
-            "Track execution progress on a task of 3 or more distinct steps that changes files (code, docs, config); use it proactively so the user sees what is done and left: items is the checklist, plan_text optionally updates the approved plan. Skip it for a single simple step and for answering questions. Not available while planning — submit a plan with ExitPlanMode.",
+            "The task checklist the user watches while you work. Use it proactively when work that changes files (code, docs, config) takes 3 or more distinct steps, when the user gives several tasks at once, or for any other non-trivial change. Skip it for a single trivial step (fixing one typo) and for a question or conversation (explaining a function). Send the whole list every call. Exactly ONE item is in_progress at a time: mark it in_progress as you start it and completed the moment it is done; never batch completions at the end. Never mark an item completed while tests fail, the work is partial, or an error is unresolved: keep it in_progress and add an item for the blocker. Items are specific and actionable; remove ones no longer relevant. Not available while planning — submit a plan with ExitPlanMode.",
             json!({
                 "type": "object",
                 "properties": {
                     "plan_text": {
                         "type": "string",
-                        "description": "Detailed markdown plan text with implementation steps, file paths, and code snippets. If omitted, existing plan_text is preserved."
+                        "description": "Replacement markdown for the approved plan. Rarely needed; if omitted, the existing plan_text is kept."
                     },
                     "items": {
                         "type": "array",
@@ -111,10 +111,17 @@ fn plan_mode_schemas() -> impl Iterator<Item = Value> {
                             "type": "object",
                             "properties": {
                                 "id": {"type": "string"},
-                                "title": {"type": "string"},
+                                "title": {
+                                    "type": "string",
+                                    "description": "Imperative form: \"Run tests\""
+                                },
                                 "status": {
                                     "type": "string",
                                     "enum": ["pending", "in_progress", "completed"]
+                                },
+                                "active_form": {
+                                    "type": "string",
+                                    "description": "Present-progressive form shown while in progress: \"Running tests\""
                                 }
                             },
                             "required": ["id", "title", "status"]

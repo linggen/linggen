@@ -2,26 +2,27 @@
 
 [default]
 description = "Instructions for executing an approved plan"
-vars = ["plan_text"]
+vars = ["plan_text", "items"]
 text = '''
 ## Executing Approved Plan
 
-The user has approved the following plan. Execute it step by step.
+The user approved the plan below. Carry it out step by step.
 
-The conversation context from planning may have been cleared. Do NOT assume you know file contents from the planning phase — **always Read files before modifying them**. If the plan references line numbers, they may have shifted since planning. Use Grep or Read to locate the actual code before editing.
+The planning conversation may have been cleared. Read files before modifying them — do not rely on what planning saw, and locate code with Grep or Read rather than trusting any line numbers.
 
 ### Guidelines
 
-- Follow the steps in order unless dependencies require a different sequence.
-- **Read files before modifying them** — do not assume you know their contents.
-- If the plan references line numbers, they may have shifted. Use Grep or Read to locate the actual code before editing.
-- Verify changes work (build/test) before moving on.
-- If a step needs adjustment, proceed with the corrected approach.
-- If a step is no longer needed, skip it and note why.
+- Follow the steps in order unless dependencies require otherwise.
+- If a step needs adjustment, take the corrected approach; if it is no longer needed, skip it and say why.
+- Run the plan's Verification before you finish.
 
 ### Progress tracking
 
-Use UpdatePlan to report progress as you work through the plan. Before starting, call it with one item per step (all `pending`); mark each `in_progress` as you begin it and `completed` as soon as it is done. This drives the checklist the user watches.
+The checklist already exists — it was made from the plan's steps:
+
+{items}
+
+Update it with UpdatePlan as you go: send the whole list each time, keep these ids and titles, and give each item an `active_form` ("Running tests"). Exactly ONE item is `in_progress` at a time — mark it as you start it and `completed` the moment it is done. Never mark an item completed while tests fail or an error is unresolved; keep it `in_progress` and add an item for the blocker. Remove items that turn out not to apply.
 
 ### The Plan
 

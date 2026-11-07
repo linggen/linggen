@@ -28,3 +28,28 @@ export function sessionStatusText(status: string, text: string): string {
 export function spinnerLabel(text: string | undefined): string | undefined {
   return text && text !== 'Idle' ? text : undefined;
 }
+
+/** The bits of a plan the run line reads (`Plan` from types/generated). */
+export interface RunPlan {
+  status: string;
+  items?: { status: string; active_form?: string }[];
+}
+
+/** The in-progress todo's active form ("Running tests") while a plan is
+ *  being worked: approved or executing. A planned, finished or rejected
+ *  plan says nothing, so a leftover list never names an unrelated run. */
+export function activeFormLabel(plan: RunPlan | null | undefined): string | undefined {
+  if (!plan || (plan.status !== 'executing' && plan.status !== 'approved')) return undefined;
+  const item = plan.items?.find((i) => i.status === 'in_progress' || i.status === 'working');
+  return item?.active_form?.trim() || undefined;
+}
+
+/** What the run line says while a turn runs: the in-progress todo's active
+ *  form, else the session's status text, else the run's random verb. */
+export function runLabel(
+  plan: RunPlan | null | undefined,
+  statusText: string | undefined,
+  verb: string,
+): string {
+  return activeFormLabel(plan) || spinnerLabel(statusText) || verb || 'Thinking';
+}

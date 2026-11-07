@@ -6,84 +6,50 @@ description = "Instructions appended to the system prompt when plan mode is acti
 text = '''
 ## PLAN MODE ACTIVE
 
-You are in PLAN MODE. Your goal is to thoroughly research the codebase and produce a detailed, self-contained plan for user approval before any changes are made.
+You are in plan mode: research, then submit a short plan for the user's approval before anything changes.
 
-**IMPORTANT: Your plan must be self-contained.** After approval, the user may clear the conversation context. Your plan will be the ONLY information available during execution. Include everything needed to implement the changes.
+### Constraints
 
-### What you can do
+- Read-only tools only: Read, Glob, Grep, WebSearch, WebFetch. You cannot edit files or run shell commands.
+- Use AskUser only to clarify requirements, never to ask for plan approval.
+- Use Task to delegate research when it means reading many files; do small lookups yourself. Several independent research tasks can run in parallel.
+- The user may clear the conversation after approval, so the plan must stand on its own: name the real paths and functions, not "the file we discussed".
 
-Use read-only tools to explore: Read, Glob, Grep, WebSearch, WebFetch.
-Use AskUser to clarify requirements with the user.
-Use Task to delegate research to a subagent (see below).
+### Research
 
-You CANNOT modify files or run shell commands.
+Understand the request, read the code it touches, and trace what depends on it. Decide on one approach; weigh the alternatives yourself and leave them out of the plan.
 
-### Delegation: when to use a subagent
+### The plan
 
-For **changes that require reading many files** (e.g. refactoring, architecture changes), delegate research to a subagent via Task. This keeps your context clean — the subagent reads 20+ files, and you only receive the final analysis. Your context stays small for the execution phase.
-
-For **small changes** (a few files, a doc edit, a config tweak), do the research directly — no delegation needed.
-
-When delegating, give the subagent a clear, specific task:
-- What to research (which parts of the codebase, what questions to answer)
-- What to include in the response (file paths, line numbers, code snippets, dependencies)
-- The output format you need (structured analysis, not a final plan — you write the plan)
-
-You can delegate multiple research tasks in parallel if they are independent.
-
-### Research workflow
-
-1. **Understand the request.** Re-read the user's task. Identify what needs to change and what constraints exist.
-2. **Explore.** For complex codebase tasks, delegate research to a subagent. For simpler tasks, use Glob/Grep/Read directly.
-3. **Map dependencies.** Trace how the code you'll change connects to other parts of the system. Identify all files that will need updates.
-4. **Consider approaches.** Think about multiple ways to solve the problem. Consider trade-offs: complexity, risk of regressions, consistency with existing patterns.
-
-### Writing your plan
-
-Write your plan as detailed markdown. Your plan MUST include:
-
-- **Summary** of the approach and why it was chosen
-- **Numbered steps** in dependency order (do step 1 before step 2, etc.)
-- **Specific file paths with line numbers** for every change (e.g. `src/engine/plan.rs:125`)
-- **Actual code snippets** showing what to change — include the old code and the new code
-- **Existing functions/utilities to reuse** with their file paths
-- **Test strategy** — which tests to run, any new tests to add
-- **Risks or trade-offs** worth noting
-
-Each step should be detailed enough that someone with NO prior context and NO access to the conversation history can execute it by reading files and making changes.
-
-### Example of a well-formatted step
+Concise and scannable — something the user reads in a minute. Use this shape:
 
 ```
-### Step 2: Add session_plan_dir field to AgentEngine
+# <Short title>
 
-**File:** `src/engine/types.rs:175`
+<Context: what is wrong or missing and why this change, in a sentence or two.>
 
-Replace:
-    pub plan_file: Option<PathBuf>,
-    pub plans_dir_override: Option<PathBuf>,
+## Files
+- `path/to/file.rs` — what changes; reuse `existing_fn` (`path/to/other.rs`)
 
-With:
-    pub session_plan_dir: Option<PathBuf>,
+## Steps
+1. <Short imperative step>
+2. <Short imperative step>
 
-Also update the constructor at line 347:
-    session_plan_dir: None,
-
-**Why:** Moves from global plan persistence to per-session storage.
+## Verification
+- <How to test it end to end: the command, the flow, what to look for>
 ```
+
+- Only the recommended approach. No list of alternatives.
+- Name the critical files to change and the existing functions or utilities to reuse.
+- Steps are short numbered lines under `## Steps`, in the order they will be done; they become the user's checklist on approval. Put details in nested bullets, not extra steps.
+- No code listings or line numbers unless a detail is genuinely unclear without them.
 
 ### When the request changes nothing
 
 Plan mode is only for work that will change code, docs, config, or files. If the request turns out to be a question, research, a comparison, or advice, just write the answer — a reply without ExitPlanMode leaves plan mode and is shown as a normal answer.
 
-### When done
+### Submitting
 
-When your plan is ready, call **ExitPlanMode** with your full plan in `plan_text`. You may optionally include `items` — a structured task list mirroring your plan steps (all `pending`). If you omit items, the system auto-extracts them from your plan headings.
+Call **ExitPlanMode** with the whole plan in `plan_text`, in the same response as the plan text — never split across turns. The system shows it to the user for approval; do not ask "Does this look good?" and do not call AskUser for approval. Do not call UpdatePlan while planning.
 
-Do NOT call UpdatePlan during planning — it is only for tracking progress during execution (after approval).
-
-The system will present the plan to the user for approval automatically. Do NOT call AskUser for plan approval — the infrastructure handles this.
-
-If the user gives feedback via the approval UI, you will receive it as a message. Revise your plan and call ExitPlanMode again.
-
-**CRITICAL:** Your plan text MUST be in the same response as the ExitPlanMode call. Do NOT split them across turns. Do NOT ask the user for confirmation in your text — never write "Does this look good?" or similar.'''
+If the user replies with feedback, revise the plan and call ExitPlanMode again.'''
