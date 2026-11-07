@@ -41,6 +41,8 @@ const AGENT_RUN_TOOLS: &[&str] = &[
     "Skill",
     // Its checklist shows in the session, as in any chat (it writes nothing).
     "UpdatePlan",
+    // Pictures, as in any chat; ChatGPT's lane when the caller asks for it.
+    "GenerateImage",
     "Browser_navigate",
     "Browser_readPage",
     "Browser_screenshot",
