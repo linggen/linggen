@@ -225,3 +225,17 @@ test("a finished run's call with no saved match is over: failed, never running",
   const out = absorbRows(ended, [row('a', 'Timed out.', [])]);
   assert.deepEqual(out.content?.map((b) => b.status), ['failed', undefined]);
 });
+
+test("rows read mid-run never undo a call the bubble heard end", () => {
+  // Away and back mid-run: the rows loaded then still say the Bash runs;
+  // its done update came after, and the run ended.
+  const ended = bubble('a', [call('Bash', 'done'), words('Slept well.')], { isGenerating: false });
+  const out = absorbRows(ended, [row('a', 'Slept well.', [call('Bash', 'running', 's0')])]);
+  assert.deepEqual(out.content?.map((b) => b.status), ['done', undefined]);
+});
+
+test("a call settled failed at the turn's end takes the done its rows saved", () => {
+  const ended = bubble('a', [call('Bash', 'failed'), words('Slept well.')], { isGenerating: false });
+  const out = absorbRows(ended, [row('a', 'Slept well.', [call('Bash', 'done', 's0')])]);
+  assert.deepEqual(out.content?.map((b) => b.status), ['done', undefined]);
+});

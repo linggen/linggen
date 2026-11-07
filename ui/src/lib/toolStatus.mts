@@ -58,7 +58,10 @@ const callsOf = (blocks: readonly ContentBlock[]) => blocks.filter((b) => b.type
 
 /** A finished bubble's calls, each with the status the run's saved rows
  *  give it when the rows hold the same calls in the same order (an update
- *  the page missed cost it nothing); otherwise as `endedCalls` leaves them. */
+ *  the page missed cost it nothing); otherwise as `endedCalls` leaves them.
+ *  Only a saved end (done / failed) counts: rows read mid-run (a switch back
+ *  to the session) still say `running` for a call that ended since, and
+ *  know less than the bubble. */
 export function callsFromRows(
   blocks: ContentBlock[] | undefined,
   rowBlocks: readonly ContentBlock[],
@@ -71,7 +74,7 @@ export function callsFromRows(
   const out = (blocks || []).map((b) => {
     if (b.type !== 'tool_use') return b;
     const status = saved[i++].status;
-    return status && status !== b.status ? { ...b, status } : b;
+    return status && status !== 'running' && status !== b.status ? { ...b, status } : b;
   });
   return endedCalls(out);
 }

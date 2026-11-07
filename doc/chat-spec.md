@@ -318,7 +318,9 @@ A session is a single conversation thread scoped to a project. Each session has 
   (which may end in silence) get none (`server/chat/run_calls.rs`). A call
   whose result never came back is `failed`. Live, too: a run's end settles the blocks it
   left open as `failed` (`engine/run_scope.rs` `OpenCalls`), and a bubble
-  whose turn ended shows no call running (`toolStatus.mts` `endedCalls`). Every history row a run wrote,
+  whose turn ended shows no call running (`toolStatus.mts` `endedCalls`); a
+  saved end (done / failed) beats that guess, a saved `running` (rows read
+  mid-run) never does (`callsFromRows`). Every history row a run wrote,
   the interrupted row too, carries the run's `run_id`; live, the row binds to
   that run's bubble by it (§ Runs).
 - **Engine prompts are never a user bubble**: a prompt the engine writes to an
