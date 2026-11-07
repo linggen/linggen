@@ -47,7 +47,7 @@ function Thumb({ image }: { image: string }) {
   return (
     <>
       <button type="button" onClick={() => setOpen(true)} className="p-0 border-0 bg-transparent cursor-zoom-in" title="Open">
-        <img src={src} alt="" className="h-16 max-w-[8rem] object-cover rounded border border-slate-200 dark:border-white/10" />
+        <img src={src} alt="" className="h-16 max-w-[8rem] object-contain rounded border border-slate-200 dark:border-white/10" />
       </button>
       {open && <Lightbox src={src} onClose={() => setOpen(false)} />}
     </>

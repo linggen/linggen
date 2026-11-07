@@ -23,7 +23,7 @@ const InlinePicture: React.FC<{ id: string; answer: AnswerRef }> = ({ id, answer
   return (
     <>
       <button type="button" onClick={() => setOpen(true)} data-answer-ref={id} title={caption || 'Open'} className="inline-block align-text-bottom mx-0.5 p-0 border-0 bg-transparent cursor-zoom-in">
-        <img src={src} alt={caption} className="h-5 w-7 object-cover rounded-sm border border-slate-200 dark:border-white/10" />
+        <img src={src} alt={caption} className="h-5 w-7 object-contain bg-slate-100 dark:bg-white/5 rounded-sm border border-slate-200 dark:border-white/10" />
       </button>
       {open && <Lightbox src={src} caption={caption} href={answer.page || answer.url || undefined} onClose={() => setOpen(false)} />}
     </>
@@ -36,7 +36,7 @@ const InlineVideo: React.FC<{ id: string; answer: AnswerRef }> = ({ id, answer }
   if (!src) return null;
   return (
     <a href={answer.url} target="_blank" rel="noopener noreferrer" data-answer-ref={id} title={answer.title || 'Video'} className="relative inline-block align-text-bottom mx-0.5 no-underline">
-      <img src={src} alt={answer.title || ''} className="h-5 w-8 object-cover rounded-sm border border-slate-200 dark:border-white/10" />
+      <img src={src} alt={answer.title || ''} className="h-5 w-8 object-contain bg-slate-100 dark:bg-white/5 rounded-sm border border-slate-200 dark:border-white/10" />
       <span className="absolute inset-0 flex items-center justify-center text-[9px] text-white drop-shadow">▶</span>
     </a>
   );
@@ -77,7 +77,7 @@ const Picture: React.FC<{ id: string; answer: AnswerRef }> = ({ id, answer }) =>
   return (
     <figure className="m-0 flex flex-col gap-1 min-w-0" data-answer-ref={id}>
       <button type="button" onClick={() => setOpen(true)} className="p-0 border-0 bg-transparent cursor-zoom-in" title={caption || 'Open'}>
-        <img src={src} alt={caption} loading="lazy" className="w-full h-32 object-cover rounded border border-slate-200 dark:border-white/10" />
+        <img src={src} alt={caption} loading="lazy" className="w-full h-32 object-contain bg-slate-100 dark:bg-white/5 rounded border border-slate-200 dark:border-white/10" />
       </button>
       {caption && <figcaption className="text-[11px] leading-4 text-slate-500 dark:text-slate-400 line-clamp-2">{caption}</figcaption>}
       {answer.page && <PageLink page={answer.page} title={answer.title} />}
@@ -106,7 +106,7 @@ const Video: React.FC<{ id: string; answer: AnswerRef }> = ({ id, answer }) => {
         />
       ) : (
         <button type="button" onClick={play} className="relative p-0 border-0 bg-transparent cursor-pointer" title={answer.title || 'Play'}>
-          <img src={src} alt={answer.title || ''} loading="lazy" className="w-full h-32 object-cover rounded border border-slate-200 dark:border-white/10" />
+          <img src={src} alt={answer.title || ''} loading="lazy" className="w-full h-32 object-contain bg-slate-100 dark:bg-white/5 rounded border border-slate-200 dark:border-white/10" />
           <span className="absolute inset-0 flex items-center justify-center">
             <span className="w-10 h-10 rounded-full bg-black/60 text-white flex items-center justify-center text-sm">▶</span>
           </span>
