@@ -102,7 +102,25 @@ fi
 if [ "$(ver_of "$MEM")" != "$MEM_VERSION" ] || [ "$(sha "$MEM")" != "$MEM_SHA" ]; then
   if "$MEM" upgrade --help 2>/dev/null | grep -q -- '--rollback'; then
     LINGGEN_RELEASE_BASE="$GOOD" "$MEM" upgrade --yes >"$OUT/mem-upgrade.log" 2>&1
-    check "ling-mem upgrade --yes (from $PREV_MEM)" $? "$(tail -3 "$OUT/mem-upgrade.log")"
+    rc=$?
+    # ling-mem 1.9.1 and earlier give the daemon 10 s to exit after SIGTERM
+    # and never escalate; a daemon with a warm embedder (the engine pre-warms
+    # it since 2.0) outlives that on its way out, and the old updater gives up
+    # before the swap. A user re-runs install.sh, so the gate does too; its
+    # install-bin.sh restarts the daemon with the release's `ling-mem
+    # restart`, which escalates to SIGKILL.
+    if [ $rc != 0 ] && grep -q 'did not exit within' "$OUT/mem-upgrade.log"; then
+      gap "ling-mem upgrade --yes (from $PREV_MEM)" "the old binary's stop waits 10 s for SIGTERM and never escalates — the daemon outlived it; upgraded by re-running install.sh"
+      hung="$(sed -nE 's/.*daemon \(pid ([0-9]+)\) did not exit.*/\1/p' "$OUT/mem-upgrade.log" | head -n1)"
+      if [ -n "$hung" ] && kill -0 "$hung" 2>/dev/null; then
+        sample "$hung" 2 -file "$OUT/mem-exit-sample.txt" >/dev/null 2>&1 \
+          && info "ling-mem $PREV_MEM: where the exiting daemon hung" "pid $hung — mem-exit-sample.txt"
+      fi
+      curl -fsSL "$GOOD/install.sh" | LINGGEN_RELEASE_BASE="$GOOD" bash >"$OUT/install-mem.log" 2>&1
+      check "install.sh after the old ling-mem upgrade gave up" $? "$(tail -3 "$OUT/install-mem.log")"
+    else
+      check "ling-mem upgrade --yes (from $PREV_MEM)" $rc "$(tail -3 "$OUT/mem-upgrade.log")"
+    fi
   else
     gap "ling-mem upgrade --yes (from $PREV_MEM)" "the old binary predates LINGGEN_RELEASE_BASE — upgraded with install-bin.sh"
     curl -fsSL "$GOOD/install-bin.sh" | LINGGEN_RELEASE_BASE="$GOOD" bash -s -- --version "^${MEM_VERSION%%.*}" >"$OUT/install-bin.log" 2>&1
@@ -114,6 +132,7 @@ fi
 check_installed "upgrade: ling-mem is the release" "$MEM" "$MEM_VERSION" "$MEM_SHA"
 
 # ── The upgraded engine on the old home ────────────────────────────────────
+mem_health 30
 v="$(mem_version)"; new_pid="$(listener_pid 9528)"
 if [ "$(sha "$OUT/ling-mem.old")" = "$MEM_SHA" ]; then
   gap "upgrade: 9528 restarted on the new ling-mem" "the baseline already runs these bytes (v$PREV_MEM) — nothing to swap"
