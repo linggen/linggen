@@ -321,7 +321,16 @@ async fn tell_in_place(
             return;
         }
     };
-    let _turn = place.await;
+    // A restart's own continue turn (`mark`) is never held back; any other
+    // notice still waiting for its place when a restart freezes is kept in
+    // its plan instead.
+    let (_turn, gate) = match &mark {
+        Some(_) => (place.await, None),
+        None => match place_or_plan(&state, place, (&session, &agent, &notice, &sender)).await {
+            Some((turn, gate)) => (turn, Some(gate)),
+            None => return,
+        },
+    };
     // A plan proposed while this waited for its turn holds it too.
     let Some(notice) = state
         .manager
@@ -364,6 +373,7 @@ async fn tell_in_place(
             .await;
         }
     }
+    drop(gate);
     let mut engine = engine.lock().await;
     engine.set_parent_agent(None);
     engine.last_assistant_text = None;
@@ -382,6 +392,55 @@ async fn tell_in_place(
         silence_ok: false,
     };
     super::chat::run_session_turn(&ctx, &mut engine, &state.manager, None).await;
+}
+
+/// `place` in the session's turn line, with the admission gate to hold
+/// until the notice is kept; `None` when a restart kept it in its plan
+/// meanwhile (or could not, which is logged).
+async fn place_or_plan(
+    state: &std::sync::Arc<super::ServerState>,
+    place: super::chat::helpers::TurnPlace,
+    (session, agent, notice, sender): (&str, &str, &str, &str),
+) -> Option<(tokio::sync::OwnedMutexGuard<()>, super::admission::Gate)> {
+    let incoming = super::admission::Incoming {
+        session,
+        agent,
+        text: notice,
+        images: &[],
+        sender: Some(sender),
+    };
+    let again = || {
+        resend_notice(
+            state.clone(),
+            session.into(),
+            agent.into(),
+            notice.into(),
+            sender.into(),
+        )
+    };
+    match super::admission::admit_in_line(&state.admission, place, incoming, again).await {
+        Ok(held) => held,
+        Err(error) => {
+            tracing::error!("[tasks] {agent} in {session} not told: {error}");
+            None
+        }
+    }
+}
+
+/// A notice kept in a restart's plan, told again as it came if this engine
+/// outlives the restart.
+fn resend_notice(
+    state: std::sync::Arc<super::ServerState>,
+    session: String,
+    agent: String,
+    notice: String,
+    sender: String,
+) -> super::admission::Resend {
+    Box::new(move || {
+        Box::pin(async move {
+            tokio::spawn(tell_from(state, session, agent, notice, sender));
+        })
+    })
 }
 
 /// Push the session's list to its surfaces.

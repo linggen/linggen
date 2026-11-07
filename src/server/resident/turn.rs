@@ -143,6 +143,7 @@ fn her_root() -> std::path::PathBuf {
 }
 
 /// Where one of her turns runs.
+#[derive(Clone)]
 struct Turn {
     session_id: String,
     root: std::path::PathBuf,
@@ -184,12 +185,12 @@ async fn run_at(
     // "running" row per message — the stop button could pick the outer one,
     // which the engine never checks (seen 2026-09-24: yinyue01 + yinyue02).
     let spoken = {
-        let _held = state.manager.session_turn(session_id).lock_owned().await;
-        let mut engine = agent.lock().await;
+        // Past a restart's snapshot her turn waits in its plan instead.
+        let (_held, gate) = her_place(state, turn, &task, trigger_source).await?;
         // Persist the incoming message to the session store so it survives
         // reload and every member's thread holds it. (The turn core only
-        // mirrors it into in-memory history.) Inside the lock: two wakes
-        // racing keep each kickoff next to its own turn.
+        // mirrors it into in-memory history.) Inside the turn lock: two
+        // wakes racing keep each kickoff next to its own turn.
         crate::server::chat::helpers::persist_message_only(
             &state.manager,
             root,
@@ -202,6 +203,8 @@ async fn run_at(
             None,
         )
         .await;
+        drop(gate);
+        let mut engine = agent.lock().await;
         // Loop-break: if this turn was woken by an agent_chat, mark the session so
         // the agent_chat tool refuses to relay onward (one hop; user re-arms).
         // Mark/clear INSIDE the lock so the flag's lifetime matches exactly the
@@ -255,6 +258,63 @@ async fn run_at(
     spoken
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
+}
+
+/// Her place in the session's turn line, with the admission gate to hold
+/// until her kickoff is kept; `None` when a restart kept it in its plan
+/// meanwhile (or could not, which is logged).
+async fn her_place(
+    state: &Arc<ServerState>,
+    turn: &Turn,
+    task: &str,
+    trigger_source: &str,
+) -> Option<(
+    tokio::sync::OwnedMutexGuard<()>,
+    crate::server::admission::Gate,
+)> {
+    let place = state.manager.session_turn(&turn.session_id).lock_owned();
+    let incoming = crate::server::admission::Incoming {
+        session: &turn.session_id,
+        agent: YINYUE_AGENT,
+        text: task,
+        images: &[],
+        sender: (trigger_source != "user").then_some("system"),
+    };
+    let again = || {
+        resend_hers(
+            state.clone(),
+            turn.clone(),
+            task.to_string(),
+            trigger_source.to_string(),
+        )
+    };
+    match crate::server::admission::admit_in_line(&state.admission, place, incoming, again).await {
+        Ok(held) => held,
+        Err(error) => {
+            tracing::error!("[yinyue] turn in {} not kept: {error}", turn.session_id);
+            None
+        }
+    }
+}
+
+/// Her turn kept in a restart's plan, run again as it came — her line
+/// spoken — if this engine outlives the restart.
+fn resend_hers(
+    state: Arc<ServerState>,
+    turn: Turn,
+    task: String,
+    trigger_source: String,
+) -> crate::server::admission::Resend {
+    Box::new(move || {
+        Box::pin(async move {
+            tokio::spawn(async move {
+                let pet = state.manager.get_config_snapshot().await.pet;
+                if let Some(reply) = run_at(&state, &turn, &pet, task, &trigger_source).await {
+                    super::speak_reply(&state, &reply);
+                }
+            });
+        })
+    })
 }
 
 /// Whether the session at this table belongs to a skill or a mission — not a

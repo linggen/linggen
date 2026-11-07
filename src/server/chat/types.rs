@@ -4,7 +4,7 @@ pub(super) fn default_user_type() -> String {
     "owner".to_string()
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub(crate) struct ChatRequest {
     pub(crate) project_root: String,
     /// The member this message is for. Empty: whoever the session's

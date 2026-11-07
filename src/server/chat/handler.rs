@@ -968,9 +968,9 @@ pub(super) fn turn_creator(
 pub(crate) enum TurnOrigin {
     /// Someone sent it — the user at a surface, or an agent relayed in.
     Person,
-    /// A message the person had queued when the engine restarted, sent
-    /// again (`restart::spawn_resume`). It stamps no presence and waits
-    /// behind the turn the restart continues, never interrupting it.
+    /// A message kept in a restart's plan, sent again by an engine that
+    /// outlived the restart (`admission::thaw`). It stamps no presence and
+    /// waits behind the turn running, never interrupting it.
     Resumed,
 }
 
@@ -1061,6 +1061,24 @@ async fn refusal(
     super::presence::absent_in_session(&state.manager, session_id, target)
         .await
         .then_some("absent")
+}
+
+/// A message kept in a restart's plan, sent again as it came to `session`
+/// and `agent` if this engine outlives the restart.
+pub(crate) fn resend_chat(
+    state: Arc<ServerState>,
+    req: &ChatRequest,
+    session: &str,
+    agent: &str,
+) -> crate::server::admission::Resend {
+    let mut req = req.clone();
+    req.session_id = Some(session.to_string());
+    req.agent_id = agent.to_string();
+    Box::new(move || {
+        Box::pin(async move {
+            start_turn(state, req, TurnOrigin::Resumed).await;
+        })
+    })
 }
 
 pub(crate) async fn start_turn(
@@ -1175,14 +1193,15 @@ pub(crate) async fn start_turn(
     // One agent speaks at a time in a session: a turn already running
     // there — anyone's — holds the session's turn lock.
     // Past a restart's snapshot the message waits in its plan instead.
-    let gate = match crate::server::restart::admit(
-        &state.admission,
-        &effective_session_id,
-        &target_id,
-        (&req.message, &req.images),
-    )
-    .await
-    {
+    let incoming = crate::server::admission::Incoming {
+        session: &effective_session_id,
+        agent: &target_id,
+        text: &req.message,
+        images: &req.images,
+        sender: None,
+    };
+    let again = || resend_chat(state.clone(), &req, &effective_session_id, &target_id);
+    let gate = match crate::server::admission::admit(&state.admission, incoming, again).await {
         Ok(Some(gate)) => gate,
         Ok(None) => {
             return Json(serde_json::json!({

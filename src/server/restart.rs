@@ -45,61 +45,13 @@ fn plan_file() -> PathBuf {
 
 /// Keep the plan whole: a torn plan would not parse, and its sessions and
 /// queues would be lost with it.
-fn write_plan(path: &std::path::Path, plan: &Value) -> std::io::Result<()> {
+pub(super) fn write_plan(path: &std::path::Path, plan: &Value) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
     let staged = path.with_extension("json.new");
     std::fs::write(&staged, plan.to_string())?;
     std::fs::rename(&staged, path)
-}
-
-/// Who admits a person's message (`ServerState::admission`). The restart
-/// snapshot holds it while it reads the turns and queues, so no message is
-/// half admitted then; once the plan is kept (`frozen`), every new message
-/// joins the plan's queue instead of a turn the restart would end.
-#[derive(Default)]
-pub(crate) struct Admission {
-    frozen: Option<PathBuf>,
-}
-
-/// Admit a message to `agent` in `session`. `Ok(Some(gate))`: it goes on;
-/// hold the gate until it is queued or kept in the transcript. `Ok(None)`:
-/// a restart is under way and the message was kept in its plan.
-pub(crate) async fn admit(
-    admission: &Arc<tokio::sync::Mutex<Admission>>,
-    session: &str,
-    agent: &str,
-    (text, images): (&str, &[String]),
-) -> Result<Option<tokio::sync::OwnedMutexGuard<Admission>>, String> {
-    let gate = admission.clone().lock_owned().await;
-    let Some(path) = gate.frozen.as_deref() else {
-        return Ok(Some(gate));
-    };
-    keep_in_plan(
-        path,
-        session,
-        json!({"text": text, "images": images, "agent_id": agent}),
-    )
-    .map_err(|error| format!("Could not keep the message for after the restart: {error}"))?;
-    Ok(None)
-}
-
-/// Add one message to `session`'s queue in the plan, after the ones there:
-/// a session with no entry gets a queue-only one.
-fn keep_in_plan(path: &std::path::Path, session: &str, item: Value) -> std::io::Result<()> {
-    let mut plan: Value = serde_json::from_slice(&std::fs::read(path)?)?;
-    let sessions = plan["sessions"]
-        .as_array_mut()
-        .ok_or(std::io::ErrorKind::InvalidData)?;
-    match sessions.iter_mut().find(|s| s["session_id"] == session) {
-        Some(entry) => match entry["queued"].as_array_mut() {
-            Some(queued) => queued.push(item),
-            None => entry["queued"] = json!([item]),
-        },
-        None => sessions.push(json!({"session_id": session, "queued": [item]})),
-    }
-    write_plan(path, &plan)
 }
 
 #[derive(serde::Deserialize)]
@@ -393,16 +345,17 @@ async fn perform_restart(
         let _ = std::fs::remove_file(&path);
         return (StatusCode::INTERNAL_SERVER_ERROR, format!("{error:#}")).into_response();
     }
-    // From here every new message joins the plan's queue (`admit`).
-    admission.frozen = Some(path);
+    // From here every new message joins the plan's queue (`admission`).
+    super::admission::freeze(&mut admission, path);
     drop(admission);
-    // Keep the lock while the helper takes over. If the helper fails before
-    // stopping this process, release it so the owner can retry.
-    let admission = state.admission.clone();
+    // Keep the queue frozen while the helper takes over. If it never stops
+    // this process, this engine goes on as it was.
+    let outlived = (state.clone(), plan.clone(), caller.clone());
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_secs(180)).await;
-        admission.lock().await.frozen = None;
-        drop(queue_guard);
+        let requested = outlived.1["requested_at"].as_u64().unwrap_or(0);
+        let outcome =
+            helper_outcome(&crate::cli::restart::status_file(), requested, TAKEOVER).await;
+        go_on(outlived, outcome, queue_guard).await;
         drop(guard);
     });
     tracing::info!(
@@ -415,23 +368,101 @@ async fn perform_restart(
         .into_response()
 }
 
-/// What an interrupted session is told when it continues.
-pub(crate) fn continue_message(plan: &Value, session: &Value, outcome: Option<&Value>) -> String {
+/// Longest the helper may take to stop this engine.
+const TAKEOVER: Duration = Duration::from_secs(180);
+
+/// How the helper said the restart asked for at `requested` went, once it
+/// has: `None` after `wait`. Status from before the request is not its.
+async fn helper_outcome(status: &std::path::Path, requested: u64, wait: Duration) -> Option<Value> {
+    let deadline = Instant::now() + wait;
+    loop {
+        let said = std::fs::read(status)
+            .ok()
+            .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+            .filter(|s| s["at"].as_u64().unwrap_or(0) >= requested);
+        if said.is_some() || Instant::now() >= deadline {
+            return said;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+}
+
+/// The helper is done, or gave up, and this engine is still running: it
+/// never stopped it (the swap failed before that, or the helper died). The
+/// plan goes, what waited in it is sent as it came, and the caller hears.
+async fn go_on(
+    (state, plan, caller): (Arc<ServerState>, Value, Option<String>),
+    outcome: Option<Value>,
+    queue_guard: tokio::sync::OwnedMutexGuard<HashMap<String, Vec<QueuedChatItem>>>,
+) {
+    tracing::error!("[restart] the helper did not stop this engine ({outcome:?}); going on");
+    let late = super::admission::thaw(&state.admission).await;
+    drop(queue_guard);
+    for resend in late {
+        resend().await;
+    }
+    let Some(sid) = caller else {
+        return;
+    };
+    let Some(meta) = state
+        .manager
+        .global_sessions
+        .get_session_meta(&sid)
+        .ok()
+        .flatten()
+    else {
+        return;
+    };
+    let message = not_restarted_message(&plan, outcome.as_ref());
+    if meta.runtime.is_linggen() {
+        let agent = plan["sessions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|s| s["session_id"] == sid.as_str())
+            .and_then(|s| s["agent_id"].as_str())
+            .unwrap_or("ling")
+            .to_string();
+        tokio::spawn(super::tasks::tell(state.clone(), sid, agent, message));
+    } else {
+        super::claude::start_task(state.clone(), sid, message, "system".into()).await;
+    }
+}
+
+/// What the caller is told when the engine it asked to restart never stopped.
+fn not_restarted_message(plan: &Value, outcome: Option<&Value>) -> String {
     let from = plan["from_version"].as_str().unwrap_or("?");
-    let to = plan["to_version"].as_str().unwrap_or("a new build");
-    let how = match outcome.and_then(|o| o["state"].as_str()) {
+    let how = match outcome {
+        Some(_) => how_it_went(plan, outcome),
+        None => "the helper did not take over in time".to_string(),
+    };
+    format!(
+        "The restart you asked for did not happen ({how}). This engine kept running {from} and \
+         nothing was interrupted; messages sent meanwhile were delivered now. Check the build \
+         before trying again."
+    )
+}
+
+/// How the helper said the swap went, in the words a continue turn uses.
+fn how_it_went(plan: &Value, outcome: Option<&Value>) -> String {
+    let detail = || outcome.and_then(|o| o["detail"].as_str()).unwrap_or("");
+    match outcome.and_then(|o| o["state"].as_str()) {
         Some("ok") if plan["current"] == true => "the current engine is up and healthy".to_string(),
         Some("ok") => "the new build is up and healthy".to_string(),
         Some("rolled_back") => format!(
             "the new build did not come up, so the previous one was restored: {}",
-            outcome.and_then(|o| o["detail"].as_str()).unwrap_or("")
+            detail()
         ),
-        Some(_) => format!(
-            "the swap failed: {}",
-            outcome.and_then(|o| o["detail"].as_str()).unwrap_or("")
-        ),
+        Some(_) => format!("the swap failed: {}", detail()),
         None => "how the swap went is not known".to_string(),
-    };
+    }
+}
+
+/// What an interrupted session is told when it continues.
+pub(crate) fn continue_message(plan: &Value, session: &Value, outcome: Option<&Value>) -> String {
+    let from = plan["from_version"].as_str().unwrap_or("?");
+    let to = plan["to_version"].as_str().unwrap_or("a new build");
+    let how = how_it_went(plan, outcome);
     let who = if session["caller"] == true {
         "You asked for this restart, and your turn ended with it."
     } else if session["turn_interrupted"] == false {
@@ -473,27 +504,32 @@ pub(crate) fn continue_message(plan: &Value, session: &Value, outcome: Option<&V
     )
 }
 
-/// Reject malformed plans rather than silently dropping queued content.
-fn safe_to_resume(plan: &Value) -> bool {
-    plan["sessions"].as_array().is_some_and(|sessions| {
-        sessions.iter().all(|session| {
-            session["session_id"]
-                .as_str()
-                .is_some_and(|id| !id.is_empty())
-                && (session.get("queued").is_none()
-                    || session["queued"].as_array().is_some_and(|items| {
-                        items.iter().all(|item| {
-                            item["text"].is_string()
-                                && item.get("images").is_none_or(|images| {
-                                    images
-                                        .as_array()
-                                        .is_some_and(|a| a.iter().all(Value::is_string))
-                                })
-                        })
-                    }))
-        })
-    })
+/// Whether a session's entry can be continued: it names its session, and
+/// its queue (if any) is readable text and picture paths.
+fn session_readable(session: &Value) -> bool {
+    let item_readable = |item: &Value| {
+        item["text"].is_string()
+            && item.get("images").is_none_or(|images| {
+                images
+                    .as_array()
+                    .is_some_and(|a| a.iter().all(Value::is_string))
+            })
+    };
+    session["session_id"]
+        .as_str()
+        .is_some_and(|id| !id.is_empty())
+        && (session.get("queued").is_none()
+            || session["queued"]
+                .as_array()
+                .is_some_and(|items| items.iter().all(item_readable)))
 }
+
+/// How many times a continue turn that could not be kept is tried.
+const ATTEMPTS: usize = 3;
+/// The pause between those tries.
+const RETRY_GAP: Duration = Duration::from_secs(2);
+/// Longest a continue turn waits for its place before recovery ends.
+const DELIVERY_WAIT: Duration = Duration::from_secs(30 * 60);
 
 /// After a restart: once the helper has said how it went, every session in
 /// the plan continues with a turn of its own. At most once per plan.
@@ -506,163 +542,350 @@ pub(crate) fn spawn_resume(state: Arc<ServerState>) {
     };
     tokio::spawn(async move {
         let _guard = guard;
-        let path = plan_file();
-        let Some(plan) = std::fs::read(&path)
-            .ok()
-            .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
-        else {
-            return;
-        };
-        let requested = plan["requested_at"].as_u64().unwrap_or(0);
-        if crate::util::now_ts_secs().saturating_sub(requested) > STALE_SECS {
-            tracing::error!("[restart] recovery plan is stale; preserving it for manual recovery");
-            return;
-        }
-        if !safe_to_resume(&plan) {
-            tracing::error!("[restart] recovery plan contains invalid sessions or queued messages; preserving it for manual recovery");
-            return;
-        }
-        for session in plan["sessions"].as_array().unwrap() {
-            let sid = session["session_id"].as_str().unwrap();
-            if !matches!(
-                state.manager.global_sessions.get_session_meta(sid),
-                Ok(Some(_))
-            ) {
-                tracing::error!("[restart] session {sid} is unavailable; preserving recovery plan");
-                return;
-            }
-        }
-        // The helper writes how it went once this engine answers health. An
-        // engine it then rolls back never gets here, and leaves the plan for
-        // the one that replaces it.
-        let mut outcome = None;
-        for _ in 0..180 {
-            let status = std::fs::read(crate::cli::restart::status_file())
-                .ok()
-                .and_then(|b| serde_json::from_slice::<Value>(&b).ok());
-            if status
-                .as_ref()
-                .is_some_and(|s| s["at"].as_u64().unwrap_or(0) >= requested)
-            {
-                outcome = status;
-                break;
-            }
-            tokio::time::sleep(Duration::from_secs(1)).await;
-        }
-        // Keep each queued picture as a file before retiring the handoff. Both
-        // runtimes can inspect the same paths with their ordinary Read tool.
-        let mut readable = plan.clone();
-        for session in readable["sessions"].as_array_mut().unwrap() {
-            let sid = session["session_id"].as_str().unwrap().to_owned();
-            if let Some(items) = session["queued"].as_array_mut() {
-                for item in items {
-                    if let Some(images) = item["images"].as_array_mut() {
-                        for image in images {
-                            let sent = image.as_str().unwrap();
-                            let store = &state.manager.global_sessions;
-                            let name = store.keep_images(&sid, &[sent.to_owned()]).pop();
-                            let Some(file) = name.and_then(|n| store.image_path(&sid, &n)) else {
-                                tracing::error!("[restart] could not keep queued picture for {sid}; preserving recovery plan");
-                                return;
-                            };
-                            *image = Value::String(file.to_string_lossy().into_owned());
-                        }
-                    }
-                }
-            }
-        }
-        // Each continue turn is kept in its session's transcript under a mark
-        // of its own before the plan goes: a plan replayed after a crash or
-        // a second restart tells only those not told yet.
-        let mut deliveries = Vec::new();
-        for session in readable["sessions"].as_array().into_iter().flatten() {
-            let Some(sid) = session["session_id"].as_str() else {
-                continue;
-            };
-            let Some(meta) = state
-                .manager
-                .global_sessions
-                .get_session_meta(sid)
-                .ok()
-                .flatten()
-            else {
-                continue;
-            };
-            let agent = session["agent_id"]
-                .as_str()
-                .or_else(|| {
-                    session["queued"]
-                        .as_array()
-                        .and_then(|items| items.first())
-                        .and_then(|item| item["agent_id"].as_str())
-                })
-                .unwrap_or(if meta.runtime.is_linggen() {
-                    "ling"
-                } else {
-                    "claude"
-                });
-            let tasks: Vec<crate::engine::events::BackgroundTask> = session["tasks"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|value| serde_json::from_value(value.clone()).ok())
-                .collect();
-            restore_interrupted_tasks(&state.tasks, sid, &tasks);
-            if !tasks.is_empty() {
-                super::tasks::emit(&state, sid);
-            }
-            let mut owners = std::collections::BTreeSet::new();
-            owners.insert(agent.to_owned());
-            for task in &tasks {
-                if !task.child_owner {
-                    if let Some(owner) = &task.owner_agent {
-                        owners.insert(owner.clone());
-                    }
-                }
-            }
-            for owner in owners {
-                let mark = delivery_mark(requested, &owner);
-                if told(&state.manager.global_sessions, sid, &mark) {
-                    tracing::info!("[restart] {sid}/{owner} was already told");
-                    continue;
-                }
-                let mut scoped = session.clone();
-                scoped["tasks"] = Value::Array(
-                    session["tasks"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .filter(|task| {
-                            task.is_string() && owner == agent
-                                || task["owner_agent"].as_str() == Some(owner.as_str())
-                                    && task["child_owner"] != true
-                        })
-                        .cloned()
-                        .collect(),
-                );
-                if owner != agent {
-                    scoped["caller"] = json!(false);
-                    scoped["turn_interrupted"] = json!(false);
-                    scoped["queued"] = json!([]);
-                }
-                tracing::info!("[restart] {sid}/{owner} continues");
-                let message = continue_message(&plan, &scoped, outcome.as_ref());
-                deliveries.push(continue_session(
-                    state.clone(),
-                    meta.clone(),
-                    owner,
-                    message,
-                    mark,
-                ));
-            }
-        }
-        let delivered = futures_util::future::join_all(deliveries).await;
-        if delivered.iter().all(|told| *told) {
-            let _ = std::fs::remove_file(&path);
-        } else {
-            tracing::error!("[restart] a continue turn was not kept; preserving recovery plan");
-        }
+        resume(&state, &plan_file()).await;
     });
+}
+
+/// Run the plan at `path`. Every way out ends with the plan gone: each
+/// session continued, or kept in the record of what was not (`retire`), so
+/// a stuck plan never refuses later restarts.
+async fn resume(state: &Arc<ServerState>, path: &std::path::Path) {
+    let Ok(bytes) = std::fs::read(path) else {
+        return; // no restart to recover from
+    };
+    let Some(plan) = serde_json::from_slice::<Value>(&bytes)
+        .ok()
+        .filter(|p| p["sessions"].is_array())
+    else {
+        retire_unreadable(path, &bytes);
+        return;
+    };
+    let requested = plan["requested_at"].as_u64().unwrap_or(0);
+    let sessions = plan["sessions"].as_array().cloned().unwrap_or_default();
+    if crate::util::now_ts_secs().saturating_sub(requested) > STALE_SECS {
+        let left = sessions
+            .iter()
+            .map(|s| not_delivered(s, "the plan was stale"))
+            .collect();
+        retire(state, path, &plan, left);
+        return;
+    }
+    let (ready, mut left) = sort_sessions(state, sessions);
+    // The helper writes how it went once this engine answers health — a
+    // rolled-back engine too: the old build, started again, reads
+    // `rolled_back` here and continues every session at once. An engine the
+    // helper then stops never gets past this, and leaves the plan whole.
+    let outcome = helper_outcome(&crate::cli::restart::status_file(), requested, TAKEOVER).await;
+    let (readable, unkept) = keep_pictures(state, ready);
+    left.extend(unkept);
+    left.extend(deliver(state, &plan, readable, outcome.as_ref()).await);
+    retire(state, path, &plan, left);
+}
+
+/// A session's entry, kept for the record with why it was not continued.
+fn not_delivered(session: &Value, why: &str) -> Value {
+    let mut session = session.clone();
+    session["not_delivered"] = json!(why);
+    session
+}
+
+/// The sessions that can continue, and those that cannot (unreadable, or
+/// deleted since).
+fn sort_sessions(state: &ServerState, sessions: Vec<Value>) -> (Vec<Value>, Vec<Value>) {
+    let mut ready = Vec::new();
+    let mut left = Vec::new();
+    for session in sessions {
+        if !session_readable(&session) {
+            left.push(not_delivered(&session, "its entry was unreadable"));
+            continue;
+        }
+        let sid = session["session_id"].as_str().unwrap_or_default();
+        if !matches!(
+            state.manager.global_sessions.get_session_meta(sid),
+            Ok(Some(_))
+        ) {
+            left.push(not_delivered(&session, "the session was deleted"));
+            continue;
+        }
+        ready.push(session);
+    }
+    (ready, left)
+}
+
+/// Keep each queued picture as a file, its path in place of what was sent:
+/// both runtimes can inspect the same paths with their ordinary Read tool.
+/// A session whose picture cannot be kept is not continued.
+fn keep_pictures(state: &ServerState, sessions: Vec<Value>) -> (Vec<Value>, Vec<Value>) {
+    let mut readable = Vec::new();
+    let mut left = Vec::new();
+    for session in sessions {
+        match with_kept_pictures(state, &session) {
+            Some(kept) => readable.push(kept),
+            None => left.push(not_delivered(
+                &session,
+                "a queued picture could not be kept",
+            )),
+        }
+    }
+    (readable, left)
+}
+
+fn with_kept_pictures(state: &ServerState, session: &Value) -> Option<Value> {
+    let mut session = session.clone();
+    let sid = session["session_id"].as_str()?.to_owned();
+    let store = &state.manager.global_sessions;
+    let images = session["queued"]
+        .as_array_mut()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item["images"].as_array_mut());
+    for image in images.flatten() {
+        let name = store.keep_images(&sid, &[image.as_str()?.to_owned()]).pop();
+        let file = name.and_then(|n| store.image_path(&sid, &n))?;
+        *image = Value::String(file.to_string_lossy().into_owned());
+    }
+    Some(session)
+}
+
+/// One continue turn to give: a session's, for one agent.
+#[derive(Clone)]
+struct Delivery {
+    meta: SessionMeta,
+    agent: String,
+    message: String,
+    mark: String,
+    /// The session's entry as this agent is told it, for the record.
+    scoped: Value,
+}
+
+/// Give every continue turn, trying again those that could not be kept.
+/// Returns the entries of those never kept.
+async fn deliver(
+    state: &Arc<ServerState>,
+    plan: &Value,
+    sessions: Vec<Value>,
+    outcome: Option<&Value>,
+) -> Vec<Value> {
+    let requested = plan["requested_at"].as_u64().unwrap_or(0);
+    let mut pending: Vec<Delivery> = Vec::new();
+    for session in &sessions {
+        pending.extend(deliveries_for(state, plan, session, outcome, requested));
+    }
+    for attempt in 1..=ATTEMPTS {
+        let tries = pending
+            .iter()
+            .cloned()
+            .map(|d| attempt_delivery(state.clone(), d));
+        let kept = futures_util::future::join_all(tries).await;
+        pending = pending
+            .into_iter()
+            .zip(kept)
+            .filter(|(_, kept)| !kept)
+            .map(|(d, _)| d)
+            .collect();
+        if pending.is_empty() {
+            break;
+        }
+        tracing::warn!(
+            "[restart] {} continue turn(s) not kept (try {attempt} of {ATTEMPTS})",
+            pending.len()
+        );
+        if attempt < ATTEMPTS {
+            tokio::time::sleep(RETRY_GAP).await;
+        }
+    }
+    pending
+        .iter()
+        .map(|d| not_delivered(&d.scoped, "its continue turn could not be kept"))
+        .collect()
+}
+
+/// One try at a continue turn; true once it is in the transcript (or was
+/// already, or its session is gone), or it still waits for its place when
+/// recovery's patience ends — it is in the turn line then, and comes.
+async fn attempt_delivery(state: Arc<ServerState>, d: Delivery) -> bool {
+    if told(&state.manager.global_sessions, &d.meta.id, &d.mark) {
+        return true;
+    }
+    let sid = d.meta.id.clone();
+    let turn = continue_session(state, d.meta, d.agent.clone(), d.message, d.mark);
+    match tokio::time::timeout(DELIVERY_WAIT, turn).await {
+        Ok(kept) => kept,
+        Err(_) => {
+            tracing::warn!("[restart] {sid}/{} still waits for its turn", d.agent);
+            true
+        }
+    }
+}
+
+/// The continue turns a session's entry asks for: its agent's, and one for
+/// each other agent that owned a task the restart ended. Those already told
+/// (a replayed plan) are left out; the session's tasks are listed as
+/// interrupted.
+fn deliveries_for(
+    state: &Arc<ServerState>,
+    plan: &Value,
+    session: &Value,
+    outcome: Option<&Value>,
+    requested: u64,
+) -> Vec<Delivery> {
+    let Some(sid) = session["session_id"].as_str() else {
+        return Vec::new();
+    };
+    let Some(meta) = state
+        .manager
+        .global_sessions
+        .get_session_meta(sid)
+        .ok()
+        .flatten()
+    else {
+        return Vec::new();
+    };
+    let agent = session["agent_id"]
+        .as_str()
+        .or_else(|| {
+            session["queued"]
+                .as_array()
+                .and_then(|items| items.first())
+                .and_then(|item| item["agent_id"].as_str())
+        })
+        .unwrap_or(if meta.runtime.is_linggen() {
+            "ling"
+        } else {
+            "claude"
+        });
+    let tasks: Vec<crate::engine::events::BackgroundTask> = session["tasks"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|value| serde_json::from_value(value.clone()).ok())
+        .collect();
+    restore_interrupted_tasks(&state.tasks, sid, &tasks);
+    if !tasks.is_empty() {
+        super::tasks::emit(state, sid);
+    }
+    let mut owners = std::collections::BTreeSet::new();
+    owners.insert(agent.to_owned());
+    for task in tasks.iter().filter(|task| !task.child_owner) {
+        if let Some(owner) = &task.owner_agent {
+            owners.insert(owner.clone());
+        }
+    }
+    let mut deliveries = Vec::new();
+    for owner in owners {
+        let mark = delivery_mark(requested, &owner);
+        if told(&state.manager.global_sessions, sid, &mark) {
+            tracing::info!("[restart] {sid}/{owner} was already told");
+            continue;
+        }
+        let scoped = scoped_to(session, &owner, agent);
+        tracing::info!("[restart] {sid}/{owner} continues");
+        let message = continue_message(plan, &scoped, outcome);
+        deliveries.push(Delivery {
+            meta: meta.clone(),
+            agent: owner,
+            message,
+            mark,
+            scoped,
+        });
+    }
+    deliveries
+}
+
+/// A session's entry as `owner` is told it: its own tasks only, and — when
+/// it is not the session's agent — no turn, queue or call of its own.
+fn scoped_to(session: &Value, owner: &str, agent: &str) -> Value {
+    let mut scoped = session.clone();
+    scoped["tasks"] = Value::Array(
+        session["tasks"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|task| {
+                task.is_string() && owner == agent
+                    || task["owner_agent"].as_str() == Some(owner) && task["child_owner"] != true
+            })
+            .cloned()
+            .collect(),
+    );
+    if owner != agent {
+        scoped["caller"] = json!(false);
+        scoped["turn_interrupted"] = json!(false);
+        scoped["queued"] = json!([]);
+    }
+    scoped
+}
+
+/// Where the sessions a plan could not continue are kept, by its request.
+fn unrecovered_file(requested_at: u64) -> PathBuf {
+    crate::paths::linggen_home().join(format!("restart/unrecovered-{requested_at}.json"))
+}
+
+/// The plan is done: gone when every session continued; else what was not
+/// delivered — the person's queued messages with it — is kept in the record
+/// first, and the person is told it is there.
+fn retire(state: &Arc<ServerState>, path: &std::path::Path, plan: &Value, left: Vec<Value>) {
+    if !left.is_empty() {
+        let requested = plan["requested_at"].as_u64().unwrap_or(0);
+        let mut record = plan.clone();
+        record["sessions"] = Value::Array(left);
+        let file = unrecovered_file(requested);
+        if let Err(error) = write_plan(&file, &record) {
+            tracing::error!(
+                "[restart] could not keep what was not delivered: {error}; preserving the plan"
+            );
+            return;
+        }
+        tracing::error!(
+            "[restart] sessions not continued after the restart are kept in {}",
+            file.display()
+        );
+        tokio::spawn(tell_the_person(state.clone(), file, record));
+    }
+    if let Err(error) = std::fs::remove_file(path) {
+        tracing::error!("[restart] could not remove the recovery plan: {error}");
+    }
+}
+
+/// A plan that does not parse: kept as it was, beside the plans retired.
+fn retire_unreadable(path: &std::path::Path, bytes: &[u8]) {
+    let file = unrecovered_file(crate::util::now_ts_secs());
+    if let Err(error) = std::fs::rename(path, &file) {
+        tracing::error!("[restart] could not set the unreadable plan aside: {error}");
+        return;
+    }
+    tracing::error!(
+        "[restart] the recovery plan did not parse ({} bytes); kept in {}",
+        bytes.len(),
+        file.display()
+    );
+}
+
+/// The facts for Yinyue to tell the person, in her words: chats that could
+/// not be picked up again after the restart, and where what they held is.
+/// A deleted chat is nobody's to tell about.
+async fn tell_the_person(state: Arc<ServerState>, file: PathBuf, record: Value) {
+    let left: Vec<&Value> = record["sessions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|s| s["not_delivered"] != "the session was deleted")
+        .collect();
+    if left.is_empty() {
+        return;
+    }
+    let messages: usize = left
+        .iter()
+        .filter_map(|s| s["queued"].as_array())
+        .map(Vec::len)
+        .sum();
+    let kickoff = format!(
+        "After the engine restarted, {} chat(s) could not be picked up again ({messages} queued message(s) \
+         of the user's among them). Nothing was lost: it is all kept in {}. Tell the user in one brief line.",
+        left.len(),
+        file.display()
+    );
+    crate::server::resident::wake_herald(state, kickoff, "neutral").await;
 }
 
 /// The mark a continue turn is kept under: one per plan and agent.
@@ -768,22 +991,19 @@ mod tests {
     }
 
     #[test]
-    fn recovery_accepts_readable_queues_but_refuses_invalid_plans() {
-        assert!(safe_to_resume(
-            &json!({"sessions": [{"session_id": "s", "queued": []}]})
+    fn recovery_accepts_readable_queues_but_refuses_invalid_entries() {
+        assert!(session_readable(&json!({"session_id": "s", "queued": []})));
+        assert!(session_readable(&json!({"session_id": "s"})));
+        assert!(session_readable(
+            &json!({"session_id": "s", "queued": [{"text": "hello", "sender": "system"}]})
         ));
-        assert!(safe_to_resume(&json!({"sessions": [{"session_id": "s"}]})));
-        assert!(safe_to_resume(
-            &json!({"sessions": [{"session_id": "s", "queued": [{"text": "hello"}]}]})
+        assert!(!session_readable(
+            &json!({"session_id": "s", "queued": [{}]})
         ));
-        assert!(!safe_to_resume(
-            &json!({"sessions": [{"session_id": "s", "queued": [{}]}]})
+        assert!(!session_readable(
+            &json!({"session_id": "s", "queued": null})
         ));
-        assert!(!safe_to_resume(
-            &json!({"sessions": [{"session_id": "s", "queued": null}]})
-        ));
-        assert!(!safe_to_resume(&json!({"sessions": [{}]})));
-        assert!(!safe_to_resume(&json!({})));
+        assert!(!session_readable(&json!({})));
     }
 
     #[test]
@@ -819,49 +1039,41 @@ mod tests {
         );
     }
 
-    /// Once the plan is kept, a message admitted later joins the plan's
-    /// queue — after what was queued, or as a queue-only session — and never
-    /// a turn the restart would end. Until then, the snapshot waits for a
-    /// message being admitted.
+    /// The engine that asked for a restart watches for the helper's word:
+    /// an older status is not this restart's, and with none it goes on
+    /// after its patience — never stays frozen.
     #[tokio::test]
-    async fn a_message_after_the_snapshot_waits_in_the_plan() {
+    async fn the_asking_engine_hears_when_the_helper_gave_up_on_it() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("restart/resume.json");
-        let plan = json!({"sessions": [{"session_id": "s", "agent_id": "ling", "queued": [{"text": "before", "images": [], "agent_id": "ling"}]}]});
-        write_plan(&path, &plan).unwrap();
-        let admission = Arc::new(tokio::sync::Mutex::new(Admission::default()));
-        let gate = admit(&admission, "s", "ling", ("open", &[])).await.unwrap();
-        assert!(gate.is_some(), "no restart yet: the message goes on");
+        let status = dir.path().join("status.json");
+        std::fs::write(&status, json!({"state": "failed", "at": 99}).to_string()).unwrap();
+        let wait = Duration::from_millis(600);
         assert!(
-            admission.try_lock().is_err(),
-            "the snapshot waits while a message is admitted"
+            helper_outcome(&status, 100, wait).await.is_none(),
+            "an earlier status is not this restart's"
         );
-        drop(gate);
-        admission.lock().await.frozen = Some(path.clone());
-        assert!(
-            admit(&admission, "s", "ling", ("after", &["p.png".to_string()]))
-                .await
-                .unwrap()
-                .is_none()
-        );
-        assert!(admit(&admission, "t", "yinyue", ("elsewhere", &[]))
+        let writer = {
+            let status = status.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                std::fs::write(
+                    &status,
+                    json!({"state": "failed", "detail": "no probe", "at": 100}).to_string(),
+                )
+                .unwrap();
+            })
+        };
+        let said = helper_outcome(&status, 100, Duration::from_secs(5))
             .await
-            .unwrap()
-            .is_none());
-        let kept: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        let texts: Vec<&str> = kept["sessions"][0]["queued"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter_map(|m| m["text"].as_str())
-            .collect();
-        assert_eq!(texts, ["before", "after"]);
-        assert_eq!(kept["sessions"][0]["queued"][1]["images"], json!(["p.png"]));
-        assert_eq!(
-            kept["sessions"][1],
-            json!({"session_id": "t", "queued": [{"text": "elsewhere", "images": [], "agent_id": "yinyue"}]})
+            .unwrap();
+        writer.await.unwrap();
+        assert_eq!(said["state"], "failed");
+        let told = not_restarted_message(&json!({"from_version": "2.0.0"}), Some(&said));
+        assert!(
+            told.contains("did not happen (the swap failed: no probe)"),
+            "{told}"
         );
-        assert!(safe_to_resume(&kept));
+        assert!(told.contains("kept running 2.0.0"), "{told}");
     }
 
     #[test]

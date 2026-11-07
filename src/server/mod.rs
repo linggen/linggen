@@ -1,3 +1,4 @@
+mod admission;
 mod anthropic_gateway;
 pub(crate) mod api;
 pub(crate) mod app_pages;
