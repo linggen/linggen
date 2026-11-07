@@ -21,7 +21,7 @@ verdict_module() {
   local m="$SKILLS_REPO/lingjing/tools/playbot/verdict.mjs" t
   [ -f "$m" ] && { echo "$m"; return; }
   command -v node >/dev/null 2>&1 || return
-  t="${TMPDIR:-/tmp}/gate-verdict-$$.mjs"
+  t="$(cd "${TMPDIR:-/tmp}" && pwd -P)/gate-verdict-$$.mjs"
   git -C "$SKILLS_REPO" show origin/main:lingjing/tools/playbot/verdict.mjs >"$t" 2>/dev/null && [ -s "$t" ] && { echo "$t"; return; }
   rm -f "$t"
 }
@@ -42,6 +42,10 @@ review_status() {
 review_status_jq() {
   local out="$1" id="$2" f="$1/review.json"
   [ -f "$f" ] || { printf 'REVIEW\tREVIEW PENDING — no %s\n' "$f"; return; }
+  # A two-tier review (notes with certainty) waits on Hanli's answers, which only verdict.mjs reads: never green here.
+  if [ "$(jq '[.notes[]? | select(.certainty)] | length' "$f" 2>/dev/null || echo 0)" != 0 ]; then
+    printf 'REVIEW\tREVIEW PENDING — a two-tier review needs verdict.mjs (node + skills origin/main), not found (%s)\n' "$f"; return
+  fi
   local rid verdict notes answered total
   rid="$(jq -r '.run_id // ""' "$f" 2>/dev/null)"
   verdict="$(jq -r '.verdict // "pending"' "$f" 2>/dev/null)"
