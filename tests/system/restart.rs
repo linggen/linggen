@@ -303,8 +303,9 @@ async fn a_plan_that_cannot_be_fully_delivered_retires_and_keeps_the_rest() {
     let good = w.api.create_session(json!({"title": "Good"})).await;
     let stuck = w.api.create_session(json!({"title": "Stuck"})).await;
     let thread = w.home.linggen_home().join(format!("sessions/{stuck}/messages.jsonl"));
-    let _ = std::fs::remove_file(&thread);
-    std::fs::create_dir_all(&thread).unwrap();
+    // Read, never written: a continue turn there cannot be kept.
+    std::fs::write(&thread, "").unwrap();
+    std::fs::set_permissions(&thread, std::os::unix::fs::PermissionsExt::from_mode(0o444)).unwrap();
     let at = now_secs();
     leave_plan_after(&w, at, json!({"state": "ok"}), json!([
         {"session_id": good, "agent_id": "ling", "caller": false, "tasks": []},
@@ -320,6 +321,8 @@ async fn a_plan_that_cannot_be_fully_delivered_retires_and_keeps_the_rest() {
         assert!(Instant::now() < deadline, "the stuck plan was never retired");
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(w.model.calls_of(Agent::Ling).len(), 1, "a turn never kept never runs, tried or retried");
     let record = w.home.linggen_home().join(format!("restart/unrecovered-{at}.json"));
     let kept: serde_json::Value = serde_json::from_slice(&std::fs::read(&record).unwrap()).unwrap();
     let sessions = kept["sessions"].as_array().unwrap();

@@ -353,9 +353,11 @@ async fn tell_in_place(
                 &[],
             )
             .await;
-            if persisted {
-                let _ = kept.send(());
+            // Not kept: no turn either, so a retry never runs it twice.
+            if !persisted {
+                return;
             }
+            let _ = kept.send(());
         }
         None => {
             super::chat::helpers::persist_and_emit_message(

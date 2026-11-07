@@ -464,6 +464,24 @@ pub(super) async fn deliver_to_chat_agent(
     // attribution is the message's from_id — the chat surfaces render the
     // "[Yinyue]" label from that one fact, and the model gets the same label
     // via ChatRunCtx::labeled_msg. The content itself stays clean.
+    // Past a restart's snapshot it waits in the plan instead; kept here, its
+    // session's pending turn is in the snapshot.
+    let incoming = crate::server::admission::Incoming {
+        session: &session_id,
+        agent: &to,
+        text: &message,
+        images: &[],
+        sender: Some(&from),
+    };
+    let again = || resend_agent_chat(state.clone(), (&from, &to, &message), app.clone());
+    let gate = match crate::server::admission::admit(&state.admission, incoming, again).await {
+        Ok(Some(gate)) => gate,
+        Ok(None) => return,
+        Err(error) => {
+            tracing::error!("[agent-chat] '{from}'→'{to}' not kept: {error}");
+            return;
+        }
+    };
     crate::server::chat::helpers::persist_and_emit_message(
         &state.manager,
         &state.events_tx,
@@ -477,6 +495,7 @@ pub(super) async fn deliver_to_chat_agent(
         None,
     )
     .await;
+    drop(gate);
 
     {
         let _turn = state.manager.session_turn(&session_id).lock_owned().await;
@@ -601,6 +620,21 @@ pub(super) async fn session_for_skill(
         return None;
     }
     Some((sid, root))
+}
+
+/// An agent_chat message kept in a restart's plan, delivered again as it
+/// came if this engine outlives the restart.
+fn resend_agent_chat(
+    state: Arc<ServerState>,
+    (from, to, message): (&str, &str, &str),
+    app: Option<String>,
+) -> crate::server::admission::Resend {
+    let (from, to, message) = (from.to_string(), to.to_string(), message.to_string());
+    Box::new(move || {
+        Box::pin(async move {
+            tokio::spawn(deliver_to_chat_agent(state, from, to, message, app));
+        })
+    })
 }
 
 #[cfg(test)]

@@ -658,7 +658,8 @@ struct Delivery {
     scoped: Value,
 }
 
-/// Give every continue turn, trying again those that could not be kept.
+/// Give every continue turn, trying a native one again when it could not
+/// be kept (it never ran).
 /// Returns the entries of those never kept.
 async fn deliver(
     state: &Arc<ServerState>,
@@ -671,6 +672,7 @@ async fn deliver(
     for session in &sessions {
         pending.extend(deliveries_for(state, plan, session, outcome, requested));
     }
+    let mut given_up = Vec::new();
     for attempt in 1..=ATTEMPTS {
         let tries = pending
             .iter()
@@ -683,6 +685,13 @@ async fn deliver(
             .filter(|(_, kept)| !kept)
             .map(|(d, _)| d)
             .collect();
+        // A Claude session's turn runs whether or not its row was kept:
+        // it is never tried twice. A native one that was not kept never ran.
+        let (native, claude): (Vec<_>, Vec<_>) = pending
+            .into_iter()
+            .partition(|d| d.meta.runtime.is_linggen());
+        given_up.extend(claude);
+        pending = native;
         if pending.is_empty() {
             break;
         }
@@ -694,7 +703,8 @@ async fn deliver(
             tokio::time::sleep(RETRY_GAP).await;
         }
     }
-    pending
+    given_up.extend(pending);
+    given_up
         .iter()
         .map(|d| not_delivered(&d.scoped, "its continue turn could not be kept"))
         .collect()
