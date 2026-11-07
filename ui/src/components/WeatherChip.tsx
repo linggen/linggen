@@ -3,7 +3,8 @@
  * there is room; a wind mark when it blows hard (wind is never a kind: a
  * clear day can be windy) and a festival mark on a festival's day, named in
  * the title. A shimmer until the first load answers; hidden while the sense
- * is off or nothing is read yet. A click opens Settings → Weather. Reads the same view the sky does.
+ * is off or nothing is read yet. A click turns the live sky (the weather
+ * animation, this browser) on or off; it dims while off. Reads the same view the sky does.
  */
 import React from 'react';
 import { Cloud, CloudFog, CloudLightning, CloudRain, CloudSnow, Moon, Sparkles, Sun, Wind, type LucideIcon } from 'lucide-react';
@@ -19,8 +20,10 @@ const WORDS: Record<string, string> = {
   clear: 'Clear', cloudy: 'Cloudy', fog: 'Fog', rain: 'Rain', snow: 'Snow', storm: 'Storm',
 };
 
-export const WeatherChip: React.FC<{ onOpen?: () => void; className?: string }> = ({ onOpen, className }) => {
+export const WeatherChip: React.FC<{ className?: string }> = ({ className }) => {
   useWeatherPoll();
+  const live = useSkyStore((s) => s.enabled);
+  const setLive = useSkyStore((s) => s.setEnabled);
   const view = useSkyStore((s) => s.view);
   const festival = useSkyStore((s) => s.today?.festival ?? null);
   const read = useSkyStore((s) => s.today !== null); // the first load has answered
@@ -30,13 +33,15 @@ export const WeatherChip: React.FC<{ onOpen?: () => void; className?: string }> 
   const Icon = ICONS[reading.kind] ?? (reading.is_day ? Sun : Moon);
   const city = view.city?.name ?? reading.city;
   const wind = windWords(windOf(reading));
-  const title = [city, WORDS[reading.kind] ?? reading.kind, wind, festival?.name, view.auto ? 'automatic' : 'typed'].filter(Boolean).join(' · ');
+  const title = [city, WORDS[reading.kind] ?? reading.kind, wind, festival?.name, view.auto ? 'automatic' : 'typed'].filter(Boolean).join(' · ')
+    + (live ? ' — click: weather animation off' : ' — click: weather animation on');
   return (
     <button
       type="button"
-      onClick={onOpen}
+      onClick={() => setLive(!live)}
+      aria-pressed={live}
       title={title}
-      className={cn('flex items-center gap-1 text-[11px] font-medium text-slate-500 dark:text-slate-400 hover:text-blue-500 transition-colors', className)}
+      className={cn('flex items-center gap-1 text-[11px] font-medium text-slate-500 dark:text-slate-400 hover:text-blue-500 transition-colors', !live && 'opacity-50', className)}
     >
       {festival ? <Sparkles size={12} className="text-amber-500" aria-label={festival.name} /> : null}
       <Icon size={14} />

@@ -157,7 +157,7 @@ export const LauncherApp: React.FC = () => {
           {/* Billing account the daemon spends from — always visible.
               Remounts when Settings closes so a sign in/out done there
               reflects immediately. */}
-          <WeatherChip onOpen={() => setSettingsOpen('general')} />
+          <WeatherChip />
           <AccountAvatar key={String(settingsOpen)} onManage={() => setSettingsOpen(true)} />
           <button
             onClick={() => setSettingsOpen(true)}

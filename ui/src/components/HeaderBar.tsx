@@ -168,7 +168,7 @@ export const HeaderBar: React.FC<{
 
       {/* Right: Status + Info + Settings + Avatar */}
       <div className="flex items-center gap-2 bg-slate-100 dark:bg-white/5 px-2.5 py-1.5 rounded-full border border-slate-200 dark:border-white/10 shadow-sm">
-        <WeatherChip onOpen={onOpenSettings} className="pr-2 border-r border-slate-300 dark:border-white/10" />
+        <WeatherChip className="pr-2 border-r border-slate-300 dark:border-white/10" />
         {/* Which session is running shows in the session list; only a lost link shows here. */}
         {connectionStatus === 'reconnecting' && (
           <div className="flex items-center gap-1.5 pr-2 border-r border-slate-300 dark:border-white/10">
