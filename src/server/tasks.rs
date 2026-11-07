@@ -106,12 +106,18 @@ impl Tasks {
 
     /// Interrupt subagent tasks nothing follows any more. `alive` says
     /// whether a task (with its recorded run) of a session still is.
-    pub fn interrupt_stale_subagents(&self, alive: impl Fn(&str, &BackgroundTask) -> bool) -> Vec<String> {
+    pub fn interrupt_stale_subagents(
+        &self,
+        alive: impl Fn(&str, &BackgroundTask) -> bool,
+    ) -> Vec<String> {
         self.with(|all| {
             let mut changed = Vec::new();
             for (session, tasks) in all.iter_mut() {
                 let mut dirty = false;
-                for task in tasks.iter_mut().filter(|t| t.is_running() && t.kind == "subagent") {
+                for task in tasks
+                    .iter_mut()
+                    .filter(|t| t.is_running() && t.kind == "subagent")
+                {
                     if task.subagent_id.is_some() && !alive(session, task) {
                         task.end("interrupted");
                         dirty = true;
@@ -191,11 +197,20 @@ pub(crate) async fn native_watch(state: std::sync::Arc<super::ServerState>) {
             Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
             Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
         };
-        let ServerEvent::BackgroundTask { session_id: Some(session), agent_id, task, notice } = event else {
+        let ServerEvent::BackgroundTask {
+            session_id: Some(session),
+            agent_id,
+            task,
+            notice,
+        } = event
+        else {
             continue;
         };
         // A task's end is told once: on the change from running to ended.
-        let was_running = state.tasks.get(&session, &task.id).is_none_or(|t| t.is_running());
+        let was_running = state
+            .tasks
+            .get(&session, &task.id)
+            .is_none_or(|t| t.is_running());
         let ended = was_running && !task.is_running();
         if state.tasks.upsert(&session, task) {
             emit(&state, &session);
@@ -205,7 +220,11 @@ pub(crate) async fn native_watch(state: std::sync::Arc<super::ServerState>) {
         };
         // While the agent's plan waits for the person, its task ends wait
         // behind it, as Claude Code holds them behind its plan prompt.
-        let Some(notice) = state.manager.hold_behind_plan(&session, &agent_id, notice).await else {
+        let Some(notice) = state
+            .manager
+            .hold_behind_plan(&session, &agent_id, notice)
+            .await
+        else {
             continue;
         };
         tokio::spawn(tell(state.clone(), session, agent_id, notice));
@@ -258,7 +277,15 @@ pub(crate) fn tell_marked(
     mark: (String, tokio::sync::oneshot::Sender<()>),
 ) -> impl std::future::Future<Output = ()> + Send + 'static {
     let (_, place) = super::chat::helpers::take_turn_place(state.manager.session_turn(&session));
-    tell_in_place(state, session, agent, notice, "system".into(), place, Some(mark))
+    tell_in_place(
+        state,
+        session,
+        agent,
+        notice,
+        "system".into(),
+        place,
+        Some(mark),
+    )
 }
 
 async fn tell_in_place(
@@ -270,14 +297,24 @@ async fn tell_in_place(
     place: super::chat::helpers::TurnPlace,
     mark: Option<(String, tokio::sync::oneshot::Sender<()>)>,
 ) {
-    let Some(meta) = state.manager.global_sessions.get_session_meta(&session).ok().flatten() else {
+    let Some(meta) = state
+        .manager
+        .global_sessions
+        .get_session_meta(&session)
+        .ok()
+        .flatten()
+    else {
         return; // the session was deleted meanwhile
     };
     if !meta.runtime.is_linggen() {
         return;
     }
     let root = std::path::PathBuf::from(meta.project.clone().unwrap_or_else(|| meta.cwd.clone()));
-    let engine = match state.manager.get_or_create_session_agent(&session, &root, &agent).await {
+    let engine = match state
+        .manager
+        .get_or_create_session_agent(&session, &root, &agent)
+        .await
+    {
         Ok(engine) => engine,
         Err(error) => {
             tracing::warn!("[tasks] could not wake {agent} in {session}: {error}");
@@ -286,7 +323,11 @@ async fn tell_in_place(
     };
     let _turn = place.await;
     // A plan proposed while this waited for its turn holds it too.
-    let Some(notice) = state.manager.hold_behind_plan(&session, &agent, notice).await else {
+    let Some(notice) = state
+        .manager
+        .hold_behind_plan(&session, &agent, notice)
+        .await
+    else {
         return;
     };
     match mark {
@@ -364,15 +405,23 @@ mod tests {
         live.subagent_id = Some("running".into());
         tasks.upsert("s", stale);
         tasks.upsert("s", live);
-        tasks.upsert("s", BackgroundTask::running("starting", "subagent", "starting"));
+        tasks.upsert(
+            "s",
+            BackgroundTask::running("starting", "subagent", "starting"),
+        );
         tasks.upsert("s", BackgroundTask::running("shell", "shell", "work"));
-        assert_eq!(tasks.interrupt_stale_subagents(|_, t| t.subagent_id.as_deref() == Some("running")), vec!["s"]);
+        assert_eq!(
+            tasks.interrupt_stale_subagents(|_, t| t.subagent_id.as_deref() == Some("running")),
+            vec!["s"]
+        );
         assert_eq!(tasks.get("s", "stale").unwrap().status, "interrupted");
         assert!(tasks.get("s", "stale").unwrap().ended_at.is_some());
         assert!(tasks.get("s", "live").unwrap().is_running());
         assert!(tasks.get("s", "starting").unwrap().is_running());
         assert!(tasks.get("s", "shell").unwrap().is_running());
-        assert!(tasks.interrupt_stale_subagents(|_, t| t.subagent_id.as_deref() == Some("running")).is_empty());
+        assert!(tasks
+            .interrupt_stale_subagents(|_, t| t.subagent_id.as_deref() == Some("running"))
+            .is_empty());
     }
 
     #[test]
@@ -385,9 +434,15 @@ mod tests {
         assert!(tasks.finish("s", "c", "failed", None));
         let ids: Vec<_> = tasks.list("s").into_iter().map(|t| t.id).collect();
         assert_eq!(ids[0], "b");
-        assert_eq!(tasks.get("s", "a").unwrap().summary.as_deref(), Some("built"));
+        assert_eq!(
+            tasks.get("s", "a").unwrap().summary.as_deref(),
+            Some("built")
+        );
         assert!(tasks.get("s", "a").unwrap().ended_at.is_some());
-        assert!(!tasks.upsert("s", tasks.get("s", "b").unwrap()), "an unchanged task is no change");
+        assert!(
+            !tasks.upsert("s", tasks.get("s", "b").unwrap()),
+            "an unchanged task is no change"
+        );
     }
 
     #[test]

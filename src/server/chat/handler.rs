@@ -436,7 +436,10 @@ pub(crate) async fn question_open_for_queued(state: &Arc<ServerState>, queued_id
         item.session_id.clone()
     };
     let pending = state.pending_ask_user.lock().await;
-    question_open(pending.values().map(|entry| entry.session_id.as_deref()), &session)
+    question_open(
+        pending.values().map(|entry| entry.session_id.as_deref()),
+        &session,
+    )
 }
 
 fn question_open<'a>(mut asks: impl Iterator<Item = Option<&'a str>>, session: &str) -> bool {
@@ -448,10 +451,14 @@ fn question_open<'a>(mut asks: impl Iterator<Item = Option<&'a str>>, session: &
 pub(crate) async fn mark_steered(state: &Arc<ServerState>, queued_id: &str) {
     let found = {
         let mut guard = state.queued_chats.lock().await;
-        guard.values_mut().flatten().find(|item| item.id == queued_id).map(|item| {
-            item.steerable = false;
-            (item.session_id.clone(), item.agent_id.clone())
-        })
+        guard
+            .values_mut()
+            .flatten()
+            .find(|item| item.id == queued_id)
+            .map(|item| {
+                item.steerable = false;
+                (item.session_id.clone(), item.agent_id.clone())
+            })
     };
     if let Some((session_id, agent_id)) = found {
         emit_queue_updated(state, &session_id, &agent_id).await;
@@ -697,7 +704,10 @@ async fn promote_mission_session_to_user(
 /// skill name doesn't resolve, or when one is already active. The
 /// permission grants are applied only when the session is interactive —
 /// non-interactive (mission/consumer) sessions don't auto-elevate.
-pub(super) async fn apply_session_bound_skill(engine: &mut crate::engine::AgentEngine, ctx: &ChatRunCtx) {
+pub(super) async fn apply_session_bound_skill(
+    engine: &mut crate::engine::AgentEngine,
+    ctx: &ChatRunCtx,
+) {
     if engine.active_skill.is_some() {
         return;
     }
@@ -1240,9 +1250,11 @@ pub(crate) async fn start_turn(
     // A queued message waits for its own turn, or for a step of the running
     // one to take it in (`fold.rs`).
     let fold_call = queued_item.as_ref().map(|(q, joins)| {
-        state
-            .fold
-            .wait(&super::helpers::fold_key(session_id.as_deref(), &target_id), &q.id, *joins)
+        state.fold.wait(
+            &super::helpers::fold_key(session_id.as_deref(), &target_id),
+            &q.id,
+            *joins,
+        )
     });
     let session_id_for_queue = effective_session_id.clone();
     let req_user_type = req.user_type;
@@ -1496,7 +1508,10 @@ mod tests {
         .await;
         assert!(shown);
         let during = during.lock().unwrap().take().unwrap();
-        assert!(during.await.unwrap(), "the snapshot found the message nowhere");
+        assert!(
+            during.await.unwrap(),
+            "the snapshot found the message nowhere"
+        );
         assert!(queue.lock().await.is_empty());
         let again = persist_then_dequeue(&queue, "s|ling", "1-1", || async {
             panic!("a message gone from the queue is not kept again")
@@ -1515,12 +1530,11 @@ mod tests {
             root.path().to_path_buf(),
             InterfaceMode::Web,
         );
-        let models = std::sync::Arc::new(
-            crate::provider::models::ModelManager::new_with_credentials(
+        let models =
+            std::sync::Arc::new(crate::provider::models::ModelManager::new_with_credentials(
                 Vec::new(),
                 &crate::credentials::Credentials::default(),
-            ),
-        );
+            ));
         let mut engine = AgentEngine::new(cfg, models, "m".to_string(), AgentRole::Lead).unwrap();
         super::bind_turn_session(&mut engine, Some("sess-x".into()));
         assert_eq!(engine.tools.builtins.session_id.as_deref(), Some("sess-x"));
@@ -1691,7 +1705,10 @@ mod tests {
         let body = &src[src
             .find(concat!("pub(crate) async fn ", "start_turn("))
             .unwrap()..];
-        assert!(body.contains(concat!("let (was_busy, place) = take_turn_place", "(turn);")));
+        assert!(body.contains(concat!(
+            "let (was_busy, place) = take_turn_place",
+            "(turn);"
+        )));
         // The turn place is awaited (or a running turn took the message in)
         // before the engine is locked.
         let lock = body.find(concat!("None => place", ".await,")).unwrap();

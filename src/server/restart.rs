@@ -20,7 +20,10 @@ struct RestartGuard;
 
 impl RestartGuard {
     fn acquire() -> Option<Self> {
-        RESTARTING.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).ok().map(|_| Self)
+        RESTARTING
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| Self)
     }
 }
 
@@ -73,8 +76,12 @@ pub(crate) async fn admit(
     let Some(path) = gate.frozen.as_deref() else {
         return Ok(Some(gate));
     };
-    keep_in_plan(path, session, json!({"text": text, "images": images, "agent_id": agent}))
-        .map_err(|error| format!("Could not keep the message for after the restart: {error}"))?;
+    keep_in_plan(
+        path,
+        session,
+        json!({"text": text, "images": images, "agent_id": agent}),
+    )
+    .map_err(|error| format!("Could not keep the message for after the restart: {error}"))?;
     Ok(None)
 }
 
@@ -82,7 +89,9 @@ pub(crate) async fn admit(
 /// a session with no entry gets a queue-only one.
 fn keep_in_plan(path: &std::path::Path, session: &str, item: Value) -> std::io::Result<()> {
     let mut plan: Value = serde_json::from_slice(&std::fs::read(path)?)?;
-    let sessions = plan["sessions"].as_array_mut().ok_or(std::io::ErrorKind::InvalidData)?;
+    let sessions = plan["sessions"]
+        .as_array_mut()
+        .ok_or(std::io::ErrorKind::InvalidData)?;
     match sessions.iter_mut().find(|s| s["session_id"] == session) {
         Some(entry) => match entry["queued"].as_array_mut() {
             Some(queued) => queued.push(item),
@@ -126,7 +135,9 @@ fn running_turns(state: &ServerState) -> Vec<(String, String)> {
 /// Where a queued message stands in the order messages were sent: its id
 /// ends with the engine's queue sequence (`chat::enqueue_if_busy`).
 fn sent_order(id: &str) -> u64 {
-    id.rsplit_once('-').and_then(|(_, seq)| seq.parse().ok()).unwrap_or(u64::MAX)
+    id.rsplit_once('-')
+        .and_then(|(_, seq)| seq.parse().ok())
+        .unwrap_or(u64::MAX)
 }
 
 /// The messages queued now, by session, each session's in the order they
@@ -137,11 +148,14 @@ fn queued_messages(all: &HashMap<String, Vec<QueuedChatItem>>) -> BTreeMap<Strin
     items.sort_by_key(|item| sent_order(&item.id));
     let mut queued: BTreeMap<String, Vec<Value>> = BTreeMap::new();
     for item in items {
-        queued.entry(item.session_id.clone()).or_default().push(json!({
-            "text": item.text,
-            "images": item.images,
-            "agent_id": item.agent_id,
-        }));
+        queued
+            .entry(item.session_id.clone())
+            .or_default()
+            .push(json!({
+                "text": item.text,
+                "images": item.images,
+                "agent_id": item.agent_id,
+            }));
     }
     queued
 }
@@ -152,7 +166,11 @@ fn built_label(binary: &std::path::Path, version: &str) -> String {
     let built = std::fs::metadata(binary)
         .and_then(|m| m.modified())
         .ok()
-        .map(|t| chrono::DateTime::<chrono::Local>::from(t).format("%Y-%m-%d %H:%M").to_string());
+        .map(|t| {
+            chrono::DateTime::<chrono::Local>::from(t)
+                .format("%Y-%m-%d %H:%M")
+                .to_string()
+        });
     let version = version.trim_start_matches("ling ").to_string();
     match built {
         Some(at) => format!("{version} built {at}"),
@@ -180,18 +198,32 @@ pub(crate) async fn restart_current(State(state): State<Arc<ServerState>>) -> Re
     perform_restart(state, None, guard).await
 }
 
-async fn perform_restart(state: Arc<ServerState>, req: Option<RestartRequest>, guard: RestartGuard) -> Response {
+async fn perform_restart(
+    state: Arc<ServerState>,
+    req: Option<RestartRequest>,
+    guard: RestartGuard,
+) -> Response {
     // Never overwrite an unfinished handoff, even if the helper timed out
     // and the in-memory guard was released.
     if plan_file().exists() {
-        return (StatusCode::CONFLICT, "An earlier restart has not finished recovery").into_response();
+        return (
+            StatusCode::CONFLICT,
+            "An earlier restart has not finished recovery",
+        )
+            .into_response();
     }
     let current = req.is_none();
-    let req = req.unwrap_or(RestartRequest { binary: String::new(), session_id: None, wait_secs: Some(0) });
+    let req = req.unwrap_or(RestartRequest {
+        binary: String::new(),
+        session_id: None,
+        wait_secs: Some(0),
+    });
     let binary = if current {
         match std::env::current_exe() {
             Ok(path) => path,
-            Err(error) => return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
+            Err(error) => {
+                return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response()
+            }
         }
     } else {
         PathBuf::from(&req.binary)
@@ -202,18 +234,23 @@ async fn perform_restart(state: Arc<ServerState>, req: Option<RestartRequest>, g
     } else {
         tokio::task::spawn_blocking(move || {
             crate::cli::self_update::probe_version(&probed, "ling", Duration::from_secs(10))
-        }).await
+        })
+        .await
     };
     let version = match version {
         Ok(Ok(version)) => version,
         Ok(Err(error)) => return (StatusCode::BAD_REQUEST, format!("{error:#}")).into_response(),
-        Err(error) => return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
+        Err(error) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response()
+        }
     };
     let caller = req.session_id.clone();
     let wait = Duration::from_secs(req.wait_secs.unwrap_or(120)).min(MAX_WAIT);
     let started = Instant::now();
     while started.elapsed() < wait
-        && running_turns(&state).iter().any(|(sid, _)| Some(sid) != caller.as_ref())
+        && running_turns(&state)
+            .iter()
+            .any(|(sid, _)| Some(sid) != caller.as_ref())
     {
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
@@ -229,10 +266,22 @@ async fn perform_restart(state: Arc<ServerState>, req: Option<RestartRequest>, g
         if turns.iter().any(|(s, _)| *s == sid) {
             continue;
         }
-        let Some(meta) = state.manager.global_sessions.get_session_meta(&sid).ok().flatten() else { continue };
-        if meta.creator == "mission" { continue; }
+        let Some(meta) = state
+            .manager
+            .global_sessions
+            .get_session_meta(&sid)
+            .ok()
+            .flatten()
+        else {
+            continue;
+        };
+        if meta.creator == "mission" {
+            continue;
+        }
         let agent = if meta.runtime.is_linggen() {
-            super::chat::members::default_responder(&super::chat::members::of_session(&state.manager, &sid).await)
+            super::chat::members::default_responder(
+                &super::chat::members::of_session(&state.manager, &sid).await,
+            )
         } else {
             "claude".to_string()
         };
@@ -246,7 +295,13 @@ async fn perform_restart(state: Arc<ServerState>, req: Option<RestartRequest>, g
                 .get_session_meta(sid)
                 .ok()
                 .flatten()
-                .map_or("ling", |meta| if meta.runtime.is_linggen() { "ling" } else { "claude" })
+                .map_or("ling", |meta| {
+                    if meta.runtime.is_linggen() {
+                        "ling"
+                    } else {
+                        "claude"
+                    }
+                })
                 .to_string();
             turns.push((sid.clone(), agent));
         }
@@ -256,16 +311,32 @@ async fn perform_restart(state: Arc<ServerState>, req: Option<RestartRequest>, g
         if turns.iter().any(|(s, _)| s == &sid) {
             continue;
         }
-        let Some(meta) = state.manager.global_sessions.get_session_meta(&sid).ok().flatten() else { continue };
-        if meta.creator == "mission" { continue; }
-        let agent = state.tasks.list(&sid).into_iter()
+        let Some(meta) = state
+            .manager
+            .global_sessions
+            .get_session_meta(&sid)
+            .ok()
+            .flatten()
+        else {
+            continue;
+        };
+        if meta.creator == "mission" {
+            continue;
+        }
+        let agent = state
+            .tasks
+            .list(&sid)
+            .into_iter()
             .find(|task| task.is_running() && !task.child_owner && task.owner_agent.is_some())
             .and_then(|task| task.owner_agent);
         if let Some(agent) = agent {
             turns.push((sid, agent));
         }
     }
-    let mut running: Vec<String> = running_turns(&state).into_iter().map(|(sid, _)| sid).collect();
+    let mut running: Vec<String> = running_turns(&state)
+        .into_iter()
+        .map(|(sid, _)| sid)
+        .collect();
     running.extend(state.manager.sessions_with_pending_turn());
     let mut queued = queued_messages(&queue_guard);
     let mut sessions: Vec<Value> = turns
@@ -278,7 +349,11 @@ async fn perform_restart(state: Arc<ServerState>, req: Option<RestartRequest>, g
         .collect();
     // A session with messages queued and no turn to continue (a mission's,
     // one between turns) is recorded without an agent: only its queue returns.
-    sessions.extend(queued.into_iter().map(|(sid, waiting)| json!({"session_id": sid, "queued": waiting})));
+    sessions.extend(
+        queued
+            .into_iter()
+            .map(|(sid, waiting)| json!({"session_id": sid, "queued": waiting})),
+    );
     let plan = json!({
         "requested_at": crate::util::now_ts_secs(),
         "from_version": env!("CARGO_PKG_VERSION"),
@@ -288,7 +363,11 @@ async fn perform_restart(state: Arc<ServerState>, req: Option<RestartRequest>, g
     });
     let path = plan_file();
     if let Err(error) = write_plan(&path, &plan) {
-        return (StatusCode::INTERNAL_SERVER_ERROR, format!("Could not keep the plan: {error}")).into_response();
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Could not keep the plan: {error}"),
+        )
+            .into_response();
     }
     // A previous status can have the same second-level timestamp. Never let
     // it masquerade as this helper's outcome when the new engine starts.
@@ -297,7 +376,11 @@ async fn perform_restart(state: Arc<ServerState>, req: Option<RestartRequest>, g
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => {
             let _ = std::fs::remove_file(&path);
-            return (StatusCode::INTERNAL_SERVER_ERROR, format!("Could not clear the previous restart status: {error}")).into_response();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Could not clear the previous restart status: {error}"),
+            )
+                .into_response();
         }
     }
     let config = state.manager.get_config_snapshot().await;
@@ -322,7 +405,12 @@ async fn perform_restart(state: Arc<ServerState>, req: Option<RestartRequest>, g
         drop(queue_guard);
         drop(guard);
     });
-    tracing::info!("[restart] restarting on {} ({}); {} session(s) continue after", binary.display(), version.trim(), sessions.len());
+    tracing::info!(
+        "[restart] restarting on {} ({}); {} session(s) continue after",
+        binary.display(),
+        version.trim(),
+        sessions.len()
+    );
     Json(json!({"status": "restarting", "waited_secs": started.elapsed().as_secs(), "sessions": sessions.len()}))
         .into_response()
 }
@@ -353,11 +441,21 @@ pub(crate) fn continue_message(plan: &Value, session: &Value, outcome: Option<&V
     } else {
         "This session had messages queued at the restart."
     };
-    let tasks: Vec<String> = session["tasks"].as_array().into_iter().flatten().filter_map(|task| {
-        task.as_str().map(str::to_owned).or_else(|| {
-            Some(format!("{}: {} ({})", task["kind"].as_str().unwrap_or("task"), task["title"].as_str()?, task["id"].as_str()?))
+    let tasks: Vec<String> = session["tasks"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|task| {
+            task.as_str().map(str::to_owned).or_else(|| {
+                Some(format!(
+                    "{}: {} ({})",
+                    task["kind"].as_str().unwrap_or("task"),
+                    task["title"].as_str()?,
+                    task["id"].as_str()?
+                ))
+            })
         })
-    }).collect();
+        .collect();
     let tasks = if tasks.is_empty() {
         String::new()
     } else {
@@ -377,13 +475,24 @@ pub(crate) fn continue_message(plan: &Value, session: &Value, outcome: Option<&V
 
 /// Reject malformed plans rather than silently dropping queued content.
 fn safe_to_resume(plan: &Value) -> bool {
-    plan["sessions"].as_array().is_some_and(|sessions| sessions.iter().all(|session| {
-        session["session_id"].as_str().is_some_and(|id| !id.is_empty())
-            && (session.get("queued").is_none() || session["queued"].as_array().is_some_and(|items| {
-                items.iter().all(|item| item["text"].is_string()
-                    && item.get("images").is_none_or(|images| images.as_array().is_some_and(|a| a.iter().all(Value::is_string))))
-            }))
-    }))
+    plan["sessions"].as_array().is_some_and(|sessions| {
+        sessions.iter().all(|session| {
+            session["session_id"]
+                .as_str()
+                .is_some_and(|id| !id.is_empty())
+                && (session.get("queued").is_none()
+                    || session["queued"].as_array().is_some_and(|items| {
+                        items.iter().all(|item| {
+                            item["text"].is_string()
+                                && item.get("images").is_none_or(|images| {
+                                    images
+                                        .as_array()
+                                        .is_some_and(|a| a.iter().all(Value::is_string))
+                                })
+                        })
+                    }))
+        })
+    })
 }
 
 /// After a restart: once the helper has said how it went, every session in
@@ -398,7 +507,10 @@ pub(crate) fn spawn_resume(state: Arc<ServerState>) {
     tokio::spawn(async move {
         let _guard = guard;
         let path = plan_file();
-        let Some(plan) = std::fs::read(&path).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) else {
+        let Some(plan) = std::fs::read(&path)
+            .ok()
+            .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+        else {
             return;
         };
         let requested = plan["requested_at"].as_u64().unwrap_or(0);
@@ -412,7 +524,10 @@ pub(crate) fn spawn_resume(state: Arc<ServerState>) {
         }
         for session in plan["sessions"].as_array().unwrap() {
             let sid = session["session_id"].as_str().unwrap();
-            if !matches!(state.manager.global_sessions.get_session_meta(sid), Ok(Some(_))) {
+            if !matches!(
+                state.manager.global_sessions.get_session_meta(sid),
+                Ok(Some(_))
+            ) {
                 tracing::error!("[restart] session {sid} is unavailable; preserving recovery plan");
                 return;
             }
@@ -425,7 +540,10 @@ pub(crate) fn spawn_resume(state: Arc<ServerState>) {
             let status = std::fs::read(crate::cli::restart::status_file())
                 .ok()
                 .and_then(|b| serde_json::from_slice::<Value>(&b).ok());
-            if status.as_ref().is_some_and(|s| s["at"].as_u64().unwrap_or(0) >= requested) {
+            if status
+                .as_ref()
+                .is_some_and(|s| s["at"].as_u64().unwrap_or(0) >= requested)
+            {
                 outcome = status;
                 break;
             }
@@ -461,22 +579,45 @@ pub(crate) fn spawn_resume(state: Arc<ServerState>) {
             let Some(sid) = session["session_id"].as_str() else {
                 continue;
             };
-            let Some(meta) = state.manager.global_sessions.get_session_meta(sid).ok().flatten() else {
+            let Some(meta) = state
+                .manager
+                .global_sessions
+                .get_session_meta(sid)
+                .ok()
+                .flatten()
+            else {
                 continue;
             };
-            let agent = session["agent_id"].as_str().or_else(|| {
-                session["queued"].as_array().and_then(|items| items.first())
-                    .and_then(|item| item["agent_id"].as_str())
-            }).unwrap_or(if meta.runtime.is_linggen() { "ling" } else { "claude" });
-            let tasks: Vec<crate::engine::events::BackgroundTask> = session["tasks"].as_array()
-                .into_iter().flatten().filter_map(|value| serde_json::from_value(value.clone()).ok()).collect();
+            let agent = session["agent_id"]
+                .as_str()
+                .or_else(|| {
+                    session["queued"]
+                        .as_array()
+                        .and_then(|items| items.first())
+                        .and_then(|item| item["agent_id"].as_str())
+                })
+                .unwrap_or(if meta.runtime.is_linggen() {
+                    "ling"
+                } else {
+                    "claude"
+                });
+            let tasks: Vec<crate::engine::events::BackgroundTask> = session["tasks"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|value| serde_json::from_value(value.clone()).ok())
+                .collect();
             restore_interrupted_tasks(&state.tasks, sid, &tasks);
-            if !tasks.is_empty() { super::tasks::emit(&state, sid); }
+            if !tasks.is_empty() {
+                super::tasks::emit(&state, sid);
+            }
             let mut owners = std::collections::BTreeSet::new();
             owners.insert(agent.to_owned());
             for task in &tasks {
                 if !task.child_owner {
-                    if let Some(owner) = &task.owner_agent { owners.insert(owner.clone()); }
+                    if let Some(owner) = &task.owner_agent {
+                        owners.insert(owner.clone());
+                    }
                 }
             }
             for owner in owners {
@@ -486,13 +627,33 @@ pub(crate) fn spawn_resume(state: Arc<ServerState>) {
                     continue;
                 }
                 let mut scoped = session.clone();
-                scoped["tasks"] = Value::Array(session["tasks"].as_array().into_iter().flatten().filter(|task| {
-                    task.is_string() && owner == agent || task["owner_agent"].as_str() == Some(owner.as_str()) && task["child_owner"] != true
-                }).cloned().collect());
-                if owner != agent { scoped["caller"] = json!(false); scoped["turn_interrupted"] = json!(false); scoped["queued"] = json!([]); }
+                scoped["tasks"] = Value::Array(
+                    session["tasks"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter(|task| {
+                            task.is_string() && owner == agent
+                                || task["owner_agent"].as_str() == Some(owner.as_str())
+                                    && task["child_owner"] != true
+                        })
+                        .cloned()
+                        .collect(),
+                );
+                if owner != agent {
+                    scoped["caller"] = json!(false);
+                    scoped["turn_interrupted"] = json!(false);
+                    scoped["queued"] = json!([]);
+                }
                 tracing::info!("[restart] {sid}/{owner} continues");
                 let message = continue_message(&plan, &scoped, outcome.as_ref());
-                deliveries.push(continue_session(state.clone(), meta.clone(), owner, message, mark));
+                deliveries.push(continue_session(
+                    state.clone(),
+                    meta.clone(),
+                    owner,
+                    message,
+                    mark,
+                ));
             }
         }
         let delivered = futures_util::future::join_all(deliveries).await;
@@ -511,10 +672,17 @@ fn delivery_mark(requested_at: u64, agent: &str) -> String {
 
 /// Whether the session's transcript holds the continue turn marked `mark`.
 fn told(store: &crate::state_fs::SessionStore, session: &str, mark: &str) -> bool {
-    store.get_chat_history(session).is_ok_and(|rows| rows.iter().any(|row| row.client_id.as_deref() == Some(mark)))
+    store.get_chat_history(session).is_ok_and(|rows| {
+        rows.iter()
+            .any(|row| row.client_id.as_deref() == Some(mark))
+    })
 }
 
-fn restore_interrupted_tasks(store: &super::tasks::Tasks, session: &str, tasks: &[crate::engine::events::BackgroundTask]) {
+fn restore_interrupted_tasks(
+    store: &super::tasks::Tasks,
+    session: &str,
+    tasks: &[crate::engine::events::BackgroundTask],
+) {
     for mut task in tasks.iter().cloned() {
         task.end("interrupted");
         store.upsert(session, task);
@@ -533,20 +701,35 @@ fn continue_session(
 ) -> impl std::future::Future<Output = bool> + Send + 'static {
     let place = meta.runtime.is_linggen().then(|| {
         let (kept, was_kept) = tokio::sync::oneshot::channel();
-        tokio::spawn(super::tasks::tell_marked(state.clone(), meta.id.clone(), agent.clone(), message.clone(), (mark.clone(), kept)));
+        tokio::spawn(super::tasks::tell_marked(
+            state.clone(),
+            meta.id.clone(),
+            agent.clone(),
+            message.clone(),
+            (mark.clone(), kept),
+        ));
         was_kept
     });
     async move {
         let kept = match place {
             Some(was_kept) => was_kept.await.is_ok(),
             None => {
-                super::claude::start_marked_task(state.clone(), meta.id.clone(), message.clone(), mark.clone()).await;
+                super::claude::start_marked_task(
+                    state.clone(),
+                    meta.id.clone(),
+                    message.clone(),
+                    mark.clone(),
+                )
+                .await;
                 wait_until_shown(&state, &meta.id, &message).await;
                 told(&state.manager.global_sessions, &meta.id, &mark)
             }
         };
         // A session deleted meanwhile has no one left to tell.
-        kept || !matches!(state.manager.global_sessions.get_session_meta(&meta.id), Ok(Some(_)))
+        kept || !matches!(
+            state.manager.global_sessions.get_session_meta(&meta.id),
+            Ok(Some(_))
+        )
     }
 }
 
@@ -554,7 +737,12 @@ fn continue_session(
 /// as it leaves the queue, never after.
 async fn wait_until_shown(state: &ServerState, session: &str, message: &str) {
     loop {
-        let queued = state.queued_chats.lock().await.values().flatten()
+        let queued = state
+            .queued_chats
+            .lock()
+            .await
+            .values()
+            .flatten()
             .any(|item| item.session_id == session && item.text == message);
         if !queued {
             return;
@@ -581,11 +769,19 @@ mod tests {
 
     #[test]
     fn recovery_accepts_readable_queues_but_refuses_invalid_plans() {
-        assert!(safe_to_resume(&json!({"sessions": [{"session_id": "s", "queued": []}]})));
+        assert!(safe_to_resume(
+            &json!({"sessions": [{"session_id": "s", "queued": []}]})
+        ));
         assert!(safe_to_resume(&json!({"sessions": [{"session_id": "s"}]})));
-        assert!(safe_to_resume(&json!({"sessions": [{"session_id": "s", "queued": [{"text": "hello"}]}]})));
-        assert!(!safe_to_resume(&json!({"sessions": [{"session_id": "s", "queued": [{}]}]})));
-        assert!(!safe_to_resume(&json!({"sessions": [{"session_id": "s", "queued": null}]})));
+        assert!(safe_to_resume(
+            &json!({"sessions": [{"session_id": "s", "queued": [{"text": "hello"}]}]})
+        ));
+        assert!(!safe_to_resume(
+            &json!({"sessions": [{"session_id": "s", "queued": [{}]}]})
+        ));
+        assert!(!safe_to_resume(
+            &json!({"sessions": [{"session_id": "s", "queued": null}]})
+        ));
         assert!(!safe_to_resume(&json!({"sessions": [{}]})));
         assert!(!safe_to_resume(&json!({})));
     }
@@ -601,7 +797,8 @@ mod tests {
     #[tokio::test]
     async fn snapshot_guard_blocks_queue_mutations_until_takeover_is_released() {
         let queue = Arc::new(tokio::sync::Mutex::new(HashMap::from([(
-            "s|ling".to_string(), vec![item(1, "s", "ling", "first")],
+            "s|ling".to_string(),
+            vec![item(1, "s", "ling", "first")],
         )])));
         let guard = queue.clone().lock_owned().await;
         let snapshot = queued_messages(&guard);
@@ -616,7 +813,10 @@ mod tests {
         assert_eq!(snapshot["s"][0]["text"], "first");
         drop(guard);
         mutation.await.unwrap();
-        assert_eq!(queued_messages(&*queue.lock().await)["s"][0]["text"], "second");
+        assert_eq!(
+            queued_messages(&*queue.lock().await)["s"][0]["text"],
+            "second"
+        );
     }
 
     /// Once the plan is kept, a message admitted later joins the plan's
@@ -632,16 +832,35 @@ mod tests {
         let admission = Arc::new(tokio::sync::Mutex::new(Admission::default()));
         let gate = admit(&admission, "s", "ling", ("open", &[])).await.unwrap();
         assert!(gate.is_some(), "no restart yet: the message goes on");
-        assert!(admission.try_lock().is_err(), "the snapshot waits while a message is admitted");
+        assert!(
+            admission.try_lock().is_err(),
+            "the snapshot waits while a message is admitted"
+        );
         drop(gate);
         admission.lock().await.frozen = Some(path.clone());
-        assert!(admit(&admission, "s", "ling", ("after", &["p.png".to_string()])).await.unwrap().is_none());
-        assert!(admit(&admission, "t", "yinyue", ("elsewhere", &[])).await.unwrap().is_none());
+        assert!(
+            admit(&admission, "s", "ling", ("after", &["p.png".to_string()]))
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(admit(&admission, "t", "yinyue", ("elsewhere", &[]))
+            .await
+            .unwrap()
+            .is_none());
         let kept: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        let texts: Vec<&str> = kept["sessions"][0]["queued"].as_array().unwrap().iter().filter_map(|m| m["text"].as_str()).collect();
+        let texts: Vec<&str> = kept["sessions"][0]["queued"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|m| m["text"].as_str())
+            .collect();
         assert_eq!(texts, ["before", "after"]);
         assert_eq!(kept["sessions"][0]["queued"][1]["images"], json!(["p.png"]));
-        assert_eq!(kept["sessions"][1], json!({"session_id": "t", "queued": [{"text": "elsewhere", "images": [], "agent_id": "yinyue"}]}));
+        assert_eq!(
+            kept["sessions"][1],
+            json!({"session_id": "t", "queued": [{"text": "elsewhere", "images": [], "agent_id": "yinyue"}]})
+        );
         assert!(safe_to_resume(&kept));
     }
 
@@ -660,11 +879,21 @@ mod tests {
         let other = json!({"caller": false, "agent_id": "ling", "tasks": ["npm run dev (sh-1)"]});
         let ok = json!({"state": "ok"});
         let said = continue_message(&plan, &caller, Some(&ok));
-        assert!(said.contains("from 1.10.0 to ling 1.10.1; the new build is up and healthy"), "{said}");
+        assert!(
+            said.contains("from 1.10.0 to ling 1.10.1; the new build is up and healthy"),
+            "{said}"
+        );
         assert!(said.contains("You asked for this restart"));
         assert!(said.contains("check the current state before redoing"));
-        let said = continue_message(&plan, &other, Some(&json!({"state": "rolled_back", "detail": "no health"})));
-        assert!(said.contains("previous one was restored: no health"), "{said}");
+        let said = continue_message(
+            &plan,
+            &other,
+            Some(&json!({"state": "rolled_back", "detail": "no health"})),
+        );
+        assert!(
+            said.contains("previous one was restored: no health"),
+            "{said}"
+        );
         assert!(said.contains("restart interrupted it"));
         assert!(said.contains("npm run dev (sh-1)"));
         assert!(continue_message(&plan, &caller, None).contains("not known"));
@@ -691,12 +920,24 @@ mod tests {
         let mut all = HashMap::new();
         all.insert(
             "s1|ling".to_string(),
-            vec![item(10, "s1", "ling", "first"), item(12, "s1", "ling", "third")],
+            vec![
+                item(10, "s1", "ling", "first"),
+                item(12, "s1", "ling", "third"),
+            ],
         );
-        all.insert("s1|yinyue".to_string(), vec![item(11, "s1", "yinyue", "second")]);
-        all.insert("s2|claude".to_string(), vec![item(9, "s2", "claude", "alone")]);
+        all.insert(
+            "s1|yinyue".to_string(),
+            vec![item(11, "s1", "yinyue", "second")],
+        );
+        all.insert(
+            "s2|claude".to_string(),
+            vec![item(9, "s2", "claude", "alone")],
+        );
         let queued = queued_messages(&all);
-        let s1: Vec<&str> = queued["s1"].iter().filter_map(|m| m["text"].as_str()).collect();
+        let s1: Vec<&str> = queued["s1"]
+            .iter()
+            .filter_map(|m| m["text"].as_str())
+            .collect();
         assert_eq!(s1, ["first", "second", "third"]);
         assert_eq!(queued["s1"][1]["agent_id"], "yinyue");
         assert_eq!(queued["s1"][1]["images"], json!(["second.png"]));
