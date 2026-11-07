@@ -4,9 +4,10 @@
 # (GATE_PHONE_SKILLS_REF, else the same commit) are each played by the play bot (skills/lingjing/tools/playbot,
 # `just playbot`): a scratch checkout at that commit, scratch saves, headless and muted — never ~/.linggen or the
 # player's Chrome. A hard finding or a layout-lint failure FAILs. Its vision review blocks green: the run's
-# review.json starts "pending", shown as REVIEW until the reviewer (the deployer Claude, or Hanli) answers its
-# checklist.md and writes a verdict for THAT run id — `just release-gate --verdict <run dir>` then re-reads it.
-# A review of another run does not count. The phone's 灵境 tests run on assets built from the same skills
+# review.json starts "pending", shown as REVIEW until Claude has sorted every shot (sure pass / sure fail / unsure)
+# for THAT run id and Hanli has answered each unsure one on 试玩台 (`tools/playbot/run.sh --ui`) — a sure fail
+# FAILs without him. `just release-gate --verdict <run dir>` then re-reads it. The verdict is derived by the skills'
+# tools/playbot/verdict.mjs (the same module the review page uses); a review of another run does not count. The phone's 灵境 tests run on assets built from the same skills
 # (tool/lingjing_assets.sh, never committed): one that still skips is a GAP.
 
 SKILLS_REPO="${GATE_SKILLS_REPO:-$WS/skills}"
@@ -14,8 +15,31 @@ APP_SKILLS="${GATE_APP_SKILLS:-$WS/linggen-app/vendor/skills}"
 MOBILE_REPO="${GATE_MOBILE_REPO:-$WS/linggen-mobile}"
 PLAYBOT="$SKILLS_REPO/lingjing/tools/playbot/run.sh"
 
+# The skills' verdict module (tools/playbot/verdict.mjs, dependency-free): the checkout's, else origin/main's as a
+# temp file (the shared checkout may lag), else none — and review_status falls back to the jq reading below.
+verdict_module() {
+  local m="$SKILLS_REPO/lingjing/tools/playbot/verdict.mjs" t
+  [ -f "$m" ] && { echo "$m"; return; }
+  command -v node >/dev/null 2>&1 || return
+  t="${TMPDIR:-/tmp}/gate-verdict-$$.mjs"
+  git -C "$SKILLS_REPO" show origin/main:lingjing/tools/playbot/verdict.mjs >"$t" 2>/dev/null && [ -s "$t" ] && { echo "$t"; return; }
+  rm -f "$t"
+}
+
 # review_status out run-id → PASS | FAIL | REVIEW, and a detail line, on stdout as "STATUS<TAB>detail".
+# PASS: no hard finding, every shot answered by Claude, every unsure one answered by Hanli. REVIEW: "N items wait
+# for Hanli: <shots>" or Claude not done. FAIL: a hard finding, a sure fail, or an unsure Hanli said no to.
 review_status() {
+  local mod line
+  mod="$(verdict_module)"
+  if [ -n "$mod" ] && line="$(node "$mod" "$1" "$2" --gate-run="${RUN:-}" 2>/dev/null)" && [ -n "$line" ]; then
+    printf '%s\n' "$line"; return
+  fi
+  review_status_jq "$@"
+}
+
+# The reading before verdict.mjs (no node, or a skills checkout without it): pass/fail as the reviewer wrote it.
+review_status_jq() {
   local out="$1" id="$2" f="$1/review.json"
   [ -f "$f" ] || { printf 'REVIEW\tREVIEW PENDING — no %s\n' "$f"; return; }
   local rid verdict notes answered total
@@ -99,6 +123,8 @@ verdict_of() { # run-dir
     st="$(review_status "$out" "$id")"
     tmp="$(mktemp)"
     awk -F'\t' -v OFS='\t' -v c="review: play bot ($label)" -v s="${st%%$'\t'*}" -v d="${st#*$'\t'}" '$2==c { $3=s; $4=d } { print }' "$RESULTS" >"$tmp" && mv "$tmp" "$RESULTS"
+    # The table cuts the detail; which shots wait (or what failed) is said here in full.
+    [ "${st%%$'\t'*}" = PASS ] || printf 'review: play bot (%s) — %s\n' "$label" "${st#*$'\t'}"
   done <"$RUN/reviews.tsv"
   PHASE=summary
   summary

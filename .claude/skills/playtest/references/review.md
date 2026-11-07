@@ -17,4 +17,22 @@ lines; name the thing ("the 3rd card's cost", "the band under 精精's rank"), n
 Hard findings in `findings.json` already have their screenshot; say whether the picture agrees with the check (a lint
 can be wrong — if it is, write so in the note, and the lint gets fixed, not ignored).
 
-The verdict is `fail` when any hard finding stands or any answer above names a real problem; `pass` otherwise.
+## Sure or unsure
+
+Every shot is sorted three ways. **Sure pass**: the four answers are clean. **Sure fail**: an answer names a real
+problem — mark the note `fail: true`; it fails the review at once. **Unsure**: the answer depends on taste or on how it
+reads on a real phone — the only two reasons. A defect you can name is never unsure; a doubt you could settle by
+looking harder is not either (look harder).
+
+Before marking one unsure, look in `tools/playbot/rulings.jsonl` for the same question (the same flag kind/why, a phone
+size or the Mac, the same kind of thing asked): if Hanli has ruled, follow him and write the note sure.
+
+An `ask` is one question he can answer 行 / 不行 from the picture alone, in plain Chinese, ≤ 40 字, naming the thing:
+- good: 「空的两排之间这条空带，算浪费吗？」 · 「杀招折成一行，手机上看得清吗？」
+- bad: 「这张有问题吗？」 (names nothing) · 「layout OK?」 (English, no thing) · two questions in one.
+
+A `box` `{x, y, w, h}` in the shot's own pixels (the shot's size is its viewport: 430×932, 375×812, 1280×820) frames
+the place to look — the band, the line, the button. Leave it out only when the whole shot is the question.
+
+The verdict is `fail` when any hard finding stands or any sure answer above names a real problem; `pending` while an
+unsure one waits for Hanli; `pass` otherwise.
