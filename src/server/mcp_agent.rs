@@ -39,6 +39,8 @@ const AGENT_RUN_TOOLS: &[&str] = &[
     // this list doesn't have to be re-edited when ling-mem gains a verb.
     "mcp__memory",
     "Skill",
+    // Its checklist shows in the session, as in any chat (it writes nothing).
+    "UpdatePlan",
     "Browser_navigate",
     "Browser_readPage",
     "Browser_screenshot",
