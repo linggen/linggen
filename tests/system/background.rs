@@ -113,3 +113,98 @@ async fn deleting_a_session_ends_its_background_shell_and_tells_no_one() {
     assert_eq!(w.model.calls_of(Agent::Ling).len(), 2, "the deleted session got a turn");
     w.assert_all_scripted();
 }
+
+/// Wait until Ling's model has been called `n` times, granting every
+/// permission asked in `sid` on the way.
+async fn until_calls_granting(w: &World, sid: &str, n: usize) {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while w.model.calls_of(Agent::Ling).len() < n {
+        assert!(Instant::now() < deadline, "only {} calls", w.model.calls_of(Agent::Ling).len());
+        for ask in w.api.pending(sid, None).await {
+            w.api.answer(&ask, "grant:all").await;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// A delegated run does not end while its own background shell runs: the
+/// shell's end is its next turn, and what it says then is the result its
+/// caller gets (2026-11-06, sess-1793970673: the child's end went to a run
+/// already over, and the caller heard only "started").
+#[tokio::test]
+async fn a_subagent_waits_for_its_background_shell_and_its_caller_gets_the_informed_result() {
+    let marker = format!("child-out-{}", uuid::Uuid::new_v4().simple());
+    let w = World::start(Setup::default().script(
+        Agent::Ling,
+        vec![
+            // 0, the main chat: a foreground subagent.
+            tool("Task", json!({"target_agent_id": "ling", "task": "Run the check in the background and report what it printed"})),
+            // 1-3, the subagent: starts its shell, replies, is told its end.
+            tool("Bash", json!({"cmd": format!("sleep 1; echo {marker}"), "run_in_background": true})),
+            text("Started the check."),
+            text("The check finished and printed its marker."),
+            // 4, the main chat again, with the subagent's result.
+            text("It reported back."),
+        ],
+    ))
+    .await;
+    let sid = w.api.create_session(json!({"title": "Chat"})).await;
+    let mark = w.mark();
+    w.api.chat(&sid, &w.work(), "Have a helper run the check").await;
+    until_calls_granting(&w, &sid, 5).await;
+    let notice = last_said(&w, 3);
+    assert!(notice.contains("ended: completed (exit code 0)"), "the subagent was not told: {notice}");
+    assert!(notice.contains(&marker), "{notice}");
+    let result = last_said(&w, 4);
+    assert!(
+        result.contains("The check finished and printed its marker."),
+        "the caller got the subagent's early reply: {result}"
+    );
+    w.finish_run(&sid, Agent::Ling, mark).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(w.model.calls_of(Agent::Ling).len(), 5, "a notice came back as an extra turn");
+    w.assert_all_scripted();
+}
+
+/// Stop on the chat stops a subagent waiting for its own shell, and the
+/// shell with it.
+#[tokio::test]
+async fn stop_ends_a_subagent_waiting_for_its_shell_and_the_shell() {
+    let marker = format!("child-wait-{}", uuid::Uuid::new_v4().simple());
+    let w = World::start(Setup::default().script(
+        Agent::Ling,
+        vec![
+            tool("Task", json!({"target_agent_id": "ling", "task": "Start the server in the background"})),
+            tool("Bash", json!({"cmd": format!("sleep 600; echo {marker}"), "run_in_background": true})),
+            text("Started the server."),
+        ],
+    ))
+    .await;
+    let sid = w.api.create_session(json!({"title": "Chat"})).await;
+    let mark = w.mark();
+    w.api.chat(&sid, &w.work(), "Have a helper start the server").await;
+    until_calls_granting(&w, &sid, 3).await;
+    assert!(running(&marker), "the subagent's shell never started");
+    let run_id = w
+        .engine
+        .log_since(mark)
+        .lines()
+        .find(|l| l.contains("run/begin") && l.contains(&sid))
+        .and_then(|l| l.split("run_id=").nth(1))
+        .map(|rest| rest.split_whitespace().next().unwrap().to_string())
+        .expect("the chat's run");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    w.api.post("/api/agent-cancel", json!({"run_id": run_id})).await;
+    let deadline = Instant::now() + Duration::from_secs(8);
+    while running(&marker) {
+        assert!(Instant::now() < deadline, "the subagent's shell outlived Stop");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let deadline = Instant::now() + Duration::from_secs(8);
+    while !w.engine.log_since(mark).lines().any(|l| l.contains("run/finish") && l.contains(&run_id)) {
+        assert!(Instant::now() < deadline, "the chat's run never ended after Stop");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(w.model.calls_of(Agent::Ling).len(), 3);
+    w.assert_all_scripted();
+}

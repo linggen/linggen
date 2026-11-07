@@ -467,6 +467,9 @@ pub(crate) async fn run_delegation(
     }
 
     let run_result = engine.run_agent_loop(session_id.as_deref()).await;
+    // A run ends only once its own background work has. The loop waited
+    // for it; a run that ends early anyway (Stop, a failure) stops it here.
+    crate::engine::background::end_owned(&manager, &run_id).await;
     // Capture sub-agent's last response before engine is dropped.
     let last_text = engine.last_assistant_text.take();
 

@@ -32,6 +32,9 @@ struct Entry {
 #[derive(Default)]
 pub struct Background {
     entries: Mutex<HashMap<String, Entry>>,
+    /// Woken when a task ends, a run's notice is queued or a run is
+    /// cancelled: a delegated run waiting on its own work wakes here.
+    pub(crate) changed: tokio::sync::Notify,
 }
 
 fn locked<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -114,6 +117,29 @@ impl Background {
         locked(&self.entries).get(id).is_some_and(|e| e.task.is_running())
     }
 
+    /// A delegated run still has work of its own running (its background
+    /// shells and subagents), so it does not end yet.
+    pub(crate) fn owns_running(&self, run: &str) -> bool {
+        locked(&self.entries)
+            .values()
+            .any(|e| e.child_owner && e.owner.as_deref() == Some(run) && e.task.is_running())
+    }
+
+    /// Stop every task a delegated run still runs. Returns their ids.
+    fn stop_owner(&self, run: &str) -> Vec<String> {
+        let mut entries = locked(&self.entries);
+        let mut ids = Vec::new();
+        for entry in entries.values_mut().filter(|e| {
+            e.child_owner && e.owner.as_deref() == Some(run) && e.task.is_running()
+        }) {
+            ids.push(entry.task.id.clone());
+            if let Some(stop) = entry.stop.take() {
+                let _ = stop.send(());
+            }
+        }
+        ids
+    }
+
     fn running(&self, ids: &[String]) -> bool {
         let entries = locked(&self.entries);
         ids.iter()
@@ -121,19 +147,24 @@ impl Background {
     }
 
     /// Route child-owned notices only to that live run, never to a session turn.
+    /// The entries lock is let go before the run's mailbox is taken: a run
+    /// deciding whether to end reads its tasks first, then its mailbox.
     fn notice(&self, manager: &AgentManager, id: &str, notice: String) -> Option<String> {
-        let entries = locked(&self.entries);
-        let entry = entries.get(id)?;
-        if entry.silent {
-            return None;
-        }
-        if entry.child_owner {
-            if let Some(owner) = entry.owner.as_deref() {
-                manager.queue_run_notice(owner, notice);
+        let owner = {
+            let entries = locked(&self.entries);
+            let entry = entries.get(id)?;
+            if entry.silent {
+                return None;
             }
-            return None;
+            if !entry.child_owner {
+                return Some(notice);
+            }
+            entry.owner.clone()
+        };
+        if let Some(owner) = owner {
+            manager.queue_run_notice(&owner, notice);
         }
-        Some(notice)
+        None
     }
 
     fn put(
@@ -161,8 +192,14 @@ impl Background {
     fn update(&self, id: &str, f: impl FnOnce(&mut BackgroundTask)) -> Option<BackgroundTask> {
         let mut entries = locked(&self.entries);
         let entry = entries.get_mut(id)?;
+        let was_running = entry.task.is_running();
         f(&mut entry.task);
-        Some(entry.task.clone())
+        let task = entry.task.clone();
+        drop(entries);
+        if was_running && !task.is_running() {
+            self.changed.notify_waiters();
+        }
+        Some(task)
     }
 }
 
@@ -400,6 +437,26 @@ pub async fn end_session(manager: &AgentManager, session: &str) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     while manager.background.running(&ids) && tokio::time::Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// A delegated run is ending before its own work did (Stop, a failure, an
+/// early exit): stop what it still runs and wait, a few seconds at most,
+/// until those have ended — while its runtime, which a shell's watcher
+/// runs on, is still up. Nothing to stop: returns at once.
+pub async fn end_owned(manager: &AgentManager, run: &str) {
+    let ids = manager.background.stop_owner(run);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let changed = manager.background.changed.notified();
+        tokio::pin!(changed);
+        changed.as_mut().enable();
+        if !manager.background.running(&ids) {
+            return;
+        }
+        if tokio::time::timeout_at(deadline, changed).await.is_err() {
+            return;
+        }
     }
 }
 
@@ -754,6 +811,75 @@ mod tests {
             .await
             .unwrap();
         assert!(bg.notice(&manager, "child-task", "late".into()).is_none());
+    }
+
+    /// A delegated run with a background subagent still running keeps its
+    /// mailbox open and waits; the child's end is queued for it and wakes
+    /// it; only then, with nothing of its own running, does it close.
+    #[tokio::test]
+    async fn a_run_waits_for_its_background_child_and_gets_its_end() {
+        let manager = manager();
+        let parent = manager
+            .begin_delegated_run(Path::new("."), Some("s"), "ling", None, None, true)
+            .await
+            .unwrap();
+        let (started_tx, started_rx) = oneshot::channel();
+        started_tx.send("child-run".to_string()).unwrap();
+        let (end_tx, end_rx) = oneshot::channel::<()>();
+        track_subagent(&manager, "s", "ling", "ling", Some(&parent), true, "dig",
+            started_rx, async move {
+                let _ = end_rx.await;
+                Ok("the answer is 42".into())
+            }).await;
+        assert!(manager.background.owns_running(&parent));
+        assert_eq!(manager.close_drain_or_wait(&parent), None, "it ended with its child running");
+        let changed = manager.background.changed.notified();
+        tokio::pin!(changed);
+        changed.as_mut().enable();
+        end_tx.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), changed).await.expect("never woken");
+        let mut mail = None;
+        for _ in 0..200 {
+            mail = manager.close_drain_or_wait(&parent);
+            if mail.is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let mail = mail.expect("still waiting after its child ended");
+        assert_eq!(mail.len(), 1, "{mail:?}");
+        assert!(mail[0].contains("ended: completed") && mail[0].contains("the answer is 42"), "{mail:?}");
+        assert_eq!(manager.close_drain_or_wait(&parent), Some(vec![]), "nothing left: it closes");
+        assert!(!manager.queue_run_notice(&parent, "late".into()));
+    }
+
+    /// A run that ends early (Stop) stops the shells it still runs, and
+    /// their ends are recorded before it returns.
+    #[tokio::test]
+    async fn an_ending_run_stops_its_own_shells_first() {
+        let manager = manager();
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("out.log");
+        let mut child = start_shell("sleep 60", dir.path(), "s", &output).unwrap();
+        let pid = child.id();
+        let shell = Shell {
+            session: "s",
+            agent: "ling",
+            owner: Some("run-x"),
+            child_owner: true,
+            id: "sh-own".into(),
+            cmd: "sleep 60",
+            started: "sleep 60".into(),
+            output,
+            pid,
+        };
+        watch_shell(&manager, shell, async move { child.wait().await.ok() }).await;
+        assert!(manager.background.owns_running("run-x"));
+        let begun = std::time::Instant::now();
+        end_owned(&manager, "run-x").await;
+        assert!(begun.elapsed() < Duration::from_secs(4));
+        assert!(!manager.background.owns_running("run-x"));
+        assert_eq!(manager.background.get("s", "sh-own").unwrap().status, "stopped");
     }
 
     /// A later engine finds a moved shell by the command line `ps` shows,

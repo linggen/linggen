@@ -165,6 +165,9 @@ Each execution is an `AgentRunRecord`:
 - Parent collects consecutive delegations, spawns concurrently via `JoinSet`.
 - Each child gets its own isolated engine and tokio runtime.
 - Parent waits for all children, feeds results back into its context.
+- A child's run ends only once its own background work (shells, background
+  subagents) has ended; each end is a turn of the child, and its last reply
+  is its result (`background-tasks-spec.md`).
 - Depth tracked and limited by `agent.max_delegation_depth` (default 2).
 - Cancellation cascades from parent to children.
 

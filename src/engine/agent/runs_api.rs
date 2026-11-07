@@ -229,24 +229,37 @@ impl AgentManager {
         }
         let queue = queues.get_mut(target).ok_or_else(|| anyhow::anyhow!("Recipient is not running"))?;
         queue.push(format!("Message from {} (run {}): {}", from.agent_id, sender, message));
+        drop(queues);
+        self.background.changed.notify_waiters();
         Ok(())
     }
 
     pub(crate) fn queue_run_notice(&self, run: &str, notice: String) -> bool {
         let mut queues = self.run_messages.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(queue) = queues.get_mut(run) {
-            queue.push(notice);
-            return true;
-        }
-        false
+        let Some(queue) = queues.get_mut(run) else {
+            return false;
+        };
+        queue.push(notice);
+        drop(queues);
+        self.background.changed.notify_waiters();
+        true
     }
 
-    /// Atomically close an empty mailbox, or take pending messages and keep it open.
-    pub(crate) fn close_or_drain_run_messages(&self, run: &str) -> Vec<String> {
+    /// A run about to end: take what waits in its mailbox; else, while work
+    /// of its own still runs, keep the mailbox open and say so (`None`, the
+    /// run waits); else close it. Its tasks are read before its mailbox — a
+    /// task's notice is queued before it reads as ended, so an ended task's
+    /// notice is always found here.
+    pub(crate) fn close_drain_or_wait(&self, run: &str) -> Option<Vec<String>> {
+        let busy = self.background.owns_running(run);
         let mut queues = self.run_messages.lock().unwrap_or_else(|e| e.into_inner());
         match queues.get_mut(run) {
-            Some(queue) if !queue.is_empty() => std::mem::take(queue),
-            _ => { queues.remove(run); Vec::new() }
+            Some(queue) if !queue.is_empty() => Some(std::mem::take(queue)),
+            Some(_) if busy => None,
+            _ => {
+                queues.remove(run);
+                Some(Vec::new())
+            }
         }
     }
 
@@ -295,6 +308,7 @@ impl AgentManager {
         }
         if !to_cancel.is_empty() {
             let _ = self.events.send((AgentEvent::StateUpdated, None));
+            self.background.changed.notify_waiters();
         }
 
         Ok(to_cancel)
@@ -341,8 +355,8 @@ mod message_tests {
         assert!(manager.drain_run_messages(&child)[0].contains("hello"));
         assert!(manager.drain_run_messages(&child).is_empty());
         assert!(manager.send_run_message("s", &root, &child, "during model call").is_ok());
-        assert!(manager.close_or_drain_run_messages(&child)[0].contains("during model call"));
-        assert!(manager.close_or_drain_run_messages(&child).is_empty());
+        assert!(manager.close_drain_or_wait(&child).unwrap()[0].contains("during model call"));
+        assert!(manager.close_drain_or_wait(&child).unwrap().is_empty());
         assert!(manager.send_run_message("s", &root, &child, "after close").is_err());
         manager.finish_agent_run(&child, AgentRunStatus::Completed, None).await.unwrap();
         assert!(manager.send_run_message("s", &root, &child, "late").is_err());

@@ -29,7 +29,8 @@ The same in a native Linggen session and in a Claude session.
    is told in a new turn of its own (who started it, how it ended, a short
    summary, where the full output is). No person's message is needed. Only
    the agent that started it is told: a subagent's own task never starts a
-   turn of the session, and its end is never said as the main agent's. Each
+   turn of the session; its end is told to the subagent, as a turn of its
+   run (rule 6). Each
    end is told once, when the task's own work ends — never later for work it
    started that runs on, and never lost to the list marking it interrupted. While the agent's plan waits for the person's approval,
    its task ends wait too, and are told after the plan is approved or
@@ -56,6 +57,14 @@ The same in a native Linggen session and in a Claude session.
    stop a native session's tasks before the session is cleared or removed,
    and their ends are told to no agent; a Claude session's go with its
    runner.
+6. **A subagent waits for its own work.** A delegated run does not end
+   while its own background shells or subagents still run: when its loop
+   would end, it waits on its notices, and each end comes in as its next
+   turn. It ends once nothing of its own runs, and that last reply is its
+   result to the agent that started it — a foreground `Task` returns it, a
+   background one's end notice carries it. Its caller never hears only
+   "started in the background". Stop on the subagent (or on its caller)
+   stops its own tasks with it. As Claude Code.
 
 ## Kinds
 
@@ -68,8 +77,8 @@ The same in a native Linggen session and in a Claude session.
 A native agent lists, reads, messages and stops what it started with tools
 of its own (`TaskList`, `TaskOutput`, `SendMessage`, `TaskStop`); a Claude
 agent uses the SDK's. The session's agent owns its tasks by name, so a later
-turn still reaches them; a subagent owns its own, and their ends are told to
-it alone. A subagent starts with its parent's path grants and asks the
+turn still reaches them; a subagent owns its own, their ends are told to
+it alone, and it runs until they have ended (rule 6). A subagent starts with its parent's path grants and asks the
 person for more only when its parent could.
 
 ## Claude sessions: the runner lives while work does

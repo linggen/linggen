@@ -431,7 +431,7 @@ impl AgentEngine {
         let mut iterations = 0;
         loop {
             if iterations >= self.cfg.max_iters {
-                if self.close_or_receive_run_messages(&mut state.messages, None) {
+                if self.close_or_receive_run_messages(&mut state.messages, None).await {
                     iterations = self.cfg.max_iters.saturating_sub(1);
                 } else {
                     break;
@@ -670,7 +670,7 @@ impl AgentEngine {
                     if self.try_drain_kickoff(&mut state, session_id, &raw).await {
                         continue;
                     }
-                    if self.close_or_receive_run_messages(&mut state.messages, None) {
+                    if self.close_or_receive_run_messages(&mut state.messages, None).await {
                         iterations = iterations.min(self.cfg.max_iters.saturating_sub(1));
                         continue;
                     }
@@ -757,7 +757,7 @@ impl AgentEngine {
                     if self.try_drain_kickoff(&mut state, session_id, &raw).await {
                         continue;
                     }
-                    if self.close_or_receive_run_messages(&mut state.messages, Some(&raw)) {
+                    if self.close_or_receive_run_messages(&mut state.messages, Some(&raw)).await {
                         iterations = iterations.min(self.cfg.max_iters.saturating_sub(1));
                         continue;
                     }
@@ -828,7 +828,7 @@ impl AgentEngine {
                         if self.try_drain_kickoff(&mut state, session_id, &raw).await {
                             continue;
                         }
-                        if self.close_or_receive_run_messages(&mut state.messages, Some(&raw)) {
+                        if self.close_or_receive_run_messages(&mut state.messages, Some(&raw)).await {
                         iterations = iterations.min(self.cfg.max_iters.saturating_sub(1));
                         continue;
                     }
@@ -852,7 +852,7 @@ impl AgentEngine {
                         {
                             continue;
                         }
-                        if self.close_or_receive_run_messages(&mut state.messages, Some(&message)) {
+                        if self.close_or_receive_run_messages(&mut state.messages, Some(&message)).await {
                             iterations = iterations.min(self.cfg.max_iters.saturating_sub(1));
                             continue;
                         }
@@ -891,11 +891,29 @@ impl AgentEngine {
         Ok(AgentOutcome::None)
     }
 
-    fn close_or_receive_run_messages(&mut self, messages: &mut Vec<ChatMessage>, response: Option<&str>) -> bool {
-        let (Some(manager), Some(run)) = (self.tools.get_manager(), self.run_id.as_deref()) else {
+    /// The loop would end. A delegated run whose own background work still
+    /// runs waits here instead, on the notice channel, and each notice that
+    /// comes is its next turn: it ends once nothing of its own runs, and its
+    /// last reply is then its result (doc/background-tasks-spec.md). True:
+    /// the loop goes on — with the messages taken, or to Stop's bail when
+    /// the run was cancelled while it waited.
+    async fn close_or_receive_run_messages(&mut self, messages: &mut Vec<ChatMessage>, response: Option<&str>) -> bool {
+        let (Some(manager), Some(run)) = (self.tools.get_manager(), self.run_id.clone()) else {
             return false;
         };
-        let pending = manager.close_or_drain_run_messages(run);
+        let pending = loop {
+            let changed = manager.background.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            if let Some(pending) = manager.close_drain_or_wait(&run) {
+                break pending;
+            }
+            if manager.is_run_cancelled(&run).await {
+                return true;
+            }
+            debug!(run = %run, "run/wait: its own background work still runs");
+            changed.await;
+        };
         let received = !pending.is_empty();
         if received {
             if let Some(response) = response.filter(|text| !text.is_empty()) {
