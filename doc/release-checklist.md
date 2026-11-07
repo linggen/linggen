@@ -86,7 +86,7 @@ checks FAIL a draft whose asset is not Developer ID signed.
   swap, restart, use it — "on main" is not "tried").
 - Engine Linux dry run, no upload:
   `gh workflow run build-linux.yml --repo linggen/linggen -f ref=$(git rev-parse HEAD)`
-- No weekend cuts.
+- Weekend cuts and releases are fine (Hanli 2026-11-07); publishing still waits for his yes.
 
 ## 1. ling-mem — only when `src/` changed since the last `v*` tag
 
