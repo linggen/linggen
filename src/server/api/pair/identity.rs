@@ -1,5 +1,5 @@
 //! Who is calling, and who this Mac is: the device behind a request, the
-//! Mac's own name and address, and its Bonjour announcement.
+//! Mac's own name and address (Bonjour itself lives in `bonjour`).
 
 use super::*;
 
@@ -64,56 +64,6 @@ pub(super) fn local_host_name() -> Option<String> {
         .ok()?;
     let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
     (!name.is_empty()).then_some(name)
-}
-
-// ---------------------------------------------------------------------------
-// Bonjour — the daemon announces itself so phones list nearby Macs by name.
-// ---------------------------------------------------------------------------
-
-/// Advertise `_linggen._tcp` on the LAN. The phone's pair sheet browses for
-/// this and shows "This-Mac · linggen" entries — no addresses typed, and in
-/// an office of Linggens each entry is named. The responder lives in the
-/// daemon process, so it dies (and the record expires) with it. Loopback-only
-/// binds skip it: nothing to discover that the LAN can reach.
-pub fn advertise(port: u16, lan_bound: bool) {
-    if !lan_bound {
-        return;
-    }
-    let (mac_name, account) = mac_identity();
-    let result = mdns_sd::ServiceDaemon::new().and_then(|daemon| {
-        // The SRV target must be a host label WE own, never the Mac's own
-        // `.local` name. enable_addr_auto() publishes A records for whatever
-        // host we name here; naming it the OS hostname makes macOS see a
-        // second responder claiming its own name and defensively rename the
-        // computer (This-Mac → This-Mac-2 → …) on every daemon start. A
-        // linggen-scoped label carries our addresses without touching the name
-        // the OS owns. Resolvers read the IPs straight from the service info,
-        // so the label never needs to be human-meaningful.
-        let host = format!("linggen-{}.local.", mac_name.to_lowercase());
-        let mut info = mdns_sd::ServiceInfo::new(
-            "_linggen._tcp.local.",
-            &mac_name,
-            &host,
-            (),
-            port,
-            &[
-                ("name", mac_name.as_str()),
-                ("account", account.as_deref().unwrap_or("")),
-            ][..],
-        )?
-        .enable_addr_auto();
-        info.set_requires_probe(false);
-        daemon.register(info)?;
-        // Leak the daemon handle — it must outlive this fn (daemon lifetime).
-        std::mem::forget(daemon);
-        Ok(())
-    });
-    match result {
-        Ok(()) => {
-            tracing::info!("[bonjour] advertising _linggen._tcp as '{mac_name}' on port {port}")
-        }
-        Err(e) => tracing::warn!("[bonjour] advertise failed: {e}"),
-    }
 }
 
 /// The device token a phone presents on every LAN call — `x-linggen-device`

@@ -25,11 +25,13 @@ use serde::Deserialize;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+mod bonjour;
 mod handshake;
 mod identity;
 mod manage;
 mod relay_window;
 
+pub use bonjour::{advertise, is_lan_bound};
 pub(crate) use handshake::*;
 pub use identity::*;
 pub(crate) use manage::*;
