@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-11-08 — your iPhone finds your Mac again
+
+- **「查找 Mac」 finds the Mac.** On macOS the engine now announces itself
+  through the system's own Bonjour service (mDNSResponder). Run from
+  Linggen.app, macOS had kept the engine's own announcer off the Wi-Fi, so
+  phones nearby saw nothing and a saved pairing could not be reached by name.
+- The watchdog that re-announced every few minutes is gone on macOS; it was
+  answering a problem that never was. Linux keeps its own announcer.
+
 ## [2.0.0] - 2026-11-03 — Linggen 2.0：灵境
 
 - **灵境 (Lingjing), the cultivation game, ships with Linggen.** Play it on the
