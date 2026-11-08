@@ -363,3 +363,20 @@ fn a_light_turn_answers_its_hidden_ask_in_the_linggen_language() {
     at(&light, "The person did not type this turn");
     assert!(!light.contains("Reply in the language the person writes in"));
 }
+
+#[test]
+fn a_chat_turn_after_her_moment_answers_in_the_language_its_message_names() {
+    // Her moment turn and a page's chat turn share her engine in that session:
+    // the moment's language must not outlive it into the next chat turn.
+    let mut engine = engine_as("yinyue", YINYUE);
+    engine.turn_language = Some("zh-Hans".to_string());
+    engine.withheld_tools.insert("AppTool".to_string());
+    engine.chat_turn_begins();
+    assert_eq!(engine.turn_language, None);
+    assert!(engine.withheld_tools.is_empty());
+    let look = turn_system(
+        &mut engine,
+        "[HIDDEN] @yinyue I drew something — what is it? (lang en)",
+    );
+    at(&look, "Reply in English.");
+}

@@ -827,6 +827,18 @@ impl AgentEngine {
             .clone()
             .unwrap_or_else(|| "user".to_string())
     }
+
+    /// A chat turn begins (`/api/chat`): what the last turn's driver set for
+    /// itself goes — its withheld tools, its final line, and its language.
+    /// The companion's engine is one per session, shared with her moment
+    /// turns: a moment's `turn_language` left standing beat the page's own
+    /// `(lang en)` on every look after it (2026-11-08: 画猜 in English,
+    /// answered in Chinese after a Chinese moment).
+    pub(crate) fn chat_turn_begins(&mut self) {
+        self.withheld_tools.clear();
+        self.last_assistant_text = None;
+        self.turn_language = None;
+    }
 }
 
 #[cfg(test)]

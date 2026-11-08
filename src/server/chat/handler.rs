@@ -1383,9 +1383,9 @@ pub(crate) async fn start_turn(
         if super::members::is_companion(&target_id_clone) {
             crate::server::resident::tune_companion(&mut engine, &pet);
         }
-        // Set per turn by whoever drives it; a chat turn withholds nothing.
-        engine.withheld_tools.clear();
-        engine.last_assistant_text = None;
+        // Set per turn by whoever drives it; a chat turn withholds nothing
+        // and names no language of its own (its message may: `(lang en)`).
+        engine.chat_turn_begins();
 
         engine.tools.builtins.set_session_id(session_id.clone());
 
