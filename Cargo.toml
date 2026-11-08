@@ -42,7 +42,6 @@ ring = "0.17"
 qrcode = "0.14"
 # Answer pictures: decode and scale to ~1000 px before keeping (engine/answer_refs).
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
-mdns-sd = "0.21"
 base64 = "0.22"
 axum = { version = "0.8", features = ["ws"] }
 tower = { version = "0.5", features = ["util"] }
@@ -86,6 +85,8 @@ flate2 = "1.1.9"
 any-tts = { version = "0.1.2", optional = true, default-features = false, features = ["kokoro", "download", "metal", "accelerate"] }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
+# Bonjour: macOS registers through mDNSResponder (server/api/pair/bonjour).
+mdns-sd = "0.21"
 any-tts = { version = "0.1.2", optional = true, default-features = false, features = ["kokoro", "download"] }
 
 # One hermetic world as its own process, for the web UI tests (tests/e2e):
