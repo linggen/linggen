@@ -247,7 +247,11 @@ mod tests {
 
     /// The rule Lingjing declares (skills/lingjing/SKILL.md `cloud.further`), with a ladder of three.
     fn lingjing() -> Rule {
-        let root = std::env::temp_dir().join(format!("further-{}", std::process::id()));
+        // One folder per call: tests run in parallel in one process, and a shared
+        // `further-<pid>` let one test's write land under another's read.
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!("further-{}-{n}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(
             root.join("ladder.json"),
