@@ -88,6 +88,25 @@ impl AgentEngine {
         }
     }
 
+    /// A run ended (typed chat, agent_run, mission — every caller of
+    /// `run_agent_loop`): a plan still Executing or Approved whose checklist
+    /// is all done becomes Completed, so its block reads done and no step
+    /// stays "in progress" after the run. A partial checklist stays open (the
+    /// next turn goes on with it); Planned and Rejected are never touched.
+    pub(crate) async fn settle_finished_plan(&mut self) {
+        let Some(plan) = self.plan.as_ref() else {
+            return;
+        };
+        let open = matches!(plan.status, PlanStatus::Executing | PlanStatus::Approved);
+        if !open || !plan.checklist_done() {
+            return;
+        }
+        let mut done = plan.clone();
+        done.status = PlanStatus::Completed;
+        info!("[plan] run ended with its checklist done → Completed");
+        self.persist_and_emit_plan(done).await;
+    }
+
     /// Store the plan in memory and emit a PlanUpdate event.
     /// Only the session's own agent shows a plan; a delegated run does not.
     fn owns_session_plan(&self) -> bool {
@@ -254,6 +273,52 @@ impl Plan {
         }
     }
 
+    /// The markdown a checklist-only plan (UpdatePlan with no plan text)
+    /// shows as its text: `- [x] Done`, `- [~] Working *(in progress)*`.
+    pub(crate) fn checklist_markdown(items: &[PlanItem]) -> String {
+        items
+            .iter()
+            .map(|item| match item.status.as_str() {
+                "completed" | "done" => format!("- [x] {}", item.title),
+                "in_progress" | "working" => format!("- [~] {} *(in progress)*", item.title),
+                _ => format!("- [ ] {}", item.title),
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The text a plan carries after an UpdatePlan with `items`. A real plan
+    /// (from ExitPlanMode or the model's own text) keeps its text unless the
+    /// model sends a longer one; a checklist-only plan's text is its
+    /// checklist, so it follows the items — it used to stay frozen at the
+    /// first call's, a step "in progress" under a finished checklist.
+    pub(crate) fn text_after_update(
+        existing: Option<&Plan>,
+        explicit: Option<String>,
+        items: &[PlanItem],
+    ) -> String {
+        let explicit = explicit.filter(|s| !s.trim().is_empty());
+        let real = existing
+            .filter(|p| !p.plan_text.trim().is_empty())
+            .filter(|p| p.plan_text != Plan::checklist_markdown(&p.items))
+            .map(|p| p.plan_text.clone());
+        match (explicit, real) {
+            (Some(explicit), Some(real)) if real.len() >= explicit.len() => real,
+            (Some(explicit), _) => explicit,
+            (None, Some(real)) => real,
+            (None, None) => Plan::checklist_markdown(items),
+        }
+    }
+
+    /// Every item of a non-empty checklist is done.
+    pub(crate) fn checklist_done(&self) -> bool {
+        !self.items.is_empty()
+            && self
+                .items
+                .iter()
+                .all(|i| matches!(i.status.as_str(), "completed" | "done"))
+    }
+
     /// The checklist as the execution prompt shows it, one item per line:
     /// `- id 2 [in_progress] Run tests`.
     pub(crate) fn checklist_text(&self) -> String {
@@ -271,6 +336,130 @@ impl Plan {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_engine(root: &std::path::Path) -> AgentEngine {
+        let cfg = crate::engine::EngineConfig::from_app_config(
+            &crate::config::Config::default(),
+            root.into(),
+            crate::engine::InterfaceMode::Web,
+        );
+        let models =
+            std::sync::Arc::new(crate::provider::models::ModelManager::new_with_credentials(
+                vec![],
+                &crate::credentials::Credentials::default(),
+            ));
+        AgentEngine::new(cfg, models, "m".into(), crate::engine::AgentRole::Lead).unwrap()
+    }
+
+    fn todo(id: &str, title: &str, status: &str) -> PlanItem {
+        PlanItem {
+            id: id.into(),
+            title: title.into(),
+            status: status.into(),
+            active_form: None,
+        }
+    }
+
+    fn todo_plan(status: PlanStatus, items: Vec<PlanItem>) -> Plan {
+        Plan {
+            summary: "S".into(),
+            status,
+            plan_text: Plan::checklist_markdown(&items),
+            items,
+        }
+    }
+
+    /// sess-1794160299 (2026-11-08): an agent_run's checklist-only plan kept
+    /// its first call's text — "[~] Inspect rulings (in progress)" over a
+    /// finished 任务清单. Its text now follows the latest items.
+    #[test]
+    fn a_checklist_only_plans_text_follows_its_latest_items() {
+        let first = vec![
+            todo("1", "Inspect rulings", "in_progress"),
+            todo("2", "Fix", "pending"),
+        ];
+        let text = Plan::text_after_update(None, None, &first);
+        assert!(text.contains("- [~] Inspect rulings *(in progress)*"));
+        let plan = todo_plan(PlanStatus::Executing, first);
+        let done = vec![
+            todo("1", "Inspect rulings", "completed"),
+            todo("2", "Fix", "completed"),
+        ];
+        let text = Plan::text_after_update(Some(&plan), None, &done);
+        assert_eq!(text, "- [x] Inspect rulings\n- [x] Fix");
+        assert!(!text.contains("in progress"));
+    }
+
+    #[test]
+    fn a_real_plans_text_survives_checklist_updates() {
+        let real = Plan {
+            summary: "Fix the bag".into(),
+            status: PlanStatus::Approved,
+            plan_text: "# Fix the bag\n\n## Steps\n1. Move the hint\n2. Test".into(),
+            items: vec![
+                todo("1", "Move the hint", "pending"),
+                todo("2", "Test", "pending"),
+            ],
+        };
+        let items = vec![
+            todo("1", "Move the hint", "completed"),
+            todo("2", "Test", "in_progress"),
+        ];
+        assert_eq!(
+            Plan::text_after_update(Some(&real), None, &items),
+            real.plan_text
+        );
+        assert_eq!(
+            Plan::text_after_update(Some(&real), Some("short".into()), &items),
+            real.plan_text,
+            "a shorter explicit text never replaces the plan"
+        );
+        let longer = format!("{}\n\n## Verification\nRun the suite", real.plan_text);
+        assert_eq!(
+            Plan::text_after_update(Some(&real), Some(longer.clone()), &items),
+            longer
+        );
+    }
+
+    /// The run's end settles a done checklist to Completed — for every run
+    /// kind, since it happens in `run_agent_loop` itself.
+    #[tokio::test]
+    async fn a_run_end_completes_a_done_checklist_and_leaves_the_rest_open() {
+        let root = tempfile::tempdir().unwrap();
+        let mut engine = test_engine(root.path());
+        let all_done = vec![todo("1", "A", "completed"), todo("2", "B", "done")];
+        let partial = vec![todo("1", "A", "completed"), todo("2", "B", "in_progress")];
+        let cases = [
+            (
+                PlanStatus::Executing,
+                all_done.clone(),
+                PlanStatus::Completed,
+            ),
+            (
+                PlanStatus::Approved,
+                all_done.clone(),
+                PlanStatus::Completed,
+            ),
+            (PlanStatus::Executing, partial, PlanStatus::Executing),
+            (PlanStatus::Executing, Vec::new(), PlanStatus::Executing),
+            (PlanStatus::Planned, all_done.clone(), PlanStatus::Planned),
+            (PlanStatus::Rejected, all_done, PlanStatus::Rejected),
+        ];
+        for (from, items, want) in cases {
+            engine.plan = Some(todo_plan(from.clone(), items.clone()));
+            engine.settle_finished_plan().await;
+            let plan = engine.plan.as_ref().unwrap();
+            assert_eq!(plan.status, want, "{from:?} with {items:?}");
+            assert_eq!(
+                format!("{:?}", plan.items),
+                format!("{items:?}"),
+                "settling never changes the checklist"
+            );
+        }
+        engine.plan = None;
+        engine.settle_finished_plan().await;
+        assert!(engine.plan.is_none());
+    }
 
     #[test]
     fn only_the_session_agent_owns_the_plan_block() {

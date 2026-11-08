@@ -614,49 +614,9 @@ impl AgentEngine {
         session_id: Option<&str>,
         tc_id: &Option<String>,
     ) {
-        // Build structured items + markdown checklist.
-        let mut plan_items = Vec::new();
-        let mut lines = Vec::new();
-        for item in &items {
-            let item = PlanItem::from_json(item);
-            let status = item.status.as_str();
-            let checkbox = match status {
-                "completed" | "done" => "- [x]",
-                "in_progress" | "working" => "- [~]",
-                _ => "- [ ]",
-            };
-            let suffix = if status == "in_progress" || status == "working" {
-                " *(in progress)*"
-            } else {
-                ""
-            };
-            lines.push(format!("{} {}{}", checkbox, item.title, suffix));
-            plan_items.push(item);
-        }
-        // Use existing plan_text if it has substantial content (from planning
-        // phase). Only replace if the model provides something longer, or if
-        // no existing plan_text exists. This prevents execution UpdatePlan
-        // calls from overwriting the full plan with a short summary.
-        let existing_text = self
-            .plan
-            .as_ref()
-            .map(|p| p.plan_text.clone())
-            .filter(|s| !s.trim().is_empty());
-        let plan_text = match (
-            explicit_plan_text.filter(|s| !s.trim().is_empty()),
-            existing_text,
-        ) {
-            (Some(explicit), Some(existing)) => {
-                if explicit.len() > existing.len() {
-                    explicit
-                } else {
-                    existing
-                }
-            }
-            (Some(explicit), None) => explicit,
-            (None, Some(existing)) => existing,
-            (None, None) => lines.join("\n"),
-        };
+        let plan_items: Vec<PlanItem> = items.iter().map(PlanItem::from_json).collect();
+        let plan_text =
+            Plan::text_after_update(self.plan.as_ref(), explicit_plan_text, &plan_items);
         let summary = Self::extract_plan_summary(&plan_text);
 
         // Preserve pre-approval status — don't promote Planned to Executing.

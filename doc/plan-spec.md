@@ -98,7 +98,9 @@ Plan text and its checklist are injected into the system prompt. Model executes 
 
 ### Completion
 
-Not yet implemented. Future: on `done`, mark remaining tracked items as `Skipped`, set plan status → `Completed`, emit event.
+When a run ends (typed chat, `agent_run`, a mission) and its plan is executing or approved with every checklist item done, the plan becomes `Completed` and a `PlanUpdate` goes out, so the block reads done. A partial checklist stays open for the next turn. An approved plan's execution also ends `Completed` and rewrites its saved plan message.
+
+A checklist-only plan (`update_plan` with no plan text) shows its checklist as its text, rebuilt on every update; a real plan's text is kept.
 
 ## Progress tracking
 

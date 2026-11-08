@@ -371,9 +371,14 @@ async fn run_approved_plan_task(
     };
     run_plan_execution(&ctx, &mut engine).await;
 
-    // Mark plan as completed and rewrite the persisted plan message.
+    // Mark plan as completed and rewrite the persisted plan message. The run's
+    // end may already have settled a done checklist to Completed
+    // (`settle_finished_plan`); the saved message still needs the update.
     if let Some(ref mut plan) = engine.plan {
-        if matches!(plan.status, PlanStatus::Executing | PlanStatus::Approved) {
+        if matches!(
+            plan.status,
+            PlanStatus::Executing | PlanStatus::Approved | PlanStatus::Completed
+        ) {
             plan.status = PlanStatus::Completed;
             let completed_snapshot = plan.clone();
             engine

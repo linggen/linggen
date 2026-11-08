@@ -417,6 +417,8 @@ impl AgentEngine {
     pub async fn run_agent_loop(&mut self, session_id: Option<&str>) -> Result<AgentOutcome> {
         let outcome = crate::util::panic_as_error(self.run_agent_loop_unguarded(session_id)).await;
         self.settle_open_calls().await;
+        // A finished checklist ends with its run (every caller: chat, agent_run, missions).
+        self.settle_finished_plan().await;
         outcome
     }
 
