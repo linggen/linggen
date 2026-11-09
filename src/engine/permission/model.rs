@@ -276,7 +276,7 @@ pub(super) fn expand_tilde(path: &str) -> String {
 /// we walk up to the nearest existing ancestor, canonicalize it, and append
 /// the missing tail so `/tmp/new-file.txt` still normalizes to
 /// `/private/tmp/new-file.txt`.
-fn normalize_path(path: &str) -> String {
+pub(super) fn normalize_path(path: &str) -> String {
     let expanded = expand_tilde(path);
     let mut p = std::path::PathBuf::from(&expanded);
     if let Ok(c) = p.canonicalize() {
@@ -1011,7 +1011,7 @@ fn thin_directories(leaf_to_root: Vec<PathBuf>) -> Vec<PathBuf> {
     out
 }
 
-fn display_path(path: &Path) -> String {
+pub fn display_path(path: &Path) -> String {
     if let Some(home) = dirs::home_dir() {
         let s = path.to_string_lossy();
         let h = home.to_string_lossy();

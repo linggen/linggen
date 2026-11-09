@@ -770,6 +770,8 @@ pub async fn stop(state: &Arc<ServerState>, session: &str) -> Result<String, Str
     let mut stopped = Vec::new();
     for run in runs.iter().filter(|r| r.status == crate::engine::agent::AgentRunStatus::Running && r.parent_run_id.is_none()) {
         let cancelled = state.manager.cancel_run_tree(&run.run_id).await.map_err(|e| e.to_string())?;
+        // A run waiting on a permission request stops now, not when it expires.
+        super::api::agents::drop_pending_asks(state, &cancelled).await;
         stopped.extend(cancelled.into_iter().map(|r| r.run_id));
     }
     Ok(serde_json::json!({"stopped": stopped}).to_string())

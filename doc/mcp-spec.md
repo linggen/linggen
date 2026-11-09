@@ -149,7 +149,9 @@ deprecation window:
   caller. Answer with `agent_permit {session_id, request_id, decision, scope?}`:
   `allow_once` runs that action; `allow_session` grants its `path` or its
   folder (`dir`, the default when grantable) at the needed level for the rest
-  of that session only; `deny` refuses it. No answer in 10 min counts as deny.
+  of that session only; `deny` refuses it and closes its project to every
+  tool for the rest of that run. No answer in 10 min counts as deny; `agent_stop`
+  ends a waiting run at once.
   `agent_run` returns early when a request is raised; `agent_status` lists
   open requests in `pending`. Refusals land in `denied` with their reason.
 - Follow up with `agent_run(session_id=…)` to retain context; omit `write_dir`,

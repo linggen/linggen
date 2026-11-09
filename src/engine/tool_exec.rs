@@ -9,6 +9,7 @@ use crate::engine::tools::{self, ToolCall};
 use crate::message::ChatMessage;
 use serde_json::Value as JsonValue;
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::sync::Arc;
 use tracing::{info, warn};
 
@@ -50,6 +51,15 @@ mod denial_store_tests {
         assert_eq!(store.get("s")[0].tool, "5");
         store.clear("s");
         assert!(store.get("s").is_empty());
+    }
+}
+
+/// The chat's line for a call refused inside a declined folder.
+fn declined_notice(dir: &str, language: &str) -> String {
+    if language.starts_with("zh") {
+        format!("本轮已拒绝访问 {dir}")
+    } else {
+        format!("Access to {dir} declined for this turn")
     }
 }
 
@@ -325,12 +335,51 @@ impl AgentEngine {
         messages: &mut Vec<ChatMessage>,
         msg: String,
     ) -> Option<PreExecOutcome> {
+        let notice = msg.clone();
+        self.refuse_saved_noted(t, messages, msg, &notice).await
+    }
+
+    /// Refuse a call inside a folder the person declined this run. `auto`:
+    /// refused without a prompt, so the chat gets one short line saying so.
+    async fn refuse_declined(
+        &mut self,
+        t: &ToolTurn<'_>,
+        messages: &mut Vec<ChatMessage>,
+        scope: &Path,
+        user_msg: Option<&str>,
+        auto: bool,
+    ) -> Option<PreExecOutcome> {
+        let dir = permission::display_path(scope);
+        let summary = self.permission_summary(t);
+        let mut msg = self.prompt_store.render_or_fallback(
+            crate::prompts::keys::PERMISSION_DECLINED,
+            &[("tool", t.canonical), ("summary", &summary), ("dir", &dir)],
+        );
+        if let Some(words) = user_msg.filter(|w| !w.trim().is_empty()) {
+            msg.push_str(&format!("\nUser says: {words}"));
+        }
+        if !auto {
+            return self.refuse_saved(t, messages, msg).await;
+        }
+        info!("Permission: {} inside declined {} → refused", t.canonical, dir);
+        let notice = declined_notice(&dir, &crate::language::effective());
+        self.refuse_saved_noted(t, messages, msg, &notice).await
+    }
+
+    /// [`Self::refuse_saved`] with its own line on the live tool block.
+    async fn refuse_saved_noted(
+        &mut self,
+        t: &ToolTurn<'_>,
+        messages: &mut Vec<ChatMessage>,
+        msg: String,
+        notice: &str,
+    ) -> Option<PreExecOutcome> {
         let safe_args = sanitize_tool_args_for_display(t.canonical, t.args);
         let block_id = self.announce_tool_start(t, &safe_args).await;
         let _ = self
             .persist_observation(t.canonical, &msg, true, t.session_id)
             .await;
-        self.announce_tool_refused(&block_id, &msg).await;
+        self.announce_tool_refused(&block_id, notice).await;
         self.refuse(t, messages, msg)
     }
 
@@ -666,6 +715,11 @@ impl AgentEngine {
                 let msg = self.permission_denied_msg(t);
                 return self.refuse_saved(t, messages, msg).await;
             }
+            // Declined earlier in this run: refused without asking again.
+            if let Some(scope) = self.declined_scopes.covering(&path).map(Path::to_path_buf) {
+                self.record_denial(t, &target_mode.to_string(), "Declined earlier in this run");
+                return self.refuse_declined(t, messages, &scope, None, true).await;
+            }
             let (question, caller_request, wait) = if asks_caller {
                 let request = self.caller_request(t, target_mode, &path, &directories);
                 let question = permission::build_caller_question(
@@ -717,22 +771,22 @@ impl AgentEngine {
                     }
                     continue;
                 }
-                Some(
-                    permission::PermissionAction::AllowSession | permission::PermissionAction::Deny,
-                ) => {
-                    if asks_caller {
-                        self.record_denial(t, &target_mode.to_string(), "Denied by the caller");
-                    }
+                Some(permission::PermissionAction::AllowSession) => {
                     let msg = self.permission_denied_msg(t);
                     return self.refuse_saved(t, messages, msg).await;
                 }
+                Some(permission::PermissionAction::Deny) => {
+                    if asks_caller {
+                        self.record_denial(t, &target_mode.to_string(), "Denied by the caller");
+                    }
+                    let scope = self.declined_scopes.decline(&path);
+                    return self.refuse_declined(t, messages, &scope, None, false).await;
+                }
                 Some(permission::PermissionAction::DenyWithMessage(user_msg)) => {
-                    let summary = self.permission_summary(t);
-                    let msg = format!(
-                        "Permission denied by user for {} '{}'. User says: {}",
-                        t.canonical, summary, user_msg
-                    );
-                    return self.refuse_saved(t, messages, msg).await;
+                    let scope = self.declined_scopes.decline(&path);
+                    return self
+                        .refuse_declined(t, messages, &scope, Some(&user_msg), false)
+                        .await;
                 }
                 None if asks_caller => {
                     // The caller never answered: denied, and the run goes on.
@@ -1557,5 +1611,112 @@ mod tests {
             tool_error_text("mcp__memory__memory_add", &err),
             "tool_error: tool=mcp__memory__memory_add error=MCP tools/call memory_add: MCP error -32603: add timed out after 25s"
         );
+    }
+}
+
+#[cfg(test)]
+mod declined_gate_tests {
+    use super::*;
+    use crate::engine::permission::{PermissionMode, SessionPermissions};
+
+    type Pending = Arc<tokio::sync::Mutex<HashMap<String, tools::PendingAskUser>>>;
+
+    fn engine(root: &std::path::Path, pending: &Pending, ask_caller: bool) -> AgentEngine {
+        let cfg = crate::engine::EngineConfig::from_app_config(
+            &crate::config::Config::default(),
+            root.into(),
+            crate::engine::InterfaceMode::Web,
+        );
+        let models = Arc::new(crate::provider::models::ModelManager::new_with_credentials(
+            vec![],
+            &crate::credentials::Credentials::default(),
+        ));
+        let mut engine = AgentEngine::new(cfg, models, "m".into(), crate::engine::AgentRole::Lead).unwrap();
+        let mut perms = SessionPermissions { interactive: !ask_caller, ask_caller, ..Default::default() };
+        perms.set_path_mode(&root.to_string_lossy(), PermissionMode::Read);
+        engine.session_permissions = perms;
+        engine.tools.set_ask_user_bridge(Arc::new(tools::AskUserBridge {
+            events_tx: tokio::sync::broadcast::channel(16).0,
+            pending: pending.clone(),
+            session_id: None,
+        }));
+        engine
+    }
+
+    /// Answer every prompt with Deny; count how many were asked.
+    fn deny_all(pending: &Pending) -> Arc<std::sync::atomic::AtomicUsize> {
+        let asked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (pending, count) = (pending.clone(), asked.clone());
+        tokio::spawn(async move {
+            loop {
+                let next = pending.lock().await.keys().next().cloned();
+                if let Some(id) = next {
+                    let entry = pending.lock().await.remove(&id).unwrap();
+                    count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    let answer = tools::AskUserAnswer { question_index: 0, selected: vec!["Deny".into()], custom_text: None };
+                    let _ = entry.sender.send(vec![answer]);
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+            }
+        });
+        asked
+    }
+
+    async fn gate(engine: &mut AgentEngine, tool: &str, args: JsonValue) -> String {
+        let id = Some("c1".to_string());
+        let t = ToolTurn { tool, canonical: tool, args: &args, session_id: None, tool_call_id: &id };
+        let mut messages = Vec::new();
+        assert!(engine.gate_permission(&t, &mut messages).await.is_some(), "{tool} was let through");
+        messages.last().map(|m| m.content.clone()).unwrap_or_default()
+    }
+
+    #[tokio::test]
+    async fn a_denial_closes_the_repo_to_every_tool_for_the_run() {
+        let home = dirs::home_dir().unwrap();
+        let (work, repo, other) = (tempfile::tempdir_in(&home).unwrap(), tempfile::tempdir_in(&home).unwrap(), tempfile::tempdir_in(&home).unwrap());
+        std::fs::create_dir_all(repo.path().join(".git")).unwrap();
+        let pending: Pending = Default::default();
+        let asked = deny_all(&pending);
+        let mut engine = engine(work.path(), &pending, false);
+        let repo_dir = repo.path().to_string_lossy().to_string();
+        let first = gate(&mut engine, "Bash", serde_json::json!({"command": format!("cd {repo_dir} && git log -1")})).await;
+        assert!(first.contains("declined access to") && first.contains("Do not try it again"), "{first}");
+        let count = || asked.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(count(), 1);
+        // Another tool on the same repo: refused, no prompt.
+        let head = repo.path().join(".git/HEAD").to_string_lossy().to_string();
+        let again = gate(&mut engine, "Read", serde_json::json!({"path": head})).await;
+        assert!(again.contains("declined access to"), "{again}");
+        assert_eq!(count(), 1, "the same repo is not asked twice in a run");
+        // A path outside the declined repo still asks.
+        let elsewhere = other.path().join("f.txt").to_string_lossy().to_string();
+        gate(&mut engine, "Read", serde_json::json!({"path": elsewhere})).await;
+        assert_eq!(count(), 2);
+        // The next run asks again.
+        engine.declined_scopes.clear();
+        gate(&mut engine, "Read", serde_json::json!({"path": head})).await;
+        assert_eq!(count(), 3);
+    }
+
+    #[tokio::test]
+    async fn a_callers_deny_also_closes_the_repo_for_the_run() {
+        let home = dirs::home_dir().unwrap();
+        let (work, repo) = (tempfile::tempdir_in(&home).unwrap(), tempfile::tempdir_in(&home).unwrap());
+        std::fs::create_dir_all(repo.path().join(".git")).unwrap();
+        let pending: Pending = Default::default();
+        let asked = deny_all(&pending);
+        let mut engine = engine(work.path(), &pending, true);
+        let file = repo.path().join("a.txt").to_string_lossy().to_string();
+        gate(&mut engine, "Read", serde_json::json!({"path": file})).await;
+        let head = repo.path().join(".git/HEAD").to_string_lossy().to_string();
+        let again = gate(&mut engine, "Read", serde_json::json!({"path": head})).await;
+        assert!(again.contains("declined access to"), "{again}");
+        assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn the_chat_line_follows_the_language() {
+        assert_eq!(declined_notice("~/r", "zh-Hans"), "本轮已拒绝访问 ~/r");
+        assert_eq!(declined_notice("~/r", "en"), "Access to ~/r declined for this turn");
     }
 }

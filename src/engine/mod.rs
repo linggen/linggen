@@ -258,6 +258,8 @@ impl AgentEngine {
     /// `native_tool_mode`, plus the builtins' progress channel).
     async fn initialize_loop(&mut self, session_id: Option<&str>) -> Result<LoopState> {
         self.session_id = session_id.map(|s| s.to_string());
+        // What the person declined last run is asked again in this one.
+        self.declined_scopes.clear();
 
         if let Some(sid) = session_id {
             if self.tools.builtins.delegation_depth() == 0 {

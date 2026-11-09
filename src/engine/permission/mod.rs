@@ -15,6 +15,7 @@
 //! - [`prompt`] — AskUser widget construction and answer parsing.
 
 mod classify;
+mod declined;
 mod manifest;
 mod model;
 mod prompt;
@@ -23,13 +24,14 @@ mod store;
 
 pub use manifest::{apply_grants, Grants, PathGrant};
 pub use model::{
-    check_permission, effective_mode_for_path, parse_skill_tier, PathMode, PermissionAction,
+    check_permission, display_path, effective_mode_for_path, parse_skill_tier, PathMode, PermissionAction,
     PermissionCheckResult, PermissionMode, PromptKind,
 };
 pub use prompt::{
     build_caller_question, build_exceeds_ceiling_question, grant_at_label,
     parse_exceeds_ceiling_answer, permission_target_summary, ALLOW_ONCE,
 };
+pub use declined::DeclinedScopes;
 pub use store::SessionPermissions;
 
 #[cfg(test)]

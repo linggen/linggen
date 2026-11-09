@@ -77,6 +77,13 @@ text = '''Permission denied by user: {tool} on '{summary}'.
 The user has denied this action. Do NOT retry the same tool call.
 Choose a different approach, skip this step, or use AskUser to ask the user what to do instead.'''
 
+[permission_declined]
+description = "Feedback when the user declines a permission request; holds for the rest of the run"
+vars = ["tool", "summary", "dir"]
+text = '''Permission declined: {tool} on '{summary}'.
+The user declined access to {dir} for this turn. Do not try it again with any tool.
+Mark what needed it as unverified, or skip it, and continue.'''
+
 [permission_timeout]
 description = "Feedback when permission prompt times out with no user response"
 text = "Permission prompt timed out. Stopping."

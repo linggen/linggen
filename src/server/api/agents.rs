@@ -82,43 +82,7 @@ pub(crate) async fn cancel_agent_run(
     }
     match state.manager.cancel_run_tree(&req.run_id).await {
         Ok(runs) => {
-            // Cancel any pending AskUser questions for the cancelled runs so
-            // the tool unblocks immediately. Dropping the sender causes the
-            // oneshot receiver to return Err, which is handled gracefully.
-            // Scope by (agent, session) — an agent-only match would nuke the
-            // same agent's prompt in an unrelated session; entries without a
-            // session fall back to the agent match. Each removal is announced
-            // with WidgetResolved: removal alone left the prompt on screen,
-            // since only that broadcast dismisses the widget.
-            {
-                let cancelled_sessions: std::collections::HashSet<(String, String)> = runs
-                    .iter()
-                    .map(|r| (r.agent_id.clone(), r.session_id.clone()))
-                    .collect();
-                let cancelled_agents: std::collections::HashSet<String> =
-                    runs.iter().map(|r| r.agent_id.clone()).collect();
-                let mut resolved: Vec<(String, Option<String>)> = Vec::new();
-                let mut pending = state.pending_ask_user.lock().await;
-                pending.retain(|qid, entry| {
-                    let hit = match entry.session_id.as_ref() {
-                        Some(sid) => {
-                            cancelled_sessions.contains(&(entry.agent_id.clone(), sid.clone()))
-                        }
-                        None => cancelled_agents.contains(&entry.agent_id),
-                    };
-                    if hit {
-                        resolved.push((qid.clone(), entry.session_id.clone()));
-                    }
-                    !hit
-                });
-                drop(pending);
-                for (widget_id, session_id) in resolved {
-                    let _ = state.events_tx.send(ServerEvent::WidgetResolved {
-                        widget_id,
-                        session_id,
-                    });
-                }
-            }
+            drop_pending_asks(&state, &runs).await;
 
             // No Idle from here: a cancel only flags the runs, and each one
             // still unwinds — its tool's failed update, its turn's end — and
@@ -410,4 +374,45 @@ pub(crate) async fn reload_agents(
     state.manager.load_met_declarations().await;
     let _ = state.events_tx.send(ServerEvent::StateUpdated);
     Json(serde_json::json!({ "ok": true })).into_response()
+}
+
+/// Cancel any pending AskUser questions for the cancelled runs so
+/// the tool unblocks immediately. Dropping the sender causes the
+/// oneshot receiver to return Err, which is handled gracefully.
+/// Scope by (agent, session) — an agent-only match would nuke the
+/// same agent's prompt in an unrelated session; entries without a
+/// session fall back to the agent match. Each removal is announced
+/// with WidgetResolved: removal alone left the prompt on screen,
+/// since only that broadcast dismisses the widget.
+pub(crate) async fn drop_pending_asks(
+    state: &ServerState,
+    runs: &[crate::engine::agent::AgentRunRecord],
+) {
+    let cancelled_sessions: std::collections::HashSet<(String, String)> = runs
+        .iter()
+        .map(|r| (r.agent_id.clone(), r.session_id.clone()))
+        .collect();
+    let cancelled_agents: std::collections::HashSet<String> =
+        runs.iter().map(|r| r.agent_id.clone()).collect();
+    let mut resolved: Vec<(String, Option<String>)> = Vec::new();
+    let mut pending = state.pending_ask_user.lock().await;
+    pending.retain(|qid, entry| {
+        let hit = match entry.session_id.as_ref() {
+            Some(sid) => {
+                cancelled_sessions.contains(&(entry.agent_id.clone(), sid.clone()))
+            }
+            None => cancelled_agents.contains(&entry.agent_id),
+        };
+        if hit {
+            resolved.push((qid.clone(), entry.session_id.clone()));
+        }
+        !hit
+    });
+    drop(pending);
+    for (widget_id, session_id) in resolved {
+        let _ = state.events_tx.send(ServerEvent::WidgetResolved {
+            widget_id,
+            session_id,
+        });
+    }
 }

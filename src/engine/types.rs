@@ -399,6 +399,8 @@ pub struct AgentEngine {
     pub(crate) open_calls: super::run_scope::OpenCalls,
     /// Session-scoped permissions (path modes, allows, denied sigs). See permission-spec.md.
     pub session_permissions: permission::SessionPermissions,
+    /// Folders the person declined in this run (cleared at its start).
+    pub(crate) declined_scopes: permission::DeclinedScopes,
     /// The session's lead member, when it isn't this engine's agent: then
     /// this agent is another member at the lead's table — the session's
     /// tools are the lead's, a bound skill's SKILL.md is the lead's place,
@@ -664,6 +666,7 @@ impl AgentEngine {
             last_ask_answered: false,
             open_calls: Default::default(),
             session_permissions: permission::SessionPermissions::default(),
+            declined_scopes: permission::DeclinedScopes::default(),
             session_lead: None,
             session_tools: None,
             skill_bound: false,

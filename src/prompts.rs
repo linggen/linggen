@@ -47,6 +47,7 @@ pub mod keys {
     pub const WRITE_SAFETY_BLOCKED: &str = "system-reminder.write_safety_blocked";
     pub const TOOL_EXEC_FAILED: &str = "system-reminder.tool_exec_failed";
     pub const PERMISSION_DENIED: &str = "system-reminder.permission_denied";
+    pub const PERMISSION_DECLINED: &str = "system-reminder.permission_declined";
     pub const PERMISSION_TIMEOUT: &str = "system-reminder.permission_timeout";
     pub const DELEGATION_BLOCKED: &str = "system-reminder.delegation_blocked";
     pub const DELEGATION_VALIDATION_FAILED: &str = "system-reminder.delegation_validation_failed";
@@ -452,6 +453,7 @@ mod tests {
             keys::WRITE_SAFETY_BLOCKED,
             keys::TOOL_EXEC_FAILED,
             keys::PERMISSION_DENIED,
+            keys::PERMISSION_DECLINED,
             keys::PERMISSION_TIMEOUT,
             keys::DELEGATION_BLOCKED,
             keys::DELEGATION_VALIDATION_FAILED,
