@@ -149,6 +149,11 @@ pub enum AgentEvent {
         preferred_model: String,
         actual_model: String,
         reason: String,
+        /// The run that switched, and whether it is a subagent's: several
+        /// subagents share the session and the agent id, and one of them
+        /// falling back says nothing about the main chat's model.
+        run_id: Option<String>,
+        subagent: bool,
     },
     ToolProgress {
         agent_id: String,

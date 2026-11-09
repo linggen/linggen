@@ -224,6 +224,8 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
             preferred_model,
             actual_model,
             reason,
+            run_id,
+            subagent,
             session_id,
         } => Some(
             ui.event(format!("model-fallback-{agent_id}-{seq}"), "model_fallback")
@@ -237,6 +239,8 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
                     preferred_model,
                     actual_model,
                     reason,
+                    run_id,
+                    subagent,
                 }),
         ),
         ServerEvent::ToolProgress {

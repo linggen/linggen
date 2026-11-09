@@ -578,6 +578,8 @@ impl AgentEngine {
             preferred_model: preferred.to_string(),
             actual_model: actual.to_string(),
             reason: reason.to_string(),
+            run_id: self.run_id.clone(),
+            subagent: self.parent_run_id.is_some(),
         })
         .await;
     }
@@ -806,7 +808,10 @@ mod fallback_window_tests {
         // this machine's own account once the backup fails. Bench it here.
         let cloud = crate::provider::models::LINGGEN_CLOUD_MODEL_ID;
         if backup_fails {
-            crate::provider::models::note_unavailable(cloud, &anyhow::anyhow!("429 Too Many Requests: rate limit"));
+            crate::provider::models::note_unavailable(
+                cloud,
+                &anyhow::anyhow!("429 Too Many Requests: rate limit"),
+            );
             assert!(crate::provider::models::in_cooldown(cloud));
         }
         let result = engine.stream_with_fallback(&messages, None).await;
@@ -825,7 +830,10 @@ mod fallback_window_tests {
             assert!(result.is_err());
             assert_eq!(engine.model_id, primary);
             assert_eq!(engine.context_window_tokens, Some(128_000));
-            assert_eq!(engine.context_window_model.as_deref(), Some(primary.as_str()));
+            assert_eq!(
+                engine.context_window_model.as_deref(),
+                Some(primary.as_str())
+            );
             assert!(!events.iter().any(|e| matches!(
                 e,
                 AgentEvent::ModelFallback { .. } | AgentEvent::ContextUsage { .. }
@@ -834,7 +842,10 @@ mod fallback_window_tests {
             assert_eq!(result.unwrap().full_text, "ok");
             assert_eq!(engine.model_id, backup);
             assert_eq!(engine.context_window_tokens, window);
-            assert_eq!(engine.context_window_model.as_deref(), Some(backup.as_str()));
+            assert_eq!(
+                engine.context_window_model.as_deref(),
+                Some(backup.as_str())
+            );
             assert!(events.iter().any(|e| matches!(e, AgentEvent::ModelFallback { preferred_model, actual_model, reason, .. } if preferred_model == &primary && actual_model == &backup && !reason.is_empty())));
             assert!(events.iter().any(|e| matches!(e, AgentEvent::ContextUsage { stage, token_limit, actual_prompt_tokens: None, actual_completion_tokens: None, compressed: false, message_count: 1, .. } if stage == "fallback" && *token_limit == window)));
         }

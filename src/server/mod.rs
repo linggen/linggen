@@ -13,8 +13,8 @@ mod mac_tools;
 mod mcp;
 mod mcp_agent;
 mod met_watch;
-mod push;
 pub(crate) mod milestones;
+mod push;
 mod quests_watch;
 mod resident;
 mod restart;
@@ -455,6 +455,8 @@ mod tests {
                 preferred_model: "gpt-4".into(),
                 actual_model: "gpt-3.5".into(),
                 reason: "rate_limited".into(),
+                run_id: None,
+                subagent: false,
                 session_id: None,
             },
             ServerEvent::ToolProgress {

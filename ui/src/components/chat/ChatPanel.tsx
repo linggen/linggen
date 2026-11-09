@@ -497,7 +497,9 @@ export const ChatPanel: React.FC<{
       </div>
 
       {showSubagentPane && paneVisible && (
-        <div className="md:flex-[2] md:min-w-0 md:max-w-[40%] border-t md:border-t-0 border-slate-200 dark:border-white/10 min-h-[180px] md:min-h-0">
+        <div className="md:flex-[2] md:min-w-0 md:max-w-[40%] border-t md:border-t-0 border-slate-200 dark:border-white/10 min-h-[140px] max-h-[40%] md:max-h-none md:min-h-0 overflow-hidden flex flex-col">
+          {/* Stacked below the chat (narrow panes, e.g. an app's side chat) it is capped, so a long
+              list scrolls inside the pane instead of pushing the conversation off screen. */}
           <SubagentPane
             messages={filteredMainMessages}
             visible={paneVisible}

@@ -70,6 +70,9 @@ export function handleTasks(item: UiEventOf<'tasks'>): void {
 // ---------------------------------------------------------------------------
 
 export function handleModelFallback(item: UiEventOf<'model_fallback'>): void {
+  // A subagent's switch is its own: subagents share the session and the agent id
+  // ("ling"), so reading it as the main chat's would flip the chat's model and status.
+  if (item.data?.subagent) return;
   const text = String(item.text || 'Model switched');
   useChatStore.getState().addMessage({
     role: 'agent' as const,

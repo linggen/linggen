@@ -388,6 +388,8 @@ pub enum ServerEvent {
         preferred_model: String,
         actual_model: String,
         reason: String,
+        run_id: Option<String>,
+        subagent: bool,
         session_id: Option<String>,
     },
     ToolProgress {
@@ -659,11 +661,15 @@ impl ServerEvent {
                 preferred_model,
                 actual_model,
                 reason,
+                run_id,
+                subagent,
             } => Some(Self::ModelFallback {
                 agent_id,
                 preferred_model,
                 actual_model,
                 reason,
+                run_id,
+                subagent,
                 session_id,
             }),
             AgentEvent::ToolProgress {

@@ -129,6 +129,9 @@ pub(super) struct ModelFallbackData {
     pub preferred_model: String,
     pub actual_model: String,
     pub reason: String,
+    pub run_id: Option<String>,
+    /// A subagent's run: the main chat's model and status stay as they are.
+    pub subagent: bool,
 }
 
 /// `tool_progress`.

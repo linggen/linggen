@@ -3,4 +3,8 @@
 /**
  * `model_fallback`.
  */
-export type ModelFallbackData = { preferred_model: string, actual_model: string, reason: string, };
+export type ModelFallbackData = { preferred_model: string, actual_model: string, reason: string, run_id: string | null, 
+/**
+ * A subagent's run: the main chat's model and status stay as they are.
+ */
+subagent: boolean, };
