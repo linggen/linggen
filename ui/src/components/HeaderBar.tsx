@@ -7,9 +7,7 @@ import { AccountAvatar } from './AccountAvatar';
 import logoUrl from '../assets/logo.svg';
 import { roomApi } from './room/roomApi';
 import { WeatherChip } from './WeatherChip';
-import { language } from '../lib/i18n';
-import { backdropLabel } from '../lib/skyArt.mts';
-import { useSkyStore } from '../stores/skyStore';
+import { TermChip } from './TermChip';
 
 /** Remote/tunnel mode — the UI reached this daemon via the relay. */
 const isRemoteUi = typeof document !== 'undefined' && !!document.querySelector('meta[name="linggen-instance"]');
@@ -80,8 +78,6 @@ export const HeaderBar: React.FC<{
   const roomEnabled = useUserStore((s) => s.roomEnabled);
   const proxyRoomName = useUserStore((s) => s.proxyRoomName);
   const openSettings = useOpenSettings();
-  const today = useSkyStore((s) => s.today);
-  const label = backdropLabel(today, language());
 
   // Fetch room name for owner — room_enabled comes from page_state, but
   // room_name requires an HTTP call since it's stored on linggen.dev.
@@ -139,11 +135,7 @@ export const HeaderBar: React.FC<{
           <img src={logoUrl} alt="Linggen" className="w-6 h-6 md:w-7 md:h-7" />
           <h1 className="text-sm md:text-base font-bold tracking-tight text-slate-900 dark:text-white">Linggen</h1>
         </a>
-        {label && (
-          <span data-no-i18n title={label.title} className={`hidden md:inline-block whitespace-nowrap shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium ${label.today ? 'bg-amber-100 dark:bg-amber-500/15 text-amber-700 dark:text-amber-300' : 'bg-slate-200/70 dark:bg-white/10 text-slate-500 dark:text-slate-400'}`}>
-            {label.name}
-          </span>
-        )}
+        <TermChip />
         {userRoomName && (
           <button
             onClick={() => {

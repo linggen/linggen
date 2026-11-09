@@ -13,6 +13,7 @@ import { LauncherSettings } from './LauncherSettings';
 import '../lib/ownModel';
 import { AccountAvatar } from '../components/AccountAvatar';
 import { WeatherChip } from '../components/WeatherChip';
+import { TermChip } from '../components/TermChip';
 import { skillsApi } from '../lib/endpoints';
 import { appLabel } from './appLabel';
 import { useYinyuePresenter } from '../hooks/useTransport';
@@ -148,6 +149,7 @@ export const LauncherApp: React.FC = () => {
         <div className="flex items-center gap-2 shrink-0">
           <img src={logoUrl} alt="Linggen" className="w-6 h-6" />
           <span className="text-sm font-bold tracking-tight text-slate-900 dark:text-white">Linggen</span>
+          <TermChip />
         </div>
         <div className="flex items-center gap-1 overflow-x-auto">
           {apps.map((a) => {
