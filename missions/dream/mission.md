@@ -13,7 +13,7 @@ enabled: true
 # mission day-scoped (`kickoff-day` / `kickoff-attended` below), so
 # the mission and the UI can never drift apart. Unattended runs are
 # safe by construction: this mission's tools are memory plus read-only
-# files (Read / Glob / Grep / Bash under a READ grant over ~ —
+# files and git (Read / Glob / Grep / Bash under a READ grant over ~ —
 # the engine refuses anything that writes, and missions never prompt);
 # the engine adds AskUser to scope only on attended triggers; and
 # uncertainty resolves to promote.
@@ -200,9 +200,8 @@ kickoff-attended:
 # judgment doctrine; this body carries only the run protocol.
 # The memory server by name — expanded to the tools it advertises, so a
 # ling-mem that gains a verb does not need this list re-edited. Read /
-# Glob / Grep / Bash let the audit check a claim against the code and
-# docs (look only; git history of a project needs `cd` / `git -C`,
-# which classify above read today). The agent spec lists the same tools —
+# Glob / Grep / Bash let the audit check a claim against the code, docs
+# and git history (look only). The agent spec lists the same tools —
 # scopes intersect.
 allowed-tools:
   - mcp__memory
@@ -212,7 +211,7 @@ allowed-tools:
   - Bash
 # READ over the home directory, granted up front: the audit can read any
 # project a memory row names (rows are filed by directory) and run
-# read-class Bash (grep, rg, cat, ls on absolute paths) with no prompt.
+# read-class Bash (git -C <dir> log/show/diff/blame/grep, grep, cat) with no prompt.
 # Anything above read — a write, git commit/checkout, rm, a redirect —
 # is refused at once with a tool error (missions run non-interactive,
 # attended day runs too), never asked.
@@ -234,8 +233,8 @@ permission:
     (derived rows only; each ruling recorded as a closed review item),
     and queues as review items (a JSON sidecar entry, no row changes)
     only what needs the user: a user-voice row that would change, a
-    pick between rows, or evidence it cannot read. Reads files under
-    your home directory to check claims (read only —
+    pick between rows, or evidence it cannot read. Reads files and git
+    history under your home directory to check claims (read only —
     anything that writes is refused); changes no files.
 ---
 

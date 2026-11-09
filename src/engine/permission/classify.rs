@@ -184,6 +184,18 @@ fn classify_words(words: &[String]) -> BashClass {
     if program == "env" {
         return classify_env(args);
     }
+    // `cd <dir>` only moves the shell; the commands after it are judged
+    // at <dir> by the target check (model.rs follows `cd`).
+    if program == "cd" {
+        return Read;
+    }
+    // `git -C <dir> <sub> …` is `<sub>` run in <dir>: judge the rest.
+    // <dir> stays an argument, so the target check sees it.
+    if program == "git" && args.first().map(String::as_str) == Some("-C") && args.len() > 2 {
+        let mut rest = vec![words[0].clone()];
+        rest.extend_from_slice(&args[2..]);
+        return classify_words(&rest);
+    }
     let sub = args.first().map(String::as_str).unwrap_or("");
     let base = match (program, sub) {
         ("git", "branch" | "tag" | "remote" | "stash") => git_ref_class(sub, &args[1..]),
@@ -326,6 +338,13 @@ const LIFTS: &[Lift] = &[
         subs: &["diff", "log", "show"],
         args: &["--output"],
         class: Write,
+    },
+    Lift {
+        // Opens the matches in a program of the caller's choosing.
+        programs: &["git"],
+        subs: &["grep"],
+        args: &["-O", "--open-files-in-pager"],
+        class: Admin,
     },
     Lift {
         programs: &["sort"],
@@ -608,6 +627,7 @@ fn classify_program(program: &str, args: &[String]) -> BashClass {
         "shortlog",
         "ls-files",
         "ls-tree",
+        "grep",
     ];
 
     const CARGO_READ: &[&str] = &[

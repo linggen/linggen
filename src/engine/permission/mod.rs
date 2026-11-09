@@ -393,6 +393,26 @@ mod tests {
     }
 
     #[test]
+    fn test_classify_bash_cd_and_git_dir() {
+        // `cd` only moves the shell: the segment after it keeps its class.
+        assert_eq!(classify_bash_command("cd /x"), BashClass::Read);
+        assert_eq!(classify_bash_command("cd /x && git log -5"), BashClass::Read);
+        assert_eq!(classify_bash_command("cd /x && git commit -m y"), BashClass::Write);
+        assert_eq!(classify_bash_command("cd /x && rm a"), BashClass::Admin);
+        // `git -C <dir> <sub>` is <sub>.
+        assert_eq!(classify_bash_command("git -C /x log --oneline"), BashClass::Read);
+        assert_eq!(classify_bash_command("git -C /x show HEAD"), BashClass::Read);
+        assert_eq!(classify_bash_command("git -C /x push"), BashClass::Write);
+        assert_eq!(classify_bash_command("git -C /x diff --output=o"), BashClass::Write);
+        assert_eq!(classify_bash_command("git -C /x branch -D y"), BashClass::Write);
+        assert_eq!(classify_bash_command("git -C"), BashClass::Admin);
+        // `git grep` reads, unless it opens a program.
+        assert_eq!(classify_bash_command("git grep -n foo"), BashClass::Read);
+        assert_eq!(classify_bash_command("git grep -O vim foo"), BashClass::Admin);
+        assert_eq!(classify_bash_command("git grep --open-files-in-pager=less foo"), BashClass::Admin);
+    }
+
+    #[test]
     fn test_classify_bash_admin() {
         assert_eq!(classify_bash_command("rm -rf dist"), BashClass::Admin);
         assert_eq!(classify_bash_command("docker run nginx"), BashClass::Admin);
@@ -745,11 +765,8 @@ mod tests {
         // repo state must not. Missions run non-interactive, so a
         // NeedsPrompt here is refused at once in tool_exec (a tool error
         // the model reads), never asked.
-        //
-        // Known gap (2026-11-09): git history of ANOTHER directory is not
-        // reachable at read — `cd` is unclassified (Admin) and `git -C`
-        // reads `-C` as the subcommand (Admin). Flip those two asserts
-        // when the classifier learns them.
+        // Git history of another directory reads too: `cd <dir> &&` and
+        // `git -C <dir>` are judged at <dir>.
         if let Some(home) = dirs::home_dir() {
             let cwd = home.join(".linggen");
             let mut sp = SessionPermissions::default();
@@ -762,6 +779,12 @@ mod tests {
                 format!("rg -n proposal {p}"),
                 format!("cat {p}/README.md"),
                 format!("ls {p}/doc"),
+                format!("cd {p} && git log --oneline -20"),
+                format!("cd {p} && git show HEAD --stat"),
+                format!("cd {p} && git diff HEAD~3 -- src"),
+                format!("cd {p} && git blame src/main.rs"),
+                format!("git -C {p} log --oneline -5"),
+                format!("cd {p} && git grep -n proposal"),
                 "git log --oneline -5".to_string(),
                 "git show HEAD --stat".to_string(),
             ] {
@@ -778,10 +801,11 @@ mod tests {
                 format!("rm {p}/a.txt"),
                 format!("echo a > {p}/a.txt"),
                 format!("sed -i '' s/a/b/ {p}/a.txt"),
-                // The gap: above read today.
-                format!("cd {p} && git log --oneline -20"),
-                format!("git -C {p} log"),
-                "git grep proposal".to_string(),
+                format!("cd {p} && git commit -am x"),
+                format!("cd {p} && git checkout main"),
+                format!("git -C {p} push"),
+                format!("git -C {p} reset --hard"),
+                format!("cd {p} && git grep -O vim proposal"),
             ] {
                 let r = check_permission("Bash", Some(&cmd), None, &cwd, &sp, None);
                 assert!(

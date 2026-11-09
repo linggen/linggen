@@ -5,8 +5,7 @@ description: Memory keeper — judges episodic staging day by day, promotes dura
 # in the mission tool scope (attended calendar triggers) — tool scopes
 # intersect. Read / Glob / Grep / Bash are for the audit's evidence
 # (look only): the dream mission grants READ over ~, so the engine
-# refuses any write and never prompts. `cd` and `git -C` classify
-# above read today, so git history of a project stays out of reach.
+# refuses any write and never prompts.
 tools: ["mcp__memory", "Read", "Glob", "Grep", "Bash", "AskUser"]
 # Run by the dream mission only — no person addresses it from the chat.
 internal: true
@@ -253,19 +252,18 @@ fresh. Take each through the lanes IN ORDER:
   its directory; "proposal pending" → look in that repo's docs), check
   it there — **look only**:
   - `Read` a file by absolute path; `Bash` with absolute paths:
-    `grep -rn "<words>" <dir>`, `rg`, `cat`, `ls`, `head`. The `Grep`
-    tool only searches this run's own directory — use `grep` in Bash
-    for a project.
-  - Git history of a project is out of reach on this run: the engine
-    refuses `cd` and `git -C` at read. A claim only git can settle
-    (an unpushed commit, a merge date) → queue it.
+    `grep -rn "<words>" <dir>`, `rg`, `cat`, `ls`, `head`; and git
+    history with `git -C <dir>`: `log --oneline -20`, `show`, `diff`,
+    `blame`, `grep`. Never `cd` — it moves this run's directory, which
+    later writes are filed by. The `Grep` tool only searches this
+    run's own directory — use `grep` in Bash for a project.
   - Never change a file or repo state (no writes, redirects, `git`
     writes, `rm`). The run holds READ only, so the engine refuses
     those anyway.
   - A refused or failed call, a directory that is not on this
     machine, or an answer only a remote or another host could give
-    (an unpushed branch elsewhere, a store you can't read) → the
-    evidence is out of reach: queue it.
+    (an unpushed branch elsewhere — never `git fetch`) → the evidence
+    is out of reach: queue it.
 
   When the evidence settles it and every row that would change is
   `from=derived`:
