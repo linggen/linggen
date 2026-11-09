@@ -164,14 +164,37 @@ fn completed_usage(val: &Value) -> Option<StreamChunk> {
     }))
 }
 
-/// An in-stream `error` event.
+/// An in-stream `error` or `response.failed` event. The reason sits at the top
+/// level, under `error`, or under `response.error` depending on the backend;
+/// when none of those carry words, the event itself is quoted (cut short) so
+/// the cause is never lost as "unknown error".
 fn error_event(val: &Value) -> anyhow::Error {
-    let msg = val
+    let detail = [val, &val["error"], &val["response"]["error"]]
+        .into_iter()
+        .find_map(error_words)
+        .unwrap_or_else(|| raw_event(val));
+    crate::provider::error::ProviderError::stream_event(format!("Responses API error: {}", detail))
+        .into()
+}
+
+/// "message (code)" from one error object, if it has a message.
+fn error_words(obj: &Value) -> Option<String> {
+    let msg = obj
         .get("message")
         .and_then(|v| v.as_str())
-        .unwrap_or("unknown error");
-    crate::provider::error::ProviderError::stream_event(format!("Responses API error: {}", msg))
-        .into()
+        .filter(|m| !m.is_empty())?;
+    match obj.get("code").and_then(|v| v.as_str()) {
+        Some(code) => Some(format!("{msg} ({code})")),
+        None => Some(msg.to_string()),
+    }
+}
+
+fn raw_event(val: &Value) -> String {
+    let raw = val.to_string();
+    match raw.char_indices().nth(300) {
+        Some((cut, _)) => format!("{}…", &raw[..cut]),
+        None => raw,
+    }
 }
 
 /// The reading of one Responses API stream. A response can hold several
@@ -290,7 +313,7 @@ impl ResponsesStream {
                 vec![]
             }
             "response.completed" => self.completed(val),
-            "error" => vec![Err(error_event(val))],
+            "error" | "response.failed" => vec![Err(error_event(val))],
             _ => return None,
         };
         Some(chunks)
@@ -448,6 +471,24 @@ pub(super) fn responses_api_input_item(msg: &crate::message::ChatMessage) -> ser
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn error_event_finds_the_reason_wherever_it_sits() {
+        let top = serde_json::json!({"type": "error", "message": "rate limited", "code": "rate_limit_exceeded"});
+        assert!(super::error_event(&top)
+            .to_string()
+            .contains("rate limited (rate_limit_exceeded)"));
+        let nested = serde_json::json!({"type": "error", "error": {"message": "bad tool schema"}});
+        assert!(super::error_event(&nested)
+            .to_string()
+            .contains("bad tool schema"));
+        let failed = serde_json::json!({"type": "response.failed", "response": {"error": {"message": "usage limit", "code": "usage_limit_reached"}}});
+        assert!(super::error_event(&failed)
+            .to_string()
+            .contains("usage limit (usage_limit_reached)"));
+        let bare = serde_json::json!({"type": "error", "detail": "x"});
+        assert!(super::error_event(&bare).to_string().contains("\"detail\""));
+    }
+
     use super::*;
     use serde_json::json;
 
