@@ -1004,6 +1004,17 @@ mod tests {
         );
         assert!(mission.enabled, "dream must be enabled by default");
         assert!(!mission.prompt.is_empty(), "dream must have a body");
+        // The audit looks at code, docs and git history: read-only tools
+        // plus Bash, under exactly one READ grant over ~ — never more.
+        for t in ["Read", "Glob", "Grep", "Bash"] {
+            assert!(mission.allowed_tools.iter().any(|x| x == t), "dream needs {t}");
+        }
+        for t in ["Write", "Edit"] {
+            assert!(!mission.allowed_tools.iter().any(|x| x == t), "dream must not have {t}");
+        }
+        let grants = &mission.permission.as_ref().expect("dream grants").paths;
+        assert_eq!(grants.len(), 1, "dream holds one grant");
+        assert_eq!((grants[0].path.as_str(), grants[0].mode.as_str()), ("~", "read"));
     }
 
     fn skill_store() -> (MissionLoader, tempfile::TempDir) {

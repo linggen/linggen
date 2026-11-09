@@ -738,6 +738,64 @@ mod tests {
     }
 
     #[test]
+    fn test_dream_read_grant_allows_look_only_and_refuses_the_rest() {
+        // The dream mission is granted `{path: "~", mode: read}` with
+        // Bash in scope: reading files and grepping a project by absolute
+        // path must pass with no prompt; anything that changes files or
+        // repo state must not. Missions run non-interactive, so a
+        // NeedsPrompt here is refused at once in tool_exec (a tool error
+        // the model reads), never asked.
+        //
+        // Known gap (2026-11-09): git history of ANOTHER directory is not
+        // reachable at read — `cd` is unclassified (Admin) and `git -C`
+        // reads `-C` as the subcommand (Admin). Flip those two asserts
+        // when the classifier learns them.
+        if let Some(home) = dirs::home_dir() {
+            let cwd = home.join(".linggen");
+            let mut sp = SessionPermissions::default();
+            sp.set_path_mode("~", PermissionMode::Read);
+            sp.interactive = false;
+            let proj = home.join("workspace/proj");
+            let p = proj.to_string_lossy();
+            for cmd in [
+                format!("grep -rn proposal {p}/doc"),
+                format!("rg -n proposal {p}"),
+                format!("cat {p}/README.md"),
+                format!("ls {p}/doc"),
+                "git log --oneline -5".to_string(),
+                "git show HEAD --stat".to_string(),
+            ] {
+                let r = check_permission("Bash", Some(&cmd), None, &cwd, &sp, None);
+                assert!(
+                    matches!(r, PermissionCheckResult::Allowed),
+                    "look-only `{cmd}` should pass at read. got {r:?}"
+                );
+            }
+            for cmd in [
+                format!("git commit -am x {p}"),
+                "git checkout main".to_string(),
+                "git push".to_string(),
+                format!("rm {p}/a.txt"),
+                format!("echo a > {p}/a.txt"),
+                format!("sed -i '' s/a/b/ {p}/a.txt"),
+                // The gap: above read today.
+                format!("cd {p} && git log --oneline -20"),
+                format!("git -C {p} log"),
+                "git grep proposal".to_string(),
+            ] {
+                let r = check_permission("Bash", Some(&cmd), None, &cwd, &sp, None);
+                assert!(
+                    !matches!(r, PermissionCheckResult::Allowed),
+                    "`{cmd}` must not pass at read. got {r:?}"
+                );
+            }
+            let target = proj.join("doc/plan.md");
+            let r = check_permission("Read", None, target.to_str(), &cwd, &sp, None);
+            assert!(matches!(r, PermissionCheckResult::Allowed), "Read: {r:?}");
+        }
+    }
+
+    #[test]
     fn test_check_permission_bash_arg_already_granted_passes() {
         // Skill activation grants admin on ~/.linggen/skills. A bash command
         // that only references that granted path (e.g. `bash ~/.linggen/skills/foo/run.sh`)

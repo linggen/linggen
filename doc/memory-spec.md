@@ -107,8 +107,12 @@ never writes to project files.
   ruling is recorded as a review item closed at once (resolved or
   dismissed, with a one-line why). It queues an open **review item**
   only when a user-voice row would change, the user must pick between
-  rows, or the evidence is out of reach on that run (the nightly
-  mission is memory-only). The marker scan excludes rows any review
+  rows, or the evidence is out of reach on that run. The dream mission
+  holds READ over the home directory with Read / Glob / Grep / Bash:
+  it looks at code and docs, and the engine refuses any write
+  (missions never prompt). Git history of a project is not reachable
+  at read yet (`cd` and `git -C` classify above read), so git-only
+  claims stay queued. The marker scan excludes rows any review
   item names, open or closed, so a settled or queued candidate is not
   served again.
 
