@@ -18,6 +18,7 @@ import { appLabel } from './appLabel';
 import { useYinyuePresenter } from '../hooks/useTransport';
 import type { SkillAppConfig, SkillInfoFull } from '../types';
 import { frameAllow } from '../lib/frameAllow.mts';
+import { setAppHost } from '../lib/appHost';
 
 /** A skill that is an app. */
 type AppSkill = SkillInfoFull & { app: SkillAppConfig };
@@ -121,6 +122,19 @@ export const LauncherApp: React.FC = () => {
     setOpened((prev) => (prev.includes(name) ? prev : [...prev, name]));
     saveUi({ active: name });
   };
+
+  // An `app_launched` (RunApp, or a skill script's POST /api/apps/launch)
+  // brings that app's tab to the front — only an app this launcher lists.
+  const appsRef = useRef(apps);
+  appsRef.current = apps;
+  useEffect(() => {
+    setAppHost((name) => {
+      if (!appsRef.current.some((a) => a.name === name)) return false;
+      open(name);
+      return true;
+    });
+    return () => setAppHost(null);
+  }, []);
 
   // in_launcher=1 tells the app it's hosted inside the unified launcher (vs a
   // standalone branded app) — apps use it to drop their own settings entry

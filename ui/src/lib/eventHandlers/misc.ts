@@ -4,6 +4,7 @@ import { useUiStore } from '../../stores/uiStore';
 import { useUserStore, type UserType } from '../../stores/userStore';
 import { useChatStore } from '../../stores/chatStore';
 import { useRoomChatStore } from '../../stores/roomChatStore';
+import { launchInHost } from '../appHost';
 
 // ---------------------------------------------------------------------------
 // Notification — mission completed, session created, etc.
@@ -38,6 +39,16 @@ export function handleNotification(item: UiEventOf<'notification'>): void {
 export function handleAppLaunched(item: UiEventOf<'app_launched'>): void {
   const url = item.data?.url || '';
   if (!url) return;
+  // The desktop launcher hosts apps: the app's tab comes to the front there.
+  // Every other surface (pet, embeds, channels) leaves it to the launcher; the
+  // dev console acts only on a launch from the session it is showing — the
+  // event is broadcast, so one it isn't watching reaches it too.
+  const view = (window as { __LINGGEN_VIEW__?: string }).__LINGGEN_VIEW__ || 'main';
+  if (view === 'launcher') {
+    launchInHost(item.data?.skill || '');
+    return;
+  }
+  if (view !== 'main' || item.session_id !== useSessionStore.getState().activeSessionId) return;
   const instanceMeta = document.querySelector('meta[name="linggen-instance"]');
   if (!instanceMeta) {
     window.open(url, '_blank');

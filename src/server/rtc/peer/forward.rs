@@ -230,6 +230,9 @@ pub(super) fn forward_event_to_channels(
             | "ask_user"
             | "widget_resolved"
             | "room_chat"
+            // A launch is for whichever surface hosts apps (the desktop
+            // launcher), which has no channel for the launching session.
+            | "app_launched"
             // The queue is state, not a stream: only its latest value matters
             // and the client cannot re-read it from anywhere. Buffering it
             // behind a closed session channel (then dropping it at the 60s

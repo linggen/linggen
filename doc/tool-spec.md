@@ -135,6 +135,10 @@ Launches an app-enabled skill. The skill must have an `app` section in its front
 
 **event**: `AppLaunched { skill, launcher, url, title, width?, height? }` — tells the UI to open the app panel.
 
+**Where a launch lands**: `app_launched` is broadcast — it reaches every surface, not only peers watching the launching session. The desktop launcher (`?launcher=1`) opens that app's tab and brings its window up (show, unminimize, focus — the only shell IPC its page is granted); the pet and skill embeds ignore it; the dev console acts only on a launch from the session it shows. Nothing falls back to a browser.
+
+**From a skill script**: `POST /api/apps/launch {skill}` sends the same event (no session) for a script with no model turn to call `RunApp` from — e.g. DJ's play asked from the phone. The page itself is how the caller learns it came up.
+
 **Implementation**: `engine/tools/delegation.rs` (`run_app()`), `server/chat_api.rs` (direct dispatch), `server/mod.rs` (static serving at `/apps/`), `ui/src/components/AppPanel.tsx` (UI).
 
 ## Tool dispatch

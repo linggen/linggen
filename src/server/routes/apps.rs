@@ -12,6 +12,8 @@ pub(super) fn routes() -> Routes {
             "/api/skills/{skill}/tools/{tool}",
             post(api::skill_tools::run_tool),
         )
+        // A skill script bringing its app's page up (no model turn for RunApp).
+        .route("/api/apps/launch", post(api::app_launch::launch))
         .route("/api/skill-cloud/{skill}", get(api::skill_cloud::get_cloud))
         .route(
             "/api/skill-cloud/{skill}/sync",
