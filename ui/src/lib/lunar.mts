@@ -80,6 +80,22 @@ export function termAt(y: number, m: number, d: number): Term | null {
   return null;
 }
 
+/// The 节气 in effect, which day of it this is (1 = its own day), and the next
+/// one with its date — or null outside the terms' reach.
+export function termSpan(y: number, m: number, d: number): { term: Term; day: number; next: { term: Term; on: Ymd } } | null {
+  const n = jdOfDay(y, m, d);
+  let back = 0;
+  while (back < 17 && !termOf(...ymdArgs(dayOfJd(n - back)))) back++;
+  if (back === 17) return null;
+  let ahead = 1;
+  while (ahead < 17 && !termOf(...ymdArgs(dayOfJd(n + ahead)))) ahead++;
+  if (ahead === 17) return null;
+  const on = dayOfJd(n + ahead);
+  return { term: termOf(...ymdArgs(dayOfJd(n - back)))!, day: back + 1, next: { term: termOf(on.y, on.m, on.d)!, on } };
+}
+
+const ymdArgs = ({ y, m, d }: Ymd): [number, number, number] => [y, m, d];
+
 /// The lunar date of a civil date — {year, month, day, leap} — or null
 /// outside the table.
 export function lunarOf(y: number, m: number, d: number, rows: Record<number, string> = LUNAR): Lunar | null {

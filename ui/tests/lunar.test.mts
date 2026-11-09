@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { festivalOn, LUNAR, lunarOf, nthWeekday, seasonOf, termAt, termOf } from '../src/lib/lunar.mts';
-import { backdropOf, BACKDROP_TIERS, FESTIVAL_ART, FESTIVALS, TERM_ART, todayOf, windOf, windWords } from '../src/lib/skyArt.mts';
+import { backdropLabel, backdropOf, BACKDROP_TIERS, FESTIVAL_ART, FESTIVALS, TERM_ART, todayOf, windOf, windWords } from '../src/lib/skyArt.mts';
 
 const ymd = (iso: string) => { const [y, m, d] = iso.split('-').map(Number); return { y, m, d }; };
 const fest = (iso: string, country: string | null = null) => { const { y, m, d } = ymd(iso); return festivalOn(y, m, d, LUNAR, { country })?.id ?? null; };
@@ -75,4 +75,20 @@ test('the wind: 30 km/h gusting 62 reads windy; the chip says so; calm says noth
   assert.equal(windWords(windOf({ wind_kmh: 6, gust_kmh: 9 })), null);
   assert.equal(windOf({}), null);
   assert.equal(windOf({ wind_kmh: 70, gust_kmh: 95 })?.level, 'gale');
+});
+
+test('backdrop label follows festival artwork, otherwise the current term', () => {
+  const lidong = todayOf(ymd('2026-11-07'));
+  assert.deepEqual(backdropLabel(lidong, 'zh-Hans'), { name: '今日立冬', title: '立冬第 1 天 · 下一个是小雪，11 月 22 日', today: true });
+  assert.deepEqual(backdropLabel(lidong, 'en'), { name: 'Start of Winter today', title: 'Start of Winter, day 1 · next: Minor Snow, Nov 22', today: true });
+  const winter = todayOf(ymd('2026-11-09'));
+  assert.deepEqual(backdropLabel(winter, 'zh-Hans'), { name: '立冬', title: '立冬第 3 天 · 下一个是小雪，11 月 22 日', today: false });
+  assert.equal(backdropLabel(todayOf(ymd('2026-11-21')), 'zh-Hans')?.name, '立冬');
+  assert.equal(backdropLabel(todayOf(ymd('2026-11-22')), 'zh-Hans')?.name, '今日小雪');
+  const festival = todayOf(ymd('2027-02-06'));
+  assert.deepEqual(backdropLabel(festival, 'zh-Hans'), { name: '春节', title: '节日 · 春节', today: true });
+  assert.deepEqual(backdropLabel(festival, 'en'), { name: 'Spring Festival', title: 'Festival · Spring Festival', today: true });
+  assert.equal(backdropLabel(todayOf(ymd('2027-02-13')), 'zh-Hans')?.name, '立春');
+  assert.equal(backdropLabel({ ...winter, festival: null, term: null }, 'en'), null);
+  assert.equal(backdropLabel(null, 'en'), null);
 });

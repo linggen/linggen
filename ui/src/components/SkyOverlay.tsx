@@ -38,8 +38,10 @@ const Picture: React.FC<{ src: string }> = ({ src }) => (
     style={{
       backgroundImage: `url("/${src}")`,
       opacity: PICTURE_OPACITY,
-      maskImage: 'radial-gradient(ellipse 70% 65% at 50% 50%, transparent 35%, black 90%)',
-      WebkitMaskImage: 'radial-gradient(ellipse 70% 65% at 50% 50%, transparent 35%, black 90%)',
+      maskImage: 'linear-gradient(to bottom, transparent 0, transparent 56px, black 140px), radial-gradient(ellipse 70% 65% at 50% 50%, transparent 35%, black 90%)',
+      WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, transparent 56px, black 140px), radial-gradient(ellipse 70% 65% at 50% 50%, transparent 35%, black 90%)',
+      maskComposite: 'intersect',
+      WebkitMaskComposite: 'source-in',
     }}
   />
 );

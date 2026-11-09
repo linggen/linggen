@@ -5,11 +5,12 @@
  * 水墨淡彩 house style. What shows behind the sky overlay, faintly: on a
  * festival's day its picture (春节's for 初一–初七), else the 节气 in effect.
  */
-import { festivalOn, LUNAR, seasonOf, termAt, type Season, type Ymd } from './lunar.mts';
+import { festivalOn, LUNAR, seasonOf, termSpan, type Season, type Term, type Ymd } from './lunar.mts';
 
 export interface FestivalMeta {
   /** Its name in the chip's title. */
   name: string;
+  zh: string;
   /** What drifts over the window that day (the overlay's own particle kinds). */
   particles: string | null;
   /** The first days of its span its picture shows (default 1). */
@@ -18,20 +19,20 @@ export interface FestivalMeta {
 
 /** Every festival the calendar names. Declarative: a new one is a row here. */
 export const FESTIVALS: Record<string, FestivalMeta> = {
-  chuxi: { name: "New Year's Eve", particles: 'sparks' },
-  chunjie: { name: 'Spring Festival', particles: 'sparks', artDays: 7 },
-  yuanxiao: { name: 'Lantern Festival', particles: 'glow' },
-  qingrenjie: { name: "Valentine's Day", particles: 'petals' },
-  qingming: { name: 'Qingming', particles: null },
-  duanwu: { name: 'Dragon Boat Festival', particles: null },
-  qixi: { name: 'Qixi', particles: 'stars' },
-  zhongqiu: { name: 'Mid-Autumn', particles: 'glow' },
-  chongyang: { name: 'Double Ninth', particles: 'leaves' },
-  wanshengjie: { name: 'Halloween', particles: 'leaves' },
-  ganenjie: { name: 'Thanksgiving', particles: 'leaves' },
-  laba: { name: 'Laba', particles: null },
-  yuandan: { name: "New Year's Day", particles: 'sparks' },
-  shengdan: { name: 'Christmas', particles: 'snow' },
+  chuxi: { zh: '除夕', name: "New Year's Eve", particles: 'sparks' },
+  chunjie: { zh: '春节', name: 'Spring Festival', particles: 'sparks', artDays: 7 },
+  yuanxiao: { zh: '元宵节', name: 'Lantern Festival', particles: 'glow' },
+  qingrenjie: { zh: '情人节', name: "Valentine's Day", particles: 'petals' },
+  qingming: { zh: '清明节', name: 'Qingming', particles: null },
+  duanwu: { zh: '端午节', name: 'Dragon Boat Festival', particles: null },
+  qixi: { zh: '七夕', name: 'Qixi', particles: 'stars' },
+  zhongqiu: { zh: '中秋节', name: 'Mid-Autumn', particles: 'glow' },
+  chongyang: { zh: '重阳节', name: 'Double Ninth', particles: 'leaves' },
+  wanshengjie: { zh: '万圣节', name: 'Halloween', particles: 'leaves' },
+  ganenjie: { zh: '感恩节', name: 'Thanksgiving', particles: 'leaves' },
+  laba: { zh: '腊八节', name: 'Laba', particles: null },
+  yuandan: { zh: '元旦', name: "New Year's Day", particles: 'sparks' },
+  shengdan: { zh: '圣诞节', name: 'Christmas', particles: 'snow' },
 };
 
 /** The pictures this build ships (ui/public/festivals/<id>.webp, ui/public/jieqi/<id>.webp). */
@@ -51,7 +52,10 @@ export interface Today {
   /** Today's festival, with how far into its span (1 = its first day). */
   festival: { id: string; name: string; particles: string | null; day: number } | null;
   /** The 节气 in effect, from its day to the next. */
-  term: { id: string; name: { zh: string; en: string } } | null;
+  term: Term | null;
+  /** Which day of the term this is (1 = the term's own day), and the next term with its date. */
+  termDay?: number;
+  nextTerm?: { term: Term; on: Ymd };
   season: Season;
 }
 
@@ -59,9 +63,11 @@ export interface Today {
 export function todayOf(day: Ymd, where: { latitude?: number | null; country?: string | null } = {}): Today {
   const f = festivalOn(day.y, day.m, day.d, LUNAR, { country: where.country ?? null });
   const meta = f ? FESTIVALS[f.id] : null;
+  const span = termSpan(day.y, day.m, day.d);
   return {
     festival: f && meta ? { id: f.id, name: meta.name, particles: meta.particles, day: f.day ?? 1 } : null,
-    term: termAt(day.y, day.m, day.d),
+    term: span?.term ?? null,
+    ...(span ? { termDay: span.day, nextTerm: span.next } : {}),
     season: seasonOf(day, where.latitude ?? null),
   };
 }
@@ -79,6 +85,33 @@ export function backdropOf(t: Today): { tier: string; src: string } | null {
     if (src) return { tier, src };
   }
   return null;
+}
+
+/** The name of the picture selected for the day, in the page's language: the
+ *  festival's on its picture days, else the 节气 in effect — 「今日立冬」 on the
+ *  term's own day, 「立冬」 after, the next term in the title. */
+export function backdropLabel(today: Today | null, lang: 'en' | 'zh-Hans'): { name: string; title: string; today: boolean } | null {
+  if (!today) return null;
+  const zh = lang === 'zh-Hans';
+  if (backdropOf(today)?.tier === 'festival' && today.festival) {
+    const name = zh ? FESTIVALS[today.festival.id].zh : today.festival.name;
+    return { name, title: `${zh ? '节日' : 'Festival'} · ${name}`, today: true };
+  }
+  if (!today.term) return null;
+  const name = today.term.name[zh ? 'zh' : 'en'];
+  const onDay = today.termDay === 1;
+  return { name: onDay ? (zh ? `今日${name}` : `${name} today`) : name, title: termTitle(today, name, zh), today: onDay };
+}
+
+const MONTHS_EN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function termTitle(today: Today, name: string, zh: boolean): string {
+  const day = today.termDay ? (zh ? `${name}第 ${today.termDay} 天` : `${name}, day ${today.termDay}`) : name;
+  const next = today.nextTerm;
+  if (!next) return day;
+  return zh
+    ? `${day} · 下一个是${next.term.name.zh}，${next.on.m} 月 ${next.on.d} 日`
+    : `${day} · next: ${next.term.name.en}, ${MONTHS_EN[next.on.m - 1]} ${next.on.d}`;
 }
 
 /* Wind levels by strength, km/h — the sustained wind or 0.7 of its gusts,
