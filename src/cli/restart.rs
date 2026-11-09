@@ -16,7 +16,9 @@ pub async fn request(port: u16, binary: &Path, wait_secs: u64) -> Result<()> {
     let binary = binary
         .canonicalize()
         .with_context(|| format!("No build at {}", binary.display()))?;
-    let session = std::env::var(crate::paths::SESSION_ENV).ok().filter(|s| !s.is_empty());
+    let session = std::env::var(crate::paths::SESSION_ENV)
+        .ok()
+        .filter(|s| !s.is_empty());
     let response = reqwest::Client::new()
         .post(format!("http://127.0.0.1:{port}/api/engine/restart"))
         .json(&json!({"binary": binary, "session_id": session, "wait_secs": wait_secs}))
@@ -37,7 +39,11 @@ pub async fn request(port: u16, binary: &Path, wait_secs: u64) -> Result<()> {
         binary.display(),
         reply["waited_secs"].as_u64().unwrap_or(0),
         reply["sessions"].as_u64().unwrap_or(0),
-        if session.is_some() { ", this one included" } else { "" },
+        if session.is_some() {
+            ", this one included"
+        } else {
+            ""
+        },
     );
     Ok(())
 }
@@ -65,8 +71,15 @@ fn install(binary: &Path, target: &Path) -> Result<()> {
         .and_then(|n| n.to_str())
         .context("binary has no name")?;
     let staged = dir.join(format!("{name}.new"));
-    std::fs::copy(binary, &staged).with_context(|| format!("Could not stage {}", staged.display()))?;
-    self_update::commit_with_probe(&staged, target, &dir.join(format!("{name}.prev")), name, Duration::from_secs(10))
+    std::fs::copy(binary, &staged)
+        .with_context(|| format!("Could not stage {}", staged.display()))?;
+    self_update::commit_with_probe(
+        &staged,
+        target,
+        &dir.join(format!("{name}.prev")),
+        name,
+        Duration::from_secs(10),
+    )
 }
 
 /// The detached helper: swap `binary` in where the engine `pid` runs from
@@ -75,30 +88,60 @@ fn install(binary: &Path, target: &Path) -> Result<()> {
 pub async fn helper(binary: Option<&Path>, pid: u32, host: String, port: u16) -> Result<()> {
     let result = async {
         let engine = engine_restart::process_info(pid).context("The engine process is gone")?;
-        let target = engine.exe.clone().context("The engine's binary is unknown")?;
+        let target = engine_binary(&engine).context("The engine's binary is unknown")?;
         let Some(binary) = binary else {
             // Allow the accepting HTTP/WebRTC response to leave the old engine.
             tokio::time::sleep(Duration::from_millis(500)).await;
-            return engine_restart::restart_current(&target, &engine, &engine_restart::Opts::new(host, port)).await;
+            return engine_restart::restart_current(
+                &target,
+                &engine,
+                &engine_restart::Opts::new(host, port),
+            )
+            .await;
         };
         install(binary, &target)?;
         let cli = PathBuf::from("/usr/local/bin/ling");
         if cli.exists() && cli.canonicalize().ok() != target.canonicalize().ok() {
             if let Err(error) = install(binary, &cli) {
-                println!("[restart] the CLI copy at {} was left as it was: {error:#}", cli.display());
+                println!(
+                    "[restart] the CLI copy at {} was left as it was: {error:#}",
+                    cli.display()
+                );
             }
         }
         let dir = target.parent().context("binary has no folder")?;
-        let name = target.file_name().and_then(|n| n.to_str()).context("binary has no name")?;
+        let name = target
+            .file_name()
+            .and_then(|n| n.to_str())
+            .context("binary has no name")?;
         engine_restart::restart(dir, name, &[engine], &engine_restart::Opts::new(host, port)).await
     }
     .await;
     match &result {
-        Ok(()) => write_status("ok", if binary.is_some() { "the new build is up and healthy" } else { "the current engine is up and healthy" }),
-        Err(error) if error.to_string().contains("rolled back") => write_status("rolled_back", &format!("{error:#}")),
+        Ok(()) => write_status(
+            "ok",
+            if binary.is_some() {
+                "the new build is up and healthy"
+            } else {
+                "the current engine is up and healthy"
+            },
+        ),
+        Err(error) if error.to_string().contains("rolled back") => {
+            write_status("rolled_back", &format!("{error:#}"))
+        }
         Err(error) => write_status("failed", &format!("{error:#}")),
     }
     result
+}
+
+/// Where the engine runs from. The kernel forgets the path once the file was
+/// replaced under a running engine (an app reinstall swaps it), so fall back
+/// to an absolute argv[0], which is how the app and `ling` start it.
+fn engine_binary(engine: &engine_restart::ProcessInfo) -> Option<PathBuf> {
+    engine.exe.clone().or_else(|| {
+        let argv0 = PathBuf::from(engine.argv.first()?);
+        (argv0.is_absolute() && argv0.exists()).then_some(argv0)
+    })
 }
 
 /// Start the helper detached from the engine (its own process group), so it
@@ -117,12 +160,19 @@ fn spawn_mode(binary: Option<&Path>, host: &str, port: u16) -> Result<()> {
     if let Some(dir) = log.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let out = std::fs::OpenOptions::new().create(true).append(true).open(&log)?;
+    let out = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log)?;
     let mut command = std::process::Command::new(exe);
     command.arg("engine-restart");
     match binary {
-        Some(binary) => { command.arg("--binary").arg(binary); }
-        None => { command.arg("--current"); }
+        Some(binary) => {
+            command.arg("--binary").arg(binary);
+        }
+        None => {
+            command.arg("--current");
+        }
     }
     command
         .arg("--pid")
@@ -139,6 +189,35 @@ fn spawn_mode(binary: Option<&Path>, host: &str, port: u16) -> Result<()> {
         use std::os::unix::process::CommandExt;
         command.process_group(0);
     }
-    command.spawn().context("Could not start the restart helper")?;
+    command
+        .spawn()
+        .context("Could not start the restart helper")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod binary_tests {
+    use super::*;
+
+    fn info(exe: Option<&str>, argv0: &str) -> engine_restart::ProcessInfo {
+        engine_restart::ProcessInfo {
+            pid: 1,
+            exe: exe.map(PathBuf::from),
+            argv: vec![argv0.into(), "--web".into()],
+            cwd: None,
+        }
+    }
+
+    #[test]
+    fn a_replaced_binary_falls_back_to_an_absolute_argv0() {
+        let me = std::env::current_exe().unwrap();
+        let me = me.to_str().unwrap();
+        assert_eq!(
+            engine_binary(&info(Some("/k/ling"), me)),
+            Some(PathBuf::from("/k/ling"))
+        );
+        assert_eq!(engine_binary(&info(None, me)), Some(PathBuf::from(me)));
+        assert_eq!(engine_binary(&info(None, "ling")), None);
+        assert_eq!(engine_binary(&info(None, "/gone/ling")), None);
+    }
 }
