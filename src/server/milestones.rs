@@ -248,7 +248,8 @@ pub(super) struct Recurring {
     how_en: &'static str,
     open: &'static str,
     reward: u32,
-    /// The agent a person's message to counts.
+    /// The agent a person's message to counts — and whom the row's chat
+    /// opens addressed to (`to`), so the line the player types reaches it.
     agent: &'static str,
     fact: Option<&'static str>,
 }
@@ -260,8 +261,8 @@ const RECURRING: &[Recurring] = &[Recurring {
     device: "both",
     zh: "问安 · 跟银月道声早或晚安",
     en: "Pay respects · a good morning or good night to Yinyue",
-    how_zh: "在聊天里跟银月说句话",
-    how_en: "Say a word to Yinyue in the chat",
+    how_zh: "在聊天里 @银月 道声早或晚安",
+    how_en: "Say good morning or good night to @Yinyue in the chat",
     open: "/",
     reward: 15,
     agent: YINYUE,
@@ -375,18 +376,24 @@ fn sighting_of(ev: &ServerEvent) -> Vec<Sighting<'_>> {
     }
 }
 
+/// One event seen at `now`: a person's message heard by its agent, every
+/// sighting kept for the next tick.
+fn note_event(ev: &ServerEvent, now: &str) {
+    for s in sighting_of(ev) {
+        if let Sighting::UserMessage { agent } = s {
+            heard(agent, now);
+        }
+        saw(s);
+    }
+}
+
 async fn watch_events(state: Arc<ServerState>) {
     let mut rx = state.events_tx.subscribe();
     loop {
         match rx.recv().await {
             Ok(ev) => {
                 let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-                for s in sighting_of(&ev) {
-                    if let Sighting::UserMessage { agent } = s {
-                        heard(agent, &now);
-                    }
-                    saw(s);
-                }
+                note_event(&ev, &now);
             }
             Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
             Err(_) => return,
@@ -466,12 +473,7 @@ pub(super) async fn milestone_loop(state: Arc<ServerState>) {
     loop {
         let opens = app_opens(&state, MILESTONES).await;
         tick(&path, MILESTONES, &opens, |m| probe(state.clone(), m)).await;
-        let heard: Vec<(&str, String)> = RECURRING
-            .iter()
-            .filter_map(|r| last_heard(r.agent).map(|at| (r.id, at)))
-            .collect();
-        let stamps: Vec<(&str, &str)> = heard.iter().map(|(id, at)| (*id, at.as_str())).collect();
-        if let Err(e) = recur(&path, RECURRING, &stamps) {
+        if let Err(e) = recur_heard(&path, RECURRING) {
             tracing::warn!("[milestones] could not write {}: {e}", path.display());
         }
         tokio::time::sleep(TICK).await;
@@ -579,6 +581,16 @@ pub(crate) fn stamp_fact(id: &str, at: &str) -> std::io::Result<()> {
     stamp_fact_in(&quests_file(), MILESTONES, id, at)
 }
 
+/// The recurring rows stamped with the latest message their agent heard.
+fn recur_heard(path: &Path, table: &[Recurring]) -> std::io::Result<Value> {
+    let heard: Vec<(&str, String)> = table
+        .iter()
+        .filter_map(|r| last_heard(r.agent).map(|at| (r.id, at)))
+        .collect();
+    let stamps: Vec<(&str, &str)> = heard.iter().map(|(id, at)| (*id, at.as_str())).collect();
+    recur(path, table, &stamps)
+}
+
 /// Bring the recurring rows up to their table, each `done_at` the later of
 /// the file's and `stamps` (id → time); under the file's one lock. Returns
 /// what the file now holds.
@@ -632,6 +644,7 @@ fn recurring_words(r: &Recurring) -> Value {
         "title": { "zh": r.zh, "en": r.en },
         "how": { "zh": r.how_zh, "en": r.how_en },
         "ask": { "zh": "", "en": "" },
+        "to": r.agent,
     })
 }
 
@@ -1147,6 +1160,55 @@ mod tests {
         assert!(RECURRING
             .iter()
             .all(|r| !MILESTONES.iter().any(|m| m.id == r.id)));
+    }
+
+    /// 问安 through the real path (Hanli 11-07, again 11-09: a plain 「早上好」
+    /// went to Ling and the row stayed undone): the chat's event, heard, the
+    /// loop's recurring pass. Only a line to 银月 does it, and the row opens
+    /// the chat addressed to her and says so.
+    #[test]
+    fn a_line_to_her_greets_and_a_line_to_ling_does_not() {
+        let line = |to: &str| ServerEvent::Message {
+            from: "user".into(),
+            to: to.into(),
+            content: "早上好".into(),
+            session_id: None,
+            run_id: None,
+            parent_agent_id: None,
+            client_id: None,
+            via: None,
+            via_note: None,
+            images: vec![],
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("linggen.json");
+        stamp_fact_in(&path, MILESTONES, "linggen-pair", "2026-09-20T08:00:00Z").unwrap();
+
+        note_event(&line("ling"), "2026-11-09T12:00:00.000Z");
+        let doc = recur_heard(&path, RECURRING).unwrap();
+        let greet = entry(&doc, "linggen-greet").unwrap();
+        assert!(
+            greet["done_at"].is_null(),
+            "a line to Ling is no 问安: {greet}"
+        );
+        assert_eq!(greet["to"], "yinyue");
+        assert!(greet["how"]["zh"].as_str().unwrap().contains("@银月"));
+        assert!(greet["how"]["en"].as_str().unwrap().contains("@Yinyue"));
+
+        note_event(&line("yinyue"), "2026-11-09T12:01:00.000Z");
+        let doc = recur_heard(&path, RECURRING).unwrap();
+        assert_eq!(
+            entry(&doc, "linggen-greet").unwrap()["done_at"],
+            "2026-11-09T12:01:00.000Z"
+        );
+        // 问道 is unchanged: still a person's message to 银月, set once.
+        let chat = MILESTONES.iter().find(|m| m.id == "linggen-chat").unwrap();
+        assert!(matches!(
+            chat.seen,
+            Seen::Saw(Sighting::UserMessage { agent: YINYUE })
+        ));
+        assert!(was_seen(Sighting::UserMessage { agent: YINYUE }));
+        assert!(was_seen(Sighting::UserMessage { agent: "ling" }));
     }
 
     #[test]
