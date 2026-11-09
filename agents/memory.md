@@ -273,6 +273,10 @@ fresh. Take each through the lanes IN ORDER:
     subject) → ONE `memory_add` with `replace_ids` writing current
     truth per the condense drafting rules;
   - **nothing to change** (still true, keep separate) → write nothing.
+    No newer row is not evidence a status still holds: "still true"
+    on a status claim needs a file, doc or row that shows it pending
+    now — otherwise the evidence is out of reach: queue it. (A kept
+    ruling takes the rows out of every later scan.)
 
   Either way, record it: `memory_issue_add` (the kind you would have
   queued, the row ids, note = what you did and why in one plain line),
