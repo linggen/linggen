@@ -149,7 +149,6 @@ export const LauncherApp: React.FC = () => {
         <div className="flex items-center gap-2 shrink-0">
           <img src={logoUrl} alt="Linggen" className="w-6 h-6" />
           <span className="text-sm font-bold tracking-tight text-slate-900 dark:text-white">Linggen</span>
-          <TermChip />
         </div>
         <div className="flex items-center gap-1 overflow-x-auto">
           {apps.map((a) => {
@@ -173,6 +172,7 @@ export const LauncherApp: React.FC = () => {
           {/* Billing account the daemon spends from — always visible.
               Remounts when Settings closes so a sign in/out done there
               reflects immediately. */}
+          <TermChip />
           <WeatherChip />
           <AccountAvatar key={String(settingsOpen)} onManage={() => setSettingsOpen(true)} />
           <button

@@ -18,7 +18,7 @@
 //     Wind (`wind: {force 0–1, dir}`) leans the rain, carries snow and the
 //     season's things across, speeds clouds and mist, and a strong one draws
 //     a few gust strokes. `season` adds its things (petals, fireflies at
-//     night, leaves, frost and a bare twig) and `festival` its particle kind
+//     night, leaves, and frost) and `festival` its particle kind
 //     (sparks, glow, stars, leaves, petals, snow) — few and faint.
 //
 //   import { mountSky } from '/shared/sky.js';
@@ -103,17 +103,16 @@ const TEX_SCALE = 4; // textures paint at 1/4 size; the upscale is the blur
 
 /* The overlay's season and festival things (2026-10-15), per 1440×900: what
    each season draws (by day, by night) and what a festival's particle kind
-   is. Faint, ink-like and few; a still overlay keeps only the frost and the
-   twig. Falling weather (rain, snow) takes the season's moving things away. */
+   is. Faint, ink-like and few; a still overlay keeps only the frost. Falling weather (rain, snow) takes the season's moving things away. */
 const SEASON_THINGS = {
   spring: { day: ['petal'], night: ['petal'] },
   summer: { day: [], night: ['firefly'] },
   autumn: { day: ['leaf'], night: ['leaf'] },
-  winter: { day: ['frost', 'twig'], night: ['frost', 'twig'] },
+  winter: { day: ['frost'], night: ['frost'] },
 };
 const FESTIVAL_THINGS = { sparks: 'spark', glow: 'lantern', stars: 'star', leaves: 'leaf', petals: 'petal', snow: 'flake' };
 const THING_COUNT = { petal: 16, leaf: 16, firefly: 14, spark: 22, lantern: 12, star: 14, flake: 30 };
-const STILL_THINGS = new Set(['frost', 'twig']);
+const STILL_THINGS = new Set(['frost']);
 /* The wind reads in what it carries (Hanli, 2026-10-15: 「落叶的走向可以代表风」):
    leaves, petals, snow and rain drift with its direction, lean and tumble
    with its force, and from BURST_FROM it comes in bursts — every few seconds
@@ -126,8 +125,8 @@ const BURST_MS = 1800;
    on their own canvas, multiplied into a light page and screened onto a dark
    one, so they show on white without a light haze over the text. */
 const THING_INK = {
-  light: { petal: 'rgba(196,112,132,', leaf: 'rgba(160,92,40,', firefly: 'rgba(140,160,40,', spark: 'rgba(200,84,36,', lantern: 'rgba(210,128,52,', star: 'rgba(176,136,60,', flake: 'rgba(100,122,156,', gust: 'rgba(84,98,118,', frost: 'rgba(150,175,200,', twig: 'rgba(40,36,30,', a: 0.62, blend: 'multiply' },
-  dark: { petal: 'rgba(240,186,198,', leaf: 'rgba(226,158,92,', firefly: 'rgba(220,240,120,', spark: 'rgba(255,170,90,', lantern: 'rgba(255,190,110,', star: 'rgba(250,236,190,', flake: 'rgba(230,236,245,', gust: 'rgba(196,208,224,', frost: 'rgba(220,232,245,', twig: 'rgba(220,214,200,', a: 0.5, blend: 'screen' },
+  light: { petal: 'rgba(196,112,132,', leaf: 'rgba(160,92,40,', firefly: 'rgba(140,160,40,', spark: 'rgba(200,84,36,', lantern: 'rgba(210,128,52,', star: 'rgba(176,136,60,', flake: 'rgba(100,122,156,', gust: 'rgba(84,98,118,', frost: 'rgba(150,175,200,', a: 0.62, blend: 'multiply' },
+  dark: { petal: 'rgba(240,186,198,', leaf: 'rgba(226,158,92,', firefly: 'rgba(220,240,120,', spark: 'rgba(255,170,90,', lantern: 'rgba(255,190,110,', star: 'rgba(250,236,190,', flake: 'rgba(230,236,245,', gust: 'rgba(196,208,224,', frost: 'rgba(220,232,245,', a: 0.5, blend: 'screen' },
 };
 
 /* Inks by look and page theme. Background: the front reads at a glance in
@@ -531,8 +530,9 @@ export function mountSky(host, opts = {}) {
     return { y: rnd(0.08, 0.7) * H, len, x: first ? rnd(-W, W) : -len - rnd(0, W * 0.8), v: rnd(700, 1100) * (0.6 + st.wind.force * 0.6), bow: rnd(-14, 14), w: rnd(1.3, 2.8) };
   }
 
-  /* Frost breathing in from the corners and one bare ink twig at the top-left
-     corner (the sun and moon keep the header's middle): painted once. */
+  /* Frost breathing in from the corners: painted once. The bare twig that
+     crossed the header is gone (Hanli, 2026-11-09) — the 节气 picture behind
+     the panels carries the season now. */
   function decoTexture(kinds) {
     const c = document.createElement('canvas');
     c.width = W; c.height = H;
@@ -544,21 +544,7 @@ export function mountSky(host, opts = {}) {
         g.fillStyle = grad; g.fillRect(0, 0, W, H);
       }
     }
-    if (kinds.includes('twig')) twig(g, k);
     return c;
-  }
-
-  function twig(g, k) {
-    const s = Math.min(1, W / 1440) * 1.1;
-    g.save(); g.scale(s, s);
-    g.strokeStyle = `${k.twig}${k.a})`; g.lineCap = 'round';
-    const branch = (pts, w) => { g.lineWidth = w; g.beginPath(); g.moveTo(pts[0], pts[1]); g.bezierCurveTo(...pts.slice(2)); g.stroke(); };
-    branch([0, 8, 60, 20, 120, 46, 200, 70], 4.5);
-    branch([70, 26, 82, 46, 84, 64, 78, 84], 2.2);
-    branch([120, 46, 140, 36, 156, 30, 170, 30], 2);
-    branch([160, 62, 166, 80, 180, 92, 196, 98], 1.6);
-    branch([200, 70, 226, 72, 246, 80, 262, 92], 1.4);
-    g.restore();
   }
 
   /* Moving things: each carried by the wind — its way across, its force,
@@ -747,7 +733,7 @@ export function mountSky(host, opts = {}) {
     else if (bg) ctx.drawImage(bg, 0, 0);
     else return;
     if (o.overlay) drift(dt, t); else blobs(dt);
-    if (o.overlay && still()) return; // a still overlay: the mist, frost and twig stay, nothing falls
+    if (o.overlay && still()) return; // a still overlay: the mist and frost stay, nothing falls
     if (o.overlay) { drawThings(dt, t); drawGusts(dt); }
     readCovers(t);
     const kind = st.kind;
