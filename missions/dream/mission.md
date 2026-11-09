@@ -1,6 +1,6 @@
 ---
 name: dream
-description: Nightly memory dream. Remembers each undreamed day's episodic staging into long-term memory, runs the forget sweep, then audits long-term memory — merging what it can prove (cited chains, completion-bar markers), digesting quiet subjects, and queueing what needs the user as review items. Built-in.
+description: Nightly memory dream. Remembers each undreamed day's episodic staging into long-term memory, runs the forget sweep, then audits long-term memory — merging what it can prove (cited chains, completion-bar markers), digesting quiet subjects, settling the rest itself from evidence, and queueing only what needs the user as review items. Built-in.
 schedule: "0 3 * * *"
 # If the 3am cron is missed (machine off/asleep), the post-turn
 # catch-up re-triggers this mission the next time Linggen is used,
@@ -50,16 +50,21 @@ kickoff-then:
     - >-
       Finish-up 2 of 3 — the marker audit per your system prompt: ONE
       `memory_chains({"kind":"marker","limit":5})` fetch; merge each
-      candidate that clears the completion bar (a `MERGE` line), queue
-      the rest via `memory_issue_add({...})` (a `QUEUE` line). End with
-      `MARKERS merged=<k> queued=<q>`, then stop and wait.
+      candidate that clears the completion bar (a `MERGE` line); settle
+      the rest from evidence yourself — `memory_get` the rows,
+      `memory_search` the subject for a newer row — and record each
+      ruling as an issue closed at once (a `SETTLE` line); queue via
+      `memory_issue_add({...})` only for the three reasons in your
+      system prompt (a `QUEUE` line). End with
+      `MARKERS merged=<k> settled=<s> queued=<q>`, then stop and wait.
     - >-
       Finish-up 3 of 3 — the quiet-subject digest per your system
       prompt: ONE
       `memory_chains({"kind":"subject","limit":5,"derived_only":true})`
       fetch; digest each cluster you are confident is one subject (a
-      `MERGE` line), queue the doubtful ones listing ALL member ids (a
-      `QUEUE` line). Then the scope and index lane per your system
+      `MERGE` line), rule clearly separate ones yourself (a `SETTLE`
+      line), queue only the ones you cannot tell, listing ALL member ids
+      (a `QUEUE` line). Then the scope and index lane per your system
       prompt: apply the sure scope / index / summary fixes yourself (a
       `FIX` line each, at most 10). Then reply exactly: DONE.
 kickoff:
@@ -152,13 +157,14 @@ kickoff-day:
   - >-
     The marker audit per your system prompt: ONE
     `memory_chains({"kind":"marker","limit":5})` fetch (`MERGE` /
-    `QUEUE` lines). End with `MARKERS merged=<k> queued=<q>`, then stop
-    and wait.
+    `SETTLE` / `QUEUE` lines — settle from evidence first, queue only
+    what needs the user). End with
+    `MARKERS merged=<k> settled=<s> queued=<q>`, then stop and wait.
   - >-
     Last turn for this run: the quiet-subject digest per your system
     prompt — ONE
     `memory_chains({"kind":"subject","limit":5,"derived_only":true})`
-    fetch (`MERGE` / `QUEUE` lines). Then reply exactly: DONE.
+    fetch (`MERGE` / `SETTLE` / `QUEUE` lines). Then reply exactly: DONE.
 # Attended day-scoped variant: the calendar day-click sends
 # `attended: true` — the user just clicked and is watching, so the
 # engine puts AskUser in scope and this kickoff ends with the
@@ -180,7 +186,8 @@ kickoff-attended:
   - >-
     Last turn for this run: the attended review per your system prompt.
     Fetch `memory_chains({"kind":"marker","limit":4,"derived_only":true})`
-    and, if candidates return, confirm them with the user in ONE
+    and, if candidates return, settle each from evidence first
+    (`SETTLE` lines); confirm only what is left with the user in ONE
     AskUser call — merge only what they approve; on timeout or error
     queue the candidates instead (`issue_add`, `QUEUE` lines). Then
     reply exactly: DONE.
@@ -205,8 +212,11 @@ permission:
     30+ days) ARCHIVE their losers — expired + superseded_by,
     recoverable — never delete them; the engine also
     snapshots the store before each run. What it cannot solve with
-    confidence it queues as review items (a JSON sidecar entry, no
-    row changes) for the user to solve later. Touches no files
+    confidence it settles from evidence like an attended solve
+    (derived rows only; each ruling recorded as a closed review item),
+    and queues as review items (a JSON sidecar entry, no row changes)
+    only what needs the user: a user-voice row that would change, a
+    pick between rows, or evidence it cannot read. Touches no files
     directly.
 ---
 
@@ -238,14 +248,19 @@ agent). This mission adds only the nightly run protocol:
   row via `replace_ids`, a `MERGE` line each, end with
   `CONDENSE merged=<k>`; (2) `memory_chains({"kind":"marker","limit":5})`
   — MERGE when the completion bar is met (a strictly newer
-  same-subject derived neighbor asserts the marked work done),
-  `issue_add` (a `QUEUE` line) for what you cannot solve with
-  confidence, end with `MARKERS merged=<k> queued=<q>`; (3)
+  same-subject derived neighbor asserts the marked work done); settle
+  the rest from evidence yourself — the rows in full, a newer row on
+  the subject — recording each ruling as an issue closed at once (a
+  `SETTLE` line); `issue_add` (a `QUEUE` line) only when a user-voice
+  row would change, the user must pick, or the answer needs code or
+  git this run cannot read; end with
+  `MARKERS merged=<k> settled=<s> queued=<q>`; (3)
   `memory_chains({"kind":"subject","limit":5,"derived_only":true})`
   — the digest stage: collapse each quiet cluster you are confident
   shares one subject into a single digest row (a `MERGE` line each);
-  queue doubtful clusters as `subject` issues listing ALL member ids
-  (a `QUEUE` line each); then the scope and index lane — apply up to
+  rule clearly separate ones yourself (a dismissed `subject` issue, a
+  `SETTLE` line); queue only the ones you cannot tell, listing ALL
+  member ids (a `QUEUE` line each); then the scope and index lane — apply up to
   10 sure scope / index / summary fixes yourself via `memory_update`
   (a `FIX` line each; never the row's content, nothing queued); reply
   `DONE`. The capped fetches are the
@@ -260,6 +275,7 @@ agent). This mission adds only the nightly run protocol:
   going.
 - **Report as you go.** The status lines from your agent spec are the
   whole surface: `DAY … rows=…`, `PROMOTE … "…"`, `DAY … done …`,
-  `CLEAR`, `SWEEP removed=…`, `CONDENSE …`, `MARKERS …`, then `DONE` /
+  `CLEAR`, `SWEEP removed=…`, `CONDENSE …`, `SETTLE …`, `QUEUE …`,
+  `MARKERS …`, then `DONE` /
   `PARTIAL …` / `STALLED`. Never
   print a status line for a tool call you did not make.

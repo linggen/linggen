@@ -100,12 +100,17 @@ never writes to project files.
   completion-bar marker merges — a provisional-state note whose
   strictly newer same-subject derived neighbor asserts the work done
   collapses the same way (the store already holds the answer).
-  Everything else (uncertain merges, status claims likely overtaken
-  by the world, user-voice conflicts) becomes a **review item** in
-  the daemon's issues queue — bookkeeping only, no row changes. The
-  marker scan excludes rows a review item already names: queueing
-  consumes nothing, so without that exclusion the capped page would
-  re-serve the same candidates forever.
+  Everything else the dream **settles itself from evidence**
+  (2026-11-09) — the rows in full, a newer row on the subject, and
+  code or git where the run has those tools — the way solve does:
+  derived rows are fixed in place (or left as they are), and the
+  ruling is recorded as a review item closed at once (resolved or
+  dismissed, with a one-line why). It queues an open **review item**
+  only when a user-voice row would change, the user must pick between
+  rows, or the evidence is out of reach on that run (the nightly
+  mission is memory-only). The marker scan excludes rows any review
+  item names, open or closed, so a settled or queued candidate is not
+  served again.
 
   Merges ARCHIVE, never delete (2026-08-17): a `replace_ids` loser in
   the semantic table gets `expired_at` + `superseded_by = <survivor>`
@@ -121,14 +126,15 @@ never writes to project files.
   subject keeps its detail) and skips rows a `subject`-kind ruling
   covers. The judge digests clusters it is confident share one
   subject (one digest row, ≤5 per night — a digest is known by the
-  rows whose `superseded_by` points at it) and queues
-  doubtful ones as open `subject` review items — listing ALL member
+  rows whose `superseded_by` points at it), rules clearly separate
+  clusters itself (a dismissed `subject` item), and queues only the
+  ones it cannot tell as open `subject` review items — listing ALL member
   ids, so a ruled cluster can never re-form. In solve, the user's
   keep-separate answer becomes the permanent (dismissed) ruling.
   Digesting unattended is safe because merges archive: a wrong
   digest is an unpack, not a loss.
-- **Solve** (attended) — a host agent drains the review queue with
-  the user present: gathers evidence at solve time (git history,
+- **Solve** (attended, the rare leftover path) — a host agent drains
+  what the dream could not settle, with the user present: gathers evidence at solve time (git history,
   files), fixes what the evidence proves, asks the user one item at a
   time for the rest, closes each item. Surfaces: `/linggen solve` on
   plugin hosts, the memory app chat on Linggen; the ling-mem console
