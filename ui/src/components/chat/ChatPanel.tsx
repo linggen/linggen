@@ -324,7 +324,7 @@ export const ChatPanel: React.FC<{
   }, [openSubagentId, subagents]);
 
   return (
-    <section className={cn('h-full flex flex-col bg-white dark:bg-[#0f0f0f] overflow-hidden min-h-0 relative', !flush && 'rounded-xl border border-slate-200 dark:border-white/5')}>
+    <section className={cn('h-full flex flex-col overflow-hidden min-h-0 relative', flush ? 'bg-(--surface-panel)' : 'bg-white dark:bg-[#0f0f0f] rounded-xl border border-slate-200 dark:border-white/5')}>
       <div className="px-1.5 py-1 border-b border-slate-200 dark:border-white/5 bg-slate-50/70 dark:bg-white/[0.02] flex items-start gap-1">
       <div className="flex-1 min-w-0 space-y-1">
         {sessionId && (

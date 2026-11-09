@@ -8,11 +8,15 @@
  * frame. The wind leans and carries it; the season adds a few faint things;
  * a festival its particles.
  *
- * Behind it, the day's picture (Hanli, 2026-10-15): the festival's painting
- * on its day, else the 节气's — a background at a few percent, in this same
- * click-through layer, never a card or a banner, never blurred or tinted;
- * it fades out toward the middle of the window, where the work is, so the
- * text's contrast is kept. Off with the overlay and with reduced motion.
+ * BEHIND the UI, the day's picture (Hanli, 2026-11-09): the festival's
+ * painting on its day, else the 节气's — a backdrop under the panels, never
+ * over text, never a card or a banner, never blurred or tinted. It paints
+ * the shell's base colour with the painting on it (ink-on-paper multiply in
+ * light; plain and fainter in dark, so the paper doesn't glow), fading out
+ * under the header. While it shows, <html data-sky-backdrop> turns the shell
+ * surfaces translucent (--surface-* in index.css) so the trees and hills at
+ * the edges read through; cards, inputs, code and menus stay opaque.
+ * Off with the overlay and with reduced motion.
  * Settings → General → Weather → "Live sky" turns it all off (this browser).
  */
 import React, { useEffect, useRef, useSyncExternalStore } from 'react';
@@ -28,23 +32,30 @@ const onCalm = (fn: () => void) => {
   return () => mq.removeEventListener('change', fn);
 };
 
-/* How faint the picture lies over the UI. */
-const PICTURE_OPACITY = 0.07;
+/* The painting's strength over the shell base, per mode. */
+const PICTURE_LOOK = 'opacity-[.2] mix-blend-multiply dark:opacity-[.12] dark:mix-blend-normal';
+/* Clear of the header: transparent to 56px, full by 140px. */
+const HEADER_FADE = 'linear-gradient(to bottom, transparent 0, transparent 56px, black 140px)';
 
-const Picture: React.FC<{ src: string }> = ({ src }) => (
-  <div
-    aria-hidden
-    className="fixed inset-0 z-[2147482999] pointer-events-none bg-center bg-cover mix-blend-multiply dark:mix-blend-screen"
-    style={{
-      backgroundImage: `url("/${src}")`,
-      opacity: PICTURE_OPACITY,
-      maskImage: 'linear-gradient(to bottom, transparent 0, transparent 56px, black 140px), radial-gradient(ellipse 70% 65% at 50% 50%, transparent 35%, black 90%)',
-      WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, transparent 56px, black 140px), radial-gradient(ellipse 70% 65% at 50% 50%, transparent 35%, black 90%)',
-      maskComposite: 'intersect',
-      WebkitMaskComposite: 'source-in',
-    }}
-  />
+/** The day's painting behind the shell: base colour + the picture on it. */
+const Backdrop: React.FC<{ src: string }> = ({ src }) => (
+  <div aria-hidden className="fixed inset-0 -z-10 pointer-events-none bg-slate-100/70 dark:bg-[#0a0a0a]">
+    <div
+      className={`absolute inset-0 bg-center bg-cover ${PICTURE_LOOK}`}
+      style={{ backgroundImage: `url("/${src}")`, maskImage: HEADER_FADE, WebkitMaskImage: HEADER_FADE }}
+    />
+  </div>
 );
+
+/** Mark <html> while the backdrop shows, so the shell surfaces go translucent. */
+function useBackdropMark(on: boolean) {
+  useEffect(() => {
+    if (!on) return;
+    const root = document.documentElement;
+    root.dataset.skyBackdrop = '';
+    return () => { delete root.dataset.skyBackdrop; };
+  }, [on]);
+}
 
 export const SkyOverlay: React.FC = () => {
   useWeatherPoll();
@@ -55,6 +66,8 @@ export const SkyOverlay: React.FC = () => {
   const calm = useSyncExternalStore(onCalm, calmNow, () => false);
   const enabled = useSkyStore((s) => s.enabled);
   const showing = enabled && !!sky;
+  const backdrop = enabled && !calm ? picture : null;
+  useBackdropMark(!!backdrop);
 
   useEffect(() => {
     if (!showing || !host.current || !sky) return;
@@ -69,7 +82,7 @@ export const SkyOverlay: React.FC = () => {
   if (!enabled) return null;
   return (
     <>
-      {picture && !calm ? <Picture src={picture} /> : null}
+      {backdrop ? <Backdrop src={backdrop} /> : null}
       {showing ? <div ref={host} className="fixed inset-0 z-[2147483000] pointer-events-none" aria-hidden /> : null}
     </>
   );

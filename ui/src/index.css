@@ -83,6 +83,34 @@
   color-scheme: light dark;
 }
 
+/* Shell surfaces — the shell frame, the panels (left list, chat column) and
+   the panes (main, right aside). Opaque by default; while the day's picture
+   lies behind them (SkyOverlay sets data-sky-backdrop) they turn translucent
+   so it shows through. Cards, inputs, code, menus and modals keep their own
+   opaque backgrounds. */
+:root {
+  --surface-shell: rgb(241 245 249 / 0.7);
+  --surface-panel: #fff;
+  --surface-pane: rgb(241 245 249 / 0.4);
+}
+:root[data-sky-backdrop] {
+  --surface-shell: transparent;
+  --surface-panel: rgb(255 255 255 / 0.4);
+  --surface-pane: transparent;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface-shell: #0a0a0a;
+    --surface-panel: #0f0f0f;
+    --surface-pane: #0a0a0a;
+  }
+  :root[data-sky-backdrop] {
+    --surface-shell: transparent;
+    --surface-panel: rgb(15 15 15 / 0.4);
+    --surface-pane: transparent;
+  }
+}
+
 * {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;

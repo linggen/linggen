@@ -325,7 +325,7 @@ export const MainApp: React.FC = () => {
       <ToastContainer />
       <LingMemConnectModal />
       {showYinyue && <YinyueBubble />}
-      <div className={`flex flex-col h-screen bg-slate-100/70 dark:bg-[#0a0a0a] text-slate-900 dark:text-slate-200 font-sans overflow-hidden${isOverlayRoute ? ' hidden' : ''}`}>
+      <div className={`flex flex-col h-screen bg-(--surface-shell) text-slate-900 dark:text-slate-200 font-sans overflow-hidden${isOverlayRoute ? ' hidden' : ''}`}>
         {/* Header */}
         <HeaderBar
           onOpenSettings={() => openSettings('general')}
@@ -355,7 +355,7 @@ export const MainApp: React.FC = () => {
           )}
 
           {/* Left sidebar — unified session list (desktop only) */}
-          <div className="hidden md:flex w-72 border-r border-slate-200 dark:border-white/5 flex-col bg-white dark:bg-[#0f0f0f] h-full">
+          <div className="hidden md:flex w-72 border-r border-slate-200 dark:border-white/5 flex-col bg-(--surface-panel) h-full">
             <SessionList
               activeSessionId={activeSessionId}
               onSelectSession={(session) => selectSession(session)}
@@ -368,7 +368,7 @@ export const MainApp: React.FC = () => {
           </div>
 
           {/* Center: Chat */}
-          <main className={`flex-1 flex flex-col overflow-hidden bg-slate-100/40 dark:bg-[#0a0a0a] min-h-0${isMobile ? ' p-0' : ''}`}>
+          <main className={`flex-1 flex flex-col overflow-hidden bg-(--surface-pane) min-h-0${isMobile ? ' p-0' : ''}`}>
             <div className="flex-1 min-h-0">
               <ChatWidget
                 sessionId={activeSessionId}
@@ -382,7 +382,7 @@ export const MainApp: React.FC = () => {
           {/* Right sidebar (desktop only) */}
           {/* Shown and hidden by the header's ✦, lit while it shows. */}
           {!isMobile && !rightHidden && (
-            <aside className="hidden lg:flex w-72 border-l border-slate-200 dark:border-white/5 flex-col bg-slate-100/40 dark:bg-[#0a0a0a] overflow-hidden">
+            <aside className="hidden lg:flex w-72 border-l border-slate-200 dark:border-white/5 flex-col bg-(--surface-pane) overflow-hidden">
               {/* Models + skills scroll above; Yinyue is docked below. */}
               <div className="flex-1 min-h-0 overflow-y-auto p-3 flex flex-col gap-3">
                 <InfoPanel {...infoPanelProps} />
