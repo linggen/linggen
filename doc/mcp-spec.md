@@ -4,7 +4,7 @@ reader: Coding agent and users
 guide: |
   Product specification — describe what the system should do and why.
   Keep it brief. Aim to guide design and implementation, not document code.
-status: all shipped — /mcp live (22 tools incl agent_run), linggen plugin + ClawHub skill published, site/docs routed
+status: all shipped — /mcp live (24 tools incl agent_run, agent_permit), linggen plugin + ClawHub skill published, site/docs routed
 ---
 
 # Linggen MCP — the capability front door
@@ -134,17 +134,27 @@ deprecation window:
 - For code changes, create a git worktree first and pass its absolute path as
   `write_dir` to `agent_run`. Pass the host's current `permission_mode`: `plan`
   is read-only; `default`/`acceptEdits` grant edit there; `auto`/
-  `bypassPermissions` grant admin there. Other paths stay read-only. Runs never
-  prompt for Linggen permissions; browser mutations have their own gate.
+  `bypassPermissions` grant admin there. Other paths stay read-only. Linggen
+  never prompts a person for these runs; browser mutations have their own gate.
 - Give a self-contained brief: files, cause, tests to run, and “reply short”.
   Only the final reply returns; working steps remain visible in the web UI.
-- If still running, don't poll. Watch
-  `ws://127.0.0.1:9527/api/agent/wait?session_id=…` (Claude Code's Monitor
-  can open a WebSocket): one JSON frame contains `session_id`, `reply`, and
-  `denied`, then it closes. Use `agent_status` for details. Read denials for
-  what was refused and why; widen `write_dir`, change mode, or do it yourself.
+- A long run continues in the background. Don't poll: start a background
+  watcher on `ws://127.0.0.1:9527/api/agent/wait?session_id=…`. It sends JSON
+  frames:
+  - `{"type":"permission_request","session_id","request":{id,tool,summary,level,path,dir?,reason?}}`
+    — once per request, including those raised before the watcher connected.
+  - `{"type":"finished","session_id","status","reply","denied"}` — last, then
+    it closes. `status` is `completed`, `failed` or `cancelled`.
+- An action beyond the grants (never the hardcoded deny floor) waits for the
+  caller. Answer with `agent_permit {session_id, request_id, decision, scope?}`:
+  `allow_once` runs that action; `allow_session` grants its `path` or its
+  folder (`dir`, the default when grantable) at the needed level for the rest
+  of that session only; `deny` refuses it. No answer in 10 min counts as deny.
+  `agent_run` returns early when a request is raised; `agent_status` lists
+  open requests in `pending`. Refusals land in `denied` with their reason.
 - Follow up with `agent_run(session_id=…)` to retain context; omit `write_dir`,
-  `permission_mode`, and `model`. `agent_models` lists models for new sessions;
+  `permission_mode`, and `model`. The session keeps its first grants, its
+  session grants, and its toolset; continuing never widens them. `agent_models` lists models for new sessions;
   `agent_stop` cancels a running turn and its subagents.
 - Review the diff before merging. When done, call
   `agent_session_close(session_id, remove_worktree=true)`; removal requires a

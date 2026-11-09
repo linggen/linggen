@@ -347,7 +347,7 @@ const TOOLS: &[McpTool] = &[
     McpTool {
         name: "agent_run",
         backend: Backend::Agent,
-        description: "Delegate to a local Linggen agent; only its final reply returns, while working steps stay visible in the web UI. If still running, watch the wait WebSocket, then use agent_status for details.",
+        description: "Delegate to a local Linggen agent; only its final reply returns, while working steps stay visible in the web UI. A long run continues in the background and returns its session: don't poll — start a background watcher on the ws://…/api/agent/wait URL it gives, which wakes you on {\"type\":\"permission_request\"} (answer with agent_permit) and {\"type\":\"finished\"} (then read agent_status for the reply).",
         schema: || json!({
             "type": "object",
             "properties": {
@@ -357,7 +357,7 @@ const TOOLS: &[McpTool] = &[
                 "agent": {"type": "string", "description": "Agent to run (default: ling). Unknown names return the available list."},
                 "host": {"type": "string", "description": "Calling host, e.g. claude-code, codex or cursor (default claude-code)"},
                 "permission_mode": {"type": "string", "enum": ["plan", "default", "acceptEdits", "auto", "bypassPermissions"], "description": "Your current permission mode; plan is read-only, default/acceptEdits grant edit, auto/bypassPermissions grant admin in write_dir only. New sessions only."},
-                "write_dir": {"type": "string", "description": "For code changes, create a git worktree first and pass its existing absolute path. The grant follows permission_mode; other paths stay read-only and the run never prompts. Omit for read-only; new sessions only."}
+                "write_dir": {"type": "string", "description": "For code changes, create a git worktree first and pass its existing absolute path. The grant follows permission_mode; other paths stay read-only, and an action beyond that waits for your agent_permit. Omit for read-only; new sessions only (a continued session keeps its grant)."}
             },
             "required": ["prompt"]
         }),
@@ -365,8 +365,19 @@ const TOOLS: &[McpTool] = &[
     },
     McpTool {
         name: "agent_status", backend: Backend::Agent,
-        description: "Get running work, final reply and denied actions with reasons. After the wait WebSocket closes, use this for details; do not poll.",
+        description: "Get running work, pending permission requests (answer with agent_permit), final reply and denied actions with reasons. Use after a wait-stream event; do not poll.",
         schema: || json!({"type": "object", "properties": {"session_id": {"type": "string", "description": "Linggen session ID"}}, "required": ["session_id"]}),
+        timeout_ms: 0,
+    },
+    McpTool {
+        name: "agent_permit", backend: Backend::Agent,
+        description: "Answer a permission request from an agent_run session (a permission_request stream event, or agent_status pending). allow_once runs that one action; allow_session grants its path or folder at the needed level for the rest of that session only; deny refuses it. Unanswered requests count as denied after 10 min.",
+        schema: || json!({"type": "object", "properties": {
+            "session_id": {"type": "string", "description": "Linggen session ID"},
+            "request_id": {"type": "string", "description": "The request's id"},
+            "decision": {"type": "string", "enum": ["allow_once", "allow_session", "deny"]},
+            "scope": {"type": "string", "enum": ["path", "dir"], "description": "allow_session only: the exact target, or its folder (default dir when grantable)"}
+        }, "required": ["session_id", "request_id", "decision"]}),
         timeout_ms: 0,
     },
     McpTool {
@@ -431,12 +442,17 @@ fn initialize_result() -> Value {
             first create a git worktree and pass its absolute path as write_dir. \
             Pass your current permission_mode: plan is read-only, default/acceptEdits \
             grant edit, auto/bypassPermissions grant admin there; other paths stay read-only. \
-            The run never prompts. Give a self-contained brief: files, cause, tests, \
+            An action beyond that is never prompted in Linggen: it waits for you. \
+            Give a self-contained brief: files, cause, tests, \
             and reply short. Only the final reply returns; working steps stay in the web UI. \
-            If still running, do not poll: watch ws://127.0.0.1:9527/api/agent/wait?session_id=… \
-            (Claude Code's Monitor can open a WebSocket); one JSON frame has session_id, \
-            reply, denied, then closes. Use agent_status for details; read denied for what \
-            and why, widen write_dir, change mode, or do the step yourself. Follow up \
+            If still running, do not poll: start a background watcher (a monitor that wakes \
+            you) on ws://127.0.0.1:9527/api/agent/wait?session_id=…. It sends JSON frames: \
+            {\"type\":\"permission_request\",\"request\":{id,tool,summary,level,path}} — answer \
+            each with agent_permit (allow_once, allow_session for that path/folder in this \
+            session only, or deny; unanswered = denied after 10 min) — and last \
+            {\"type\":\"finished\",status,reply,denied}, then it closes. Use agent_status \
+            for details; read denied for what and why, do the step yourself, or ask for a \
+            new run with a wider write_dir. Follow up \
             with agent_run(session_id=…), without write_dir, permission_mode or model. \
             agent_models lists models for new sessions. Review the diff before merging; \
             then agent_session_close(session_id, remove_worktree=true) removes only a \
@@ -551,6 +567,10 @@ async fn call_tool(deps: &McpDeps<'_>, name: &str, args: Value) -> Result<Value,
             let result = match name {
                 "agent_status" => super::mcp_agent::status(state, session.unwrap_or_default()).await,
                 "agent_stop" => super::mcp_agent::stop(state, session.unwrap_or_default()).await,
+                "agent_permit" => {
+                    let field = |key: &str| args.get(key).and_then(Value::as_str);
+                    super::mcp_agent::permit(state, session.unwrap_or_default(), field("request_id").unwrap_or_default(), field("decision").unwrap_or_default(), field("scope")).await
+                }
                 "agent_models" => Ok(super::mcp_agent::models(state).await),
                 "agent_session_close" => super::mcp_agent::close(state, session.unwrap_or_default(), args.get("remove_worktree").and_then(Value::as_bool).unwrap_or(false)).await,
                 _ => super::mcp_agent::run(state, agent, prompt, write_dir, session, args.get("model").and_then(Value::as_str), args.get("permission_mode").and_then(Value::as_str), args.get("host").and_then(Value::as_str)).await,
@@ -809,7 +829,7 @@ mod tests {
         assert_eq!(res["result"]["serverInfo"]["name"], "linggen");
         assert!(res["result"]["capabilities"]["tools"].is_object());
         let instructions = res["result"]["instructions"].as_str().unwrap();
-        for text in ["git worktree", "permission_mode", "do not poll", "agent_session_close"] {
+        for text in ["git worktree", "permission_mode", "do not poll", "agent_session_close", "agent_permit", "permission_request", "finished"] {
             assert!(instructions.contains(text), "missing {text}");
         }
     }
@@ -819,11 +839,12 @@ mod tests {
         let msg = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" });
         let res = handle_rpc(&deps(&hub()), &msg).await.unwrap();
         let tools = res["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 23);
+        assert_eq!(tools.len(), 24);
         assert!(tools.iter().any(|t| t["name"] == "browser_navigate"));
         assert!(tools.iter().any(|t| t["name"] == "x_search"));
         assert!(tools.iter().any(|t| t["name"] == "x_mentions"));
         assert!(tools.iter().any(|t| t["name"] == "agent_run"));
+        assert!(tools.iter().any(|t| t["name"] == "agent_permit"));
         assert!(tools.iter().all(|t| t["inputSchema"]["type"] == "object"));
     }
 

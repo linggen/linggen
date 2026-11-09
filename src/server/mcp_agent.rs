@@ -16,6 +16,11 @@
 //! (Bash, Write, Edit), every other path stays Read, and the run still never
 //! prompts. The caller's own approval of the tool call is the grant — a coding
 //! host hands its delegate a worktree and reviews the diff after.
+//!
+//! An action beyond the grants (never the hardcoded deny floor) is asked of
+//! the CALLER: it waits as a permission request on the wait stream and in
+//! `agent_status.pending` until `agent_permit` answers it, or counts as
+//! denied after [`CALLER_ASK_WAIT`](crate::engine::tool_exec::CALLER_ASK_WAIT).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -136,16 +141,15 @@ pub async fn run(
             .or_else(|| meta.agents.first().map(|m| m.id.clone()))
             .unwrap_or_else(|| "ling".into());
         clear_denials(session);
+        keep_delegate_tools(state, session, &meta, &agent_id).await;
         let turn = super::tasks::tell_from(state.clone(), session.into(), agent_id,
             prompt.into(), "claude-code".into());
-        let task = tokio::spawn(turn);
-        return match tokio::time::timeout(std::time::Duration::from_secs(WAIT_SECS), task).await {
-            Ok(Ok(())) => {
-                Ok(with_denials(session, final_reply(session).unwrap_or_else(|| "(the agent finished without a textual reply)".into())))
-            }
-            Ok(Err(e)) => Err(format!("agent run failed: {e}")),
-            Err(_) => Ok(still_running(session)),
-        };
+        let sid = session.to_string();
+        let task = tokio::spawn(async move {
+            turn.await;
+            Ok(with_denials(&sid, final_reply(&sid).unwrap_or_else(|| NO_REPLY.into())))
+        });
+        return await_run(state, session, task).await;
     }
     let model = if let Some(model) = model {
         let models = state.manager.models.read().await;
@@ -219,6 +223,9 @@ pub async fn run(
         params: Default::default(),
     };
     meta.params.insert("host".into(), host.unwrap_or("claude-code").into());
+    // The delegate's toolset, so a continued session keeps it (see
+    // `keep_delegate_tools`).
+    meta.params.insert(TOOLS_PARAM.into(), if mode.is_some() { "write" } else { "read" }.into());
     meta.set_cwd(&root_str);
     meta.set_member_model(&agent_id, model.clone());
     if let Err(e) = store.add_session(&meta) {
@@ -234,6 +241,8 @@ pub async fn run(
     {
         let mut perms = crate::engine::permission::SessionPermissions {
             interactive: false,
+            // Beyond the grants, ask the caller (agent_permit) — not refuse.
+            ask_caller: true,
             ..Default::default()
         };
         if permission_mode.is_none() && write.is_none() {
@@ -292,15 +301,72 @@ pub async fn run(
         mode.is_some(),
         model,
     ));
-    match tokio::time::timeout(std::time::Duration::from_secs(WAIT_SECS), run).await {
-        Ok(Ok(result)) => result,
-        Ok(Err(e)) => Err(format!("agent run failed: {e}")),
-        Err(_) => Ok(still_running(&session_id)),
-    }
+    await_run(state, &session_id, run).await
 }
 
 /// How long a call waits for the run before handing back its session.
 const WAIT_SECS: u64 = 45;
+
+const NO_REPLY: &str = "(the agent finished without a textual reply)";
+
+/// The session param that keeps a delegate's toolset: `read` or `write`.
+const TOOLS_PARAM: &str = "agent_run_tools";
+
+/// Wait a while for the run; hand back its session sooner when it asks the
+/// caller for a permission (the caller can't answer while blocked here).
+async fn await_run(
+    state: &Arc<ServerState>,
+    session: &str,
+    run: tokio::task::JoinHandle<Result<String, String>>,
+) -> Result<String, String> {
+    let deadline = tokio::time::sleep(std::time::Duration::from_secs(WAIT_SECS));
+    tokio::pin!(deadline);
+    let mut events = state.events_tx.subscribe();
+    tokio::pin!(run);
+    loop {
+        if !pending_requests(state, session).await.is_empty() {
+            return Ok(still_running(state, session).await);
+        }
+        tokio::select! {
+            done = &mut run => return done.unwrap_or_else(|e| Err(format!("agent run failed: {e}"))),
+            _ = &mut deadline => return Ok(still_running(state, session).await),
+            event = events.recv() => if matches!(event, Err(tokio::sync::broadcast::error::RecvError::Closed)) {
+                return Ok(still_running(state, session).await);
+            },
+        }
+    }
+}
+
+/// The delegate's toolset: read / search / memory / browser, plus Bash,
+/// Write and Edit for a write run.
+fn delegate_tool_scope(write: bool) -> Option<std::collections::HashSet<String>> {
+    let extra: &[&str] = if write { WRITE_TOOLS } else { &[] };
+    let declared: Vec<String> = AGENT_RUN_TOOLS
+        .iter()
+        .chain(extra)
+        .map(|s| s.to_string())
+        .collect();
+    crate::engine::tool_scope::compute_tool_scope(&declared)
+}
+
+/// A continued session keeps the toolset it was started with — its grants
+/// already live in its permission.json. A cached engine still holds it; one
+/// rebuilt since (a restart) gets it back here. A busy engine is mid-turn
+/// with its toolset in place.
+async fn keep_delegate_tools(
+    state: &Arc<ServerState>,
+    session: &str,
+    meta: &crate::state_fs::sessions::SessionMeta,
+    agent_id: &str,
+) {
+    let Some(kind) = meta.params.get(TOOLS_PARAM) else { return };
+    let root = PathBuf::from(meta.project.clone().unwrap_or_else(|| meta.cwd.clone()));
+    let Ok(agent) = state.manager.get_or_create_session_agent(session, &root, agent_id).await else {
+        return;
+    };
+    let Ok(mut engine) = agent.try_lock() else { return };
+    engine.cfg.mission_allowed_tools = delegate_tool_scope(kind == "write");
+}
 
 /// One headless run in its own task, to completion whether or not anyone
 /// still waits for it.
@@ -334,9 +400,14 @@ async fn drive(
         .map_err(|e| format!("failed to begin run: {e}"))?;
     let _life = state.manager.run_life(&run_id);
 
-    // Browser + memory bridges (no AskUser — a headless MCP delegate has no
-    // Linggen-side user to answer a prompt; a blocked run would hang).
+    // Browser bridge, and the AskUser bridge its permission requests wait
+    // on (the AskUser TOOL stays out of its toolset: no person is there).
     engine.tools.set_browser_bridge(state.bridge.clone());
+    engine.tools.set_ask_user_bridge(Arc::new(crate::engine::tools::AskUserBridge {
+        events_tx: state.events_tx.clone(),
+        pending: state.pending_ask_user.clone(),
+        session_id: Some(session_id.clone()),
+    }));
 
     engine.observations.clear();
     engine.task = Some(prompt.to_string());
@@ -348,13 +419,7 @@ async fn drive(
     // Bash stops the `echo > file` end-run around it. cfg isn't reloaded by
     // initialize_loop, so this sticks. (It also flips the session
     // non-interactive on load, matching the permission.json.)
-    let extra: &[&str] = if write { WRITE_TOOLS } else { &[] };
-    let declared: Vec<String> = AGENT_RUN_TOOLS
-        .iter()
-        .chain(extra)
-        .map(|s| s.to_string())
-        .collect();
-    engine.cfg.mission_allowed_tools = crate::engine::tool_scope::compute_tool_scope(&declared);
+    engine.cfg.mission_allowed_tools = delegate_tool_scope(write);
 
     // Register the turn just as typed chat does, including its terminal event.
     let model_label = engine.model_id.clone();
@@ -389,7 +454,7 @@ async fn drive(
     let _ = state.events_tx.send(crate::server::ServerEvent::StateUpdated);
     match result {
         Ok(_) => Ok(with_denials(&session_id, final_reply(&session_id)
-            .unwrap_or_else(|| "(the agent finished without a textual reply)".to_string()))),
+            .unwrap_or_else(|| NO_REPLY.to_string()))),
         Err(e) => Err(format!("agent run failed: {e}")),
     }
 }
@@ -411,8 +476,22 @@ fn seed_first_prompt(history: &mut Vec<crate::message::ChatMessage>, prompt: &st
     history.insert(0, crate::message::ChatMessage::new("user", prompt.to_string()));
 }
 
-fn still_running(session: &str) -> String {
-    format!("Still running in Linggen session {session}. Watch ws://127.0.0.1:9527/api/agent/wait?session_id={session}")
+/// What a caller gets while the run goes on: where to watch, and any
+/// permission requests already waiting on it.
+async fn still_running(state: &Arc<ServerState>, session: &str) -> String {
+    let mut text = still_running_text(state.port, session);
+    let pending = pending_requests(state, session).await;
+    if !pending.is_empty() {
+        text.push_str(&format!("\nWaiting for permission: {}", serde_json::Value::Array(pending)));
+    }
+    text
+}
+
+fn still_running_text(port: u16, session: &str) -> String {
+    format!("Still running in the background in Linggen session {session}. Don't poll: \
+        watch ws://127.0.0.1:{port}/api/agent/wait?session_id={session} with a background \
+        watcher. It sends {{\"type\":\"permission_request\"}} (answer with agent_permit) and \
+        {{\"type\":\"finished\"}} (then read agent_status).")
 }
 
 fn validate_options(session: Option<&str>, write: Option<&str>, model: Option<&str>) -> Result<(), String> {
@@ -439,7 +518,112 @@ pub async fn status(state: &Arc<ServerState>, session: &str) -> Result<String, S
     session_meta(state, session)?;
     let work = super::api::sessions::session_running_work(state, session).await;
     Ok(serde_json::json!({"running": work.turn, "tasks": work.tasks,
-        "subagents": work.subagents, "denied": denials(session), "reply": if work.turn { None } else { final_reply(session) }}).to_string())
+        "subagents": work.subagents, "pending": pending_requests(state, session).await,
+        "denied": denials(session), "reply": if work.turn { None } else { final_reply(session) }}).to_string())
+}
+
+/// The permission requests `session` is waiting on, for its caller.
+async fn pending_requests(state: &ServerState, session: &str) -> Vec<serde_json::Value> {
+    caller_requests(&*state.pending_ask_user.lock().await, session)
+}
+
+fn caller_requests(
+    pending: &std::collections::HashMap<String, crate::engine::tools::PendingAskUser>,
+    session: &str,
+) -> Vec<serde_json::Value> {
+    let mut rows: Vec<_> = pending
+        .iter()
+        .filter(|(_, entry)| entry.session_id.as_deref() == Some(session))
+        .filter_map(|(id, entry)| Some(request_json(id, entry.caller_request.as_ref()?)))
+        .collect();
+    rows.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
+    rows
+}
+
+fn request_json(id: &str, request: &crate::engine::tools::CallerPermissionRequest) -> serde_json::Value {
+    let mut row = serde_json::to_value(request).unwrap_or_default();
+    row["id"] = id.into();
+    row
+}
+
+/// `agent_permit`: answer one permission request of an `agent_run`
+/// session. Only that session's own caller requests are answerable here —
+/// never a person's prompt in another chat.
+pub async fn permit(
+    state: &Arc<ServerState>,
+    session: &str,
+    request_id: &str,
+    decision: &str,
+    scope: Option<&str>,
+) -> Result<String, String> {
+    session_meta(state, session)?;
+    let session_dir = crate::paths::global_sessions_dir().join(session);
+    if !crate::engine::permission::SessionPermissions::load(&session_dir).ask_caller {
+        return Err(format!("session '{session}' does not ask its caller for permissions"));
+    }
+    let label = answer_request(&state.pending_ask_user, session, request_id, decision, scope).await?;
+    let _ = state.events_tx.send(crate::server::ServerEvent::WidgetResolved {
+        widget_id: request_id.to_string(),
+        session_id: Some(session.to_string()),
+    });
+    Ok(serde_json::json!({"request_id": request_id, "decision": decision, "answer": label}).to_string())
+}
+
+/// Take the request and send the decision's answer to the waiting run.
+async fn answer_request(
+    pending: &tokio::sync::Mutex<std::collections::HashMap<String, crate::engine::tools::PendingAskUser>>,
+    session: &str,
+    request_id: &str,
+    decision: &str,
+    scope: Option<&str>,
+) -> Result<String, String> {
+    let mut pending = pending.lock().await;
+    let entry = pending.get(request_id).ok_or_else(|| unknown_request(request_id))?;
+    let label = decision_label(entry, session, decision, scope)?;
+    let entry = pending.remove(request_id).ok_or_else(|| unknown_request(request_id))?;
+    let answer = crate::engine::tools::AskUserAnswer {
+        question_index: 0,
+        selected: vec![label.clone()],
+        custom_text: None,
+    };
+    entry.sender.send(vec![answer]).map_err(|_| format!("request '{request_id}' already expired"))?;
+    Ok(label)
+}
+
+fn unknown_request(request_id: &str) -> String {
+    format!("unknown permission request '{request_id}' (answered, expired, or not this session's)")
+}
+
+/// The offered option a decision selects. `allow_session` grants the target
+/// (`scope: path`) or its folder (`scope: dir`, the default when grantable)
+/// at the requested level — never a session-wide grant.
+fn decision_label(
+    entry: &crate::engine::tools::PendingAskUser,
+    session: &str,
+    decision: &str,
+    scope: Option<&str>,
+) -> Result<String, String> {
+    use crate::engine::permission::{grant_at_label, ALLOW_ONCE};
+    let request = entry
+        .caller_request
+        .as_ref()
+        .filter(|_| entry.session_id.as_deref() == Some(session))
+        .ok_or_else(|| "this request is not this session's to answer".to_string())?;
+    let label = match (decision, scope) {
+        ("allow_once", _) => ALLOW_ONCE.to_string(),
+        ("deny", _) => "Deny".to_string(),
+        ("allow_session", Some("path")) => grant_at_label(&request.level, &request.path),
+        ("allow_session", Some("dir")) => grant_at_label(&request.level, request.dir.as_deref()
+            .ok_or("this target's folder cannot be granted; use scope \"path\"")?),
+        ("allow_session", None) => grant_at_label(&request.level, request.dir.as_deref().unwrap_or(&request.path)),
+        ("allow_session", Some(other)) => return Err(format!("unknown scope '{other}': use path or dir")),
+        (other, _) => return Err(format!("unknown decision '{other}': use allow_once, allow_session or deny")),
+    };
+    let offered = entry.questions.first().is_some_and(|q| q.options.iter().any(|o| o.label == label));
+    if !offered {
+        return Err(format!("'{label}' was not offered for this request"));
+    }
+    Ok(label)
 }
 
 fn denials(session: &str) -> Vec<crate::engine::tool_exec::DeniedAction> {
@@ -479,10 +663,17 @@ pub(crate) async fn wait_socket(
     }
     let mut events = state.events_tx.subscribe();
     ws.on_upgrade(move |mut socket| async move {
+        let session = query.session_id.as_str();
+        let mut told = std::collections::HashSet::new();
         let mut ready_since = None;
         loop {
-            let work = super::api::sessions::session_running_work(&state, &query.session_id).await;
-            let ready = wait_ready(&work, state.manager.has_pending_turn(&query.session_id));
+            // Every permission request once — those raised before the
+            // watcher connected too.
+            for frame in new_requests(&pending_requests(&state, session).await, &mut told, session) {
+                if socket.send(axum::extract::ws::Message::Text(frame.to_string().into())).await.is_err() { return; }
+            }
+            let work = super::api::sessions::session_running_work(&state, session).await;
+            let ready = wait_ready(&work, state.manager.has_pending_turn(session));
             let deadline = if ready {
                 *ready_since.get_or_insert_with(|| tokio::time::Instant::now() + std::time::Duration::from_secs(3))
             } else {
@@ -490,22 +681,60 @@ pub(crate) async fn wait_socket(
                 tokio::time::Instant::now()
             };
             if ready && tokio::time::Instant::now() >= deadline {
-                let frame = serde_json::json!({"session_id": query.session_id, "reply": final_reply(&query.session_id), "denied": denials(&query.session_id)});
+                let frame = finished_frame(session, end_status(&state, session).await, final_reply(session), denials(session));
                 let _ = socket.send(axum::extract::ws::Message::Text(frame.to_string().into())).await;
                 let _ = socket.send(axum::extract::ws::Message::Close(None)).await;
                 break;
             }
             tokio::select! {
                 _ = tokio::time::sleep_until(deadline), if ready => {},
-                event = events.recv() => match event {
-                    Ok(super::ServerEvent::TurnComplete { .. } | super::ServerEvent::StateUpdated | super::ServerEvent::TasksUpdated { .. }) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {},
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                    _ => {},
-                },
+                event = events.recv() => if matches!(event, Err(tokio::sync::broadcast::error::RecvError::Closed)) { break; },
                 incoming = socket.recv() => if incoming.is_none() || matches!(incoming, Some(Err(_)) | Some(Ok(axum::extract::ws::Message::Close(_)))) { break; },
             }
         }
     })
+}
+
+/// Stream event types a watcher matches on.
+const PERMISSION_REQUEST_EVENT: &str = "permission_request";
+const FINISHED_EVENT: &str = "finished";
+
+/// `permission_request` frames for requests not told yet.
+fn new_requests(
+    pending: &[serde_json::Value],
+    told: &mut std::collections::HashSet<String>,
+    session: &str,
+) -> Vec<serde_json::Value> {
+    pending
+        .iter()
+        .filter(|row| row["id"].as_str().is_some_and(|id| told.insert(id.to_string())))
+        .map(|row| serde_json::json!({"type": PERMISSION_REQUEST_EVENT, "session_id": session, "request": row}))
+        .collect()
+}
+
+/// The stream's last frame: how the session's work ended, its reply, and
+/// what was denied. Earlier keys (`session_id`, `reply`, `denied`) stay.
+fn finished_frame(
+    session: &str,
+    status: &str,
+    reply: Option<String>,
+    denied: Vec<crate::engine::tool_exec::DeniedAction>,
+) -> serde_json::Value {
+    serde_json::json!({"type": FINISHED_EVENT, "session_id": session, "status": status, "reply": reply, "denied": denied})
+}
+
+/// How the session's latest top-level run ended: completed, failed or
+/// cancelled — `completed` when no run is on record (an idle session).
+async fn end_status(state: &ServerState, session: &str) -> &'static str {
+    use crate::engine::agent::AgentRunStatus;
+    let runs = state.manager.list_agent_runs(&PathBuf::new(), Some(session)).await.unwrap_or_default();
+    let last = runs.iter().filter(|r| r.parent_run_id.is_none()).max_by_key(|r| r.started_at);
+    match last.map(|r| r.status) {
+        Some(AgentRunStatus::Failed) => "failed",
+        Some(AgentRunStatus::Cancelled) => "cancelled",
+        Some(AgentRunStatus::Running) => "running",
+        _ => "completed",
+    }
 }
 
 #[cfg(test)]
@@ -677,5 +906,191 @@ mod tests {
     #[test]
     fn mcp_agent_rejects_unknown_model() {
         assert!(validate_model("bad", None, &["good".into()]).unwrap_err().contains("good"));
+    }
+}
+
+#[cfg(test)]
+mod permit_tests {
+    use super::*;
+    use crate::engine::permission::{
+        build_caller_question, build_exceeds_ceiling_question, check_permission,
+        parse_exceeds_ceiling_answer, PermissionAction, PermissionCheckResult, SessionPermissions,
+    };
+    use crate::engine::tools::{AskUserBridge, CallerPermissionRequest, PendingAskUser};
+    use std::collections::HashMap;
+    use std::time::Duration;
+    use tokio::sync::Mutex;
+
+    type Pending = Arc<Mutex<HashMap<String, PendingAskUser>>>;
+
+    fn request(dir: Option<&str>) -> CallerPermissionRequest {
+        CallerPermissionRequest {
+            tool: "Bash".into(),
+            summary: "touch ~/out/file".into(),
+            level: PermissionMode::Edit,
+            path: "~/out/file".into(),
+            dir: dir.map(str::to_string),
+            reason: Some("make the marker".into()),
+        }
+    }
+
+    fn question(dir: Option<&str>) -> crate::engine::tools::AskUserQuestion {
+        let dirs: Vec<String> = dir.into_iter().map(str::to_string).collect();
+        build_caller_question("touch ~/out/file", &PermissionMode::Edit, "~/out/file", &dirs)
+    }
+
+    fn bridge(pending: &Pending, session: &str) -> AskUserBridge {
+        AskUserBridge {
+            events_tx: tokio::sync::broadcast::channel(16).0,
+            pending: pending.clone(),
+            session_id: Some(session.into()),
+        }
+    }
+
+    /// Raise a caller request in `session`, answer it with `decision`, and
+    /// return what the waiting gate would act on.
+    async fn ask_and_answer(
+        decision: &str,
+        scope: Option<&str>,
+        dir: Option<&str>,
+    ) -> (Result<String, String>, Option<PermissionAction>) {
+        let pending: Pending = Default::default();
+        let question = question(dir);
+        let offered: Vec<String> = question.options.iter().map(|o| o.label.clone()).collect();
+        let b = bridge(&pending, "s1");
+        let req = request(dir);
+        let ask = tokio::spawn(async move {
+            crate::engine::tool_exec::ask_on_bridge(&b, "ling".into(), question, Some(req), Duration::from_secs(5)).await
+        });
+        let id = loop {
+            if let Some(id) = pending.lock().await.keys().next().cloned() { break id; }
+            tokio::task::yield_now().await;
+        };
+        let answered = answer_request(&pending, "s1", &id, decision, scope).await;
+        if answered.is_err() {
+            ask.abort();
+            return (answered, None);
+        }
+        let answers = ask.await.unwrap().flatten().expect("answered");
+        let action = parse_exceeds_ceiling_answer(&answers, &PermissionMode::Edit, &offered);
+        (answered, Some(action))
+    }
+
+    #[tokio::test]
+    async fn permit_allow_once_runs_that_action() {
+        let (_, action) = ask_and_answer("allow_once", None, Some("~/out")).await;
+        assert_eq!(action, Some(PermissionAction::AllowOnce));
+    }
+
+    #[tokio::test]
+    async fn permit_allow_session_grants_folder_or_path_only() {
+        let (_, dir) = ask_and_answer("allow_session", Some("dir"), Some("~/out")).await;
+        assert_eq!(dir, Some(PermissionAction::AllowDirectory { all: false, mode: PermissionMode::Edit, path: "~/out".into() }));
+        let (_, default) = ask_and_answer("allow_session", None, Some("~/out")).await;
+        assert_eq!(default, dir);
+        let (_, path) = ask_and_answer("allow_session", Some("path"), Some("~/out")).await;
+        assert_eq!(path, Some(PermissionAction::AllowDirectory { all: false, mode: PermissionMode::Edit, path: "~/out/file".into() }));
+        // An ungrantable folder (home itself) offers the path, not the folder.
+        let (err, _) = ask_and_answer("allow_session", Some("dir"), None).await;
+        assert!(err.unwrap_err().contains("scope"));
+        let (_, fallback) = ask_and_answer("allow_session", None, None).await;
+        assert_eq!(fallback, path);
+    }
+
+    #[tokio::test]
+    async fn permit_deny_refuses() {
+        let (_, action) = ask_and_answer("deny", None, Some("~/out")).await;
+        assert_eq!(action, Some(PermissionAction::Deny));
+        let (err, _) = ask_and_answer("maybe", None, Some("~/out")).await;
+        assert!(err.unwrap_err().contains("unknown decision"));
+    }
+
+    #[tokio::test]
+    async fn unanswered_request_times_out_and_is_gone() {
+        let pending: Pending = Default::default();
+        let b = bridge(&pending, "s1");
+        let answer = crate::engine::tool_exec::ask_on_bridge(&b, "ling".into(), question(None), Some(request(None)), Duration::from_millis(30)).await;
+        assert!(answer.is_none(), "a timeout is no answer");
+        assert!(pending.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn permit_answers_only_its_own_sessions_caller_requests() {
+        let pending: Pending = Default::default();
+        let (tx, _rx) = tokio::sync::oneshot::channel();
+        let (tx2, _rx2) = tokio::sync::oneshot::channel();
+        {
+            let mut map = pending.lock().await;
+            map.insert("other".into(), PendingAskUser { agent_id: "ling".into(), questions: vec![question(None)], sender: tx, session_id: Some("s2".into()), caller_request: Some(request(None)) });
+            // A person's prompt in the same session: not the caller's to answer.
+            let card = build_exceeds_ceiling_question("x", &PermissionMode::Edit, "~/out/file", &[]);
+            map.insert("person".into(), PendingAskUser { agent_id: "ling".into(), questions: vec![card], sender: tx2, session_id: Some("s1".into()), caller_request: None });
+        }
+        assert!(answer_request(&pending, "s1", "other", "allow_once", None).await.is_err());
+        assert!(answer_request(&pending, "s1", "person", "allow_once", None).await.is_err());
+        assert!(answer_request(&pending, "s1", "missing", "deny", None).await.is_err());
+        assert_eq!(pending.lock().await.len(), 2, "refusals leave requests pending");
+        assert!(caller_requests(&*pending.lock().await, "s1").is_empty());
+        let rows = caller_requests(&*pending.lock().await, "s2");
+        assert_eq!((rows[0]["id"].as_str(), rows[0]["level"].as_str()), (Some("other"), Some("edit")));
+    }
+
+    #[test]
+    fn deny_floor_is_never_a_request() {
+        let mut perms = SessionPermissions { interactive: false, ask_caller: true, ..Default::default() };
+        perms.set_path_mode("/tmp/wd", PermissionMode::Admin);
+        for cmd in ["sudo -n true", "rm -rf /", "ls && sudo rm /etc/foo"] {
+            let result = check_permission("Bash", Some(cmd), None, std::path::Path::new("/tmp/wd"), &perms, None);
+            assert!(matches!(result, PermissionCheckResult::Blocked(_)), "{cmd}: {result:?}");
+        }
+    }
+
+    #[test]
+    fn caller_question_offers_no_session_wide_grant() {
+        let q = build_caller_question("touch", &PermissionMode::Edit, "~/a/f", &["~/a".into()]);
+        let labels: Vec<&str> = q.options.iter().map(|o| o.label.as_str()).collect();
+        assert_eq!(labels, ["grant:at:edit:~/a", "grant:at:edit:~/a/f", "Allow once", "Deny"]);
+        // The person's card offers no "Allow once": that label denies there.
+        let card = build_exceeds_ceiling_question("touch", &PermissionMode::Edit, "~/a/f", &["~/a".into()]);
+        let offered: Vec<String> = card.options.iter().map(|o| o.label.clone()).collect();
+        let once = crate::engine::tools::AskUserAnswer { question_index: 0, selected: vec!["Allow once".into()], custom_text: None };
+        assert_eq!(parse_exceeds_ceiling_answer(&[once], &PermissionMode::Edit, &offered), PermissionAction::Deny);
+    }
+
+    #[test]
+    fn ask_caller_persists_only_when_set() {
+        let dir = tempfile::tempdir().unwrap();
+        SessionPermissions::default().save(dir.path());
+        assert!(!std::fs::read_to_string(dir.path().join("permission.json")).unwrap().contains("ask_caller"));
+        SessionPermissions { interactive: false, ask_caller: true, ..Default::default() }.save(dir.path());
+        assert!(SessionPermissions::load(dir.path()).ask_caller);
+    }
+
+    #[test]
+    fn stream_tells_each_request_once_then_finished() {
+        let mut told = std::collections::HashSet::new();
+        let rows = vec![serde_json::json!({"id": "r1", "tool": "Bash"})];
+        let first = new_requests(&rows, &mut told, "s1");
+        assert_eq!(first[0]["type"], "permission_request");
+        assert_eq!(first[0]["request"]["id"], "r1");
+        assert!(new_requests(&rows, &mut told, "s1").is_empty());
+        let done = finished_frame("s1", "completed", Some("ok".into()), vec![]);
+        assert_eq!((done["type"].as_str(), done["status"].as_str(), done["reply"].as_str()), (Some("finished"), Some("completed"), Some("ok")));
+        assert!(done["denied"].is_array() && done["session_id"] == "s1");
+    }
+
+    #[test]
+    fn still_running_names_the_stream_events() {
+        let text = still_running_text(9527, "s1");
+        assert!(text.contains("ws://127.0.0.1:9527/api/agent/wait?session_id=s1"));
+        assert!(text.contains("permission_request") && text.contains("finished") && text.contains("agent_permit"));
+    }
+
+    #[test]
+    fn delegate_toolset_widens_only_for_write() {
+        let read = delegate_tool_scope(false).unwrap();
+        let write = delegate_tool_scope(true).unwrap();
+        assert!(!read.contains("Bash") && write.contains("Bash") && write.contains("Edit"));
+        assert!(!write.contains("Task") && !write.contains("AskUser"));
     }
 }

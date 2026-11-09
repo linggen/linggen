@@ -27,7 +27,8 @@ pub use model::{
     PermissionCheckResult, PermissionMode, PromptKind,
 };
 pub use prompt::{
-    build_exceeds_ceiling_question, parse_exceeds_ceiling_answer, permission_target_summary,
+    build_caller_question, build_exceeds_ceiling_question, grant_at_label,
+    parse_exceeds_ceiling_answer, permission_target_summary, ALLOW_ONCE,
 };
 pub use store::SessionPermissions;
 

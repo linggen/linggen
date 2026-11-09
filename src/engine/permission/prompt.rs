@@ -130,6 +130,56 @@ pub fn build_exceeds_ceiling_question(
     }
 }
 
+/// The option a caller's "run this one action" answer selects.
+pub const ALLOW_ONCE: &str = "Allow once";
+
+/// The option label that grants `path` at `mode` for the session.
+pub fn grant_at_label(mode: &PermissionMode, path: &str) -> String {
+    format!("grant:at:{mode}:{path}")
+}
+
+/// The question a non-interactive session raises to its caller: the target
+/// itself, its folders, once, or deny — never a session-wide grant.
+pub fn build_caller_question(
+    tool_summary: &str,
+    target_mode: &PermissionMode,
+    path: &str,
+    directories: &[String],
+) -> AskUserQuestion {
+    let grant = |dir: &str, what: &str| AskUserOption {
+        label: grant_at_label(target_mode, dir),
+        description: Some(format!("{what} — {target_mode} for this session")),
+        preview: None,
+    };
+    let mut options: Vec<AskUserOption> = directories
+        .iter()
+        .map(|dir| grant(dir, &format!("{dir} and its children")))
+        .collect();
+    if !directories.iter().any(|dir| dir == path) {
+        options.push(grant(path, path));
+    }
+    options.push(AskUserOption {
+        label: ALLOW_ONCE.into(),
+        description: Some("Run this one action".into()),
+        preview: None,
+    });
+    options.push(AskUserOption {
+        label: "Deny".into(),
+        description: Some("Block this action".into()),
+        preview: None,
+    });
+    AskUserQuestion {
+        question: tool_summary.to_string(),
+        header: "Permission".to_string(),
+        permission: Some(DirectoryPermissionMetadata {
+            path: path.to_string(),
+            mode: *target_mode,
+        }),
+        options,
+        multi_select: false,
+    }
+}
+
 /// A native permission answer must be exactly one offered option for question zero.
 /// A directory answer grants that offered path at the needed level. Anything
 /// that was not offered denies, so a client cannot name its own path.
@@ -151,6 +201,9 @@ pub fn parse_exceeds_ceiling_answer(
     let selected = answer.selected[0].as_str();
     if !offered.iter().any(|label| label == selected) {
         return PermissionAction::Deny;
+    }
+    if selected == ALLOW_ONCE {
+        return PermissionAction::AllowOnce;
     }
     if let Some(dir) = selected
         .strip_prefix(&format!("grant:at:{target_mode}:"))

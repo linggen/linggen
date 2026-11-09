@@ -53,6 +53,56 @@ mod denial_store_tests {
     }
 }
 
+/// How long a person in the chat has to answer a permission question.
+const PERSON_ASK_WAIT: std::time::Duration = std::time::Duration::from_secs(8 * 3600);
+/// How long a non-interactive session waits for its caller's decision
+/// before the action counts as denied.
+pub(crate) const CALLER_ASK_WAIT: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// Raise one question on the bridge and wait up to `wait` for its answer:
+/// `None` on timeout, `Some(None)` when the question was dropped unanswered.
+pub(crate) async fn ask_on_bridge(
+    bridge: &tools::AskUserBridge,
+    agent_id: String,
+    question: tools::AskUserQuestion,
+    caller_request: Option<tools::CallerPermissionRequest>,
+    wait: std::time::Duration,
+) -> Option<Option<Vec<tools::AskUserAnswer>>> {
+    let question_id = uuid::Uuid::new_v4().to_string();
+    let questions = vec![question];
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    // Register before publishing so an immediate answer cannot race it.
+    bridge.pending.lock().await.insert(
+        question_id.clone(),
+        tools::PendingAskUser {
+            agent_id: agent_id.clone(),
+            questions: questions.clone(),
+            sender: tx,
+            session_id: bridge.session_id.clone(),
+            caller_request,
+        },
+    );
+    let _ = bridge
+        .events_tx
+        .send(crate::engine::events::ServerEvent::AskUser {
+            agent_id,
+            question_id: question_id.clone(),
+            questions,
+            session_id: bridge.session_id.clone(),
+        });
+    let response = tokio::time::timeout(wait, rx).await;
+    if bridge.pending.lock().await.remove(&question_id).is_some() && response.is_err() {
+        // Nobody answered: tell every client to drop the card.
+        let _ = bridge
+            .events_tx
+            .send(crate::engine::events::ServerEvent::WidgetResolved {
+                widget_id: question_id,
+                session_id: bridge.session_id.clone(),
+            });
+    }
+    Some(response.ok()?.ok())
+}
+
 impl AgentEngine {
     /// Create a message with the correct role for tool results.
     /// In native tool calling mode, uses `role: "tool"` (required by Ollama).
@@ -83,51 +133,27 @@ impl AgentEngine {
         }
     }
 
-    /// Ask the user for permission via the AskUser bridge.
-    /// Ask user for permission, returning the raw selected label and optional custom text.
-    /// Returns `None` on timeout, `Some(PermissionAction)` otherwise.
+    /// Ask for permission via the AskUser bridge and wait up to `wait`:
+    /// the person in the chat, or — with `caller_request` — the session's
+    /// caller (`agent_permit`). Returns `None` on timeout.
     pub async fn ask_permission_raw(
         &self,
         tool: &str,
         question: tools::AskUserQuestion,
+        caller_request: Option<tools::CallerPermissionRequest>,
+        wait: std::time::Duration,
     ) -> Option<permission::PermissionAction> {
-        let bridge = match self.tools.ask_user_bridge() {
-            Some(b) => Arc::clone(b),
-            None => return None,
-        };
-
-        let question_id = uuid::Uuid::new_v4().to_string();
+        let bridge = Arc::clone(self.tools.ask_user_bridge()?);
         let agent_id = self.agent_id.clone().unwrap_or_default();
 
-        info!("Permission: awaiting user approval for '{}'", tool);
+        info!("Permission: awaiting approval for '{}'", tool);
         // The offered grants are for this level only; parse against it.
         let target_mode = question.permission.as_ref().map(|meta| meta.mode);
         let offered: Vec<String> = question.options.iter().map(|opt| opt.label.clone()).collect();
-        let questions = vec![question];
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        bridge.pending.lock().await.insert(
-            question_id.clone(),
-            tools::PendingAskUser {
-                agent_id: agent_id.clone(),
-                questions: questions.clone(),
-                sender: tx,
-                session_id: bridge.session_id.clone(),
-            },
-        );
-        let _ = bridge
-            .events_tx
-            .send(crate::engine::events::ServerEvent::AskUser {
-                agent_id,
-                question_id: question_id.clone(),
-                questions,
-                session_id: bridge.session_id.clone(),
-            });
-
-        let response = tokio::time::timeout(std::time::Duration::from_secs(8 * 3600), rx).await;
-        bridge.pending.lock().await.remove(&question_id);
+        let response = ask_on_bridge(&bridge, agent_id, question, caller_request, wait).await;
 
         match response {
-            Ok(Ok(answers)) => {
+            Some(Some(answers)) => {
                 if let Some(target_mode) = target_mode {
                     return Some(permission::parse_exceeds_ceiling_answer(
                         &answers,
@@ -171,12 +197,12 @@ impl AgentEngine {
                     }
                 }
             }
-            Ok(Err(_)) => {
+            Some(None) => {
                 warn!("Permission: '{}' channel closed → denied", tool);
                 Some(permission::PermissionAction::Deny)
             }
-            Err(_) => {
-                warn!("Permission: '{}' timed out → stopping agent", tool);
+            None => {
+                warn!("Permission: '{}' timed out", tool);
                 None
             }
         }
@@ -608,12 +634,7 @@ impl AgentEngine {
                 permission::PermissionCheckResult::Allowed => return None,
                 permission::PermissionCheckResult::Blocked(reason) => {
                     info!("Permission blocked: {} — {}", t.canonical, reason);
-                    if let Some(session) = t.session_id {
-                        DENIALS.lock().unwrap_or_else(|e| e.into_inner()).record(session, DeniedAction {
-                            tool: t.canonical.to_string(), summary: self.permission_summary(t),
-                            mode: "blocked".into(), reason: reason.to_string(),
-                        });
-                    }
+                    self.record_denial(t, "blocked", &reason);
                     let msg = self.permission_denied_msg(t);
                     return self.refuse_saved(t, messages, msg).await;
                 }
@@ -621,15 +642,13 @@ impl AgentEngine {
             };
 
             // Non-interactive sessions (mission, proxy consumer) cannot prompt —
-            // return permission-needed immediately.
-            if !self.session_permissions.interactive {
+            // return permission-needed immediately. One whose caller answers
+            // (an MCP delegate) asks the caller instead and waits.
+            let asks_caller = !self.session_permissions.interactive;
+            if asks_caller && !self.session_permissions.ask_caller {
                 let permission::PromptKind::ExceedsCeiling { target_mode, .. } = &prompt_kind;
-                if let Some(session) = t.session_id {
-                    DENIALS.lock().unwrap_or_else(|e| e.into_inner()).record(session, DeniedAction {
-                        tool: t.canonical.to_string(), summary: self.permission_summary(t),
-                        mode: target_mode.to_string(), reason: "Action exceeds session grants (non-interactive)".into(),
-                    });
-                }
+                let reason = "Action exceeds session grants (non-interactive)";
+                self.record_denial(t, &target_mode.to_string(), reason);
                 let msg = self.permission_denied_msg(t);
                 return self.refuse_saved(t, messages, msg).await;
             }
@@ -647,13 +666,28 @@ impl AgentEngine {
                 let msg = self.permission_denied_msg(t);
                 return self.refuse_saved(t, messages, msg).await;
             }
-            let question = permission::build_exceeds_ceiling_question(
-                &tool_summary,
-                &target_mode,
-                &path,
-                &directories,
-            );
-            match self.ask_permission_raw(t.canonical, question).await {
+            let (question, caller_request, wait) = if asks_caller {
+                let request = self.caller_request(t, target_mode, &path, &directories);
+                let question = permission::build_caller_question(
+                    &tool_summary,
+                    &target_mode,
+                    &path,
+                    &directories,
+                );
+                (question, Some(request), CALLER_ASK_WAIT)
+            } else {
+                let question = permission::build_exceeds_ceiling_question(
+                    &tool_summary,
+                    &target_mode,
+                    &path,
+                    &directories,
+                );
+                (question, None, PERSON_ASK_WAIT)
+            };
+            let answer = self
+                .ask_permission_raw(t.canonical, question, caller_request, wait)
+                .await;
+            match answer {
                 Some(permission::PermissionAction::AllowOnce) => return None,
                 Some(permission::PermissionAction::AllowDirectory { all, mode, path: chosen }) => {
                     // Do not use a session grant when persisting it failed.
@@ -686,6 +720,9 @@ impl AgentEngine {
                 Some(
                     permission::PermissionAction::AllowSession | permission::PermissionAction::Deny,
                 ) => {
+                    if asks_caller {
+                        self.record_denial(t, &target_mode.to_string(), "Denied by the caller");
+                    }
                     let msg = self.permission_denied_msg(t);
                     return self.refuse_saved(t, messages, msg).await;
                 }
@@ -695,6 +732,16 @@ impl AgentEngine {
                         "Permission denied by user for {} '{}'. User says: {}",
                         t.canonical, summary, user_msg
                     );
+                    return self.refuse_saved(t, messages, msg).await;
+                }
+                None if asks_caller => {
+                    // The caller never answered: denied, and the run goes on.
+                    let reason = format!(
+                        "No answer from the caller within {} min (non-interactive)",
+                        CALLER_ASK_WAIT.as_secs() / 60
+                    );
+                    self.record_denial(t, &target_mode.to_string(), &reason);
+                    let msg = self.permission_denied_msg(t);
                     return self.refuse_saved(t, messages, msg).await;
                 }
                 None => {
@@ -707,6 +754,45 @@ impl AgentEngine {
                     )));
                 }
             }
+        }
+    }
+
+    /// Keep a refused action where `agent_status` reports it.
+    fn record_denial(&self, t: &ToolTurn<'_>, mode: &str, reason: &str) {
+        let Some(session) = t.session_id else { return };
+        DENIALS.lock().unwrap_or_else(|e| e.into_inner()).record(
+            session,
+            DeniedAction {
+                tool: t.canonical.to_string(),
+                summary: self.permission_summary(t),
+                mode: mode.to_string(),
+                reason: reason.to_string(),
+            },
+        );
+    }
+
+    /// What the caller sees of a permission request: the action, the level
+    /// it needs, its target, the narrowest grantable folder, and the
+    /// agent's own words for it when the call carries them.
+    fn caller_request(
+        &self,
+        t: &ToolTurn<'_>,
+        level: permission::PermissionMode,
+        path: &str,
+        directories: &[String],
+    ) -> tools::CallerPermissionRequest {
+        let reason = ["description", "reason"]
+            .iter()
+            .find_map(|key| t.args.get(*key).and_then(|v| v.as_str()))
+            .filter(|text| !text.trim().is_empty())
+            .map(str::to_string);
+        tools::CallerPermissionRequest {
+            tool: t.canonical.to_string(),
+            summary: self.permission_summary(t),
+            level,
+            path: path.to_string(),
+            dir: directories.last().cloned(),
+            reason,
         }
     }
 

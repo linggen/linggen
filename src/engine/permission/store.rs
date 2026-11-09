@@ -22,6 +22,11 @@ pub struct SessionPermissions {
     /// mission and proxy-consumer sessions (pause/fail; never prompt).
     #[serde(default = "default_true")]
     pub interactive: bool,
+    /// A non-interactive session whose caller answers permission requests
+    /// (an MCP `agent_run` delegate): an action beyond the grants waits for
+    /// the caller's decision instead of being refused at once.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ask_caller: bool,
 }
 
 impl Default for SessionPermissions {
@@ -29,6 +34,7 @@ impl Default for SessionPermissions {
         Self {
             path_modes: Vec::new(),
             interactive: true,
+            ask_caller: false,
         }
     }
 }

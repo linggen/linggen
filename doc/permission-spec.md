@@ -47,6 +47,10 @@ An admin action omits the extra admin choice. A path with no repository root sto
 
 Deny blocks this action and is not stored. The next time the agent needs that permission, the chat asks again. Either allow choice is written to that session's permission file. Reopening the same session keeps it. Other sessions do not inherit it. A grant for all directories replaces existing directory grants; a later, more specific directory grant can override it. Admin everywhere is the broad setting: later actions in that session are not asked again. The hardcoded deny floor still blocks dangerous commands. Unattended runs cannot ask and must pause or fail when permission is insufficient.
 
+### Sessions that ask their caller
+
+A session started through MCP `agent_run` has no person in the chat, but it has a caller. An action beyond its grants asks the caller instead of failing: the request (action, target path, needed level, the agent's stated reason) waits on the session's wait stream and in `agent_status`, and the run waits for `agent_permit`. The caller may allow the action once, grant its path or its folder at that level for the rest of the session, or deny. The caller is never offered a grant for all directories. No answer within 10 minutes counts as deny. A refused action is listed as denied. The hardcoded deny floor is never asked. The owner sees the same request in the chat and may answer it there.
+
 The chat shows the effective level for the current working directory. Changing that directory updates the displayed level without changing the grants. Changing its level affects that directory, not unrelated directories.
 
 ## Boundaries and exceptions

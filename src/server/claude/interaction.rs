@@ -193,6 +193,7 @@ impl Interaction {
                 questions: questions.clone(),
                 sender: tx,
                 session_id: Some(self.meta.id.clone()),
+                caller_request: None,
             },
         );
         let _ = self.state.events_tx.send(ServerEvent::AskUser {

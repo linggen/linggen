@@ -291,6 +291,25 @@ pub struct PendingAskUser {
     pub questions: Vec<AskUserQuestion>,
     pub sender: tokio::sync::oneshot::Sender<Vec<AskUserAnswer>>,
     pub session_id: Option<String>,
+    /// Set when the session's caller (not a person in the chat) answers this
+    /// permission question — an MCP `agent_run` delegate's `agent_permit`.
+    pub caller_request: Option<CallerPermissionRequest>,
+}
+
+/// A permission request raised to a non-interactive session's caller.
+#[derive(Debug, Clone, Serialize)]
+pub struct CallerPermissionRequest {
+    pub tool: String,
+    pub summary: String,
+    pub level: crate::engine::permission::PermissionMode,
+    pub path: String,
+    /// The narrowest folder a session grant may cover; `None` when the
+    /// target's folder is not grantable (the home folder, `/`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dir: Option<String>,
+    /// What the agent said the action is for, when the call carries it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -671,6 +690,7 @@ impl Tools {
                 questions: questions_clone,
                 sender: tx,
                 session_id: bridge.session_id.clone(),
+                caller_request: None,
             },
         );
         let _ = bridge
