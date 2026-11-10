@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ChevronDown, ChevronRight, CheckCircle2, Circle, Loader2 } from 'lucide-react';
 import type { Plan, PlanItem } from '../../types';
+import { planTitle } from './utils/planPresentation.mts';
 
 const isWorking = (status: string) => status === 'in_progress' || status === 'working';
 
@@ -44,7 +45,7 @@ export const TodoPanel: React.FC<{
             <ChevronDown size={14} className="text-slate-400 shrink-0" />
           )}
           <span className="text-[12px] font-semibold text-slate-700 dark:text-slate-200 truncate">
-            {plan.summary}
+            {planTitle(plan)}
           </span>
           <span className="text-[11px] text-slate-400 dark:text-slate-500 ml-auto shrink-0">
             {completed}/{total}

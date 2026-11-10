@@ -1,6 +1,8 @@
 import React, { useRef, useState } from 'react';
 import { MarkdownContent } from './MarkdownContent';
 import type { Plan } from '../../types';
+import { useInteractionStore } from '../../stores/interactionStore';
+import { isChecklistOnly, planTitle } from './utils/planPresentation.mts';
 
 
 /** Renders a plan block with markdown rendering, inline editing, and approval buttons. */
@@ -17,6 +19,10 @@ export const PlanBlock: React.FC<{
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState('');
   const editRef = useRef<HTMLTextAreaElement | null>(null);
+  const activePlan = useInteractionStore(s => s.activePlan);
+  const liveList = !!activePlan?.items?.length && JSON.stringify(activePlan) === JSON.stringify(plan);
+  const checklistOnly = !!plan.items?.length && isChecklistOnly(plan.plan_text || '');
+  const showItems = !!plan.items?.length && !liveList && !editing;
 
   const saveEdit = () => {
     if (onEditPlan && editText.trim()) {
@@ -37,7 +43,7 @@ export const PlanBlock: React.FC<{
           {plan.status}
         </span>
       </div>
-      <div className="text-sm opacity-90">{plan.summary}</div>
+      <div className="text-sm opacity-90">{planTitle(plan)}</div>
       {editing ? (
         <div className="space-y-2">
           <textarea
@@ -66,17 +72,17 @@ export const PlanBlock: React.FC<{
             <span className="text-xs text-slate-400 self-center">Cmd/Ctrl+S to save, Esc to cancel</span>
           </div>
         </div>
-      ) : (
+      ) : !checklistOnly && plan.plan_text ? (
         <div className="text-sm bg-slate-50 dark:bg-white/5 rounded-md p-3 border border-slate-200 dark:border-white/10">
-          <MarkdownContent text={plan.plan_text || ''} />
+          <MarkdownContent text={plan.plan_text} />
         </div>
-      )}
-      {Array.isArray(plan.items) && plan.items.length > 0 && !editing && (
+      ) : null}
+      {showItems && (
         <div className="space-y-1">
           <div className="text-sm font-semibold text-slate-600 dark:text-slate-300">Task List</div>
-          {plan.items.map((item) => {
+          {plan.items?.map((item) => {
             const done = item.status === 'completed' || item.status === 'done';
-            const working = item.status === 'in_progress';
+            const working = item.status === 'in_progress' || item.status === 'working';
             return (
               <div key={item.id} className="flex items-start gap-2 text-sm">
                 <span className={`mt-0.5 shrink-0 ${done ? 'text-emerald-500' : working ? 'text-blue-500' : 'text-slate-400'}`}>
