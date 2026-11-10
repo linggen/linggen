@@ -20,7 +20,9 @@ export const PlanBlock: React.FC<{
   const [editText, setEditText] = useState('');
   const editRef = useRef<HTMLTextAreaElement | null>(null);
   const activePlan = useInteractionStore(s => s.activePlan);
-  const liveList = !!activePlan?.items?.length && JSON.stringify(activePlan) === JSON.stringify(plan);
+  // The pinned panel is showing this same list (matched by its items' titles — a status may lag between the two).
+  const titles = (p?: { items?: { title: string }[] } | null) => (p?.items ?? []).map(i => i.title).join('\n');
+  const liveList = !!activePlan?.items?.length && titles(activePlan) === titles(plan);
   const checklistOnly = !!plan.items?.length && isChecklistOnly(plan.plan_text || '');
   const showItems = !!plan.items?.length && !liveList && !editing;
 
