@@ -77,6 +77,14 @@ title_locked: boolean,
  */
 withheld_tools?: Array<string>, 
 /**
+ * Whether a failed model call may be answered by another model. None:
+ * the usual — it may (see `routing.auto_fallback`). `false`: the run
+ * fails on the model the session asked for, naming it and the
+ * provider's reason. Sessions made through the delegation front door
+ * (`agent_run`) start with `false`; the model picker's switch sets it.
+ */
+model_fallback?: boolean | null, 
+/**
  * The values this session is bound to — the bound skill's declared
  * session parameters (`session-params`), set once when the session is
  * made (`POST /api/sessions` `params`) and checked against the

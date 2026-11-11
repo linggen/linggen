@@ -111,6 +111,9 @@ export const sessionApi = {
    *  answers with by default). */
   setModel: (projectRoot: string, sessionId: string, modelId: string, agentId?: string) =>
     apiPatch<void>('/api/sessions', { project_root: projectRoot, session_id: sessionId, model_id: modelId, ...(agentId ? { agent_id: agentId } : {}) }),
+  /** Let (or stop) a failed model call be answered by another model in the session. */
+  setModelFallback: (sessionId: string, allowed: boolean) =>
+    apiPatch<void>('/api/sessions', { session_id: sessionId, model_fallback: allowed }),
   setPermission: (sessionId: string, path: string, mode: string) =>
     apiPatch<void>('/api/sessions/permission', { session_id: sessionId, path, mode }),
   pendingAskUser: () =>

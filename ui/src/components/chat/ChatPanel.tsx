@@ -33,7 +33,7 @@ import { ChatInput } from './ChatInput';
 import { SubagentDrawer } from './SubagentDrawer';
 import { SubagentPane } from './SubagentPane';
 import { statusBadgeClass } from './MessageHelpers';
-import { SessionModelSelector, SessionModeSelector, SessionStats } from './SessionSelectors';
+import { SessionFallbackToggle, SessionModelSelector, SessionModeSelector, SessionStats } from './SessionSelectors';
 import { useChatActions } from '../../hooks/useChatActions';
 import { sessionApi } from '../../lib/endpoints';
 import { startNewChat } from '../../lib/newChat';
@@ -366,6 +366,7 @@ export const ChatPanel: React.FC<{
               })()}
               <SessionModeSelector />
               <SessionModelSelector />
+              <SessionFallbackToggle />
               <SessionStats />
             </summary>
             <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">

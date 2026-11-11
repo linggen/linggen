@@ -441,11 +441,28 @@ impl AgentEngine {
         let mut model_id = preferred.clone();
         let mut fallback_reason = String::new();
 
+        // Two switches decide whether this call may move to another model: the
+        // routing config's, and the session's own (`SessionMeta::model_fallback`,
+        // off for a session a host made through `agent_run`). Read once per call.
+        let session_switch = self.session_allows_fallback();
+        let may_switch = self.auto_fallback && session_switch;
+
+        // A session that may not switch cannot be saved by the chain either:
+        // a model this machine does not have fails here, named, instead of
+        // as "Model x not found" from deep in a client.
+        if !session_switch && !self.model_manager.has_model(&model_id) {
+            self.note_run_model(&model_id);
+            return Err(crate::provider::error::no_fallback_error(
+                &model_id,
+                &anyhow::anyhow!("that model is not configured on this machine"),
+            ));
+        }
+
         // A model that has already told us it is rate-limited is not worth a
         // round trip: spend the turn on something that can answer. Only when
         // the chain has an alternative — otherwise try it anyway and let the
         // provider's own error be the one the user reads.
-        if self.auto_fallback && crate::provider::models::in_cooldown(&model_id) {
+        if may_switch && crate::provider::models::in_cooldown(&model_id) {
             if let Some(next) = self.next_fallback_model(&[model_id.clone()]) {
                 warn!("model '{model_id}' is still rate-limited; starting on '{next}'");
                 fallback_reason = "still rate-limited".to_string();
@@ -479,6 +496,7 @@ impl AgentEngine {
                     crate::provider::models::note_healthy(&model_id);
                     self.remember_call(&model_id, messages, tools.as_ref(), &result);
                     self.run_usage.add(&model_id, result.token_usage.as_ref());
+                    self.note_run_model(&model_id);
                     crate::engine::cloud_meter::after_call(self, result.token_usage.as_ref());
                     if model_id != preferred {
                         self.model_id = model_id.clone();
@@ -505,9 +523,17 @@ impl AgentEngine {
                     }
                     crate::provider::models::note_unavailable(&model_id, &e);
                     tried.push(model_id.clone());
-                    if !self.auto_fallback || !crate::provider::models::is_fallback_worthy_error(&e)
-                    {
-                        return Err(e);
+                    self.note_run_model(&model_id);
+                    let worthy = crate::provider::models::is_fallback_worthy_error(&e);
+                    if !may_switch || !worthy {
+                        // The refusal another model would have answered: with
+                        // the session's switch off, say which model failed and
+                        // why, and that no other was tried.
+                        return Err(if !session_switch && worthy {
+                            crate::provider::error::no_fallback_error(&model_id, &e)
+                        } else {
+                            e
+                        });
                     }
                     let Some(next) = self.next_fallback_model(&tried) else {
                         return Err(e);
@@ -522,6 +548,25 @@ impl AgentEngine {
                     model_id = next;
                 }
             }
+        }
+    }
+
+    /// Whether the session this engine speaks in lets a failed model call
+    /// move to another model (`SessionMeta::model_fallback`; yes when there is
+    /// no session). Read from the stored session, so the picker's switch takes
+    /// hold on the next call of a turn already running.
+    pub(crate) fn session_allows_fallback(&self) -> bool {
+        let (Some(manager), Some(session_id)) = (self.tools.get_manager(), &self.session_id) else {
+            return true;
+        };
+        manager.global_sessions.model_fallback_allowed(session_id)
+    }
+
+    /// Record on the run which model answered (or failed) its latest model
+    /// call — what `agent_status` reports as the run's `model`.
+    fn note_run_model(&self, model_id: &str) {
+        if let (Some(manager), Some(run_id)) = (self.tools.get_manager(), &self.run_id) {
+            manager.run_store.set_model(run_id, model_id);
         }
     }
 
@@ -867,5 +912,178 @@ mod fallback_window_tests {
     #[tokio::test]
     async fn failed_backup_keeps_primary_window_and_emits_no_switch() {
         run_case(Some(32_000), true, false).await;
+    }
+
+    /// One failing primary and a healthy backup, in a session whose model
+    /// switch is `flag`: the result, the models the fake was asked, the model
+    /// the run records as its last answerer, and the session's stored model.
+    async fn run_session_case(
+        flag: Option<bool>,
+    ) -> (
+        Result<StreamResult>,
+        Vec<String>,
+        Option<String>,
+        String,
+        String,
+    ) {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let fake = Fake {
+            requests: requests.clone(),
+            backup_fails: false,
+            window_fails: false,
+        };
+        let app = Router::new()
+            .route("/api/chat", post(chat))
+            .route(
+                "/api/ps",
+                get(|| async { Json(serde_json::json!({"models": []})) }),
+            )
+            .route("/api/show", post(show))
+            .with_state(fake);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let root = tempfile::tempdir().unwrap();
+        let config = crate::config::Config::default();
+        let cfg = EngineConfig::from_app_config(&config, root.path().into(), InterfaceMode::Web);
+        let port = url.rsplit(':').next().unwrap();
+        let (primary, backup) = (format!("nf-primary-{port}"), format!("nf-backup-{port}"));
+        let (mut a, mut b) = (model("primary", &url, None), model("backup", &url, None));
+        (a.id, b.id) = (primary.clone(), backup.clone());
+        let models = Arc::new(ModelManager::new_with_credentials(
+            vec![a, b],
+            &crate::credentials::Credentials::default(),
+        ));
+        let mut engine = AgentEngine::new(cfg, models, primary.clone(), AgentRole::Lead).unwrap();
+        engine.agent_id = Some("ling".into());
+        engine.default_models = vec![primary.clone(), backup.clone()];
+        let (mut manager, _events) = AgentManager::new(
+            config,
+            None,
+            Arc::new(crate::engine::test_registries::Empty),
+            Arc::new(crate::engine::test_registries::Empty),
+            Arc::new(crate::engine::test_registries::Empty),
+            InterfaceMode::Web,
+        );
+        // The session store in a temp dir — never the person's own.
+        let sessions = root.path().join("sessions");
+        Arc::get_mut(&mut manager)
+            .expect("a fresh manager")
+            .global_sessions = crate::state_fs::SessionStore::with_sessions_dir(sessions);
+        let session = format!("s-nf-{port}");
+        manager
+            .global_sessions
+            .add_session(&crate::state_fs::sessions::SessionMeta {
+                id: session.clone(),
+                model_fallback: flag,
+                agents: vec![crate::state_fs::sessions::SessionMember::new("ling")],
+                ..Default::default()
+            })
+            .unwrap();
+        let run_id = manager
+            .begin_agent_run(root.path(), Some(&session), "ling", None, None)
+            .await
+            .unwrap();
+        engine.set_manager_context(manager.clone());
+        engine.session_id = Some(session.clone());
+        engine.set_run_id(Some(run_id.clone()));
+        let messages = vec![ChatMessage::new("user", "hello")];
+        let result = engine.stream_with_fallback(&messages, None).await;
+        let asked: Vec<String> = requests
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|r| r["model"].as_str().unwrap().to_string())
+            .collect();
+        let run_model = manager.run_store.get_run(&run_id).and_then(|r| r.model);
+        server.abort();
+        (result, asked, run_model, primary, backup)
+    }
+
+    #[tokio::test]
+    async fn a_session_that_may_switch_models_falls_back_as_before() {
+        for flag in [None, Some(true)] {
+            let (result, asked, run_model, _primary, backup) = run_session_case(flag).await;
+            assert_eq!(result.unwrap().full_text, "ok");
+            assert_eq!(asked, ["primary", "backup"]);
+            assert_eq!(run_model.as_deref(), Some(backup.as_str()));
+        }
+    }
+
+    #[tokio::test]
+    async fn a_session_that_may_not_switch_fails_on_its_model_and_calls_no_other() {
+        let (result, asked, run_model, primary, _backup) = run_session_case(Some(false)).await;
+        let err = result.err().expect("the primary's failure is the run's");
+        let said = err.to_string();
+        assert!(
+            said.starts_with(crate::provider::error::NO_FALLBACK_MARK),
+            "{said}"
+        );
+        assert!(
+            said.contains(&format!("'{primary}'")),
+            "names the model: {said}"
+        );
+        assert!(
+            said.contains("provider error (5xx)") && said.contains("server error"),
+            "{said}"
+        );
+        assert!(said.contains("no other model was tried"), "{said}");
+        assert_eq!(asked, ["primary"], "no second model is called");
+        assert_eq!(run_model.as_deref(), Some(primary.as_str()));
+        // The refusal keeps its kind: still a 5xx to whatever reads it next.
+        assert_eq!(
+            crate::provider::error::kind_of(&err),
+            crate::provider::error::ProviderErrorKind::Server5xx
+        );
+    }
+
+    #[tokio::test]
+    async fn a_model_this_machine_lacks_fails_named_when_switching_is_off() {
+        let root = tempfile::tempdir().unwrap();
+        let config = crate::config::Config::default();
+        let cfg = EngineConfig::from_app_config(&config, root.path().into(), InterfaceMode::Web);
+        let models = Arc::new(ModelManager::new_with_credentials(
+            vec![],
+            &crate::credentials::Credentials::default(),
+        ));
+        let mut engine =
+            AgentEngine::new(cfg, models, "ghost-model".into(), AgentRole::Lead).unwrap();
+        engine.agent_id = Some("ling".into());
+        let (mut manager, _events) = AgentManager::new(
+            config,
+            None,
+            Arc::new(crate::engine::test_registries::Empty),
+            Arc::new(crate::engine::test_registries::Empty),
+            Arc::new(crate::engine::test_registries::Empty),
+            InterfaceMode::Web,
+        );
+        Arc::get_mut(&mut manager)
+            .expect("a fresh manager")
+            .global_sessions =
+            crate::state_fs::SessionStore::with_sessions_dir(root.path().join("sessions"));
+        manager
+            .global_sessions
+            .add_session(&crate::state_fs::sessions::SessionMeta {
+                id: "s-ghost".into(),
+                model_fallback: Some(false),
+                ..Default::default()
+            })
+            .unwrap();
+        engine.set_manager_context(manager);
+        engine.session_id = Some("s-ghost".into());
+        let err = engine
+            .stream_with_fallback(&[ChatMessage::new("user", "hi")], None)
+            .await
+            .err()
+            .expect("no such model, and no other to try");
+        let said = err.to_string();
+        assert!(
+            said.starts_with(crate::provider::error::NO_FALLBACK_MARK),
+            "{said}"
+        );
+        assert!(
+            said.contains("'ghost-model'") && said.contains("not configured"),
+            "{said}"
+        );
     }
 }

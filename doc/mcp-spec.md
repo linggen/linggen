@@ -143,8 +143,11 @@ deprecation window:
   frames:
   - `{"type":"permission_request","session_id","request":{id,tool,summary,level,path,dir?,reason?}}`
     — once per request, including those raised before the watcher connected.
-  - `{"type":"finished","session_id","status","reply","denied"}` — last, then
-    it closes. `status` is `completed`, `failed` or `cancelled`.
+  - `{"type":"finished","session_id","status","reply","denied","error","model"}`
+    — last, then it closes. `status` is `completed`, `failed` or `cancelled`;
+    `error` says why a failed run failed; `model` is the model that answered
+    the run's last call. `agent_status` carries the same `status`, `error`
+    and `model`.
 - An action beyond the grants (never the hardcoded deny floor) waits for the
   caller. Answer with `agent_permit {session_id, request_id, decision, scope?}`:
   `allow_once` runs that action; `allow_session` grants its `path` or its
@@ -154,6 +157,11 @@ deprecation window:
   ends a waiting run at once.
   `agent_run` returns early when a request is raised; `agent_status` lists
   open requests in `pending`. Refusals land in `denied` with their reason.
+- A session made by `agent_run` does not fall back to another model when its
+  model fails (`model_fallback`, default `false`; pass `true` to allow it):
+  the run ends `failed`, `error` naming the model and the provider's reason, and
+  the caller decides. The web UI's model switch 「出错时自动换模型」 shows and sets
+  the same per-session value.
 - Follow up with `agent_run(session_id=…)` to retain context; omit `write_dir`,
   `permission_mode`, and `model`. The session keeps its first grants, its
   session grants, and its toolset; continuing never widens them. `agent_models` lists models for new sessions;

@@ -28,6 +28,24 @@ pub struct AgentRunRecord {
     pub detail: Option<String>,
     pub started_at: u64,
     pub ended_at: Option<u64>,
+    /// The model that answered this run's latest model call (or the one that
+    /// failed it) — after a fallback, not the model the run began on.
+    #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
+    pub model: Option<String>,
+}
+
+/// How a session's latest top-level run ended. The run itself leaves the
+/// store the moment it finishes; this is what a caller reading the session
+/// afterwards (`agent_status`, the wait stream's last frame) is told.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunOutcome {
+    pub run_id: String,
+    pub status: AgentRunStatus,
+    /// Why a failed run failed — the error that ended it.
+    pub error: Option<String>,
+    /// The model that answered its last model call, or failed it.
+    pub model: Option<String>,
 }
 
 /// In-memory run store. No file persistence — runs are ephemeral process records
@@ -36,6 +54,8 @@ pub struct RunStore {
     runs: Mutex<HashMap<String, AgentRunRecord>>,
     /// Parent run_id → foreground child run_ids, for cancel cascade.
     children: Mutex<HashMap<String, Vec<String>>>,
+    /// Session id → how its latest top-level run ended.
+    outcomes: Mutex<HashMap<String, RunOutcome>>,
 }
 
 impl RunStore {
@@ -43,7 +63,48 @@ impl RunStore {
         Self {
             runs: Mutex::new(HashMap::new()),
             children: Mutex::new(HashMap::new()),
+            outcomes: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Note the model that answered (or failed) a run's latest model call.
+    pub fn set_model(&self, run_id: &str, model: &str) {
+        if let Some(run) = self.runs.lock_ok().get_mut(run_id) {
+            if run.model.as_deref() != Some(model) {
+                run.model = Some(model.to_string());
+            }
+        }
+    }
+
+    /// Forget how the session's last run ended: a new top-level run begins,
+    /// and nothing of the one before may be read as its result.
+    pub fn clear_outcome(&self, session_id: &str) {
+        self.outcomes.lock_ok().remove(session_id);
+    }
+
+    /// Keep how a finished top-level run ended, as its session's latest.
+    /// A subagent's run is part of its parent's and keeps nothing.
+    pub fn record_outcome(&self, run: &AgentRunRecord) {
+        if run.parent_run_id.is_some() {
+            return;
+        }
+        let error = (run.status == AgentRunStatus::Failed)
+            .then(|| run.detail.clone())
+            .flatten();
+        self.outcomes.lock_ok().insert(
+            run.session_id.clone(),
+            RunOutcome {
+                run_id: run.run_id.clone(),
+                status: run.status,
+                error,
+                model: run.model.clone(),
+            },
+        );
+    }
+
+    /// How the session's latest top-level run ended, if one has this process.
+    pub fn outcome(&self, session_id: &str) -> Option<RunOutcome> {
+        self.outcomes.lock_ok().get(session_id).cloned()
     }
 
     #[cfg(test)]
@@ -154,6 +215,7 @@ impl RunStore {
         // page_state — matches `finish_agent_run`'s normal cleanup path.
         for id in &reaped {
             if let Some(run) = runs.remove(id) {
+                self.record_outcome(&run);
                 if let Some(ref parent_id) = run.parent_run_id {
                     let mut children = self.children.lock_ok();
                     if let Some(siblings) = children.get_mut(parent_id) {
@@ -207,6 +269,7 @@ mod tests {
             detail: None,
             started_at,
             ended_at: None,
+            model: None,
         }
     }
 
@@ -237,6 +300,33 @@ mod tests {
         assert_eq!(fetched.status, AgentRunStatus::Completed);
         assert_eq!(fetched.detail.as_deref(), Some("done"));
         assert_eq!(fetched.ended_at, Some(2000));
+    }
+
+    #[test]
+    fn a_finished_runs_outcome_and_model_stay_with_its_session() {
+        let store = RunStore::new();
+        store.add_run(&make_run("r1", "s1", None, 1000));
+        store.add_run(&make_run("sub", "s1", Some("r1"), 1001));
+        store.set_model("r1", "model-a");
+        store.set_model("r1", "model-b"); // a fallback answered the later call
+        let kept = store.get_run("r1").unwrap().model;
+        assert_eq!(kept.as_deref(), Some("model-b"));
+        let mut done = store.get_run("r1").unwrap();
+        done.status = AgentRunStatus::Failed;
+        done.detail = Some("provider said no".into());
+        store.record_outcome(&done);
+        store.remove_run("r1");
+        let outcome = store.outcome("s1").unwrap();
+        assert_eq!(outcome.status, AgentRunStatus::Failed);
+        assert_eq!(outcome.error.as_deref(), Some("provider said no"));
+        assert_eq!(outcome.model.as_deref(), Some("model-b"));
+        // A completed run keeps no error — its `detail` is only a label.
+        let mut ok = make_run("r2", "s1", None, 2000);
+        ok.status = AgentRunStatus::Completed;
+        ok.detail = Some("agent_run".into());
+        store.record_outcome(&ok);
+        assert_eq!(store.outcome("s1").unwrap().error, None);
+        assert!(store.outcome("other").is_none());
     }
 
     #[test]

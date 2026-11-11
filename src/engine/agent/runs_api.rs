@@ -94,6 +94,7 @@ impl AgentManager {
             detail,
             started_at,
             ended_at: None,
+            model: None,
         };
         // Serialize registration with cancellation's tree snapshot. A foreground
         // child cannot be registered after its parent was cancelled or retired.
@@ -107,6 +108,9 @@ impl AgentManager {
             }
         }
         self.run_messages.lock().unwrap_or_else(|e| e.into_inner()).insert(run_id.clone(), Vec::new());
+        if record.parent_run_id.is_none() {
+            self.run_store.clear_outcome(&record.session_id);
+        }
         self.run_store.add_run_with_cascade(&record, !background);
         drop(cancelled);
         // A new run is new page state, same as its finish below. Without this
@@ -157,6 +161,8 @@ impl AgentManager {
         let _ = self.events.send((AgentEvent::StateUpdated, None));
         let run_snapshot = self.run_store.get_run(run_id);
         if let Some(ref run) = run_snapshot {
+            // The run leaves the store below; its session keeps how it ended.
+            self.run_store.record_outcome(run);
             self.update_agent_activity(&run.repo_path, &run.agent_id)
                 .await;
             // A finished top-level run retires its busy status here, at the

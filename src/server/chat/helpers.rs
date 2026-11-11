@@ -35,6 +35,16 @@ pub(crate) fn format_turn_error(msg: &str) -> String {
     if let Some(at) = msg.find("BILLING_REQUIRED:") {
         return format!("Error: {}", &msg[at..]);
     }
+    // A call that failed with the session's model switching off: the model,
+    // the provider's reason and the switch are already in the words — the
+    // generic line below would hide the one thing the person needs to see.
+    if let Some(at) = msg.find(crate::provider::error::NO_FALLBACK_MARK) {
+        let said = msg[at + crate::provider::error::NO_FALLBACK_MARK.len()..].trim();
+        let said = said
+            .strip_prefix("model")
+            .map_or(said.to_string(), |r| format!("Model{r}"));
+        return format!("Error: {said}");
+    }
     // "Error:" is the prefix every surface reads as the error banner.
     let line = match model_error_code(msg) {
         "quota" => "The model has hit its limit for now — try again in a minute, or switch models.",
@@ -421,6 +431,21 @@ mod turn_error_tests {
         );
         assert!(shown.contains("limit"));
         assert!(format_turn_error("connection timed out").contains("reach the model"));
+    }
+
+    #[test]
+    fn a_call_that_failed_with_switching_off_names_its_model_and_reason() {
+        let err = crate::provider::error::no_fallback_error(
+            "gpt-6.1-sol",
+            &anyhow::anyhow!("openai error (429 Too Many Requests): slow down"),
+        );
+        let shown = format_turn_error(&format!("agent run failed: {err}"));
+        assert!(
+            shown.starts_with("Error: Model 'gpt-6.1-sol' failed (rate limit)"),
+            "{shown}"
+        );
+        assert!(shown.contains("slow down") && shown.contains("no other model was tried"));
+        assert!(!shown.contains("MODEL_FAILED"));
     }
 
     #[test]

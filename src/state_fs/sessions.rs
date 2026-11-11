@@ -147,6 +147,13 @@ pub struct SessionMeta {
     /// the real memory store withholds the memory server.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub withheld_tools: Vec<String>,
+    /// Whether a failed model call may be answered by another model. None:
+    /// the usual — it may (see `routing.auto_fallback`). `false`: the run
+    /// fails on the model the session asked for, naming it and the
+    /// provider's reason. Sessions made through the delegation front door
+    /// (`agent_run`) start with `false`; the model picker's switch sets it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_fallback: Option<bool>,
     /// The values this session is bound to — the bound skill's declared
     /// session parameters (`session-params`), set once when the session is
     /// made (`POST /api/sessions` `params`) and checked against the
@@ -246,6 +253,11 @@ impl SessionMeta {
             model: legacy.model_id,
         }];
         true
+    }
+
+    /// Whether a failed model call may move to another model in this session.
+    pub fn allows_model_fallback(&self) -> bool {
+        self.model_fallback.unwrap_or(true)
     }
 
     /// The member `id`, if seated.
@@ -554,6 +566,30 @@ impl SessionStore {
         Ok(())
     }
 
+    /// Whether a failed model call may move to another model in session
+    /// `session_id`. True for a session that does not exist or cannot be read:
+    /// the switch only ever turns the fallback off.
+    pub fn model_fallback_allowed(&self, session_id: &str) -> bool {
+        self.get_session_meta(session_id)
+            .ok()
+            .flatten()
+            .is_none_or(|m| m.allows_model_fallback())
+    }
+
+    /// Keep `allowed` as the session's model-fallback switch. Read-modify-write
+    /// on the stored meta; false when the session is not there.
+    pub fn set_model_fallback(&self, session_id: &str, allowed: bool) -> Result<bool> {
+        Self::validate_id(session_id)?;
+        let yaml_path = self.session_dir(session_id).join("session.yaml");
+        if !yaml_path.exists() {
+            return Ok(false);
+        }
+        let mut meta = parse_meta(&fs::read_to_string(&yaml_path)?)?;
+        meta.model_fallback = Some(allowed);
+        fs::write(yaml_path, meta_yaml(&meta)?)?;
+        Ok(true)
+    }
+
     pub fn remove_session(&self, session_id: &str) -> Result<()> {
         Self::validate_id(session_id)?;
         let dir = self.session_dir(session_id);
@@ -782,6 +818,38 @@ mod tests {
         fs::read_to_string(store.session_dir(id).join("session.yaml")).unwrap()
     }
 
+    /// The model-fallback switch is stored with the session: absent means the
+    /// usual (on) and writes nothing; `false` and `true` survive a reload; a
+    /// session that is not there never blocks a fallback.
+    #[test]
+    fn a_sessions_model_fallback_switch_survives_a_reload() {
+        let (store, _dir) = temp_store();
+        let session = |id: &str, fallback: Option<bool>| SessionMeta {
+            id: id.into(),
+            title: "t".into(),
+            model_fallback: fallback,
+            ..Default::default()
+        };
+        store.add_session(&session("plain", None)).unwrap();
+        store.add_session(&session("host", Some(false))).unwrap();
+        assert!(!yaml_of(&store, "plain").contains("model_fallback"));
+        assert!(yaml_of(&store, "host").contains("model_fallback: false"));
+        let reloaded = store.get_session_meta("host").unwrap().unwrap();
+        assert_eq!(reloaded.model_fallback, Some(false));
+        assert!(store.model_fallback_allowed("plain"));
+        assert!(!store.model_fallback_allowed("host"));
+        assert!(store.model_fallback_allowed("nowhere"));
+        // The picker's switch turns it back on, and off again.
+        assert!(store.set_model_fallback("host", true).unwrap());
+        assert!(store.model_fallback_allowed("host"));
+        assert!(store.set_model_fallback("plain", false).unwrap());
+        assert!(!store.model_fallback_allowed("plain"));
+        assert!(!store.set_model_fallback("nowhere", false).unwrap());
+        // An older session.yaml, written before the switch, reads as on.
+        legacy_session(&store, "old", "");
+        assert!(store.model_fallback_allowed("old"));
+    }
+
     /// A session's project is the git repo its folder is in, also from a
     /// subdirectory. A move out of every repo keeps it; a move into another
     /// repo switches it; a session never in a repo has none. One that was
@@ -890,6 +958,7 @@ mod tests {
             compact_focus: None,
             title_locked: false,
             withheld_tools: Vec::new(),
+            model_fallback: None,
             params: Default::default(),
         };
         store.add_session(&meta).unwrap();
@@ -978,6 +1047,7 @@ mod tests {
                     compact_focus: None,
                     title_locked: false,
                     withheld_tools: Vec::new(),
+                    model_fallback: None,
                     params: Default::default(),
                 })
                 .unwrap();
@@ -1011,6 +1081,7 @@ mod tests {
             compact_focus: None,
             title_locked: false,
             withheld_tools: Vec::new(),
+            model_fallback: None,
             params: Default::default(),
         };
         store.add_session(&meta).unwrap();
@@ -1107,6 +1178,7 @@ mod tests {
                 compact_focus: None,
                 title_locked: false,
                 withheld_tools: Vec::new(),
+                model_fallback: None,
                 params: Default::default(),
             })
             .unwrap();
@@ -1182,6 +1254,7 @@ mod tests {
                 compact_focus: None,
                 title_locked: false,
                 withheld_tools: Vec::new(),
+                model_fallback: None,
                 params: Default::default(),
             })
             .unwrap();
@@ -1235,6 +1308,7 @@ mod tests {
                 compact_focus: None,
                 title_locked: false,
                 withheld_tools: Vec::new(),
+                model_fallback: None,
                 params: Default::default(),
             })
             .unwrap();
@@ -1288,6 +1362,7 @@ mod tests {
                 compact_focus: None,
                 title_locked: false,
                 withheld_tools: Vec::new(),
+                model_fallback: None,
                 params: Default::default(),
             })
             .is_err());
@@ -1313,6 +1388,7 @@ mod tests {
                 compact_focus: None,
                 title_locked: false,
                 withheld_tools: Vec::new(),
+                model_fallback: None,
                 params: Default::default(),
             })
             .is_err());
@@ -1338,6 +1414,7 @@ mod tests {
                 compact_focus: None,
                 title_locked: false,
                 withheld_tools: Vec::new(),
+                model_fallback: None,
                 params: Default::default(),
             })
             .is_err());

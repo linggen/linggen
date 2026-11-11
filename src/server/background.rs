@@ -602,6 +602,7 @@ mod sweep_tests {
             detail: None,
             started_at,
             ended_at: None,
+            model: None,
         }
     }
 

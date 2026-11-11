@@ -612,6 +612,7 @@ pub(super) async fn session_for_skill(
         cwd: root.to_string_lossy().to_string(),
         title_locked: true,
         withheld_tools: Vec::new(),
+        model_fallback: None,
         agents: declared,
         ..Default::default()
     };

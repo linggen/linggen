@@ -207,6 +207,8 @@ export const ZH: Record<string, string> = {
   'Reject': '拒绝',
   'Interrupted after': '中断于',
   'Session model override': '会话模型覆盖',
+  'Switch model automatically on errors': '出错时自动换模型',
+  'When the model fails, the run ends on that model instead of switching to another.': '模型出错时，在该模型上结束，不自动换用其他模型。',
   'Permission mode for this folder': '这个文件夹的权限模式',
   'User Stories': '用户故事',
   'Acceptance Criteria': '验收标准',

@@ -60,6 +60,7 @@ pub(super) fn ensure_session_exists(state: &Arc<ServerState>, sid: &str, root: &
         cwd: root.to_string_lossy().to_string(),
         title_locked: true,
         withheld_tools: Vec::new(),
+        model_fallback: None,
         // Her daily thread is hers: she is its one member and its lead.
         agents: vec![crate::state_fs::sessions::SessionMember::new(YINYUE_AGENT)],
         ..Default::default()

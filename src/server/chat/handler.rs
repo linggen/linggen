@@ -273,6 +273,7 @@ async fn ensure_session(
         // `auto_session_title`, so it's a real title — lock it.
         title_locked: true,
         withheld_tools: Vec::new(),
+        model_fallback: None,
         params: Default::default(),
     };
 
@@ -627,6 +628,21 @@ pub(super) async fn resolve_effective_model(
             if let (TurnModel::Request(_), Some(sid)) = (asked, session_id) {
                 super::members::set_model(manager, sid, member, Some(live)).await;
             }
+            return;
+        }
+        // A session that may not switch models keeps the one it asked for:
+        // the turn then fails on it, named (`stream_with_fallback`), and the
+        // pin stays so the picker still shows what is wrong. A consumer's
+        // list is an access rule, not a failure — it is never lifted.
+        if !is_consumer
+            && session_id.is_some_and(|sid| !manager.global_sessions.model_fallback_allowed(sid))
+        {
+            tracing::warn!(
+                "Session '{}' asked model '{}' for {member}, unavailable — model switching is off, not falling back",
+                session_id.unwrap_or("?"),
+                mid
+            );
+            engine.model_id = mid.to_string();
             return;
         }
         // Requested model unavailable / not shared with this consumer.

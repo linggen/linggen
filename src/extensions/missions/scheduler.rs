@@ -390,6 +390,7 @@ fn mission_session_meta(
         // Mission sessions carry the mission name as canonical title.
         title_locked: true,
         withheld_tools: Vec::new(),
+        model_fallback: None,
         params: Default::default(),
     };
     meta.set_cwd(&cwd);
@@ -774,6 +775,19 @@ async fn dispatch_mission_prompt(
                 .model_manager
                 .resolve_id(mid)
                 .unwrap_or_else(|| mid.to_string());
+        }
+        // A session that may not switch models runs on the one the mission
+        // names: the run fails on it, named, instead of answering on another.
+        Some(mid)
+            if session_id
+                .as_deref()
+                .is_some_and(|s| !manager.global_sessions.model_fallback_allowed(s)) =>
+        {
+            warn!(
+                "Mission '{}' requested model '{}' which is not configured — model switching is off, not falling back",
+                mission.id, mid
+            );
+            engine.model_id = mid.to_string();
         }
         Some(mid) => {
             warn!(

@@ -61,6 +61,52 @@ impl ProviderErrorKind {
     }
 }
 
+/// What a failed call becomes when its session may not switch models: the
+/// model named, the provider's reason, and that no other model was tried. The
+/// kind of the refusal is kept (a `ProviderError`), and the provider's own
+/// words lead the reason, so `AUTH_REQUIRED:` / `BILLING_REQUIRED:` markers
+/// inside it still reach the chat.
+pub fn no_fallback_error(model_id: &str, cause: &anyhow::Error) -> anyhow::Error {
+    let kind = kind_of(cause);
+    let mut reason = cause.to_string();
+    if let Some((cut, _)) = reason.char_indices().nth(300) {
+        reason.truncate(cut);
+        reason.push('…');
+    }
+    ProviderError::new(
+        kind,
+        format!(
+            "{NO_FALLBACK_MARK} model '{model_id}' failed ({}): {reason}. \
+             Automatic model switching is off for this session, so no other model was tried.",
+            kind.label()
+        ),
+    )
+    .into()
+}
+
+/// Leads the message of a call that failed with model switching off; the chat
+/// shows what follows it.
+pub const NO_FALLBACK_MARK: &str = "MODEL_FAILED:";
+
+impl ProviderErrorKind {
+    /// The refusal in plain words, for a line a person or a calling agent
+    /// reads ("rate limit", "quota used up", "timeout or network").
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::RateLimit => "rate limit",
+            Self::QuotaExhausted => "quota used up",
+            Self::Auth => "sign-in or key refused",
+            Self::ContextTooLong => "context too long for the model",
+            Self::BadRequest => "request refused",
+            Self::Server5xx => "provider error (5xx)",
+            Self::Network => "timeout or network",
+            Self::EmptyResponse => "empty answer",
+            Self::Stalled => "no answer in time",
+            Self::Other => "error",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct ProviderError {
     pub kind: ProviderErrorKind,

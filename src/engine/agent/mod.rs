@@ -160,11 +160,16 @@ impl AgentManager {
     /// 2. Frontmatter model (if exists in configured models)
     /// 3. First model in routing.default_models
     /// 4. First configured model
+    ///
+    /// `skip_dead_auth` passes over a routing default whose credentials are
+    /// absent; a session that may not switch models keeps it instead
+    /// ([`Self::intended_model_id`]).
     fn resolve_model_id(
         config: &Config,
         models: &ModelManager,
         agent_id: &str,
         frontmatter_model: Option<String>,
+        skip_dead_auth: bool,
     ) -> Result<String> {
         let model_ids: std::collections::HashSet<&str> =
             config.models.iter().map(|m| m.id.as_str()).collect();
@@ -204,7 +209,7 @@ impl AgentManager {
         let mut auth_dead_default: Option<String> = None;
         for dm in &config.routing.default_models {
             if model_ids.contains(dm.as_str()) || models.has_model(dm) {
-                if models.model_auth_ok(dm) {
+                if !skip_dead_auth || models.model_auth_ok(dm) {
                     return Ok(dm.clone());
                 }
                 if auth_dead_default.is_none() {
@@ -276,6 +281,7 @@ impl AgentManager {
             &models,
             normalized_id,
             agent_spec.spec.model.clone(),
+            true,
         )?;
 
         let mut engine = AgentEngine::new(
@@ -704,7 +710,26 @@ impl AgentManager {
         let spec = self.agents.find(project_root, &normalized).await.ok()??;
         let config = self.config.read().await.clone();
         let models = self.models.read().await.clone();
-        Self::resolve_model_id(&config, &models, &normalized, spec.spec.model.clone()).ok()
+        Self::resolve_model_id(&config, &models, &normalized, spec.spec.model.clone(), true).ok()
+    }
+
+    /// [`Self::agent_model_id`] without passing over a routing default whose
+    /// sign-in is missing: the model the agent is meant to run on. A session
+    /// that may not switch models takes it, so a dead credential fails the
+    /// turn on that model, named — not on the next one down the chain.
+    pub async fn intended_model_id(&self, project_root: &Path, agent_id: &str) -> Option<String> {
+        let normalized = Self::normalize_agent_id(agent_id);
+        let spec = self.agents.find(project_root, &normalized).await.ok()??;
+        let config = self.config.read().await.clone();
+        let models = self.models.read().await.clone();
+        Self::resolve_model_id(
+            &config,
+            &models,
+            &normalized,
+            spec.spec.model.clone(),
+            false,
+        )
+        .ok()
     }
 
     pub async fn agent_exists(&self, project_root: &Path, agent_id: &str) -> bool {

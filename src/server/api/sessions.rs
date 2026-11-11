@@ -147,6 +147,7 @@ pub(crate) async fn create_session(
         // once the user's first message lands.
         title_locked: is_skill,
         withheld_tools: req.withheld_tools,
+        model_fallback: None,
         params: req.params,
     };
     meta.set_cwd(&cwd);
@@ -367,6 +368,10 @@ pub(crate) struct RenameSessionRequest {
     agent_id: Option<String>,
     #[serde(default)]
     claude_permission_mode: Option<crate::state_fs::sessions::ClaudePermissionMode>,
+    /// The session's model-fallback switch (`SessionMeta::model_fallback`):
+    /// false stops a failed model call from being answered by another model.
+    #[serde(default)]
+    model_fallback: Option<bool>,
 }
 
 /// The fields a Claude session's rename request sets.
@@ -446,6 +451,16 @@ pub(crate) async fn rename_session_api(
         }
         if req.claude_permission_mode.is_some() {
             return StatusCode::BAD_REQUEST.into_response();
+        }
+    }
+    if let Some(allowed) = req.model_fallback {
+        if let Err(e) = state
+            .manager
+            .global_sessions
+            .set_model_fallback(&req.session_id, allowed)
+        {
+            tracing::warn!("model_fallback not set on '{}': {e}", req.session_id);
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     }
     if let Some(ref title) = req.title {
@@ -633,6 +648,7 @@ mod tests {
             detail: None,
             started_at: 0,
             ended_at: None,
+            model: None,
         }
     }
 

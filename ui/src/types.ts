@@ -303,6 +303,7 @@ export interface SessionInfo {
   agents?: SessionMember[]; // the agents at the session's table, the lead first
   permission_mode?: string | null; // effective permission mode (read/edit/admin)
   params?: Record<string, string> | null; // the values a skill session is bound to (its session params)
+  model_fallback?: boolean; // false: a failed model call is not answered by another model (absent = true)
 }
 
 

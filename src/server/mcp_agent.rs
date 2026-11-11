@@ -123,6 +123,7 @@ pub async fn run(
     model: Option<&str>,
     permission_mode: Option<&str>,
     host: Option<&str>,
+    model_fallback: Option<bool>,
 ) -> Result<String, String> {
     let prompt = prompt.trim();
     if prompt.is_empty() {
@@ -142,11 +143,21 @@ pub async fn run(
             .unwrap_or_else(|| "ling".into());
         clear_denials(session);
         keep_delegate_tools(state, session, &meta, &agent_id).await;
+        if let Some(allowed) = model_fallback {
+            state.manager.global_sessions.set_model_fallback(session, allowed)
+                .map_err(|e| format!("cannot set model_fallback: {e}"))?;
+        }
         let turn = super::tasks::tell_from(state.clone(), session.into(), agent_id,
             prompt.into(), "claude-code".into());
         let sid = session.to_string();
+        let manager = state.manager.clone();
         let task = tokio::spawn(async move {
             turn.await;
+            // A turn that failed (its model above all) is an error to the
+            // caller, named as the engine named it — not "no textual reply".
+            if let Some(error) = failed_error(&manager, &sid) {
+                return Err(format!("agent run failed: {error}"));
+            }
             Ok(with_denials(&sid, final_reply(&sid).unwrap_or_else(|| NO_REPLY.into())))
         });
         return await_run(state, session, task).await;
@@ -187,6 +198,17 @@ pub async fn run(
         ));
     }
 
+    // A session that may not switch models runs on the model its agent is
+    // meant to have — not the next one down the chain when that one's sign-in
+    // is missing — so the run fails on it, named, and the pin keeps the
+    // session's later turns there.
+    let model = match model {
+        None if !new_session_fallback(model_fallback) => {
+            state.manager.intended_model_id(&root, &agent_id).await
+        }
+        chosen => chosen,
+    };
+
     // Fresh, visible session (creator "agent" → shows in the session list with
     // an agent badge). Titled from the prompt.
     let session_id = format!(
@@ -199,35 +221,16 @@ pub async fn run(
     let root_str = write.as_ref().unwrap_or(&root).to_string_lossy().to_string();
     let store =
         crate::state_fs::SessionStore::with_sessions_dir(crate::paths::global_sessions_dir());
-    let mut meta = crate::state_fs::sessions::SessionMeta {
-        runtime: Default::default(),
-        claude_permission_mode: Default::default(),
-        parent_session_id: None,
-        id: session_id.clone(),
-        title: title.clone(),
-        created_at: crate::util::now_ts_secs(),
-        updated_at: 0,
-        skill: None,
-        creator: "external".into(),
-        cwd: String::new(),
-        project: None,
-        project_name: None,
-        mission_id: None,
-        agents: vec![crate::state_fs::sessions::SessionMember::new(&agent_id)],
-        legacy: Default::default(),
-        user_id: None,
-        compact_threshold: None,
-        compact_focus: None,
-        title_locked: true,
-        withheld_tools: Vec::new(),
-        params: Default::default(),
-    };
-    meta.params.insert("host".into(), host.unwrap_or("claude-code").into());
-    // The delegate's toolset, so a continued session keeps it (see
-    // `keep_delegate_tools`).
-    meta.params.insert(TOOLS_PARAM.into(), if mode.is_some() { "write" } else { "read" }.into());
+    let mut meta = delegate_meta(
+        &session_id,
+        &title,
+        &agent_id,
+        model.clone(),
+        host.unwrap_or("claude-code"),
+        mode.is_some(),
+        model_fallback,
+    );
     meta.set_cwd(&root_str);
-    meta.set_member_model(&agent_id, model.clone());
     if let Err(e) = store.add_session(&meta) {
         return Err(format!("failed to create session: {e}"));
     }
@@ -440,6 +443,22 @@ async fn drive(
                 Ok(_) => (crate::engine::agent::AgentRunStatus::Completed, None),
                 Err(e) => (crate::engine::agent::AgentRunStatus::Failed, Some(e.to_string())),
             };
+            // The session tells a failure as a chat turn's does, before the
+            // turn closes.
+            if let Err(e) = &result {
+                crate::server::chat::helpers::persist_and_emit_message(
+                    &state.manager,
+                    &state.events_tx,
+                    &root,
+                    &agent_id,
+                    &agent_id,
+                    "user",
+                    &crate::server::chat::helpers::format_turn_error(&e.to_string()),
+                    Some(&session_id),
+                    false,
+                    Some(&run_id),
+                ).await;
+            }
             let _ = state.manager.finish_agent_run(&run_id, status, error).await;
             result
         },
@@ -455,8 +474,84 @@ async fn drive(
     match result {
         Ok(_) => Ok(with_denials(&session_id, final_reply(&session_id)
             .unwrap_or_else(|| NO_REPLY.to_string()))),
-        Err(e) => Err(format!("agent run failed: {e}")),
+        Err(e) => {
+            let model = state.manager.run_store.outcome(&session_id).and_then(|o| o.model);
+            Err(format!("agent run failed: {}", naming_model(e.to_string(), model.as_deref())))
+        }
     }
+}
+
+/// The session record of a new delegated run: titled from the prompt, made by
+/// an `external` host, its model pinned, its toolset kept for follow-ups, and
+/// its model-fallback switch off unless the caller asked for it.
+fn delegate_meta(
+    id: &str,
+    title: &str,
+    agent_id: &str,
+    model: Option<String>,
+    host: &str,
+    write: bool,
+    model_fallback: Option<bool>,
+) -> crate::state_fs::sessions::SessionMeta {
+    let mut meta = crate::state_fs::sessions::SessionMeta {
+        runtime: Default::default(),
+        claude_permission_mode: Default::default(),
+        parent_session_id: None,
+        id: id.to_string(),
+        title: title.to_string(),
+        created_at: crate::util::now_ts_secs(),
+        updated_at: 0,
+        skill: None,
+        creator: "external".into(),
+        cwd: String::new(),
+        project: None,
+        project_name: None,
+        mission_id: None,
+        agents: vec![crate::state_fs::sessions::SessionMember::new(agent_id)],
+        legacy: Default::default(),
+        user_id: None,
+        compact_threshold: None,
+        compact_focus: None,
+        title_locked: true,
+        withheld_tools: Vec::new(),
+        // A delegated run that cannot use its model ends there, named, for the
+        // calling agent to decide — unless the caller opts back in.
+        model_fallback: Some(new_session_fallback(model_fallback)),
+        params: Default::default(),
+    };
+    meta.params.insert("host".into(), host.into());
+    // The delegate's toolset, so a continued session keeps it (see
+    // `keep_delegate_tools`).
+    meta.params.insert(TOOLS_PARAM.into(), if write { "write" } else { "read" }.into());
+    meta.set_member_model(agent_id, model);
+    meta
+}
+
+/// A new delegated session's model-fallback switch: off unless the caller
+/// asked for it.
+fn new_session_fallback(requested: Option<bool>) -> bool {
+    requested.unwrap_or(false)
+}
+
+/// An error as the caller reads it, with the model that failed named: a
+/// switching-off failure already names it; a sign-in refusal or a bad request
+/// may not. The chat's own markers (`AUTH_REQUIRED:` …) stay in the text.
+fn naming_model(error: String, model: Option<&str>) -> String {
+    match model {
+        Some(m) if !error.contains(m) => format!("model '{m}' failed: {error}"),
+        _ => error,
+    }
+}
+
+/// The error that ended the session's latest run, when it failed.
+fn failed_error(manager: &crate::engine::agent::AgentManager, session: &str) -> Option<String> {
+    let outcome = manager.run_store.outcome(session)?;
+    (outcome.status == crate::engine::agent::AgentRunStatus::Failed).then(|| {
+        naming_model(
+            outcome.error.unwrap_or_else(|| "the run failed".into()),
+            outcome.model.as_deref(),
+        )
+    })
 }
 
 /// Open and close the UI turn around every outcome of the driven loop.
@@ -517,9 +612,11 @@ fn require_session<T>(session: &str, meta: Option<T>) -> Result<T, String> {
 pub async fn status(state: &Arc<ServerState>, session: &str) -> Result<String, String> {
     session_meta(state, session)?;
     let work = super::api::sessions::session_running_work(state, session).await;
+    let last = last_run(&state.manager, session);
     Ok(serde_json::json!({"running": work.turn, "tasks": work.tasks,
         "subagents": work.subagents, "pending": pending_requests(state, session).await,
-        "denied": denials(session), "reply": if work.turn { None } else { final_reply(session) }}).to_string())
+        "denied": denials(session), "reply": if work.turn { None } else { final_reply(session) },
+        "status": last.status, "error": last.error, "model": last.model}).to_string())
 }
 
 /// The permission requests `session` is waiting on, for its caller.
@@ -681,7 +778,7 @@ pub(crate) async fn wait_socket(
                 tokio::time::Instant::now()
             };
             if ready && tokio::time::Instant::now() >= deadline {
-                let frame = finished_frame(session, end_status(&state, session).await, final_reply(session), denials(session));
+                let frame = finished_frame(session, last_run(&state.manager, session), final_reply(session), denials(session));
                 let _ = socket.send(axum::extract::ws::Message::Text(frame.to_string().into())).await;
                 let _ = socket.send(axum::extract::ws::Message::Close(None)).await;
                 break;
@@ -712,28 +809,55 @@ fn new_requests(
         .collect()
 }
 
-/// The stream's last frame: how the session's work ended, its reply, and
-/// what was denied. Earlier keys (`session_id`, `reply`, `denied`) stay.
+/// The stream's last frame: how the session's work ended, its reply, what
+/// was denied, and — for a failed run — `error` (the model named, with the
+/// provider's reason) — plus `model`, the one that answered its last call.
+/// Earlier keys (`session_id`, `status`, `reply`, `denied`) stay.
 fn finished_frame(
     session: &str,
-    status: &str,
+    last: LastRun,
     reply: Option<String>,
     denied: Vec<crate::engine::tool_exec::DeniedAction>,
 ) -> serde_json::Value {
-    serde_json::json!({"type": FINISHED_EVENT, "session_id": session, "status": status, "reply": reply, "denied": denied})
+    serde_json::json!({"type": FINISHED_EVENT, "session_id": session, "status": last.status,
+        "reply": reply, "denied": denied, "error": last.error, "model": last.model})
 }
 
-/// How the session's latest top-level run ended: completed, failed or
-/// cancelled — `completed` when no run is on record (an idle session).
-async fn end_status(state: &ServerState, session: &str) -> &'static str {
+/// How the session's latest top-level run ended or stands.
+#[derive(Debug, PartialEq, Eq)]
+struct LastRun {
+    /// `running`, `completed`, `failed` or `cancelled` — `completed` when no
+    /// run is on record (an idle session, or one from before a restart).
+    status: &'static str,
+    /// Why a failed run failed.
+    error: Option<String>,
+    /// The model that answered the run's last model call (or failed it) —
+    /// not the one asked for, when a fallback was allowed and happened.
+    model: Option<String>,
+}
+
+fn last_run(manager: &crate::engine::agent::AgentManager, session: &str) -> LastRun {
     use crate::engine::agent::AgentRunStatus;
-    let runs = state.manager.list_agent_runs(&PathBuf::new(), Some(session)).await.unwrap_or_default();
-    let last = runs.iter().filter(|r| r.parent_run_id.is_none()).max_by_key(|r| r.started_at);
-    match last.map(|r| r.status) {
-        Some(AgentRunStatus::Failed) => "failed",
-        Some(AgentRunStatus::Cancelled) => "cancelled",
-        Some(AgentRunStatus::Running) => "running",
-        _ => "completed",
+    let store = &manager.run_store;
+    let runs = store.list_runs(Some(session));
+    let running = runs.iter()
+        .filter(|r| r.parent_run_id.is_none() && r.status == AgentRunStatus::Running)
+        .max_by_key(|r| r.started_at);
+    if let Some(run) = running {
+        return LastRun { status: "running", error: None, model: run.model.clone() };
+    }
+    match store.outcome(session) {
+        Some(o) => LastRun {
+            status: match o.status {
+                AgentRunStatus::Failed => "failed",
+                AgentRunStatus::Cancelled => "cancelled",
+                AgentRunStatus::Running => "running",
+                AgentRunStatus::Completed => "completed",
+            },
+            error: o.error.map(|e| naming_model(e, o.model.as_deref())),
+            model: o.model,
+        },
+        None => LastRun { status: "completed", error: None, model: None },
     }
 }
 
@@ -1076,7 +1200,7 @@ mod permit_tests {
         assert_eq!(first[0]["type"], "permission_request");
         assert_eq!(first[0]["request"]["id"], "r1");
         assert!(new_requests(&rows, &mut told, "s1").is_empty());
-        let done = finished_frame("s1", "completed", Some("ok".into()), vec![]);
+        let done = finished_frame("s1", LastRun { status: "completed", error: None, model: None }, Some("ok".into()), vec![]);
         assert_eq!((done["type"].as_str(), done["status"].as_str(), done["reply"].as_str()), (Some("finished"), Some("completed"), Some("ok")));
         assert!(done["denied"].is_array() && done["session_id"] == "s1");
     }
@@ -1086,6 +1210,126 @@ mod permit_tests {
         let text = still_running_text(9527, "s1");
         assert!(text.contains("ws://127.0.0.1:9527/api/agent/wait?session_id=s1"));
         assert!(text.contains("permission_request") && text.contains("finished") && text.contains("agent_permit"));
+    }
+
+
+    fn manager() -> Arc<crate::engine::agent::AgentManager> {
+        crate::engine::agent::AgentManager::new(
+            crate::config::Config::default(),
+            None,
+            Arc::new(crate::engine::test_registries::Empty),
+            Arc::new(crate::engine::test_registries::Empty),
+            Arc::new(crate::engine::test_registries::Empty),
+            crate::engine::InterfaceMode::Web,
+        ).0
+    }
+
+    fn record(id: &str, status: crate::engine::agent::AgentRunStatus) -> crate::engine::agent::AgentRunRecord {
+        crate::engine::agent::AgentRunRecord {
+            run_id: id.into(), repo_path: String::new(), session_id: "s1".into(),
+            agent_id: "ling".into(), agent_kind: None, parent_run_id: None, status,
+            detail: None, started_at: 1, ended_at: None, model: None,
+        }
+    }
+
+    #[test]
+    fn a_delegated_session_does_not_switch_models_unless_asked() {
+        assert!(!new_session_fallback(None));
+        assert!(!new_session_fallback(Some(false)));
+        assert!(new_session_fallback(Some(true)));
+        // The meta `run` stores for the new session carries it.
+        let meta = |asked| delegate_meta("s", "t", "ling", None, "claude-code", false, asked);
+        assert_eq!(meta(None).model_fallback, Some(false));
+        assert_eq!(meta(Some(true)).model_fallback, Some(true));
+        assert!(!meta(None).allows_model_fallback());
+        assert!(meta(Some(true)).allows_model_fallback());
+    }
+
+    #[test]
+    fn the_tool_offers_an_optional_model_fallback() {
+        let schema = crate::server::mcp::tool_schema("agent_run").unwrap();
+        assert_eq!(schema["properties"]["model_fallback"]["type"], "boolean");
+        assert!(schema["required"].as_array().unwrap().iter().all(|k| k != "model_fallback"));
+    }
+
+    #[test]
+    fn a_failure_names_the_model_when_the_provider_did_not() {
+        let auth = "AUTH_REQUIRED: ChatGPT session expired. Sign in with ChatGPT to continue.";
+        let said = naming_model(auth.into(), Some("gpt-6.1-sol"));
+        assert!(said.starts_with("model 'gpt-6.1-sol' failed: AUTH_REQUIRED:"), "{said}");
+        // Already named (a switching-off failure): left as it is.
+        let named = "MODEL_FAILED: model 'gpt-6.1-sol' failed (rate limit): x".to_string();
+        assert_eq!(naming_model(named.clone(), Some("gpt-6.1-sol")), named);
+        assert_eq!(naming_model(auth.into(), None), auth);
+    }
+
+    #[test]
+    fn the_last_run_names_its_model_and_why_it_failed() {
+        use crate::engine::agent::AgentRunStatus::{Completed, Failed, Running};
+        let manager = manager();
+        // Nothing on record: an idle session reads as completed.
+        let idle = last_run(&manager, "s1");
+        assert_eq!((idle.status, idle.error, idle.model), ("completed", None, None));
+        // While it runs: running, and the model answering so far.
+        manager.run_store.add_run(&record("r1", Running));
+        manager.run_store.set_model("r1", "gpt-6.1-sol");
+        let running = last_run(&manager, "s1");
+        assert_eq!((running.status, running.model.as_deref()), ("running", Some("gpt-6.1-sol")));
+        // Failed: the run leaves the store; the session keeps how it ended.
+        let mut done = manager.run_store.get_run("r1").unwrap();
+        done.status = Failed;
+        done.detail = Some("MODEL_FAILED: model 'gpt-6.1-sol' failed (rate limit): 429".into());
+        manager.run_store.record_outcome(&done);
+        manager.run_store.remove_run("r1");
+        let failed = last_run(&manager, "s1");
+        assert_eq!(failed.status, "failed");
+        assert!(failed.error.as_deref().unwrap().contains("gpt-6.1-sol"));
+        assert_eq!(failed.model.as_deref(), Some("gpt-6.1-sol"));
+        assert_eq!(failed_error(&manager, "s1"), failed.error);
+        // A later completed run replaces it: no stale error.
+        let mut ok = record("r2", Completed);
+        ok.model = Some("deepseek-flash".into());
+        manager.run_store.record_outcome(&ok);
+        let after = last_run(&manager, "s1");
+        assert_eq!((after.status, after.error, after.model.as_deref()), ("completed", None, Some("deepseek-flash")));
+        assert_eq!(failed_error(&manager, "s1"), None);
+    }
+
+    #[test]
+    fn the_finished_frame_carries_error_and_model() {
+        let frame = finished_frame(
+            "s1",
+            LastRun { status: "failed", error: Some("MODEL_FAILED: model 'm' failed".into()), model: Some("m".into()) },
+            None,
+            vec![],
+        );
+        assert_eq!(frame["status"], "failed");
+        assert_eq!(frame["error"], "MODEL_FAILED: model 'm' failed");
+        assert_eq!(frame["model"], "m");
+    }
+
+    #[tokio::test]
+    async fn a_new_run_forgets_how_the_last_one_ended() {
+        use crate::engine::agent::AgentRunStatus::Failed;
+        let manager = manager();
+        let mut old = record("r0", Failed);
+        old.detail = Some("the last turn's model failed".into());
+        manager.run_store.record_outcome(&old);
+        assert!(failed_error(&manager, "s1").is_some());
+        let dir = tempfile::tempdir().unwrap();
+        manager.begin_agent_run(dir.path(), Some("s1"), "ling", None, None).await.unwrap();
+        // Running now, and nothing of the turn before is read as its result.
+        assert_eq!(failed_error(&manager, "s1"), None);
+        assert_eq!(last_run(&manager, "s1").status, "running");
+    }
+
+    #[test]
+    fn a_subagents_run_is_not_the_sessions_outcome() {
+        let manager = manager();
+        let mut child = record("c1", crate::engine::agent::AgentRunStatus::Failed);
+        child.parent_run_id = Some("r1".into());
+        manager.run_store.record_outcome(&child);
+        assert!(manager.run_store.outcome("s1").is_none());
     }
 
     #[test]

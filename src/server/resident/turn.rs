@@ -349,6 +349,17 @@ async fn apply_her_model(
     };
     match engine.model_manager.resolve_id(&m) {
         Some(live) => engine.model_id = live,
+        // A session that may not switch models fails on the one asked for.
+        None if !state
+            .manager
+            .global_sessions
+            .model_fallback_allowed(session_id) =>
+        {
+            tracing::warn!(
+                "[yinyue] model '{m}' unavailable; model switching is off, not falling back"
+            );
+            engine.model_id = m;
+        }
         None => tracing::warn!(
             "[yinyue] model '{m}' unavailable; using {}",
             engine.model_id

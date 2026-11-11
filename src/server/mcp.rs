@@ -347,7 +347,7 @@ const TOOLS: &[McpTool] = &[
     McpTool {
         name: "agent_run",
         backend: Backend::Agent,
-        description: "Delegate to a local Linggen agent; only its final reply returns, while working steps stay visible in the web UI. A long run continues in the background and returns its session: don't poll — start a background watcher on the ws://…/api/agent/wait URL it gives, which wakes you on {\"type\":\"permission_request\"} (answer with agent_permit) and {\"type\":\"finished\"} (then read agent_status for the reply).",
+        description: "Delegate to a local Linggen agent; only its final reply returns, while working steps stay visible in the web UI. A long run continues in the background and returns its session: don't poll — start a background watcher on the ws://…/api/agent/wait URL it gives, which wakes you on {\"type\":\"permission_request\"} (answer with agent_permit) and {\"type\":\"finished\"} (then read agent_status for the reply; status failed carries the error and model).",
         schema: || json!({
             "type": "object",
             "properties": {
@@ -355,6 +355,7 @@ const TOOLS: &[McpTool] = &[
                 "session_id": {"type": "string", "description": "Continue an existing session with its context; omit write_dir, permission_mode and model"},
                 "model": {"type": "string", "description": "Model for a new session; use agent_models to list choices"},
                 "agent": {"type": "string", "description": "Agent to run (default: ling). Unknown names return the available list."},
+                "model_fallback": {"type": "boolean", "description": "Default false: if the model fails the run ends naming the model and the reason, rather than switching to another model; true allows the automatic switch."},
                 "host": {"type": "string", "description": "Calling host, e.g. claude-code, codex or cursor (default claude-code)"},
                 "permission_mode": {"type": "string", "enum": ["plan", "default", "acceptEdits", "auto", "bypassPermissions"], "description": "Your current permission mode; plan is read-only, default/acceptEdits grant edit, auto/bypassPermissions grant admin in write_dir only. New sessions only."},
                 "write_dir": {"type": "string", "description": "For code changes, create a git worktree first and pass its existing absolute path. The grant follows permission_mode; other paths stay read-only, and an action beyond that waits for your agent_permit. Omit for read-only; new sessions only (a continued session keeps its grant)."}
@@ -365,7 +366,7 @@ const TOOLS: &[McpTool] = &[
     },
     McpTool {
         name: "agent_status", backend: Backend::Agent,
-        description: "Get running work, pending permission requests (answer with agent_permit), final reply and denied actions with reasons. Use after a wait-stream event; do not poll.",
+        description: "Get running work, pending permission requests (answer with agent_permit), status (completed, failed, cancelled), error, the model that answered, final reply and denied actions with reasons. Use after a wait-stream event; do not poll.",
         schema: || json!({"type": "object", "properties": {"session_id": {"type": "string", "description": "Linggen session ID"}}, "required": ["session_id"]}),
         timeout_ms: 0,
     },
@@ -450,7 +451,7 @@ fn initialize_result() -> Value {
             {\"type\":\"permission_request\",\"request\":{id,tool,summary,level,path}} — answer \
             each with agent_permit (allow_once, allow_session for that path/folder in this \
             session only, or deny; unanswered = denied after 10 min) — and last \
-            {\"type\":\"finished\",status,reply,denied}, then it closes. Use agent_status \
+            {\"type\":\"finished\",status,reply,denied,error,model}, then it closes. Use agent_status \
             for details; read denied for what and why, do the step yourself, or ask for a \
             new run with a wider write_dir. Follow up \
             with agent_run(session_id=…), without write_dir, permission_mode or model. \
@@ -458,6 +459,11 @@ fn initialize_result() -> Value {
             then agent_session_close(session_id, remove_worktree=true) removes only a \
             clean linked worktree whose HEAD is contained in a remote branch."
     })
+}
+
+/// The input schema one tool is advertised with.
+pub(crate) fn tool_schema(name: &str) -> Option<Value> {
+    TOOLS.iter().find(|t| t.name == name).map(|t| (t.schema)())
 }
 
 fn tools_list_result() -> Value {
@@ -573,7 +579,7 @@ async fn call_tool(deps: &McpDeps<'_>, name: &str, args: Value) -> Result<Value,
                 }
                 "agent_models" => Ok(super::mcp_agent::models(state).await),
                 "agent_session_close" => super::mcp_agent::close(state, session.unwrap_or_default(), args.get("remove_worktree").and_then(Value::as_bool).unwrap_or(false)).await,
-                _ => super::mcp_agent::run(state, agent, prompt, write_dir, session, args.get("model").and_then(Value::as_str), args.get("permission_mode").and_then(Value::as_str), args.get("host").and_then(Value::as_str)).await,
+                _ => super::mcp_agent::run(state, agent, prompt, write_dir, session, args.get("model").and_then(Value::as_str), args.get("permission_mode").and_then(Value::as_str), args.get("host").and_then(Value::as_str), args.get("model_fallback").and_then(Value::as_bool)).await,
             };
             match result {
                 Ok(text) => Ok(tool_content(text, false)),

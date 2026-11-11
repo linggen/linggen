@@ -457,6 +457,7 @@ mod tests {
             compact_focus: None,
             title_locked: false,
             withheld_tools: Vec::new(),
+            model_fallback: None,
             params: Default::default(),
         };
         meta.legacy = Default::default();

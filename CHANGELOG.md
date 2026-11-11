@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+- **A session can refuse to switch models.** Each session has a switch (the
+  chat's model bar: 出错时自动换模型 / Switch model automatically on errors).
+  Off, a failed model call ends the run on that model, naming it and the
+  provider's reason, instead of answering on another. Sessions a host creates
+  through `agent_run` start with it off (`model_fallback: true` opts back in),
+  and `agent_status` and the wait stream's last frame now report `status`,
+  `error` and the `model` that answered.
+
 ## [2.0.1] - 2026-11-08 — your iPhone finds your Mac again
 
 - **「查找 Mac」 finds the Mac.** On macOS the engine now announces itself
