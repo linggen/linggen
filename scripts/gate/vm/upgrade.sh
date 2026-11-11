@@ -258,7 +258,46 @@ if real_prev "ling-mem" "$MEM" "$OUT/ling-mem.old"; then
 fi
 
 # ── App ────────────────────────────────────────────────────────────────────
+# What the in-app updater leaves behind: the bundle swapped, the OLD engine
+# still running and healthy. The new shell must replace it (shell/src/main.rs
+# upgrade_engine): asked to restart first, reclaimed if that does not take.
+# The updater itself is a native dialog (a GAP below), so the state is made
+# here the way update-helper.sh makes it: old bundle moved aside, new one in.
+OLD_APP=/tmp/gate-old-app/Linggen.app
+engine_version() { curl -fsS -m 3 http://127.0.0.1:9527/api/health 2>/dev/null | jq -r '.version // empty'; }
+older_than() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" = "$1" ]; }
+wait_engine_version() { # want seconds
+  local i
+  for ((i = 0; i < $2; i += 3)); do [ "$(engine_version)" = "$1" ] && { UPGRADED_AFTER=$i; return 0; }; sleep 3; done
+  return 1
+}
+app_engine_upgrade_check() {
+  local name="app: an older engine left running is replaced by the new app" new=/tmp/gate-new-app/Linggen.app old_v new_v
+  if [ ! -d "$OLD_APP" ]; then gap "$name" "no older Linggen.app on the baseline"; return; fi
+  quit_app; stop_engine
+  new_v="$(ver_of /Applications/Linggen.app/Contents/MacOS/ling)"
+  old_v="$(ver_of "$OLD_APP/Contents/MacOS/ling")"
+  if ! older_than "$old_v" "$new_v"; then gap "$name" "the baseline app's engine ($old_v) is not older than the release's ($new_v)"; return; fi
+  rm -rf /tmp/gate-new-app; mkdir -p /tmp/gate-new-app
+  mv /Applications/Linggen.app "$new" && mv "$OLD_APP" /Applications/Linggen.app
+  (cd "$HOME" && nohup /Applications/Linggen.app/Contents/MacOS/ling --web --idle-shutdown-secs 300 >"$OUT/old-engine.log" 2>&1 &)
+  engine_health 90 && [ "$(engine_version)" = "$old_v" ]
+  if [ $? != 0 ]; then
+    fail "$name" "the old engine ($old_v) did not come up: health says '$(engine_version)'"
+    pkill -f '/ling --web' 2>/dev/null; rm -rf /Applications/Linggen.app; mv "$new" /Applications/Linggen.app; return
+  fi
+  mv /Applications/Linggen.app /tmp/gate-old-app/Prev.app && mv "$new" /Applications/Linggen.app && rm -rf /tmp/gate-old-app/Prev.app
+  open /Applications/Linggen.app
+  wait_engine_version "$new_v" 300
+  check "$name" $? "9527 still answers '$(engine_version)' 300 s after open (want $new_v, was $old_v)" "$old_v → $new_v after ${UPGRADED_AFTER:-?} s"
+  pgrep -f '/Linggen.app/Contents/MacOS/linggen-shell' >/dev/null
+  check "app: still running after replacing the engine" $? "no Linggen.app shell process"
+  quit_app
+}
+
 if [ -n "$APP_VERSION" ]; then
+  rm -rf /tmp/gate-old-app; mkdir -p /tmp/gate-old-app
+  [ -d /Applications/Linggen.app ] && ditto /Applications/Linggen.app "$OLD_APP"
   curl -fsSL "$GOOD/install-app.sh" | LINGGEN_RELEASE_BASE="$GOOD" bash -s -- --no-launch >"$OUT/install-app.log" 2>&1
   check "app: install-app.sh over ${PREV_APP:-nothing}" $? "$(tail -3 "$OUT/install-app.log")"
   [ "$(app_version)" = "$APP_VERSION" ]; check "app: Linggen.app is the release" $? "got $(app_version)"
@@ -266,6 +305,7 @@ if [ -n "$APP_VERSION" ]; then
   open /Applications/Linggen.app
   engine_health 120; check "app: launches on the old home" $? "no 9527 health 120 s after open"
   sleep 5; quit_app
+  app_engine_upgrade_check
   launchctl unsetenv LINGGEN_RELEASE_BASE
   gap "app: in-app updater" "asks through a native confirm dialog (shell/src/main.rs) — not drivable headless"
 fi
