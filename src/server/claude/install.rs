@@ -14,23 +14,18 @@ pub(super) fn runtime_dir() -> PathBuf {
         .join(VERSION)
 }
 
+/// The bun the SDK runner runs on — the engine's one notion of it
+/// (`crate::js_runtime`): missing, a fetch starts and this says so.
 pub(super) fn bun_path() -> Result<PathBuf> {
-    let bundled = crate::paths::linggen_home().join("bin/bun");
-    if bundled.is_file() {
-        return Ok(bundled);
-    }
-    std::env::var_os("PATH")
-        .and_then(|paths| {
-            std::env::split_paths(&paths)
-                .map(|path| path.join("bun"))
-                .find(|path| path.is_file())
-        })
-        .context("Bun is missing. Reinstall Linggen to restore its runtime.")
+    crate::js_runtime::bun_now()
 }
 
 /// Install once on first use, serialized across agents. A marker is written
 /// only after Bun succeeded; an interrupted download is retried next time.
 pub(super) async fn ensure_installed() -> Result<PathBuf> {
+    // The runner needs bun as much as the install does: fetched (awaited)
+    // here, so `sdk_command`'s `bun_path` finds it.
+    let bun = crate::js_runtime::bun_ready().await?;
     let _guard = INSTALL_LOCK.lock().await;
     let dir = runtime_dir();
     tokio::fs::create_dir_all(&dir).await?;
@@ -59,7 +54,7 @@ pub(super) async fn ensure_installed() -> Result<PathBuf> {
     {
         return Ok(dir.join("runner.ts"));
     }
-    let install = Command::new(bun_path()?)
+    let install = Command::new(bun)
         .args([
             "install",
             "--production",

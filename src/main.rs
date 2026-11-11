@@ -5,6 +5,7 @@ mod credentials;
 mod engine;
 mod extensions;
 mod hf_mirror;
+mod js_runtime;
 mod language;
 mod logging;
 mod mcp_client;

@@ -12,6 +12,15 @@ pub(super) fn routes() -> Routes {
             "/api/skills/{skill}/tools/{tool}",
             post(api::skill_tools::run_tool),
         )
+        // The JS runtime skill actions run on (`crate::js_runtime`): GET reads
+        // where it stands; POST also starts a fetch when it is missing.
+        .route(
+            "/api/runtime/js",
+            get(|| async { axum::Json(crate::js_runtime::status()) }).post(|| async {
+                crate::js_runtime::ensure_in_background();
+                axum::Json(crate::js_runtime::status())
+            }),
+        )
         .route("/api/skill-cloud/{skill}", get(api::skill_cloud::get_cloud))
         .route(
             "/api/skill-cloud/{skill}/sync",
