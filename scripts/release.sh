@@ -107,8 +107,12 @@ ensure_release() {
     echo "✅ Release ${VERSION} already exists"
     return 0
   fi
+  # The tag is cut at publish, at the draft's target. Target the commit just
+  # built and stamped (full sha), never the default branch — a hotfix cut off
+  # an older tag would otherwise be tagged on main's head.
   gh release create "$VERSION" \
     --repo "$REPO" \
+    --target "$(git -C "$ROOT_DIR" rev-parse HEAD)" \
     --title "Linggen ${VERSION}" \
     --notes "Release ${VERSION}" \
     --draft
