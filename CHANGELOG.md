@@ -10,6 +10,16 @@
   and `agent_status` and the wait stream's last frame now report `status`,
   `error` and the `model` that answered.
 
+## [2.0.2] - 2026-11-11 — 灵境 wakes on a Mac with no JS runtime
+
+- **The engine fetches bun itself.** A Mac that got Linggen.app from the DMG
+  runs no install script, so with no node it had no JS runtime: skill actions
+  failed and 灵境 sat on 「灵境还没醒来」. The engine now downloads a pinned,
+  checksum-verified bun into `~/.linggen/bin` when it is missing, and
+  `/api/runtime/js` says where that stands.
+- **Linggen.app restarts a silent engine.** The app now checks the engine every
+  15 s; after about 45 s without an answer it starts the bundled engine again.
+
 ## [2.0.1] - 2026-11-08 — your iPhone finds your Mac again
 
 - **「查找 Mac」 finds the Mac.** On macOS the engine now announces itself
