@@ -169,6 +169,11 @@ tunnels, so nothing on the host listens beyond loopback.
    Codex has no unattended installer without node; the host's CLI is copied in.
    Claude Code comes from the live claude.ai/install.sh: its version is INFO,
    its failure a GAP.
+   After `install-app.sh` (bun removed first, so it is that script's own): bun
+   is in `~/.linggen/bin`. Then the DMG state, made by hand: app quit, 9527
+   down, bun removed, no bun/node where `run-js.sh` looks (else a GAP) — the
+   app opened must bring bun back by itself and a 灵境 Look must answer ok
+   (unsigned, the door is 401, so the Look runs as the declared command).
 2. Also a browser-style download of each asset — the app, `ling`,
    `ling-mem` — with `com.apple.quarantine` set (curl and `install-app.sh`
    leave none, so they alone hide Gatekeeper). The vanilla image ships with

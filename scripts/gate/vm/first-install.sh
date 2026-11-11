@@ -47,10 +47,82 @@ chat_turn 90
 check "chat: one turn completes on the fake model" $? "$CHAT_DETAIL" "$CHAT_DETAIL"
 stop_engine
 
+# ── A DMG install: the app alone, no bun, no node ──────────────────────────
+# A person who drags Linggen.app in from the DMG runs no script: the engine
+# fetches bun itself (src/js_runtime.rs), and 灵境's Look runs on it. The state
+# is made here — app quit, its engine down, bun removed — and refused as a GAP
+# when another JS runtime run-js.sh would find is on this Mac anyway.
+js_runtimes() { # what run-js.sh would run instead of ~/.linggen/bin/bun
+  local c
+  for c in "$(command -v bun 2>/dev/null)" "$(command -v node 2>/dev/null)" /opt/homebrew/bin/node /usr/local/bin/node; do
+    [ -n "$c" ] && [ -x "$c" ] && printf ' %s' "$c"
+  done
+}
+
+wait_bun() { # seconds
+  local i
+  for ((i = 0; i < $1; i++)); do "$LG/bin/bun" --version >/dev/null 2>&1 && { BUN_AFTER=$i; return 0; }; sleep 1; done
+  return 1
+}
+
+# One Look on a scratch save, through the page's door. Unsigned (the VM has no
+# account) the door answers 401 — 灵境 declares `cloud:` — so the Look runs
+# as the door would run it: the declared command, in the skill folder, on a
+# bare PATH. LOOK_DETAIL says which.
+lingjing_look() { # seconds
+  local skill="$LG/skills/lingjing" i code
+  for ((i = 0; i < $1; i += 5)); do
+    code="$(curl -sS -m 20 -o "$OUT/dmg-look.json" -w '%{http_code}' -X POST -H 'content-type: application/json' \
+      -d '{"verb":"look","flags":["--save=gate-dmg"]}' http://127.0.0.1:9527/api/skills/lingjing/tools/Verb 2>/dev/null)"
+    if [ "$code" = 401 ]; then
+      (cd "$skill" && env -i HOME="$HOME" PATH=/usr/bin:/bin bash scripts/run-js.sh scripts/rules.mjs look --save=gate-dmg) \
+        2>&1 | tail -1 >"$OUT/dmg-look.line"
+      LOOK_DETAIL="door 401 (signed out); the declared command: $(head -c 120 "$OUT/dmg-look.line")"
+    else
+      jq -r '.stdout // empty' "$OUT/dmg-look.json" 2>/dev/null | tail -1 >"$OUT/dmg-look.line"
+      LOOK_DETAIL="door $code: $(head -c 120 "$OUT/dmg-look.line")"
+    fi
+    jq -e '.ok == true' "$OUT/dmg-look.line" >/dev/null 2>&1 && return 0
+    sleep 5
+  done
+  return 1
+}
+
+dmg_runtime_check() {
+  local pid others
+  pid="$(listener_pid 9527)"
+  [ -n "$pid" ] && { kill "$pid" 2>/dev/null; sleep 2; }
+  pid="$(listener_pid 9527)"
+  if [ -n "$pid" ]; then fail "dmg: no bun — engine down first" "pid $pid still listens on 9527"; return; fi
+  rm -f "$LG/bin/bun"
+  others="$(js_runtimes)"
+  if [ -n "$others" ]; then
+    gap "dmg: the engine fetches bun on a Mac with no JS runtime" "a JS runtime is here anyway:$others — the check would prove nothing"
+    return
+  fi
+  open /Applications/Linggen.app
+  engine_health 120
+  check "dmg: no bun — app brings up 9527" $? "no health 120 s after open"
+  wait_bun 180
+  check "dmg: the engine fetches bun itself" $? "no runnable $LG/bin/bun 180 s after open — $(curl -fsS -m 3 http://127.0.0.1:9527/api/runtime/js 2>/dev/null | head -c 200)" "bun $("$LG/bin/bun" --version 2>/dev/null) after ${BUN_AFTER:-?} s"
+  if [ -d "$LG/skills/lingjing" ]; then
+    lingjing_look 60
+    check "dmg: 灵境 Look answers ok on the fetched bun" $? "$LOOK_DETAIL" "$LOOK_DETAIL"
+  else
+    gap "dmg: 灵境 Look answers ok on the fetched bun" "the app synced no lingjing into $LG/skills"
+  fi
+  quit_app
+}
+
 # ── install-app.sh — Linggen.app from the mirror ───────────────────────────
 if [ -n "$APP_VERSION" ]; then
+  # install.sh above bundled bun already; taken away (the engine is stopped),
+  # so the bun check below is install-app.sh's own.
+  rm -f "$LG/bin/bun"
   curl -fsSL "$SITE/install-app.sh" | env $RB bash -s -- --no-launch >"$OUT/install-app.log" 2>&1
   check "install-app.sh exits 0" $? "$(tail -3 "$OUT/install-app.log")"
+  "$LG/bin/bun" --version >/dev/null 2>&1
+  check "install-app.sh: bun in ~/.linggen/bin" $? "no runnable $LG/bin/bun — $(grep -i bun "$OUT/install-app.log" | tail -2)" "bun $("$LG/bin/bun" --version 2>/dev/null)"
   [ "$(app_version)" = "$APP_VERSION" ]
   check "install-app.sh: Linggen.app is the release" $? "got '$(app_version)', want $APP_VERSION" "$APP_VERSION"
   xattr -r /Applications/Linggen.app 2>/dev/null | grep -q com.apple.quarantine
@@ -64,6 +136,7 @@ if [ -n "$APP_VERSION" ]; then
   check "app: still running after first launch" $? "no Linggen.app process"
   sleep 10
   quit_app
+  dmg_runtime_check
   launchctl unsetenv LINGGEN_RELEASE_BASE
 else
   gap "install-app.sh" "no app in the mirror"

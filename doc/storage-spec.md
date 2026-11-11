@@ -51,6 +51,8 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 │   └── {name}/
 │       ├── SKILL.md                  # Skill definition
 │       └── scripts/                  # Skill assets (optional)
+├── bin/
+│   └── bun                           # Pinned JS runtime for skill actions (src/js_runtime.rs); the engine fetches it when absent
 ├── runtime/                          # Managed Python runtime (see src/runtime.rs)
 │   ├── py/                           # Pinned relocatable CPython (python-build-standalone)
 │   ├── envs/{name}/                  # Named venvs: tools (yt-dlp), tts (mlx-audio), pictures (mflux)

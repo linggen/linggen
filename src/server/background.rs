@@ -22,6 +22,9 @@ pub(super) fn spawn_background_tasks(
     flush_token_usage(state);
     watch_skill_sync(state);
     prewarm_memory(state);
+    // bun for skill actions: its own fetch, never queued behind the
+    // Python runtime's download slot.
+    crate::js_runtime::ensure_in_background();
     prewarm_runtime(state);
     prewarm_voice(state, pet_enabled);
     connect_mcp_servers(state);
