@@ -273,15 +273,22 @@ wait_engine_version() { # want seconds
 }
 # Bundled skills (shell/src/skill_sync.rs): the new app replaces an older
 # installed skill's code with its bundle's and never touches the skill's state.
-# Planted before install-app.sh: a state file under 灵境's data/, and a comment
-# appended to the baseline's state.mjs, so the check proves a replace even when
-# the baseline already shipped the release's state.mjs.
+# linggen-prev installs the old app with --no-launch, so 灵境 is laid down here
+# the way a 2.0.x shell did on first open — a plain copy of its bundle, no
+# marker. Then, before install-app.sh: a state file under data/, and a comment
+# appended to state.mjs, so the check proves a replace even when the old
+# bundle already carried the release's state.mjs.
 SKILL_CODE=scripts/state.mjs
 SKILL_PLANT=data/gate-planted-state.json
+APP_SKILLS=Contents/Resources/app-resources
 skill_state_plant() {
-  local g="$LG/skills/lingjing"
+  local g="$LG/skills/lingjing" old="$OLD_APP/$APP_SKILLS/skills/lingjing"
   PLANT_SHA=""
-  [ -f "$g/$SKILL_CODE" ] || { info "skills: baseline 灵境" "none installed — the release's sync is a fresh install"; return; }
+  if [ ! -f "$g/$SKILL_CODE" ] && [ -f "$old/$SKILL_CODE" ]; then
+    mkdir -p "$LG/skills" && ditto "$old" "$g"
+    info "skills: baseline 灵境" "copied from the old app's bundle (what its shell did on first open)"
+  fi
+  [ -f "$g/$SKILL_CODE" ] || { info "skills: baseline 灵境" "none — neither installed nor in the old app's bundle"; return; }
   mkdir -p "$g/data"
   printf '{"gate":"%s","save":"kept byte for byte"}\n' "$(date +%s)-$RANDOM" >"$g/$SKILL_PLANT"
   PLANT_SHA="$(sha "$g/$SKILL_PLANT")"
@@ -289,13 +296,19 @@ skill_state_plant() {
   info "skills: baseline 灵境" "$SKILL_CODE $(sha "$g/$SKILL_CODE" | cut -c1-12), marker: $(jq -c '{ref,by,committed}' "$g/.installed" 2>/dev/null || echo none)"
 }
 skill_update_check() {
-  local g="$LG/skills/lingjing" b="/Applications/Linggen.app/Contents/Resources/app-resources/skills/lingjing"
+  local g="$LG/skills/lingjing" res="/Applications/Linggen.app/$APP_SKILLS"
   local name="app: an installed 灵境 gets the bundle's code" have want
-  if [ ! -f "$b/$SKILL_CODE" ]; then gap "$name" "the release bundle has no lingjing/$SKILL_CODE"; return; fi
-  have="$(sha "$g/$SKILL_CODE")"; want="$(sha "$b/$SKILL_CODE")"
+  [ -f "$res/skills-stamp.json" ]
+  check "app: the bundle carries skills-stamp.json" $? "missing — the shell falls back to adding missing files only, and no installed skill is updated" "$(jq -c . "$res/skills-stamp.json" 2>/dev/null)"
+  if [ ! -f "$res/skills/lingjing/$SKILL_CODE" ]; then gap "$name" "the release bundle has no lingjing/$SKILL_CODE"; return; fi
+  if [ -z "$PLANT_SHA" ]; then
+    gap "$name" "no older 灵境 on the baseline — the release's sync was a fresh install"
+    gap "app: 灵境 data/ kept across the app update" "no baseline 灵境 to plant state in"
+    return
+  fi
+  have="$(sha "$g/$SKILL_CODE")"; want="$(sha "$res/skills/lingjing/$SKILL_CODE")"
   [ -n "$have" ] && [ "$have" = "$want" ]
-  check "$name" $? "installed ${have:-none} ≠ bundle $want — marker: $(cat "$g/.installed" 2>/dev/null | head -c 160)" "${want:0:12}, marker $(jq -c '{ref,by}' "$g/.installed" 2>/dev/null)"
-  if [ -z "$PLANT_SHA" ]; then gap "app: 灵境 data/ kept across the app update" "no baseline 灵境 to plant state in"; return; fi
+  check "$name" $? "installed ${have:-none} ≠ bundle $want — marker: $(head -c 160 "$g/.installed" 2>/dev/null)" "${want:0:12}, marker $(jq -c '{ref,by}' "$g/.installed" 2>/dev/null)"
   [ "$(sha "$g/$SKILL_PLANT")" = "$PLANT_SHA" ]
   check "app: 灵境 data/ kept across the app update" $? "$SKILL_PLANT is $(sha "$g/$SKILL_PLANT" || echo gone), was $PLANT_SHA"
 }
