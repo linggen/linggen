@@ -8,7 +8,10 @@
 //! a phone decides by — and without one the account's copy wins; a tie goes
 //! to the account's. The loser is never destroyed: each file it had is kept
 //! beside the save as `<file>.conflict-<unix secs>` (the account's copy too,
-//! when this machine's wins). Pulls happen only at a turn's edges and when the
+//! when this machine's wins) — unless it differs from the winner only in the
+//! keys the skill declares as not progress (`cloud.ignore`): then both agree,
+//! the ledger is settled and no copy is written. Each file keeps its newest 5
+//! copies. Pulls happen only at a turn's edges and when the
 //! page asks; mid-turn, after a model call, the save is only pushed. Every
 //! read and write of the save's files holds the save's lockfile (`lock.rs`),
 //! the one the skill's own scripts take.
@@ -30,7 +33,7 @@ pub mod lock;
 pub mod peer;
 pub mod state;
 
-use files::{plain, Files, Layout};
+use files::{plain, Files, Ignore, Layout};
 
 /// One sync at a time: a turn's push and the page's pull never interleave.
 static SYNC_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -162,6 +165,7 @@ pub fn target(skill: &Skill) -> Option<SaveTarget> {
         .further
         .as_ref()
         .and_then(|v| further::rule(&skill.name, &root, v));
+    let ignore = ignore_of(&skill.name, &cloud.ignore, further.as_ref());
     Some(SaveTarget {
         skill: skill.name.clone(),
         layout: Layout {
@@ -169,17 +173,74 @@ pub fn target(skill: &Skill) -> Option<SaveTarget> {
             entries,
             one: paths.is_one(),
             skip: cloud.skip.clone(),
+            ignore,
         },
         further,
     })
 }
 
-/// The save's files and their fingerprint, read under the save's lock.
+/// `cloud.ignore` read against the rule's file: without a readable `further`
+/// there is no file for the keys to belong to, and the save is compared raw.
+fn ignore_of(skill: &str, keys: &[String], rule: Option<&further::Rule>) -> Option<Ignore> {
+    if keys.is_empty() {
+        return None;
+    }
+    let Some(rule) = rule else {
+        tracing::warn!("skill '{skill}': cloud.ignore needs a readable cloud.further; not used");
+        return None;
+    };
+    if keys.iter().any(|k| k.is_empty()) {
+        tracing::warn!("skill '{skill}': cloud.ignore holds an empty key; not used");
+        return None;
+    }
+    Some(Ignore {
+        file: rule.file().to_string(),
+        keys: keys.to_vec(),
+    })
+}
+
+/// The save's files and their fingerprint (progress only: `files.rs`
+/// `progress_fingerprint`), read under the save's lock.
 async fn read_locked(t: &SaveTarget) -> Result<(Files, u64)> {
     let _held = lock::acquire(&t.file()).await?;
     let files = t.layout.read();
-    let hash = t.layout.fingerprint(&files);
+    let hash = t.layout.progress_fingerprint(&files);
     Ok((files, hash))
+}
+
+/// What this machine last agreed on, its hash brought to the progress
+/// fingerprint. A ledger written before `cloud.ignore` holds the raw one: it
+/// proves the save unmoved when the files still hash to it that way (and is
+/// then rewritten); a save that does not hash to it is taken as moved — it
+/// cannot be told from a stamp alone, so it goes through the rule once.
+fn agreed_ledger(t: &SaveTarget, files: &Files, progress: u64) -> Option<Ledger> {
+    let l = read_ledger(&t.skill)?;
+    Some(match brought_to_progress(&t.layout, l, files, progress) {
+        Some(up) => {
+            let _ = write_ledger(&t.skill, up);
+            up
+        }
+        None => l,
+    })
+}
+
+/// `l` with its hash as the progress fingerprint, when `l` holds the raw one
+/// of exactly these files; None when it needs no change or cannot be proved.
+fn brought_to_progress(layout: &Layout, l: Ledger, files: &Files, progress: u64) -> Option<Ledger> {
+    (l.hash != progress
+        && layout.has_ignore()
+        && !files.is_empty()
+        && layout.fingerprint(files) == l.hash)
+        .then_some(Ledger {
+            version: l.version,
+            hash: progress,
+        })
+}
+
+/// The ledger that settles a conflict when the account's copy holds the same
+/// progress as ours (stamps aside): nothing to choose, nothing to keep.
+fn settled(layout: &Layout, version: u64, hash: u64, theirs: &Files) -> Option<Ledger> {
+    (layout.progress_fingerprint(theirs) == hash).then_some(Ledger { version, hash })
 }
 
 /// Bring the files and the account's copy into step.
@@ -199,7 +260,7 @@ pub async fn sync(t: &SaveTarget) -> Result<Synced> {
         }
     };
     let local = (!files.is_empty()).then_some(hash);
-    let done = match decide(local, read_ledger(&t.skill), cloud.version) {
+    let done = match decide(local, agreed_ledger(t, &files, hash), cloud.version) {
         Step::Nothing => Synced::plain(Action::Nothing, cloud.version),
         Step::Pull => pull(t, &cloud).await?,
         Step::Push { version } => push_or_pull(t, version, &files, hash).await?,
@@ -234,14 +295,9 @@ async fn push_or_pull(t: &SaveTarget, version: u64, files: &Files, hash: u64) ->
 async fn both(t: &SaveTarget, cloud: &CloudSave, files: &Files, hash: u64) -> Result<Synced> {
     let body = cloud.body.as_ref().context("the account's save is empty")?;
     let theirs = t.layout.decode(body)?;
-    if t.layout.fingerprint(&theirs) == hash {
-        write_ledger(
-            &t.skill,
-            Ledger {
-                version: cloud.version,
-                hash,
-            },
-        )?;
+    // The same progress (stamps aside): nothing is lost either way, no copy.
+    if let Some(agreed) = settled(&t.layout, cloud.version, hash, &theirs) {
+        write_ledger(&t.skill, agreed)?;
         return Ok(Synced::plain(Action::Nothing, cloud.version));
     }
     let here_wins = t
@@ -284,10 +340,13 @@ pub async fn push(t: &SaveTarget) -> Result<Action> {
     if state::backed_off(&state::read(&t.skill), now, state::who()) {
         return Ok(Action::Local);
     }
-    let Some(agreed) = read_ledger(&t.skill) else {
+    if read_ledger(&t.skill).is_none() {
         return Ok(Action::Nothing); // never synced here: the turn's edge pulls first
-    };
+    }
     let (files, hash) = read_locked(t).await?;
+    let Some(agreed) = agreed_ledger(t, &files, hash) else {
+        return Ok(Action::Nothing);
+    };
     if files.is_empty() || hash == agreed.hash {
         return Ok(Action::Nothing);
     }
@@ -362,8 +421,9 @@ async fn pull(t: &SaveTarget, cloud: &CloudSave) -> Result<Synced> {
         .decode(cloud.body.as_ref().context("the account's save is empty")?)?;
     let _held = lock::acquire(&t.file()).await?;
     let current = t.layout.read();
-    let changed_here = !current.is_empty()
-        && read_ledger(&t.skill).map(|l| l.hash) != Some(t.layout.fingerprint(&current));
+    let here = t.layout.progress_fingerprint(&current);
+    let changed_here =
+        !current.is_empty() && agreed_ledger(t, &current, here).map(|l| l.hash) != Some(here);
     let conflicts = if changed_here {
         t.layout.keep_conflicts(&current, &incoming)?
     } else {
@@ -381,7 +441,7 @@ async fn pull(t: &SaveTarget, cloud: &CloudSave) -> Result<Synced> {
         &t.skill,
         Ledger {
             version: cloud.version,
-            hash: t.layout.fingerprint(&incoming),
+            hash: t.layout.progress_fingerprint(&incoming),
         },
     )?;
     Ok(Synced {
@@ -488,8 +548,136 @@ mod tests {
                 meter: None,
                 skip: Vec::new(),
                 further: None,
+                ignore: Vec::new(),
             });
             assert!(target(&skill).is_none(), "{bad}");
         }
+    }
+
+    fn ignoring_target(extra: &str) -> SaveTarget {
+        let root = std::env::temp_dir().join(format!("cloud-ignore-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let md = format!(
+            "---\nname: g\ndescription: d\ncloud:\n  save: [data/state.json]\n{extra}---\nbody"
+        );
+        let mut skill =
+            crate::extensions::skills::parse_skill_text(&md, SkillSource::Global).unwrap();
+        skill.skill_dir = Some(root);
+        target(&skill).unwrap()
+    }
+
+    const FURTHER: &str = "  further:\n    {\"file\": \"data/state.json\", \"by\": [{\"count\": \"done\"}, {\"time\": \"updated\"}]}\n";
+
+    fn state(text: &str) -> Files {
+        let mut f = Files::new();
+        f.insert("data/state.json".into(), text.as_bytes().to_vec());
+        f
+    }
+
+    #[test]
+    fn cloud_ignore_is_read_against_the_rules_file_and_needs_a_rule() {
+        let t = ignoring_target(&format!("{FURTHER}  ignore: [updated, stamina]\n"));
+        let ig = t.layout.ignore.as_ref().expect("the keys are read");
+        assert_eq!(ig.file, "data/state.json");
+        assert_eq!(ig.keys, vec!["updated", "stamina"]);
+        // The shape skills/lingjing/SKILL.md declares: comments after `further`, a JSON list over several lines.
+        let t = ignoring_target(&format!(
+            "{FURTHER}  # stamps, not moves\n  # more\n  ignore: [\"updated\", \"stamina\",\n    \"shown\", \"guided\"]\n"
+        ));
+        assert_eq!(
+            t.layout.ignore.as_ref().unwrap().keys,
+            ["updated", "stamina", "shown", "guided"]
+        );
+        // No readable rule: no file for the keys, so the save is compared raw.
+        assert!(ignoring_target("  ignore: [updated]\n")
+            .layout
+            .ignore
+            .is_none());
+        assert!(ignoring_target(FURTHER).layout.ignore.is_none());
+    }
+
+    #[test]
+    fn a_stamp_is_no_move_and_a_play_is() {
+        let t = ignoring_target(&format!("{FURTHER}  ignore: [updated, stamina]\n"));
+        let at = |s: &str| t.layout.progress_fingerprint(&state(s));
+        let agreed = Ledger {
+            version: 3,
+            hash: at(r#"{"done":["a"],"updated":"t1","stamina":40}"#),
+        };
+        let stamped = at(r#"{"stamina":41,"done":["a"],"updated":"t2"}"#);
+        assert_eq!(decide(Some(stamped), Some(agreed), 3), Step::Nothing);
+        assert_eq!(decide(Some(stamped), Some(agreed), 4), Step::Pull);
+        let played = at(r#"{"done":["a","b"],"updated":"t2","stamina":38}"#);
+        assert_eq!(
+            decide(Some(played), Some(agreed), 3),
+            Step::Push { version: 3 }
+        );
+        assert_eq!(decide(Some(played), Some(agreed), 4), Step::Both);
+    }
+
+    #[test]
+    fn both_moved_to_the_same_progress_settles_with_no_conflict() {
+        let t = ignoring_target(&format!("{FURTHER}  ignore: [updated, stamina]\n"));
+        let here = state(r#"{"done":["a"],"updated":"t1","stamina":10}"#);
+        let theirs = state(r#"{"updated":"t9","stamina":99,"done":["a"]}"#);
+        let hash = t.layout.progress_fingerprint(&here);
+        assert_eq!(
+            settled(&t.layout, 5, hash, &theirs),
+            Some(Ledger { version: 5, hash })
+        );
+        assert!(t.layout.keep_conflicts(&here, &theirs).unwrap().is_empty());
+        // Real progress on either side is not settled.
+        let ahead = state(r#"{"done":["a","b"],"updated":"t9"}"#);
+        assert_eq!(settled(&t.layout, 5, hash, &ahead), None);
+        // A save with no ignore list settles only on identical bytes, as before.
+        let plain = ignoring_target(FURTHER);
+        let h = plain.layout.progress_fingerprint(&here);
+        assert_eq!(settled(&plain.layout, 5, h, &theirs), None);
+        assert!(settled(&plain.layout, 5, h, &here.clone()).is_some());
+    }
+
+    #[test]
+    fn a_ledger_written_raw_is_proved_unmoved_or_taken_as_moved() {
+        let t = ignoring_target(&format!("{FURTHER}  ignore: [updated, stamina]\n"));
+        let was = state(r#"{"done":["a"],"updated":"t1","stamina":10}"#);
+        let old = Ledger {
+            version: 3,
+            hash: t.layout.fingerprint(&was),
+        };
+        // The files still hash to the old raw hash: unmoved, and the ledger moves to the new kind.
+        let progress = t.layout.progress_fingerprint(&was);
+        assert_eq!(
+            brought_to_progress(&t.layout, old, &was, progress),
+            Some(Ledger {
+                version: 3,
+                hash: progress
+            })
+        );
+        // Stamped since: the raw hash no longer proves anything; left as it is, the save reads as moved.
+        let stamped = state(r#"{"done":["a"],"updated":"t2","stamina":11}"#);
+        let p2 = t.layout.progress_fingerprint(&stamped);
+        assert_eq!(brought_to_progress(&t.layout, old, &stamped, p2), None);
+        assert_eq!(decide(Some(p2), Some(old), 3), Step::Push { version: 3 });
+        assert_eq!(decide(Some(p2), Some(old), 4), Step::Both);
+        // A ledger already of the new kind, or a save with no ignore list, is not touched.
+        let new = Ledger {
+            version: 3,
+            hash: progress,
+        };
+        assert_eq!(brought_to_progress(&t.layout, new, &was, progress), None);
+        let plain = ignoring_target(FURTHER);
+        let raw = Ledger {
+            version: 3,
+            hash: plain.layout.fingerprint(&was),
+        };
+        assert_eq!(
+            brought_to_progress(
+                &plain.layout,
+                raw,
+                &was,
+                plain.layout.progress_fingerprint(&was)
+            ),
+            None
+        );
     }
 }

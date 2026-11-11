@@ -139,6 +139,13 @@ pub struct CloudConfig {
     /// cannot read only warns, and the other copy wins as without it.
     #[serde(default)]
     pub further: Option<serde_json::Value>,
+    /// Top-level keys of `further.file` that are not progress — stamped by
+    /// reading or by the clock, not by play. They are left out when the
+    /// engine asks whether this machine's save moved or whether two copies
+    /// agree, so a stamp alone is no change and makes no conflict copy
+    /// (`account/cloud_save/files.rs`). Needs a readable `further`.
+    #[serde(default)]
+    pub ignore: Vec<String>,
     /// A rolling token window on linggen.dev, named by the site. Each turn's
     /// tokens are reported to it; a spent window refuses the next turn.
     #[serde(default)]

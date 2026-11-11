@@ -26,7 +26,20 @@ pub struct Layout {
     pub one: bool,
     /// File or folder names left out at any depth (`cloud.skip`).
     pub skip: Vec<String>,
+    /// Keys of one JSON file that are not progress (`cloud.ignore`).
+    pub ignore: Option<Ignore>,
 }
+
+/// Top-level keys of one JSON file of a save that stamps leave behind without
+/// play. Left out when asking whether a save moved or two copies agree.
+#[derive(Debug, Clone)]
+pub struct Ignore {
+    pub file: String,
+    pub keys: Vec<String>,
+}
+
+/// How many `<file>.conflict-<secs>` copies are kept beside a file.
+pub const KEEP_COPIES: usize = 5;
 
 /// Files the engine and the scripts leave beside a save — never part of it.
 fn is_scratch(name: &str) -> bool {
@@ -109,6 +122,44 @@ impl Layout {
         h.finish()
     }
 
+    /// The fingerprint a ledger keeps: over the files as progress, with the
+    /// ignored keys left out of the file that has them and its JSON read in
+    /// canonical form (key order and spacing do not count). Without an ignore
+    /// list it is [`Layout::fingerprint`] exactly.
+    pub fn progress_fingerprint(&self, files: &Files) -> u64 {
+        self.fingerprint(&self.progress_of(files))
+    }
+
+    /// Whether this layout has keys to leave out.
+    pub fn has_ignore(&self) -> bool {
+        self.ignore.is_some()
+    }
+
+    fn progress_of(&self, files: &Files) -> Files {
+        files
+            .iter()
+            .map(|(rel, bytes)| (rel.clone(), self.progress_bytes(rel, bytes)))
+            .collect()
+    }
+
+    /// A file's bytes as progress: for the ignore file, canonical JSON without
+    /// the ignored keys; anything else (or a file that is not a JSON object)
+    /// as it is.
+    fn progress_bytes(&self, rel: &str, bytes: &[u8]) -> Vec<u8> {
+        let Some(ig) = self.ignore.as_ref().filter(|ig| ig.file == rel) else {
+            return bytes.to_vec();
+        };
+        match serde_json::from_slice::<Value>(bytes) {
+            Ok(Value::Object(mut o)) => {
+                for k in &ig.keys {
+                    o.remove(k);
+                }
+                canonical(&Value::Object(o)).to_string().into_bytes()
+            }
+            _ => bytes.to_vec(),
+        }
+    }
+
     pub fn encode(&self, files: &Files) -> Value {
         if self.one {
             let text = files
@@ -171,12 +222,15 @@ impl Layout {
     /// Before `current` loses to `incoming`, each file of it that `incoming`
     /// would change or lack is copied beside itself as
     /// `<file>.conflict-<unix secs>` — the files here before a pull, or the
-    /// account's copy before this machine's replaces it. Returns the copies.
+    /// account's copy before this machine's replaces it. A file that differs
+    /// only in ignored keys is no loss and gets no copy. Each file keeps its
+    /// newest [`KEEP_COPIES`] copies; older ones go. Returns the copies.
     pub fn keep_conflicts(&self, current: &Files, incoming: &Files) -> Result<Vec<PathBuf>> {
         let stamp = crate::util::now_ts_secs();
         let mut kept = Vec::new();
         for (rel, bytes) in current {
-            if incoming.get(rel) == Some(bytes) {
+            let same = |b: &Vec<u8>| self.progress_bytes(rel, b) == self.progress_bytes(rel, bytes);
+            if incoming.get(rel).is_some_and(same) {
                 continue;
             }
             let file = self.root.join(rel);
@@ -188,9 +242,51 @@ impl Layout {
                     .with_context(|| format!("create {}", dir.display()))?;
             }
             std::fs::write(&copy, bytes).with_context(|| format!("write {}", copy.display()))?;
+            prune_copies(&file);
             kept.push(copy);
         }
         Ok(kept)
+    }
+}
+
+/// JSON with every object's keys in sorted order, so two readings of the same
+/// content print the same text.
+fn canonical(v: &Value) -> Value {
+    match v {
+        Value::Object(o) => {
+            let sorted: BTreeMap<&String, Value> =
+                o.iter().map(|(k, v)| (k, canonical(v))).collect();
+            Value::Object(sorted.into_iter().map(|(k, v)| (k.clone(), v)).collect())
+        }
+        Value::Array(a) => Value::Array(a.iter().map(canonical).collect()),
+        other => other.clone(),
+    }
+}
+
+/// Delete all but the newest [`KEEP_COPIES`] of `<file>.conflict-<digits>` in
+/// the file's folder — only names of exactly that pattern, only this file's.
+fn prune_copies(file: &Path) {
+    let (Some(dir), Some(name)) = (file.parent(), file.file_name().and_then(|n| n.to_str())) else {
+        return;
+    };
+    let prefix = format!("{name}.conflict-");
+    let Ok(listing) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut copies: Vec<(u64, PathBuf)> = listing
+        .flatten()
+        .filter_map(|e| {
+            let n = e.file_name().into_string().ok()?;
+            let digits = n.strip_prefix(&prefix)?;
+            if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            Some((digits.parse().ok()?, e.path()))
+        })
+        .collect();
+    copies.sort_by(|a, b| b.0.cmp(&a.0));
+    for (_, path) in copies.into_iter().skip(KEEP_COPIES) {
+        let _ = std::fs::remove_file(path);
     }
 }
 
@@ -240,6 +336,7 @@ mod tests {
             entries: vec!["data/state.json".into(), "data/worlds".into()],
             one: false,
             skip: Vec::new(),
+            ignore: None,
         }
     }
 
@@ -325,6 +422,7 @@ mod tests {
             entries: vec!["data/state.json".into()],
             one: true,
             skip: Vec::new(),
+            ignore: None,
         };
         let mut files = Files::new();
         files.insert("data/state.json".into(), b"hello".to_vec());
@@ -353,5 +451,156 @@ mod tests {
         assert_eq!(l.read(), incoming);
         assert!(kept.iter().all(|k| k.exists()));
         assert_eq!(std::fs::read(&kept[0]).unwrap(), b"mine");
+    }
+
+    fn ignoring(root: &Path) -> Layout {
+        Layout {
+            ignore: Some(Ignore {
+                file: "data/state.json".into(),
+                keys: vec!["updated".into(), "last_seen".into(), "stamina".into()],
+            }),
+            ..bundle(root)
+        }
+    }
+
+    fn one_file(rel: &str, text: &str) -> Files {
+        let mut f = Files::new();
+        f.insert(rel.into(), text.as_bytes().to_vec());
+        f
+    }
+
+    #[test]
+    fn the_progress_fingerprint_leaves_out_the_ignored_keys_order_and_spacing() {
+        let l = ignoring(Path::new("/s/g"));
+        let at = |t: &str| l.progress_fingerprint(&one_file("data/state.json", t));
+        let base = at(r#"{"done":["a"],"tier":"qi","updated":"t1","last_seen":"t1","stamina":50}"#);
+        // Stamps only, other order, other spacing, nested order: the same progress.
+        assert_eq!(
+            base,
+            at(
+                r#"{ "tier": "qi", "stamina": 7, "done": ["a"], "last_seen": "t9", "updated": "t9" }"#
+            )
+        );
+        assert_eq!(
+            at(r#"{"a":{"x":1,"y":2},"updated":1}"#),
+            at(r#"{"updated":2,"a":{"y":2,"x":1}}"#)
+        );
+        // Real progress moves it, and so does a change in an array's order.
+        assert_ne!(base, at(r#"{"done":["a","b"],"tier":"qi","updated":"t1"}"#));
+        assert_ne!(
+            base,
+            at(r#"{"done":["a"],"tier":"foundation","updated":"t1"}"#)
+        );
+        assert_ne!(at(r#"{"d":["a","b"]}"#), at(r#"{"d":["b","a"]}"#));
+        // Only the declared file's top-level keys are left out.
+        let other = |t: &str| l.progress_fingerprint(&one_file("data/worlds/w/world.json", t));
+        assert_ne!(other(r#"{"updated":1}"#), other(r#"{"updated":2}"#));
+        assert_ne!(at(r#"{"n":{"updated":1}}"#), at(r#"{"n":{"updated":2}}"#));
+        // A file that is not a JSON object is compared as it is.
+        assert_ne!(at("not json"), at("not json "));
+    }
+
+    #[test]
+    fn without_an_ignore_list_the_fingerprint_is_the_raw_one() {
+        let l = bundle(Path::new("/s/g"));
+        let f = one_file("data/state.json", r#"{"updated":1}"#);
+        assert_eq!(l.progress_fingerprint(&f), l.fingerprint(&f));
+        let g = one_file("data/state.json", r#"{ "updated": 1 }"#);
+        assert_ne!(l.progress_fingerprint(&f), l.progress_fingerprint(&g));
+        assert!(!l.has_ignore());
+    }
+
+    fn copies_of(dir: &Path, name: &str) -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .filter_map(|e| e.file_name().into_string().ok())
+            .filter(|n| n.starts_with(name))
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn a_loser_that_differs_only_in_ignored_keys_leaves_no_copy() {
+        let root = scratch("same");
+        let l = ignoring(&root);
+        let here = one_file(
+            "data/state.json",
+            r#"{"tier":"qi","updated":"a","stamina":3}"#,
+        );
+        let there = one_file(
+            "data/state.json",
+            r#"{"stamina":90,"tier":"qi","updated":"b"}"#,
+        );
+        assert!(l.keep_conflicts(&here, &there).unwrap().is_empty());
+        // A real difference is kept, once.
+        let ahead = one_file("data/state.json", r#"{"tier":"core","updated":"b"}"#);
+        write_atomic(&root.join("data/state.json"), b"x").unwrap();
+        let kept = l.keep_conflicts(&here, &ahead).unwrap();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(std::fs::read(&kept[0]).unwrap(), here["data/state.json"]);
+        // …and a file the other side lacks is kept too.
+        assert_eq!(l.keep_conflicts(&here, &Files::new()).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn only_the_newest_five_copies_of_a_file_stay() {
+        let root = scratch("prune");
+        let l = bundle(&root);
+        let dir = root.join("data");
+        for n in 1..=7u64 {
+            write_atomic(&dir.join(format!("state.json.conflict-{n}")), b"old").unwrap();
+        }
+        // Not this engine's pattern, or another file's: never touched.
+        for other in [
+            "state.json.conflict-abc",
+            "state.json.conflict-",
+            "state.json.conflict-12x",
+            "state.json.conflicts-1",
+            "state.jsonx.conflict-1",
+            "other.json.conflict-1",
+        ] {
+            write_atomic(&dir.join(other), b"keep").unwrap();
+        }
+        let kept = l
+            .keep_conflicts(
+                &one_file("data/state.json", "mine"),
+                &one_file("data/state.json", "theirs"),
+            )
+            .unwrap();
+        assert_eq!(kept.len(), 1);
+        let left: Vec<String> = copies_of(&dir, "state.json.conflict-")
+            .into_iter()
+            .filter(|n| {
+                let d = &n["state.json.conflict-".len()..];
+                !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit())
+            })
+            .collect();
+        let now = kept[0].file_name().unwrap().to_str().unwrap().to_string();
+        assert_eq!(left.len(), 5, "{left:?}");
+        assert!(left.contains(&now));
+        for n in 4..=7 {
+            assert!(
+                left.contains(&format!("state.json.conflict-{n}")),
+                "{n} stays"
+            );
+        }
+        for n in 1..=3 {
+            assert!(
+                !dir.join(format!("state.json.conflict-{n}")).exists(),
+                "{n} went"
+            );
+        }
+        for other in [
+            "state.json.conflict-abc",
+            "state.json.conflict-",
+            "state.json.conflict-12x",
+            "state.json.conflicts-1",
+            "state.jsonx.conflict-1",
+            "other.json.conflict-1",
+        ] {
+            assert!(dir.join(other).exists(), "{other} untouched");
+        }
     }
 }

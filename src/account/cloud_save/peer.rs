@@ -142,6 +142,7 @@ mod tests {
                 entries: vec!["data/state.json".into(), "data/worlds".into()],
                 one: false,
                 skip: vec!["art".into()],
+                ignore: None,
             },
             further: None,
         }
@@ -239,6 +240,32 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(root.join("data/state.json")).unwrap(),
             "{\"phone\":5}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_device_copy_over_a_stamp_alone_keeps_no_copy() {
+        let root = scratch("stamp");
+        let mut t = target(&root);
+        t.layout.ignore = Some(super::super::files::Ignore {
+            file: "data/state.json".into(),
+            keys: vec!["updated".into()],
+        });
+        std::fs::write(root.join("data/state.json"), r#"{"n":1,"updated":"a"}"#).unwrap();
+        let old = SystemTime::now() - AT_REST - Duration::from_secs(5);
+        std::fs::File::options()
+            .write(true)
+            .open(root.join("data/state.json"))
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        let base = read(&t).await.unwrap().fingerprint;
+        let done = write(&t, &base, &body(r#"{"updated":"b","n":1}"#), true)
+            .await
+            .unwrap();
+        assert!(
+            matches!(done, PeerWrite::Saved { ref conflicts, .. } if conflicts.is_empty()),
+            "{done:?}"
         );
     }
 }

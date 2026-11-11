@@ -190,6 +190,11 @@ fn at_map<'a>(m: &'a Map<String, Value>, path: &str) -> Option<&'a Value> {
 }
 
 impl Rule {
+    /// The save's file this rule reads.
+    pub fn file(&self) -> &str {
+        &self.file
+    }
+
     fn state(&self, files: &Files) -> Option<Map<String, Value>> {
         let bytes = files.get(&self.file)?;
         match serde_json::from_slice(bytes) {
