@@ -271,6 +271,35 @@ wait_engine_version() { # want seconds
   for ((i = 0; i < $2; i += 3)); do [ "$(engine_version)" = "$1" ] && { UPGRADED_AFTER=$i; return 0; }; sleep 3; done
   return 1
 }
+# Bundled skills (shell/src/skill_sync.rs): the new app replaces an older
+# installed skill's code with its bundle's and never touches the skill's state.
+# Planted before install-app.sh: a state file under 灵境's data/, and a comment
+# appended to the baseline's state.mjs, so the check proves a replace even when
+# the baseline already shipped the release's state.mjs.
+SKILL_CODE=scripts/state.mjs
+SKILL_PLANT=data/gate-planted-state.json
+skill_state_plant() {
+  local g="$LG/skills/lingjing"
+  PLANT_SHA=""
+  [ -f "$g/$SKILL_CODE" ] || { info "skills: baseline 灵境" "none installed — the release's sync is a fresh install"; return; }
+  mkdir -p "$g/data"
+  printf '{"gate":"%s","save":"kept byte for byte"}\n' "$(date +%s)-$RANDOM" >"$g/$SKILL_PLANT"
+  PLANT_SHA="$(sha "$g/$SKILL_PLANT")"
+  printf '\n// gate: the baseline copy, changed so only a replace makes it the release'"'"'s\n' >>"$g/$SKILL_CODE"
+  info "skills: baseline 灵境" "$SKILL_CODE $(sha "$g/$SKILL_CODE" | cut -c1-12), marker: $(jq -c '{ref,by,committed}' "$g/.installed" 2>/dev/null || echo none)"
+}
+skill_update_check() {
+  local g="$LG/skills/lingjing" b="/Applications/Linggen.app/Contents/Resources/app-resources/skills/lingjing"
+  local name="app: an installed 灵境 gets the bundle's code" have want
+  if [ ! -f "$b/$SKILL_CODE" ]; then gap "$name" "the release bundle has no lingjing/$SKILL_CODE"; return; fi
+  have="$(sha "$g/$SKILL_CODE")"; want="$(sha "$b/$SKILL_CODE")"
+  [ -n "$have" ] && [ "$have" = "$want" ]
+  check "$name" $? "installed ${have:-none} ≠ bundle $want — marker: $(cat "$g/.installed" 2>/dev/null | head -c 160)" "${want:0:12}, marker $(jq -c '{ref,by}' "$g/.installed" 2>/dev/null)"
+  if [ -z "$PLANT_SHA" ]; then gap "app: 灵境 data/ kept across the app update" "no baseline 灵境 to plant state in"; return; fi
+  [ "$(sha "$g/$SKILL_PLANT")" = "$PLANT_SHA" ]
+  check "app: 灵境 data/ kept across the app update" $? "$SKILL_PLANT is $(sha "$g/$SKILL_PLANT" || echo gone), was $PLANT_SHA"
+}
+
 app_engine_upgrade_check() {
   local name="app: an older engine left running is replaced by the new app" new=/tmp/gate-new-app/Linggen.app old_v new_v
   if [ ! -d "$OLD_APP" ]; then gap "$name" "no older Linggen.app on the baseline"; return; fi
@@ -298,13 +327,16 @@ app_engine_upgrade_check() {
 if [ -n "$APP_VERSION" ]; then
   rm -rf /tmp/gate-old-app; mkdir -p /tmp/gate-old-app
   [ -d /Applications/Linggen.app ] && ditto /Applications/Linggen.app "$OLD_APP"
+  skill_state_plant
   curl -fsSL "$GOOD/install-app.sh" | LINGGEN_RELEASE_BASE="$GOOD" bash -s -- --no-launch >"$OUT/install-app.log" 2>&1
   check "app: install-app.sh over ${PREV_APP:-nothing}" $? "$(tail -3 "$OUT/install-app.log")"
   [ "$(app_version)" = "$APP_VERSION" ]; check "app: Linggen.app is the release" $? "got $(app_version)"
   launchctl setenv LINGGEN_RELEASE_BASE "$GOOD"
   open /Applications/Linggen.app
   engine_health 120; check "app: launches on the old home" $? "no 9527 health 120 s after open"
+  for _ in $(seq 20); do [ "$(jq -r '.by // empty' "$LG/skills/lingjing/.installed" 2>/dev/null)" = app ] && break; sleep 3; done
   sleep 5; quit_app
+  skill_update_check
   app_engine_upgrade_check
   launchctl unsetenv LINGGEN_RELEASE_BASE
   gap "app: in-app updater" "asks through a native confirm dialog (shell/src/main.rs) — not drivable headless"
