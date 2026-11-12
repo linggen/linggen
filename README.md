@@ -57,6 +57,7 @@ Opens the web UI at `http://localhost:9527`.
 - **Apple Shifu** — AI health analyst for your Mac: disk, security, performance, dormant apps, buyer's guide. Recommends; never acts on its own.
 - **DJ** — tell it a vibe and it curates a set, builds your local music library with clean tags, syncs tracks to your phone, and does karaoke with synced, translated lyrics.
 - **Pulse** — GTM brain for solo founders. Reads your configured trends and feeds, then drafts on-voice posts and replies for X and Reddit.
+- **灵境 (Lingjing)** — a cultivation story with ink-wash scenes, card duels and small games. Plays on the Mac and the iPhone; your save syncs through your account.
 - **Games** — Chinese Chess and Gomoku where the model actually plays you, plus Snake, Pong, and Tetris.
 - **Memory** — cross-agent semantic memory via [`ling-mem`](https://github.com/linggen/linggen-memory): the same store reachable from Linggen, Claude Code, or Codex.
 - **Model sharing** — open a room and let friends use your models over P2P WebRTC. No keys for the consumer, no cloud middleman; the owner controls budget and tools.
@@ -162,16 +163,33 @@ your machine; no VPN, no port forwarding.
 
 ---
 
-## Use Linggen from other agents (MCP)
+## Hand work to Linggen from Claude Code or Codex (MCP)
 
-The daemon is an MCP server at `http://127.0.0.1:9527/mcp` — 22 tools in
-four groups: `memory_*` (durable cross-host memory on the ling-mem store),
-`browser_*` (drive one visible tab in your own Chrome, per-site permission
-prompts), `x_*` (structured reads of your logged-in X session), and
-`agent_run` (hand a task to a local Linggen agent and get its answer back).
+The daemon is an MCP server at `http://127.0.0.1:9527/mcp`. Its `agent_run`
+tool lets another agent hand a task to a local Linggen agent:
 
-On Claude Code / Codex, install the `linggen` plugin — it bundles the
-per-turn memory recall hook and installs both binaries on first session
+- **A different model does the work.** The Linggen agent runs on whatever you
+  have set up here: a ChatGPT plan, a local model through Ollama, or an API
+  key. The caller spends tokens on the brief and the answer, not on the file
+  reads and test runs in between.
+- **Writes stay in one folder.** The caller passes a git worktree as
+  `write_dir`. Everything else on disk is read-only to the agent.
+- **The caller answers permission requests.** A request for more goes back
+  over a WebSocket to the agent that called; it answers with `agent_permit`
+  (`allow_once`, `allow_session` or `deny`). No answer in ten minutes is a deny.
+- **Long jobs run in the background.** `agent_run` returns a session id, and
+  one frame arrives when the job ends. `agent_status` has the reply.
+
+The story of using it day to day, with what the second agent got wrong:
+[My Claude Code quota kept running out…](https://linggen.dev/blog/claude-code-hands-work-to-chatgpt-plan)
+
+The same server carries `browser_*` (drive one visible tab in your own Chrome,
+with per-site permission prompts), `x_*` (structured reads of your logged-in X
+session) and the memory upkeep tools. Durable memory itself is served by
+[`ling-mem`](https://github.com/linggen/linggen-memory) on its own MCP server.
+
+On Claude Code / Codex, install the `linggen` plugin. It adds both servers and
+the per-turn memory recall hook, and installs both binaries on first session
 start:
 
 ```bash
