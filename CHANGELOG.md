@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-11-11 — 灵境 on its numbers, and the app keeps your skills current
+
+- **灵境 plays on one set of numbers.** 修为, the layers, 灵石, items and fights
+  now sit on one curve across 81 levels, so a night's 闭关, a small game and a
+  fight each pay what the layer you stand at is worth. Saves move to version 18.
+- **New play in 灵境.** 守山门's 兽潮 nights keep up the pressure with new side
+  cards and beasts; every 秘境 room draws a different game; small games arrive
+  as 观里的事, a place, a person and a reason; 褚先生 passes on a seal a week
+  (师父传印); the sky shows the sun by day and the moon in its true phase, with
+  the 节气 beside the weather in the header.
+- **Save sync trusts the newer rules.** When the Mac and the cloud disagree, the
+  save carried forward by newer rules wins, and the clock's own stamps no longer
+  count as progress, so false conflict copies stop.
+- **A save from a newer Linggen is left alone.** An older build that meets a
+  save from newer rules never writes or migrates it; the page says
+  「存档来自新版 Linggen，更新后继续。」
+- **Linggen.app delivers skill updates.** An app update now gives installed
+  skills the bundle's newer code and never touches their saved data.
+- **An old engine is replaced after an update.** If the engine left running is
+  older than the one in the new app, the app restarts it on the new one.
 - **A session can refuse to switch models.** Each session has a switch (the
   chat's model bar: 出错时自动换模型 / Switch model automatically on errors).
   Off, a failed model call ends the run on that model, naming it and the
@@ -9,6 +29,16 @@
   through `agent_run` start with it off (`model_fallback: true` opts back in),
   and `agent_status` and the wait stream's last frame now report `status`,
   `error` and the `model` that answered.
+- **Agents ask instead of failing.** An `agent_run` session that needs a
+  permission asks its caller, who answers with `agent_permit`; a declined one
+  closes that project for the run, and `agent_stop` ends a run that is waiting.
+  A subagent's model fallback stays its own and no longer changes the main
+  chat's model.
+- **Smaller fixes.** A plan's checklist shows once while it runs; a failed
+  Responses API stream keeps its real reason; `ling restart` works after an app
+  reinstall replaced the binary; launching an app brings its tab and window up;
+  the memory dream settles review items itself and asks you only when it must.
+- Includes 2.0.2 (the engine fetches bun; the app restarts a silent engine).
 
 ## [2.0.2] - 2026-11-11 — 灵境 wakes on a Mac with no JS runtime
 
