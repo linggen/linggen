@@ -199,6 +199,9 @@ claude plugin install linggen@linggen-memory
 
 Without git (a fresh Mac): `curl -fsSL https://linggen.dev/install-plugin.sh | bash`.
 
+Then pick the model the Linggen agent runs on: in Linggen, Settings → Models →
+**Sign in with ChatGPT**, or add an API key, or choose a local model.
+
 Any other MCP client just points at the endpoint. Details in
 [`doc/mcp-spec.md`](doc/mcp-spec.md).
 
