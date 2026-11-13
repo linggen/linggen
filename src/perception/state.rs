@@ -140,7 +140,11 @@ fn disk_lines() -> Vec<String> {
     let pct = (free * 100).checked_div(total).unwrap_or(0);
     // "% free", never a bare "%": half the readers of a disk figure assume the
     // other one, and the agent says out loud whichever it assumed.
-    let mut line = format!("disk: {} free of {} · {pct}% free", gb(free), gb(total));
+    let mut line = format!(
+        "this Mac's disk: {} free of {} · {pct}% free",
+        gb(free),
+        gb(total)
+    );
     if let Some(f) = super::trend::forecast() {
         // Slope, not level — and only when there is a slope worth naming.
         if f.bytes_per_day >= NAMEABLE_BYTES_PER_DAY && f.days_until_full <= NAMEABLE_HORIZON_DAYS {
@@ -475,7 +479,7 @@ mod tests {
         match disk() {
             Some(_) => {
                 assert_eq!(lines.len(), 1);
-                assert!(lines[0].starts_with("disk: "), "{lines:?}");
+                assert!(lines[0].starts_with("this Mac's disk: "), "{lines:?}");
                 assert!(lines[0].contains("free of"), "{lines:?}");
             }
             None => assert!(lines.is_empty()),

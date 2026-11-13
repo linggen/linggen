@@ -29,8 +29,11 @@ pub(super) fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
             agent_id,
             question_id,
             questions,
-            ..
+            session_id,
         } => {
+            if delegated_session(state, session_id.as_deref()) {
+                return; // the external host answers its own prompts
+            }
             if agent_id == YINYUE_AGENT {
                 return; // she's the one asking — not a herald
             }
@@ -223,6 +226,9 @@ pub(super) fn handle_notification(state: &Arc<ServerState>, payload: Notificatio
             agent_id,
             session_id,
         } => {
+            if delegated_session(state, session_id.as_deref()) {
+                return; // the external host receives its own result
+            }
             if agent_id == YINYUE_AGENT {
                 return; // never herald her own turns
             }
@@ -261,6 +267,23 @@ pub(super) fn handle_notification(state: &Arc<ServerState>, payload: Notificatio
             });
         }
     }
+}
+
+/// External delegation sessions belong to the calling host, not the person.
+fn delegated_session(state: &Arc<ServerState>, session_id: Option<&str>) -> bool {
+    let meta = session_id.and_then(|id| {
+        state
+            .manager
+            .global_sessions
+            .get_session_meta(id)
+            .ok()
+            .flatten()
+    });
+    is_delegated(meta.as_ref())
+}
+
+fn is_delegated(meta: Option<&crate::state_fs::sessions::SessionMeta>) -> bool {
+    meta.is_some_and(|meta| meta.creator == "external")
 }
 
 /// The user's most recent message in a session — the topic of the reply
@@ -640,7 +663,25 @@ fn resend_agent_chat(
 
 #[cfg(test)]
 mod native_target_tests {
-    use super::native_target;
+    use super::{is_delegated, native_target};
+    use crate::state_fs::sessions::SessionMeta;
+
+    #[test]
+    fn only_external_sessions_are_delegated() {
+        for creator in ["user", "agent", "skill", "mission"] {
+            let meta = SessionMeta {
+                creator: creator.into(),
+                ..Default::default()
+            };
+            assert!(!is_delegated(Some(&meta)), "{creator}");
+        }
+        let meta = SessionMeta {
+            creator: "external".into(),
+            ..Default::default()
+        };
+        assert!(is_delegated(Some(&meta)));
+        assert!(!is_delegated(None));
+    }
 
     #[test]
     fn agent_chat_skips_a_viewed_claude_session_for_the_agents_own() {
