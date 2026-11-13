@@ -681,7 +681,7 @@ fn still_running_text(port: u16, session: &str) -> String {
         "Still running in the background in Linggen session {session}. Don't poll: \
         watch ws://127.0.0.1:{port}/api/agent/wait?session_id={session} with a background \
         watcher. It sends {{\"type\":\"permission_request\"}} (answer with agent_permit) and \
-        {{\"type\":\"finished\"}} (then read agent_status)."
+        {{\"type\":\"finished\"}} (then read agent_status). Start a new watch for every agent_run, including continued sessions. If it closes or expires without finished, call agent_status once; never poll."
     )
 }
 

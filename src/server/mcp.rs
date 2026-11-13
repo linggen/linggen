@@ -347,7 +347,7 @@ const TOOLS: &[McpTool] = &[
     McpTool {
         name: "agent_run",
         backend: Backend::Agent,
-        description: "Delegate to a local Linggen agent; only its final reply returns, while working steps stay visible in the web UI. A long run continues in the background and returns its session: don't poll — start a background watcher on the ws://…/api/agent/wait URL it gives, which wakes you on {\"type\":\"permission_request\"} (answer with agent_permit) and {\"type\":\"finished\"} (then read agent_status for the reply; status failed carries the error and model).",
+        description: "Delegate to a local Linggen agent; only its final reply returns, while working steps stay visible in the web UI. A long run returns its session: start a new background watcher for every agent_run, including continued sessions; if it closes or expires without finished, call agent_status once, never poll. Watch on the ws://…/api/agent/wait URL it gives, which wakes you on {\"type\":\"permission_request\"} (answer with agent_permit) and {\"type\":\"finished\"} (then read agent_status for the reply; status failed carries the error and model).",
         schema: || json!({
             "type": "object",
             "properties": {
@@ -366,7 +366,7 @@ const TOOLS: &[McpTool] = &[
     },
     McpTool {
         name: "agent_status", backend: Backend::Agent,
-        description: "Get running work, pending permission requests (answer with agent_permit), status (completed, failed, cancelled), error, the model that answered, final reply and denied actions with reasons. Use after a wait-stream event; do not poll.",
+        description: "Get running work, pending permission requests (answer with agent_permit), status (completed, failed, cancelled), error, the model that answered, final reply and denied actions with reasons. Use after finished, or once if a watch closes or expires without finished; do not poll. Start a new watch for every background agent_run, including continued sessions.",
         schema: || json!({"type": "object", "properties": {"session_id": {"type": "string", "description": "Linggen session ID"}}, "required": ["session_id"]}),
         timeout_ms: 0,
     },
@@ -416,48 +416,7 @@ fn initialize_result() -> Value {
             "title": "Linggen",
             "version": env!("CARGO_PKG_VERSION"),
         },
-        "instructions": "Linggen's capability front door. browser_* tools operate the \
-            user's own Chrome through the linggen-browser extension: one visible \
-            controlled tab — work a loop of browser_read_page (returns [nN] refs) then \
-            browser_click / browser_type by ref; mutating actions may pause for the \
-            user's permission prompt in the browser. x_* tools return structured data \
-            from the user's logged-in x.com session. A no_bridge error means the \
-            extension is not connected. Memory is NOT served here — the memory_* \
-            proxies were cut on 2026-07-30, and ling-mem serves those tools on its \
-            own MCP server (default 127.0.0.1:9528/mcp). Add that server alongside \
-            this one for memory_search, memory_add and the rest; it carries the \
-            memory protocol in its own instructions. What stays here is upkeep, \
-            because it is the engine's rather than the store's: \
-            memory_dream_status says whether nightly judgment passes are due \
-            (first_undreamed / undreamed_days; first_unscanned flags a day whose \
-            session logs were never scanned) and whether review items await the \
-            user (open_issues). When days await a dream, offer to run it — /linggen:dream uses YOUR \
-            model, memory_dream_run offloads to the Linggen engine; if a run failed, \
-            show last_run_error to the user. When open_issues > 0, offer \
-            /linggen:solve: read memory_issues, solve each item yourself first — \
-            verify it against the world (rows, git, code, docs) — fix via \
-            memory_add + replace_ids, close via memory_issue_resolve. Ask the \
-            user only when evidence cannot settle it or a user-voice row is \
-            involved: one simple fact question at a time, plain words, with a \
-            recommendation. agent_* delegates to local Linggen agents: for code changes, \
-            first create a git worktree and pass its absolute path as write_dir. \
-            Pass your current permission_mode: plan is read-only, default/acceptEdits \
-            grant edit, auto/bypassPermissions grant admin there; other paths stay read-only. \
-            An action beyond that is never prompted in Linggen: it waits for you. \
-            Give a self-contained brief: files, cause, tests, \
-            and reply short. Only the final reply returns; working steps stay in the web UI. \
-            If still running, do not poll: start a background watcher (a monitor that wakes \
-            you) on ws://127.0.0.1:9527/api/agent/wait?session_id=…. It sends JSON frames: \
-            {\"type\":\"permission_request\",\"request\":{id,tool,summary,level,path}} — answer \
-            each with agent_permit (allow_once, allow_session for that path/folder in this \
-            session only, or deny; unanswered = denied after 10 min) — and last \
-            {\"type\":\"finished\",status,reply,denied,error,model}, then it closes. Use agent_status \
-            for details; read denied for what and why, do the step yourself, or ask for a \
-            new run with a wider write_dir. Follow up \
-            with agent_run(session_id=…), without write_dir, permission_mode or model. \
-            agent_models lists models for new sessions. Review the diff before merging; \
-            then agent_session_close(session_id, remove_worktree=true) removes only a \
-            clean linked worktree whose HEAD is contained in a remote branch."
+        "instructions": "Linggen front door: browser_* controls one visible Chrome tab via linggen-browser; read_page gives refs for click/type. Mutations may require browser permission; no_bridge means disconnected. x_* reads the signed-in X session. Memory tools are on ling-mem at 127.0.0.1:9528/mcp; add it for memory_search, memory_add and its protocol. memory_dream_status shows undreamed days, first_unscanned, open_issues and failures: offer /linggen:dream (your model) or memory_dream_run (Linggen); show last_run_error. If open_issues > 0 offer /linggen:solve: read memory_issues, verify each against rows, git, code and docs, fix using memory_add + replace_ids, close with memory_issue_resolve. Ask only when evidence cannot settle it or a user-voice row is involved: one plain fact question with recommendation. agent_* delegates to local agents. For code changes create a git worktree and pass its absolute path as write_dir and your permission_mode: plan is read-only, default/acceptEdits grant edit, auto/bypassPermissions grant admin there; other paths remain read-only. Actions beyond grants wait for your permission. Give a self-contained brief with files, cause, tests and short reply; only the final reply returns, work appears in the web UI. If still running, do not poll: start a new background watcher on the returned ws://127.0.0.1:9527/api/agent/wait?session_id=… URL for every agent_run, including session_id follow-ups. Answer permission_request with agent_permit (allow_once, allow_session for path/folder in this session, or deny); unanswered requests are denied after 10 minutes. On finished read agent_status; if the watch closes or expires without finished call agent_status once, never poll. Check denied and act yourself or request a wider write_dir. Follow up with agent_run(session_id=…), omitting write_dir, permission_mode and model; agent_models lists models. Review the diff before merging; agent_session_close with remove_worktree=true removes only a clean linked worktree whose HEAD is on a remote branch."
     })
 }
 
@@ -571,15 +530,46 @@ async fn call_tool(deps: &McpDeps<'_>, name: &str, args: Value) -> Result<Value,
             let write_dir = args.get("write_dir").and_then(Value::as_str);
             let session = args.get("session_id").and_then(Value::as_str);
             let result = match name {
-                "agent_status" => super::mcp_agent::status(state, session.unwrap_or_default()).await,
+                "agent_status" => {
+                    super::mcp_agent::status(state, session.unwrap_or_default()).await
+                }
                 "agent_stop" => super::mcp_agent::stop(state, session.unwrap_or_default()).await,
                 "agent_permit" => {
                     let field = |key: &str| args.get(key).and_then(Value::as_str);
-                    super::mcp_agent::permit(state, session.unwrap_or_default(), field("request_id").unwrap_or_default(), field("decision").unwrap_or_default(), field("scope")).await
+                    super::mcp_agent::permit(
+                        state,
+                        session.unwrap_or_default(),
+                        field("request_id").unwrap_or_default(),
+                        field("decision").unwrap_or_default(),
+                        field("scope"),
+                    )
+                    .await
                 }
                 "agent_models" => Ok(super::mcp_agent::models(state).await),
-                "agent_session_close" => super::mcp_agent::close(state, session.unwrap_or_default(), args.get("remove_worktree").and_then(Value::as_bool).unwrap_or(false)).await,
-                _ => super::mcp_agent::run(state, agent, prompt, write_dir, session, args.get("model").and_then(Value::as_str), args.get("permission_mode").and_then(Value::as_str), args.get("host").and_then(Value::as_str), args.get("model_fallback").and_then(Value::as_bool)).await,
+                "agent_session_close" => {
+                    super::mcp_agent::close(
+                        state,
+                        session.unwrap_or_default(),
+                        args.get("remove_worktree")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false),
+                    )
+                    .await
+                }
+                _ => {
+                    super::mcp_agent::run(
+                        state,
+                        agent,
+                        prompt,
+                        write_dir,
+                        session,
+                        args.get("model").and_then(Value::as_str),
+                        args.get("permission_mode").and_then(Value::as_str),
+                        args.get("host").and_then(Value::as_str),
+                        args.get("model_fallback").and_then(Value::as_bool),
+                    )
+                    .await
+                }
             };
             match result {
                 Ok(text) => Ok(tool_content(text, false)),
@@ -835,7 +825,20 @@ mod tests {
         assert_eq!(res["result"]["serverInfo"]["name"], "linggen");
         assert!(res["result"]["capabilities"]["tools"].is_object());
         let instructions = res["result"]["instructions"].as_str().unwrap();
-        for text in ["git worktree", "permission_mode", "do not poll", "agent_session_close", "agent_permit", "permission_request", "finished"] {
+        assert!(
+            instructions.chars().count() <= 2048,
+            "instructions: {} characters",
+            instructions.chars().count()
+        );
+        for text in [
+            "git worktree",
+            "permission_mode",
+            "do not poll",
+            "agent_session_close",
+            "agent_permit",
+            "permission_request",
+            "finished",
+        ] {
             assert!(instructions.contains(text), "missing {text}");
         }
     }
