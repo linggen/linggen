@@ -35,9 +35,9 @@ impl Tool for AgentChatTool {
     }
     fn description(&self) -> &'static str {
         "Send a brief one-way message to another agent (e.g. tell Yinyue something \
-         worth surfacing to the user). Passing on what the user said? Quote their words \
-         verbatim and say whose they are (`Alex asked: “…”`) — never recast them as your \
-         instruction. Fire-and-forget — if you need a reply, use Task instead. You can't \
+         worth surfacing to the user). State facts and whose request it is: say `银月 asks` \
+         for her request; only say the person asked and quote them if they said those words \
+         in this conversation. Never invent their request. Fire-and-forget — if you need a reply, use Task instead. You can't \
          send if you were yourself reached via agent_chat."
     }
     fn tier(&self) -> PermissionMode {
