@@ -120,8 +120,8 @@ export const SessionFallbackToggle: React.FC = () => {
   const session = useSessionStore((s) => s.allSessions.find((item) => item.id === s.activeSessionId));
   if (!sessionId || !session || session.runtime === 'claude_agent_sdk') return null;
   const on = session.model_fallback !== false;
-  const change = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const allowed = event.target.checked;
+  const change = () => {
+    const allowed = !on;
     const update = (item: SessionInfo) => (item.id === sessionId ? { ...item, model_fallback: allowed } : item);
     useSessionStore.setState((s) => ({ allSessions: s.allSessions.map(update), sessions: s.sessions.map(update) }));
     sessionApi.setModelFallback(sessionId, allowed).catch((error) => {
@@ -131,14 +131,17 @@ export const SessionFallbackToggle: React.FC = () => {
     });
   };
   return (
-    <label
-      className="flex items-center gap-1 text-[11px] text-slate-500 dark:text-slate-400 whitespace-nowrap cursor-pointer"
-      onClick={(e) => e.stopPropagation()}
-      title="When the model fails, the run ends on that model instead of switching to another."
+    <button
+      type="button"
+      className={`text-[11px] border rounded px-1.5 py-0.5 font-semibold ${on
+        ? 'border-current bg-white dark:bg-black/30 text-blue-600 dark:text-blue-400'
+        : 'border-slate-200 dark:border-white/10 text-slate-300 dark:text-slate-600'}`}
+      onClick={(e) => { e.stopPropagation(); change(); }}
+      aria-pressed={on}
+      title={on ? 'On: when the model fails, another model answers.' : 'Off: when the model fails, the run ends on that model.'}
     >
-      <input type="checkbox" checked={on} onChange={change} className="accent-blue-500" />
-      <span>Switch model automatically on errors</span>
-    </label>
+      Auto switch
+    </button>
   );
 };
 
