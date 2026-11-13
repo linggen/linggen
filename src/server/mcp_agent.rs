@@ -931,34 +931,93 @@ pub(crate) async fn wait_socket(
     if session_meta(&state, &query.session_id).is_err() {
         return (axum::http::StatusCode::NOT_FOUND, "unknown session").into_response();
     }
-    let mut events = state.events_tx.subscribe();
+    let events = state.events_tx.subscribe();
     ws.on_upgrade(move |mut socket| async move {
         let session = query.session_id.as_str();
-        let mut told = std::collections::HashMap::new();
-        let mut tick = tokio::time::interval(std::time::Duration::from_secs(2));
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let watch = watch_session(session, events, tx, WaitTiming {
+            tick: std::time::Duration::from_secs(2),
+            grace: std::time::Duration::from_secs(2),
+            resend: std::time::Duration::from_secs(60),
+        }, || async {
+            let pending = pending_requests(&state, session).await;
+            let work = super::api::sessions::session_running_work(&state, session).await;
+            (pending, wait_ready(&work, state.manager.has_pending_turn(session)))
+        });
+        tokio::pin!(watch);
+        let mut watching = true;
         let mut ping = tokio::time::interval_at(tokio::time::Instant::now() + std::time::Duration::from_secs(20), std::time::Duration::from_secs(20));
         loop {
-            // Every permission request once — those raised before the
-            // watcher connected too.
-            for frame in new_requests(&pending_requests(&state, session).await, &mut told, session, tokio::time::Instant::now(), std::time::Duration::from_secs(60)) {
-                if socket.send(axum::extract::ws::Message::Text(frame.to_string().into())).await.is_err() { return; }
-            }
-            let work = super::api::sessions::session_running_work(&state, session).await;
-            let ready = wait_ready(&work, state.manager.has_pending_turn(session));
-            if ready {
-                let frame = finished_frame(session, last_run(&state.manager, session), final_reply(session), denials(session));
-                let _ = socket.send(axum::extract::ws::Message::Text(frame.to_string().into())).await;
-                let _ = socket.send(axum::extract::ws::Message::Close(None)).await;
-                break;
-            }
             tokio::select! {
-                _ = tick.tick() => {},
+                biased;
+                frame = rx.recv() => match frame {
+                    Some(WatchFrame::Permission(frame)) => if socket.send(axum::extract::ws::Message::Text(frame.to_string().into())).await.is_err() { break; },
+                    Some(WatchFrame::Finished) => {
+                        let frame = finished_frame(session, last_run(&state.manager, session), final_reply(session), denials(session));
+                        let _ = socket.send(axum::extract::ws::Message::Text(frame.to_string().into())).await;
+                        let _ = socket.send(axum::extract::ws::Message::Close(None)).await;
+                        break;
+                    }
+                    None => break,
+                },
+                _ = &mut watch, if watching => watching = false,
                 _ = ping.tick() => if socket.send(axum::extract::ws::Message::Ping(Default::default())).await.is_err() { break; },
-                event = events.recv() => if matches!(event, Err(tokio::sync::broadcast::error::RecvError::Closed)) { break; },
                 incoming = socket.recv() => if incoming.is_none() || matches!(incoming, Some(Err(_)) | Some(Ok(axum::extract::ws::Message::Close(_)))) { break; },
             }
         }
     })
+}
+
+struct WaitTiming {
+    tick: std::time::Duration,
+    grace: std::time::Duration,
+    resend: std::time::Duration,
+}
+
+enum WatchFrame {
+    Permission(serde_json::Value),
+    Finished,
+}
+
+/// Probe on broadcasts and on a timer: completion requires continuous observed
+/// idleness, so a short gap before a background follow-up is not terminal.
+async fn watch_session<E, P, F>(
+    session: &str,
+    mut events: tokio::sync::broadcast::Receiver<E>,
+    sink: tokio::sync::mpsc::UnboundedSender<WatchFrame>,
+    timing: WaitTiming,
+    mut probe: P,
+) where
+    E: Clone,
+    P: FnMut() -> F,
+    F: std::future::Future<Output = (Vec<serde_json::Value>, bool)>,
+{
+    let mut told = std::collections::HashMap::new();
+    let mut ready_since = None;
+    let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + timing.tick, timing.tick);
+    loop {
+        let (pending, ready) = probe().await;
+        let now = tokio::time::Instant::now();
+        for frame in new_requests(&pending, &mut told, session, now, timing.resend) {
+            if sink.send(WatchFrame::Permission(frame)).is_err() {
+                return;
+            }
+        }
+        if ready {
+            let since = ready_since.get_or_insert(now);
+            if now.duration_since(*since) >= timing.grace {
+                let _ = sink.send(WatchFrame::Finished);
+                return;
+            }
+        } else {
+            ready_since = None;
+        }
+        tokio::select! {
+            _ = tick.tick() => {},
+            event = events.recv() => if matches!(event, Err(tokio::sync::broadcast::error::RecvError::Closed)) { return; },
+            _ = sink.closed() => return,
+        }
+    }
 }
 
 /// Stream event types a watcher matches on.
@@ -1092,6 +1151,110 @@ mod wait_ready_tests {
             &RunningWork::default(),
             manager.has_pending_turn("reserved")
         ));
+    }
+
+    fn watcher(
+        ready: Arc<std::sync::atomic::AtomicBool>,
+        pending: Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
+        manager: Option<Arc<crate::engine::agent::AgentManager>>,
+    ) -> (
+        tokio::sync::broadcast::Sender<()>,
+        tokio::sync::mpsc::UnboundedReceiver<WatchFrame>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let (events, rx) = tokio::sync::broadcast::channel(8);
+        let (tx, frames) = tokio::sync::mpsc::unbounded_channel();
+        let task = tokio::spawn(async move {
+            watch_session(
+                "reserved",
+                rx,
+                tx,
+                WaitTiming {
+                    tick: std::time::Duration::from_millis(20),
+                    grace: std::time::Duration::from_millis(40),
+                    resend: std::time::Duration::from_millis(60),
+                },
+                || {
+                    let rows = pending.lock().unwrap().clone();
+                    let idle = ready.load(std::sync::atomic::Ordering::SeqCst)
+                        && !manager
+                            .as_ref()
+                            .is_some_and(|m| m.has_pending_turn("reserved"));
+                    async move { (rows, idle) }
+                },
+            )
+            .await;
+        });
+        (events, frames, task)
+    }
+
+    #[tokio::test]
+    async fn idle_without_broadcast_finishes_once() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let ready = Arc::new(AtomicBool::new(false));
+        let (_events, mut frames, task) = watcher(ready.clone(), Default::default(), None);
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        ready.store(true, Ordering::SeqCst);
+        assert!(matches!(
+            tokio::time::timeout(std::time::Duration::from_millis(180), frames.recv())
+                .await
+                .unwrap(),
+            Some(WatchFrame::Finished)
+        ));
+        task.await.unwrap();
+        assert!(frames.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn transient_idle_resets_grace() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let ready = Arc::new(AtomicBool::new(true));
+        let (events, mut frames, task) = watcher(ready.clone(), Default::default(), None);
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        ready.store(false, Ordering::SeqCst);
+        events.send(()).unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(90)).await;
+        assert!(frames.try_recv().is_err());
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn pending_before_watch_repeats_until_answered() {
+        let rows = Arc::new(std::sync::Mutex::new(vec![serde_json::json!({"id":"r1"})]));
+        let (events, mut frames, task) = watcher(
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            rows.clone(),
+            None,
+        );
+        for _ in 0..2 {
+            let frame = tokio::time::timeout(std::time::Duration::from_millis(200), frames.recv())
+                .await
+                .unwrap();
+            assert!(
+                matches!(frame, Some(WatchFrame::Permission(value)) if value["request"]["id"] == "r1")
+            );
+        }
+        rows.lock().unwrap().clear();
+        events.send(()).unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert!(frames.try_recv().is_err());
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn registered_unstarted_turn_never_finishes() {
+        let manager = super::permit_tests::manager();
+        let (_, place) =
+            crate::server::chat::helpers::take_turn_place(manager.session_turn("reserved"));
+        let (_events, mut frames, task) = watcher(
+            Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            Default::default(),
+            Some(manager),
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+        assert!(frames.try_recv().is_err());
+        drop(place);
+        task.abort();
     }
 
     #[test]
