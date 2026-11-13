@@ -423,7 +423,9 @@ pub(super) async fn wake_and_speak(
     let reply = match reach {
         Reach::Open => run_yinyue_turn(&state, kickoff, trigger_source).await,
         Reach::Sealed => run_moment_turn(&state, (kickoff, table), trigger_source, language).await,
-        Reach::SpeakOnly => super::turn::run_home(&state, kickoff, trigger_source, reach, language).await,
+        Reach::SpeakOnly => {
+            super::turn::run_home(&state, kickoff, trigger_source, reach, language).await
+        }
     }?;
     let Some(line) = spoken_line(&reply) else {
         tracing::info!("[yinyue-watch] Yinyue chose silence");
@@ -454,28 +456,34 @@ pub(super) async fn deliver_to_chat_agent(
     let mut candidates = Vec::new();
     if let Some(skill) = app.as_deref() {
         if let Ok(sessions) = state.manager.global_sessions.list_sessions() {
-            let mut sessions: Vec<_> = sessions.into_iter().filter(|m| m.skill.as_deref() == Some(skill)).collect();
+            let mut sessions: Vec<_> = sessions
+                .into_iter()
+                .filter(|m| m.skill.as_deref() == Some(skill))
+                .collect();
             sessions.sort_by_key(|m| std::cmp::Reverse(m.created_at));
-            candidates.extend(sessions.into_iter().map(|m| (m.id, std::path::PathBuf::from(m.cwd))));
+            candidates.extend(
+                sessions
+                    .into_iter()
+                    .map(|m| (m.id, std::path::PathBuf::from(m.cwd))),
+            );
         }
     } else {
         candidates.extend(focused_session(&state));
         candidates.extend(latest_session_for_agent(&state, &to));
     }
-    let mut selected = None;
-    for (sid, root) in candidates {
-        if !handoff_eligible(&state, &sid) { continue; }
-        if let Ok(held) = state.manager.session_turn(&sid).try_lock_owned() {
-            if handoff_eligible(&state, &sid) {
-                selected = Some((sid, root, held));
-                break;
-            }
+    let selected = select_handoff(candidates, |sid| {
+        if !handoff_eligible(&state, sid) {
+            return None;
         }
-    }
+        let held = state.manager.session_turn(sid).try_lock_owned().ok()?;
+        handoff_eligible(&state, sid).then_some(held)
+    });
     let (session_id, root, _turn) = match selected {
         Some(selected) => selected,
         None => {
-            let Some((sid, root)) = new_handoff_session(&state, app.as_deref(), &to).await else { return; };
+            let Some((sid, root)) = new_handoff_session(&state, app.as_deref(), &to).await else {
+                return;
+            };
             let held = state.manager.session_turn(&sid).lock_owned().await;
             (sid, root, held)
         }
@@ -510,6 +518,12 @@ pub(super) async fn deliver_to_chat_agent(
         sender: Some(&from),
     };
     let again = || resend_agent_chat(state.clone(), (&from, &to, &message), app.clone());
+    // admit can capture the message in a frozen restart plan, so validate
+    // before calling it, while this session's turn place is still held.
+    if !handoff_eligible(&state, &session_id) {
+        tracing::warn!("[agent-chat] session became ineligible at admission");
+        return;
+    }
     let gate = match crate::server::admission::admit(&state.admission, incoming, again).await {
         Ok(Some(gate)) => gate,
         Ok(None) => return,
@@ -593,30 +607,57 @@ pub(super) fn latest_session_for_agent(
     Some((session_id, std::path::PathBuf::from(repo_path)))
 }
 
-/// Resolve the session bound to an app/skill — the latest existing one (so it
-/// lands in the open app tab when there is one), else a freshly minted
-/// skill-bound session so the request still runs with that app's tools.
+// The caller supplies candidates in preference order and reserves their turn
+// place while checking eligibility. None means the caller creates its own.
+fn select_handoff<T>(
+    candidates: Vec<(String, std::path::PathBuf)>,
+    mut reserve: impl FnMut(&str) -> Option<T>,
+) -> Option<(String, std::path::PathBuf, T)> {
+    candidates
+        .into_iter()
+        .find_map(|(id, root)| reserve(&id).map(|held| (id, root, held)))
+}
+
 fn handoff_eligible(state: &Arc<ServerState>, session_id: &str) -> bool {
-    state.manager.global_sessions.get_session_meta(session_id).ok().flatten()
-        .is_some_and(|meta| meta.creator != "external" && meta.runtime.is_linggen())
+    state
+        .manager
+        .global_sessions
+        .get_session_meta(session_id)
+        .ok()
+        .flatten()
+        .is_some_and(|meta| eligible_meta(&meta))
+}
+
+fn eligible_meta(meta: &crate::state_fs::sessions::SessionMeta) -> bool {
+    meta.creator != "external" && meta.runtime.is_linggen()
 }
 
 async fn new_handoff_session(
-    state: &Arc<ServerState>, skill: Option<&str>, agent: &str,
+    state: &Arc<ServerState>,
+    skill: Option<&str>,
+    agent: &str,
 ) -> Option<(String, std::path::PathBuf)> {
     let now = crate::util::now_ts_secs();
     let sid = format!("sess-handoff-{}", uuid::Uuid::new_v4());
-    let found = match skill { Some(name) => state.manager.skills.get_skill(name).await, None => None };
+    let found = match skill {
+        Some(name) => state.manager.skills.get_skill(name).await,
+        None => None,
+    };
     let declared = crate::server::chat::members::default_members(found.as_ref());
     let root = match &found {
         Some(s) => s.working_dir(),
         None => std::path::PathBuf::from(crate::state_fs::sessions::fallback_cwd(skill)),
     };
     let meta = crate::state_fs::sessions::SessionMeta {
-        id: sid.clone(), title: skill.unwrap_or(agent).to_string(), created_at: now,
-        skill: skill.map(str::to_string), creator: "agent".to_string(),
-        cwd: root.to_string_lossy().to_string(), title_locked: true,
-        agents: declared, ..Default::default()
+        id: sid.clone(),
+        title: skill.unwrap_or(agent).to_string(),
+        created_at: now,
+        skill: skill.map(str::to_string),
+        creator: "agent".to_string(),
+        cwd: root.to_string_lossy().to_string(),
+        title_locked: true,
+        agents: declared,
+        ..Default::default()
     };
     if let Err(e) = state.manager.global_sessions.add_session(&meta) {
         tracing::warn!("[agent-chat] could not create handoff session: {e}");
@@ -642,8 +683,86 @@ fn resend_agent_chat(
 
 #[cfg(test)]
 mod native_target_tests {
-    use super::is_delegated;
+    use super::{eligible_meta, is_delegated, select_handoff};
     use crate::state_fs::sessions::SessionMeta;
+    use std::path::PathBuf;
+
+    struct Candidate {
+        meta: SessionMeta,
+        busy: bool,
+        messages: Vec<String>,
+    }
+
+    fn candidate(id: &str, creator: &str, busy: bool) -> Candidate {
+        Candidate {
+            meta: SessionMeta {
+                id: id.into(),
+                creator: creator.into(),
+                ..Default::default()
+            },
+            busy,
+            messages: Vec::new(),
+        }
+    }
+
+    fn route(candidates: &mut [Candidate]) -> String {
+        let choices = candidates
+            .iter()
+            .map(|c| (c.meta.id.clone(), PathBuf::new()))
+            .collect();
+        let selected = select_handoff(choices, |id| {
+            let c = candidates.iter().find(|c| c.meta.id == id).unwrap();
+            (eligible_meta(&c.meta) && !c.busy).then_some(())
+        });
+        let id = selected
+            .map(|(id, _, ())| id)
+            .unwrap_or_else(|| "new-own".into());
+        if let Some(c) = candidates.iter_mut().find(|c| c.meta.id == id) {
+            c.messages.push("handoff".into());
+        }
+        id
+    }
+
+    #[test]
+    fn no_app_external_only_creates_own_session() {
+        let mut sessions = [candidate("external", "external", false)];
+        assert_eq!(route(&mut sessions), "new-own");
+        assert!(sessions[0].messages.is_empty());
+    }
+
+    #[test]
+    fn no_app_own_idle_session_is_chosen() {
+        let mut sessions = [candidate("own", "user", false)];
+        assert_eq!(route(&mut sessions), "own");
+        assert_eq!(sessions[0].messages, ["handoff"]);
+    }
+
+    #[test]
+    fn app_newest_external_session_is_not_reused() {
+        let mut sessions = [
+            candidate("newest", "external", false),
+            candidate("older", "skill", false),
+        ];
+        assert_eq!(route(&mut sessions), "older");
+        assert!(sessions[0].messages.is_empty());
+    }
+
+    #[test]
+    fn external_focused_session_is_skipped() {
+        let mut sessions = [
+            candidate("focused", "external", false),
+            candidate("latest", "user", false),
+        ];
+        assert_eq!(route(&mut sessions), "latest");
+        assert!(sessions[0].messages.is_empty());
+    }
+
+    #[test]
+    fn another_owners_busy_latest_session_is_skipped() {
+        let mut sessions = [candidate("latest", "user", true)];
+        assert_eq!(route(&mut sessions), "new-own");
+        assert!(sessions[0].messages.is_empty());
+    }
 
     #[test]
     fn only_external_sessions_are_delegated() {
@@ -661,5 +780,4 @@ mod native_target_tests {
         assert!(is_delegated(Some(&meta)));
         assert!(!is_delegated(None));
     }
-
 }
