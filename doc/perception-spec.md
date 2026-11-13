@@ -2,6 +2,9 @@
 
 **Status: built on both hosts** — engine (`src/perception/`) and phone
 (`lib/services/perception/`). One condition ships enabled: storage filling.
+**Redesigned 2026-11-13, not built:** the log is kept, not swept (§7); a
+monthly rollup and a filtered query (§3); skills declare their world line (§2)
+and the verbs they log (§3); each device's days are mirrored to the other (§6).
 
 What a resident agent knows about the world it lives in, without being told.
 
@@ -21,7 +24,7 @@ Perception is that world, in three parts that cost three different amounts.
 |---|---|---|---|
 | **State** | What is true now | Every turn | Recomputed, never stored |
 | **The doorbell** | Has anything happened | Every turn, three lines | Derived from the log |
-| **The log** | What changed, and who did it | Only when read | A file on the device |
+| **The log** | What changed, and who did it | Only when read | Files on the device, kept |
 
 The separation is the design. State is small and always current, so it can ride
 every turn. History is large and grows, so it must never ride a turn uninvited —
@@ -65,6 +68,25 @@ The phone's `ReadoutPublisher` is live, so it is read as it stands.
 **Consequence.** With state in hand, an agent stops asserting conditions it has
 not checked. "Your Mac is asleep" becomes a reading rather than a guess.
 
+### One line per app, declared by the skill
+
+Every agent turn, wherever it runs, carries one line per installed app — that
+is how Ling and Yinyue know the whole of Linggen without carrying any app's
+conversation. The engine names no app: each skill declares where its line comes
+from (a file and the fields to read, the same data its page shows), and the
+engine renders it. A line is a reading only — facts, never a suggestion; what
+to say about it is the agent's.
+
+```
+dj        23 songs · playing 李香兰
+lingjing  往柳湾 · 第三回 · 2 daily tasks left
+health    6,200 steps today · last workout yesterday
+cfo       1 alert
+```
+
+Budget: a few hundred tokens for all apps together. An app whose line would be
+longer is saying too much; the detail belongs to its own tools.
+
 ---
 
 ## 3. The activity log — what changed
@@ -83,9 +105,12 @@ because two schemas for one idea fork on contact.
   the family/multi-user design already calls for; it is the same field, not a
   second one. Optional: a file is one host's, so an absent `device` means the
   host whose file it is.
-- `app` — `dj`, `photos`, `cfo`, `shifu`, `system`.
-- `verb` — a short closed-set slug: `delete`, `add`, `edit`, `sync`, `backup`,
-  `clean`, `import`, `pair`, `connect`, `disconnect`, `restart`.
+- `app` — `dj`, `photos`, `cfo`, `shifu`, `health`, `lingjing`, `system`.
+- `verb` — a short slug from a closed set. The engine owns its own (`pair`,
+  `connect`, `disconnect`, `restart`); every other verb is declared by the app
+  that writes it, in its skill (DJ `download`, `delete`; Health `workout`;
+  灵境 `chapter_done`; CFO `import`). A verb no skill declared is refused at the
+  door, so the set stays closed without the engine naming an app.
 - `object` — what it happened to, in the user's terms. A song title, not a path.
 - `detail` — optional, small, structured.
 
@@ -93,7 +118,8 @@ because two schemas for one idea fork on contact.
 
 An entry records **a change to the world**. Not a glance at it.
 
-- Yes: deleted a song, edited a playlist, backed up 200 photos, imported a
+- Yes: deleted a song, downloaded three Cantonese songs, edited a playlist,
+  finished a workout, closed a 回 in 灵境, backed up 200 photos, imported a
   statement, freed 40 GB, paired a device, lost the route to the Mac.
 - No: scrolled the library, opened a tab, played/paused (that is state — what is
   playing now — not history).
@@ -127,6 +153,30 @@ failed while the user was away. Both are needed and they are not the same fact.
 
 - Phone: the app's documents directory, beside the app data it describes.
 - Mac: `~/.linggen/activity/`, one file per day.
+- Beside the days, `rollup/YYYY-MM.jsonl`: one line per day — counts per app and
+  verb, and the day's top few objects. Written mechanically at rotation (§7), no
+  model involved.
+
+Files, not a database. The date is the index: a question about a span opens
+only that span's days, and a question about months or years reads the rollup.
+Measured 2026-11-13 on the Mac (full JSON parse of every line): a year at 200
+events a day — 73k rows, 10 MB — counts by month in 56 ms, finds a text match in
+8 ms, reads a week in 1 ms. Five years at 1,000 a day (1.8M rows) takes 1.2 s
+for the full count, which is what the rollup is for. Real days carry tens of
+events, not hundreds. The phone was not measured; expect a few times slower.
+
+The move to SQLite comes when a question needs joins across months, ranked
+full-text search, or a full scan the user can feel in a turn — a few hundred
+thousand rows. Same record shape, imported from the files in one pass. Never
+the memory store: Lance is built for vector search, versions every small
+append, and holds who the person is — not what happened.
+
+### Reading it
+
+`recent_activity` is the one door, with filters: `app`, `verb`, `since`,
+`until`, `text` (a substring of `object`), `limit`, and `rollup: true` for the
+per-day counts over a span instead of the entries. Both devices' entries come
+back, each under its device's name. Plain lines, newest first.
 
 ### Who writes it
 
@@ -135,7 +185,12 @@ Everything else is the app's own act, so the app says so — the phone's service
 call the log directly, and anything on the Mac with no way into the engine's
 memory (skills, app pages, scripts) posts to `POST /api/activity`. The engine
 names no app there; it takes the caller's word for what it is, exactly as
-`/api/topic/publish` does.
+`/api/topic/publish` does, and checks only that the verb is one the app's
+skill declared.
+
+As of 2026-11-13 only the engine writes: three days of the Mac's log held 65
+entries, every one `system connect/disconnect`. The apps writing their own acts
+is what makes the rest of this section worth having.
 
 That settles the Mac's `backup-log.jsonl`, which is the same idea in one lane:
 it is neither migrated nor read in place. It stays the Media pane's detailed
@@ -231,6 +286,16 @@ count means nothing to a reader who is not the one who last looked.
 A host that cannot be reached simply contributes nothing. Its absence is itself
 a state line, and its departure is a log entry.
 
+**History is mirrored by day, one writer per file.** The retained topic carries
+a dozen recent lines — enough for "what just happened over there", not for "how
+many workouts on my phone last month". So when the two are connected, each
+copies the other's finished days (and the rollup) into
+`activity/devices/<device>/`, read-only, the same file names. Nothing is
+reconciled: every file has exactly one writer, the device it is about, and a
+day is copied whole once it is closed; today's comes in on the next connect
+after it is. A question about a span then reads both devices' days locally,
+with no wire in the turn, and says how fresh the other's are.
+
 **A newly arrived device has heard nothing.** A publisher that skips an
 unchanged reading is measuring "unchanged" against a reader that may have just
 connected, so the set of present devices changing is itself a change: the next
@@ -252,22 +317,28 @@ to be hostile to end a bullet early and start reading as an instruction.
 The log rotates daily. Rotation is one moment with two jobs:
 
 1. **A state sample** — the day's numbers appended to the trend series (§5).
-2. **The sweep.** A day that falls out of the window is deleted. Activities
-   never become memory: what the person does is perceived live, for the last
-   three days only, and nothing of it is written to `ling-mem`.
+2. **The rollup** — the closed day's counts appended to its month's file (§3).
 
-   Days are already remembered by the nightly dream from what the person said.
-   A digest written when a day aged out arrived days after that dream, re-opened
-   a dreamed day, and was never once promoted — so there is none.
+**Nothing is swept.** The log is the record of what the person did in Linggen
+— a workout, three songs, a 回 closed — and a question about last spring is as
+fair as one about this morning. It costs a few MB a year. The person clears it
+in Settings, all of it or before a date; nothing else deletes it. (Until
+2026-11-13 the log kept three days and swept the rest; that answered "what just
+happened" and nothing longer.)
 
-**Sweeping is not a side effect of reading.** Rotation is the only sweeper.
-Reading the log is what starts it, so a log that swept on read would make the
-window depend on whoever opened it first.
+**The doorbell stays recent.** "Since you last looked" and its latest line read
+the last few days only. Keeping the log is about what can be asked, never about
+what rides a turn.
+
+**Activities never become memory — memory reads them.** The log is what
+happened; memory is what it means. No entry, digest or rollup is ever copied
+into `ling-mem`. The nightly dream may read the log as evidence — and what it
+writes is the pattern, judged like any other: "into Cantonese songs lately",
+"runs twice a week", never "downloaded 千千阙歌 on 11-12". (A digest written as
+days aged out was tried, re-opened dreamed days, and was never once promoted;
+reading, not copying, is the lesson kept from it.)
 
 Nothing is uploaded (§8).
-
-Local retention is a few days, not one — perception wants "recent", and at 11pm
-a one-day window holds almost nothing.
 
 ---
 
@@ -282,7 +353,9 @@ records `screen_view` and `tap` with names only, capped at 64 characters and
 validated server-side so content cannot travel. Perception adds nothing to it and
 takes nothing from it. The two never meet.
 
-So rotation (§7) has no upload step. A day is sampled for trends and swept.
+So rotation (§7) has no upload step. A day is sampled for trends and rolled up,
+and stays on the device. The mirror (§6) is between the person's own devices,
+over their own paired channel; it is not "leaving".
 
 ---
 
@@ -299,6 +372,10 @@ Settled at build time:
 
 Open:
 
+- **Files until they hurt** (§3) — the SQLite threshold is a measurement, not
+  a date.
+- **Which verbs each app logs first.** DJ `download`/`delete`, Health
+  `workout`, 灵境 `chapter_done`, CFO `import` are the proposal.
 - The Mac sweeps its conditions on Yinyue's ambient glance and the phone on
   resume, because both are moments she could speak anyway. Neither host notices
   a crossing while nobody is there to be told — right for a companion, wrong the
@@ -307,7 +384,7 @@ Open:
 ---
 
 Related: [memory-spec](memory-spec.md) (where durable facts live — never
-activities),
+activities; the dream reads them as evidence, §7),
 [yinyue-companion-spec](yinyue-companion-spec.md) (the resident, its gates, and
 what it does with a notice), [app-action-spec](app-action-spec.md) (the verbs a
 noticing can offer), [network-spec](network-spec.md) (how a host reads the
