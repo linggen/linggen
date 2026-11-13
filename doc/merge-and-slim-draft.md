@@ -37,9 +37,12 @@ The binaries' weight is code: candle, lance/arrow, fastembed.
 2. **灵境 art, ~180 MB → CF R2**, downloaded in the background per world or
    chapter. The first chapter's art stays in the package so play starts
    offline at once.
-3. **Yinyue's model + animations, ~60 MB** → downloaded when the user first
-   meets her. She is already hidden until met (`met_when`), so that is the
-   natural moment.
+3. **Yinyue's model + animations, ~60 MB** → downloaded **in the background
+   right after first launch**, never at the moment she is met. Hanli
+   2026-11-13: 「yinyue的模型, 动画要在第一次启动后下载, 不能遇上了才开始下载,
+   让用户等.」 Meeting her must never wait on a download. (Claude had first
+   proposed "when first met"; dropped.) If the download has not finished by
+   then — no network — the meeting still happens; she appears once it lands.
 4. **Merging the binaries** — both carry tokio, candle (fastembed's qwen3 and
    Kokoro TTS) and the HTTP/MCP stack. Estimate: merged ≈ 170–190 MB instead of
    133 + 114. An estimate; a test build gives the real number.
