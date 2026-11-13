@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-11-13 — 灵境: cards worth collecting, and 灵石 with a use
+
+- **Cards have a 品 and a frame.** Every card wears the frame of its grade
+  (凡, 银, 金, 宝石, 钻石), read off where the card is found, and the 卡册 beside
+  the 牌组 shows what you hold and what is still out there.
+- **New card mechanics in 斗法.** Shield, poison, laid talismans (伏符) and
+  root skills (灵根术) play in fights, and each card's face says what it does.
+- **银月 coaches a lost duel.** After a loss she names the move that would
+  have won and the lesson of the fight; after losses in a row she lends her own
+  cards into your opening hand. A 秘境 boss can be fought again once.
+- **灵石 has a use.** 闭关 can burn 灵石 in a 聚灵阵 to gather faster, with a
+  preview of what each choice pays; a 秘境 run costs 体力 at the door instead of
+  a 秘境令; the 饭桶 eats 炉炭 from the pill shelves. 修为 stops at the cap and
+  the rest is paid as 灵石. Saves move to version 19.
+- **The day's work is easier to read.** The tray shows three rows and one
+  goal, with 全部 for the rest; daily chores rotate; the gain float names the
+  board that paid it; story prose gives pinyin for creatures out of a classic.
+- **Hand seals hold through a flicker.** A seal survives a brief loss of
+  recognition, and on a narrow screen the seal helper floats over the board.
+- **银月 only speaks in a quiet moment.** A quiet glance may talk and look; it
+  never starts work, never hands off into a session an agent or a person is
+  using, and never claims you asked.
+- **`agent_run` waits properly.** The wait stream stays open through short
+  idle gaps, a finished run always wakes its caller, a permission request is
+  delivered again to a new watcher, and a run that is just starting no longer
+  looks finished.
+- **Cloud save knows the newest rules it may hold.** A device declares the
+  newest save version it plays, and a copy waits by progress, not by file time.
+- **Smaller fixes.** Mission and skill sessions stay under Active for a day
+  after they finish; the model bar's auto-switch is a pill like the others;
+  the Mac's disk is named in what 银月 knows of right now.
+
 ## [2.1.0] - 2026-11-11 — 灵境 on its numbers, and the app keeps your skills current
 
 - **灵境 plays on one set of numbers.** 修为, the layers, 灵石, items and fights
