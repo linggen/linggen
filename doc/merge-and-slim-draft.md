@@ -48,6 +48,34 @@ After 1–3: a download around 80–100 MB, or ~150–200 MB with the merged bin
 everything heavy fetched in the background. The first-launch download needs an
 offline fallback and to work from China (the 1.7.0 China-ready install lesson).
 
+### Where downloads come from today, and what goes on CF
+
+Hanli: 「第一次启动时下载的模型和权重是从哪里下载的? 我们应该发布到CF上吗?」
+
+Each is fetched when its feature is first used, not at first launch:
+
+| Model | Size | Source today |
+|---|---|---|
+| Qwen3-Embedding-0.6B (ling-mem) | ~1.2 GB | huggingface.co → ModelScope (`linggen-memory/src/embed/model_fetch.rs`), SHA-256 pinned |
+| Qwen3-TTS, Qwen3-ASR, FLUX.2 klein 4B (engine, MLX) | 1.6–4.3 GB each | huggingface.co → hf-mirror.com (`linggen/src/hf_mirror.rs`; a user `HF_ENDPOINT` wins); **not pinned** |
+| Kokoro voices | 1 MB | Hugging Face |
+| engine, skills, ling-mem binaries | — | GitHub releases → linggen.dev `/dl` (CF) |
+
+Claude's recommendation:
+
+- **Models stay on Hugging Face as the source.** Free, official, upstream owns
+  updates and licences; China is already covered by ModelScope and hf-mirror,
+  and CF is itself patchy inside China.
+- **One exception: the embedding model gets linggen.dev R2 as a last
+  fallback**, under the same pins — memory is dead without it, while voice,
+  ASR and pictures are optional features.
+- **Our own assets must go on R2** (灵境 art, Yinyue's model + animations) — no
+  one else hosts them — each file SHA-256 pinned.
+- **Pin TTS, ASR and FLUX** (hashes, or at least an HF revision): hf-mirror.com
+  is a third party and today could hand over altered files unnoticed.
+- **Check FLUX.2 klein's licence** before ever hosting it ourselves; Qwen3 and
+  Kokoro are Apache-2.0.
+
 ## 4. Merging: for, and the two constraints
 
 For: one process, one port, no cross-process calls, one version and one
