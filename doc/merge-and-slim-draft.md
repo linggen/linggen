@@ -37,6 +37,18 @@ The binaries' weight is code: candle, lance/arrow, fastembed.
 2. **灵境 art, ~180 MB → CF R2**, downloaded in the background per world or
    chapter. The first chapter's art stays in the package so play starts
    offline at once.
+   How big the first chapter is (estimated 2026-11-13 by matching art file
+   names against the text of `chapters/00-prologue` + `00-waimen`; art is
+   grouped by kind, not chapter): **20.6 MB named** (200 files — places 9.5,
+   games 3.8, plates 2.0, people 1.7) **+ ~24 MB shared by every chapter**
+   (cards, items, map, 节气, festivals, creatures) **≈ 45 MB** of the 144 MB of
+   art; story text 1.7 MB. The other 43 MB of `skills/lingjing` is code:
+   `vendor/mediapipe` 19 MB (结印 hand tracking — only when its camera opens, a
+   candidate for the background download too), `games` 19 MB, Phaser 1 MB.
+   灵境 in the package: **≈ 90 MB** (≈ 70 MB without mediapipe), from 209 MB.
+   A lower bound — some art is picked at runtime from shared data; confirm by
+   running the play bot through 序章 + 第一章 with only that art present and
+   downloads blocked.
 3. **Yinyue's model + animations, ~60 MB** → downloaded **in the background
    right after first launch**, never at the moment she is met. Hanli
    2026-11-13: 「yinyue的模型, 动画要在第一次启动后下载, 不能遇上了才开始下载,
