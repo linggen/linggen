@@ -51,6 +51,8 @@ pub(super) enum Reach {
     /// (2026-09-24: an idle moment's turn relayed its kickoff to Ling, which
     /// started her loop in the Lingjing chat).
     Sealed,
+    /// A quiet glance only reads proven read-only senses.
+    SpeakOnly,
 }
 
 /// The tools a sealed turn withholds: the ones that reach another agent.
@@ -61,11 +63,12 @@ pub(super) fn withheld_for(reach: Reach) -> std::collections::HashSet<String> {
     match reach {
         Reach::Open => Default::default(),
         Reach::Sealed => SEALED_WITHHOLDS.iter().map(|t| t.to_string()).collect(),
+        Reach::SpeakOnly => Default::default(),
     }
 }
 
 /// Her turn on her own rolling thread, with the given reach.
-async fn run_home(
+pub(super) async fn run_home(
     state: &Arc<ServerState>,
     task: String,
     trigger_source: &str,
@@ -377,6 +380,8 @@ fn ready_for_turn(
 ) -> crate::engine::session_policy::SessionPolicy {
     engine.set_parent_agent(None);
     engine.withheld_tools = withheld_for(turn.reach);
+    engine.turn_tool_allowlist = (turn.reach == Reach::SpeakOnly)
+        .then(|| ["sense", "recent_activity"].into_iter().map(String::from).collect());
     // Per turn, like the tools: a moment's language never outlives it.
     engine.turn_language = turn.language.clone();
     // Clear so we read THIS turn's final line — the engine is reused across
@@ -437,6 +442,22 @@ mod tests {
     fn a_sealed_turn_withholds_agent_chat_and_an_open_one_nothing() {
         assert!(withheld_for(Reach::Sealed).contains("agent_chat"));
         assert!(withheld_for(Reach::Open).is_empty());
+    }
+
+    #[test]
+    fn quiet_turn_classifies_declared_tools_and_open_turn_restores_them() {
+        let mut engine = her_engine();
+        let quiet = Turn { reach: Reach::SpeakOnly, ..turn(true) };
+        ready_for_turn(&mut engine, &quiet, &Default::default());
+        let (spec, _) = crate::extensions::agents::parse_agent_markdown(include_str!("../../../agents/yinyue.md")).unwrap();
+        let classified = ["mcp__memory", "WebSearch", "WebFetch", "Express", "Voice", "sense", "recent_activity", "answer_prompt", "agent_chat", "AppTool"];
+        for tool in &spec.tools {
+            assert!(classified.contains(&tool.as_str()), "classify new tool: {tool}");
+            assert_eq!(!engine.is_withheld(tool), ["sense", "recent_activity"].contains(&tool.as_str()), "{tool}");
+        }
+        for tool in ["agent_chat", "AppTool", "Write", "mcp__memory__memory_add"] { assert!(engine.is_withheld(tool)); }
+        ready_for_turn(&mut engine, &Turn { reach: Reach::Open, ..turn(true) }, &Default::default());
+        for tool in ["agent_chat", "AppTool"] { assert!(!engine.is_withheld(tool)); }
     }
 
     fn her_engine() -> crate::engine::AgentEngine {

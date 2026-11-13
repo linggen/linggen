@@ -423,6 +423,7 @@ pub(super) async fn wake_and_speak(
     let reply = match reach {
         Reach::Open => run_yinyue_turn(&state, kickoff, trigger_source).await,
         Reach::Sealed => run_moment_turn(&state, (kickoff, table), trigger_source, language).await,
+        Reach::SpeakOnly => super::turn::run_home(&state, kickoff, trigger_source, reach, language).await,
     }?;
     let Some(line) = spoken_line(&reply) else {
         tracing::info!("[yinyue-watch] Yinyue chose silence");

@@ -1302,7 +1302,8 @@ impl AgentEngine {
     /// server's (`mcp__memory`) — is withheld from this turn.
     pub(crate) fn is_withheld(&self, tool: &str) -> bool {
         let name = crate::engine::tools::canonical_tool_name(tool).unwrap_or(tool);
-        self.withheld_tools
+        self.turn_tool_allowlist.as_ref().is_some_and(|allowed| !allowed.contains(name))
+            || self.withheld_tools
             .iter()
             .any(|entry| crate::engine::tool_scope::entry_covers(entry, name))
     }

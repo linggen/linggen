@@ -417,6 +417,8 @@ pub struct AgentEngine {
     /// companion woken by an app moment speaks its own line and reaches no
     /// other agent); empty for an ordinary turn.
     pub withheld_tools: std::collections::HashSet<String>,
+    /// Exact tools permitted on this turn, if restricted.
+    pub turn_tool_allowlist: Option<std::collections::HashSet<String>>,
     /// The language a turn the person did not type answers in, when its caller
     /// knows it — an app moment that names its own (`/api/yinyue/event` `lang`).
     /// Set per turn by whoever drives it; `None` is the Linggen language.
@@ -671,6 +673,7 @@ impl AgentEngine {
             session_tools: None,
             skill_bound: false,
             withheld_tools: Default::default(),
+            turn_tool_allowlist: None,
             turn_language: None,
             prompt_profile: super::prompt::profile::PromptProfile::default(),
             session_dir: None,
@@ -839,6 +842,7 @@ impl AgentEngine {
     /// answered in Chinese after a Chinese moment).
     pub(crate) fn chat_turn_begins(&mut self) {
         self.withheld_tools.clear();
+        self.turn_tool_allowlist = None;
         self.last_assistant_text = None;
         self.turn_language = None;
     }

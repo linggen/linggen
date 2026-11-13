@@ -2,6 +2,7 @@
 //! now and then, says one small unprompted thing. Mostly she stays quiet.
 
 use super::*;
+use super::triggers::wake_and_speak;
 
 /// Base wake interval — she wakes *occasionally*, not every few minutes.
 pub(super) const AMBIENT_BASE_SECS: u64 = 1800; // ~30 min
@@ -47,7 +48,7 @@ pub(super) async fn ambient_glance(state: &Arc<ServerState>) {
         // The re-arm starts only if she actually said it. A SILENT reply is
         // her judging the moment, not the user being told — and this condition
         // fires two days before the disk is full.
-        if wake_herald(state.clone(), kickoff, "neutral")
+        if wake_and_speak(state.clone(), (kickoff, None), "neutral", "timer", Reach::SpeakOnly, None)
             .await
             .is_some()
         {
@@ -61,7 +62,7 @@ pub(super) async fn ambient_glance(state: &Arc<ServerState>) {
         gone, the quiet, your own mood — say ONE short line in your voice, spoken aloud, plain \
         prose. This is just you being present, never a report: never narrate their work or what \
         an agent did. If they're heads-down working, let them be. Don't repeat what you said last \
-        time. When in doubt, SILENT."
+        time. You cannot act this turn; if something needs doing, say so in your one line and ask. When in doubt, SILENT."
         .to_string();
-    wake_herald(state.clone(), kickoff, "neutral").await;
+    wake_and_speak(state.clone(), (kickoff, None), "neutral", "timer", Reach::SpeakOnly, None).await;
 }
