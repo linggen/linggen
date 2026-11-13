@@ -451,22 +451,34 @@ pub(super) async fn deliver_to_chat_agent(
     // With an explicit app target, deliver into that app's (skill's) session so
     // the recipient runs with that app's tools. Otherwise prefer the session the
     // user is viewing; else the agent's latest.
-    let resolved = match app.as_deref() {
-        Some(skill) => session_for_skill(&state, skill).await,
-        None => native_target(
-            focused_session(&state),
-            || latest_session_for_agent(&state, &to),
-            |sid| hosts_native_turns(&state, sid),
-        ),
-    };
-    let Some((session_id, root)) = resolved else {
-        tracing::info!(
-            "[agent-chat] '{from}'→'{to}'{}: no session to deliver to — dropped",
-            app.as_deref()
-                .map(|a| format!(" (app {a})"))
-                .unwrap_or_default()
-        );
-        return;
+    let mut candidates = Vec::new();
+    if let Some(skill) = app.as_deref() {
+        if let Ok(sessions) = state.manager.global_sessions.list_sessions() {
+            let mut sessions: Vec<_> = sessions.into_iter().filter(|m| m.skill.as_deref() == Some(skill)).collect();
+            sessions.sort_by_key(|m| std::cmp::Reverse(m.created_at));
+            candidates.extend(sessions.into_iter().map(|m| (m.id, std::path::PathBuf::from(m.cwd))));
+        }
+    } else {
+        candidates.extend(focused_session(&state));
+        candidates.extend(latest_session_for_agent(&state, &to));
+    }
+    let mut selected = None;
+    for (sid, root) in candidates {
+        if !handoff_eligible(&state, &sid) { continue; }
+        if let Ok(held) = state.manager.session_turn(&sid).try_lock_owned() {
+            if handoff_eligible(&state, &sid) {
+                selected = Some((sid, root, held));
+                break;
+            }
+        }
+    }
+    let (session_id, root, _turn) = match selected {
+        Some(selected) => selected,
+        None => {
+            let Some((sid, root)) = new_handoff_session(&state, app.as_deref(), &to).await else { return; };
+            let held = state.manager.session_turn(&sid).lock_owned().await;
+            (sid, root, held)
+        }
     };
     let agent = match state
         .manager
@@ -506,6 +518,11 @@ pub(super) async fn deliver_to_chat_agent(
             return;
         }
     };
+    // Recheck while the admission gate and turn lock are held.
+    if !handoff_eligible(&state, &session_id) {
+        tracing::warn!("[agent-chat] session became ineligible at admission");
+        return;
+    }
     crate::server::chat::helpers::persist_and_emit_message(
         &state.manager,
         &state.events_tx,
@@ -522,7 +539,6 @@ pub(super) async fn deliver_to_chat_agent(
     drop(gate);
 
     {
-        let _turn = state.manager.session_turn(&session_id).lock_owned().await;
         let mut engine = agent.lock().await;
         // Loop-break: this turn was reached via agent_chat → it can't agent_chat
         // onward. Mark/clear INSIDE the engine lock so the flag's lifetime matches
@@ -550,30 +566,6 @@ pub(super) async fn deliver_to_chat_agent(
     }
 
     tracing::info!("[agent-chat] delivered '{from}'→'{to}' in {session_id}");
-}
-
-/// The viewed session, else the agent's latest — skipping any that cannot
-/// host a native turn, so a message never lands in a Claude transcript.
-pub(super) fn native_target<T: AsRef<str>, R>(
-    focused: Option<(T, R)>,
-    latest: impl FnOnce() -> Option<(T, R)>,
-    native: impl Fn(&str) -> bool,
-) -> Option<(T, R)> {
-    focused
-        .filter(|(sid, _)| native(sid.as_ref()))
-        .or_else(|| latest().filter(|(sid, _)| native(sid.as_ref())))
-}
-
-/// Whether a native agent's turn may run in this session: not when the
-/// session belongs to another runtime (a Claude session is the SDK's alone).
-pub(super) fn hosts_native_turns(state: &Arc<ServerState>, session_id: &str) -> bool {
-    state
-        .manager
-        .global_sessions
-        .get_session_meta(session_id)
-        .ok()
-        .flatten()
-        .is_none_or(|meta| meta.runtime.is_linggen())
 }
 
 /// The session the user is currently viewing (`set_view_context`), if any — so
@@ -604,44 +596,30 @@ pub(super) fn latest_session_for_agent(
 /// Resolve the session bound to an app/skill — the latest existing one (so it
 /// lands in the open app tab when there is one), else a freshly minted
 /// skill-bound session so the request still runs with that app's tools.
-pub(super) async fn session_for_skill(
-    state: &Arc<ServerState>,
-    skill: &str,
+fn handoff_eligible(state: &Arc<ServerState>, session_id: &str) -> bool {
+    state.manager.global_sessions.get_session_meta(session_id).ok().flatten()
+        .is_some_and(|meta| meta.creator != "external" && meta.runtime.is_linggen())
+}
+
+async fn new_handoff_session(
+    state: &Arc<ServerState>, skill: Option<&str>, agent: &str,
 ) -> Option<(String, std::path::PathBuf)> {
-    if let Ok(sessions) = state.manager.global_sessions.list_sessions() {
-        if let Some(meta) = sessions
-            .into_iter()
-            .filter(|s| s.skill.as_deref() == Some(skill))
-            .max_by_key(|s| s.created_at)
-        {
-            return Some((meta.id, std::path::PathBuf::from(meta.cwd)));
-        }
-    }
-    // None yet — mint a skill-bound session so "tell Yinyue → app" works first time.
     let now = crate::util::now_ts_secs();
-    let sid = format!("sess-{skill}-{now}");
-    let found = state.manager.skills.get_skill(skill).await;
+    let sid = format!("sess-handoff-{}", uuid::Uuid::new_v4());
+    let found = match skill { Some(name) => state.manager.skills.get_skill(name).await, None => None };
     let declared = crate::server::chat::members::default_members(found.as_ref());
     let root = match &found {
         Some(s) => s.working_dir(),
-        None => std::path::PathBuf::from(crate::state_fs::sessions::fallback_cwd(Some(skill))),
+        None => std::path::PathBuf::from(crate::state_fs::sessions::fallback_cwd(skill)),
     };
     let meta = crate::state_fs::sessions::SessionMeta {
-        id: sid.clone(),
-        title: skill.to_string(),
-        created_at: now,
-        updated_at: 0,
-        skill: Some(skill.to_string()),
-        creator: "agent".to_string(),
-        cwd: root.to_string_lossy().to_string(),
-        title_locked: true,
-        withheld_tools: Vec::new(),
-        model_fallback: None,
-        agents: declared,
-        ..Default::default()
+        id: sid.clone(), title: skill.unwrap_or(agent).to_string(), created_at: now,
+        skill: skill.map(str::to_string), creator: "agent".to_string(),
+        cwd: root.to_string_lossy().to_string(), title_locked: true,
+        agents: declared, ..Default::default()
     };
     if let Err(e) = state.manager.global_sessions.add_session(&meta) {
-        tracing::warn!("[agent-chat] could not create '{skill}' session: {e}");
+        tracing::warn!("[agent-chat] could not create handoff session: {e}");
         return None;
     }
     Some((sid, root))
@@ -664,7 +642,7 @@ fn resend_agent_chat(
 
 #[cfg(test)]
 mod native_target_tests {
-    use super::{is_delegated, native_target};
+    use super::is_delegated;
     use crate::state_fs::sessions::SessionMeta;
 
     #[test]
@@ -684,18 +662,4 @@ mod native_target_tests {
         assert!(!is_delegated(None));
     }
 
-    #[test]
-    fn agent_chat_skips_a_viewed_claude_session_for_the_agents_own() {
-        let native = |sid: &str| sid != "claude-session";
-        let picked = native_target(
-            Some(("claude-session", 1)),
-            || Some(("ling-session", 2)),
-            native,
-        );
-        assert_eq!(picked, Some(("ling-session", 2)));
-        let picked = native_target(Some(("viewed", 1)), || Some(("ling-session", 2)), native);
-        assert_eq!(picked, Some(("viewed", 1)));
-        let picked = native_target(None, || Some(("claude-session", 2)), native);
-        assert_eq!(picked, None);
-    }
 }
