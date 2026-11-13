@@ -31,6 +31,7 @@ mod files;
 pub mod further;
 pub mod lock;
 pub mod peer;
+mod rest;
 pub mod state;
 
 use files::{plain, Files, Ignore, Layout};
@@ -205,6 +206,8 @@ async fn read_locked(t: &SaveTarget) -> Result<(Files, u64)> {
     let _held = lock::acquire(&t.file()).await?;
     let files = t.layout.read();
     let hash = t.layout.progress_fingerprint(&files);
+    // Every read dates the save's last move, for a device's write (`rest.rs`).
+    rest::note(t, &files, hash);
     Ok((files, hash))
 }
 

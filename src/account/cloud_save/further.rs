@@ -8,6 +8,7 @@
 //!   further:
 //!     {"file": "data/state.json", "by": [
 //!       {"count": "done_scenes"},
+//!       {"number": "version", "newest": 19},
 //!       {"rank": "tier", "order": {"file": "ladder.json", "list": "tiers", "key": "id"}, "rise": true},
 //!       {"number": "step", "within": ["tier", "version"]},
 //!       {"time": "updated"}]}
@@ -17,8 +18,15 @@
 //! - `number`: the larger wins (not a number counts -1); with `within`, only
 //!   when those keys are equal on both sides.
 //! - `time`: the later instant wins; only when both read as one.
+//! - `newest` (on one `number` entry, never with `within`): the largest value
+//!   the installed skill plays — a side past it was written by a newer build
+//!   and wins before any entry is read, so an older build never writes over
+//!   it. Otherwise the entry stands in its place in the order.
 //!
-//! A side without the file never wins; all even, the other side wins.
+//! A side without the file never wins; all even, the other side wins. The
+//! engine cannot bring a save to the skill's version; a skill orders first
+//! what reads the same at every version (2026-11-12: scenes done before the
+//! save's version — a save only migrated first lost a further one).
 //! `rise` marks the entries whose move up is a milestone ([`Rule::rose`]).
 
 use serde_json::{Map, Value};
@@ -41,6 +49,8 @@ struct By {
     key: String,
     within: Vec<String>,
     rise: bool,
+    /// The newest value the installed skill plays (`number` only).
+    newest: Option<f64>,
 }
 
 /// A declared `cloud.further`, its orders read.
@@ -79,7 +89,10 @@ fn parse(root: &Path, v: &Value) -> Result<Rule, String> {
         .iter()
         .enumerate()
         .map(|(i, e)| entry(root, e).map_err(|w| format!("by[{i}]: {w}")))
-        .collect::<Result<_, _>>()?;
+        .collect::<Result<Vec<By>, _>>()?;
+    if by.iter().filter(|b| b.newest.is_some()).count() > 1 {
+        return Err("one entry with `newest` at most".into());
+    }
     Ok(Rule {
         file: file.to_string(),
         by,
@@ -108,11 +121,19 @@ fn entry(root: &Path, e: &Value) -> Result<By, String> {
             .and_then(|a| a.iter().map(|k| k.as_str().map(String::from)).collect())
             .ok_or("`within` must be a list of keys")?,
     };
+    let newest = match e.get("newest") {
+        None => None,
+        Some(n) if matches!(kind, Kind::Number) && within.is_empty() => {
+            Some(n.as_f64().ok_or("`newest` must be a number")?)
+        }
+        Some(_) => return Err("`newest` only on a `number` without `within`".into()),
+    };
     Ok(By {
         kind,
         key: key.to_string(),
         within,
         rise: e.get("rise").and_then(Value::as_bool).unwrap_or(false),
+        newest,
     })
 }
 
@@ -176,6 +197,22 @@ impl By {
         };
         (ord != Ordering::Equal).then_some(ord)
     }
+
+    /// With `newest`: how `a` stands against `b` when one side is past it.
+    fn past_newest(&self, a: &Map<String, Value>, b: &Map<String, Value>) -> Option<Ordering> {
+        let newest = self.newest?;
+        let past = |m: &Map<String, Value>| {
+            at_map(m, &self.key)
+                .and_then(Value::as_f64)
+                .is_some_and(|v| v > newest)
+        };
+        let (pa, pb) = (past(a), past(b));
+        (pa != pb).then_some(if pa {
+            Ordering::Greater
+        } else {
+            Ordering::Less
+        })
+    }
 }
 
 fn at_map<'a>(m: &'a Map<String, Value>, path: &str) -> Option<&'a Value> {
@@ -213,7 +250,8 @@ impl Rule {
         };
         self.by
             .iter()
-            .find_map(|e| e.compare(&a, &b))
+            .find_map(|e| e.past_newest(&a, &b))
+            .or_else(|| self.by.iter().find_map(|e| e.compare(&a, &b)))
             .is_some_and(|o| o == Ordering::Greater)
     }
 
@@ -265,6 +303,7 @@ mod tests {
         .unwrap();
         let declared = json!({"file": "data/state.json", "by": [
             {"count": "done_scenes"},
+            {"number": "version", "newest": 19},
             {"rank": "tier", "order": {"file": "ladder.json", "list": "tiers", "key": "id"}, "rise": true},
             {"number": "step", "within": ["tier", "version"], "rise": true},
             {"number": "progress", "within": ["tier", "version"]},
@@ -338,16 +377,58 @@ mod tests {
             &grind("qi", 5, 120.0, LATE, 15),
             &grind("qi", 5, 120.0, EARLY, 15)
         ));
-        // Another save version: the layer is not compared, the time decides.
-        assert!(r.further(
+        // Another save version at even scenes: the newer version decides (the
+        // layer is read on another ladder there), never the later write.
+        assert!(!r.further(
             &grind("qi", 2, 10.0, LATE, 14),
             &grind("qi", 5, 900.0, EARLY, 15)
+        ));
+        assert!(r.further(
+            &grind("qi", 5, 900.0, EARLY, 15),
+            &grind("qi", 2, 10.0, LATE, 14)
         ));
         // A realm the ladder does not hold is not compared.
         assert!(!r.further(
             &grind("void", 0, 10.0, EARLY, 15),
             &grind("qi", 8, 900.0, LATE, 15)
         ));
+    }
+
+    /// 2026-11-12, by the keys the rule reads: the phone's v18 save, 116
+    /// scenes on, against the Mac's 105, migrated to v19 seconds before.
+    fn incident(version: i64, scenes: usize, progress: f64, story: &str) -> Files {
+        files(
+            json!({"version": version, "done_scenes": vec!["s"; scenes], "tier": "foundation",
+            "step": 0, "progress": progress, "story_at": story, "updated": story}),
+        )
+    }
+
+    #[test]
+    fn a_save_further_on_in_play_beats_one_only_migrated_first() {
+        let r = lingjing();
+        let phone = incident(18, 116, 383.0, "2026-11-12T23:19:48Z");
+        let mac = incident(19, 105, 56.0, "2026-11-12T20:57:49Z");
+        // Mac↔cloud (the engine both ways round): the phone's copy wins.
+        assert!(r.further(&phone, &mac));
+        assert!(!r.further(&mac, &phone));
+        // The opposite: the migrated side really further on.
+        let mac = incident(19, 120, 56.0, "2026-11-12T20:57:49Z");
+        assert!(r.further(&mac, &phone));
+        assert!(!r.further(&phone, &mac));
+    }
+
+    #[test]
+    fn a_save_past_the_newest_version_wins_outright() {
+        let r = lingjing();
+        let newer = incident(20, 3, 0.0, "2026-11-12T01:00:00Z");
+        let here = incident(19, 116, 383.0, "2026-11-12T23:00:00Z");
+        assert!(
+            r.further(&newer, &here),
+            "an older build never writes over it"
+        );
+        assert!(!r.further(&here, &newer));
+        // Both past it: the order decides as ever.
+        assert!(r.further(&incident(21, 9, 0.0, EARLY), &incident(20, 3, 0.0, EARLY)));
     }
 
     #[test]
@@ -381,6 +462,10 @@ mod tests {
             json!({"file": "s.json", "by": [{"count": "a", "time": "b"}]}),
             json!({"file": "s.json", "by": [{"rank": "tier"}]}),
             json!({"file": "s.json", "by": [{"rank": "tier", "order": {"file": "none.json", "list": "x"}}]}),
+            json!({"file": "s.json", "by": [{"count": "a", "newest": 3}]}),
+            json!({"file": "s.json", "by": [{"number": "v", "newest": "x"}]}),
+            json!({"file": "s.json", "by": [{"number": "v", "within": ["t"], "newest": 3}]}),
+            json!({"file": "s.json", "by": [{"number": "v", "newest": 3}, {"number": "w", "newest": 3}]}),
         ] {
             assert!(parse(root, &bad).is_err(), "{bad}");
         }

@@ -10,16 +10,18 @@
 //! When the device writes over changes made here (both sides moved; its copy
 //! won), each file it replaces is first kept beside itself as
 //! `<file>.conflict-<unix secs>`, exactly as a pull from the account does — and
-//! only once the save has been left alone for [`AT_REST`]: a game in play on
-//! this Mac is never written under the player.
+//! only once the save's progress has been left alone for [`AT_REST`]: a game
+//! in play on this Mac is never written under the player. Rest is measured by
+//! progress (`rest.rs`), not mtime: a page that only stamps its save (a hold it
+//! renews) does not keep a device's further copy out.
 
 use anyhow::Result;
 use serde::Serialize;
 use serde_json::Value;
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
-use super::{lock, SaveTarget, SYNC_LOCK};
+use super::{lock, rest, SaveTarget, SYNC_LOCK};
 
 /// How long the save must have stood still before a device's copy may replace
 /// changes made here.
@@ -32,7 +34,7 @@ pub struct PeerCopy {
     pub fingerprint: String,
     /// The bundle (`files.rs` `encode`); null when there are no files.
     pub body: Value,
-    /// Seconds since a save file was last written here.
+    /// Seconds since the save's progress last changed here (`rest.rs`).
     pub rest_s: u64,
 }
 
@@ -71,21 +73,9 @@ fn copy_of(t: &SaveTarget, files: &super::Files) -> PeerCopy {
     }
 }
 
-/// Seconds since the newest of the save's files was written.
+/// Seconds since the save's progress last changed here.
 fn rest_secs(t: &SaveTarget, files: &super::Files) -> u64 {
-    let newest = files
-        .keys()
-        .filter_map(|rel| {
-            std::fs::metadata(t.layout.root.join(rel))
-                .ok()?
-                .modified()
-                .ok()
-        })
-        .max();
-    newest
-        .and_then(|m| SystemTime::now().duration_since(m).ok())
-        .map(|d| d.as_secs())
-        .unwrap_or(u64::MAX)
+    rest::note(t, files, t.layout.progress_fingerprint(files))
 }
 
 /// The save as it is now, read under its lock.
@@ -133,6 +123,7 @@ pub async fn write(
 mod tests {
     use super::super::files::Layout;
     use super::*;
+    use std::time::SystemTime;
 
     fn target(root: &std::path::Path) -> SaveTarget {
         SaveTarget {
@@ -241,6 +232,60 @@ mod tests {
             std::fs::read_to_string(root.join("data/state.json")).unwrap(),
             "{\"phone\":5}"
         );
+    }
+
+    fn age(root: &std::path::Path, by: Duration) {
+        std::fs::File::options()
+            .write(true)
+            .open(root.join("data/state.json"))
+            .unwrap()
+            .set_modified(SystemTime::now() - by)
+            .unwrap();
+    }
+
+    /// 2026-11-12: the Mac's page held a passage open, renewing `reading`
+    /// every 4 minutes. By mtime the save never came to rest and every
+    /// further copy the phone sent was answered `in_play` all evening.
+    #[tokio::test]
+    async fn a_page_stamping_its_save_does_not_keep_it_from_rest() {
+        let root = scratch("stamping");
+        let mut t = target(&root);
+        t.layout.ignore = Some(super::super::files::Ignore {
+            file: "data/state.json".into(),
+            keys: vec!["reading".into()],
+        });
+        let mac = |since: &str| {
+            format!(r#"{{"version":19,"done_scenes":[1,2,3],"reading":{{"since":"{since}"}}}}"#)
+        };
+        // The last move here, an hour ago.
+        std::fs::write(root.join("data/state.json"), mac("20:57")).unwrap();
+        age(&root, Duration::from_secs(3600));
+        assert!(read(&t).await.unwrap().rest_s >= 3600);
+        // The hold renewed just now: a write, no move.
+        std::fs::write(root.join("data/state.json"), mac("23:38")).unwrap();
+        let now = read(&t).await.unwrap();
+        assert!(now.rest_s >= 3600, "still at rest: {}", now.rest_s);
+        let phone = r#"{"version":18,"done_scenes":[1,2,3,4],"reading":{"since":"23:01"}}"#;
+        let done = write(&t, &now.fingerprint, &body(phone), true)
+            .await
+            .unwrap();
+        let PeerWrite::Saved { conflicts, .. } = done else {
+            panic!("{done:?}")
+        };
+        assert_eq!(conflicts.len(), 1, "the Mac's copy is kept");
+        assert_eq!(
+            std::fs::read_to_string(root.join("data/state.json")).unwrap(),
+            phone
+        );
+        // A real move here just now is still never written under the player.
+        std::fs::write(
+            root.join("data/state.json"),
+            r#"{"version":19,"done_scenes":[1,2,3,4,5]}"#,
+        )
+        .unwrap();
+        let base = read(&t).await.unwrap().fingerprint;
+        let done = write(&t, &base, &body(phone), true).await.unwrap();
+        assert!(matches!(done, PeerWrite::InPlay { .. }), "{done:?}");
     }
 
     #[tokio::test]
