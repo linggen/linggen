@@ -30,6 +30,7 @@ Read files under `doc/` and follow them. If you find wrong content in any doc fi
 - `doc/yinyue-spec.md` — Yinyue companion: avatar, voice, session + memory model
 - `doc/shared-session-spec.md` — shared sessions: several agents at one table, one thread/tools/permissions, per-agent persona + model
 - `doc/one-ling-spec.md` — one Ling + one Yinyue on every device: who answers, Mac work continues in the app's latest Mac session as the same Ling, sessions stay per device
+- `doc/dynamic-session-draft.md` — DRAFT (2026-11-13, talk only): one daily thread across apps, prompt projected per focus app, fold only when needed; review pending
 - `doc/yinyue-companion-spec.md` — Yinyue's proactive/interactive layer: senses, heralds, `agent_chat`, ambient life-signs
 - `doc/perception-spec.md` — what a resident agent knows without being told: world state, the activity log, and when to speak
 - `doc/phone-push-spec.md` — Mac → closed phone: skill-declared lines, her words, sealed per phone, rung through the linggen.dev APNs relay
