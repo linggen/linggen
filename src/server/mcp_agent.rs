@@ -68,11 +68,15 @@ const WRITE_TOOLS: &[&str] = &["Bash", "Write", "Edit"];
 fn write_root(dir: &str) -> Result<PathBuf, String> {
     let path = crate::util::resolve_path(std::path::Path::new(dir.trim()));
     if !path.is_absolute() || !path.is_dir() {
-        return Err(format!("write_dir must be an existing absolute folder: {dir}"));
+        return Err(format!(
+            "write_dir must be an existing absolute folder: {dir}"
+        ));
     }
     let home = dirs::home_dir().unwrap_or_default();
     if path.parent().is_none() || path == home {
-        return Err(format!("write_dir is too wide: {dir} — pass the task's own checkout"));
+        return Err(format!(
+            "write_dir is too wide: {dir} — pass the task's own checkout"
+        ));
     }
     Ok(path)
 }
@@ -108,7 +112,11 @@ fn final_reply(session_id: &str) -> Option<String> {
 fn last_agent_reply(msgs: Vec<crate::state_fs::sessions::ChatMsg>) -> Option<String> {
     msgs.into_iter()
         .rev()
-        .find(|m| !m.is_observation && !matches!(m.from_id.as_str(), "user" | "claude-code" | "system") && !m.content.trim().is_empty())
+        .find(|m| {
+            !m.is_observation
+                && !matches!(m.from_id.as_str(), "user" | "claude-code" | "system")
+                && !m.content.trim().is_empty()
+        })
         .map(|m| m.content)
 }
 
@@ -131,24 +139,35 @@ pub async fn run(
     }
 
     validate_options(session, write_dir, model)?;
-    if session.is_some() && permission_mode.is_some() { return Err("permission_mode cannot be used with session_id".into()); }
+    if session.is_some() && permission_mode.is_some() {
+        return Err("permission_mode cannot be used with session_id".into());
+    }
     let mode = permission_mapping(permission_mode, write_dir.is_some())?;
     if let Some(session) = session {
         let meta = session_meta(state, session)?;
         if !meta.runtime.is_linggen() {
             return Err("session is not a Linggen session".into());
         }
-        let agent_id = agent.map(str::to_string)
+        let agent_id = agent
+            .map(str::to_string)
             .or_else(|| meta.agents.first().map(|m| m.id.clone()))
             .unwrap_or_else(|| "ling".into());
         clear_denials(session);
         keep_delegate_tools(state, session, &meta, &agent_id).await;
         if let Some(allowed) = model_fallback {
-            state.manager.global_sessions.set_model_fallback(session, allowed)
+            state
+                .manager
+                .global_sessions
+                .set_model_fallback(session, allowed)
                 .map_err(|e| format!("cannot set model_fallback: {e}"))?;
         }
-        let turn = super::tasks::tell_from(state.clone(), session.into(), agent_id,
-            prompt.into(), "claude-code".into());
+        let turn = super::tasks::tell_from(
+            state.clone(),
+            session.into(),
+            agent_id,
+            prompt.into(),
+            "claude-code".into(),
+        );
         let sid = session.to_string();
         let manager = state.manager.clone();
         let task = tokio::spawn(async move {
@@ -158,7 +177,10 @@ pub async fn run(
             if let Some(error) = failed_error(&manager, &sid) {
                 return Err(format!("agent run failed: {error}"));
             }
-            Ok(with_denials(&sid, final_reply(&sid).unwrap_or_else(|| NO_REPLY.into())))
+            Ok(with_denials(
+                &sid,
+                final_reply(&sid).unwrap_or_else(|| NO_REPLY.into()),
+            ))
         });
         return await_run(state, session, task).await;
     }
@@ -167,8 +189,18 @@ pub async fn run(
         let resolved = models.resolve_id(model);
         drop(models);
         let config = state.manager.get_config_snapshot().await;
-        Some(validate_model(model, resolved, &config.models.iter().map(|m| m.id.clone()).collect::<Vec<_>>())?)
-    } else { None };
+        Some(validate_model(
+            model,
+            resolved,
+            &config
+                .models
+                .iter()
+                .map(|m| m.id.clone())
+                .collect::<Vec<_>>(),
+        )?)
+    } else {
+        None
+    };
 
     let root = workspace_root();
     let write = write_dir.map(write_root).transpose()?;
@@ -218,7 +250,11 @@ pub async fn run(
     );
     let title = title_from_prompt(prompt);
     // A write run lives in its folder; a read run in the workspace.
-    let root_str = write.as_ref().unwrap_or(&root).to_string_lossy().to_string();
+    let root_str = write
+        .as_ref()
+        .unwrap_or(&root)
+        .to_string_lossy()
+        .to_string();
     let store =
         crate::state_fs::SessionStore::with_sessions_dir(crate::paths::global_sessions_dir());
     let mut meta = delegate_meta(
@@ -252,7 +288,9 @@ pub async fn run(
             perms.set_path_mode(&root_str, PermissionMode::Read);
         } else {
             perms.set_path_mode("*", PermissionMode::Read);
-            if let Some(grant) = mode { perms.set_path_mode(&root_str, grant); }
+            if let Some(grant) = mode {
+                perms.set_path_mode(&root_str, grant);
+            }
         }
         perms.save(&crate::paths::global_sessions_dir().join(&session_id));
     }
@@ -292,18 +330,28 @@ pub async fn run(
     // and left its session spinning). Wait a while, else hand back where
     // the answer will be.
     clear_denials(&session_id);
-    let run = tokio::spawn(drive(
-        state.clone(),
-        session_id.clone(),
-        // The agent stands where it may write: a relative path then lands in
-        // the grant (2026-11-06: Write review.json resolved against the
-        // daemon's launch dir and was refused).
-        write.unwrap_or(root),
-        agent_id,
-        prompt.to_string(),
-        mode.is_some(),
-        model,
-    ));
+    // Reserve the session turn synchronously, before a watcher can observe idle.
+    // Keep it through drive, including failures, so no startup gap looks finished.
+    let (_, place) = super::chat::helpers::take_turn_place(state.manager.session_turn(&session_id));
+    let run_state = state.clone();
+    let run_session = session_id.clone();
+    let prompt = prompt.to_string();
+    let run = tokio::spawn(async move {
+        let _turn = place.await;
+        drive(
+            run_state,
+            run_session,
+            // The agent stands where it may write: a relative path then lands in
+            // the grant (2026-11-06: Write review.json resolved against the
+            // daemon's launch dir and was refused).
+            write.unwrap_or(root),
+            agent_id,
+            prompt.to_string(),
+            mode.is_some(),
+            model,
+        )
+        .await
+    });
     await_run(state, &session_id, run).await
 }
 
@@ -362,12 +410,20 @@ async fn keep_delegate_tools(
     meta: &crate::state_fs::sessions::SessionMeta,
     agent_id: &str,
 ) {
-    let Some(kind) = meta.params.get(TOOLS_PARAM) else { return };
-    let root = PathBuf::from(meta.project.clone().unwrap_or_else(|| meta.cwd.clone()));
-    let Ok(agent) = state.manager.get_or_create_session_agent(session, &root, agent_id).await else {
+    let Some(kind) = meta.params.get(TOOLS_PARAM) else {
         return;
     };
-    let Ok(mut engine) = agent.try_lock() else { return };
+    let root = PathBuf::from(meta.project.clone().unwrap_or_else(|| meta.cwd.clone()));
+    let Ok(agent) = state
+        .manager
+        .get_or_create_session_agent(session, &root, agent_id)
+        .await
+    else {
+        return;
+    };
+    let Ok(mut engine) = agent.try_lock() else {
+        return;
+    };
     engine.cfg.mission_allowed_tools = delegate_tool_scope(kind == "write");
 }
 
@@ -388,7 +444,9 @@ async fn drive(
         .await
         .map_err(|e| format!("failed to create agent '{agent_id}': {e}"))?;
     let mut engine = agent.lock().await;
-    if let Some(model) = model { engine.model_id = model; }
+    if let Some(model) = model {
+        engine.model_id = model;
+    }
 
     let run_id = state
         .manager
@@ -406,11 +464,13 @@ async fn drive(
     // Browser bridge, and the AskUser bridge its permission requests wait
     // on (the AskUser TOOL stays out of its toolset: no person is there).
     engine.tools.set_browser_bridge(state.bridge.clone());
-    engine.tools.set_ask_user_bridge(Arc::new(crate::engine::tools::AskUserBridge {
-        events_tx: state.events_tx.clone(),
-        pending: state.pending_ask_user.clone(),
-        session_id: Some(session_id.clone()),
-    }));
+    engine
+        .tools
+        .set_ask_user_bridge(Arc::new(crate::engine::tools::AskUserBridge {
+            events_tx: state.events_tx.clone(),
+            pending: state.pending_ask_user.clone(),
+            session_id: Some(session_id.clone()),
+        }));
 
     engine.observations.clear();
     engine.task = Some(prompt.to_string());
@@ -428,20 +488,27 @@ async fn drive(
     let model_label = engine.model_id.clone();
     let result = with_turn_status(
         async {
-            state.send_agent_status(
-                agent_id.clone(),
-                crate::server::AgentStatusKind::ModelLoading,
-                Some(format!("Loading model: {model_label}")),
-                None,
-                Some(session_id.clone()),
-            ).await;
-            let _ = state.events_tx.send(crate::server::ServerEvent::StateUpdated);
+            state
+                .send_agent_status(
+                    agent_id.clone(),
+                    crate::server::AgentStatusKind::ModelLoading,
+                    Some(format!("Loading model: {model_label}")),
+                    None,
+                    Some(session_id.clone()),
+                )
+                .await;
+            let _ = state
+                .events_tx
+                .send(crate::server::ServerEvent::StateUpdated);
         },
         async {
             let result = engine.run_agent_loop(Some(&session_id)).await;
             let (status, error) = match &result {
                 Ok(_) => (crate::engine::agent::AgentRunStatus::Completed, None),
-                Err(e) => (crate::engine::agent::AgentRunStatus::Failed, Some(e.to_string())),
+                Err(e) => (
+                    crate::engine::agent::AgentRunStatus::Failed,
+                    Some(e.to_string()),
+                ),
             };
             // The session tells a failure as a chat turn's does, before the
             // turn closes.
@@ -457,26 +524,44 @@ async fn drive(
                     Some(&session_id),
                     false,
                     Some(&run_id),
-                ).await;
+                )
+                .await;
             }
             let _ = state.manager.finish_agent_run(&run_id, status, error).await;
             result
         },
-        || crate::server::chat::close_turn(
-            &state, agent_id.clone(), Some(session_id.clone()), Some(run_id.clone()),
-        ),
-    ).await;
+        || {
+            crate::server::chat::close_turn(
+                &state,
+                agent_id.clone(),
+                Some(session_id.clone()),
+                Some(run_id.clone()),
+            )
+        },
+    )
+    .await;
     engine.set_run_id(None);
     seed_first_prompt(&mut engine.chat_history, &prompt);
     drop(engine);
 
-    let _ = state.events_tx.send(crate::server::ServerEvent::StateUpdated);
+    let _ = state
+        .events_tx
+        .send(crate::server::ServerEvent::StateUpdated);
     match result {
-        Ok(_) => Ok(with_denials(&session_id, final_reply(&session_id)
-            .unwrap_or_else(|| NO_REPLY.to_string()))),
+        Ok(_) => Ok(with_denials(
+            &session_id,
+            final_reply(&session_id).unwrap_or_else(|| NO_REPLY.to_string()),
+        )),
         Err(e) => {
-            let model = state.manager.run_store.outcome(&session_id).and_then(|o| o.model);
-            Err(format!("agent run failed: {}", naming_model(e.to_string(), model.as_deref())))
+            let model = state
+                .manager
+                .run_store
+                .outcome(&session_id)
+                .and_then(|o| o.model);
+            Err(format!(
+                "agent run failed: {}",
+                naming_model(e.to_string(), model.as_deref())
+            ))
         }
     }
 }
@@ -522,7 +607,10 @@ fn delegate_meta(
     meta.params.insert("host".into(), host.into());
     // The delegate's toolset, so a continued session keeps it (see
     // `keep_delegate_tools`).
-    meta.params.insert(TOOLS_PARAM.into(), if write { "write" } else { "read" }.into());
+    meta.params.insert(
+        TOOLS_PARAM.into(),
+        if write { "write" } else { "read" }.into(),
+    );
     meta.set_member_model(agent_id, model);
     meta
 }
@@ -568,7 +656,10 @@ async fn with_turn_status<T, F: std::future::Future<Output = ()>>(
 
 /// Keep the bootstrap task in the cached thread, before the agent's replies.
 fn seed_first_prompt(history: &mut Vec<crate::message::ChatMessage>, prompt: &str) {
-    history.insert(0, crate::message::ChatMessage::new("user", prompt.to_string()));
+    history.insert(
+        0,
+        crate::message::ChatMessage::new("user", prompt.to_string()),
+    );
 }
 
 /// What a caller gets while the run goes on: where to watch, and any
@@ -577,21 +668,34 @@ async fn still_running(state: &Arc<ServerState>, session: &str) -> String {
     let mut text = still_running_text(state.port, session);
     let pending = pending_requests(state, session).await;
     if !pending.is_empty() {
-        text.push_str(&format!("\nWaiting for permission: {}", serde_json::Value::Array(pending)));
+        text.push_str(&format!(
+            "\nWaiting for permission: {}",
+            serde_json::Value::Array(pending)
+        ));
     }
     text
 }
 
 fn still_running_text(port: u16, session: &str) -> String {
-    format!("Still running in the background in Linggen session {session}. Don't poll: \
+    format!(
+        "Still running in the background in Linggen session {session}. Don't poll: \
         watch ws://127.0.0.1:{port}/api/agent/wait?session_id={session} with a background \
         watcher. It sends {{\"type\":\"permission_request\"}} (answer with agent_permit) and \
-        {{\"type\":\"finished\"}} (then read agent_status).")
+        {{\"type\":\"finished\"}} (then read agent_status)."
+    )
 }
 
-fn validate_options(session: Option<&str>, write: Option<&str>, model: Option<&str>) -> Result<(), String> {
-    if session.is_some() && write.is_some() { return Err("write_dir cannot be used with session_id".into()); }
-    if session.is_some() && model.is_some() { return Err("model cannot be used with session_id".into()); }
+fn validate_options(
+    session: Option<&str>,
+    write: Option<&str>,
+    model: Option<&str>,
+) -> Result<(), String> {
+    if session.is_some() && write.is_some() {
+        return Err("write_dir cannot be used with session_id".into());
+    }
+    if session.is_some() && model.is_some() {
+        return Err("model cannot be used with session_id".into());
+    }
     Ok(())
 }
 
@@ -599,8 +703,14 @@ fn validate_model(model: &str, resolved: Option<String>, ids: &[String]) -> Resu
     resolved.ok_or_else(|| format!("unknown model '{model}'. Available: {}", ids.join(", ")))
 }
 
-fn session_meta(state: &ServerState, session: &str) -> Result<crate::state_fs::sessions::SessionMeta, String> {
-    let meta = state.manager.global_sessions.get_session_meta(session)
+fn session_meta(
+    state: &ServerState,
+    session: &str,
+) -> Result<crate::state_fs::sessions::SessionMeta, String> {
+    let meta = state
+        .manager
+        .global_sessions
+        .get_session_meta(session)
         .map_err(|e| format!("cannot read session: {e}"))?;
     require_session(session, meta)
 }
@@ -613,10 +723,13 @@ pub async fn status(state: &Arc<ServerState>, session: &str) -> Result<String, S
     session_meta(state, session)?;
     let work = super::api::sessions::session_running_work(state, session).await;
     let last = last_run(&state.manager, session);
-    Ok(serde_json::json!({"running": work.turn, "tasks": work.tasks,
+    Ok(
+        serde_json::json!({"running": work.turn, "tasks": work.tasks,
         "subagents": work.subagents, "pending": pending_requests(state, session).await,
         "denied": denials(session), "reply": if work.turn { None } else { final_reply(session) },
-        "status": last.status, "error": last.error, "model": last.model}).to_string())
+        "status": last.status, "error": last.error, "model": last.model})
+        .to_string(),
+    )
 }
 
 /// The permission requests `session` is waiting on, for its caller.
@@ -637,7 +750,10 @@ fn caller_requests(
     rows
 }
 
-fn request_json(id: &str, request: &crate::engine::tools::CallerPermissionRequest) -> serde_json::Value {
+fn request_json(
+    id: &str,
+    request: &crate::engine::tools::CallerPermissionRequest,
+) -> serde_json::Value {
     let mut row = serde_json::to_value(request).unwrap_or_default();
     row["id"] = id.into();
     row
@@ -656,34 +772,57 @@ pub async fn permit(
     session_meta(state, session)?;
     let session_dir = crate::paths::global_sessions_dir().join(session);
     if !crate::engine::permission::SessionPermissions::load(&session_dir).ask_caller {
-        return Err(format!("session '{session}' does not ask its caller for permissions"));
+        return Err(format!(
+            "session '{session}' does not ask its caller for permissions"
+        ));
     }
-    let label = answer_request(&state.pending_ask_user, session, request_id, decision, scope).await?;
-    let _ = state.events_tx.send(crate::server::ServerEvent::WidgetResolved {
-        widget_id: request_id.to_string(),
-        session_id: Some(session.to_string()),
-    });
-    Ok(serde_json::json!({"request_id": request_id, "decision": decision, "answer": label}).to_string())
+    let label = answer_request(
+        &state.pending_ask_user,
+        session,
+        request_id,
+        decision,
+        scope,
+    )
+    .await?;
+    let _ = state
+        .events_tx
+        .send(crate::server::ServerEvent::WidgetResolved {
+            widget_id: request_id.to_string(),
+            session_id: Some(session.to_string()),
+        });
+    Ok(
+        serde_json::json!({"request_id": request_id, "decision": decision, "answer": label})
+            .to_string(),
+    )
 }
 
 /// Take the request and send the decision's answer to the waiting run.
 async fn answer_request(
-    pending: &tokio::sync::Mutex<std::collections::HashMap<String, crate::engine::tools::PendingAskUser>>,
+    pending: &tokio::sync::Mutex<
+        std::collections::HashMap<String, crate::engine::tools::PendingAskUser>,
+    >,
     session: &str,
     request_id: &str,
     decision: &str,
     scope: Option<&str>,
 ) -> Result<String, String> {
     let mut pending = pending.lock().await;
-    let entry = pending.get(request_id).ok_or_else(|| unknown_request(request_id))?;
+    let entry = pending
+        .get(request_id)
+        .ok_or_else(|| unknown_request(request_id))?;
     let label = decision_label(entry, session, decision, scope)?;
-    let entry = pending.remove(request_id).ok_or_else(|| unknown_request(request_id))?;
+    let entry = pending
+        .remove(request_id)
+        .ok_or_else(|| unknown_request(request_id))?;
     let answer = crate::engine::tools::AskUserAnswer {
         question_index: 0,
         selected: vec![label.clone()],
         custom_text: None,
     };
-    entry.sender.send(vec![answer]).map_err(|_| format!("request '{request_id}' already expired"))?;
+    entry
+        .sender
+        .send(vec![answer])
+        .map_err(|_| format!("request '{request_id}' already expired"))?;
     Ok(label)
 }
 
@@ -710,13 +849,30 @@ fn decision_label(
         ("allow_once", _) => ALLOW_ONCE.to_string(),
         ("deny", _) => "Deny".to_string(),
         ("allow_session", Some("path")) => grant_at_label(&request.level, &request.path),
-        ("allow_session", Some("dir")) => grant_at_label(&request.level, request.dir.as_deref()
-            .ok_or("this target's folder cannot be granted; use scope \"path\"")?),
-        ("allow_session", None) => grant_at_label(&request.level, request.dir.as_deref().unwrap_or(&request.path)),
-        ("allow_session", Some(other)) => return Err(format!("unknown scope '{other}': use path or dir")),
-        (other, _) => return Err(format!("unknown decision '{other}': use allow_once, allow_session or deny")),
+        ("allow_session", Some("dir")) => grant_at_label(
+            &request.level,
+            request
+                .dir
+                .as_deref()
+                .ok_or("this target's folder cannot be granted; use scope \"path\"")?,
+        ),
+        ("allow_session", None) => grant_at_label(
+            &request.level,
+            request.dir.as_deref().unwrap_or(&request.path),
+        ),
+        ("allow_session", Some(other)) => {
+            return Err(format!("unknown scope '{other}': use path or dir"))
+        }
+        (other, _) => {
+            return Err(format!(
+                "unknown decision '{other}': use allow_once, allow_session or deny"
+            ))
+        }
     };
-    let offered = entry.questions.first().is_some_and(|q| q.options.iter().any(|o| o.label == label));
+    let offered = entry
+        .questions
+        .first()
+        .is_some_and(|q| q.options.iter().any(|o| o.label == label));
     if !offered {
         return Err(format!("'{label}' was not offered for this request"));
     }
@@ -724,16 +880,27 @@ fn decision_label(
 }
 
 fn denials(session: &str) -> Vec<crate::engine::tool_exec::DeniedAction> {
-    crate::engine::tool_exec::DENIALS.lock().unwrap_or_else(|e| e.into_inner()).get(session)
+    crate::engine::tool_exec::DENIALS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(session)
 }
 fn clear_denials(session: &str) {
-    crate::engine::tool_exec::DENIALS.lock().unwrap_or_else(|e| e.into_inner()).clear(session);
+    crate::engine::tool_exec::DENIALS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clear(session);
 }
 fn with_denials(session: &str, mut reply: String) -> String {
     let rows = denials(session);
     if !rows.is_empty() {
         reply.push_str("\n\nDenied:");
-        for row in rows { reply.push_str(&format!("\n- {} {} ({}): {}", row.tool, row.summary, row.mode, row.reason)); }
+        for row in rows {
+            reply.push_str(&format!(
+                "\n- {} {} ({}): {}",
+                row.tool, row.summary, row.mode, row.reason
+            ));
+        }
     }
     reply
 }
@@ -743,7 +910,9 @@ fn wait_ready(work: &super::api::sessions::RunningWork, pending_turn: bool) -> b
 }
 
 #[derive(serde::Deserialize)]
-pub(crate) struct WaitQuery { session_id: String }
+pub(crate) struct WaitQuery {
+    session_id: String,
+}
 
 pub(crate) async fn wait_socket(
     axum::extract::State(state): axum::extract::State<Arc<ServerState>>,
@@ -752,7 +921,11 @@ pub(crate) async fn wait_socket(
     ws: axum::extract::ws::WebSocketUpgrade,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    if headers.get(axum::http::header::ORIGIN).is_some_and(|v| !v.to_str().map(super::loopback_guard::origin_is_loopback_page).unwrap_or(false)) {
+    if headers.get(axum::http::header::ORIGIN).is_some_and(|v| {
+        !v.to_str()
+            .map(super::loopback_guard::origin_is_loopback_page)
+            .unwrap_or(false)
+    }) {
         return (axum::http::StatusCode::FORBIDDEN, "origin not allowed").into_response();
     }
     if session_meta(&state, &query.session_id).is_err() {
@@ -761,30 +934,26 @@ pub(crate) async fn wait_socket(
     let mut events = state.events_tx.subscribe();
     ws.on_upgrade(move |mut socket| async move {
         let session = query.session_id.as_str();
-        let mut told = std::collections::HashSet::new();
-        let mut ready_since = None;
+        let mut told = std::collections::HashMap::new();
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(2));
+        let mut ping = tokio::time::interval_at(tokio::time::Instant::now() + std::time::Duration::from_secs(20), std::time::Duration::from_secs(20));
         loop {
             // Every permission request once — those raised before the
             // watcher connected too.
-            for frame in new_requests(&pending_requests(&state, session).await, &mut told, session) {
+            for frame in new_requests(&pending_requests(&state, session).await, &mut told, session, tokio::time::Instant::now(), std::time::Duration::from_secs(60)) {
                 if socket.send(axum::extract::ws::Message::Text(frame.to_string().into())).await.is_err() { return; }
             }
             let work = super::api::sessions::session_running_work(&state, session).await;
             let ready = wait_ready(&work, state.manager.has_pending_turn(session));
-            let deadline = if ready {
-                *ready_since.get_or_insert_with(|| tokio::time::Instant::now() + std::time::Duration::from_secs(3))
-            } else {
-                ready_since = None;
-                tokio::time::Instant::now()
-            };
-            if ready && tokio::time::Instant::now() >= deadline {
+            if ready {
                 let frame = finished_frame(session, last_run(&state.manager, session), final_reply(session), denials(session));
                 let _ = socket.send(axum::extract::ws::Message::Text(frame.to_string().into())).await;
                 let _ = socket.send(axum::extract::ws::Message::Close(None)).await;
                 break;
             }
             tokio::select! {
-                _ = tokio::time::sleep_until(deadline), if ready => {},
+                _ = tick.tick() => {},
+                _ = ping.tick() => if socket.send(axum::extract::ws::Message::Ping(Default::default())).await.is_err() { break; },
                 event = events.recv() => if matches!(event, Err(tokio::sync::broadcast::error::RecvError::Closed)) { break; },
                 incoming = socket.recv() => if incoming.is_none() || matches!(incoming, Some(Err(_)) | Some(Ok(axum::extract::ws::Message::Close(_)))) { break; },
             }
@@ -799,12 +968,19 @@ const FINISHED_EVENT: &str = "finished";
 /// `permission_request` frames for requests not told yet.
 fn new_requests(
     pending: &[serde_json::Value],
-    told: &mut std::collections::HashSet<String>,
+    told: &mut std::collections::HashMap<String, tokio::time::Instant>,
     session: &str,
+    now: tokio::time::Instant,
+    interval: std::time::Duration,
 ) -> Vec<serde_json::Value> {
+    told.retain(|id, _| pending.iter().any(|row| row["id"].as_str() == Some(id)));
     pending
         .iter()
-        .filter(|row| row["id"].as_str().is_some_and(|id| told.insert(id.to_string())))
+        .filter(|row| row["id"].as_str().is_some_and(|id| {
+            if told.get(id).is_some_and(|last| now.duration_since(*last) < interval) { return false; }
+            told.insert(id.to_string(), now);
+            true
+        }))
         .map(|row| serde_json::json!({"type": PERMISSION_REQUEST_EVENT, "session_id": session, "request": row}))
         .collect()
 }
@@ -840,11 +1016,16 @@ fn last_run(manager: &crate::engine::agent::AgentManager, session: &str) -> Last
     use crate::engine::agent::AgentRunStatus;
     let store = &manager.run_store;
     let runs = store.list_runs(Some(session));
-    let running = runs.iter()
+    let running = runs
+        .iter()
         .filter(|r| r.parent_run_id.is_none() && r.status == AgentRunStatus::Running)
         .max_by_key(|r| r.started_at);
     if let Some(run) = running {
-        return LastRun { status: "running", error: None, model: run.model.clone() };
+        return LastRun {
+            status: "running",
+            error: None,
+            model: run.model.clone(),
+        };
     }
     match store.outcome(session) {
         Some(o) => LastRun {
@@ -857,7 +1038,11 @@ fn last_run(manager: &crate::engine::agent::AgentManager, session: &str) -> Last
             error: o.error.map(|e| naming_model(e, o.model.as_deref())),
             model: o.model,
         },
-        None => LastRun { status: "completed", error: None, model: None },
+        None => LastRun {
+            status: "completed",
+            error: None,
+            model: None,
+        },
     }
 }
 
@@ -869,31 +1054,86 @@ mod wait_ready_tests {
     fn wait_ready_requires_all_work_to_finish() {
         assert!(wait_ready(&RunningWork::default(), false));
         assert!(!wait_ready(&RunningWork::default(), true));
-        assert!(!wait_ready(&RunningWork { turn: true, ..Default::default() }, false));
-        assert!(!wait_ready(&RunningWork { tasks: 1, ..Default::default() }, false));
-        assert!(!wait_ready(&RunningWork { subagents: 1, ..Default::default() }, false));
+        assert!(!wait_ready(
+            &RunningWork {
+                turn: true,
+                ..Default::default()
+            },
+            false
+        ));
+        assert!(!wait_ready(
+            &RunningWork {
+                tasks: 1,
+                ..Default::default()
+            },
+            false
+        ));
+        assert!(!wait_ready(
+            &RunningWork {
+                subagents: 1,
+                ..Default::default()
+            },
+            false
+        ));
+    }
+
+    #[tokio::test]
+    async fn reserved_turn_stays_busy_until_released() {
+        let manager = super::permit_tests::manager();
+        let (_, place) =
+            crate::server::chat::helpers::take_turn_place(manager.session_turn("reserved"));
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        assert!(!wait_ready(
+            &RunningWork::default(),
+            manager.has_pending_turn("reserved")
+        ));
+        drop(place);
+        assert!(wait_ready(
+            &RunningWork::default(),
+            manager.has_pending_turn("reserved")
+        ));
     }
 
     #[test]
     fn final_reply_skips_system_notice() {
         let row = |from: &str, content: &str, observation| crate::state_fs::sessions::ChatMsg {
-            agent_id: "ling".into(), from_id: from.into(), to_id: "ling".into(),
-            content: content.into(), timestamp: 0, is_observation: observation,
-            client_id: None, failed: false, via: None, via_note: None,
-            images: vec![], run_id: None,
+            agent_id: "ling".into(),
+            from_id: from.into(),
+            to_id: "ling".into(),
+            content: content.into(),
+            timestamp: 0,
+            is_observation: observation,
+            client_id: None,
+            failed: false,
+            via: None,
+            via_note: None,
+            images: vec![],
+            run_id: None,
         };
-        let messages = vec![row("ling", "agent answer", false),
-            row("system", "Background task sh-1 ended: failed", false)];
+        let messages = vec![
+            row("ling", "agent answer", false),
+            row("system", "Background task sh-1 ended: failed", false),
+        ];
         assert_eq!(last_agent_reply(messages).as_deref(), Some("agent answer"));
     }
 }
 
 pub async fn stop(state: &Arc<ServerState>, session: &str) -> Result<String, String> {
     session_meta(state, session)?;
-    let runs = state.manager.list_agent_runs(&PathBuf::new(), Some(session)).await.map_err(|e| e.to_string())?;
+    let runs = state
+        .manager
+        .list_agent_runs(&PathBuf::new(), Some(session))
+        .await
+        .map_err(|e| e.to_string())?;
     let mut stopped = Vec::new();
-    for run in runs.iter().filter(|r| r.status == crate::engine::agent::AgentRunStatus::Running && r.parent_run_id.is_none()) {
-        let cancelled = state.manager.cancel_run_tree(&run.run_id).await.map_err(|e| e.to_string())?;
+    for run in runs.iter().filter(|r| {
+        r.status == crate::engine::agent::AgentRunStatus::Running && r.parent_run_id.is_none()
+    }) {
+        let cancelled = state
+            .manager
+            .cancel_run_tree(&run.run_id)
+            .await
+            .map_err(|e| e.to_string())?;
         // A run waiting on a permission request stops now, not when it expires.
         super::api::agents::drop_pending_asks(state, &cancelled).await;
         stopped.extend(cancelled.into_iter().map(|r| r.run_id));
@@ -915,33 +1155,58 @@ fn format_models(models: &crate::provider::models::ModelManager, default: Option
     let default = default.and_then(|id| models.resolve_id(id));
     serde_json::json!({"models": models.list_models().iter().map(|m| serde_json::json!({
         "id": m.id, "provider": m.provider, "default": Some(m.id.as_str()) == default.as_deref()
-    })).collect::<Vec<_>>()}).to_string()
+    })).collect::<Vec<_>>()})
+    .to_string()
 }
 
 pub async fn models(state: &Arc<ServerState>) -> String {
     let config = state.manager.get_config_snapshot().await;
     let models = state.manager.models.read().await;
-    format_models(&models, config.routing.default_models.first().map(String::as_str))
+    format_models(
+        &models,
+        config.routing.default_models.first().map(String::as_str),
+    )
 }
 
 fn worktree_decision(linked: bool, clean: bool, merged: bool) -> Result<(), String> {
-    if !linked { return Err("worktree check failed: not a linked worktree root".into()); }
-    if !clean { return Err("clean check failed: worktree has changes".into()); }
-    if !merged { return Err("merged check failed: HEAD is not contained in a remote branch".into()); }
+    if !linked {
+        return Err("worktree check failed: not a linked worktree root".into());
+    }
+    if !clean {
+        return Err("clean check failed: worktree has changes".into());
+    }
+    if !merged {
+        return Err("merged check failed: HEAD is not contained in a remote branch".into());
+    }
     Ok(())
 }
 
 fn git(cwd: &std::path::Path, args: &[&str]) -> Result<String, String> {
-    let output = std::process::Command::new("git").current_dir(cwd).args(args).output()
+    let output = std::process::Command::new("git")
+        .current_dir(cwd)
+        .args(args)
+        .output()
         .map_err(|e| format!("git failed: {e}"))?;
-    if !output.status.success() { return Err(format!("git {} failed: {}", args.join(" "), String::from_utf8_lossy(&output.stderr))); }
+    if !output.status.success() {
+        return Err(format!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-pub async fn close(state: &Arc<ServerState>, session: &str, remove: bool) -> Result<String, String> {
+pub async fn close(
+    state: &Arc<ServerState>,
+    session: &str,
+    remove: bool,
+) -> Result<String, String> {
     let meta = session_meta(state, session)?;
     let stopped = stop(state, session).await?;
-    if !remove { return Ok(stopped); }
+    if !remove {
+        return Ok(stopped);
+    }
     let work = super::api::sessions::session_running_work(state, session).await;
     if work.turn || work.tasks > 0 || work.subagents > 0 {
         return Err("running check failed: work is still stopping; retry".into());
@@ -956,8 +1221,13 @@ pub async fn close(state: &Arc<ServerState>, session: &str, remove: bool) -> Res
     let merged = !git(cwd, &["branch", "-r", "--contains", "HEAD"])?.is_empty();
     worktree_decision(linked, clean, merged)?;
     // git refuses to remove the worktree it runs in: run from the main checkout.
-    let common = git(cwd, &["rev-parse", "--path-format=absolute", "--git-common-dir"])?;
-    let main = std::path::Path::new(&common).parent().ok_or("no main checkout")?;
+    let common = git(
+        cwd,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )?;
+    let main = std::path::Path::new(&common)
+        .parent()
+        .ok_or("no main checkout")?;
     git(main, &["worktree", "remove", "--", &root])?;
     Ok(serde_json::json!({"stopped": stopped, "removed_worktree": root}).to_string())
 }
@@ -974,42 +1244,67 @@ mod tests {
                 async { busy.set(true) },
                 async {
                     assert!(busy.get());
-                    if fail { Err("failed") } else { Ok(()) }
+                    if fail {
+                        Err("failed")
+                    } else {
+                        Ok(())
+                    }
                 },
                 || async { busy.set(false) },
-            ).await;
+            )
+            .await;
             assert_eq!(result.is_err(), fail);
             assert!(!busy.get());
         }
     }
     #[test]
     fn mcp_agent_permission_mapping() {
-        for (mode, expected) in [("plan", None), ("default", Some(PermissionMode::Edit)), ("acceptEdits", Some(PermissionMode::Edit)), ("auto", Some(PermissionMode::Admin)), ("bypassPermissions", Some(PermissionMode::Admin))] {
+        for (mode, expected) in [
+            ("plan", None),
+            ("default", Some(PermissionMode::Edit)),
+            ("acceptEdits", Some(PermissionMode::Edit)),
+            ("auto", Some(PermissionMode::Admin)),
+            ("bypassPermissions", Some(PermissionMode::Admin)),
+        ] {
             assert_eq!(permission_mapping(Some(mode), true).unwrap(), expected);
             assert_eq!(permission_mapping(Some(mode), false).unwrap(), None);
         }
         assert!(permission_mapping(Some("bad"), true).is_err());
-        assert_eq!(permission_mapping(None, true).unwrap(), Some(PermissionMode::Admin));
+        assert_eq!(
+            permission_mapping(None, true).unwrap(),
+            Some(PermissionMode::Admin)
+        );
     }
     #[test]
     fn mcp_agent_worktree_safety() {
         assert!(worktree_decision(true, true, true).is_ok());
-        assert!(worktree_decision(false, true, true).unwrap_err().contains("worktree"));
-        assert!(worktree_decision(true, false, true).unwrap_err().contains("clean"));
-        assert!(worktree_decision(true, true, false).unwrap_err().contains("merged"));
+        assert!(worktree_decision(false, true, true)
+            .unwrap_err()
+            .contains("worktree"));
+        assert!(worktree_decision(true, false, true)
+            .unwrap_err()
+            .contains("clean"));
+        assert!(worktree_decision(true, true, false)
+            .unwrap_err()
+            .contains("merged"));
     }
     #[test]
     fn mcp_agent_models_format() {
         let manager = crate::provider::models::ModelManager::new_with_credentials(
-            vec![], &crate::credentials::Credentials::default(),
+            vec![],
+            &crate::credentials::Credentials::default(),
         );
         let builtin = manager.list_models().first().unwrap().id.clone();
-        let result: serde_json::Value = serde_json::from_str(&format_models(&manager, Some(&builtin))).unwrap();
+        let result: serde_json::Value =
+            serde_json::from_str(&format_models(&manager, Some(&builtin))).unwrap();
         let rows = result["models"].as_array().unwrap();
         assert_eq!(rows.len(), manager.list_models().len());
         let selected = rows.iter().find(|m| m["id"] == builtin).unwrap();
         assert_eq!(selected["default"], true);
-        assert_eq!(selected["provider"], manager.provider_kind(&builtin).unwrap());
+        assert_eq!(
+            selected["provider"],
+            manager.provider_kind(&builtin).unwrap()
+        );
         assert_eq!(rows.iter().filter(|m| m["default"] == true).count(), 1);
         assert!(rows.iter().any(|m| m["id"] == "deepseek-flash"));
     }
@@ -1017,7 +1312,10 @@ mod tests {
     fn mcp_agent_first_prompt_enters_cached_thread() {
         let mut history = vec![crate::message::ChatMessage::new("assistant", "first reply")];
         seed_first_prompt(&mut history, "first prompt");
-        assert_eq!((history[0].role.as_str(), history[0].content.as_str()), ("user", "first prompt"));
+        assert_eq!(
+            (history[0].role.as_str(), history[0].content.as_str()),
+            ("user", "first prompt")
+        );
         assert_eq!(history[1].content, "first reply");
     }
     #[test]
@@ -1027,11 +1325,15 @@ mod tests {
     }
     #[test]
     fn mcp_agent_rejects_unknown_session() {
-        assert!(require_session::<()>("missing", None).unwrap_err().contains("unknown session"));
+        assert!(require_session::<()>("missing", None)
+            .unwrap_err()
+            .contains("unknown session"));
     }
     #[test]
     fn mcp_agent_rejects_unknown_model() {
-        assert!(validate_model("bad", None, &["good".into()]).unwrap_err().contains("good"));
+        assert!(validate_model("bad", None, &["good".into()])
+            .unwrap_err()
+            .contains("good"));
     }
 }
 
@@ -1062,7 +1364,12 @@ mod permit_tests {
 
     fn question(dir: Option<&str>) -> crate::engine::tools::AskUserQuestion {
         let dirs: Vec<String> = dir.into_iter().map(str::to_string).collect();
-        build_caller_question("touch ~/out/file", &PermissionMode::Edit, "~/out/file", &dirs)
+        build_caller_question(
+            "touch ~/out/file",
+            &PermissionMode::Edit,
+            "~/out/file",
+            &dirs,
+        )
     }
 
     fn bridge(pending: &Pending, session: &str) -> AskUserBridge {
@@ -1086,10 +1393,19 @@ mod permit_tests {
         let b = bridge(&pending, "s1");
         let req = request(dir);
         let ask = tokio::spawn(async move {
-            crate::engine::tool_exec::ask_on_bridge(&b, "ling".into(), question, Some(req), Duration::from_secs(5)).await
+            crate::engine::tool_exec::ask_on_bridge(
+                &b,
+                "ling".into(),
+                question,
+                Some(req),
+                Duration::from_secs(5),
+            )
+            .await
         });
         let id = loop {
-            if let Some(id) = pending.lock().await.keys().next().cloned() { break id; }
+            if let Some(id) = pending.lock().await.keys().next().cloned() {
+                break id;
+            }
             tokio::task::yield_now().await;
         };
         let answered = answer_request(&pending, "s1", &id, decision, scope).await;
@@ -1111,11 +1427,25 @@ mod permit_tests {
     #[tokio::test]
     async fn permit_allow_session_grants_folder_or_path_only() {
         let (_, dir) = ask_and_answer("allow_session", Some("dir"), Some("~/out")).await;
-        assert_eq!(dir, Some(PermissionAction::AllowDirectory { all: false, mode: PermissionMode::Edit, path: "~/out".into() }));
+        assert_eq!(
+            dir,
+            Some(PermissionAction::AllowDirectory {
+                all: false,
+                mode: PermissionMode::Edit,
+                path: "~/out".into()
+            })
+        );
         let (_, default) = ask_and_answer("allow_session", None, Some("~/out")).await;
         assert_eq!(default, dir);
         let (_, path) = ask_and_answer("allow_session", Some("path"), Some("~/out")).await;
-        assert_eq!(path, Some(PermissionAction::AllowDirectory { all: false, mode: PermissionMode::Edit, path: "~/out/file".into() }));
+        assert_eq!(
+            path,
+            Some(PermissionAction::AllowDirectory {
+                all: false,
+                mode: PermissionMode::Edit,
+                path: "~/out/file".into()
+            })
+        );
         // An ungrantable folder (home itself) offers the path, not the folder.
         let (err, _) = ask_and_answer("allow_session", Some("dir"), None).await;
         assert!(err.unwrap_err().contains("scope"));
@@ -1135,7 +1465,14 @@ mod permit_tests {
     async fn unanswered_request_times_out_and_is_gone() {
         let pending: Pending = Default::default();
         let b = bridge(&pending, "s1");
-        let answer = crate::engine::tool_exec::ask_on_bridge(&b, "ling".into(), question(None), Some(request(None)), Duration::from_millis(30)).await;
+        let answer = crate::engine::tool_exec::ask_on_bridge(
+            &b,
+            "ling".into(),
+            question(None),
+            Some(request(None)),
+            Duration::from_millis(30),
+        )
+        .await;
         assert!(answer.is_none(), "a timeout is no answer");
         assert!(pending.lock().await.is_empty());
     }
@@ -1147,27 +1484,73 @@ mod permit_tests {
         let (tx2, _rx2) = tokio::sync::oneshot::channel();
         {
             let mut map = pending.lock().await;
-            map.insert("other".into(), PendingAskUser { agent_id: "ling".into(), questions: vec![question(None)], sender: tx, session_id: Some("s2".into()), caller_request: Some(request(None)) });
+            map.insert(
+                "other".into(),
+                PendingAskUser {
+                    agent_id: "ling".into(),
+                    questions: vec![question(None)],
+                    sender: tx,
+                    session_id: Some("s2".into()),
+                    caller_request: Some(request(None)),
+                },
+            );
             // A person's prompt in the same session: not the caller's to answer.
-            let card = build_exceeds_ceiling_question("x", &PermissionMode::Edit, "~/out/file", &[]);
-            map.insert("person".into(), PendingAskUser { agent_id: "ling".into(), questions: vec![card], sender: tx2, session_id: Some("s1".into()), caller_request: None });
+            let card =
+                build_exceeds_ceiling_question("x", &PermissionMode::Edit, "~/out/file", &[]);
+            map.insert(
+                "person".into(),
+                PendingAskUser {
+                    agent_id: "ling".into(),
+                    questions: vec![card],
+                    sender: tx2,
+                    session_id: Some("s1".into()),
+                    caller_request: None,
+                },
+            );
         }
-        assert!(answer_request(&pending, "s1", "other", "allow_once", None).await.is_err());
-        assert!(answer_request(&pending, "s1", "person", "allow_once", None).await.is_err());
-        assert!(answer_request(&pending, "s1", "missing", "deny", None).await.is_err());
-        assert_eq!(pending.lock().await.len(), 2, "refusals leave requests pending");
+        assert!(answer_request(&pending, "s1", "other", "allow_once", None)
+            .await
+            .is_err());
+        assert!(answer_request(&pending, "s1", "person", "allow_once", None)
+            .await
+            .is_err());
+        assert!(answer_request(&pending, "s1", "missing", "deny", None)
+            .await
+            .is_err());
+        assert_eq!(
+            pending.lock().await.len(),
+            2,
+            "refusals leave requests pending"
+        );
         assert!(caller_requests(&*pending.lock().await, "s1").is_empty());
         let rows = caller_requests(&*pending.lock().await, "s2");
-        assert_eq!((rows[0]["id"].as_str(), rows[0]["level"].as_str()), (Some("other"), Some("edit")));
+        assert_eq!(
+            (rows[0]["id"].as_str(), rows[0]["level"].as_str()),
+            (Some("other"), Some("edit"))
+        );
     }
 
     #[test]
     fn deny_floor_is_never_a_request() {
-        let mut perms = SessionPermissions { interactive: false, ask_caller: true, ..Default::default() };
+        let mut perms = SessionPermissions {
+            interactive: false,
+            ask_caller: true,
+            ..Default::default()
+        };
         perms.set_path_mode("/tmp/wd", PermissionMode::Admin);
         for cmd in ["sudo -n true", "rm -rf /", "ls && sudo rm /etc/foo"] {
-            let result = check_permission("Bash", Some(cmd), None, std::path::Path::new("/tmp/wd"), &perms, None);
-            assert!(matches!(result, PermissionCheckResult::Blocked(_)), "{cmd}: {result:?}");
+            let result = check_permission(
+                "Bash",
+                Some(cmd),
+                None,
+                std::path::Path::new("/tmp/wd"),
+                &perms,
+                None,
+            );
+            assert!(
+                matches!(result, PermissionCheckResult::Blocked(_)),
+                "{cmd}: {result:?}"
+            );
         }
     }
 
@@ -1175,33 +1558,82 @@ mod permit_tests {
     fn caller_question_offers_no_session_wide_grant() {
         let q = build_caller_question("touch", &PermissionMode::Edit, "~/a/f", &["~/a".into()]);
         let labels: Vec<&str> = q.options.iter().map(|o| o.label.as_str()).collect();
-        assert_eq!(labels, ["grant:at:edit:~/a", "grant:at:edit:~/a/f", "Allow once", "Deny"]);
+        assert_eq!(
+            labels,
+            [
+                "grant:at:edit:~/a",
+                "grant:at:edit:~/a/f",
+                "Allow once",
+                "Deny"
+            ]
+        );
         // The person's card offers no "Allow once": that label denies there.
-        let card = build_exceeds_ceiling_question("touch", &PermissionMode::Edit, "~/a/f", &["~/a".into()]);
+        let card = build_exceeds_ceiling_question(
+            "touch",
+            &PermissionMode::Edit,
+            "~/a/f",
+            &["~/a".into()],
+        );
         let offered: Vec<String> = card.options.iter().map(|o| o.label.clone()).collect();
-        let once = crate::engine::tools::AskUserAnswer { question_index: 0, selected: vec!["Allow once".into()], custom_text: None };
-        assert_eq!(parse_exceeds_ceiling_answer(&[once], &PermissionMode::Edit, &offered), PermissionAction::Deny);
+        let once = crate::engine::tools::AskUserAnswer {
+            question_index: 0,
+            selected: vec!["Allow once".into()],
+            custom_text: None,
+        };
+        assert_eq!(
+            parse_exceeds_ceiling_answer(&[once], &PermissionMode::Edit, &offered),
+            PermissionAction::Deny
+        );
     }
 
     #[test]
     fn ask_caller_persists_only_when_set() {
         let dir = tempfile::tempdir().unwrap();
         SessionPermissions::default().save(dir.path());
-        assert!(!std::fs::read_to_string(dir.path().join("permission.json")).unwrap().contains("ask_caller"));
-        SessionPermissions { interactive: false, ask_caller: true, ..Default::default() }.save(dir.path());
+        assert!(!std::fs::read_to_string(dir.path().join("permission.json"))
+            .unwrap()
+            .contains("ask_caller"));
+        SessionPermissions {
+            interactive: false,
+            ask_caller: true,
+            ..Default::default()
+        }
+        .save(dir.path());
         assert!(SessionPermissions::load(dir.path()).ask_caller);
     }
 
     #[test]
     fn stream_tells_each_request_once_then_finished() {
-        let mut told = std::collections::HashSet::new();
+        let mut told = std::collections::HashMap::new();
+        let now = tokio::time::Instant::now();
+        let interval = Duration::from_millis(20);
         let rows = vec![serde_json::json!({"id": "r1", "tool": "Bash"})];
-        let first = new_requests(&rows, &mut told, "s1");
+        let first = new_requests(&rows, &mut told, "s1", now, interval);
         assert_eq!(first[0]["type"], "permission_request");
         assert_eq!(first[0]["request"]["id"], "r1");
-        assert!(new_requests(&rows, &mut told, "s1").is_empty());
-        let done = finished_frame("s1", LastRun { status: "completed", error: None, model: None }, Some("ok".into()), vec![]);
-        assert_eq!((done["type"].as_str(), done["status"].as_str(), done["reply"].as_str()), (Some("finished"), Some("completed"), Some("ok")));
+        assert!(new_requests(&rows, &mut told, "s1", now, interval).is_empty());
+        assert_eq!(
+            new_requests(&rows, &mut told, "s1", now + interval, interval)[0]["request"]["id"],
+            "r1"
+        );
+        let done = finished_frame(
+            "s1",
+            LastRun {
+                status: "completed",
+                error: None,
+                model: None,
+            },
+            Some("ok".into()),
+            vec![],
+        );
+        assert_eq!(
+            (
+                done["type"].as_str(),
+                done["status"].as_str(),
+                done["reply"].as_str()
+            ),
+            (Some("finished"), Some("completed"), Some("ok"))
+        );
         assert!(done["denied"].is_array() && done["session_id"] == "s1");
     }
 
@@ -1209,11 +1641,14 @@ mod permit_tests {
     fn still_running_names_the_stream_events() {
         let text = still_running_text(9527, "s1");
         assert!(text.contains("ws://127.0.0.1:9527/api/agent/wait?session_id=s1"));
-        assert!(text.contains("permission_request") && text.contains("finished") && text.contains("agent_permit"));
+        assert!(
+            text.contains("permission_request")
+                && text.contains("finished")
+                && text.contains("agent_permit")
+        );
     }
 
-
-    fn manager() -> Arc<crate::engine::agent::AgentManager> {
+    pub(super) fn manager() -> Arc<crate::engine::agent::AgentManager> {
         crate::engine::agent::AgentManager::new(
             crate::config::Config::default(),
             None,
@@ -1221,14 +1656,26 @@ mod permit_tests {
             Arc::new(crate::engine::test_registries::Empty),
             Arc::new(crate::engine::test_registries::Empty),
             crate::engine::InterfaceMode::Web,
-        ).0
+        )
+        .0
     }
 
-    fn record(id: &str, status: crate::engine::agent::AgentRunStatus) -> crate::engine::agent::AgentRunRecord {
+    fn record(
+        id: &str,
+        status: crate::engine::agent::AgentRunStatus,
+    ) -> crate::engine::agent::AgentRunRecord {
         crate::engine::agent::AgentRunRecord {
-            run_id: id.into(), repo_path: String::new(), session_id: "s1".into(),
-            agent_id: "ling".into(), agent_kind: None, parent_run_id: None, status,
-            detail: None, started_at: 1, ended_at: None, model: None,
+            run_id: id.into(),
+            repo_path: String::new(),
+            session_id: "s1".into(),
+            agent_id: "ling".into(),
+            agent_kind: None,
+            parent_run_id: None,
+            status,
+            detail: None,
+            started_at: 1,
+            ended_at: None,
+            model: None,
         }
     }
 
@@ -1249,14 +1696,21 @@ mod permit_tests {
     fn the_tool_offers_an_optional_model_fallback() {
         let schema = crate::server::mcp::tool_schema("agent_run").unwrap();
         assert_eq!(schema["properties"]["model_fallback"]["type"], "boolean");
-        assert!(schema["required"].as_array().unwrap().iter().all(|k| k != "model_fallback"));
+        assert!(schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|k| k != "model_fallback"));
     }
 
     #[test]
     fn a_failure_names_the_model_when_the_provider_did_not() {
         let auth = "AUTH_REQUIRED: ChatGPT session expired. Sign in with ChatGPT to continue.";
         let said = naming_model(auth.into(), Some("gpt-6.1-sol"));
-        assert!(said.starts_with("model 'gpt-6.1-sol' failed: AUTH_REQUIRED:"), "{said}");
+        assert!(
+            said.starts_with("model 'gpt-6.1-sol' failed: AUTH_REQUIRED:"),
+            "{said}"
+        );
         // Already named (a switching-off failure): left as it is.
         let named = "MODEL_FAILED: model 'gpt-6.1-sol' failed (rate limit): x".to_string();
         assert_eq!(naming_model(named.clone(), Some("gpt-6.1-sol")), named);
@@ -1269,12 +1723,18 @@ mod permit_tests {
         let manager = manager();
         // Nothing on record: an idle session reads as completed.
         let idle = last_run(&manager, "s1");
-        assert_eq!((idle.status, idle.error, idle.model), ("completed", None, None));
+        assert_eq!(
+            (idle.status, idle.error, idle.model),
+            ("completed", None, None)
+        );
         // While it runs: running, and the model answering so far.
         manager.run_store.add_run(&record("r1", Running));
         manager.run_store.set_model("r1", "gpt-6.1-sol");
         let running = last_run(&manager, "s1");
-        assert_eq!((running.status, running.model.as_deref()), ("running", Some("gpt-6.1-sol")));
+        assert_eq!(
+            (running.status, running.model.as_deref()),
+            ("running", Some("gpt-6.1-sol"))
+        );
         // Failed: the run leaves the store; the session keeps how it ended.
         let mut done = manager.run_store.get_run("r1").unwrap();
         done.status = Failed;
@@ -1291,7 +1751,10 @@ mod permit_tests {
         ok.model = Some("deepseek-flash".into());
         manager.run_store.record_outcome(&ok);
         let after = last_run(&manager, "s1");
-        assert_eq!((after.status, after.error, after.model.as_deref()), ("completed", None, Some("deepseek-flash")));
+        assert_eq!(
+            (after.status, after.error, after.model.as_deref()),
+            ("completed", None, Some("deepseek-flash"))
+        );
         assert_eq!(failed_error(&manager, "s1"), None);
     }
 
@@ -1299,7 +1762,11 @@ mod permit_tests {
     fn the_finished_frame_carries_error_and_model() {
         let frame = finished_frame(
             "s1",
-            LastRun { status: "failed", error: Some("MODEL_FAILED: model 'm' failed".into()), model: Some("m".into()) },
+            LastRun {
+                status: "failed",
+                error: Some("MODEL_FAILED: model 'm' failed".into()),
+                model: Some("m".into()),
+            },
             None,
             vec![],
         );
@@ -1317,7 +1784,10 @@ mod permit_tests {
         manager.run_store.record_outcome(&old);
         assert!(failed_error(&manager, "s1").is_some());
         let dir = tempfile::tempdir().unwrap();
-        manager.begin_agent_run(dir.path(), Some("s1"), "ling", None, None).await.unwrap();
+        manager
+            .begin_agent_run(dir.path(), Some("s1"), "ling", None, None)
+            .await
+            .unwrap();
         // Running now, and nothing of the turn before is read as its result.
         assert_eq!(failed_error(&manager, "s1"), None);
         assert_eq!(last_run(&manager, "s1").status, "running");
