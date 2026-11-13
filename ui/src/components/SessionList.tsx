@@ -230,13 +230,11 @@ export const SessionList: React.FC<{
     }
   }, [allSessions]);
 
-  // Mission and skill sessions need an ongoing run or unanswered question; his own
-  // and external (agent_run) ones stay 24 h, so a finished delegate can be read.
+  // Every kind stays Active while it works or waits on a question, then 24 h
+  // more, so a finished mission, skill run or delegate can still be read.
   const isActiveSession = (s: SessionInfo) => {
     if (archived.has(s.id)) return false;
-    const kind = sessionKind(s);
-    const working = runningSessionIds.has(s.id) || !!askQueues[s.id]?.length;
-    if (kind !== 'user' && kind !== 'external') return working;
+    if (runningSessionIds.has(s.id) || askQueues[s.id]?.length) return true;
     return now / 1000 - lastActive(s) < 86400;
   };
   const filtered = useMemo(() => {
