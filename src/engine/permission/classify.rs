@@ -586,6 +586,8 @@ fn classify_program(program: &str, args: &[String]) -> BashClass {
         "true",
         "false",
         "seq",
+        // Only waits: `sleep 30; tail -25 <task log>` watches a shell.
+        "sleep",
         "sort",
         "uniq",
         "tr",
