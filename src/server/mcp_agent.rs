@@ -127,7 +127,9 @@ struct TurnReplies {
 }
 
 /// A turn opens on a prompt (`user`, `claude-code`) or on the engine's own
-/// notice (`system`, not an observation). Tool results are observations.
+/// notice (`system`, not an observation). A restart's continue notice
+/// (`client_id` `restart-…`) goes on with the turn it interrupted. Tool
+/// results are observations; recall and compaction rows are no reply.
 fn turn_replies(msgs: Vec<crate::state_fs::sessions::ChatMsg>) -> TurnReplies {
     let mut out = TurnReplies::default();
     let mut callers_turn = true;
@@ -135,12 +137,18 @@ fn turn_replies(msgs: Vec<crate::state_fs::sessions::ChatMsg>) -> TurnReplies {
         if m.is_observation {
             continue;
         }
+        let continues = m
+            .client_id
+            .as_deref()
+            .is_some_and(|c| c.starts_with("restart-"));
         match m.from_id.as_str() {
             "user" | "claude-code" => {
                 out = TurnReplies::default();
                 callers_turn = true;
             }
+            "system" if continues => {}
             "system" => callers_turn = false,
+            "memory-recall" | super::chat::COMPACTION_SENDER => {}
             _ if m.content.trim().is_empty() => {}
             _ if callers_turn => out.reply = Some(m.content),
             _ => out.followup = Some(m.content),
@@ -1340,6 +1348,22 @@ mod wait_ready_tests {
                 reply: Some("Fixed in abc123; tests pass.".into()),
                 followup: Some("The watcher ended.".into()),
             }
+        );
+        // A restart's continue turn is still the caller's; recall and
+        // compaction rows are not replies.
+        let mut restart = row("system", "The engine restarted (from 2.1.0 …", false);
+        restart.client_id = Some("restart-1794602103-ling".into());
+        let messages = vec![
+            row("claude-code", "fix it", false),
+            row("ling", "building", false),
+            restart,
+            row("memory-recall", "From memory: …", false),
+            row("ling", "Done after the restart.", false),
+            row("compaction", "Summary …", false),
+        ];
+        assert_eq!(
+            turn_replies(messages).reply.as_deref(),
+            Some("Done after the restart.")
         );
         // A new prompt starts over: nothing from before answers it.
         let messages = vec![
