@@ -16,7 +16,8 @@ use super::model::Token;
 /// A flag is listed as taking a value only when every implementation in
 /// use takes one: a flag that is a switch somewhere (BSD `sed -l`, BSD
 /// `grep --context`, gawk's `-i` under the one-true-awk) would make the
-/// pattern its value and hide the file after it as the pattern. For the
+/// pattern its value and hide the file after it as the pattern
+/// (`scripts/permission-flagcheck.sh` shows how each one reads them). For the
 /// same reason BSD `sed -i ''` gets no special reading: GNU sed takes the
 /// empty word as its script and the next word as a file.
 struct PatternFlags {

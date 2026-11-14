@@ -40,11 +40,13 @@ fn long_value<'a>(
 // sed
 // ---------------------------------------------------------------------------
 
-/// sed's scripts, or None when one is unseen (`-f`) or an option is unknown.
+/// sed's scripts, or None when one is unseen (`-f`), an option is unknown,
+/// or an option takes a value in one sed and none in another (`-l`).
 fn sed_scripts(args: &[String]) -> Option<Vec<&str>> {
     let mut scripts = Vec::new();
     let mut operands = Vec::new();
     let mut options_done = false;
+    let mut bare_in_place = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         if options_done || a == "-" || !a.starts_with('-') {
@@ -61,14 +63,31 @@ fn sed_scripts(args: &[String]) -> Option<Vec<&str>> {
                 it.next();
             }
         } else {
+            bare_in_place |= a == "-i";
             sed_short(&a[1..], &mut it, &mut scripts)?;
         }
     }
     if scripts.is_empty() {
-        // BSD `sed -i ''` leaves an empty suffix word before the script.
-        scripts.extend(operands.into_iter().find(|o| !o.is_empty()));
+        scripts.extend(operand_scripts(&operands, bare_in_place));
     }
     Some(scripts)
+}
+
+/// The operands that may be the script when no `-e` gave one. BSD sed takes
+/// the word after a bare `-i` as the backup suffix and the next as the
+/// script; GNU sed takes the first as the script. macOS ships the BSD one
+/// and may have the GNU one installed, so both words are read there.
+fn operand_scripts<'a>(operands: &[&'a str], bare_in_place: bool) -> Vec<&'a str> {
+    if bare_in_place && cfg!(target_os = "macos") {
+        return operands.iter().take(2).copied().collect();
+    }
+    // BSD `sed -i ''` leaves an empty suffix word before the script.
+    operands
+        .iter()
+        .find(|o| !o.is_empty())
+        .copied()
+        .into_iter()
+        .collect()
 }
 
 fn sed_short<'a>(
@@ -87,12 +106,10 @@ fn sed_short<'a>(
                 });
                 return Some(());
             }
-            'l' => {
-                if glued.is_empty() {
-                    rest.next();
-                }
-                return Some(());
-            }
+            // GNU `-l N` takes the next word; BSD `-l` is a switch and the
+            // next word is the script. Only the glued form reads the same.
+            'l' if glued.is_empty() => return None,
+            'l' => return Some(()),
             // `-i` takes an optional glued suffix.
             'i' => return Some(()),
             'n' | 's' | 'E' | 'r' | 'z' | 'u' => {}
@@ -263,7 +280,9 @@ fn awk_programs(args: &[String]) -> Option<Vec<&str>> {
             if long_is(name, "source") {
                 programs.push(long_value(value, &mut it)?);
             } else if long_is(name, "assign") || long_is(name, "field-separator") {
-                long_value(value, &mut it)?;
+                // gawk takes the next word as the value; the one-true-awk
+                // ignores the flag and runs that word as the program.
+                value?;
             } else {
                 return None;
             }

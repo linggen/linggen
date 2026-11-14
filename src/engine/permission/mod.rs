@@ -384,6 +384,13 @@ mod tests {
                 "awk 'BEGIN{while ((getline l < \"/etc/x\") > 0) print l}'",
                 Admin,
             ),
+            // A flag some awk or sed does not know takes no value there: the
+            // word after it is the program (BWK awk, BSD sed).
+            ("awk --assign 'BEGIN{system(\"x\")}' f", Admin),
+            ("awk --field-separator 'BEGIN{system(\"x\")}' f", Admin),
+            ("awk --assign=x=1 '{print x}' f", Write),
+            ("sed -l 'w out.txt' p", Admin),
+            ("sed -n -l '1e ls' p", Admin),
             // A comparison is not a redirection.
             ("awk '$3 > 5 {print $1}' f", Write),
             ("awk '{ if ($3 > 5) print ($1 > 2) }' f", Write),
@@ -1311,6 +1318,23 @@ mod tests {
             "cat > /tmp/x.sh <<'EOF'\nrm -rf /etc/x\nEOF\nsh /tmp/x.sh",
         ] {
             assert!(!allowed(cmd), "{cmd}");
+        }
+    }
+
+    /// BSD sed takes the word after a bare `-i` as the backup suffix and
+    /// the next as the script; GNU sed takes the first as the script. On
+    /// macOS either sed may be installed: both words are read as scripts.
+    #[test]
+    fn sed_in_place_reads_the_script_where_this_system_may_find_it() {
+        let class = classify_bash_command("sed -i p 'w out.txt' f");
+        if cfg!(target_os = "macos") {
+            assert_eq!(class, BashClass::Admin);
+        } else {
+            assert_eq!(class, BashClass::Write);
+        }
+        // The BSD form with an empty suffix, and the glued suffix, stay edits.
+        for cmd in ["sed -i '' 's/a/b/' f", "sed -i.bak 's/a/b/' f"] {
+            assert_eq!(classify_bash_command(cmd), BashClass::Write, "{cmd}");
         }
     }
 
