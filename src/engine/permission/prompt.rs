@@ -21,13 +21,7 @@ pub fn permission_target_summary(tool: &str, args: &serde_json::Value, cwd: &Pat
             .get("cmd")
             .or_else(|| args.get("command"))
             .and_then(|v| v.as_str())
-            .map(|cmd| {
-                if cmd.len() > 80 {
-                    format!("{}...", &cmd[..77])
-                } else {
-                    cmd.to_string()
-                }
-            })
+            .map(|cmd| truncate_for_prompt(cmd, 80))
             .unwrap_or_else(|| "<unknown command>".to_string()),
         "Patch" => args
             .get("diff")
@@ -66,12 +60,17 @@ fn skill_tool_summary(args: &serde_json::Value) -> Option<String> {
     None
 }
 
+/// `s` cut to `max` bytes with `...`, never inside a character (a byte
+/// cut through a CJK character panics).
 fn truncate_for_prompt(s: &str, max: usize) -> String {
-    if s.len() > max {
-        format!("{}...", &s[..max.saturating_sub(3)])
-    } else {
-        s.to_string()
+    if s.len() <= max {
+        return s.to_string();
     }
+    let mut end = max.saturating_sub(3);
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}...", &s[..end])
 }
 
 /// Build AskUser question for an ExceedsCeiling prompt.

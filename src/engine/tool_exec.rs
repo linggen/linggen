@@ -840,9 +840,16 @@ impl AgentEngine {
             .find_map(|key| t.args.get(*key).and_then(|v| v.as_str()))
             .filter(|text| !text.trim().is_empty())
             .map(str::to_string);
+        let summary = self.permission_summary(t);
+        let command = ["cmd", "command"]
+            .iter()
+            .find_map(|key| t.args.get(*key).and_then(|v| v.as_str()))
+            .filter(|cmd| t.canonical == "Bash" && **cmd != summary)
+            .map(str::to_string);
         tools::CallerPermissionRequest {
             tool: t.canonical.to_string(),
-            summary: self.permission_summary(t),
+            summary,
+            command,
             level,
             path: path.to_string(),
             dir: directories.last().cloned(),

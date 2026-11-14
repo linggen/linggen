@@ -1631,6 +1631,7 @@ mod permit_tests {
         CallerPermissionRequest {
             tool: "Bash".into(),
             summary: "touch ~/out/file".into(),
+            command: None,
             level: PermissionMode::Edit,
             path: "~/out/file".into(),
             dir: dir.map(str::to_string),

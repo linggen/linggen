@@ -144,7 +144,7 @@ deprecation window:
   Claude Code's Monitor stops at 30 min) gets one `agent_status`; if that
   still says running, the caller starts a new watch. The stream sends JSON
   frames:
-  - `{"type":"permission_request","session_id","request":{id,tool,summary,level,path,dir?,reason?}}`
+  - `{"type":"permission_request","session_id","request":{id,tool,summary,command?,level,path,dir?,reason?}}`
     — once per request, including those raised before the watcher connected.
   - `{"type":"finished","session_id","status","reply","denied","error","model"}`
     — last, then it closes. `status` is `completed`, `failed` or `cancelled`;

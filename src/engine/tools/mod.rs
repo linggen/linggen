@@ -301,6 +301,10 @@ pub struct PendingAskUser {
 pub struct CallerPermissionRequest {
     pub tool: String,
     pub summary: String,
+    /// The whole Bash command when `summary` cut it short: the caller
+    /// permits what it can read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
     pub level: crate::engine::permission::PermissionMode,
     pub path: String,
     /// The narrowest folder a session grant may cover; `None` when the
