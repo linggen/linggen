@@ -5,6 +5,7 @@
 //! [`super::store`]; prompt construction in [`super::prompt`].
 
 use super::classify::{classify_bash_command, dequote};
+use super::shell_text::{strip_heredoc_bodies, PatternSlot};
 use super::store::SessionPermissions;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -596,22 +597,6 @@ fn needs_prompt(
 // Helpers reused by check_permission and prompt construction
 // ---------------------------------------------------------------------------
 
-/// Extract absolute (`/foo/bar`), tilde-prefixed (`~`, `~/foo`), and
-/// upward-relative (`../foo`, `a/../../b`) tokens from a bash command. Used to
-/// gate Bash by the paths it actually touches, not just the session cwd's tier.
-/// Relative tokens that climb out of cwd via a `..` component are caught so a
-/// session granted only on cwd can't reach `cat ../../.ssh/id_rsa`; tokens that
-/// stay within cwd are omitted (already covered by the cwd-tier check).
-/// Best-effort: doesn't handle quoted paths with spaces, embedded
-/// `--flag=/path` forms, shell-variable expansion (`$HOME`), or command
-/// substitution (`$(…)`).
-pub(super) fn extract_command_paths(cmd: &str) -> Vec<String> {
-    shell_words(cmd)
-        .iter()
-        .filter_map(|w| path_token(w))
-        .collect()
-}
-
 /// The path a single shell word names, when it is one the gate cares about:
 /// absolute, tilde-prefixed or upward-relative. A fully-quoted word is a
 /// single string argument — unwrapped so a quoted path ARG (`cat "/etc/x"`)
@@ -643,7 +628,12 @@ fn path_token(word: &str) -> Option<String> {
 /// have moved (a pipeline stage is a subshell, `||` runs only when the cd
 /// failed, `&` backgrounds it), so the rest resolves from the session's
 /// folder as before.
+///
+/// Text the command carries is not a target: a heredoc body, or the pattern
+/// of grep, sed, awk or jq (see `shell_text`).
 pub(super) fn command_targets(cmd: &str, session_cwd: &Path) -> Vec<PathBuf> {
+    let cmd = strip_heredoc_bodies(cmd);
+    let cmd = cmd.as_str();
     let mut cwd = session_cwd.to_path_buf();
     let mut following = !has_subshell_syntax(cmd);
     let mut at_command = true;
@@ -656,6 +646,7 @@ pub(super) fn command_targets(cmd: &str, session_cwd: &Path) -> Vec<PathBuf> {
     // Relative operands of common file operations are targets too, even when
     // another operand is an absolute or exempt scratch path.
     let mut file_operands = false;
+    let mut pattern = PatternSlot::default();
     for token in command_tokens(cmd) {
         let w = match token {
             Token::Op(joint) => {
@@ -670,13 +661,17 @@ pub(super) fn command_targets(cmd: &str, session_cwd: &Path) -> Vec<PathBuf> {
                 after_and = joint == Joint::And || (after_and && joint != Joint::Seq);
                 at_command = true;
                 file_operands = false;
+                pattern = PatternSlot::default();
                 cd_pending = false;
                 continue;
             }
             Token::Word(w) => w,
         };
         let w = w.as_str();
-        if cd_pending && !is_cd_flag(&dequote(w)) {
+        let text = !at_command && pattern.is_text(w);
+        if text {
+            // Pattern text, not a path.
+        } else if cd_pending && !is_cd_flag(&dequote(w)) {
             cd_pending = false;
             if let Some(token) = path_token(w) {
                 out.push(resolve_bash_arg(&token, &cwd));
@@ -704,6 +699,7 @@ pub(super) fn command_targets(cmd: &str, session_cwd: &Path) -> Vec<PathBuf> {
         // Program names and cd flags as the shell passes them (`\rm`, `'cp'`).
         let word = dequote(w);
         if at_command {
+            pattern = PatternSlot::for_program(&word);
             file_operands = matches!(
                 word.as_str(),
                 "cp" | "mv" | "ln" | "install" | "rsync" | "cat" | "touch" | "mkdir" | "rm"
@@ -842,7 +838,7 @@ fn cd_destination(word: &str, cwd: &Path) -> Option<PathBuf> {
 /// parser — just enough to tell a path ARG from a path that merely appears
 /// inside a quoted string argument (search query, jq program), which must
 /// NOT be gated as a path the command touches.
-fn shell_words(cmd: &str) -> Vec<String> {
+pub(super) fn shell_words(cmd: &str) -> Vec<String> {
     let mut words = Vec::new();
     let mut cur = String::new();
     let mut quote: Option<char> = None;
@@ -1030,16 +1026,34 @@ mod grantable_tests {
     #[test]
     fn a_folder_in_a_home_under_a_system_root_is_grantable() {
         let home = Some(Path::new("/private/var/tmp/w/home"));
-        assert!(!ungrantable_with_home(Path::new("/private/var/tmp/w/home/work"), home));
-        assert!(ungrantable_with_home(Path::new("/private/var/tmp/w/home"), home));
-        assert!(ungrantable_with_home(Path::new("/private/var/tmp/w/homework"), home));
+        assert!(!ungrantable_with_home(
+            Path::new("/private/var/tmp/w/home/work"),
+            home
+        ));
+        assert!(ungrantable_with_home(
+            Path::new("/private/var/tmp/w/home"),
+            home
+        ));
+        assert!(ungrantable_with_home(
+            Path::new("/private/var/tmp/w/homework"),
+            home
+        ));
         assert!(ungrantable_with_home(Path::new("/dev/null"), home));
     }
 
     #[test]
     fn a_bare_root_home_exempts_nothing() {
-        assert!(ungrantable_with_home(Path::new("/var/x"), Some(Path::new("/var"))));
-        assert!(ungrantable_with_home(Path::new("/dev"), Some(Path::new("/"))));
-        assert!(!ungrantable_with_home(Path::new("/Users/alex/repo"), Some(Path::new("/Users/alex"))));
+        assert!(ungrantable_with_home(
+            Path::new("/var/x"),
+            Some(Path::new("/var"))
+        ));
+        assert!(ungrantable_with_home(
+            Path::new("/dev"),
+            Some(Path::new("/"))
+        ));
+        assert!(!ungrantable_with_home(
+            Path::new("/Users/alex/repo"),
+            Some(Path::new("/Users/alex"))
+        ));
     }
 }

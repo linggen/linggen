@@ -20,24 +20,25 @@ mod manifest;
 mod model;
 mod prompt;
 mod scripts;
+mod shell_text;
 mod store;
 
+pub use declined::DeclinedScopes;
 pub use manifest::{apply_grants, Grants, PathGrant};
 pub use model::{
-    check_permission, display_path, effective_mode_for_path, parse_skill_tier, PathMode, PermissionAction,
-    PermissionCheckResult, PermissionMode, PromptKind,
+    check_permission, display_path, effective_mode_for_path, parse_skill_tier, PathMode,
+    PermissionAction, PermissionCheckResult, PermissionMode, PromptKind,
 };
 pub use prompt::{
     build_caller_question, build_exceeds_ceiling_question, grant_at_label,
     parse_exceeds_ceiling_answer, permission_target_summary, ALLOW_ONCE,
 };
-pub use declined::DeclinedScopes;
 pub use store::SessionPermissions;
 
 #[cfg(test)]
 mod tests {
     use super::classify::classify_bash_command;
-    use super::model::{extract_command_paths, is_hardcoded_deny, tool_action_tier, BashClass};
+    use super::model::{command_targets, is_hardcoded_deny, tool_action_tier, BashClass};
     use super::*;
     use std::fs;
     use std::path::Path;
@@ -190,7 +191,10 @@ mod tests {
             "ls > /dev/null-output",
         ] {
             let result = check_permission("Bash", Some(cmd), None, cwd, &sp, None);
-            assert!(matches!(result, PermissionCheckResult::NeedsPrompt(_)), "{cmd}: {result:?}");
+            assert!(
+                matches!(result, PermissionCheckResult::NeedsPrompt(_)),
+                "{cmd}: {result:?}"
+            );
         }
     }
 
@@ -200,7 +204,10 @@ mod tests {
         let mut sp = SessionPermissions::default();
         sp.set_path_mode("*", PermissionMode::Read);
         let result = check_permission("Bash", Some("echo 'a|b'"), None, cwd, &sp, None);
-        assert!(matches!(result, PermissionCheckResult::Allowed), "{result:?}");
+        assert!(
+            matches!(result, PermissionCheckResult::Allowed),
+            "{result:?}"
+        );
     }
 
     #[test]
@@ -216,7 +223,10 @@ mod tests {
             "c''p /tmp/source out",
         ] {
             let result = check_permission("Bash", Some(cmd), None, cwd, &sp, None);
-            assert!(matches!(result, PermissionCheckResult::NeedsPrompt(_)), "{cmd}: {result:?}");
+            assert!(
+                matches!(result, PermissionCheckResult::NeedsPrompt(_)),
+                "{cmd}: {result:?}"
+            );
         }
     }
 
@@ -396,20 +406,44 @@ mod tests {
     fn test_classify_bash_cd_and_git_dir() {
         // `cd` only moves the shell: the segment after it keeps its class.
         assert_eq!(classify_bash_command("cd /x"), BashClass::Read);
-        assert_eq!(classify_bash_command("cd /x && git log -5"), BashClass::Read);
-        assert_eq!(classify_bash_command("cd /x && git commit -m y"), BashClass::Write);
+        assert_eq!(
+            classify_bash_command("cd /x && git log -5"),
+            BashClass::Read
+        );
+        assert_eq!(
+            classify_bash_command("cd /x && git commit -m y"),
+            BashClass::Write
+        );
         assert_eq!(classify_bash_command("cd /x && rm a"), BashClass::Admin);
         // `git -C <dir> <sub>` is <sub>.
-        assert_eq!(classify_bash_command("git -C /x log --oneline"), BashClass::Read);
-        assert_eq!(classify_bash_command("git -C /x show HEAD"), BashClass::Read);
+        assert_eq!(
+            classify_bash_command("git -C /x log --oneline"),
+            BashClass::Read
+        );
+        assert_eq!(
+            classify_bash_command("git -C /x show HEAD"),
+            BashClass::Read
+        );
         assert_eq!(classify_bash_command("git -C /x push"), BashClass::Write);
-        assert_eq!(classify_bash_command("git -C /x diff --output=o"), BashClass::Write);
-        assert_eq!(classify_bash_command("git -C /x branch -D y"), BashClass::Write);
+        assert_eq!(
+            classify_bash_command("git -C /x diff --output=o"),
+            BashClass::Write
+        );
+        assert_eq!(
+            classify_bash_command("git -C /x branch -D y"),
+            BashClass::Write
+        );
         assert_eq!(classify_bash_command("git -C"), BashClass::Admin);
         // `git grep` reads, unless it opens a program.
         assert_eq!(classify_bash_command("git grep -n foo"), BashClass::Read);
-        assert_eq!(classify_bash_command("git grep -O vim foo"), BashClass::Admin);
-        assert_eq!(classify_bash_command("git grep --open-files-in-pager=less foo"), BashClass::Admin);
+        assert_eq!(
+            classify_bash_command("git grep -O vim foo"),
+            BashClass::Admin
+        );
+        assert_eq!(
+            classify_bash_command("git grep --open-files-in-pager=less foo"),
+            BashClass::Admin
+        );
     }
 
     #[test]
@@ -843,25 +877,31 @@ mod tests {
         }
     }
 
+    /// The targets a command reaches from `/w`, as strings.
+    fn targets(cmd: &str) -> Vec<String> {
+        command_targets(cmd, Path::new("/w"))
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect()
+    }
+
     #[test]
-    fn test_extract_command_paths_catches_upward_relative() {
-        // Relative args that climb out of cwd via `..` are extracted so they
-        // get gated against their resolved target — this closes the
-        // `cat ../../.ssh/id_rsa` escape. Relative args without `..` stay
-        // inside cwd and are omitted (already covered by the cwd-tier check).
+    fn test_command_targets_catches_upward_relative() {
+        // Relative args that climb out of cwd via `..` are targets, gated
+        // against their resolved place — this closes the
+        // `cat ../../.ssh/id_rsa` escape.
         assert_eq!(
-            extract_command_paths("cat ../../.ssh/id_rsa"),
-            vec!["../../.ssh/id_rsa".to_string()],
+            targets("cat ../../.ssh/id_rsa"),
+            vec!["/w/../../.ssh/id_rsa"]
         );
         assert_eq!(
-            extract_command_paths("cp a/../../b/x ./out"),
-            vec!["a/../../b/x".to_string()],
+            targets("cp a/../../b/x ./out"),
+            vec!["/w/a/../../b/x", "/w/./out"]
         );
-        // No `..` component → not extracted.
-        assert!(extract_command_paths("cargo build --release").is_empty());
-        assert!(extract_command_paths("cat ./local.txt").is_empty());
+        // Subcommand words are not targets.
+        assert!(targets("cargo build --release").is_empty());
         // A git range (`main..feature`) is one component, not a `..` traversal.
-        assert!(extract_command_paths("git log main..feature").is_empty());
+        assert!(targets("git log main..feature").is_empty());
     }
 
     #[test]
@@ -905,24 +945,26 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_command_paths_ignores_jq_alternative_operator() {
+    fn test_command_targets_ignore_jq_alternative_operator() {
         // jq's `//` alternative operator must NOT be read as a filesystem
         // path — otherwise the dream's TTL command demands admin on `//`.
         let cmd = "ling-mem list --episodic --older-than \"7d\" --format json \
                    | jq -r '.data.episodic_ttl_days // env.X // 7'";
-        let paths = extract_command_paths(cmd);
-        assert!(
-            paths.is_empty(),
-            "jq // should not be extracted; got {paths:?}"
-        );
+        assert!(targets(cmd).is_empty(), "{:?}", targets(cmd));
 
         // Real paths still come through; bare-slash junk is dropped.
-        let mixed = extract_command_paths("cat ~/.linggen/x.json / // ///");
-        assert_eq!(mixed, vec!["~/.linggen/x.json".to_string()]);
+        let home = dirs::home_dir().unwrap();
+        assert_eq!(
+            command_targets("cat ~/.linggen/x.json / // ///", Path::new("/w"))
+                .into_iter()
+                .filter(|p| p.starts_with(&home))
+                .count(),
+            1
+        );
 
         // Path-like words INSIDE a quoted string arg (a search query) are
         // NOT path args — the quoted span stays one word.
-        let q = extract_command_paths(
+        let q = targets(
             "ling-mem search \"binary path /usr/local/bin ~/.local/bin state ~/.linggen\" --limit 8",
         );
         assert!(
@@ -931,10 +973,70 @@ mod tests {
         );
 
         // But a genuinely quoted path ARG still counts.
+        assert_eq!(targets("cat \"/etc/hosts\""), vec!["/etc/hosts"]);
+    }
+
+    #[test]
+    fn heredoc_bodies_are_text_not_targets() {
+        // The 2026-11-10 shapes: a body full of paths written to a file.
+        let cmd = "cat > /tmp/notes.md <<'EOF'\nThe binary lives at /usr/local/bin/ling\nand state in ~/.linggen/sessions/x — don't move it.\nEOF\ngit status";
+        assert_eq!(targets(cmd), vec!["/tmp/notes.md"]);
+        assert_eq!(classify_bash_command(cmd), BashClass::Write);
+        // Unquoted delimiter, `<<-` with a tab-indented terminator, and a
+        // file argument after the operator.
+        let cmd = "tee -a ../log.txt <<-END\n/etc/passwd\n\tEND";
+        assert_eq!(targets(cmd), vec!["/w/../log.txt"]);
+        let cmd = "ling-mem add --stdin <<EOF\nsee /Users/x/y.rs\nEOF";
+        assert!(targets(cmd).is_empty(), "{:?}", targets(cmd));
+        // A here-string is not a heredoc; its word is judged as before.
+        assert_eq!(targets("cat <<< /etc/hosts"), vec!["/etc/hosts"]);
+    }
+
+    #[test]
+    fn heredoc_bodies_a_shell_runs_or_expands_are_still_judged() {
+        // A shell runs the body as a script: its paths are real.
+        let cmd = "bash <<'EOF'\ncat /etc/hosts\nEOF";
+        assert_eq!(targets(cmd), vec!["/etc/hosts"]);
+        let cmd = "cat <<'EOF' | sh\nrm -f /etc/x\nEOF";
+        assert_eq!(targets(cmd), vec!["/etc/x"]);
+        // An unquoted delimiter expands `$(…)` in the body: it stays dynamic.
+        let cmd = "cat > /tmp/x <<EOF\n$(rm -rf ~/y)\nEOF";
+        assert_eq!(classify_bash_command(cmd), BashClass::Admin);
+    }
+
+    #[test]
+    fn grep_sed_awk_patterns_are_text_not_targets() {
+        // The 2026-11-10 shape: a regex with slashes in it.
         assert_eq!(
-            extract_command_paths("cat \"/etc/hosts\""),
-            vec!["/etc/hosts".to_string()],
+            targets("grep -nE '/api/agent/(wait|status)' src/server/mcp_agent.rs"),
+            Vec::<String>::new()
         );
+        assert_eq!(
+            targets("grep -rn -A 3 '/sessions/' /Users/x/repo/src"),
+            vec!["/Users/x/repo/src"]
+        );
+        assert_eq!(
+            targets("rg -g '*.rs' '/tasks/' ../other"),
+            vec!["/w/../other"]
+        );
+        assert_eq!(
+            targets("grep -e '/a/' -e '/b/' /etc/hosts"),
+            vec!["/etc/hosts"]
+        );
+        assert_eq!(
+            targets("sed -n '/^## /p' /tmp/../etc/x.md"),
+            vec!["/tmp/../etc/x.md"]
+        );
+        assert_eq!(targets("sed -i '' '/foo/d' ./a.txt"), vec!["/w/./a.txt"]);
+        assert_eq!(
+            targets("awk -F/ '/ling/ {print $2}' /etc/hosts"),
+            vec!["/etc/hosts"]
+        );
+        // A pattern file and a redirect target are still paths.
+        assert_eq!(targets("grep -f /etc/pats x"), vec!["/etc/pats"]);
+        assert_eq!(targets("grep foo > /etc/out"), vec!["/etc/out"]);
+        // A quoted path given to cat is still a target.
+        assert_eq!(targets("cat '/etc/hosts' | grep '/x/'"), vec!["/etc/hosts"]);
     }
 
     #[test]
@@ -1068,7 +1170,11 @@ mod tests {
 
     #[test]
     fn test_build_exceeds_ceiling_question() {
-        let dirs = vec!["~/repo".to_string(), "~/repo/a".to_string(), "~/repo/a/b".to_string()];
+        let dirs = vec![
+            "~/repo".to_string(),
+            "~/repo/a".to_string(),
+            "~/repo/a/b".to_string(),
+        ];
         let labels = |mode: PermissionMode| -> Vec<String> {
             build_exceeds_ceiling_question("x", &mode, "~/repo/a/b/aaa.rs", &dirs)
                 .options
@@ -1139,7 +1245,11 @@ mod tests {
             }
         );
         assert_eq!(
-            parse_exceeds_ceiling_answer(&[answer(0, vec!["grant:all:admin"])], &admin, &admin_offer),
+            parse_exceeds_ceiling_answer(
+                &[answer(0, vec!["grant:all:admin"])],
+                &admin,
+                &admin_offer
+            ),
             PermissionAction::AllowDirectory {
                 all: true,
                 mode: PermissionMode::Admin,
@@ -1216,7 +1326,11 @@ mod tests {
             PermissionAction::Deny
         );
         assert_eq!(
-            parse_exceeds_ceiling_answer(&[answer(1, vec!["grant:all:admin"])], &admin, &admin_offer),
+            parse_exceeds_ceiling_answer(
+                &[answer(1, vec!["grant:all:admin"])],
+                &admin,
+                &admin_offer
+            ),
             PermissionAction::Deny
         );
         assert_eq!(
@@ -1263,7 +1377,10 @@ mod tests {
                 assert!(path.ends_with("aaa.rs"), "{path}");
                 assert!(directories[0].ends_with("/repo"), "{}", directories[0]);
                 assert!(directories.iter().any(|dir| dir.ends_with("/repo/a")));
-                assert!(directories.last().unwrap().ends_with("/c"), "{directories:?}");
+                assert!(
+                    directories.last().unwrap().ends_with("/c"),
+                    "{directories:?}"
+                );
             }
             other => panic!("expected a prompt, got {other:?}"),
         }

@@ -6,9 +6,11 @@
 
 use super::model::{command_tokens, BashClass, Joint, Token};
 use super::scripts::{awk_class, sed_class};
+use super::shell_text::strip_heredoc_bodies;
 use BashClass::{Admin, Read, Write};
 
 pub fn classify_bash_command(cmd: &str) -> BashClass {
+    let cmd = &strip_heredoc_bodies(cmd);
     if cmd.trim().is_empty() || has_dynamic_syntax(cmd) {
         return Admin;
     }
