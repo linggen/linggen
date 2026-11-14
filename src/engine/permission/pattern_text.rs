@@ -16,7 +16,9 @@ use super::model::Token;
 /// A flag is listed as taking a value only when every implementation in
 /// use takes one: a flag that is a switch somewhere (BSD `sed -l`, BSD
 /// `grep --context`, gawk's `-i` under the one-true-awk) would make the
-/// pattern its value and hide the file after it as the pattern.
+/// pattern its value and hide the file after it as the pattern. For the
+/// same reason BSD `sed -i ''` gets no special reading: GNU sed takes the
+/// empty word as its script and the next word as a file.
 struct PatternFlags {
     /// Flags whose next word is pattern text (`grep -e`).
     pattern: &'static [&'static str],
@@ -37,8 +39,6 @@ struct PatternFlags {
     value_long2: &'static [&'static str],
     /// Flags after which no operand is a pattern (`rg --files`).
     no_pattern: &'static [&'static str],
-    /// Flags an empty word may follow as their value (BSD `sed -i ''`).
-    empty_value_after: &'static [&'static str],
 }
 
 const GREP: PatternFlags = PatternFlags {
@@ -62,7 +62,6 @@ const GREP: PatternFlags = PatternFlags {
     ],
     value_long2: &[],
     no_pattern: &[],
-    empty_value_after: &[],
 };
 
 const RG: PatternFlags = PatternFlags {
@@ -99,7 +98,6 @@ const RG: PatternFlags = PatternFlags {
     ],
     value_long2: &[],
     no_pattern: &["--files", "--type-list"],
-    empty_value_after: &[],
 };
 
 const SED: PatternFlags = PatternFlags {
@@ -111,7 +109,6 @@ const SED: PatternFlags = PatternFlags {
     value_long: &[],
     value_long2: &[],
     no_pattern: &[],
-    empty_value_after: &["-i"],
 };
 
 const AWK: PatternFlags = PatternFlags {
@@ -123,7 +120,6 @@ const AWK: PatternFlags = PatternFlags {
     value_long: &[],
     value_long2: &[],
     no_pattern: &[],
-    empty_value_after: &[],
 };
 
 const JQ: PatternFlags = PatternFlags {
@@ -135,7 +131,6 @@ const JQ: PatternFlags = PatternFlags {
     value_long: &["--indent"],
     value_long2: &["--arg", "--argjson", "--slurpfile", "--rawfile"],
     no_pattern: &[],
-    empty_value_after: &[],
 };
 
 fn pattern_flags(program: &str) -> Option<&'static PatternFlags> {
@@ -190,10 +185,6 @@ fn text_operands(flags: &PatternFlags, args: &[&str]) -> Option<Vec<usize>> {
             continue;
         }
         let w = dequote(raw);
-        let after = i.checked_sub(2).map(|p| dequote(args[p]));
-        if w.is_empty() && after.is_some_and(|a| flags.empty_value_after.contains(&a.as_str())) {
-            continue;
-        }
         if scan.options_done || w == "-" || !w.starts_with('-') {
             scan.operand(i - 1)?;
             continue;

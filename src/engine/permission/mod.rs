@@ -1096,7 +1096,6 @@ mod tests {
             targets("sed -n '/^## /p' /tmp/../etc/x.md"),
             vec!["/tmp/../etc/x.md"]
         );
-        assert_eq!(targets("sed -i '' '/foo/d' ./a.txt"), vec!["/w/./a.txt"]);
         assert_eq!(
             targets("awk -F/ '/ling/ {print $2}' /etc/hosts"),
             vec!["/etc/hosts"]
@@ -1263,6 +1262,10 @@ mod tests {
             // `-e` with a carriage return glued on is one word, not `-e` and
             // a pattern.
             "grep -v -e\r /etc/x",
+            // GNU sed reads the empty word after `-i` as its script, and
+            // the next word as a file (BSD: a suffix, then the script).
+            "sed -n -i '' /etc/x",
+            "sed -i '' /etc/x",
         ];
         let missing = missing_etc_x(&cmds);
         assert!(missing.is_empty(), "{missing:#?}");
