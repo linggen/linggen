@@ -1,36 +1,48 @@
-//! Text a Bash command carries that is not a path it touches: heredoc
-//! bodies, and the pattern or program operand of grep, sed, awk and jq.
+//! Heredoc bodies: text a Bash command carries, not paths it touches
+//! (pattern operands are in [`super::pattern_text`]).
 //!
-//! Best effort, like the rest of the gate, and failing closed: a body is
-//! dropped only when nothing on its line consumes it (no interpreter, loop,
-//! `xargs` or pipe) and the shell would not expand it (`$`, backticks under
-//! an unquoted delimiter). Any other body is kept and judged as before.
+//! Best effort, like the rest of the gate, and failing closed: text is
+//! dropped only on a positive match of a shape understood here. Anything
+//! else — an unknown reader, a pipe, grouping, a comment, a flag form not
+//! listed — keeps every word, and the command is judged as before.
 
 use super::classify::dequote;
-use super::model::{Joint, Token};
+use super::model::{command_tokens, Joint, Token};
 
-/// The command with inert heredoc bodies removed, along with their `<<`
-/// operator and delimiter. The rest of the line — a real redirect target,
-/// a file argument — stays.
+/// The command with its heredoc bodies removed, along with their `<<`
+/// operator and delimiter, when every heredoc in it is inert data (see
+/// [`is_inert`]). Otherwise the command unchanged: one body that might
+/// be run, expanded or read as paths keeps them all.
 pub(super) fn strip_heredoc_bodies(cmd: &str) -> String {
+    if !cmd.contains("<<") {
+        return cmd.to_string();
+    }
+    stripped(cmd).unwrap_or_else(|| cmd.to_string())
+}
+
+fn stripped(cmd: &str) -> Option<String> {
     let mut out = String::with_capacity(cmd.len());
     let mut quote = None;
     let mut lines = cmd.split_inclusive('\n');
     while let Some(line) = lines.next() {
         let (kept, docs) = split_heredocs(line, &mut quote);
-        if docs.is_empty() || quote.is_some() {
+        if docs.is_empty() {
             out.push_str(line);
             continue;
         }
-        let bodies: Vec<String> = docs.iter().map(|d| take_body(&mut lines, d)).collect();
-        if is_inert(&kept, &docs, &bodies) {
-            out.push_str(&kept);
-        } else {
-            out.push_str(line);
-            bodies.iter().for_each(|b| out.push_str(b));
+        if quote.is_some() {
+            return None;
         }
+        let bodies = docs
+            .iter()
+            .map(|d| take_body(&mut lines, d))
+            .collect::<Option<Vec<_>>>()?;
+        if !is_inert(&kept, &docs, &bodies) {
+            return None;
+        }
+        out.push_str(&kept);
     }
-    out
+    Some(out)
 }
 
 struct Heredoc {
@@ -41,56 +53,61 @@ struct Heredoc {
     quoted: bool,
 }
 
-/// Programs and keywords that turn input into commands or paths: a body
-/// fed to one of them is not data.
-const CONSUMERS: &[&str] = &[
-    "bash",
-    "sh",
-    "zsh",
-    "dash",
-    "ksh",
-    "fish",
-    "python",
-    "python3",
-    "node",
-    "ruby",
-    "perl",
-    "php",
-    "osascript",
-    "bun",
-    "deno",
-    "xargs",
-    "eval",
-    "source",
-    ".",
-    "while",
-    "until",
-    "for",
-    "do",
-    "done",
-    "read",
-    "exec",
-    "env",
-    "sudo",
-];
+/// Programs whose standard input is only data: it goes to their output
+/// or to the files they name, and those stay targets.
+const DATA_READERS: &[&str] = &["cat", "tee"];
 
-/// A body is data when nothing on its line consumes it (no consumer, no
-/// pipe to another command) and the shell would not expand anything in it.
+/// A body is data when its line is plain (no pipe, grouping, comment,
+/// substitution or continuation — anything that could take the body
+/// elsewhere), every command on that line is a [`DATA_READERS`] program,
+/// and the shell would not expand anything in the body.
 fn is_inert(line: &str, docs: &[Heredoc], bodies: &[String]) -> bool {
-    let consumed = super::model::command_tokens(line).iter().any(|t| match t {
-        Token::Op(joint) => *joint == Joint::Break,
-        Token::Word(w) => is_consumer(&dequote(w)),
-    });
     let expands = docs
         .iter()
         .zip(bodies)
         .any(|(d, b)| !d.quoted && b.contains(['$', '`']));
-    !consumed && !expands
+    !expands && is_plain(line) && only_data_readers(line)
 }
 
-fn is_consumer(word: &str) -> bool {
-    let name = word.rsplit('/').next().unwrap_or("");
-    CONSUMERS.contains(&name) || name.starts_with("python")
+/// No continuation and, outside quotes, none of `# $ ` ( ) { }`; no `$`
+/// or backtick inside double quotes either.
+fn is_plain(line: &str) -> bool {
+    if line.trim_end_matches(['\n', '\r']).ends_with('\\') {
+        return false;
+    }
+    let mut quote = None;
+    for c in line.chars() {
+        match quote {
+            Some('\'') if c == '\'' => quote = None,
+            Some('\'') => {}
+            Some(_) if c == '"' => quote = None,
+            Some(_) if matches!(c, '$' | '`' | '\\') => return false,
+            Some(_) => {}
+            None if c == '\'' || c == '"' => quote = Some(c),
+            None if "#$`(){}\\".contains(c) => return false,
+            None => {}
+        }
+    }
+    true
+}
+
+/// Each command on the line is `cat` or `tee`, joined only by `;` or `&&`.
+fn only_data_readers(line: &str) -> bool {
+    let mut at_command = true;
+    for token in command_tokens(line) {
+        match token {
+            Token::Op(Joint::Break) => return false,
+            Token::Op(_) => at_command = true,
+            Token::Word(w) if at_command => {
+                if !DATA_READERS.contains(&dequote(&w).as_str()) {
+                    return false;
+                }
+                at_command = false;
+            }
+            Token::Word(_) => {}
+        }
+    }
+    true
 }
 
 /// The line without its heredoc operators, and the heredocs it opens.
@@ -167,125 +184,21 @@ fn read_delimiter(chars: &mut std::iter::Peekable<std::str::Chars>) -> Option<He
     })
 }
 
-/// The body lines and the terminator line, consumed from `lines`.
-fn take_body<'a>(lines: &mut impl Iterator<Item = &'a str>, doc: &Heredoc) -> String {
+/// The body lines and the terminator line, consumed from `lines`; `None`
+/// when no terminator follows (what the shell then does is not judged here).
+fn take_body<'a>(lines: &mut impl Iterator<Item = &'a str>, doc: &Heredoc) -> Option<String> {
     let mut body = String::new();
     for line in lines.by_ref() {
         body.push_str(line);
-        let text = line.trim_end_matches(['\n', '\r']);
+        let text = line.strip_suffix('\n').unwrap_or(line);
         let text = if doc.dash {
             text.trim_start_matches('\t')
         } else {
             text
         };
         if text == doc.delimiter {
-            break;
+            return Some(body);
         }
     }
-    body
-}
-
-/// Which operand of a command is pattern or program text. `grep -E '/a/b'
-/// src` searches for `/a/b`; it does not read a file there.
-#[derive(Default)]
-pub(super) struct PatternSlot {
-    state: Slot,
-    /// Flags of this program that take the next word as their value.
-    value_flags: &'static [&'static str],
-}
-
-#[derive(Default, PartialEq, Eq, Clone, Copy)]
-enum Slot {
-    /// Not a pattern program: nothing is text.
-    #[default]
-    None,
-    /// The next operand is the pattern.
-    Operand,
-    /// The pattern is known; the rest are files, except after `-e`.
-    Files,
-    /// The next word is a pattern (after `-e`).
-    Explicit,
-    /// The next word is a flag's value.
-    FlagValue,
-    /// The next word is a redirect target.
-    Redirect,
-}
-
-impl PatternSlot {
-    pub(super) fn for_program(program: &str) -> Self {
-        let value_flags: &'static [&'static str] = match program {
-            "grep" | "egrep" | "fgrep" => &["-A", "-B", "-C", "-m", "-d", "-D"],
-            "rg" => &[
-                "-A", "-B", "-C", "-m", "-g", "-t", "-T", "-j", "-M", "--glob", "--type",
-            ],
-            "awk" | "gawk" | "mawk" => &["-F", "-v"],
-            "sed" | "jq" => &[],
-            _ => return Self::default(),
-        };
-        Self {
-            state: Slot::Operand,
-            value_flags,
-        }
-    }
-
-    /// Whether `word` (as written) is pattern text rather than a path.
-    /// Called once per word after the program name, in order.
-    pub(super) fn is_text(&mut self, word: &str) -> bool {
-        let w = dequote(word);
-        match self.state {
-            Slot::None => false,
-            Slot::Explicit => {
-                self.state = Slot::Files;
-                true
-            }
-            Slot::FlagValue => {
-                self.state = Slot::Operand;
-                true
-            }
-            Slot::Redirect => {
-                self.state = Slot::Operand;
-                false
-            }
-            Slot::Files => {
-                if is_pattern_flag(&w) {
-                    self.state = Slot::Explicit;
-                }
-                false
-            }
-            Slot::Operand => self.operand(word, &w),
-        }
-    }
-
-    fn operand(&mut self, raw: &str, w: &str) -> bool {
-        if is_pattern_flag(w) {
-            self.state = Slot::Explicit;
-            return false;
-        }
-        if matches!(w, "-f" | "--file" | "--files")
-            || w.starts_with("--regexp=")
-            || w.starts_with("--file=")
-        {
-            self.state = Slot::Files;
-            return false;
-        }
-        if self.value_flags.contains(&w) {
-            self.state = Slot::FlagValue;
-            return false;
-        }
-        if matches!(raw, ">" | ">>" | "<" | "1>" | "2>" | "&>") {
-            self.state = Slot::Redirect;
-            return false;
-        }
-        // A flag, a glued redirect (`>out`), or an empty word (`sed -i ''`)
-        // is not the pattern.
-        if w.starts_with('-') || raw.starts_with(['>', '<']) || w.is_empty() {
-            return false;
-        }
-        self.state = Slot::Files;
-        true
-    }
-}
-
-fn is_pattern_flag(w: &str) -> bool {
-    matches!(w, "-e" | "--regexp" | "--expression")
+    None
 }
