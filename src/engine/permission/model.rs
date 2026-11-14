@@ -538,6 +538,7 @@ pub fn check_permission(
         if let Some(cmd) = bash_command {
             let targets = command_targets(cmd, session_cwd);
             if !targets.is_empty() {
+                let mut judged = false;
                 for arg_path in &targets {
                     // OS temp dir is always-available scratch, and a session
                     // reads its own folder — don't gate them.
@@ -546,6 +547,7 @@ pub fn check_permission(
                     {
                         continue;
                     }
+                    judged = true;
                     let mode = effective_mode_for_path(&session_perms.path_modes, arg_path);
                     if mode.is_none_or(|m| action_tier > m) {
                         return needs_prompt(
@@ -556,7 +558,13 @@ pub fn check_permission(
                         );
                     }
                 }
-                return PermissionCheckResult::Allowed;
+                // A scratch path is free; a command that runs code is not.
+                // With no other path to judge it (`sh /tmp/x.sh`,
+                // `python3 -c … > /tmp/out`), it is judged where it runs,
+                // like a command with no path at all.
+                if judged || action_tier < PermissionMode::Admin {
+                    return PermissionCheckResult::Allowed;
+                }
             }
             // No path args: fall through to the cwd check below — `ls`,
             // `cargo build`, etc. operate in cwd, so cwd's tier is the gate.
@@ -647,6 +655,9 @@ fn path_token(word: &str) -> Option<String> {
     }
     // Strip trailing punctuation from compound shell syntax.
     let t = t.trim_end_matches([';', '&', '|']);
+    if is_device_stream(t) {
+        return None;
+    }
     // Reject all-slash tokens (`/`, `//`, `///`) — e.g. an unquoted jq
     // `//` operator — which would otherwise demand admin on `//`.
     (!t.trim_matches('/').is_empty()).then(|| t.to_string())
@@ -702,6 +713,12 @@ pub(super) fn command_targets(cmd: &str, session_cwd: &Path) -> Vec<PathBuf> {
             Token::Word(w) => w,
         };
         let w = w.as_str();
+        // A redirection glued to its file (`>/x`, `2>>/x`, `hi>/x`, `</x`).
+        for file in redirect_files(w) {
+            if let Some(token) = path_token(file) {
+                out.push(resolve_bash_arg(&token, &cwd));
+            }
+        }
         if text {
             // Pattern text, not a path.
         } else if cd_pending && !is_cd_flag(&dequote(w)) {
@@ -741,6 +758,49 @@ pub(super) fn command_targets(cmd: &str, session_cwd: &Path) -> Vec<PathBuf> {
         at_command = false;
     }
     out
+}
+
+/// The file each redirection operator inside `word` is glued to
+/// (`>/x`, `2>>/x`, `hi>/x`, `</x`, `&>/x`, `>|/x`); a `>` in quotes or
+/// after a backslash is text.
+fn redirect_files(word: &str) -> Vec<&str> {
+    let mut files = Vec::new();
+    let mut quote: Option<char> = None;
+    let mut chars = word.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        if c == '\\' && quote != Some('\'') {
+            chars.next();
+            continue;
+        }
+        if let Some(q) = quote {
+            if c == q {
+                quote = None;
+            }
+            continue;
+        }
+        if c == '\'' || c == '"' {
+            quote = Some(c);
+            continue;
+        }
+        if c != '>' && c != '<' {
+            continue;
+        }
+        let mut end = i + 1;
+        while let Some((j, _)) = chars.next_if(|(_, n)| "<>|&".contains(*n)) {
+            end = j + 1;
+        }
+        files.push(&word[end..]);
+    }
+    files
+}
+
+/// Where output is thrown away or a stream is named: nothing is written
+/// to disk.
+fn is_device_stream(file: &str) -> bool {
+    matches!(
+        file,
+        "/dev/null" | "/dev/stdin" | "/dev/stdout" | "/dev/stderr" | "/dev/tty"
+    )
 }
 
 fn is_cd_flag(w: &str) -> bool {

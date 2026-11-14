@@ -12,6 +12,11 @@ use super::model::Token;
 /// listed are taken to be switches; a long one that is not listed and
 /// stands right before the would-be pattern makes the segment opaque, as
 /// it may take that word as its value.
+///
+/// A flag is listed as taking a value only when every implementation in
+/// use takes one: a flag that is a switch somewhere (BSD `sed -l`, BSD
+/// `grep --context`, gawk's `-i` under the one-true-awk) would make the
+/// pattern its value and hide the file after it as the pattern.
 struct PatternFlags {
     /// Flags whose next word is pattern text (`grep -e`).
     pattern: &'static [&'static str],
@@ -45,7 +50,6 @@ const GREP: PatternFlags = PatternFlags {
     value_long: &[
         "--after-context",
         "--before-context",
-        "--context",
         "--max-count",
         "--directories",
         "--devices",
@@ -103,8 +107,8 @@ const SED: PatternFlags = PatternFlags {
     file: &["-f", "--file"],
     letters: "ef",
     long: &["expression", "file"],
-    value_letters: "l",
-    value_long: &["--line-length"],
+    value_letters: "",
+    value_long: &[],
     value_long2: &[],
     no_pattern: &[],
     empty_value_after: &["-i"],
@@ -115,8 +119,8 @@ const AWK: PatternFlags = PatternFlags {
     file: &["-f", "--file", "-E", "--exec"],
     letters: "efE",
     long: &["source", "file", "exec"],
-    value_letters: "Fvil",
-    value_long: &["--field-separator", "--assign", "--include", "--load"],
+    value_letters: "Fv",
+    value_long: &[],
     value_long2: &[],
     no_pattern: &[],
     empty_value_after: &[],

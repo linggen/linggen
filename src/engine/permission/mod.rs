@@ -1167,6 +1167,122 @@ mod tests {
         assert!(missing.is_empty(), "{missing:#?}");
     }
 
+    /// Shapes this gate once read differently than the shell does (review
+    /// 2026-11-14, each run in bash): the body's end moved, and commands
+    /// after it were dropped as text.
+    #[test]
+    fn a_heredoc_the_shell_reads_differently_drops_nothing() {
+        let cmds = [
+            // An escaped space is part of the delimiter.
+            "cat <<E\\ F\nx\nE F\nrm -rf /etc/x\nE",
+            // An empty delimiter ends at the first empty line.
+            "cat <<''\ncat <<'X'\n\nrm -rf /etc/x\nX",
+            // The lines of a compound command share one output.
+            "{\ncat <<'EOF'\n/etc/x\nEOF\n} | xargs rm",
+            "(\ncat <<'EOF'\n/etc/x\nEOF\n) | xargs rm",
+            "if true; then\ncat <<'EOF'\n/etc/x\nEOF\nfi | xargs rm",
+            // `cat` made to mean something else.
+            "shopt -s expand_aliases\nalias cat=sh\ncat <<'EOF'\nrm -rf /etc/x\nEOF",
+            "PATH=/w/bin\ncat <<'EOF'\nrm -rf /etc/x\nEOF",
+        ];
+        let missing = missing_etc_x(&cmds);
+        assert!(missing.is_empty(), "{missing:#?}");
+    }
+
+    /// Words the shell reads differently hide what follows them: such a
+    /// command is unclear, and asks.
+    #[test]
+    fn a_command_read_differently_from_the_shell_is_unclear() {
+        for cmd in [
+            // A comment's apostrophe is no quote; `$'…'` escapes its own.
+            "echo hi # it's\ncat /etc/x\necho '",
+            ": # it's\necho ' \ncat <<X\n' ; rm -rf /etc/x\nX",
+            "echo $'a\\'\ncat <<X\n' ; rm -rf /etc/x\nX",
+            // A heredoc body left in: the shell does not split it into words.
+            "ls | cat <<'EOF'\nit's\nEOF\ncat /etc/x # '",
+        ] {
+            assert_eq!(classify_bash_command(cmd), BashClass::Admin, "{cmd}");
+        }
+        // A plain comment and a here-string stay as they were.
+        assert_eq!(
+            classify_bash_command("ls -la # list files"),
+            BashClass::Read
+        );
+        assert_eq!(
+            classify_bash_command("grep -c foo <<< abc"),
+            BashClass::Read
+        );
+    }
+
+    #[test]
+    fn a_redirection_glued_to_its_file_is_a_target() {
+        let cmds = [
+            "echo hi >/etc/x",
+            "echo hi>/etc/x",
+            "echo hi >>/etc/x",
+            "cat a 2>/etc/x",
+            "cat </etc/x",
+            "ls &>/etc/x",
+            "ls >|/etc/x",
+            "cat <<'EOF'>/etc/x\nhi\nEOF",
+            "cat <<EOF >/etc/x\nhi\nEOF",
+            "cat >/etc/x<<EOF\nhi\nEOF",
+            "cat <<EOF</etc/x\nhi\nEOF",
+        ];
+        let missing = missing_etc_x(&cmds);
+        assert!(missing.is_empty(), "{missing:#?}");
+        // Thrown away, a duplicated stream, or inside quotes: no file.
+        for cmd in [
+            "ls 2>/dev/null",
+            "ls > /dev/null",
+            "ls >/dev/null 2>&1",
+            "echo 'a>/etc/x'",
+        ] {
+            assert_eq!(targets(cmd), Vec::<String>::new(), "{cmd}");
+        }
+    }
+
+    /// BSD `grep --context` and `sed -l`, and a flag the one-true-awk does
+    /// not know, take no value: the next word is the pattern, then the file.
+    #[test]
+    fn a_flag_that_is_a_switch_somewhere_takes_no_value() {
+        let cmds = [
+            "grep --context foo /etc/x",
+            "sed -l p /etc/x",
+            "sed -n -l p /etc/x",
+            "awk -i '{print}' /etc/x",
+            "awk --include '{print}' /etc/x",
+            "awk --assign '{print}' /etc/x",
+        ];
+        let missing = missing_etc_x(&cmds);
+        assert!(missing.is_empty(), "{missing:#?}");
+    }
+
+    #[test]
+    fn a_scratch_path_is_free_but_running_code_is_not() {
+        let cwd = dirs::home_dir().unwrap().join("a");
+        let mut sp = SessionPermissions::default();
+        sp.set_path_mode(&cwd.to_string_lossy(), PermissionMode::Edit);
+        let allowed = |cmd: &str| {
+            matches!(
+                check_permission("Bash", Some(cmd), None, &cwd, &sp, None),
+                PermissionCheckResult::Allowed
+            )
+        };
+        // Data in and out of scratch space.
+        assert!(allowed("jq . data.json > /tmp/out.json"));
+        assert!(allowed("cat > /tmp/notes.md <<'EOF'\nsee /etc/x\nEOF"));
+        // A program run from scratch space, or any code with its output there.
+        for cmd in [
+            "sh /tmp/x.sh",
+            "python3 /tmp/x.py",
+            "python3 -c 'print(1)' > /tmp/out",
+            "cat > /tmp/x.sh <<'EOF'\nrm -rf /etc/x\nEOF\nsh /tmp/x.sh",
+        ] {
+            assert!(!allowed(cmd), "{cmd}");
+        }
+    }
+
     #[test]
     fn sleep_only_waits() {
         assert_eq!(classify_bash_command("sleep 30"), BashClass::Read);

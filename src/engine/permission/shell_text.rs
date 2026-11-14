@@ -2,17 +2,19 @@
 //! (pattern operands are in [`super::pattern_text`]).
 //!
 //! Best effort, like the rest of the gate, and failing closed: text is
-//! dropped only on a positive match of a shape understood here. Anything
-//! else — an unknown reader, a pipe, grouping, a comment, a flag form not
-//! listed — keeps every word, and the command is judged as before.
+//! dropped only when the whole command is of a shape read here exactly as
+//! the shell reads it. Anything else — an unknown reader, a pipe, grouping,
+//! a comment, a substitution, a backslash, a compound command — keeps every
+//! word, and the command is judged as before.
 
 use super::classify::dequote;
 use super::model::{command_tokens, Joint, Token};
 
 /// The command with its heredoc bodies removed, along with their `<<`
 /// operator and delimiter, when every heredoc in it is inert data (see
-/// [`is_inert`]). Otherwise the command unchanged: one body that might
-/// be run, expanded or read as paths keeps them all.
+/// [`is_inert`]) and every other line is plain. Otherwise the command
+/// unchanged: one body that might be run, expanded or read as paths keeps
+/// them all.
 pub(super) fn strip_heredoc_bodies(cmd: &str) -> String {
     if !cmd.contains("<<") {
         return cmd.to_string();
@@ -20,18 +22,22 @@ pub(super) fn strip_heredoc_bodies(cmd: &str) -> String {
     stripped(cmd).unwrap_or_else(|| cmd.to_string())
 }
 
+/// Every line outside a body must be plain and ordinary, heredoc or not:
+/// a body is found by reading the lines around it as the shell does, and
+/// one construct read differently (a comment's apostrophe, `$'…'`, an
+/// escaped delimiter) moves where a body starts or ends — commands the
+/// shell runs would be dropped as text.
 fn stripped(cmd: &str) -> Option<String> {
     let mut out = String::with_capacity(cmd.len());
-    let mut quote = None;
     let mut lines = cmd.split_inclusive('\n');
     while let Some(line) = lines.next() {
-        let (kept, docs) = split_heredocs(line, &mut quote);
+        if !is_plain(line) || !is_ordinary(line) {
+            return None;
+        }
+        let (kept, docs) = split_heredocs(line)?;
         if docs.is_empty() {
             out.push_str(line);
             continue;
-        }
-        if quote.is_some() {
-            return None;
         }
         let bodies = docs
             .iter()
@@ -57,20 +63,34 @@ struct Heredoc {
 /// or to the files they name, and those stay targets.
 const DATA_READERS: &[&str] = &["cat", "tee"];
 
-/// A body is data when its line is plain (no pipe, grouping, comment,
-/// substitution or continuation — anything that could take the body
-/// elsewhere), every command on that line is a [`DATA_READERS`] program,
-/// and the shell would not expand anything in the body.
+/// Words that open, close or continue a compound command, whose lines
+/// share one output (`if …; then` / `cat <<EOF` / `fi | sh`).
+const COMPOUND_WORDS: &[&str] = &[
+    "!", "[[", "case", "coproc", "do", "done", "elif", "else", "esac", "fi", "for", "function",
+    "if", "in", "select", "then", "time", "until", "while",
+];
+
+/// Builtins that change what a later word means or where output goes.
+const SHELL_STATE_WORDS: &[&str] = &[
+    ".", "alias", "builtin", "command", "declare", "enable", "eval", "exec", "export", "hash",
+    "local", "readonly", "set", "setopt", "shopt", "source", "trap", "typeset", "unalias", "unset",
+];
+
+/// A body is data when every command on its line is a [`DATA_READERS`]
+/// program and the shell would not expand anything in the body. (That the
+/// line is plain — no pipe into a group, comment, substitution or
+/// continuation that could take the body elsewhere — holds for every line.)
 fn is_inert(line: &str, docs: &[Heredoc], bodies: &[String]) -> bool {
     let expands = docs
         .iter()
         .zip(bodies)
         .any(|(d, b)| !d.quoted && b.contains(['$', '`']));
-    !expands && is_plain(line) && only_data_readers(line)
+    !expands && only_data_readers(line)
 }
 
-/// No continuation and, outside quotes, none of `# $ ` ( ) { }`; no `$`
-/// or backtick inside double quotes either.
+/// No continuation and, outside quotes, none of `# $ ` ( ) { } \`; no `$`,
+/// backtick or backslash inside double quotes either. Such a line's quotes
+/// and words are read here exactly as the shell reads them.
 fn is_plain(line: &str) -> bool {
     if line.trim_end_matches(['\n', '\r']).ends_with('\\') {
         return false;
@@ -86,6 +106,28 @@ fn is_plain(line: &str) -> bool {
             None if c == '\'' || c == '"' => quote = Some(c),
             None if "#$`(){}\\".contains(c) => return false,
             None => {}
+        }
+    }
+    true
+}
+
+/// No command on the line is part of a compound command, an assignment, or
+/// a builtin that changes the shell: each is a simple command of its own.
+fn is_ordinary(line: &str) -> bool {
+    let mut at_command = true;
+    for token in command_tokens(line) {
+        match token {
+            Token::Op(_) => at_command = true,
+            Token::Word(w) if at_command => {
+                let odd = w.contains('=')
+                    || COMPOUND_WORDS.contains(&w.as_str())
+                    || SHELL_STATE_WORDS.contains(&dequote(&w).as_str());
+                if odd {
+                    return false;
+                }
+                at_command = false;
+            }
+            Token::Word(_) => {}
         }
     }
     true
@@ -110,27 +152,25 @@ fn only_data_readers(line: &str) -> bool {
     true
 }
 
-/// The line without its heredoc operators, and the heredocs it opens.
-/// `quote` carries an open quote across lines; `<<<` is a here-string.
-fn split_heredocs(line: &str, quote: &mut Option<char>) -> (String, Vec<Heredoc>) {
+/// The (plain) line without its heredoc operators, and the heredocs it
+/// opens; `<<<` is a here-string. `None` when a quote stays open at the
+/// line's end or a `<<` has no delimiter that can be read: where its body
+/// ends is then not known.
+fn split_heredocs(line: &str) -> Option<(String, Vec<Heredoc>)> {
     let mut kept = String::with_capacity(line.len());
     let mut docs = Vec::new();
+    let mut quote: Option<char> = None;
     let mut chars = line.chars().peekable();
     while let Some(c) = chars.next() {
-        if c == '\\' && *quote != Some('\'') {
-            kept.push(c);
-            kept.extend(chars.next());
-            continue;
-        }
-        if let Some(q) = *quote {
+        if let Some(q) = quote {
             kept.push(c);
             if c == q {
-                *quote = None;
+                quote = None;
             }
             continue;
         }
         if c == '\'' || c == '"' {
-            *quote = Some(c);
+            quote = Some(c);
             kept.push(c);
             continue;
         }
@@ -143,19 +183,14 @@ fn split_heredocs(line: &str, quote: &mut Option<char>) -> (String, Vec<Heredoc>
             kept.push_str("<<<");
             continue;
         }
-        let mut probe = chars.clone();
-        match read_delimiter(&mut probe) {
-            Some(doc) => {
-                docs.push(doc);
-                chars = probe;
-            }
-            None => kept.push_str("<<"),
-        }
+        docs.push(read_delimiter(&mut chars)?);
     }
-    (kept, docs)
+    quote.is_none().then_some((kept, docs))
 }
 
-/// The delimiter word after `<<` (`EOF`, `'EOF'`, `"EOF"`, `\EOF`, `-EOF`).
+/// The delimiter word after `<<` (`EOF`, `'EOF'`, `"EOF"`, `-EOF`); `None`
+/// for an empty one (`<<''` ends at the first empty line) or one whose
+/// quote does not close.
 fn read_delimiter(chars: &mut std::iter::Peekable<std::str::Chars>) -> Option<Heredoc> {
     let dash = chars.next_if_eq(&'-').is_some();
     while chars.next_if(|c| *c == ' ' || *c == '\t').is_some() {}
@@ -176,9 +211,9 @@ fn read_delimiter(chars: &mut std::iter::Peekable<std::str::Chars>) -> Option<He
         raw.push(c);
         chars.next();
     }
-    let delimiter: String = raw.chars().filter(|c| !"'\"\\".contains(*c)).collect();
-    (!delimiter.is_empty()).then(|| Heredoc {
-        quoted: raw.contains(['\'', '"', '\\']),
+    let delimiter: String = raw.chars().filter(|c| !"'\"".contains(*c)).collect();
+    (quote.is_none() && !delimiter.is_empty()).then(|| Heredoc {
+        quoted: raw.contains(['\'', '"']),
         delimiter,
         dash,
     })

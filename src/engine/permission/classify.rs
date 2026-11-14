@@ -34,12 +34,19 @@ pub fn classify_bash_command(cmd: &str) -> BashClass {
 
 /// Backticks and `$` outside single quotes change the command or its
 /// targets at run time; an unclosed quote or trailing backslash is unclear.
+/// So is what the words here would be read differently from the shell:
+/// a heredoc whose body was not dropped as data (the shell does not split
+/// a body into words; an apostrophe in it is no quote), and a comment
+/// holding a quote character.
 fn has_dynamic_syntax(cmd: &str) -> bool {
     let mut quote = None;
     let mut escaped = false;
-    for c in cmd.chars() {
+    let mut word_start = true;
+    let mut chars = cmd.chars().peekable();
+    while let Some(c) = chars.next() {
         if escaped {
             escaped = false;
+            word_start = false;
             continue;
         }
         if c == '\\' && quote != Some('\'') {
@@ -49,6 +56,14 @@ fn has_dynamic_syntax(cmd: &str) -> bool {
         if (c == '`' || c == '$') && quote != Some('\'') {
             return true;
         }
+        if quote.is_none() {
+            if c == '#' && word_start && comment_holds_a_quote(&mut chars) {
+                return true;
+            }
+            if c == '<' && chars.next_if_eq(&'<').is_some() && chars.next_if_eq(&'<').is_none() {
+                return true;
+            }
+        }
         if c == '\'' || c == '"' {
             if quote == Some(c) {
                 quote = None;
@@ -56,8 +71,18 @@ fn has_dynamic_syntax(cmd: &str) -> bool {
                 quote = Some(c);
             }
         }
+        word_start = quote.is_none() && (c.is_whitespace() || ";|&()".contains(c));
     }
     quote.is_some() || escaped
+}
+
+/// Reads a comment to the end of its line; whether it holds `'` or `"`.
+fn comment_holds_a_quote(chars: &mut std::iter::Peekable<std::str::Chars>) -> bool {
+    let mut found = false;
+    while let Some(c) = chars.next_if(|c| *c != '\n') {
+        found |= c == '\'' || c == '"';
+    }
+    found
 }
 
 /// A word as the program receives it: quotes and backslash escapes removed.
