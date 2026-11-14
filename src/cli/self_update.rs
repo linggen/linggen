@@ -461,8 +461,17 @@ pub(crate) fn rollback_binary(
     binary_name: &str,
     timeout: Duration,
 ) -> Result<(String, String)> {
+    rollback_to(dir, binary_name, &prev_location(dir, binary_name), timeout)
+}
+
+fn rollback_to(
+    dir: &Path,
+    binary_name: &str,
+    prev: &Path,
+    timeout: Duration,
+) -> Result<(String, String)> {
     let target = dir.join(binary_name);
-    let prev = prev_location(dir, binary_name);
+    let prev = prev.to_path_buf();
     if !prev.is_file() {
         anyhow::bail!(
             "[{binary_name}] No previous binary kept at {} — nothing to roll back to",
@@ -726,6 +735,38 @@ mod tests {
         assert_eq!(version_in(dir.path(), "ling.prev"), "9.9.9");
         rollback_binary(dir.path(), "ling", T).unwrap();
         assert_eq!(version_in(dir.path(), "ling"), "9.9.9");
+    }
+
+    #[test]
+    fn inside_an_app_bundle_update_and_rollback_keep_nothing_in_it() {
+        let home = tempfile::tempdir().unwrap();
+        let apps = tempfile::tempdir().unwrap();
+        let dir = apps.path().join("Linggen.app/Contents/MacOS");
+        std::fs::create_dir_all(&dir).unwrap();
+        script(&dir.join("ling"), &says("1.0.0"));
+        let prev = crate::cli::prev_binary::prev_location_in(home.path(), &dir, "ling");
+        let new = apps.path().join("ling.new");
+        script(&new, &says("9.9.9"));
+        commit_with_probe(&new, &dir.join("ling"), &prev, "ling", T).unwrap();
+        let in_bundle = || {
+            let mut names: Vec<_> = std::fs::read_dir(&dir)
+                .unwrap()
+                .map(|e| e.unwrap().file_name())
+                .collect();
+            names.sort();
+            names
+        };
+        assert_eq!(in_bundle(), vec!["ling"]);
+        assert_eq!(version_in(&dir, "ling"), "9.9.9");
+        assert_eq!(
+            rollback_to(&dir, "ling", &prev, T).unwrap(),
+            ("9.9.9".into(), "1.0.0".into())
+        );
+        assert_eq!(in_bundle(), vec!["ling"]);
+        assert_eq!(probe_version(&prev, "ling", T).unwrap(), "9.9.9");
+        rollback_to(&dir, "ling", &prev, T).unwrap();
+        assert_eq!(version_in(&dir, "ling"), "9.9.9");
+        assert_eq!(in_bundle(), vec!["ling"]);
     }
 
     #[test]
