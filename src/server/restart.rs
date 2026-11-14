@@ -784,7 +784,7 @@ fn deliveries_for(
     let mut deliveries = Vec::new();
     for owner in owners {
         let scoped = scoped_to(session, &owner, agent);
-        let mark = delivery_mark(requested, &owner, scoped["turn_interrupted"] == true);
+        let mark = delivery_mark(requested, &owner, scoped["turn_interrupted"] != false);
         if told(&state.manager.global_sessions, sid, &mark) {
             tracing::info!("[restart] {sid}/{owner} was already told");
             continue;
