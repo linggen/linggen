@@ -1181,6 +1181,9 @@ mod tests {
             "{\ncat <<'EOF'\n/etc/x\nEOF\n} | xargs rm",
             "(\ncat <<'EOF'\n/etc/x\nEOF\n) | xargs rm",
             "if true; then\ncat <<'EOF'\n/etc/x\nEOF\nfi | xargs rm",
+            // Only space, tab and newline end the delimiter word.
+            "cat <<'EOF'\r\nx\nEOF\r\nrm -rf /etc/x\nEOF",
+            "cat <<EOF\u{a0}\nx\nEOF\u{a0}\nrm -rf /etc/x\nEOF",
             // `cat` made to mean something else.
             "shopt -s expand_aliases\nalias cat=sh\ncat <<'EOF'\nrm -rf /etc/x\nEOF",
             "PATH=/w/bin\ncat <<'EOF'\nrm -rf /etc/x\nEOF",
@@ -1200,6 +1203,10 @@ mod tests {
             "echo $'a\\'\ncat <<X\n' ; rm -rf /etc/x\nX",
             // A heredoc body left in: the shell does not split it into words.
             "ls | cat <<'EOF'\nit's\nEOF\ncat /etc/x # '",
+            // A comment ends at its line's end, backslash or not.
+            "echo hi # note \\\npython3 -c 'print(1)'",
+            // A carriage return does not end a word: `-e\r` is one flag.
+            "grep -v -e\r /etc/x",
         ] {
             assert_eq!(classify_bash_command(cmd), BashClass::Admin, "{cmd}");
         }
@@ -1253,6 +1260,9 @@ mod tests {
             "awk -i '{print}' /etc/x",
             "awk --include '{print}' /etc/x",
             "awk --assign '{print}' /etc/x",
+            // `-e` with a carriage return glued on is one word, not `-e` and
+            // a pattern.
+            "grep -v -e\r /etc/x",
         ];
         let missing = missing_etc_x(&cmds);
         assert!(missing.is_empty(), "{missing:#?}");

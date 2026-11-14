@@ -8,7 +8,7 @@
 //! word, and the command is judged as before.
 
 use super::classify::dequote;
-use super::model::{command_tokens, Joint, Token};
+use super::model::{command_tokens, is_odd_space, Joint, Token};
 
 /// The command with its heredoc bodies removed, along with their `<<`
 /// operator and delimiter, when every heredoc in it is inert data (see
@@ -88,9 +88,10 @@ fn is_inert(line: &str, docs: &[Heredoc], bodies: &[String]) -> bool {
     !expands && only_data_readers(line)
 }
 
-/// No continuation and, outside quotes, none of `# $ ` ( ) { } \`; no `$`,
-/// backtick or backslash inside double quotes either. Such a line's quotes
-/// and words are read here exactly as the shell reads them.
+/// No continuation and, outside quotes, none of `# $ ` ( ) { } \` and no
+/// whitespace but space and tab; no `$`, backtick or backslash inside
+/// double quotes either. Such a line's quotes and words are read here
+/// exactly as the shell reads them.
 fn is_plain(line: &str) -> bool {
     if line.trim_end_matches(['\n', '\r']).ends_with('\\') {
         return false;
@@ -104,7 +105,7 @@ fn is_plain(line: &str) -> bool {
             Some(_) if matches!(c, '$' | '`' | '\\') => return false,
             Some(_) => {}
             None if c == '\'' || c == '"' => quote = Some(c),
-            None if "#$`(){}\\".contains(c) => return false,
+            None if "#$`(){}\\".contains(c) || is_odd_space(c) => return false,
             None => {}
         }
     }

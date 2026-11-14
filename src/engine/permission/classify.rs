@@ -4,7 +4,7 @@
 //! as the program receives them (quotes and backslashes removed). Unknown
 //! programs, flags and dynamic shell syntax go up a tier, never down.
 
-use super::model::{command_tokens, BashClass, Joint, Token};
+use super::model::{command_tokens, is_odd_space, BashClass, Joint, Token};
 use super::scripts::{awk_class, sed_class};
 use super::shell_text::strip_heredoc_bodies;
 use BashClass::{Admin, Read, Write};
@@ -36,8 +36,9 @@ pub fn classify_bash_command(cmd: &str) -> BashClass {
 /// targets at run time; an unclosed quote or trailing backslash is unclear.
 /// So is what the words here would be read differently from the shell:
 /// a heredoc whose body was not dropped as data (the shell does not split
-/// a body into words; an apostrophe in it is no quote), and a comment
-/// holding a quote character.
+/// a body into words; an apostrophe in it is no quote), a comment holding
+/// a quote character or a backslash (neither means anything to the shell
+/// there), and whitespace the shell does not split words on.
 fn has_dynamic_syntax(cmd: &str) -> bool {
     let mut quote = None;
     let mut escaped = false;
@@ -57,7 +58,10 @@ fn has_dynamic_syntax(cmd: &str) -> bool {
             return true;
         }
         if quote.is_none() {
-            if c == '#' && word_start && comment_holds_a_quote(&mut chars) {
+            if is_odd_space(c) {
+                return true;
+            }
+            if c == '#' && word_start && comment_is_unclear(&mut chars) {
                 return true;
             }
             if c == '<' && chars.next_if_eq(&'<').is_some() && chars.next_if_eq(&'<').is_none() {
@@ -71,16 +75,17 @@ fn has_dynamic_syntax(cmd: &str) -> bool {
                 quote = Some(c);
             }
         }
-        word_start = quote.is_none() && (c.is_whitespace() || ";|&()".contains(c));
+        word_start = quote.is_none() && (c.is_whitespace() || ";|&()<>".contains(c));
     }
     quote.is_some() || escaped
 }
 
-/// Reads a comment to the end of its line; whether it holds `'` or `"`.
-fn comment_holds_a_quote(chars: &mut std::iter::Peekable<std::str::Chars>) -> bool {
+/// Reads a comment to the end of its line; whether it holds a quote
+/// character or a backslash.
+fn comment_is_unclear(chars: &mut std::iter::Peekable<std::str::Chars>) -> bool {
     let mut found = false;
     while let Some(c) = chars.next_if(|c| *c != '\n') {
-        found |= c == '\'' || c == '"';
+        found |= matches!(c, '\'' | '"' | '\\');
     }
     found
 }

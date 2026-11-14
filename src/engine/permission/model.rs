@@ -878,7 +878,9 @@ pub(super) fn command_tokens(cmd: &str) -> Vec<Token> {
             }
             '&' if chars.next_if_eq(&'&').is_some() => Joint::And,
             '&' => Joint::Break,
-            c if c.is_whitespace() => {
+            // Only a space or a tab ends a word for the shell: a carriage
+            // return or a no-break space stays in it.
+            ' ' | '\t' => {
                 flush(&mut cur, &mut out);
                 continue;
             }
@@ -892,6 +894,12 @@ pub(super) fn command_tokens(cmd: &str) -> Vec<Token> {
     }
     flush(&mut cur, &mut out);
     out
+}
+
+/// Whitespace the shell does not split words on (a carriage return, a
+/// no-break space, …): unquoted, it makes a command read here differently.
+pub(super) fn is_odd_space(c: char) -> bool {
+    c.is_whitespace() && !matches!(c, ' ' | '\t' | '\n')
 }
 
 /// Parentheses, braces, backticks and `$(` open a scope the shell leaves
