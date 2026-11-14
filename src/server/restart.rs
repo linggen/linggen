@@ -783,12 +783,12 @@ fn deliveries_for(
     }
     let mut deliveries = Vec::new();
     for owner in owners {
-        let mark = delivery_mark(requested, &owner);
+        let scoped = scoped_to(session, &owner, agent);
+        let mark = delivery_mark(requested, &owner, scoped["turn_interrupted"] == true);
         if told(&state.manager.global_sessions, sid, &mark) {
             tracing::info!("[restart] {sid}/{owner} was already told");
             continue;
         }
-        let scoped = scoped_to(session, &owner, agent);
         tracing::info!("[restart] {sid}/{owner} continues");
         let message = continue_message(plan, &scoped, outcome);
         deliveries.push(Delivery {
@@ -898,9 +898,23 @@ async fn tell_the_person(state: Arc<ServerState>, file: PathBuf, record: Value) 
     crate::server::resident::wake_herald(state, kickoff, "neutral").await;
 }
 
-/// The mark a continue turn is kept under: one per plan and agent.
-fn delivery_mark(requested_at: u64, agent: &str) -> String {
-    format!("restart-{requested_at}-{agent}")
+/// The mark a continue turn is kept under: one per plan and agent. One
+/// that only reports background work, no turn having been cut, is marked
+/// apart (see [`continues_a_turn`]).
+fn delivery_mark(requested_at: u64, agent: &str, turn_interrupted: bool) -> String {
+    if turn_interrupted {
+        format!("restart-{requested_at}-{agent}")
+    } else {
+        format!("{TASKS_ONLY_MARK}{requested_at}-{agent}")
+    }
+}
+
+const TASKS_ONLY_MARK: &str = "restart-tasks-";
+
+/// Whether a row kept under `client_id` is a continue turn that goes on
+/// with the turn a restart cut — it answers what that turn answered.
+pub(crate) fn continues_a_turn(client_id: &str) -> bool {
+    client_id.starts_with("restart-") && !client_id.starts_with(TASKS_ONLY_MARK)
 }
 
 /// Whether the session's transcript holds the continue turn marked `mark`.
