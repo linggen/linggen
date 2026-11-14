@@ -5,7 +5,8 @@
 //! [`super::store`]; prompt construction in [`super::prompt`].
 
 use super::classify::{classify_bash_command, dequote};
-use super::shell_text::{strip_heredoc_bodies, PatternSlot};
+use super::pattern_text::text_words;
+use super::shell_text::strip_heredoc_bodies;
 use super::store::SessionPermissions;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -668,8 +669,9 @@ pub(super) fn command_targets(cmd: &str, session_cwd: &Path) -> Vec<PathBuf> {
     // Relative operands of common file operations are targets too, even when
     // another operand is an absolute or exempt scratch path.
     let mut file_operands = false;
-    let mut pattern = PatternSlot::default();
-    for token in command_tokens(cmd) {
+    let tokens = command_tokens(cmd);
+    let text = text_words(&tokens);
+    for (token, text) in tokens.into_iter().zip(text) {
         let w = match token {
             Token::Op(joint) => {
                 // A bare `cd` goes home — not followed.
@@ -683,14 +685,12 @@ pub(super) fn command_targets(cmd: &str, session_cwd: &Path) -> Vec<PathBuf> {
                 after_and = joint == Joint::And || (after_and && joint != Joint::Seq);
                 at_command = true;
                 file_operands = false;
-                pattern = PatternSlot::default();
                 cd_pending = false;
                 continue;
             }
             Token::Word(w) => w,
         };
         let w = w.as_str();
-        let text = !at_command && pattern.is_text(w);
         if text {
             // Pattern text, not a path.
         } else if cd_pending && !is_cd_flag(&dequote(w)) {
@@ -721,7 +721,6 @@ pub(super) fn command_targets(cmd: &str, session_cwd: &Path) -> Vec<PathBuf> {
         // Program names and cd flags as the shell passes them (`\rm`, `'cp'`).
         let word = dequote(w);
         if at_command {
-            pattern = PatternSlot::for_program(&word);
             file_operands = matches!(
                 word.as_str(),
                 "cp" | "mv" | "ln" | "install" | "rsync" | "cat" | "touch" | "mkdir" | "rm"
@@ -860,7 +859,7 @@ fn cd_destination(word: &str, cwd: &Path) -> Option<PathBuf> {
 /// parser — just enough to tell a path ARG from a path that merely appears
 /// inside a quoted string argument (search query, jq program), which must
 /// NOT be gated as a path the command touches.
-pub(super) fn shell_words(cmd: &str) -> Vec<String> {
+fn shell_words(cmd: &str) -> Vec<String> {
     let mut words = Vec::new();
     let mut cur = String::new();
     let mut quote: Option<char> = None;

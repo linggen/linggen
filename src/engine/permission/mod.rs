@@ -18,6 +18,7 @@ mod classify;
 mod declined;
 mod manifest;
 mod model;
+mod pattern_text;
 mod prompt;
 mod scripts;
 mod shell_text;
@@ -1033,8 +1034,10 @@ mod tests {
         // file argument after the operator.
         let cmd = "tee -a ../log.txt <<-END\n/etc/passwd\n\tEND";
         assert_eq!(targets(cmd), vec!["/w/../log.txt"]);
+        // Only cat and tee read a body as data: any other reader (here a
+        // program not known to the gate) keeps its paths.
         let cmd = "ling-mem add --stdin <<EOF\nsee /Users/x/y.rs\nEOF";
-        assert!(targets(cmd).is_empty(), "{:?}", targets(cmd));
+        assert_eq!(targets(cmd), vec!["/Users/x/y.rs"]);
         // A here-string is not a heredoc; its word is judged as before.
         assert_eq!(targets("cat <<< /etc/hosts"), vec!["/etc/hosts"]);
     }
@@ -1096,6 +1099,70 @@ mod tests {
         assert_eq!(targets("grep foo > /etc/out"), vec!["/etc/out"]);
         // A quoted path given to cat is still a target.
         assert_eq!(targets("cat '/etc/hosts' | grep '/x/'"), vec!["/etc/hosts"]);
+    }
+
+    /// Every command of `cmds` whose targets miss `/etc/x`, with what they were.
+    fn missing_etc_x(cmds: &[&str]) -> Vec<String> {
+        cmds.iter()
+            .filter(|c| !targets(c).iter().any(|t| t == "/etc/x"))
+            .map(|c| format!("{c:?}: {:?} {:?}", targets(c), classify_bash_command(c)))
+            .collect()
+    }
+
+    /// Shapes whose heredoc body reaches something other than data: each
+    /// keeps the body's paths as targets (review 2026-11-14).
+    #[test]
+    fn heredoc_bodies_reaching_anything_but_cat_or_tee_are_still_judged() {
+        let cmds = [
+            // Run later through a variable.
+            "x=$(cat <<'EOF'\nrm -rf /etc/x\nEOF\n)\n$x",
+            // `<<` that is not a heredoc swallowed the next line.
+            "echo $((1<<2))\nrm -rf /etc/x",
+            "((y = 1<<2))\nrm -rf /etc/x",
+            "echo hi # <<EOF\nrm -rf /etc/x\nEOF",
+            // Programs that act on what they read.
+            "ed -s f <<'EOF'\nw /etc/x\nEOF",
+            "make -f - <<'EOF'\nall:\n\trm -rf /etc/x\nEOF",
+            "rsync --files-from=- . /w/b <<'EOF'\n/etc/x\nEOF",
+            "ling-mem add --stdin <<'EOF'\nsee /etc/x\nEOF",
+            // A grouped or continued line hides where the body goes.
+            "(cat <<'EOF'\nall:\n\trm /etc/x\nEOF\n) | make -f -",
+            "cat <<'EOF' \\\n| sh\nrm -rf /etc/x\nEOF",
+            "{ cat <<'EOF'; } | sh\nrm -rf /etc/x\nEOF",
+        ];
+        let missing = missing_etc_x(&cmds);
+        assert!(missing.is_empty(), "{missing:#?}");
+    }
+
+    #[test]
+    fn a_pattern_given_by_a_flag_leaves_the_operands_as_files() {
+        let cmds = [
+            "grep -- -x /etc/x",
+            "grep -e/a /etc/x",
+            "grep -f/tmp/p /etc/x",
+            "grep -rfp /etc/x",
+            "grep --regex=a /etc/x",
+            "grep --regexp a /etc/x",
+            "sed -nep /etc/x",
+            "sed --expression=p /etc/x",
+            "sed --expr p /etc/x",
+            "rg -e/a /etc/x",
+            // A pattern flag after the first operand.
+            "grep /etc/x -e .",
+            "rg /etc/x -e .",
+            "grep /etc/x -f p",
+            // jq's `-e` is the exit status, not a program.
+            "jq -R . -e /etc/x",
+        ];
+        let missing = missing_etc_x(&cmds);
+        assert!(missing.is_empty(), "{missing:#?}");
+    }
+
+    #[test]
+    fn sleep_only_waits() {
+        assert_eq!(classify_bash_command("sleep 30"), BashClass::Read);
+        assert_eq!(classify_bash_command("sleep 1; rm x"), BashClass::Admin);
+        assert_eq!(classify_bash_command("sleep $(rm x)"), BashClass::Admin);
     }
 
     #[test]
