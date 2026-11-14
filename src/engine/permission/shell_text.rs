@@ -1,11 +1,13 @@
 //! Text a Bash command carries that is not a path it touches: heredoc
 //! bodies, and the pattern or program operand of grep, sed, awk and jq.
 //!
-//! Best effort, like the rest of the gate. A body the shell would expand
-//! (`$`, backticks under an unquoted delimiter) or run as a script (a shell
-//! on the same line) is kept, so it is judged as before.
+//! Best effort, like the rest of the gate, and failing closed: a body is
+//! dropped only when nothing on its line consumes it (no interpreter, loop,
+//! `xargs` or pipe) and the shell would not expand it (`$`, backticks under
+//! an unquoted delimiter). Any other body is kept and judged as before.
 
 use super::classify::dequote;
+use super::model::{Joint, Token};
 
 /// The command with inert heredoc bodies removed, along with their `<<`
 /// operator and delimiter. The rest of the line — a real redirect target,
@@ -39,20 +41,56 @@ struct Heredoc {
     quoted: bool,
 }
 
-const SHELLS: &[&str] = &["bash", "sh", "zsh", "dash", "ksh", "fish"];
+/// Programs and keywords that turn input into commands or paths: a body
+/// fed to one of them is not data.
+const CONSUMERS: &[&str] = &[
+    "bash",
+    "sh",
+    "zsh",
+    "dash",
+    "ksh",
+    "fish",
+    "python",
+    "python3",
+    "node",
+    "ruby",
+    "perl",
+    "php",
+    "osascript",
+    "bun",
+    "deno",
+    "xargs",
+    "eval",
+    "source",
+    ".",
+    "while",
+    "until",
+    "for",
+    "do",
+    "done",
+    "read",
+    "exec",
+    "env",
+    "sudo",
+];
 
-/// A body is data when no shell on its line runs it as a script and the
-/// shell would not expand anything in it.
+/// A body is data when nothing on its line consumes it (no consumer, no
+/// pipe to another command) and the shell would not expand anything in it.
 fn is_inert(line: &str, docs: &[Heredoc], bodies: &[String]) -> bool {
-    let runs_script = super::model::shell_words(line).iter().any(|w| {
-        let word = dequote(w);
-        SHELLS.contains(&word.rsplit('/').next().unwrap_or(""))
+    let consumed = super::model::command_tokens(line).iter().any(|t| match t {
+        Token::Op(joint) => *joint == Joint::Break,
+        Token::Word(w) => is_consumer(&dequote(w)),
     });
     let expands = docs
         .iter()
         .zip(bodies)
         .any(|(d, b)| !d.quoted && b.contains(['$', '`']));
-    !runs_script && !expands
+    !consumed && !expands
+}
+
+fn is_consumer(word: &str) -> bool {
+    let name = word.rsplit('/').next().unwrap_or("");
+    CONSUMERS.contains(&name) || name.starts_with("python")
 }
 
 /// The line without its heredoc operators, and the heredocs it opens.
@@ -223,7 +261,10 @@ impl PatternSlot {
             self.state = Slot::Explicit;
             return false;
         }
-        if matches!(w, "-f" | "--file") || w.starts_with("--regexp=") || w.starts_with("--file=") {
+        if matches!(w, "-f" | "--file" | "--files")
+            || w.starts_with("--regexp=")
+            || w.starts_with("--file=")
+        {
             self.state = Slot::Files;
             return false;
         }
