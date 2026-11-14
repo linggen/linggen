@@ -195,7 +195,11 @@ impl World {
     /// Every UI event the engine sent so far (`LINGGEN_EVENT_LOG`), in order.
     pub fn events(&self) -> Vec<serde_json::Value> {
         let text = std::fs::read_to_string(self.home.root.join("events.jsonl")).unwrap_or_default();
-        text.lines()
+        // The engine may be mid-write: a last line without its newline is
+        // not an event yet.
+        let whole = text.rfind('\n').map_or("", |end| &text[..end]);
+        whole
+            .lines()
             .filter(|l| !l.trim().is_empty())
             .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("bad event {l}: {e}")))
             .collect()
