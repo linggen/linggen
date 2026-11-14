@@ -710,7 +710,7 @@ fn still_running_text(port: u16, session: &str) -> String {
         "Still running in the background in Linggen session {session}. Don't poll: \
         watch ws://127.0.0.1:{port}/api/agent/wait?session_id={session} with a background \
         watcher. It sends {{\"type\":\"permission_request\"}} (answer with agent_permit) and \
-        {{\"type\":\"finished\"}} (then read agent_status). Start a new watch for every agent_run, including continued sessions. If it closes or expires without finished, call agent_status once; never poll."
+        {{\"type\":\"finished\"}} (then read agent_status). Start a new watch for every agent_run, including continued sessions. If it closes or expires without finished, call agent_status once; if that still says running, start a new watch. Never poll."
     )
 }
 
@@ -1880,6 +1880,9 @@ mod permit_tests {
                 && text.contains("finished")
                 && text.contains("agent_permit")
         );
+        // A watch can expire (Claude Code's Monitor caps at 30 min) while the
+        // run goes on: the caller re-arms instead of giving up or polling.
+        assert!(text.contains("still says running, start a new watch"));
     }
 
     pub(super) fn manager() -> Arc<crate::engine::agent::AgentManager> {

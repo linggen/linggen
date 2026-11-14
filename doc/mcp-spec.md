@@ -139,7 +139,10 @@ deprecation window:
 - Give a self-contained brief: files, cause, tests to run, and “reply short”.
   Only the final reply returns; working steps remain visible in the web UI.
 - A long run continues in the background. Don't poll: start a background
-  watcher on `ws://127.0.0.1:9527/api/agent/wait?session_id=…`. It sends JSON
+  watcher on `ws://127.0.0.1:9527/api/agent/wait?session_id=…`. A watch that
+  closes or expires without `finished` (a host's watcher has a time cap —
+  Claude Code's Monitor stops at 30 min) gets one `agent_status`; if that
+  still says running, the caller starts a new watch. The stream sends JSON
   frames:
   - `{"type":"permission_request","session_id","request":{id,tool,summary,level,path,dir?,reason?}}`
     — once per request, including those raised before the watcher connected.
@@ -173,6 +176,8 @@ deprecation window:
 - Review the diff before merging. When done, call
   `agent_session_close(session_id, remove_worktree=true)`; removal requires a
   clean linked worktree whose HEAD is contained in a remote branch.
+- The MCP `instructions` string stays at or under 2048 characters: Claude
+  Code cuts it there (a test holds it).
 
 ## Later
 
