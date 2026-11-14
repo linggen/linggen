@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+- **The permission gate reads a command the way the shell does.** Text a
+  command carries is no longer taken for a path: a heredoc body written with
+  `cat` or `tee`, and the pattern of `grep`, `rg`, `sed`, `awk` or `jq` — so
+  writing notes or searching for `/api/…` stops asking. It is dropped only
+  where the gate and the shell agree on every line; anything unclear asks.
+- **Holes in the gate closed.** A redirection glued to its file (`>/path`,
+  `</path`) is a target; a command that runs code is judged where it runs even
+  when its only paths are in the temp folder (`sh /tmp/x.sh` no longer runs in
+  a read-only session); a `sed` or `awk` script that names a file or is read
+  differently by BSD and GNU tools asks; a quote inside a comment no longer
+  hides the command after it.
+- **A session reads its own folder, and `sleep` only waits.** An agent can
+  watch its own background task's log without a prompt.
+- **`agent_permit` shows the whole command.** A permission request from an
+  `agent_run` session carries the full Bash text when its summary is cut, and
+  a long command with CJK text no longer crashes the prompt.
+- **`agent_status` answers the caller's prompt.** `reply` is the agent's last
+  message in the turn that answered you; a later turn the engine started
+  itself (a background task ending) is `followup`. A watch that expires while
+  the run goes on is re-armed.
+- **The previous binary stays out of the app bundle.** `ling update` and
+  `ling restart` keep `ling.prev` under `~/.linggen/prev/` for a binary inside
+  a macOS `.app`, so the bundle's seal holds; one left inside is moved out.
+- **Linux.** A leftover background shell with a multi-line command is found
+  and ended on Linux too (`ps` prints a newline differently there); a session
+  list with ties comes back in a fixed order.
+
 ## [2.2.0] - 2026-11-13 — 灵境: cards worth collecting, and 灵石 with a use
 
 - **Cards have a 品 and a frame.** Every card wears the frame of its grade
