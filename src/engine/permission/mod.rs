@@ -373,6 +373,21 @@ mod tests {
             ("awk '$1 == \"a|b\" || $2 {print}' f", Write),
             ("awk -f prog.awk f", Admin),
             ("awk -v x=1 '{print x}' f", Write),
+            // A file named inside the script is no target: such a script asks.
+            ("sed -n 'w out.txt' f", Admin),
+            ("sed -n '/x/w /etc/x' f", Admin),
+            ("sed 's/a/b/w out.txt' f", Admin),
+            ("sed 'r head.txt' f", Admin),
+            ("awk '{print > \"out.txt\"}' f", Admin),
+            ("awk '{printf(\"%s\", $1) >> \"o\"}' f", Admin),
+            (
+                "awk 'BEGIN{while ((getline l < \"/etc/x\") > 0) print l}'",
+                Admin,
+            ),
+            // A comparison is not a redirection.
+            ("awk '$3 > 5 {print $1}' f", Write),
+            ("awk '{ if ($3 > 5) print ($1 > 2) }' f", Write),
+            ("awk '{getline; print}' f", Write),
         ] {
             assert_eq!(classify_bash_command(cmd), expected, "{cmd}");
         }

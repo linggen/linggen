@@ -1,8 +1,11 @@
-//! sed and awk programs given on the command line: do they run commands?
+//! sed and awk programs given on the command line: do they run commands,
+//! or reach a file they name themselves?
 //!
 //! Both are edit-tier programs; a script that runs a shell command (sed's
-//! `e`, awk's `system()` or a pipe) is admin. A script that cannot be seen
-//! (`-f file`) or read is admin too.
+//! `e`, awk's `system()` or a pipe) is admin. So is one that reads or
+//! writes a file named inside it (sed's `r`/`w`, awk's `print > file` or
+//! `getline < file`): the script is text, so that file is no target of the
+//! command. A script that cannot be seen (`-f file`) or read is admin too.
 
 use super::model::BashClass::{self, Admin, Read};
 
@@ -106,7 +109,8 @@ fn split_long(long: &str) -> (&str, Option<&str>) {
     }
 }
 
-/// True when the script has an `e` command or `s///e`, or cannot be read.
+/// True when the script has an `e` command or `s///e`, names a file
+/// (`r`, `w`, `s///w`), or cannot be read.
 fn sed_script_runs(script: &str) -> bool {
     let c: Vec<char> = script.chars().collect();
     let mut i = 0;
@@ -194,14 +198,16 @@ fn skip_line(c: &[char], mut i: usize) -> usize {
     i.min(c.len())
 }
 
-/// Index past one command, or None when it runs something or is unknown.
+/// Index past one command, or None when it runs something, names a file
+/// or is unknown.
 fn sed_command(c: &[char], i: usize) -> Option<usize> {
     let j = i + 1;
     match c[i] {
         '{' | '}' | '=' | 'd' | 'D' | 'g' | 'G' | 'h' | 'H' | 'n' | 'N' | 'p' | 'P' | 'x' | 'z'
         | 'F' => Some(j),
         'l' | 'L' | 'q' | 'Q' => Some(skip_while(c, j, |ch| ch.is_ascii_digit() || ch == ' ')),
-        'a' | 'i' | 'c' | 'r' | 'R' | 'w' | 'W' | '#' => Some(skip_line(c, j)),
+        'a' | 'i' | 'c' | '#' => Some(skip_line(c, j)),
+        'r' | 'R' | 'w' | 'W' => None,
         ':' | 'b' | 't' | 'T' | 'v' => Some(skip_while(c, j, |ch| ch != ';' && ch != '\n')),
         's' => {
             let d = *c.get(j)?;
@@ -224,7 +230,7 @@ fn sed_s_flags(c: &[char], mut k: usize) -> Option<usize> {
         match c.get(k) {
             None => return Some(k),
             Some(';' | '\n' | '}' | ' ' | '\t') => return Some(k),
-            Some('w') => return Some(skip_line(c, k + 1)),
+            Some('w') => return None,
             Some(ch) if ch.is_ascii_digit() || matches!(ch, 'g' | 'p' | 'i' | 'I' | 'm' | 'M') => {
                 k += 1
             }
@@ -280,11 +286,12 @@ fn awk_programs(args: &[String]) -> Option<Vec<&str>> {
     Some(programs)
 }
 
-/// True when the program can run a command: `system()`, a pipe, or `@load`.
+/// True when the program can run a command (`system()`, a pipe, `@load`)
+/// or names a file (`print > file`, `getline < file`).
 fn awk_program_runs(program: &str) -> bool {
     let code = awk_strip_literals(program);
     let c: Vec<char> = code.chars().collect();
-    if code.contains("@load") {
+    if code.contains("@load") || awk_names_a_file(&c) {
         return true;
     }
     for (i, &ch) in c.iter().enumerate() {
@@ -301,6 +308,39 @@ fn awk_program_runs(program: &str) -> bool {
             return true;
         }
         rest = &rest[at + 6..];
+    }
+    false
+}
+
+/// `print … > file` (or `>>`) and `getline < file`. A `>` in a print
+/// statement outside parentheses is always a redirection in awk.
+fn awk_names_a_file(c: &[char]) -> bool {
+    let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let word_at = |i: usize, word: &str| {
+        let w: Vec<char> = word.chars().collect();
+        c[i..].starts_with(&w)
+            && !i.checked_sub(1).is_some_and(|p| is_word(c[p]))
+            && !c.get(i + w.len()).is_some_and(|&n| is_word(n))
+    };
+    (0..c.len()).any(|i| {
+        (word_at(i, "print") || word_at(i, "printf")) && statement_has(c, i, '>')
+            || word_at(i, "getline") && statement_has(c, i, '<')
+    })
+}
+
+/// Whether `op` stands in the statement starting at `from`, at its own
+/// depth: not inside parentheses or brackets opened after `from`.
+fn statement_has(c: &[char], from: usize, op: char) -> bool {
+    let mut depth = 0usize;
+    for &ch in &c[from..] {
+        match ch {
+            '(' | '[' => depth += 1,
+            ')' | ']' if depth == 0 => return false,
+            ')' | ']' => depth -= 1,
+            ';' | '}' | '\n' if depth == 0 => return false,
+            _ if ch == op && depth == 0 => return true,
+            _ => {}
+        }
     }
     false
 }
