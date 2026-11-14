@@ -13,7 +13,7 @@ pub fn prev_location(dir: &Path, name: &str) -> PathBuf {
     prev_location_in(crate::paths::linggen_home(), dir, name)
 }
 
-fn prev_location_in(home: &Path, dir: &Path, name: &str) -> PathBuf {
+pub(crate) fn prev_location_in(home: &Path, dir: &Path, name: &str) -> PathBuf {
     let beside = dir.join(format!("{name}.prev"));
     if !in_app_bundle(dir) {
         return beside;
