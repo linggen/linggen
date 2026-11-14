@@ -977,6 +977,50 @@ mod tests {
     }
 
     #[test]
+    fn a_session_reads_its_own_folder_and_no_other() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join(format!("perm-own-dir-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        for s in ["a", "b"] {
+            fs::create_dir_all(root.join(s).join("tasks")).unwrap();
+            fs::write(root.join(s).join("tasks/sh-1.log"), "x").unwrap();
+        }
+        let own = root.join("a");
+        let log = own.join("tasks/sh-1.log").to_string_lossy().into_owned();
+        let other = root.join("b/tasks/sh-1.log").to_string_lossy().into_owned();
+        let cwd = Path::new("/");
+        let sp = SessionPermissions::load(&own);
+        let check = |tool: &str, cmd: Option<&str>, file: Option<&str>| {
+            check_permission(tool, cmd, file, cwd, &sp, None)
+        };
+        let allowed = |r: PermissionCheckResult| matches!(r, PermissionCheckResult::Allowed);
+        assert!(allowed(check("Read", None, Some(&log))));
+        assert!(allowed(check(
+            "Bash",
+            Some(&format!("tail -20 {log}")),
+            None
+        )));
+        // Another session's folder, also through `..`, and any write ask.
+        assert!(!allowed(check("Read", None, Some(&other))));
+        let escape = format!("cat {}/../b/tasks/sh-1.log", own.display());
+        assert!(!allowed(check("Bash", Some(&escape), None)));
+        assert!(!allowed(check("Write", None, Some(&log))));
+        assert!(!allowed(check("Bash", Some(&format!("rm {log}")), None)));
+        // Permissions not loaded from a session folder have no own folder.
+        let none = SessionPermissions::default();
+        assert!(!allowed(check_permission(
+            "Read",
+            None,
+            Some(&log),
+            cwd,
+            &none,
+            None
+        )));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn heredoc_bodies_are_text_not_targets() {
         // The 2026-11-10 shapes: a body full of paths written to a file.
         let cmd = "cat > /tmp/notes.md <<'EOF'\nThe binary lives at /usr/local/bin/ling\nand state in ~/.linggen/sessions/x — don't move it.\nEOF\ngit status";

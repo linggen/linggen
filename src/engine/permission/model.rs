@@ -369,10 +369,28 @@ fn temp_roots() -> &'static [String] {
 /// exempt from permission gating — treated as always-granted scratch.
 pub(super) fn is_under_temp(target: &Path) -> bool {
     let t = normalize_path(&target.to_string_lossy());
-    temp_roots().iter().any(|root| {
-        t.starts_with(root.as_str())
-            && (t.len() == root.len() || t.as_bytes().get(root.len()) == Some(&b'/'))
-    })
+    temp_roots().iter().any(|root| is_within(&t, root))
+}
+
+/// A read inside the session's own folder (its tasks' logs): allowed
+/// without a grant. Never a write, and never another session's folder —
+/// both sides are resolved, so `<own>/../<other>` is the other one.
+fn reads_own_dir(perms: &SessionPermissions, tier: PermissionMode, target: &Path) -> bool {
+    let Some(own) = perms
+        .own_dir
+        .as_deref()
+        .filter(|_| tier <= PermissionMode::Read)
+    else {
+        return false;
+    };
+    let own = normalize_path(&own.to_string_lossy());
+    is_within(&normalize_path(&target.to_string_lossy()), &own)
+}
+
+/// `path` is `root` or inside it (both normalized strings).
+fn is_within(path: &str, root: &str) -> bool {
+    path.starts_with(root)
+        && (path.len() == root.len() || path.as_bytes().get(root.len()) == Some(&b'/'))
 }
 
 // ---------------------------------------------------------------------------
@@ -509,8 +527,11 @@ pub fn check_permission(
             let targets = command_targets(cmd, session_cwd);
             if !targets.is_empty() {
                 for arg_path in &targets {
-                    // OS temp dir is always-available scratch — don't gate it.
-                    if is_under_temp(arg_path) {
+                    // OS temp dir is always-available scratch, and a session
+                    // reads its own folder — don't gate them.
+                    if is_under_temp(arg_path)
+                        || reads_own_dir(session_perms, action_tier, arg_path)
+                    {
                         continue;
                     }
                     let mode = effective_mode_for_path(&session_perms.path_modes, arg_path);
@@ -551,8 +572,9 @@ pub fn check_permission(
         })
         .unwrap_or_else(|| session_cwd.to_path_buf());
 
-    // 3b. OS temp dir is always-available scratch (deny floor still applies).
-    if is_under_temp(&target_path) {
+    // 3b. OS temp dir is always-available scratch (deny floor still applies);
+    // a session reads its own folder.
+    if is_under_temp(&target_path) || reads_own_dir(session_perms, action_tier, &target_path) {
         return PermissionCheckResult::Allowed;
     }
 
