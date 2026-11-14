@@ -63,7 +63,8 @@ fn write_status(state: &str, detail: &str) {
 }
 
 /// Copy `binary` over `target` the way an update does: the old one kept as
-/// `<name>.prev`, the new one kept only if it answers `--version`.
+/// `<name>.prev` (outside an app bundle: `prev_binary`), the new one kept
+/// only if it answers `--version`.
 fn install(binary: &Path, target: &Path) -> Result<()> {
     let dir = target.parent().context("binary has no folder")?;
     let name = target
@@ -76,7 +77,7 @@ fn install(binary: &Path, target: &Path) -> Result<()> {
     self_update::commit_with_probe(
         &staged,
         target,
-        &dir.join(format!("{name}.prev")),
+        &super::prev_binary::prev_location(dir, name),
         name,
         Duration::from_secs(10),
     )

@@ -163,7 +163,10 @@ ling update --rollback
 ```
 
 - Skips when already up to date.
-- Keeps the replaced binary as `ling.prev` beside `ling`; the new one goes in
+- Keeps the replaced binary as `ling.prev` beside `ling` — but never inside a
+  macOS `.app` bundle, whose seal must hold: there it is kept at
+  `~/.linggen/prev/<encoded folder>/ling.prev`, and a `ling.prev` an older
+  version left in the bundle is moved out. The new one goes in
   by rename (a fresh inode, never a copy over a live file).
 - Keeps the new binary only if `ling --version` answers within 60 s (a new
   file's first run waits on the macOS scan); else puts `ling.prev` back and
@@ -191,7 +194,8 @@ ling restart --binary target/release/ling [--wait 120]
   finish, then records sessions with a running turn or background work
   (missions left out) and starts a detached helper.
 - The helper swaps the build in where the engine runs from (and over
-  `/usr/local/bin/ling`), each keeping `ling.prev`; a build that does not
+  `/usr/local/bin/ling`), each keeping `ling.prev` (outside an app bundle, as
+  for `update`); a build that does not
   answer `--version` is refused before anything is touched. It restarts the
   engine with its own arguments and rolls back to `ling.prev` when it gives
   no `/api/health` within 60 s. How it went is in

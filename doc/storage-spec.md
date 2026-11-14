@@ -51,6 +51,8 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 │   └── {name}/
 │       ├── SKILL.md                  # Skill definition
 │       └── scripts/                  # Skill assets (optional)
+├── prev/
+│   └── {encoded folder}/ling.prev    # The binary before the last update/restart, for one inside an .app bundle (kept out of its seal); elsewhere ling.prev sits beside ling
 ├── bin/
 │   └── bun                           # Pinned JS runtime for skill actions (src/js_runtime.rs); the engine fetches it when absent
 ├── runtime/                          # Managed Python runtime (see src/runtime.rs)

@@ -5,7 +5,8 @@
 //! `<base>/<owner>/<repo>/<asset>` (the release gate's local mirror of a
 //! draft). The sha256 check applies either way; an override must carry it.
 //!
-//! An update keeps the previous binary as `ling.prev`, swaps the new one in
+//! An update keeps the previous binary as `ling.prev` (beside it, or under
+//! `~/.linggen/prev/` for an app bundle — `prev_binary`), swaps the new one in
 //! by rename (a fresh inode, never a copy over a live file), and keeps it
 //! only if `ling --version` answers in time — else the previous one is put
 //! back. `--rollback` swaps `ling` and `ling.prev` by hand.
@@ -16,6 +17,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use super::engine_restart;
+use super::prev_binary::{move_file, prev_location};
 
 /// Env var naming a release mirror that replaces GitHub for every
 /// installer and updater (see doc/cli.md § Release override).
@@ -309,10 +311,6 @@ struct Verify<'a> {
     required: bool,
 }
 
-fn prev_path(dir: &Path, binary_name: &str) -> PathBuf {
-    dir.join(format!("{binary_name}.prev"))
-}
-
 /// Verify, extract and swap in a release tarball; returns the installed
 /// path. Any failure leaves the binary that was there before in place.
 fn install_tarball(
@@ -363,7 +361,7 @@ fn stage_and_swap(
     set_executable(&extracted)?;
 
     let target = dir.join(binary_name);
-    let prev = prev_path(dir, binary_name);
+    let prev = prev_location(dir, binary_name);
     commit_with_probe(&extracted, &target, &prev, binary_name, timeout)?;
     Ok(target)
 }
@@ -392,7 +390,7 @@ pub(crate) fn commit_with_probe(
     let had_previous = target.exists();
     if had_previous {
         let _ = std::fs::remove_file(prev);
-        std::fs::rename(target, prev).with_context(|| {
+        move_file(target, prev).with_context(|| {
             format!(
                 "[{binary_name}] Failed to keep the previous binary at {}",
                 prev.display()
@@ -401,14 +399,14 @@ pub(crate) fn commit_with_probe(
     }
     if let Err(e) = std::fs::rename(new, target) {
         if had_previous {
-            let _ = std::fs::rename(prev, target);
+            let _ = move_file(prev, target);
         }
         return Err(e).context(format!("[{binary_name}] Failed to install binary"));
     }
     if let Err(e) = probe_version(target, binary_name, timeout) {
         let _ = std::fs::remove_file(target);
         if had_previous {
-            std::fs::rename(prev, target).with_context(|| {
+            move_file(prev, target).with_context(|| {
                 format!("[{binary_name}] The new binary failed to start ({e:#}) and restoring {} failed", prev.display())
             })?;
             anyhow::bail!("[{binary_name}] The new binary failed to start ({e:#}); the previous one is restored");
@@ -464,7 +462,7 @@ pub(crate) fn rollback_binary(
     timeout: Duration,
 ) -> Result<(String, String)> {
     let target = dir.join(binary_name);
-    let prev = prev_path(dir, binary_name);
+    let prev = prev_location(dir, binary_name);
     if !prev.is_file() {
         anyhow::bail!(
             "[{binary_name}] No previous binary kept at {} — nothing to roll back to",
@@ -474,17 +472,17 @@ pub(crate) fn rollback_binary(
     let from = probe_version(&target, binary_name, timeout).unwrap_or_else(|_| "?".into());
     let aside = dir.join(format!(".{binary_name}.rollback-{}", std::process::id()));
     std::fs::rename(&target, &aside).context("Failed to move the current binary aside")?;
-    if let Err(e) = std::fs::rename(&prev, &target) {
+    if let Err(e) = move_file(&prev, &target) {
         let _ = std::fs::rename(&aside, &target);
         return Err(e).context("Failed to restore the previous binary");
     }
     match probe_version(&target, binary_name, timeout) {
         Ok(to) => {
-            std::fs::rename(&aside, &prev).context("Failed to keep the replaced binary")?;
+            move_file(&aside, &prev).context("Failed to keep the replaced binary")?;
             Ok((from, to))
         }
         Err(e) => {
-            let _ = std::fs::rename(&target, &prev);
+            let _ = move_file(&target, &prev);
             let _ = std::fs::rename(&aside, &target);
             anyhow::bail!(
                 "[{binary_name}] The previous binary failed to start ({e:#}); kept the current one"
