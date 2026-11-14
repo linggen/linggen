@@ -487,7 +487,12 @@ impl SessionStore {
                 }
             }
         }
-        sessions.sort_by_key(|m| std::cmp::Reverse(m.updated_at));
+        sessions.sort_by(|a, b| {
+            b.updated_at
+                .cmp(&a.updated_at)
+                .then_with(|| b.created_at.cmp(&a.created_at))
+                .then_with(|| a.id.cmp(&b.id))
+        });
         let off = offset.unwrap_or(0);
         if off > 0 {
             sessions = sessions.into_iter().skip(off).collect();
@@ -1050,6 +1055,12 @@ mod tests {
                     model_fallback: None,
                     params: Default::default(),
                 })
+                .unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(store.session_dir(id).join("messages.jsonl"))
+                .unwrap()
+                .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(ts))
                 .unwrap();
         }
         let sessions = store.list_sessions().unwrap();

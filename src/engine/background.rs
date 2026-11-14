@@ -634,14 +634,16 @@ pub fn end_leftovers() {
     });
 }
 
-/// How `ps -o command=` shows `sh -c cmd`: control characters as octal
-/// escapes (a moved foreground Bash's command ends in a newline-joined
-/// cwd sentinel).
+/// How `ps -o command=` shows `sh -c cmd`: control characters are octal
+/// escapes on macOS and spaces elsewhere (a moved foreground Bash's command
+/// ends in a newline-joined cwd sentinel).
 fn ps_form(cmd: &str) -> String {
     let mut shown = String::from("sh -c ");
     for c in cmd.chars() {
-        if c.is_ascii_control() {
+        if c.is_ascii_control() && cfg!(target_os = "macos") {
             shown.push_str(&format!("\\{:03o}", c as u32));
+        } else if c.is_ascii_control() {
+            shown.push(' ');
         } else {
             shown.push(c);
         }
