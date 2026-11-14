@@ -109,7 +109,7 @@ test.describe('a live run', () => {
   test.use({
     scenario: {
       scripts: {
-        ling: [{ tool: 'Bash', args: { cmd: 'sleep 120', timeout_ms: 180_000 } }, { text: 'Back again.' }],
+        ling: [{ tool: 'Bash', args: { cmd: 'echo started > started.txt; sleep 120', timeout_ms: 180_000 } }, { text: 'Back again.' }],
       },
     },
   });
@@ -172,7 +172,7 @@ test.describe('a stopped run, then a turn with a tool', () => {
     scenario: {
       scripts: {
         ling: [
-          { tool: 'Bash', args: { cmd: 'sleep 120', timeout_ms: 180_000 } },
+          { tool: 'Bash', args: { cmd: 'echo started > started.txt; sleep 120', timeout_ms: 180_000 } },
           // The same tool again, as the picture was asked for again.
           { tool: 'Bash', args: { cmd: 'echo drawn' } },
           { text: 'Drawn this time.' },
@@ -234,7 +234,7 @@ test.describe('a stopped run, then a turn with a tool', () => {
 test.describe('a mid-turn switch to another session and back', () => {
   test.use({
     scenario: {
-      scripts: { ling: [{ tool: 'Bash', args: { cmd: 'sleep 4' } }, { text: 'Slept well.' }] },
+      scripts: { ling: [{ tool: 'Bash', args: { cmd: 'echo started > started.txt; sleep 4' } }, { text: 'Slept well.' }] },
     },
   });
 
