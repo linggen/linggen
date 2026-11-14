@@ -1001,6 +1001,9 @@ mod tests {
             Some(&format!("tail -20 {log}")),
             None
         )));
+        // The real shape (2026-11-13): an agent watching its own shell.
+        let watch = format!("sleep 30; tail -25 {log}");
+        assert!(allowed(check("Bash", Some(&watch), None)), "{watch}");
         // Another session's folder, also through `..`, and any write ask.
         assert!(!allowed(check("Read", None, Some(&other))));
         let escape = format!("cat {}/../b/tasks/sh-1.log", own.display());
@@ -1043,6 +1046,16 @@ mod tests {
         assert_eq!(targets(cmd), vec!["/etc/hosts"]);
         let cmd = "cat <<'EOF' | sh\nrm -f /etc/x\nEOF";
         assert_eq!(targets(cmd), vec!["/etc/x"]);
+        // Anything else that turns the body into commands or paths: a loop,
+        // xargs, a pipe (also continued on the next line), an interpreter.
+        let cmd = "cat <<'EOF' | xargs rm\n/etc/x\nEOF";
+        assert_eq!(targets(cmd), vec!["/etc/x"]);
+        let cmd = "while read f; do rm \"$f\"; done <<'EOF'\n/etc/x\nEOF";
+        assert!(!targets(cmd).is_empty(), "{:?}", targets(cmd));
+        let cmd = "cat <<'EOF' |\nrm /etc/x\nEOF\nsh";
+        assert_eq!(targets(cmd), vec!["/etc/x"]);
+        let cmd = "python3 - <<'EOF'\nopen('/etc/x', 'w')\np = \"/etc/y\"\nEOF";
+        assert_eq!(targets(cmd), vec!["/etc/y"]);
         // An unquoted delimiter expands `$(…)` in the body: it stays dynamic.
         let cmd = "cat > /tmp/x <<EOF\n$(rm -rf ~/y)\nEOF";
         assert_eq!(classify_bash_command(cmd), BashClass::Admin);
@@ -1076,6 +1089,8 @@ mod tests {
             targets("awk -F/ '/ling/ {print $2}' /etc/hosts"),
             vec!["/etc/hosts"]
         );
+        // `rg --files <dir>` lists a folder: no pattern.
+        assert_eq!(targets("rg --files /etc"), vec!["/etc"]);
         // A pattern file and a redirect target are still paths.
         assert_eq!(targets("grep -f /etc/pats x"), vec!["/etc/pats"]);
         assert_eq!(targets("grep foo > /etc/out"), vec!["/etc/out"]);
