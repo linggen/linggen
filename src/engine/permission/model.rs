@@ -380,12 +380,23 @@ fn reads_own_dir(perms: &SessionPermissions, tier: PermissionMode, target: &Path
     let Some(own) = perms
         .own_dir
         .as_deref()
-        .filter(|_| tier <= PermissionMode::Read)
+        .filter(|own| tier <= PermissionMode::Read && names_one_session(own))
     else {
         return false;
     };
     let own = normalize_path(&own.to_string_lossy());
     is_within(&normalize_path(&target.to_string_lossy()), &own)
+}
+
+/// The folder ends in a real session id: never the sessions folder itself
+/// (an empty id) or a parent of it (`.`, `..`).
+fn names_one_session(own: &Path) -> bool {
+    let text = own.to_string_lossy();
+    let last = text.rsplit(['/', '\\']).next().unwrap_or("");
+    !matches!(last, "" | "." | "..")
+        && !own
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
 }
 
 /// `path` is `root` or inside it (both normalized strings).

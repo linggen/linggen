@@ -389,7 +389,6 @@ pub(crate) fn commit_with_probe(
 ) -> Result<()> {
     let had_previous = target.exists();
     if had_previous {
-        let _ = std::fs::remove_file(prev);
         move_file(target, prev).with_context(|| {
             format!(
                 "[{binary_name}] Failed to keep the previous binary at {}",

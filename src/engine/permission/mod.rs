@@ -1011,6 +1011,15 @@ mod tests {
         assert!(!allowed(check("Bash", Some(&escape), None)));
         assert!(!allowed(check("Write", None, Some(&log))));
         assert!(!allowed(check("Bash", Some(&format!("rm {log}")), None)));
+        // An id that is empty, `.` or `..` names no one session: the
+        // sessions folder and its parent stay gated.
+        for id in ["", ".", ".."] {
+            let odd = SessionPermissions::load(&root.join(id));
+            assert!(
+                !allowed(check_permission("Read", None, Some(&log), cwd, &odd, None)),
+                "{id:?}"
+            );
+        }
         // Permissions not loaded from a session folder have no own folder.
         let none = SessionPermissions::default();
         assert!(!allowed(check_permission(

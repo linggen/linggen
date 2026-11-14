@@ -127,8 +127,9 @@ struct TurnReplies {
 }
 
 /// A turn opens on a prompt (`user`, `claude-code`) or on the engine's own
-/// notice (`system`, not an observation). A restart's continue notice
-/// (`client_id` `restart-…`) goes on with the turn it interrupted. Tool
+/// notice (`system`, not an observation). A restart's continue notice goes
+/// on with the turn it interrupted; one sent only for background work
+/// opens a notice turn of its own. Tool
 /// results are observations; recall and compaction rows are no reply.
 fn turn_replies(msgs: Vec<crate::state_fs::sessions::ChatMsg>) -> TurnReplies {
     let mut out = TurnReplies::default();
@@ -140,7 +141,7 @@ fn turn_replies(msgs: Vec<crate::state_fs::sessions::ChatMsg>) -> TurnReplies {
         let continues = m
             .client_id
             .as_deref()
-            .is_some_and(|c| c.starts_with("restart-"));
+            .is_some_and(super::restart::continues_a_turn);
         match m.from_id.as_str() {
             "user" | "claude-code" => {
                 out = TurnReplies::default();
@@ -1364,6 +1365,23 @@ mod wait_ready_tests {
         assert_eq!(
             turn_replies(messages).reply.as_deref(),
             Some("Done after the restart.")
+        );
+        // A restart that cut no turn — only background work was running —
+        // opens a notice turn: it does not replace the reply.
+        let mut tasks_only = row("system", "The engine restarted …", false);
+        tasks_only.client_id = Some("restart-tasks-1794602103-ling".into());
+        let messages = vec![
+            row("claude-code", "fix it", false),
+            row("ling", "Fixed.", false),
+            tasks_only,
+            row("ling", "The watcher was cut; restarting it.", false),
+        ];
+        assert_eq!(
+            turn_replies(messages),
+            TurnReplies {
+                reply: Some("Fixed.".into()),
+                followup: Some("The watcher was cut; restarting it.".into()),
+            }
         );
         // A new prompt starts over: nothing from before answers it.
         let messages = vec![
