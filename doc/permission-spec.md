@@ -56,7 +56,7 @@ The chat shows the effective level for the current working directory. Changing t
 ## Boundaries and exceptions
 
 - Reading outside a grant also requires approval; reads are not universally free. Temporary scratch directories are exempt from path-mode checks, but not the Bash deny floor.
-- Bash commands are classified by risk and checked against identifiable targets. This is **best effort, not a filesystem sandbox**: a command may access files, processes, or network resources beyond what can be inferred from its arguments. A directory-scoped admin grant must not be presented as shell confinement.
+- Bash commands are classified by risk and checked against identifiable targets. This is **best effort, not a filesystem sandbox**: a command may access files, processes, or network resources beyond what can be inferred from its arguments. A directory-scoped admin grant must not be presented as shell confinement. Text a command carries is not a target: a heredoc body, and the pattern or program of `grep`, `rg`, `sed`, `awk` and `jq`. A body a shell runs as a script, or expands (`$`, backticks under an unquoted delimiter), is still judged; a redirect target or file argument is always a target.
 - Skills and some chat-tier or explicitly ungated MCP tools can operate outside the ordinary path-mode gate. A skill may request its own grants. The owner should not assume that `chat` alone is a complete isolation boundary.
 - Browser actions use site trust and separate confirmations for sensitive actions; see `browser-control-spec.md`.
 - Agent permissions do not gate the owner's own typed commands or deterministic skill interface actions. This is not a substitute for enforcing identity and access boundaries on remote interfaces.
