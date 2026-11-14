@@ -366,7 +366,7 @@ const TOOLS: &[McpTool] = &[
     },
     McpTool {
         name: "agent_status", backend: Backend::Agent,
-        description: "Get running work, pending permission requests (answer with agent_permit), status (completed, failed, cancelled), error, the model that answered, final reply and denied actions with reasons. Use after finished, or once if a watch closes or expires without finished; do not poll. Start a new watch for every background agent_run, including continued sessions.",
+        description: "Get running work, pending permission requests (answer with agent_permit), status (completed, failed, cancelled), error, the model that answered, reply (the agent's last message in the turn that answered your latest prompt), followup (its last message from a later turn the engine started itself, such as a background task ending) and denied actions with reasons. Use after finished, or once if a watch closes or expires without finished; do not poll. Start a new watch for every background agent_run, including continued sessions.",
         schema: || json!({"type": "object", "properties": {"session_id": {"type": "string", "description": "Linggen session ID"}}, "required": ["session_id"]}),
         timeout_ms: 0,
     },

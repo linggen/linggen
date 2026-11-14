@@ -102,22 +102,51 @@ fn workspace_root() -> PathBuf {
     crate::util::resolve_path(&cwd)
 }
 
-/// Read the last agent-authored reply from a finished session.
+/// The reply to the caller's latest prompt (see [`turn_replies`]).
 fn final_reply(session_id: &str) -> Option<String> {
-    let store =
-        crate::state_fs::SessionStore::with_sessions_dir(crate::paths::global_sessions_dir());
-    last_agent_reply(store.get_chat_history(session_id).ok()?)
+    session_replies(session_id).reply
 }
 
-fn last_agent_reply(msgs: Vec<crate::state_fs::sessions::ChatMsg>) -> Option<String> {
-    msgs.into_iter()
-        .rev()
-        .find(|m| {
-            !m.is_observation
-                && !matches!(m.from_id.as_str(), "user" | "claude-code" | "system")
-                && !m.content.trim().is_empty()
-        })
-        .map(|m| m.content)
+fn session_replies(session_id: &str) -> TurnReplies {
+    let store =
+        crate::state_fs::SessionStore::with_sessions_dir(crate::paths::global_sessions_dir());
+    store
+        .get_chat_history(session_id)
+        .map(turn_replies)
+        .unwrap_or_default()
+}
+
+/// What a session's agent last said, split by whose turn it answered.
+#[derive(Default, Debug, PartialEq)]
+struct TurnReplies {
+    /// The last agent message of the turn the latest caller prompt opened.
+    reply: Option<String>,
+    /// The last agent message of a later turn the engine told on its own
+    /// (a background task's end), when there was one.
+    followup: Option<String>,
+}
+
+/// A turn opens on a prompt (`user`, `claude-code`) or on the engine's own
+/// notice (`system`, not an observation). Tool results are observations.
+fn turn_replies(msgs: Vec<crate::state_fs::sessions::ChatMsg>) -> TurnReplies {
+    let mut out = TurnReplies::default();
+    let mut callers_turn = true;
+    for m in msgs {
+        if m.is_observation {
+            continue;
+        }
+        match m.from_id.as_str() {
+            "user" | "claude-code" => {
+                out = TurnReplies::default();
+                callers_turn = true;
+            }
+            "system" => callers_turn = false,
+            _ if m.content.trim().is_empty() => {}
+            _ if callers_turn => out.reply = Some(m.content),
+            _ => out.followup = Some(m.content),
+        }
+    }
+    out
 }
 
 /// Run one delegated agent turn. `Ok(text)` is the agent's final reply;
@@ -723,10 +752,15 @@ pub async fn status(state: &Arc<ServerState>, session: &str) -> Result<String, S
     session_meta(state, session)?;
     let work = super::api::sessions::session_running_work(state, session).await;
     let last = last_run(&state.manager, session);
+    let replies = if work.turn {
+        TurnReplies::default()
+    } else {
+        session_replies(session)
+    };
     Ok(
         serde_json::json!({"running": work.turn, "tasks": work.tasks,
         "subagents": work.subagents, "pending": pending_requests(state, session).await,
-        "denied": denials(session), "reply": if work.turn { None } else { final_reply(session) },
+        "denied": denials(session), "reply": replies.reply, "followup": replies.followup,
         "status": last.status, "error": last.error, "model": last.model})
         .to_string(),
     )
@@ -1257,9 +1291,8 @@ mod wait_ready_tests {
         task.abort();
     }
 
-    #[test]
-    fn final_reply_skips_system_notice() {
-        let row = |from: &str, content: &str, observation| crate::state_fs::sessions::ChatMsg {
+    fn row(from: &str, content: &str, observation: bool) -> crate::state_fs::sessions::ChatMsg {
+        crate::state_fs::sessions::ChatMsg {
             agent_id: "ling".into(),
             from_id: from.into(),
             to_id: "ling".into(),
@@ -1272,12 +1305,50 @@ mod wait_ready_tests {
             via_note: None,
             images: vec![],
             run_id: None,
-        };
+        }
+    }
+
+    #[test]
+    fn final_reply_skips_system_notice() {
         let messages = vec![
             row("ling", "agent answer", false),
             row("system", "Background task sh-1 ended: failed", false),
         ];
-        assert_eq!(last_agent_reply(messages).as_deref(), Some("agent answer"));
+        assert_eq!(
+            turn_replies(messages).reply.as_deref(),
+            Some("agent answer")
+        );
+    }
+
+    #[test]
+    fn the_reply_answers_the_callers_prompt_not_a_later_notice_turn() {
+        let messages = vec![
+            row("user", "first task", false),
+            row("ling", "old answer", false),
+            row("claude-code", "fix the bug", false),
+            row("ling", "looking", false),
+            row("system", "Tool Bash: ok", true),
+            row("ling", "Fixed in abc123; tests pass.", false),
+            row("system", "Background task sh-1 ended: completed", false),
+            row("ling", "The watcher ended.", false),
+            row("system", "Background task sh-2 ended: completed", false),
+            row("ling", "", false),
+        ];
+        assert_eq!(
+            turn_replies(messages),
+            TurnReplies {
+                reply: Some("Fixed in abc123; tests pass.".into()),
+                followup: Some("The watcher ended.".into()),
+            }
+        );
+        // A new prompt starts over: nothing from before answers it.
+        let messages = vec![
+            row("ling", "old answer", false),
+            row("system", "notice", false),
+            row("ling", "notice answer", false),
+            row("claude-code", "next", false),
+        ];
+        assert_eq!(turn_replies(messages), TurnReplies::default());
     }
 }
 
