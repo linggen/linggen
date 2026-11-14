@@ -242,7 +242,9 @@ impl AgentEngine {
     /// the session's grant table live and saves what the person grants on
     /// its prompt there, where the main chat and the badge see it.
     pub(crate) fn join_session_permissions(&mut self, sid: &str) {
-        self.session_dir = Some(crate::paths::global_sessions_dir().join(sid));
+        let sdir = crate::paths::global_sessions_dir().join(sid);
+        self.session_permissions.own_dir = Some(sdir.clone());
+        self.session_dir = Some(sdir);
         self.sync_session_grants();
     }
 

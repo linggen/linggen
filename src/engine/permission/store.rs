@@ -1,7 +1,7 @@
 use super::model::{expand_tilde, PathMode, PermissionMode};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tracing::warn;
 
 fn default_true() -> bool {
@@ -27,6 +27,11 @@ pub struct SessionPermissions {
     /// the caller's decision instead of being refused at once.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub ask_caller: bool,
+    /// The session's own folder (`sessions/<id>/`): readable without a
+    /// grant — its background tasks' logs live there. Never saved; set by
+    /// [`SessionPermissions::load`] from where the file lives.
+    #[serde(skip)]
+    pub own_dir: Option<PathBuf>,
 }
 
 impl Default for SessionPermissions {
@@ -35,6 +40,7 @@ impl Default for SessionPermissions {
             path_modes: Vec::new(),
             interactive: true,
             ask_caller: false,
+            own_dir: None,
         }
     }
 }
@@ -44,6 +50,13 @@ impl SessionPermissions {
     /// Tolerates legacy fields (`policy`, `locked`, `allows`, `denied_sigs`)
     /// — they're ignored, which is the migration.
     pub fn load(session_dir: &Path) -> Self {
+        Self {
+            own_dir: Some(session_dir.to_path_buf()),
+            ..Self::read_file(session_dir)
+        }
+    }
+
+    fn read_file(session_dir: &Path) -> Self {
         let file = session_dir.join("permission.json");
         if !file.exists() {
             return Self::default();
