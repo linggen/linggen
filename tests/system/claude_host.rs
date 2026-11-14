@@ -18,7 +18,9 @@ supports_tools = true
 "#;
 /// The conversation id the bridge fixture's SDK reports.
 const SDK_ID: &str = "5d1c2a9e-7b3f-4c1d-9e2a-0f6b8c4d2e10";
-const BRIDGE: &str = r#"#!/bin/sh
+// bash, not sh: the script waits on its input with `read -t`, which dash
+// (Ubuntu's /bin/sh) does not have — there the stream case never saw Stop.
+const BRIDGE: &str = r#"#!/bin/bash
 [ "$1" = install ] && exit 0
 IFS= read -r start
 emit() { printf '%s\n' "$1"; }
