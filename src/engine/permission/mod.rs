@@ -1195,6 +1195,9 @@ mod tests {
             "{\ncat <<'EOF'\n/etc/x\nEOF\n} | xargs rm",
             "(\ncat <<'EOF'\n/etc/x\nEOF\n) | xargs rm",
             "if true; then\ncat <<'EOF'\n/etc/x\nEOF\nfi | xargs rm",
+            // A quote inside the other kind of quotes belongs to the delimiter.
+            "cat <<'E\"F'\ndata\nE\"F\nrm -rf /etc/x\nEF",
+            "cat <<\"E'F\"\ndata\nE'F\nrm -rf /etc/x\nEF",
             // Only space, tab and newline end the delimiter word.
             "cat <<'EOF'\r\nx\nEOF\r\nrm -rf /etc/x\nEOF",
             "cat <<EOF\u{a0}\nx\nEOF\u{a0}\nrm -rf /etc/x\nEOF",
@@ -1625,6 +1628,10 @@ mod tests {
             permission_target_summary("Bash", &args, Path::new("/tmp")),
             "cargo build"
         );
+        // A long command is cut between characters, never inside one.
+        let args = serde_json::json!({ "cmd": format!("echo {}", "修".repeat(40)) });
+        let cut = permission_target_summary("Bash", &args, Path::new("/tmp"));
+        assert!(cut.ends_with("...") && cut.len() <= 80, "{cut}");
     }
 
     #[test]

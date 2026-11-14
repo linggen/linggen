@@ -212,7 +212,9 @@ fn read_delimiter(chars: &mut std::iter::Peekable<std::str::Chars>) -> Option<He
         raw.push(c);
         chars.next();
     }
-    let delimiter: String = raw.chars().filter(|c| !"'\"".contains(*c)).collect();
+    // Quote removal as the shell does it: a quote inside the other kind
+    // of quotes is part of the delimiter (`<<'E"F'` ends at `E"F`).
+    let delimiter = dequote(&raw);
     (quote.is_none() && !delimiter.is_empty()).then(|| Heredoc {
         quoted: raw.contains(['\'', '"']),
         delimiter,
