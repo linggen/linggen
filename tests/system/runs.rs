@@ -30,7 +30,8 @@ async fn every_run_event_and_row_names_its_run() {
             text("Two notes here."),
             tool(
                 "Bash",
-                json!({"cmd": "echo started; sleep 120", "timeout_ms": 180_000}),
+                // A write: past the read grant, so it asks first.
+                json!({"cmd": "echo started > started.txt; sleep 120", "timeout_ms": 180_000}),
             ),
             tool("Glob", json!({"pattern": "*.md"})),
             text("Still here."),
