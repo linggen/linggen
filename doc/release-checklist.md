@@ -25,9 +25,39 @@ left out serves its latest published release), boots a fresh Tart VM and a
 clone of `linggen-prev`, runs the checks, prints a table, exits non-zero on
 any FAIL. `--local` gates local builds instead of drafts. Exit 0 is the go to
 publish; a green `--draft` run saves its upgraded VM as the next
-`linggen-prev`. The app's draft bundles the latest *published* engine
-(`download-ling.sh`), so a train with a new engine gates engine + ling-mem,
-publishes them, then cuts and gates the app.
+`linggen-prev`.
+
+A train with a new engine and a new app is gated in ONE run, both drafts
+together (`--draft "engine=X.Y.Z app=linggen-vX.Y.Z"`). An engine-only run
+upgrades a baseline that already holds the published app, so "an installed
+灵境 gets the bundle's code" FAILs falsely (2.2.0, 2026-11-13). The app's
+draft takes the unpublished engine by hand: `gh release download X.Y.Z -p
+ling-macos-aarch64.tar.gz --repo linggen/linggen`, the binary to
+`linggen-app/vendor/ling/darwin-arm64/ling` (fresh inode), `vendor/skills`
+checked out at the release commit and committed, then
+`./scripts/release.sh linggen --draft --skip-vendor`. Every skills commit
+after that means: pointer bump, app draft recut, a new gate run, a new review.
+
+What the 2.2.0 train taught (2026-11-13/14):
+- Start with `--rebuild-prev`. A run saves its upgraded VM as `linggen-prev`
+  once the VM checks pass, review pending or not; the next run then
+  "upgrades" from the release itself, and an old bundle that has `ling.prev`
+  inside (the engine keeps it beside its binary) may never launch once moved
+  — the run hangs at "an older engine left running is replaced". `ssh` into
+  the VM (`tart ip gate-upgrade`, key `~/.cache/linggen-gate/id_ed25519`) to
+  see what a silent run waits on.
+- One half can be re-run alone: `--upgrade-only --rebuild-prev --skip-playbot
+  --skip-host-checks`. Say so in the release record when the evidence is two
+  runs.
+- Do not let the play bot cross midnight: the day's 问签 pops over the kept
+  board and every control under it is a hard finding.
+- A stale hand baseline is a hard finding: after a deliberate card or header
+  change, `tools/playbot/run.sh --ref HEAD --only baseline --update-baselines`,
+  look at the pictures, commit them.
+- The screenshot review is the slow loop (one run ≈ 50 min, one review ≈ 8).
+  Before the first run, `node lingjing/tools/card-fit.mjs` (skills) must
+  report 0, and ask the reviewer for every latent spot it has seen, not only
+  the shots that failed.
 
 Before any VM boots, the gate runs `./scripts/check.sh all` and
 `./scripts/check.sh e2e` on the engine HEAD it records (a red suite stops it;
