@@ -73,7 +73,7 @@ checkout's `target/fast`, so the first build there compiles only our own code.
 
 Linggen is a local-first, multi-agent coding assistant. The binary is
 `ling`. Default mode starts a background daemon + opens browser. Explore
-`src/` and `ui/src/` directly for layout; the non-derivable anchors:
+the crates (below) and `ui/src/` directly for layout; the non-derivable anchors:
 
 - The three extension types (skills / agents / missions) share one
   `record.rs` + `registry.rs` shape under `engine/`; their disk loaders all
@@ -82,6 +82,25 @@ Linggen is a local-first, multi-agent coding assistant. The binary is
   tabs still use local `useState` + direct `fetch` instead.
 - Mission cron scheduling lives in `extensions/missions/scheduler.rs`, not
   under `engine/mission/`.
+
+### Crates
+
+One Cargo workspace, one version (`[workspace.package]`), one `Cargo.lock`:
+
+- `.` — package `linggen`, the `ling` binary: `src/server/`, `src/cli/`,
+  `src/main.rs`, the embedded `ui/dist/`, `agents/`, `missions/`, `shared/`
+  (the engine embeds `agents/places/` itself).
+- `crates/linggen-engine` — lib `linggen_engine`: every other module
+  (`engine`, `extensions`, `config`, `provider`, `state_fs`, `memory_host`,
+  `assets`, …). `main.rs` imports its modules at the crate root, so server
+  and CLI code still says `crate::engine::…`. Only what the binary uses is
+  `pub`; the rest stays `pub(crate)`. The engine never calls up into
+  `server`; the server's tests reach its test helpers through the
+  `test-support` feature.
+- `crates/linggen-memory` — lib `ling_mem`, the memory store the engine hosts.
+
+A bare `cargo build` / `test` / `clippy` covers the binary and the engine
+(`default-members`); `cargo test -p linggen-memory` runs memory's tests.
 
 ### Configuration
 
