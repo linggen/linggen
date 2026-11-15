@@ -22,9 +22,6 @@ telemetry = []
 name = "ling_mem"
 path = "src/lib.rs"
 
-[[bin]]
-name = "ling-mem"
-path = "src/main.rs"
 
 [dependencies]
 # Async

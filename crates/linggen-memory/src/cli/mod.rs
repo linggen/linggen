@@ -172,93 +172,6 @@ pub enum Command {
     // Session-scanning utilities (`collect` + `extract`) used to live here.
     // They moved to `skills/memory/scripts/` as bash helpers — the daemon is
     // a pure data service; reading session files isn't its concern.
-    /// Spawn the daemon. Forks to background by default and waits for
-    /// the port to bind; pass `--foreground` to block in the current
-    /// process (what `launchd` / `systemd` / docker want).
-    ///
-    /// Aliased as `serve` for back-compat with earlier scripts/launchd
-    /// configs — `serve` implies `--foreground`.
-    #[command(hide = true)]
-    Start {
-        #[arg(long, default_value_t = crate::daemon::DEFAULT_PORT)]
-        port: u16,
-        /// Bind address for this run. Without it, the console's network
-        /// setting decides: the LAN (`0.0.0.0`, the default) or this machine
-        /// only (`127.0.0.1`). Off-machine callers need a paired device.
-        #[arg(long)]
-        host: Option<std::net::IpAddr>,
-        /// Block in the current process instead of forking. Use this
-        /// when something else (launchd, systemd, docker, the user's
-        /// terminal) is the supervising parent.
-        #[arg(long)]
-        foreground: bool,
-    },
-
-    /// Back-compat alias for `start --foreground`. Hidden from --help;
-    /// kept callable so existing launchd / systemd / supervisor configs
-    /// invoking `ling-mem serve` keep working unchanged.
-    #[command(hide = true)]
-    Serve {
-        #[arg(long, default_value_t = crate::daemon::DEFAULT_PORT)]
-        port: u16,
-        /// Bind address for this run. Without it, the console's network
-        /// setting decides: the LAN (`0.0.0.0`, the default) or this machine
-        /// only (`127.0.0.1`). Off-machine callers need a paired device.
-        #[arg(long)]
-        host: Option<std::net::IpAddr>,
-    },
-
-    /// SIGTERM the running daemon and wait for it to exit. Hidden —
-    /// the CLI manages daemon lifecycle transparently; explicit stop
-    /// is power-user / installer territory.
-    #[command(hide = true)]
-    Stop,
-
-    /// Stop + start. Hidden for the same reason as `stop`.
-    #[command(hide = true)]
-    Restart {
-        #[arg(long, default_value_t = crate::daemon::DEFAULT_PORT)]
-        port: u16,
-        /// Bind address for this run. Without it, the console's network
-        /// setting decides: the LAN (`0.0.0.0`, the default) or this machine
-        /// only (`127.0.0.1`). Off-machine callers need a paired device.
-        #[arg(long)]
-        host: Option<std::net::IpAddr>,
-    },
-
-    /// Report daemon state: pidfile, liveness, health probe. Also surfaces
-    /// the most recent (cached) upgrade probe so callers know whether a
-    /// newer binary is available without making any network call.
-    Status,
-
-    /// Check for or apply a `ling-mem` upgrade from GitHub releases.
-    /// With `--check`, report the latest version without downloading.
-    /// Otherwise download, verify, swap the binary, and restart the
-    /// daemon if it was running. Aliased as `self-update` for back-compat.
-    #[command(alias = "self-update")]
-    Upgrade {
-        /// Print version info only; don't download or swap.
-        #[arg(long)]
-        check: bool,
-
-        /// Reinstall even if already on the latest version.
-        #[arg(long)]
-        force: bool,
-
-        /// Confirm the swap. Required for the actual upgrade path —
-        /// scripted/agent callers must pass it explicitly.
-        #[arg(long)]
-        yes: bool,
-
-        /// Daemon port to use when restarting after the swap.
-        #[arg(long, default_value_t = crate::daemon::DEFAULT_PORT)]
-        port: u16,
-
-        /// Swap back to the binary the last upgrade kept (`ling-mem.prev`).
-        #[arg(long, conflicts_with_all = ["check", "force"])]
-        rollback: bool,
-    },
-
     /// Dump every fact as newline-delimited JSON (one object per line),
     /// schema-agnostic, embeddings omitted. Pass `-` for stdout. With the
     /// global `--episodic` flag, exports the staging table. The escape hatch
@@ -862,135 +775,6 @@ async fn open_store(data_dir: &std::path::Path, episodic: bool) -> Result<Memory
     }
 }
 
-/// Run the CLI. Dispatches to the appropriate subcommand and returns its
-/// result. Errors propagate to `main` which serializes them to stderr.
-pub async fn run(cli: Cli) -> Result<()> {
-    let format = cli.format;
-
-    // Lifecycle commands don't need the LanceDB store — route them
-    // before opening it.
-    let data_dir = resolve_data_dir(cli.data_dir)?;
-    // Pin fastembed's model cache to <data_dir>/cache/fastembed so the
-    // ~1.2 GB Qwen3-Embedding-0.6B weights aren't redownloaded into a `.fastembed_cache/`
-    // dir every time `ling-mem` is invoked from a different CWD. fastembed
-    // reads FASTEMBED_CACHE_DIR before falling back to its CWD-relative
-    // default; setting it here once covers every code path that constructs
-    // an Embedder.
-    if std::env::var_os("FASTEMBED_CACHE_DIR").is_none() {
-        let cache_dir = data_dir.join("cache").join("fastembed");
-        let _ = std::fs::create_dir_all(&cache_dir);
-        std::env::set_var("FASTEMBED_CACHE_DIR", &cache_dir);
-    }
-    let skill_dir = crate::daemon::skill_dir(&data_dir);
-    match cli.cmd {
-        // `start --foreground` blocks (what `serve` always did); without
-        // it, forks to background and waits for the port to bind. The
-        // hidden `serve` alias maps to `start --foreground` so existing
-        // launchd/systemd configs keep working.
-        Command::Serve { port, host } => {
-            return crate::daemon::serve::run(&data_dir, &skill_dir, port, host).await
-        }
-        Command::Start {
-            port,
-            host,
-            foreground,
-        } => {
-            if foreground {
-                return crate::daemon::serve::run(&data_dir, &skill_dir, port, host).await;
-            }
-            let outcome =
-                crate::daemon::lifecycle::start(&data_dir, &skill_dir, port, host).await?;
-            let update = crate::update::check_quiet(&data_dir).await;
-            return emit_lifecycle_with_update(&outcome, Some(&update));
-        }
-        Command::Stop => {
-            let outcome = crate::daemon::lifecycle::stop(&skill_dir).await?;
-            return emit_lifecycle(&outcome);
-        }
-        Command::Restart { port, host } => {
-            let outcome =
-                crate::daemon::lifecycle::restart(&data_dir, &skill_dir, port, host).await?;
-            let update = crate::update::check_quiet(&data_dir).await;
-            return emit_lifecycle_with_update(&outcome, Some(&update));
-        }
-        Command::Status => {
-            let mut value = crate::daemon::lifecycle::status(&skill_dir).await?;
-            // Merge the cached upgrade probe (if any) so callers see
-            // available-update info without `status` itself hitting the
-            // network. Probes are populated by `start` / `restart` /
-            // `upgrade --check` and live for 24h.
-            if let (Some(info), Some(map)) =
-                (crate::update::read_cached(&data_dir), value.as_object_mut())
-            {
-                let mut update = serde_json::to_value(&info)?;
-                if let (Some(fetched_at), Some(update_obj)) = (
-                    crate::update::cache_fetched_at(&data_dir),
-                    update.as_object_mut(),
-                ) {
-                    update_obj.insert(
-                        "checked_at".to_string(),
-                        serde_json::Value::Number(fetched_at.into()),
-                    );
-                }
-                map.insert("update".to_string(), update);
-            }
-            // Surface store-schema compatibility so callers (autostart's
-            // version reconcile, the website "store compatible?" check) can
-            // see the on-disk store version vs what this binary speaks.
-            if let Some(map) = value.as_object_mut() {
-                use crate::memory::schema_version as sv;
-                map.insert(
-                    "store_schema".to_string(),
-                    match sv::read_version(&data_dir) {
-                        Some(v) => serde_json::json!(v),
-                        None => serde_json::Value::Null,
-                    },
-                );
-                map.insert(
-                    "binary_schema".to_string(),
-                    serde_json::json!({
-                        "writes": sv::STORE_SCHEMA_VERSION,
-                        "min_readable": sv::MIN_READABLE_SCHEMA,
-                    }),
-                );
-            }
-            println!("{}", serde_json::to_string_pretty(&value)?);
-            return Ok(());
-        }
-        Command::Upgrade {
-            check,
-            force,
-            yes,
-            port,
-            rollback,
-        } => {
-            if rollback {
-                return cmd_rollback(&data_dir, &skill_dir, port).await;
-            }
-            return cmd_upgrade(&data_dir, &skill_dir, check, force, yes, port).await;
-        }
-        _ => {}
-    }
-
-    // Prefer the running daemon when one is reachable. This eliminates the
-    // CLI/daemon data-path split: with the daemon up, the CLI is a typed
-    // shell client over HTTP and there's exactly one writer to the store.
-    // If no daemon is running, autostart one (matches Linggen engine
-    // semantics in `engine::capability_tools::dispatch`). Direct
-    // `MemoryStore` mode below remains a fallback for when autostart fails
-    // (e.g. port in use, binary missing).
-    //
-    // `--episodic` always uses the direct store: the HTTP surface only
-    // exposes the curated `semantic` table, so routing episodic ops through
-    // the daemon would silently hit the wrong table.
-    let base = match &cli.cmd {
-        Command::Export { .. } | Command::Import { .. } => None,
-        _ if cli.episodic => None,
-        _ => client::try_running_or_start(&data_dir, &skill_dir).await,
-    };
-    run_data_at(cli.cmd, cli.episodic, format, &data_dir, base).await
-}
-
 /// Memory's data verbs — everything but the daemon's lifecycle — against
 /// `base` (a memory HTTP surface such as `http://127.0.0.1:9527/mem`) when
 /// given, else on the store under the data dir, opened directly. For a host
@@ -998,26 +782,9 @@ pub async fn run(cli: Cli) -> Result<()> {
 /// its own way and holds the store's lock, so this never looks for or starts
 /// a daemon.
 pub async fn run_data(cli: Cli, base: Option<String>) -> Result<()> {
-    if is_lifecycle(&cli.cmd) {
-        return Err(anyhow!(
-            "not a data verb: the daemon's lifecycle belongs to its host"
-        ));
-    }
     let format = cli.format;
     let data_dir = resolve_data_dir(cli.data_dir)?;
     run_data_at(cli.cmd, cli.episodic, format, &data_dir, base).await
-}
-
-fn is_lifecycle(cmd: &Command) -> bool {
-    matches!(
-        cmd,
-        Command::Serve { .. }
-            | Command::Start { .. }
-            | Command::Stop
-            | Command::Restart { .. }
-            | Command::Status
-            | Command::Upgrade { .. }
-    )
 }
 
 async fn run_data_at(
@@ -1065,14 +832,7 @@ async fn run_data_at(
                 Command::IssueAdd(args) => client::issue_add(&base_url, args, format).await,
                 Command::IssueResolve(args) => client::issue_resolve(&base_url, args, format).await,
                 Command::ApplySchema(args) => client::apply_schema(&base_url, args, format).await,
-                Command::Serve { .. }
-                | Command::Start { .. }
-                | Command::Stop
-                | Command::Restart { .. }
-                | Command::Status
-                | Command::Upgrade { .. }
-                | Command::Export { .. }
-                | Command::Import { .. } => unreachable!("handled above"),
+                Command::Export { .. } | Command::Import { .. } => unreachable!("handled above"),
             };
         }
     }
@@ -1115,28 +875,8 @@ async fn run_data_at(
         | Command::ApplySchema(_) => Err(anyhow!(
             "this command requires the daemon — start it with `ling-mem start`"
         )),
-        Command::Serve { .. }
-        | Command::Start { .. }
-        | Command::Stop
-        | Command::Restart { .. }
-        | Command::Status
-        | Command::Upgrade { .. }
-        | Command::Export { .. }
-        | Command::Import { .. } => unreachable!("handled above"),
+        Command::Export { .. } | Command::Import { .. } => unreachable!("handled above"),
     }
-}
-
-fn emit_lifecycle(outcome: &crate::daemon::lifecycle::LifecycleOutcome) -> Result<()> {
-    emit_lifecycle_with_update(outcome, None)
-}
-
-fn emit_lifecycle_with_update(
-    outcome: &crate::daemon::lifecycle::LifecycleOutcome,
-    update: Option<&crate::update::UpdateInfo>,
-) -> Result<()> {
-    let value = outcome.to_json_with_update(update);
-    println!("{}", serde_json::to_string_pretty(&value)?);
-    Ok(())
 }
 
 // ── Subcommand handlers ─────────────────────────────────────────────────────
@@ -1481,55 +1221,6 @@ async fn cmd_forget(store: &MemoryStore, args: ForgetArgs, format: OutputFormat)
 // Session-scanning utilities (`collect` / `extract`) live as bash
 // scripts under `skills/shared-memory/scripts/`; the daemon stays
 // focused on the memory store.
-
-async fn cmd_upgrade(
-    data_dir: &std::path::Path,
-    skill_dir: &std::path::Path,
-    check_only: bool,
-    force: bool,
-    yes: bool,
-    port: u16,
-) -> Result<()> {
-    use crate::update;
-
-    if check_only {
-        let info = update::check(data_dir, true).await?;
-        println!("{}", serde_json::to_string_pretty(&info)?);
-        return Ok(());
-    }
-
-    if !yes {
-        return Err(anyhow!(
-            "refusing to update without --yes (the swap replaces the running binary)"
-        ));
-    }
-
-    let outcome = update::apply(update::ApplyOptions {
-        data_dir,
-        skill_dir,
-        port,
-        force,
-    })
-    .await?;
-    println!("{}", serde_json::to_string_pretty(&outcome)?);
-    Ok(())
-}
-
-async fn cmd_rollback(
-    data_dir: &std::path::Path,
-    skill_dir: &std::path::Path,
-    port: u16,
-) -> Result<()> {
-    let outcome = crate::update::rollback(crate::update::ApplyOptions {
-        data_dir,
-        skill_dir,
-        port,
-        force: false,
-    })
-    .await?;
-    println!("{}", serde_json::to_string_pretty(&outcome)?);
-    Ok(())
-}
 
 // ── I/O helpers ─────────────────────────────────────────────────────────────
 

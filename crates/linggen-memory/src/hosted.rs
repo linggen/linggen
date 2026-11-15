@@ -2,10 +2,10 @@
 //! its own daemon: open the stores once, serve the routes on the host's port,
 //! and hold the store's lock for the life of whoever opened it.
 //!
-//! The start-up steps are `daemon::serve::run`'s — open both tables, attach
-//! the change log, start upkeep and the replica loop — without the listener,
-//! the pidfile, the LAN gate, the console UI or telemetry, which are the
-//! host's business. The embedding model is not warmed: it loads on the first
+//! The start-up steps the old daemon took — open both tables, attach the
+//! change log, start upkeep and the replica loop — without the listener, the
+//! pidfile, the LAN gate, the console UI or telemetry, which are the host's
+//! business. The embedding model is not warmed: it loads on the first
 //! call that embeds.
 
 use crate::embed::{Embedder, LoadOnce};
@@ -105,6 +105,28 @@ fn try_flock(_file: &File) -> Result<bool> {
     Ok(true)
 }
 
+/// One change log for both tables (`memory::changes`) — what a replica pulls.
+/// A store that has never had one is seeded with every existing row, so a
+/// replica's first pull is a full copy.
+async fn attach_change_log(
+    data_dir: &Path,
+    semantic: &MemoryStore,
+    episodic: &MemoryStore,
+) -> Result<()> {
+    use crate::memory::changes::{log_path, ChangeLog, Op};
+    let log = Arc::new(ChangeLog::open(log_path(data_dir)).context("opening the change log")?);
+    if log.needs_seed() {
+        for store in [semantic, episodic] {
+            let ids = store.ids_where(None).await?;
+            log.record(store.table_name(), Op::Upsert, &ids);
+        }
+        tracing::info!("change log seeded at seq {}", log.head());
+    }
+    semantic.attach_changes(Arc::clone(&log));
+    episodic.attach_changes(log);
+    Ok(())
+}
+
 /// Open the stores under `data_dir` and start their background work on the
 /// current runtime. `self_base` is where this memory's routes are reachable
 /// over loopback (MCP calls reuse the HTTP handlers through it), e.g.
@@ -120,7 +142,7 @@ pub async fn open(data_dir: &Path, self_base: String) -> Result<SharedState> {
             .await
             .with_context(|| format!("opening episodic store under {}", data_dir.display()))?,
     );
-    crate::daemon::serve::attach_change_log(data_dir, &semantic, &episodic).await?;
+    attach_change_log(data_dir, &semantic, &episodic).await?;
     let recall = Arc::new(Recall::new(Arc::clone(&semantic), Arc::clone(&episodic)));
     let embedder = Arc::new(LoadOnce::new(Embedder::new));
     let bound = self_addr(&self_base);

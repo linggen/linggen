@@ -18,18 +18,11 @@ use crate::cli::{
     AddArgs, CliMemoryType, CliOrigin, CliOutcome, FilterArgs, ForgetArgs, ListArgs, OutputFormat,
     SearchArgs, UpdateArgs,
 };
-use crate::daemon::lifecycle::LifecycleOutcome;
-use crate::daemon::pidfile;
 use crate::memory::Memory;
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
 use std::io::Write;
-use std::path::Path;
 use std::time::Duration;
-
-/// Health-probe budget. Must be short — runs on every CLI invocation, so a
-/// hung daemon should not stall an offline command.
-const PROBE_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// Per-operation budget. Search + add embed on the daemon side and can take
 /// a few seconds on cold start.
@@ -40,76 +33,6 @@ const OP_TIMEOUT: Duration = Duration::from_secs(30);
 /// than a single add. A generous ceiling keeps a large import from tripping
 /// the 30s `OP_TIMEOUT`; the work is bounded (one commit) so it won't wedge.
 const BULK_TIMEOUT: Duration = Duration::from_secs(600);
-
-/// Probe the daemon: read its pidfile, confirm the pid is alive, then
-/// confirm `/api/health` returns 200. Returns the base URL on success.
-///
-/// Failure modes that all collapse to `None` (CLI falls back to direct
-/// store): missing pidfile, dead pid, refused connection, non-2xx health,
-/// timeout. Any of these mean "no daemon" — the CLI should not produce a
-/// noisy error here.
-pub(crate) async fn try_running_daemon(skill_dir: &Path) -> Option<String> {
-    let info = pidfile::read(skill_dir).ok().flatten()?;
-    if !pidfile::pid_is_alive(info.pid) {
-        return None;
-    }
-    let base = format!("http://127.0.0.1:{}", info.port);
-    let client = reqwest::Client::builder()
-        .timeout(PROBE_TIMEOUT)
-        .build()
-        .ok()?;
-    let resp = client.get(format!("{base}/api/health")).send().await.ok()?;
-    if resp.status().is_success() {
-        Some(base)
-    } else {
-        None
-    }
-}
-
-/// Probe; if the daemon isn't up, autostart it (same pattern Linggen's
-/// engine uses in `engine::capability_tools::dispatch`) and re-probe.
-///
-/// On any failure we fall back to `None`, so the caller can use direct
-/// `MemoryStore` mode. Failures we surface to stderr so the user can see
-/// *why* the daemon path was skipped — silent fallback would hide real
-/// problems (e.g. port in use, binary missing).
-pub(crate) async fn try_running_or_start(data_dir: &Path, skill_dir: &Path) -> Option<String> {
-    if let Some(url) = try_running_daemon(skill_dir).await {
-        return Some(url);
-    }
-
-    // No daemon reachable — start one. Matches Linggen engine autostart
-    // semantics: data_dir flows through `LINGGEN_DATA_DIR` so the child's
-    // store path resolution matches ours.
-    // No `--host`: the daemon binds the saved network setting, the same as
-    // every other starter.
-    match crate::daemon::lifecycle::start(data_dir, skill_dir, crate::daemon::DEFAULT_PORT, None)
-        .await
-    {
-        Ok(outcome) => {
-            let url = try_running_daemon(skill_dir).await;
-            if url.is_none() {
-                // Was already up by pid, yet silent over HTTP: either this
-                // shell cannot reach loopback (a sandbox, typically) or the
-                // daemon is wedged. Say so — "no daemon" sends the user
-                // chasing a ghost. A daemon we just started gets no such
-                // note: it may still be opening its store when probed.
-                if let LifecycleOutcome::AlreadyRunning(info) = &outcome {
-                    eprintln!(
-                        "ling-mem: daemon pid {} on port {} is up but did not answer this shell \
-                         (sandbox without loopback access, or a wedged daemon?); using direct store",
-                        info.pid, info.port
-                    );
-                }
-            }
-            url
-        }
-        Err(e) => {
-            eprintln!("ling-mem: autostart failed ({e}); using direct store");
-            None
-        }
-    }
-}
 
 /// POST `body` to `<base>/<path>` and unwrap the standard envelope.
 async fn post(base: &str, path: &str, body: &Value) -> Result<Value> {

@@ -2,30 +2,24 @@
 //! or this machine only.
 //!
 //! The choice is the `network` field of `.config.json`, beside the other
-//! knobs, and `serve` resolves it at bind time: an explicit `--host` wins, then
-//! this setting, then the LAN. Every starter — the plugin hook, the engine, a
-//! bare `ling-mem restart` — passes no `--host`, so the setting is what binds.
+//! knobs. The old daemon bound by it; hosted by the engine, memory listens
+//! where the engine does, so the setting is kept and shown but binds nothing.
 //!
 //! Only this machine may change it. The gate already admits paired devices
 //! from the LAN, and a device must never decide how the Mac listens — so both
 //! writes here pass `local::require_local` themselves, and `PUT /api/config`
 //! keeps whatever is on disk (see `config::put_config`).
-//!
-//! A new bind needs a new listener, so a change applies on restart:
-//! `POST /api/network/restart` spawns `ling-mem restart`, which stops this
-//! daemon and starts the next one on the saved choice.
 
 use axum::{
     extract::{ConnectInfo, State},
     response::Response,
-    routing::{get, post},
+    routing::get,
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::path::Path;
 
 use crate::http::config;
 use crate::http::envelope::{ok, ApiError};
@@ -54,20 +48,13 @@ impl Network {
     }
 }
 
-/// The address `serve` binds: the flag someone typed, else the saved choice.
-pub fn resolve_bind(flag: Option<IpAddr>, setting: Network) -> IpAddr {
-    flag.unwrap_or_else(|| setting.host())
-}
-
 #[derive(Deserialize)]
 struct SetNetwork {
     network: Network,
 }
 
 pub fn router() -> Router<SharedState> {
-    Router::new()
-        .route("/api/network", get(get_network).put(put_network))
-        .route("/api/network/restart", post(restart))
+    Router::new().route("/api/network", get(get_network).put(put_network))
 }
 
 /// The saved choice beside the address actually bound — facts the console
@@ -101,41 +88,6 @@ async fn put_network(
     Ok(ok(view(cfg.network, state.bound, &state.data_dir)))
 }
 
-async fn restart(
-    State(state): State<SharedState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
-) -> Result<Response, ApiError> {
-    local::require_local(peer.ip(), &headers, state.port)?;
-    schedule_restart(state.data_dir.clone(), state.port);
-    Ok(ok(json!({ "restarting": true })))
-}
-
-/// Restart from outside: a child `ling-mem restart` stops this daemon and
-/// starts the next. Delayed a beat so the response reaches the console first.
-fn schedule_restart(data_dir: PathBuf, port: u16) {
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        if let Err(e) = spawn_restart(&data_dir, port) {
-            tracing::warn!("restart for a network change failed to spawn: {e}");
-        }
-    });
-}
-
-fn spawn_restart(data_dir: &Path, port: u16) -> std::io::Result<()> {
-    let exe = std::env::current_exe()?;
-    std::process::Command::new(exe)
-        .arg("restart")
-        .arg("--port")
-        .arg(port.to_string())
-        .env("LINGGEN_DATA_DIR", data_dir)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map(|_| ())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,18 +96,9 @@ mod tests {
     fn the_lan_is_the_default() {
         assert_eq!(Network::default(), Network::Lan);
         assert_eq!(
-            resolve_bind(None, Network::default()),
+            Network::default().host(),
             "0.0.0.0".parse::<IpAddr>().unwrap()
         );
-    }
-
-    #[test]
-    fn the_saved_choice_binds_unless_a_flag_overrides_it() {
-        let local: IpAddr = "127.0.0.1".parse().unwrap();
-        assert_eq!(resolve_bind(None, Network::Local), local);
-        let flag: IpAddr = "192.168.1.5".parse().unwrap();
-        assert_eq!(resolve_bind(Some(flag), Network::Local), flag);
-        assert_eq!(resolve_bind(Some(local), Network::Lan), local);
     }
 
     #[test]

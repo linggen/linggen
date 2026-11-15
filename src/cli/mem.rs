@@ -15,6 +15,10 @@ use std::io::Write;
 use std::time::Duration;
 
 pub async fn run(args: Vec<String>) -> Result<()> {
+    if let Err(e) = refuse_lifecycle(&args) {
+        print_error(&e);
+        std::process::exit(1);
+    }
     let argv = std::iter::once("ling mem".to_string()).chain(args);
     let cli = match Cli::try_parse_from(argv) {
         Ok(cli) => cli,
@@ -28,7 +32,6 @@ pub async fn run(args: Vec<String>) -> Result<()> {
 }
 
 async fn dispatch(mut cli: Cli) -> Result<()> {
-    refuse_lifecycle(&cli.cmd)?;
     let data_dir = cli
         .data_dir
         .get_or_insert_with(|| crate::paths::linggen_home().clone())
@@ -66,15 +69,28 @@ fn needs_the_store(cli: &Cli) -> bool {
     cli.episodic || matches!(cli.cmd, Command::Export { .. } | Command::Import { .. })
 }
 
-fn refuse_lifecycle(cmd: &Command) -> Result<()> {
-    let verb = match cmd {
-        Command::Serve { .. } => "serve",
-        Command::Start { .. } => "start",
-        Command::Stop => "stop",
-        Command::Restart { .. } => "restart",
-        Command::Status => "status",
-        Command::Upgrade { .. } => "upgrade",
-        _ => return Ok(()),
+/// The subcommand: the first word that is neither a flag nor a global
+/// option's value.
+fn verb_of(args: &[String]) -> Option<&str> {
+    let mut words = args.iter();
+    while let Some(w) = words.next() {
+        match w.as_str() {
+            "--data-dir" | "--format" => {
+                words.next();
+            }
+            w if w.starts_with('-') => {}
+            w => return Some(w),
+        }
+    }
+    None
+}
+
+/// The old daemon's lifecycle verbs, which `ling mem` does not have.
+const LIFECYCLE: &[&str] = &["serve", "start", "stop", "restart", "status", "upgrade"];
+
+fn refuse_lifecycle(args: &[String]) -> Result<()> {
+    let Some(verb) = verb_of(args).filter(|v| LIFECYCLE.contains(v)) else {
+        return Ok(());
     };
     Err(anyhow!(
         "`ling mem {verb}` is not a memory verb: memory runs inside the Linggen engine \
