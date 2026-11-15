@@ -203,12 +203,21 @@ he told her he cares about, set against how the day has gone.
 
 ## 6. Before a step can ship
 
-| Check | Blocks |
-|---|---|
-| Mixamo's terms on offering animation files | Hosting Yinyue's animations |
-| The VRoid model's redistribution licence (open since 2026-08) | Hosting Yinyue's model |
-| The picture model's licence, and a steadier source than a personal account's conversion | Mirroring it on our storage |
-| Cloudflare storage price (≈ 10 GB of models, plus art) | Going live with the mirrors |
+Checked on the web 2026-11-15 by a research agent. Several of the licensors'
+pages refused automated reading, so each line says how firm it is; none of it
+is legal advice.
+
+| Item | Finding | How firm | So |
+|---|---|---|---|
+| Mixamo clips (26 `.fbx`) | Commercial use in a product is allowed; distributing the raw files to anyone outside the team is not | Adobe's FAQ read second-hand (the page refused the fetch) | Never host the `.fbx` files. Bake the clips into a compact form inside the program |
+| Mixamo clips, converted | No Adobe text covers converted animation files on a public address | Unknown | Not hosted either, unless Adobe says so in writing |
+| pixiv's 7 sample motions (`VRMA_01`–`07`) | Commercial use allowed **with the credit** "Character animation credits to pixiv Inc.'s VRoid Project"; distributing them or altered versions "in a way that can be rigged or extracted" is prohibited | Read on pixiv's own BOOTH page | Never hosted. Wherever the clips ship the credit is shown; keeping them or dropping them is Hanli's call (§8) |
+| The VRoid model (`yinyue.vrm`) | Models made in VRoid Studio from its own presets may be used and distributed commercially | pixiv's guidelines through search excerpts, plus the Steam page read directly | May be hosted or packaged; set the usage fields in the file |
+| Picture model FLUX.2 [klein] 4B | Apache-2.0: may be mirrored and used commercially; the 9B and [dev] variants are non-commercial | Model card and the maker's own announcement, read directly | May be mirrored with its licence text; still move off the personal account's conversion |
+| Cloudflare storage | $0.015 per GB-month, no egress fee, 10 GB free | Pricing page, updated 2026-10-30 | ≈ $0.03–0.20 a month for 12 GB and 2,000 downloads |
+
+Consequence for Yinyue: her animations stay in the program, baked small
+(trial running); only her model is free to move.
 
 ## 7. Claude's calls — say no to any
 
@@ -230,3 +239,4 @@ he told her he cares about, set against how the day has gone.
 - How the world state reaches a session Linggen does not host (Claude Code or
   Codex in a terminal) — through the plugin's hook, or not at all.
 - Whether the gate tests a first launch with no network.
+- pixiv's seven sample motions: show the credit and keep them (baked), or drop them.
