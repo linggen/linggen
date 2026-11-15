@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2.2.1] - 2026-11-14 — the permission gate reads a command as the shell does
 
 - **The permission gate reads a command the way the shell does.** Text a
   command carries is no longer taken for a path: a heredoc body written with
