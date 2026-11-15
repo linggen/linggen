@@ -7,7 +7,8 @@
 //! an older `.prev` is renamed with a timestamp, never overwritten — and a
 //! small shell script takes its place:
 //!
-//! - data verbs run as `ling mem "$@"` (`ling` on PATH, else this engine);
+//! - data verbs run as `ling mem "$@"` (the engine that wrote the script, else
+//!   `ling` on PATH — which may be an older one without `mem`);
 //! - `--version` answers this engine's version, so the plugin's
 //!   `install-bin.sh` (which replaces only an older binary) leaves it alone;
 //! - `status` answers what the old autostart hook reads from a running
@@ -202,8 +203,9 @@ case "$verb" in
     echo "ling-mem: memory is part of Linggen now; '$verb' does nothing (ling status)" >&2
     exit 0 ;;
 esac
-if command -v ling >/dev/null 2>&1; then exec ling mem "$@"; fi
-exec "$ENGINE" mem "$@"
+# The engine that wrote this knows `mem`; a `ling` on PATH may be an older one that does not.
+if [ -x "$ENGINE" ]; then exec "$ENGINE" mem "$@"; fi
+exec ling mem "$@"
 "#
     )
 }
@@ -275,6 +277,15 @@ mod tests {
         }
         let (_, out, _) = sh(&bin, &["search", "a status", "--limit", "1"], no_ling);
         assert_eq!(out.trim(), "engine: mem search a status --limit 1");
+
+        // An older `ling` on PATH (one with no `mem`) is not the one that answers.
+        let old = dir.path().join("oldbin");
+        std::fs::create_dir(&old).unwrap();
+        std::fs::write(old.join("ling"), "#!/bin/sh\necho \"old ling: $*\"\n").unwrap();
+        set_executable(&old.join("ling")).unwrap();
+        let with_old = format!("{}:{no_ling}", old.display());
+        let (_, out, _) = sh(&bin, &["list"], &with_old);
+        assert_eq!(out.trim(), "engine: mem list");
 
         // Again: nothing to do. A newer engine rewrites its own stand-in.
         assert!(install_at(&bin, &engine, "2.3.0", 9528).unwrap().is_none());
