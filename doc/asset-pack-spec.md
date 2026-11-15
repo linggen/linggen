@@ -1,7 +1,40 @@
 # Asset packs — a skill's heavy files, fetched after install
 
-**Status: designed 2026-11-15, not built.** Part of 2.3 (`plan-3.0.md`,
+**Status: engine side built 2026-11-15** (`src/assets/`; the phone, the
+publish script and the packaging step are not). Part of 2.3 (`plan-3.0.md`,
 Slimming). The first user is 灵境's art; the engine names no app.
+
+What the build settled or changed from the design:
+
+- **Object name.** `<hash>.<ext>` where `<ext>` is the path's extension *as
+  written* when it is 1 to 8 ASCII letters or digits, else none (`<hash>`
+  alone). The publisher must name objects by the same rule: it is part of the
+  URL. The store keeps the extension so a stored object still has its content
+  type.
+- **Store path.** `<linggen home>/assets/sha256/<hash>.<ext>` (the design
+  said `<hash>`).
+- **Manifest checks.** `version` is 1, `base` is `https://`, every `path` is
+  relative with no empty, `.` or `..` part, `sha256` is 64 hex digits, a path
+  is listed once. `pack` and `order` are required on every file. A manifest
+  that fails is logged once and the skill carries on as if it had none.
+- **Fetching.** Started when the skills are loaded or reloaded (not on a
+  timer), at most 4 downloads at once, lowest `order` first. A download that
+  fails because the service cannot be had (no network, a 5xx, a full disk)
+  pauses all fetching, 2 s doubling to 10 min; a 4xx or wrong bytes back off
+  that file alone. One log line per burst, and only when it changes (the first
+  failure, a recovery) — never one per file.
+- **A page asking** puts that file first and sends it through any back-off or
+  pause, once per ask.
+- **State.** `GET /api/assets/<skill>` answers 404 for a skill with no
+  manifest. `held` counts a file the skill's own folder holds as well as a
+  stored one; `failing` is a wanted file that has failed since its last try.
+- **Sweep.** Once, after the first load of the skills, and only if every
+  declared manifest was read. An engine started with `--skills-dir` sees only
+  that skill set, so its sweep removes what the other set's skills listed;
+  they fetch it again.
+- Not built: a hole between the engine starting and the first manifest read
+  (milliseconds) in which a page's ask is not queued — the first read queues
+  everything anyway.
 
 ## The problem
 
@@ -60,7 +93,7 @@ An object's address is its hash: `<base><first two hex>/<sha256>.<ext>`.
 
 ## On the device
 
-- Fetched files live under `~/.linggen/assets/sha256/<hash>`, shared by every
+- Fetched files live under `~/.linggen/assets/sha256/<hash>.<ext>`, shared by every
   skill and every version of one. A skill update fetches only what changed.
 - **When.** After the engine has started and the skill is installed: every
   listed file not yet held, in `order`, a few at a time, in the background.

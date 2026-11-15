@@ -421,6 +421,8 @@ Three launcher types: `web` (static files in an embedded panel), `bash` (run a s
 
 `allow` names the device features the app's page may ask for — `camera` and `microphone` (`allow: [camera]`, `allow: [microphone]`). The launcher frames a declaring app with `allow="camera"` (or `microphone`) and the engine serves its pages with `Permissions-Policy: camera=(self)`; a feature not declared gets `'none'` / `()`. In Linggen.app the shell grants a capture request only to the engine's own origin and only for a page under a declaring app; macOS asks the user once. A new feature name needs the Mac shell's usage text and entitlement first.
 
+`assets` names the skill's asset-pack manifest, a JSON file inside the skill (`assets: assets.json`) listing heavy files (`path`, `sha256`, `size`, `pack`, `order`) the install may leave out. A listed file the skill's folder lacks is fetched in the background by its hash into the shared store (`~/.linggen/assets/sha256/`) and served at the same `/apps/<skill>/<path>`; until it is there that address answers 404 as for any missing file. Absent → nothing changes. `GET /api/assets/<skill>` reads what is wanted, held and failing per pack. `doc/asset-pack-spec.md`.
+
 Interactive apps are **session-bound** — every message in the session activates the skill (tool restrictions, prompt injection). The app talks to the agent through the same WebRTC surface as the main UI; no custom endpoints needed.
 
 ### Page helpers (`/shared/*`)

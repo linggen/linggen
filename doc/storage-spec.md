@@ -126,6 +126,15 @@ install, never on first use: a person never waits on one.
 - **Progress** rides the retained `tasks`/`runtime` topic; `waiting_for_quiet`
   marks a stage queued for a quiet moment.
 
+**Asset packs.** A skill's heavy files that its install left out
+(`app.assets`, `doc/asset-pack-spec.md`) are fetched into
+`~/.linggen/assets/sha256/<hash>.<ext>` — by content, shared by every skill
+and every version of one, written to `<hash>.<ext>.part` and renamed once the
+size and SHA-256 match. Four at a time, lowest `order` first, in the
+background after the skills load; failures back off to 10 minutes and retry
+for as long as the engine runs. Once at start-up, objects no installed
+skill's manifest lists are removed.
+
 Ollama models are the user's own pulls, not managed here. ling-mem's
 embedding model is ling-mem's (it fetches it when its daemon starts).
 

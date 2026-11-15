@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+- **Asset packs, engine side.** A skill can list heavy files in a manifest
+  (`app.assets`); the ones its folder lacks are fetched in the background by
+  hash, checked, kept in `~/.linggen/assets/sha256/`, and served at the same
+  `/apps/<skill>/…` address. `GET /api/assets/<skill>` reads what is held.
+
 ## [2.2.1] - 2026-11-14 — the permission gate reads a command as the shell does
 
 - **The permission gate reads a command the way the shell does.** Text a
