@@ -185,6 +185,15 @@ mod tests {
         assert!(err.to_string().contains("port 4100"), "{err}");
         assert_eq!(StoreLock::holder(dir.path()).unwrap().port, Some(4100));
         drop(first);
-        StoreLock::acquire(dir.path(), None).expect("free once dropped");
+        // A process another test forks in this moment holds a copy of the
+        // descriptor until it execs (milliseconds): allow for that.
+        let freed = (0..100).any(|_| {
+            let ok = StoreLock::acquire(dir.path(), None).is_ok();
+            if !ok {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            ok
+        });
+        assert!(freed, "the lock is free once its holder lets go");
     }
 }
