@@ -1,4 +1,5 @@
 mod account;
+mod assets;
 mod cli;
 mod config;
 mod credentials;
