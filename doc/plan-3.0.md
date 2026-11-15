@@ -1,9 +1,9 @@
 # Linggen 3.0 — plan
 
-**Status: plan, nothing built.** Agreed in talk, Hanli and Claude, 2026-11-15.
-It replaces `merge-and-slim-draft.md` and `dynamic-session-draft.md` (kept for
-the measurements and the talk that led here). Code starts only after Hanli has
-read this.
+**Status: plan, work started 2026-11-15** (Hanli: 「先开吧」). Agreed in talk, Hanli
+and Claude, 2026-11-15. Claude plans and keeps the whole in hand; the work itself
+goes to Linggen agents and Claude subagents. It replaces `merge-and-slim-draft.md` and `dynamic-session-draft.md` (kept for
+the measurements and the talk that led here).
 
 Every number is tagged **(measured)** — taken on his Mac on 2026-11-15 — or
 **(estimate)**.
@@ -24,7 +24,7 @@ Every number is tagged **(measured)** — taken on his Mac on 2026-11-15 — or
 |---|---|---|
 | **2.3** | Structure: architecture review, build speed, the merge, the engine split into modules, library upgrades, app slimming | Gate green on first install and on 2.2.1 → 2.3 (the takeover of an existing memory store); one process serving memory to Claude Code, Codex and OpenClaw seen live on his Mac; sizes re-measured |
 | **2.4** | Behaviour: one Ling and one Yinyue (§5) | Gate green; the scenario tests pass; his three scenarios seen live |
-| **3.0** | Both, settled | Hanli's call — see Open (§8) |
+| **3.0** | A release of its own, after 2.4 and likely a 2.5 of fixes | Hanli's call, once everything has settled |
 
 ## 3. Rules for the work
 
@@ -224,7 +224,6 @@ he told her he cares about, set against how the day has gone.
 
 ## 8. Open
 
-- **3.0:** a release of its own after 2.4, or the name of the last one.
 - Where the art's source of truth lives once it has left the package, and how
   an art update ships.
 - What the phone gets in each milestone; its App Store train is separate.
