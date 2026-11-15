@@ -139,6 +139,7 @@ enum Command {
     /// Memory's data verbs: `ling mem search …`, `ling mem add …`, `ling mem list`, …
     /// (`ling mem --help` lists them). Runs against the engine when it is up,
     /// else on the store directly.
+    #[command(disable_help_flag = true)]
     Mem {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
