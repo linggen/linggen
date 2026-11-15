@@ -449,7 +449,7 @@ fn auto_connect_rooms(state: &Arc<ServerState>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicBool, AtomicUsize};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     /// A provider whose weights are missing until `fetch` runs.
     struct FakeVoice {
