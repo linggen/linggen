@@ -123,16 +123,22 @@ Only its art moves to Cloudflare, one copy for Mac and phone.
 
 | | Today (measured) | After (estimate) |
 |---|---|---|
-| Mac app installed | 359 MB (+ 109 MB ling-mem apart) | 240–255 MB |
+| Mac app installed | 359 MB (+ 109 MB ling-mem apart) | ≈ 290 MB (estimate) |
 | Mac download (dmg) | 245 MB | — |
-| ↳ 灵境 in the app | 209 MB (art ≈ 146, code 43, tools + tests 15) | 75–90 MB |
+| ↳ 灵境 in the app | 209 MB (art ≈ 146, code 43, tools + tests 15) | ≈ 105 MB (art 61 + code 43; estimate from the measured packs) |
 | ↳ `ling` | 132 MB | ≈ 170 MB merged (220 measured, less the 51 MB her clips no longer take) |
 | iPhone upload (ipa) | 126 MB | 50–60 MB |
 | iPhone installed | 169 MB (灵境 106) | — |
 
 - **In the package:** the first chapter's art and the art every chapter
-  shares — ≈ 45 MB (estimate, a lower bound). Proved by running the play bot
-  through 序章 and 第一章 with only that art present and downloads blocked.
+  shares. Sorted by a tool from the game's own data (`skills`
+  `lingjing/tools/art-packs.mjs`, measured 2026-11-15, 137.5 MB of art in
+  1,054 files): **package 60.9 MB** · later chapters 38.3 MB in ten packs ·
+  **38.2 MB the game never loads** (untouched scans, paint sources kept beside
+  the art, art of boards since cut) — these leave the package and are fetched
+  by no one. The 60.9 MB is the careful count (every shared item, creature
+  and card; every place an errand can reach); the play bot on an install
+  holding only that list, with fetching blocked, shows what can still go.
 - **The rest downloads:** Mac — all of it, in the background, right after
   first launch. Phone on Wi-Fi — the same. Phone on cellular — only the chapter
   that comes next; the rest waits for Wi-Fi.
