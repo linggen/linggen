@@ -34,6 +34,8 @@ pub fn hermetic_env(home: &Home, mem_url: Option<&str>) -> Vec<(String, String)>
         ("SHELL", "/bin/sh".to_string()),
         ("LINGGEN_NO_TELEMETRY", "1".to_string()),
         ("LING_MEM_NO_TELEMETRY", "1".to_string()),
+        // Never the real old memory port: the engine also listens there.
+        ("LINGGEN_LEGACY_MEMORY_PORT", "0".to_string()),
         ("LINGGEN_SITE_URL", DEAD_PROXY.to_string()),
         ("HF_HUB_OFFLINE", "1".to_string()),
         ("NO_COLOR", "1".to_string()),

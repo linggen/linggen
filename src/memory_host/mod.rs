@@ -20,7 +20,9 @@
 //! (`effective_url` points them at [`PREFIX`] on this port); calling the
 //! library directly is a later step.
 
+mod legacy_port;
 mod routes;
+mod standin;
 mod takeover;
 
 pub(crate) use routes::routes;
@@ -85,10 +87,13 @@ pub(crate) async fn start(port: u16) {
     let data_dir = crate::paths::linggen_home().clone();
     let served = open(&data_dir, port).await;
     match &served {
-        Ok(_) => tracing::info!(
-            "memory: store open under {} — serving at {PREFIX} and {MCP_PATH}",
-            data_dir.display()
-        ),
+        Ok(s) => {
+            tracing::info!(
+                "memory: store open under {} — serving at {PREFIX} and {MCP_PATH}",
+                data_dir.display()
+            );
+            keep_old_callers_working(&s.router);
+        }
         Err(why) => tracing::warn!("memory: not serving — {why}"),
     }
     let _ = HOST.set(Host {
@@ -96,6 +101,16 @@ pub(crate) async fn start(port: u16) {
         runtime: runtime().handle().clone(),
         served,
     });
+}
+
+/// What callers of the old daemon still use: its address on this machine
+/// (`legacy_port`) and its binary (`standin`).
+fn keep_old_callers_working(router: &axum::Router) {
+    let port = legacy_port::port();
+    if let Some(port) = port {
+        legacy_port::serve(runtime(), router.clone(), port);
+    }
+    standin::install(port.unwrap_or(legacy_port::DEFAULT_PORT));
 }
 
 async fn open(data_dir: &Path, port: u16) -> Result<Served, String> {
