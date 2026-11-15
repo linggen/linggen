@@ -43,9 +43,8 @@ async fn the_fixture_home_loads() {
 /// A true first install — no config folder, no client.json — boots on the
 /// engine's own defaults: its memory is the one it hosts itself, on its own
 /// port (an address on this machine, here the world's `LING_MEM_URL`, names
-/// it), never the real one on 9528. The address lives in
-/// `~/.linggen/client.json`, not the config, and a default one is written
-/// nowhere.
+/// it), never the real one on 9528. The address is in neither the config
+/// nor `~/.linggen/client.json`.
 #[tokio::test]
 async fn a_first_install_with_no_config_reaches_its_own_memory() {
     let w = World::start(Setup {
@@ -58,10 +57,8 @@ async fn a_first_install_with_no_config_reaches_its_own_memory() {
         config["agent"].get("ling_mem_url").is_none(),
         "the config still carries the memory address: {config}"
     );
-    let client = w.api.get("/api/ling-mem/client").await;
-    assert_eq!(client["data"]["ling_mem"], w.memory.url, "{client}");
-    assert_eq!(client["data"]["local"], json!(true), "{client}");
-    assert_eq!(client["data"]["state"], "ok", "{client}");
+    let role = w.api.get("/api/ling-mem/primary").await;
+    assert_eq!(role["data"]["role"], "primary", "{role}");
 
     // A memory call through the engine lands in the world's own store.
     let note = format!("no-config world {}", w.home.root.display());

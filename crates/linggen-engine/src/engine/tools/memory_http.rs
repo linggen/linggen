@@ -208,10 +208,7 @@ async fn post_raw(url: &str, args: &Value) -> Result<(u16, Value), DispatchError
         .build()
         .map_err(|e| DispatchError::Other(anyhow!(e)))?;
 
-    // The device token from client.json: ignored on loopback, required by a
-    // ling-mem on another machine.
-    let request = crate::state_fs::client::with_token(client.post(url).json(args));
-    let response = match request.send().await {
+    let response = match client.post(url).json(args).send().await {
         Ok(r) => r,
         Err(e) if e.is_connect() || e.is_timeout() => return Err(DispatchError::NoDaemon),
         Err(e) => {

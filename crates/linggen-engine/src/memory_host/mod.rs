@@ -220,14 +220,32 @@ pub(crate) fn hosted_url() -> Option<String> {
     HOST.get().map(|h| url_for(h.port))
 }
 
-/// The memory address the engine's own callers use. With memory hosted here,
-/// any address on this machine — the old daemon's `127.0.0.1:9528` included —
-/// means this process; another machine's address is kept as configured.
+/// The memory address the engine's own callers use: the store this process
+/// hosts, whatever the config names. Machines share memory as primary and
+/// replicas, each engine with its own store; an engine never uses another
+/// machine's store by address. A configured address on another machine is
+/// ignored, with one log line (`ling status` says so too).
 pub fn effective_url(configured: &str) -> String {
-    match hosted_url() {
-        Some(own) if is_loopback_url(configured) => own,
-        _ => configured.trim_end_matches('/').to_string(),
+    if let Some(other) = ignored_address(configured) {
+        tracing::warn!(
+            "memory: {other} names another machine's memory — ignored; this engine uses its \
+             own store (share memory across machines with Settings → Memory → Primary)"
+        );
     }
+    match hosted_url() {
+        Some(own) => own,
+        None => configured.trim_end_matches('/').to_string(),
+    }
+}
+
+/// An address on another machine that a config names for the engine's
+/// memory — `[agent].ling_mem_url` / `$LING_MEM_URL`, or `ling_mem` in
+/// `client.json` (which older engines followed) — and that the engine
+/// ignores. `None` when everything named is on this machine.
+pub fn ignored_address(configured: &str) -> Option<String> {
+    std::iter::once(configured.trim_end_matches('/').to_string())
+        .chain(crate::state_fs::client::memory_address())
+        .find(|url| !is_loopback_url(url))
 }
 
 fn is_loopback_url(raw: &str) -> bool {

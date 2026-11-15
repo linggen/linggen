@@ -310,14 +310,13 @@ pub struct AgentConfig {
     #[serde(default = "default_memory_recall_count")]
     pub memory_recall_count: usize,
 
-    /// Base URL of the `ling-mem` HTTP daemon. Two things resolve from it:
-    /// the built-in memory MCP server's endpoint (`<url>/mcp`, which is how a
-    /// model reaches memory), and the engine's own program-side calls.
-    ///
-    /// Resolved at load from `~/.linggen/client.json` (`ling_mem`), the one
-    /// file every writer shares (`state_fs::client`); else `$LING_MEM_URL`;
-    /// else the daemon's own default port. Read from an older toml only to
-    /// migrate it into client.json once — never written to the toml.
+    /// Base URL of memory for the engine's own callers: the built-in memory
+    /// MCP server's endpoint (`<url>/mcp`, how a model reaches memory) and
+    /// the program-side calls. Memory is hosted by this process, so at
+    /// start-up any address on this machine becomes the hosted one and an
+    /// address on another machine is ignored, with a log line and a line in
+    /// `ling status` (`memory_host::effective_url`). From the toml, else
+    /// `$LING_MEM_URL`, else the old daemon's port; never written.
     #[serde(default = "default_ling_mem_url", skip_serializing)]
     pub ling_mem_url: String,
     /// Ask the model for follow-up buttons on the turns of a chat that shows
@@ -472,24 +471,12 @@ impl Config {
                 config.server.migrated_legacy_addr = config.server.migrate_legacy_fields();
                 config.migrate_retired_chatgpt_builtins();
                 config.migrate_retired_cloud_ids();
-                config.resolve_ling_mem();
                 crate::provider::set_first_event_timeout(config.routing.first_event_timeout_secs);
                 return Ok((config, Some(path)));
             }
         }
 
-        let mut config = Config::default();
-        config.resolve_ling_mem();
-        Ok((config, None))
-    }
-
-    /// `[agent].ling_mem_url` from client.json (migrating a custom toml value
-    /// there once). See `state_fs::client`.
-    fn resolve_ling_mem(&mut self) {
-        self.agent.ling_mem_url = crate::state_fs::client::resolve_ling_mem(
-            &self.agent.ling_mem_url,
-            &default_ling_mem_url(),
-        );
+        Ok((Config::default(), None))
     }
 
     /// Migrate persisted state left behind by a ChatGPT built-in generation

@@ -822,17 +822,9 @@ impl AgentManager {
         self.config.read().await.clone()
     }
 
-    /// Point the engine at another ling-mem. The caller has already written
-    /// client.json; this makes the running engine follow it. An address on
-    /// this machine means the memory this process hosts.
-    pub async fn set_ling_mem_url(&self, url: String) {
-        self.config.write().await.agent.ling_mem_url = crate::memory_host::effective_url(&url);
-    }
-
     pub async fn apply_config(&self, mut new_config: Config) -> Result<()> {
-        // The ling-mem address is client.json's, changed only through
-        // `set_ling_mem_url` (a loopback-only route) — never by a whole-config
-        // write, which a paired device may also send.
+        // The memory address is settled at start-up (`memory_host`) and never
+        // changed by a whole-config write, which a paired device may also send.
         new_config.agent.ling_mem_url = self.config.read().await.agent.ling_mem_url.clone();
         new_config.validate()?;
         // Write to disk first — if this fails, in-memory state remains unchanged.

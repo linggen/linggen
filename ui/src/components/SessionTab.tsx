@@ -6,7 +6,6 @@
 import React from 'react';
 import type { AppConfig } from '../types';
 import { Field, Grid, MoreGroup, NumberInput, Section, inputCls } from './settings/kit';
-import { LingMemAddress } from './settings/LingMemAddress';
 import { LingMemPrimary } from './settings/LingMemPrimary';
 
 type AgentCfg = AppConfig['agent'];
@@ -123,14 +122,6 @@ export const SessionTab: React.FC<{
               wide
             >
               <LingMemPrimary />
-            </Field>
-            <Field
-              label="Ling-mem URL (legacy)"
-              hint="Leave on this machine; use Primary to share memory."
-              details={<>Saved in <code>~/.linggen/client.json</code>, shared with <code>/linggen:config</code>.</>}
-              wide
-            >
-              <LingMemAddress />
             </Field>
           </Grid>
         </MoreGroup>

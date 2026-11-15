@@ -66,19 +66,6 @@ pub(super) fn routes() -> Routes {
             "/api/ling-mem/primary",
             get(api::ling_mem_primary::get_primary).put(api::ling_mem_primary::put_primary),
         )
-        // Where this machine's memory lives (client.json)
-        .route(
-            "/api/ling-mem/client",
-            get(api::ling_mem_client::get_client).put(api::ling_mem_client::put_client),
-        )
-        .route(
-            "/api/ling-mem/client/request-access",
-            post(api::ling_mem_client::request_access),
-        )
-        .route(
-            "/api/ling-mem/client/access/{id}",
-            get(api::ling_mem_client::access_status),
-        )
         // Push: the phone registers and acks; the Mac raises (doc/phone-push-spec.md)
         .route(
             "/api/push/device",
