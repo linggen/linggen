@@ -126,7 +126,7 @@ Only its art moves to Cloudflare, one copy for Mac and phone.
 | Mac app installed | 359 MB (+ 109 MB ling-mem apart) | 240–255 MB |
 | Mac download (dmg) | 245 MB | — |
 | ↳ 灵境 in the app | 209 MB (art ≈ 146, code 43, tools + tests 15) | 75–90 MB |
-| ↳ `ling` | 132 MB | ≈ 154 MB merged, without Yinyue's 66 MB |
+| ↳ `ling` | 132 MB | ≈ 170 MB merged (220 measured, less the 51 MB her clips no longer take) |
 | iPhone upload (ipa) | 126 MB | 50–60 MB |
 | iPhone installed | 169 MB (灵境 106) | — |
 
@@ -137,10 +137,14 @@ Only its art moves to Cloudflare, one copy for Mac and phone.
   first launch. Phone on Wi-Fi — the same. Phone on cellular — only the chapter
   that comes next; the rest waits for Wi-Fi.
 - **Never packaged:** 灵境's `tools` and `tests` (15 MB, measured).
-- **Yinyue** (66 MB measured: model 16, animations 50): compress first —
-  animations to a compact format, compressed textures — measure, then decide
-  whether she is hosted or simply stays in the package. Meeting her never
-  waits on a download.
+- **Yinyue stays in the package** (done 2026-11-15, engine main). Her 33
+  clips are baked once, at build time, into a compact form: 52.4 MB → 1.1 MB
+  (measured; largest error 0.19° per joint, 0.3 mm at the hips; rendered
+  frames compared before and after). The web UI went from 78 MB to 27 MB
+  (measured). No raw clip is in the program any more; the raw files and the
+  baked ones are in no repository, so a build without them must say
+  `LINGGEN_NO_CLIPS=1` (the Linux builds do). Her model (16.5 MB: textures 8,
+  expression shapes 5.8) is left as it is.
 - **Sources.** Our own files on linggen.dev's Cloudflare storage, each checked
   by content hash. Models: Hugging Face first, then the China mirror, then a
   copy on our storage for every model whose licence allows it; all pinned by
@@ -218,7 +222,7 @@ is legal advice.
 | Cloudflare storage | $0.015 per GB-month, no egress fee, 10 GB free | Pricing page, updated 2026-10-30 | ≈ $0.03–0.20 a month for 12 GB and 2,000 downloads |
 
 Consequence for Yinyue: her animations stay in the program, baked small
-(trial running); only her model is free to move.
+(done); only her model would be free to move, and at 16.5 MB it stays too.
 
 ## 7. Claude's calls — say no to any
 
