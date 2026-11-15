@@ -16,7 +16,10 @@
 //!   starts nor restarts anything;
 //! - `serve`, `start`, `stop`, `restart`, `upgrade` do nothing, and say so.
 //!
-//! A stand-in from an older engine is rewritten; any other script is left.
+//! Where there is no `ling-mem` at all the stand-in is written too: a plugin
+//! from before 2.3 would otherwise install the old daemon and start it beside
+//! the engine. A stand-in from an older engine is rewritten; any other script
+//! is left.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -108,7 +111,20 @@ fn install_at(
     legacy_port: u16,
 ) -> std::io::Result<Option<String>> {
     match inspect(path)? {
-        Found::Nothing | Found::Other => Ok(None),
+        Found::Other => Ok(None),
+        // Nothing there yet: put the stand-in down anyway. A plugin from
+        // before 2.3 installs and starts the old daemon when it finds no
+        // `ling-mem` — and that daemon knows nothing of the store's lock.
+        Found::Nothing => {
+            if let Some(dir) = path.parent() {
+                std::fs::create_dir_all(dir)?;
+            }
+            write_standin(path, engine, version, legacy_port)?;
+            Ok(Some(format!(
+                "ling-mem stand-in written at {} (no old binary was there)",
+                path.display()
+            )))
+        }
         Found::StandIn { version: v } if v == version => Ok(None),
         Found::StandIn { .. } => {
             write_standin(path, engine, version, legacy_port)?;
@@ -294,12 +310,17 @@ mod tests {
     }
 
     #[test]
-    fn nothing_and_foreign_scripts_are_left_alone() {
+    fn where_nothing_is_the_stand_in_is_written_and_a_foreign_script_is_left_alone() {
         let dir = tempfile::tempdir().unwrap();
-        let bin = dir.path().join("ling-mem");
+        let bin = dir.path().join("bin/ling-mem");
         let engine = Path::new("/nonexistent/ling");
-        assert!(install_at(&bin, engine, "2.3.0", 9528).unwrap().is_none());
-        assert!(!bin.exists());
+        // No `ling-mem` yet (and no folder for it): an old plugin must find ours, not install the daemon.
+        assert!(install_at(&bin, engine, "2.3.0", 9528).unwrap().is_some());
+        assert_eq!(
+            sh(&bin, &["-V"], "/usr/bin:/bin").1.trim(),
+            "ling-mem 2.3.0"
+        );
+        assert!(!dir.path().join("bin/ling-mem.prev").exists());
         std::fs::write(&bin, "#!/bin/sh\necho mine\n").unwrap();
         assert!(install_at(&bin, engine, "2.3.0", 9528).unwrap().is_none());
         assert_eq!(
