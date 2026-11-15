@@ -24,10 +24,14 @@ use std::path::{Path, PathBuf};
 /// it replaced, kept so the copies that build left behind still expire.
 /// A new migration adds its kind here and builds its path with
 /// [`migration_backup_dir`].
-pub const MIGRATION_BACKUP_KINDS: &[&str] = &[SCHEMA_V2, "scope-migration"];
+pub const MIGRATION_BACKUP_KINDS: &[&str] = &[SCHEMA_V2, "scope-migration", TAKEOVER];
 
 /// The gated v1 → v2 schema step's backup kind.
 pub const SCHEMA_V2: &str = "schema-v2";
+
+/// The copy taken before a new host version first opens the store
+/// (`crate::hosted::backup_once`).
+pub const TAKEOVER: &str = "takeover";
 
 /// How long a migration backup is kept.
 pub const MIGRATION_KEEP_DAYS: i64 = 14;

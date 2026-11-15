@@ -198,6 +198,77 @@ fn self_addr(self_base: &str) -> SocketAddr {
     SocketAddr::from(([127, 0, 0, 1], port))
 }
 
+/// The marker that says `tag` (a host version) already backed this store up.
+fn backup_marker(data_dir: &Path, tag: &str, outcome: &str) -> PathBuf {
+    crate::memory::backups::backups_dir(data_dir).join(format!("takeover-{tag}.{outcome}"))
+}
+
+/// Whether `tag` has backed this store up (or found none to back up).
+pub fn backup_taken(data_dir: &Path, tag: &str) -> bool {
+    backup_marker(data_dir, tag, "done").exists()
+}
+
+/// Why the last backup for `tag` failed, if it did — for a status report.
+pub fn backup_failure(data_dir: &Path, tag: &str) -> Option<String> {
+    std::fs::read_to_string(backup_marker(data_dir, tag, "failed")).ok()
+}
+
+/// Copy the store once per host version, before that version first opens
+/// it: `memory/backups/takeover-<UTC stamp>/` (expired like the other
+/// migration backups), then the marker `takeover-<tag>.done`. Everything
+/// under `memory/` but `backups/`, the old daemon's logs and the lock file.
+/// `Ok(None)` when already done or there is no store yet. A failure leaves
+/// `takeover-<tag>.failed` with the reason, and the next start tries again.
+/// The caller holds the [`StoreLock`].
+pub fn backup_once(data_dir: &Path, tag: &str) -> Result<Option<PathBuf>> {
+    let done = backup_marker(data_dir, tag, "done");
+    let failed = backup_marker(data_dir, tag, "failed");
+    let mem = data_dir.join("memory");
+    if done.exists() {
+        return Ok(None);
+    }
+    std::fs::create_dir_all(crate::memory::backups::backups_dir(data_dir))?;
+    if !mem.join("memory.lancedb").exists() {
+        std::fs::write(&done, "no store to back up\n")?;
+        return Ok(None);
+    }
+    let dest = crate::memory::backups::migration_backup_dir(
+        data_dir,
+        crate::memory::backups::TAKEOVER,
+        chrono::Utc::now(),
+    );
+    match copy_store(&mem, &dest) {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&failed);
+            std::fs::write(&done, format!("{}\n", dest.display()))?;
+            Ok(Some(dest))
+        }
+        Err(e) => {
+            let _ = std::fs::write(&failed, format!("{e}\n"));
+            Err(anyhow::Error::from(e).context(format!("backing up {}", mem.display())))
+        }
+    }
+}
+
+fn copy_store(mem: &Path, dest: &Path) -> std::io::Result<()> {
+    const SKIP: [&str; 3] = ["backups", "linggen-memory", ".store.lock"];
+    std::fs::create_dir_all(dest)?;
+    for entry in std::fs::read_dir(mem)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if SKIP.iter().any(|s| name == *s) {
+            continue;
+        }
+        let target = dest.join(&name);
+        if entry.file_type()?.is_dir() {
+            crate::http::migration::copy_dir(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
+}
+
 /// Memory's routes for a host to mount (see [`crate::http::build_hosted_router`]).
 pub fn router(state: SharedState) -> axum::Router {
     crate::http::build_hosted_router(state)
@@ -224,6 +295,27 @@ pub async fn export(store: &MemoryStore, path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_store_is_backed_up_once_per_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let mem = dir.path().join("memory");
+        std::fs::create_dir_all(mem.join("memory.lancedb/semantic.lance")).unwrap();
+        std::fs::write(mem.join("memory.lancedb/semantic.lance/x"), "rows").unwrap();
+        std::fs::write(mem.join(".days.json"), "{}").unwrap();
+        std::fs::create_dir_all(mem.join("linggen-memory")).unwrap();
+        std::fs::write(mem.join("linggen-memory/serve.log"), "log").unwrap();
+
+        let copy = backup_once(dir.path(), "9.9.9").unwrap().expect("a copy");
+        assert!(copy.join("memory.lancedb/semantic.lance/x").is_file());
+        assert!(copy.join(".days.json").is_file());
+        assert!(!copy.join("linggen-memory").exists(), "logs are not copied");
+        assert!(backup_once(dir.path(), "9.9.9").unwrap().is_none(), "once");
+        assert!(
+            backup_once(dir.path(), "9.9.10").unwrap().is_some(),
+            "per version"
+        );
+    }
 
     #[test]
     fn a_second_opener_is_refused_until_the_first_lets_go() {

@@ -23,7 +23,7 @@ pub(crate) mod lease;
 pub(crate) mod local;
 mod mcp;
 mod memory;
-mod migration;
+pub(crate) mod migration;
 pub(crate) mod network;
 pub mod presence;
 mod primary;

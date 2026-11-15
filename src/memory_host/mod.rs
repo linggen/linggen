@@ -12,12 +12,16 @@
 //! - A failed open does not stop the engine: memory answers 503 with the
 //!   reason, everything else serves.
 //! - The embedding model loads on the first call that embeds, not at start.
+//! - Before opening: an old `ling-mem` daemon still serving the store is
+//!   stopped (`takeover`), and each engine version copies the store once
+//!   (`memory/backups/takeover-<stamp>/`, marker `takeover-<version>.done`).
 //!
 //! The engine's own callers still reach memory over loopback HTTP and MCP
 //! (`effective_url` points them at [`PREFIX`] on this port); calling the
 //! library directly is a later step.
 
 mod routes;
+mod takeover;
 
 pub(crate) use routes::routes;
 
@@ -95,7 +99,9 @@ pub(crate) async fn start(port: u16) {
 }
 
 async fn open(data_dir: &Path, port: u16) -> Result<Served, String> {
+    takeover::stop_old_daemon(data_dir).await?;
     let lock = acquire_lock(data_dir.to_path_buf(), port).await?;
+    back_up_once(data_dir);
     let dir = data_dir.to_path_buf();
     let self_base = url_for(port);
     let state = runtime()
@@ -109,6 +115,20 @@ async fn open(data_dir: &Path, port: u16) -> Result<Served, String> {
         _lock: lock,
     })
 }
+
+/// This version's one copy of the store before it first opens it
+/// (`ling_mem::hosted::backup_once`). A failure does not stop start-up; it
+/// is logged as an error and `ling status` reports it until a start succeeds.
+fn back_up_once(data_dir: &Path) {
+    match ling_mem::hosted::backup_once(data_dir, VERSION) {
+        Ok(Some(copy)) => tracing::info!("memory: store backed up to {}", copy.display()),
+        Ok(None) => {}
+        Err(e) => tracing::error!("memory: BACKUP BEFORE FIRST OPEN FAILED — {e:#}"),
+    }
+}
+
+/// The engine's version: one store backup per version.
+pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// The store's lock, waiting up to [`LOCK_WAIT`] for a holder to let go.
 async fn acquire_lock(data_dir: PathBuf, port: u16) -> Result<StoreLock, String> {

@@ -107,6 +107,22 @@ async fn check_ling_mem(ling_mem_url: &str) {
         }
         None => info("Serving   ", "not open (the running engine serves memory)"),
     }
+    let home = crate::paths::linggen_home();
+    let version = crate::memory_host::VERSION;
+    match ling_mem::hosted::backup_failure(home, version) {
+        Some(why) => fail(
+            "Backup    ",
+            &format!(
+                "the store backup before {version} first opened it failed: {}",
+                why.trim()
+            ),
+        ),
+        None if ling_mem::hosted::backup_taken(home, version) => ok(
+            "Backup    ",
+            &format!("taken once for {version} (memory/backups/)"),
+        ),
+        None => info("Backup    ", &format!("not yet taken for {version}")),
+    }
     let configured = ling_mem_url.trim_end_matches('/');
     if !configured.contains("127.0.0.1") && !configured.contains("localhost") {
         info("Address   ", &format!("{configured} (another machine)"));
