@@ -42,6 +42,10 @@
 - **Allow / Deny at this Mac, in its web UI.** The local page's channel
   says it was opened on this machine, so the Share-memory prompt shows
   there; a phone's or a relay peer's channel never counts as this machine.
+- **Phones and the owner's doors.** The MCP front door (`/mcp`) is for this
+  machine and approved machines; a phone is refused. `/api/user/name` gives
+  each caller its own name. A phone's first requests wait up to 1.5 s for it
+  to name its device.
 
 ## [2.2.1] - 2026-11-14 — the permission gate reads a command as the shell does
 

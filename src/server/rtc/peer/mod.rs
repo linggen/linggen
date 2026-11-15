@@ -335,6 +335,9 @@ struct PeerLoop {
     /// When the answer went out — how long the control channel took to open
     /// is logged against it (a page's connect time, as the engine sees it).
     born: Instant,
+    /// When this peer's first request came in; how long a request waits for
+    /// the peer to name its device is counted from here (`IDENTIFY_GRACE`).
+    first_request: Option<Instant>,
     /// Track which session IDs belong to this user (for event filtering).
     /// Populated from session store on connect, updated on SessionCreated events.
     user_session_ids: HashSet<String>,
@@ -576,6 +579,7 @@ impl PeerLoop {
             disconnected_since: None,
             last_heard: Instant::now(),
             born: Instant::now(),
+            first_request: None,
             user_session_ids,
             view_ctx: super::page_state::ViewContext::default(),
             dirty_flags: 0,
@@ -860,6 +864,7 @@ impl PeerLoop {
         let cid = req.channel_id;
         let ctx_clone = self.user_ctx.clone();
         let who = self.peer_actor.clone();
+        let first = *self.first_request.get_or_insert_with(Instant::now);
         let tok = self.tokens_used.clone();
 
         if req.msg_type == "inference" || req.msg_type == "list_models" {
@@ -869,8 +874,10 @@ impl PeerLoop {
             });
         } else {
             tokio::spawn(async move {
-                let result =
-                    process_control_request_async(&req, &st, &client, &ctx_clone, &who, &tok).await;
+                let result = process_control_request_async(
+                    &req, &st, &client, &ctx_clone, &who, first, &tok,
+                )
+                .await;
                 let _ = tx.send((rid, cid, result)).await;
             });
         }

@@ -158,6 +158,30 @@ pub struct Person {
     pub name: Option<String>,
 }
 
+/// Whose name labels a caller's own messages.
+#[derive(Debug, PartialEq)]
+pub(crate) enum OwnName {
+    /// The owner (this machine, an approved machine, the owner's own phone):
+    /// core memory states it.
+    Core,
+    /// A phone that is another person: the name its pairing record holds. A
+    /// signed-out phone is nobody yet and has none.
+    Held(Option<String>),
+    /// A caller memory does not know.
+    NoOne,
+}
+
+pub(crate) fn own_name_of(caller: &Caller) -> OwnName {
+    match caller {
+        Caller::Owner | Caller::Machine(_) => OwnName::Core,
+        Caller::Unknown => OwnName::NoOne,
+        Caller::Phone(device) => match person_of(device) {
+            None => OwnName::Core,
+            Some(person) => OwnName::Held(device.account.as_ref().and(person.name)),
+        },
+    }
+}
+
 /// Who is behind this device, for the store. The Mac's own account is the
 /// owner and gets no stamp; any other account is stamped as itself; a
 /// signed-out phone is stamped as its device until it signs in.
@@ -391,6 +415,27 @@ mod tests {
         let mut owner = json!({"query": "x", "account": "u-2", "account_id": "u-2"});
         stamp_person("search", &mut owner, None);
         assert_eq!(owner, json!({"query": "x"}));
+    }
+
+    /// A phone that is another person is shown its own name, never the
+    /// owner's; a signed-out phone has none; the owner and an approved
+    /// machine get core memory's; a caller nobody knows gets no answer.
+    #[test]
+    fn a_callers_own_name_is_never_the_owners_for_another_person() {
+        let alex = device(Some(("u-3", Some("Alex"))));
+        assert_eq!(
+            own_name_of(&Caller::Phone(alex)),
+            OwnName::Held(Some("Alex".to_string()))
+        );
+        let signed_out = device(None);
+        assert_eq!(own_name_of(&Caller::Phone(signed_out)), OwnName::Held(None));
+        assert_eq!(own_name_of(&Caller::Unknown), OwnName::NoOne);
+        assert_eq!(own_name_of(&Caller::Owner), OwnName::Core);
+        let mac = PairedDevice {
+            kind: Some(crate::state_fs::devices::DeviceKind::Machine),
+            ..device(None)
+        };
+        assert_eq!(own_name_of(&Caller::Machine(mac)), OwnName::Core);
     }
 
     /// A body that names another person: the owner and an approved machine

@@ -6,11 +6,24 @@ use axum::{extract::State, response::IntoResponse};
 use serde_json::json;
 use std::sync::Arc;
 
-/// GET /api/user/name — the user's name as core memory states it. Core is
-/// the one authority for who the user is, so every chat surface labels the
-/// user's bubbles from this answer. `name` is null until core genuinely
-/// holds one — callers show nothing rather than a placeholder.
-pub(crate) async fn get_user_name(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
+/// GET /api/user/name — the name to label the asker's own messages with.
+/// For the owner it is the name core memory states: core is the one authority
+/// for who the user is. A phone that is another person gets the name its
+/// pairing record holds, never the owner's. `name` is null until one is
+/// genuinely known — callers show nothing rather than a placeholder.
+pub(crate) async fn get_user_name(
+    State(state): State<Arc<ServerState>>,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    use crate::server::api::memory::{own_name_of, OwnName};
+    let caller = crate::memory_host::caller::resolve(peer.ip(), &headers);
+    match own_name_of(&caller) {
+        OwnName::Core => {}
+        OwnName::Held(name) => return axum::Json(json!({ "name": name })).into_response(),
+        // Not "no name": a caller that keeps a name must not drop it on this.
+        OwnName::NoOne => return axum::http::StatusCode::FORBIDDEN.into_response(),
+    }
     let ling_mem_url = state.manager.get_config_snapshot().await.agent.ling_mem_url;
     // The extractor blocks on its own bounded thread; keep the worker free.
     let name = tokio::task::spawn_blocking(move || {
@@ -19,7 +32,7 @@ pub(crate) async fn get_user_name(State(state): State<Arc<ServerState>>) -> impl
     .await
     .ok()
     .flatten();
-    axum::Json(serde_json::json!({ "name": name }))
+    axum::Json(json!({ "name": name })).into_response()
 }
 
 /// GET /api/user/language — the language Linggen writes in for the person.

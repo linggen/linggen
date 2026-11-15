@@ -362,6 +362,37 @@ async fn loopback(
     req.send().await
 }
 
+/// How long a request waits for its peer to say which device it is, counted
+/// from the peer's first request. A phone names itself as its channel opens,
+/// and its first requests can overtake that message; unnamed, they would be
+/// no one's and memory would refuse them.
+const IDENTIFY_GRACE: std::time::Duration = std::time::Duration::from_millis(1500);
+
+/// The device a peer's request is re-issued for. A peer the tunnel already
+/// knows as the owner needs no name; any other is given until
+/// [`IDENTIFY_GRACE`] to send one.
+async fn named_device(
+    user_ctx: &crate::server::rtc::UserContext,
+    actor: &super::PeerActor,
+    first_request: std::time::Instant,
+) -> Option<String> {
+    use crate::server::api::pair::{TUNNEL_LOCAL, TUNNEL_OWNER};
+    let named = || actor.lock_ok().as_ref().map(|a| a.device.clone());
+    if matches!(user_ctx.tunnel_mark(), TUNNEL_LOCAL | TUNNEL_OWNER) {
+        return named();
+    }
+    let deadline = first_request + IDENTIFY_GRACE;
+    loop {
+        if let Some(device) = named() {
+            return Some(device);
+        }
+        if std::time::Instant::now() >= deadline {
+            return None;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+}
+
 /// Process a pending control channel request asynchronously.
 /// Runs in a spawned task — returns the result to be sent on the data channel
 /// via the ctrl_resp channel (avoiding blocking str0m's event loop).
@@ -371,6 +402,7 @@ pub(super) async fn process_control_request_async(
     client: &reqwest::Client,
     user_ctx: &crate::server::rtc::UserContext,
     actor: &super::PeerActor,
+    first_request: std::time::Instant,
     tokens_used: &Arc<std::sync::atomic::AtomicI64>,
 ) -> serde_json::Value {
     let port = state.port;
@@ -435,7 +467,7 @@ pub(super) async fn process_control_request_async(
             // speaks only WebRTC, so without this a handler cannot tell which
             // paired device is asking — which is what per-phone state, like the
             // delete queue, needs to be correct with more than one phone.
-            let actor_device = actor.lock_ok().as_ref().map(|a| a.device.clone());
+            let actor_device = named_device(user_ctx, actor, first_request).await;
             let mark = user_ctx.tunnel_mark();
             match loopback(
                 client,
@@ -490,8 +522,52 @@ pub(super) async fn process_control_request_async(
 
 #[cfg(test)]
 mod tests {
-    use super::{is_text, reply_data, wrap_endpoint_response};
+    use super::{is_text, named_device, reply_data, wrap_endpoint_response, IDENTIFY_GRACE};
+    use crate::server::api::pair::Actor;
+    use crate::server::rtc::UserContext;
     use serde_json::json;
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    fn phone() -> Actor {
+        Actor {
+            device: "phone".into(),
+            account: None,
+        }
+    }
+
+    /// A phone's first request can overtake the message that names it: the
+    /// request waits, and is re-issued as that phone's.
+    #[tokio::test]
+    async fn a_request_waits_for_its_peer_to_name_itself() {
+        let actor: super::super::PeerActor = Arc::new(Mutex::new(None));
+        let late = actor.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(80)).await;
+            *late.lock().unwrap() = Some(phone());
+        });
+        let named = named_device(&UserContext::paired(), &actor, Instant::now()).await;
+        assert_eq!(named.as_deref(), Some("phone"));
+    }
+
+    /// The wait is counted from the peer's first request, so a peer that
+    /// never names itself is held up once, not on every request; and a peer
+    /// the tunnel knows as the owner is not held up at all.
+    #[tokio::test]
+    async fn the_wait_ends_and_the_owner_never_waits() {
+        let nobody: super::super::PeerActor = Arc::new(Mutex::new(None));
+        let long_ago = Instant::now() - IDENTIFY_GRACE;
+        let asked = Instant::now();
+        assert!(named_device(&UserContext::paired(), &nobody, long_ago)
+            .await
+            .is_none());
+        assert!(
+            named_device(&UserContext::owner(None), &nobody, Instant::now())
+                .await
+                .is_none()
+        );
+        assert!(asked.elapsed() < Duration::from_millis(200));
+    }
 
     #[test]
     fn text_replies_ride_as_text() {

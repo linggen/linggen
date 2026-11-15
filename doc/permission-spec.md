@@ -28,6 +28,11 @@ Anything reaching this machine over the network presents a paired device's token
 
 Through the WebRTC tunnel a request arrives from loopback, so the tunnel names the device it carries and marks what it knows of a peer that names none; only this machine's own page and the owner's relay login count as the owner. Approving a machine (Allow / Deny) is only for someone at this machine. See `memory-spec.md` § Who reaches memory.
 
+The same kinds decide two more doors. The MCP front door (`/mcp`) is for computers: its tools act as the owner, so this machine and an approved machine come in and a phone is refused (403). `GET /api/user/name` answers with the asker's own name: core memory's for the owner, the pairing record's for a phone that is another person, none for a signed-out phone, and 403 for a caller nobody knows.
+
+A phone names its device as its channel opens, and its first requests can overtake that message. A request from a peer that has not named itself waits up to 1.5 s, counted from the peer's first request, for the name to arrive.
+
+
 ## Session grants
 
 Each grant pairs a permission level with a scope: a directory and its children, or **all directories** (`*`). The most specific directory grant takes precedence; the all-directories grant is the fallback. Without a matching grant, the level is `chat`.

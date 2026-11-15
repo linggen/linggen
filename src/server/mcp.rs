@@ -760,6 +760,13 @@ fn origin_allowed(headers: &HeaderMap) -> bool {
     }
 }
 
+/// Who may use the front door: this machine and the machines it approved.
+/// Its tools act as the owner (an agent started here reads the owner's
+/// memory), so a phone — its own person — is not let in.
+fn door_open_to(caller: &crate::memory_host::caller::Caller) -> bool {
+    caller.is_owner()
+}
+
 /// Every `/mcp` exchange is one-shot: `Connection: close` keeps client pools
 /// from ever reusing a stale socket (observed intermittently with Claude
 /// Code's MCP client; loopback reconnect cost is negligible).
@@ -772,11 +779,15 @@ fn one_shot(mut resp: Response) -> Response {
 /// `POST /mcp` — the streamable-HTTP MCP endpoint (stateless, JSON responses).
 pub(crate) async fn post_handler(
     State(state): State<Arc<ServerState>>,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
     if !origin_allowed(&headers) {
         return one_shot((StatusCode::FORBIDDEN, "origin not allowed").into_response());
+    }
+    if !door_open_to(&crate::memory_host::caller::resolve(peer.ip(), &headers)) {
+        return one_shot((StatusCode::FORBIDDEN, "this door is for computers").into_response());
     }
     let ling_mem_url = state.manager.get_config_snapshot().await.agent.ling_mem_url;
     let deps = McpDeps {
@@ -882,6 +893,30 @@ mod tests {
     async fn notifications_get_no_response() {
         let msg = json!({ "jsonrpc": "2.0", "method": "notifications/initialized" });
         assert!(handle_rpc(&deps(&hub()), &msg).await.is_none());
+    }
+
+    /// The front door's tools act as the owner, so only the owner's own
+    /// computers come in.
+    #[test]
+    fn the_front_door_is_for_computers() {
+        use crate::memory_host::caller::Caller;
+        use crate::state_fs::devices::{DeviceKind, PairedDevice};
+        let row = |kind| PairedDevice {
+            id: "d".into(),
+            name: "d".into(),
+            secret: "s".into(),
+            created_at: 0,
+            kind: Some(kind),
+            account: None,
+            device_id: None,
+            settings: Default::default(),
+            relay_grant: None,
+            superseded_grant: None,
+        };
+        assert!(door_open_to(&Caller::Owner));
+        assert!(door_open_to(&Caller::Machine(row(DeviceKind::Machine))));
+        assert!(!door_open_to(&Caller::Phone(row(DeviceKind::Phone))));
+        assert!(!door_open_to(&Caller::Unknown));
     }
 
     #[test]
