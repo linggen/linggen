@@ -29,8 +29,9 @@ use crate::replica::{outbox, Role};
 /// The review-queue kind for a queued write the primary did not take.
 pub const CONFLICT_KIND: &str = "replica-conflict";
 
-/// Writes a replica forwards (or queues).
-const WRITES: &[&str] = &[
+/// Writes a replica forwards (or queues) — with the pull and the connect
+/// routes, the whole of what a replica asks of its primary.
+pub const WRITES: &[&str] = &[
     "/api/memory/add",
     "/api/memory/add_batch",
     "/api/memory/update",

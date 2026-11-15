@@ -1,14 +1,15 @@
 //! A machine on the LAN asking ling-mem to share memory — shown here so the
 //! Allow / Deny click can happen on whatever Linggen page is open.
 //!
-//! ling-mem owns the whole flow (`/api/connect/*` on the daemon): the pending
-//! request, the token, the denied list. These routes only forward the three
+//! Memory owns the whole flow (its `/api/connect/*`): the pending request,
+//! the token, the denied list. These routes call it in-process for the three
 //! calls the modal makes, and only for someone sitting at this Mac:
 //!
 //! - the socket peer is loopback (a paired phone or laptop holds a token and
 //!   passes the LAN gate, so a token is never enough);
-//! - the request did not come through the WebRTC tunnel, which re-issues a
-//!   phone's calls from loopback (`TUNNEL_HEADER` / `ACTOR_DEVICE_HEADER`);
+//! - through the WebRTC tunnel (which re-issues a peer's calls from
+//!   loopback), only a channel opened on this machine that names no device
+//!   (`TUNNEL_LOCAL`, no `ACTOR_DEVICE_HEADER`) — this machine's own page;
 //! - the Host names loopback and a browser Origin, if any, is a loopback page
 //!   or the app shell — no extension, no other site.
 //!
@@ -16,35 +17,27 @@
 //! nothing, the server does.
 
 use axum::{
-    extract::{ConnectInfo, Path, State},
-    http::{HeaderMap, StatusCode},
+    extract::{ConnectInfo, Path},
+    http::{HeaderMap, Method, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
-use serde_json::{json, Value};
+use serde_json::json;
 use std::net::SocketAddr;
-use std::sync::Arc;
-use std::time::Duration;
 
 use crate::server::api::pair::{ACTOR_DEVICE_HEADER, TUNNEL_HEADER, TUNNEL_LOCAL};
 use crate::server::loopback_guard;
-use crate::server::state::ServerState;
 
 /// `GET /api/ling-mem/connect/pending`
-pub async fn pending(
-    State(state): State<Arc<ServerState>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
-) -> Response {
+pub async fn pending(ConnectInfo(peer): ConnectInfo<SocketAddr>, headers: HeaderMap) -> Response {
     if !is_at_this_mac(peer, &headers) {
         return refused();
     }
-    forward(&state, reqwest::Method::GET, "pending").await
+    forward(Method::GET, "pending").await
 }
 
 /// `POST /api/ling-mem/connect/{id}/{verdict}` — verdict is `allow` or `deny`.
 pub async fn decide(
-    State(state): State<Arc<ServerState>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Path((id, verdict)): Path<(String, String)>,
@@ -59,7 +52,7 @@ pub async fn decide(
         )
             .into_response();
     }
-    forward(&state, reqwest::Method::POST, &format!("{id}/{verdict}")).await
+    forward(Method::POST, &format!("{id}/{verdict}")).await
 }
 
 /// Someone at this Mac: loopback socket, loopback Host, no foreign Origin,
@@ -93,26 +86,16 @@ pub(super) fn refused() -> Response {
         .into_response()
 }
 
-async fn forward(state: &ServerState, method: reqwest::Method, tail: &str) -> Response {
-    let base = state.manager.get_config_snapshot().await.agent.ling_mem_url;
-    let url = format!("{}/api/connect/{tail}", base.trim_end_matches('/'));
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()
-        .unwrap_or_default();
-    match client.request(method, &url).send().await {
-        Ok(r) => {
-            let status =
-                StatusCode::from_u16(r.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
-            let body: Value = r.json().await.unwrap_or(Value::Null);
-            (status, Json(body)).into_response()
-        }
-        Err(e) => (
-            StatusCode::BAD_GATEWAY,
-            Json(json!({ "ok": false, "error": format!("ling-mem unreachable: {e}") })),
-        )
-            .into_response(),
+/// Memory's own connect route, called in-process as this machine. After an
+/// Allow the device list is re-read at once, so the new machine's first
+/// call is not refused by a cached copy.
+async fn forward(method: Method, tail: &str) -> Response {
+    let path = format!("/api/connect/{tail}");
+    let (status, body) = crate::memory_host::local_call(method, &path, None).await;
+    if status.is_success() && tail.ends_with("/allow") {
+        crate::state_fs::devices::reload_devices();
     }
+    (status, Json(body)).into_response()
 }
 
 #[cfg(test)]

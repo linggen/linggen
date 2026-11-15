@@ -183,7 +183,9 @@ fn loopback_rejection(
 /// The LAN trust gate (see `api::pair`). Loopback callers — the local web UI,
 /// app shells, skills, the simulator — pass untouched. Anything arriving over
 /// the network must present a paired-device token; only the health check and
-/// the pairing handshake itself stay open (they are the bootstrap).
+/// the two pairing handshakes stay open (they are the bootstrap): a phone's
+/// code pairing, and a machine asking memory to connect
+/// (`memory_host::is_open_path`).
 async fn lan_gate(
     axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
     req: axum::extract::Request,
@@ -212,7 +214,8 @@ async fn lan_gate(
     if matches!(
         path,
         "/api/health" | "/api/pair/request" | "/api/pair/confirm" | "/api/pair/qr-confirm"
-    ) {
+    ) || crate::memory_host::is_open_path(path)
+    {
         return next.run(req).await;
     }
     let token = crate::memory_host::caller::token_from_headers(req.headers());

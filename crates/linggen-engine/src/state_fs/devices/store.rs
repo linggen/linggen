@@ -63,6 +63,14 @@ impl DeviceStore {
         self.refresh(migrate)
     }
 
+    /// Drop what the cache knows of the file, so the next read checks it.
+    pub(super) fn forget(&self) {
+        if let Some(c) = self.cache.write_ok().as_mut() {
+            c.checked = None;
+            c.stamp = None;
+        }
+    }
+
     /// Apply `f` to the list and persist it atomically.
     pub(super) fn modify<R>(
         &self,

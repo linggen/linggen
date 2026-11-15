@@ -1,5 +1,6 @@
-//! Becoming a replica: this daemon asks the primary to connect (the primary's
-//! `/api/connect/request`, the same Allow / Deny flow a person sees there),
+//! Becoming a replica: this machine asks the primary to connect (the
+//! primary's `/mem/api/connect/request` on its engine port — the same
+//! Allow / Deny a person sees there),
 //! then follows the request until someone clicks. On Allow the token lands in
 //! `.replica.json`; no client ever handles it.
 
@@ -27,7 +28,7 @@ pub fn become_primary(state: &SharedState) {
 pub async fn ask(state: &SharedState, primary: String) -> anyhow::Result<()> {
     let device_id = device_id(state);
     let body = json!({ "device_name": host_name(), "device_id": device_id });
-    let url = format!("http://{primary}/api/connect/request");
+    let url = format!("{}/api/connect/request", super::state::base_url(&primary));
     let resp = super::http().post(&url).json(&body).send().await?;
     let status = resp.status();
     let reply: Value = resp.json().await.unwrap_or(Value::Null);
@@ -79,7 +80,10 @@ async fn follow(state: SharedState, primary: String, rid: String) {
         if state.replica.snapshot().request_id.as_deref() != Some(rid.as_str()) {
             return; // replaced or cancelled
         }
-        let url = format!("http://{primary}/api/connect/status/{rid}");
+        let url = format!(
+            "{}/api/connect/status/{rid}",
+            super::state::base_url(&primary)
+        );
         let Ok(resp) = super::http().get(&url).send().await else {
             continue;
         };

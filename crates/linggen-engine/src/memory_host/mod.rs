@@ -26,7 +26,7 @@ mod routes;
 mod standin;
 mod takeover;
 
-pub use routes::routes;
+pub use routes::{is_open_path, routes};
 
 use ling_mem::hosted::StoreLock;
 use std::path::{Path, PathBuf};
@@ -37,7 +37,7 @@ use std::time::Duration;
 /// `/mem/api/memory/<verb>`, `/mem/api/health`, `/mem/mcp`, … Loopback only.
 /// Not under `/api/`: the phone's WebRTC channel forwards `/api/*` to this
 /// port as loopback, and the phone's door is the stamped `/api/memory/<verb>`.
-pub const PREFIX: &str = "/mem";
+pub const PREFIX: &str = ling_mem::replica::state::PRIMARY_PREFIX;
 
 /// Memory's MCP server for hosts on this machine (Claude Code, Codex, …),
 /// beside the engine's own `/mcp`. The same server is at `/mem/mcp`.
@@ -160,6 +160,59 @@ async fn acquire_lock(data_dir: PathBuf, port: u16) -> Result<StoreLock, String>
 
 fn url_for(port: u16) -> String {
     format!("http://127.0.0.1:{port}{PREFIX}")
+}
+
+/// One request to the hosted memory's own routes as this machine (no HTTP
+/// hop): the engine's settings and Allow / Deny call memory this way.
+/// Answers memory's envelope, or a 503 envelope when memory is not served.
+pub async fn local_call(
+    method: axum::http::Method,
+    path: &str,
+    body: Option<serde_json::Value>,
+) -> (axum::http::StatusCode, serde_json::Value) {
+    use axum::http::StatusCode;
+    use tower::ServiceExt;
+    let unavailable = |why: &str| {
+        let body = serde_json::json!({ "ok": false, "error": why, "code": "MEMORY_UNAVAILABLE" });
+        (StatusCode::SERVICE_UNAVAILABLE, body)
+    };
+    let Some(host) = HOST.get() else {
+        return unavailable("memory is not hosted by this process");
+    };
+    let served = match &host.served {
+        Ok(served) => served,
+        Err(why) => return unavailable(why),
+    };
+    let bytes = body.map(|b| b.to_string()).unwrap_or_default();
+    let mut req = match axum::http::Request::builder()
+        .method(method)
+        .uri(path)
+        .header("host", format!("127.0.0.1:{}", host.port))
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(bytes))
+    {
+        Ok(req) => req,
+        Err(e) => return unavailable(&format!("bad memory path {path}: {e}")),
+    };
+    let me = std::net::SocketAddr::from(([127, 0, 0, 1], 0));
+    req.extensions_mut().insert(axum::extract::ConnectInfo(me));
+    let router = served.router.clone();
+    let answer = host.runtime.spawn(async move {
+        let response = match router.oneshot(req).await {
+            Ok(response) => response,
+            Err(never) => match never {},
+        };
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 16 << 20)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok::<_, String>((status, serde_json::from_slice(&bytes).unwrap_or_default()))
+    });
+    match answer.await {
+        Ok(Ok(answer)) => answer,
+        Ok(Err(e)) => unavailable(&format!("memory answered unreadably: {e}")),
+        Err(e) => unavailable(&format!("memory request failed: {e}")),
+    }
 }
 
 /// The base URL of the memory this process hosts, once `start` has run.

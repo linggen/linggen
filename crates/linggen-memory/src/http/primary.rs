@@ -56,8 +56,9 @@ async fn set_primary(
         link::become_primary(&state);
         return Ok(ok(view(&state)));
     }
-    let primary = normalize_primary(wanted)
-        .ok_or_else(|| ApiError::bad_request("an address like 192.168.1.5:9528, or local"))?;
+    let primary = normalize_primary(wanted).ok_or_else(|| {
+        ApiError::bad_request("an address like 192.168.1.5:9527 (the primary's Linggen), or local")
+    })?;
     link::ask(&state, primary)
         .await
         .map_err(|e| ApiError::bad_request(format!("{e:#}")))?;

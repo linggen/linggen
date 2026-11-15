@@ -134,6 +134,12 @@ pub fn load_devices() -> Vec<PairedDevice> {
     STORE.load(migrate_rows)
 }
 
+/// Re-read the file on the next call, now — after another writer (memory's
+/// Allow) has added a row whose token must work at once.
+pub fn reload_devices() {
+    STORE.forget();
+}
+
 /// Read-modify-write the device list under the store's writer lock, persisted
 /// atomically.
 pub fn modify_devices<R>(f: impl FnOnce(&mut Vec<PairedDevice>) -> R) -> std::io::Result<R> {

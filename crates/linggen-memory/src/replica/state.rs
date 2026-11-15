@@ -14,7 +14,8 @@ pub enum Role {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ReplicaFile {
-    /// `host:port` of the primary; absent = this daemon IS the primary.
+    /// `host:port` of the primary's engine; absent = this machine IS the
+    /// primary.
     #[serde(default)]
     pub primary: Option<String>,
     /// Issued by the primary when someone there clicked Allow.
@@ -37,6 +38,15 @@ pub struct ReplicaFile {
     /// A connect request waiting for the click on the primary.
     #[serde(default)]
     pub request_id: Option<String>,
+}
+
+/// Where a primary serves memory's routes on its engine's port; a replica
+/// joins, pulls and pushes there (`http://<primary>/mem/api/…`).
+pub const PRIMARY_PREFIX: &str = "/mem";
+
+/// The base URL of a primary's memory routes, from its `host:port`.
+pub fn base_url(primary: &str) -> String {
+    format!("http://{primary}{PRIMARY_PREFIX}")
 }
 
 pub fn path(data_dir: &Path) -> PathBuf {
@@ -73,7 +83,7 @@ impl ReplicaFile {
     }
 
     pub fn upstream_url(&self) -> Option<String> {
-        self.primary.as_deref().map(|p| format!("http://{p}"))
+        self.primary.as_deref().map(base_url)
     }
 
     /// What the console, the engine and `/linggen:config` show — facts only,
@@ -123,11 +133,11 @@ mod tests {
         let f = ReplicaFile::default();
         assert_eq!(f.role(), Role::Primary);
         let r = ReplicaFile {
-            primary: Some("192.168.20.230:9528".into()),
+            primary: Some("192.168.20.230:9527".into()),
             ..Default::default()
         };
         assert_eq!(r.role(), Role::Replica);
-        assert_eq!(r.upstream_url().unwrap(), "http://192.168.20.230:9528");
+        assert_eq!(r.upstream_url().unwrap(), "http://192.168.20.230:9527/mem");
     }
 
     #[test]
