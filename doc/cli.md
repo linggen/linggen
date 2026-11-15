@@ -187,7 +187,7 @@ Restart the running engine on a build, from inside one of its sessions
 (`background-tasks-spec.md` § Engine restart).
 
 ```
-ling restart --binary target/release/ling [--wait 120]
+ling restart --binary target/fast/ling [--wait 120]
 ```
 
 - The engine first waits up to `--wait` seconds for other sessions' turns to

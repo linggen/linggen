@@ -57,11 +57,12 @@ Full-stack dev = `cargo run -- --web --dev` alongside `cd ui && npm run dev`
 you rebuild dist).
 
 Inside a session the engine hosts, restart the live engine on a fresh build
-with `target/release/ling restart --binary target/release/ling` (after
-`cd ui && npm run build` and `cargo build --release`). It waits for other
+with `target/fast/ling restart --binary target/fast/ling` (after
+`cd ui && npm run build` and `cargo build --profile fast`). It waits for other
 turns, keeps `ling.prev`, rolls back if unhealthy, and this session continues
 in a new turn afterwards — do nothing else in the turn that calls it.
 `scripts/restart-engine.sh` does the builds and this in one go.
+Release builds (`cargo build --release`) are for shipping.
 
 ## Architecture
 

@@ -4,7 +4,7 @@
 # restart).
 #
 #   scripts/restart-engine.sh            build ui (when stale) + ling, then restart
-#   scripts/restart-engine.sh --no-build restart on the last release build
+#   scripts/restart-engine.sh --no-build restart on the last fast build
 #   scripts/restart-engine.sh --status   how the last restart went
 #
 # A build error stops here with nothing touched. The restart itself is the
@@ -14,7 +14,7 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-BUILT="$REPO/target/release/ling"
+BUILT="$REPO/target/fast/ling"
 HOME_DIR="${LINGGEN_HOME:-$HOME/.linggen}"
 
 say() { echo "[restart $(date '+%H:%M:%S')] $*" >&2; }
@@ -23,14 +23,14 @@ build() {
   # shellcheck disable=SC1091
   . "$REPO/scripts/lib-common.sh"
   ensure_cargo
-  # A release binary embeds ui/dist; rebuild it when any source is newer.
+  # A fast binary embeds ui/dist; rebuild it when any source is newer.
   if [ ! -f "$REPO/ui/dist/index.html" ] || \
      [ -n "$(find "$REPO/ui/src" "$REPO/ui/index.html" -newer "$REPO/ui/dist/index.html" -type f | head -1)" ]; then
     say "building ui"
     (cd "$REPO/ui" && npm run build >&2) || { say "ui build failed"; exit 1; }
   fi
-  say "building ling (release)"
-  (cd "$REPO" && cargo build --release --bin ling)
+  say "building ling (fast)"
+  (cd "$REPO" && cargo build --profile fast --bin ling)
 }
 
 case "${1:-}" in
