@@ -4,6 +4,7 @@
 pub(super) mod account;
 pub(super) mod activity;
 pub(super) mod app_launch;
+pub(super) mod assets;
 pub(super) mod agents;
 pub(super) mod config;
 pub(super) mod ling_mem_client;

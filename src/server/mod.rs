@@ -66,6 +66,12 @@ async fn prepare_server(
     // Pet/voice settings drive the TTS engine choice + whether to pre-warm it.
     let pet_cfg = manager.get_config_snapshot().await.pet;
 
+    let assets = Arc::new(crate::assets::Assets::new(
+        crate::assets::Store::in_home(),
+        crate::assets::Tuning::default(),
+    ));
+    crate::extensions::skills::assets_link::spawn(assets.clone(), skills.clone());
+
     let state = Arc::new(ServerState {
         manager,
         dev_mode,
@@ -76,6 +82,7 @@ async fn prepare_server(
         last_user_turn_at: Arc::new(AtomicU64::new(unix_secs_now())),
         events_tx,
         skills,
+        assets,
         missions,
         prompt_store,
         queued_chats: Arc::new(Mutex::new(HashMap::new())),

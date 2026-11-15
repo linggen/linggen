@@ -9,6 +9,9 @@ members: [ling, yinyue]
 app:
   launcher: web
   entry: index.html
+  # Two pictures a manifest lists: one held in the store, one not fetchable
+  # (its base refuses connections) — tests/system/assets.rs.
+  assets: assets.json
 place:
   yinyue:
     tools: [Peek]

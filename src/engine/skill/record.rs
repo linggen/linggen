@@ -41,6 +41,11 @@ pub struct AppConfig {
     /// count — each one needs the Mac shell to carry its usage text.
     #[serde(default)]
     pub allow: Vec<String>,
+    /// The skill's manifest of heavy files that are fetched after install, a
+    /// path inside the skill (`assets.json`). Absent → every file ships with
+    /// the skill. See `doc/asset-pack-spec.md`.
+    #[serde(default)]
+    pub assets: Option<String>,
 }
 
 fn listed_by_default() -> bool {

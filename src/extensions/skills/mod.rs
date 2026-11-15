@@ -1,5 +1,7 @@
 pub use crate::extensions::marketplace;
 
+pub mod assets_link;
+
 use crate::engine::skill_tool::{SkillParamDef, SkillToolDef};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -406,6 +408,8 @@ pub struct SkillLoader {
     triggers: Mutex<HashMap<String, String>>,
     /// Rung after every load or reload, for whoever mirrors the skill set.
     changed: tokio::sync::Notify,
+    /// Counts every load or reload; any number of followers may watch it.
+    loads: tokio::sync::watch::Sender<u64>,
 }
 
 impl SkillLoader {
@@ -414,7 +418,21 @@ impl SkillLoader {
             skills: Mutex::new(HashMap::new()),
             triggers: Mutex::new(HashMap::new()),
             changed: tokio::sync::Notify::new(),
+            loads: tokio::sync::watch::channel(0).0,
         }
+    }
+
+    /// A count that goes up after every load or reload. Unlike [`changed`],
+    /// it serves any number of followers.
+    ///
+    /// [`changed`]: Self::changed
+    pub fn subscribe(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.loads.subscribe()
+    }
+
+    fn announce(&self) {
+        self.changed.notify_one();
+        self.loads.send_modify(|n| *n += 1);
     }
 
     /// Resolves after the next load or reload (or at once, if one happened
@@ -473,7 +491,7 @@ impl SkillLoader {
                 }
             }
         }
-        self.changed.notify_one();
+        self.announce();
 
         Ok(())
     }
@@ -579,7 +597,7 @@ impl SkillLoader {
             .lock()
             .await
             .insert(parsed.name.clone(), parsed.clone());
-        self.changed.notify_one();
+        self.announce();
         Some(parsed)
     }
 

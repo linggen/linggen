@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "base": "https://127.0.0.1:1/a/",
+  "files": [
+    { "path": "art/held.svg", "sha256": "5b10d22019dbf0238b178c09957cac2af302655093bbe81a741d207a4e58e53a", "size": 62, "pack": "shared", "order": 1 },
+    { "path": "index.html", "sha256": "4ba16c5c88de3f6c2471fdcabfc00cbccdaf7b36d02758e10ddfe92796fb627b", "size": 1193, "pack": "shared", "order": 2 },
+    { "path": "art/late.svg", "sha256": "089001a35679a33ef3db0ca350db9b9a2f0136e0e327577b04b3b98127470961", "size": 4, "pack": "later", "order": 9 }
+  ]
+}

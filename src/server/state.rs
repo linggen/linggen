@@ -37,6 +37,8 @@ pub struct ServerState {
     pub last_user_turn_at: Arc<AtomicU64>,
     pub events_tx: broadcast::Sender<ServerEvent>,
     pub skills: Arc<crate::extensions::skills::SkillLoader>,
+    /// The skills' heavy files fetched after install (`crate::assets`).
+    pub assets: Arc<crate::assets::Assets>,
     /// The mission loader — the same one `manager.missions` looks through,
     /// held concretely for editing, reloads and the scheduler's run history.
     pub missions: Arc<crate::extensions::missions::MissionLoader>,

@@ -2,6 +2,8 @@
 //! app skill's files, and the Memory_* capability a skill page may call.
 
 use super::ServerState;
+use crate::assets::Resolved;
+use crate::engine::skill::AppConfig;
 use axum::{
     extract::State,
     http::Uri,
@@ -121,6 +123,14 @@ pub(super) async fn capability_dispatch(
     }
 }
 
+fn build_err(status: u16, msg: &str) -> Response {
+    Response::builder()
+        .status(status)
+        .header("Content-Type", "text/plain")
+        .body(axum::body::Body::from(msg.to_string()))
+        .unwrap_or_else(|_| Response::new(axum::body::Body::from("internal server error")))
+}
+
 /// Serve static files from an app-enabled skill's directory.
 /// Route: GET /apps/{skill_name}/{*file_path}
 pub(super) async fn serve_app_file(
@@ -128,14 +138,6 @@ pub(super) async fn serve_app_file(
     axum::extract::Path((skill_name, file_path)): axum::extract::Path<(String, String)>,
     req: axum::extract::Request,
 ) -> Response {
-    let build_err = |status: u16, msg: &str| -> Response {
-        Response::builder()
-            .status(status)
-            .header("Content-Type", "text/plain")
-            .body(axum::body::Body::from(msg.to_string()))
-            .unwrap_or_else(|_| Response::new(axum::body::Body::from("internal server error")))
-    };
-
     // Look up the skill.
     let skill = state.skills.get_skill(&skill_name).await;
     let Some(skill) = skill else {
@@ -176,12 +178,33 @@ pub(super) async fn serve_app_file(
     };
     let canonical_full = match tokio::fs::canonicalize(&full_path).await {
         Ok(p) => p,
-        Err(_) => return build_err(404, &format!("File not found: {}", file_path_clean)),
+        Err(_) => {
+            // Not in the folder: a file the skill's manifest lists may be
+            // fetched by now (doc/asset-pack-spec.md).
+            let fetched = state.assets.resolve(&skill_name, file_path_clean);
+            return match fetched {
+                Resolved::Stored(stored) => {
+                    send_file(&skill_name, app, file_path_clean, stored, req).await
+                }
+                _ => build_err(404, &format!("File not found: {}", file_path_clean)),
+            };
+        }
     };
     if !canonical_full.starts_with(&canonical_dir) {
         return build_err(403, "Path traversal not allowed");
     }
-    note_served(&skill_name, file_path_clean, &app.entry);
+    send_file(&skill_name, app, file_path_clean, canonical_full, req).await
+}
+
+/// Answer with `file`, as the app's page `file_path_clean`.
+async fn send_file(
+    skill_name: &str,
+    app: &AppConfig,
+    file_path_clean: &str,
+    canonical_full: std::path::PathBuf,
+    req: axum::extract::Request,
+) -> Response {
+    note_served(skill_name, file_path_clean, &app.entry);
 
     // Delegate to tower-http's ServeFile: it speaks Range/206 (video seeking
     // in skill pages needs partial content), conditional requests, and HEAD.

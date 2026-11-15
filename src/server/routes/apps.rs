@@ -45,6 +45,8 @@ pub(super) fn routes() -> Routes {
         )
         // One app's quest file, read (a paired phone's 开府 list).
         .route("/api/quests/{app}", get(api::quests::get_quests))
+        // What an app's fetched files stand at (asset packs).
+        .route("/api/assets/{skill}", get(api::assets::get_assets))
         .route("/shared/{file}", get(shared_pages::serve))
         .route("/apps/{skill_name}/{*file_path}", get(serve_app_file))
 }
