@@ -131,6 +131,7 @@ async fn forward(peer: SocketAddr, mut req: Request, path: &str, door: Door) -> 
     if let Err(e) = set_path(&mut req, path) {
         return refuse(StatusCode::BAD_REQUEST, &e, "BAD_PATH");
     }
+    let req = only_the_peer(req, peer);
     let router = served.router.clone();
     match host
         .runtime
@@ -145,6 +146,17 @@ async fn forward(peer: SocketAddr, mut req: Request, path: &str, door: Door) -> 
             "INTERNAL",
         ),
     }
+}
+
+/// The request as memory's router should see it: the engine's own route
+/// state (its `{*rest}` path parameter above all, which memory's `Path`
+/// extractors would read as one argument too many) left behind, the
+/// caller's socket address kept.
+fn only_the_peer(req: Request, peer: SocketAddr) -> Request {
+    let (mut parts, body) = req.into_parts();
+    parts.extensions = Default::default();
+    parts.extensions.insert(ConnectInfo(peer));
+    Request::from_parts(parts, body)
 }
 
 /// Point the request at memory's own path, keeping its query.
@@ -236,6 +248,19 @@ mod tests {
             status_from("127.0.0.1:50000", "/mem/api/health").await,
             StatusCode::SERVICE_UNAVAILABLE
         );
+    }
+
+    /// The engine's `{*rest}` parameter must not reach memory's router: its
+    /// `Path` extractors would read it as one argument too many.
+    #[test]
+    fn memory_sees_the_peer_and_none_of_the_engines_route_state() {
+        let mut req = Request::get("/x").body(Body::empty()).unwrap();
+        req.extensions_mut().insert(42u8);
+        let peer: SocketAddr = "192.168.1.5:1".parse().unwrap();
+        let req = only_the_peer(req, peer);
+        assert!(req.extensions().get::<u8>().is_none());
+        let seen = req.extensions().get::<ConnectInfo<SocketAddr>>().unwrap();
+        assert_eq!(seen.0, peer);
     }
 
     #[test]
