@@ -629,7 +629,7 @@ impl AgentEngine {
         let tail_budget = self.context_tail_token_budget();
         let before = manager.global_sessions.rewrite_count(&sid);
         if let Err(e) = manager.global_sessions.edit_chat_history(&sid, |rows| {
-            crate::server::commit_compaction(
+            super::compaction::commit_compaction(
                 rows,
                 summary.clone(),
                 &agent,

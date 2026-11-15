@@ -149,7 +149,7 @@ fn turn_replies(msgs: Vec<crate::state_fs::sessions::ChatMsg>) -> TurnReplies {
             }
             "system" if continues => {}
             "system" => callers_turn = false,
-            "memory-recall" | super::chat::COMPACTION_SENDER => {}
+            "memory-recall" | crate::engine::compaction::COMPACTION_SENDER => {}
             _ if m.content.trim().is_empty() => {}
             _ if callers_turn => out.reply = Some(m.content),
             _ => out.followup = Some(m.content),

@@ -19,9 +19,9 @@
 //! The thread starts at the newest compaction row: what came before it is
 //! what that summary stands for.
 
-use super::compact_rows::COMPACTION_SENDER;
 use super::restored_tools::{self, ToolReplay, ToolRow};
 use super::ChatRunCtx;
+use crate::engine::compaction::{since_compaction, COMPACTION_SENDER};
 use crate::engine::{shown_images, AgentEngine, ThreadMark};
 use crate::message::ChatMessage;
 use crate::state_fs::sessions::ChatMsg;
@@ -205,15 +205,6 @@ async fn declared_for_others(ctx: &ChatRunCtx, sid: &str) -> HashMap<String, Vec
         .filter(|t| !t.others_read.is_empty())
         .map(|t| (t.name, t.others_read))
         .collect()
-}
-
-/// The rows from the newest compaction summary on (all of them when none).
-pub(crate) fn since_compaction(rows: &[ChatMsg]) -> &[ChatMsg] {
-    let start = rows
-        .iter()
-        .rposition(|r| !r.is_observation && r.from_id == COMPACTION_SENDER)
-        .unwrap_or(0);
-    &rows[start..]
 }
 
 /// `rows` as `reader`'s thread.

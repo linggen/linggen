@@ -4,6 +4,7 @@ pub mod answer_refs;
 pub mod background;
 mod closing_ask;
 pub(crate) mod cloud_meter;
+pub(crate) mod compaction;
 mod context;
 mod dispatch;
 mod foreground_task;
