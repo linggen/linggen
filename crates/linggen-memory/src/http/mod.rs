@@ -12,6 +12,7 @@
 //! code moved into the engine's workspace; it is not served from here.
 
 mod chains;
+mod compact;
 pub(crate) mod config;
 pub(crate) mod connect;
 pub(crate) mod days;
@@ -60,6 +61,7 @@ pub fn build_hosted_router(state: SharedState) -> Router {
         .merge(primary::router())
         .merge(lease::router())
         .merge(migration::router())
+        .merge(compact::router())
         .layer(middleware::from_fn_with_state(
             state.clone(),
             crate::replica::forward::replica_writes,
