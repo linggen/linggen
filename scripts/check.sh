@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Every check CI runs, runnable before a push: ./scripts/check.sh
 #   ./scripts/check.sh          everything
-#   ./scripts/check.sh rust     cargo test (unit) + generated TS types current + clippy count
+#   ./scripts/check.sh rust     cargo test (unit: the ling binary and the engine
+#                               crate) + generated TS types current + clippy count
 #   ./scripts/check.sh system   the hermetic system tests (tests/system; cargo
 #                               nextest; the engine hosts the memory). The
 #                               memory test runs when the embedding model is in
@@ -45,8 +46,9 @@ npm_ready() {
 if [ "$what" = all ] || [ "$what" = rust ]; then
   # rust_embed needs the folder to exist even when the UI isn't built.
   mkdir -p ui/dist
-  # Every target but tests/system, which runs as its own step below.
-  step cargo test --bins --test rtc_link_bench
+  # Every target but tests/system, which runs as its own step below: the
+  # binary's unit tests and the engine crate's (crates/linggen-engine).
+  step cargo test --lib --bins --test rtc_link_bench
   # Memory (crates/linggen-memory), hosted by the engine.
   step cargo test -p linggen-memory
   # cargo test re-emits the ts-rs bindings; they must match what's committed.

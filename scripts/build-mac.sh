@@ -36,7 +36,7 @@ echo "✅ Web UI built"
 echo ""
 echo "2️⃣  Building ling binary..."
 cd "$ROOT_DIR"
-cargo clean -p linggen
+cargo clean -p linggen -p linggen-engine
 cargo build --release
 BUILT_VER=$(target/release/ling --version | awk '{print $2}')
 if [ "$BUILT_VER" != "$VERSION_NUM" ]; then

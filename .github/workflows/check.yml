@@ -30,7 +30,7 @@ jobs:
         run: |
           mkdir -p ui/dist
           # tests/system runs in its own job below.
-          cargo test --bins --test rtc_link_bench
+          cargo test --lib --bins --test rtc_link_bench
       - name: Generated TS types are current
         run: ./scripts/gen-types.sh --check
       - name: clippy (reported, not enforced)
