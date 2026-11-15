@@ -26,7 +26,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::server::api::pair::{ACTOR_DEVICE_HEADER, TUNNEL_HEADER};
+use crate::server::api::pair::{ACTOR_DEVICE_HEADER, TUNNEL_HEADER, TUNNEL_LOCAL};
 use crate::server::loopback_guard;
 use crate::server::state::ServerState;
 
@@ -62,12 +62,15 @@ pub async fn decide(
     forward(&state, reqwest::Method::POST, &format!("{id}/{verdict}")).await
 }
 
-/// Someone at this Mac: loopback socket, not tunnelled, loopback Host, and no
-/// foreign Origin.
+/// Someone at this Mac: loopback socket, loopback Host, no foreign Origin,
+/// and — through the tunnel — a channel opened on this machine
+/// (`TUNNEL_LOCAL`) that has not named a device. The local web UI speaks only
+/// over its channel, so this is how its Allow click arrives; a phone's or a
+/// relay peer's channel never carries that mark.
 pub(super) fn is_at_this_mac(peer: SocketAddr, headers: &HeaderMap) -> bool {
     let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
     peer.ip().is_loopback()
-        && header(TUNNEL_HEADER).is_none()
+        && header(TUNNEL_HEADER).is_none_or(|v| v == TUNNEL_LOCAL)
         && header(ACTOR_DEVICE_HEADER).is_none()
         && header("host").is_some_and(loopback_guard::host_is_loopback)
         && header("origin").is_none_or(is_local_page)
@@ -141,6 +144,9 @@ mod tests {
         assert!(is_at_this_mac(lo(), &page));
         let shell = headers(&[("host", "127.0.0.1:9527"), ("origin", "tauri://localhost")]);
         assert!(is_at_this_mac(lo(), &shell));
+        // This machine's own page, over its channel.
+        let ui = headers(&[("host", "127.0.0.1:9527"), (TUNNEL_HEADER, TUNNEL_LOCAL)]);
+        assert!(is_at_this_mac(lo(), &ui));
     }
 
     /// A paired phone or laptop passes the LAN gate with its token or cookie;
@@ -161,6 +167,14 @@ mod tests {
     fn a_tunnelled_phone_may_not() {
         let tunnelled = headers(&[("host", "127.0.0.1:9527"), (TUNNEL_HEADER, "1")]);
         assert!(!is_at_this_mac(lo(), &tunnelled));
+        let relay_owner = headers(&[("host", "127.0.0.1:9527"), (TUNNEL_HEADER, "owner")]);
+        assert!(!is_at_this_mac(lo(), &relay_owner));
+        let local_but_a_phone = headers(&[
+            ("host", "127.0.0.1:9527"),
+            (TUNNEL_HEADER, TUNNEL_LOCAL),
+            (ACTOR_DEVICE_HEADER, "dev"),
+        ]);
+        assert!(!is_at_this_mac(lo(), &local_but_a_phone));
         let acting = headers(&[("host", "127.0.0.1:9527"), (ACTOR_DEVICE_HEADER, "dev")]);
         assert!(!is_at_this_mac(lo(), &acting));
     }

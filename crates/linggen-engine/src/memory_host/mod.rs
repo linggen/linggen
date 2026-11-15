@@ -20,6 +20,7 @@
 //! (`effective_url` points them at [`PREFIX`] on this port); calling the
 //! library directly is a later step.
 
+pub mod caller;
 mod legacy_port;
 mod routes;
 mod standin;

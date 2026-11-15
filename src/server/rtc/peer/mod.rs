@@ -97,10 +97,17 @@ pub(super) fn user_info_msg(user_ctx: &super::UserContext, identified: bool) -> 
 ///
 /// Returns the SDP answer string to send back to the client.
 /// Spawns a background task to run the peer connection event loop.
-pub async fn create_peer(offer_sdp: String, state: Arc<ServerState>) -> Result<String> {
-    // Local WHIP — owner with Admin permission
-    let user_ctx =
-        super::UserContext::owner(crate::account::load_account().and_then(|a| a.user_id));
+pub async fn create_peer(
+    offer_sdp: String,
+    state: Arc<ServerState>,
+    reached_by: super::Reach,
+) -> Result<String> {
+    // WHIP — owner with Admin permission; how it was reached is kept for
+    // what the tunnel says of it (`UserContext::tunnel_mark`).
+    let user_ctx = super::UserContext {
+        reached_by,
+        ..super::UserContext::owner(crate::account::load_account().and_then(|a| a.user_id))
+    };
     create_peer_inner(offer_sdp, state, false, user_ctx).await
 }
 

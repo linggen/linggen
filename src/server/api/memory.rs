@@ -29,23 +29,28 @@
 //! non-loopback request without a paired `x-linggen-device` token before it
 //! reaches this handler, and loopback callers are already inside the fence.
 //!
-//! **Whose memory.** Two phones with two accounts can pair to one Mac, and the
-//! store must never hand one person the other's life. So every verb that
-//! arrives from a paired device is stamped here with the person behind it —
-//! read from the pairing record the Mac keeps, never from anything the phone
-//! put in the body — and the daemon scopes the verb to that person. The Mac's
-//! owner (a phone signed in to this Mac's own account, or no device at all)
-//! gets no stamp: their rows are the store's unmarked rows, as they always
-//! were. A signed-out phone is stamped `device:<id>` and re-stamped to the
-//! account the day it signs in (`restamp_device`). See `phone-memory-spec.md`.
+//! **Whose memory** is decided by `memory_host::caller`, the one rule every
+//! memory route uses: this machine and an approved machine (a `machine` row)
+//! are the owner; a phone is its own person. Two phones with two accounts can
+//! pair to one Mac, and the store must never hand one person the other's
+//! life. So every verb a phone sends is stamped here with the person behind
+//! it — read from the pairing record the Mac keeps, never from anything the
+//! phone put in the body — and memory scopes the verb to that person. The
+//! owner's rows are the store's unmarked rows; a phone signed in to this
+//! Mac's own account is the owner too. A signed-out phone is stamped
+//! `device:<id>` and re-stamped to the account the day it signs in
+//! (`restamp_device`). See `phone-memory-spec.md`.
 
 use axum::{
-    extract::{Json, Path, State},
+    extract::{ConnectInfo, Json, Path, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
 use serde_json::{json, Value};
+use std::net::SocketAddr;
 use std::sync::Arc;
+
+use crate::memory_host::caller::{self, Caller};
 
 use crate::server::state::ServerState;
 
@@ -62,6 +67,7 @@ use crate::server::state::ServerState;
 /// phone never learns a port, stores one, or needs a rebuild when it moves.
 pub async fn passthrough(
     State(state): State<Arc<ServerState>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Path(verb): Path<String>,
     headers: HeaderMap,
     body: Option<Json<Value>>,
@@ -75,15 +81,8 @@ pub async fn passthrough(
     }
 
     let mut args = body.map(|Json(v)| v).unwrap_or_else(|| json!({}));
-    if let Some(device) = crate::server::api::pair::device_for_headers(&headers) {
-        if DEVICE_FORBIDDEN_VERBS.contains(&verb.as_str()) {
-            return unreachable_envelope(
-                StatusCode::FORBIDDEN,
-                format!("{verb} is the Mac's to run, not a phone's"),
-                "FORBIDDEN",
-            );
-        }
-        stamp_person(&verb, &mut args, person_of(&device).as_ref());
+    if let Err(refused) = scope_to_caller(&caller::resolve(peer.ip(), &headers), &verb, &mut args) {
+        return refused;
     }
     let ling_mem_url = state.manager.get_config_snapshot().await.agent.ling_mem_url;
 
@@ -119,7 +118,35 @@ pub async fn passthrough(
     }
 }
 
-/// Verbs a device may not run: they cross account lines by design, and only
+/// Fit a memory verb's arguments to whoever is asking (`memory_host::caller`):
+/// the owner's go as given; a phone's are stamped with its person, and the
+/// verbs that cross account lines are refused; anyone else is refused. Every
+/// memory route a phone can reach on this port goes through here.
+pub(crate) fn scope_to_caller(
+    caller: &Caller,
+    verb: &str,
+    args: &mut Value,
+) -> Result<(), Response> {
+    match caller {
+        Caller::Owner | Caller::Machine(_) => Ok(()),
+        Caller::Phone(_) if DEVICE_FORBIDDEN_VERBS.contains(&verb) => Err(unreachable_envelope(
+            StatusCode::FORBIDDEN,
+            format!("{verb} is the Mac's to run, not a phone's"),
+            "FORBIDDEN",
+        )),
+        Caller::Phone(device) => {
+            stamp_person(verb, args, person_of(device).as_ref());
+            Ok(())
+        }
+        Caller::Unknown => Err(unreachable_envelope(
+            StatusCode::FORBIDDEN,
+            "memory does not know this caller".to_string(),
+            "FORBIDDEN",
+        )),
+    }
+}
+
+/// Verbs a phone may not run: they cross account lines by design, and only
 /// the Mac's own logic ever has cause to.
 const DEVICE_FORBIDDEN_VERBS: &[&str] = &["restamp", "accounts"];
 
@@ -364,6 +391,36 @@ mod tests {
         let mut owner = json!({"query": "x", "account": "u-2", "account_id": "u-2"});
         stamp_person("search", &mut owner, None);
         assert_eq!(owner, json!({"query": "x"}));
+    }
+
+    /// A body that names another person: the owner and an approved machine
+    /// may say whose rows they mean; a phone's claim is replaced by its own
+    /// person; a caller memory does not know is refused.
+    #[test]
+    fn whose_rows_comes_from_the_caller_not_the_body() {
+        let body = || json!({"query": "x", "account": "u-2", "all_accounts": true});
+
+        let mut owner = body();
+        assert!(scope_to_caller(&Caller::Owner, "search", &mut owner).is_ok());
+        assert_eq!(owner, body());
+
+        let mut machine = body();
+        let mac = PairedDevice {
+            kind: Some(crate::state_fs::devices::DeviceKind::Machine),
+            ..device(None)
+        };
+        assert!(scope_to_caller(&Caller::Machine(mac), "search", &mut machine).is_ok());
+        assert_eq!(machine, body());
+
+        let mut phone = body();
+        let alex = device(Some(("u-3", Some("Alex"))));
+        assert!(scope_to_caller(&Caller::Phone(alex.clone()), "search", &mut phone).is_ok());
+        assert_eq!(phone["account"], "u-3");
+        assert!(phone.get("all_accounts").is_none());
+        assert!(scope_to_caller(&Caller::Phone(alex), "accounts", &mut body()).is_err());
+
+        let mut unknown = body();
+        assert!(scope_to_caller(&Caller::Unknown, "search", &mut unknown).is_err());
     }
 
     #[test]

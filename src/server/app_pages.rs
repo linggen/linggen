@@ -42,8 +42,13 @@ pub(crate) fn ui_build(dev_mode: bool) -> Option<String> {
 /// Memory_* via this endpoint. Skills the user doesn't trust shouldn't
 /// be installed in the first place; the route name + skill_name still
 /// shows up in audit logs.
+///
+/// Whose rows: the page's caller decides (`memory_host::caller`), as on
+/// `/api/memory/<verb>` — a page open on a phone sees that phone's person.
 pub(super) async fn capability_dispatch(
     State(state): State<Arc<ServerState>>,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    headers: axum::http::HeaderMap,
     axum::extract::Path((skill_name, tool_name)): axum::extract::Path<(String, String)>,
     body: Option<axum::Json<serde_json::Value>>,
 ) -> Response {
@@ -75,9 +80,10 @@ pub(super) async fn capability_dispatch(
     let verb = args
         .get("verb")
         .and_then(|v| v.as_str())
-        .unwrap_or_default();
-    let Some(mutates) = crate::server::api::memory::verb_mutates(verb)
-        .filter(|_| crate::server::api::memory::is_safe_verb(verb))
+        .unwrap_or_default()
+        .to_string();
+    let Some(mutates) = crate::server::api::memory::verb_mutates(&verb)
+        .filter(|_| crate::server::api::memory::is_safe_verb(&verb))
     else {
         return (
             StatusCode::BAD_REQUEST,
@@ -106,6 +112,12 @@ pub(super) async fn capability_dispatch(
     // `linggen` — including the `/mcp` front door, which is not. Each caller
     // says who it is now, and this one is a webpage running inside Linggen.
     let mut args = args;
+    let caller = crate::memory_host::caller::resolve(peer.ip(), &headers);
+    if let Err(refused) =
+        crate::server::api::memory::scope_to_caller(&caller, verb.as_str(), &mut args)
+    {
+        return refused;
+    }
     if let Some(obj) = args.as_object_mut() {
         if tool_name == "Memory_write" && !obj.contains_key("host") {
             obj.insert("host".to_string(), serde_json::json!("linggen"));

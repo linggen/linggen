@@ -344,6 +344,7 @@ async fn loopback(
     method: &str,
     url: &str,
     body: &serde_json::Value,
+    tunnel_mark: &str,
     actor_device: Option<&str>,
 ) -> reqwest::Result<reqwest::Response> {
     let req = match method {
@@ -353,7 +354,7 @@ async fn loopback(
         "DELETE" => client.delete(url).json(body),
         _ => client.get(url),
     };
-    let req = req.header(crate::server::api::pair::TUNNEL_HEADER, "1");
+    let req = req.header(crate::server::api::pair::TUNNEL_HEADER, tunnel_mark);
     let req = match actor_device {
         Some(d) => req.header(crate::server::api::pair::ACTOR_DEVICE_HEADER, d),
         None => req,
@@ -435,7 +436,17 @@ pub(super) async fn process_control_request_async(
             // paired device is asking — which is what per-phone state, like the
             // delete queue, needs to be correct with more than one phone.
             let actor_device = actor.lock_ok().as_ref().map(|a| a.device.clone());
-            match loopback(client, method, &url, &body_val, actor_device.as_deref()).await {
+            let mark = user_ctx.tunnel_mark();
+            match loopback(
+                client,
+                method,
+                &url,
+                &body_val,
+                mark,
+                actor_device.as_deref(),
+            )
+            .await
+            {
                 Ok(r) => serde_json::json!({ "data": proxied_reply(r).await }),
                 Err(e) => serde_json::json!({ "error": format!("{e}") }),
             }
@@ -460,7 +471,7 @@ pub(super) async fn process_control_request_async(
                 serde_json::Value::String(user_ctx.user_type_for(identified).to_string());
             body["user_id"] = serde_json::Value::String(user_ctx.user_id.clone());
             let url = format!("http://127.0.0.1:{port}{endpoint}");
-            match loopback(client, "POST", &url, &body, None).await {
+            match loopback(client, "POST", &url, &body, user_ctx.tunnel_mark(), None).await {
                 Ok(r) => {
                     let status = r.status().as_u16();
                     let body: serde_json::Value = r.json().await.unwrap_or(serde_json::Value::Null);

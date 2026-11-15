@@ -215,29 +215,11 @@ async fn lan_gate(
     ) {
         return next.run(req).await;
     }
-    let headers = req.headers();
-    let token = headers
-        .get("x-linggen-device")
-        .and_then(|v| v.to_str().ok())
-        .or_else(|| {
-            headers
-                .get(axum::http::header::AUTHORIZATION)
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.strip_prefix("Bearer "))
-        })
-        // Webviews (phone app_mode surfaces) can't add headers to their
-        // subresource requests — they carry the device token as a cookie.
-        .or_else(|| {
-            headers
-                .get(axum::http::header::COOKIE)
-                .and_then(|v| v.to_str().ok())
-                .and_then(|c| {
-                    c.split(';')
-                        .map(str::trim)
-                        .find_map(|kv| kv.strip_prefix("linggen_device="))
-                })
-        });
-    if token.map(api::pair::is_valid_device_token).unwrap_or(false) {
+    let token = crate::memory_host::caller::token_from_headers(req.headers());
+    if token
+        .as_deref()
+        .is_some_and(api::pair::is_valid_device_token)
+    {
         return next.run(req).await;
     }
     tracing::info!("[gate] rejected {} {} from {}", req.method(), path, addr);

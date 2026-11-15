@@ -136,6 +136,20 @@ pub struct UserContext {
     pub room_name: Option<String>,
     /// Consumer transport type: "browser" or "linggen". None for owner.
     pub consumer_type: Option<String>,
+    /// How the peer's channel was opened. Decides what the tunnel tells a
+    /// handler about a peer that has not named a device ([`Self::tunnel_mark`]).
+    pub reached_by: Reach,
+}
+
+/// How a peer's channel was opened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reach {
+    /// WHIP from this machine: the local web UI, the app shell.
+    ThisMachine,
+    /// WHIP from the LAN, with a paired device's token.
+    Lan,
+    /// An offer through the linggen.dev relay.
+    Relay,
 }
 
 impl UserContext {
@@ -156,6 +170,7 @@ impl UserContext {
             token_budget_daily: None,
             room_name: None,
             consumer_type: None,
+            reached_by: Reach::Relay,
         }
     }
 
@@ -193,6 +208,7 @@ impl UserContext {
             token_budget_daily: None,
             room_name: None,
             consumer_type: None,
+            reached_by: Reach::Relay,
         }
     }
 
@@ -213,6 +229,7 @@ impl UserContext {
             token_budget_daily,
             room_name,
             consumer_type: Some(consumer_type),
+            reached_by: Reach::Relay,
         }
     }
 
@@ -242,6 +259,20 @@ impl UserContext {
     /// [`Self::user_type`], corrected by what `identify` revealed.
     pub fn user_type_for(&self, identified: bool) -> &'static str {
         self.effective_kind(identified).as_str()
+    }
+
+    /// The `TUNNEL_HEADER` value for this peer's re-issued requests, while it
+    /// has not named a device: the owner only when its channel was opened on
+    /// this machine, or by the owner's own account through the relay. A LAN
+    /// peer is a paired device until `identify` says which one, so it is
+    /// neither.
+    pub fn tunnel_mark(&self) -> &'static str {
+        use crate::server::api::pair::{TUNNEL_LOCAL, TUNNEL_OWNER};
+        match (self.reached_by, self.kind) {
+            (Reach::ThisMachine, _) => TUNNEL_LOCAL,
+            (Reach::Relay, PeerKind::Owner) => TUNNEL_OWNER,
+            _ => "1",
+        }
     }
 
     /// A proxy room consumer, borrowing this machine's models.
@@ -287,6 +318,7 @@ pub async fn whip_token_handler(State(state): State<Arc<ServerState>>) -> Json<s
 /// Requires `Authorization: Bearer <whip_token>` header.
 pub async fn whip_handler(
     State(state): State<Arc<ServerState>>,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
     headers: HeaderMap,
     body: Bytes,
 ) -> impl IntoResponse {
@@ -308,7 +340,12 @@ pub async fn whip_handler(
         }
     };
 
-    match peer::create_peer(offer_str, state).await {
+    let reach = if peer.ip().is_loopback() {
+        Reach::ThisMachine
+    } else {
+        Reach::Lan
+    };
+    match peer::create_peer(offer_str, state, reach).await {
         Ok(answer_sdp) => (
             StatusCode::CREATED,
             [(header::CONTENT_TYPE, "application/sdp")],
@@ -343,6 +380,28 @@ mod tests {
         );
     }
 
+    /// What a handler learns of a peer that has not named a device: the
+    /// owner only for this machine's own page and the owner's relay login.
+    #[test]
+    fn the_tunnel_mark_says_owner_only_when_it_knows() {
+        use crate::server::api::pair::{TUNNEL_LOCAL, TUNNEL_OWNER};
+        let reached = |ctx: UserContext, reach| UserContext {
+            reached_by: reach,
+            ..ctx
+        };
+        assert_eq!(
+            reached(UserContext::owner(None), Reach::ThisMachine).tunnel_mark(),
+            TUNNEL_LOCAL
+        );
+        assert_eq!(UserContext::owner(None).tunnel_mark(), TUNNEL_OWNER);
+        assert_eq!(
+            reached(UserContext::owner(None), Reach::Lan).tunnel_mark(),
+            "1"
+        );
+        assert_eq!(UserContext::paired().tunnel_mark(), "1");
+        assert_eq!(UserContext::pairing().tunnel_mark(), "1");
+    }
+
     #[test]
     fn an_unidentified_peer_is_still_the_owner() {
         // The web UI and the app shell never identify — they have no device
@@ -363,7 +422,11 @@ mod tests {
 
     #[test]
     fn only_admin_peers_can_restart_the_engine() {
-        for perm in [UserPermission::Chat, UserPermission::Read, UserPermission::Edit] {
+        for perm in [
+            UserPermission::Chat,
+            UserPermission::Read,
+            UserPermission::Edit,
+        ] {
             assert!(!perm.can_access_endpoint("POST", "/api/restart/current"));
             assert!(!perm.can_access_endpoint("POST", "/api/engine/restart"));
         }
