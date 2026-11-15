@@ -207,7 +207,8 @@ building). The stores form a star: one **primary**, any number of
   *local* (default) or another machine's Linggen (`host:port`, its engine
   port). Set it in Settings → Memory → Primary. An engine never uses
   another machine's store by address; an old config that names one is
-  ignored (a log line, and `ling status` says so).
+  ignored (a log line, and `ling status` says so). A replica that followed
+  a primary at the old daemon's `host:9528` follows `host:9527`.
 - **Plugin only** — a machine with a plugin and no Linggen has no store: the
   plugin points at another machine's `/mcp/memory` with that machine's
   token (`/linggen:config`).

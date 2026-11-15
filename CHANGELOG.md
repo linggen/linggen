@@ -31,8 +31,9 @@
   replica protocol under `/mem`. A phone sees only its person's rows, at
   `/api/memory/<verb>` and from skill pages, and is refused on the machine
   routes. One rule decides this for every memory route. Replicas now call
-  the primary at its Linggen port (`host:9527`). `127.0.0.1:9528` stays
-  this machine's only.
+  the primary at its Linggen port (`host:9527`; a replica that followed
+  `host:9528` follows `host:9527`). `127.0.0.1:9528` stays this machine's
+  only.
 - **An engine uses its own memory.** "Use another machine's store by
   address" is gone (Settings → Memory → "Ling-mem URL" and its routes); an
   old config naming one is ignored, with a log line and a line in
