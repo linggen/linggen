@@ -132,6 +132,15 @@ async fn attach_change_log(
 /// over loopback (MCP calls reuse the HTTP handlers through it), e.g.
 /// `http://127.0.0.1:9527/mem`. The caller holds the [`StoreLock`].
 pub async fn open(data_dir: &Path, self_base: String) -> Result<SharedState> {
+    let state = open_quiet(data_dir, self_base).await?;
+    crate::daemon::maintenance::spawn(Arc::clone(&state));
+    crate::replica::spawn(Arc::clone(&state));
+    Ok(state)
+}
+
+/// [`open`] without the background work: for a short-lived caller (a
+/// `ling mem` verb run on the store directly) that only answers requests.
+pub async fn open_quiet(data_dir: &Path, self_base: String) -> Result<SharedState> {
     let semantic = Arc::new(
         MemoryStore::open_semantic(data_dir)
             .await
@@ -155,10 +164,27 @@ pub async fn open(data_dir: &Path, self_base: String) -> Result<SharedState> {
         bound,
     );
     state.self_base = self_base;
-    let state = Arc::new(state);
-    crate::daemon::maintenance::spawn(Arc::clone(&state));
-    crate::replica::spawn(Arc::clone(&state));
-    Ok(state)
+    Ok(Arc::new(state))
+}
+
+/// Serve memory's routes on a free loopback port of this process, for as
+/// long as the process runs; returns their base URL. How `ling mem` runs a
+/// verb that only the HTTP handlers implement (days, stats, …) with no
+/// engine up: the same handlers, on the store this process holds the lock of.
+pub async fn serve_here(data_dir: &Path) -> Result<String> {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .context("binding a loopback port")?;
+    let base = format!("http://127.0.0.1:{}", listener.local_addr()?.port());
+    let app = router(open_quiet(data_dir, base.clone()).await?);
+    tokio::spawn(async move {
+        let _ = axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await;
+    });
+    Ok(base)
 }
 
 /// The loopback address in `self_base`, for the fields that report it.

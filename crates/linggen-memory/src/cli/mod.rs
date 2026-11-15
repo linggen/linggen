@@ -77,7 +77,6 @@ pub enum Command {
     /// What a session loads at start: the core rows, plus — given `--cwd` —
     /// the scope candidates and the index for that directory. Text prints
     /// the block a host injects; `--format json` prints the whole payload.
-    /// Requires the daemon.
     SessionStart(SessionStartArgs),
 
     /// Modify fields of an existing fact. Aliased as `update` for back-
@@ -107,18 +106,16 @@ pub enum Command {
     /// `first_undreamed` and past-day summary counts (`total_days`,
     /// `scanned_days`, `dreamed_days`). `--undreamed` narrows to days
     /// awaiting a dream pass, oldest first — the dream worklist.
-    /// Requires the daemon.
     Days(DaysArgs),
 
     /// Stamp a day as remembered after a remember pass judged its rows.
     /// Called by the agent that ran the pass (Linggen mission / skill
-    /// page / CC host agent). Requires the daemon.
+    /// page / CC host agent).
     RememberDay(RememberDayArgs),
 
     /// Stamp a day scanned (`harvested_at` only): a scan pass covered
     /// this day's session logs. Does not touch `remembered_at` — the
-    /// staged rows go pending and a dream pass judges them. Requires
-    /// the daemon.
+    /// staged rows go pending and a dream pass judges them.
     HarvestDay {
         /// Local calendar day, `YYYY-MM-DD`.
         date: String,
@@ -127,7 +124,7 @@ pub enum Command {
     /// Forget sweep — the dream pipeline's mechanical third stage: evict
     /// episodic rows that are past TTL, belong to a remembered day, and
     /// were judged (created before the day's `remembered_at`). Never
-    /// touches un-judged rows. Requires the daemon.
+    /// touches un-judged rows.
     Sweep {
         /// Report what would be evicted without deleting anything.
         #[arg(long)]
@@ -136,7 +133,7 @@ pub enum Command {
 
     /// Store-state summary: per-tier row counts, disk footprint, last
     /// dream, TTL, schema + embedding model. The same numbers the
-    /// console and the memory app render. Requires the daemon.
+    /// console and the memory app render.
     Stats,
 
     /// Condense scan — mechanical, read-only detection of stale
@@ -144,29 +141,29 @@ pub enum Command {
     /// groups rows that cite another row's id verbatim; `--kind marker`
     /// lists rows with provisional-state language plus their nearest
     /// neighbors for LLM confirmation. Judgment and merges belong to the
-    /// caller (the condense mission / host agent). Requires the daemon.
+    /// caller (the condense mission / host agent).
     Chains(ChainsArgs),
 
     /// Review queue — the leftovers the dream could not settle itself (a
     /// user-voice row that would change, a pick between rows, evidence it
     /// could not read); `--status all` also lists what it settled, with
     /// its why. Listing is read-only; solving happens in a host agent
-    /// (`/linggen:solve`). Requires the daemon.
+    /// (`/linggen:solve`).
     Issues(IssuesArgs),
 
     /// Queue one review item — only what needs the user; a ruling the
     /// audit settled itself is queued and closed at once as its record.
     /// Idempotent per (kind, row_ids) while open — re-queueing returns the
-    /// existing item. Requires the daemon.
+    /// existing item.
     IssueAdd(IssueAddArgs),
 
     /// Close one review-queue item by id after solving (or dismissing)
-    /// it. Requires the daemon.
+    /// it.
     IssueResolve(IssueResolveArgs),
 
     /// Run the store's gated schema step (v1 → v2, `doc/schema-versioning.md`):
     /// back the store up, then drop `contexts`/`tags` and rename `hook` →
-    /// `summary`, `cwd` → `scope`. Pass `--yes`. Requires the daemon.
+    /// `summary`, `cwd` → `scope`. Pass `--yes`.
     ApplySchema(ApplySchemaArgs),
 
     // Session-scanning utilities (`collect` + `extract`) used to live here.
@@ -787,6 +784,25 @@ pub async fn run_data(cli: Cli, base: Option<String>) -> Result<()> {
     run_data_at(cli.cmd, cli.episodic, format, &data_dir, base).await
 }
 
+/// Verbs the HTTP handlers implement and the direct store path does not
+/// (they own sidecars like `.days.json`).
+fn only_over_http(cmd: &Command) -> bool {
+    matches!(
+        cmd,
+        Command::Days(_)
+            | Command::SessionStart(_)
+            | Command::RememberDay(_)
+            | Command::HarvestDay { .. }
+            | Command::Sweep { .. }
+            | Command::Stats
+            | Command::Chains(_)
+            | Command::Issues(_)
+            | Command::IssueAdd(_)
+            | Command::IssueResolve(_)
+            | Command::ApplySchema(_)
+    ) || matches!(cmd, Command::List(args) if args.unjudged)
+}
+
 async fn run_data_at(
     cmd: Command,
     episodic: bool,
@@ -811,6 +827,14 @@ async fn run_data_at(
         _ => {}
     }
 
+    // The verbs only the HTTP handlers implement run on them here, against
+    // the store this process opened, when no engine was given.
+    let base = match base {
+        None if !episodic && only_over_http(&cmd) => {
+            Some(crate::hosted::serve_here(data_dir).await?)
+        }
+        base => base,
+    };
     if !episodic {
         if let Some(base_url) = base {
             return match cmd {
@@ -859,9 +883,7 @@ async fn run_data_at(
         Command::Edit(args) => cmd_update(&store, args, format).await,
         Command::Delete { id, yes } => cmd_delete(&store, &id, yes, format).await,
         Command::Forget(args) => cmd_forget(&store, args, format).await,
-        // Dream-state ops live behind the daemon (it owns `.days.json`);
-        // there is deliberately no direct-store fallback — two writers to
-        // the sidecar would race.
+        // Over HTTP above; `--episodic` has no form of these.
         Command::Days(_)
         | Command::SessionStart(_)
         | Command::RememberDay(_)
@@ -872,9 +894,7 @@ async fn run_data_at(
         | Command::Issues(_)
         | Command::IssueAdd(_)
         | Command::IssueResolve(_)
-        | Command::ApplySchema(_) => Err(anyhow!(
-            "this command requires the daemon — start it with `ling-mem start`"
-        )),
+        | Command::ApplySchema(_) => Err(anyhow!("this verb has no --episodic form")),
         Command::Export { .. } | Command::Import { .. } => unreachable!("handled above"),
     }
 }
@@ -1129,7 +1149,7 @@ fn embed_missing(facts: &mut [crate::memory::Memory]) -> Result<()> {
 async fn cmd_list(store: &MemoryStore, args: ListArgs, format: OutputFormat) -> Result<()> {
     if args.unjudged {
         return Err(anyhow!(
-            "--unjudged needs the running daemon: it keeps the day records"
+            "--unjudged has no --episodic form: it reads the day records"
         ));
     }
     let filters = args.filters.into_filters()?;
@@ -1463,5 +1483,18 @@ mod tests {
         // must not coerce a default tier (that would hide semantic rows).
         let filters = FilterArgs::default().into_filters().unwrap();
         assert_eq!(filters.tier, None);
+    }
+
+    /// With no engine to talk to, a verb only the HTTP handlers implement
+    /// still runs: on those handlers, served by this process over the store
+    /// it opened.
+    #[tokio::test]
+    async fn a_handler_only_verb_runs_without_an_engine() {
+        let dir = tempfile::tempdir().unwrap();
+        let data_dir = dir.path().to_string_lossy().to_string();
+        for verb in ["stats", "days", "issues"] {
+            let cli = Cli::parse_from(["ling mem", "--data-dir", &data_dir, verb]);
+            run_data(cli, None).await.unwrap_or_else(|e| panic!("{verb}: {e:#}"));
+        }
     }
 }
