@@ -10,7 +10,10 @@ status: describes what ships today; the open section is not built
 # Linggen network — who talks to whom
 
 Two daemons on the user's machine, and everything else is a client of one of
-them. Every edge below is in the shipped code; the transport on each arrow is
+them. **Since 2.3 (unreleased) memory is hosted by the engine** — one
+process; see `memory-spec.md` § Memory is hosted by the engine. The diagram
+and tables below still show the two-daemon edges the plugins use until they
+move to 9527; the rows marked *2.3* say what answers them now. Every edge below is in the shipped code; the transport on each arrow is
 what actually runs, not what could. What is decided but not yet built lives in
 `## Open`, never in the diagram — an arrow that doesn't run is a phantom.
 
@@ -116,10 +119,10 @@ not memory-server ones.
 
 | | `ling` (engine) | `ling-mem` (memory) |
 |:--|:--|:--|
-| Binds | `0.0.0.0:9527` | `127.0.0.1:9528` — loopback unless `--host`, which is refused without paired devices |
-| Address from | `[server].url` in `~/.linggen/config/linggen.runtime.toml` | compiled `daemon::DEFAULT_PORT`, or `--port` |
-| Publishes where it bound | — | `~/.linggen/memory/linggen-memory/daemon.json` |
-| Started by | `Linggen.app` shell (LaunchAgent), `--idle-shutdown-secs 300` | `ling-mem start`, plugin autostart, or first CLI use |
+| Binds | `0.0.0.0:9527` | `127.0.0.1:9528` — loopback unless `--host`, which is refused without paired devices. *2.3:* the engine itself, `127.0.0.1:9528` only, while nothing else holds it (`LINGGEN_LEGACY_MEMORY_PORT`, `0` = off) |
+| Address from | `[server].url` in `~/.linggen/config/linggen.runtime.toml` | compiled `daemon::DEFAULT_PORT`, or `--port`. *2.3:* `memory_host::legacy_port::DEFAULT_PORT` |
+| Publishes where it bound | — | `~/.linggen/memory/linggen-memory/daemon.json`. *2.3:* nothing; the store lock `memory/.store.lock` names the holder's pid and engine port |
+| Started by | `Linggen.app` shell (LaunchAgent), `--idle-shutdown-secs 300` | `ling-mem start`, plugin autostart, or first CLI use. *2.3:* not a process — the engine opens the store at start-up and stops an old daemon first |
 | Outbound | LLM providers, `linggen.dev` relay | none — embeddings run in-process |
 
 The asymmetry is the source of most address bugs: **the one with a config file
@@ -149,9 +152,9 @@ cannot point it elsewhere.
 | `ling`, on behalf of a model | HTTP MCP, JSON-RPC | `/mcp` — the built-in server, URL from `[agent].ling_mem_url` + `/mcp` |
 | `ling`, as a program | HTTP REST | `POST /api/memory/<verb>` — dream rollup, scheduler stats, core block, skill pages, the phone's passthrough |
 | A second machine on the LAN | HTTP MCP, JSON-RPC | `/mcp` with `x-linggen-device` |
-| `ling-mem` CLI | HTTP REST | port read from `daemon.json` |
-| Plugin hooks | HTTP MCP, JSON-RPC | `/mcp` — `memory_search` per turn, `memory_list` for core, `memory_days` for upkeep |
-| Plugin hooks (local only) | spawn the CLI | `ling-mem status`, `start` — daemon lifecycle, skipped on a remote host |
+| `ling-mem` CLI | HTTP REST | port read from `daemon.json`. *2.3:* `ling mem <verb>` — the engine's port from the lock file, `/mem/api/memory/<verb>`; engine down, the store directly under the lock |
+| Plugin hooks | HTTP MCP, JSON-RPC | `/mcp` — `memory_search` per turn, `memory_list` for core, `memory_days` for upkeep. *2.3:* answered by the engine on `127.0.0.1:9528` |
+| Plugin hooks (local only) | spawn the CLI | `ling-mem status`, `start` — daemon lifecycle, skipped on a remote host. *2.3:* `~/.local/bin/ling-mem` is the engine's stand-in: `status` says running at the engine's version, `start`/`restart` do nothing |
 | ClawHub `shared-memory` skill | spawn the CLI | `Bash ling-mem <verb>` — every op, no exception |
 | Browser | HTTP | `/` — the Data Browser UI |
 
@@ -235,7 +238,7 @@ mistake — on a second machine they are facts about different computers.
 | Daemon | Reads | Notes |
 |:--|:--|:--|
 | `ling` | `[server].url` in `linggen.runtime.toml` | `--port` / `LINGGEN_PORT` override; legacy `host`+`port` still parse and say so at startup |
-| `ling-mem` | `--port` / `--host` | no config file; publishes `daemon.json` |
+| `ling-mem` | `--port` / `--host` | no config file; publishes `daemon.json`. *2.3:* gone; memory is `/mem` and `/mcp/memory` on the engine's port (loopback callers only) and the old `127.0.0.1:9528` |
 
 Nothing else asserts a bind address. The app shell and the plugin's autostart
 both **read** `[server].url` and no longer pass `--port` — they used to assert
@@ -251,7 +254,7 @@ ignored, and how the 9898 stray daemon was launched.
 | `ling` → `ling-mem` | `[agent].ling_mem_url` > `$LING_MEM_URL` > `:9528` | full URL, so it can already point off-machine; autostart starts ling-mem on its port, loopback only |
 | `ling` `cli/status.rs` | the resolved `[agent].ling_mem_url` | yes |
 | `ling` permission check | hardcoded `127.0.0.1:9528` | **no** |
-| `ling-mem` CLI | `daemon.json` | discovery; local only by construction |
+| `ling-mem` CLI | `daemon.json` | discovery; local only by construction. *2.3:* `ling mem` reads `memory/.store.lock` |
 | `linggen-vscode` | its own `linggen.dashboard.port` | yes |
 
 `linggen/src/config.rs` carries `DEFAULT_LING_MEM_PORT` with a comment saying

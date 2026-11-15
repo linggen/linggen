@@ -146,6 +146,30 @@ never writes to project files.
   works on; see the section below.
 - **Secrets** — credentials never enter memory; deleted on sight.
 
+## Memory is hosted by the engine
+
+Since 2.3 (unreleased) there is no `ling-mem` process: `ling` opens the store
+at start-up and serves it (`src/memory_host/`, code in `crates/linggen-memory`).
+
+- **One writer.** The engine holds `memory/.store.lock` (flock) for its life;
+  the file names its pid and port. A second opener is refused.
+- **Doors.** `/mem/*` (memory's own routes) and `/mcp/memory` on the engine's
+  port, this machine only; the phone's `/api/memory/<verb>` as before.
+- **The old address.** `127.0.0.1:9528` answers with the same routes while
+  nothing else holds it — for plugins that still say 9528; goes one release
+  after they move.
+- **The old binary.** `~/.local/bin/ling-mem` becomes a stand-in: data verbs
+  run as `ling mem`, `status` says running at the engine's version, lifecycle
+  verbs do nothing. The real binary is kept as `ling-mem.prev`.
+- **Takeover.** A running `ling-mem` named in `daemon.json` is stopped
+  first; each engine version copies the store once to
+  `memory/backups/takeover-<stamp>/` before it first opens it.
+- **CLI.** `ling mem <verb>`: to the engine when it is up, else on the store
+  directly under the lock.
+- **Other machines.** Memory's routes answer loopback only until the owner
+  decides who may reach memory from another machine (see below): replicas
+  and clients on other machines cannot reach this store meanwhile.
+
 ## Across machines
 
 One person, one memory across all their machines (designed 2026-10-21,

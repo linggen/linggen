@@ -73,7 +73,10 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 │       ├── claude-trust-declined.json # The folder this Claude session was told not to trust (until Clear)
 │       ├── refs.jsonl                # Numbered sources, pictures and videos tools returned (append-only)
 │       └── images/                   # Pictures a person's messages carried, pictures Read opened, and the ones answers showed (<sha256-16>.png|jpg|gif|webp)
-├── memory/                           # Global memory
+├── memory/                           # Global memory, hosted by the engine (memory-spec.md)
+│   ├── .store.lock                   # flock held by the process that has the store open; {"pid", "port"}
+│   ├── backups/takeover-<stamp>/     # Copy taken before an engine version first opens the store (14 days)
+│   ├── backups/takeover-<ver>.done   # …marker: that version has taken it (`.failed` holds a failure's reason)
 │   └── ...
 ├── activity/                         # Perception's record of what changed here
 │   ├── {YYYY-MM-DD}.jsonl            # One day of activities (JSONL, last few days)
@@ -135,8 +138,12 @@ background after the skills load; failures back off to 10 minutes and retry
 for as long as the engine runs. Once at start-up, objects no installed
 skill's manifest lists are removed.
 
-Ollama models are the user's own pulls, not managed here. ling-mem's
-embedding model is ling-mem's (it fetches it when its daemon starts).
+Ollama models are the user's own pulls, not managed here. Memory's
+embedding model loads from the Hugging Face cache on its first use.
+
+Outside `~/.linggen`: when a real `ling-mem` binary is at
+`~/.local/bin/ling-mem`, the engine keeps it as `ling-mem.prev` and puts a
+shell stand-in there that runs `ling mem` (memory-spec.md).
 
 ## Project-local state (`{repo}/.linggen/`)
 

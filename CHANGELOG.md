@@ -11,8 +11,16 @@
   opens the store at start-up and serves memory on its own port —
   `/mem/api/memory/<verb>` and `/mcp/memory` for this machine, the phone's
   `/api/memory/<verb>` as before. No separate `ling-mem` is started,
-  installed or looked for. `ling mem <verb>` runs memory's data verbs.
-  No takeover of a running `ling-mem` yet.
+  installed or looked for. `ling mem <verb>` runs memory's data verbs,
+  with the engine up or down (stats, days and the other handler verbs too).
+- **One restart cuts a machine over.** At start-up the engine stops a
+  `ling-mem` daemon still serving the store, copies the store once per
+  version (`memory/backups/takeover-…`), and holds it under
+  `memory/.store.lock`. Old callers keep working: `127.0.0.1:9528` answers
+  as the old daemon did (this machine only), and `~/.local/bin/ling-mem`
+  becomes a stand-in for `ling mem` (the real binary stays as
+  `ling-mem.prev` for a rollback). Other machines cannot reach this store
+  until access across machines is decided.
 
 ## [2.2.1] - 2026-11-14 — the permission gate reads a command as the shell does
 
