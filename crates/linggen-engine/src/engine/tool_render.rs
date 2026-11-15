@@ -1,0 +1,601 @@
+//! Tool-result rendering for the chat UI.
+//!
+//! Two consumers:
+//! - [`tool_status_line`] — used by `tool_exec` to emit progress strings as
+//!   tool calls run (start/done/failed).
+//! - [`sanitize_message_for_ui`] — used by chat-history endpoints to strip
+//!   verbose tool payloads (Read bodies, Grep matches, Glob lists) and
+//!   replace them with compact one-line summaries.
+//!
+//! All helpers below are pure string formatters — no I/O, no engine state.
+
+use std::collections::BTreeSet;
+
+#[derive(Debug, Clone)]
+struct ToolCallForUi {
+    name: String,
+    args: Option<serde_json::Value>,
+}
+
+fn parse_tool_call_from_json_line(line: &str) -> Option<ToolCallForUi> {
+    let trimmed = line.trim();
+    if !trimmed.starts_with('{') {
+        return None;
+    }
+    let parsed: serde_json::Value = serde_json::from_str(trimmed).ok()?;
+    if parsed.get("type")?.as_str()? == "tool" {
+        let tool = parsed
+            .get("tool")
+            .and_then(|v| v.as_str())
+            .map(|v| v.to_string())?;
+        return Some(ToolCallForUi {
+            name: tool,
+            args: parsed.get("args").cloned(),
+        });
+    }
+    let kind = parsed.get("type").and_then(|v| v.as_str())?;
+    if parsed.get("args").and_then(|v| v.as_object()).is_some() {
+        return Some(ToolCallForUi {
+            name: kind.to_string(),
+            args: parsed.get("args").cloned(),
+        });
+    }
+    None
+}
+
+fn preview_value(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        value.to_string()
+    } else {
+        let preview: String = value.chars().take(max_chars).collect();
+        format!("{preview}... ({len} chars)", len = value.chars().count())
+    }
+}
+
+fn basename(value: &str) -> String {
+    let normalized = value.trim().replace('\\', "/");
+    normalized
+        .split('/')
+        .rfind(|part| !part.is_empty())
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| normalized.to_string())
+}
+
+fn first_string_arg(args: Option<&serde_json::Value>, keys: &[&str]) -> Option<String> {
+    let obj = args.and_then(|v| v.as_object())?;
+    for key in keys {
+        if let Some(value) = obj.get(*key).and_then(|v| v.as_str()) {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn parse_read_result_path_from_tool_header(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    if trimmed.len() < 10 || !trimmed[..10].eq_ignore_ascii_case("tool read:") {
+        return None;
+    }
+    let mut rest = trimmed[10..].trim();
+    if rest.len() >= 5 && rest[..5].eq_ignore_ascii_case("read:") {
+        rest = rest[5..].trim();
+    }
+    // A text read ends its head with "(truncated: …)", a picture with
+    // "— a picture (…)".
+    let path = rest
+        .split(" (truncated:")
+        .next()
+        .and_then(|p| p.split(" — a picture").next())
+        .map(str::trim)
+        .unwrap_or_default();
+    if path.is_empty() {
+        None
+    } else {
+        Some(preview_value(&basename(path), 140))
+    }
+}
+
+fn tool_target_line(tool: &str, target: Option<&str>) -> String {
+    match target.map(str::trim).filter(|v| !v.is_empty()) {
+        Some(t) => format!("Used tool: {} · target={}", tool, t),
+        None => format!("Used tool: {}", tool),
+    }
+}
+
+fn parse_grep_target(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed == "(no matches)" {
+        return None;
+    }
+    let path = trimmed.split(':').next().unwrap_or("").trim();
+    if path.is_empty() || path == "(no matches)" {
+        None
+    } else {
+        Some(path.to_string())
+    }
+}
+
+fn summarize_targets(tool: &str, targets: &BTreeSet<String>, empty_label: &str) -> String {
+    if targets.is_empty() {
+        return tool_target_line(tool, Some(empty_label));
+    }
+    let first = targets.iter().next().cloned().unwrap_or_default();
+    if targets.len() == 1 {
+        return tool_target_line(tool, Some(&first));
+    }
+    let more = targets.len() - 1;
+    tool_target_line(tool, Some(&format!("{first} (+{more} more)")))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ToolStatusPhase {
+    Start,
+    Done,
+    Failed,
+}
+
+/// A finished tool call's status, as the chat shows it: live (the block's
+/// update) and saved (the calls on a history row) alike.
+pub fn tool_call_status(failed: bool) -> &'static str {
+    if failed {
+        "failed"
+    } else {
+        "done"
+    }
+}
+
+pub(crate) fn tool_status_line(
+    tool: &str,
+    args: Option<&serde_json::Value>,
+    phase: ToolStatusPhase,
+) -> String {
+    let name = tool.trim().to_lowercase();
+    let read_path = first_string_arg(args, &["path", "file", "filepath"])
+        .map(|path| preview_value(&basename(&path), 140));
+    let bash_cmd = first_string_arg(args, &["cmd", "command"]).map(|cmd| preview_value(&cmd, 140));
+    let grep_query =
+        first_string_arg(args, &["query", "pattern", "q"]).map(|query| preview_value(&query, 140));
+    let delegate_target = first_string_arg(args, &["target_agent_id"]);
+    let glob_preview = args
+        .and_then(|v| v.get("globs"))
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|item| item.as_str())
+                .map(|v| v.trim())
+                .filter(|v| !v.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .filter(|values| !values.is_empty())
+        .map(|values| preview_value(&values.join(", "), 140));
+
+    match name.as_str() {
+        "read" => match phase {
+            ToolStatusPhase::Start => read_path
+                .map(|path| format!("Reading file: {path}"))
+                .unwrap_or_else(|| "Reading file...".to_string()),
+            ToolStatusPhase::Done => read_path
+                .map(|path| format!("Read file: {path}"))
+                .unwrap_or_else(|| "Read file".to_string()),
+            ToolStatusPhase::Failed => read_path
+                .map(|path| format!("Read failed: {path}"))
+                .unwrap_or_else(|| "Read failed".to_string()),
+        },
+        "write" => match phase {
+            ToolStatusPhase::Start => read_path
+                .map(|path| format!("Writing file: {path}"))
+                .unwrap_or_else(|| "Writing file...".to_string()),
+            ToolStatusPhase::Done => read_path
+                .map(|path| format!("Wrote file: {path}"))
+                .unwrap_or_else(|| "Wrote file".to_string()),
+            ToolStatusPhase::Failed => read_path
+                .map(|path| format!("Write failed: {path}"))
+                .unwrap_or_else(|| "Write failed".to_string()),
+        },
+        "edit" => match phase {
+            ToolStatusPhase::Start => read_path
+                .map(|path| format!("Editing file: {path}"))
+                .unwrap_or_else(|| "Editing file...".to_string()),
+            ToolStatusPhase::Done => read_path
+                .map(|path| format!("Edited file: {path}"))
+                .unwrap_or_else(|| "Edited file".to_string()),
+            ToolStatusPhase::Failed => read_path
+                .map(|path| format!("Edit failed: {path}"))
+                .unwrap_or_else(|| "Edit failed".to_string()),
+        },
+        "bash" => match phase {
+            ToolStatusPhase::Start => bash_cmd
+                .map(|cmd| format!("Running command: {cmd}"))
+                .unwrap_or_else(|| "Running command...".to_string()),
+            ToolStatusPhase::Done => bash_cmd
+                .map(|cmd| format!("Ran command: {cmd}"))
+                .unwrap_or_else(|| "Ran command".to_string()),
+            ToolStatusPhase::Failed => bash_cmd
+                .map(|cmd| format!("Command failed: {cmd}"))
+                .unwrap_or_else(|| "Command failed".to_string()),
+        },
+        "grep" => match phase {
+            ToolStatusPhase::Start => grep_query
+                .map(|query| format!("Searching: {query}"))
+                .unwrap_or_else(|| "Searching...".to_string()),
+            ToolStatusPhase::Done => grep_query
+                .map(|query| format!("Searched: {query}"))
+                .unwrap_or_else(|| "Searched".to_string()),
+            ToolStatusPhase::Failed => grep_query
+                .map(|query| format!("Search failed: {query}"))
+                .unwrap_or_else(|| "Search failed".to_string()),
+        },
+        "glob" => match phase {
+            ToolStatusPhase::Start => glob_preview
+                .map(|globs| format!("Listing files: {globs}"))
+                .unwrap_or_else(|| "Listing files...".to_string()),
+            ToolStatusPhase::Done => glob_preview
+                .map(|globs| format!("Listed files: {globs}"))
+                .unwrap_or_else(|| "Listed files".to_string()),
+            ToolStatusPhase::Failed => glob_preview
+                .map(|globs| format!("List files failed: {globs}"))
+                .unwrap_or_else(|| "List files failed".to_string()),
+        },
+        "webfetch" => {
+            let url = first_string_arg(args, &["url"]).map(|u| preview_value(&u, 140));
+            match phase {
+                ToolStatusPhase::Start => url
+                    .map(|u| format!("Fetching URL: {u}"))
+                    .unwrap_or_else(|| "Fetching URL...".to_string()),
+                ToolStatusPhase::Done => url
+                    .map(|u| format!("Fetched URL: {u}"))
+                    .unwrap_or_else(|| "Fetched URL".to_string()),
+                ToolStatusPhase::Failed => url
+                    .map(|u| format!("Fetch failed: {u}"))
+                    .unwrap_or_else(|| "Fetch failed".to_string()),
+            }
+        }
+        "websearch" => {
+            let query = first_string_arg(args, &["query", "q"]).map(|q| preview_value(&q, 140));
+            match phase {
+                ToolStatusPhase::Start => query
+                    .map(|q| format!("Searching web: {q}"))
+                    .unwrap_or_else(|| "Searching web...".to_string()),
+                ToolStatusPhase::Done => query
+                    .map(|q| format!("Searched web: {q}"))
+                    .unwrap_or_else(|| "Searched web".to_string()),
+                ToolStatusPhase::Failed => query
+                    .map(|q| format!("Web search failed: {q}"))
+                    .unwrap_or_else(|| "Web search failed".to_string()),
+            }
+        }
+        "imagesearch" | "videosearch" => {
+            let query = first_string_arg(args, &["query", "q"]).map(|q| preview_value(&q, 140));
+            let (start, done, failed) = match name.as_str() {
+                "imagesearch" => (
+                    "Finding pictures",
+                    "Found pictures",
+                    "Picture search failed",
+                ),
+                _ => ("Finding videos", "Found videos", "Video search failed"),
+            };
+            let label = match phase {
+                ToolStatusPhase::Start => start,
+                ToolStatusPhase::Done => done,
+                ToolStatusPhase::Failed => failed,
+            };
+            query.map_or_else(|| label.to_string(), |q| format!("{label}: {q}"))
+        }
+        "task" => match phase {
+            ToolStatusPhase::Start => delegate_target
+                .map(|target| format!("Delegating to subagent: {target}"))
+                .unwrap_or_else(|| "Delegating...".to_string()),
+            ToolStatusPhase::Done => delegate_target
+                .map(|target| format!("Delegated to subagent: {target}"))
+                .unwrap_or_else(|| "Delegated to subagent".to_string()),
+            ToolStatusPhase::Failed => delegate_target
+                .map(|target| format!("Delegation failed: {target}"))
+                .unwrap_or_else(|| "Delegation failed".to_string()),
+        },
+        n if n.starts_with("browser_") => {
+            let detail = first_string_arg(
+                args,
+                &["url", "keys", "text", "ref", "direction", "action", "for"],
+            )
+            .map(|v| preview_value(&v, 100));
+            let (start, done, failed) = match n {
+                "browser_navigate" => ("Browsing to", "Browsed to", "Navigation failed"),
+                "browser_readpage" => ("Reading page", "Read page", "Page read failed"),
+                "browser_screenshot" => ("Capturing page", "Captured page", "Capture failed"),
+                "browser_click" => ("Clicking", "Clicked", "Click failed"),
+                "browser_type" => ("Typing", "Typed", "Typing failed"),
+                "browser_key" => ("Pressing", "Pressed", "Key press failed"),
+                "browser_scroll" => ("Scrolling", "Scrolled", "Scroll failed"),
+                "browser_wait" => ("Waiting for page", "Waited for page", "Wait failed"),
+                "browser_readconsole" => ("Reading console", "Read console", "Console read failed"),
+                "browser_tabs" => ("Browser tab", "Browser tab", "Browser tab action failed"),
+                _ => ("Browser action", "Browser action", "Browser action failed"),
+            };
+            let verb = match phase {
+                ToolStatusPhase::Start => start,
+                ToolStatusPhase::Done => done,
+                ToolStatusPhase::Failed => failed,
+            };
+            match detail {
+                Some(d) => format!("{verb}: {d}"),
+                None => verb.to_string(),
+            }
+        }
+        "" => match phase {
+            ToolStatusPhase::Start => "Calling tool...".to_string(),
+            ToolStatusPhase::Done => "Used tool".to_string(),
+            ToolStatusPhase::Failed => "Tool failed".to_string(),
+        },
+        _ => match phase {
+            ToolStatusPhase::Start => format!("Calling tool: {}", tool.trim()),
+            ToolStatusPhase::Done => format!("Used tool: {}", tool.trim()),
+            ToolStatusPhase::Failed => format!("Tool failed: {}", tool.trim()),
+        },
+    }
+}
+
+/// Strip verbose tool payloads from a chat-history message and replace them
+/// with compact one-line summaries. Read bodies become "Used tool: Read ·
+/// target=…", Grep/Glob bodies become "Used tool: Grep · target=… (+N more)".
+/// Internal diagnostics ([HIDDEN], tool_not_allowed:) are dropped.
+pub fn sanitize_message_for_ui(from: &str, content: &str) -> Option<String> {
+    if content.contains("[HIDDEN]") {
+        return None;
+    }
+    if from == "user" {
+        return Some(content.to_string());
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum SuppressedToolBodyKind {
+        Read,
+        Grep,
+        Glob,
+    }
+
+    #[derive(Debug, Clone)]
+    enum SuppressedToolBody {
+        Read,
+        Grep {
+            summary_idx: usize,
+            targets: BTreeSet<String>,
+            saw_no_matches: bool,
+        },
+        Glob {
+            summary_idx: usize,
+            targets: BTreeSet<String>,
+        },
+    }
+
+    let finalize_mode = |mode: SuppressedToolBody, cleaned_lines: &mut Vec<String>| match mode {
+        SuppressedToolBody::Read => {}
+        SuppressedToolBody::Grep {
+            summary_idx,
+            targets,
+            saw_no_matches,
+        } => {
+            if let Some(entry) = cleaned_lines.get_mut(summary_idx) {
+                *entry = if saw_no_matches {
+                    tool_target_line("Grep", Some("(no matches)"))
+                } else {
+                    summarize_targets("Grep", &targets, "(no matches)")
+                };
+            }
+        }
+        SuppressedToolBody::Glob {
+            summary_idx,
+            targets,
+        } => {
+            if let Some(entry) = cleaned_lines.get_mut(summary_idx) {
+                *entry = summarize_targets("Glob", &targets, "(no files)");
+            }
+        }
+    };
+
+    let mode_kind = |mode: &SuppressedToolBody| match mode {
+        SuppressedToolBody::Read => SuppressedToolBodyKind::Read,
+        SuppressedToolBody::Grep { .. } => SuppressedToolBodyKind::Grep,
+        SuppressedToolBody::Glob { .. } => SuppressedToolBodyKind::Glob,
+    };
+
+    let mut cleaned_lines: Vec<String> = Vec::new();
+    let mut suppressed_tool_body: Option<SuppressedToolBody> = None;
+
+    for raw_line in content.lines() {
+        let line = raw_line.trim();
+        let lower = line.to_lowercase();
+
+        if let Some(mut mode) = suppressed_tool_body.take() {
+            let is_boundary = line.starts_with('{')
+                || lower.starts_with("tool ")
+                || lower.starts_with("tool_error:")
+                || lower.starts_with("tool_not_allowed:");
+            let should_suppress = match mode_kind(&mode) {
+                SuppressedToolBodyKind::Read => !is_boundary,
+                SuppressedToolBodyKind::Grep | SuppressedToolBodyKind::Glob => {
+                    !is_boundary && !line.is_empty()
+                }
+            };
+            if should_suppress {
+                match &mut mode {
+                    SuppressedToolBody::Read => {}
+                    SuppressedToolBody::Grep {
+                        targets,
+                        saw_no_matches,
+                        ..
+                    } => {
+                        if line.eq_ignore_ascii_case("(no matches)")
+                            || lower.contains("no file candidates found")
+                        {
+                            *saw_no_matches = true;
+                        } else if let Some(target) = parse_grep_target(line) {
+                            targets.insert(target);
+                        }
+                    }
+                    SuppressedToolBody::Glob { targets, .. } => {
+                        targets.insert(line.to_string());
+                    }
+                }
+                suppressed_tool_body = Some(mode);
+                continue;
+            }
+            finalize_mode(mode, &mut cleaned_lines);
+        }
+
+        if line.is_empty() {
+            if cleaned_lines.last().map(|v| !v.is_empty()).unwrap_or(false) {
+                cleaned_lines.push(String::new());
+            }
+            continue;
+        }
+
+        if let Some(tool_call) = parse_tool_call_from_json_line(line) {
+            suppressed_tool_body = None;
+            if !tool_call.name.is_empty() {
+                cleaned_lines.push(tool_status_line(
+                    &tool_call.name,
+                    tool_call.args.as_ref(),
+                    ToolStatusPhase::Start,
+                ));
+            }
+            continue;
+        }
+
+        // Suppress raw JSON objects/arrays that are internal structured data
+        // — not meant for display. Plan JSON is rendered by the UI as a
+        // PlanBlock; pass it through.
+        if (line.starts_with('{') && line.ends_with('}'))
+            || (line.starts_with('[') && line.ends_with(']'))
+        {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
+                let is_special_block = val
+                    .get("type")
+                    .and_then(|t| t.as_str())
+                    .map(|t| t == "plan")
+                    .unwrap_or(false);
+                if !is_special_block {
+                    continue;
+                }
+            }
+        }
+
+        // Tool errors → keep as compact summaries. Permission denials → suppress
+        // (internal diagnostics, not useful for the user).
+        if lower.starts_with("tool_not_allowed:") {
+            suppressed_tool_body = None;
+            continue;
+        }
+        if lower.starts_with("tool_error:") {
+            suppressed_tool_body = None;
+            cleaned_lines.push(raw_line.to_string());
+            continue;
+        }
+
+        // Tool result header lines ("Tool Read: ...", "Tool Grep: ..."). Keep
+        // compact status lines and suppress verbose bodies for selected tools.
+        if lower.starts_with("tool ") {
+            if lower.starts_with("tool read:") {
+                let status = parse_read_result_path_from_tool_header(line)
+                    .map(|path| tool_target_line("Read", Some(&path)))
+                    .unwrap_or_else(|| tool_target_line("Read", None));
+                cleaned_lines.push(status);
+                suppressed_tool_body = Some(SuppressedToolBody::Read);
+            } else if lower.starts_with("tool grep:") {
+                cleaned_lines.push(tool_target_line("Grep", None));
+                let idx = cleaned_lines.len() - 1;
+                suppressed_tool_body = Some(SuppressedToolBody::Grep {
+                    summary_idx: idx,
+                    targets: BTreeSet::new(),
+                    saw_no_matches: false,
+                });
+            } else if lower.starts_with("tool glob:") {
+                cleaned_lines.push(tool_target_line("Glob", None));
+                let idx = cleaned_lines.len() - 1;
+                suppressed_tool_body = Some(SuppressedToolBody::Glob {
+                    summary_idx: idx,
+                    targets: BTreeSet::new(),
+                });
+            } else if lower.starts_with("tool websearch:") {
+                let query = line
+                    .split("WebSearch:")
+                    .nth(1)
+                    .and_then(|s| s.split('(').next())
+                    .map(|s| s.trim().trim_matches('"'))
+                    .filter(|s| !s.is_empty());
+                cleaned_lines.push(tool_target_line("WebSearch", query));
+            } else if lower.contains("tool_not_allowed:") || lower.contains("tool_error:") {
+                suppressed_tool_body = None;
+            } else {
+                suppressed_tool_body = None;
+                cleaned_lines.push(raw_line.to_string());
+            }
+            continue;
+        }
+
+        if lower.starts_with("starting autonomous loop for task:") {
+            continue;
+        }
+        if lower == "(content omitted in chat; open the file viewer for full text)" {
+            continue;
+        }
+
+        cleaned_lines.push(raw_line.to_string());
+    }
+
+    if let Some(mode) = suppressed_tool_body.take() {
+        finalize_mode(mode, &mut cleaned_lines);
+    }
+
+    let cleaned = cleaned_lines
+        .join("\n")
+        .replace("\n\n\n", "\n\n")
+        .trim()
+        .to_string();
+    if cleaned.is_empty() {
+        return None;
+    }
+    Some(cleaned)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_message_for_ui;
+
+    #[test]
+    fn sanitize_hides_read_body_and_keeps_file_status() {
+        let input = "Tool Read: Read: doc/storage-spec.md (truncated: false)\n\nFilesystem layout for all persistent state.\nNo database — everything is files.\n\n(content omitted in chat; open the file viewer for full text)";
+        let cleaned = sanitize_message_for_ui("system", input).expect("expected sanitized output");
+        assert_eq!(cleaned, "Used tool: Read · target=storage-spec.md");
+    }
+
+    #[test]
+    fn sanitize_names_a_read_picture_by_its_file() {
+        let input = "Tool Read: Read: shots/login.png — a picture (PNG, 64×48, 2 KB), not text.\n[turn1image1] login.png";
+        let cleaned = sanitize_message_for_ui("system", input).expect("expected sanitized output");
+        assert_eq!(cleaned, "Used tool: Read · target=login.png");
+    }
+
+    #[test]
+    fn sanitize_handles_tool_read_header_without_path() {
+        let input = "Tool Read: Read:\n\nsecret content";
+        let cleaned = sanitize_message_for_ui("system", input).expect("expected sanitized output");
+        assert_eq!(cleaned, "Used tool: Read");
+    }
+
+    #[test]
+    fn sanitize_hides_grep_body_and_keeps_compact_status() {
+        let input = "Tool Grep: Grep matches:\nsrc/a.rs:10: fn main() {}\nsrc/b.rs:42: let x = 1;";
+        let cleaned = sanitize_message_for_ui("system", input).expect("expected sanitized output");
+        assert_eq!(cleaned, "Used tool: Grep · target=src/a.rs (+1 more)");
+    }
+
+    #[test]
+    fn sanitize_hides_glob_body_and_keeps_compact_status() {
+        let input = "Tool Glob: files:\nsrc/a.rs\nsrc/b.rs\nsrc/c.rs";
+        let cleaned = sanitize_message_for_ui("system", input).expect("expected sanitized output");
+        assert_eq!(cleaned, "Used tool: Glob · target=src/a.rs (+2 more)");
+    }
+}

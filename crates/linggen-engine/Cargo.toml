@@ -1,0 +1,69 @@
+[package]
+name = "linggen-engine"
+version.workspace = true
+edition = "2021"
+license = "Apache-2.0"
+description = "The Linggen engine: everything but the `ling` binary's server and CLI."
+repository = "https://github.com/linggen/linggen"
+
+[lib]
+name = "linggen_engine"
+# A binary crate never ran doc examples; the split keeps it that way.
+doctest = false
+
+[features]
+# Anonymous usage telemetry — see src/telemetry/mod.rs. The `ling` package
+# turns it on through its own `telemetry` feature.
+default = ["telemetry"]
+telemetry = []
+# What the `ling` package's tests use from this crate: the empty registries
+# and the TypeScript derives of the wire types its own exported types embed.
+test-support = ["dep:ts-rs"]
+
+[dependencies]
+anyhow = "1"
+async-trait = "0.1"
+ignore = "0.4"
+globset = "0.4"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "time"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream", "cookies"] }
+uuid = { version = "1", features = ["v4"] }
+sha2 = "0.10"
+# Answer pictures: decode and scale to ~1000 px before keeping (engine/answer_refs).
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+base64 = "0.22"
+axum = { version = "0.8", features = ["ws"] }
+tower = { version = "0.5", features = ["util"] }
+rust-embed = "8.0"
+tokio-stream = "0.1"
+futures-util = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "chrono"] }
+tracing-appender = "0.2"
+toml = "1.0"
+serde_norway = "0.9"
+dirs = "6.0"
+grep = "0.4"
+grep-regex = "0.1"
+grep-searcher = "0.1"
+tokio-util = { version = "0.7", features = ["codec"] }
+tempfile = "3"
+zip = "8"
+url = "2"
+libc = "0.2"
+rand = "0.10.0"
+cron = "0.16"
+chrono = "0.4"
+gethostname = "1.1.0"
+urlencoding = "2.1.3"
+# Memory, hosted in this process (`memory_host`). Its own telemetry stays
+# off: the engine's is the one that counts.
+linggen-memory = { path = "../linggen-memory", default-features = false }
+# The TypeScript derives, for the `test-support` feature (see [features]).
+ts-rs = { version = "12", features = ["serde-json-impl", "no-serde-warnings"], optional = true }
+
+[dev-dependencies]
+ts-rs = { version = "12", features = ["serde-json-impl", "no-serde-warnings"] }

@@ -1,0 +1,833 @@
+mod builtin;
+use crate::util::LockExt;
+pub use builtin::builtin_tier;
+pub(crate) use builtin::tool_cacheable;
+pub(crate) use builtin::tool_max_duration;
+pub(crate) use builtin::unavailable as unavailable_builtins;
+pub(crate) use builtin::RightNow;
+
+pub mod browser_tool;
+mod file_tools;
+mod foreground_shell;
+mod read_picture;
+pub use read_picture::human_size;
+pub(crate) mod json_schema;
+pub mod memory_http;
+mod memory_mcp;
+pub use memory_mcp::{memory_root, place_of, MemoryPlace};
+mod delegation;
+mod drawing;
+mod search_exec;
+mod tool_helpers;
+mod write_tools;
+
+pub(crate) use delegation::{run_delegation, DelegationCancelled, TaskArgs};
+pub use search_exec::find_git_root as search_exec_find_git_root;
+pub(crate) use search_exec::kill_process_group;
+pub use search_exec::project_ancestors;
+pub use tool_helpers::canonical_tool_name;
+pub(crate) use tool_helpers::full_tool_schema_entries;
+pub(crate) use tool_helpers::{normalize_tool_args, summarize_tool_args};
+
+use crate::engine::agent::AgentManager;
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::{broadcast, Mutex};
+use tracing::debug;
+
+// ── Public types ────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct ToolCall {
+    pub tool: String,
+    pub args: Value,
+    pub block_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub enum ToolResult {
+    FileList(Vec<String>),
+    FileContent {
+        path: String,
+        content: String,
+        truncated: bool,
+    },
+    SearchMatches(Vec<SearchMatch>),
+    CommandOutput {
+        exit_code: Option<i32>,
+        stdout: String,
+        stderr: String,
+    },
+    Screenshot {
+        url: String,
+        base64: String,
+        /// Its number in the session (`turn3image1`), once numbered.
+        id: String,
+    },
+    /// A drawn picture (`GenerateImage`). Numbered into the session like a
+    /// screenshot; its bytes are dropped once kept.
+    Picture {
+        base64: String,
+        caption: String,
+        /// Who drew it ("ChatGPT", "this Mac").
+        source: String,
+        seconds: f64,
+        seed: Option<u64>,
+        /// In a skill: the skill's own copy, as (url, path).
+        saved: Option<(String, String)>,
+        /// Its number in the session (`turn3image1`), once numbered.
+        id: String,
+    },
+    /// A picture file `Read` opened, readied for the model (scaled like a
+    /// person's pasted picture). Numbered into the session; attached to the
+    /// model once when it can see (`seen`), else its bytes are dropped.
+    PictureFile {
+        path: String,
+        /// Its file name: the caption the chat shows.
+        name: String,
+        /// "PNG", "JPEG", "GIF", "WebP", "HEIC".
+        kind: String,
+        width: u32,
+        height: u32,
+        /// The file's size in bytes.
+        size: u64,
+        base64: String,
+        seen: bool,
+        /// Its number in the session (`turn3image1`), once numbered.
+        id: String,
+    },
+    Success(String),
+    LockResult {
+        acquired: Vec<(String, String)>,
+        denied: Vec<String>,
+    },
+    AgentOutcome(crate::engine::AgentOutcome),
+    WebSearchResults {
+        query: String,
+        results: Vec<super::web_search::WebSearchResult>,
+    },
+    /// Pictures of a thing, each from a page a search found (`ImageSearch`).
+    PictureSearchResults {
+        query: String,
+        pictures: Vec<super::image_search::FoundPicture>,
+        /// The pictures as one contact sheet (base64 JPEG), for a model
+        /// that sees only; never kept.
+        #[serde(skip)]
+        sheet: String,
+    },
+    /// Videos about a thing (`VideoSearch`).
+    VideoSearchResults {
+        query: String,
+        videos: Vec<super::video_search::FoundVideo>,
+    },
+    WebFetchContent {
+        url: String,
+        content: String,
+        content_type: String,
+        truncated: bool,
+        title: String,
+        pictures: Vec<super::page_pictures::WebPicture>,
+        /// The page's own number as a source (`turn2search1`), once numbered.
+        id: String,
+    },
+    AskUserResponse {
+        answers: Vec<AskUserAnswer>,
+    },
+}
+
+/// Byte budget for one stream of process output handed back to the model.
+/// Matches `Read`'s default so no command can quietly dominate the context;
+/// skill tools raise or lower it with `max_output_bytes:` in frontmatter.
+pub const DEFAULT_MAX_TOOL_OUTPUT_BYTES: usize = 64 * 1024;
+
+fn floor_char_boundary(s: &str, mut i: usize) -> usize {
+    if i >= s.len() {
+        return s.len();
+    }
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+fn ceil_char_boundary(s: &str, mut i: usize) -> usize {
+    while i < s.len() && !s.is_char_boundary(i) {
+        i += 1;
+    }
+    i
+}
+
+/// Trim one output stream to `max_bytes`, keeping the head and the tail — a
+/// command's first lines say what it did, its last lines say how it ended.
+/// The dropped middle becomes a marker naming the original size, so the model
+/// knows it did not see everything and can narrow the command instead of
+/// reasoning from a silent cut. The result is `max_bytes` of payload plus
+/// that one marker line.
+pub fn cap_stream(s: &str, max_bytes: usize) -> String {
+    if s.len() <= max_bytes {
+        return s.to_string();
+    }
+    let head_end = floor_char_boundary(s, max_bytes * 2 / 3);
+    let tail_start = ceil_char_boundary(s, s.len() - (max_bytes - head_end));
+    format!(
+        "{}\n[linggen: {} bytes omitted — output was {} bytes, capped at {}. \
+Narrow the command (filter, grep, head) to see the rest.]\n{}",
+        &s[..head_end],
+        tail_start - head_end,
+        s.len(),
+        max_bytes,
+        &s[tail_start..],
+    )
+}
+
+impl ToolResult {
+    /// The picture this result shows the model, as the note it rides with
+    /// and its base64 — a screenshot, or a picture file a seeing model read.
+    pub fn attachment(&self) -> Option<(String, &str)> {
+        match self {
+            ToolResult::Screenshot { url, base64, .. } if !base64.is_empty() => {
+                Some((format!("[screenshot of {url}]"), base64))
+            }
+            ToolResult::PictureFile {
+                path,
+                base64,
+                seen: true,
+                ..
+            } if !base64.is_empty() => Some((format!("[picture {path}]"), base64)),
+            ToolResult::PictureSearchResults { query, sheet, .. } if !sheet.is_empty() => Some((
+                format!("[ImageSearch \"{query}\": contact sheet, each tile labelled by its picture's number]"),
+                sheet,
+            )),
+            _ => None,
+        }
+    }
+
+    /// Build a `CommandOutput` with both streams capped. Every producer of
+    /// process output goes through here so none of them can forget: an
+    /// unbounded stdout is a context blowup, not a big answer.
+    pub fn command_output(
+        exit_code: Option<i32>,
+        stdout: &str,
+        stderr: &str,
+        max_bytes: usize,
+    ) -> Self {
+        ToolResult::CommandOutput {
+            exit_code,
+            stdout: cap_stream(stdout, max_bytes),
+            stderr: cap_stream(stderr, max_bytes),
+        }
+    }
+}
+
+// ── AskUser types ───────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[cfg_attr(any(test, feature = "test-support"), derive(ts_rs::TS), ts(export))]
+pub struct AskUserQuestion {
+    pub question: String,
+    pub header: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission: Option<DirectoryPermissionMetadata>,
+    pub options: Vec<AskUserOption>,
+    #[serde(default)]
+    #[cfg_attr(any(test, feature = "test-support"), ts(as = "Option<bool>", optional))]
+    pub multi_select: bool,
+}
+
+/// Context for a native directory permission question; absent for ordinary AskUser prompts.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[cfg_attr(any(test, feature = "test-support"), derive(ts_rs::TS), ts(export))]
+pub struct DirectoryPermissionMetadata {
+    pub path: String,
+    pub mode: crate::engine::permission::PermissionMode,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[cfg_attr(any(test, feature = "test-support"), derive(ts_rs::TS), ts(export, optional_fields = nullable))]
+pub struct AskUserOption {
+    pub label: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub preview: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AskUserArgs {
+    questions: Vec<AskUserQuestion>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[cfg_attr(any(test, feature = "test-support"), derive(ts_rs::TS), ts(export, optional_fields = nullable))]
+pub struct AskUserAnswer {
+    pub question_index: usize,
+    pub selected: Vec<String>,
+    pub custom_text: Option<String>,
+}
+
+/// Tools that belong to the on-screen pet/companion (Yinyue) — only an agent
+/// that lists them EXPLICITLY gets them. They're excluded from the `*` wildcard
+/// so a worker agent (Ling) can't drive the avatar; it asks Yinyue via
+/// `agent_chat` instead.
+pub(crate) fn is_pet_scoped(name: &str) -> bool {
+    matches!(name, "Express")
+}
+
+/// Bridge between the synchronous tool executor and the async server state,
+/// allowing the AskUser tool to emit events and block on user responses.
+pub struct AskUserBridge {
+    pub events_tx: broadcast::Sender<crate::engine::events::ServerEvent>,
+    pub pending: Arc<Mutex<HashMap<String, PendingAskUser>>>,
+    pub session_id: Option<String>,
+}
+
+pub struct PendingAskUser {
+    pub agent_id: String,
+    pub questions: Vec<AskUserQuestion>,
+    pub sender: tokio::sync::oneshot::Sender<Vec<AskUserAnswer>>,
+    pub session_id: Option<String>,
+    /// Set when the session's caller (not a person in the chat) answers this
+    /// permission question — an MCP `agent_run` delegate's `agent_permit`.
+    pub caller_request: Option<CallerPermissionRequest>,
+}
+
+/// A permission request raised to a non-interactive session's caller.
+#[derive(Debug, Clone, Serialize)]
+pub struct CallerPermissionRequest {
+    pub tool: String,
+    pub summary: String,
+    /// The whole Bash command when `summary` cut it short: the caller
+    /// permits what it can read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    pub level: crate::engine::permission::PermissionMode,
+    pub path: String,
+    /// The narrowest folder a session grant may cover; `None` when the
+    /// target's folder is not grantable (the home folder, `/`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dir: Option<String>,
+    /// What the agent said the action is for, when the call carries it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SearchMatch {
+    pub path: String,
+    pub line: usize,
+    pub snippet: String,
+}
+
+/// Sender for streaming tool progress lines (tool_name, stream_name, line).
+/// Uses tokio's unbounded channel so the sender works in sync contexts
+/// and the receiver can be held across async .await points.
+pub type ToolProgressSender = tokio::sync::mpsc::UnboundedSender<(String, String, String)>;
+
+// ── Tools struct ────────────────────────────────────────────────────────
+
+#[derive(Clone)]
+pub struct Tools {
+    root: PathBuf,
+    /// Per-session working directory. Key = session_id, value = cwd.
+    /// Sessions without an entry default to `root`.
+    cwd_by_session: Arc<std::sync::Mutex<std::collections::HashMap<String, PathBuf>>>,
+    manager: Option<Arc<AgentManager>>,
+    agent_id: Option<String>,
+    delegation_depth: usize,
+    max_delegation_depth: usize,
+    run_id: Option<String>,
+    ask_user_bridge: Option<Arc<AskUserBridge>>,
+    progress_tx: Option<ToolProgressSender>,
+    prompt_store: Option<Arc<crate::prompts::PromptStore>>,
+    pub session_id: Option<String>,
+    /// Session policy propagated to subagents via delegation.
+    /// Set by the parent engine; applied to subagent engines after spawn.
+    pub(crate) session_policy: Option<super::session_policy::SessionPolicy>,
+    /// Effective tool set of the loop dispatching the current call.
+    pub(crate) parent_allowed_tools: Option<std::collections::HashSet<String>>,
+    /// Parent engine's path-mode grants, propagated to subagents via delegation.
+    /// Mirrors `engine.session_permissions.path_modes` and is re-synced by the
+    /// caller before each tool dispatch. Subagents inherit these so skill-
+    /// granted paths (e.g. `~/.linggen`) don't require re-prompting inside a
+    /// delegated run.
+    pub(crate) parent_path_modes: Vec<super::permission::PathMode>,
+    /// Parent engine's `interactive` flag. Propagated to subagents so that a
+    /// non-interactive parent (mission, proxy consumer) yields a non-interactive
+    /// child — prompts in unattended runs deadlock.
+    pub(crate) parent_interactive: bool,
+    /// When the last AskUser was answered in this session. The user-voice
+    /// merge guard (memory_tool) unlocks writes that replace `from=user`
+    /// rows for a short window after an answered AskUser — the ask→resolve
+    /// flow the merge law prescribes. Arc-shared across clones so subagent
+    /// asks count too.
+    pub(crate) last_ask_user: Arc<std::sync::Mutex<Option<std::time::Instant>>>,
+    /// Browser bridge hub for the `Browser_*` tools. Wired by the server;
+    /// `None` in CLI/eval contexts, where browser control is unavailable.
+    pub(crate) browser_bridge: Option<Arc<dyn crate::engine::tools::browser_tool::BrowserBridge>>,
+    /// The active skill's name and folder, set on activation. Tools that
+    /// write a skill's own files (pictures) resolve the folder here and
+    /// build the `/apps/<name>/...` URL the web UI and phone can load.
+    pub(crate) active_skill: Option<(String, PathBuf)>,
+    /// The running turn's Steer (`engine/steer.rs`), wired by the server for
+    /// a person's turn: a foreground Bash moves to the background on it.
+    pub(crate) steer: Option<Arc<crate::engine::steer::SteerSignal>>,
+}
+
+impl Tools {
+    pub fn new(root: PathBuf) -> Result<Self> {
+        let cwd_by_session = Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        Ok(Self {
+            root,
+            cwd_by_session,
+            manager: None,
+            agent_id: None,
+            delegation_depth: 0,
+            max_delegation_depth: 2,
+            run_id: None,
+            ask_user_bridge: None,
+            progress_tx: None,
+            prompt_store: None,
+            session_id: None,
+            session_policy: None,
+            parent_allowed_tools: None,
+            parent_path_modes: Vec::new(),
+            parent_interactive: true,
+            last_ask_user: Arc::new(std::sync::Mutex::new(None)),
+            browser_bridge: None,
+            active_skill: None,
+            steer: None,
+        })
+    }
+
+    /// True when an AskUser was answered within `window` — the unlock
+    /// signal for the user-voice merge guard.
+    pub(crate) fn ask_user_recently(&self, window: Duration) -> bool {
+        self.last_ask_user
+            .lock()
+            .ok()
+            .and_then(|g| *g)
+            .is_some_and(|t| t.elapsed() <= window)
+    }
+
+    pub fn set_context(&mut self, manager: Arc<AgentManager>, agent_id: String) {
+        self.manager = Some(manager);
+        self.agent_id = Some(agent_id);
+    }
+
+    pub fn set_delegation_depth(&mut self, depth: usize) {
+        self.delegation_depth = depth;
+    }
+
+    pub fn set_max_delegation_depth(&mut self, max_depth: usize) {
+        self.max_delegation_depth = max_depth;
+    }
+
+    pub fn delegation_depth(&self) -> usize {
+        self.delegation_depth
+    }
+
+    /// Who owns the background tasks this caller starts: the session's own
+    /// agent by name, so they outlive its turn; a subagent by its run.
+    pub(crate) fn task_owner(&self) -> Option<&str> {
+        if self.delegation_depth > 0 {
+            self.run_id.as_deref()
+        } else {
+            self.agent_id.as_deref()
+        }
+    }
+
+    pub fn max_delegation_depth(&self) -> usize {
+        self.max_delegation_depth
+    }
+
+    pub fn set_run_id(&mut self, run_id: Option<String>) {
+        self.run_id = run_id;
+    }
+
+    pub fn set_ask_user_bridge(&mut self, bridge: Arc<AskUserBridge>) {
+        self.ask_user_bridge = Some(bridge);
+    }
+
+    pub fn set_browser_bridge(
+        &mut self,
+        hub: Arc<dyn crate::engine::tools::browser_tool::BrowserBridge>,
+    ) {
+        self.browser_bridge = Some(hub);
+    }
+
+    pub fn set_progress_tx(&mut self, tx: ToolProgressSender) {
+        self.progress_tx = Some(tx);
+    }
+
+    pub fn set_prompt_store(&mut self, store: Arc<crate::prompts::PromptStore>) {
+        self.prompt_store = Some(store);
+    }
+
+    pub fn set_session_id(&mut self, session_id: Option<String>) {
+        self.session_id = session_id;
+    }
+
+    pub fn set_steer(&mut self, steer: Option<Arc<crate::engine::steer::SteerSignal>>) {
+        self.steer = steer;
+    }
+
+    /// A steer no step has taken in yet, for this top-level turn only: a
+    /// subagent's own work never hands off on its parent's Steer.
+    pub(crate) fn steer_pending(&self) -> bool {
+        self.delegation_depth == 0 && self.steer.as_ref().is_some_and(|s| s.pending())
+    }
+
+    pub fn set_active_skill(&mut self, name: String, dir: Option<PathBuf>) {
+        self.active_skill = dir.map(|d| (name, d));
+    }
+
+    pub(crate) fn active_skill(&self) -> Option<&(String, PathBuf)> {
+        self.active_skill.as_ref()
+    }
+
+    /// Render a prompt template with fallback.
+    pub fn prompt(&self, key: &str, vars: &[(&str, &str)]) -> String {
+        match &self.prompt_store {
+            Some(store) => store.render_or_fallback(key, vars),
+            None => format!("[missing prompt: {}]", key),
+        }
+    }
+
+    pub fn ask_user_bridge(&self) -> Option<&Arc<AskUserBridge>> {
+        self.ask_user_bridge.as_ref()
+    }
+
+    /// Draw one picture into the active skill's `data/pictures/` and answer
+    /// with its URL. When the lane is not installed yet the install starts
+    /// in the background and the reply says so in one line — a first call
+    /// never blocks for a 5 GB download.
+    pub fn get_manager(&self) -> Option<Arc<AgentManager>> {
+        self.manager.clone()
+    }
+
+    /// The calling agent's id (the sender, for `agent_chat`).
+    pub fn agent_id(&self) -> Option<&str> {
+        self.agent_id.as_deref()
+    }
+
+    /// Update the workspace root (e.g. when the agent enters a new git project).
+    /// This makes Read/Write/Edit/Glob/Grep resolve relative paths from the new root.
+    pub fn set_workspace_root(&mut self, new_root: PathBuf) {
+        self.root = new_root;
+    }
+
+    /// What a skill tool's command is told about where it runs, as env:
+    /// `LINGGEN_SESSION_ID`, and `LINGGEN_USER_TURNS` — how many messages the
+    /// person has sent in this session, the one being answered included. A
+    /// script that keeps count of the person's turns (a game paying a tale
+    /// by turns played) takes the number from here instead of trusting the
+    /// model to report each one. `LINGGEN_USER_WORDS` — only for a skill
+    /// that declares the `user_words` sense (`senses`, the owning skill's) —
+    /// the person's last few messages as they typed them, a JSON array of
+    /// strings, newest last (hidden rows and tool observations left out, each
+    /// cut at 500 characters), so a script that keeps a quote can check it was
+    /// really said instead of trusting the model's copy. And
+    /// `LINGGEN_RESTRICTED` — the well-known services this machine cannot
+    /// reach (`youtube,google`; empty when all answer; see `reach`). Names no
+    /// app. `LINGGEN_LANGUAGE` is not here: every skill command gets it at
+    /// spawn (`SkillToolDef::execute`), session or not.
+    pub fn tool_env(&self, senses: &[String]) -> Vec<(String, String)> {
+        let restricted = crate::reach::tool_env();
+        let Some(sid) = &self.session_id else {
+            return restricted.into_iter().collect();
+        };
+        let mut env = vec![("LINGGEN_SESSION_ID".to_string(), sid.clone())];
+        env.extend(restricted);
+        if let Some(manager) = self.get_manager() {
+            if let Ok(history) = manager.global_sessions.get_chat_history(sid) {
+                let turns = history.iter().filter(|m| m.from_id == "user").count();
+                env.push(("LINGGEN_USER_TURNS".to_string(), turns.to_string()));
+                if senses.iter().any(|s| s == crate::senses::USER_WORDS) {
+                    env.push(("LINGGEN_USER_WORDS".to_string(), user_words(&history)));
+                }
+            }
+        }
+        env
+    }
+
+    /// The values this session is bound to (`SessionMeta::params`), for a
+    /// tool of `skill` — only when the session is that skill's: a session's
+    /// params are its own skill's declarations, never another skill's.
+    pub fn session_params_for(
+        &self,
+        skill: Option<&str>,
+    ) -> crate::engine::skill::params::SessionParams {
+        let (Some(sid), Some(skill), Some(manager)) = (&self.session_id, skill, self.get_manager())
+        else {
+            return Default::default();
+        };
+        manager
+            .global_sessions
+            .params_for(sid, skill)
+            .unwrap_or_default()
+    }
+
+    pub fn cwd(&self) -> PathBuf {
+        let map = self.cwd_by_session.lock_ok();
+        if let Some(sid) = &self.session_id {
+            map.get(sid).cloned().unwrap_or_else(|| self.root.clone())
+        } else {
+            self.root.clone()
+        }
+    }
+
+    /// Seed the per-session cwd if not already set. Used when a session-bound
+    /// skill activates — the skill's permission grant usually targets a
+    /// specific path (e.g. ~/.linggen), and aligning session_cwd with that
+    /// path lets Bash permission checks resolve to the granted mode.
+    /// Callers should pass an absolute, expanded path.
+    pub fn seed_session_cwd_if_unset(&self, path: PathBuf) {
+        let Some(sid) = &self.session_id else { return };
+        let mut map = self.cwd_by_session.lock_ok();
+        map.entry(sid.clone()).or_insert(path);
+    }
+
+    // ── Execute dispatcher ──────────────────────────────────────────────
+
+    /// Run a tool call by looking up the tool in the [`builtin`] registry
+    /// and dispatching to its `execute` impl. Unknown tool names fall
+    /// through to `ToolRegistry::execute`, which handles capability tools
+    /// and skill tools.
+    /// Run a synchronous, CPU-bound or filesystem-blocking closure on the
+    /// blocking pool. The closure receives a clone of `Tools` so it can call
+    /// `*_inner` methods that take `&self`. `label` is used in the panic
+    /// error message.
+    pub(super) async fn run_blocking<F, T>(&self, label: &'static str, f: F) -> Result<T>
+    where
+        F: FnOnce(Tools) -> Result<T> + Send + 'static,
+        T: Send + 'static,
+    {
+        let tools = self.clone();
+        tokio::task::spawn_blocking(move || f(tools))
+            .await
+            .map_err(|e| anyhow::anyhow!("{label} panic: {e}"))?
+    }
+
+    pub async fn execute(&self, mut call: ToolCall) -> Result<ToolResult> {
+        call.args = normalize_tool_args(&call.tool, call.args);
+        debug!(
+            "Executing tool: {} args={}",
+            call.tool,
+            summarize_tool_args(&call.tool, &call.args)
+        );
+        if let Some(tool) = builtin::lookup(&call.tool) {
+            return tool.execute(self, call).await;
+        }
+        // A tool from a configured MCP server. Discovered at runtime, so it
+        // is not in the static registry — it is routed by its qualified
+        // `mcp__<server>__<tool>` name instead. Memory calls pick up the
+        // session state only the host holds on the way out; see `memory_mcp`.
+        if crate::mcp_client::is_mcp_tool(&call.tool) {
+            let args =
+                memory_mcp::augment(self, &call.tool, std::mem::take(&mut call.args)).await?;
+            let out = crate::mcp_client::registry().call(&call.tool, args).await?;
+            return Ok(ToolResult::Success(out));
+        }
+        anyhow::bail!("unknown tool: {}", call.tool)
+    }
+
+    /// AskUser is async-native — it uses tokio oneshot + timeout + Mutex
+    /// internally and was previously bridged through `block_on_async`.
+    pub(super) async fn ask_user(&self, args: serde_json::Value) -> Result<ToolResult> {
+        let args: AskUserArgs = serde_json::from_value(args)
+            .map_err(|e| anyhow::anyhow!("invalid args for AskUser: {}", e))?;
+
+        // Validate question count.
+        if args.questions.is_empty() || args.questions.len() > 4 {
+            anyhow::bail!(
+                "AskUser requires 1-4 questions, got {}",
+                args.questions.len()
+            );
+        }
+        for (i, q) in args.questions.iter().enumerate() {
+            if q.options.len() < 2 || q.options.len() > 6 {
+                anyhow::bail!(
+                    "AskUser question {} requires 2-6 options, got {}",
+                    i,
+                    q.options.len()
+                );
+            }
+        }
+
+        // Subagents are now allowed to call AskUser as long as the caller
+        // wired an `ask_user_bridge` (the parent's bridge is propagated via
+        // `run_delegation` so the subagent shares the same
+        // pending_ask_user map + events_tx). The `AskUser` event carries
+        // the emitting `agent_id`; the UI routes the widget to the right
+        // surface (main chat for depth-0, SubagentPane for depth>0) based
+        // on that. The 5-minute timeout below covers the previous
+        // "subagent hangs waiting for an answer" concern.
+        let bridge = match &self.ask_user_bridge {
+            Some(b) => Arc::clone(b),
+            None => {
+                tracing::warn!(
+                    "AskUser called with no bridge wired (agent={:?}, session={:?}) — returning CLI-blocked",
+                    self.agent_id,
+                    self.session_id
+                );
+                return Ok(ToolResult::Success(
+                    self.prompt(crate::prompts::keys::ASKUSER_CLI_BLOCKED, &[]),
+                ));
+            }
+        };
+
+        let question_id = uuid::Uuid::new_v4().to_string();
+        let agent_id = self.agent_id.clone().unwrap_or_default();
+        let questions_clone = args.questions.clone();
+
+        // Register before publishing so an immediate response cannot race registration.
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        bridge.pending.lock().await.insert(
+            question_id.clone(),
+            PendingAskUser {
+                agent_id: agent_id.clone(),
+                questions: questions_clone,
+                sender: tx,
+                session_id: bridge.session_id.clone(),
+                caller_request: None,
+            },
+        );
+        let _ = bridge
+            .events_tx
+            .send(crate::engine::events::ServerEvent::AskUser {
+                agent_id,
+                question_id: question_id.clone(),
+                questions: args.questions,
+                session_id: bridge.session_id.clone(),
+            });
+
+        // Wait up to 5 minutes for a response.
+        let response = tokio::time::timeout(Duration::from_secs(300), rx).await;
+
+        // Cleanup: remove from pending map regardless of outcome.
+        bridge.pending.lock().await.remove(&question_id);
+
+        match response {
+            Ok(Ok(answers)) => {
+                if let Ok(mut g) = self.last_ask_user.lock() {
+                    *g = Some(std::time::Instant::now());
+                }
+                Ok(ToolResult::AskUserResponse { answers })
+            }
+            Ok(Err(_)) => Ok(ToolResult::Success(
+                self.prompt(crate::prompts::keys::ASKUSER_CANCELLED, &[]),
+            )),
+            Err(_) => Ok(ToolResult::Success(
+                self.prompt(crate::prompts::keys::ASKUSER_TIMEOUT, &[]),
+            )),
+        }
+    }
+}
+
+/// How many of the person's recent messages `LINGGEN_USER_WORDS` carries, and
+/// how long each may be.
+const USER_WORDS_KEEP: usize = 8;
+const USER_WORDS_CHARS: usize = 500;
+
+/// The person's last messages as they typed them, a JSON array, newest last:
+/// no hidden rows (a page's report, a nudge), no observations.
+fn user_words(history: &[crate::state_fs::sessions::ChatMsg]) -> String {
+    let said: Vec<String> = history
+        .iter()
+        .filter(|m| m.from_id == "user" && !m.is_observation)
+        .filter(|m| !m.content.contains("[HIDDEN]") && !m.content.trim().is_empty())
+        .map(|m| m.content.chars().take(USER_WORDS_CHARS).collect())
+        .collect();
+    let recent = &said[said.len().saturating_sub(USER_WORDS_KEEP)..];
+    serde_json::to_string(recent).unwrap_or_else(|_| "[]".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn user_words_keeps_what_the_person_typed_newest_last() {
+        let msg = |from: &str, content: &str, obs: bool| crate::state_fs::sessions::ChatMsg {
+            run_id: None,
+            via: None,
+            via_note: None,
+            agent_id: "a".into(),
+            from_id: from.into(),
+            to_id: "a".into(),
+            content: content.into(),
+            timestamp: 0,
+            is_observation: obs,
+            client_id: None,
+            failed: false,
+            images: Vec::new(),
+        };
+        let mut history = vec![
+            msg("user", "[HIDDEN] [scene] opened", false),
+            msg("user", "hello", false),
+            msg("a", "hi there", false),
+            msg("user", "tool output", true),
+        ];
+        for i in 0..USER_WORDS_KEEP {
+            history.push(msg("user", &format!("line {i}"), false));
+        }
+        let words: Vec<String> = serde_json::from_str(&user_words(&history)).unwrap();
+        assert_eq!(words.len(), USER_WORDS_KEEP);
+        assert_eq!(
+            words.last().unwrap(),
+            &format!("line {}", USER_WORDS_KEEP - 1)
+        );
+        assert!(!words
+            .iter()
+            .any(|w| w.contains("HIDDEN") || w == "hello" || w == "tool output"));
+        let long = vec![msg("user", &"字".repeat(900), false)];
+        let cut: Vec<String> = serde_json::from_str(&user_words(&long)).unwrap();
+        assert_eq!(cut[0].chars().count(), USER_WORDS_CHARS);
+    }
+
+    #[test]
+    fn cap_stream_passes_short_output_through() {
+        let s = "all of it\n";
+        assert_eq!(cap_stream(s, 1024), s);
+        // Exactly at the budget is still whole.
+        let exact = "x".repeat(64);
+        assert_eq!(cap_stream(&exact, 64), exact);
+    }
+
+    #[test]
+    fn cap_stream_keeps_head_and_tail_and_names_the_gap() {
+        let s = format!("HEAD{}TAIL", "x".repeat(2000));
+        let out = cap_stream(&s, 300);
+        assert!(out.starts_with("HEAD"), "head survives");
+        assert!(out.ends_with("TAIL"), "tail survives");
+        assert!(out.contains("bytes omitted"), "the gap is named");
+        assert!(out.contains(&format!("output was {} bytes", s.len())));
+        // Payload stays within budget; only the marker line is extra.
+        assert!(out.len() < 300 + 200);
+    }
+
+    #[test]
+    fn cap_stream_cuts_on_char_boundaries() {
+        // Every char is three bytes, so a byte-indexed cut lands mid-char.
+        let s = "日".repeat(1000);
+        let out = cap_stream(&s, 100);
+        assert!(out.contains("bytes omitted"));
+        assert!(out.starts_with('日') && out.ends_with('日'));
+    }
+
+    #[test]
+    fn command_output_caps_both_streams() {
+        let big = "y".repeat(200_000);
+        let result = ToolResult::command_output(Some(0), &big, &big, 1024);
+        let ToolResult::CommandOutput { stdout, stderr, .. } = result else {
+            panic!("expected CommandOutput");
+        };
+        assert!(stdout.len() < 2048, "stdout capped: {}", stdout.len());
+        assert!(stderr.len() < 2048, "stderr capped: {}", stderr.len());
+    }
+}

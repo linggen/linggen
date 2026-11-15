@@ -1,5 +1,7 @@
 # Rust
 /target
+# The engine crate's permission tests make their folders under its own target/.
+/crates/linggen-engine/target
 # Cargo.lock IS committed: linggen is a binary crate, and the mac build and the
 # two build-linux.yml runners must resolve identical dependency versions.
 

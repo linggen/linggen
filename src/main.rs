@@ -1,30 +1,13 @@
-mod account;
-mod assets;
 mod cli;
-mod config;
-mod credentials;
-mod engine;
-mod extensions;
-mod hf_mirror;
-mod js_runtime;
-mod language;
-mod logging;
-mod mcp_client;
-mod memory_host;
-mod message;
-mod mirror;
-mod paths;
-mod perception;
-mod pictures;
-mod prompts;
-mod provider;
-mod reach;
-mod runtime;
-mod senses;
 mod server;
-mod state_fs;
-mod telemetry;
-mod util;
+
+// The engine's modules, by the names the server and the CLI use for them
+// (`crate::engine::…`, `crate::config::…`).
+use linggen_engine::{
+    account, assets, config, credentials, engine, extensions, hf_mirror, js_runtime, language,
+    logging, mcp_client, memory_host, message, mirror, paths, perception, pictures, prompts,
+    provider, reach, runtime, senses, state_fs, telemetry, util,
+};
 
 use crate::config::Config;
 use anyhow::Result;

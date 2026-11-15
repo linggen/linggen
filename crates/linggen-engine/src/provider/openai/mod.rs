@@ -1,0 +1,655 @@
+//! The OpenAI-compatible client: one HTTP client, two wires. A ChatGPT-OAuth
+//! client speaks the Responses API ([`responses_api`]); every other one speaks
+//! Chat Completions ([`chat_completions`]). Wire shapes live in [`wire`].
+
+mod chat_completions;
+mod citations;
+mod image_gen;
+mod responses_api;
+mod strict_schema;
+mod wire;
+
+pub use image_gen::PictureRequest;
+pub use wire::wire_tool_def;
+use wire::{extract_error_code, extract_error_message};
+
+use crate::provider::models::StreamChunk;
+use anyhow::Result;
+use futures_util::{Stream, StreamExt};
+use reqwest::Client;
+
+/// Reads one SSE `data:` payload of a turn into the chunks it carries. It may
+/// keep state across the stream (the Responses API tracks output items).
+type Parser = Box<dyn FnMut(&str) -> Vec<Result<StreamChunk>> + Send>;
+
+/// A response's SSE lines read into chunks — one line can yield several
+/// (batched tool call deltas from Gemini/Groq, a new item's paragraph break).
+/// The first line — any line, `event:` and blanks included — is awaited
+/// here, inside the call's first-event window, so a backend that took the
+/// request and says nothing fails as `Stalled` instead of waiting out the
+/// wire's 180 s read timeout.
+async fn parse_sse(
+    resp: reqwest::Response,
+    mut parse: Parser,
+    first: &crate::provider::FirstEvent,
+) -> Result<impl Stream<Item = Result<StreamChunk>> + Send> {
+    let mut lines = Box::pin(sse_lines(resp));
+    let opening = first.within(lines.next()).await?;
+    Ok(futures_util::stream::iter(opening)
+        .chain(lines)
+        .map(move |line_result| match line_result {
+            Ok(line) => sse_data(&line).map(&mut parse).unwrap_or_default(),
+            Err(e) => vec![Err(crate::provider::stream_read_error(e))],
+        })
+        .flat_map(futures_util::stream::iter))
+}
+
+/// The `data:` payload of one SSE line, or `None` for blank lines, `event:`
+/// lines, non-data lines and the `[DONE]` sentinel.
+fn sse_data(line: &str) -> Option<&str> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with("event:") {
+        return None;
+    }
+    let data = trimmed.strip_prefix("data: ")?.trim();
+    (data != "[DONE]").then_some(data)
+}
+
+/// The SSE lines of a streamed response body.
+fn sse_lines(
+    resp: reqwest::Response,
+) -> impl Stream<Item = Result<String, tokio_util::codec::LinesCodecError>> + Send {
+    let byte_stream = resp
+        .bytes_stream()
+        .map(|item| item.map_err(std::io::Error::other));
+    let reader = tokio_util::io::StreamReader::new(byte_stream);
+    tokio_util::codec::FramedRead::new(reader, tokio_util::codec::LinesCodec::new())
+}
+
+#[derive(Clone)]
+pub struct OpenAiClient {
+    pub(super) http: Client,
+    pub(super) base_url: String,
+    api_key: Option<String>,
+    /// ChatGPT Account ID for OAuth mode (sent as `ChatGPT-Account-Id` header).
+    chatgpt_account_id: Option<String>,
+    /// When true, reload token from codex_auth.json on each request (auto-refresh).
+    codex_auth_live: bool,
+    /// When true, resolve the linggen.dev account token on each request, so
+    /// signing in/out is picked up without a daemon restart.
+    linggen_account_live: bool,
+}
+
+impl OpenAiClient {
+    pub fn new(base_url: String, api_key: Option<String>) -> Self {
+        let http = Client::builder()
+            .timeout(std::time::Duration::from_secs(300))
+            .connect_timeout(std::time::Duration::from_secs(10))
+            // The total timeout above does NOT govern bodies consumed via
+            // bytes_stream() (reqwest gap) — a backend that accepts the
+            // request and then goes silent wedges the run forever (observed
+            // live 2026-07-10: 35 min on one Responses API call). read_timeout
+            // bounds every socket read, streaming included; reasoning models'
+            // silent thinking gaps stay well under it, and the resulting
+            // error is transient-classified so the model fallback chain runs.
+            .read_timeout(std::time::Duration::from_secs(180))
+            .build()
+            .unwrap_or_else(|_| Client::new());
+        Self {
+            http,
+            base_url: base_url.trim_end_matches('/').to_string(),
+            api_key,
+            chatgpt_account_id: None,
+            codex_auth_live: false,
+            linggen_account_live: false,
+        }
+    }
+
+    /// Create a client configured for ChatGPT OAuth (subscription-based access).
+    /// Reads fresh tokens from codex_auth.json on each request.
+    pub fn new_chatgpt_oauth(
+        base_url: String,
+        access_token: String,
+        account_id: Option<String>,
+    ) -> Self {
+        let http = Client::builder()
+            .timeout(std::time::Duration::from_secs(300))
+            .connect_timeout(std::time::Duration::from_secs(10))
+            // The total timeout above does NOT govern bodies consumed via
+            // bytes_stream() (reqwest gap) — a backend that accepts the
+            // request and then goes silent wedges the run forever (observed
+            // live 2026-07-10: 35 min on one Responses API call). read_timeout
+            // bounds every socket read, streaming included; reasoning models'
+            // silent thinking gaps stay well under it, and the resulting
+            // error is transient-classified so the model fallback chain runs.
+            .read_timeout(std::time::Duration::from_secs(180))
+            .build()
+            .unwrap_or_else(|_| Client::new());
+        Self {
+            http,
+            base_url: base_url.trim_end_matches('/').to_string(),
+            api_key: Some(access_token),
+            chatgpt_account_id: account_id,
+            codex_auth_live: true,
+            linggen_account_live: false,
+        }
+    }
+
+    /// Create a client for the Linggen Cloud proxy (linggen.dev/api/llm).
+    /// The account token is resolved fresh on each request.
+    pub fn new_linggen_account(base_url: String) -> Self {
+        let mut client = Self::new(base_url, None);
+        client.linggen_account_live = true;
+        client
+    }
+
+    /// Apply auth headers to a request builder.
+    fn apply_auth(&self, mut rb: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        if self.codex_auth_live {
+            // Read fresh token from disk so login/refresh is picked up immediately
+            let tokens = crate::provider::codex_auth::CodexAuthTokens::load(
+                &crate::provider::codex_auth::codex_auth_file(),
+            );
+            if let Some(ref token) = tokens.access_token {
+                rb = rb.header("Authorization", format!("Bearer {}", token));
+            }
+            if let Some(ref account_id) = tokens.account_id {
+                rb = rb.header("ChatGPT-Account-Id", account_id);
+            }
+            // The Codex backend routes model slugs by originator+version;
+            // with no originator, gpt-5.6-luna resolved to a missing
+            // internal engine and 404'd ("Model not found"), and a version
+            // older than a model's launch refuses it ("not supported when
+            // using Codex with a ChatGPT account" — gpt-6-* under 0.144.1,
+            // gpt-6.1-sol under 0.159). Identify as a current Codex CLI
+            // (openai/codex#31967); bump the version with each built-in
+            // generation.
+            rb = rb.header("originator", "codex_cli_rs");
+            rb = rb.header("version", "0.159.2");
+        } else if self.linggen_account_live {
+            if let Some((token, _)) = crate::account::resolve_token() {
+                rb = rb.header("Authorization", format!("Bearer {}", token));
+            }
+        } else {
+            if let Some(key) = &self.api_key {
+                rb = rb.header("Authorization", format!("Bearer {}", key));
+            }
+            if let Some(account_id) = &self.chatgpt_account_id {
+                rb = rb.header("ChatGPT-Account-Id", account_id);
+            }
+        }
+        rb
+    }
+
+    /// Tag the request with the app product for per-app usage attribution on
+    /// the Linggen Cloud proxy (it meters tokens per X-Linggen-App bucket).
+    /// No-op for every other provider.
+    fn with_app_header(
+        &self,
+        rb: reqwest::RequestBuilder,
+        app: Option<&str>,
+    ) -> reqwest::RequestBuilder {
+        match app {
+            Some(app) if self.linggen_account_live => rb.header("X-Linggen-App", app),
+            _ => rb,
+        }
+    }
+
+    /// Format a non-success provider response into a user-facing error.
+    /// Payment errors carry the proxy's message (subscribe / trial CTA)
+    /// verbatim — Linggen Cloud 402s get a `BILLING_REQUIRED:` prefix so the
+    /// chat UI renders the subscribe card; live-auth 401s become sign-in CTAs.
+    fn provider_error(&self, status: reqwest::StatusCode, text: String) -> anyhow::Error {
+        use crate::provider::error::{ProviderError, ProviderErrorKind};
+        if self.codex_auth_live && status == reqwest::StatusCode::UNAUTHORIZED {
+            return ProviderError::new(
+                ProviderErrorKind::Auth,
+                "AUTH_REQUIRED: ChatGPT session expired. Sign in with ChatGPT to continue."
+                    .to_string(),
+            )
+            .into();
+        }
+        if self.linggen_account_live && status == reqwest::StatusCode::UNAUTHORIZED {
+            return ProviderError::new(
+                ProviderErrorKind::Auth,
+                "AUTH_REQUIRED: linggen.dev sign-in missing or expired. Run `ling account login`."
+                    .to_string(),
+            )
+            .into();
+        }
+        // A spent Linggen Cloud allowance: the trial's 402, or the monthly
+        // pool's 429 (`monthly_cap_exceeded`). The proxy's code leads the
+        // line after the marker, so every surface reads which one it was.
+        if self.linggen_account_live {
+            if let Some(line) = billing_line(status, &text) {
+                return ProviderError::new(ProviderErrorKind::QuotaExhausted, line).into();
+            }
+        }
+        if status == reqwest::StatusCode::PAYMENT_REQUIRED {
+            if let Some(msg) = extract_error_message(&text) {
+                return ProviderError::new(ProviderErrorKind::QuotaExhausted, msg).into();
+            }
+        }
+        let truncated = if text.len() > 500 {
+            format!(
+                "{}… ({} chars)",
+                &text[..text.floor_char_boundary(500)],
+                text.len()
+            )
+        } else {
+            text.clone()
+        };
+        ProviderError::http(
+            status,
+            &text,
+            format!("openai error ({}): {}", status, truncated),
+        )
+        .into()
+    }
+
+    /// Send a request, applying auth fresh each attempt. In ChatGPT OAuth
+    /// mode a 401 means the access token expired — refresh it once using the
+    /// stored refresh token and retry transparently. Only when the refresh
+    /// itself fails (refresh token revoked/expired) does the 401 propagate,
+    /// where the caller turns it into an `AUTH_REQUIRED:` sign-in CTA.
+    async fn send_with_oauth_retry(
+        &self,
+        rb: reqwest::RequestBuilder,
+    ) -> anyhow::Result<reqwest::Response> {
+        let first = self.apply_auth(
+            rb.try_clone()
+                .ok_or_else(|| anyhow::anyhow!("request body not cloneable for auth retry"))?,
+        );
+        let resp = first.send().await?;
+        if resp.status() != reqwest::StatusCode::UNAUTHORIZED || !self.codex_auth_live {
+            return Ok(resp);
+        }
+        if !self.try_refresh_codex_tokens().await {
+            return Ok(resp);
+        }
+        // apply_auth re-reads codex_auth.json, so the retry uses the fresh token.
+        Ok(self.apply_auth(rb).send().await?)
+    }
+
+    /// Attempt a one-shot refresh of the on-disk ChatGPT OAuth tokens.
+    /// Returns true if a new token was fetched and saved.
+    async fn try_refresh_codex_tokens(&self) -> bool {
+        use crate::provider::codex_auth;
+        let tokens = codex_auth::CodexAuthTokens::load(&codex_auth::codex_auth_file());
+        if tokens.refresh_token.is_none() {
+            return false;
+        }
+        match codex_auth::refresh_tokens(&self.http, &tokens).await {
+            Ok(new) => match new.save(&codex_auth::codex_auth_file()) {
+                Ok(()) => {
+                    tracing::info!("Refreshed expired ChatGPT OAuth token after 401.");
+                    true
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to save refreshed ChatGPT tokens: {}", e);
+                    false
+                }
+            },
+            Err(e) => {
+                tracing::warn!("ChatGPT token refresh after 401 failed: {}", e);
+                false
+            }
+        }
+    }
+
+    /// Whether this client uses the ChatGPT Responses API (OAuth mode).
+    pub(crate) fn uses_responses_api(&self) -> bool {
+        self.chatgpt_account_id.is_some()
+    }
+
+    /// Read the signed-in ChatGPT account's Codex metadata.
+    pub async fn codex_metadata(&self, path: &str) -> anyhow::Result<serde_json::Value> {
+        let url = format!("{}/{}", self.base_url.trim_end_matches('/'), path);
+        let request = self.http.get(url).timeout(std::time::Duration::from_secs(5));
+        let response = self.send_with_oauth_retry(request).await?.error_for_status()?;
+        Ok(response.json().await?)
+    }
+
+    pub(crate) async fn codex_context_window(&self, model: &str) -> anyhow::Result<usize> {
+        let json = self.codex_metadata("models?client_version=0.159.2").await?;
+        json.get("models").and_then(|v| v.as_array())
+            .and_then(|models| models.iter().find(|m| m.get("slug").and_then(|v| v.as_str()) == Some(model)))
+            .and_then(|m| m.get("context_window")).and_then(|v| v.as_u64())
+            .filter(|v| *v > 0).map(|v| v as usize)
+            .ok_or_else(|| anyhow::anyhow!("context window unavailable for model"))
+    }
+
+    /// Try to fetch context window size from the provider's models endpoint.
+    /// Works for: Gemini (`inputTokenLimit`), OpenAI (`context_window` if present).
+    /// Returns None if not available.
+    pub async fn get_context_window(&self, model: &str) -> Option<usize> {
+        // Try OpenAI-compatible /models/{id} endpoint. Best-effort metadata:
+        // a backend that never answers must not hold up an agent turn for the
+        // client's 180s read timeout, so cap the whole probe at 5s.
+        let url = format!("{}/models/{}", self.base_url, model);
+        let resp = self
+            .apply_auth(self.http.get(&url))
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .await
+            .ok()?;
+        if !resp.status().is_success() {
+            return None;
+        }
+        let json: serde_json::Value = resp.json().await.ok()?;
+        // Gemini returns inputTokenLimit at top level
+        if let Some(limit) = json.get("inputTokenLimit").and_then(|v| v.as_u64()) {
+            return Some(limit as usize);
+        }
+        // Some OpenAI-compatible providers return context_window or context_length
+        if let Some(limit) = json.get("context_window").and_then(|v| v.as_u64()) {
+            return Some(limit as usize);
+        }
+        if let Some(limit) = json.get("context_length").and_then(|v| v.as_u64()) {
+            return Some(limit as usize);
+        }
+        None
+    }
+
+    /// Check if a model supports reasoning effort control.
+    pub(super) fn model_supports_reasoning(model: &str, is_gemini: bool) -> bool {
+        let m = model.to_lowercase();
+        // OpenAI reasoning models
+        if m.contains("gpt-5")
+            || m.contains("gpt-6")
+            || m.contains("o3")
+            || m.contains("o4")
+            || m.contains("o1")
+        {
+            return true;
+        }
+        // Gemini 2.5 thinking models
+        if is_gemini && m.contains("2.5") {
+            return true;
+        }
+        // DeepSeek reasoning
+        if m.contains("deepseek-r") || m.contains("deepseek-reasoner") {
+            return true;
+        }
+        false
+    }
+
+    /// Apply reasoning effort to a request based on provider.
+    /// - OpenAI (GPT-5, o3, o4-mini): `reasoning_effort` field
+    /// - Gemini 2.5: `generationConfig.thinkingConfig.thinkingBudget`
+    /// - Others: no-op (unknown params are silently ignored by most providers)
+    pub(super) fn apply_reasoning_effort(
+        req: &mut serde_json::Value,
+        effort: Option<&str>,
+        is_gemini: bool,
+        model: &str,
+    ) {
+        let Some(effort) = effort else { return };
+        let effort_lower = effort.to_lowercase();
+        if !["low", "medium", "high"].contains(&effort_lower.as_str()) {
+            return;
+        }
+
+        // Only send to models that support it — avoid API errors on others
+        if !Self::model_supports_reasoning(model, is_gemini) {
+            return;
+        }
+
+        if is_gemini && model.to_lowercase().contains("2.5") {
+            // Gemini uses thinkingBudget (token count): low=1024, medium=8192, high=32768
+            let budget = match effort_lower.as_str() {
+                "low" => 1024,
+                "high" => 32768,
+                _ => 8192, // medium
+            };
+            req["generationConfig"] = serde_json::json!({
+                "thinkingConfig": { "thinkingBudget": budget }
+            });
+        } else {
+            // OpenAI-compatible: reasoning_effort field (GPT-5, o3, o4-mini)
+            req["reasoning_effort"] = serde_json::json!(effort_lower);
+        }
+    }
+
+    /// POST a turn's request and hand back the response, or the provider's
+    /// error if it refused.
+    async fn send_turn(
+        &self,
+        rb: reqwest::RequestBuilder,
+        app: Option<&str>,
+    ) -> Result<reqwest::Response> {
+        let resp = self
+            .send_with_oauth_retry(self.with_app_header(rb, app))
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(self.provider_error(status, text));
+        }
+        Ok(resp)
+    }
+
+    /// Streaming text chat completion (SSE format).
+    /// Uses Responses API for ChatGPT OAuth, Chat Completions for standard API.
+    pub async fn chat_text_stream(
+        &self,
+        model: &str,
+        messages: &[crate::message::ChatMessage],
+        reasoning_effort: Option<&str>,
+        app: Option<&str>,
+    ) -> Result<impl Stream<Item = Result<StreamChunk>> + Send> {
+        let total_len: usize = messages.iter().map(|m| m.content.len()).sum();
+        tracing::info!(
+            "OpenAI stream: model={} msgs={} chars={}",
+            model,
+            messages.len(),
+            total_len
+        );
+        if let Some(last) = messages.last() {
+            tracing::debug!("Last msg ({}): {:.200}", last.role, last.content);
+        }
+
+        let (rb, parse): (_, Parser) = if self.uses_responses_api() {
+            let mut stream = responses_api::ResponsesStream::default();
+            (
+                responses_api::text_request(self, model, messages),
+                Box::new(move |data| stream.text_event(data)),
+            )
+        } else {
+            (
+                chat_completions::text_request(self, model, messages, reasoning_effort),
+                Box::new(|data| {
+                    chat_completions::parse_text_chunk(data)
+                        .into_iter()
+                        .collect()
+                }),
+            )
+        };
+        let first = crate::provider::FirstEvent::start(&self.base_url);
+        let resp = first.within(self.send_turn(rb, app)).await??;
+        parse_sse(resp, parse, &first).await
+    }
+
+    /// Streaming chat with native tool calling support (SSE format).
+    /// Sends tool definitions and parses incremental tool_call deltas.
+    /// Uses Responses API for ChatGPT OAuth, Chat Completions for standard API.
+    pub async fn chat_tool_stream(
+        &self,
+        model: &str,
+        messages: &[crate::message::ChatMessage],
+        tools: Vec<serde_json::Value>,
+        reasoning_effort: Option<&str>,
+        app: Option<&str>,
+    ) -> Result<impl Stream<Item = Result<StreamChunk>> + Send> {
+        let total_len: usize = messages.iter().map(|m| m.content.len()).sum();
+        tracing::info!(
+            "OpenAI tool stream: model={} msgs={} chars={} tools={}",
+            model,
+            messages.len(),
+            total_len,
+            tools.len()
+        );
+
+        let (rb, parse): (_, Parser) = if self.uses_responses_api() {
+            let mut stream = responses_api::ResponsesStream::default();
+            (
+                responses_api::tool_request(self, model, messages, &tools, reasoning_effort),
+                Box::new(move |data| stream.tool_event(data)),
+            )
+        } else {
+            (
+                chat_completions::tool_request(self, model, messages, tools, reasoning_effort),
+                Box::new(chat_completions::parse_tool_chunk),
+            )
+        };
+        let first = crate::provider::FirstEvent::start(&self.base_url);
+        let resp = first.within(self.send_turn(rb, app)).await??;
+        parse_sse(resp, parse, &first).await
+    }
+}
+
+/// The chat's line for a Linggen Cloud refusal on a spent allowance:
+/// `BILLING_REQUIRED: <code>: <proxy message>`. `None` for anything else —
+/// a 429 that is a plain rate limit stays a rate limit.
+fn billing_line(status: reqwest::StatusCode, text: &str) -> Option<String> {
+    let code = extract_error_code(text).unwrap_or_default();
+    let spent = match status.as_u16() {
+        402 => true,
+        429 => code == "monthly_cap_exceeded",
+        _ => false,
+    };
+    if !spent {
+        return None;
+    }
+    let code = if code.is_empty() {
+        "trial_exhausted"
+    } else {
+        code.as_str()
+    };
+    let msg = extract_error_message(text).unwrap_or_default();
+    Some(format!("BILLING_REQUIRED: {code}: {msg}"))
+}
+
+#[cfg(test)]
+mod billing_line_tests {
+    use super::billing_line;
+    use reqwest::StatusCode;
+
+    fn body(code: &str, msg: &str) -> String {
+        format!(r#"{{"error":{{"message":"{msg}","type":"x","code":"{code}"}}}}"#)
+    }
+
+    #[test]
+    fn trial_and_monthly_pool_both_read_as_billing() {
+        let trial = billing_line(
+            StatusCode::PAYMENT_REQUIRED,
+            &body("trial_exhausted", "Your free tokens are used up for now."),
+        );
+        assert_eq!(
+            trial.as_deref(),
+            Some("BILLING_REQUIRED: trial_exhausted: Your free tokens are used up for now.")
+        );
+        let pool = billing_line(
+            StatusCode::TOO_MANY_REQUESTS,
+            &body("monthly_cap_exceeded", "Monthly token limit reached"),
+        );
+        assert!(pool
+            .unwrap()
+            .starts_with("BILLING_REQUIRED: monthly_cap_exceeded:"));
+    }
+
+    #[test]
+    fn a_plain_rate_limit_is_not_billing() {
+        assert_eq!(
+            billing_line(
+                StatusCode::TOO_MANY_REQUESTS,
+                &body("rate_limited", "slow down")
+            ),
+            None
+        );
+        assert_eq!(billing_line(StatusCode::BAD_GATEWAY, "oops"), None);
+    }
+}
+
+#[cfg(test)]
+mod first_event_wire_tests {
+    use super::*;
+    use crate::provider::error::{kind_of, ProviderErrorKind};
+    use std::time::{Duration, Instant};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// A backend on a local socket: it reads the request, waits `delay`, then
+    /// answers `reply` (headers and the first event in one write).
+    async fn backend(delay: Duration, reply: &'static str) -> std::net::SocketAddr {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                return;
+            };
+            let mut buf = vec![0u8; 65536];
+            let _ = sock.read(&mut buf).await;
+            tokio::time::sleep(delay).await;
+            let _ = sock.write_all(reply.as_bytes()).await;
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        });
+        addr
+    }
+
+    const SSE: &str = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\ndata: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n";
+
+    /// Ask the backend as a remote host would be asked: a non-loopback name
+    /// pointed at the local socket, so the local-backend exemption stays out.
+    async fn ask(addr: std::net::SocketAddr) -> Result<()> {
+        let host = "backend.example";
+        let mut client =
+            OpenAiClient::new(format!("http://{host}:{}", addr.port()), Some("k".into()));
+        client.http = Client::builder().resolve(host, addr).build().unwrap();
+        send(client).await
+    }
+
+    async fn ask_local(addr: std::net::SocketAddr) -> Result<()> {
+        send(OpenAiClient::new(
+            format!("http://{addr}"),
+            Some("k".into()),
+        ))
+        .await
+    }
+
+    async fn send(client: OpenAiClient) -> Result<()> {
+        let msgs = vec![crate::message::ChatMessage::new("user", "hi".to_string())];
+        client
+            .chat_tool_stream("m", &msgs, vec![], None, None)
+            .await
+            .map(|_| ())
+    }
+
+    // The first-event window is process-wide: one test owns it.
+    #[tokio::test]
+    async fn the_first_event_guard_on_a_real_socket() {
+        crate::provider::set_first_event_timeout(Some(1));
+
+        let silent = backend(Duration::from_secs(4), SSE).await;
+        let t = Instant::now();
+        let err = ask(silent).await.unwrap_err();
+        assert_eq!(kind_of(&err), ProviderErrorKind::Stalled, "{err:#}");
+        assert!(
+            t.elapsed() < Duration::from_secs(3),
+            "tripped at the window, not later"
+        );
+
+        let prompt = backend(Duration::from_millis(100), SSE).await;
+        ask(prompt)
+            .await
+            .expect("an answer inside the window passes");
+
+        // The same silence from a model on this machine (Ollama, MLX) is a
+        // load, not a stall: it is waited out.
+        let loading = backend(Duration::from_millis(1500), SSE).await;
+        ask_local(loading)
+            .await
+            .expect("a local backend is exempt from the guard");
+
+        crate::provider::set_first_event_timeout(None);
+    }
+}

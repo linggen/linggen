@@ -1,0 +1,1862 @@
+pub mod actions;
+pub mod agent;
+pub mod answer_refs;
+pub mod background;
+pub mod claude_sdk;
+mod closing_ask;
+pub(crate) mod cloud_meter;
+pub mod compaction;
+mod context;
+mod dispatch;
+mod foreground_task;
+pub mod events;
+pub mod mission;
+pub mod image_relevance;
+pub mod image_search;
+pub(crate) mod light_turn;
+pub mod picture_sheet;
+pub mod page_pictures;
+pub mod permission;
+mod plan;
+pub mod prompt;
+pub mod render;
+mod render_media;
+mod run_scope;
+pub mod session_policy;
+pub mod shown_images;
+pub mod skill;
+pub mod skill_activation;
+pub mod skill_tool;
+pub mod steer;
+#[cfg(test)]
+mod steer_loop_tests;
+mod streaming;
+pub mod suggestion;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_registries;
+pub mod tool_exec;
+pub mod tool_registry;
+pub mod tool_render;
+pub mod tool_scope;
+pub mod tools;
+mod types;
+pub mod video_search;
+pub mod web_fetch;
+pub mod web_search;
+
+// Re-export public API types
+pub use types::{
+    ActiveMission, AgentEngine, AgentOutcome, AgentRole, ContextType, EngineConfig, InterfaceMode,
+    InboxMessage, Plan, PlanStatus, StreamedToken, ThreadMark,
+};
+
+pub use actions::{
+    looks_like_final_answer, model_message_log_parts, parse_all_actions, text_before_first_json,
+    ModelAction,
+};
+
+pub use skill_activation::{ActivationMode, ActivationOutcome};
+
+pub use context::summarize_text;
+
+// Internal imports used by run_agent_loop
+use closing_ask::ClosingAsk;
+use streaming::{can_parallel_tool, has_write_path_conflicts};
+use types::{KickoffTurn, LoopControl, LoopState, ParsedToolCall};
+
+use crate::message::ChatMessage;
+use anyhow::Result;
+use serde_json::Value as JsonValue;
+use std::collections::HashMap;
+use tracing::{debug, info, warn};
+
+impl AgentEngine {
+    /// Convert native ParsedToolCalls into ModelActions for dispatch.
+    /// "Done" calls are filtered out — the loop stops when no tool calls remain.
+    fn tool_calls_to_actions(tool_calls: &[ParsedToolCall]) -> Vec<ModelAction> {
+        tool_calls
+            .iter()
+            .filter_map(|tc| {
+                match tc.name.as_str() {
+                    "" => {
+                        // Empty tool name — skip (some models produce phantom calls)
+                        tracing::warn!("Skipping native tool call with empty name");
+                        None
+                    }
+                    "Done" => {
+                        // No longer a real tool — ignore. Loop stops when no tool calls.
+                        None
+                    }
+                    _ => Some(ModelAction {
+                        tool: tc.name.clone(),
+                        args: tc.arguments.clone(),
+                    }),
+                }
+            })
+            .collect()
+    }
+
+    /// Drain one pending kickoff turn, if any, persisting it as a user
+    /// message and pushing it into the running loop state. Called at
+    /// each "final assistant reply" return site so multi-item missions
+    /// continue past the first response instead of exiting the loop.
+    /// Returns `true` when an item was drained — caller should `continue`
+    /// the agent loop instead of returning.
+    ///
+    /// Early-drain: when `final_reply` is exactly one of the mission's
+    /// `kickoff-stop` sentinels (e.g. the dream mission's `DONE` on an
+    /// empty worklist), the remaining queue is discarded — the run is
+    /// complete and the leftover nudge items would each burn a no-op
+    /// model turn.
+    async fn try_drain_kickoff(
+        &mut self,
+        state: &mut LoopState,
+        session_id: Option<&str>,
+        final_reply: &str,
+    ) -> bool {
+        if let Some((sentinel, items)) = take_kickoff_branch(&mut self.kickoff_then, final_reply) {
+            info!(
+                "kickoff: branch {sentinel:?} — {} item(s) replace {} queued",
+                items.len(),
+                self.kickoff_queue.len()
+            );
+            self.kickoff_queue = items.into();
+        }
+        if !self.kickoff_queue.is_empty() && kickoff_stop_hit(&self.kickoff_stop, final_reply) {
+            info!(
+                "kickoff: completion sentinel {:?} — discarding {} queued item(s)",
+                final_reply.trim(),
+                self.kickoff_queue.len()
+            );
+            self.kickoff_queue.clear();
+            return false;
+        }
+        let Some(next) = self.kickoff_queue.pop_front() else {
+            return false;
+        };
+        if self.tools.get_manager().is_some() {
+            let agent_id = self
+                .agent_id
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string());
+            self.save_row(
+                session_id,
+                crate::state_fs::sessions::ChatMsg {
+                    run_id: None,
+                    via: None,
+                    via_note: None,
+                    agent_id: agent_id.clone(),
+                    from_id: "user".to_string(),
+                    to_id: agent_id,
+                    content: next.clone(),
+                    timestamp: crate::util::now_ts_secs(),
+                    is_observation: false,
+                    client_id: None,
+                    failed: false,
+                    images: Vec::new(),
+                },
+            )
+            .await;
+            self.emit(crate::engine::agent::AgentEvent::StateUpdated)
+                .await;
+        }
+        // The next item answers this reply, so the model sees it first.
+        state
+            .messages
+            .push(ChatMessage::new("assistant", final_reply.to_string()));
+        if self.kickoff_fresh {
+            self.fold_finished_kickoff_turn(&mut state.messages);
+        }
+        state.messages.push(ChatMessage::new("user", next.clone()));
+        self.kickoff_turn = KickoffTurn::opened_by_last(&state.messages);
+        self.chat_history.push(ChatMessage::new("user", next));
+        true
+    }
+
+    /// `kickoff-fresh`: drop the finished turn's working messages.
+    fn fold_finished_kickoff_turn(&mut self, messages: &mut Vec<ChatMessage>) {
+        let Some(turn) = self.kickoff_turn.take() else {
+            return;
+        };
+        let before = messages.len();
+        if fold_kickoff_turn(messages, &turn) {
+            self.accumulated_token_estimate = Self::estimate_tokens_for_messages(messages);
+            info!(
+                "kickoff: fresh context — folded {} message(s) of the finished turn",
+                before - messages.len()
+            );
+        }
+    }
+
+    /// The permissions this loop runs under: the session's permission.json —
+    /// every member's alike — initialized with the configured default mode
+    /// on the starting cwd for a new user session.
+    fn load_session_permissions(&mut self, sid: &str) {
+        let sdir = crate::paths::global_sessions_dir().join(sid);
+        self.session_permissions = permission::SessionPermissions::load(&sdir);
+
+        // Mission and proxy-consumer sessions are non-interactive — they
+        // pause/fail instead of prompting. Re-apply after load, since
+        // permission.json may have been written before this flag was set.
+        if self.cfg.consumer_allowed_tools.is_some() || self.cfg.mission_allowed_tools.is_some() {
+            self.session_permissions.interactive = false;
+        }
+
+        // Initialize default path_modes if empty (new user session →
+        // configured default mode on starting cwd). Mission/consumer
+        // sessions get their grants from frontmatter; skip the default.
+        if self.session_permissions.path_modes.is_empty() && self.session_permissions.interactive {
+            let actual_cwd = self.tools.builtins.cwd();
+            let cwd_str = if let Some(home) = dirs::home_dir() {
+                let ws = actual_cwd.to_string_lossy();
+                let hs = home.to_string_lossy();
+                if ws.starts_with(hs.as_ref()) {
+                    format!("~{}", &ws[hs.len()..])
+                } else {
+                    ws.to_string()
+                }
+            } else {
+                actual_cwd.to_string_lossy().to_string()
+            };
+            self.session_permissions
+                .set_path_mode(&cwd_str, self.cfg.permission_mode);
+            self.session_permissions.save(&sdir);
+        }
+
+        self.session_dir = Some(sdir);
+    }
+
+    /// One chat, one permission set: re-read the session's grant table, so
+    /// a grant the person makes in any of the chat's runs — the main chat or
+    /// a subagent at any depth — holds in all of them at once. `interactive`
+    /// stays this run's own (a policy or a mission may have locked it).
+    pub(crate) fn sync_session_grants(&mut self) {
+        if let Some(modes) = self
+            .session_dir
+            .as_deref()
+            .and_then(permission::SessionPermissions::read_path_modes)
+        {
+            self.session_permissions.path_modes = modes;
+        }
+    }
+
+    /// A subagent runs under the chat's permissions, not a copy: it reads
+    /// the session's grant table live and saves what the person grants on
+    /// its prompt there, where the main chat and the badge see it.
+    pub(crate) fn join_session_permissions(&mut self, sid: &str) {
+        let sdir = crate::paths::global_sessions_dir().join(sid);
+        self.session_permissions.own_dir = Some(sdir.clone());
+        self.session_dir = Some(sdir);
+        self.sync_session_grants();
+    }
+
+    /// Pre-loop setup: load session permissions, emit "working" status,
+    /// sync world state, validate the task, push the start-of-loop
+    /// context record, prime context-window/token estimates, and
+    /// construct the initial `LoopState`.
+    ///
+    /// Extracted from the head of `run_agent_loop` so the loop body
+    /// proper reads as a tight iteration over model turns. Mutates
+    /// `self` (sets `session_id`, `session_dir`, `session_permissions`,
+    /// `context_window_tokens`, `accumulated_token_estimate`,
+    /// `native_tool_mode`, plus the builtins' progress channel).
+    async fn initialize_loop(&mut self, session_id: Option<&str>) -> Result<LoopState> {
+        self.session_id = session_id.map(|s| s.to_string());
+        // What the person declined last run is asked again in this one.
+        self.declined_scopes.clear();
+
+        if let Some(sid) = session_id {
+            if self.tools.builtins.delegation_depth() == 0 {
+                self.load_session_permissions(sid);
+            }
+        }
+
+        if self.is_cancelled().await {
+            anyhow::bail!("run cancelled");
+        }
+
+        if self.tools.get_manager().is_some() {
+            let agent_id = self
+                .agent_id
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string());
+            self.emit(crate::engine::agent::AgentEvent::AgentStatus {
+                agent_id,
+                status: "working".to_string(),
+                detail: Some("Running".to_string()),
+                parent_id: self.parent_agent_id.clone(),
+                run_id: self.run_id.clone(),
+                parent_run_id: self.parent_run_id.clone(),
+            })
+            .await;
+        }
+
+        // Sync world state before running the loop if we have a manager
+        if let Some(manager) = self.tools.get_manager() {
+            let _ = manager.sync_world_state(&self.cfg.ws_root).await;
+        }
+
+        // Set up progress channel for streaming Bash output.
+        let (progress_tx, progress_rx) =
+            tokio::sync::mpsc::unbounded_channel::<(String, String, String)>();
+        self.tools.builtins.set_progress_tx(progress_tx);
+
+        let Some(task) = self.task.clone() else {
+            anyhow::bail!("no task set; use /task <text>");
+        };
+
+        let log_run = self.run_id.clone().unwrap_or_else(|| "root".to_string());
+        // Task strings can be 100+ lines (e.g. MEMORY_EXTRACT embeds the full
+        // dashboard-page-layout prompt). Logging the whole thing at INFO
+        // overwhelms the log. Show the first non-blank line + size so a
+        // human can match run IDs to tasks; full text remains at DEBUG.
+        let task_summary = summarize_task_for_log(task.as_ref());
+        info!(
+            "[{}] Starting agent loop for role {:?} (depth={}) task: {}",
+            log_run,
+            self.role,
+            self.tools.builtins.delegation_depth(),
+            task_summary,
+        );
+        // Cap the DEBUG dump too — a 3KB hidden-init prompt blowing up
+        // every agent loop line in the log is just noise. Full task is
+        // persisted to context records below, query that when needed.
+        tracing::debug!(
+            "[{}] Task: {}",
+            log_run,
+            truncate_for_log(task.as_ref(), 800),
+        );
+        self.push_context_record(
+            ContextType::Status,
+            Some("autonomous_loop_start".to_string()),
+            self.agent_id.clone(),
+            None,
+            format!("Starting autonomous loop for task: {}", task),
+            serde_json::json!({ "mode": "structured" }),
+        );
+
+        // Record start of loop in session store. Skip for subagents
+        // (delegation_depth > 0): they share the parent's session_id, so
+        // a write here would dump every subagent's task prompt — e.g.
+        // the encoder's full "<recent-exchange>...</recent-exchange>"
+        // payload — into the parent's messages.jsonl as a system
+        // observation, which then re-renders on every chat reload.
+        if self.tools.get_manager().is_some() {
+            if self.tools.builtins.delegation_depth() == 0 {
+                let aid = self
+                    .agent_id
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_string());
+                self.save_row(
+                    session_id,
+                    crate::state_fs::sessions::ChatMsg {
+                        run_id: None,
+                        via: None,
+                        via_note: None,
+                        agent_id: aid.clone(),
+                        from_id: "system".to_string(),
+                        to_id: aid,
+                        content: format!("Starting autonomous loop for task: {}", task),
+                        timestamp: crate::util::now_ts_secs(),
+                        is_observation: true,
+                        client_id: None,
+                        failed: false,
+                        images: Vec::new(),
+                    },
+                )
+                .await;
+            }
+        }
+
+        // Query and cache the model's context window for adaptive thresholds
+        // — again whenever the model is not the one it was read for.
+        if self.context_window_tokens.is_none()
+            || self.context_window_model.as_deref() != Some(self.model_id.as_str())
+        {
+            self.refresh_context_window().await;
+            if let Some(cw) = self.context_window_tokens {
+                debug!(
+                    "Context window: {}t, soft_limit={}, tail_budget={}t",
+                    cw,
+                    self.context_soft_token_limit(),
+                    self.context_tail_token_budget()
+                );
+            }
+        }
+
+        let use_native_tools = self.model_manager.supports_tools(&self.model_id);
+        info!(
+            "[{}] Agent loop: model_id={}, native_tools={}, reasoning_effort={:?}",
+            log_run, self.model_id, use_native_tools, self.reasoning_effort
+        );
+        let (messages, allowed_tools, read_paths) = self.prepare_loop_messages(
+            &task,
+            use_native_tools,
+            crate::engine::prompt::PromptPurpose::Turn,
+        );
+
+        // Initialize accumulated token estimate from current messages.
+        self.accumulated_token_estimate = Self::estimate_tokens_for_messages(&messages);
+
+        let state = LoopState {
+            messages,
+            allowed_tools,
+            read_paths,
+            tool_cache: HashMap::new(),
+            empty_search_streak: 0,
+            redundant_tool_streak: 0,
+            last_tool_sig: String::new(),
+            invalid_json_streak: 0,
+            last_assistant_response: String::new(),
+            identical_response_streak: 0,
+            loop_nudge_count: 0,
+            empty_response_streak: 0,
+            progress_rx,
+        };
+        self.native_tool_mode = use_native_tools;
+        Ok(state)
+    }
+
+    /// Run the loop to an outcome. A panic anywhere inside comes back as an
+    /// error, so chat, missions, delegation and `agent_run` each end the run
+    /// through their own failure handling instead of hanging on a dead task.
+    pub async fn run_agent_loop(&mut self, session_id: Option<&str>) -> Result<AgentOutcome> {
+        let outcome = crate::util::panic_as_error(self.run_agent_loop_unguarded(session_id)).await;
+        self.settle_open_calls().await;
+        // A finished checklist ends with its run (every caller: chat, agent_run, missions).
+        self.settle_finished_plan().await;
+        outcome
+    }
+
+    async fn run_agent_loop_unguarded(&mut self, session_id: Option<&str>) -> Result<AgentOutcome> {
+        self.begin_suggestion_turn();
+        let mut state = self.initialize_loop(session_id).await?;
+        self.kickoff_turn = KickoffTurn::opened_by_last(&state.messages);
+        self.closing_ask = None;
+        self.last_ask_answered = false;
+        let log_run = self.run_id.clone().unwrap_or_else(|| "root".to_string());
+
+        let mut iterations = 0;
+        loop {
+            if iterations >= self.cfg.max_iters {
+                if self.close_or_receive_run_messages(&mut state.messages, None).await {
+                    iterations = self.cfg.max_iters.saturating_sub(1);
+                } else {
+                    break;
+                }
+            }
+            iterations += 1;
+            if let (Some(manager), Some(run)) = (self.tools.get_manager(), self.run_id.as_deref()) {
+                for message in manager.drain_run_messages(run) {
+                    self.push_tracked_message(&mut state.messages, ChatMessage::new("user", message));
+                }
+            }
+            if self.is_cancelled().await {
+                anyhow::bail!("run cancelled");
+            }
+
+            // What the person sent while we worked joins this turn here, at
+            // the step boundary, as Claude Code folds queued input between
+            // tool rounds — the turn goes on with it instead of ending.
+            if self.take_inbox(&mut state.messages).await {
+                anyhow::bail!("run cancelled");
+            }
+
+            if self.tools.get_manager().is_some() {
+                let agent_id = self
+                    .agent_id
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_string());
+                self.emit(crate::engine::agent::AgentEvent::AgentStatus {
+                    agent_id,
+                    status: "thinking".to_string(),
+                    detail: Some(format!("Thinking ({})", self.model_id)),
+                    parent_id: self.parent_agent_id.clone(),
+                    run_id: self.run_id.clone(),
+                    parent_run_id: self.parent_run_id.clone(),
+                })
+                .await;
+            }
+
+            // Skip compaction while executing an approved plan — the model
+            // needs full tool-result context to track progress against plan steps.
+            let executing_plan = self
+                .plan
+                .as_ref()
+                .map(|p| p.status == PlanStatus::Executing || p.status == PlanStatus::Approved)
+                .unwrap_or(false);
+            let summary_count = if executing_plan {
+                0
+            } else {
+                self.maybe_compact_model_messages(&mut state.messages, "loop_iter")
+                    .await
+            };
+            self.emit_context_usage_event("loop_iter", &state.messages, summary_count)
+                .await;
+
+            // Determine whether to use native tool calling for this model.
+            let native_tools = if self.model_manager.supports_tools(&self.model_id) {
+                Some(self.offered_tool_definitions(state.allowed_tools.as_ref()))
+            } else {
+                None
+            };
+
+            // Ask model for the next action, streaming thinking tokens.
+            let stream_result = self
+                .stream_with_fallback(&state.messages, native_tools.clone())
+                .await?;
+            if stream_result.steered {
+                // Steer: keep what was said, then the loop top takes the
+                // message in and the turn goes on.
+                self.keep_steered_reply(stream_result.full_text, &mut state.messages, session_id)
+                    .await;
+                continue;
+            }
+            let raw = stream_result.full_text;
+            let stream_first_action = stream_result.first_action;
+            let native_tool_calls = stream_result.tool_calls;
+
+            // Log model output: text + json (truncated).
+            let (text_part, json_part) = model_message_log_parts(&raw, 100, 100);
+            let json_rendered = json_part
+                .as_ref()
+                .and_then(|v| serde_json::to_string(v).ok())
+                .unwrap_or_else(|| "null".to_string());
+            if !native_tool_calls.is_empty() {
+                debug!(
+                    "[{}] Model response (native): text='{}' tool_calls={}",
+                    log_run,
+                    text_part.replace('\n', "\\n"),
+                    native_tool_calls.len()
+                );
+            } else {
+                debug!(
+                    "[{}] Model response: text='{}' json={}",
+                    log_run,
+                    text_part.replace('\n', "\\n"),
+                    json_rendered
+                );
+            }
+
+            // --- Empty response protection ---
+            // Some providers may return empty text with no tool calls. Bail out
+            // after consecutive empties to avoid infinite loops.
+            //
+            // Reasoning models (gpt-5.x / o-series, esp. via the ChatGPT/Codex
+            // `responses` backend) intermittently emit a reasoning-only turn —
+            // no output_text and no function_call — which lands here as "empty".
+            // These are transient and usually recover on the next attempt, so we
+            // give reasoning models more retries before giving up than the 3 we
+            // use elsewhere; bailing at 3 was killing otherwise-recoverable runs.
+            if raw.trim().is_empty() && native_tool_calls.is_empty() {
+                state.empty_response_streak += 1;
+                warn!(
+                    "Empty model response (streak {}): model={} native_tools={}",
+                    state.empty_response_streak,
+                    self.model_id,
+                    native_tools.is_some(),
+                );
+                let m = self.model_id.to_lowercase();
+                let is_reasoning_model = m.contains("gpt-5")
+                    || m.contains("gpt-6")
+                    || m.contains("o1")
+                    || m.contains("o3")
+                    || m.contains("o4")
+                    || m.contains("deepseek-r");
+                let empty_bail_threshold = if is_reasoning_model { 6 } else { 3 };
+                if state.empty_response_streak >= empty_bail_threshold {
+                    warn!(
+                        "Bailing out after {} consecutive empty responses from {}",
+                        state.empty_response_streak, self.model_id
+                    );
+
+                    // In plan mode, auto-finalize with whatever research was gathered
+                    // instead of showing an error. The user can still see and approve the plan.
+                    if self.plan_mode {
+                        let plan_text = if !state.last_assistant_response.is_empty() {
+                            state.last_assistant_response.clone()
+                        } else {
+                            format!(
+                                "Plan could not be completed — model '{}' stopped responding after research phase. \
+                                 Please review the tool results above and try again or switch models.",
+                                self.model_id
+                            )
+                        };
+                        info!("[plan] Empty response streak in plan mode → auto-finalizing plan");
+                        let outcome = self.finalize_plan_mode(plan_text).await;
+                        return Ok(outcome);
+                    }
+
+                    // Bail out with error message.
+                    let msg = format!(
+                        "Model '{}' returned {} consecutive empty responses. This usually means the model doesn't support the tool calling format being used. Please check the model configuration.",
+                        self.model_id, state.empty_response_streak
+                    );
+                    let _ = self.persist_assistant_message(&msg, session_id).await;
+                    if self.tools.get_manager().is_some() {
+                        let agent_id = self
+                            .agent_id
+                            .clone()
+                            .unwrap_or_else(|| "unknown".to_string());
+                        self.emit(crate::engine::agent::AgentEvent::TextSegment {
+                            agent_id,
+                            text: msg.clone(),
+                            parent_id: self.parent_agent_id.clone(),
+                            run_id: None,
+                        })
+                        .await;
+                    }
+                    self.active_skill = None;
+                    return Ok(AgentOutcome::None);
+                }
+                // Push a nudge and retry
+                let nudge = self.tool_result_msg(
+                    "Your response was empty. Please respond with either a tool call or text."
+                        .to_string(),
+                );
+                self.push_tracked_message(&mut state.messages, nudge);
+                continue;
+            }
+            state.empty_response_streak = 0;
+
+            // --- Native tool calling path ---
+            if !native_tool_calls.is_empty() {
+                // Visible text beside the calls (any embedded JSON actions
+                // stripped): shown and saved. Plan mode suppresses it — plan
+                // text reaches the UI via PlanUpdate, and a duplicate text
+                // message would hide the PlanBlock.
+                self.emit_text_segment(text_before_first_json(&raw), session_id)
+                    .await;
+
+                // Record the assistant message with tool_calls in chat history.
+                // Preserve id/call_type so OpenAI-compatible APIs (Gemini, etc.)
+                // can match tool results back to their calls.
+                let tool_call_msgs: Vec<crate::message::ToolCallMessage> = native_tool_calls
+                    .iter()
+                    .map(|tc| crate::message::ToolCallMessage {
+                        id: tc.id.clone(),
+                        call_type: "function".to_string(),
+                        function: crate::message::ToolCallFunction {
+                            name: tc.name.clone(),
+                            arguments: tc.arguments.clone(),
+                        },
+                        thought_signature: tc.thought_signature.clone(),
+                    })
+                    .collect();
+                let mut assistant_msg = ChatMessage::assistant_with_tool_calls(tool_call_msgs);
+                if !raw.is_empty() {
+                    assistant_msg.content = raw.clone();
+                }
+                self.push_tracked_message(&mut state.messages, assistant_msg);
+
+                // Convert ParsedToolCalls to ModelActions
+                let actions: Vec<ModelAction> = Self::tool_calls_to_actions(&native_tool_calls);
+
+                // All native tool calls were filtered (e.g. all were "Done") →
+                // treat as text-only response and end the loop.
+                if actions.is_empty() {
+                    // Only ExitPlanMode submits a plan; anything else is an answer.
+                    self.leave_plan_mode_for_answer();
+                    let _ = self.persist_assistant_message(&raw, session_id).await;
+                    self.chat_history
+                        .push(ChatMessage::new("assistant", raw.clone()));
+                    self.last_assistant_text = Some(raw.clone());
+                    let done_ids: Vec<String> =
+                        native_tool_calls.iter().map(|tc| tc.id.clone()).collect();
+                    match self
+                        .try_closing_ask(&mut state, session_id, &raw, true, &done_ids)
+                        .await?
+                    {
+                        ClosingAsk::Answered => continue,
+                        ClosingAsk::Exit(outcome) => return Ok(outcome),
+                        ClosingAsk::Unanswered => {
+                            self.active_skill = None;
+                            return Ok(AgentOutcome::None);
+                        }
+                        ClosingAsk::NotNeeded => {}
+                    }
+                    if self.try_drain_kickoff(&mut state, session_id, &raw).await {
+                        continue;
+                    }
+                    if self.close_or_receive_run_messages(&mut state.messages, None).await {
+                        iterations = iterations.min(self.cfg.max_iters.saturating_sub(1));
+                        continue;
+                    }
+                    self.active_skill = None;
+                    return Ok(AgentOutcome::None);
+                }
+
+                state.invalid_json_streak = 0;
+                // Track latest response so plan mode can read it (ExitPlanMode
+                // uses last_assistant_response as plan text).  Only update
+                // when non-empty to avoid losing the plan text if ExitPlanMode
+                // arrives in a turn with no text content.
+                if !raw.is_empty() {
+                    state.last_assistant_response = raw.clone();
+                }
+
+                // Execute actions (reusing shared dispatch logic)
+                let tc_ids: Vec<String> =
+                    native_tool_calls.iter().map(|tc| tc.id.clone()).collect();
+                if let Some(outcome) = self
+                    .execute_action_loop(actions, &mut state, session_id, &tc_ids)
+                    .await?
+                {
+                    return Ok(outcome);
+                }
+                continue;
+            }
+
+            // --- Native mode: text-only response (no tool calls) ---
+            if native_tools.is_some() && native_tool_calls.is_empty() && !raw.trim().is_empty() {
+                // Check if the text contains JSON actions (some models output JSON text
+                // instead of using native function calls). If so, fall through to the
+                // legacy JSON action parser below.
+                let has_json_actions = {
+                    let trimmed = raw.trim();
+                    trimmed.starts_with('{')
+                        && (trimmed.contains("\"type\"") || trimmed.contains("\"name\""))
+                };
+                if !has_json_actions {
+                    // Only ExitPlanMode submits a plan; a text reply is an answer.
+                    self.leave_plan_mode_for_answer();
+
+                    // Pure conversational text — emit as a complete block.
+                    if self.tools.get_manager().is_some() {
+                        let agent_id = self
+                            .agent_id
+                            .clone()
+                            .unwrap_or_else(|| "unknown".to_string());
+                        self.emit(crate::engine::agent::AgentEvent::TextSegment {
+                            agent_id: agent_id.clone(),
+                            text: raw.clone(),
+                            parent_id: self.parent_agent_id.clone(),
+                            run_id: None,
+                        })
+                        .await;
+                        self.emit(crate::engine::agent::AgentEvent::ContentBlockStart {
+                            agent_id,
+                            block_id: uuid::Uuid::new_v4().to_string(),
+                            block_type: "text".to_string(),
+                            tool: None,
+                            args: Some(raw.clone()),
+                            parent_id: self.parent_agent_id.clone(),
+                            run_id: self.run_id.clone(),
+                            parent_run_id: self.parent_run_id.clone(),
+                        })
+                        .await;
+                    }
+                    let _ = self.persist_assistant_message(&raw, session_id).await;
+                    self.chat_history
+                        .push(ChatMessage::new("assistant", raw.clone()));
+                    self.last_assistant_text = Some(raw.clone());
+                    match self
+                        .try_closing_ask(&mut state, session_id, &raw, true, &[])
+                        .await?
+                    {
+                        ClosingAsk::Answered => continue,
+                        ClosingAsk::Exit(outcome) => return Ok(outcome),
+                        ClosingAsk::Unanswered => {
+                            self.active_skill = None;
+                            return Ok(AgentOutcome::None);
+                        }
+                        ClosingAsk::NotNeeded => {}
+                    }
+                    if self.try_drain_kickoff(&mut state, session_id, &raw).await {
+                        continue;
+                    }
+                    if self.close_or_receive_run_messages(&mut state.messages, Some(&raw)).await {
+                        iterations = iterations.min(self.cfg.max_iters.saturating_sub(1));
+                        continue;
+                    }
+                    self.active_skill = None;
+                    return Ok(AgentOutcome::None);
+                }
+                // Fall through to legacy JSON action parser
+            }
+
+            // --- Legacy path: parse JSON actions from free-form text ---
+
+            // Text before the first JSON object: shown and saved (not in plan
+            // mode — plan text is delivered via PlanUpdate events).
+            self.emit_text_segment(text_before_first_json(&raw), session_id)
+                .await;
+
+            // Repetition check
+            if let Some(ctrl) = self
+                .handle_repetition_check(
+                    &raw,
+                    &mut state.last_assistant_response,
+                    &mut state.identical_response_streak,
+                    &mut state.loop_nudge_count,
+                    &mut state.messages,
+                    session_id,
+                )
+                .await
+            {
+                match ctrl {
+                    LoopControl::Return(outcome) => return Ok(outcome),
+                    LoopControl::Continue => continue,
+                }
+            }
+
+            // Parse actions from model response.
+            let actions = if let Some((first, offset)) = stream_first_action {
+                let remainder = &raw[offset..];
+                let mut all = vec![first];
+                if let Ok(rest) = parse_all_actions(remainder) {
+                    all.extend(rest);
+                }
+                Ok(all)
+            } else {
+                parse_all_actions(&raw)
+            };
+            let actions = match actions {
+                Ok(v) if !v.is_empty() => v,
+                Ok(_) | Err(_) => {
+                    if !raw.contains('{') && looks_like_final_answer(&raw) {
+                        // Plain text that looks like a substantive answer (long enough,
+                        // not "thinking out loud") — treat as an implicit done.
+                        let _ = self.persist_assistant_message(&raw, session_id).await;
+                        match self
+                            .try_closing_ask(
+                                &mut state,
+                                session_id,
+                                &raw,
+                                native_tools.is_some(),
+                                &[],
+                            )
+                            .await?
+                        {
+                            ClosingAsk::Answered => continue,
+                            ClosingAsk::Exit(outcome) => return Ok(outcome),
+                            ClosingAsk::Unanswered => return Ok(AgentOutcome::None),
+                            ClosingAsk::NotNeeded => {}
+                        }
+                        if self.try_drain_kickoff(&mut state, session_id, &raw).await {
+                            continue;
+                        }
+                        if self.close_or_receive_run_messages(&mut state.messages, Some(&raw)).await {
+                        iterations = iterations.min(self.cfg.max_iters.saturating_sub(1));
+                        continue;
+                    }
+                        return Ok(AgentOutcome::None);
+                    }
+                    // Either malformed JSON or short/incomplete plain text — nudge.
+                    state.invalid_json_streak += 1;
+                    if state.invalid_json_streak >= 4 {
+                        let message = if !raw.contains('{') {
+                            raw.clone()
+                        } else {
+                            self.prompt_store.render_or_fallback(
+                                crate::prompts::keys::BAILOUT_MALFORMED_OUTPUT,
+                                &[],
+                            )
+                        };
+                        let _ = self.persist_assistant_message(&message, session_id).await;
+                        if self
+                            .try_drain_kickoff(&mut state, session_id, &message)
+                            .await
+                        {
+                            continue;
+                        }
+                        if self.close_or_receive_run_messages(&mut state.messages, Some(&message)).await {
+                            iterations = iterations.min(self.cfg.max_iters.saturating_sub(1));
+                            continue;
+                        }
+                        self.active_skill = None;
+                        return Ok(AgentOutcome::None);
+                    }
+                    let nudge =
+                        self.tool_result_msg(self.prompt_store.render_or_fallback(
+                            crate::prompts::NUDGE_INVALID_JSON,
+                            &[("raw", &raw)],
+                        ));
+                    self.push_tracked_message(&mut state.messages, nudge);
+                    self.push_context_record(
+                        ContextType::Error,
+                        Some("invalid_json".to_string()),
+                        self.agent_id.clone(),
+                        None,
+                        "invalid_json: no valid action found".to_string(),
+                        serde_json::json!({ "raw": raw }),
+                    );
+                    continue;
+                }
+            };
+            state.invalid_json_streak = 0;
+
+            // Execute actions with parallel delegation support.
+            if let Some(outcome) = self
+                .execute_action_loop(actions, &mut state, session_id, &[])
+                .await?
+            {
+                return Ok(outcome);
+            }
+        }
+
+        self.emit_loop_limit_bailout(session_id).await;
+        Ok(AgentOutcome::None)
+    }
+
+    /// The loop would end. A delegated run whose own background work still
+    /// runs waits here instead, on the notice channel, and each notice that
+    /// comes is its next turn: it ends once nothing of its own runs, and its
+    /// last reply is then its result (doc/background-tasks-spec.md). True:
+    /// the loop goes on — with the messages taken, or to Stop's bail when
+    /// the run was cancelled while it waited.
+    async fn close_or_receive_run_messages(&mut self, messages: &mut Vec<ChatMessage>, response: Option<&str>) -> bool {
+        let (Some(manager), Some(run)) = (self.tools.get_manager(), self.run_id.clone()) else {
+            return false;
+        };
+        let pending = loop {
+            let changed = manager.background.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            if let Some(pending) = manager.close_drain_or_wait(&run) {
+                break pending;
+            }
+            if manager.is_run_cancelled(&run).await {
+                return true;
+            }
+            debug!(run = %run, "run/wait: its own background work still runs");
+            changed.await;
+        };
+        let received = !pending.is_empty();
+        if received {
+            if let Some(response) = response.filter(|text| !text.is_empty()) {
+                self.push_tracked_message(messages, ChatMessage::new("assistant", response));
+            }
+        }
+        for message in pending {
+            self.push_tracked_message(messages, ChatMessage::new("user", message));
+        }
+        received
+    }
+
+    /// A reply cut short by Steer: what it said so far stays, shown and
+    /// saved, as an assistant message (any JSON action it began is dropped).
+    async fn keep_steered_reply(
+        &mut self,
+        raw: String,
+        messages: &mut Vec<ChatMessage>,
+        session_id: Option<&str>,
+    ) {
+        let text = text_before_first_json(&raw);
+        if text.trim().is_empty() {
+            return;
+        }
+        info!("Steer: the reply so far is kept and the queued message goes in");
+        self.emit_text_segment(text.clone(), session_id).await;
+        self.push_tracked_message(messages, ChatMessage::new("assistant", text));
+    }
+
+    /// Take in what the person sent while the turn ran, as user messages.
+    /// True when Stop landed while the messages were handed over: then
+    /// none is taken, and each runs as its own turn once this one ends.
+    async fn take_inbox(&mut self, messages: &mut Vec<ChatMessage>) -> bool {
+        let Some(inbox) = self.inbox.clone() else {
+            return false;
+        };
+        if let Some(steer) = &self.tools.builtins.steer {
+            steer.settle();
+        }
+        let sent = inbox().await;
+        if !sent.is_empty() && self.is_cancelled().await {
+            return true;
+        }
+        for sent in sent {
+            info!("Taking in a message the person sent during the turn");
+            let mut message = ChatMessage::new("user", sent.text);
+            message.images = sent.images;
+            self.push_tracked_message(messages, message);
+            let _ = sent.taken.send(());
+        }
+        false
+    }
+
+    /// Tail of `run_agent_loop`: the loop ran out of steps — clear
+    /// `active_skill` and emit the loop-limit bailout message + context record.
+    async fn emit_loop_limit_bailout(&mut self, session_id: Option<&str>) {
+        self.active_skill = None;
+        let fallback = self
+            .prompt_store
+            .render_or_fallback(crate::prompts::keys::BAILOUT_LOOP_LIMIT, &[]);
+        self.push_context_record(
+            ContextType::Status,
+            Some("loop_limit_reached".to_string()),
+            self.agent_id.clone(),
+            Some("user".to_string()),
+            fallback.clone(),
+            serde_json::json!({ "max_iters": self.cfg.max_iters }),
+        );
+        let _ = self.persist_assistant_message(&fallback, session_id).await;
+    }
+
+    /// Execute a list of model actions with batching (delegation, parallel, sequential).
+    /// Shared by both native tool-call and legacy JSON paths.
+    /// Returns `Ok(Some(outcome))` if the loop should exit early; errs with
+    /// "run cancelled" on user cancel so finalizers record `Cancelled` — a
+    /// plain outcome here made a mid-batch cancel indistinguishable from
+    /// success (mission runs logged `completed`, Yinyue announced them).
+    async fn execute_action_loop(
+        &mut self,
+        actions: Vec<ModelAction>,
+        state: &mut LoopState,
+        session_id: Option<&str>,
+        tc_ids: &[String],
+    ) -> Result<Option<AgentOutcome>> {
+        let mut actions = actions;
+        let mut action_idx: usize = 0;
+
+        while !actions.is_empty() {
+            // Check cancellation before dispatching each tool/batch. Same
+            // bail string as the loop-top checks — finalizers match on it.
+            if self.is_cancelled().await {
+                anyhow::bail!("run cancelled");
+            }
+
+            let front_is_delegation = {
+                let tool = &actions[0].tool;
+                self.tools
+                    .canonical_tool_name(tool)
+                    .unwrap_or(tool.as_str())
+                    == "Task"
+            };
+
+            let parallel_batch_size = if !front_is_delegation {
+                let candidate_count = actions
+                    .iter()
+                    .take_while(|a| {
+                        let c = self
+                            .tools
+                            .canonical_tool_name(&a.tool)
+                            .unwrap_or(a.tool.as_str());
+                        can_parallel_tool(c)
+                    })
+                    .count()
+                    .min(8);
+                if candidate_count >= 2 {
+                    let pairs: Vec<(&str, &JsonValue)> = actions[..candidate_count]
+                        .iter()
+                        .map(|a| {
+                            let c = self
+                                .tools
+                                .canonical_tool_name(&a.tool)
+                                .unwrap_or(a.tool.as_str());
+                            (c, &a.args)
+                        })
+                        .collect();
+                    if has_write_path_conflicts(&pairs, &self.tools.builtins.cwd()) {
+                        1
+                    } else {
+                        candidate_count
+                    }
+                } else {
+                    candidate_count
+                }
+            } else {
+                0
+            };
+
+            if front_is_delegation {
+                let batch_size = actions
+                    .iter()
+                    .take_while(|a| {
+                        self.tools
+                            .canonical_tool_name(&a.tool)
+                            .unwrap_or(a.tool.as_str())
+                            == "Task"
+                    })
+                    .count();
+                let batch: Vec<ModelAction> = actions.drain(..batch_size).collect();
+                let batch_start = action_idx;
+                action_idx += batch_size;
+
+                if let Some(outcome) = self
+                    .handle_delegation_batch(
+                        batch,
+                        &state.allowed_tools,
+                        &mut state.messages,
+                        session_id,
+                        tc_ids,
+                        batch_start,
+                    )
+                    .await
+                {
+                    self.drain_tool_progress(&mut state.progress_rx).await;
+                    return Ok(Some(outcome));
+                }
+            } else if parallel_batch_size >= 2 {
+                let batch: Vec<ModelAction> = actions.drain(..parallel_batch_size).collect();
+                let batch_start = action_idx;
+                action_idx += parallel_batch_size;
+
+                if let Some(outcome) = self
+                    .handle_parallel_batch(batch, state, session_id, tc_ids, batch_start)
+                    .await
+                {
+                    self.drain_tool_progress(&mut state.progress_rx).await;
+                    return Ok(Some(outcome));
+                }
+            } else {
+                let action = actions.remove(0);
+                let tc_id = tc_ids.get(action_idx).cloned();
+                action_idx += 1;
+                let actions_remaining = !actions.is_empty();
+                if let Some(outcome) = self
+                    .dispatch_sequential_action(action, state, actions_remaining, session_id, tc_id)
+                    .await
+                {
+                    self.drain_tool_progress(&mut state.progress_rx).await;
+                    return Ok(Some(outcome));
+                }
+            }
+        }
+
+        self.drain_tool_progress(&mut state.progress_rx).await;
+        // Check if the agent cd'd into/out of a git project
+        self.check_working_folder_change();
+        Ok(None)
+    }
+}
+
+/// Build a single-line preview of an agent task for the INFO log. Strips
+/// `[HIDDEN]` marker tags (used internally to hide prompts from UI), then
+/// keeps the first non-empty line. Multi-line/very long tasks (e.g. the
+/// full MEMORY_EXTRACT payload that embeds the dashboard schema) are
+/// truncated with an ellipsis and a byte/line count so the reader can tell
+/// there's more hidden at DEBUG.
+/// Trim a task string for log lines that want more than the INFO summary
+/// but not the full text. Caps at `max_chars` chars (char-safe, no
+/// multi-byte panics) and appends a "(NNNNB total — see context records)"
+/// suffix when truncated. Used by the DEBUG dump in `run_agent_loop`
+/// so a 3 KB hidden-init prompt doesn't flood the log every turn.
+fn truncate_for_log(task: &str, max_chars: usize) -> String {
+    let char_count = task.chars().count();
+    if char_count <= max_chars {
+        return task.to_string();
+    }
+    let head: String = task.chars().take(max_chars).collect();
+    format!("{head}… ({}B total — full in context records)", task.len())
+}
+
+/// True when the assistant's final reply *ends on* one of the mission's
+/// `kickoff-stop` sentinels: the sentinel is the reply's final word
+/// (whitespace/line boundary before it; one trailing `.`/`!` tolerated).
+/// The memory agent's status-line doctrine closes a finished run with
+/// the sentinel as the last line (`SWEEP removed=4` ↵ `DONE`) — and
+/// models sometimes fold that into one line (`SWEEP removed=4 DONE`) —
+/// while every mid-run reply ends on a data-bearing line (`DAY <date>
+/// done judged=…`), so a backlog run never ends on a bare sentinel.
+/// A sentinel merely *mentioned* mid-reply never matches.
+/// Fold a finished kickoff turn to what the next turn needs: the message that
+/// opened it and the reply that closed it (the last message). Everything
+/// between — tool calls, tool results, nudges — goes; calls and their results
+/// leave together, so no tool result is orphaned. Returns false and leaves
+/// `messages` alone when the opening is no longer at its index.
+fn fold_kickoff_turn(messages: &mut Vec<ChatMessage>, turn: &KickoffTurn) -> bool {
+    let opened_here = messages
+        .get(turn.index)
+        .is_some_and(|m| m.role == "user" && m.content == turn.opening);
+    let Some(reply) = messages.len().checked_sub(1) else {
+        return false;
+    };
+    if !opened_here || reply <= turn.index + 1 {
+        return false;
+    }
+    messages.drain(turn.index + 1..reply);
+    true
+}
+
+/// The `kickoff-then` branch a final reply ends on, taken out of the map so it
+/// fires once: its sentinel and the items that replace the queue.
+fn take_kickoff_branch(
+    branches: &mut std::collections::BTreeMap<String, Vec<String>>,
+    reply: &str,
+) -> Option<(String, Vec<String>)> {
+    let sentinel = branches
+        .keys()
+        .find(|s| kickoff_stop_hit(std::slice::from_ref(*s), reply))?
+        .clone();
+    branches.remove_entry(&sentinel)
+}
+
+fn kickoff_stop_hit(stops: &[String], reply: &str) -> bool {
+    if stops.is_empty() {
+        return false;
+    }
+    let trimmed = reply.trim_end();
+    let bare = trimmed
+        .strip_suffix(['.', '!'])
+        .map(str::trim_end)
+        .unwrap_or(trimmed);
+    stops.iter().any(|s| {
+        let s = s.trim();
+        if s.is_empty() || !bare.ends_with(s) {
+            return false;
+        }
+        // Word boundary: the sentinel is the whole reply or is preceded
+        // by whitespace ("…removed=4 DONE" yes, "ABANDONE" no).
+        bare[..bare.len() - s.len()]
+            .chars()
+            .next_back()
+            .is_none_or(char::is_whitespace)
+    })
+}
+
+fn summarize_task_for_log(task: &str) -> String {
+    const MAX: usize = 160;
+    let stripped = task.trim_start_matches("[HIDDEN] ").trim_start();
+    // Collapse the leading marker again if the model double-marked it.
+    let stripped = stripped.trim_start_matches("[HIDDEN] ").trim();
+    let first_line = stripped
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("");
+    let total_bytes = task.len();
+    let total_lines = task.lines().count();
+    let one_line = if first_line.chars().count() > MAX {
+        let cut: String = first_line.chars().take(MAX).collect();
+        format!("{cut}…")
+    } else {
+        first_line.to_string()
+    };
+    if total_lines <= 1 && total_bytes <= MAX {
+        one_line
+    } else {
+        format!("{one_line} ({total_bytes}B/{total_lines}L — full at DEBUG)")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{fold_kickoff_turn, kickoff_stop_hit, take_kickoff_branch, KickoffTurn};
+    use crate::message::ChatMessage;
+
+    fn msg(role: &str, content: &str) -> ChatMessage {
+        ChatMessage::new(role, content.to_string())
+    }
+
+    /// A dream turn: the nudge, a list call and its 50KB result, the stamp,
+    /// then the status reply.
+    fn day_turn() -> (Vec<ChatMessage>, KickoffTurn) {
+        let messages = vec![
+            msg("system", "doctrine"),
+            msg("user", "remember the oldest day"),
+            msg("assistant", "calling memory_list"),
+            msg("tool", "[fifty kilobytes of rows]"),
+            msg("assistant", "calling memory_remember_day"),
+            msg("tool", "{\"date\":\"2026-09-14\"}"),
+            msg("assistant", "DAY 2026-09-14 done judged=31 promoted=3"),
+        ];
+        let turn = KickoffTurn::opened_by_last(&messages[..2]).unwrap();
+        (messages, turn)
+    }
+
+    #[test]
+    fn a_branch_sentinel_hands_over_its_items_once() {
+        let mut branches = std::collections::BTreeMap::from([(
+            "CLEAR".to_string(),
+            vec!["sweep".to_string(), "audit".to_string()],
+        )]);
+        assert!(take_kickoff_branch(&mut branches, "DAY 2026-09-14 done judged=1").is_none());
+        let (sentinel, items) = take_kickoff_branch(&mut branches, "CLEAR").unwrap();
+        assert_eq!((sentinel.as_str(), items.len()), ("CLEAR", 2));
+        assert!(take_kickoff_branch(&mut branches, "CLEAR").is_none());
+    }
+
+    #[test]
+    fn a_fresh_fold_keeps_the_opening_and_the_reply() {
+        let (mut messages, turn) = day_turn();
+        assert!(fold_kickoff_turn(&mut messages, &turn));
+        let kept: Vec<_> = messages.iter().map(|m| m.content.as_str()).collect();
+        assert_eq!(
+            kept,
+            [
+                "doctrine",
+                "remember the oldest day",
+                "DAY 2026-09-14 done judged=31 promoted=3"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_fold_leaves_messages_alone_when_the_opening_moved() {
+        let (mut messages, turn) = day_turn();
+        messages[1] = msg("user", "[summary of earlier turns]");
+        let before = messages.clone();
+        assert!(!fold_kickoff_turn(&mut messages, &turn));
+        assert_eq!(messages.len(), before.len());
+    }
+
+    #[test]
+    fn a_turn_with_nothing_between_is_left_as_is() {
+        let mut messages = vec![msg("system", "doctrine"), msg("user", "go")];
+        let turn = KickoffTurn::opened_by_last(&messages).unwrap();
+        messages.push(msg("assistant", "DONE"));
+        assert!(!fold_kickoff_turn(&mut messages, &turn));
+        assert_eq!(messages.len(), 3);
+    }
+
+    #[test]
+    fn only_a_user_message_opens_a_turn() {
+        assert!(KickoffTurn::opened_by_last(&[msg("system", "doctrine")]).is_none());
+        assert!(KickoffTurn::opened_by_last(&[]).is_none());
+    }
+
+    fn stops(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn kickoff_stop_exact_match() {
+        assert!(kickoff_stop_hit(&stops(&["DONE", "STALLED"]), "DONE"));
+        assert!(kickoff_stop_hit(&stops(&["DONE", "STALLED"]), "STALLED"));
+    }
+
+    #[test]
+    fn kickoff_stop_tolerates_whitespace_and_trailing_punctuation() {
+        assert!(kickoff_stop_hit(&stops(&["DONE"]), "  DONE\n"));
+        assert!(kickoff_stop_hit(&stops(&["DONE"]), "DONE."));
+        assert!(kickoff_stop_hit(&stops(&["DONE"]), "DONE!"));
+    }
+
+    #[test]
+    fn kickoff_stop_matches_sentinel_as_final_word() {
+        let stops = stops(&["DONE"]);
+        // Status-line doctrine shape: sentinel as the closing line.
+        assert!(kickoff_stop_hit(&stops, "SWEEP removed=4\nDONE"));
+        // Model-folded one-liner observed live on gpt-5.5.
+        assert!(kickoff_stop_hit(&stops, "SWEEP removed=38 DONE"));
+    }
+
+    #[test]
+    fn kickoff_stop_requires_final_word_boundary() {
+        let stops = stops(&["DONE"]);
+        assert!(!kickoff_stop_hit(&stops, "DONE with day one, moving on"));
+        assert!(!kickoff_stop_hit(&stops, "DAY 2026-07-06 done judged=27"));
+        assert!(!kickoff_stop_hit(&stops, "ABANDONE"));
+        assert!(!kickoff_stop_hit(&stops, "done"));
+        assert!(!kickoff_stop_hit(&stops, ""));
+    }
+
+    #[test]
+    fn kickoff_stop_empty_list_never_hits() {
+        assert!(!kickoff_stop_hit(&[], "DONE"));
+    }
+}
+
+#[cfg(test)]
+mod member_tests {
+    use super::permission::{PermissionMode, SessionPermissions};
+    use super::{AgentEngine, AgentRole, EngineConfig, InterfaceMode};
+
+    fn engine_at(root: &std::path::Path) -> AgentEngine {
+        let cfg = EngineConfig::from_app_config(
+            &crate::config::Config::default(),
+            root.to_path_buf(),
+            InterfaceMode::Web,
+        );
+        let models =
+            std::sync::Arc::new(crate::provider::models::ModelManager::new_with_credentials(
+                Vec::new(),
+                &crate::credentials::Credentials::default(),
+            ));
+        AgentEngine::new(cfg, models, "m".to_string(), AgentRole::Lead).unwrap()
+    }
+
+    /// What the person sent during the turn joins it as user messages, with
+    /// their pictures, in order — the turn goes on rather than ending.
+    #[tokio::test]
+    async fn a_step_takes_the_persons_messages_into_the_turn() {
+        let root = tempfile::tempdir().unwrap();
+        let mut engine = engine_at(root.path());
+        let mut messages = vec![crate::message::ChatMessage::new("user", "build it")];
+        assert!(!engine.take_inbox(&mut messages).await);
+        assert_eq!(messages.len(), 1, "no inbox, nothing taken");
+        let (first, mut first_taken) = inbox_message("skip the tests", vec![]);
+        let (second, _) = inbox_message("this one", vec!["IMG".into()]);
+        let sent = std::sync::Mutex::new(Some(vec![first, second]));
+        engine.inbox = Some(std::sync::Arc::new(move || {
+            let batch = sent.lock().unwrap().take().unwrap_or_default();
+            Box::pin(async move { batch })
+        }));
+        assert!(!engine.take_inbox(&mut messages).await);
+        let added: Vec<(&str, &str, usize)> = messages[1..]
+            .iter()
+            .map(|m| (m.role.as_str(), m.content.as_str(), m.images.len()))
+            .collect();
+        assert_eq!(added, [("user", "skip the tests", 0), ("user", "this one", 1)]);
+        assert_eq!(first_taken.try_recv(), Ok(()), "its sender learns it was taken");
+    }
+
+    fn inbox_message(
+        text: &str,
+        images: Vec<String>,
+    ) -> (super::InboxMessage, tokio::sync::oneshot::Receiver<()>) {
+        let (taken, rx) = tokio::sync::oneshot::channel();
+        (super::InboxMessage { text: text.into(), images, taken }, rx)
+    }
+
+    /// Stop lands while a message is handed over: the turn does not take it,
+    /// and its sender learns so — it runs as its own turn, never lost.
+    #[tokio::test]
+    async fn a_message_taken_as_stop_lands_is_left_for_its_own_turn() {
+        let root = tempfile::tempdir().unwrap();
+        let mut engine = engine_at(root.path());
+        engine.agent_id = Some("ling".into());
+        let (manager, _events) = crate::engine::agent::AgentManager::new(
+            crate::config::Config::default(),
+            None,
+            std::sync::Arc::new(crate::engine::test_registries::Empty),
+            std::sync::Arc::new(crate::engine::test_registries::Empty),
+            std::sync::Arc::new(crate::engine::test_registries::Empty),
+            crate::engine::InterfaceMode::Web,
+        );
+        let run = manager
+            .begin_agent_run(root.path(), Some("s"), "ling", None, None)
+            .await
+            .unwrap();
+        engine.set_manager_context(manager.clone());
+        engine.run_id = Some(run.clone());
+        let (message, mut taken) = inbox_message("one more thing", vec![]);
+        let sent = std::sync::Mutex::new(Some(message));
+        engine.inbox = Some(std::sync::Arc::new(move || {
+            let message = sent.lock().unwrap().take();
+            let (manager, run) = (manager.clone(), run.clone());
+            Box::pin(async move {
+                // Stop lands during the handover.
+                manager.cancel_run_tree(&run).await.unwrap();
+                message.into_iter().collect()
+            })
+        }));
+        let mut messages = vec![crate::message::ChatMessage::new("user", "build it")];
+        assert!(engine.take_inbox(&mut messages).await, "the run was stopped");
+        assert_eq!(messages.len(), 1, "the stopped turn did not take it");
+        assert!(taken.try_recv().is_err(), "its sender runs it as its own turn");
+    }
+
+    fn spec_engine(agent: &str, md: &str) -> AgentEngine {
+        let root = tempfile::tempdir().unwrap();
+        let mut engine = engine_at(root.path());
+        let (spec, body) = crate::extensions::agents::parse_agent_markdown(md).unwrap();
+        engine.set_spec(agent.to_string(), spec, body);
+        engine
+    }
+
+    #[test]
+    fn delegated_loop_inherits_plan_mission_skill_and_nested_ceiling() {
+        use std::collections::HashSet;
+        use crate::engine::prompt::PromptPurpose;
+        let set = |names: &[&str]| -> HashSet<String> {
+            names.iter().map(|s| s.to_string()).collect()
+        };
+        let effective = |engine: &mut AgentEngine| {
+            engine.prepare_loop_messages("test", true, PromptPurpose::Turn).1
+        };
+        let root = tempfile::tempdir().unwrap();
+        for source in ["plan", "mission", "skill"] {
+            let mut parent = engine_at(root.path());
+            match source {
+                "plan" => parent.plan_mode = true,
+                "mission" => parent.cfg.mission_allowed_tools = Some(set(&["Read", "Task"])),
+                _ => parent.cfg.skill_allowed_tools = Some(set(&["Read", "Task"])),
+            }
+            let ceiling = effective(&mut parent);
+            assert!(ceiling.as_ref().unwrap().contains("Read"));
+            assert!(!ceiling.as_ref().unwrap().contains("Write"));
+            let mut child = engine_at(root.path());
+            child.cfg.delegated_allowed_tools = ceiling;
+            child.cfg.skill_allowed_tools = Some(set(&["Read", "Write", "Task"]));
+            let child_set = effective(&mut child).unwrap();
+            assert_eq!(child_set, set(&["Read", "Task"]));
+            let mut grandchild = engine_at(root.path());
+            grandchild.cfg.delegated_allowed_tools = Some(child_set);
+            assert_eq!(effective(&mut grandchild).unwrap(), set(&["Read", "Task"]));
+        }
+        let mut child = engine_at(root.path());
+        child.cfg.delegated_allowed_tools = Some(HashSet::new());
+        assert!(effective(&mut child).unwrap().is_empty());
+    }
+
+    /// Her real spec, on an engine — leading her own thread.
+    fn yinyue_engine() -> AgentEngine {
+        spec_engine("yinyue", include_str!("../../../../agents/yinyue.md"))
+    }
+
+    fn ling_spec() -> Vec<String> {
+        let (spec, _) =
+            crate::extensions::agents::parse_agent_markdown(include_str!("../../../../agents/ling.md"))
+                .unwrap();
+        spec.tools
+    }
+
+    /// Her daily thread is hers: its tool set is her own narrow list — no
+    /// Bash, no Write, no Skill to take up a skill and its habits
+    /// (2026-09-23: she loaded lingjing and copied Ling's AskUser).
+    #[test]
+    fn her_daily_thread_lacks_bash_write_and_skill() {
+        let set = yinyue_engine().allowed_tool_names().unwrap();
+        for absent in ["Bash", "Write", "Edit", "Skill", "AskUser", "Task"] {
+            assert!(!set.contains(absent), "{absent} in {set:?}");
+        }
+        assert!(set.contains("WebSearch") && set.contains("Express") && set.contains("Voice"));
+    }
+
+    /// The tool set is the session's, set by its lead: at Ling's table she
+    /// uses his (unrestricted) set; at hers, he uses her narrow one.
+    #[test]
+    fn a_member_uses_the_sessions_tool_set_its_lead_set() {
+        let mut her = yinyue_engine();
+        her.session_lead = Some("ling".into());
+        her.session_tools = Some(ling_spec());
+        assert_eq!(her.allowed_tool_names(), None, "Ling's set: everything");
+
+        let mut ling = spec_engine("ling", include_str!("../../../../agents/ling.md"));
+        assert_eq!(ling.allowed_tool_names(), None);
+        let (her_spec, _) =
+            crate::extensions::agents::parse_agent_markdown(include_str!("../../../../agents/yinyue.md"))
+                .unwrap();
+        ling.session_lead = Some("yinyue".into());
+        ling.session_tools = Some(her_spec.tools);
+        let set = ling.allowed_tool_names().unwrap();
+        assert!(!set.contains("Bash") && set.contains("WebSearch"));
+    }
+
+    fn lingjing_like() -> crate::engine::skill::Skill {
+        let text = "---\nname: game\ndescription: d\nallowed-tools: [AskUser]\nmembers: [ling, yinyue]\nplace:\n  yinyue:\n    text: At the player's side.\n    tools: [AppTool, Story]\ntools:\n  - name: Story\n    description: read\n    cmd: \"echo story\"\n    tier: read\n  - name: Resolve\n    description: move\n    cmd: \"echo move\"\n    tier: edit\n---\nTHE GAME'S RULES.";
+        crate::extensions::skills::parse_skill_text(text, crate::engine::skill::SkillSource::Global)
+            .unwrap()
+    }
+
+    /// At a skill's table she leads nothing: she uses what the skill names
+    /// for her — never its moves or its question widget — and Ling keeps
+    /// the skill's whole set.
+    #[tokio::test]
+    async fn at_a_skills_table_a_member_uses_only_what_the_skill_names_for_her() {
+        let mut her = yinyue_engine();
+        her.session_lead = Some("ling".into());
+        her.activate_skill(lingjing_like(), crate::engine::ActivationMode::Export)
+            .await;
+        let set = her.allowed_tool_names().unwrap();
+        for absent in ["Resolve", "AskUser", "Skill", "Bash"] {
+            assert!(!set.contains(absent), "{absent} in {set:?}");
+        }
+        assert!(set.contains("AppTool"));
+        assert!(her.cfg.is_tool_allowed("AppTool") && !her.cfg.is_tool_allowed("Resolve"));
+
+        let mut ling = spec_engine("ling", include_str!("../../../../agents/ling.md"));
+        ling.activate_skill(lingjing_like(), crate::engine::ActivationMode::Export)
+            .await;
+        assert!(ling.cfg.is_tool_allowed("Resolve") && ling.cfg.is_tool_allowed("AskUser"));
+    }
+
+    /// The export lists the tools each member's turn sends: the skill's own
+    /// with them — hers what the skill names for her, his its whole set.
+    #[tokio::test]
+    async fn an_export_lists_the_skills_own_tools_each_member_sends() {
+        let names = |e: &AgentEngine| -> Vec<String> {
+            e.tools
+                .oai_tool_definitions(e.allowed_tool_names().as_ref())
+                .iter()
+                .filter_map(|t| t["function"]["name"].as_str().map(String::from))
+                .collect()
+        };
+        let mut her = yinyue_engine();
+        her.session_lead = Some("ling".into());
+        her.activate_skill(lingjing_like(), crate::engine::ActivationMode::Export)
+            .await;
+        let hers = names(&her);
+        assert!(hers.contains(&"Story".to_string()), "{hers:?}");
+        assert!(!hers.contains(&"Resolve".to_string()), "{hers:?}");
+
+        let mut ling = spec_engine("ling", include_str!("../../../../agents/ling.md"));
+        ling.activate_skill(lingjing_like(), crate::engine::ActivationMode::Export)
+            .await;
+        let his = names(&ling);
+        assert!(
+            his.contains(&"Story".to_string()) && his.contains(&"Resolve".to_string()),
+            "{his:?}"
+        );
+    }
+
+    /// A `pet: true` tool is the companion's: the lead never gets it, she
+    /// does where her place names it.
+    #[tokio::test]
+    async fn a_pet_tool_reaches_only_the_companion() {
+        let text = "---\nname: game\ndescription: d\nallowed-tools: [AskUser]\nmembers: [ling, yinyue]\nplace:\n  yinyue:\n    tools: [Peek]\ntools:\n  - name: Look\n    description: read\n    cmd: \"echo look\"\n    tier: read\n  - name: Peek\n    description: hers\n    cmd: \"echo peek\"\n    tier: read\n    pet: true\n---\nRULES.";
+        let skill = || {
+            crate::extensions::skills::parse_skill_text(
+                text,
+                crate::engine::skill::SkillSource::Global,
+            )
+            .unwrap()
+        };
+        let names = |e: &AgentEngine| -> Vec<String> {
+            e.tools
+                .oai_tool_definitions(e.allowed_tool_names().as_ref())
+                .iter()
+                .filter_map(|t| t["function"]["name"].as_str().map(String::from))
+                .collect()
+        };
+        let mut ling = spec_engine("ling", include_str!("../../../../agents/ling.md"));
+        ling.activate_skill(skill(), crate::engine::ActivationMode::Export)
+            .await;
+        let his = names(&ling);
+        assert!(his.contains(&"Look".to_string()), "{his:?}");
+        assert!(!his.contains(&"Peek".to_string()), "{his:?}");
+        assert!(!ling.cfg.is_tool_allowed("Peek"));
+
+        let mut her = yinyue_engine();
+        her.session_lead = Some("ling".into());
+        her.activate_skill(skill(), crate::engine::ActivationMode::Export)
+            .await;
+        assert!(names(&her).contains(&"Peek".to_string()));
+    }
+
+    /// A move the model names anyway is refused at execute time.
+    #[tokio::test]
+    async fn a_members_move_is_refused_at_execute_time() {
+        let mut her = yinyue_engine();
+        her.session_lead = Some("ling".into());
+        her.activate_skill(lingjing_like(), crate::engine::ActivationMode::Export)
+            .await;
+        let allowed = her.allowed_tool_names();
+        let mut messages = Vec::new();
+        let outcome = her
+            .pre_execute_tool(
+                "AskUser".to_string(),
+                serde_json::json!({"questions": []}),
+                &allowed,
+                &mut messages,
+                &mut std::collections::HashMap::new(),
+                &mut std::collections::HashSet::new(),
+                &mut String::new(),
+                &mut 0,
+                None,
+                Some("t1".to_string()),
+            )
+            .await;
+        assert!(matches!(outcome, super::types::PreExecOutcome::Blocked(_)));
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.content.contains("AskUser") && m.content.contains("not allowed")),
+            "{messages:?}"
+        );
+    }
+
+    /// Permissions are the session's: every member's loop reads the same
+    /// permission.json — a grant made on his turn holds on hers.
+    #[test]
+    fn every_member_runs_under_the_sessions_permissions() {
+        let her_root = dirs::home_dir().unwrap().join(".linggen");
+        let sid = format!("sess-perm-test-{}", uuid::Uuid::new_v4());
+        let sdir = crate::paths::global_sessions_dir().join(&sid);
+        let mut perms = SessionPermissions::default();
+        perms.set_path_mode("~/Projects/x", PermissionMode::Edit);
+        perms.save(&sdir);
+
+        let mut ling = engine_at(&her_root);
+        let mut her = yinyue_engine();
+        her.session_lead = Some("ling".into());
+        ling.load_session_permissions(&sid);
+        her.load_session_permissions(&sid);
+        let modes = |e: &AgentEngine| format!("{:?}", e.session_permissions.path_modes);
+        assert_eq!(modes(&ling), modes(&her));
+        assert!(modes(&her).contains("Projects/x"));
+        assert!(
+            her.session_permissions.interactive,
+            "her turn asks the person"
+        );
+        let _ = std::fs::remove_dir_all(&sdir);
+    }
+
+    /// One chat, one permission set: a subagent reads the chat's grants, and
+    /// what the person grants on its prompt reaches the main chat (and the
+    /// session file the badge reads) — 2026-11-06, a depth-2 grant of admin
+    /// on all paths stayed in the subagent while the chat still showed chat.
+    #[test]
+    fn a_subagents_grant_is_the_chats_grant() {
+        let root = dirs::home_dir().unwrap().join(".linggen");
+        let sid = format!("sess-perm-test-{}", uuid::Uuid::new_v4());
+        let sdir = crate::paths::global_sessions_dir().join(&sid);
+        let mut perms = SessionPermissions::default();
+        perms.set_path_mode("~/Projects/x", PermissionMode::Read);
+        perms.save(&sdir);
+
+        let mut chat = engine_at(&root);
+        chat.load_session_permissions(&sid);
+        let mut sub = engine_at(&root);
+        sub.join_session_permissions(&sid);
+        assert_eq!(
+            format!("{:?}", sub.session_permissions.path_modes),
+            format!("{:?}", chat.session_permissions.path_modes),
+            "the subagent starts on the chat's grants"
+        );
+
+        // What gate_permission does when the person grants on its prompt.
+        let mut granted = sub.session_permissions.clone();
+        granted.set_path_mode("*", PermissionMode::Admin);
+        granted
+            .try_save(sub.session_dir.as_deref().unwrap())
+            .unwrap();
+
+        chat.sync_session_grants();
+        let saved = SessionPermissions::load(&sdir);
+        for modes in [&chat.session_permissions.path_modes, &saved.path_modes] {
+            assert_eq!(modes.len(), 1);
+            assert_eq!(modes[0].path, "*");
+            assert_eq!(modes[0].mode, PermissionMode::Admin);
+        }
+        let _ = std::fs::remove_dir_all(&sdir);
+    }
+
+    /// Pictures go to the model once: a session with a picture on each of
+    /// three turns sends exactly one on turn 3 — the earlier two stand as
+    /// numbered notes in their turns' place.
+    #[test]
+    fn only_the_current_turns_pictures_are_sent() {
+        let mut engine = yinyue_engine();
+        engine.prompt_profile.task_bootstrap = false;
+        let mut sent = Vec::new();
+        let mut last = Vec::new();
+        for turn in 1..=3 {
+            let said = format!("look {turn}");
+            engine
+                .chat_history
+                .push(crate::message::ChatMessage::new("user", said.clone()));
+            engine.pending_images = vec![format!("BASE64-{turn}")];
+            let (messages, _, _) = engine.prepare_loop_messages(
+                &said,
+                true,
+                crate::engine::prompt::PromptPurpose::Turn,
+            );
+            sent.push(messages.iter().map(|m| m.images.len()).sum::<usize>());
+            last = messages;
+            engine.chat_history.push(crate::message::ChatMessage::new(
+                "assistant",
+                format!("guess {turn}"),
+            ));
+        }
+        assert_eq!(
+            sent,
+            vec![1, 1, 1],
+            "one picture a turn, never the earlier ones"
+        );
+        let pictured: Vec<&crate::message::ChatMessage> =
+            last.iter().filter(|m| !m.images.is_empty()).collect();
+        assert_eq!(pictured.len(), 1);
+        assert_eq!(pictured[0].images, vec!["BASE64-3".to_string()]);
+        assert!(
+            pictured[0].content.ends_with("look 3"),
+            "{}",
+            pictured[0].content
+        );
+        let text: String = last
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("look 1 [image01, shown earlier]"), "{text}");
+        assert!(text.contains("look 2 [image02, shown earlier]"), "{text}");
+        assert!(
+            !text.contains("image03"),
+            "the current one is shown, not noted"
+        );
+        // A second run in the same turn, before any reply (a retry), still
+        // finds the turn delivered: the words are not pushed again.
+        engine.chat_history.pop();
+        let (again, _, _) = engine.prepare_loop_messages(
+            "look 3",
+            true,
+            crate::engine::prompt::PromptPurpose::Turn,
+        );
+        let said = again
+            .iter()
+            .filter(|m| m.content.contains("look 3"))
+            .count();
+        assert_eq!(said, 1, "the turn is in the history once");
+    }
+
+    /// A withheld tool is not offered on the turn — her moment wake must not
+    /// reach Ling through `agent_chat` (2026-09-24: an idle moment's turn
+    /// messaged him and started his autonomous loop in the app's chat).
+    #[test]
+    fn a_withheld_tool_is_not_offered() {
+        let mut engine = yinyue_engine();
+        let (_, offered, _) =
+            engine.prepare_loop_messages("hi", true, crate::engine::prompt::PromptPurpose::Turn);
+        assert!(offered.unwrap().contains("agent_chat"));
+        engine.withheld_tools = ["agent_chat".to_string()].into();
+        let (_, offered, _) =
+            engine.prepare_loop_messages("hi", true, crate::engine::prompt::PromptPurpose::Turn);
+        let offered = offered.unwrap();
+        assert!(!offered.contains("agent_chat"), "{offered:?}");
+        assert!(offered.contains("Express"));
+    }
+
+    /// A session withholds tools from every member: what it declares joins
+    /// the turn's withheld set, a whole MCP server covers each of its tools,
+    /// and an unrestricted set (Ling's `*`) is offered without them too.
+    #[test]
+    fn a_sessions_withheld_tools_are_neither_offered_nor_callable() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = crate::state_fs::sessions::SessionStore::with_sessions_dir(dir.path().into());
+        store
+            .add_session(&crate::state_fs::sessions::SessionMeta {
+                id: "sess-1-scratch".into(),
+                withheld_tools: vec!["mcp__memory".into(), "Write".into()],
+                ..Default::default()
+            })
+            .unwrap();
+        let mut ling = spec_engine("ling", include_str!("../../../../agents/ling.md"));
+        assert!(
+            ling.allowed_tool_names().is_none(),
+            "his set is unrestricted"
+        );
+        ling.withhold_session_tools(&store, Some("sess-1-scratch"));
+        assert!(ling.is_withheld("mcp__memory__memory_add"));
+        assert!(ling.is_withheld("mcp__memory__memory_search"));
+        assert!(!ling.is_withheld("mcp__memory2__x"));
+        let offered: Vec<String> = ling
+            .offered_tool_definitions(None)
+            .iter()
+            .filter_map(|t| t["function"]["name"].as_str().map(String::from))
+            .collect();
+        assert!(!offered.contains(&"Write".to_string()), "{offered:?}");
+        assert!(offered.contains(&"Read".to_string()));
+
+        let mut plain = spec_engine("ling", include_str!("../../../../agents/ling.md"));
+        plain.withhold_session_tools(&store, Some("sess-unknown"));
+        plain.withhold_session_tools(&store, None);
+        assert!(plain.withheld_tools.is_empty());
+    }
+
+    /// And a withheld call the model makes anyway is refused, never run.
+    #[tokio::test]
+    async fn a_withheld_call_is_refused_at_execute_time() {
+        let mut engine = yinyue_engine();
+        engine.withheld_tools = ["agent_chat".to_string()].into();
+        let mut messages = Vec::new();
+        let outcome = engine
+            .pre_execute_tool(
+                "AgentChat".to_string(),
+                serde_json::json!({"to": "ling", "message": "SILENT"}),
+                &None,
+                &mut messages,
+                &mut std::collections::HashMap::new(),
+                &mut std::collections::HashSet::new(),
+                &mut String::new(),
+                &mut 0,
+                None,
+                Some("t1".to_string()),
+            )
+            .await;
+        assert!(matches!(outcome, super::types::PreExecOutcome::Blocked(_)));
+        assert!(messages
+            .iter()
+            .any(|m| m.content.contains("reason=withheld")));
+    }
+}
