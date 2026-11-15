@@ -6,6 +6,13 @@
   (`app.assets`); the ones its folder lacks are fetched in the background by
   hash, checked, kept in `~/.linggen/assets/sha256/`, and served at the same
   `/apps/<skill>/…` address. `GET /api/assets/<skill>` reads what is held.
+- **Memory runs inside the engine** (3.0 plan, step 2.1). The memory code
+  (`crates/linggen-memory`, from ling-mem 1.13.0) is part of the build; `ling`
+  opens the store at start-up and serves memory on its own port —
+  `/mem/api/memory/<verb>` and `/mcp/memory` for this machine, the phone's
+  `/api/memory/<verb>` as before. No separate `ling-mem` is started,
+  installed or looked for. `ling mem <verb>` runs memory's data verbs.
+  No takeover of a running `ling-mem` yet.
 
 ## [2.2.1] - 2026-11-14 — the permission gate reads a command as the shell does
 

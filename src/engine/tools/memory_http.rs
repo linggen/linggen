@@ -10,15 +10,11 @@
 //! - the core-block reconcile fetch
 //! - `api::memory`, the phone's passthrough: Yinyue runs on the phone, so her
 //!   memory calls arrive over the WebRTC channel and terminate here rather
-//!   than on ling-mem's own loopback port
+//!   than on memory's own loopback routes
 //!
-//! and, separately, ownership of the dependency itself: on
-//! `ConnectionRefused` or timeout, ensure the binary is present (auto-install
-//! the pinned `ling-mem` if missing — a fresh Linggen marketplace install
-//! ships skill files but no binary), then autostart `ling-mem start` and retry
-//! once. The daemon is idempotent: re-running `start` while up exits 0. The
-//! engine owns this because nothing else would install or start the daemon for
-//! a program that only ever speaks HTTP to it.
+//! Memory is hosted in this process (`memory_host`); the address these calls
+//! go to is its loopback prefix on the engine's own port. Nothing here starts,
+//! installs or looks for a separate `ling-mem` daemon any more.
 //!
 //! Wire behaviour that comes with this path: verb-dispatched endpoints,
 //! soft-empty cleanup, `tier: "episodic"` → `episodic: true`. The same fixes
@@ -26,40 +22,17 @@
 //! — models fill arguments sloppily, programs don't. Naming the calling host
 //! is each caller's own job, not this function's; see `memory_mcp::HOST`.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::time::Duration;
 
 /// Per-call HTTP timeout. Matches the old `capability_tools.rs` budget.
 const DISPATCH_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Outer budget for `ling-mem start` autostart. The spawned command has
-/// its own ~10s internal budget; this ceiling avoids cancelling a start
-/// that's about to succeed.
-const AUTOSTART_TIMEOUT: Duration = Duration::from_secs(15);
-
-/// Binary version the engine bootstraps when `ling-mem` is missing. A semver
-/// range floor — `install-bin.sh` resolves it to the highest matching release.
-/// Major-version range now that ling-mem has cut 1.0 — resolves to the highest
-/// 1.x release, so minors/patches flow without a re-pin (store schema-version
-/// guard keeps it data-safe). NOTE the form: `install-bin.sh`'s `~` needs
-/// `X.Y`, so a major range is `^1` (or `1.x`), never `~1`. Override with
-/// `$LING_MEM_VERSION`.
-const LING_MEM_PIN: &str = "^1";
-
-/// Canonical binary-only installer (SHA-256 verified inside). Fetched over
-/// HTTPS and run via `bash -s` when the binary is absent.
-const INSTALL_BIN_URL: &str =
-    "https://raw.githubusercontent.com/linggen/linggen-memory/main/plugins/linggen/scripts/install-bin.sh";
-
-/// Same file through linggen.dev's `/dl` GitHub mirror — raw.githubusercontent
-/// is blocked in some regions (notably China); Cloudflare is reachable.
-const INSTALL_BIN_MIRROR_URL: &str = "https://linggen.dev/dl/install-bin.sh";
-
 /// POST `args` to `<ling_mem_url>/api/memory/<verb>` (verb taken from
 /// `args["verb"]` and stripped) and return the daemon's `data` payload.
 /// Handles soft-empty cleanup, the `tier=episodic` → `episodic=true` wire
-/// translation, and one autostart retry on `ConnectionRefused`/`Timeout`.
+/// translation.
 ///
 /// `caller` names who is asking, for the error and the log line only — it
 /// changes nothing on the wire. Stamping `host` on a row is the caller's own
@@ -184,7 +157,7 @@ pub async fn call_memory_http(ling_mem_url: &str, caller: &str, mut args: Value)
 
 #[derive(Debug)]
 enum DispatchError {
-    /// Daemon isn't reachable — autostart + retry.
+    /// Memory isn't reachable at that address.
     NoDaemon,
     /// Anything else — surface to the model.
     Other(anyhow::Error),
@@ -193,23 +166,22 @@ enum DispatchError {
 impl From<DispatchError> for anyhow::Error {
     fn from(e: DispatchError) -> Self {
         match e {
-            DispatchError::NoDaemon => anyhow!(
-                "ling-mem daemon is not reachable after autostart — check `ling-mem status`"
-            ),
+            DispatchError::NoDaemon => {
+                anyhow!("memory is not reachable — check `ling status`")
+            }
             DispatchError::Other(e) => e,
         }
     }
 }
 
-/// The one way anything in this engine reaches ling-mem's REST surface, and
-/// the only place that knows the daemon may need starting first.
+/// The one way anything in this engine reaches memory's REST surface.
 ///
 /// Returns the daemon's envelope **verbatim** — `{ok, data}` or
 /// `{ok:false, error, code}` — because its two callers want different halves
 /// of it. `call_memory_http` unwraps to `data` for programs inside the engine;
 /// `api::memory`'s passthrough hands the whole thing to the phone, which reads
 /// the same documented shape a loopback caller would. Neither reimplements the
-/// request, the autostart retry, or the error classification.
+/// request or the error classification.
 ///
 /// The daemon's HTTP status rides along with it. A non-2xx is not automatically
 /// a failure of this hop — a 404 is ling-mem saying that verb doesn't exist and
@@ -222,16 +194,7 @@ pub async fn post_memory_verb(
     body: &Value,
 ) -> Result<(u16, Value)> {
     let url = format!("{}/api/memory/{verb}", ling_mem_url.trim_end_matches('/'));
-    match post_raw(&url, body).await {
-        Ok(v) => Ok(v),
-        Err(DispatchError::NoDaemon) => {
-            autostart(ling_mem_url).await.with_context(|| {
-                format!("autostarting ling-mem after first attempt to {url} failed")
-            })?;
-            post_raw(&url, body).await.map_err(anyhow::Error::from)
-        }
-        Err(DispatchError::Other(e)) => Err(e),
-    }
+    post_raw(&url, body).await.map_err(anyhow::Error::from)
 }
 
 /// One request. Returns `(status, envelope)` whenever the daemon answered at
@@ -310,144 +273,6 @@ fn parse_envelope(envelope: Value) -> Result<Value> {
     }
 }
 
-/// Parse `<bin> --version` ("ling-mem X.Y.Z") into a comparable tuple.
-fn ling_mem_version(path: &std::path::Path) -> Option<(u32, u32, u32)> {
-    let out = std::process::Command::new(path)
-        .arg("--version")
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let v = stdout.split_whitespace().nth(1)?;
-    let mut it = v.trim().split('.');
-    let major = it.next()?.parse().ok()?;
-    let minor = it.next()?.parse().ok()?;
-    let patch = it.next().and_then(|p| p.parse().ok()).unwrap_or(0);
-    Some((major, minor, patch))
-}
-
-/// Resolve the `ling-mem` binary to the **highest-version** copy among the
-/// canonical location (`~/.local/bin/ling-mem`) and whatever `$PATH` turns up.
-///
-/// `~/.local/bin/ling-mem` is the singleton: one real file shared by every
-/// host and channel, written only by `install-bin.sh`, which resolves a
-/// semver range and refuses to downgrade. `/usr/local/bin` is deliberately
-/// NOT probed — nothing installs there any more, and probing it is how a
-/// stale copy left by a retired installer got a vote. A machine still
-/// carrying one is reachable through the `$PATH` hit below.
-///
-/// Picking by version — not first-on-PATH — is the last line of defence:
-/// if two copies do exist, the newer one wins whatever PATH order says.
-/// `None` if no usable binary is found.
-fn resolve_ling_mem() -> Option<std::path::PathBuf> {
-    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
-    // The daemon may carry launchd's minimal PATH, which omits ~/.local/bin;
-    // hand `which` the same augmented PATH shell children get, so a PATH hit
-    // means what it says.
-    if let Ok(out) = std::process::Command::new("which")
-        .arg("ling-mem")
-        .env("PATH", crate::util::shell_path())
-        .output()
-    {
-        if out.status.success() {
-            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !s.is_empty() {
-                candidates.push(std::path::PathBuf::from(s));
-            }
-        }
-    }
-    if let Some(home) = std::env::var_os("HOME") {
-        candidates.push(std::path::PathBuf::from(home).join(".local/bin/ling-mem"));
-    }
-
-    candidates.retain(|p| p.is_file());
-    candidates.sort();
-    candidates.dedup();
-    candidates
-        .into_iter()
-        .filter_map(|p| ling_mem_version(&p).map(|v| (v, p)))
-        .max_by_key(|(v, _)| *v)
-        .map(|(_, p)| p)
-}
-
-/// GET `url` and return the body as text, erroring on non-2xx.
-async fn fetch_text(client: &reqwest::Client, url: &str) -> Result<String> {
-    client
-        .get(url)
-        .send()
-        .await
-        .context("sending request")?
-        .error_for_status()
-        .context("non-success status")?
-        .text()
-        .await
-        .context("reading body")
-}
-
-/// Fetch the canonical binary-only installer and run it (`bash -s`), pinned to
-/// [`LING_MEM_PIN`]. The engine owns the dependency — a fresh marketplace
-/// install ships skill files but no binary, and nothing else would install it
-/// for the HTTP memory path.
-async fn install_ling_mem() -> Result<()> {
-    let pin = std::env::var("LING_MEM_VERSION").unwrap_or_else(|_| LING_MEM_PIN.to_string());
-    tracing::info!("ling-mem binary not found — installing {pin} via install-bin.sh");
-
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()
-        .map_err(|e| anyhow!(e))?;
-    let script = match fetch_text(&client, INSTALL_BIN_URL).await {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::info!("install-bin.sh fetch from GitHub failed ({e:#}); trying mirror");
-            fetch_text(&client, INSTALL_BIN_MIRROR_URL)
-                .await
-                .context("fetching install-bin.sh (GitHub and mirror)")?
-        }
-    };
-
-    let mut child = tokio::process::Command::new("bash")
-        .arg("-s")
-        .arg("--")
-        .arg("--version")
-        .arg(&pin)
-        .arg("--quiet")
-        // Install-source labels for ling-mem's telemetry marker: the engine
-        // IS this channel, so it may declare itself (analytics-spec.md).
-        .env("LING_MEM_SOURCE", "linggen")
-        .env("LING_MEM_AGENT", "linggen")
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .context("spawning bash to run install-bin.sh")?;
-
-    {
-        use tokio::io::AsyncWriteExt;
-        let mut stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| anyhow!("could not open stdin to install-bin.sh"))?;
-        stdin
-            .write_all(script.as_bytes())
-            .await
-            .context("piping install-bin.sh to bash")?;
-    } // drop stdin → EOF so bash runs
-
-    let out = tokio::time::timeout(Duration::from_secs(120), child.wait_with_output())
-        .await
-        .map_err(|_| anyhow!("install-bin.sh did not complete within 120s"))?
-        .context("waiting for install-bin.sh")?;
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
-        return Err(anyhow!("install-bin.sh failed: {}", err.trim()));
-    }
-    Ok(())
-}
-
 /// Snapshot the store before a memory-agent mission run. Condense
 /// merges retire rows atomically (`replace_ids` has no undo), so every
 /// run day gets one ndjson export under `~/.linggen/memory/backups/`,
@@ -461,7 +286,6 @@ pub(crate) async fn backup_store_best_effort() {
 }
 
 async fn try_backup_store() -> Result<()> {
-    let bin = resolve_ling_mem().ok_or_else(|| anyhow!("ling-mem binary not found for backup"))?;
     let dir = crate::paths::linggen_home().join("memory/backups");
     tokio::fs::create_dir_all(&dir).await?;
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
@@ -470,25 +294,9 @@ async fn try_backup_store() -> Result<()> {
         return Ok(()); // one snapshot per day covers every run that day
     }
 
-    let out = tokio::time::timeout(
-        Duration::from_secs(60),
-        tokio::process::Command::new(&bin)
-            .arg("export")
-            .arg(&path)
-            .env("LINGGEN_DATA_DIR", crate::paths::linggen_home())
-            .kill_on_drop(true)
-            .output(),
-    )
-    .await
-    .map_err(|_| anyhow!("`ling-mem export` did not complete within 60s"))?
-    .context("spawning `ling-mem export`")?;
-
-    if !out.status.success() {
+    if let Err(e) = crate::memory_host::export_to(&path).await {
         let _ = tokio::fs::remove_file(&path).await;
-        anyhow::bail!(
-            "`ling-mem export` failed: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
+        return Err(e.context("exporting the memory store"));
     }
     tracing::info!("memory store snapshot written: {}", path.display());
     prune_backups(&dir).await;
@@ -515,97 +323,5 @@ async fn prune_backups(dir: &std::path::Path) {
     files.sort();
     while files.len() > 7 {
         let _ = tokio::fs::remove_file(files.remove(0)).await;
-    }
-}
-
-/// Ensure the binary exists (installing it if missing) and run
-/// `<bin> start --port <port>` for the daemon at `ling_mem_url` — the
-/// resolved `[agent].ling_mem_url`, so a daemon is started where the engine
-/// will look for it. Idempotent — `start` while the daemon is already up
-/// exits 0. A URL on another machine is never started here: a local daemon
-/// on that port would answer from a different store.
-pub(crate) async fn autostart(ling_mem_url: &str) -> Result<()> {
-    let port = local_port(ling_mem_url)?;
-    let bin = match resolve_ling_mem() {
-        Some(p) => p,
-        None => {
-            install_ling_mem()
-                .await
-                .context("ling-mem binary missing and auto-install failed")?;
-            resolve_ling_mem()
-                .ok_or_else(|| anyhow!("ling-mem still not found after auto-install"))?
-        }
-    };
-
-    let output = tokio::time::timeout(
-        AUTOSTART_TIMEOUT,
-        tokio::process::Command::new(&bin)
-            .arg("start")
-            .args(["--port", &port.to_string()])
-            .env("LINGGEN_DATA_DIR", crate::paths::linggen_home())
-            .kill_on_drop(true)
-            .output(),
-    )
-    .await
-    .map_err(|_| {
-        anyhow!(
-            "`{} start` did not complete within {}s",
-            bin.display(),
-            AUTOSTART_TIMEOUT.as_secs()
-        )
-    })?
-    .with_context(|| format!("spawning `{} start`", bin.display()))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let trimmed = stderr.trim();
-        return Err(anyhow!(
-            "`{} start` exited with status {}{}",
-            bin.display(),
-            output.status,
-            if trimmed.is_empty() {
-                String::new()
-            } else {
-                format!(": {trimmed}")
-            }
-        ));
-    }
-    Ok(())
-}
-
-/// The port of a ling-mem URL on this machine, or why it is not one to start.
-fn local_port(ling_mem_url: &str) -> Result<u16> {
-    let url = url::Url::parse(ling_mem_url)
-        .with_context(|| format!("ling-mem URL {ling_mem_url:?} does not parse"))?;
-    let local = match url.host() {
-        Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
-        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
-        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
-        None => false,
-    };
-    if !local {
-        return Err(anyhow!(
-            "ling-mem at {ling_mem_url} is not on this machine — not starting a local daemon"
-        ));
-    }
-    url.port_or_known_default()
-        .ok_or_else(|| anyhow!("ling-mem URL {ling_mem_url:?} names no port"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::local_port;
-
-    /// Autostart starts the daemon on the resolved URL's port, never 9528 by
-    /// assumption — and never for a daemon on another machine.
-    #[test]
-    fn autostart_port_comes_from_the_url() {
-        assert_eq!(local_port("http://127.0.0.1:4100").unwrap(), 4100);
-        assert_eq!(local_port("http://localhost:4101/").unwrap(), 4101);
-        assert_eq!(local_port("http://[::1]:4102").unwrap(), 4102);
-        assert_eq!(local_port("http://127.0.0.1").unwrap(), 80);
-        assert!(local_port("http://192.168.1.5:9528").is_err());
-        assert!(local_port("http://mem.lan:9528").is_err());
-        assert!(local_port("not a url").is_err());
     }
 }

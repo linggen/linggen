@@ -583,7 +583,7 @@ fn loopback_error(verb: &str, err: reqwest::Error) -> ApiError {
 }
 
 async fn loopback(state: &SharedState, verb: &str, body: Value) -> Result<Value, ApiError> {
-    loopback_url(&format!("http://127.0.0.1:{}", state.port), verb, body).await
+    loopback_url(&state.self_base, verb, body).await
 }
 
 async fn loopback_url(base: &str, verb: &str, body: Value) -> Result<Value, ApiError> {

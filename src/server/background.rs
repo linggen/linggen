@@ -4,7 +4,6 @@
 use super::{api, milestones, resident, rtc, yinyue_moments, ServerState};
 use crate::engine::agent::AgentEvent;
 use crate::engine::events::{AgentStatusKind, ServerEvent};
-use crate::mcp_client::McpServerConfig;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -21,7 +20,6 @@ pub(super) fn spawn_background_tasks(
 ) {
     flush_token_usage(state);
     watch_skill_sync(state);
-    prewarm_memory(state);
     // bun for skill actions: its own fetch, never queued behind the
     // Python runtime's download slot.
     crate::js_runtime::ensure_in_background();
@@ -82,33 +80,6 @@ fn flush_token_usage(state: &Arc<ServerState>) {
 fn watch_skill_sync(state: &Arc<ServerState>) {
     let sync_state = state.clone();
     tokio::spawn(async move { api::skill_sync::spawn_watchers(sync_state).await });
-}
-
-/// Pre-warm ling-mem when any installed skill uses scoped memory
-/// (`memory-context`). Those apps auto-recall every turn, so get the
-/// possibly-first-time (~100 MB) install + daemon start off the hot path.
-/// No-op for daemons with no memory-using skill; on failure the per-call
-/// autostart still covers it.
-fn prewarm_memory(state: &Arc<ServerState>) {
-    let state = state.clone();
-    tokio::spawn(async move {
-        let skills = state.skills.clone();
-        let uses_memory = skills.list_skills().await.iter().any(|s| {
-            s.memory_context
-                .as_deref()
-                .map(|c| !c.trim().is_empty())
-                .unwrap_or(false)
-        });
-        if uses_memory {
-            let url = state.manager.get_config_snapshot().await.agent.ling_mem_url;
-            match crate::engine::tools::memory_http::autostart(&url).await {
-                Ok(()) => info!("ling-mem pre-warmed (a skill uses scoped memory)"),
-                Err(e) => {
-                    info!("ling-mem pre-warm deferred to first use: {e}")
-                }
-            }
-        }
-    });
 }
 
 /// How long no one must have chatted (with no top-level run in flight)
@@ -196,38 +167,7 @@ fn connect_mcp_servers(state: &Arc<ServerState>) {
         let cfg = manager.get_config_snapshot().await;
         let servers = crate::mcp_client::with_builtin(&cfg.mcp_servers, &cfg.agent.ling_mem_url);
         crate::mcp_client::registry().connect_all(&servers).await;
-        watch_for_late_servers(servers).await;
     });
-}
-
-/// Keep asking the MCP servers that weren't listening at boot.
-///
-/// `connect_all` is best-effort by design, which is right for a server the
-/// user configured and wrong for the one this engine depends on: the app
-/// starts `ling-mem` beside this process, so a few seconds of start order
-/// decided whether the daemon had memory at all for the rest of its life.
-/// A refused connect costs a syscall, so the loop is cheap; it backs off to
-/// minutes and stops as soon as everything enabled is connected.
-async fn watch_for_late_servers(servers: std::collections::BTreeMap<String, McpServerConfig>) {
-    const FIRST: std::time::Duration = std::time::Duration::from_secs(5);
-    const CEILING: std::time::Duration = std::time::Duration::from_secs(300);
-
-    let mut wait = FIRST;
-    loop {
-        tokio::time::sleep(wait).await;
-        let registry = crate::mcp_client::registry();
-        if registry.all_connected() {
-            return;
-        }
-        let arrived = registry.retry_failed(&servers).await;
-        if !arrived.is_empty() {
-            info!(
-                "MCP late arrival: {} — its tools are live for this daemon now",
-                arrived.join(", ")
-            );
-        }
-        wait = (wait * 2).min(CEILING);
-    }
 }
 
 /// Idle-shutdown watcher: when --idle-shutdown-secs is set, exit the

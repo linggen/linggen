@@ -20,6 +20,7 @@ pub(super) fn router(state: Arc<ServerState>) -> Router {
         .merge(workspace::routes())
         .merge(devices::routes())
         .merge(apps::routes())
+        .merge(crate::memory_host::routes())
         .fallback(super::app_pages::static_handler)
         .with_state(state)
 }

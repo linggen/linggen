@@ -95,6 +95,38 @@ pub fn build_router(state: SharedState, telemetry: Telemetry) -> Router {
         .with_state(state)
 }
 
+/// The router for memory hosted inside another process (`crate::hosted`):
+/// the daemon's routes without its LAN gate (the host decides who reaches
+/// them), and without its telemetry layer. Replica write-forwarding and the
+/// activity stamp that background upkeep waits on stay.
+pub fn build_hosted_router(state: SharedState) -> Router {
+    Router::new()
+        .route("/api/health", get(health::handler))
+        .merge(memory::router())
+        .merge(days::router())
+        .merge(chains::router())
+        .merge(issues::router())
+        .merge(stats::router())
+        .merge(session::router())
+        .merge(mcp::router())
+        .merge(config::router())
+        .merge(network::router())
+        .merge(connect::router())
+        .merge(sync::router())
+        .merge(primary::router())
+        .merge(lease::router())
+        .merge(migration::router())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::replica::forward::replica_writes,
+        ))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            mark_activity_layer,
+        ))
+        .with_state(state)
+}
+
 /// Middleware: stamp "the daemon is being used" on every request, so the
 /// background maintenance loop can wait for a genuinely quiet window.
 async fn mark_activity_layer(

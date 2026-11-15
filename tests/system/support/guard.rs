@@ -120,13 +120,15 @@ pub fn no_config(home: &Home) {
     }
 }
 
-/// The ling-mem URL a child is told (`LING_MEM_URL`): loopback, and not
-/// the real ling-mem's port.
+/// The memory URL a child is told (`LING_MEM_URL`): loopback, and not
+/// the real ling-mem's port. A path after the port (the engine's `/mem`) is
+/// fine.
 pub fn mem_url(url: &str) {
     let rest = url
         .strip_prefix("http://127.0.0.1:")
         .unwrap_or_else(|| refuse(format!("LING_MEM_URL {url} is not a loopback http URL")));
-    match rest.trim_end_matches('/').parse::<u16>() {
+    let port_text = rest.split('/').next().unwrap_or_default();
+    match port_text.parse::<u16>() {
         Ok(p) => port(p, "LING_MEM_URL"),
         Err(_) => refuse(format!("LING_MEM_URL {url} names no port")),
     }

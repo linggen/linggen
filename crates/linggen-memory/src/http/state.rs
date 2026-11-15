@@ -36,6 +36,10 @@ pub struct AppState {
     /// reuses the same handlers (and their dispatch fixes) instead of
     /// duplicating logic.
     pub port: u16,
+    /// Where this memory's routes are reachable over loopback — the MCP
+    /// handler's self-POST base. `http://127.0.0.1:<port>` for the daemon;
+    /// the host's prefix when another process hosts memory (`crate::hosted`).
+    pub self_base: String,
     /// The address the listener actually bound — what the console shows as
     /// a fact beside the saved network choice.
     pub bound: SocketAddr,
@@ -78,6 +82,7 @@ impl AppState {
             embedder,
             data_dir,
             port: bound.port(),
+            self_base: format!("http://127.0.0.1:{}", bound.port()),
             bound,
             connect: Default::default(),
             presence: Default::default(),

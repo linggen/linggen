@@ -86,35 +86,30 @@ pub async fn run(config: &Config, config_path: Option<&Path>) -> Result<()> {
     Ok(())
 }
 
-/// Memory backend (`ling-mem`) health. Reports the binary location +
-/// version, the daemon's `/api/health` response at `ling_mem_url` (the
-/// resolved `[agent].ling_mem_url` — the daemon the engine uses), the on-disk
-/// store, and the canonical skill bundle. Each independent — a missing
-/// daemon doesn't mask a present binary, etc.
+/// Memory health. Memory is served by the engine itself (`memory_host`): the
+/// store's lock names the process holding it and the port it serves on, and
+/// that port's `/mem/api/health` says whether it answers. Then the on-disk
+/// store and the canonical skill bundle — each independent.
 async fn check_ling_mem(ling_mem_url: &str) {
-    println!("  Memory (ling-mem):");
+    println!("  Memory:");
 
-    // Binary on PATH.
-    let bin = which_path("ling-mem");
-    match &bin {
-        Some(path) => {
-            let ver = ling_mem_version(path).unwrap_or_else(|| "unknown".to_string());
-            ok("Binary    ", &format!("{} (v{})", path.display(), ver));
+    let holder = ling_mem::hosted::StoreLock::holder(crate::paths::linggen_home());
+    match holder.and_then(|h| h.port.map(|port| (h.pid, port))) {
+        Some((pid, port)) => {
+            let url = format!("http://127.0.0.1:{port}{}", crate::memory_host::PREFIX);
+            match fetch_ling_mem_health(&url).await {
+                Some(v) => ok(
+                    "Serving   ",
+                    &format!("in the engine (pid {pid}) at {url} (v{v})"),
+                ),
+                None => info("Serving   ", &format!("{url} not answering")),
+            }
         }
-        None => fail(
-            "Binary    ",
-            "ling-mem not on PATH (auto-installs on first memory op; or see linggen.dev/memory)",
-        ),
+        None => info("Serving   ", "not open (the running engine serves memory)"),
     }
-
-    // The daemon the engine uses: the resolved `[agent].ling_mem_url`.
-    let url = ling_mem_url.trim_end_matches('/');
-    match fetch_ling_mem_health(url).await {
-        Some(v) => ok("Daemon    ", &format!("{url} healthy (v{v})")),
-        None => info(
-            "Daemon    ",
-            &format!("{url} not answering (it starts on the first memory call)"),
-        ),
+    let configured = ling_mem_url.trim_end_matches('/');
+    if !configured.contains("127.0.0.1") && !configured.contains("localhost") {
+        info("Address   ", &format!("{configured} (another machine)"));
     }
 
     // Store. Memory rows live under ~/.linggen/memory/memory.lancedb/
@@ -145,32 +140,6 @@ async fn check_ling_mem(ling_mem_url: &str) {
             ),
         );
     }
-}
-
-fn which_path(bin: &str) -> Option<PathBuf> {
-    let out = std::process::Command::new("which").arg(bin).output().ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if s.is_empty() {
-        None
-    } else {
-        Some(PathBuf::from(s))
-    }
-}
-
-fn ling_mem_version(bin: &Path) -> Option<String> {
-    // `ling-mem --version` prints `ling-mem <ver>` — pick the 2nd token.
-    let out = std::process::Command::new(bin)
-        .arg("--version")
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let s = String::from_utf8_lossy(&out.stdout);
-    s.split_whitespace().nth(1).map(|v| v.to_string())
 }
 
 async fn fetch_ling_mem_health(url: &str) -> Option<String> {

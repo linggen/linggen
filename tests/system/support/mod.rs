@@ -1,7 +1,7 @@
 //! The hermetic system-test harness (doc/test-design.md § 2).
 //!
 //! A [`World`] is one test's whole Linggen: the fixture home copied into a
-//! fresh root, a fake model, a scratch ling-mem and the built engine — each
+//! fresh root, a fake model and the built engine (which hosts memory) — each
 //! on its own port, none of them the person's. Dropping it stops everything
 //! and removes the root.
 
@@ -37,9 +37,9 @@ pub struct World {
 pub struct Setup {
     pub scripts: Vec<(Agent, Vec<Reply>)>,
     pub extras: Vec<Extra>,
-    /// Load the real embedding model in ling-mem (slow; few tests).
+    /// Load the real embedding model in the engine's memory (slow; few tests).
     pub embedder: bool,
-    /// Seed this `tests/fixtures/memory/` file before the engine starts
+    /// Seed this `tests/fixtures/memory/` file once the engine is up
     /// (needs `embedder`).
     pub memory_rows: Option<&'static str>,
     /// The `tests/fixtures/<dir>` the home is copied from; `home` when unset.
@@ -83,11 +83,13 @@ impl World {
     pub async fn start(setup: Setup) -> Self {
         let home = Home::new();
         let model = FakeModel::start(&setup.scripts, &setup.extras).await;
-        let memory = Memory::start(&home, setup.embedder).await;
+        Memory::prepare(&home, setup.embedder);
         let port = Engine::new_port();
+        // The engine hosts memory; an address on this machine names it.
+        let mem_url = memory::url_on(port);
         let mut vars = home.base_vars();
         vars.insert("ENGINE_PORT", port.to_string());
-        vars.insert("MEM_URL", memory.url.clone());
+        vars.insert("MEM_URL", mem_url.clone());
         vars.insert("MODEL_URL", model.url());
         if setup.no_config {
             guard::no_config(&home);
@@ -106,12 +108,9 @@ impl World {
             }
             let config = std::fs::read_to_string(home.config_path()).expect("config");
             guard::config_text(&config);
-            guard::config_mem_url(&config, &memory.url);
+            guard::config_mem_url(&config, &mem_url);
         }
         guard::home_files(&home.home(), &home.model_cache());
-        if let Some(file) = setup.memory_rows {
-            memory.seed(file, &vars).await;
-        }
         if setup.signed_out {
             let _ = std::fs::remove_file(home.linggen_home().join("codex_auth.json"));
         }
@@ -124,7 +123,11 @@ impl World {
             extra_env.push(("LINGGEN_MACHINE_MEMORY_GB".to_string(), gb.to_string()));
         }
         extra_env.extend(setup.env.iter().map(|(k, v)| (k.to_string(), v.clone())));
-        let engine = Engine::start(&home, port, &memory.url, !setup.no_config, &extra_env).await;
+        let engine = Engine::start(&home, port, &mem_url, !setup.no_config, &extra_env).await;
+        let memory = Memory::hosted(engine.port);
+        if let Some(file) = setup.memory_rows {
+            memory.seed(file, &vars).await;
+        }
         let api = Api::new(engine.base_url());
         Self {
             api,

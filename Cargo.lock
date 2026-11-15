@@ -5560,6 +5560,7 @@ dependencies = [
  "image",
  "insta",
  "libc",
+ "linggen-memory",
  "llmposter",
  "mdns-sd",
  "mime_guess",

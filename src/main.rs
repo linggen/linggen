@@ -10,6 +10,7 @@ mod js_runtime;
 mod language;
 mod logging;
 mod mcp_client;
+mod memory_host;
 mod message;
 mod mirror;
 mod paths;
@@ -372,6 +373,12 @@ async fn main() -> Result<()> {
             let host = global_host.clone().unwrap_or(cfg_host);
             // Captured before the config moves into the manager below.
             let migrated_legacy_addr = config.server.migrated_legacy_addr;
+
+            // Memory is hosted in this process: open its store before the
+            // listener binds, and send the engine's own memory calls to it.
+            memory_host::start(port).await;
+            let mut config = config;
+            config.agent.ling_mem_url = memory_host::effective_url(&config.agent.ling_mem_url);
 
             // Install/update built-in agent specs to ~/.linggen/agents/
             if let Err(e) = cli::init::install_default_agents() {

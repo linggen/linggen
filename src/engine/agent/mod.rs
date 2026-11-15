@@ -823,9 +823,10 @@ impl AgentManager {
     }
 
     /// Point the engine at another ling-mem. The caller has already written
-    /// client.json; this makes the running engine follow it.
+    /// client.json; this makes the running engine follow it. An address on
+    /// this machine means the memory this process hosts.
     pub async fn set_ling_mem_url(&self, url: String) {
-        self.config.write().await.agent.ling_mem_url = url;
+        self.config.write().await.agent.ling_mem_url = crate::memory_host::effective_url(&url);
     }
 
     pub async fn apply_config(&self, mut new_config: Config) -> Result<()> {

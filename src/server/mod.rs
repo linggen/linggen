@@ -110,6 +110,11 @@ async fn prepare_server(
         next_peer_id: Arc::new(std::sync::atomic::AtomicU64::new(1)),
     });
 
+    // Bound before the background tasks start: one of them connects the
+    // built-in memory MCP server, which is this port (`memory_host`). Until
+    // `axum::serve` runs, connections wait in the backlog.
+    let listener = tokio::net::TcpListener::bind(format!("{}:{}", host, port)).await?;
+
     // Who is met, settled before anything can ask or bind: an agent that
     // appears only once met is latched now when it already has history here
     // (an upgrade keeps her), or when its trigger already reads set.
@@ -125,7 +130,6 @@ async fn prepare_server(
     // LAN gate: outermost layer — see `lan_gate`.
     let app = routes::router(state.clone()).layer(axum::middleware::from_fn(lan_gate));
 
-    let listener = tokio::net::TcpListener::bind(format!("{}:{}", host, port)).await?;
     let actual_port = listener.local_addr()?.port();
     info!("Server running on http://{}:{}", host, actual_port);
     api::pair::advertise(actual_port, api::pair::is_lan_bound(host));

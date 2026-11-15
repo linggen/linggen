@@ -83,6 +83,9 @@ gethostname = "1.1.0"
 open = "5.3.3"
 urlencoding = "2.1.3"
 flate2 = "1.1.9"
+# Memory, hosted in this process (`memory_host`). Its own telemetry stays
+# off: the engine's is the one that counts.
+linggen-memory = { path = "crates/linggen-memory", default-features = false }
 
 # any-tts (Kokoro voice). `metal` + `accelerate` are Apple-only candle backends
 # — they pull in objc2*, which `compile_error!`s on non-Apple targets — so enable
@@ -117,6 +120,10 @@ insta = { version = "1", features = ["filters"] }
 # (Kokoro TTS) run 20-50x faster optimized — unoptimized candle makes synthesis
 # unusably slow (~47s/utterance vs ~1s).
 [profile.dev.package."*"]
+opt-level = 3
+# `"*"` is every package but the workspace's own; memory's store code
+# (LanceDB queries, the change log) is as slow unoptimized as its deps.
+[profile.dev.package.linggen-memory]
 opt-level = 3
 
 # Day-to-day builds of the live engine: release speed, but only what changed is rebuilt

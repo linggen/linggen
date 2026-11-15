@@ -326,7 +326,17 @@ fn fetch(
         let _ = tx.send(result);
     });
 
-    match rx.recv_timeout(timeout) {
+    // Prompt assembly is sync and often runs on an engine worker. Waiting
+    // there must not hold that worker's queued tasks: memory is served by
+    // this same process now (`memory_host`), so the answer needs them.
+    let wait = || rx.recv_timeout(timeout);
+    let answer = match tokio::runtime::Handle::try_current() {
+        Ok(h) if h.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+            tokio::task::block_in_place(wait)
+        }
+        _ => wait(),
+    };
+    match answer {
         Ok(result) => Some(result),
         Err(_) => {
             tracing::warn!(

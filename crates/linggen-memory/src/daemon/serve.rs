@@ -38,7 +38,7 @@ const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 /// One change log for both tables (`memory::changes`) — what a replica pulls.
 /// A store that has never had one is seeded with every existing row, so a
 /// replica's first pull is a full copy.
-async fn attach_change_log(
+pub(crate) async fn attach_change_log(
     data_dir: &Path,
     semantic: &MemoryStore,
     episodic: &MemoryStore,

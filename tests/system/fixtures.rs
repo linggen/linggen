@@ -1,8 +1,9 @@
 //! The fixture world itself: it loads as written, and the guard refuses
 //! anything that would reach the person's own Linggen.
 
+use crate::support::engine::Engine;
 use crate::support::home::Home;
-use crate::support::memory::Memory;
+use crate::support::memory;
 use crate::support::{guard, Setup, World};
 use serde_json::{json, Value};
 use std::path::Path;
@@ -40,11 +41,11 @@ async fn the_fixture_home_loads() {
 }
 
 /// A true first install — no config folder, no client.json — boots on the
-/// engine's own defaults: its memory is the default address, which a real
-/// install resolves to 127.0.0.1:9528 and this world to its own ling-mem
-/// (named only by `LING_MEM_URL`), never the real one on 9528. The address
-/// lives in `~/.linggen/client.json`, not the config, and a default one is
-/// written nowhere.
+/// engine's own defaults: its memory is the one it hosts itself, on its own
+/// port (an address on this machine, here the world's `LING_MEM_URL`, names
+/// it), never the real one on 9528. The address lives in
+/// `~/.linggen/client.json`, not the config, and a default one is written
+/// nowhere.
 #[tokio::test]
 async fn a_first_install_with_no_config_reaches_its_own_memory() {
     let w = World::start(Setup {
@@ -75,7 +76,7 @@ async fn a_first_install_with_no_config_reaches_its_own_memory() {
     let issues = w.memory.call("issues", json!({})).await.to_string();
     assert!(
         issues.contains(&note),
-        "not in the world's ling-mem: {issues}"
+        "not in the world's memory: {issues}"
     );
 
     assert!(
@@ -138,16 +139,17 @@ fn guard_refuses_a_root_inside_a_git_repo() {
 }
 
 /// A port someone else holds — and answers health on — is never taken for
-/// our server: the child moves to a fresh port.
+/// our server: the child moves to a fresh port. (The engine is the one server
+/// a world starts now that it hosts memory.)
 #[tokio::test]
 async fn a_taken_port_is_never_mistaken_for_ours() {
     let stranger = std::net::TcpListener::bind("127.0.0.1:0").expect("bind a stranger");
     let taken = stranger.local_addr().expect("stranger addr").port();
     std::thread::spawn(move || answer_healthy(stranger));
     let home = Home::new();
-    let memory = Memory::start_on(&home, false, Some(taken)).await;
-    assert!(
-        !memory.url.ends_with(&format!(":{taken}")),
+    let engine = Engine::start(&home, taken, &memory::url_on(taken), false, &[]).await;
+    assert_ne!(
+        engine.port, taken,
         "took the stranger's port {taken} for ours"
     );
 }
