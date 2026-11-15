@@ -143,7 +143,9 @@ cannot point it elsewhere.
 | Phone off LAN | WebRTC over relay | `linggen.dev` signalling → `/api/signaling/<nonce>/answer` |
 | linggen-browser extension | WebSocket, extension dials in | `/api/bridge/socket` |
 | Skill scripts reaching the browser | HTTP | `POST /api/bridge/call` (a skill page's own call rides its channel) |
-| Phone, for Yinyue's memory | HTTP in the tunnel | `POST /api/memory/<verb>` → `ling-mem` |
+| Phone, for Yinyue's memory | HTTP in the tunnel | `POST /api/memory/<verb>` → `ling-mem`. *2.3:* the hosted store, scoped to the phone's person |
+| *2.3:* another machine, approved (`machine` token) | HTTP | `/mcp/memory` (a plugin-only machine); a replica: `/mem/api/sync/*` and its pushed writes |
+| *2.3:* a machine asking to connect | HTTP, no token | `/mem/api/connect/request`, `/mem/api/connect/status/<id>` |
 
 **Into `ling-mem` (`:9528`)**
 
@@ -151,7 +153,7 @@ cannot point it elsewhere.
 |:--|:--|:--|
 | `ling`, on behalf of a model | HTTP MCP, JSON-RPC | `/mcp` — the built-in server, URL from `[agent].ling_mem_url` + `/mcp` |
 | `ling`, as a program | HTTP REST | `POST /api/memory/<verb>` — dream rollup, scheduler stats, core block, skill pages, the phone's passthrough |
-| A second machine on the LAN | HTTP MCP, JSON-RPC | `/mcp` with `x-linggen-device` |
+| A second machine on the LAN | HTTP MCP, JSON-RPC | `/mcp` with `x-linggen-device`. *2.3:* not on the network — `/mcp/memory` on the engine's port |
 | `ling-mem` CLI | HTTP REST | port read from `daemon.json`. *2.3:* `ling mem <verb>` — the engine's port from the lock file, `/mem/api/memory/<verb>`; engine down, the store directly under the lock |
 | Plugin hooks | HTTP MCP, JSON-RPC | `/mcp` — `memory_search` per turn, `memory_list` for core, `memory_days` for upkeep. *2.3:* answered by the engine on `127.0.0.1:9528` |
 | Plugin hooks (local only) | spawn the CLI | `ling-mem status`, `start` — daemon lifecycle, skipped on a remote host. *2.3:* `~/.local/bin/ling-mem` is the engine's stand-in: `status` says running at the engine's version, `start`/`restart` do nothing |
@@ -251,7 +253,7 @@ ignored, and how the 9898 stray daemon was launched.
 |:--|:--|:--|
 | plugin hooks | `~/.linggen/client.json` | env > file > default, via `hooks/mcp.sh` |
 | plugin `.mcp.json` | `${LINGGEN_HOST/PORT}`, `${LING_MEM_HOST/PORT}` | CC expands at startup, **before** any hook — so it can only take env; `config.sh` mirrors `client.json` into `settings.json` `env` |
-| `ling` → `ling-mem` | `[agent].ling_mem_url` > `$LING_MEM_URL` > `:9528` | full URL, so it can already point off-machine; autostart starts ling-mem on its port, loopback only |
+| `ling` → `ling-mem` | `[agent].ling_mem_url` > `$LING_MEM_URL` > `:9528` | *2.3:* always the store the engine hosts; an address on another machine (here or in `client.json`) is ignored with a log line and a line in `ling status` |
 | `ling` `cli/status.rs` | the resolved `[agent].ling_mem_url` | yes |
 | `ling` permission check | hardcoded `127.0.0.1:9528` | **no** |
 | `ling-mem` CLI | `daemon.json` | discovery; local only by construction. *2.3:* `ling mem` reads `memory/.store.lock` |
@@ -272,12 +274,12 @@ than a configured one. (`ling status` and autostart now read the resolved
 `[agent].ling_mem_url`; every other `9528` in `src/` is the default, a test
 literal or a doc comment.)
 
-**A second machine, end to end.** Every piece is built — the plugin's two
-server entries, hooks over curl, `autostart.sh` skipping the binary on a remote
-host, ling-mem's LAN gate — but nobody has yet pointed a real second machine at
-this store. `LING_MEM_HOST` + `LING_MEM_TOKEN`, pair once through Linggen, and
-nothing installed locally. Until that run happens it is designed and unit-true,
-not proven.
+**A second machine, end to end.** *2.3:* machines share memory as primary
+and replicas, each Linggen with its own store; a machine with only a plugin
+points it at another machine's `/mcp/memory` with that machine's token. Both
+paths run between two engines on one Mac over its LAN address; nobody has yet
+done it from a real second machine, nor moved the plugin's entries and hooks
+from 9528 to the engine's port.
 
 **Two daemons, one relay instance.** Both registrations are accepted, and the
 phone's offers are answered by whichever polls first. The second should be

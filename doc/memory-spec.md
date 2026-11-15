@@ -154,7 +154,7 @@ at start-up and serves it (`src/memory_host/`, code in `crates/linggen-memory`).
 - **One writer.** The engine holds `memory/.store.lock` (flock) for its life;
   the file names its pid and port. A second opener is refused.
 - **Doors.** `/mem/*` (memory's own routes) and `/mcp/memory` on the engine's
-  port, this machine only; the phone's `/api/memory/<verb>` as before.
+  port; the phone's `/api/memory/<verb>`. Who reaches which is below.
 - **The old address.** `127.0.0.1:9528` answers with the same routes while
   nothing else holds it — for plugins that still say 9528; goes one release
   after they move.
@@ -166,9 +166,35 @@ at start-up and serves it (`src/memory_host/`, code in `crates/linggen-memory`).
   `memory/backups/takeover-<stamp>/` before it first opens it.
 - **CLI.** `ling mem <verb>`: to the engine when it is up, else on the store
   directly under the lock.
-- **Other machines.** Memory's routes answer loopback only until the owner
-  decides who may reach memory from another machine (see below): replicas
-  and clients on other machines cannot reach this store meanwhile.
+
+### Who reaches memory, and whose rows they see
+
+One rule, in one place (`memory_host::caller`), for every memory route on
+the engine's port. Every paired device is one row in `paired-devices.json`
+with a **kind**:
+
+| Caller | Who it is | Sees |
+|---|---|---|
+| This machine (loopback; its own web UI over its channel) | the owner | all of the owner's memory |
+| A `machine` — approved with Allow on this machine | the owner's other computer | all of the owner's memory |
+| A `phone` — paired with the on-screen code | its own person | its person's rows only |
+| No token, an unknown token | no one | nothing |
+
+- **Whose rows** comes from the caller, never from the request body — unless
+  the caller is the owner or a machine. A phone's own claims are removed and
+  its person stamped (`/api/memory/<verb>`, a skill page's memory calls).
+- **Over the network** (through the LAN gate, with a token) a machine
+  reaches `/mcp/memory` — for a machine with only a plugin — and the replica
+  protocol under `/mem`: `/api/sync/changes`, `/api/sync/rows`,
+  `/api/sync/role` and the writes a replica pushes. Asking to connect
+  (`/mem/api/connect/request`, `/mem/api/connect/status/<id>`) needs no
+  token. Everything else under `/mem` is this machine's. A phone's token is
+  refused on all of these (403); its door is `/api/memory/<verb>`.
+- **Allow / Deny** happen only at this machine.
+- **On by default**, for approved machines only. `127.0.0.1:9528` is never on
+  the network.
+- **Old rows** are classified once: a row the Allow ceremony recorded
+  (`memory/connect-devices.json`) is a machine; any other is a phone.
 
 ## Across machines
 
@@ -176,13 +202,18 @@ One person, one memory across all their machines (designed 2026-10-21,
 building). The stores form a star: one **primary**, any number of
 **replicas**.
 
-- **Setup** — every machine runs its own ling-mem; clients talk only to
-  the local one. One setting picks the primary: *local* (default) or
-  another machine's address. Set it in 9527 Settings, the ling-mem
-  console, or `/linggen:config`.
+- **Setup** — every machine runs its own Linggen with its own store;
+  clients talk only to the local one. One setting picks the primary:
+  *local* (default) or another machine's Linggen (`host:port`, its engine
+  port). Set it in Settings → Memory → Primary. An engine never uses
+  another machine's store by address; an old config that names one is
+  ignored (a log line, and `ling status` says so).
+- **Plugin only** — a machine with a plugin and no Linggen has no store: the
+  plugin points at another machine's `/mcp/memory` with that machine's
+  token (`/linggen:config`).
 - **Joining** — a replica asks; the primary's machine shows Allow /
-  Deny. Allow issues a device token the stores keep. Only the primary's
-  own machine can approve.
+  Deny. Allow issues a device token the replica keeps, on a `machine`
+  row. Only the primary's own machine can approve.
 - **Reads** — from the local copy, synced from the primary; work
   offline.
 - **Writes** — go to the primary; queued while it is away, sent when it

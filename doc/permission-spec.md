@@ -19,6 +19,15 @@ A room user running Linggen on their own device uses their own device's permissi
 
 [Hanli]: we need to figure out how do we define owner, when there are multiple accounts. 
 
+## Remote trust: devices and memory
+
+Anything reaching this machine over the network presents a paired device's token at the LAN gate. Each paired device is one row with a kind:
+
+- **Machine** — the owner's other computer, approved with Allow at this machine. For memory it is the owner: it sees all of the owner's memory, through `/mcp/memory` and the replica protocol.
+- **Phone** — paired with the on-screen code. For memory it is its own person and sees only that person's rows, through `/api/memory/<verb>`; the machine routes refuse it.
+
+Through the WebRTC tunnel a request arrives from loopback, so the tunnel names the device it carries and marks what it knows of a peer that names none; only this machine's own page and the owner's relay login count as the owner. Approving a machine (Allow / Deny) is only for someone at this machine. See `memory-spec.md` § Who reaches memory.
+
 ## Session grants
 
 Each grant pairs a permission level with a scope: a directory and its children, or **all directories** (`*`). The most specific directory grant takes precedence; the all-directories grant is the fallback. Without a matching grant, the level is `chat`.

@@ -22,8 +22,25 @@
   `memory/.store.lock`. Old callers keep working: `127.0.0.1:9528` answers
   as the old daemon did (this machine only), and `~/.local/bin/ling-mem`
   becomes a stand-in for `ling mem` (the real binary stays as
-  `ling-mem.prev` for a rollback). Other machines cannot reach this store
-  until access across machines is decided.
+  `ling-mem.prev` for a rollback).
+- **Memory across machines: approved machines only.** Each paired device is
+  a `phone` or a `machine` (approved with Allow; existing rows are
+  classified by how they were made). A machine is the owner's other
+  computer and sees all of the owner's memory: over the LAN, with its token,
+  it reaches `/mcp/memory` (for a machine with only a plugin) and the
+  replica protocol under `/mem`. A phone sees only its person's rows, at
+  `/api/memory/<verb>` and from skill pages, and is refused on the machine
+  routes. One rule decides this for every memory route. Replicas now call
+  the primary at its Linggen port (`host:9527`). `127.0.0.1:9528` stays
+  this machine's only.
+- **An engine uses its own memory.** "Use another machine's store by
+  address" is gone (Settings → Memory → "Ling-mem URL" and its routes); an
+  old config naming one is ignored, with a log line and a line in
+  `ling status`. Share memory with Primary instead. A plugin-only machine
+  still points its plugin at another machine.
+- **Allow / Deny at this Mac, in its web UI.** The local page's channel
+  says it was opened on this machine, so the Share-memory prompt shows
+  there; a phone's or a relay peer's channel never counts as this machine.
 
 ## [2.2.1] - 2026-11-14 — the permission gate reads a command as the shell does
 
