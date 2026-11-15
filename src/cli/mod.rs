@@ -3,6 +3,7 @@ pub mod claude;
 pub mod daemon;
 pub mod engine_restart;
 pub mod init;
+pub mod mem;
 pub mod prev_binary;
 pub mod restart;
 pub mod self_update;

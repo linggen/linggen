@@ -972,23 +972,6 @@ pub async fn run(cli: Cli) -> Result<()> {
         _ => {}
     }
 
-    // Export/import are direct-store maintenance ops — never routed through the
-    // daemon (bulk local I/O; export must read every row, import bulk-inserts).
-    // Handled here so they bypass both the daemon branch and the store match.
-    match &cli.cmd {
-        Command::Export { .. } | Command::Import { .. } => {
-            let store = open_store(&data_dir, cli.episodic)
-                .await
-                .with_context(|| format!("opening store at {}", data_dir.display()))?;
-            return match cli.cmd {
-                Command::Export { file } => cmd_export(&store, &file, format).await,
-                Command::Import { file } => cmd_import(&store, &file, format, cli.episodic).await,
-                _ => unreachable!("matched Export/Import above"),
-            };
-        }
-        _ => {}
-    }
-
     // Prefer the running daemon when one is reachable. This eliminates the
     // CLI/daemon data-path split: with the daemon up, the CLI is a typed
     // shell client over HTTP and there's exactly one writer to the store.
@@ -1000,9 +983,70 @@ pub async fn run(cli: Cli) -> Result<()> {
     // `--episodic` always uses the direct store: the HTTP surface only
     // exposes the curated `semantic` table, so routing episodic ops through
     // the daemon would silently hit the wrong table.
-    if !cli.episodic {
-        if let Some(base_url) = client::try_running_or_start(&data_dir, &skill_dir).await {
-            return match cli.cmd {
+    let base = match &cli.cmd {
+        Command::Export { .. } | Command::Import { .. } => None,
+        _ if cli.episodic => None,
+        _ => client::try_running_or_start(&data_dir, &skill_dir).await,
+    };
+    run_data_at(cli.cmd, cli.episodic, format, &data_dir, base).await
+}
+
+/// Memory's data verbs — everything but the daemon's lifecycle — against
+/// `base` (a memory HTTP surface such as `http://127.0.0.1:9527/mem`) when
+/// given, else on the store under the data dir, opened directly. For a host
+/// that runs memory itself (the Linggen engine's `ling mem`): it finds memory
+/// its own way and holds the store's lock, so this never looks for or starts
+/// a daemon.
+pub async fn run_data(cli: Cli, base: Option<String>) -> Result<()> {
+    if is_lifecycle(&cli.cmd) {
+        return Err(anyhow!(
+            "not a data verb: the daemon's lifecycle belongs to its host"
+        ));
+    }
+    let format = cli.format;
+    let data_dir = resolve_data_dir(cli.data_dir)?;
+    run_data_at(cli.cmd, cli.episodic, format, &data_dir, base).await
+}
+
+fn is_lifecycle(cmd: &Command) -> bool {
+    matches!(
+        cmd,
+        Command::Serve { .. }
+            | Command::Start { .. }
+            | Command::Stop
+            | Command::Restart { .. }
+            | Command::Status
+            | Command::Upgrade { .. }
+    )
+}
+
+async fn run_data_at(
+    cmd: Command,
+    episodic: bool,
+    format: OutputFormat,
+    data_dir: &std::path::Path,
+    base: Option<String>,
+) -> Result<()> {
+    // Export/import are direct-store maintenance ops — never routed through the
+    // daemon (bulk local I/O; export must read every row, import bulk-inserts).
+    // Handled here so they bypass both the daemon branch and the store match.
+    match &cmd {
+        Command::Export { .. } | Command::Import { .. } => {
+            let store = open_store(data_dir, episodic)
+                .await
+                .with_context(|| format!("opening store at {}", data_dir.display()))?;
+            return match cmd {
+                Command::Export { file } => cmd_export(&store, &file, format).await,
+                Command::Import { file } => cmd_import(&store, &file, format, episodic).await,
+                _ => unreachable!("matched Export/Import above"),
+            };
+        }
+        _ => {}
+    }
+
+    if !episodic {
+        if let Some(base_url) = base {
+            return match cmd {
                 Command::Add(args) => client::add(&base_url, args, format).await,
                 Command::Get { id } => client::get(&base_url, &id, format).await,
                 Command::Search(args) => client::search(&base_url, args, format).await,
@@ -1033,17 +1077,17 @@ pub async fn run(cli: Cli) -> Result<()> {
         }
     }
 
-    let store = open_store(&data_dir, cli.episodic)
+    let store = open_store(data_dir, episodic)
         .await
         .with_context(|| format!("opening store at {}", data_dir.display()))?;
 
-    match cli.cmd {
-        Command::Add(args) => cmd_add(&store, args, format, cli.episodic).await,
+    match cmd {
+        Command::Add(args) => cmd_add(&store, args, format, episodic).await,
         Command::Get { id } => cmd_get(&store, &id, format).await,
         // Default search spans both tables (recall). `store` is the semantic
-        // handle here (`!cli.episodic`); reuse it and open episodic alongside.
-        Command::Search(args) if !cli.episodic => {
-            let episodic = MemoryStore::open_episodic(&data_dir)
+        // handle here (`!episodic`); reuse it and open episodic alongside.
+        Command::Search(args) if !episodic => {
+            let episodic = MemoryStore::open_episodic(data_dir)
                 .await
                 .with_context(|| format!("opening episodic store at {}", data_dir.display()))?;
             let recall = Recall::new(Arc::new(store), Arc::new(episodic));

@@ -136,6 +136,13 @@ enum Command {
         #[command(subcommand)]
         action: AccountAction,
     },
+    /// Memory's data verbs: `ling mem search …`, `ling mem add …`, `ling mem list`, …
+    /// (`ling mem --help` lists them). Runs against the engine when it is up,
+    /// else on the store directly.
+    Mem {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -243,6 +250,9 @@ async fn main() -> Result<()> {
         }
         Some(Command::Claude { args }) => {
             return cli::claude::run(config.server.port(), args).await;
+        }
+        Some(Command::Mem { args }) => {
+            return cli::mem::run(args.clone()).await;
         }
         Some(Command::Restart { binary, wait }) => {
             return cli::restart::request(config.server.port(), binary, *wait).await;
@@ -507,6 +517,7 @@ async fn main() -> Result<()> {
         | Some(Command::Auth { .. })
         | Some(Command::Account { .. })
         | Some(Command::Claude { .. })
+        | Some(Command::Mem { .. })
         | Some(Command::Restart { .. })
         | Some(Command::EngineRestart { .. }) => unreachable!(),
     }
