@@ -20,6 +20,9 @@ interface PairDevice {
   /// pairing never required an account, so a nameless row would read as a
   /// missing fact rather than as a guest.
   person?: string;
+  /// A phone (code pairing) sees its own person's memory; a computer (Allow
+  /// on this Mac) is the owner's other machine and sees all of it.
+  kind?: 'phone' | 'machine';
 }
 
 interface PairInfo {
@@ -292,7 +295,8 @@ export const PhoneTab: React.FC<{
                     </button>
                   )}
                   <p className="text-[11px] text-slate-400">
-                    {d.person ? `${d.person} · ` : ''}
+                    {d.kind === 'machine' ? 'Computer · ' : 'Phone · '}
+                    {d.kind !== 'machine' && d.person ? `${d.person} · ` : ''}
                     Paired {new Date(d.created_at * 1000).toLocaleDateString()}
                   </p>
                 </div>

@@ -25,6 +25,8 @@ pub(crate) async fn get_pair_info(
                 "id": d.id,
                 "name": d.name,
                 "created_at": d.created_at,
+                // phone | machine: a computer sees all the owner's memory.
+                "kind": d.kind(),
                 "settings": d.settings,
                 "account": d.account,
                 // Who to call them on screen. `account` above is the truth and

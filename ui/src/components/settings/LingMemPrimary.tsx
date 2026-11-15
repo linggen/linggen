@@ -2,7 +2,8 @@ import React from 'react';
 import { inputCls } from './kit';
 
 // This machine's memory: the primary (default), or a replica of another
-// machine's. The local ling-mem owns the setting; the engine forwards.
+// machine's (its Linggen address). Memory owns the setting; the engine
+// calls it in-process.
 
 interface Role {
   role: 'primary' | 'replica';
@@ -79,7 +80,7 @@ export const LingMemPrimary: React.FC = () => {
           onChange={(e) => setText(e.target.value)}
           onBlur={save}
           onKeyDown={(e) => { if (e.key === 'Enter') save(); }}
-          placeholder="local, or 192.168.1.5:9528"
+          placeholder="local, or 192.168.1.5:9527"
         />
       </div>
       {role && <span className="text-xs text-slate-500 dark:text-slate-400">{fact(role)}</span>}

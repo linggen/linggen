@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
 
-// A machine on the LAN asking ling-mem to share memory. The engine forwards
-// the three calls (`/api/ling-mem/connect/*`) only for someone at this Mac —
+// A computer on the LAN asking to share this Mac's memory — once allowed it
+// is the owner's other machine and sees all of it. The engine answers the
+// three calls (`/api/ling-mem/connect/*`) only for someone at this Mac —
 // anyone else gets 403 and this renders nothing, so the server decides who
 // sees it, never the page.
 
@@ -66,7 +67,7 @@ export const LingMemConnectModal: React.FC = () => {
     <div className={overlayCls}>
       <div className={cardCls} role="alertdialog" aria-modal="true" aria-label="Share memory">
         <p className={msgCls}>
-          <b>{pending.device_name}</b> ({pending.ip}) wants to share memory.
+          <b>{pending.device_name}</b> ({pending.ip}) wants to share your memory. Allow it only if it is your computer.
         </p>
         {pending.known && <p className={hintCls}>Allowed before; it lost its key.</p>}
         <div className="flex justify-end gap-2 mt-4">
