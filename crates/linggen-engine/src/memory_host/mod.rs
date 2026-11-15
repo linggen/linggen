@@ -34,13 +34,15 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 /// Where memory's own routes are mounted on the engine's port —
-/// `/mem/api/memory/<verb>`, `/mem/api/health`, `/mem/mcp`, … Loopback only.
+/// `/mem/api/memory/<verb>`, `/mem/api/health`, `/mem/mcp`, … For this
+/// machine; an approved machine reaches the replica protocol here (`routes`).
 /// Not under `/api/`: the phone's WebRTC channel forwards `/api/*` to this
 /// port as loopback, and the phone's door is the stamped `/api/memory/<verb>`.
 pub const PREFIX: &str = ling_mem::replica::state::PRIMARY_PREFIX;
 
-/// Memory's MCP server for hosts on this machine (Claude Code, Codex, …),
-/// beside the engine's own `/mcp`. The same server is at `/mem/mcp`.
+/// Memory's MCP server for hosts on this machine (Claude Code, Codex, …) and
+/// for an approved machine with only a plugin, beside the engine's own
+/// `/mcp`. The same server is at `/mem/mcp` (this machine only).
 pub(crate) const MCP_PATH: &str = "/mcp/memory";
 
 /// Worker threads of memory's runtime. Its blocking pool (embedding, file

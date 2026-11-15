@@ -240,7 +240,7 @@ mistake — on a second machine they are facts about different computers.
 | Daemon | Reads | Notes |
 |:--|:--|:--|
 | `ling` | `[server].url` in `linggen.runtime.toml` | `--port` / `LINGGEN_PORT` override; legacy `host`+`port` still parse and say so at startup |
-| `ling-mem` | `--port` / `--host` | no config file; publishes `daemon.json`. *2.3:* gone; memory is `/mem` and `/mcp/memory` on the engine's port (loopback callers only) and the old `127.0.0.1:9528` |
+| `ling-mem` | `--port` / `--host` | no config file; publishes `daemon.json`. *2.3:* gone; memory is `/mem` and `/mcp/memory` on the engine's port (this machine; an approved machine reaches `/mcp/memory` and the replica protocol) and the old `127.0.0.1:9528` (this machine only) |
 
 Nothing else asserts a bind address. The app shell and the plugin's autostart
 both **read** `[server].url` and no longer pass `--port` — they used to assert
