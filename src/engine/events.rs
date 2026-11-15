@@ -787,3 +787,43 @@ pub struct UiEvent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data: Option<serde_json::Value>,
 }
+
+/// The session id that reaches every surface over its control channel.
+pub(crate) const GLOBAL: &str = "global";
+
+/// Builders the server's `ui_events` mapping writes its events with.
+impl UiEvent {
+    pub(crate) fn phase(mut self, phase: &str) -> Self {
+        self.phase = Some(phase.to_string());
+        self
+    }
+    pub(crate) fn text(mut self, text: impl Into<String>) -> Self {
+        self.text = Some(text.into());
+        self
+    }
+    pub(crate) fn agent(mut self, agent_id: impl Into<String>) -> Self {
+        self.agent_id = Some(agent_id.into());
+        self
+    }
+    pub(crate) fn session(mut self, session_id: Option<String>) -> Self {
+        self.session_id = session_id;
+        self
+    }
+    /// The run that sent it (`UiEvent::run_id`).
+    pub(crate) fn run(mut self, run_id: Option<String>) -> Self {
+        self.run_id = run_id;
+        self
+    }
+    pub(crate) fn global(mut self) -> Self {
+        self.session_id = Some(GLOBAL.to_string());
+        self
+    }
+    pub(crate) fn project_root(mut self, project_root: Option<String>) -> Self {
+        self.project_root = project_root;
+        self
+    }
+    pub(crate) fn data(mut self, data: impl serde::Serialize) -> Self {
+        self.data = serde_json::to_value(data).ok();
+        self
+    }
+}

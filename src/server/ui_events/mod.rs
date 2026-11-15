@@ -10,7 +10,7 @@ mod data;
 mod global;
 mod pet;
 
-use crate::engine::events::{ServerEvent, UiEvent};
+use crate::engine::events::{ServerEvent, UiEvent, GLOBAL};
 
 pub(crate) const UI_KIND_MESSAGE: &str = "message";
 pub(crate) const UI_KIND_ACTIVITY: &str = "activity";
@@ -36,9 +36,6 @@ pub(crate) const UI_PHASE_DOING: &str = "doing";
 pub(crate) const UI_PHASE_DONE: &str = "done";
 pub(crate) const UI_PHASE_RESYNC: &str = "resync";
 
-/// The session id that reaches every surface over its control channel.
-const GLOBAL: &str = "global";
-
 /// The header every event of one mapping shares.
 #[derive(Clone, Copy)]
 struct Ui {
@@ -62,42 +59,6 @@ impl Ui {
             run_id: None,
             data: None,
         }
-    }
-}
-
-impl UiEvent {
-    fn phase(mut self, phase: &str) -> Self {
-        self.phase = Some(phase.to_string());
-        self
-    }
-    fn text(mut self, text: impl Into<String>) -> Self {
-        self.text = Some(text.into());
-        self
-    }
-    fn agent(mut self, agent_id: impl Into<String>) -> Self {
-        self.agent_id = Some(agent_id.into());
-        self
-    }
-    fn session(mut self, session_id: Option<String>) -> Self {
-        self.session_id = session_id;
-        self
-    }
-    /// The run that sent it (`UiEvent::run_id`).
-    fn run(mut self, run_id: Option<String>) -> Self {
-        self.run_id = run_id;
-        self
-    }
-    fn global(mut self) -> Self {
-        self.session_id = Some(GLOBAL.to_string());
-        self
-    }
-    fn project_root(mut self, project_root: Option<String>) -> Self {
-        self.project_root = project_root;
-        self
-    }
-    fn data(mut self, data: impl serde::Serialize) -> Self {
-        self.data = serde_json::to_value(data).ok();
-        self
     }
 }
 
