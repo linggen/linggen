@@ -257,7 +257,13 @@ async function build() {
   const baked = fs.existsSync(OUT_DIR) ? fs.readdirSync(OUT_DIR).filter((f) => f.endsWith('.bin')) : [];
   if (sources.length === 0) {
     if (baked.length === 0) {
-      console.error('bake-anim: no animation sources in ui/anim-src/ and no baked clips in ui/public/anim-baked/ — copy the clips into ui/anim-src/ (see scripts/worktree-setup.sh).');
+      // The clips are in no repository (their licences do not allow it), so a build off this machine has none.
+      // It must say so on purpose: a Mac release built without them would ship her with no gestures.
+      if (process.env.LINGGEN_NO_CLIPS === '1') {
+        console.warn('bake-anim: LINGGEN_NO_CLIPS=1 — building without her animation clips (she keeps her procedural motions only)');
+        return;
+      }
+      console.error('bake-anim: no animation sources in ui/anim-src/ and no baked clips in ui/public/anim-baked/ — copy the clips into ui/anim-src/ (see scripts/worktree-setup.sh), or set LINGGEN_NO_CLIPS=1 to build without them.');
       process.exit(1);
     }
     console.log(`bake-anim: no ui/anim-src/ — using the ${baked.length} baked clips already in public/anim-baked/`);

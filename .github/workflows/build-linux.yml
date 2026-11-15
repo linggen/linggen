@@ -54,6 +54,9 @@ jobs:
       # rust-embed bakes ui/dist/ into the binary, so the UI MUST build first.
       - name: Build Web UI
         working-directory: ui
+        # Her animation clips are in no repository; this build has none (ui/scripts/bake-anim.mjs).
+        env:
+          LINGGEN_NO_CLIPS: "1"
         run: |
           npm install
           npm run build

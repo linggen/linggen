@@ -36,7 +36,8 @@ COPY . .
 WORKDIR /app/ui
 # Remove lockfile and node_modules to avoid architecture mismatches during multi-arch builds
 RUN rm -rf package-lock.json node_modules && npm install
-RUN npm run build && [ "$(ls -A dist)" ] || (echo "❌ Error: UI build produced no assets" && exit 1)
+# Her animation clips are in no repository; this build has none (ui/scripts/bake-anim.mjs).
+RUN LINGGEN_NO_CLIPS=1 npm run build && [ "$(ls -A dist)" ] || (echo "❌ Error: UI build produced no assets" && exit 1)
 
 # 4. Build the real ling binary (with embedded UI)
 ARG BUILD_VERSION
