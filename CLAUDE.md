@@ -30,8 +30,9 @@ Read files under `doc/` and follow them. If you find wrong content in any doc fi
 - `doc/yinyue-spec.md` — Yinyue companion: avatar, voice, session + memory model
 - `doc/shared-session-spec.md` — shared sessions: several agents at one table, one thread/tools/permissions, per-agent persona + model
 - `doc/one-ling-spec.md` — one Ling + one Yinyue on every device: who answers, Mac work continues in the app's latest Mac session as the same Ling, sessions stay per device
-- `doc/dynamic-session-draft.md` — DRAFT (2026-11-13, talk only): one daily thread across apps, prompt projected per focus app, fold only when needed; review pending
-- `doc/merge-and-slim-draft.md` — DRAFT (2026-11-13, talk only): merge ling-mem into ling (one bin, 9527), slim the app (ling.prev in bundle, 灵境 art + Yinyue assets to R2), measured sizes
+- `doc/plan-3.0.md` — PLAN (2026-11-15, agreed, nothing built): 2.3 = review, build speed, ling-mem merged into ling, engine in modules, upgrades, app slimming; 2.4 = one Ling and one Yinyue (one session a day, one world state, few general tools)
+- `doc/dynamic-session-draft.md` — superseded by `plan-3.0.md` (2026-11-13 talk; the folding design was dropped)
+- `doc/merge-and-slim-draft.md` — superseded by `plan-3.0.md` (2026-11-13 talk; measured sizes)
 - `doc/yinyue-companion-spec.md` — Yinyue's proactive/interactive layer: senses, heralds, `agent_chat`, ambient life-signs
 - `doc/perception-spec.md` — what a resident agent knows without being told: world state, the activity log, and when to speak
 - `doc/phone-push-spec.md` — Mac → closed phone: skill-declared lines, her words, sealed per phone, rung through the linggen.dev APNs relay

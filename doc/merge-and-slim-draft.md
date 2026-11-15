@@ -1,6 +1,9 @@
 # Merge ling-mem into ling, and slim the app — discussion draft (2026-11-13)
 
-**Status: talk only, nothing decided, nothing built.** Hanli and Claude,
+**Superseded 2026-11-15 by `plan-3.0.md`**, which holds what was decided. Kept for
+the measurements and the talk that led there.
+
+Was: talk only, nothing decided, nothing built. Hanli and Claude,
 2026-11-13. To be picked up the week of 2026-11-16.
 
 ## 1. Hanli's words

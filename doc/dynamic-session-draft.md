@@ -1,6 +1,10 @@
 # Dynamic session — discussion draft (2026-11-13)
 
-**Status: talk only, nothing decided, nothing built.** Hanli and Claude,
+**Superseded 2026-11-15 by `plan-3.0.md`**, which holds what was decided. Kept for
+the measurements and the talk that led there; its folding / projection design
+(§3.3) was dropped.
+
+Was: talk only, nothing decided, nothing built. Hanli and Claude,
 2026-11-13. To be reviewed in detail the week of 2026-11-16, once there is token
 quota. The perception half of this talk *was* agreed and is already in
 `perception-spec.md` (commit `b2808772`); this file holds the session half.
