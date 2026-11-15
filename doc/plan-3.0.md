@@ -127,8 +127,8 @@ Only its art moves to Cloudflare, one copy for Mac and phone.
 | Mac download (dmg) | 245 MB | — |
 | ↳ 灵境 in the app | 209 MB (art ≈ 146, code 43, tools + tests 15) | ≈ 105 MB (art 61 + code 43; estimate from the measured packs) |
 | ↳ `ling` | 132 MB | ≈ 170 MB merged (220 measured, less the 51 MB her clips no longer take) |
-| iPhone upload (ipa) | 126 MB | 50–60 MB |
-| iPhone installed | 169 MB (灵境 106) | — |
+| iPhone upload (ipa) | 126 MB | ≈ 100 MB careful · ≈ 85 MB lean (estimates; the earlier 50–60 was wrong) |
+| iPhone installed | 169 MB (灵境 110.8) | ≈ 144 MB careful · ≈ 124 MB lean (estimates) |
 
 - **In the package:** the first chapter's art and the art every chapter
   shares. Sorted by a tool from the game's own data (`skills`
@@ -142,6 +142,18 @@ Only its art moves to Cloudflare, one copy for Mac and phone.
 - **The rest downloads:** Mac — all of it, in the background, right after
   first launch. Phone on Wi-Fi — the same. Phone on cellular — only the chapter
   that comes next; the rest waits for Wi-Fi.
+- **The phone is another shape** (measured 2026-11-15, 110.8 MB of 灵境 in
+  the app): its boards ride in 36 uncompressed packs that mix code and art —
+  program code 19.6 MB (11.2 of it the hand-tracking wasm for 结印), the
+  hand-tracking model 7.8, pictures 48.1 in packs + 19.9 of place paintings,
+  audio 5.1, text 6.9. Only data may be fetched after install, never code.
+  - No fetching needed: paint sources 1.75 MB, the `.ogg` copies the phone
+    cannot decode 2.3 MB, JSON held twice 2.2 MB; jigsaw paintings stored at
+    Mac size 4.4 MB (re-encoding them wants Hanli's eye).
+  - Fetched by chapter: later chapters' place paintings 11.6 MB and their art
+    inside packs 6.9 MB — the pack tool must first split art from code.
+  - Careful ≈ 86 MB of 灵境 in the app; lean ≈ 65 MB (also fetches the
+    hand-tracking model and art a first-chapter player does not reach).
 - **Never packaged:** 灵境's `tools` and `tests` (15 MB, measured).
 - **Yinyue stays in the package** (done 2026-11-15, engine main). Her 33
   clips are baked once, at build time, into a compact form: 52.4 MB → 1.1 MB
@@ -247,6 +259,7 @@ Consequence for Yinyue: her animations stay in the program, baked small
 - Where the art's source of truth lives once it has left the package, and how
   an art update ships.
 - What the phone gets in each milestone; its App Store train is separate.
+- The phone: careful or lean; and whether 结印's camera (19.8 MB of code and model) is worth its weight there.
 - How the world state reaches a session Linggen does not host (Claude Code or
   Codex in a terminal) — through the plugin's hook, or not at all.
 - Whether the gate tests a first launch with no network.
