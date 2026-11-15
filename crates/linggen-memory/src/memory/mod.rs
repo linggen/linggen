@@ -1,0 +1,33 @@
+//! # memory — memory types and storage
+//!
+//! v0.1 memory-store primitives for `ling-mem`. See `doc/tech-spec.md` for the
+//! locked schema and CLI contract.
+//!
+//! This module is deliberately thin: a [`Memory`] struct, three validated enums
+//! ([`MemoryType`], [`Outcome`], [`Origin`]), and the Arrow/LanceDB plumbing
+//! that stores and retrieves them. CLI parsing, embedding, and extraction
+//! pipelines live in sibling modules.
+
+pub mod backups;
+pub mod changes;
+pub mod hybrid;
+pub mod maintenance;
+pub mod recall;
+pub mod schema;
+pub mod schema_version;
+pub mod scope;
+pub mod store;
+pub mod types;
+
+pub use hybrid::{Candidate, Hit};
+pub use recall::Recall;
+pub use schema::{
+    build_schema, memories_to_record_batch, record_batch_to_memories, SEMANTIC_TABLE_NAME,
+    VECTOR_DIM,
+};
+pub use scope::RecallScope;
+pub use store::{
+    AccountScope, Filters, InsertOutcome, MemoryPatch, MemoryStore, ScopeWeigher, SortOrder,
+    DEDUP_SIMILARITY_THRESHOLD,
+};
+pub use types::{Memory, MemoryType, Origin, Outcome, ParseEnumError, Tier};

@@ -1,0 +1,105 @@
+[package]
+name = "ling-mem"
+version = "1.13.0"
+edition = "2021"
+authors = ["linggen77@gmail.com"]
+description = "Semantic memory store — facts, activity, LanceDB-backed retrieval"
+repository = "https://github.com/linggen/linggen-memory"
+license = "MIT"
+readme = "README.md"
+
+[features]
+# Anonymous usage telemetry (install/upgrade/heartbeat/command events sent to
+# linggen.dev/api/track). See src/telemetry/mod.rs for the exact field list.
+# Disable at runtime: env LING_MEM_NO_TELEMETRY=1 OR file ~/.linggen/no-telemetry.
+# Disable at compile time: cargo build --no-default-features.
+default = ["telemetry"]
+telemetry = []
+
+[[bin]]
+name = "ling-mem"
+path = "src/main.rs"
+
+[dependencies]
+# Async
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+
+# Errors
+anyhow = "1"
+thiserror = "2"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# IDs and timestamps
+uuid = { version = "1", features = ["v4", "serde"] }
+rand = "0.9"
+chrono = { version = "0.4", features = ["serde"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+dirs = "5"
+
+# Session scanning / extraction
+regex = "1"
+once_cell = "1"
+
+# Embeddings — Qwen3-Embedding-0.6B via candle (1024-dim, multilingual, matches
+# facts schema). The qwen3 feature pulls in candle-core + candle-nn. macOS gets
+# Metal acceleration via the target-specific block below.
+fastembed = { version = "5", features = ["qwen3"] }
+# candle-core provides the Device + DType types Qwen3TextEmbedding::from_hf needs.
+# Version must align with the candle-core pulled in by fastembed's qwen3 feature.
+candle-core = "0.10"
+
+# Storage — keep arrow aligned with the lance version lancedb pins internally.
+# Bumping arrow past that duplicates the arrow types ling-mem uses directly
+# (schema.rs RecordBatch/Field/DataType). Check `cargo tree -p lancedb` after
+# any lancedb bump. NOTE the requirement is a caret: "0.30" never resolves 0.31,
+# so bump this string to move a minor version, don't just `cargo update`.
+# roaring is pinned to 0.11.4 in Cargo.lock: 0.11.3 dropped the Eq impl lance 7
+# needs and cargo's minimal update parks there ("RoaringBitmap: Eq is not
+# satisfied" in lance transaction.rs). Re-pin with
+# `cargo update -p roaring --precise 0.11.4` if the lock is ever regenerated.
+lancedb = "0.31"
+arrow = "58"
+arrow-array = "58"
+arrow-schema = "58"
+
+# Daemon: HTTP server + signals
+axum = "0.8"
+tower = "0.5"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# Sync HTTP for the embedding-model ModelScope fallback (embed/model_fetch.rs).
+# Already in the tree via hf-hub; a direct dep so the fallback can stream
+# without touching the async reqwest stack from sync embedder init.
+ureq = "3"
+
+# Static assets for the Data Browser UI. Default behaviour: debug builds
+# read from disk at runtime (live-edit static/ without recompile), release
+# builds bake files into the binary.
+rust-embed = "8"
+mime_guess = "2"
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.29", features = ["signal", "process", "socket", "net"] }
+# `_exit` for the daemon's last step (`daemon::serve::exit_now`).
+libc = "0.2"
+
+# macOS-only Metal acceleration for the Qwen3 embedder (candle backend).
+[target.'cfg(target_os = "macos")'.dependencies]
+fastembed = { version = "5", features = ["qwen3", "metal"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1

@@ -1,0 +1,3556 @@
+//! [`MemoryStore`] — LanceDB wrapper around one memory table.
+//!
+//! The store is opened once per `ling-mem` invocation (CLI is one-shot in
+//! v0.1). It owns a LanceDB [`Connection`] and a [`Table`] handle for one
+//! table; the table is auto-created on first open if missing. `open_semantic`
+//! binds the `semantic` table (curated long-term memory), `open_episodic`
+//! the `episodic` table (staged short-term memory) — same connection, same
+//! schema, per-table ANN-index isolation.
+//!
+//! See `doc/tech-spec.md` for the full CLI contract. This module implements
+//! just the storage primitives: `open_semantic`, `insert`, `get`. Search,
+//! list, and mutation ops land in subsequent commits.
+
+use super::schema::{
+    build_schema, memories_to_record_batch, record_batch_to_memories, EPISODIC_TABLE_NAME,
+    SEMANTIC_TABLE_NAME,
+};
+use super::scope::RecallScope;
+use super::types::{Memory, MemoryType, Origin, Outcome, Tier};
+use anyhow::{anyhow, Context, Result};
+use arrow_array::{RecordBatch, RecordBatchIterator, RecordBatchReader};
+use chrono::{DateTime, SubsecRound, Utc};
+use futures::TryStreamExt;
+use lancedb::{
+    connect,
+    query::{ExecutableQuery, QueryBase},
+    table::NewColumnTransform,
+    Connection, DistanceType, Table,
+};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+/// Whose rows a query sees. One person at a time, always: the store holds
+/// the owner's memory and, once a phone with another account has paired,
+/// that person's too — and a recall that mixed them would hand one person
+/// the other's life.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub enum AccountScope {
+    /// The store owner's rows — `account_id IS NULL`. The default, so
+    /// every caller that never heard of accounts keeps seeing exactly
+    /// what it saw before the field existed.
+    #[default]
+    Owner,
+    /// One other person's rows.
+    Id(String),
+    /// Everyone's. For maintenance that walks the whole store — the
+    /// per-account dream picks its person from `distinct_accounts`.
+    Any,
+}
+
+impl AccountScope {
+    /// The scope a request names: `all_accounts` beats `account`, and an
+    /// absent `account` is the owner.
+    pub fn from_args(account: Option<String>, all_accounts: bool) -> Self {
+        if all_accounts {
+            return Self::Any;
+        }
+        match account
+            .map(|a| a.trim().to_string())
+            .filter(|a| !a.is_empty())
+        {
+            Some(id) => Self::Id(id),
+            None => Self::Owner,
+        }
+    }
+
+    /// Does a row fall inside this scope? The post-fetch twin of the SQL
+    /// clause, for the by-id verbs (`get` / `update` / `delete`) that
+    /// fetch first and must not touch another person's row.
+    pub fn admits(&self, fact: &Memory) -> bool {
+        match self {
+            Self::Owner => fact.account_id.is_none(),
+            Self::Id(id) => fact.account_id.as_deref() == Some(id.as_str()),
+            Self::Any => true,
+        }
+    }
+}
+
+/// Filter criteria shared by [`MemoryStore::search`] and [`MemoryStore::list`].
+///
+/// All filter fields combine with AND. Within `types` and `apps`, any one
+/// entry matches (OR). An empty filter matches every row of the owner's.
+#[derive(Debug, Clone, Default)]
+pub struct Filters {
+    /// Rows scoped to any of these skills' dirs (`~/.linggen/skills/<name>`
+    /// and below). The phone's pull: "the rows of any app I run".
+    pub apps: Vec<String>,
+    /// Only rows with this `indexed` flag.
+    pub indexed: Option<bool>,
+    /// Only rows whose `scope` is exactly one of these — the index query.
+    pub scope_in: Vec<String>,
+    /// No rows under `~/.linggen/skills` (an app's own rows). Set by
+    /// [`Filters::for_search`] on a search outside a skill: weights replace
+    /// the scope filter there, but app rows stay out of non-app recall.
+    pub no_skills: bool,
+    /// Set by the store, never by callers: the table still carries the v1
+    /// `contexts` column (migration not yet accepted), so app and skill
+    /// scopes also match rows tagged with the app's name there.
+    pub(crate) legacy_contexts: bool,
+    /// Set by the store, never by callers: the table still names the scope
+    /// column `cwd` (the v1 name), so the SQL says `cwd`.
+    pub(crate) legacy_cwd: bool,
+    /// Whose rows. Defaults to the owner's; see [`AccountScope`].
+    pub account: AccountScope,
+    pub types: Vec<MemoryType>,
+    /// Rows of none of these types. Per-turn recall skips `preference`
+    /// rows because session start already loaded them.
+    pub exclude_types: Vec<MemoryType>,
+    pub origin: Option<Origin>,
+    pub outcome: Option<Outcome>,
+    pub tier: Option<Tier>,
+    pub since: Option<DateTime<Utc>>,
+    pub until: Option<DateTime<Utc>>,
+    /// Only rows written at or after this instant — `created_at`, never the
+    /// back-dated `occurred_at`. A judged day's new work is exactly its rows
+    /// created since the day's `remembered_at`.
+    pub created_since: Option<DateTime<Utc>>,
+    /// Narrow to a single `source_session` id. Used by dashboard
+    /// deep-links (`?session=<sid>`) to show only rows the agent wrote
+    /// during one engine session.
+    pub source_session: Option<String>,
+    /// The session's recall scope, given as its root (or cwd): see
+    /// [`RecallScope`]. On `list` it filters in SQL: an owner root sees rows
+    /// under it, rows at its parents and rows with no scope; a skill's dir
+    /// sees only rows under it; `$HOME`, `~/.linggen` and temp dirs see only
+    /// rows with no scope. On search ([`Filters::for_search`]) a skill's dir
+    /// still filters the same way; any other root weighs every non-app row
+    /// by its directory's distance ([`super::scope::Kin`]) instead.
+    pub scope_root: Option<String>,
+    /// Include archived rows (`expired_at IS NOT NULL`). Default `false`:
+    /// live memory only — the archive exists for provenance and unpack,
+    /// not for recall.
+    pub include_expired: bool,
+    /// Only the rows one survivor replaced — the unpack query for a merge
+    /// or digest. Implies `include_expired` (the members are archived by
+    /// definition).
+    pub superseded_by: Option<String>,
+}
+
+impl Filters {
+    /// No selective criterion set. `include_expired` alone doesn't count —
+    /// it widens rather than narrows. The `forget` guard keys on this
+    /// (NOT on `to_sql()` returning `None`, which the always-on archive
+    /// gate would defeat: an empty filter still renders
+    /// `expired_at IS NULL`).
+    pub fn is_empty(&self) -> bool {
+        // `account` deliberately doesn't count: it narrows to a person, and
+        // "forget everyone this person is" must be a by-id decision, not a
+        // filter that reads like a scope.
+        self.apps.is_empty()
+            && self.indexed.is_none()
+            && self.scope_in.is_empty()
+            && !self.no_skills
+            && self.types.is_empty()
+            && self.origin.is_none()
+            && self.outcome.is_none()
+            && self.tier.is_none()
+            && self.since.is_none()
+            && self.until.is_none()
+            && self.created_since.is_none()
+            && self.source_session.is_none()
+            && self.scope_root.is_none()
+            && self.superseded_by.is_none()
+    }
+
+    /// The rendered WHERE clause, for tests outside this module.
+    #[cfg(test)]
+    pub(crate) fn to_sql_for_test(&self) -> String {
+        self.to_sql().unwrap_or_default()
+    }
+
+    /// Render this filter set as a SQL WHERE-clause fragment (without the
+    /// `WHERE` keyword itself). Returns `None` only when no clause renders
+    /// at all (an empty filter with `include_expired` set); the default
+    /// archive gate means an otherwise-empty filter still renders
+    /// `expired_at IS NULL`.
+    ///
+    /// Time fields compare against `COALESCE(occurred_at, created_at)` so
+    /// `since` / `until` match whichever timestamp the fact actually carries.
+    fn to_sql(&self) -> Option<String> {
+        let mut clauses: Vec<String> = Vec::new();
+        let home = super::scope::home();
+
+        if !self.apps.is_empty() {
+            let or = self
+                .apps
+                .iter()
+                .map(|name| {
+                    let dir = home.join(super::scope::SKILLS_REL).join(name);
+                    self.skill_sql(&dir.to_string_lossy(), name)
+                })
+                .collect::<Vec<_>>()
+                .join(" OR ");
+            clauses.push(format!("({or})"));
+        }
+
+        if let Some(flag) = self.indexed {
+            clauses.push(if flag {
+                "indexed = true".to_string()
+            } else {
+                "(indexed IS NULL OR indexed = false)".to_string()
+            });
+        }
+
+        if self.no_skills {
+            let skills = home.join(super::scope::SKILLS_REL);
+            clauses.push(format!(
+                "({} IS NULL OR NOT ({}))",
+                self.col(),
+                self.subtree_sql(&skills.to_string_lossy())
+            ));
+        }
+
+        if !self.scope_in.is_empty() {
+            let list = self
+                .scope_in
+                .iter()
+                .map(|c| format!("'{}'", escape_sql(c)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            clauses.push(format!("{} IN ({list})", self.col()));
+        }
+
+        match &self.account {
+            AccountScope::Owner => clauses.push("account_id IS NULL".to_string()),
+            AccountScope::Id(id) => clauses.push(format!("account_id = '{}'", escape_sql(id))),
+            AccountScope::Any => {}
+        }
+
+        if !self.types.is_empty() {
+            let or = self
+                .types
+                .iter()
+                .map(|t| format!("type = '{}'", t.as_str()))
+                .collect::<Vec<_>>()
+                .join(" OR ");
+            clauses.push(format!("({or})"));
+        }
+
+        if !self.exclude_types.is_empty() {
+            let list = self
+                .exclude_types
+                .iter()
+                .map(|t| format!("'{}'", t.as_str()))
+                .collect::<Vec<_>>()
+                .join(", ");
+            clauses.push(format!("type NOT IN ({list})"));
+        }
+
+        // NOTE: `from` is intentionally NOT pushed as a SQL clause here.
+        // The column name `from` is a SQL keyword, and LanceDB / DataFusion
+        // returns 0 rows for `"from" = 'value'` even though the column does
+        // hold values that match — likely a parser bug in the keyword path.
+        // Origin filtering happens post-fetch in `apply_origin_filter` below;
+        // skipping it in SQL avoids the keyword collision entirely. If the
+        // upstream parser is fixed later, restore the SQL clause and drop the
+        // post-filter for one less Rust pass over the rows.
+
+        if let Some(o) = self.outcome {
+            clauses.push(format!("outcome = '{}'", o.as_str()));
+        }
+
+        // Unlike `from`, `tier` is not a SQL keyword, so the plain equality
+        // clause is safe to push down — no post-fetch filter needed.
+        if let Some(t) = self.tier {
+            clauses.push(format!("tier = '{}'", t.as_str()));
+        }
+
+        if let Some(since) = self.since {
+            clauses.push(format!(
+                "COALESCE(occurred_at, created_at) >= TIMESTAMP '{}'",
+                since.format("%Y-%m-%d %H:%M:%S%.6f")
+            ));
+        }
+
+        if let Some(until) = self.until {
+            clauses.push(format!(
+                "COALESCE(occurred_at, created_at) < TIMESTAMP '{}'",
+                until.format("%Y-%m-%d %H:%M:%S%.6f")
+            ));
+        }
+
+        if let Some(created) = self.created_since {
+            clauses.push(format!(
+                "created_at >= TIMESTAMP '{}'",
+                created.format("%Y-%m-%d %H:%M:%S%.6f")
+            ));
+        }
+
+        if let Some(sid) = &self.source_session {
+            clauses.push(format!("source_session = '{}'", escape_sql(sid)));
+        }
+
+        // Archive gate. Ordinary queries see live rows only; the unpack
+        // query (`superseded_by`) targets archived members and implies
+        // include_expired.
+        if let Some(succ) = &self.superseded_by {
+            clauses.push(format!("superseded_by = '{}'", escape_sql(succ)));
+        } else if !self.include_expired {
+            clauses.push("expired_at IS NULL".to_string());
+        }
+
+        if let Some(p) = &self.scope_root {
+            clauses.push(self.recall_sql(&RecallScope::of(p, &home)));
+        }
+
+        if clauses.is_empty() {
+            None
+        } else {
+            Some(clauses.join(" AND "))
+        }
+    }
+}
+
+/// How a search weighs each candidate row by its scope. `None` root: the
+/// session sent a path that does not parse — every filed row is far.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScopeWeigher {
+    pub root: Option<PathBuf>,
+}
+
+impl ScopeWeigher {
+    pub fn weight(&self, scope: Option<&str>, home: &Path) -> f32 {
+        super::scope::Kin::of(self.root.as_deref(), scope, home).weight()
+    }
+}
+
+impl Filters {
+    /// The filter a search runs, and how it weighs rows. A skill's own
+    /// session keeps its hard filter (only its rows, no weights: app
+    /// isolation is a standing rule). Any other `scope_root` stops
+    /// filtering by scope and weighs instead, minus every app's rows. No
+    /// `scope_root`: unchanged, unweighted.
+    pub fn for_search(&self) -> (Filters, Option<ScopeWeigher>) {
+        let Some(raw) = &self.scope_root else {
+            return (self.clone(), None);
+        };
+        let home = super::scope::home();
+        if let RecallScope::Skill { .. } = RecallScope::of(raw, &home) {
+            return (self.clone(), None);
+        }
+        let mut f = self.clone();
+        f.scope_root = None;
+        f.no_skills = true;
+        let root = super::scope::expand(raw, &home);
+        (f, Some(ScopeWeigher { root }))
+    }
+
+    /// A directory and everything under it. The trailing separator on the
+    /// LIKE keeps `…/linggen` from claiming `…/linggen-mobile`.
+    fn subtree_sql(&self, dir: &str) -> String {
+        let p = escape_sql(dir.trim_end_matches('/'));
+        let c = self.col();
+        format!("{c} = '{p}' OR {c} LIKE '{p}/%'")
+    }
+
+    /// The scope column's name on this table: `scope`, or `cwd` on a v1
+    /// table not yet renamed.
+    fn col(&self) -> &'static str {
+        if self.legacy_cwd {
+            "cwd"
+        } else {
+            "scope"
+        }
+    }
+
+    /// One skill's rows: under its dir — and, while the v1 `contexts`
+    /// column survives, rows tagged with its name (the old namespace).
+    fn skill_sql(&self, dir: &str, name: &str) -> String {
+        let mut or = self.subtree_sql(dir);
+        if self.legacy_contexts {
+            or.push_str(&format!(" OR array_has(contexts, '{}')", escape_sql(name)));
+        }
+        format!("({or})")
+    }
+
+    fn recall_sql(&self, scope: &RecallScope) -> String {
+        match scope {
+            RecallScope::Owner { root, ancestors } => {
+                let mut or = format!("{} IS NULL OR {}", self.col(), self.subtree_sql(root));
+                if !ancestors.is_empty() {
+                    let list = ancestors
+                        .iter()
+                        .map(|a| format!("'{}'", escape_sql(a)))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    or.push_str(&format!(" OR {} IN ({list})", self.col()));
+                }
+                format!("({or})")
+            }
+            // A skill's own session sees its dir only — never the old tag,
+            // which coding sessions also wrote on their notes about the app.
+            // (The phone's `apps` pull keeps the tag until the drop, see
+            // `skill_sql`; its rows are filtered to the person's types.)
+            RecallScope::Skill { dir, .. } => format!("({})", self.subtree_sql(dir)),
+            RecallScope::NoRoot => format!("{} IS NULL", self.col()),
+        }
+    }
+}
+
+/// Apply the `origin` filter post-fetch. `Filters::to_sql` deliberately
+/// skips `from` because LanceDB / DataFusion mis-handles the SQL keyword
+/// even when double-quoted (returns 0 rows). Cheap O(N) over the limited
+/// row set we already pulled.
+fn apply_origin_filter(facts: &mut Vec<Memory>, origin: Option<Origin>) {
+    if let Some(o) = origin {
+        facts.retain(|f| f.origin == o);
+    }
+}
+
+/// Sort order for [`MemoryStore::list`]. Search is ordered by similarity and
+/// doesn't use this.
+#[derive(Debug, Clone, Copy, Default)]
+pub enum SortOrder {
+    /// Newest first (by `activity_timestamp`, i.e. `updated_at ?? created_at`).
+    #[default]
+    Newest,
+    /// Oldest first.
+    Oldest,
+}
+
+/// Per-field changes for [`MemoryStore::update`].
+///
+/// Each field carries **three** states: `None` means "leave unchanged";
+/// `Some(value)` applies the value. For nullable schema fields (`outcome`,
+/// `scope`, `occurred_at`, `source_session`, `vector`) the inner value is
+/// itself an `Option` — `Some(Some(x))` sets, `Some(None)` clears to null.
+#[derive(Debug, Clone, Default)]
+pub struct MemoryPatch {
+    pub content: Option<String>,
+    pub summary: Option<Option<String>>,
+    pub indexed: Option<bool>,
+    pub r#type: Option<MemoryType>,
+    pub tier: Option<Tier>,
+    pub origin: Option<Origin>,
+    pub outcome: Option<Option<Outcome>>,
+    pub scope: Option<Option<String>>,
+    pub occurred_at: Option<Option<DateTime<Utc>>>,
+    pub source_session: Option<Option<String>>,
+    pub host: Option<Option<String>>,
+    pub vector: Option<Option<Vec<f32>>>,
+    pub account_id: Option<Option<String>>,
+    pub account_name: Option<Option<String>>,
+}
+
+impl MemoryPatch {
+    /// Apply this patch in place to a fact. Used internally by
+    /// [`MemoryStore::update`]; exposed for tests.
+    pub fn apply(&self, f: &mut Memory) {
+        if let Some(v) = &self.content {
+            f.content = v.clone();
+        }
+        if let Some(v) = &self.summary {
+            f.summary = v.clone();
+        }
+        if let Some(v) = self.indexed {
+            f.indexed = v;
+        }
+        if let Some(v) = &self.r#type {
+            f.r#type = *v;
+        }
+        if let Some(v) = &self.tier {
+            f.tier = *v;
+        }
+        if let Some(v) = &self.origin {
+            f.origin = *v;
+        }
+        if let Some(v) = &self.outcome {
+            f.outcome = *v;
+        }
+        if let Some(v) = &self.scope {
+            f.scope = v.clone();
+        }
+        if let Some(v) = &self.occurred_at {
+            f.occurred_at = *v;
+        }
+        if let Some(v) = &self.source_session {
+            f.source_session = v.clone();
+        }
+        if let Some(v) = &self.host {
+            f.host = v.clone();
+        }
+        if let Some(v) = &self.vector {
+            f.vector = v.clone();
+        }
+        if let Some(v) = &self.account_id {
+            f.account_id = v.clone();
+        }
+        if let Some(v) = &self.account_name {
+            f.account_name = v.clone();
+        }
+    }
+}
+
+/// Auto-add columns added after the initial schema (e.g. `host`, 2026-05-20)
+/// when an existing on-disk table predates them. Idempotent — skips when
+/// the column is already present. Uses LanceDB's `add_columns(AllNulls)`
+/// so existing rows get `host=NULL` rather than being wiped.
+///
+/// Limited to nullable additions; non-nullable / type-changing migrations
+/// still fall back to the wipe-and-restart policy (`memory_recall_redesign`,
+/// 2026-05-15). A single safe column add stays well under the complexity
+/// bar that rejected the broader migration scheme.
+async fn ensure_late_schema_additions(table: &lancedb::Table) -> Result<()> {
+    use arrow_schema::{DataType, Field, Schema as ArrowSchema, TimeUnit};
+    let current = table
+        .schema()
+        .await
+        .context("reading existing memory table schema")?;
+    // Every column added after the initial schema, in add order:
+    // `host` (2026-05-20), the archive pair (2026-08-17), the account pair
+    // (2026-09-08), the scope pair (2026-10-04).
+    let late: &[(&str, DataType)] = &[
+        ("host", DataType::Utf8),
+        (
+            "expired_at",
+            DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
+        ),
+        ("superseded_by", DataType::Utf8),
+        ("account_id", DataType::Utf8),
+        ("account_name", DataType::Utf8),
+        ("summary", DataType::Utf8),
+        ("indexed", DataType::Boolean),
+    ];
+    // A v1 table may carry a renamed column under its v1 name (`hook` for
+    // `summary`); the 1→2 step renames it, so it is not added twice.
+    let present = |name: &str| {
+        current.field_with_name(name).is_ok()
+            || super::schema::LEGACY_RENAMES
+                .iter()
+                .any(|(old, new)| *new == name && current.field_with_name(old).is_ok())
+    };
+    let missing: Vec<Field> = late
+        .iter()
+        .filter(|(name, _)| !present(name))
+        .map(|(name, dt)| Field::new(*name, dt.clone(), true))
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    let names: Vec<&str> = missing.iter().map(|f| f.name().as_str()).collect();
+    let add_schema = Arc::new(ArrowSchema::new(missing.clone()));
+    table
+        .add_columns(NewColumnTransform::AllNulls(add_schema), None)
+        .await
+        .with_context(|| format!("adding {names:?} column(s) to existing memory table"))?;
+    tracing::info!("memory table: added {names:?} column(s) (NULL for pre-existing rows)");
+    Ok(())
+}
+
+/// Verify the existing table's `vector` column dimension matches the dim
+/// the current build expects ([`super::schema::VECTOR_DIM`]). When a user
+/// upgrades from a release indexed with a different embedding model
+/// (e.g. v0.4.x's MiniLM-L6-v2 = 384-dim → v0.5+'s Qwen3-Embedding-0.6B
+/// = 1024-dim), the data is incompatible and continuing would surface as
+/// cryptic LanceDB errors on insert / search. Bail with a clear message
+/// instead.
+async fn check_schema_dim(table: &lancedb::Table, lancedb_dir: &Path) -> Result<()> {
+    use arrow_schema::DataType;
+
+    let schema = table
+        .schema()
+        .await
+        .context("reading existing memory table schema")?;
+    let vector_field = schema
+        .field_with_name("vector")
+        .context("existing memory table is missing the `vector` column")?;
+
+    let actual_dim = match vector_field.data_type() {
+        DataType::FixedSizeList(_, dim) => *dim,
+        other => {
+            return Err(anyhow!(
+                "memory table `vector` column has unexpected type {other:?}; expected FixedSizeList<Float32>"
+            ));
+        }
+    };
+
+    let expected = super::schema::VECTOR_DIM;
+    if actual_dim != expected {
+        return Err(anyhow!(
+            "ling-mem schema mismatch: existing data at `{}` was indexed with {actual_dim}-dim embeddings, but this build uses {expected}-dim Qwen3-Embedding-0.6B. \
+             The two are incompatible and there is no forward migration — start fresh by removing the data dir:\n\n  rm -rf {}",
+            lancedb_dir.display(),
+            lancedb_dir.display()
+        ));
+    }
+    Ok(())
+}
+
+/// What of the v1 layout a table still carries. The 1→2 step clears it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Layout {
+    /// The `contexts`/`tags` list columns.
+    lists: bool,
+    /// The scope column under its v1 name, `cwd`.
+    cwd: bool,
+    /// Any column under its v1 name (`cwd`, `hook`).
+    renamed: bool,
+}
+
+impl Layout {
+    fn is_v1(&self) -> bool {
+        self.lists || self.renamed
+    }
+}
+
+async fn read_layout(table: &lancedb::Table) -> Result<Layout> {
+    let schema = table.schema().await.context("reading table schema")?;
+    let has = |c: &str| schema.field_with_name(c).is_ok();
+    Ok(Layout {
+        lists: super::schema::LEGACY_LIST_COLUMNS.iter().any(|c| has(c)),
+        cwd: has("cwd"),
+        renamed: super::schema::LEGACY_RENAMES
+            .iter()
+            .any(|(old, _)| has(old)),
+    })
+}
+
+/// Does any *other* table in this store still carry the v1 layout?
+/// The sidecar describes the whole store, so one legacy table keeps it v1.
+async fn any_table_legacy(conn: &Connection, names: &[String], skip: &str) -> Result<bool> {
+    for name in names.iter().filter(|n| n.as_str() != skip) {
+        let t = conn
+            .open_table(name)
+            .execute()
+            .await
+            .with_context(|| format!("opening `{name}` table"))?;
+        if read_layout(&t).await?.is_v1() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn escape_sql(s: &str) -> String {
+    s.replace('\'', "''")
+}
+
+/// Empirical cosine-distribution reference from the Qwen3-Embedding-0.6B
+/// retune (`embed::tests::dedup_threshold_probe`, 2026-05-15): reworded
+/// restatements scored 0.78–0.97, related-but-distinct facts 0.53–0.65.
+///
+/// **No longer an automatic dedup/merge gate.** Cosine cannot separate a
+/// restatement from a single-token *contradiction* ("cat is male" vs
+/// "cat is female" both score ~0.9) — using it to merge silently
+/// corrupts a user fact. Mechanical dedup is now **exact-content** only
+/// (see [`MemoryStore::insert_with_dedup`]); fuzzy "same fact?" is LLM
+/// judgment (the Reconcile contract, `linggen/doc/memory-spec.md` §2).
+/// Retained as a relevance reference and for the tuning probe.
+pub const DEDUP_SIMILARITY_THRESHOLD: f32 = 0.75;
+
+/// Outcome of [`MemoryStore::insert_with_dedup`]. Either the candidate was
+/// inserted as a new row, or it collapsed into an existing one.
+#[derive(Debug, Clone)]
+pub enum InsertOutcome {
+    /// No existing row had the same exact content; inserted fresh.
+    Added(Memory),
+    /// An existing row (same type) had byte-identical content; the
+    /// candidate's missing-on-existing fields filled it and its id kept.
+    Merged {
+        /// The post-merge fact (same id as the existing row).
+        fact: Memory,
+        /// Always `1.0` — an exact-content match. Kept for telemetry/CLI
+        /// shape compat; cosine is no longer the merge criterion.
+        similarity: f32,
+        /// Id of the existing row that absorbed the candidate (same as
+        /// `fact.id`; surfaced separately for clarity in telemetry).
+        previous_id: String,
+    },
+}
+
+/// Dot-product cosine similarity for two equal-length vectors. Guards
+/// against zero-length or mismatched-dim inputs by returning 0.0.
+pub(crate) fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    if a.is_empty() || a.len() != b.len() {
+        return 0.0;
+    }
+    let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+    let na: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let nb: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if na == 0.0 || nb == 0.0 {
+        return 0.0;
+    }
+    dot / (na * nb)
+}
+
+/// Merge a near-duplicate `candidate` into an `existing` row. Keeps the
+/// existing id, created_at, and origin (original authorship); prefers the
+/// longer content (more signal). Scalar
+/// optional fields on the candidate overwrite the existing value only
+/// when the candidate actually carries a value — a `None` never clears.
+///
+/// `scope` is the exception: it only fills an empty one, never overwrites.
+/// It records where the memory ORIGINATED, and origin stays with the
+/// existing row like `created_at` does — a fact re-said from another repo
+/// must not leave the first repo's scope, or the project that wrote it
+/// can no longer find it.
+fn merge_fact(existing: &Memory, candidate: &Memory) -> Memory {
+    let mut merged = existing.clone();
+
+    if candidate.content.len() > existing.content.len() {
+        merged.content = candidate.content.clone();
+        merged.vector = candidate.vector.clone();
+    }
+
+    if candidate.outcome.is_some() {
+        merged.outcome = candidate.outcome;
+    }
+    if merged.scope.is_none() {
+        merged.scope = candidate.scope.clone();
+    }
+    if merged.summary.is_none() {
+        merged.summary = candidate.summary.clone();
+    }
+    merged.indexed |= candidate.indexed;
+    if candidate.occurred_at.is_some() {
+        merged.occurred_at = candidate.occurred_at;
+    }
+    if candidate.source_session.is_some() {
+        merged.source_session = candidate.source_session.clone();
+    }
+    if candidate.host.is_some() {
+        merged.host = candidate.host.clone();
+    }
+
+    merged
+}
+
+/// The LanceDB-backed memory store.
+pub struct MemoryStore {
+    _conn: Connection,
+    table: Table,
+    /// Serializes read-modify-write mutations (dedup merge, update) against
+    /// this table. The daemon shares one `MemoryStore` per table across a
+    /// multi-thread Tokio runtime, so without this two concurrent
+    /// `insert_with_dedup` calls on the same (content, type) could both
+    /// observe "no existing row" (TOCTOU) and write duplicates, or a
+    /// concurrent update+update on one id could lose a patch. Per-table:
+    /// the semantic and episodic stores hold independent locks, so a
+    /// cross-tier write touching both never self-deadlocks.
+    write_lock: tokio::sync::Mutex<()>,
+    /// Where every write records the ids it touched — what a replica pulls.
+    /// Attached by the daemon after open; absent in tests and offline CLI use.
+    changes: std::sync::OnceLock<Arc<super::changes::ChangeLog>>,
+    /// What of the v1 layout the table still carries — the 1→2 step has not
+    /// run. Writes fill the old columns (keeping a row's `contexts`/`tags`,
+    /// naming `summary`/`scope` by their v1 names); app/skill scopes also
+    /// match the old `contexts` namespace.
+    layout: std::sync::RwLock<Layout>,
+}
+
+impl MemoryStore {
+    /// Open (or auto-create) the curated long-term (semantic) store
+    /// rooted at `data_dir`.
+    ///
+    /// The actual LanceDB directory is `data_dir/memory/memory.lancedb/` —
+    /// appending `memory/memory.lancedb/` to the Linggen-per-user data dir.
+    /// If the dir doesn't exist, both the directories and an empty
+    /// `semantic` table are created.
+    pub async fn open_semantic(data_dir: &Path) -> Result<Self> {
+        Self::open_named(data_dir, SEMANTIC_TABLE_NAME).await
+    }
+
+    /// Open (or auto-create) the short-term (episodic) store rooted at
+    /// `data_dir`.
+    ///
+    /// Lives in the same `data_dir/memory/memory.lancedb/` connection as
+    /// [`Self::open_semantic`] but is a separate LanceDB table reusing the
+    /// identical Memory schema. Separate tables give per-table ANN-index
+    /// isolation, so staged episodic rows never pollute the curated
+    /// semantic index.
+    pub async fn open_episodic(data_dir: &Path) -> Result<Self> {
+        Self::open_named(data_dir, EPISODIC_TABLE_NAME).await
+    }
+
+    /// Shared open-or-create body for [`Self::open_semantic`] /
+    /// [`Self::open_episodic`]. Connects to the single
+    /// `data_dir/memory/memory.lancedb/` directory and opens-or-creates
+    /// `table_name` against [`build_schema`].
+    async fn open_named(data_dir: &Path, table_name: &str) -> Result<Self> {
+        let lancedb_dir = data_dir.join("memory").join("memory.lancedb");
+        tokio::fs::create_dir_all(&lancedb_dir)
+            .await
+            .with_context(|| format!("creating memory dir at {}", lancedb_dir.display()))?;
+
+        // Store schema-version gate (see schema_version + doc/schema-versioning.md).
+        // Refuse a store written by a newer release, or one too old to migrate,
+        // before touching it. Openable cases fall through and are stamped below.
+        let compat = super::schema_version::classify(data_dir);
+        if let Some(msg) = super::schema_version::refuse_message(compat, &lancedb_dir) {
+            return Err(anyhow!(msg));
+        }
+
+        let uri = lancedb_dir
+            .to_str()
+            .ok_or_else(|| anyhow!("memory path is not valid UTF-8: {}", lancedb_dir.display()))?;
+
+        // Strong read consistency: the store is shared across processes — the
+        // daemon holds its table handles for its whole lifetime while CLI
+        // invocations (`add --episodic`, scan staging) commit new versions
+        // directly. Without this, a long-lived handle stays pinned at its
+        // open-time version and daemon reads (`list`, `get`, `days`) miss
+        // every external commit until restart. Zero = check the manifest on
+        // every read; local-disk cost is negligible at this store's scale.
+        let conn = connect(uri)
+            .read_consistency_interval(std::time::Duration::ZERO)
+            .execute()
+            .await
+            .with_context(|| format!("opening LanceDB at {uri}"))?;
+
+        let names = conn
+            .table_names()
+            .execute()
+            .await
+            .context("listing LanceDB tables")?;
+
+        let table = if names.iter().any(|n| n == table_name) {
+            let t = conn
+                .open_table(table_name)
+                .execute()
+                .await
+                .with_context(|| format!("opening `{table_name}` table"))?;
+            check_schema_dim(&t, &lancedb_dir).await?;
+            ensure_late_schema_additions(&t).await?;
+            t
+        } else {
+            let schema = build_schema();
+            // lancedb 0.29's create_table takes data implementing
+            // Scannable, which covers a boxed RecordBatchReader but not
+            // bare iterators — so box it.
+            let empty: Box<dyn RecordBatchReader + Send> = Box::new(RecordBatchIterator::new(
+                std::iter::empty::<arrow::error::Result<RecordBatch>>(),
+                schema,
+            ));
+            conn.create_table(table_name, empty)
+                .execute()
+                .await
+                .with_context(|| format!("creating `{table_name}` table"))?
+        };
+
+        // A store from an older (still-readable) schema generation runs its
+        // registered migrations. The v1→v2 step (dropping `contexts`/`tags`)
+        // is gated on the owner's accept, so it does not run here.
+        if let super::schema_version::Compat::Migrate { from } = compat {
+            super::schema_version::run_migrations(from)?;
+        }
+
+        // Record the layout this store actually has: v1 while any table still
+        // carries the v1 layout, v2 once none does. Idempotent.
+        let layout = read_layout(&table).await?;
+        let any_legacy = layout.is_v1() || any_table_legacy(&conn, &names, table_name).await?;
+        super::schema_version::stamp_layout(data_dir, any_legacy)?;
+
+        Ok(Self {
+            _conn: conn,
+            table,
+            write_lock: tokio::sync::Mutex::new(()),
+            changes: std::sync::OnceLock::new(),
+            layout: std::sync::RwLock::new(layout),
+        })
+    }
+
+    fn layout(&self) -> Layout {
+        *self.layout.read().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Does this table still carry the v1 `contexts`/`tags` columns?
+    pub fn is_legacy(&self) -> bool {
+        self.layout().lists
+    }
+
+    /// Does this table still carry anything of the v1 layout?
+    pub fn is_v1_layout(&self) -> bool {
+        self.layout().is_v1()
+    }
+
+    /// The gated v1→v2 step (`ling-mem apply-schema`, after a backup): drop
+    /// `contexts` and `tags`, rename `hook` → `summary` and `cwd` → `scope`
+    /// with their values. Idempotent.
+    pub async fn apply_v2_layout(&self) -> Result<()> {
+        use lancedb::table::ColumnAlteration;
+        let _guard = self.write_lock.lock().await;
+        let schema = self.table.schema().await.context("reading table schema")?;
+        let has = |c: &str| schema.field_with_name(c).is_ok();
+        let lists: Vec<&str> = super::schema::LEGACY_LIST_COLUMNS
+            .iter()
+            .copied()
+            .filter(|c| has(c))
+            .collect();
+        if !lists.is_empty() {
+            self.table
+                .drop_columns(&lists)
+                .await
+                .with_context(|| format!("dropping {lists:?}"))?;
+        }
+        for (old, new) in super::schema::LEGACY_RENAMES {
+            if !has(old) {
+                continue;
+            }
+            if has(new) {
+                // Both names present: carry the old values into rows the new
+                // column leaves empty, then drop the old one.
+                self.table
+                    .update()
+                    .only_if(format!("{new} IS NULL AND {old} IS NOT NULL"))
+                    .column(new, old)
+                    .execute()
+                    .await
+                    .with_context(|| format!("copying {old} into {new}"))?;
+                self.table
+                    .drop_columns(&[old])
+                    .await
+                    .with_context(|| format!("dropping {old}"))?;
+            } else {
+                self.table
+                    .alter_columns(
+                        &[ColumnAlteration::new(old.to_string()).rename(new.to_string())],
+                    )
+                    .await
+                    .with_context(|| format!("renaming {old} to {new}"))?;
+            }
+        }
+        let layout = read_layout(&self.table).await?;
+        *self.layout.write().unwrap_or_else(|e| e.into_inner()) = layout;
+        Ok(())
+    }
+
+    /// The filter's SQL for this table — knows whether the v1 `contexts`
+    /// column still exists and what the scope column is called.
+    fn sql(&self, filters: &Filters) -> Option<String> {
+        let layout = self.layout();
+        if layout.lists == filters.legacy_contexts && layout.cwd == filters.legacy_cwd {
+            return filters.to_sql();
+        }
+        let mut f = filters.clone();
+        f.legacy_contexts = layout.lists;
+        f.legacy_cwd = layout.cwd;
+        f.to_sql()
+    }
+
+    /// A batch shaped to this table's on-disk schema (see
+    /// [`super::schema::conform_keeping`]). On a v1 table, rows that already
+    /// exist keep their `contexts`/`tags` — the scope migration reads them.
+    async fn batch_for_table(&self, facts: &[Memory]) -> Result<RecordBatch> {
+        let batch = memories_to_record_batch(facts)?;
+        let schema = self.table.schema().await.context("reading table schema")?;
+        let keep = if self.is_legacy() {
+            self.legacy_lists_of(facts).await?
+        } else {
+            std::collections::HashMap::new()
+        };
+        super::schema::conform_keeping(batch, &schema, &keep)
+    }
+
+    /// `column → id → values` of the legacy list columns for these rows'
+    /// ids, where any are stored.
+    async fn legacy_lists_of(
+        &self,
+        facts: &[Memory],
+    ) -> Result<std::collections::HashMap<String, std::collections::HashMap<String, Vec<String>>>>
+    {
+        let mut out = std::collections::HashMap::new();
+        if facts.is_empty() {
+            return Ok(out);
+        }
+        let ids = facts
+            .iter()
+            .map(|f| format!("'{}'", escape_sql(&f.id)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut stream = self
+            .table
+            .query()
+            .only_if(format!("id IN ({ids})"))
+            .execute()
+            .await
+            .context("reading legacy lists")?;
+        while let Some(batch) = stream.try_next().await.context("reading batch")? {
+            for column in super::schema::LEGACY_LIST_COLUMNS {
+                let entry: &mut std::collections::HashMap<String, Vec<String>> =
+                    out.entry(column.to_string()).or_default();
+                for (id, values) in super::schema::legacy_list(&batch, column)? {
+                    entry.insert(id, values);
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Atomic upsert keyed on `id`: replace the row with a matching id if one
+    /// exists, insert otherwise — in a single LanceDB `merge_insert`
+    /// transaction. Replaces the old delete-then-insert round-trip, which
+    /// left a window where a crash/cancel between the two ops destroyed the
+    /// row with no replacement (the one true data-loss class in this layer).
+    /// All three RMW callers (`insert_with_dedup` merge, `update`,
+    /// `update_full_public`) preserve the existing id, so the id-keyed merge
+    /// updates the row in place rather than duplicating it.
+    async fn upsert(&self, fact: &Memory) -> Result<()> {
+        let batch = self.batch_for_table(std::slice::from_ref(fact)).await?;
+        let schema = batch.schema();
+        let batches: Box<dyn RecordBatchReader + Send> =
+            Box::new(RecordBatchIterator::new(std::iter::once(Ok(batch)), schema));
+
+        let mut builder = self.table.merge_insert(&["id"]);
+        builder.when_matched_update_all(None);
+        builder.when_not_matched_insert_all();
+        builder
+            .execute(batches)
+            .await
+            .context("upserting memory row (merge_insert on id)")?;
+        self.record(super::changes::Op::Upsert, std::slice::from_ref(&fact.id));
+        Ok(())
+    }
+
+    /// Send every later write's ids to `log` (see `changes.rs`).
+    pub fn attach_changes(&self, log: Arc<super::changes::ChangeLog>) {
+        let _ = self.changes.set(log);
+    }
+
+    /// The change log this store writes to, once the daemon attached one.
+    pub fn changes(&self) -> Option<Arc<super::changes::ChangeLog>> {
+        self.changes.get().cloned()
+    }
+
+    fn record(&self, op: super::changes::Op, ids: &[String]) {
+        if let Some(log) = self.changes.get() {
+            log.record(self.table.name(), op, ids);
+        }
+    }
+
+    /// Ids of the rows matching `predicate` (every row when `None`).
+    pub async fn ids_where(&self, predicate: Option<&str>) -> Result<Vec<String>> {
+        let mut q = self
+            .table
+            .query()
+            .select(lancedb::query::Select::columns(&["id"]));
+        if let Some(p) = predicate {
+            q = q.only_if(p.to_string());
+        }
+        let mut stream = q.execute().await.context("listing row ids")?;
+        let mut out = Vec::new();
+        while let Some(batch) = stream.try_next().await.context("reading id batch")? {
+            let Some(col) = batch.column_by_name("id") else {
+                continue;
+            };
+            let Some(ids) = col.as_any().downcast_ref::<arrow_array::StringArray>() else {
+                continue;
+            };
+            out.extend(ids.iter().flatten().map(str::to_string));
+        }
+        Ok(out)
+    }
+
+    /// Write a row exactly as given (vector included) — a replica applying
+    /// what its primary sent. Insert or replace by id.
+    pub async fn put_synced(&self, fact: &Memory) -> Result<()> {
+        let _guard = self.write_lock.lock().await;
+        self.upsert(fact).await
+    }
+
+    /// Insert one or more facts. Returns the number of rows written.
+    ///
+    /// Treats the store as append-only — existing IDs are not detected or
+    /// deduplicated here. Callers who need upsert semantics should use
+    /// `update()` (next commit) or check with `get()` first.
+    pub async fn insert(&self, facts: &[Memory]) -> Result<usize> {
+        if facts.is_empty() {
+            return Ok(0);
+        }
+
+        let batch = self.batch_for_table(facts).await?;
+        let schema = batch.schema();
+        let batches: Box<dyn RecordBatchReader + Send> =
+            Box::new(RecordBatchIterator::new(std::iter::once(Ok(batch)), schema));
+
+        self.table
+            .add(batches)
+            .execute()
+            .await
+            .context("adding batch to memory table")?;
+        let ids: Vec<String> = facts.iter().map(|f| f.id.clone()).collect();
+        self.record(super::changes::Op::Upsert, &ids);
+
+        Ok(facts.len())
+    }
+
+    /// Insert a single fact with **exact-content** dedup protection.
+    ///
+    /// If a row of the same `type` already has byte-identical content, the
+    /// candidate's contexts/tags are unioned into it (see [`merge_fact`])
+    /// and the existing id is preserved. Otherwise it is inserted fresh.
+    ///
+    /// Cosine similarity is deliberately **not** the merge criterion: it
+    /// cannot tell a restatement from a single-token contradiction
+    /// ("cat is male" vs "cat is female" both score ~0.9), so a cosine
+    /// merge silently corrupts a user fact. Fuzzy "is this the same
+    /// fact?" is LLM judgment — the Reconcile contract
+    /// (`linggen/doc/memory-spec.md` §2), not this mechanical path.
+    ///
+    /// Vector-less candidates take the same path: the exact-content lookup
+    /// is pure SQL, and an exact match has equal-length content, so
+    /// [`merge_fact`] never replaces the existing row's vector with `None`.
+    pub async fn insert_with_dedup(&self, fact: Memory) -> Result<InsertOutcome> {
+        self.insert_with_dedup_except(fact, &[]).await
+    }
+
+    /// [`Self::insert_with_dedup`], never merging into a row in `except` —
+    /// the rows a replacement retires. Merging into one of them handed the
+    /// new content to a row the same call then archived, so the add left
+    /// nothing live behind it.
+    pub async fn insert_with_dedup_except(
+        &self,
+        fact: Memory,
+        except: &[String],
+    ) -> Result<InsertOutcome> {
+        // Serialize the find→merge→write sequence. Without the lock, two
+        // concurrent adds of the same (content, type) could both miss the
+        // existing row and each insert a fresh copy.
+        let _guard = self.write_lock.lock().await;
+
+        if let Some(existing) = self
+            .find_exact_content(&fact.content, fact.r#type, except)
+            .await?
+        {
+            let previous_id = existing.id.clone();
+            let merged = merge_fact(&existing, &fact);
+            // `merged` keeps `existing.id`, so the id-keyed upsert replaces the
+            // row in place — atomic, no delete-then-insert window.
+            self.upsert(&merged).await?;
+            return Ok(InsertOutcome::Merged {
+                fact: merged,
+                similarity: 1.0,
+                previous_id,
+            });
+        }
+
+        self.insert(std::slice::from_ref(&fact)).await?;
+        Ok(InsertOutcome::Added(fact))
+    }
+
+    /// Public wrapper for [`Self::find_exact_content`] so the HTTP
+    /// layer can run cross-store dedup against the sibling table
+    /// (semantic ↔ episodic) before calling `insert_with_dedup`.
+    pub async fn find_exact_content_public(
+        &self,
+        content: &str,
+        ty: MemoryType,
+        except: &[String],
+    ) -> Result<Option<Memory>> {
+        self.find_exact_content(content, ty, except).await
+    }
+
+    /// Move every row stamped `from` (live or archived) to `to` — `None`
+    /// hands them to the owner. The once-only re-stamp when a phone that
+    /// wrote under its device id signs in. Returns how many rows moved.
+    pub async fn restamp_account(
+        &self,
+        from: &str,
+        to: Option<&str>,
+        name: Option<&str>,
+    ) -> Result<usize> {
+        let filters = Filters {
+            account: AccountScope::Id(from.to_string()),
+            include_expired: true,
+            ..Filters::default()
+        };
+        let mut q = self.table.query();
+        if let Some(sql) = self.sql(&filters) {
+            q = q.only_if(sql);
+        }
+        let rows = self.collect_query(q).await?;
+        let _guard = self.write_lock.lock().await;
+        let mut moved = 0usize;
+        for mut row in rows {
+            row.account_id = to.map(str::to_string);
+            row.account_name = if to.is_some() {
+                name.map(str::to_string)
+            } else {
+                None
+            };
+            self.upsert(&row).await?;
+            moved += 1;
+        }
+        Ok(moved)
+    }
+
+    /// Every non-owner account with rows here, with a name if any row
+    /// carries one and how many rows (live only).
+    pub async fn distinct_accounts(&self) -> Result<Vec<(String, Option<String>, usize)>> {
+        let q = self
+            .table
+            .query()
+            .only_if("account_id IS NOT NULL AND expired_at IS NULL");
+        let rows = self.collect_query(q).await?;
+        let mut seen: std::collections::BTreeMap<String, (Option<String>, usize)> =
+            std::collections::BTreeMap::new();
+        for r in rows {
+            let Some(id) = r.account_id else { continue };
+            let e = seen.entry(id).or_insert((None, 0));
+            if e.0.is_none() {
+                e.0 = r.account_name;
+            }
+            e.1 += 1;
+        }
+        Ok(seen.into_iter().map(|(id, (n, c))| (id, n, c)).collect())
+    }
+
+    /// Public wrapper for replacing a row by id — used by the cross-tier
+    /// dedup path to merge contexts/tags into the existing higher-tier
+    /// row when a lower-tier write hit the same (content, type).
+    pub async fn update_full_public(&self, id: &str, replacement: &Memory) -> Result<()> {
+        let _guard = self.write_lock.lock().await;
+        // Every current caller passes `replacement.id == id` (the merge
+        // helpers clone the existing row), so the id-keyed upsert replaces
+        // the right row in place — atomic, no delete window.
+        self.upsert(replacement).await?;
+        // Defensive: if a future caller ever changes the id, the upsert keyed
+        // on the *new* id won't touch the old row — delete it so a stale
+        // duplicate can't leak. Insert-then-delete here means the worst case
+        // is a transient duplicate, never a lost row.
+        if replacement.id != id {
+            self.delete_one(id).await?;
+        }
+        Ok(())
+    }
+
+    /// Find one existing row of the same `type` whose content is
+    /// byte-identical to `content`. Exact match only — see
+    /// [`Self::insert_with_dedup`] for why cosine is never a sameness
+    /// decision. `content` is a normal column (not a SQL keyword); `type`
+    /// equality mirrors [`Filters::to_sql`].
+    ///
+    /// Live rows only: an archived (superseded) row is history, and merging
+    /// a new write into it left the write invisible. Rows in `except` are
+    /// never a match.
+    async fn find_exact_content(
+        &self,
+        content: &str,
+        ty: MemoryType,
+        except: &[String],
+    ) -> Result<Option<Memory>> {
+        let mut filter = format!(
+            "content = '{}' AND type = '{}' AND expired_at IS NULL",
+            escape_sql(content),
+            ty.as_str()
+        );
+        if !except.is_empty() {
+            let ids: Vec<String> = except
+                .iter()
+                .map(|id| format!("'{}'", escape_sql(id)))
+                .collect();
+            filter.push_str(&format!(" AND id NOT IN ({})", ids.join(", ")));
+        }
+        let q = self.table.query().only_if(filter).limit(1);
+        let mut hits = self.collect_query(q).await?;
+        Ok(hits.pop())
+    }
+
+    /// Fetch one fact by id. Returns `None` if the id is not present.
+    pub async fn get(&self, id: &str) -> Result<Option<Memory>> {
+        // LanceDB SQL filter — id is Utf8, so we compare against a literal.
+        // Escape single quotes for safety even though base62 ids never carry
+        // one (defensive — keeps the path robust if id format ever changes).
+        let filter = format!("id = '{}'", escape_sql(id));
+
+        let mut stream = self
+            .table
+            .query()
+            .only_if(filter)
+            .limit(1)
+            .execute()
+            .await
+            .context("querying facts by id")?;
+
+        while let Some(batch) = stream
+            .try_next()
+            .await
+            .context("reading next batch from facts query")?
+        {
+            if batch.num_rows() == 0 {
+                continue;
+            }
+            let facts = record_batch_to_memories(&batch)?;
+            if let Some(fact) = facts.into_iter().next() {
+                return Ok(Some(fact));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Total row count in the memory table. Useful for tests and dashboards.
+    pub async fn count(&self) -> Result<usize> {
+        self.table
+            .count_rows(None)
+            .await
+            .context("counting rows in memory table")
+    }
+
+    /// Row count constrained by `filters`. Pushes filter SQL into LanceDB
+    /// so the count is a metadata-only operation (no row materialization).
+    /// Empty filters → same as [`count`]. `origin` is ignored at the SQL
+    /// layer (see [`Filters::to_sql`] on the `from` keyword bug); pre-existing
+    /// callers that need an exact origin-scoped count still have to fall
+    /// back to `list` + post-filter.
+    pub async fn count_filtered(&self, filters: &Filters) -> Result<usize> {
+        let predicate = self.sql(filters);
+        self.table
+            .count_rows(predicate)
+            .await
+            .context("counting filtered rows in memory table")
+    }
+
+    /// Nearest-neighbor search over `vector`, constrained by `filters`.
+    ///
+    /// Returns up to `limit` facts sorted by vector similarity (closest
+    /// first). Rows with null vectors are never returned — they wouldn't
+    /// have a similarity score.
+    ///
+    /// Thin wrapper around [`Self::search_scored`] that drops the per-row
+    /// score. Callers that want to gate on similarity should use
+    /// `search_scored` directly.
+    pub async fn search(
+        &self,
+        query_vec: &[f32],
+        filters: &Filters,
+        limit: usize,
+    ) -> Result<Vec<Memory>> {
+        let scored = self.search_scored(query_vec, filters, limit, None).await?;
+        Ok(scored.into_iter().map(|(f, _)| f).collect())
+    }
+
+    /// Nearest-neighbor search that also returns the cosine similarity of
+    /// each row against the query, with an optional `min_score` floor that
+    /// drops rows below the threshold.
+    ///
+    /// Score range is `[-1.0, 1.0]` (cosine of unit-normalized embeddings,
+    /// effectively `[0.0, 1.0]` in practice for Qwen3-Embedding-0.6B outputs). A
+    /// `min_score` of `Some(0.5)` keeps moderately-relevant hits and drops
+    /// noise; `None` disables filtering. Computed post-fetch from the
+    /// stored vectors — same arithmetic as the dedup path.
+    pub async fn search_scored(
+        &self,
+        query_vec: &[f32],
+        filters: &Filters,
+        limit: usize,
+        min_score: Option<f32>,
+    ) -> Result<Vec<(Memory, f32)>> {
+        if query_vec.len() != super::schema::VECTOR_DIM as usize {
+            return Err(anyhow!(
+                "query vector has len {} but schema dim is {}",
+                query_vec.len(),
+                super::schema::VECTOR_DIM
+            ));
+        }
+
+        // Pin lancedb's metric to Cosine so its top-K selection and
+        // ordering match the `cosine_similarity` we recompute post-fetch
+        // (and the dedup threshold). lancedb defaults to L2; for the
+        // unit-normalized Qwen3 embeddings L2 and Cosine rank identically,
+        // so this is a no-op behaviorally — but it makes the absence of a
+        // post-fetch re-sort correct by construction rather than by the
+        // normalization coincidence. Safe here because no ANN index is
+        // trained (flat search), so there is no index metric to mismatch;
+        // revisit if an IVF/PQ index is added.
+        let mut q = self
+            .table
+            .vector_search(query_vec.to_vec())
+            .context("starting vector search")?
+            .distance_type(DistanceType::Cosine)
+            .limit(limit);
+
+        if let Some(sql) = self.sql(&filters) {
+            q = q.only_if(sql);
+        }
+
+        let mut facts = self.collect_query(q).await?;
+        apply_origin_filter(&mut facts, filters.origin);
+
+        let mut scored: Vec<(Memory, f32)> = facts
+            .into_iter()
+            .map(|f| {
+                let score = f
+                    .vector
+                    .as_ref()
+                    .map(|v| cosine_similarity(query_vec, v))
+                    .unwrap_or(0.0);
+                (f, score)
+            })
+            .collect();
+
+        if let Some(threshold) = min_score {
+            scored.retain(|(_, score)| *score >= threshold);
+        }
+        Ok(scored)
+    }
+
+    /// Fetch the full filtered row set and pair each with its cosine
+    /// similarity to `query_vec` — the candidate pool for hybrid retrieval.
+    ///
+    /// Unlike [`Self::search_scored`] this does **not** push a top-K limit
+    /// into LanceDB: BM25 (the lexical half of hybrid search, computed by the
+    /// caller) needs the whole corpus for its document-frequency / average-
+    /// length statistics, and a keyword-only match must remain a candidate
+    /// even when its cosine would rank it well outside the vector top-K.
+    /// Rows with a null vector get cosine `0.0` (they can still be lexical
+    /// hits). Same flat-scan posture as [`Self::list`]; revisit past ~100k
+    /// rows.
+    pub async fn scored_candidates(
+        &self,
+        query_vec: &[f32],
+        filters: &Filters,
+    ) -> Result<Vec<super::Candidate>> {
+        if query_vec.len() != super::schema::VECTOR_DIM as usize {
+            return Err(anyhow!(
+                "query vector has len {} but schema dim is {}",
+                query_vec.len(),
+                super::schema::VECTOR_DIM
+            ));
+        }
+
+        // Outside a skill, scope weighs rather than filters, so the pool is
+        // every live non-app row — the same flat scan an unscoped search
+        // always ran (no ANN index at this size; revisit near 100k rows).
+        let (filters, weigher) = filters.for_search();
+        let home = super::scope::home();
+        let mut q = self.table.query();
+        if let Some(sql) = self.sql(&filters) {
+            q = q.only_if(sql);
+        }
+        let mut facts = self.collect_query(q).await?;
+        apply_origin_filter(&mut facts, filters.origin);
+
+        Ok(facts
+            .into_iter()
+            .map(|f| {
+                let cosine = f
+                    .vector
+                    .as_ref()
+                    .map(|v| cosine_similarity(query_vec, v))
+                    .unwrap_or(0.0);
+                let weight = weigher
+                    .as_ref()
+                    .map_or(1.0, |w| w.weight(f.scope.as_deref(), &home));
+                super::Candidate {
+                    memory: f,
+                    cosine,
+                    weight,
+                }
+            })
+            .collect())
+    }
+
+    /// Hybrid (dense + lexical) search over this one table. Fetches the
+    /// candidate pool ([`Self::scored_candidates`]) and scores each row as
+    /// (cosine + an IDF-weighted keyword boost) × its scope weight (see
+    /// [`super::hybrid::fuse`]). Returns up to `limit` hits ordered by that
+    /// score; `min_score` gates it.
+    pub async fn hybrid_scored(
+        &self,
+        query_vec: &[f32],
+        query_text: &str,
+        filters: &Filters,
+        limit: usize,
+        min_score: Option<f32>,
+    ) -> Result<Vec<super::Hit>> {
+        let candidates = self.scored_candidates(query_vec, filters).await?;
+        Ok(super::hybrid::fuse(
+            candidates, query_text, limit, min_score,
+        ))
+    }
+
+    /// Non-semantic browse. Returns up to `limit` facts matching `filters`,
+    /// skipping the first `offset` in sort order.
+    ///
+    /// Sorting is done in-process after the batch returns — LanceDB's query
+    /// builder doesn't expose an ORDER BY equivalent for list-style queries
+    /// without a vector, and our sort key is `activity_timestamp`
+    /// (`COALESCE(updated_at, created_at)`), not a plain column. Because the
+    /// sort happens after the fetch, a DB-side `limit` would cap the scan to
+    /// an ARBITRARY set of rows before ordering — `list(Newest, 1)` would
+    /// return a random row, and page 1 of a store larger than the page size
+    /// would be a random page sorted among itself, not the global newest.
+    /// So we fetch the FULL filtered set, sort, then slice the
+    /// `[offset .. offset+limit]` window. For v0.1 row counts this is fine
+    /// (same posture as `core_facts`); revisit with a DB-side sort if files
+    /// grow past ~100k rows.
+    pub async fn list(
+        &self,
+        filters: &Filters,
+        order: SortOrder,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<Memory>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        // No LanceDB-side `limit`: the in-process sort below must see every
+        // matching row, or pagination returns an arbitrary page (see the
+        // doc comment). Filtering is pushed into SQL where possible; the
+        // origin filter is applied post-fetch (`apply_origin_filter`) due to
+        // a LanceDB keyword bug.
+        let mut q = self.table.query();
+        if let Some(sql) = self.sql(&filters) {
+            q = q.only_if(sql);
+        }
+
+        let mut facts = self.collect_query(q).await?;
+        apply_origin_filter(&mut facts, filters.origin);
+
+        // List = "what was written recently" — sort by activity_timestamp
+        // (updated_at ?? created_at), the SAME key the UI shows as the
+        // "N ago" age, so sort position and badge agree. NOT
+        // effective_timestamp: that falls back to occurred_at, which the
+        // LLM/consolidator routinely back-dates to the source session
+        // ("today midnight UTC" for same-day facts), collapsing many
+        // newest rows to one key and burying freshly-written rows.
+        facts.sort_by(|a, b| match order {
+            SortOrder::Newest => b.activity_timestamp().cmp(&a.activity_timestamp()),
+            SortOrder::Oldest => a.activity_timestamp().cmp(&b.activity_timestamp()),
+        });
+
+        if offset >= facts.len() {
+            return Ok(Vec::new());
+        }
+        facts.drain(..offset);
+        facts.truncate(limit);
+        Ok(facts)
+    }
+
+    /// Update a single fact by id. Applies `patch` on top of the existing
+    /// row, then writes the result back. Returns the post-patch fact, or
+    /// `None` if the id doesn't exist.
+    ///
+    /// v0.1 uses read-modify-write (delete + insert). LanceDB supports
+    /// column-level updates for simple types, but our nested schema (lists,
+    /// FixedSizeList vectors, timezone-tagged timestamps) is cleaner to
+    /// round-trip through [`Memory`] than to express as SQL column setters.
+    pub async fn update(&self, id: &str, patch: &MemoryPatch) -> Result<Option<Memory>> {
+        // Serialize the read-modify-write so a concurrent update on the same
+        // id can't clobber this patch (last-writer-wins data loss).
+        let _guard = self.write_lock.lock().await;
+        let Some(mut existing) = self.get(id).await? else {
+            return Ok(None);
+        };
+        patch.apply(&mut existing);
+        // Touch the decay/TTL clock. Microsecond-truncated to match the
+        // `created_at` precision (see `Memory::new`) so the value round-trips
+        // through LanceDB's `Timestamp(Microsecond)` column intact.
+        existing.updated_at = Some(Utc::now().trunc_subsecs(6));
+        // `existing.id == id`, so the id-keyed upsert replaces in place —
+        // atomic, no delete-then-insert window.
+        self.upsert(&existing).await?;
+        Ok(Some(existing))
+    }
+
+    /// [`Self::update`] without touching `updated_at` — for bookkeeping
+    /// that changes where a row belongs, not what it says (the scope
+    /// migration's accepts). The row keeps its place in newest-first lists.
+    pub async fn update_quiet(&self, id: &str, patch: &MemoryPatch) -> Result<Option<Memory>> {
+        let _guard = self.write_lock.lock().await;
+        let Some(mut existing) = self.get(id).await? else {
+            return Ok(None);
+        };
+        patch.apply(&mut existing);
+        self.upsert(&existing).await?;
+        Ok(Some(existing))
+    }
+
+    /// Hard-delete a single fact by id. Returns `true` if a row was
+    /// removed, `false` if the id wasn't present.
+    pub async fn delete(&self, id: &str) -> Result<bool> {
+        let removed = self.delete_one(id).await?;
+        Ok(removed > 0)
+    }
+
+    /// Archive a fact out of live memory: stamp `expired_at = now` and
+    /// record the `successor` id that replaced it. The row leaves every
+    /// default-filtered read (search / list / scans / counts) but stays on
+    /// disk — which is what makes a `replace_ids` merge or a subject
+    /// digest reversible (`Filters::superseded_by` is the unpack query).
+    /// Deliberately does NOT touch `updated_at`: expiring is bookkeeping,
+    /// not activity, and the archived row should keep its original clock.
+    /// Returns `false` if the id wasn't present; expiring an already-
+    /// expired row just restamps it (idempotent in effect).
+    pub async fn expire(&self, id: &str, successor: &str) -> Result<bool> {
+        let _guard = self.write_lock.lock().await;
+        let Some(mut existing) = self.get(id).await? else {
+            return Ok(false);
+        };
+        existing.expired_at = Some(Utc::now().trunc_subsecs(6));
+        existing.superseded_by = Some(successor.to_string());
+        self.upsert(&existing).await?;
+        Ok(true)
+    }
+
+    /// Archived-row count (`expired_at IS NOT NULL`) — surfaced in stats
+    /// so the archive is visible state, never hidden state.
+    pub async fn count_expired(&self) -> Result<usize> {
+        self.table
+            .count_rows(Some("expired_at IS NOT NULL".to_string()))
+            .await
+            .context("counting expired rows in memory table")
+    }
+
+    /// Bulk-delete by filter. Returns the number of rows removed.
+    ///
+    /// Safety: refuses to run with an empty filter — use `Filters::default()`
+    /// would match every row, which is almost always a bug. Callers who
+    /// genuinely want "forget everything" should iterate over all rows and
+    /// delete by id, or drop the table directory externally.
+    ///
+    /// When `origin` is set, we can't push it as a SQL clause (LanceDB
+    /// reserved-word bug — see `apply_origin_filter`), so we fall back to
+    /// list-then-delete-by-id. The per-row delete cost is fine at our scale.
+    pub async fn forget(&self, filters: &Filters) -> Result<usize> {
+        // Safety: an `origin`-only filter would render `to_sql()` as `None`
+        // (since origin isn't pushed into SQL anymore). Treat that as
+        // non-empty to avoid the "refusing to forget with empty filter"
+        // guard accidentally rejecting a perfectly valid origin-only request.
+        // Structural check, not SQL-shaped: the archive gate makes to_sql()
+        // non-None even for an empty filter, which would wave through a
+        // store-wide delete.
+        if filters.is_empty() {
+            return Err(anyhow!(
+                "refusing to forget with empty filter — provide at least one criterion"
+            ));
+        }
+        let predicate = self.sql(filters);
+
+        if filters.origin.is_some() {
+            // Origin filter active → list rows that match, delete each by id.
+            // Use a generous limit to cover the whole store; pagination here
+            // would just complicate the count math.
+            let mut victims = self.list(filters, SortOrder::Newest, usize::MAX, 0).await?;
+            apply_origin_filter(&mut victims, filters.origin);
+            let mut removed = 0;
+            for v in victims {
+                removed += self.delete_one(&v.id).await? as usize;
+            }
+            return Ok(removed);
+        }
+
+        let predicate =
+            predicate.expect("predicate exists when origin is None and filter non-empty");
+        self.delete_where(&predicate)
+            .await
+            .context("deleting memories by filter")
+    }
+
+    /// Evict rows whose TTL clock has fallen before `cutoff`. Deletes every
+    /// row where `COALESCE(occurred_at, created_at) < cutoff` — the one TTL
+    /// clock, shared with `list past_ttl` and the days rollup (a row's age is
+    /// when the thing happened, not when it was last edited). Returns the
+    /// number of rows removed.
+    ///
+    /// Used against the episodic store: the consolidation pass calls this
+    /// with `cutoff = now − Settings.EPISODIC_TTL` to drop staged rows that
+    /// were never promoted into curated facts. There is no TTL column and
+    /// no TTL argument — the caller owns the TTL policy and passes only the
+    /// resolved cutoff instant.
+    pub async fn evict_expired(&self, cutoff: DateTime<Utc>) -> Result<usize> {
+        let predicate = format!(
+            "COALESCE(occurred_at, created_at) < TIMESTAMP '{}'",
+            cutoff.format("%Y-%m-%d %H:%M:%S%.6f")
+        );
+        self.delete_where(&predicate)
+            .await
+            .context("evicting expired memories")
+    }
+
+    /// This table's LanceDB name (`semantic` / `episodic`) — what the
+    /// maintenance walk needs to find the table's directory on disk.
+    pub fn table_name(&self) -> &str {
+        self.table.name()
+    }
+
+    /// `(fragments, uncompacted fragments)` for the *current* version.
+    ///
+    /// Deliberately not a count of files in `data/`: compaction unlinks the
+    /// fragments it merged, but their files stay on disk until a later
+    /// prune can verify no reader holds them (Lance keeps anything younger
+    /// than 7 days unless `delete_unverified` is forced). Counting files
+    /// therefore keeps reporting the pre-compaction number for days, which
+    /// would make the maintenance trigger fire forever against an
+    /// already-clean table.
+    ///
+    /// The second number is Lance's own `num_small_fragments` — its
+    /// verdict on what still wants compacting. Preferring it to a
+    /// homegrown rows-per-fragment ratio means the threshold tracks
+    /// whatever Lance considers small, across version bumps.
+    pub async fn fragment_stats(&self) -> Result<(usize, usize)> {
+        let stats = self.table.stats().await.context("reading table stats")?;
+        Ok((
+            stats.fragment_stats.num_fragments,
+            stats.fragment_stats.num_small_fragments,
+        ))
+    }
+
+    /// Physical maintenance: merge fragments, then drop version metadata
+    /// older than `prune_older_than`. See `memory::maintenance` for why
+    /// this is necessary and how the schedule decides to call it.
+    ///
+    /// **This must never change what the table says.** Compaction rewrites
+    /// rows into fewer files and materializes tombstones; pruning removes
+    /// manifests. Live row content and row count are invariant, and a test
+    /// asserts exactly that.
+    ///
+    /// Order matters: compact first, prune second. Compaction *adds* files
+    /// (the merged fragments land before the versions referencing the old
+    /// ones are removable), so pruning afterwards is what actually returns
+    /// the disk — a compact-only pass legitimately grows the table.
+    ///
+    /// `delete_unverified` is deliberately left unset. Lance only skips
+    /// files newer than 7 days when it cannot verify no transaction is
+    /// mid-flight, and overriding that requires guaranteeing single-process
+    /// ownership of the dataset — which this crate cannot claim while the
+    /// CLI's `--episodic` path bypasses the daemon and writes the store
+    /// directly.
+    ///
+    /// Takes the write lock so a compaction can never interleave with a
+    /// read-modify-write mutation on the same table.
+    pub async fn optimize_storage(&self, prune_older_than: chrono::Duration) -> Result<()> {
+        use lancedb::table::{CompactionOptions, OptimizeAction};
+
+        let _guard = self.write_lock.lock().await;
+
+        self.table
+            .optimize(OptimizeAction::Compact {
+                options: CompactionOptions::default(),
+                remap_options: None,
+            })
+            .await
+            .context("compacting fragments")?;
+
+        self.table
+            .optimize(OptimizeAction::Prune {
+                older_than: Some(prune_older_than),
+                delete_unverified: None,
+                error_if_tagged_old_versions: None,
+            })
+            .await
+            .context("pruning old versions")?;
+
+        Ok(())
+    }
+
+    /// All `tier='core'` facts — the always-load identity/preference set.
+    ///
+    /// No vector, no similarity gate, no pagination cap: core is the small
+    /// durable set surfaced eagerly on every turn, so it's read whole rather
+    /// than retrieved. Filters by `tier = 'core'` in SQL (no LanceDB row
+    /// limit — `list`'s over-fetch math can't express "unbounded"), then
+    /// sorts newest-first in process to match `list`'s default order.
+    pub async fn core_facts(&self) -> Result<Vec<Memory>> {
+        let filters = Filters {
+            tier: Some(Tier::Core),
+            ..Filters::default()
+        };
+        let mut q = self.table.query();
+        if let Some(sql) = self.sql(&filters) {
+            q = q.only_if(sql);
+        }
+        let mut facts = self.collect_query(q).await?;
+        facts.sort_by(|a, b| b.activity_timestamp().cmp(&a.activity_timestamp()));
+        Ok(facts)
+    }
+
+    /// Count the rows matching `predicate`, delete them, and return that
+    /// pre-delete count as the number removed.
+    ///
+    /// lancedb 0.29's `Table::delete` yields only a `DeleteResult` (table
+    /// version, no deleted-row count), so an exact single-call number
+    /// isn't available. Counting the *predicate* — not the whole table —
+    /// before the delete replaces two full-table `count_rows(None)` scans
+    /// with one scoped scan and narrows the count→delete race window:
+    /// under the shared-`MemoryStore` daemon (`Arc<AppState>`), the old
+    /// `count()-before − count()-after` could be skewed by any concurrent
+    /// insert/delete on an unrelated row, whereas now only a concurrent
+    /// change to rows matching `predicate` can affect the reported count.
+    /// The delete itself is always complete regardless; only the returned
+    /// tally is best-effort.
+    async fn delete_where(&self, predicate: &str) -> Result<usize> {
+        let removed = self
+            .table
+            .count_rows(Some(predicate.to_string()))
+            .await
+            .context("counting rows matching delete predicate")?;
+        // The ids first, so the change log can name what is about to go.
+        let doomed = if self.changes.get().is_some() && removed > 0 {
+            self.ids_where(Some(predicate)).await?
+        } else {
+            Vec::new()
+        };
+        self.table
+            .delete(predicate)
+            .await
+            .context("executing delete")?;
+        self.record(super::changes::Op::Delete, &doomed);
+        Ok(removed)
+    }
+
+    /// Delete the single row with the given id. Returns the number removed
+    /// (0 or 1 in practice). Private — public API uses `delete` / `update`.
+    async fn delete_one(&self, id: &str) -> Result<usize> {
+        self.delete_where(&format!("id = '{}'", escape_sql(id)))
+            .await
+            .with_context(|| format!("deleting memory {id}"))
+    }
+
+    async fn collect_query<Q: ExecutableQuery>(&self, q: Q) -> Result<Vec<Memory>> {
+        let mut stream = q.execute().await.context("executing facts query")?;
+        let mut out: Vec<Memory> = Vec::new();
+        while let Some(batch) = stream
+            .try_next()
+            .await
+            .context("reading next batch from facts query")?
+        {
+            if batch.num_rows() == 0 {
+                continue;
+            }
+            out.extend(record_batch_to_memories(&batch)?);
+        }
+        Ok(out)
+    }
+}
+
+// ── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memory::types::{MemoryType, Origin, Outcome};
+    use tempfile::TempDir;
+
+    async fn fresh_store() -> (MemoryStore, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let store = MemoryStore::open_semantic(dir.path()).await.unwrap();
+        (store, dir)
+    }
+
+    fn make_fact(content: &str, t: MemoryType) -> Memory {
+        Memory::new(content, t, Origin::User)
+    }
+
+    #[tokio::test]
+    async fn opens_and_creates_empty_table() {
+        let (store, _dir) = fresh_store().await;
+        assert_eq!(store.count().await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn open_is_idempotent() {
+        let dir = TempDir::new().unwrap();
+        {
+            let store = MemoryStore::open_semantic(dir.path()).await.unwrap();
+            store
+                .insert(&[make_fact("first", MemoryType::Fact)])
+                .await
+                .unwrap();
+        }
+        // Re-opening finds the table and sees the existing row.
+        let store = MemoryStore::open_semantic(dir.path()).await.unwrap();
+        assert_eq!(store.count().await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn episodic_table_is_separate_from_facts() {
+        let dir = TempDir::new().unwrap();
+        // Same lancedb dir, two tables in one connection.
+        let facts = MemoryStore::open_semantic(dir.path()).await.unwrap();
+        let episodic = MemoryStore::open_episodic(dir.path()).await.unwrap();
+
+        let fact = make_fact("curated fact", MemoryType::Fact);
+        let fact_id = fact.id.clone();
+        facts.insert(&[fact]).await.unwrap();
+        episodic
+            .insert(&[make_fact("staged experience", MemoryType::Learned)])
+            .await
+            .unwrap();
+
+        // Each table holds exactly its own row.
+        assert_eq!(facts.count().await.unwrap(), 1);
+        assert_eq!(episodic.count().await.unwrap(), 1);
+
+        // True isolation: the semantic row is invisible to the episodic store
+        // even though they share one LanceDB connection.
+        assert!(episodic.get(&fact_id).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn external_commits_visible_without_reopen() {
+        let dir = TempDir::new().unwrap();
+        // Long-lived handle first (the daemon), then a second independent
+        // open of the same table (a CLI invocation) that commits a row.
+        let daemon = MemoryStore::open_episodic(dir.path()).await.unwrap();
+        let cli = MemoryStore::open_episodic(dir.path()).await.unwrap();
+
+        let staged = make_fact("staged from a second process", MemoryType::Learned);
+        let staged_id = staged.id.clone();
+        cli.insert(&[staged]).await.unwrap();
+
+        // The pre-existing handle must see the external commit on its next
+        // read — no reopen, no restart.
+        assert_eq!(daemon.count().await.unwrap(), 1);
+        assert!(daemon.get(&staged_id).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn open_episodic_is_idempotent() {
+        let dir = TempDir::new().unwrap();
+        {
+            let store = MemoryStore::open_episodic(dir.path()).await.unwrap();
+            store
+                .insert(&[make_fact("staged", MemoryType::Learned)])
+                .await
+                .unwrap();
+        }
+        // Re-opening finds the episodic table and sees the existing row.
+        let store = MemoryStore::open_episodic(dir.path()).await.unwrap();
+        assert_eq!(store.count().await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn insert_returns_row_count() {
+        let (store, _dir) = fresh_store().await;
+        let facts = vec![
+            make_fact("a", MemoryType::Fact),
+            make_fact("b", MemoryType::Preference),
+        ];
+        assert_eq!(store.insert(&facts).await.unwrap(), 2);
+        assert_eq!(store.count().await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn insert_empty_slice_is_a_noop() {
+        let (store, _dir) = fresh_store().await;
+        assert_eq!(store.insert(&[]).await.unwrap(), 0);
+        assert_eq!(store.count().await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn get_finds_inserted_fact() {
+        let (store, _dir) = fresh_store().await;
+        let mut f = make_fact("find me", MemoryType::Learned);
+        f.summary = Some("dates on macos".into());
+        f.indexed = true;
+        f.scope = Some("/w/p".into());
+        f.outcome = Some(Outcome::Positive);
+        let id = f.id.clone();
+        store.insert(&[f.clone()]).await.unwrap();
+
+        let got = store.get(&id).await.unwrap().expect("fact missing");
+        assert_eq!(got, f);
+    }
+
+    #[tokio::test]
+    async fn get_returns_none_for_missing_id() {
+        let (store, _dir) = fresh_store().await;
+        store
+            .insert(&[make_fact("x", MemoryType::Fact)])
+            .await
+            .unwrap();
+        let missing = crate::memory::types::short_id();
+        assert!(store.get(&missing).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn insert_many_then_count() {
+        let (store, _dir) = fresh_store().await;
+        let facts: Vec<Memory> = (0..50)
+            .map(|i| make_fact(&format!("f{i}"), MemoryType::Fact))
+            .collect();
+        store.insert(&facts).await.unwrap();
+        assert_eq!(store.count().await.unwrap(), 50);
+    }
+
+    // ── search + list tests ────────────────────────────────────────────────
+
+    use super::super::schema::VECTOR_DIM;
+    use chrono::Duration;
+
+    fn with_vector(mut f: Memory, value: f32) -> Memory {
+        f.vector = Some(vec![value; VECTOR_DIM as usize]);
+        f
+    }
+
+    #[tokio::test]
+    async fn default_filter_renders_only_the_two_gates() {
+        // The default filter is structurally empty (forget refuses it) but
+        // still renders the two always-on gates: the owner's rows, live only.
+        assert!(Filters::default().is_empty());
+        assert_eq!(
+            Filters::default().to_sql().as_deref(),
+            Some("account_id IS NULL AND expired_at IS NULL")
+        );
+        // Opting into the archive and every account removes both gates —
+        // nothing left to render.
+        let all = Filters {
+            include_expired: true,
+            account: AccountScope::Any,
+            ..Filters::default()
+        };
+        assert!(all.to_sql().is_none());
+        // The unpack query targets one survivor's archived members.
+        let unpack = Filters {
+            superseded_by: Some("abc123".into()),
+            account: AccountScope::Any,
+            ..Filters::default()
+        };
+        assert!(!unpack.is_empty());
+        assert_eq!(unpack.to_sql().as_deref(), Some("superseded_by = 'abc123'"));
+    }
+
+    #[tokio::test]
+    async fn account_scope_renders_and_admits() {
+        let mine = Filters {
+            account: AccountScope::Id("u1".into()),
+            ..Filters::default()
+        };
+        assert_eq!(
+            mine.to_sql().as_deref(),
+            Some("account_id = 'u1' AND expired_at IS NULL")
+        );
+        // Scope alone is not a filter: forget must not take a person by scope.
+        assert!(mine.is_empty());
+        let any = Filters {
+            apps: vec!["dj".into(), "cfo".into()],
+            ..Filters::default()
+        };
+        assert!(!any.is_empty());
+        let sql = any.to_sql().unwrap();
+        assert!(sql.contains("/.linggen/skills/dj'"), "{sql}");
+        assert!(sql.contains("/.linggen/skills/cfo/%'"), "{sql}");
+        assert!(!sql.contains("array_has"), "{sql}");
+        // While the v1 column survives, the old namespace still answers.
+        let legacy = Filters {
+            legacy_contexts: true,
+            ..any.clone()
+        };
+        assert!(legacy
+            .to_sql()
+            .unwrap()
+            .contains("array_has(contexts, 'dj')"));
+
+        let mut owner_row = Memory::new("x", MemoryType::Fact, Origin::User);
+        let mut theirs = owner_row.clone();
+        theirs.account_id = Some("u1".into());
+        assert!(AccountScope::Owner.admits(&owner_row));
+        assert!(!AccountScope::Owner.admits(&theirs));
+        assert!(AccountScope::Id("u1".into()).admits(&theirs));
+        assert!(!AccountScope::Id("u1".into()).admits(&owner_row));
+        assert!(AccountScope::Any.admits(&theirs));
+        owner_row.account_id = Some("device:abc".into());
+        assert!(!AccountScope::Owner.admits(&owner_row));
+        assert_eq!(
+            AccountScope::from_args(Some("  ".into()), false),
+            AccountScope::Owner
+        );
+        assert_eq!(
+            AccountScope::from_args(Some("u1".into()), true),
+            AccountScope::Any
+        );
+    }
+
+    #[tokio::test]
+    async fn filters_sql_builds_single_clauses() {
+        let f = Filters {
+            apps: Vec::new(),
+            indexed: Some(true),
+            scope_in: vec!["/w/a".into()],
+            no_skills: true,
+            legacy_contexts: false,
+            legacy_cwd: false,
+            types: vec![MemoryType::Fixed],
+            exclude_types: Vec::new(),
+            origin: Some(Origin::User),
+            outcome: Some(Outcome::Positive),
+            tier: Some(Tier::Core),
+            since: None,
+            until: None,
+            created_since: None,
+            source_session: None,
+            scope_root: None,
+            include_expired: false,
+            superseded_by: None,
+            account: AccountScope::Owner,
+        };
+        let sql = f.to_sql().unwrap();
+        assert!(sql.contains("indexed = true"), "{sql}");
+        assert!(sql.contains("scope IN ('/w/a')"), "{sql}");
+        assert!(sql.contains("(scope IS NULL OR NOT (scope = '"), "{sql}");
+        // A v1 table not yet renamed: the same filter says `cwd`.
+        let v1 = Filters {
+            legacy_cwd: true,
+            ..f.clone()
+        }
+        .to_sql()
+        .unwrap();
+        assert!(
+            v1.contains("cwd IN ('/w/a')") && !v1.contains("scope "),
+            "{v1}"
+        );
+        assert!(sql.contains("type = 'fixed'"));
+        // origin/from is intentionally NOT in the SQL — applied post-fetch
+        // because LanceDB returns 0 rows for `"from" = 'user'` even though
+        // the column has matching values.
+        assert!(!sql.contains("\"from\""));
+        assert!(sql.contains("outcome = 'positive'"));
+        // tier IS pushed down — not a SQL keyword, so the plain clause works.
+        assert!(sql.contains("tier = 'core'"));
+        assert!(sql.contains(" AND "));
+    }
+
+    #[tokio::test]
+    async fn scope_root_keeps_the_nested_and_the_unscoped() {
+        let f = Filters {
+            scope_root: Some("/Users/l/work/linggen".into()),
+            ..Default::default()
+        };
+        let sql = f.to_sql().unwrap();
+        // The project itself, and anything inside it.
+        assert!(sql.contains("scope = '/Users/l/work/linggen'"), "{sql}");
+        assert!(
+            sql.contains("scope LIKE '/Users/l/work/linggen/%'"),
+            "{sql}"
+        );
+        // And the rows that belong to no project — who the user is, not what
+        // they were working on. Scoping those away is worse than not scoping.
+        assert!(sql.contains("scope IS NULL"), "{sql}");
+        // A sibling sharing the prefix is a DIFFERENT project: the trailing
+        // separator is what keeps `linggen-mobile` out of `linggen`.
+        assert!(!sql.contains("LIKE '/Users/l/work/linggen%'"), "{sql}");
+    }
+
+    #[tokio::test]
+    async fn recall_scope_is_root_subtree_parents_and_person_rows() {
+        let home = crate::memory::scope::home();
+        let root = home.join("w/linggen/skills");
+        let f = Filters {
+            scope_root: Some(root.to_string_lossy().to_string()),
+            ..Default::default()
+        };
+        let sql = f.to_sql().unwrap();
+        let w = home.join("w").to_string_lossy().to_string();
+        assert!(sql.contains(&format!("'{w}'")), "a parent of root: {sql}");
+        assert!(sql.contains("scope IS NULL"), "{sql}");
+        assert!(
+            !sql.contains(&format!("'{}'", home.to_string_lossy())),
+            "home is never a scope: {sql}"
+        );
+
+        // A skill's own session: its dir only, no person rows.
+        let skill = Filters {
+            scope_root: Some(
+                home.join(".linggen/skills/cfo")
+                    .to_string_lossy()
+                    .to_string(),
+            ),
+            ..Default::default()
+        };
+        let sql = skill.to_sql().unwrap();
+        assert!(!sql.contains("scope IS NULL"), "{sql}");
+        assert!(sql.contains("/.linggen/skills/cfo/%'"), "{sql}");
+
+        // No root: person rows only.
+        for nowhere in [home.clone(), home.join(".linggen")] {
+            let f = Filters {
+                scope_root: Some(nowhere.to_string_lossy().to_string()),
+                ..Default::default()
+            };
+            let sql = f.to_sql().unwrap();
+            assert!(
+                sql.contains("scope IS NULL") && !sql.contains("LIKE"),
+                "{sql}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn recall_scope_on_the_table() {
+        let (store, _dir) = fresh_store().await;
+        let home = crate::memory::scope::home();
+        let at = |p: &str| Some(home.join(p).to_string_lossy().to_string());
+        let mut lingjing = make_fact("lingjing rule", MemoryType::Preference);
+        lingjing.scope = at("w/linggen/skills/lingjing");
+        let mut sanji = make_fact("sanji rule", MemoryType::Preference);
+        sanji.scope = at("w/rust/sanji");
+        let mut workspace = make_fact("commit on main", MemoryType::Preference);
+        workspace.scope = at("w");
+        let person = make_fact("likes tea", MemoryType::Preference);
+        let mut cfo = make_fact("budget in CAD", MemoryType::Preference);
+        cfo.scope = at(".linggen/skills/cfo");
+        store
+            .insert(&[lingjing, sanji, workspace, person, cfo])
+            .await
+            .unwrap();
+        let seen = |scope: &str| {
+            let f = Filters {
+                scope_root: Some(scope.to_string()),
+                ..Default::default()
+            };
+            let store = &store;
+            async move {
+                let mut v: Vec<String> = store
+                    .list(&f, SortOrder::Newest, 50, 0)
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .map(|m| m.content)
+                    .collect();
+                v.sort();
+                v
+            }
+        };
+        assert_eq!(
+            seen(&at("w/linggen/skills").unwrap()).await,
+            ["commit on main", "likes tea", "lingjing rule"]
+        );
+        assert_eq!(
+            seen(&at(".linggen/skills/cfo").unwrap()).await,
+            ["budget in CAD"]
+        );
+        assert_eq!(seen(&home.to_string_lossy()).await, ["likes tea"]);
+    }
+
+    /// One row per distance band, all with the same vector, so a search's
+    /// score is exactly cosine (0.8) × the row's weight.
+    async fn banded_store() -> (MemoryStore, TempDir, PathBuf) {
+        let (store, dir) = fresh_store().await;
+        let home = crate::memory::scope::home();
+        let at = |p: &str| Some(home.join(p).to_string_lossy().to_string());
+        let mut v = vec![0.0_f32; VECTOR_DIM as usize];
+        v[0] = 0.8;
+        v[1] = 0.6;
+        let row = |content: &str, scope: Option<String>| {
+            let mut m = make_fact(content, MemoryType::Fact);
+            m.scope = scope;
+            m.vector = Some(v.clone());
+            m
+        };
+        store
+            .insert(&[
+                row("same", at("w/linggen")),
+                row("child", at("w/linggen/linggen")),
+                row("grandchild", at("w/linggen/skills/lingjing")),
+                row("parent", at("w")),
+                row("sibling", at("w/linggen-old")),
+                row("far", at("w/rust/sanji")),
+                row("person", None),
+                row("app", at(".linggen/skills/cfo")),
+                row("app deep", at(".linggen/skills/cfo/data")),
+            ])
+            .await
+            .unwrap();
+        (store, dir, home)
+    }
+
+    fn query_vec() -> Vec<f32> {
+        let mut q = vec![0.0_f32; VECTOR_DIM as usize];
+        q[0] = 1.0;
+        q
+    }
+
+    /// Rows as `(content, score)`, best first; equal scores by content, so
+    /// the order never rides on the table's scan order.
+    async fn weighed(
+        store: &MemoryStore,
+        root: Option<String>,
+        floor: Option<f32>,
+    ) -> Vec<(String, f32)> {
+        let f = Filters {
+            scope_root: root,
+            ..Default::default()
+        };
+        let mut got = store
+            .hybrid_scored(&query_vec(), "", &f, 50, floor)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|h| (h.memory.content, (h.score * 1000.0).round() / 1000.0))
+            .collect::<Vec<_>>();
+        got.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+        got
+    }
+
+    #[tokio::test]
+    async fn search_weighs_each_distance_band() {
+        let (store, _dir, home) = banded_store().await;
+        let root = home.join("w/linggen").to_string_lossy().to_string();
+        let got = weighed(&store, Some(root), None).await;
+        assert_eq!(
+            got,
+            [
+                ("same".to_string(), 0.88),
+                ("child".to_string(), 0.8),
+                ("person".to_string(), 0.8),
+                ("parent".to_string(), 0.72),
+                ("grandchild".to_string(), 0.68),
+                ("sibling".to_string(), 0.68),
+                ("far".to_string(), 0.64),
+            ],
+            "no app row, every other row weighed by its distance"
+        );
+    }
+
+    #[tokio::test]
+    async fn weighted_min_score_gates_search() {
+        let (store, _dir, home) = banded_store().await;
+        let root = home.join("w/linggen").to_string_lossy().to_string();
+        let names: Vec<String> = weighed(&store, Some(root), Some(0.7))
+            .await
+            .into_iter()
+            .map(|(n, _)| n)
+            .collect();
+        assert_eq!(names, ["same", "child", "person", "parent"]);
+    }
+
+    #[tokio::test]
+    async fn a_skill_session_still_sees_only_its_own_rows() {
+        let (store, _dir, home) = banded_store().await;
+        let skill = home
+            .join(".linggen/skills/cfo")
+            .to_string_lossy()
+            .to_string();
+        let mut got = weighed(&store, Some(skill), None).await;
+        got.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            got,
+            [("app".to_string(), 0.8), ("app deep".to_string(), 0.8)],
+            "its own rows only, unweighed"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_root_sessions_weigh_and_never_see_app_rows() {
+        let (store, _dir, home) = banded_store().await;
+        let ws = home
+            .join(".linggen/workspace")
+            .to_string_lossy()
+            .to_string();
+        let got = weighed(&store, Some(ws), None).await;
+        let names: Vec<&str> = got.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names[0], "person");
+        assert!(!names.iter().any(|n| n.starts_with("app")), "{names:?}");
+        assert!(got[1..].iter().all(|(_, s)| *s == 0.64), "{got:?}");
+        // No root at all: unweighed and unfiltered, as before.
+        let all = weighed(&store, None, None).await;
+        assert_eq!(all.len(), 9);
+        assert!(all.iter().all(|(_, s)| *s == 0.8));
+    }
+
+    #[tokio::test]
+    async fn search_filter_split() {
+        let home = crate::memory::scope::home();
+        let skill = Filters {
+            scope_root: Some(
+                home.join(".linggen/skills/dj")
+                    .to_string_lossy()
+                    .to_string(),
+            ),
+            ..Default::default()
+        };
+        let (f, w) = skill.for_search();
+        assert!(w.is_none() && f.scope_root == skill.scope_root && !f.no_skills);
+        let owner = Filters {
+            scope_root: Some("/Users/l/work/linggen/".into()),
+            ..Default::default()
+        };
+        let (f, w) = owner.for_search();
+        assert!(f.scope_root.is_none() && f.no_skills);
+        assert_eq!(
+            w.unwrap().root,
+            Some(PathBuf::from("/Users/l/work/linggen"))
+        );
+        let sql = f.to_sql().unwrap();
+        assert!(
+            sql.contains("(scope IS NULL OR NOT (scope = '") && sql.contains("/.linggen/skills/%'"),
+            "{sql}"
+        );
+        let (f, w) = Filters::default().for_search();
+        assert!(w.is_none() && !f.no_skills);
+    }
+
+    #[tokio::test]
+    async fn scope_root_ignores_a_trailing_slash() {
+        let f = Filters {
+            scope_root: Some("/Users/l/work/linggen/".into()),
+            ..Default::default()
+        };
+        let sql = f.to_sql().unwrap();
+        assert!(sql.contains("scope = '/Users/l/work/linggen'"), "{sql}");
+        assert!(
+            sql.contains("scope LIKE '/Users/l/work/linggen/%'"),
+            "{sql}"
+        );
+    }
+
+    #[tokio::test]
+    async fn types_and_exclude_types_filter_on_the_table() {
+        let (store, _dir) = fresh_store().await;
+        store
+            .insert(&[
+                make_fact("p", MemoryType::Preference),
+                make_fact("f", MemoryType::Fact),
+                make_fact("d", MemoryType::Decision),
+            ])
+            .await
+            .unwrap();
+        let names = |rows: Vec<Memory>| {
+            let mut v: Vec<String> = rows.into_iter().map(|r| r.content).collect();
+            v.sort();
+            v
+        };
+        let without_prefs = Filters {
+            exclude_types: vec![MemoryType::Preference],
+            ..Default::default()
+        };
+        let rows = store
+            .list(&without_prefs, SortOrder::Newest, 50, 0)
+            .await
+            .unwrap();
+        assert_eq!(names(rows), ["d", "f"]);
+
+        let two = Filters {
+            types: vec![MemoryType::Preference, MemoryType::Decision],
+            ..Default::default()
+        };
+        let rows = store.list(&two, SortOrder::Newest, 50, 0).await.unwrap();
+        assert_eq!(names(rows), ["d", "p"]);
+    }
+
+    #[tokio::test]
+    async fn list_with_empty_filters_returns_all_newest_first() {
+        let (store, _dir) = fresh_store().await;
+
+        // list() orders by activity_timestamp (updated_at ?? created_at), so the
+        // fixtures have to differ THERE. Stamping only occurred_at leaves all
+        // three tied on the real key — successive Utc::now() calls share one
+        // microsecond ~86% of the time — and a tied stable sort just returns
+        // scan order, which is the store's to choose, not ours to assert.
+        let mut old = make_fact("old", MemoryType::Fact);
+        old.created_at = Utc::now() - Duration::days(3);
+        let mut mid = make_fact("mid", MemoryType::Fact);
+        mid.created_at = Utc::now() - Duration::days(1);
+        let mut new = make_fact("new", MemoryType::Fact);
+        // Back-dated occurred_at on the NEWEST row: list must not reorder on it.
+        // That is effective_timestamp's key, deliberately not this one.
+        new.occurred_at = Some(Utc::now() - Duration::days(10));
+
+        store.insert(&[old, mid, new]).await.unwrap();
+
+        let results = store
+            .list(&Filters::default(), SortOrder::Newest, 10, 0)
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].content, "new");
+        assert_eq!(results[1].content, "mid");
+        assert_eq!(results[2].content, "old");
+
+        let oldest_first = store
+            .list(&Filters::default(), SortOrder::Oldest, 10, 0)
+            .await
+            .unwrap();
+        assert_eq!(oldest_first[0].content, "old");
+        assert_eq!(oldest_first[2].content, "new");
+    }
+
+    #[tokio::test]
+    async fn list_returns_global_newest_when_limit_below_total() {
+        // Regression: `list` must sort the FULL filtered set before slicing
+        // the page window. A DB-side limit-then-sort returns an arbitrary
+        // `limit` rows — the bug that made list(Newest, 1) (and the dashboard
+        // "latest" badge) pick a random row, and would corrupt page 1 once a
+        // store exceeds the page size.
+        let (store, _dir) = fresh_store().await;
+
+        // Six rows one hour apart, inserted OLDEST-first so the newest rows
+        // are written last — a fetch of the first N would miss them.
+        let base = Utc::now() - Duration::days(1);
+        let mut facts = Vec::new();
+        for i in 0..6 {
+            let mut f = make_fact(&format!("row{i}"), MemoryType::Fact);
+            f.created_at = base + Duration::hours(i);
+            facts.push(f);
+        }
+        store.insert(&facts).await.unwrap();
+
+        // limit 2 of 6 → the two GLOBAL newest, in order.
+        let top2 = store
+            .list(&Filters::default(), SortOrder::Newest, 2, 0)
+            .await
+            .unwrap();
+        assert_eq!(top2.len(), 2);
+        assert_eq!(top2[0].content, "row5");
+        assert_eq!(top2[1].content, "row4");
+
+        // limit 1 → the single global newest (the count endpoint relies on this).
+        let top1 = store
+            .list(&Filters::default(), SortOrder::Newest, 1, 0)
+            .await
+            .unwrap();
+        assert_eq!(top1.len(), 1);
+        assert_eq!(top1[0].content, "row5");
+    }
+
+    #[tokio::test]
+    async fn list_offset_pages_through_results() {
+        let (store, _dir) = fresh_store().await;
+
+        let mut a = make_fact("a", MemoryType::Fact);
+        a.occurred_at = Some(Utc::now() - Duration::days(5));
+        let mut b = make_fact("b", MemoryType::Fact);
+        b.occurred_at = Some(Utc::now() - Duration::days(4));
+        let mut c = make_fact("c", MemoryType::Fact);
+        c.occurred_at = Some(Utc::now() - Duration::days(3));
+        let mut d = make_fact("d", MemoryType::Fact);
+        d.occurred_at = Some(Utc::now() - Duration::days(2));
+        let mut e = make_fact("e", MemoryType::Fact);
+        e.occurred_at = Some(Utc::now() - Duration::days(1));
+
+        store.insert(&[a, b, c, d, e]).await.unwrap();
+
+        let page1 = store
+            .list(&Filters::default(), SortOrder::Oldest, 2, 0)
+            .await
+            .unwrap();
+        assert_eq!(page1.len(), 2);
+        assert_eq!(page1[0].content, "a");
+        assert_eq!(page1[1].content, "b");
+
+        let page2 = store
+            .list(&Filters::default(), SortOrder::Oldest, 2, 2)
+            .await
+            .unwrap();
+        assert_eq!(page2.len(), 2);
+        assert_eq!(page2[0].content, "c");
+        assert_eq!(page2[1].content, "d");
+
+        let page3 = store
+            .list(&Filters::default(), SortOrder::Oldest, 2, 4)
+            .await
+            .unwrap();
+        assert_eq!(page3.len(), 1);
+        assert_eq!(page3[0].content, "e");
+
+        let past_end = store
+            .list(&Filters::default(), SortOrder::Oldest, 2, 10)
+            .await
+            .unwrap();
+        assert!(past_end.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_filters_by_type_and_index() {
+        let (store, _dir) = fresh_store().await;
+
+        let a = make_fact("a", MemoryType::Preference);
+        let mut b = make_fact("b", MemoryType::Fixed);
+        b.indexed = true;
+        b.scope = Some("/w/linggen".into());
+        let mut c = make_fact("c", MemoryType::Fixed);
+        c.scope = Some("/w/linggen".into());
+
+        store.insert(&[a, b, c]).await.unwrap();
+
+        let only_fixed_in_linggen = store
+            .list(
+                &Filters {
+                    indexed: Some(true),
+                    scope_in: vec!["/w/linggen".into()],
+                    types: vec![MemoryType::Fixed],
+                    ..Default::default()
+                },
+                SortOrder::Newest,
+                10,
+                0,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(only_fixed_in_linggen.len(), 1);
+        assert_eq!(only_fixed_in_linggen[0].content, "b");
+    }
+
+    #[tokio::test]
+    async fn list_types_are_or_combined() {
+        let (store, _dir) = fresh_store().await;
+        let a = make_fact("pref", MemoryType::Preference);
+        let b = make_fact("fix", MemoryType::Fixed);
+        let c = make_fact("tried", MemoryType::Tried);
+        store.insert(&[a, b, c]).await.unwrap();
+
+        let prefs_or_fixes = store
+            .list(
+                &Filters {
+                    types: vec![MemoryType::Preference, MemoryType::Fixed],
+                    ..Default::default()
+                },
+                SortOrder::Newest,
+                10,
+                0,
+            )
+            .await
+            .unwrap();
+        assert_eq!(prefs_or_fixes.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn list_filters_by_time_range() {
+        let (store, _dir) = fresh_store().await;
+        let now = Utc::now();
+
+        let mut old = make_fact("old", MemoryType::Fact);
+        old.occurred_at = Some(now - Duration::days(10));
+        let mut recent = make_fact("recent", MemoryType::Fact);
+        recent.occurred_at = Some(now - Duration::hours(2));
+
+        store.insert(&[old, recent]).await.unwrap();
+
+        let since_yesterday = store
+            .list(
+                &Filters {
+                    since: Some(now - Duration::days(1)),
+                    ..Default::default()
+                },
+                SortOrder::Newest,
+                10,
+                0,
+            )
+            .await
+            .unwrap();
+        assert_eq!(since_yesterday.len(), 1);
+        assert_eq!(since_yesterday[0].content, "recent");
+    }
+
+    #[tokio::test]
+    async fn created_since_ignores_the_back_dated_occurred_at() {
+        // A late row about an old day — the shape that reopens a judged day.
+        let (store, _dir) = fresh_store().await;
+        let now = Utc::now();
+        let stamp = now - Duration::hours(1);
+
+        let mut judged = make_fact("judged", MemoryType::Fact);
+        judged.created_at = now - Duration::days(2);
+        judged.occurred_at = Some(now - Duration::days(2));
+        let mut late = make_fact("late", MemoryType::Fact);
+        late.occurred_at = Some(now - Duration::days(2));
+
+        store.insert(&[judged, late]).await.unwrap();
+
+        let unjudged = store
+            .list(
+                &Filters {
+                    created_since: Some(stamp),
+                    ..Default::default()
+                },
+                SortOrder::Oldest,
+                10,
+                0,
+            )
+            .await
+            .unwrap();
+        assert_eq!(unjudged.len(), 1);
+        assert_eq!(unjudged[0].content, "late");
+    }
+
+    #[tokio::test]
+    async fn search_returns_nearest_first() {
+        let (store, _dir) = fresh_store().await;
+
+        // Three facts in distinct directions (unit basis vectors) — the
+        // production shape: unit-normalized, non-collinear embeddings.
+        // Collinear constant vectors would all tie at cosine 1.0 and the
+        // ordering assertion would be meaningless.
+        let mut a = make_fact("a", MemoryType::Fact);
+        a.vector = Some(unit_vec_at(0));
+        let mut b = make_fact("b", MemoryType::Fact);
+        b.vector = Some(unit_vec_at(1));
+        let mut c = make_fact("c", MemoryType::Fact);
+        c.vector = Some(unit_vec_at(2));
+        store
+            .insert(&[a.clone(), b.clone(), c.clone()])
+            .await
+            .unwrap();
+
+        // Query pointing along `a`'s direction → cosine 1.0 with `a`,
+        // 0.0 with `b`/`c` → `a` ranks first.
+        let query = unit_vec_at(0);
+        let results = store.search(&query, &Filters::default(), 3).await.unwrap();
+
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].content, "a");
+    }
+
+    #[tokio::test]
+    async fn search_respects_limit() {
+        let (store, _dir) = fresh_store().await;
+        // Distinct unit directions — non-zero so cosine is defined for
+        // every row (a zero vector has no direction and would be dropped
+        // under the Cosine metric).
+        let facts: Vec<Memory> = (0..10)
+            .map(|i| {
+                let mut f = make_fact(&format!("f{i}"), MemoryType::Fact);
+                f.vector = Some(unit_vec_at(i));
+                f
+            })
+            .collect();
+        store.insert(&facts).await.unwrap();
+
+        let query = unit_vec_at(0);
+        let results = store.search(&query, &Filters::default(), 3).await.unwrap();
+        assert_eq!(results.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn search_with_app_filter() {
+        let (store, _dir) = fresh_store().await;
+        let home = crate::memory::scope::home();
+        let mut in_ctx = with_vector(make_fact("in-ctx", MemoryType::Fact), 0.3);
+        in_ctx.scope = Some(
+            home.join(".linggen/skills/dj")
+                .to_string_lossy()
+                .to_string(),
+        );
+        let mut other = with_vector(make_fact("other", MemoryType::Fact), 0.3);
+        other.scope = Some("/w/linggen".into());
+        store.insert(&[in_ctx, other]).await.unwrap();
+
+        let query = vec![0.3; VECTOR_DIM as usize];
+        let results = store
+            .search(
+                &query,
+                &Filters {
+                    apps: vec!["dj".into()],
+                    ..Default::default()
+                },
+                10,
+            )
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].content, "in-ctx");
+    }
+
+    #[tokio::test]
+    async fn search_rejects_wrong_dim() {
+        let (store, _dir) = fresh_store().await;
+        let err = store
+            .search(&[0.0; 100], &Filters::default(), 1)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains(&format!("dim is {VECTOR_DIM}")));
+    }
+
+    /// Every write primitive names its ids in the change log: inserts and
+    /// in-place writes as upserts, deletes (even by filter) as deletes.
+    #[tokio::test]
+    async fn writes_and_deletes_land_in_the_change_log() {
+        use crate::memory::changes::{ChangeLog, Op};
+        let (store, dir) = fresh_store().await;
+        let log = Arc::new(ChangeLog::open(dir.path().join("c.jsonl")).unwrap());
+        store.attach_changes(Arc::clone(&log));
+
+        let f = make_fact("x", MemoryType::Fact);
+        let id = f.id.clone();
+        store.insert(&[f.clone()]).await.unwrap();
+        store.put_synced(&f).await.unwrap();
+        let g = make_fact("y", MemoryType::Fact);
+        let gid = g.id.clone();
+        store.insert(&[g]).await.unwrap();
+        assert!(store.delete(&id).await.unwrap());
+
+        let (page, next, _) = log.since(0, 100);
+        assert_eq!(next, log.head());
+        let op_of = |i: &str| page.iter().find(|e| e.id == i).map(|e| e.op);
+        assert_eq!(op_of(&id), Some(Op::Delete));
+        assert_eq!(op_of(&gid), Some(Op::Upsert));
+        assert_eq!(store.ids_where(None).await.unwrap(), vec![gid]);
+    }
+
+    // ── update + delete + forget tests ─────────────────────────────────────
+
+    #[tokio::test]
+    async fn delete_removes_row() {
+        let (store, _dir) = fresh_store().await;
+        let f = make_fact("x", MemoryType::Fact);
+        let id = f.id.clone();
+        store.insert(&[f]).await.unwrap();
+        assert_eq!(store.count().await.unwrap(), 1);
+
+        assert!(store.delete(&id).await.unwrap());
+        assert_eq!(store.count().await.unwrap(), 0);
+
+        // Second delete is a no-op but not an error.
+        assert!(!store.delete(&id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn expire_archives_instead_of_deleting() {
+        let (store, _dir) = fresh_store().await;
+        let loser = make_fact("old claim, superseded", MemoryType::Built);
+        let survivor = make_fact("current truth", MemoryType::Built);
+        let (loser_id, survivor_id) = (loser.id.clone(), survivor.id.clone());
+        store.insert(&[loser, survivor]).await.unwrap();
+
+        assert!(store.expire(&loser_id, &survivor_id).await.unwrap());
+
+        // Default reads see live memory only.
+        let live = store
+            .list(&Filters::default(), SortOrder::Newest, 100, 0)
+            .await
+            .unwrap();
+        assert_eq!(live.len(), 1);
+        assert_eq!(live[0].id, survivor_id);
+        assert_eq!(store.count_filtered(&Filters::default()).await.unwrap(), 1);
+        assert_eq!(store.count_expired().await.unwrap(), 1);
+
+        // Direct get still returns the archived row, fields stamped,
+        // original activity clock untouched.
+        let archived = store.get(&loser_id).await.unwrap().unwrap();
+        assert!(archived.expired_at.is_some());
+        assert_eq!(
+            archived.superseded_by.as_deref(),
+            Some(survivor_id.as_str())
+        );
+        assert!(archived.updated_at.is_none());
+
+        // The unpack query finds exactly the survivor's members.
+        let members = store
+            .list(
+                &Filters {
+                    superseded_by: Some(survivor_id.clone()),
+                    ..Filters::default()
+                },
+                SortOrder::Newest,
+                100,
+                0,
+            )
+            .await
+            .unwrap();
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0].id, loser_id);
+
+        // include_expired widens a plain list back to both rows.
+        let all = store
+            .list(
+                &Filters {
+                    include_expired: true,
+                    ..Filters::default()
+                },
+                SortOrder::Newest,
+                100,
+                0,
+            )
+            .await
+            .unwrap();
+        assert_eq!(all.len(), 2);
+
+        // Expiring a missing id reports false.
+        assert!(!store.expire("nope-nope-1", &survivor_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn update_applies_patch() {
+        let (store, _dir) = fresh_store().await;
+        let f = make_fact("original", MemoryType::Fact);
+        let id = f.id.clone();
+        store.insert(&[f]).await.unwrap();
+
+        let patch = MemoryPatch {
+            content: Some("edited".into()),
+            summary: Some(Some("what it is for".into())),
+            indexed: Some(true),
+            outcome: Some(Some(Outcome::Positive)),
+            ..Default::default()
+        };
+
+        let updated = store.update(&id, &patch).await.unwrap().unwrap();
+        assert_eq!(updated.content, "edited");
+        assert_eq!(updated.summary.as_deref(), Some("what it is for"));
+        assert!(updated.indexed);
+        assert_eq!(updated.outcome, Some(Outcome::Positive));
+
+        // Persisted.
+        let got = store.get(&id).await.unwrap().unwrap();
+        assert_eq!(got, updated);
+        assert_eq!(store.count().await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn update_can_clear_optional_field() {
+        let (store, _dir) = fresh_store().await;
+        let mut f = make_fact("x", MemoryType::Tried);
+        f.outcome = Some(Outcome::Negative);
+        let id = f.id.clone();
+        store.insert(&[f]).await.unwrap();
+
+        // Some(None) clears to null.
+        let patch = MemoryPatch {
+            outcome: Some(None),
+            ..Default::default()
+        };
+        let updated = store.update(&id, &patch).await.unwrap().unwrap();
+        assert_eq!(updated.outcome, None);
+    }
+
+    #[tokio::test]
+    async fn update_missing_id_returns_none() {
+        let (store, _dir) = fresh_store().await;
+        let result = store
+            .update(&crate::memory::types::short_id(), &MemoryPatch::default())
+            .await
+            .unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn update_stamps_updated_at() {
+        let (store, _dir) = fresh_store().await;
+        let f = make_fact("before", MemoryType::Fact);
+        let id = f.id.clone();
+        let created_at = f.created_at;
+        assert!(f.updated_at.is_none());
+        store.insert(&[f]).await.unwrap();
+
+        let patch = MemoryPatch {
+            content: Some("after".into()),
+            ..Default::default()
+        };
+        let updated = store.update(&id, &patch).await.unwrap().unwrap();
+        let stamped = updated.updated_at.expect("update must stamp updated_at");
+        assert!(stamped >= created_at);
+
+        // Persisted through the store roundtrip, not just the return value.
+        let got = store.get(&id).await.unwrap().unwrap();
+        assert_eq!(got.updated_at, Some(stamped));
+    }
+
+    #[tokio::test]
+    async fn forget_bulk_deletes_matching() {
+        let (store, _dir) = fresh_store().await;
+        let s1 = make_fact("s1", MemoryType::Fact);
+        let s2 = make_fact("s2", MemoryType::Fact);
+        let ling = make_fact("l1", MemoryType::Learned);
+        store.insert(&[s1, s2, ling]).await.unwrap();
+
+        let removed = store
+            .forget(&Filters {
+                types: vec![MemoryType::Fact],
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(removed, 2);
+        assert_eq!(store.count().await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn forget_refuses_empty_filter() {
+        let (store, _dir) = fresh_store().await;
+        store
+            .insert(&[make_fact("x", MemoryType::Fact)])
+            .await
+            .unwrap();
+
+        let err = store.forget(&Filters::default()).await.unwrap_err();
+        assert!(err.to_string().contains("empty filter"));
+        assert_eq!(store.count().await.unwrap(), 1);
+    }
+
+    // ── v1 layout (contexts/tags) awaiting the gated drop ─────────────────
+
+    /// Build a v1 store on disk: `contexts`/`tags`, the scope column under
+    /// its v1 name `cwd`, and — `with_hook` — the additive scope pair as
+    /// `hook` + `indexed` (the live store between bfea7a6 and its v2 step);
+    /// without it, no scope pair at all (an older v1 store). One row, tagged
+    /// `dj`, filed under `/w/dj`, with a summary when the layout can hold one.
+    async fn v1_store(dir: &Path, with_hook: bool) -> Memory {
+        use arrow_schema::{DataType, Field, Schema};
+        let lancedb_dir = dir.join("memory").join("memory.lancedb");
+        std::fs::create_dir_all(&lancedb_dir).unwrap();
+        crate::memory::schema_version::write_version(dir, 1).unwrap();
+        let mut row = make_fact("dj likes city pop", MemoryType::Preference);
+        row.vector = Some(unit_vec_at(1));
+        row.scope = Some("/w/dj".into());
+        if with_hook {
+            row.summary = Some("city pop".into());
+            row.indexed = true;
+        }
+        let batch = memories_to_record_batch(std::slice::from_ref(&row)).unwrap();
+        let utf8_item = Arc::new(Field::new("item", DataType::Utf8, true));
+        let mut fields: Vec<Field> = batch
+            .schema()
+            .fields()
+            .iter()
+            .filter(|f| with_hook || !matches!(f.name().as_str(), "summary" | "indexed"))
+            .map(|f| match f.name().as_str() {
+                "scope" => Field::new("cwd", DataType::Utf8, true),
+                "summary" => Field::new("hook", DataType::Utf8, true),
+                _ => f.as_ref().clone(),
+            })
+            .collect();
+        fields.insert(
+            3,
+            Field::new("contexts", DataType::List(utf8_item.clone()), false),
+        );
+        fields.insert(4, Field::new("tags", DataType::List(utf8_item), false));
+        let v1 = Schema::new(fields);
+        let mut shaped = crate::memory::schema::conform_to(batch, &v1).unwrap();
+        // Tag the row `dj` in the legacy column.
+        let mut b =
+            arrow_array::builder::ListBuilder::new(arrow_array::builder::StringBuilder::new());
+        b.values().append_value("dj");
+        b.append(true);
+        let ctx_idx = v1.index_of("contexts").unwrap();
+        let mut cols: Vec<Arc<dyn arrow_array::Array>> = shaped.columns().to_vec();
+        cols[ctx_idx] = Arc::new(b.finish());
+        shaped = RecordBatch::try_new(Arc::new(v1.clone()), cols).unwrap();
+        let conn = connect(lancedb_dir.to_str().unwrap())
+            .execute()
+            .await
+            .unwrap();
+        for name in [SEMANTIC_TABLE_NAME, EPISODIC_TABLE_NAME] {
+            let reader: Box<dyn RecordBatchReader + Send> = Box::new(RecordBatchIterator::new(
+                std::iter::once(Ok(shaped.clone())),
+                Arc::new(v1.clone()),
+            ));
+            conn.create_table(name, reader).execute().await.unwrap();
+        }
+        row
+    }
+
+    async fn column_names(store: &MemoryStore) -> Vec<String> {
+        store
+            .table
+            .schema()
+            .await
+            .unwrap()
+            .fields()
+            .iter()
+            .map(|f| f.name().clone())
+            .collect()
+    }
+
+    async fn contexts_of(store: &MemoryStore, row: &Memory) -> Option<Vec<String>> {
+        store
+            .legacy_lists_of(std::slice::from_ref(row))
+            .await
+            .unwrap()
+            .get("contexts")
+            .and_then(|m| m.get(&row.id))
+            .cloned()
+    }
+
+    /// Both v1 shapes work until `apply-schema`, then reach the v2 layout
+    /// with every value carried.
+    async fn v1_to_v2(with_hook: bool) {
+        let dir = TempDir::new().unwrap();
+        let tagged = v1_store(dir.path(), with_hook).await;
+        let store = MemoryStore::open_semantic(dir.path()).await.unwrap();
+        let episodic = MemoryStore::open_episodic(dir.path()).await.unwrap();
+        assert!(store.is_legacy() && store.is_v1_layout());
+        let cols = column_names(&store).await;
+        // The open adds what is missing under the right name — never a
+        // second summary column beside `hook`.
+        assert!(cols.contains(&"cwd".to_string()) && !cols.contains(&"scope".to_string()));
+        if with_hook {
+            assert!(cols.contains(&"hook".to_string()));
+            assert!(!cols.contains(&"summary".to_string()), "{cols:?}");
+        } else {
+            assert!(cols.contains(&"summary".to_string()));
+        }
+        // The sidecar stays v1: an older binary still opens this store.
+        assert_eq!(
+            crate::memory::schema_version::read_version(dir.path()),
+            Some(1)
+        );
+        // Reads decode the v1 names.
+        let got = store.get(&tagged.id).await.unwrap().unwrap();
+        assert_eq!(got.scope.as_deref(), Some("/w/dj"));
+        assert_eq!(got.summary, tagged.summary);
+        assert_eq!(contexts_of(&store, &tagged).await, Some(vec!["dj".into()]));
+        // Scope SQL speaks the table's own column name.
+        let under = Filters {
+            scope_in: vec!["/w/dj".into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            store
+                .list(&under, SortOrder::Newest, 10, 0)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        // The app scope still answers through the old namespace.
+        let apps = Filters {
+            apps: vec!["dj".into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            store
+                .list(&apps, SortOrder::Newest, 10, 0)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        // Writes fit the v1 layout: plain insert and the id-keyed upsert.
+        let mut fresh = make_fact("new row", MemoryType::Fact);
+        fresh.summary = Some("a summary".into());
+        fresh.scope = Some("/w/new".into());
+        fresh.indexed = true;
+        store.insert(std::slice::from_ref(&fresh)).await.unwrap();
+        let patch = MemoryPatch {
+            summary: Some(Some("edited summary".into())),
+            ..Default::default()
+        };
+        let got = store.update(&fresh.id, &patch).await.unwrap().unwrap();
+        assert_eq!(got.summary.as_deref(), Some("edited summary"));
+        assert_eq!(got.scope.as_deref(), Some("/w/new"));
+        assert!(got.indexed);
+        // A tag survives an update of its row.
+        store
+            .update_quiet(
+                &tagged.id,
+                &MemoryPatch {
+                    indexed: Some(true),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            contexts_of(&store, &tagged).await,
+            Some(vec!["dj".into()]),
+            "an update keeps the row's old namespace"
+        );
+
+        // The gated step, on both tables (what `/api/schema/apply` runs).
+        store.apply_v2_layout().await.unwrap();
+        episodic.apply_v2_layout().await.unwrap();
+        assert!(!store.is_legacy() && !store.is_v1_layout());
+        crate::memory::schema_version::stamp_layout(dir.path(), false).unwrap();
+        drop(store);
+        drop(episodic);
+
+        let reopened = MemoryStore::open_semantic(dir.path()).await.unwrap();
+        assert!(!reopened.is_v1_layout());
+        assert_eq!(
+            crate::memory::schema_version::read_version(dir.path()),
+            Some(crate::memory::schema_version::STORE_SCHEMA_VERSION)
+        );
+        let cols = column_names(&reopened).await;
+        for gone in ["contexts", "tags", "cwd", "hook"] {
+            assert!(!cols.contains(&gone.to_string()), "{gone} in {cols:?}");
+        }
+        for kept in ["scope", "summary", "indexed"] {
+            assert!(cols.contains(&kept.to_string()), "{kept} missing: {cols:?}");
+        }
+        assert_eq!(reopened.count().await.unwrap(), 2);
+        // Values carried across the renames.
+        let got = reopened.get(&tagged.id).await.unwrap().unwrap();
+        assert_eq!(got.scope.as_deref(), Some("/w/dj"));
+        assert_eq!(got.summary, tagged.summary);
+        assert!(got.indexed);
+        let got = reopened.get(&fresh.id).await.unwrap().unwrap();
+        assert_eq!(got.scope.as_deref(), Some("/w/new"));
+        assert_eq!(got.summary.as_deref(), Some("edited summary"));
+        assert_eq!(
+            reopened
+                .list(&under, SortOrder::Newest, 10, 0)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        // The step is idempotent.
+        reopened.apply_v2_layout().await.unwrap();
+        assert_eq!(reopened.count().await.unwrap(), 2);
+        let ep = MemoryStore::open_episodic(dir.path()).await.unwrap();
+        assert!(!ep.is_v1_layout());
+        assert_eq!(
+            ep.get(&tagged.id).await.unwrap().unwrap().scope.as_deref(),
+            Some("/w/dj")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_v1_store_with_hook_reaches_v2() {
+        v1_to_v2(true).await;
+    }
+
+    #[tokio::test]
+    async fn a_v1_store_without_hook_reaches_v2() {
+        v1_to_v2(false).await;
+    }
+
+    // ── evict_expired + core_facts tests ───────────────────────────────────
+
+    #[tokio::test]
+    async fn evict_expired_drops_only_rows_older_than_cutoff() {
+        let (store, _dir) = fresh_store().await;
+        let now = Utc::now();
+
+        // Old: created 10 days ago, never updated → decay clock = created_at.
+        let mut old = make_fact("stale", MemoryType::Learned);
+        old.created_at = (now - Duration::days(10)).trunc_subsecs(6);
+        let old_id = old.id.clone();
+
+        // Fresh: created just now → decay clock = created_at ≈ now.
+        let fresh = make_fact("recent", MemoryType::Learned);
+        let fresh_id = fresh.id.clone();
+
+        // Touched: created 10 days ago, edited 1 hour ago. An edit is not
+        // the thing happening again — the one TTL clock is
+        // `occurred_at ?? created_at`, so it goes too.
+        let mut touched = make_fact("edited", MemoryType::Learned);
+        touched.created_at = (now - Duration::days(10)).trunc_subsecs(6);
+        touched.updated_at = Some((now - Duration::hours(1)).trunc_subsecs(6));
+        let touched_id = touched.id.clone();
+
+        // Late-staged: written 10 days ago about something that happened
+        // an hour ago — its clock is occurred_at, which is recent.
+        let mut late = make_fact("late", MemoryType::Learned);
+        late.created_at = (now - Duration::days(10)).trunc_subsecs(6);
+        late.occurred_at = Some((now - Duration::hours(1)).trunc_subsecs(6));
+        let late_id = late.id.clone();
+
+        store.insert(&[old, fresh, touched, late]).await.unwrap();
+
+        let removed = store.evict_expired(now - Duration::days(1)).await.unwrap();
+        assert_eq!(removed, 2);
+        assert!(store.get(&old_id).await.unwrap().is_none());
+        assert!(store.get(&touched_id).await.unwrap().is_none());
+        assert!(store.get(&fresh_id).await.unwrap().is_some());
+        assert!(store.get(&late_id).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn core_facts_returns_only_core_tier() {
+        let (store, _dir) = fresh_store().await;
+
+        let mut core1 = make_fact("identity bit", MemoryType::Fact);
+        core1.tier = Tier::Core;
+        let mut core2 = make_fact("preference bit", MemoryType::Preference);
+        core2.tier = Tier::Core;
+        let semantic = make_fact("retrieval pool bit", MemoryType::Learned); // default Semantic
+
+        store.insert(&[core1, core2, semantic]).await.unwrap();
+
+        let core = store.core_facts().await.unwrap();
+        assert_eq!(core.len(), 2);
+        assert!(core.iter().all(|f| f.tier == Tier::Core));
+    }
+
+    // ── insert_with_dedup tests ────────────────────────────────────────────
+
+    /// Unit vector with a single 1.0 at `idx`; cosine similarity with its
+    /// twin is 1.0, with a disjoint-index vector is 0.0. Sidesteps flaky
+    /// float comparisons against the real embedding distribution.
+    fn unit_vec_at(idx: usize) -> Vec<f32> {
+        let mut v = vec![0.0_f32; VECTOR_DIM as usize];
+        v[idx] = 1.0;
+        v
+    }
+
+    #[tokio::test]
+    async fn dedup_adds_when_store_is_empty() {
+        let (store, _dir) = fresh_store().await;
+        let f = with_vector(make_fact("first", MemoryType::Fact), 1.0);
+        let outcome = store.insert_with_dedup(f.clone()).await.unwrap();
+        match outcome {
+            InsertOutcome::Added(got) => assert_eq!(got.id, f.id),
+            InsertOutcome::Merged { .. } => panic!("empty store should never merge"),
+        }
+        assert_eq!(store.count().await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn dedup_merges_exact_content_and_keeps_existing_id() {
+        let (store, _dir) = fresh_store().await;
+
+        let mut existing = make_fact("original phrasing", MemoryType::Fact);
+        existing.vector = Some(unit_vec_at(0));
+        existing.scope = Some("/w/linggen".into());
+        let existing_id = existing.id.clone();
+        store.insert(&[existing.clone()]).await.unwrap();
+
+        // Candidate: byte-identical content (same type), a summary + index flag.
+        let mut candidate = make_fact("original phrasing", MemoryType::Fact);
+        candidate.vector = Some(unit_vec_at(0));
+        candidate.scope = Some("/w/other".into());
+        candidate.summary = Some("setup".into());
+        candidate.indexed = true;
+
+        let outcome = store.insert_with_dedup(candidate).await.unwrap();
+        let (merged, similarity, previous_id) = match outcome {
+            InsertOutcome::Merged {
+                fact,
+                similarity,
+                previous_id,
+            } => (fact, similarity, previous_id),
+            InsertOutcome::Added(_) => panic!("exact-content match should merge"),
+        };
+
+        assert_eq!(previous_id, existing_id);
+        assert_eq!(merged.id, existing_id);
+        assert_eq!(
+            similarity, 1.0,
+            "exact-content match reports similarity 1.0"
+        );
+        assert_eq!(merged.content, "original phrasing");
+        assert_eq!(merged.scope.as_deref(), Some("/w/linggen"), "scope stays");
+        assert_eq!(
+            merged.summary.as_deref(),
+            Some("setup"),
+            "an empty summary fills"
+        );
+        assert!(merged.indexed);
+        assert_eq!(store.count().await.unwrap(), 1);
+    }
+
+    /// A dedup merge must not move a row between projects: `scope` records
+    /// where the memory originated, and a re-say from another repo taking
+    /// it over would hide the row from the project that wrote it. Empty
+    /// stays fillable — a scoped re-say upgrades an unscoped row.
+    #[test]
+    fn merge_keeps_the_existing_scope_and_fills_an_empty_one() {
+        let mut existing = make_fact("same words", MemoryType::Fact);
+        existing.scope = Some("/home/u/first-repo".into());
+        let mut candidate = make_fact("same words", MemoryType::Fact);
+        candidate.scope = Some("/home/u/other-repo".into());
+        let merged = merge_fact(&existing, &candidate);
+        assert_eq!(merged.scope.as_deref(), Some("/home/u/first-repo"));
+
+        let mut unscoped = make_fact("same words", MemoryType::Fact);
+        unscoped.scope = None;
+        let merged = merge_fact(&unscoped, &candidate);
+        assert_eq!(merged.scope.as_deref(), Some("/home/u/other-repo"));
+    }
+
+    #[tokio::test]
+    async fn dedup_does_not_merge_contradiction_despite_high_cosine() {
+        let (store, _dir) = fresh_store().await;
+
+        let mut existing = make_fact("the cat is male", MemoryType::Fact);
+        existing.vector = Some(unit_vec_at(0));
+        store.insert(&[existing]).await.unwrap();
+
+        // Same vector index (cosine 1.0) but CONTRADICTORY content. The old
+        // cosine gate would have silently merged these and corrupted the
+        // fact. Exact-content dedup must keep both rows.
+        let mut candidate = make_fact("the cat is female", MemoryType::Fact);
+        candidate.vector = Some(unit_vec_at(0));
+
+        let outcome = store.insert_with_dedup(candidate.clone()).await.unwrap();
+        match outcome {
+            InsertOutcome::Added(got) => assert_eq!(got.id, candidate.id),
+            InsertOutcome::Merged { .. } => {
+                panic!("a contradiction must NOT merge, regardless of cosine")
+            }
+        }
+        assert_eq!(store.count().await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn dedup_does_not_merge_across_types() {
+        let (store, _dir) = fresh_store().await;
+
+        let mut existing = make_fact("shared meaning", MemoryType::Fact);
+        existing.vector = Some(unit_vec_at(0));
+        store.insert(&[existing]).await.unwrap();
+
+        // Same content, different type — must insert, not merge
+        // (dedup is type-scoped).
+        let mut candidate = make_fact("shared meaning", MemoryType::Preference);
+        candidate.vector = Some(unit_vec_at(0));
+
+        let outcome = store.insert_with_dedup(candidate).await.unwrap();
+        assert!(matches!(outcome, InsertOutcome::Added(_)));
+        assert_eq!(store.count().await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn dedup_without_vector_merges_into_existing_row() {
+        let (store, _dir) = fresh_store().await;
+
+        let mut existing = make_fact("anything", MemoryType::Fact);
+        existing.vector = Some(unit_vec_at(0));
+        let existing_id = existing.id.clone();
+        store.insert(&[existing]).await.unwrap();
+
+        // A no-vector candidate dedups like any other (the exact-content
+        // lookup is pure SQL) — and the merge keeps the existing row's
+        // vector, since equal-length content never replaces it.
+        let candidate = make_fact("anything", MemoryType::Fact);
+        let outcome = store.insert_with_dedup(candidate).await.unwrap();
+        let InsertOutcome::Merged { fact, .. } = outcome else {
+            panic!("expected Merged, got {outcome:?}");
+        };
+        assert_eq!(fact.id, existing_id);
+        assert!(fact.vector.is_some());
+        assert_eq!(store.count().await.unwrap(), 1);
+    }
+
+    /// The 2026-10-05 loss: a replacement whose content equals the row it
+    /// replaces must not merge into that row (the same call then archives
+    /// it). It lands as its own row.
+    #[tokio::test]
+    async fn dedup_never_merges_into_an_excepted_row() {
+        let (store, _dir) = fresh_store().await;
+        let mut loser = make_fact("same words", MemoryType::Fact);
+        loser.vector = Some(unit_vec_at(0));
+        let loser_id = loser.id.clone();
+        store.insert(&[loser]).await.unwrap();
+
+        let mut candidate = make_fact("same words", MemoryType::Fact);
+        candidate.vector = Some(unit_vec_at(0));
+        let outcome = store
+            .insert_with_dedup_except(candidate.clone(), &[loser_id.clone()])
+            .await
+            .unwrap();
+        let InsertOutcome::Added(got) = outcome else {
+            panic!("expected Added, got {outcome:?}");
+        };
+        assert_eq!(got.id, candidate.id);
+        assert_ne!(got.id, loser_id);
+        assert_eq!(store.count().await.unwrap(), 2);
+    }
+
+    /// An archived row is history: a re-add of its words is a new live row,
+    /// never a merge into the archive (which left the add invisible).
+    #[tokio::test]
+    async fn dedup_skips_archived_rows() {
+        let (store, _dir) = fresh_store().await;
+        let mut old = make_fact("archived words", MemoryType::Fact);
+        old.vector = Some(unit_vec_at(0));
+        let old_id = old.id.clone();
+        store.insert(&[old]).await.unwrap();
+        assert!(store.expire(&old_id, "someone").await.unwrap());
+
+        let mut candidate = make_fact("archived words", MemoryType::Fact);
+        candidate.vector = Some(unit_vec_at(0));
+        let outcome = store.insert_with_dedup(candidate.clone()).await.unwrap();
+        assert!(matches!(outcome, InsertOutcome::Added(_)), "{outcome:?}");
+        let live = store.get(&candidate.id).await.unwrap().unwrap();
+        assert!(live.expired_at.is_none());
+    }
+
+    // ── physical maintenance ───────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn table_name_reports_the_lancedb_table() {
+        let dir = TempDir::new().unwrap();
+        let semantic = MemoryStore::open_semantic(dir.path()).await.unwrap();
+        let episodic = MemoryStore::open_episodic(dir.path()).await.unwrap();
+        assert_eq!(semantic.table_name(), "semantic");
+        assert_eq!(episodic.table_name(), "episodic");
+    }
+
+    /// THE invariant of the physical lane: it may move bytes around on
+    /// disk, but it may never change what the store says. If this test
+    /// ever fails, maintenance has crossed into the semantic lane and is
+    /// no longer safe to run unattended.
+    #[tokio::test]
+    async fn optimize_storage_preserves_every_row() {
+        let (store, _dir) = fresh_store().await;
+
+        // Write each row in its own call, which is exactly what produces
+        // the one-fragment-per-row shape this pass exists to collapse.
+        for i in 0..12 {
+            store
+                .insert(&[make_fact(&format!("row {i}"), MemoryType::Fact)])
+                .await
+                .unwrap();
+        }
+        // Delete one, so compaction has a tombstone to materialize.
+        let doomed = store
+            .list(&Filters::default(), SortOrder::Newest, 1, 0)
+            .await
+            .unwrap()[0]
+            .id
+            .clone();
+        assert!(store.delete(&doomed).await.unwrap());
+
+        let before = store
+            .list(&Filters::default(), SortOrder::Newest, 100, 0)
+            .await
+            .unwrap();
+        let before_count = store.count().await.unwrap();
+        assert_eq!(before_count, 11);
+
+        store
+            .optimize_storage(chrono::Duration::days(2))
+            .await
+            .unwrap();
+
+        // Same rows, same ids, same content — nothing invented, nothing lost.
+        let after = store
+            .list(&Filters::default(), SortOrder::Newest, 100, 0)
+            .await
+            .unwrap();
+        assert_eq!(store.count().await.unwrap(), before_count);
+        assert_eq!(after.len(), before.len());
+
+        let mut before_rows: Vec<_> = before.iter().map(|m| (&m.id, &m.content)).collect();
+        let mut after_rows: Vec<_> = after.iter().map(|m| (&m.id, &m.content)).collect();
+        before_rows.sort();
+        after_rows.sort();
+        assert_eq!(before_rows, after_rows);
+
+        // And the deleted row stays deleted — compaction must not
+        // resurrect a tombstoned row when it rewrites the fragment.
+        assert!(store.get(&doomed).await.unwrap().is_none());
+    }
+
+    /// Maintenance on an empty table is a no-op, not an error — a fresh
+    /// install runs this loop too.
+    #[tokio::test]
+    async fn optimize_storage_is_safe_on_an_empty_table() {
+        let (store, _dir) = fresh_store().await;
+        store
+            .optimize_storage(chrono::Duration::days(2))
+            .await
+            .unwrap();
+        assert_eq!(store.count().await.unwrap(), 0);
+    }
+
+    /// Rows must still be findable by vector search afterwards — a
+    /// compaction that rewrote fragments but broke retrieval would pass a
+    /// naive count check and still have destroyed the store's purpose.
+    #[tokio::test]
+    async fn optimize_storage_keeps_rows_searchable() {
+        let (store, _dir) = fresh_store().await;
+        for i in 0..8 {
+            let mut fact = make_fact(&format!("row {i}"), MemoryType::Fact);
+            fact.vector = Some(unit_vec_at(i));
+            store.insert(&[fact]).await.unwrap();
+        }
+
+        let probe = unit_vec_at(3);
+        let before = store.search(&probe, &Filters::default(), 1).await.unwrap();
+
+        store
+            .optimize_storage(chrono::Duration::days(2))
+            .await
+            .unwrap();
+
+        let after = store.search(&probe, &Filters::default(), 1).await.unwrap();
+        assert_eq!(after.len(), 1);
+        assert_eq!(after[0].id, before[0].id);
+    }
+}

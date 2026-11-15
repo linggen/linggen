@@ -1,0 +1,799 @@
+//! Arrow + LanceDB schema for the memory tables.
+//!
+//! Defines:
+//! - [`SEMANTIC_TABLE_NAME`] — the curated long-term (semantic) table.
+//! - [`VECTOR_DIM`] — embedding dimension (1024, matches `Qwen3-Embedding-0.6B`).
+//! - [`build_schema`] — the 14-field Arrow schema matching `doc/tech-spec.md`.
+//! - [`memories_to_record_batch`] — encode `&[Memory]` as a single `RecordBatch`.
+//! - [`record_batch_to_memories`] — decode a `RecordBatch` back into `Vec<Memory>`.
+//!
+//! Changes to any field (rename, type change, nullability flip) must be made
+//! in lockstep here and in `types.rs`.
+
+use super::types::{Memory, MemoryType, Origin, Outcome, Tier};
+use anyhow::{anyhow, Context, Result};
+use arrow_array::{
+    builder::{FixedSizeListBuilder, Float32Builder, ListBuilder, StringBuilder},
+    Array, BooleanArray, FixedSizeListArray, ListArray, RecordBatch, StringArray,
+    TimestampMicrosecondArray,
+};
+use arrow_schema::{DataType, Field, Schema, TimeUnit};
+use chrono::{DateTime, TimeZone, Utc};
+use std::str::FromStr;
+use std::sync::Arc;
+
+/// Name of the LanceDB table holding curated long-term memory (semantic
+/// memory, in brain terms). Both `tier=core` and `tier=semantic` rows
+/// live here.
+pub const SEMANTIC_TABLE_NAME: &str = "semantic";
+
+/// Name of the LanceDB table holding staged short-term experience
+/// (episodic memory) awaiting consolidation. Same row schema as the
+/// semantic table (reuses [`build_schema`]); a separate table so its ANN
+/// index stays isolated from the curated semantic index.
+pub const EPISODIC_TABLE_NAME: &str = "episodic";
+
+/// Embedding vector dimensionality. Locked by the default model
+/// (`Qwen/Qwen3-Embedding-0.6B`, 1024-dim).
+pub const VECTOR_DIM: i32 = 1024;
+
+const TZ_UTC: &str = "UTC";
+
+/// Build the Arrow schema for a memory table.
+pub fn build_schema() -> Arc<Schema> {
+    let float_item = Arc::new(Field::new("item", DataType::Float32, true));
+
+    Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Utf8, false),
+        Field::new("content", DataType::Utf8, false),
+        Field::new(
+            "vector",
+            DataType::FixedSizeList(float_item, VECTOR_DIM),
+            true,
+        ),
+        Field::new("type", DataType::Utf8, false),
+        Field::new("outcome", DataType::Utf8, true),
+        Field::new("from", DataType::Utf8, false),
+        Field::new("tier", DataType::Utf8, false),
+        // The directory the row is about; null = about the person. A v1
+        // store names it `cwd` (see [`LEGACY_RENAMES`]).
+        Field::new("scope", DataType::Utf8, true),
+        Field::new(
+            "created_at",
+            DataType::Timestamp(TimeUnit::Microsecond, Some(TZ_UTC.into())),
+            false,
+        ),
+        Field::new(
+            "updated_at",
+            DataType::Timestamp(TimeUnit::Microsecond, Some(TZ_UTC.into())),
+            true,
+        ),
+        Field::new(
+            "occurred_at",
+            DataType::Timestamp(TimeUnit::Microsecond, Some(TZ_UTC.into())),
+            true,
+        ),
+        Field::new("source_session", DataType::Utf8, true),
+        Field::new("host", DataType::Utf8, true),
+        // Archive pair (2026-08-17): a merge/digest EXPIRES its losers
+        // instead of deleting them. NULL expired_at = live row.
+        Field::new(
+            "expired_at",
+            DataType::Timestamp(TimeUnit::Microsecond, Some(TZ_UTC.into())),
+            true,
+        ),
+        Field::new("superseded_by", DataType::Utf8, true),
+        // Account pair (2026-09-08): whose memory a row is. NULL = the
+        // store owner's; set only on rows from another person's phone.
+        Field::new("account_id", DataType::Utf8, true),
+        Field::new("account_name", DataType::Utf8, true),
+        // Scope pair (2026-10-04, doc/scope-index-spec.md): the one-line
+        // summary the index shows, and whether the row is in its dir's index.
+        // A v1 store names the first one `hook` (see [`LEGACY_RENAMES`]).
+        Field::new("summary", DataType::Utf8, true),
+        Field::new("indexed", DataType::Boolean, true),
+    ]))
+}
+
+/// Columns of the v1 layout that v2 dropped. A store keeps them until its
+/// owner accepts the scope migration (`schema_version` step 1→2); until
+/// then every write fills them with empty lists via [`conform_to`].
+pub const LEGACY_LIST_COLUMNS: [&str; 2] = ["contexts", "tags"];
+
+/// Columns v2 renamed, as `(v1 name, v2 name)`. A v1 store keeps the old
+/// names until the 1→2 step renames them (values carried); until then reads
+/// take either name and writes fill the table's own.
+pub const LEGACY_RENAMES: [(&str, &str); 2] = [("hook", "summary"), ("cwd", "scope")];
+
+/// The v2 name of a v1 column, if v2 renamed it.
+fn renamed_to(legacy: &str) -> Option<&'static str> {
+    LEGACY_RENAMES
+        .iter()
+        .find(|(old, _)| *old == legacy)
+        .map(|(_, new)| *new)
+}
+
+/// A column by its v2 name, or by its v1 name on a table not yet renamed.
+fn column_either<'a>(batch: &'a RecordBatch, name: &str) -> Option<&'a Arc<dyn Array>> {
+    batch.column_by_name(name).or_else(|| {
+        LEGACY_RENAMES
+            .iter()
+            .find(|(_, new)| *new == name)
+            .and_then(|(old, _)| batch.column_by_name(old))
+    })
+}
+
+/// Reshape a batch built against [`build_schema`] to an on-disk table's own
+/// schema: same column order, and every column the batch lacks filled —
+/// an empty list for a list column (the v1 `contexts`/`tags`, which are
+/// non-null), nulls otherwise. Lets one binary write into both a v1 store
+/// awaiting its migration and a v2 one.
+pub fn conform_to(batch: RecordBatch, table: &Schema) -> Result<RecordBatch> {
+    conform_keeping(batch, table, &std::collections::HashMap::new())
+}
+
+/// [`conform_to`], carrying each row's existing legacy list values (keyed by
+/// column, then row id) instead of empty lists — an update of a v1 row must
+/// not wipe the `contexts` the scope migration still reads.
+pub fn conform_keeping(
+    batch: RecordBatch,
+    table: &Schema,
+    keep: &std::collections::HashMap<String, std::collections::HashMap<String, Vec<String>>>,
+) -> Result<RecordBatch> {
+    if batch.schema().as_ref() == table {
+        return Ok(batch);
+    }
+    let n = batch.num_rows();
+    let mut cols: Vec<Arc<dyn Array>> = Vec::with_capacity(table.fields().len());
+    for field in table.fields() {
+        if let Some(col) = batch.column_by_name(field.name()) {
+            cols.push(col.clone());
+            continue;
+        }
+        // A v1 table's `hook`/`cwd` are this build's `summary`/`scope`.
+        if let Some(col) = renamed_to(field.name()).and_then(|n| batch.column_by_name(n)) {
+            cols.push(col.clone());
+            continue;
+        }
+        match field.data_type() {
+            DataType::List(_) => {
+                let ids = col_utf8(&batch, "id")?;
+                let kept = keep.get(field.name());
+                let mut b = ListBuilder::new(StringBuilder::new());
+                for i in 0..n {
+                    if let Some(values) = kept.and_then(|k| k.get(ids.value(i))) {
+                        for v in values {
+                            b.values().append_value(v);
+                        }
+                    }
+                    b.append(true);
+                }
+                cols.push(Arc::new(b.finish()));
+            }
+            dt if field.is_nullable() => cols.push(arrow_array::new_null_array(dt, n)),
+            dt => {
+                return Err(anyhow!(
+                    "table column `{}` ({dt:?}) is required and this build has no value for it",
+                    field.name()
+                ))
+            }
+        }
+    }
+    RecordBatch::try_new(Arc::new(table.clone()), cols).context("conforming batch to table schema")
+}
+
+/// `(id, values)` of one legacy list column, rows with any values only.
+pub fn legacy_list(batch: &RecordBatch, column: &str) -> Result<Vec<(String, Vec<String>)>> {
+    if batch.column_by_name(column).is_none() {
+        return Ok(Vec::new());
+    }
+    let ids = col_utf8(batch, "id")?;
+    let values = col_string_list(batch, column)?;
+    Ok((0..batch.num_rows())
+        .filter(|&i| !values[i].is_empty())
+        .map(|i| (ids.value(i).to_string(), values[i].clone()))
+        .collect())
+}
+
+/// Encode a slice of facts as a single Arrow `RecordBatch` matching
+/// [`build_schema`]. Preserves row order; `None`-valued optional fields
+/// become nulls in the corresponding columns.
+pub fn memories_to_record_batch(facts: &[Memory]) -> Result<RecordBatch> {
+    let schema = build_schema();
+
+    let ids = StringArray::from_iter_values(facts.iter().map(|f| f.id.as_str()));
+    let contents = StringArray::from_iter_values(facts.iter().map(|f| f.content.clone()));
+    let types = StringArray::from_iter_values(facts.iter().map(|f| f.r#type.as_str()));
+    let froms = StringArray::from_iter_values(facts.iter().map(|f| f.origin.as_str()));
+    let tiers = StringArray::from_iter_values(facts.iter().map(|f| f.tier.as_str()));
+
+    let outcomes = StringArray::from_iter(facts.iter().map(|f| f.outcome.map(|o| o.as_str())));
+    let scopes = StringArray::from_iter(facts.iter().map(|f| f.scope.clone()));
+    let source_sessions = StringArray::from_iter(facts.iter().map(|f| f.source_session.clone()));
+    let hosts = StringArray::from_iter(facts.iter().map(|f| f.host.clone()));
+
+    let vectors = build_vector_column(facts)?;
+    let summaries = StringArray::from_iter(facts.iter().map(|f| f.summary.clone()));
+    let indexed = BooleanArray::from_iter(facts.iter().map(|f| Some(f.indexed)));
+
+    let created_at = TimestampMicrosecondArray::from_iter_values(
+        facts.iter().map(|f| f.created_at.timestamp_micros()),
+    )
+    .with_timezone(TZ_UTC);
+
+    let updated_at = TimestampMicrosecondArray::from_iter(
+        facts
+            .iter()
+            .map(|f| f.updated_at.map(|t| t.timestamp_micros())),
+    )
+    .with_timezone(TZ_UTC);
+
+    let occurred_at = TimestampMicrosecondArray::from_iter(
+        facts
+            .iter()
+            .map(|f| f.occurred_at.map(|t| t.timestamp_micros())),
+    )
+    .with_timezone(TZ_UTC);
+
+    let expired_at = TimestampMicrosecondArray::from_iter(
+        facts
+            .iter()
+            .map(|f| f.expired_at.map(|t| t.timestamp_micros())),
+    )
+    .with_timezone(TZ_UTC);
+    let superseded_bys = StringArray::from_iter(facts.iter().map(|f| f.superseded_by.clone()));
+    let account_ids = StringArray::from_iter(facts.iter().map(|f| f.account_id.clone()));
+    let account_names = StringArray::from_iter(facts.iter().map(|f| f.account_name.clone()));
+
+    RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(ids),
+            Arc::new(contents),
+            Arc::new(vectors),
+            Arc::new(types),
+            Arc::new(outcomes),
+            Arc::new(froms),
+            Arc::new(tiers),
+            Arc::new(scopes),
+            Arc::new(created_at),
+            Arc::new(updated_at),
+            Arc::new(occurred_at),
+            Arc::new(source_sessions),
+            Arc::new(hosts),
+            Arc::new(expired_at),
+            Arc::new(superseded_bys),
+            Arc::new(account_ids),
+            Arc::new(account_names),
+            Arc::new(summaries),
+            Arc::new(indexed),
+        ],
+    )
+    .context("building facts RecordBatch")
+}
+
+/// Decode a `RecordBatch` produced against [`build_schema`] back into facts.
+/// Returns an error if any required column is missing or has the wrong type.
+pub fn record_batch_to_memories(batch: &RecordBatch) -> Result<Vec<Memory>> {
+    let n = batch.num_rows();
+    let ids = col_utf8(batch, "id")?;
+    let contents = col_utf8(batch, "content")?;
+    let types = col_utf8(batch, "type")?;
+    let froms = col_utf8(batch, "from")?;
+    let tiers = col_utf8(batch, "tier")?;
+    let outcomes = col_utf8_opt(batch, "outcome")?;
+    let scopes = col_utf8_opt_either(batch, "scope")?;
+    let source_sessions = col_utf8_opt(batch, "source_session")?;
+    // `host` was added after the initial schema. Older tables on disk
+    // may not carry the column yet — treat its absence as "all rows
+    // have host=null" rather than failing the whole batch decode.
+    let hosts = col_utf8_opt_missing_ok(batch, "host");
+    let vectors = col_vector(batch, "vector")?;
+    let created_at = col_timestamp(batch, "created_at")?;
+    let updated_at = col_timestamp_opt(batch, "updated_at")?;
+    let occurred_at = col_timestamp_opt(batch, "occurred_at")?;
+    // Archive pair — added 2026-08-17; absent on older on-disk tables
+    // until `ensure_late_schema_additions` runs, so decode is lenient.
+    let expired_at = col_timestamp_opt_missing_ok(batch, "expired_at");
+    let superseded_bys = col_utf8_opt_missing_ok(batch, "superseded_by");
+    // Account pair — added 2026-09-08; same leniency.
+    let account_ids = col_utf8_opt_missing_ok(batch, "account_id");
+    let account_names = col_utf8_opt_missing_ok(batch, "account_name");
+    // Scope pair — added 2026-10-04; same leniency. A v1 table names the
+    // summary `hook` until the 1→2 step renames it.
+    let summaries = column_either(batch, "summary")
+        .and_then(|c| c.as_any().downcast_ref::<StringArray>())
+        .map(|a| {
+            (0..a.len())
+                .map(|i| (!a.is_null(i)).then(|| a.value(i).to_string()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(|| vec![None; n]);
+    let indexed = col_bool_missing_ok(batch, "indexed");
+
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let id = ids.value(i).to_string();
+        let type_str = types.value(i);
+        let r#type = MemoryType::from_str(type_str)
+            .with_context(|| format!("unknown type `{type_str}` at row {i}"))?;
+        let from_str = froms.value(i);
+        let origin = Origin::from_str(from_str)
+            .with_context(|| format!("unknown from `{from_str}` at row {i}"))?;
+        let tier_str = tiers.value(i);
+        let tier = Tier::from_str(tier_str)
+            .with_context(|| format!("unknown tier `{tier_str}` at row {i}"))?;
+        let outcome = match outcomes.get(i).copied().flatten() {
+            Some(s) => Some(
+                Outcome::from_str(s)
+                    .with_context(|| format!("unknown outcome `{s}` at row {i}"))?,
+            ),
+            None => None,
+        };
+
+        out.push(Memory {
+            id,
+            content: contents.value(i).to_string(),
+            vector: vectors.get(i).cloned().flatten(),
+            r#type,
+            tier,
+            outcome,
+            origin,
+            scope: scopes.get(i).copied().flatten().map(str::to_string),
+            summary: summaries.get(i).cloned().flatten(),
+            indexed: indexed.get(i).copied().unwrap_or(false),
+            created_at: created_at[i],
+            updated_at: updated_at.get(i).copied().flatten(),
+            occurred_at: occurred_at.get(i).copied().flatten(),
+            source_session: source_sessions
+                .get(i)
+                .copied()
+                .flatten()
+                .map(str::to_string),
+            host: hosts.get(i).cloned().flatten(),
+            expired_at: expired_at.get(i).copied().flatten(),
+            superseded_by: superseded_bys.get(i).cloned().flatten(),
+            account_id: account_ids.get(i).cloned().flatten(),
+            account_name: account_names.get(i).cloned().flatten(),
+        });
+    }
+    Ok(out)
+}
+
+// ── column builders ─────────────────────────────────────────────────────────
+
+fn build_vector_column(facts: &[Memory]) -> Result<FixedSizeListArray> {
+    let mut builder = FixedSizeListBuilder::new(Float32Builder::new(), VECTOR_DIM);
+    for fact in facts {
+        match &fact.vector {
+            Some(v) => {
+                if v.len() != VECTOR_DIM as usize {
+                    return Err(anyhow!(
+                        "fact {} has vector len {} but schema expects {}",
+                        fact.id,
+                        v.len(),
+                        VECTOR_DIM
+                    ));
+                }
+                for x in v {
+                    builder.values().append_value(*x);
+                }
+                builder.append(true);
+            }
+            None => {
+                for _ in 0..VECTOR_DIM {
+                    builder.values().append_null();
+                }
+                builder.append(false);
+            }
+        }
+    }
+    Ok(builder.finish())
+}
+
+// ── column extractors ───────────────────────────────────────────────────────
+
+fn col_utf8<'a>(batch: &'a RecordBatch, name: &str) -> Result<&'a StringArray> {
+    batch
+        .column_by_name(name)
+        .with_context(|| format!("missing column `{name}`"))?
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .with_context(|| format!("column `{name}` is not Utf8"))
+}
+
+/// Like [`col_utf8_opt`] but returns all-None when the column is absent
+/// entirely — used for fields added after the initial schema (e.g.
+/// `host`) so legacy on-disk tables still decode cleanly.
+fn col_utf8_opt_missing_ok(batch: &RecordBatch, name: &str) -> Vec<Option<String>> {
+    let Some(col) = batch.column_by_name(name) else {
+        return vec![None; batch.num_rows()];
+    };
+    let Some(arr) = col.as_any().downcast_ref::<StringArray>() else {
+        return vec![None; batch.num_rows()];
+    };
+    (0..arr.len())
+        .map(|i| {
+            if arr.is_null(i) {
+                None
+            } else {
+                Some(arr.value(i).to_string())
+            }
+        })
+        .collect()
+}
+
+/// A nullable Boolean column, all-false when absent (a v1 table before
+/// `ensure_late_schema_additions` ran) — null reads as false.
+fn col_bool_missing_ok(batch: &RecordBatch, name: &str) -> Vec<bool> {
+    let Some(arr) = batch
+        .column_by_name(name)
+        .and_then(|c| c.as_any().downcast_ref::<BooleanArray>())
+    else {
+        return vec![false; batch.num_rows()];
+    };
+    (0..arr.len())
+        .map(|i| !arr.is_null(i) && arr.value(i))
+        .collect()
+}
+
+/// Like [`col_timestamp_opt`] but returns all-None when the column is
+/// absent entirely — same legacy-table leniency as
+/// [`col_utf8_opt_missing_ok`], for timestamp fields added after the
+/// initial schema (e.g. `expired_at`).
+fn col_timestamp_opt_missing_ok(batch: &RecordBatch, name: &str) -> Vec<Option<DateTime<Utc>>> {
+    if batch.column_by_name(name).is_none() {
+        return vec![None; batch.num_rows()];
+    }
+    col_timestamp_opt(batch, name).unwrap_or_else(|_| vec![None; batch.num_rows()])
+}
+
+/// Utf8 column as a Vec mapping row → Option<&str>. Cheap: borrows from the
+/// underlying array, one Option per row.
+fn col_utf8_opt<'a>(batch: &'a RecordBatch, name: &str) -> Result<Vec<Option<&'a str>>> {
+    let arr = col_utf8(batch, name)?;
+    Ok((0..arr.len())
+        .map(|i| {
+            if arr.is_null(i) {
+                None
+            } else {
+                Some(arr.value(i))
+            }
+        })
+        .collect())
+}
+
+/// [`col_utf8_opt`] by v2 name, or by v1 name on a table not yet renamed.
+fn col_utf8_opt_either<'a>(batch: &'a RecordBatch, name: &str) -> Result<Vec<Option<&'a str>>> {
+    let arr = column_either(batch, name)
+        .with_context(|| format!("missing column `{name}`"))?
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .with_context(|| format!("column `{name}` is not Utf8"))?;
+    Ok((0..arr.len())
+        .map(|i| (!arr.is_null(i)).then(|| arr.value(i)))
+        .collect())
+}
+
+fn col_string_list(batch: &RecordBatch, name: &str) -> Result<Vec<Vec<String>>> {
+    let arr = batch
+        .column_by_name(name)
+        .with_context(|| format!("missing column `{name}`"))?
+        .as_any()
+        .downcast_ref::<ListArray>()
+        .with_context(|| format!("column `{name}` is not List<Utf8>"))?;
+
+    let mut out = Vec::with_capacity(arr.len());
+    for i in 0..arr.len() {
+        let row = arr.value(i);
+        let strs = row
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .context("list item is not Utf8")?;
+        out.push(
+            (0..strs.len())
+                .filter(|&j| !strs.is_null(j))
+                .map(|j| strs.value(j).to_string())
+                .collect(),
+        );
+    }
+    Ok(out)
+}
+
+fn col_vector(batch: &RecordBatch, name: &str) -> Result<Vec<Option<Vec<f32>>>> {
+    let arr = batch
+        .column_by_name(name)
+        .with_context(|| format!("missing column `{name}`"))?
+        .as_any()
+        .downcast_ref::<FixedSizeListArray>()
+        .with_context(|| format!("column `{name}` is not FixedSizeList<Float32>"))?;
+
+    let mut out = Vec::with_capacity(arr.len());
+    for i in 0..arr.len() {
+        if arr.is_null(i) {
+            out.push(None);
+            continue;
+        }
+        let row = arr.value(i);
+        let floats = row
+            .as_any()
+            .downcast_ref::<arrow_array::Float32Array>()
+            .context("vector row is not Float32")?;
+        let vec: Vec<f32> = (0..floats.len())
+            .map(|j| {
+                if floats.is_null(j) {
+                    0.0
+                } else {
+                    floats.value(j)
+                }
+            })
+            .collect();
+        out.push(Some(vec));
+    }
+    Ok(out)
+}
+
+fn col_timestamp(batch: &RecordBatch, name: &str) -> Result<Vec<DateTime<Utc>>> {
+    let arr = batch
+        .column_by_name(name)
+        .with_context(|| format!("missing column `{name}`"))?
+        .as_any()
+        .downcast_ref::<TimestampMicrosecondArray>()
+        .with_context(|| format!("column `{name}` is not Timestamp(us)"))?;
+
+    (0..arr.len())
+        .map(|i| {
+            Utc.timestamp_micros(arr.value(i))
+                .single()
+                .with_context(|| format!("row {i} of `{name}` is an ambiguous/invalid timestamp"))
+        })
+        .collect()
+}
+
+fn col_timestamp_opt(batch: &RecordBatch, name: &str) -> Result<Vec<Option<DateTime<Utc>>>> {
+    let arr = batch
+        .column_by_name(name)
+        .with_context(|| format!("missing column `{name}`"))?
+        .as_any()
+        .downcast_ref::<TimestampMicrosecondArray>()
+        .with_context(|| format!("column `{name}` is not Timestamp(us)"))?;
+
+    (0..arr.len())
+        .map(|i| {
+            if arr.is_null(i) {
+                Ok(None)
+            } else {
+                Utc.timestamp_micros(arr.value(i))
+                    .single()
+                    .map(Some)
+                    .with_context(|| {
+                        format!("row {i} of `{name}` is an ambiguous/invalid timestamp")
+                    })
+            }
+        })
+        .collect()
+}
+
+// ── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Duration;
+
+    fn sample_facts() -> Vec<Memory> {
+        let mut f1 = Memory::new(
+            "user prefers concise replies",
+            MemoryType::Preference,
+            Origin::User,
+        );
+        f1.summary = Some("reply style".into());
+        f1.indexed = true;
+
+        let mut f2 = Memory::new(
+            "webrtc dc closes after 30s idle",
+            MemoryType::Fixed,
+            Origin::Agent,
+        );
+        f2.outcome = Some(Outcome::Positive);
+        f2.vector = Some(vec![0.1; VECTOR_DIM as usize]);
+        f2.scope = Some("/home/u/workspace/linggen".into());
+        f2.updated_at = Some(f2.created_at + Duration::minutes(20));
+        f2.occurred_at = Some(f2.created_at - Duration::hours(3));
+        f2.source_session = Some("sess-abc".into());
+
+        // f3 leaves updated_at None — proves the null path round-trips too.
+        let f3 = Memory::new("", MemoryType::Learned, Origin::Derived);
+
+        vec![f1, f2, f3]
+    }
+
+    #[test]
+    fn schema_has_nineteen_fields() {
+        let schema = build_schema();
+        assert_eq!(schema.fields().len(), 19);
+        assert!(schema.field_with_name("contexts").is_err());
+        assert!(schema.field_with_name("tags").is_err());
+    }
+
+    #[test]
+    fn schema_field_names_match_spec() {
+        let schema = build_schema();
+        let names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "id",
+                "content",
+                "vector",
+                "type",
+                "outcome",
+                "from",
+                "tier",
+                "scope",
+                "created_at",
+                "updated_at",
+                "occurred_at",
+                "source_session",
+                "host",
+                "expired_at",
+                "superseded_by",
+                "account_id",
+                "account_name",
+                "summary",
+                "indexed",
+            ]
+        );
+    }
+
+    #[test]
+    fn facts_roundtrip_through_record_batch() {
+        let facts = sample_facts();
+        let batch = memories_to_record_batch(&facts).unwrap();
+        assert_eq!(batch.num_rows(), facts.len());
+
+        let decoded = record_batch_to_memories(&batch).unwrap();
+        assert_eq!(decoded, facts);
+    }
+
+    #[test]
+    fn empty_vec_roundtrips() {
+        let batch = memories_to_record_batch(&[]).unwrap();
+        assert_eq!(batch.num_rows(), 0);
+        let decoded = record_batch_to_memories(&batch).unwrap();
+        assert!(decoded.is_empty());
+    }
+
+    #[test]
+    fn wrong_vector_dim_is_rejected() {
+        let mut f = Memory::new("x", MemoryType::Fact, Origin::Derived);
+        f.vector = Some(vec![0.0; 128]);
+        let err = memories_to_record_batch(&[f]).unwrap_err();
+        assert!(err.to_string().contains(&format!("expects {VECTOR_DIM}")));
+    }
+
+    #[test]
+    fn nulls_omit_optional_fields() {
+        let facts = sample_facts();
+        let batch = memories_to_record_batch(&facts).unwrap();
+
+        // f1 and f3 have no outcome; f2 does.
+        let outcomes = batch
+            .column_by_name("outcome")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert!(outcomes.is_null(0));
+        assert!(!outcomes.is_null(1));
+        assert!(outcomes.is_null(2));
+
+        // f2 carries updated_at; f1 and f3 leave it null.
+        let updated_at = batch
+            .column_by_name("updated_at")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<TimestampMicrosecondArray>()
+            .unwrap();
+        assert!(updated_at.is_null(0));
+        assert!(!updated_at.is_null(1));
+        assert!(updated_at.is_null(2));
+
+        // f2 has a vector; f1 and f3 don't.
+        let vectors = batch
+            .column_by_name("vector")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<FixedSizeListArray>()
+            .unwrap();
+        assert!(vectors.is_null(0));
+        assert!(!vectors.is_null(1));
+        assert!(vectors.is_null(2));
+    }
+
+    #[test]
+    fn a_v1_table_gets_empty_legacy_lists() {
+        // A v1 store keeps `contexts`/`tags` (non-null lists) until its
+        // owner accepts the migration; writes must still fit it.
+        let mut fields: Vec<Field> = build_schema()
+            .fields()
+            .iter()
+            .map(|f| f.as_ref().clone())
+            .collect();
+        let utf8_item = Arc::new(Field::new("item", DataType::Utf8, true));
+        fields.insert(
+            3,
+            Field::new("contexts", DataType::List(utf8_item.clone()), false),
+        );
+        fields.insert(4, Field::new("tags", DataType::List(utf8_item), false));
+        let v1 = Schema::new(fields);
+        let facts = sample_facts();
+        let batch = memories_to_record_batch(&facts).unwrap();
+        let shaped = conform_to(batch, &v1).unwrap();
+        assert_eq!(shaped.schema().as_ref(), &v1);
+        let contexts = shaped
+            .column_by_name("contexts")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .unwrap();
+        assert!(!contexts.is_null(0));
+        assert_eq!(contexts.value(0).len(), 0);
+        // Decoding the v1 batch ignores the legacy columns.
+        let decoded = record_batch_to_memories(&shaped).unwrap();
+        assert_eq!(decoded, facts);
+        assert!(legacy_list(&shaped, "contexts").unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_v1_table_keeps_its_old_column_names() {
+        // A v1 store calls `summary` `hook` and `scope` `cwd`; writes fill
+        // the old names and reads take them back.
+        let fields: Vec<Field> = build_schema()
+            .fields()
+            .iter()
+            .map(
+                |f| match LEGACY_RENAMES.iter().find(|(_, new)| new == f.name()) {
+                    Some((old, _)) => Field::new(*old, DataType::Utf8, true),
+                    None => f.as_ref().clone(),
+                },
+            )
+            .collect();
+        let v1 = Schema::new(fields);
+        let facts = sample_facts();
+        assert!(facts.iter().any(|f| f.summary.is_some()));
+        assert!(facts.iter().any(|f| f.scope.is_some()));
+        let shaped = conform_to(memories_to_record_batch(&facts).unwrap(), &v1).unwrap();
+        assert_eq!(shaped.schema().as_ref(), &v1);
+        assert!(shaped.column_by_name("summary").is_none());
+        assert!(shaped.column_by_name("scope").is_none());
+        assert!(shaped.column_by_name("cwd").is_some());
+        assert_eq!(record_batch_to_memories(&shaped).unwrap(), facts);
+    }
+
+    #[test]
+    fn record_batch_reports_missing_column() {
+        let mut facts = sample_facts();
+        facts.truncate(1);
+        let batch = memories_to_record_batch(&facts).unwrap();
+        let schema = batch.schema();
+        let keep: Vec<usize> = (0..schema.fields().len())
+            .filter(|&i| schema.field(i).name() != "tier")
+            .collect();
+        let pruned = batch.project(&keep).unwrap();
+        let err = record_batch_to_memories(&pruned).unwrap_err();
+        assert!(err.to_string().contains("tier"));
+    }
+
+    #[test]
+    fn a_table_without_the_scope_pair_still_decodes() {
+        let facts = sample_facts();
+        let batch = memories_to_record_batch(&facts).unwrap();
+        let schema = batch.schema();
+        let keep: Vec<usize> = (0..schema.fields().len())
+            .filter(|&i| !matches!(schema.field(i).name().as_str(), "summary" | "indexed"))
+            .collect();
+        let decoded = record_batch_to_memories(&batch.project(&keep).unwrap()).unwrap();
+        assert!(decoded.iter().all(|m| m.summary.is_none() && !m.indexed));
+    }
+}
