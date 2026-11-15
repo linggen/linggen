@@ -96,3 +96,38 @@ fn refuse(status: StatusCode, error: &str, code: &str) -> Response {
     )
         .into_response()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::routes;
+    use axum::body::Body;
+    use axum::extract::ConnectInfo;
+    use axum::http::{Request, StatusCode};
+    use std::net::SocketAddr;
+    use tower::ServiceExt;
+
+    async fn status_from(peer: &str, path: &str) -> StatusCode {
+        let mut req = Request::get(path).body(Body::empty()).unwrap();
+        let peer: SocketAddr = peer.parse().unwrap();
+        req.extensions_mut().insert(ConnectInfo(peer));
+        routes::<()>().oneshot(req).await.unwrap().status()
+    }
+
+    /// A paired device passes the engine's LAN gate; memory's own routes
+    /// still refuse anything that is not this machine.
+    #[tokio::test]
+    async fn memory_routes_answer_this_machine_only() {
+        for path in ["/mem/api/memory/list", "/mem", "/mcp/memory"] {
+            assert_eq!(
+                status_from("192.168.1.5:50000", path).await,
+                StatusCode::FORBIDDEN,
+                "{path}"
+            );
+        }
+        // Loopback gets past the guard (no memory hosted in this test: 503).
+        assert_eq!(
+            status_from("127.0.0.1:50000", "/mem/api/health").await,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+    }
+}
