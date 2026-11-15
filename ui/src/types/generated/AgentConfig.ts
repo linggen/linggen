@@ -39,14 +39,13 @@ memory_inject_min_score: number | null,
  */
 memory_recall_count: number, 
 /**
- * Base URL of the `ling-mem` HTTP daemon. Two things resolve from it:
- * the built-in memory MCP server's endpoint (`<url>/mcp`, which is how a
- * model reaches memory), and the engine's own program-side calls.
- *
- * Resolved at load from `~/.linggen/client.json` (`ling_mem`), the one
- * file every writer shares (`state_fs::client`); else `$LING_MEM_URL`;
- * else the daemon's own default port. Read from an older toml only to
- * migrate it into client.json once — never written to the toml.
+ * Base URL of memory for the engine's own callers: the built-in memory
+ * MCP server's endpoint (`<url>/mcp`, how a model reaches memory) and
+ * the program-side calls. Memory is hosted by this process, so at
+ * start-up any address on this machine becomes the hosted one and an
+ * address on another machine is ignored, with a log line and a line in
+ * `ling status` (`memory_host::effective_url`). From the toml, else
+ * `$LING_MEM_URL`, else the old daemon's port; never written.
  */
 ling_mem_url?: string, 
 /**
