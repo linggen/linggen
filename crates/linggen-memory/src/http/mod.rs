@@ -8,9 +8,8 @@
 //! directly to endpoint path — `Memory.search` → `POST /api/memory/search`.
 //! Linggen's dispatcher translates nothing; JSON args pass through.
 //!
-//! The same daemon also serves the Data Browser UI: `GET /` returns the
-//! bundled `index.html` and `GET /assets/*` fans out to the rest of
-//! `static/`. See `doc/ui-spec.md`.
+//! The Data Browser UI (`static/`) stayed in the linggen-memory repo when this
+//! code moved into the engine's workspace; it is not served from here.
 
 mod chains;
 pub(crate) mod config;
@@ -32,7 +31,6 @@ pub(crate) mod session;
 pub mod state;
 mod stats;
 pub(crate) mod sync;
-mod ui;
 
 use crate::telemetry::Telemetry;
 use axum::extract::Request;
@@ -72,7 +70,6 @@ pub fn build_router(state: SharedState, telemetry: Telemetry) -> Router {
         .merge(primary::router())
         .merge(lease::router())
         .merge(migration::router())
-        .merge(ui::router())
         // On a replica, writes go to the primary (or the outbox) — inside the
         // gate, so only admitted callers reach it. See `replica::forward`.
         .layer(middleware::from_fn_with_state(

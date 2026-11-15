@@ -6,6 +6,12 @@ license = "Apache-2.0"
 description = "Linggen — the root system for AI agents. A local-first runtime for AI apps."
 repository = "https://github.com/linggen/linggen"
 
+# One workspace, one Cargo.lock. The engine stays the root package; memory
+# (`crates/linggen-memory`, imported from the linggen-memory repo) is the
+# first member — see doc/architecture-review.md § 2.
+[workspace]
+members = [".", "crates/linggen-memory"]
+
 [features]
 # Anonymous usage telemetry (install + command events sent to
 # linggen.dev/api/track). See src/telemetry/mod.rs for the exact field list.
