@@ -292,6 +292,7 @@ mod tests {
             name: "Alex's iPhone".into(),
             secret: "s".into(),
             created_at: 0,
+            kind: None,
             account: account.map(|(id, name)| AccountRef {
                 id: id.into(),
                 email: Some("x@y.z".into()),

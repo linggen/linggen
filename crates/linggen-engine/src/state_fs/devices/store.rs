@@ -182,6 +182,7 @@ mod tests {
             name: format!("phone {id}"),
             secret: format!("secret-{id}"),
             created_at: 0,
+            kind: None,
             account: None,
             device_id: None,
             settings: Default::default(),

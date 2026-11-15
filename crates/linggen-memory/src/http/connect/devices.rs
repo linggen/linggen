@@ -1,9 +1,10 @@
 //! The files a decision lands in.
 //!
 //! - `<data_dir>/paired-devices.json` — the SAME list the engine's pairing
-//!   writes and `gate.rs` reads. An allowed machine gets a row in the engine's
-//!   schema (`id`, `name`, `secret`, `created_at`, `device_id`, `settings`), so
-//!   the engine's Devices UI shows it and either daemon accepts its token.
+//!   writes and reads. An allowed machine gets a row in the engine's schema
+//!   (`id`, `name`, `secret`, `created_at`, `kind: "machine"`, `device_id`,
+//!   `settings`), so the engine's device list shows it as a computer and its
+//!   token reaches the owner's memory.
 //!   Rows are handled as raw JSON: fields this daemon does not know (a phone's
 //!   `account`, `relay_grant`) pass through untouched.
 //! - `<data_dir>/memory/connect-devices.json` — which of those rows this
@@ -127,6 +128,7 @@ pub fn allow(data_dir: &Path, device_id: &str, name: &str, ip: IpAddr) -> io::Re
         "name": name,
         "secret": secret,
         "created_at": now,
+        "kind": "machine",
         "device_id": device_id,
         "settings": {},
     });
@@ -255,6 +257,7 @@ mod tests {
         ] {
             assert!(row.get(key).is_some(), "missing {key}");
         }
+        assert_eq!(row["kind"], "machine");
         assert_eq!(row["secret"], token);
         assert!(row["created_at"].is_i64());
     }

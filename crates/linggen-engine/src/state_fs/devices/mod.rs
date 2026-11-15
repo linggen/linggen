@@ -3,6 +3,10 @@
 //! WebRTC tunnel's attribution, perception's device names).
 //!
 //! Plain state: no HTTP here. The handshake lives in `server::api::pair`.
+//!
+//! Each row has a **kind**: a `phone` (the code-pairing ceremony) or a
+//! `machine` (the owner's other computer, approved with Allow). Rows written
+//! before the kind existed are classified once on load (`classify`).
 
 use rand::RngExt;
 use serde::{Deserialize, Serialize};
@@ -35,12 +39,25 @@ pub struct Actor {
     pub account: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+/// What a paired row is. Decides whose memory it reaches
+/// (`memory_host::caller`): a machine is the owner's, a phone its person's.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum DeviceKind {
+    Phone,
+    Machine,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PairedDevice {
     pub id: String,
     pub name: String,
     pub secret: String,
     pub created_at: i64,
+    /// `None` only until `classify` has run on a row from before kinds; read
+    /// it through [`PairedDevice::kind`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<DeviceKind>,
     /// The account signed in on this phone, last time it said so. A phone can
     /// sign in and out long after pairing, so this is refreshed on connect —
     /// never only at pair time.
@@ -70,6 +87,38 @@ pub struct PairedDevice {
     pub superseded_grant: Option<String>,
 }
 
+impl PairedDevice {
+    /// The row's kind; a row nobody classified is a phone, the narrower grant.
+    pub fn kind(&self) -> DeviceKind {
+        self.kind.unwrap_or(DeviceKind::Phone)
+    }
+}
+
+/// The header a paired device presents its token in.
+pub const DEVICE_HEADER: &str = "x-linggen-device";
+
+/// Header the WebRTC tunnel stamps on a request it forwards for an identified
+/// peer. The phone speaks only WebRTC, so its calls reach the router from
+/// loopback with no device token — this is how a handler still knows which
+/// phone is asking.
+///
+/// Trust: only the tunnel writes it, and anything else able to reach loopback
+/// is already the Mac's owner. It routes and attributes; it never authorizes.
+pub const ACTOR_DEVICE_HEADER: &str = "x-linggen-actor-device";
+
+/// Header the WebRTC tunnel stamps on EVERY request it re-issues to loopback.
+/// Loopback alone does not mean "someone at this Mac" once the tunnel is
+/// involved. Its value says what the tunnel knows of a peer that has not
+/// named a device: [`TUNNEL_LOCAL`], [`TUNNEL_OWNER`], or anything else.
+pub const TUNNEL_HEADER: &str = "x-linggen-tunnel";
+
+/// The peer's channel was opened from this machine (the local web UI, the
+/// app shell).
+pub const TUNNEL_LOCAL: &str = "local";
+
+/// The peer reached the relay as the owner's own account.
+pub const TUNNEL_OWNER: &str = "owner";
+
 fn devices_path() -> PathBuf {
     crate::paths::linggen_home().join("paired-devices.json")
 }
@@ -94,8 +143,9 @@ pub fn modify_devices<R>(f: impl FnOnce(&mut Vec<PairedDevice>) -> R) -> std::io
 /// Rows written before the models default existed carry no "models" key at
 /// all, and re-pairs preserve that forever — seed those once. An explicit
 /// list (even an emptied one) is the owner's curation and stays untouched.
+/// Rows from before kinds get theirs (`classify`).
 fn migrate_rows(devices: &mut [PairedDevice]) -> bool {
-    let mut seeded = false;
+    let mut seeded = classify(devices, &connect_allowed_ids());
     for d in devices {
         if !d.settings.contains_key("models") {
             d.settings.append(&mut default_device_settings());
@@ -104,6 +154,40 @@ fn migrate_rows(devices: &mut [PairedDevice]) -> bool {
         seeded |= migrate_retired_models(&mut d.settings);
     }
     seeded
+}
+
+/// Give each row from before kinds its kind, by how it was made: the Allow
+/// ceremony recorded every machine it approved in
+/// `memory/connect-devices.json` (`connect_allowed`); every other row came
+/// from the code-pairing ceremony, a phone. True when a row changed.
+fn classify(devices: &mut [PairedDevice], machines: &[String]) -> bool {
+    let mut changed = false;
+    for d in devices.iter_mut().filter(|d| d.kind.is_none()) {
+        d.kind = Some(if machines.contains(&d.id) {
+            DeviceKind::Machine
+        } else {
+            DeviceKind::Phone
+        });
+        changed = true;
+    }
+    changed
+}
+
+/// The row ids the Allow ceremony approved, from its own record. Missing or
+/// unreadable: none — every unclassified row then stays a phone.
+fn connect_allowed_ids() -> Vec<String> {
+    #[derive(Deserialize)]
+    struct Allowed {
+        id: String,
+    }
+    let path = crate::paths::linggen_home()
+        .join("memory")
+        .join("connect-devices.json");
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<Vec<Allowed>>(&t).ok())
+        .map(|rows| rows.into_iter().map(|a| a.id).collect())
+        .unwrap_or_default()
 }
 
 /// A GPT generation bump moves each retired ChatGPT id in a phone's
@@ -173,6 +257,7 @@ pub fn commit_device(
             account: account.map(stamp_account),
             secret: random_hex(24),
             created_at: chrono::Utc::now().timestamp(),
+            kind: Some(DeviceKind::Phone),
             device_id: device_id.clone(),
             settings: carried.unwrap_or_else(default_device_settings),
             // Filled in by the caller once the relay has issued one.
@@ -316,6 +401,49 @@ pub fn random_hex(bytes: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn row(id: &str, kind: Option<DeviceKind>) -> PairedDevice {
+        PairedDevice {
+            id: id.into(),
+            name: id.into(),
+            secret: format!("s-{id}"),
+            created_at: 0,
+            kind,
+            account: None,
+            device_id: None,
+            settings: Default::default(),
+            relay_grant: None,
+            superseded_grant: None,
+        }
+    }
+
+    /// Rows from before kinds: the Allow ceremony's own list names the
+    /// machines; every other row is a phone; a row already classified keeps
+    /// its kind.
+    #[test]
+    fn old_rows_are_classified_by_how_they_were_made() {
+        let mut rows = vec![
+            row("phone-1", None),
+            row("mac-2", None),
+            row("kept", Some(DeviceKind::Machine)),
+        ];
+        assert!(classify(&mut rows, &["mac-2".to_string()]));
+        assert_eq!(rows[0].kind(), DeviceKind::Phone);
+        assert_eq!(rows[1].kind(), DeviceKind::Machine);
+        assert_eq!(rows[2].kind(), DeviceKind::Machine);
+        assert!(!classify(&mut rows, &[]), "classified once");
+    }
+
+    #[test]
+    fn a_row_without_a_kind_reads_as_a_phone_and_round_trips() {
+        let old: PairedDevice =
+            serde_json::from_str(r#"{"id":"a","name":"n","secret":"s","created_at":0}"#).unwrap();
+        assert_eq!(old.kind, None);
+        assert_eq!(old.kind(), DeviceKind::Phone);
+        let machine = row("m", Some(DeviceKind::Machine));
+        let text = serde_json::to_string(&machine).unwrap();
+        assert!(text.contains(r#""kind":"machine""#));
+    }
 
     #[test]
     fn a_phone_allow_list_follows_the_gpt_bump() {
