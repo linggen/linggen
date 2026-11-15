@@ -64,6 +64,10 @@ in a new turn afterwards — do nothing else in the turn that calls it.
 `scripts/restart-engine.sh` does the builds and this in one go.
 Release builds (`cargo build --release`) are for shipping.
 
+In a fresh `git worktree`, run `scripts/worktree-setup.sh` before the first
+build: it clones (copy-on-write) the built UI, the avatar clips and the main
+checkout's `target/fast`, so the first build there compiles only our own code.
+
 ## Architecture
 
 Linggen is a local-first, multi-agent coding assistant. The binary is
