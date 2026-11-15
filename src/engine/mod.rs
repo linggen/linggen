@@ -2,6 +2,7 @@ pub mod actions;
 pub mod agent;
 pub mod answer_refs;
 pub mod background;
+pub(crate) mod claude_sdk;
 mod closing_ask;
 pub(crate) mod cloud_meter;
 pub(crate) mod compaction;

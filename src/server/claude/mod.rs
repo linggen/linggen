@@ -15,12 +15,13 @@ mod tasks;
 pub(crate) mod trust;
 pub(crate) mod usage;
 
+pub(crate) use crate::engine::claude_sdk::{new_meta, supports_model, AGENT_ID};
 pub(crate) use host::Host;
 
 use super::{chat, ServerState};
 use crate::config::ModelConfig;
 use crate::engine::agent::AgentRunStatus;
-use crate::state_fs::sessions::{SessionMember, SessionMeta, SessionRuntime};
+use crate::state_fs::sessions::SessionMeta;
 use anyhow::{bail, Context, Result};
 use axum::{
     http::StatusCode,
@@ -29,8 +30,6 @@ use axum::{
 };
 use serde_json::json;
 use std::{path::Path, sync::Arc};
-
-pub(crate) const AGENT_ID: &str = "claude";
 
 pub(crate) struct ModeChange {
     pub mode: crate::state_fs::sessions::ClaudePermissionMode,
@@ -172,12 +171,6 @@ pub(crate) async fn quiesce_within(
     }
 }
 
-pub(crate) fn supports_model(model: &ModelConfig) -> bool {
-    model.provider == "anthropic"
-        && model.auth_mode.as_deref() != Some("claude_oauth")
-        && model.api_key.as_deref().is_some_and(|key| !key.is_empty())
-}
-
 pub(crate) async fn resolve_model(
     state: &ServerState,
     chosen: Option<&str>,
@@ -205,26 +198,6 @@ pub(crate) async fn resolve_model(
         .cloned()
         .cloned()
         .context("Add a Claude API-key model in Settings → Models.")
-}
-
-pub(crate) fn new_meta(title: String, cwd: String, parent: Option<String>) -> SessionMeta {
-    let mut meta = SessionMeta {
-        id: format!(
-            "sess-{}-{}",
-            crate::util::now_ts_secs(),
-            &uuid::Uuid::new_v4().to_string()[..8]
-        ),
-        title,
-        created_at: crate::util::now_ts_secs(),
-        runtime: SessionRuntime::ClaudeAgentSdk,
-        agents: vec![SessionMember::new(AGENT_ID)],
-        parent_session_id: parent,
-        creator: "user".into(),
-        title_locked: false,
-        ..Default::default()
-    };
-    meta.set_cwd(&cwd);
-    meta
 }
 
 pub(crate) async fn start_task(state: Arc<ServerState>, id: String, message: String, from: String) {

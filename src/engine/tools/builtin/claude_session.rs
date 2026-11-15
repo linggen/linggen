@@ -59,7 +59,7 @@ impl Tool for ClaudeSessionTool {
                 .await
                 .list_models()
                 .iter()
-                .any(|model| crate::server::claude::supports_model(model)),
+                .any(|model| crate::engine::claude_sdk::supports_model(model)),
             "Add a Claude API-key model in Settings → Models."
         );
         let title = call.args["title"]
@@ -71,7 +71,7 @@ impl Tool for ClaudeSessionTool {
             .filter(|s| !s.trim().is_empty())
             .context("A task is required")?;
         let cwd = working_folder(&tools.cwd(), call.args["cwd"].as_str())?;
-        let mut meta = crate::server::claude::new_meta(
+        let mut meta = crate::engine::claude_sdk::new_meta(
             title.into(),
             cwd.to_string_lossy().into(),
             tools.session_id.clone(),
