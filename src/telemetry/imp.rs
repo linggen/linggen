@@ -364,10 +364,8 @@ pub fn read_system_state(data_dir: &Path) -> serde_json::Value {
 /// install-source marker names to try, newest first — a product renamed
 /// twice (sys-doctor → mac-shifu → apple-shifu) may still carry an old
 /// marker until it migrates. Data, so a rename or a new product is a row here.
-const SIBLING_PRODUCTS: &[(&str, &[&str])] = &[
-    ("sys_doctor", &["apple-shifu", "mac-shifu", "sys-doctor"]),
-    ("ling_mem", &["ling-mem"]),
-];
+const SIBLING_PRODUCTS: &[(&str, &[&str])] =
+    &[("sys_doctor", &["apple-shifu", "mac-shifu", "sys-doctor"])];
 
 /// Like `read_install_source` but returns `None` when the file is absent
 /// (vs an empty map). Use this when file presence itself is the signal.

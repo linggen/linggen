@@ -204,27 +204,13 @@ mod tests {
         assert_eq!(content_text(&json!({})), "");
     }
 
-    /// The whole stack against a real server: handshake, discovery, call.
-    ///
-    /// Self-gating — skips when no `ling-mem` daemon is listening, so it runs
-    /// on a developer machine and never fails CI for being offline.
+    /// The whole stack against a real server — the hosted memory on a temp
+    /// store: handshake, discovery, call.
     #[tokio::test]
-    async fn talks_to_a_live_ling_mem() {
-        const URL: &str = "http://127.0.0.1:9528/mcp";
-        let up = reqwest::Client::new()
-            .get("http://127.0.0.1:9528/api/health")
-            .timeout(std::time::Duration::from_millis(800))
-            .send()
-            .await
-            .map(|r| r.status().is_success())
-            .unwrap_or(false);
-        if !up {
-            eprintln!("skipped: no ling-mem on 9528");
-            return;
-        }
-
+    async fn talks_to_a_memory_server() {
+        let (url, _store) = crate::mcp_client::test_memory::mcp_url().await;
         let cfg = McpServerConfig {
-            url: Some(URL.into()),
+            url: Some(url),
             ..Default::default()
         };
         let client = McpClient::connect(&cfg).await.expect("connect");
@@ -246,8 +232,9 @@ mod tests {
             );
         }
 
+        // `memory_list`, not a search: a search loads the embedding model.
         let out = client
-            .call_tool("memory_search", json!({ "query": "linggen", "limit": 1 }))
+            .call_tool("memory_list", json!({ "limit": 1 }))
             .await
             .expect("tools/call");
         assert!(!out.starts_with("error:"), "{out}");

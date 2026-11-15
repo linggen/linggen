@@ -47,10 +47,6 @@ fn get_at(p: &Path, key: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-pub fn ling_mem() -> Option<String> {
-    get("ling_mem")
-}
-
 pub fn token() -> Option<String> {
     get("token")
 }

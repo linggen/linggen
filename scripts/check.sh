@@ -3,8 +3,7 @@
 #   ./scripts/check.sh          everything
 #   ./scripts/check.sh rust     cargo test (unit) + generated TS types current + clippy count
 #   ./scripts/check.sh system   the hermetic system tests (tests/system; cargo
-#                               nextest; needs a ling-mem binary — LING_MEM_BIN,
-#                               ../linggen-memory's release build, or PATH). The
+#                               nextest; the engine hosts the memory). The
 #                               memory test runs when the embedding model is in
 #                               ~/.cache/huggingface (LINGGEN_SYSTEM_REQUIRE_EMBED=1:
 #                               always, failing without the model)
@@ -12,7 +11,7 @@
 #   ./scripts/check.sh e2e      Playwright on the web UI (tests/e2e), each test
 #                               on its own hermetic world; builds ui/dist and
 #                               the debug engine first. Not part of `all`
-#                               (~1 min with builds; needs Chromium + ling-mem)
+#                               (~1 min with builds; needs Chromium)
 #   ./scripts/check.sh js       node tests for the shared page helpers
 #   ./scripts/check.sh live [flags]
 #                               the live regression suite against the running
@@ -43,22 +42,13 @@ npm_ready() {
   fi
 }
 
-# The ling-mem tests/system runs (the same order as support/memory.rs).
-ling_mem_bin() {
-  if [ -n "${LING_MEM_BIN:-}" ]; then
-    echo "$LING_MEM_BIN"
-  elif [ -x ../linggen-memory/target/release/ling-mem ]; then
-    echo ../linggen-memory/target/release/ling-mem
-  else
-    command -v ling-mem
-  fi
-}
-
 if [ "$what" = all ] || [ "$what" = rust ]; then
   # rust_embed needs the folder to exist even when the UI isn't built.
   mkdir -p ui/dist
   # Every target but tests/system, which runs as its own step below.
   step cargo test --bins --test rtc_link_bench
+  # Memory (crates/linggen-memory), hosted by the engine.
+  step cargo test -p linggen-memory
   # cargo test re-emits the ts-rs bindings; they must match what's committed.
   step ./scripts/gen-types.sh --check
   warnings=$(cargo clippy --all-targets --message-format=short 2>&1 | grep -c '^[^ ]*: warning' || true)
@@ -67,8 +57,6 @@ fi
 
 if [ "$what" = all ] || [ "$what" = system ]; then
   mkdir -p ui/dist
-  mem=$(ling_mem_bin)
-  echo "ling-mem: ${mem:-none found} ($( [ -n "$mem" ] && "$mem" --version 2>&1))"
   # The memory test is #[ignore]d (it needs the embedding model): run it
   # when the model is here, or when it is required.
   ignored=default

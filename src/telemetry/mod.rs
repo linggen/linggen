@@ -10,7 +10,7 @@
 //! - `install` event whenever the version changes from the last recorded one
 //!   (payload.via = "upgrade", payload.from_version, payload.to_version).
 //! - `command` event with payload.verb = "engine.start" and payload.system_state
-//!   reflecting which sibling products (Apple Shifu, ling-mem) are detected
+//!   reflecting which sibling products (Apple Shifu) are detected
 //!   on this machine. Counts as the daily activity row for DAU.
 //!
 //! `payload.via` names the distribution channel this machine came through,
