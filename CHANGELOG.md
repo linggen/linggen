@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- **The engine stays up.** It hosts memory now, and other tools on the machine
+  use memory whether or not a Linggen window is open, so it no longer exits
+  when idle. `--idle-shutdown-secs` is accepted and ignored.
 - **Asset packs, engine side.** A skill can list heavy files in a manifest
   (`app.assets`); the ones its folder lacks are fetched in the background by
   hash, checked, kept in `~/.linggen/assets/sha256/`, and served at the same

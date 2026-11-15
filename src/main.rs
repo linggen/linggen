@@ -52,8 +52,8 @@ struct Cli {
     #[arg(long, global = true)]
     skills_dir: Option<std::path::PathBuf>,
 
-    /// Auto-exit after N seconds with zero connected WebRTC peers. 0 = disabled.
-    /// Used by bundled apps so the daemon doesn't outlive the last client.
+    /// Ignored since 2.3: the engine hosts memory and stays up. Still accepted,
+    /// because app shells before 2.3 pass it.
     #[arg(long, global = true)]
     idle_shutdown_secs: Option<u64>,
 

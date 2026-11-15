@@ -122,7 +122,7 @@ not memory-server ones.
 | Binds | `0.0.0.0:9527` | `127.0.0.1:9528` — loopback unless `--host`, which is refused without paired devices. *2.3:* the engine itself, `127.0.0.1:9528` only, while nothing else holds it (`LINGGEN_LEGACY_MEMORY_PORT`, `0` = off) |
 | Address from | `[server].url` in `~/.linggen/config/linggen.runtime.toml` | compiled `daemon::DEFAULT_PORT`, or `--port`. *2.3:* `memory_host::legacy_port::DEFAULT_PORT` |
 | Publishes where it bound | — | `~/.linggen/memory/linggen-memory/daemon.json`. *2.3:* nothing; the store lock `memory/.store.lock` names the holder's pid and engine port |
-| Started by | `Linggen.app` shell (LaunchAgent), `--idle-shutdown-secs 300` | `ling-mem start`, plugin autostart, or first CLI use. *2.3:* not a process — the engine opens the store at start-up and stops an old daemon first |
+| Started by | `Linggen.app` shell (LaunchAgent); stays up once started — it hosts memory (the old `--idle-shutdown-secs` flag is ignored) | `ling-mem start`, plugin autostart, or first CLI use. *2.3:* not a process — the engine opens the store at start-up and stops an old daemon first |
 | Outbound | LLM providers, `linggen.dev` relay | none — embeddings run in-process |
 
 The asymmetry is the source of most address bugs: **the one with a config file

@@ -5,7 +5,6 @@ use super::{api, milestones, resident, rtc, yinyue_moments, ServerState};
 use crate::engine::agent::AgentEvent;
 use crate::engine::events::{AgentStatusKind, ServerEvent};
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::info;
@@ -26,8 +25,11 @@ pub(super) fn spawn_background_tasks(
     prewarm_runtime(state);
     prewarm_voice(state, pet_enabled);
     connect_mcp_servers(state);
-    if let Some(timeout) = idle_shutdown_secs.filter(|t| *t > 0) {
-        idle_shutdown(state, timeout);
+    // Memory lives in this process, and other tools on the machine use it
+    // whether or not a Linggen window is open — so the engine stays up. App
+    // shells before 2.3 still pass the flag; it is accepted and ignored.
+    if idle_shutdown_secs.is_some_and(|t| t > 0) {
+        info!("--idle-shutdown-secs is ignored: the engine hosts memory and stays up");
     }
     super::event_log::spawn(state);
     tokio::spawn(bridge_agent_events(state.clone(), agent_events_rx));
@@ -167,37 +169,6 @@ fn connect_mcp_servers(state: &Arc<ServerState>) {
         let cfg = manager.get_config_snapshot().await;
         let servers = crate::mcp_client::with_builtin(&cfg.mcp_servers, &cfg.agent.ling_mem_url);
         crate::mcp_client::registry().connect_all(&servers).await;
-    });
-}
-
-/// Idle-shutdown watcher: when --idle-shutdown-secs is set, exit the
-/// process after that many seconds with zero connected WebRTC peers.
-/// Used by bundled apps so the daemon doesn't outlive its last client.
-fn idle_shutdown(state: &Arc<ServerState>, timeout: u64) {
-    let peers = state.active_peer_count.clone();
-    let last_activity = state.last_activity.clone();
-    info!("idle-shutdown enabled: exit after {timeout}s with no peers and no activity");
-    tokio::spawn(async move {
-        let check_interval = std::time::Duration::from_secs(15);
-        loop {
-            tokio::time::sleep(check_interval).await;
-            let now = super::unix_secs_now();
-            // A connected peer is itself a sign of life — keep the activity
-            // clock fresh so dropping a peer never trips an instant exit on
-            // a stale timestamp.
-            if peers.load(Ordering::Relaxed) > 0 {
-                last_activity.store(now, Ordering::Relaxed);
-                continue;
-            }
-            // No peers: exit only after `timeout` of no activity at all.
-            // Bundled-app shells ping /api/health while their window is open
-            // (see health_handler), so the daemon survives a window that is
-            // open but transiently disconnected.
-            if now.saturating_sub(last_activity.load(Ordering::Relaxed)) >= timeout {
-                info!("idle-shutdown: no peers and no activity for {timeout}s, exiting");
-                std::process::exit(0);
-            }
-        }
     });
 }
 
@@ -352,17 +323,18 @@ fn sweep_stale_runs(state: &Arc<ServerState>) {
         loop {
             tick.tick().await;
             let runs = sweep_state.manager.run_store.list_runs(None);
-            let orphans: HashSet<String> = orphaned_runs(
-                &runs,
-                |run| sweep_state.manager.run_lives_on(run),
-                |session, run| {
-                    sweep_state.tasks.list(session).iter().any(|task| {
-                        task.is_running() && task.subagent_id.as_deref() == Some(run)
-                    })
-                },
-            )
-            .into_iter()
-            .collect();
+            let orphans: HashSet<String> =
+                orphaned_runs(
+                    &runs,
+                    |run| sweep_state.manager.run_lives_on(run),
+                    |session, run| {
+                        sweep_state.tasks.list(session).iter().any(|task| {
+                            task.is_running() && task.subagent_id.as_deref() == Some(run)
+                        })
+                    },
+                )
+                .into_iter()
+                .collect();
             let due: Vec<String> = orphans.intersection(&suspects).cloned().collect();
             suspects = orphans;
             let now = crate::util::now_ts_secs();
@@ -375,11 +347,18 @@ fn sweep_stale_runs(state: &Arc<ServerState>) {
                 );
                 let _ = sweep_state.events_tx.send(ServerEvent::StateUpdated);
             }
-            let changed = sweep_state.tasks.interrupt_stale_subagents(|session, task| {
-                let native = sweep_state.manager.global_sessions.get_session_meta(session)
-                    .ok().flatten().is_some_and(|meta| meta.runtime.is_linggen());
-                !native || subagent_task_alive(&sweep_state.manager, session, task)
-            });
+            let changed = sweep_state
+                .tasks
+                .interrupt_stale_subagents(|session, task| {
+                    let native = sweep_state
+                        .manager
+                        .global_sessions
+                        .get_session_meta(session)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|meta| meta.runtime.is_linggen());
+                    !native || subagent_task_alive(&sweep_state.manager, session, task)
+                });
             for session in changed {
                 crate::server::tasks::emit(&sweep_state, &session);
             }
@@ -398,9 +377,13 @@ fn subagent_task_alive(
     task: &crate::engine::events::BackgroundTask,
 ) -> bool {
     manager.background.tracks_running(&task.id)
-        || task.subagent_id.as_deref().and_then(|run| manager.run_store.get_run(run)).is_some_and(|r| {
-            r.session_id == session && r.status == crate::engine::agent::AgentRunStatus::Running
-        })
+        || task
+            .subagent_id
+            .as_deref()
+            .and_then(|run| manager.run_store.get_run(run))
+            .is_some_and(|r| {
+                r.session_id == session && r.status == crate::engine::agent::AgentRunStatus::Running
+            })
 }
 
 /// `Running` rows with nothing alive behind them. A run lives while its
@@ -594,13 +577,27 @@ mod sweep_tests {
         .0;
         let session = "s";
         let run = manager
-            .begin_delegated_run(std::path::Path::new("."), Some(session), "worker", None, None, true)
+            .begin_delegated_run(
+                std::path::Path::new("."),
+                Some(session),
+                "worker",
+                None,
+                None,
+                true,
+            )
             .await
             .unwrap();
         let (started_tx, started_rx) = tokio::sync::oneshot::channel();
         let (end_tx, end_rx) = tokio::sync::oneshot::channel::<()>();
         let task = crate::engine::background::track_subagent(
-            &manager, session, "ling", "worker", None, false, "work", started_rx,
+            &manager,
+            session,
+            "ling",
+            "worker",
+            None,
+            false,
+            "work",
+            started_rx,
             async move {
                 let _ = end_rx.await;
                 Ok("the result".to_string())
@@ -608,7 +605,10 @@ mod sweep_tests {
         )
         .await;
         started_tx.send(run.clone()).unwrap();
-        manager.finish_agent_run(&run, AgentRunStatus::Completed, None).await.unwrap();
+        manager
+            .finish_agent_run(&run, AgentRunStatus::Completed, None)
+            .await
+            .unwrap();
 
         // The list's row, as the bridge has it: running, with its run.
         let tasks = super::super::tasks::Tasks::default();
@@ -619,7 +619,10 @@ mod sweep_tests {
             tasks.interrupt_stale_subagents(|s, t| super::subagent_task_alive(&manager, s, t))
         };
         assert!(sweep(&tasks).is_empty(), "the tracker still follows it");
-        assert!(tasks.get(session, &task.id).unwrap().is_running(), "its end is still to be told");
+        assert!(
+            tasks.get(session, &task.id).unwrap().is_running(),
+            "its end is still to be told"
+        );
 
         end_tx.send(()).unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
