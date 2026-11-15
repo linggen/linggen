@@ -20,6 +20,9 @@ mod mdns;
 
 const SERVICE_TYPE: &str = "_linggen._tcp";
 
+/// Set to `1`: do not announce this engine (see [`advertise`]).
+const NO_BONJOUR_ENV: &str = "LINGGEN_NO_BONJOUR";
+
 /// Whether a bind address can be reached from the LAN, so worth announcing.
 /// Loopback-only binds skip Bonjour: nothing to discover that the LAN can reach.
 pub fn is_lan_bound(host: &str) -> bool {
@@ -47,8 +50,11 @@ fn record() -> Record {
 /// pair sheet browses for this and shows "This-Mac · linggen" entries — no
 /// addresses typed, and in an office of Linggens each entry is named. The
 /// record lives as long as the daemon process.
+///
+/// `LINGGEN_NO_BONJOUR=1` keeps an engine off the list: a second engine on
+/// one Mac (a test, a scratch home) would be listed under this Mac's name.
 pub fn advertise(port: u16, lan_bound: bool) {
-    if !lan_bound {
+    if !lan_bound || std::env::var_os(NO_BONJOUR_ENV).is_some_and(|v| v == "1") {
         return;
     }
     #[cfg(target_os = "macos")]
