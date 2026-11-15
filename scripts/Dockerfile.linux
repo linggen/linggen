@@ -45,7 +45,7 @@ ARG BUILD_VERSION
 ENV LINGGEN_BUILD_VERSION=$BUILD_VERSION
 
 WORKDIR /app
-RUN find src -name "*.rs" -exec touch {} + && cargo build --release
+RUN find src crates -name "*.rs" -exec touch {} + && cargo build --release
 
 # 5. Prepare portable artifacts
 RUN mkdir -p /app/dist-temp && \
