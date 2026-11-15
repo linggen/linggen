@@ -29,9 +29,9 @@ What the build settled or changed from the design:
   manifest. `held` counts a file the skill's own folder holds as well as a
   stored one; `failing` is a wanted file that has failed since its last try.
 - **Sweep.** Once, after the first load of the skills, and only if every
-  declared manifest was read. An engine started with `--skills-dir` sees only
-  that skill set, so its sweep removes what the other set's skills listed;
-  they fetch it again.
+  declared manifest was read. An object nothing lists is kept a month before
+  it goes, so an engine that sees another set of skills (`--skills-dir`) does
+  not take what the first one still wants.
 - Not built: a hole between the engine starting and the first manifest read
   (milliseconds) in which a page's ask is not queued — the first read queues
   everything anyway.
@@ -102,8 +102,8 @@ An object's address is its hash: `<base><first two hex>/<sha256>.<ext>`.
   try again, with a growing pause. The page is never told to wait.
 - **What is known.** `GET /api/assets/<skill>` → files and bytes wanted, held
   and failing, per pack. A page may read it; nothing requires it to.
-- **Removal.** Uninstalling the last skill that lists an object lets a sweep
-  remove it. Not before.
+- **Removal.** Once no installed skill has listed an object for a month, a
+  sweep removes it. Not before.
 
 ## The phone
 

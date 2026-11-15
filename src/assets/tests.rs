@@ -385,14 +385,25 @@ async fn the_first_refresh_sweeps_unlisted_objects_and_later_ones_do_not() {
     let rig = Rig::new(1);
     let store = Store::new(rig.store.path().into());
     std::fs::write(store.path_of(&listed), b"listed").expect("write");
-    std::fs::write(store.path_of(&other), b"other").expect("write");
+    write_long_ago(&store.path_of(&other));
 
     rig.assets.refresh(declare(&rig, &manifest_of(&listed)));
     assert!(store.holds(&listed) && !store.holds(&other));
 
-    std::fs::write(store.path_of(&other), b"other").expect("write");
+    write_long_ago(&store.path_of(&other));
     rig.assets.refresh(declare(&rig, &manifest_of(&listed)));
     assert!(store.holds(&other), "a reload does not sweep");
+}
+
+/// An object nothing has listed for longer than a sweep keeps one.
+fn write_long_ago(path: &std::path::Path) {
+    std::fs::write(path, b"other").expect("write");
+    let then = std::time::SystemTime::now() - std::time::Duration::from_secs(40 * 24 * 3600);
+    std::fs::File::options()
+        .write(true)
+        .open(path)
+        .and_then(|f| f.set_modified(then))
+        .expect("set the time");
 }
 
 #[tokio::test]

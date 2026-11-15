@@ -8,6 +8,10 @@ use std::path::PathBuf;
 
 /// A half-written download. Never served, never listed; swept.
 const PART: &str = ".part";
+/// An object nothing lists is kept this long before a sweep takes it. Another
+/// engine on this device may list it (a second skills folder, a version being
+/// installed): removing it at once would only make that one fetch it again.
+const UNLISTED_KEPT: std::time::Duration = std::time::Duration::from_secs(30 * 24 * 3600);
 
 #[derive(Debug, Clone)]
 pub struct Store {
@@ -40,10 +44,14 @@ impl Store {
         std::fs::create_dir_all(&self.root)
     }
 
-    /// Remove every object no pack lists, and any half-written download.
-    /// Returns how many files went. Only called with the complete set of
-    /// installed packs: an object that is still listed is never removed.
+    /// Remove objects no pack has listed for a month, and any half-written
+    /// download. Returns how many files went. Only called with the complete
+    /// set of installed packs: an object that is still listed is never removed.
     pub fn sweep(&self, packs: &[Pack]) -> usize {
+        self.sweep_at(packs, std::time::SystemTime::now())
+    }
+
+    fn sweep_at(&self, packs: &[Pack], now: std::time::SystemTime) -> usize {
         let keep: HashSet<String> = packs
             .iter()
             .flat_map(|p| p.manifest.files.iter().map(FileEntry::object))
@@ -54,13 +62,22 @@ impl Store {
         let mut removed = 0;
         for entry in dir.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            let stale = name.ends_with(PART) || !keep.contains(&name);
+            let stale = name.ends_with(PART) || (!keep.contains(&name) && old_enough(&entry, now));
             if stale && std::fs::remove_file(entry.path()).is_ok() {
                 removed += 1;
             }
         }
         removed
     }
+}
+
+/// Written longer ago than an unlisted object is kept. Unknown age: kept.
+fn old_enough(entry: &std::fs::DirEntry, now: std::time::SystemTime) -> bool {
+    let Ok(written) = entry.metadata().and_then(|m| m.modified()) else {
+        return false;
+    };
+    now.duration_since(written)
+        .is_ok_and(|age| age >= UNLISTED_KEPT)
 }
 
 #[cfg(test)]
@@ -96,10 +113,17 @@ mod tests {
             },
         };
 
-        assert_eq!(store.sweep(&[pack]), 2);
+        // Just written: the unlisted object stays, the half-written download goes.
+        assert_eq!(store.sweep(std::slice::from_ref(&pack)), 1);
+        assert!(store.holds(&other));
+        assert!(!store.temp_of(&listed).exists());
+
+        // A month on: the unlisted object goes, the listed one never does.
+        let later =
+            std::time::SystemTime::now() + UNLISTED_KEPT + std::time::Duration::from_secs(60);
+        assert_eq!(store.sweep_at(&[pack], later), 1);
         assert!(store.holds(&listed));
         assert!(!store.holds(&other));
-        assert!(!store.temp_of(&listed).exists());
     }
 
     #[test]
