@@ -58,10 +58,10 @@ export async function importTs(relFromUi) {
   try { return await import(pathToFileURL(tmp).href); } finally { fs.rmSync(tmp, { force: true }); }
 }
 
-/** FBXLoader.loadAsync would fetch(); serve `/anim/x.fbx` from public/ instead. */
+/** FBXLoader.loadAsync would fetch(); serve `/anim/x.fbx` from the raw sources in anim-src/ instead. */
 export function patchFbxLoaderToDisk() {
   FBXLoader.prototype.loadAsync = async function (url) {
-    const b = fs.readFileSync(uiPath('public', url));
+    const b = fs.readFileSync(uiPath('anim-src', url.split('/').pop()));
     return this.parse(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength), '');
   };
 }

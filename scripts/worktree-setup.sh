@@ -7,7 +7,9 @@
 # Everything is a copy-on-write clone of the main checkout's own files (APFS `cp -c`: about a second, no disk
 # used until a file changes) — never a link, so a build here can never write into the main checkout.
 #
-# - ui/dist is not in git and the engine embeds it; the avatar's clips under ui/public/anim are not in git either.
+# - ui/dist is not in git and the engine embeds it; the avatar's raw clips (ui/anim-src) and the clips baked
+#   from them (ui/public/anim-baked) are not in git either — `npm run build` bakes anim-src into anim-baked,
+#   and a worktree that only needs the build can live on the cloned anim-baked alone.
 # - target/fast: with the main checkout's libraries already compiled, the first build here compiles our own code
 #   only — 87 s instead of 170 s (measured 2026-11-15). The folder is this worktree's own from then on: no
 #   shared lock, no shared binary.
@@ -28,8 +30,7 @@ clone() {
 }
 
 clone ui/dist
-for clip in "$MAIN"/ui/public/anim/*.fbx "$MAIN"/ui/public/anim/*.vrma; do
-  [ -e "$clip" ] && clone "ui/public/anim/$(basename "$clip")" >/dev/null
-done
+clone ui/anim-src
+clone ui/public/anim-baked
 clone target/fast
 [ "${1:-}" != "--ui" ] || clone ui/node_modules

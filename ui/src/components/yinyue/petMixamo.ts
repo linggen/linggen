@@ -7,6 +7,11 @@
  * VRM0 models (gated on `metaVersion`; Yinyue's own model is VRM1, so no flip).
  *
  * Returns a THREE.AnimationClip ready for the avatar's AnimationMixer.
+ *
+ * NOT part of the runtime bundle any more: `scripts/bake-anim.mjs` runs this
+ * under Node to bake each clip once (see petBaked.ts, which is what PetStage
+ * loads). Note the hips scale is read from the hips node's current pose, so
+ * run it on a rig at rest.
  */
 import * as THREE from 'three';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
@@ -129,18 +134,4 @@ export async function loadMixamoAnimation(url: string, vrm: VRM): Promise<THREE.
   });
 
   return new THREE.AnimationClip('mixamo', clip.duration, tracks);
-}
-
-/** Trim a clip to a `start,end` (seconds) window — e.g. to drop a clip's
- *  tail (a Mixamo "Clapping" that ends by sitting down). Empty side = clip
- *  bound. fps is inferred from keyframe spacing so the cut matches seconds. */
-export function trimClip(clip: THREE.AnimationClip, frag: string): THREE.AnimationClip {
-  const [sStr, eStr] = frag.split(',');
-  const start = sStr ? parseFloat(sStr) : 0;
-  const end = eStr ? parseFloat(eStr) : clip.duration;
-  if (!(end > start)) return clip;
-  const t0 = clip.tracks[0];
-  const dt = t0 && t0.times.length > 1 ? t0.times[1] - t0.times[0] : 1 / 30;
-  const fps = dt > 0 ? Math.round(1 / dt) : 30;
-  return THREE.AnimationUtils.subclip(clip, clip.name, Math.round(start * fps), Math.round(end * fps), fps);
 }

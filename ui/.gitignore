@@ -1,0 +1,5 @@
+# Raw animation sources: Mixamo FBX and the VRoid VRMA motion pack
+# (© pixiv Inc. VRoid Project — the licence forbids redistributing the raw motion files,
+# or shipping them in a way that can be extracted). Dev-local only; `npm run build` bakes
+# them into public/anim-baked/ and only that baked data ships.
+/anim-src/

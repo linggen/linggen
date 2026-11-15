@@ -14,12 +14,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils, type VRM, type VRMHumanBoneName } from '@pixiv/three-vrm';
-import {
-  VRMAnimationLoaderPlugin,
-  createVRMAnimationClip,
-  type VRMAnimation,
-} from '@pixiv/three-vrm-animation';
-import { loadMixamoAnimation, trimClip } from './petMixamo';
+import { bakedUrl, loadBakedAnimation, trimClip } from './petBaked';
 
 export type EmotionName = 'neutral' | 'happy' | 'angry' | 'sad' | 'relaxed';
 export type ActionName = 'nod' | 'shake' | 'wave' | 'bow' | 'dance' | 'cheer';
@@ -222,8 +217,10 @@ export class PetStage {
   private async startThinkingClip() {
     if (!this.mixer || !this.vrm) return;
     if (this.thinkingClip === undefined) {
-      // Lazy-load + retarget the FBX once; null if missing/unparseable.
-      this.thinkingClip = await loadMixamoAnimation(this.thinkingClipUrl, this.vrm).catch((e) => {
+      // Lazy-load the baked clip once; null if missing/unparseable. As before the change to baked
+      // clips, this path never applies the `#0,2.5` window (it passed the URL straight to the
+      // FBX loader) — the full clip plays and clamps at its end.
+      this.thinkingClip = await loadBakedAnimation(bakedUrl(this.thinkingClipUrl.split('#')[0]), this.vrm).catch((e) => {
         console.warn('[pet] thinking clip load failed — using procedural pose', e);
         return null;
       });
@@ -316,29 +313,15 @@ export class PetStage {
     return from[Math.floor(Math.random() * from.length)];
   }
 
-  /** Load + cache a `.vrma`, retargeted to this VRM's humanoid rig. */
+  /** Load + cache a clip. Every clip (Mixamo FBX and VRMA alike) was baked offline onto this
+   *  VRM's humanoid — the URL names the source (`/anim/idle2.fbx`), the file read is its baked twin. */
   private async loadClip(url: string): Promise<THREE.AnimationClip | null> {
     const cached = this.clipCache.get(url);
     if (cached) return cached;
     if (!this.vrm) return null;
     // Optional `#start,end` (seconds) trim window appended to the URL.
     const [src, frag] = url.split('#');
-    let clip: THREE.AnimationClip | null = null;
-    if (src.endsWith('.fbx')) {
-      // Mixamo FBX → retargeted to this VRM rig at runtime (no Blender).
-      clip = await loadMixamoAnimation(src, this.vrm);
-    } else {
-      // VRMA — native VRM humanoid animation.
-      const loader = new GLTFLoader();
-      loader.register((parser) => new VRMAnimationLoaderPlugin(parser));
-      const gltf = await loader.loadAsync(src);
-      const anims = gltf.userData.vrmAnimations as VRMAnimation[] | undefined;
-      if (!anims || anims.length === 0) {
-        console.warn(`[pet] ${src} contains no VRM animation`);
-        return null;
-      }
-      clip = createVRMAnimationClip(anims[0], this.vrm);
-    }
+    let clip = await loadBakedAnimation(bakedUrl(src), this.vrm);
     if (clip && frag) clip = trimClip(clip, frag);
     if (clip) {
       console.info(`[pet] clip ${url} dur=${clip.duration.toFixed(2)}s`); // helps tune trim windows

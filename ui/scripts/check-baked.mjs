@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Prove the baked clips play the same as the runtime Mixamo retarget.
-//   (a) petMixamo.ts loadMixamoAnimation on the .fbx   — the app's real code
+//   (a) the old runtime's retarget of the raw clip in anim-src/ — petMixamo.ts
+//       loadMixamoAnimation for .fbx, GLTFLoader + VRMAnimationLoaderPlugin +
+//       createVRMAnimationClip for .vrma (the calls PetStage used to make)
 //   (b) petBaked.ts decodeBakedClip on public/anim-baked/<name>.bin
 // Both are evaluated with three's own keyframe interpolants at 30 evenly spaced
 // times plus every original key time; reports the largest angle between the
@@ -15,7 +17,7 @@ import fs from 'node:fs';
 import zlib from 'node:zlib';
 import * as THREE from 'three';
 import { importTs, uiPath } from './_nodeEnv.mjs';
-import { encodeClip, fbxNames, loadContext } from './bake-anim.mjs';
+import { encodeClip, loadContext, loadSourceClip, sourceNames } from './bake-anim.mjs';
 
 const SAMPLES = 30;
 const deg = (r) => (r * 180) / Math.PI;
@@ -85,32 +87,35 @@ const TRIMS = { clap: '1,3.2', thinking: '0,2.5' }; // the fragments PetStage / 
 async function main() {
   const ctx = await loadContext();
   const { decodeBakedClip } = await importTs('src/components/yinyue/petBaked.ts');
-  const { trimClip } = await importTs('src/components/yinyue/petMixamo.ts');
+  const { trimClip } = await importTs('src/components/yinyue/petBaked.ts');
   const dir = uiPath('public/anim-baked');
   const rows = [];
   const runtime = new Map();
   let tot = { orig: 0, baked: 0 }, worst = { local: 0, hips: 0, world: 0 };
   const verdicts = [];
-  for (const f of fbxNames()) {
-    const name = f.replace(/\.fbx$/, '');
-    const a = await ctx.loadMixamoAnimation(`/anim/${f}`, ctx.vrm);
+  for (const f of sourceNames()) {
+    const name = f.replace(/\.(fbx|vrma)$/, '');
+    const a = await loadSourceClip(ctx, f);
     runtime.set(name, a);
     const bytes = fs.readFileSync(`${dir}/${name}.bin`);
     const b = decodeBakedClip(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength), ctx.vrm);
     const r = compare(a, b, ctx.vrm);
-    const orig = fs.statSync(uiPath('public/anim', f)).size;
+    const orig = fs.statSync(uiPath('anim-src', f)).size;
     tot.orig += orig; tot.baked += bytes.length;
     worst = { local: Math.max(worst.local, r.localAll), hips: Math.max(worst.hips, r.hips), world: Math.max(worst.world, r.world) };
     rows.push(`${name.padEnd(18)} ${String(orig).padStart(9)} ${String(bytes.length).padStart(7)}  ${r.local30.toFixed(3).padStart(7)} ${r.localAll.toFixed(3).padStart(7)} ${r.world.toFixed(3).padStart(7)} ${(r.hips * 1000).toFixed(3).padStart(8)}  ${r.timeDiff.toExponential(1)} ${r.problems.join('; ')}`);
     if (TRIMS[name]) {
       const rt = compare(trimClip(a, TRIMS[name]), trimClip(b, TRIMS[name]), ctx.vrm);
+      if (rt.problems.length) process.exitCode = 1;
       verdicts.push(`trimClip(${name}#${TRIMS[name]}): ${rt.problems.join('; ') || `dur ok, local ${rt.localAll.toFixed(3)} deg, world ${rt.world.toFixed(3)} deg, hips ${(rt.hips * 1000).toFixed(3)} mm`}`);
     }
   }
-  console.log('clip                  fbx B  baked B  loc@30° loc@all° world°  hips mm  max|dt| s');
+  console.log('clip                src B  baked B  loc@30° loc@all° world°  hips mm  max|dt| s');
   console.log(rows.join('\n'));
   console.log(`TOTAL ${tot.orig} -> ${tot.baked} bytes (${(tot.orig / tot.baked).toFixed(0)}x)`);
   console.log(`WORST local ${worst.local.toFixed(3)} deg, world ${worst.world.toFixed(3)} deg, hips ${(worst.hips * 1000).toFixed(3)} mm (target < 0.5 deg, < 1 mm)`);
+  const vrmaBytes = [...runtime.keys()].filter((n) => n.startsWith('VRMA_')).reduce((n, k) => n + fs.statSync(`${dir}/${k}.bin`).size, 0);
+  console.log(`the seven .vrma baked: ${vrmaBytes} bytes (source ${[...runtime.keys()].filter((n) => n.startsWith('VRMA_')).reduce((n, k) => n + fs.statSync(uiPath('anim-src', k + '.vrma')).size, 0)})`);
   verdicts.forEach((v) => console.log(v));
   if (process.argv.includes('--sweep')) await sweep(ctx, runtime, decodeBakedClip);
   if (worst.local >= 0.5 || worst.hips >= 0.001) process.exitCode = 1;
