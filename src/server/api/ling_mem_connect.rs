@@ -60,7 +60,7 @@ pub async fn decide(
 /// (`TUNNEL_LOCAL`) that has not named a device. The local web UI speaks only
 /// over its channel, so this is how its Allow click arrives; a phone's or a
 /// relay peer's channel never carries that mark.
-pub(super) fn is_at_this_mac(peer: SocketAddr, headers: &HeaderMap) -> bool {
+pub(crate) fn is_at_this_mac(peer: SocketAddr, headers: &HeaderMap) -> bool {
     let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
     peer.ip().is_loopback()
         && header(TUNNEL_HEADER).is_none_or(|v| v == TUNNEL_LOCAL)

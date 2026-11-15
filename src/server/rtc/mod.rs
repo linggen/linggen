@@ -340,12 +340,8 @@ pub async fn whip_handler(
         }
     };
 
-    let reach = if peer.ip().is_loopback() {
-        Reach::ThisMachine
-    } else {
-        Reach::Lan
-    };
-    match peer::create_peer(offer_str, state, reach).await {
+    let (reach, device) = whip_reach(peer, &headers);
+    match peer::create_peer(offer_str, state, reach, device).await {
         Ok(answer_sdp) => (
             StatusCode::CREATED,
             [(header::CONTENT_TYPE, "application/sdp")],
@@ -363,9 +359,56 @@ pub async fn whip_handler(
     }
 }
 
+/// How a WHIP peer reached us. This machine only when the request is what
+/// "someone at this Mac" means everywhere (`is_at_this_mac`: loopback
+/// socket, loopback Host, a loopback page or the app shell as Origin); any
+/// other caller is a LAN peer, and the device whose token it presented is
+/// the peer from the start, as `identify` would make it.
+fn whip_reach(
+    peer: std::net::SocketAddr,
+    headers: &HeaderMap,
+) -> (Reach, Option<crate::server::api::pair::Actor>) {
+    if crate::server::api::ling_mem_connect::is_at_this_mac(peer, headers) {
+        return (Reach::ThisMachine, None);
+    }
+    let device = crate::memory_host::caller::token_from_headers(headers)
+        .and_then(|t| crate::server::api::pair::actor_for_token(&t));
+    (Reach::Lan, device)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Only this machine's own page or shell opens a `local` channel; a
+    /// loopback request from another origin (an extension, a rebound name)
+    /// is not "at this Mac", and a LAN peer is a device, never the owner.
+    #[test]
+    fn a_whip_peer_is_this_machine_only_when_someone_is_at_it() {
+        let h = |pairs: &[(&'static str, &'static str)]| {
+            let mut m = HeaderMap::new();
+            for (k, v) in pairs {
+                m.insert(*k, v.parse().unwrap());
+            }
+            m
+        };
+        let lo: std::net::SocketAddr = "127.0.0.1:5000".parse().unwrap();
+        let page = h(&[
+            ("host", "127.0.0.1:9527"),
+            ("origin", "http://127.0.0.1:9527"),
+        ]);
+        assert_eq!(whip_reach(lo, &page).0, Reach::ThisMachine);
+        let shell = h(&[("host", "127.0.0.1:9527"), ("origin", "tauri://localhost")]);
+        assert_eq!(whip_reach(lo, &shell).0, Reach::ThisMachine);
+        let ext = h(&[
+            ("host", "127.0.0.1:9527"),
+            ("origin", "chrome-extension://abc"),
+        ]);
+        assert!(matches!(whip_reach(lo, &ext), (Reach::Lan, None)));
+        let lan: std::net::SocketAddr = "192.168.1.5:5000".parse().unwrap();
+        let unknown = h(&[("host", "192.168.1.2:9527"), ("x-linggen-device", "nobody")]);
+        assert!(matches!(whip_reach(lan, &unknown), (Reach::Lan, None)));
+    }
 
     /// A phone reaches us two ways and must answer to one name. Over the relay
     /// the grant says so at handshake; on the LAN nothing does, and `identify`

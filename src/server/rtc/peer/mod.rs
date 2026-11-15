@@ -101,14 +101,16 @@ pub async fn create_peer(
     offer_sdp: String,
     state: Arc<ServerState>,
     reached_by: super::Reach,
+    device: Option<crate::server::api::pair::Actor>,
 ) -> Result<String> {
     // WHIP — owner with Admin permission; how it was reached is kept for
-    // what the tunnel says of it (`UserContext::tunnel_mark`).
+    // what the tunnel says of it (`UserContext::tunnel_mark`), and the device
+    // whose token opened it from the LAN is the peer from the start.
     let user_ctx = super::UserContext {
         reached_by,
         ..super::UserContext::owner(crate::account::load_account().and_then(|a| a.user_id))
     };
-    create_peer_inner(offer_sdp, state, false, user_ctx).await
+    create_peer_inner(offer_sdp, state, false, user_ctx, device).await
 }
 
 /// Create a peer for a remote offer (via signaling relay).
@@ -118,7 +120,7 @@ pub async fn create_remote_peer(
     state: Arc<ServerState>,
     user_ctx: super::UserContext,
 ) -> Result<String> {
-    create_peer_inner(offer_sdp, state, true, user_ctx).await
+    create_peer_inner(offer_sdp, state, true, user_ctx, None).await
 }
 
 async fn create_peer_inner(
@@ -126,6 +128,7 @@ async fn create_peer_inner(
     state: Arc<ServerState>,
     remote: bool,
     user_ctx: super::UserContext,
+    device: Option<crate::server::api::pair::Actor>,
 ) -> Result<String> {
     // Parse the SDP offer (raw SDP text from WHIP POST body)
     let offer = SdpOffer::from_sdp_string(&offer_sdp).context("Failed to parse SDP offer")?;
@@ -228,7 +231,10 @@ async fn create_peer_inner(
     // Who this peer turns out to be, once `identify` lands. Owned out here so
     // the teardown below still knows which device just went away — a departure
     // is a transition, and transitions belong in the activity log.
-    let peer_actor: PeerActor = Arc::new(std::sync::Mutex::new(None));
+    if let Some(a) = &device {
+        crate::perception::devices::arrived(&a.device, peer_id);
+    }
+    let peer_actor: PeerActor = Arc::new(std::sync::Mutex::new(device));
     let departing = peer_actor.clone();
     // Every line a peer logs names it: str0m's ICE lines and ours alike, so
     // concurrent peers (a reload's old and new) can be told apart.
