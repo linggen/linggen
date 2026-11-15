@@ -33,4 +33,7 @@ clone ui/dist
 clone ui/anim-src
 clone ui/public/anim-baked
 clone target/fast
+# The test build too: without it the first `cargo test` here compiles every library again (ten minutes and more
+# when two worktrees do it at once — seen 2026-11-15).
+clone target/debug
 [ "${1:-}" != "--ui" ] || clone ui/node_modules
