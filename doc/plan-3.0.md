@@ -197,9 +197,10 @@ are never told to her).
 
 **Scenario tests** are how it gets smarter without more code: a world state
 and a memory in, "should she speak, and naming what" out; rerun on every model
-or persona change. The first three are Hanli's — work 8 h, play 2 h and a low
-HRV in 灵境; disk under 50 GB and a 12 h 闭关 during a coding session; something
-he told her he cares about, set against how the day has gone.
+or persona change. The first three are Hanli's, kept as test fixtures: long work, long play and
+a tired body, while he is in a game; a machine reading and a game state worth
+acting on, while he is in a coding session; something he told her he cares
+about, set against how the day has gone.
 
 ## 6. Before a step can ship
 
