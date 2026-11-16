@@ -1070,6 +1070,7 @@ mod tests {
         assert!(!scan.enabled && scan.schedule.is_empty(), "never on a schedule");
         assert_eq!(scan.agent_id, "memory");
         assert!(scan.kickoff_fresh);
+        assert_eq!(scan.kickoff_stop, ["DONE", "CLEAN", "FAILED"]);
         assert!(scan.kickoff_day[0].contains("ling mem scan $DAY"), "{}", scan.kickoff_day[0]);
         assert!(scan.kickoff_day.len() > 10, "too few turns for a day's sessions");
         assert!(scan.kickoff_day.last().unwrap().contains("PARTIAL"));

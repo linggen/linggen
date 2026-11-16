@@ -404,7 +404,8 @@ It works on every machine, primary or replica.
    no network — into `~/.linggen/memory/.scan-output.jsonl`, and prints
    one line: `scan: window=<date> found=<n> scanned=<n> skipped=<n> …`.
    A non-zero exit, or an error line instead of that one →
-   `SCAN <date> failed "<the line>"` and stop.
+   `SCAN <date> failed "<the line>"`, then reply exactly `FAILED` — no
+   stamp: the day was not scanned.
 2. **The candidates.** Line 1 of the file is the header (`_meta`); each
    later line is one session: `filepath`, `source`
    (`CC|Codex|OpenClaw|Linggen`), `date`, `user_turns`, `bytes`,
@@ -534,7 +535,7 @@ started this run.
 - Nothing to do: `CLEAN`
 - Scan: `SCAN <date> found=<n> scanned=<n>` · `SKIP <session-id> covered` ·
   `TODO <lines>` · `STAGE <line> <session-id> rows=<k>` ·
-  `DAY <date> not over — staged only` · `SCAN <date> failed "<line>"`
+  `DAY <date> not over — staged only` · `SCAN <date> failed "<line>"` then `FAILED`
 - Solve: `SOLVED <id> "<what>"` · `DISMISSED <id> "<why>"` ·
   `SKIPPED <id> needs <dir>` · `OPEN <id> "<question>"`
 

@@ -164,7 +164,8 @@ review queue"); the mission files carry only the pacing and the grants.
   `source_session`), then judges one candidate per turn and stages what is
   worth keeping as short-term rows, each carrying its session id and the
   session's directory. It ends by stamping the day scanned
-  (`harvest_day`), also when nothing new was staged. It never promotes:
+  (`harvest_day`), also when nothing new was staged; a scan that fails
+  ends `FAILED`, unstamped. It never promotes:
   the next dream judges the rows. Today can be staged but not stamped. A
   day with more sessions than one run's turns ends `PARTIAL`, unstamped;
   scanning again continues. Scan works on every machine.
@@ -186,9 +187,12 @@ review queue"); the mission files carry only the pacing and the grants.
 - **Grants** — the scan holds admin on its own empty working folder
   (`~/.linggen/missions/memory-scan/work`, its cwd: `ling mem scan` is an
   admin-class command naming no path, so it is judged there) and read on
-  the candidates file — nothing else; the session logs are read by
-  `ling mem scan`, not by the agent. The solve holds the dream's READ over
-  the home directory. Missions never prompt: anything else is refused.
+  the candidates file. No grant names the session folders: `ling mem scan`
+  reads them itself, and the agent's own reads of them are refused. An
+  admin grant is not a shell sandbox — a command naming no path is judged
+  at the cwd (`permission-spec.md`). The solve holds the dream's READ over
+  the home directory. Missions never prompt: a call outside the grants is
+  refused.
 
 ## Memory is hosted by the engine
 

@@ -11,14 +11,15 @@ enabled: false
 agent: memory
 # The run's own working folder, empty, under the mission's folder (the
 # engine makes it). `ling mem scan` is an admin-class command with no
-# path the gate can see, so it is judged here — the admin grant below
-# covers this folder and nothing else.
+# path the gate can see, so it is judged here. The admin grant below
+# names this folder only; like any admin grant it is not a shell sandbox
+# (a command naming no path is judged here too).
 cwd: ~/.linggen/missions/memory-scan/work
 # One candidate session per turn, each turn starting clean: a day's
 # transcripts run to 200 KB a session, and reading them all in one
 # context would carry every earlier one into every later call.
 kickoff-fresh: true
-kickoff-stop: [DONE, CLEAN]
+kickoff-stop: [DONE, CLEAN, FAILED]
 # Without a day there is nothing to scan.
 kickoff:
   - >-
@@ -34,9 +35,10 @@ kickoff-day:
     (output line n is file line n; line 1 is the header); collect the
     day's covered sessions. Reply with `SCAN $DAY found=<n> scanned=<n>`,
     a `SKIP <session-id> covered` line per covered candidate, and
-    `TODO <file line numbers of the candidates left>`. No candidates
-    left → stamp the day per your procedure and reply with your status
-    lines, then exactly: CLEAN. Otherwise stop and wait.
+    `TODO <file line numbers of the candidates left>`. The scan failed →
+    your `SCAN $DAY failed` line, then exactly: FAILED (no stamp). No
+    candidates left → stamp the day per your procedure and reply with
+    your status lines, then exactly: CLEAN. Otherwise stop and wait.
   - &next >-
     First check your `TODO` line and this run's `STAGE` lines. Take the
     lowest TODO line that has no STAGE line yet: Read only that line of
@@ -69,10 +71,9 @@ allowed-tools:
 # - admin on the run's own empty folder — `ling mem scan <day>` is judged
 #   there (an unknown program is admin-class);
 # - read on the one file the scan writes, the candidates.
-# Nothing else: the session folders `ling mem scan` walks are read by
-# that program, not by the agent, so no grant names them, and the agent
-# cannot open a raw session log past the scan's secret filter. Missions
-# never prompt: anything outside these is refused.
+# No grant names the session folders: `ling mem scan` reads them itself,
+# and a Read, grep or cat of a session log is refused. Missions never
+# prompt: a call outside these grants is refused.
 permission:
   paths:
     - { path: ~/.linggen/missions/memory-scan/work, mode: admin }
@@ -85,10 +86,11 @@ permission:
     writes ~/.linggen/memory/.scan-output.jsonl; no network. The agent
     then reads that file and writes short-term memory rows through this
     machine's own memory (each carrying the session it came from), and
-    stamps the day scanned. It never promotes, merges or deletes rows,
-    and never opens a session log itself. The admin grant covers only
-    the run's own empty folder; like any admin grant it is not a shell
-    sandbox — a command naming no path is judged there.
+    stamps the day scanned. It never promotes, merges or deletes rows. No
+    grant names the session folders, so the agent's own reads of them are
+    refused. The admin grant names only the run's own empty folder; like
+    any admin grant it is not a shell sandbox — a command naming no path
+    is judged there.
 ---
 
 # Memory scan — run protocol
