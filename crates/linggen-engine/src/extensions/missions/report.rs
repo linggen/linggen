@@ -3,7 +3,7 @@
 //! When a mission run completes, the scheduler appends one summary
 //! message to the run's session, composed mechanically from the
 //! transcript's memory tool results (the `days` worklist,
-//! `remember_day` stamps, `sweep` evictions). The model's own status
+//! `remember_day` and `harvest_day` stamps, `sweep` evictions). The model's own status
 //! lines stay best-effort narration; this report is the trustworthy
 //! record of what actually happened — a model was observed inventing
 //! failure reasons and a wrong final token instead of reporting
@@ -113,10 +113,20 @@ fn worklist_line(v: &serde_json::Value) -> Option<String> {
     })
 }
 
-/// A `remember_day` stamp: `{"date": "...", "record": {"judged": n, "promoted": n, ...}}`.
+/// A day stamp: `{"date": "...", "record": {...}}`. Both stamps answer
+/// with the day's whole record; the one this call made is the newer of its
+/// `remembered_at` (a dream's `remember_day`) and `harvested_at` (a scan's
+/// `harvest_day`).
 fn remember_line(v: &serde_json::Value) -> Option<String> {
     let date = v.get("date")?.as_str()?;
     let record = v.get("record")?;
+    let at = |field: &str| {
+        let text = record.get(field)?.as_str()?;
+        chrono::DateTime::parse_from_rfc3339(text).ok()
+    };
+    if at("harvested_at").is_some() && at("harvested_at") > at("remembered_at") {
+        return Some(format!("scanned {date}: its session logs staged"));
+    }
     let judged = record.get("judged").and_then(|n| n.as_u64()).unwrap_or(0);
     let promoted = record.get("promoted").and_then(|n| n.as_u64()).unwrap_or(0);
     Some(format!(
@@ -274,6 +284,18 @@ mod tests {
         assert_eq!(
             report,
             "Mission report:\n- worklist: no undreamed days\n- forget sweep: nothing expired"
+        );
+    }
+
+    #[test]
+    fn a_scan_stamp_reads_as_scanned_not_remembered() {
+        let messages = vec![sys(
+            r#"Tool mcp__memory__memory_harvest_day: success: {"date":"2026-11-10","record":{"forgotten":0,"harvested_at":"2026-11-16T15:00:00Z","judged":3,"promoted":1,"remembered_at":"2026-11-11T03:00:00Z"}}"#,
+        )];
+        let report = compose_memory_report(&messages).unwrap();
+        assert_eq!(
+            report,
+            "Mission report:\n- scanned 2026-11-10: its session logs staged"
         );
     }
 
