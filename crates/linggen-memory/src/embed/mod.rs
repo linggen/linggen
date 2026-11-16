@@ -74,6 +74,24 @@ pub struct Embedder {
     gate: tokio::sync::Mutex<()>,
 }
 
+/// What turns text into vectors: the Qwen3 model, or — in tests only — a
+/// deterministic stand-in (`fake.rs`, the `test-support` feature).
+enum Inner {
+    Qwen3(Box<Qwen3TextEmbedding>),
+    #[cfg(any(test, feature = "test-support"))]
+    Fake,
+}
+
+impl Inner {
+    fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+        match self {
+            Inner::Qwen3(model) => model.embed(texts).context("running Qwen3 embedding model"),
+            #[cfg(any(test, feature = "test-support"))]
+            Inner::Fake => Ok(texts.iter().map(|t| fake::vector(t)).collect()),
+        }
+    }
+}
+
 impl Embedder {
     /// Construct with the default model (Qwen3-Embedding-0.6B) on the best
     /// available device (Metal on macOS, CUDA where compiled in, else CPU).
@@ -109,7 +127,7 @@ impl Embedder {
             }
         };
         Ok(Self {
-            inner: Inner::Qwen3(inner),
+            inner: Inner::Qwen3(Box::new(inner)),
             gate: tokio::sync::Mutex::new(()),
         })
     }
@@ -225,24 +243,6 @@ impl Embedder {
             }
         }
         Ok(vectors)
-    }
-}
-
-/// What turns text into vectors: the Qwen3 model, or — in tests only — a
-/// deterministic stand-in (`fake.rs`, the `test-support` feature).
-enum Inner {
-    Qwen3(Qwen3TextEmbedding),
-    #[cfg(any(test, feature = "test-support"))]
-    Fake,
-}
-
-impl Inner {
-    fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
-        match self {
-            Inner::Qwen3(model) => model.embed(texts).context("running Qwen3 embedding model"),
-            #[cfg(any(test, feature = "test-support"))]
-            Inner::Fake => Ok(texts.iter().map(|t| fake::vector(t)).collect()),
-        }
     }
 }
 
