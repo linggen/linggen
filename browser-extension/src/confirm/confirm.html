@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="confirm.css" />
+    <title>Linggen — allow action?</title>
+  </head>
+  <body>
+    <div class="head">
+      <img class="logo" src="../../icons/icon-48.png" alt="Linggen" width="22" height="22" />
+      <strong>Agent wants to act on this site</strong>
+    </div>
+    <div id="floorWarn" class="warn" hidden></div>
+    <div class="origin" id="origin"></div>
+    <div class="summary" id="summary"></div>
+    <div class="buttons">
+      <button id="once" class="primary">Allow once</button>
+      <button id="always" class="secondary">Always allow this site</button>
+      <button id="deny" class="ghost">Deny</button>
+    </div>
+    <script src="confirm.js"></script>
+  </body>
+</html>

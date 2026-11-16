@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "Linggen Browser Bridge",
+  "version": "0.4.8",
+  "description": "Let a local Linggen agent read your logged-in sessions and control one visible tab. You approve each site; sensitive ones confirm.",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "src/popup/popup.html",
+    "default_title": "Linggen Bridge",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "permissions": ["tabs", "tabGroups", "storage", "alarms", "debugger"],
+  "host_permissions": ["https://x.com/*", "http://127.0.0.1/*"],
+  "content_scripts": [
+    {
+      "matches": ["https://x.com/*"],
+      "js": ["src/content/x-hook.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://x.com/*"],
+      "js": ["src/content/x-relay.js"],
+      "run_at": "document_start",
+      "world": "ISOLATED"
+    }
+  ]
+}
