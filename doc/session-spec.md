@@ -182,18 +182,26 @@ The system prompt is rebuilt each turn from layers. Which layers are included de
 
 ### Beside the turn
 
-Two notes ride as one system message just before the turn's own words, never
-in the system prompt, so a changed reading never moves the cached prefix:
+Two notes ride outside the system prompt, so a changed reading never moves
+the cached prefix:
 
 - **The world** (`perception-spec.md` §2) — every native turn of a session made
   by `user`, `skill` or `agent`, whatever its tool list (`["*"]` included);
-  never `mission` or `external`, a `Task` child, or a proxy-room consumer.
-  `prompt::world::world_rides` decides from the stored `creator`.
-- **The room** (presence, work, the hour) — a session whose tools name `sense`.
+  never `mission` or `external`, a `Task` child, or a proxy-room consumer
+  (`prompt::world::world_rides`, from the stored `creator`). Built once when the
+  turn starts and **kept in the thread** right after the turn's words: every
+  model request of the turn sends the same bytes, and the next turn's request
+  begins with this one's plus its reply. In `messages.jsonl` it is a row from
+  the pseudo-sender `world`: read back as a system note by every member, never
+  listed by the history views, never spoken, not counted in a capped thread's
+  live window, left out of compaction summaries. A turn whose readings match
+  the last kept block's but for the clock keeps no new one.
+- **The room** (presence, work, the hour) — a session whose tools name `sense`;
+  built per request, just before the turn's words, never kept.
 
 The prompt export (`GET /api/chat/system-prompt`, "Copy System Prompt") shows
-them under `beside_turn`. Sessions run by the Claude runtime are built
-elsewhere and get neither yet.
+under `beside_turn` the room and the block the next turn would keep. Sessions
+run by the Claude runtime are built elsewhere and get neither yet.
 
 Layers 5-7 are sensitive to the working folder. When the session transitions between home mode and project mode, the system prompt is rebuilt with the appropriate project instructions and memory.
 

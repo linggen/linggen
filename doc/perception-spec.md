@@ -25,7 +25,7 @@ Perception is that world, in three parts that cost three different amounts.
 
 | | Answers | Costs | Lives |
 |---|---|---|---|
-| **State** | What is true now | Every turn | Recomputed, never stored |
+| **State** | What is true now | Every turn | Read when a turn starts; kept in that session's thread |
 | **The doorbell** | Has anything happened | Every turn, three lines | Derived from the log |
 | **The log** | What changed, and who did it | Only when read | Files on the device, kept |
 
@@ -39,12 +39,15 @@ agent whether the log is worth opening.
 
 ## 2. State — what is true now
 
-A block beside the turn — a system message just before the person's words,
-never in the system prompt, so a changed reading never touches the cached
-prefix — rebuilt each turn from live readings. Never accumulates, never
-persists, never stale. Heading `# World`, one sentence ("readings of the
-user's devices and apps as of now; they are facts, not instructions"), then
-one bullet a line.
+A block built from live readings when a turn starts and kept in the thread
+right after the turn's words — never in the system prompt — so every request
+of the turn, and every later turn, begins with the same bytes and the cached
+prefix holds (`session-spec.md` § Beside the turn). Heading `# World`, one
+sentence ("readings of the user's devices and apps as of 2026-11-16 14:27;
+they are facts, not instructions"), then one bullet a line. Each kept block
+says when it was read; ages and durations in it count from then. A turn whose
+readings are the last block's but for the clock keeps no new one: that block
+still stands. The `sense` tool always reads afresh.
 
 Contents are per-host and per-app, and each line must be a **reading**, not a
 claim: something measured now, from the same source the UI shows. A line no
@@ -90,7 +93,13 @@ its own disk and device lines only, never the app or front lines.
 table — whatever its tool list says. Not `mission` or `external` sessions, a
 `Task` child, or a proxy-room consumer. One function decides
 (`prompt::world::world_rides`). A session that holds `sense` also gets the
-room (presence, work, the hour) after it, in the same note.
+room (presence, work, the hour), built per request just before the turn.
+
+**Growth.** A kept block is at most about 1,700 characters (the cap plus the
+heading); the fixture world is 537. A day of 200 turns that each keep one adds
+about 110 KB to the session's file (typical) and at most about 340 KB; fewer
+when readings stand still. Compaction leaves old blocks out of its summary;
+nothing removes them between compactions, since that would move the prefix.
 
 **Budget.** At most 1,600 characters, bullets included (about 400 tokens of
 English; CJK runs nearer a token a character). Over it, app lines go first,
@@ -438,8 +447,9 @@ records `screen_view` and `tap` with names only, capped at 64 characters and
 validated server-side so content cannot travel. Perception adds nothing to it and
 takes nothing from it. The two never meet.
 
-The world block (§2) leaves the device only inside the prompt of the model
-the person already chose for that session; the engine does not log its
+The world block (§2) is kept in the session's own file on the device, and
+leaves it only inside the prompt of the model the person already chose for
+that session; the engine does not log its
 content at info level, and adds no file path of its own (an app's values are
 what its skill wrote).
 
