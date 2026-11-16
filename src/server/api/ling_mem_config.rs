@@ -126,7 +126,17 @@ fn settings_of(record: &Value) -> Map<String, Value> {
     [TTL_DAYS, MIN_SCORE]
         .into_iter()
         .filter_map(|k| Some((k.to_string(), record.get(k)?.clone())))
+        .map(|(k, v)| (k, as_typed(v)))
         .collect()
+}
+
+/// Memory keeps the threshold as an f32, which its JSON writes widened to
+/// f64 (0.7 as 0.699999988079071). Shown as the f32 reads: 0.7.
+fn as_typed(v: Value) -> Value {
+    match v.as_f64().filter(|_| v.is_f64()) {
+        Some(wide) => json!((wide as f32).to_string().parse::<f64>().unwrap_or(wide)),
+        None => v,
+    }
 }
 
 /// Memory's answer under its own status, with a success cut to the two fields.
@@ -209,6 +219,20 @@ mod tests {
             body["data"],
             json!({ "episodic_ttl_days": 7, "recall_min_score": 0.7 })
         );
+    }
+
+    /// Memory's threshold is an f32 widened by its JSON: 0.7 arrives as
+    /// 0.699999988079071 and must reach the page as 0.7.
+    #[tokio::test]
+    async fn a_widened_f32_is_shown_as_typed() {
+        let call = |_: Method, _: &'static str, _: Option<Value>| async {
+            let data =
+                json!({ "episodic_ttl_days": 7, "recall_min_score": 0.7f32, "network": "lan" });
+            (StatusCode::OK, json!({ "ok": true, "data": data }))
+        };
+        let (_, body) = body_of(read(&Caller::Owner, &call).await).await;
+        assert_eq!(body["data"]["recall_min_score"], json!(0.7));
+        assert_eq!(body["data"]["episodic_ttl_days"], json!(7));
     }
 
     #[tokio::test]
