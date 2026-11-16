@@ -1,6 +1,6 @@
 [package]
 name = "linggen-memory"
-version = "1.13.0"
+version.workspace = true
 edition = "2021"
 authors = ["linggen77@gmail.com"]
 description = "Semantic memory store — facts, activity, LanceDB-backed retrieval"

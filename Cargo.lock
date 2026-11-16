@@ -5629,7 +5629,7 @@ dependencies = [
 
 [[package]]
 name = "linggen-memory"
-version = "1.13.0"
+version = "2.2.1"
 dependencies = [
  "anyhow",
  "arrow",
