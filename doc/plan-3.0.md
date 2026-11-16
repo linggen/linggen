@@ -20,21 +20,22 @@ Every number is tagged **(measured)** — taken on his Mac on 2026-11-15 — or
 
 ## Progress
 
-| Step | State (2026-11-15) |
+| Step | State (2026-11-16) |
 |---|---|
 | 0 Architecture review | Done — `architecture-review.md` |
 | 1 Build speed | Done — `fast` profile, `scripts/worktree-setup.sh` |
 | 2 The merge | Done on main: memory runs inside the engine; an old daemon is taken over at start-up; `ling-mem` is a stand-in; one port — nothing listens on 9528 (no compatibility path; the plugins move to 9527). Who reaches memory from another machine is built (approved machines only; a phone sees its own person's rows — `memory-spec.md`). Open: the plugins (in work), the install scripts, the gate scripts, a real second machine |
-| 3 Modules | 3.2 done — `ling` (server, cli) and `crates/linggen-engine`. The further cuts (base, model, store, skills) wait: with incremental builds a one-file rebuild is already 5–10 s, so they would buy tidiness, not time |
-| 4 Upgrades | Patch and minor batch done (329 crates; checks equal before and after; the store still opens in the previous program). The two major groups — the vector database, the embedding stack — wait until the rest of 2.3 is stable |
+| 3 Modules | 3.2 done — `ling` (server, cli) and `crates/linggen-engine`. The further cuts (base, model, store, skills) are put off until 2.4 has landed, or dropped (decided 2026-11-16): they move files wholesale, would collide with the 2.4 branch, and with incremental builds a one-file rebuild is already 5–10 s — they would buy tidiness, not time |
+| 4 Upgrades | Patch and minor batch done (329 crates; checks equal before and after; the store still opens in the previous program). The two major groups — the vector database, the embedding stack — moved out of 2.3 into **2.3.1**, a release of their own (decided 2026-11-16): a database upgrade may change the store on disk, and that risk gets its own gate run |
 | Slimming | Yinyue's clips baked (done); packaged skills leave out tools, tests and unloaded source art (done); asset packs — engine side built, art sorted into packs; publishing, the app's packaging by pack and the phone are open |
-| 2.4 | Not started |
+| 2.4 | Groundwork on the local `next/2.4` branches (engine and skills), rebased as main moves: the activity log, the world block, notes and look-again, the guardrails, a turn's place. The one session a day is not started. Runs in parallel with 2.3; lands on main only after 2.3 is published |
 
 ## 2. Milestones
 
 | Release | Holds | Done when |
 |---|---|---|
-| **2.3** | Structure: architecture review, build speed, the merge, the engine split into modules, library upgrades, app slimming | Gate green on first install and on 2.2.1 → 2.3 (the takeover of an existing memory store); one process serving memory to Claude Code and Codex seen live on his Mac; sizes re-measured |
+| **2.3** | Structure: architecture review, build speed, the merge, memory as a library the engine calls, the engine split into modules (first cut), patch and minor library upgrades, app slimming | Gate green on first install and on 2.2.1 → 2.3 (the takeover of an existing memory store); one process serving memory to Claude Code and Codex seen live on his Mac; sizes re-measured |
+| **2.3.1** | The two major library groups (vector database; embedding stack), each verified on its own | Gate green; an existing store opens, and the memory benchmark holds |
 | **2.4** | Behaviour: one Ling and one Yinyue (§5) | Gate green; the scenario tests pass; his three scenarios seen live |
 | **3.0** | A release of its own, after 2.4 and likely a 2.5 of fixes | Hanli's call, once everything has settled |
 
