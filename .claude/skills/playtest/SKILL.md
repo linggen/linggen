@@ -5,7 +5,7 @@ description: Play 灵境 (Lingjing) by its play bot and review what it saw — h
 
 # playtest — 灵境's play bot, and the review it waits on
 
-The bot lives in the skills repo: `skills/lingjing/tools/playbot/` (`run.sh`, `playbot.mjs`, `lint.mjs`,
+The bot lives in the skills repo: `skills/lingjing/tools/playbot/` (`run.sh`, `playbot.mjs`, `art.mjs`, `lint.mjs`,
 `serve.mjs`, `report.mjs`, `verdict.mjs`, `seeded-bugs.json`; the review page `review-server.mjs` + `review-ui/`;
 Hanli's answers `rulings.jsonl`). It serves a skills checkout the way the engine serves it, runs the
 page's Verb door as `node rules.mjs` against a scratch data folder, and drives the real page with Playwright at
@@ -19,8 +19,9 @@ Never point it at `~/.linggen/skills/lingjing/data`, never `--headed` on his scr
 1. **Run it** on what you are testing, from the engine repo:
    - `just playbot` — origin/main of the skills; `just playbot --ref <sha>` — a commit; `just playbot --install <lingjing dir>` — an install played read-only (its data never touched).
    - `--sizes 430x932,375x812,1280x820` and `--fights N` (降妖 per size) narrow or widen it. It takes minutes; it is not part of check.sh.
+   - `--art core` — the proof that the core art pack is enough for the first chapter: the bot's server answers 404 for every art file `art-packs.mjs` does not place in `core`, and the play stays in the first chapter. `pictures.json` in the report lists every picture asked for, its answer and its pack.
    - The report lands in `skills/lingjing/report/<run-id>/` (or `--out`). Exit 1 = hard findings.
-2. **Read** `findings.json` (every hard finding names its screenshot: no-response, no-feedback, mana-waste, no-spoils, frozen-by-fight, resume-mismatch, console-error, layout), `refusals.json` (every refusal the rules gave, with its reason — read them as a player would: is each one fair?) and `played.json` (what was played and what could not be).
+2. **Read** `findings.json` (every hard finding names its screenshot: no-response, no-feedback, mana-waste, no-spoils, frozen-by-fight, resume-mismatch, console-error, layout, art-missing — a picture the page asked for and did not get), `refusals.json` (every refusal the rules gave, with its reason — read them as a player would: is each one fair?) and `played.json` (what was played and what could not be).
 3. **Read `skills/lingjing/tools/playbot/rulings.jsonl` first** — every answer Hanli has given on 试玩台, one per
    line: `{at, run_id, shot, ask, ok, said, size, fight, tag, flags, claude}`. A question he has answered (the same
    flag kind/why, phone or Mac size, the same thing asked) is not asked again: take his ruling as the answer and say so
@@ -65,6 +66,8 @@ holds one of the bugs found since 2026-11-04, and the finding the bot must raise
 | spoils-shown-control | dcab26ad + seeded/winnable-control.patch | control: no `no-spoils` |
 | hand-squeezed | 94b26505 + seeded/hand-squeezed.patch | `layout` · hand-too-small (centre card < 120 px) |
 | hand-floor-control | 94b26505 | control: no hand-too-small |
+| art-missing | 8e62a077d + seeded/art-missing.patch | `art-missing` (后山's painting points at a file that is not there) |
+| art-present-control | 8e62a077d | control: no `art-missing` |
 
 A control (`absent: true`) is the same play without the bug; it must NOT raise the finding.
 
