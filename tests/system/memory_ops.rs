@@ -320,6 +320,20 @@ async fn a_scan_run_stages_the_days_sessions_and_stamps_the_day() {
         text(&format!("STAGE 3 {LING_SESSION} rows=1")),
         tool("mcp__memory__memory_harvest_day", json!({"date": DAY})),
         text("DONE"),
+        // The same day scanned again: both sessions already have rows.
+        tool("Bash", json!({"command": format!("ling mem scan {DAY}")})),
+        tool(
+            "mcp__memory__memory_list",
+            json!({"tier": "episodic", "day": DAY, "limit": 100}),
+        ),
+        tool(
+            "mcp__memory__memory_list",
+            json!({"tier": "semantic", "day": DAY, "limit": 100}),
+        ),
+        tool("mcp__memory__memory_harvest_day", json!({"date": DAY})),
+        text(&format!(
+            "SKIP {CC_SESSION} covered\nSKIP {LING_SESSION} covered\nCLEAN"
+        )),
     ];
     let w = World::start(Setup {
         embedder: true,
@@ -354,6 +368,16 @@ async fn a_scan_run_stages_the_days_sessions_and_stamps_the_day() {
         model_saw.contains("I water the garden every Sunday"),
         "the candidate was never read"
     );
+    let prompts: String = w
+        .model
+        .calls_of(Agent::Memory)
+        .iter()
+        .map(|c| c.body.to_string())
+        .collect();
+    assert!(
+        prompts.contains("Procedure — scan one day"),
+        "the scan procedure is not in the run's prompt"
+    );
     assert!(
         seen.contains(&format!("scanned {DAY}: its session logs staged")),
         "no report line"
@@ -382,6 +406,21 @@ async fn a_scan_run_stages_the_days_sessions_and_stamps_the_day() {
         .unwrap_or_else(|| panic!("no {DAY}: {days}"));
     assert_eq!(day["scanned"], true, "{day}");
     assert_eq!(day["dreamed"], false, "a scan marks nothing dreamed: {day}");
+
+    // Scanned again, the run's own day listing shows each session's id —
+    // what the covered-session skip reads.
+    let again = trigger(&w, "memory-scan", json!({"day": DAY, "attended": true})).await;
+    let run = finished_run(&w, "memory-scan", &again).await;
+    assert_eq!(run["status"], "completed", "{run}");
+    assert!(run.get("failure_count").is_none(), "{run}");
+    w.assert_all_scripted();
+    let listed = tool_results(&w, &again);
+    for session in [CC_SESSION, LING_SESSION] {
+        assert!(
+            listed.contains(&format!("source_session\\\":\\\"{session}")),
+            "the day listing does not show {session}: {listed}"
+        );
+    }
 }
 
 /// Settings → Memory's Solve: the run reads the queue, asks the user (it is
