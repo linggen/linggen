@@ -61,6 +61,11 @@ pub(super) fn routes() -> Routes {
             "/api/ling-mem/connect/{id}/{verdict}",
             post(api::ling_mem_connect::decide),
         )
+        // Memory's own two settings (keep days, recall threshold) — owner only
+        .route(
+            "/api/ling-mem/config",
+            get(api::ling_mem_config::get_config).put(api::ling_mem_config::put_config),
+        )
         // Primary or replica — the local ling-mem's own setting
         .route(
             "/api/ling-mem/primary",
