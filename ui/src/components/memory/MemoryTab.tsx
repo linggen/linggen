@@ -120,8 +120,8 @@ export const MemoryTab: React.FC = () => {
             <div className="lg:sticky lg:top-0">
               <MemoryDetail
                 row={selected}
-                onSaved={(row) => { rows.replaceRow(row); changed(); }}
-                onDeleted={(id) => { rows.dropRows([id]); setSelectedId(null); changed(); }}
+                onSaved={(row) => { rows.replaceRow(row); setNotice(''); changed(); }}
+                onDeleted={(id) => { rows.dropRows([id]); setSelectedId(null); setNotice(''); changed(); }}
                 onClose={close}
                 onDirty={onDirty}
               />

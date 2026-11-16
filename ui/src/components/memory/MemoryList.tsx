@@ -61,7 +61,7 @@ const Row: React.FC<{
     onClick={() => onSelect(row.id)}
     className={`flex gap-2.5 items-start rounded-lg border px-3 py-2 cursor-pointer transition-colors ${
       selected
-        ? 'border-blue-500/50 bg-blue-50/60 dark:bg-blue-500/10'
+        ? 'border-blue-500 bg-blue-50 dark:bg-blue-500/15'
         : 'border-slate-200 dark:border-white/5 bg-white dark:bg-[#141414] hover:bg-slate-50 dark:hover:bg-white/[0.03]'
     }`}
   >

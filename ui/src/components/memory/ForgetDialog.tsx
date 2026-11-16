@@ -68,7 +68,7 @@ export const ForgetDialog: React.FC<{
       {failure && <p role="alert" className="text-xs text-red-600 dark:text-red-400">{failure}</p>}
       <div className="flex justify-end gap-2">
         <button className={ghostBtn} onClick={onClose}>Cancel</button>
-        <button className={dangerBtn} disabled={busy || !count} onClick={forget}>Forget {count ?? ''} rows</button>
+        <button className={dangerBtn} disabled={busy || !count} onClick={forget}>{count ? `Forget ${count} row${count === 1 ? '' : 's'}` : 'Forget'}</button>
       </div>
     </ModalShell>
   );
