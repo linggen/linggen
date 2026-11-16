@@ -2,7 +2,7 @@
 source: tests/system/support/mod.rs
 expression: text
 ---
-tools: ["Peek", "Voice"]
+tools: ["Peek", "Voice", "note_done", "note_write"]
 
 ## Identity
 
