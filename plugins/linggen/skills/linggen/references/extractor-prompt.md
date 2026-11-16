@@ -3,7 +3,7 @@
 This file is the host LLM's working prompt for the **encode step of
 `/linggen scan`** (the user-triggered backfill of a past day —
 scan is standalone; the nightly dream is remember + forget only).
-`scan.sh` already produced a clean, secret-filtered, byte-capped
+`ling mem scan` already produced a clean, secret-filtered, byte-capped
 transcript per session and wrote them to
 `~/.linggen/memory/.scan-output.jsonl`; you are about to read those
 transcripts and stage durable signal to memory.
@@ -24,7 +24,7 @@ phase, never ask questions, never explain your reasoning. You run
 
 Input: lines 2..N of `.scan-output.jsonl`, one cleaned session per
 line. Each row has a `transcript` field with the flattened
-`[role]: text` content (already extracted by `extract_session.sh`)
+`[role]: text` content (already extracted by `ling mem scan`)
 plus a `[SESSION_CWD]: <path>` header.
 
 For each piece of durable signal in the transcript, write a row,
@@ -36,7 +36,7 @@ apply:
   can re-read next time. The file is the source of truth; never copy
   it into memory.
 - **A secret.** Credentials, API keys, tokens, passwords, auth in
-  URLs. (scan.sh already stripped these — defence in depth.)
+  URLs. (`ling mem scan` already stripped these — defence in depth.)
 - **Pure activity/transcript.** "Ran the tests", "opened the file" —
   git and the host's own session store already record that.
 
@@ -161,7 +161,7 @@ nothing before or after that final line.
 ## Source cwd
 
 The transcript starts with a `[SESSION_CWD]: <path>` header (emitted
-by `extract_session.sh`). Pass it through as `--cwd <path>` on writes
+by `ling mem scan`). Pass it through as `--cwd <path>` on writes
 so the row's scope defaults to *where* it happened (the project root for a coding
 session, the home dir for a casual chat). If the header is missing,
 omit `--cwd` entirely — never guess.

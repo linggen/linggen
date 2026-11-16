@@ -90,7 +90,7 @@ other tools, and not in tension with `f915e6b` (engine-scoped).
 `/shared-memory dream` = scan → extract → judge/write → consolidate +
 evict.
 
-**Scan + extract (script, token-cheap).** A script parses the host's
+**Scan + extract (code, token-cheap).** `ling mem scan <date>` parses the host's
 on-disk transcripts, strips tool noise, hash-dedups, secret-filters —
 no LLM, so no token cost on raw logs. Verified sources:
 
@@ -228,10 +228,10 @@ working tree, not yet pushed). F deferred to its own distribution plan.
    - `references/extractor-prompt.md` rewritten as a single-source
      pointer to engine `agents/ling-mem.md` ENCODE phase (anti-drift
      marker included).
-   - `scripts/collect_sessions.sh` + `extract_session.sh`: added
-     Codex sources, per-source mtime watermark
-     (`--watermark <file>`), defence-in-depth secret filter, byte
-     cap. Both still syntax-clean.
+   - The session scan (collect + extract): added Codex sources,
+     per-source mtime watermark, defence-in-depth secret filter, byte
+     cap. It was two shell scripts in the skill; it is now
+     `ling mem scan <date>`, part of Linggen.
 
 4. **D — Recall hook** ✅ AUDITED. `install.sh` already wires
    `UserPromptSubmit` → `recall.sh` → `ling-mem search "$prompt"
