@@ -539,6 +539,11 @@ pub struct Skill {
     /// Whether a busy-time message steers the running turn or waits for it.
     #[serde(default)]
     pub queue: QueueMode,
+    /// What is said in this app's turns is the app's alone
+    /// (`private-talk: true`). Read from a turn's place
+    /// (`TurnPlace::talk_is_private`); nothing acts on it yet.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub private_talk: bool,
     /// Which phone facts stamp which of the skill's quests, and how.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quests: Option<QuestsConfig>,

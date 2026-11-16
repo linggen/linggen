@@ -380,6 +380,10 @@ struct SkillFrontmatter {
     /// `steer` (default) or `after-turn` — see `doc/skill-spec.md` § Queue.
     #[serde(default)]
     queue: crate::engine::skill::QueueMode,
+    /// What is said in the app's turns is its own — see `doc/skill-spec.md`
+    /// § Private talk.
+    #[serde(default, rename = "private-talk")]
+    private_talk: bool,
     /// Phone facts → the skill's quests — see `doc/skill-spec.md` § Quests.
     #[serde(default)]
     quests: Option<crate::engine::skill::QuestsConfig>,
@@ -746,6 +750,7 @@ pub fn parse_skill_text(text: &str, source: SkillSource) -> Result<Skill> {
         suggestions: frontmatter.suggestions,
         closing_ask: frontmatter.closing_ask,
         queue: frontmatter.queue,
+        private_talk: frontmatter.private_talk,
         quests: frontmatter.quests,
         notices,
         place: frontmatter.place,
@@ -1083,6 +1088,19 @@ This is the skill content."#;
         );
         let bare = parse_skill_text("---\nname: x\ndescription: y\n---\n", SkillSource::Global);
         assert!(!bare.unwrap().closing_ask);
+    }
+
+    /// `private-talk: true` is kept on the skill; absent, its talk is not
+    /// private; a value that is not a boolean is refused as any wrong
+    /// frontmatter type is.
+    #[test]
+    fn a_skill_declares_its_talk_private() {
+        let text = "---\nname: diary\ndescription: Write\nprivate-talk: true\n---\nBody";
+        assert!(parse_skill_text(text, SkillSource::Global).unwrap().private_talk);
+        let bare = parse_skill_text("---\nname: x\ndescription: y\n---\n", SkillSource::Global);
+        assert!(!bare.unwrap().private_talk);
+        let wrong = "---\nname: diary\ndescription: Write\nprivate-talk: [yes]\n---\nBody";
+        assert!(parse_skill_text(wrong, SkillSource::Global).is_err());
     }
 
     #[test]

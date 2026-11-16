@@ -85,3 +85,36 @@ fn home_has_a_key_no_skill_can_take() {
     let place = TurnPlace::of_request(Some("zz-game"), None);
     assert_ne!(place.key(), HOME_KEY);
 }
+
+/// A registry holding one made-up app that keeps its talk private.
+struct OneApp(crate::engine::skill::Skill);
+
+#[async_trait::async_trait]
+impl crate::engine::skill::SkillRegistry for OneApp {
+    async fn get_skill(&self, name: &str) -> Option<crate::engine::skill::Skill> {
+        (name == self.0.name).then(|| self.0.clone())
+    }
+    async fn reload_one(&self, name: &str) -> Option<crate::engine::skill::Skill> {
+        self.get_skill(name).await
+    }
+    async fn list_skills(&self) -> Vec<crate::engine::skill::Skill> {
+        vec![self.0.clone()]
+    }
+    async fn match_trigger(&self, _: &str) -> Option<(String, String)> {
+        None
+    }
+    async fn list_metadata(&self) -> Vec<(String, String, bool)> {
+        Vec::new()
+    }
+}
+
+/// A turn's place tells whether its app keeps its talk private.
+#[tokio::test]
+async fn a_place_tells_whether_its_talk_is_private() {
+    let text = "---\nname: zz-diary\ndescription: Write\nprivate-talk: true\n---\nBody";
+    let diary = crate::extensions::skills::parse_skill_text(text, crate::engine::skill::SkillSource::Global).unwrap();
+    let skills = OneApp(diary);
+    assert!(TurnPlace::of_request(Some("zz-diary"), None).talk_is_private(&skills).await);
+    assert!(!TurnPlace::home().talk_is_private(&skills).await);
+    assert!(!TurnPlace::of_request(Some("zz-gone"), None).talk_is_private(&skills).await);
+}
