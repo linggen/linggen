@@ -9,8 +9,13 @@
 //! - `2026-11-02T14:30:00Z`, `…+02:00` — exact
 //!
 //! `now` and the zone are arguments, so a day boundary is tested in any zone.
+//!
+//! A time ahead ([`resolve_ahead`], a note's look-again) is read with its own
+//! small set: `+40m`, `+3h`, `+2d`; `HH:MM` (the next time the clock reads
+//! it); `tomorrow HH:MM`; and the dated forms above. A moment already past is
+//! refused, never moved.
 
-use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
 
 /// What the forms above look like, for an error a model can act on.
 pub const FORMS: &str = "an ISO time, a date (YYYY-MM-DD), today, yesterday, now, or -30m / -6h / -3d";
@@ -28,18 +33,67 @@ pub fn resolve<Tz: TimeZone>(text: &str, now: &DateTime<Tz>) -> Result<DateTime<
     found.ok_or_else(|| format!("cannot read '{t}' as a time; use {FORMS}"))
 }
 
+/// The forms a time ahead may take, for an error a model can act on.
+pub const AHEAD_FORMS: &str =
+    "+40m, +3h, +2d, HH:MM (the next time the clock reads it), tomorrow HH:MM, or YYYY-MM-DD HH:MM";
+
+/// The moment ahead `text` names, read at `now` in `now`'s zone. A moment
+/// that is not after `now` is refused.
+pub fn resolve_ahead<Tz: TimeZone>(text: &str, now: &DateTime<Tz>) -> Result<DateTime<Utc>, String> {
+    let t = text.trim();
+    let zone = now.timezone();
+    let found = ahead(t, now)
+        .or_else(|| clock(t, now))
+        .or_else(|| tomorrow_at(t, now))
+        .or_else(|| absolute(t, &zone));
+    let Some(at) = found else {
+        return Err(format!("cannot read '{t}' as a time ahead; use {AHEAD_FORMS}"));
+    };
+    if at <= now.with_timezone(&Utc) {
+        return Err(format!("'{t}' has already passed; give a time ahead ({AHEAD_FORMS})"));
+    }
+    Ok(at)
+}
+
 /// `-6h` and its kin.
 fn offset<Tz: TimeZone>(t: &str, now: &DateTime<Tz>) -> Option<DateTime<Utc>> {
-    let rest = t.strip_prefix('-')?;
+    Some(now.with_timezone(&Utc) - span(t.strip_prefix('-')?)?)
+}
+
+/// `+40m` and its kin.
+fn ahead<Tz: TimeZone>(t: &str, now: &DateTime<Tz>) -> Option<DateTime<Utc>> {
+    Some(now.with_timezone(&Utc) + span(t.strip_prefix('+')?)?)
+}
+
+/// `40m`, `6h`, `3d` (`d` is 24 hours).
+fn span(rest: &str) -> Option<Duration> {
     let unit = rest.chars().last()?;
     let n: i64 = rest[..rest.len() - unit.len_utf8()].parse().ok()?;
-    let span = match unit {
-        'm' => Duration::minutes(n),
-        'h' => Duration::hours(n),
-        'd' => Duration::days(n),
-        _ => return None,
-    };
-    Some(now.with_timezone(&Utc) - span)
+    match unit {
+        'm' => Some(Duration::minutes(n)),
+        'h' => Some(Duration::hours(n)),
+        'd' => Some(Duration::days(n)),
+        _ => None,
+    }
+}
+
+/// `HH:MM`: the next time the local clock reads it — today, or tomorrow
+/// when today's has passed.
+fn clock<Tz: TimeZone>(t: &str, now: &DateTime<Tz>) -> Option<DateTime<Utc>> {
+    let time = NaiveTime::parse_from_str(t, "%H:%M").ok()?;
+    let zone = now.timezone();
+    let today = in_zone(&zone, now.date_naive().and_time(time))?;
+    if today > now.with_timezone(&Utc) {
+        return Some(today);
+    }
+    in_zone(&zone, (now.date_naive() + Duration::days(1)).and_time(time))
+}
+
+/// `tomorrow HH:MM`, local.
+fn tomorrow_at<Tz: TimeZone>(t: &str, now: &DateTime<Tz>) -> Option<DateTime<Utc>> {
+    let rest = t.strip_prefix("tomorrow")?.trim();
+    let time = NaiveTime::parse_from_str(rest, "%H:%M").ok()?;
+    in_zone(&now.timezone(), (now.date_naive() + Duration::days(1)).and_time(time))
 }
 
 fn absolute<Tz: TimeZone>(t: &str, zone: &Tz) -> Option<DateTime<Utc>> {
@@ -108,6 +162,40 @@ mod tests {
         assert_eq!(resolve("2026-11-01T14:30", &now).unwrap(), utc("2026-11-01T05:30:00Z"));
         assert_eq!(resolve("2026-11-01 14:30:10", &now).unwrap(), utc("2026-11-01T05:30:10Z"));
         assert_eq!(resolve("2026-11-01T14:30:00Z", &now).unwrap(), utc("2026-11-01T14:30:00Z"));
+    }
+
+    /// 23:50 on 2026-11-02 at UTC+9: ten minutes before the local day turns.
+    fn just_before_midnight() -> DateTime<FixedOffset> {
+        let tz = FixedOffset::east_opt(9 * 3600).unwrap();
+        tz.with_ymd_and_hms(2026, 11, 2, 23, 50, 0).unwrap()
+    }
+
+    #[test]
+    fn a_time_ahead_counts_forward_and_crosses_the_local_midnight() {
+        let now = just_before_midnight();
+        assert_eq!(resolve_ahead("+40m", &now).unwrap(), utc("2026-11-02T15:30:00Z"));
+        assert_eq!(resolve_ahead("+3h", &now).unwrap(), utc("2026-11-02T17:50:00Z"));
+        assert_eq!(resolve_ahead("+2d", &now).unwrap(), utc("2026-11-04T14:50:00Z"));
+        // Ten minutes from now, local: still today.
+        assert_eq!(resolve_ahead("23:59", &now).unwrap(), utc("2026-11-02T14:59:00Z"));
+        // Already passed today: the next time the clock reads it, tomorrow.
+        assert_eq!(resolve_ahead("10:00", &now).unwrap(), utc("2026-11-03T01:00:00Z"));
+        // Tomorrow is the local day after, not the UTC one.
+        assert_eq!(resolve_ahead("tomorrow 00:30", &now).unwrap(), utc("2026-11-02T15:30:00Z"));
+        assert_eq!(resolve_ahead("2026-11-05 09:00", &now).unwrap(), utc("2026-11-05T00:00:00Z"));
+    }
+
+    #[test]
+    fn a_time_ahead_that_has_passed_is_refused_not_moved() {
+        let now = just_before_midnight();
+        for past in ["2026-11-02 23:00", "2026-11-01", "+0m", "2026-11-02T14:00:00Z"] {
+            let err = resolve_ahead(past, &now).unwrap_err();
+            assert!(err.contains("already passed"), "{past}: {err}");
+        }
+        for bad in ["", "soon", "-30m", "40m", "tomorrow", "25:00"] {
+            let err = resolve_ahead(bad, &now).unwrap_err();
+            assert!(err.contains("+40m"), "{bad}: {err}");
+        }
     }
 
     #[test]
