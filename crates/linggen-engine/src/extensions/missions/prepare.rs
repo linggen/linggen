@@ -26,7 +26,11 @@ const STEP: &str = "prepare";
 /// Run `mission`'s step, if it has one, in `cwd`. `Err` is the end the run
 /// gets instead of starting: failed, with the step's exit status and the
 /// last lines of its stderr.
-pub(super) async fn run(mission: &Mission, day: Option<&str>, cwd: &Path) -> Result<(), RunEnd> {
+pub(super) async fn run(
+    mission: &Mission,
+    day: Option<&str>,
+    cwd: &Path,
+) -> Result<(), Box<RunEnd>> {
     if mission.prepare.is_empty() {
         return Ok(());
     }
@@ -52,7 +56,7 @@ pub(super) async fn run(mission: &Mission, day: Option<&str>, cwd: &Path) -> Res
 
 /// The step's arguments with `$DAY` filled in. A step that names `$DAY` on
 /// a run with no day cannot run.
-fn arguments(prepare: &[String], day: Option<&str>) -> Result<Vec<String>, RunEnd> {
+fn arguments(prepare: &[String], day: Option<&str>) -> Result<Vec<String>, Box<RunEnd>> {
     let needs_day = prepare.iter().any(|a| a.contains("$DAY"));
     match day {
         Some(day) => Ok(prepare.iter().map(|a| a.replace("$DAY", day)).collect()),
@@ -63,30 +67,30 @@ fn arguments(prepare: &[String], day: Option<&str>) -> Result<Vec<String>, RunEn
     }
 }
 
-fn exited(code: Option<i32>, stderr: &str) -> RunEnd {
+fn exited(code: Option<i32>, stderr: &str) -> Box<RunEnd> {
     let mut faults = RunFaults::default();
     faults.note_exit(STEP, code, stderr);
     end(faults, "the prepare step failed")
 }
 
-fn failed_to_start(error: &str) -> RunEnd {
+fn failed_to_start(error: &str) -> Box<RunEnd> {
     let mut faults = RunFaults::default();
     faults.note_error(STEP, error);
     end(faults, error)
 }
 
-fn end(faults: RunFaults, error: &str) -> RunEnd {
-    RunEnd {
+fn end(faults: RunFaults, error: &str) -> Box<RunEnd> {
+    Box::new(RunEnd {
         faults,
         ..RunEnd::failed(error.to_string())
-    }
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn args(list: &[&str], day: Option<&str>) -> Result<Vec<String>, RunEnd> {
+    fn args(list: &[&str], day: Option<&str>) -> Result<Vec<String>, Box<RunEnd>> {
         let list: Vec<String> = list.iter().map(|s| s.to_string()).collect();
         arguments(&list, day)
     }

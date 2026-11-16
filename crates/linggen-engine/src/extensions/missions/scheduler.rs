@@ -645,7 +645,7 @@ async fn dispatch_mission_prompt(
     // memory scan's walk of the session logs). A failure ends the run here.
     if let Err(end) = super::prepare::run(mission, day.as_deref(), &root).await {
         note_unprepared(&state, mission, session_id.as_deref(), &end);
-        end_mission_run(&state, mission, &mission_run_id, session_id, end);
+        end_mission_run(&state, mission, &mission_run_id, session_id, *end);
         return;
     }
 
