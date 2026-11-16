@@ -44,7 +44,9 @@ pub(super) async fn run_skill_dispatch(ctx: &ChatRunCtx, engine: &mut crate::eng
     // — without this preload it would re-prompt every turn.
     if let Some(ref sid) = ctx.session_id {
         let sdir = crate::paths::global_sessions_dir().join(sid);
-        engine.session_permissions = crate::engine::permission::SessionPermissions::load(&sdir);
+        let place = engine.turn_place().and_then(|p| p.grants_key()).map(str::to_string);
+        engine.session_permissions =
+            crate::engine::permission::SessionPermissions::load_at(&sdir, place.as_deref());
         if engine.session_dir.is_none() {
             engine.session_dir = Some(sdir);
         }

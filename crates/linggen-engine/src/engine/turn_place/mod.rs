@@ -90,6 +90,13 @@ impl TurnPlace {
         self.skill.as_deref().unwrap_or(HOME_KEY)
     }
 
+    /// The slot this place's grants are kept under in the session's
+    /// `permission.json`: `None` for the session's own place, whose grants
+    /// are the file's top level (as before places).
+    pub fn grants_key(&self) -> Option<&str> {
+        (!self.own).then(|| self.key())
+    }
+
     /// Whether two turns stand in the same app. The bound values are the
     /// session's, so they never tell two places of one session apart.
     pub fn same_app(&self, other: &TurnPlace) -> bool {

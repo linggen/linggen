@@ -137,6 +137,29 @@ impl AgentEngine {
         if let Some(prev) = entered.cwd {
             self.tools.builtins.replace_session_cwd(prev);
         }
+        self.back_to_own_grants();
+    }
+
+    /// The key of the slot the running turn's grants live in, in the
+    /// session's `permission.json`: `None` for the session's own place.
+    pub(crate) fn grants_place(&self) -> Option<String> {
+        self.turn_place()?.grants_key().map(str::to_string)
+    }
+
+    /// Grants held for another place go back to the session's own once its
+    /// turn is over: no grant of one place is left to the next turn.
+    fn back_to_own_grants(&mut self) {
+        if self.session_permissions.place.is_none() {
+            return;
+        }
+        let interactive = self.session_permissions.interactive;
+        let ask_caller = self.session_permissions.ask_caller;
+        self.session_permissions = match self.session_dir.as_deref() {
+            Some(dir) => crate::engine::permission::SessionPermissions::load(dir),
+            None => Default::default(),
+        };
+        self.session_permissions.interactive = interactive;
+        self.session_permissions.ask_caller = ask_caller;
     }
 
     /// The place this engine's turn stands in, while one does.
@@ -166,3 +189,5 @@ impl AgentEngine {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod grants_tests;

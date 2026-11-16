@@ -195,7 +195,8 @@ impl AgentEngine {
     /// on the starting cwd for a new user session.
     fn load_session_permissions(&mut self, sid: &str) {
         let sdir = crate::paths::global_sessions_dir().join(sid);
-        self.session_permissions = permission::SessionPermissions::load(&sdir);
+        self.session_permissions =
+            permission::SessionPermissions::load_at(&sdir, self.grants_place().as_deref());
 
         // Mission and proxy-consumer sessions are non-interactive — they
         // pause/fail instead of prompting. Re-apply after load, since
@@ -233,10 +234,11 @@ impl AgentEngine {
     /// a subagent at any depth — holds in all of them at once. `interactive`
     /// stays this run's own (a policy or a mission may have locked it).
     pub(crate) fn sync_session_grants(&mut self) {
+        let place = self.session_permissions.place.clone();
         if let Some(modes) = self
             .session_dir
             .as_deref()
-            .and_then(permission::SessionPermissions::read_path_modes)
+            .and_then(|dir| permission::SessionPermissions::read_path_modes(dir, place.as_deref()))
         {
             self.session_permissions.path_modes = modes;
         }
@@ -248,6 +250,7 @@ impl AgentEngine {
     pub(crate) fn join_session_permissions(&mut self, sid: &str) {
         let sdir = crate::paths::global_sessions_dir().join(sid);
         self.session_permissions.own_dir = Some(sdir.clone());
+        self.session_permissions.place = self.grants_place();
         self.session_dir = Some(sdir);
         self.sync_session_grants();
     }
