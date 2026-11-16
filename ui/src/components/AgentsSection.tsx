@@ -40,6 +40,29 @@ const ModelOptions: React.FC<{ options: ModelOption[]; current?: string }> = ({ 
   </>
 );
 
+const QUIET_HOURS = /^([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d$/;
+
+/** `HH:MM-HH:MM`, or empty for none — committed on blur when it reads. */
+const QuietHoursInput: React.FC<{ value: string; onCommit: (v: string) => void }> = ({ value, onCommit }) => {
+  const [draft, setDraft] = React.useState(value);
+  React.useEffect(() => setDraft(value), [value]);
+  const commit = () => {
+    const v = draft.replace(/\s+/g, '');
+    if (v === '' || QUIET_HOURS.test(v)) onCommit(v);
+    else setDraft(value);
+  };
+  return (
+    <input
+      className={inputCls}
+      value={draft}
+      placeholder="23:00-07:00"
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => { if (e.key === 'Enter') commit(); }}
+    />
+  );
+};
+
 const AgentCard: React.FC<{ name: string; role: string; children: React.ReactNode }> = ({ name, role, children }) => (
   <div className="rounded-lg border border-slate-100 dark:border-white/5 bg-slate-50/60 dark:bg-white/[0.02] p-4">
     <div className="flex items-baseline gap-2 mb-3">
@@ -118,6 +141,12 @@ export const AgentsSection: React.FC<{
               </Field>
               <Field label="Threshold score" hint="Lowest match a memory needs to reach her. Default 0.8." details="Higher means sharper, fewer memories. Range 0–1.">
                 <NumberInput min={0} max={1} step={0.05} value={her.recall_min_score ?? 0.8} onCommit={(v) => setHer({ recall_min_score: v })} />
+              </Field>
+              <Field label="Unprompted lines" hint="Most lines she says unasked in an hour. Default 6; 0 is none." details="Glances, app moments and her notes count. Replies never do.">
+                <NumberInput integer min={0} max={60} value={her.unprompted_per_hour ?? 6} onCommit={(v) => setHer({ unprompted_per_hour: v })} />
+              </Field>
+              <Field label="Quiet hours" hint="She says nothing unasked then. Local time; empty is none." details="Default 23:00-07:00. A note due then waits until they end.">
+                <QuietHoursInput value={her.quiet_hours ?? '23:00-07:00'} onCommit={(v) => setHer({ quiet_hours: v })} />
               </Field>
             </Grid>
             <p className="mt-3 text-[10px] text-slate-400 dark:text-slate-500">Character animation credits to pixiv Inc.&apos;s VRoid Project</p>
