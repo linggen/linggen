@@ -784,6 +784,19 @@ pub async fn run_data(cli: Cli, base: Option<String>) -> Result<()> {
     run_data_at(cli.cmd, cli.episodic, format, &data_dir, base).await
 }
 
+/// Does a direct write belong in the staging table without `--episodic`?
+/// The same answer the engine gives (`http::memory::resolve_tier`): one add
+/// that names no tier, or names episodic, is staged — unless it is indexed
+/// (long-term) or replaces rows (their tier). A `--stdin` batch carries its
+/// own tiers and stays as it was.
+fn lands_staged(cmd: &Command) -> bool {
+    let Command::Add(a) = cmd else {
+        return false;
+    };
+    let unpinned = matches!(a.tier, None | Some(CliTier::Episodic));
+    unpinned && !a.stdin && !a.indexed && a.replace_ids.is_empty()
+}
+
 /// Verbs the HTTP handlers implement and the direct store path does not
 /// (they own sidecars like `.days.json`).
 fn only_over_http(cmd: &Command) -> bool {
@@ -861,6 +874,7 @@ async fn run_data_at(
         }
     }
 
+    let episodic = episodic || lands_staged(&cmd);
     let store = open_store(data_dir, episodic)
         .await
         .with_context(|| format!("opening store at {}", data_dir.display()))?;
@@ -1442,6 +1456,23 @@ pub fn error_code(err: &anyhow::Error) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// With the engine down an add lands where the engine would put it.
+    #[test]
+    fn a_direct_add_is_staged_as_the_engine_would_stage_it() {
+        let staged = |args: &[&str]| {
+            let argv = ["ling mem"].iter().chain(args.iter());
+            lands_staged(&Cli::parse_from(argv).cmd)
+        };
+        assert!(staged(&["add", "a note"]));
+        assert!(staged(&["add", "a note", "--tier", "episodic"]));
+        assert!(!staged(&["add", "a rule", "--tier", "semantic"]));
+        assert!(!staged(&["add", "who they are", "--tier", "core"]));
+        assert!(!staged(&["add", "a standing rule", "--indexed"]));
+        assert!(!staged(&["add", "a merge", "--replace", "abc"]));
+        assert!(!staged(&["add", "--stdin"]));
+        assert!(!staged(&["list"]));
+    }
 
     #[test]
     fn truncate_respects_char_boundaries() {
