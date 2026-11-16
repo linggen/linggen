@@ -1,7 +1,8 @@
 //! Memory, hosted inside this process.
 //!
 //! The engine opens the memory store itself at start-up (`start`) and serves
-//! memory's HTTP routes on its own port (`routes`). No second process: what
+//! memory's HTTP routes on its own port (`routes`) — the only port: nothing
+//! answers at the old daemon's address. No second process: what
 //! used to be the `ling-mem` daemon is the `ling_mem` library, run here on a
 //! tokio runtime of its own, so a slow query or a store compaction keeps to
 //! memory's threads and cannot stall the engine's (WebRTC, streaming, the UI).
@@ -21,7 +22,6 @@
 //! library directly is a later step.
 
 pub mod caller;
-mod legacy_port;
 mod routes;
 mod standin;
 mod takeover;
@@ -91,12 +91,12 @@ pub async fn start(port: u16) {
     let data_dir = crate::paths::linggen_home().clone();
     let served = open(&data_dir, port).await;
     match &served {
-        Ok(s) => {
+        Ok(_) => {
             tracing::info!(
                 "memory: store open under {} — serving at {PREFIX} and {MCP_PATH}",
                 data_dir.display()
             );
-            keep_old_callers_working(&s.router);
+            standin::install(port);
         }
         Err(why) => tracing::warn!("memory: not serving — {why}"),
     }
@@ -105,16 +105,6 @@ pub async fn start(port: u16) {
         runtime: runtime().handle().clone(),
         served,
     });
-}
-
-/// What callers of the old daemon still use: its address on this machine
-/// (`legacy_port`) and its binary (`standin`).
-fn keep_old_callers_working(router: &axum::Router) {
-    let port = legacy_port::port();
-    if let Some(port) = port {
-        legacy_port::serve(runtime(), router.clone(), port);
-    }
-    standin::install(port.unwrap_or(legacy_port::DEFAULT_PORT));
 }
 
 async fn open(data_dir: &Path, port: u16) -> Result<Served, String> {

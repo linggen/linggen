@@ -12,8 +12,8 @@
 //! - `--version` answers this engine's version, so the plugin's
 //!   `install-bin.sh` (which replaces only an older binary) leaves it alone;
 //! - `status` answers what the old autostart hook reads from a running
-//!   daemon at that version (`state`, `version`, `port`), so the hook neither
-//!   starts nor restarts anything;
+//!   daemon at that version (`state`, `version`, `port` — the engine's own
+//!   port), so the hook neither starts nor restarts anything;
 //! - `serve`, `start`, `stop`, `restart`, `upgrade` do nothing, and say so.
 //!
 //! A rollback to an engine that does not host memory puts the kept binary
@@ -43,14 +43,15 @@ pub fn ling_mem_path() -> Option<PathBuf> {
     canonical_path()
 }
 
-/// Put the stand-in in place, if a real `ling-mem` binary is there. Best
-/// effort: a failure is logged and changes nothing else.
-pub(super) fn install(legacy_port: u16) {
+/// Put the stand-in in place, if a real `ling-mem` binary is there; its
+/// `status` names `port`, the engine's. Best effort: a failure is logged and
+/// changes nothing else.
+pub(super) fn install(port: u16) {
     let Some(path) = canonical_path() else {
         return;
     };
     let engine = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("ling"));
-    match install_at(&path, &engine, super::VERSION, legacy_port) {
+    match install_at(&path, &engine, super::VERSION, port) {
         Ok(Some(what)) => tracing::info!("memory: {what}"),
         Ok(None) => {}
         Err(e) => tracing::warn!("memory: the ling-mem stand-in was not written: {e}"),
@@ -118,7 +119,7 @@ fn install_at(
     path: &Path,
     engine: &Path,
     version: &str,
-    legacy_port: u16,
+    port: u16,
 ) -> std::io::Result<Option<String>> {
     match inspect(path)? {
         Found::Other => Ok(None),
@@ -129,7 +130,7 @@ fn install_at(
             if let Some(dir) = path.parent() {
                 std::fs::create_dir_all(dir)?;
             }
-            write_standin(path, engine, version, legacy_port)?;
+            write_standin(path, engine, version, port)?;
             Ok(Some(format!(
                 "ling-mem stand-in written at {} (no old binary was there)",
                 path.display()
@@ -137,7 +138,7 @@ fn install_at(
         }
         Found::StandIn { version: v } if v == version => Ok(None),
         Found::StandIn { .. } => {
-            write_standin(path, engine, version, legacy_port)?;
+            write_standin(path, engine, version, port)?;
             Ok(Some(format!(
                 "ling-mem stand-in at {} updated",
                 path.display()
@@ -145,7 +146,7 @@ fn install_at(
         }
         Found::Binary => {
             let prev = keep_aside(path)?;
-            write_standin(path, engine, version, legacy_port)?;
+            write_standin(path, engine, version, port)?;
             Ok(Some(format!(
                 "ling-mem at {} is now a stand-in for `ling mem`; the old binary is {}",
                 path.display(),
@@ -270,12 +271,12 @@ fn write_standin(
     path: &Path,
     engine: &Path,
     version: &str,
-    legacy_port: u16,
+    port: u16,
 ) -> std::io::Result<()> {
     let tmp = path.with_file_name(format!(".ling-mem.standin.{}", std::process::id()));
     {
         let mut f = std::fs::File::create(&tmp)?;
-        f.write_all(script(engine, version, legacy_port).as_bytes())?;
+        f.write_all(script(engine, version, port).as_bytes())?;
     }
     set_executable(&tmp)?;
     std::fs::rename(&tmp, path)
@@ -297,7 +298,7 @@ fn sh_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
-fn script(engine: &Path, version: &str, legacy_port: u16) -> String {
+fn script(engine: &Path, version: &str, port: u16) -> String {
     let engine = sh_quote(&engine.to_string_lossy());
     format!(
         r#"#!/bin/sh
@@ -320,7 +321,7 @@ for a in "$@"; do
 done
 case "$verb" in
   status)
-    printf '{{"state":"running","version":"%s","port":{legacy_port},"host":"linggen"}}\n' "$VERSION"
+    printf '{{"state":"running","version":"%s","port":{port},"host":"linggen"}}\n' "$VERSION"
     exit 0 ;;
   serve|start|stop|restart|upgrade|self-update)
     echo "ling-mem: memory is part of Linggen now; '$verb' does nothing (ling status)" >&2

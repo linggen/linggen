@@ -126,7 +126,7 @@ else
   host_env=(HOME="$HOST_HOME" CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
             PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-$HOME/Library/Caches/ms-playwright}"
             LINGGEN_HOME="$HOST_HOME/.linggen" LINGGEN_DATA_DIR="$HOST_HOME/.linggen"
-            LINGGEN_LEGACY_MEMORY_PORT=0 LINGGEN_NO_BONJOUR=1)
+            LINGGEN_NO_BONJOUR=1)
   for suite in all e2e; do
     say "Host suites: check.sh $suite"
     (cd "$REPO" && env "${host_env[@]}" ./scripts/check.sh "$suite") >"$RUN/host-check-$suite.log" 2>&1
