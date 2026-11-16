@@ -65,7 +65,9 @@ Built-in tools are the kernel API. Skills are userspace.
 agent whose tool list names them has them, and a call from any other is
 refused at dispatch. Notes belong to the agent that wrote them
 (`~/.linggen/notes/<agent>.json`); an agent whose own spec lists the note
-tools keeps them at every table it sits at, whatever the session's set.
+tools keeps them at every table with an explicit tool set (a skill's, or
+what it names for that member). In a session whose set is unrestricted (a
+`*` lead's chat it is addressed in) it has none, and is shown none.
 Yinyue lists them; Ling (`*`) has none. Two tools, not one with an op:
 their params differ (app-action-spec § one tool per verb). Reading needs
 no tool — the open notes ride beside each turn (session-spec § Beside the

@@ -50,14 +50,19 @@ fn her_notes(w: &World) -> Vec<Value> {
 async fn she_writes_the_note(w: &World) {
     let mark = w.mark();
     w.api
-        .post("/api/yinyue/chat", json!({"text": "Keep the parcel in mind."}))
+        .post(
+            "/api/yinyue/chat",
+            json!({"text": "Keep the parcel in mind."}),
+        )
         .await;
     w.wait_agent(Agent::Yinyue, mark).await;
     let notes = her_notes(w);
     assert_eq!(notes.len(), 1, "{notes:?}");
     assert_eq!(notes[0]["id"], "n1");
     assert_eq!(notes[0]["text"], "the parcel arrives tomorrow");
-    let at = notes[0]["look_again_at"].as_u64().expect("a look-again time");
+    let at = notes[0]["look_again_at"]
+        .as_u64()
+        .expect("a look-again time");
     let ahead = at.saturating_sub(now());
     assert!((2280..=2400).contains(&ahead), "+40m is {ahead}s ahead");
 }
@@ -75,7 +80,11 @@ fn the_clock_moves(w: &World) {
 fn assert_woken_with_the_note(call: &Call) {
     let thread = call.thread();
     // The turn's own words, the last user row (its world block follows it).
-    let (_, kickoff) = thread.iter().rev().find(|(role, _)| role == "user").expect("a kickoff");
+    let (_, kickoff) = thread
+        .iter()
+        .rev()
+        .find(|(role, _)| role == "user")
+        .expect("a kickoff");
     assert!(kickoff.contains("look again at your note n1"), "{kickoff}");
     assert!(kickoff.contains("the parcel arrives tomorrow"), "{kickoff}");
     let notes = thread
@@ -187,8 +196,15 @@ async fn the_hourly_ceiling_holds_the_wake_once_and_lets_it_go_after() {
     assert_eq!(records[0]["by"], "yinyue");
     assert_eq!(records[0]["object"], "a look-again on n1 (hourly ceiling)");
     assert_eq!(records[0]["detail"]["source"], "note");
-    assert_eq!(w.model.calls_of(Agent::Yinyue).len(), 2, "she was not woken");
-    assert!(her_notes(&w)[0]["look_again_at"].is_u64(), "held, not used up");
+    assert_eq!(
+        w.model.calls_of(Agent::Yinyue).len(),
+        2,
+        "she was not woken"
+    );
+    assert!(
+        her_notes(&w)[0]["look_again_at"].is_u64(),
+        "held, not used up"
+    );
 
     // The ceiling lifted: the held wake comes.
     let mark = w.mark();
@@ -196,5 +212,53 @@ async fn the_hourly_ceiling_holds_the_wake_once_and_lets_it_go_after() {
     w.wait_agent(Agent::Yinyue, mark).await;
     assert_woken_with_the_note(w.model.calls_of(Agent::Yinyue).last().unwrap());
     assert_open_without_a_time(&w);
+    w.assert_all_scripted();
+}
+
+/// At an app's table her notes follow her: shown, and hers to finish there,
+/// whatever tools the skill names for her (the dice table names one).
+#[tokio::test]
+async fn at_an_apps_table_her_notes_are_in_front_of_her_and_hers_to_finish() {
+    let w = World::start(Setup::default().script(
+        Agent::Yinyue,
+        vec![
+            tool("note_write", json!({"text": "the parcel arrives tomorrow"})),
+            text("Noted."),
+            tool("note_done", json!({"id": "n1"})),
+            text("Clouds over the harbor."),
+        ],
+    ))
+    .await;
+    let mark = w.mark();
+    w.api
+        .post(
+            "/api/yinyue/chat",
+            json!({"text": "Keep the parcel in mind."}),
+        )
+        .await;
+    w.wait_agent(Agent::Yinyue, mark).await;
+    assert_eq!(her_notes(&w).len(), 1);
+
+    let sid = w
+        .api
+        .create_session(json!({"title": "table", "skill": "dice"}))
+        .await;
+    let mark = w.mark();
+    let moment = json!({"app": "dice", "text": "The player looks at the sky.", "asked": true, "session": sid});
+    assert_eq!(w.api.post("/api/yinyue/event", moment).await, json!("ok"));
+    w.finish_run(&sid, Agent::Yinyue, mark).await;
+
+    let calls = w.model.calls_of(Agent::Yinyue);
+    let at_table = &calls[2];
+    let thread = at_table.thread();
+    assert!(
+        thread.iter().any(
+            |(_, t)| t.starts_with("# Your notes") && t.contains("the parcel arrives tomorrow")
+        ),
+        "{thread:?}"
+    );
+    let offered = at_table.tool_names();
+    assert!(offered.iter().any(|t| t == "note_done"), "{offered:?}");
+    assert!(her_notes(&w).is_empty(), "finished at the table");
     w.assert_all_scripted();
 }

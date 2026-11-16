@@ -276,8 +276,16 @@ fn apply_skill_tool_scope(engine: &mut AgentEngine, skill: &Skill) {
         }
         // A person can ask anyone to mute Yinyue — in an app's chat too.
         set.insert("Voice".to_string());
+        add_own_notes(engine, set);
     }
     engine.cfg.skill_allowed_tools = scope;
+}
+
+/// An agent's own notes follow it into a skill's scope when its own spec
+/// lists them (`crate::notes`): they are its, not the skill's.
+fn add_own_notes(engine: &AgentEngine, set: &mut std::collections::HashSet<String>) {
+    let own: Vec<String> = engine.own_note_tools().map(String::from).collect();
+    set.extend(own);
 }
 
 /// A member who isn't the skill's lead, and for whom the skill names tools
@@ -295,6 +303,7 @@ fn apply_member_tool_scope(engine: &mut AgentEngine, skill: &Skill) {
     };
     let mut scope = crate::engine::tool_scope::compute_tool_scope(named).unwrap_or_default();
     scope.insert("Voice".to_string());
+    add_own_notes(engine, &mut scope);
     engine.cfg.skill_allowed_tools = Some(scope);
 }
 
