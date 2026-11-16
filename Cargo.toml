@@ -78,8 +78,7 @@ str0m = "0.21"
 open = "5.3.3"
 urlencoding = "2.1.3"
 flate2 = "1.1.9"
-# Memory, hosted in this process (`memory_host`). Its own telemetry stays
-# off: the engine's is the one that counts.
+# Memory, hosted in this process (`memory_host`).
 linggen-memory = { path = "crates/linggen-memory", default-features = false }
 # Everything but the server, the CLI and `main` (doc/architecture-review.md
 # § 2). Its telemetry follows this package's `telemetry` feature.
