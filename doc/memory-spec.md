@@ -30,12 +30,11 @@ never writes to project files.
   protocol in the system prompt.
 - **Memory agent + mission** — the offline judgment brain; runs the
   nightly **dream** mission (remember → forget → condense). The memory
-  app's buttons trigger the same mission.
-- **linggen plugin/skill** (formerly shared-memory) — the same store in
-  Claude Code, Codex, and OpenClaw: recall each turn, capture protocol,
-  runbooks, and the memory app UI (calendar, dashboard, row browser).
-  Third-party hosts reach the store through the daemon's `/mcp`
-  `memory_*` group (`mcp-spec.md`).
+  Settings → Memory in Linggen's UI shows rows, days and the review queue.
+- **linggen plugin** — the same store in Claude Code, Codex, and OpenClaw:
+  recall each turn, capture protocol, runbooks, and `/linggen:scan` for
+  backfilling days. Third-party hosts reach the store through the engine's
+  `/mcp/memory` endpoint (`mcp-spec.md`).
 
 ## Tiers
 
@@ -139,8 +138,7 @@ never writes to project files.
   what the dream could not settle, with the user present: gathers evidence at solve time (git history,
   files), fixes what the evidence proves, asks the user one item at a
   time for the rest, closes each item. Surfaces: `/linggen solve` on
-  plugin hosts, the memory app chat on Linggen; the ling-mem console
-  shows the queue read-only. Dream reports and the recall footer
+  plugin hosts and Linggen's chat; Settings → Memory shows the queue. Dream reports and the recall footer
   carry the open count.
 - **Across machines** — one memory shared by every machine the user
   works on; see the section below.

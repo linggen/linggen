@@ -86,7 +86,7 @@ mission executor. ling-mem can serve neither.
 
 Three channels, one product name: **linggen**.
 
-- **Claude Code plugin `linggen`** (replaces `shared-memory`):
+- **Claude Code plugin `linggen`**:
   - `.mcp.json` → the daemon endpoint (`http://127.0.0.1:9527/mcp`).
   - Hooks: the same per-turn recall hook (`recall.sh`, CLI-based — no MCP
     round-trip in a shell hook) + session-start core load.
@@ -117,18 +117,16 @@ Three channels, one product name: **linggen**.
 No real user base yet (2026-07-10), so retirement is a clean cut, not a
 deprecation window:
 
-- **`shared-memory` CC plugin — removed outright** from the marketplace; the
-  plugin directory is replaced by `linggen`. The one live install (the dev
-  machine) migrates as part of Phase 2 verification — never run both, two
-  plugins means a doubled recall hook.
+- Memory rows, days and the review queue are in Settings → Memory in Linggen's
+  UI; run `/linggen:scan` from the Claude Code / Codex plugin.
 - **ClawHub `ling-mem` skill** — renamed to `linggen` (slug redirect). Done.
 - **ling-mem's own MCP server** — ~~code stays (harmless) but is no longer
   promoted anywhere~~. **Reversed 2026-07-29**: it is the promoted memory
   endpoint. Everything of Linggen's is on it — the engine's agents via its MCP
   client, a second machine on the LAN directly — and the plugin pointing
   outside agents there is what closes the window above.
-- Site installers: `install-shared-memory.sh` is a guidance stub pointing at
-  the plugin channels; `install.sh` is the base for every channel. Done.
+- Site installers: the retired memory installer points at the plugin channels;
+  `install.sh` is the base for every channel. Done.
 
 ## agent_* group
 
@@ -188,7 +186,7 @@ deprecation window:
 ## Phasing
 
 1. **memory_* on `/mcp`** — proxy + instructions + autostart path (engine). Done.
-2. **`linggen` plugin** — new plugin, shared-memory retirement notes. Done.
+2. **`linggen` plugin** — new plugin. Done.
 3. **ClawHub `linggen` skill** + listing updates. Done.
 4. **Site/docs** — install pages route to the one endpoint. Done.
 5. Later: `agent_*`.

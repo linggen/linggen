@@ -28,7 +28,7 @@ const isApp = (s: SkillInfoFull): s is AppSkill => !!s.app;
 
 /** Curated menu order — products first; anything else falls to the end
  *  alphabetically (by label) so new apps still appear deterministically. */
-const PREFERRED_ORDER = ['cfo', 'apple-shifu', 'mac-shifu', 'sys-doctor', 'pulse', 'dj', 'shared-memory'];
+const PREFERRED_ORDER = ['cfo', 'apple-shifu', 'mac-shifu', 'sys-doctor', 'pulse', 'dj'];
 const orderIndex = (name: string) => {
   const i = PREFERRED_ORDER.indexOf(name);
   return i === -1 ? Number.MAX_SAFE_INTEGER : i;

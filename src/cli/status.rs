@@ -89,7 +89,7 @@ pub async fn run(config: &Config, config_path: Option<&Path>) -> Result<()> {
 /// Memory health. Memory is served by the engine itself (`memory_host`): the
 /// store's lock names the process holding it and the port it serves on, and
 /// that port's `/mem/api/health` says whether it answers. Then the on-disk
-/// store and the canonical skill bundle — each independent.
+/// store and its backup — each independent.
 async fn check_ling_mem() {
     println!("  Memory:");
 
@@ -137,21 +137,6 @@ async fn check_ling_mem() {
         );
     }
 
-    // Canonical shared-memory skill bundle. Per-host SKILL.md stubs
-    // point back here for references/scripts/hooks; absence means the
-    // skill hasn't been installed (or was installed pre-canonical-layout).
-    let skill = crate::paths::linggen_home().join("skills/shared-memory");
-    if skill.join("SKILL.md").is_file() {
-        ok("Skill     ", &format!("{}", skill.display()));
-    } else {
-        info(
-            "Skill     ",
-            &format!(
-                "{} (run install-shared-memory.sh to install)",
-                skill.display()
-            ),
-        );
-    }
 }
 
 async fn fetch_ling_mem_health(url: &str) -> Option<String> {

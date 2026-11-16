@@ -24,7 +24,6 @@ flowchart LR
     cc["Claude Code<br/>linggen plugin"]
     codex["Codex<br/>linggen plugin"]
     hooks["plugin hooks<br/>autostart.sh · recall.sh"]
-    skill["ClawHub skill<br/>shared-memory"]
   end
 
   subgraph mac["The user's Mac"]
@@ -33,7 +32,7 @@ flowchart LR
     cli["ling-mem CLI"]
     shell["Linggen.app shell"]
     webui["Web UI<br/>127.0.0.1:9527"]
-    dash["Data Browser<br/>127.0.0.1:9528/"]
+    dash["Settings → Memory<br/>rows · days · review queue"]
     ext["Chrome +<br/>linggen-browser"]
     ollama["Ollama<br/>127.0.0.1:11434"]
   end
@@ -55,7 +54,6 @@ flowchart LR
   cc -->|"mcp — memory_*"| lingmem
   codex -->|"mcp — memory_*"| lingmem
   hooks -->|"curl · mcp tools/call"| lingmem
-  skill -->|"Bash ling-mem verb"| cli
   cli -->|http| lingmem
 
   ling -->|"mcp client — tools + auto-recall"| lingmem
@@ -65,7 +63,7 @@ flowchart LR
   shell -->|http · health keepalive| ling
   shell -->|webrtc · whip| ling
   webui -->|webrtc · whip| ling
-  dash -->|http| lingmem
+  dash -->|webrtc| ling
   ext -->|websocket · /api/bridge/socket| ling
 
   mobile -->|"webrtc · LAN whip"| ling
@@ -158,8 +156,7 @@ cannot point it elsewhere.
 | `ling-mem` CLI | HTTP REST | port read from `daemon.json`. *2.3:* `ling mem <verb>` — the engine's port from the lock file, `/mem/api/memory/<verb>`; engine down, the store directly under the lock |
 | Plugin hooks | HTTP MCP, JSON-RPC | `/mcp` — `memory_search` per turn, `memory_list` for core, `memory_days` for upkeep. *2.3:* `/mcp/memory` on the engine's port; 9528 no longer answers |
 | Plugin hooks (local only) | spawn the CLI | `ling-mem status`, `start` — daemon lifecycle, skipped on a remote host. *2.3:* `~/.local/bin/ling-mem` is the engine's stand-in: `status` says running at the engine's version, `start`/`restart` do nothing |
-| ClawHub `shared-memory` skill | spawn the CLI | `Bash ling-mem <verb>` — every op, no exception |
-| Browser | HTTP | `/` — the Data Browser UI |
+| Linggen UI | WebRTC | Settings → Memory — rows, days and review queue; scan via `/linggen:scan` in the Claude Code / Codex plugin |
 
 ### Four front doors to one store
 

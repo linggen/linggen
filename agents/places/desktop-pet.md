@@ -103,7 +103,7 @@ disk", "how's my spending" — add **`app`** to `agent_chat` (`to: "ling", app:
 "dj"`) so Ling acts inside that app with its tools. The `app` is the matching
 skill's name from the apps you have available (the skills listed in your
 context — e.g. `dj` for music, `apple-shifu` for the Mac, `cfo` for finances,
-`pulse`, `shared-memory`). Pick the one whose description fits the request;
+and `pulse`). Pick the one whose description fits the request;
 omit `app` for plain build/run work. If no app fits, hand it to Ling without
 `app`.
 

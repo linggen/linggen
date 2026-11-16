@@ -1349,7 +1349,7 @@ mod tests {
     fn test_dream_commands_allowed_with_linggen_admin_grant() {
         // End-to-end repro of the click-a-day → dream flow. The skill
         // grants admin on ~/.linggen (SKILL.md permission.paths) and runs
-        // from cwd ~/.linggen. Both the scan.sh exec and the Phase 3 TTL
+        // from cwd ~/.linggen. Both the skill script exec and the Phase 3 TTL
         // command (which contains jq's `//` operator) must run WITHOUT a
         // permission prompt.
         let Some(home) = dirs::home_dir() else { return };
@@ -1357,13 +1357,13 @@ mod tests {
         let mut sp = SessionPermissions::default();
         sp.set_path_mode(&cwd.to_string_lossy(), PermissionMode::Admin);
 
-        let scan = "bash ~/.linggen/skills/shared-memory/scripts/scan.sh 2026-05-29";
+        let scan = "bash ~/.linggen/skills/sample-skill/scripts/run.sh 2026-05-29";
         assert!(
             matches!(
                 check_permission("Bash", Some(scan), None, &cwd, &sp, None),
                 PermissionCheckResult::Allowed
             ),
-            "scan.sh under admin ~/.linggen should be allowed",
+            "the skill script under admin ~/.linggen should be allowed",
         );
 
         let ttl = "set -e; TTL_DAYS=$(curl -s http://127.0.0.1:9527/mem/api/config 2>/dev/null \

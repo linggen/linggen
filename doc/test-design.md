@@ -162,7 +162,7 @@ tunnels, so nothing on the host listens beyond loopback.
 
 **First install** (fresh VM, no `~/.linggen`):
 1. The real public paths: `install.sh`, `install-app.sh`,
-   `install-shared-memory.sh` (retired: says so, exits 0), the Claude Code and
+   the retired memory installer (says so, exits 0), the Claude Code and
    Codex plugin installs — pointed at the draft assets. A clean Mac's git is
    the Command Line Tools stub, so the plugins go through
    `install-plugin.sh`: it must see no git and install linggen-memory's

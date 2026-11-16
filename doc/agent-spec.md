@@ -125,7 +125,8 @@ Ling is the universal agent. Specialized behavior comes from skills:
 - **Game-table skill** — bound to game sessions, zero tools, pure conversation
 - **Linggen-guide skill** — documentation lookup and Q&A
 - **Apple Shifu skill** — system health analyst with web dashboard
-- **Shared-memory skill** — the memory store's CLI and Data Browser (the tools themselves come from ling-mem's MCP server, not the skill)
+
+Memory rows, days and the review queue are in Settings → Memory in Linggen's UI; run scans from the Claude Code / Codex plugin.
 
 Missions are a sibling subsystem to skills (cron-scheduled), not a skill type. See `mission-spec.md`.
 

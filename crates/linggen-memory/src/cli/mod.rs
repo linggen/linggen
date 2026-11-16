@@ -1252,9 +1252,8 @@ async fn cmd_forget(store: &MemoryStore, args: ForgetArgs, format: OutputFormat)
 //     since the 2026-05-20 core-tier cutover (rows live in LanceDB
 //     with `tier=core`). The data directory is auto-created on the
 //     first write, so a stand-alone seed step is dead weight.
-// Session-scanning utilities (`collect` / `extract`) live as bash
-// scripts under `skills/shared-memory/scripts/`; the daemon stays
-// focused on the memory store.
+// Session-scanning utilities (`collect` / `extract`) live in the host
+// plugin's scan scripts; the daemon stays focused on the memory store.
 
 // ── I/O helpers ─────────────────────────────────────────────────────────────
 
