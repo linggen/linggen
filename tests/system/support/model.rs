@@ -20,6 +20,8 @@ const CATCH_ALL: &str = "unscripted";
 pub enum Agent {
     Ling,
     Yinyue,
+    /// The memory keeper (agents/memory.md), which runs the memory missions.
+    Memory,
 }
 
 impl Agent {
@@ -27,6 +29,7 @@ impl Agent {
         match self {
             Agent::Ling => "ling",
             Agent::Yinyue => "yinyue",
+            Agent::Memory => "memory",
         }
     }
 
@@ -36,6 +39,7 @@ impl Agent {
         match self {
             Agent::Ling => "You are Ling — Linggen itself",
             Agent::Yinyue => "You are Yinyue — 银月",
+            Agent::Memory => "You are the memory keeper.",
         }
     }
 }

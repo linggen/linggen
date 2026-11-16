@@ -15,6 +15,7 @@ mod claude_host;
 mod claude_subagents;
 mod drawing;
 mod fixtures;
+mod memory_ops;
 mod met;
 mod missions;
 mod pictures;
