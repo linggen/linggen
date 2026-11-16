@@ -142,7 +142,7 @@ Three groups of fields. Standard fields work across tools; the others are extens
 | `quests` | Which phone facts stamp which of the skill's quests, and the skill's own writer that stamps them (see "Quests") |
 | `place` | Where the skill's sessions stand for each agent, and whether an agent is there yet (see "Place") |
 | `senses` | Real-world facts the engine reads for the skill, e.g. `[weather]` (see "Senses") |
-| `activity-verbs` | The verbs it may write to the activity log under its own name, e.g. `[archive, import]`; `POST /api/activity` refuses others. Not the engine's own (`pair`, `connect`, `disconnect`, `restart`, `used`) — see `perception-spec.md` §3 |
+| `activity-verbs` | The verbs it may write to the activity log under its own name, e.g. `[archive, import]`; `POST /api/activity` refuses others. Not the engine's own (`pair`, `connect`, `disconnect`, `restart`, `used`, `hold`) — see `perception-spec.md` §3 |
 | `world-line` | The small file in its folder, and the fields of it, that make the app's one line in the world block (see "World line") |
 | `session-params` | Values a session of the skill may be bound to when it is made, e.g. a save (see "Session parameters") |
 | `requires` | External dependencies to resolve at install |

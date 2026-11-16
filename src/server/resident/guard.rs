@@ -26,7 +26,7 @@ pub(crate) enum Held {
 }
 
 impl Held {
-    fn reason(&self) -> &'static str {
+    pub(crate) fn reason(&self) -> &'static str {
         match self {
             Held::Quiet { .. } => "quiet-hours",
             Held::Ceiling { .. } => "hourly-ceiling",

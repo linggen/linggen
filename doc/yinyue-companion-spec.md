@@ -268,7 +268,9 @@ worth a sentence.
   which to finish — nothing is dropped. The tools are listed-only: Yinyue's
   spec lists them; Ling (`*`) has none until his spec names them.
 - **In front of her** at every turn of hers — her thread, a moment, a glance,
-  a woken note, an app's table — as a per-request block beside the turn
+  a woken note, an app's table (whatever tools the skill names for her) —
+  but not in a person's chat she is addressed in, whose set is the lead's
+  `*` — as a per-request block beside the turn
   (`session-spec.md` § Beside the turn), never a kept row: her notes are hers,
   and a kept row is read by every member of a table. Within **2400**
   characters; nothing when she has none:
@@ -319,9 +321,11 @@ are checked once more before her voice, for two unprompted turns that ran at
 once. The count is kept in memory: a restart starts the hour afresh.
 
 What was held is one activity record (engine verb `hold`, by `yinyue`):
-`yinyue held a look-again on n1 (quiet hours)`, `… 2 app moments from dice
-(hourly ceiling)`; `detail` says the reason, the source and until when. It
-rings the doorbell like any change — once per held thing, so never a loop.
+`yinyue held a look-again on n1 (quiet hours)` once per held wake, `yinyue
+held app moments from dice (hourly ceiling)` at most once an hour for each
+reason (moments keep coming while it holds); `detail` says the reason, the
+source and until when. It rings the doorbell like any change, so it is
+paced — never a record per tick or per batch.
 
 ## `agent_chat` — general inter-agent messaging
 

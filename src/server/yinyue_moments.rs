@@ -296,19 +296,25 @@ fn held_for(
 }
 
 /// Moments a guardrail held: dropped (they would be stale by the time it
-/// passes), and written once to the activity log.
+/// passes), and written to the activity log at most once an hour for each
+/// reason — moments keep coming while it holds, and every record would ring
+/// the doorbell.
 fn drop_held(moments: &[Moment], held: &super::resident::guard::Held, now: u64) {
-    let n = moments.len();
-    let item = super::resident::guard::Withheld {
-        what: format!(
-            "{n} app moment{} from {}",
-            if n == 1 { "" } else { "s" },
-            app_names(moments)
-        ),
+    super::resident::guard::record_held(&held_moments(moments, held, now), held);
+}
+
+/// What the record of held moments says, and its key: one per reason per
+/// clock hour.
+fn held_moments<'a>(
+    moments: &[Moment],
+    held: &super::resident::guard::Held,
+    now: u64,
+) -> super::resident::guard::Withheld<'a> {
+    super::resident::guard::Withheld {
+        what: format!("app moments from {}", app_names(moments)),
         source: "moment",
-        key: format!("moments-{now}"),
-    };
-    super::resident::guard::record_held(&item, held);
+        key: format!("moments-{}-{}", held.reason(), now / 3600),
+    }
 }
 
 /// Asked moments nobody will answer — the pet is off. The page that asked
@@ -580,6 +586,37 @@ mod tests {
         }];
         assert_eq!(held_for(&asked, Some(quiet)), None);
         assert_eq!(held_for(&asked, Some(full)), None);
+    }
+
+    /// Moments keep coming while quiet hours hold them: one record an hour,
+    /// not one a batch.
+    #[test]
+    fn held_moments_are_recorded_once_an_hour_for_each_reason() {
+        use crate::server::resident::guard::{held_record, Held};
+        let quiet = Held::Quiet {
+            until: "07:00".into(),
+        };
+        let full = Held::Ceiling { per_hour: 6 };
+        let hour = 1_790_002_800 / 3600 * 3600; // the start of a clock hour
+        let records = (0..120)
+            .filter(|i| {
+                held_record(
+                    &held_moments(&[m(hour + i * 25, true)], &quiet, hour + i * 25),
+                    &quiet,
+                )
+                .is_some()
+            })
+            .count();
+        assert_eq!(records, 1);
+        let (object, _) =
+            held_record(&held_moments(&[m(hour, false)], &full, hour), &full).unwrap();
+        assert_eq!(object, "app moments from game (hourly ceiling)");
+        let next_hour = hour + 3600;
+        assert!(held_record(
+            &held_moments(&[m(next_hour, true)], &quiet, next_hour),
+            &quiet
+        )
+        .is_some());
     }
 
     #[test]
