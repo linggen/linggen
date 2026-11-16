@@ -8,6 +8,8 @@
 #   takeover_writes          a write through the stand-in and one through the engine
 #   takeover_rollback        the previous engine + ling-mem.prev back: every row there
 #   takeover_again           the release again: the old daemon stopped, no second backup
+#   takeover_engine_rollback `ling update --rollback` to the previous release: its memory answers
+#   takeover_engine_forward  `ling update --rollback` again: the engine holds the store, every row there
 #
 # Needs LING (the installed ling), OUT, and the release's bytes at $LING when
 # takeover_rollback is called.
@@ -191,4 +193,37 @@ takeover_again() {
   start_engine 90
   check "takeover (again): the release starts over the old daemon" $? "no health — $(tail -3 "$LG/ling.log" 2>/dev/null)"
   takeover_after again "$TK_BACKUPS_AFTER"
+}
+
+# `ling update --rollback` ran and the previous engine was restarted. An
+# engine without memory starts it as `ling-mem start`, so the rollback must
+# have put ling-mem.prev back over the stand-in: the old daemon answers on
+# the legacy port and reads every row, including those written after the
+# upgrade. An engine that hosts memory serves the same port itself.
+takeover_engine_rollback() { # prev-engine-version prev-engine-hosts-memory(true|false)
+  local p="ling update --rollback" v
+  mem_health 90
+  check "$p: memory answers on $LP" $? "nothing answers on $LP — v$1 starts memory as 'ling-mem start'; $(tail -2 "$OUT/ling-rollback.log" 2>/dev/null)" "v$(mem_version)"
+  if [ "$2" = false ]; then
+    v="$(mem_version)"
+    ! is_standin "$STANDIN" && [ ! -e "$STANDIN.prev" ] && [ -n "$(ling_mem_procs)" ] && [ "$v" = "$(ver_of "$STANDIN")" ]
+    check "$p: the old ling-mem is back and serves $LP" $? "stand-in=$(is_standin "$STANDIN" && echo yes || echo no), ling-mem.prev=$([ -e "$STANDIN.prev" ] && echo present || echo gone), daemons: $(ling_mem_procs), 9528 v$v" "ling-mem v$v: $(grep -m1 'ling-mem' "$OUT/ling-rollback.log")"
+  fi
+  tk_find_all "$OLD_MEM" "$OUT/takeover-ids-after.txt"
+  check "$p: the rows written after the upgrade are there on $LP" $? "missing:$TK_MISSING" "$TK_FOUND ids"
+  tk_find_all "$OLD_MEM" "$TK_ALL"
+  check "$p: every older row is there too" $? "missing:$TK_MISSING" "$TK_FOUND ids"
+}
+
+# Rolled forward again: the engine that hosts memory stopped the old daemon,
+# took the store over and put the stand-in back.
+takeover_engine_forward() {
+  local p="ling update --rollback again" left
+  engine_mem_health 60
+  check "$p: memory answers through the engine" $? "no ok from $ENGINE_MEM/api/health — $(tail -2 "$LG/ling.log" 2>/dev/null)"
+  left="$(ling_mem_procs)"
+  [ -z "$left" ] && is_standin "$STANDIN"
+  check "$p: the old daemon is gone and ~/.local/bin/ling-mem is the stand-in" $? "ling-mem processes: ${left:-none}; stand-in=$(is_standin "$STANDIN" && echo yes || echo no)"
+  tk_find_all "$ENGINE_MEM" "$TK_ALL"
+  check "$p: every row is found through the engine" $? "missing:$TK_MISSING" "$TK_FOUND ids"
 }

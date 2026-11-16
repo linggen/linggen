@@ -173,7 +173,10 @@ ling update --rollback
   fails. A sha256 mismatch fails before anything
   is touched.
 - `--rollback` swaps `ling` and `ling.prev` (run it again to return), and
-  refuses when `ling.prev` is missing or doesn't start.
+  refuses when `ling.prev` is missing or doesn't start. If the engine now in
+  place does not host memory (`ling mem --help` fails) and
+  `~/.local/bin/ling-mem` is the stand-in, `ling-mem.prev` is renamed over it
+  before that engine starts; the same when a restart rolls back.
 - After either swap, an engine running from this `ling` (a `ling --web`
   process at this path) is stopped and started again with its own arguments
   and working directory — no browser — so the swapped-in version serves. If

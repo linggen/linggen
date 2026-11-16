@@ -9,6 +9,11 @@
   (`app.assets`); the ones its folder lacks are fetched in the background by
   hash, checked, kept in `~/.linggen/assets/sha256/`, and served at the same
   `/apps/<skill>/…` address. `GET /api/assets/<skill>` reads what is held.
+- **A rollback brings the old `ling-mem` back.** `ling update --rollback` (and
+  the roll-back of a restart whose engine does not come up) to an engine that
+  does not host memory renames `ling-mem.prev` over the stand-in before that
+  engine starts, so it can start memory as before; rolling forward takes the
+  store over again.
 - **Memory runs inside the engine** (3.0 plan, step 2.1). The memory code
   (`crates/linggen-memory`, from ling-mem 1.13.0) is part of the build; `ling`
   opens the store at start-up and serves memory on its own port —

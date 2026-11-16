@@ -241,8 +241,12 @@ sessions, config, saves, a memory store in the old schema, both plugins):
    aside and puts it there when the update kept none or kept the release's own
    bytes) — and back. With nothing older to return to (the baseline already
    runs the release) the rollback and restart checks are GAPs, not passes.
-   An engine-only rollback from 2.3 leaves memory down (the older engine
-   starts it through `ling-mem`, now the stand-in): a WARN.
+   `ling update --rollback` from 2.3 to an engine that does not host memory
+   puts `ling-mem.prev` back over the stand-in before that engine starts (it
+   starts memory through `ling-mem`): the old daemon answers on 9528 with every
+   row, including those written after the upgrade, and rolling forward takes
+   the store over again (PASS/FAIL). The automatic roll-back of an unhealthy
+   restart does the same.
 5. A green `--draft` gate saves its VM as the next `linggen-prev`, so the
    old-user baseline rolls forward each release; `--local` keeps it unless
    `--save-prev`. `linggen-prev` is built once from the published releases.

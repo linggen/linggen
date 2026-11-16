@@ -249,6 +249,7 @@ if real_prev "ling" "$LING" "$OUT/ling.old"; then
   engine_pid="$(listener_pid 9527)"
   a="$(sha "$LING")"; p="$(sha "$LING.prev")"; pv="$(ver_of "$LING.prev")"; prev_restarts=false
   "$LING.prev" update --help 2>/dev/null | grep -qi 'restart' && prev_restarts=true
+  prev_hosts_memory=false; "$LING.prev" mem --help >/dev/null 2>&1 && prev_hosts_memory=true
   "$LING" update --rollback >"$OUT/ling-rollback.log" 2>&1
   rc=$?
   [ "$rc" = 0 ] && [ "$(sha "$LING")" = "$p" ] && [ "$(sha "$LING.prev")" = "$a" ] && [ "$(ver_of "$LING")" = "$pv" ]
@@ -256,18 +257,17 @@ if real_prev "ling" "$LING" "$OUT/ling.old"; then
   engine_restarted "ling update --rollback: 9527 restarted on ling.prev" "$engine_pid" "$pv" "$OUT/ling-rollback.log"
   engine_pid="$(listener_pid 9527)"
   # An engine from before 2.3.0 starts its memory as `ling-mem start`, and
-  # ~/.local/bin/ling-mem is now the stand-in, which starts nothing: an
-  # engine-only rollback leaves memory down until ling-mem.prev is put back
-  # (the takeover rollback above puts both back).
-  if [ "$ONE_BINARY" = 1 ] && is_standin "$MEM"; then
-    if mem_health 20; then info "ling update --rollback: memory on ling.prev" "9528 answers v$(mem_version)"
-    else warn "ling update --rollback: memory on ling.prev" "nothing answers on 9528 — v$pv starts memory as 'ling-mem start', a no-op in the stand-in; a rollback needs ling-mem.prev back too"; fi
+  # ~/.local/bin/ling-mem is the stand-in, which starts nothing: the rollback
+  # puts ling-mem.prev back before that engine starts.
+  if [ "$ONE_BINARY" = 1 ] && [ "$TK_SEEDED" = 1 ]; then
+    takeover_engine_rollback "$pv" "$prev_hosts_memory"
   fi
   if "$LING" update --help 2>/dev/null | grep -q -- '--rollback'; then
     "$LING" update --rollback >>"$OUT/ling-rollback.log" 2>&1
     [ "$(sha "$LING")" = "$a" ]; check "ling update --rollback again returns" $? "sha ${a:0:12} not back"
     if [ "$ONE_BINARY" = 1 ] && $prev_restarts; then
-      engine_mem_health 60; check "ling update --rollback again: memory answers through the engine" $? "no ok from $ENGINE_MEM/api/health"
+      if [ "$TK_SEEDED" = 1 ]; then takeover_engine_forward
+      else engine_mem_health 60; check "ling update --rollback again: memory answers through the engine" $? "no ok from $ENGINE_MEM/api/health"; fi
     fi
     if $prev_restarts; then
       engine_restarted "ling update --rollback again: 9527 back on the release" "$engine_pid" "$LING_VERSION" "$OUT/ling-rollback.log"

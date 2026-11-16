@@ -124,9 +124,11 @@ session-start`, `~/.local/bin/ling-mem` the stand-in and `ling-mem.prev` the
 old binary, MCP answering at `127.0.0.1:9528/mcp` and `9527/mcp/memory`, a
 write through the stand-in. Then a rollback — the previous engine and
 `ling-mem.prev` put back and started — must find every row, and the release
-again must take over without a second backup. A rollback of the engine alone
-leaves memory down (the old engine starts memory through `ling-mem`, now the
-stand-in): the gate WARNs it; roll back both.
+again must take over without a second backup. `ling update --rollback` to an
+engine that does not host memory puts `ling-mem.prev` back over the stand-in
+before that engine starts (it starts memory through `ling-mem`): the gate
+checks that the old daemon answers on 9528 with every row, including those
+written after the upgrade, and that rolling forward takes the store over again.
 
 ## Signing — every Mac asset
 
