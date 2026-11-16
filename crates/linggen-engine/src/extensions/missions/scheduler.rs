@@ -1,7 +1,7 @@
 use super::run_if::{self, Trigger};
 use crate::engine::events::{AgentStatusKind, NotificationPayload, ServerEvent};
 use crate::engine::mission::record::{Mission, MissionRunEntry, SkipKind};
-use crate::provider::models::RunUsage;
+use super::outcome::RunEnd;
 use crate::util::LockExt;
 use chrono::Local;
 use std::collections::HashMap;
@@ -633,7 +633,7 @@ async fn dispatch_mission_prompt(
     // function — a hang, crash, or daemon restart must leave a visible
     // row (healed to `interrupted` on the next start), never an
     // invisible zombie (2026-07-10 dream hang left no record at all).
-    record_running(&state, mission, &mission_run_id, session_id.as_deref());
+    record_running(&state, mission, &mission_run_id, session_id.as_deref(), attended);
 
     // Memory-agent runs end in the condense stage, whose replace_ids
     // merges retire long-term rows with no undo — snapshot the store
@@ -651,7 +651,7 @@ async fn dispatch_mission_prompt(
         Ok(a) => a,
         Err(e) => {
             warn!("Mission scheduler: failed to get mission agent: {}", e);
-            finalize_mission_run(&state, mission, &mission_run_id, "failed", None);
+            finalize_mission_run(&state, mission, &mission_run_id, RunEnd::failed(e.to_string()));
             return;
         }
     };
@@ -904,10 +904,13 @@ async fn dispatch_mission_prompt(
     });
 
     engine.run_usage = Default::default();
+    engine.run_faults = Default::default();
     let result = engine.run_agent_loop(session_id.as_deref()).await;
     engine.thinking_tx = None;
     engine.set_run_id(None);
     let usage = std::mem::take(&mut engine.run_usage);
+    let faults = std::mem::take(&mut engine.run_faults);
+    let mut error = None;
 
     let status = match result {
         Ok(outcome) => {
@@ -970,11 +973,12 @@ async fn dispatch_mission_prompt(
                 }
             }
             let _ = manager
-                .finish_agent_run(&run_id, run_status, Some(msg))
+                .finish_agent_run(&run_id, run_status, Some(msg.clone()))
                 .await;
             if cancelled {
                 "cancelled"
             } else {
+                error = Some(msg);
                 "failed"
             }
         }
@@ -1001,7 +1005,14 @@ async fn dispatch_mission_prompt(
     manager.update_agent_activity(project_path, agent_id).await;
 
     let usage = (!usage.is_empty()).then_some(usage);
-    finalize_mission_run(&state, mission, &mission_run_id, status, usage);
+    let end = RunEnd {
+        status,
+        usage,
+        faults,
+        error,
+    };
+    let failure_count = end.faults.count;
+    finalize_mission_run(&state, mission, &mission_run_id, end);
 
     // Notify UI that the mission finished.
     let _ = state.events_tx.send(ServerEvent::Notification(
@@ -1009,6 +1020,7 @@ async fn dispatch_mission_prompt(
             mission_id: mission.id.clone(),
             mission_name: mission.name.clone().unwrap_or_else(|| mission.id.clone()),
             status: status.to_string(),
+            failure_count,
             run_id: mission_run_id.clone(),
             session_id: session_id.clone(),
         },
@@ -1066,23 +1078,24 @@ async fn append_run_report(state: &Arc<SchedulerHost>, agent_id: &str, session_i
 }
 
 /// Flip the up-front `running` entry to its terminal status, with what the
-/// run spent. The entry keeps its original `triggered_at` (the actual start
-/// time).
-fn finalize_mission_run(
-    state: &Arc<SchedulerHost>,
-    mission: &Mission,
-    run_id: &str,
-    status: &str,
-    usage: Option<RunUsage>,
-) {
-    if let Err(e) = state
-        .missions
-        .finish_mission_run(&mission.id, run_id, status, usage)
-    {
+/// run spent and what went wrong in it. The entry keeps its original
+/// `triggered_at` (the actual start time). A run that had something go wrong
+/// also leaves one line in the activity log.
+fn finalize_mission_run(state: &Arc<SchedulerHost>, mission: &Mission, run_id: &str, end: RunEnd) {
+    let status = end.status;
+    let mut finished = None;
+    let written = state.missions.update_mission_run(&mission.id, run_id, |e| {
+        end.apply(e);
+        finished = Some(e.clone());
+    });
+    if let Err(e) = written {
         warn!(
             "Mission '{}': failed to finalize run {} as {}: {}",
             mission.id, run_id, status, e
         );
+    }
+    if let Some(entry) = finished {
+        super::outcome::record_fault(mission, &entry);
     }
 }
 
@@ -1125,12 +1138,14 @@ fn record_running(
     mission: &Mission,
     run_id: &str,
     session_id: Option<&str>,
+    attended: bool,
 ) {
     let entry = MissionRunEntry {
         run_id: run_id.to_string(),
         session_id: session_id.map(|s| s.to_string()),
         triggered_at: crate::util::now_ts_secs(),
         status: "running".into(),
+        attended,
         ..Default::default()
     };
     let _ = state.missions.append_mission_run(&mission.id, &entry);

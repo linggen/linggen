@@ -102,6 +102,7 @@ fn past(verb: &str) -> &str {
         "connect" => "connected",
         "disconnect" => "disconnected",
         "restart" => "restarted",
+        "fault" => "recorded a failure in",
         other => other,
     }
 }

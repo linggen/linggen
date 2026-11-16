@@ -21,6 +21,7 @@ mod plan;
 pub mod prompt;
 pub mod render;
 mod render_media;
+pub mod run_faults;
 mod run_scope;
 pub mod session_policy;
 pub mod shown_images;
@@ -979,6 +980,7 @@ impl AgentEngine {
     /// `active_skill` and emit the loop-limit bailout message + context record.
     async fn emit_loop_limit_bailout(&mut self, session_id: Option<&str>) {
         self.active_skill = None;
+        self.run_faults.hit_limit = true;
         let fallback = self
             .prompt_store
             .render_or_fallback(crate::prompts::keys::BAILOUT_LOOP_LIMIT, &[]);

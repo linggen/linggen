@@ -11,6 +11,7 @@
 //! semantics) stay in `extensions::missions`.
 
 use crate::engine::permission::Grants;
+use crate::engine::run_faults::{RunFaults, ToolFailure};
 use serde::{Deserialize, Serialize};
 
 /// The agent that always runs missions. Single canonical id so the
@@ -160,9 +161,44 @@ pub struct MissionRunEntry {
     /// A `run-if` skip's reason: the check's first stdout line.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// The tool calls that ended in failure — the first few by name
+    /// (`run_faults::MAX_KEPT`), each with a capped tail of its error output.
+    /// Rows written before this field have none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub failures: Vec<ToolFailure>,
+    /// How many tool calls ended in failure, the unnamed ones included.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub failure_count: u32,
+    /// The run stopped at its step limit rather than on a final reply.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hit_limit: bool,
+    /// A `failed` run's error, capped (`run_faults::TAIL_MAX_CHARS`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// A person was watching: a manual run started as attended.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub attended: bool,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 impl MissionRunEntry {
+    /// Something went wrong in a run that ran: it failed, a tool call failed,
+    /// or it stopped at its step limit. A cancel is the person's own act and
+    /// an interrupted run died with the daemon — neither is this.
+    pub fn faulted(&self) -> bool {
+        self.status == "failed" || self.failure_count > 0 || self.hit_limit
+    }
+
+    /// Keep what the engine saw go wrong in the run.
+    pub fn set_faults(&mut self, faults: RunFaults) {
+        self.failures = faults.failures;
+        self.failure_count = faults.count;
+        self.hit_limit = faults.hit_limit;
+    }
+
     /// True when this entry handled its schedule slot, so catch-up leaves
     /// the slot alone: a run that started (and wasn't cut off by a dead
     /// daemon), or a `run-if` skip — the check answered for that slot. A

@@ -140,6 +140,9 @@ pub enum NotificationPayload {
         mission_id: String,
         mission_name: String,
         status: String,
+        /// Tool calls in the run that ended in failure (`run_faults`); 0 for
+        /// a clean run. The run's record holds which.
+        failure_count: u32,
         run_id: String,
         session_id: Option<String>,
     },

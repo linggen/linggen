@@ -1,11 +1,13 @@
 pub mod cron;
 pub mod draft;
 pub mod enter;
+pub mod outcome;
 pub mod parser;
 mod report;
 mod run_if;
 pub mod scheduler;
 mod skill_missions;
+pub mod streak;
 
 use crate::util::LockExt;
 use anyhow::{bail, Result};
@@ -492,10 +494,7 @@ impl MissionLoader {
     }
 
     /// Rewrite the run entry matching `run_id` with its status and, when
-    /// given, what the run spent — keeping file order and unknown lines
-    /// intact. Missing file or run_id is a no-op — finalizing a run whose
-    /// record was healed or removed in the meantime must not error the
-    /// dispatch path.
+    /// given, what the run spent.
     pub fn finish_mission_run(
         &self,
         mission_id: &str,
@@ -503,28 +502,45 @@ impl MissionLoader {
         status: &str,
         usage: Option<RunUsage>,
     ) -> Result<()> {
+        self.update_mission_run(mission_id, run_id, |e| {
+            e.status = status.to_string();
+            if usage.is_some() {
+                e.usage = usage;
+            }
+        })
+    }
+
+    /// Rewrite the run entry matching `run_id` through `change` — keeping
+    /// file order and unknown lines intact, and the file untouched when
+    /// nothing changed. Missing file or run_id is a no-op — finalizing a run
+    /// whose record was healed or removed in the meantime must not error the
+    /// dispatch path.
+    pub fn update_mission_run(
+        &self,
+        mission_id: &str,
+        run_id: &str,
+        change: impl FnOnce(&mut MissionRunEntry),
+    ) -> Result<()> {
         let path = self.runs_path(mission_id);
         if !path.exists() {
             return Ok(());
         }
         let content = fs::read_to_string(&path)?;
         let mut out = String::new();
+        let mut change = Some(change);
         let mut changed = false;
         for line in content.lines() {
             if line.trim().is_empty() {
                 continue;
             }
             match serde_json::from_str::<MissionRunEntry>(line) {
-                Ok(mut e) if e.run_id == run_id => {
-                    if e.status != status {
-                        e.status = status.to_string();
-                        changed = true;
+                Ok(mut e) if e.run_id == run_id && change.is_some() => {
+                    if let Some(apply) = change.take() {
+                        apply(&mut e);
                     }
-                    if usage.is_some() && e.usage != usage {
-                        e.usage = usage.clone();
-                        changed = true;
-                    }
-                    out.push_str(&serde_json::to_string(&e)?);
+                    let rewritten = serde_json::to_string(&e)?;
+                    changed |= rewritten != line;
+                    out.push_str(&rewritten);
                     out.push('\n');
                 }
                 _ => {
@@ -799,6 +815,56 @@ mod tests {
         assert_eq!(runs[0].run_id, "run-2");
         assert_eq!(runs[1].run_id, "run-1");
         assert!(runs[0].skipped);
+    }
+
+    #[test]
+    fn a_run_with_a_failed_tool_keeps_it_and_old_lines_still_read() {
+        use crate::engine::run_faults::RunFaults;
+        let (store, _dir) = temp_store();
+        let m = store
+            .create_mission(draft_min("Test", "0 * * * *", "Test"))
+            .unwrap();
+        // A line from before failures were kept, then a run of today.
+        let old = r#"{"run_id":"run-0","triggered_at":900,"status":"completed","skipped":false}"#;
+        std::fs::create_dir_all(store.state_dir(&m.id)).unwrap();
+        std::fs::write(store.runs_path(&m.id), format!("{old}\n")).unwrap();
+        let running = MissionRunEntry {
+            run_id: "run-1".into(),
+            triggered_at: 1000,
+            status: "running".into(),
+            ..Default::default()
+        };
+        store.append_mission_run(&m.id, &running).unwrap();
+
+        let mut faults = RunFaults::default();
+        let stderr = format!("{}\nTraceback\n{}", "x".repeat(50), "e".repeat(400));
+        faults.note_exit("fetch", Some(255), &stderr);
+        let end = outcome::RunEnd {
+            status: "completed",
+            faults,
+            ..Default::default()
+        };
+        store
+            .update_mission_run(&m.id, "run-1", |e| end.apply(e))
+            .unwrap();
+
+        let runs = store.list_mission_runs(&m.id).unwrap();
+        assert_eq!(runs.len(), 2, "the old line no longer reads");
+        let new = &runs[0];
+        assert_eq!(new.status, "completed");
+        assert_eq!(new.failure_count, 1);
+        assert!(new.faulted());
+        let tail = new.failures[0].tail.as_deref().unwrap();
+        assert!(tail.starts_with("Traceback / eee"), "{tail}");
+        assert_eq!(
+            tail.chars().count(),
+            crate::engine::run_faults::TAIL_MAX_CHARS
+        );
+        let old = &runs[1];
+        assert!(!old.faulted() && old.failures.is_empty() && !old.attended);
+        // The old line is left as it was written.
+        let text = std::fs::read_to_string(store.runs_path(&m.id)).unwrap();
+        assert!(text.starts_with(&format!("{}\n", r#"{"run_id":"run-0","triggered_at":900,"status":"completed","skipped":false}"#)));
     }
 
     #[test]

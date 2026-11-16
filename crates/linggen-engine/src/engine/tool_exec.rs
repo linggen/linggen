@@ -374,6 +374,7 @@ impl AgentEngine {
         msg: String,
         notice: &str,
     ) -> Option<PreExecOutcome> {
+        self.run_faults.note_refused(t.canonical, notice);
         let safe_args = sanitize_tool_args_for_display(t.canonical, t.args);
         let block_id = self.announce_tool_start(t, &safe_args).await;
         let _ = self
@@ -1062,6 +1063,7 @@ impl AgentEngine {
             tool_call_id,
         } = exec;
 
+        self.note_run_fault(&canonical_tool, &result);
         match result {
             Ok(mut result) => {
                 self.note_closing_ask(&canonical_tool, &result);
@@ -1301,6 +1303,23 @@ impl AgentEngine {
             }
         }
         LoopControl::Continue
+    }
+
+    /// Keep a call that ended in failure for whoever records the run
+    /// (`run_faults` says what counts). The model has already been handed the
+    /// result either way; this only keeps the fact.
+    fn note_run_fault(&mut self, tool: &str, result: &anyhow::Result<tools::ToolResult>) {
+        match result {
+            Err(e) if !is_cancel_error(e) => {
+                self.run_faults.note_error(tool, &format!("{e:#}"));
+            }
+            Ok(tools::ToolResult::CommandOutput {
+                exit_code, stderr, ..
+            }) if self.tools.has_skill_tool(tool) => {
+                self.run_faults.note_exit(tool, *exit_code, stderr);
+            }
+            _ => {}
+        }
     }
 
     /// Build optional extra payload for ContentBlockUpdate (e.g. diff data for Edit/Write).
@@ -1576,6 +1595,12 @@ struct ToolTurn<'a> {
 }
 
 /// A Bash call's command, under either of its argument names.
+/// The error a user cancel hands back to an in-flight call — the run's own
+/// status says it, so it is no tool's failure.
+fn is_cancel_error(e: &anyhow::Error) -> bool {
+    e.to_string() == "run cancelled"
+}
+
 fn bash_command_arg(args: &JsonValue) -> Option<String> {
     args.get("cmd")
         .or_else(|| args.get("command"))
@@ -1725,5 +1750,69 @@ mod declined_gate_tests {
     fn the_chat_line_follows_the_language() {
         assert_eq!(declined_notice("~/r", "zh-Hans"), "本轮已拒绝访问 ~/r");
         assert_eq!(declined_notice("~/r", "en"), "Access to ~/r declined for this turn");
+    }
+}
+
+#[cfg(test)]
+mod run_fault_tests {
+    use super::*;
+    use crate::engine::run_faults::FailureKind;
+
+    fn engine_with_declared(tool: &str) -> AgentEngine {
+        let root = std::env::temp_dir();
+        let cfg = crate::engine::EngineConfig::from_app_config(
+            &crate::config::Config::default(),
+            root,
+            crate::engine::InterfaceMode::Web,
+        );
+        let models = Arc::new(crate::provider::models::ModelManager::new_with_credentials(
+            vec![],
+            &crate::credentials::Credentials::default(),
+        ));
+        let mut engine =
+            AgentEngine::new(cfg, models, "m".into(), crate::engine::AgentRole::Lead).unwrap();
+        let def: crate::engine::skill_tool::SkillToolDef = serde_json::from_value(
+            serde_json::json!({ "name": tool, "description": "d", "cmd": "sh fetch.sh" }),
+        )
+        .unwrap();
+        engine.tools.skill_tools.insert(tool.to_string(), def);
+        engine
+    }
+
+    fn output(exit: Option<i32>, stderr: &str) -> anyhow::Result<tools::ToolResult> {
+        Ok(tools::ToolResult::CommandOutput {
+            exit_code: exit,
+            stdout: "private rows the model read".into(),
+            stderr: stderr.into(),
+        })
+    }
+
+    #[test]
+    fn a_declared_tool_that_exits_non_zero_is_kept_with_its_stderr_tail_only() {
+        let mut engine = engine_with_declared("fetch");
+        engine.note_run_fault("fetch", &output(Some(3), "one\ntwo\nhost unreachable\n"));
+        let f = &engine.run_faults.failures[0];
+        assert_eq!((f.kind, f.exit), (FailureKind::Exit, Some(3)));
+        assert_eq!(f.tail.as_deref(), Some("two / host unreachable"));
+        assert!(!format!("{f:?}").contains("private rows"), "stdout leaked");
+    }
+
+    #[test]
+    fn a_clean_declared_tool_and_a_bash_exit_are_not_failures() {
+        let mut engine = engine_with_declared("fetch");
+        engine.note_run_fault("fetch", &output(Some(0), ""));
+        engine.note_run_fault("Bash", &output(Some(1), "no match"));
+        engine.note_run_fault("Grep", &Ok(tools::ToolResult::Success("(no matches)".into())));
+        assert!(engine.run_faults.is_empty(), "{:?}", engine.run_faults);
+    }
+
+    #[test]
+    fn a_tool_error_is_a_failure_and_a_cancel_is_not() {
+        let mut engine = engine_with_declared("fetch");
+        engine.note_run_fault("fetch", &Err(anyhow::anyhow!("run cancelled")));
+        assert!(engine.run_faults.is_empty());
+        engine.note_run_fault("Read", &Err(anyhow::anyhow!("timeout: Read did not finish")));
+        assert_eq!(engine.run_faults.failures[0].kind, FailureKind::Error);
+        assert_eq!(engine.run_faults.count, 1);
     }
 }

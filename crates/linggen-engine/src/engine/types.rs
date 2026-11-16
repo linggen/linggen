@@ -451,6 +451,11 @@ pub struct AgentEngine {
     /// a mission run takes it to record what the run spent. A delegated
     /// agent's calls are its own engine's.
     pub run_usage: crate::provider::models::RunUsage,
+    /// The tool calls that ended in failure, and whether the step limit was
+    /// reached, since the caller last took it — a mission run takes it to
+    /// record what failed (`run_faults`). Like `run_usage`, a delegated
+    /// agent's failures are its own engine's.
+    pub run_faults: crate::engine::run_faults::RunFaults,
     /// This turn's surface shows the next-prompt hint: once the turn ends, its
     /// last call is forked to predict what the person types next
     /// (`suggestion.rs`). Set for one turn by the web chat handler, which
@@ -685,6 +690,7 @@ impl AgentEngine {
             compact_focus: None,
             last_token_usage: None,
             run_usage: Default::default(),
+            run_faults: Default::default(),
             suggest_followups: false,
             last_call: None,
             suggestion_fork: None,

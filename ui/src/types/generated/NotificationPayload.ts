@@ -4,4 +4,9 @@
  * Discriminated payload for the Notification event.
  * Add new variants here to introduce new notification types.
  */
-export type NotificationPayload = { "kind": "mission_completed", mission_id: string, mission_name: string, status: string, run_id: string, session_id: string | null, } | { "kind": "run_failed", agent_id: string, session_id: string | null, auth_required: boolean, } | { "kind": "run_completed", agent_id: string, session_id: string | null, };
+export type NotificationPayload = { "kind": "mission_completed", mission_id: string, mission_name: string, status: string, 
+/**
+ * Tool calls in the run that ended in failure (`run_faults`); 0 for
+ * a clean run. The run's record holds which.
+ */
+failure_count: number, run_id: string, session_id: string | null, } | { "kind": "run_failed", agent_id: string, session_id: string | null, auth_required: boolean, } | { "kind": "run_completed", agent_id: string, session_id: string | null, };
