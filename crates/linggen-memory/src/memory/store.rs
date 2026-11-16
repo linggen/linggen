@@ -1797,7 +1797,7 @@ impl MemoryStore {
     /// isn't available. Counting the *predicate* — not the whole table —
     /// before the delete replaces two full-table `count_rows(None)` scans
     /// with one scoped scan and narrows the count→delete race window:
-    /// under the shared-`MemoryStore` daemon (`Arc<AppState>`), the old
+    /// under the shared-`MemoryStore` daemon (`Arc<handle::Memory>`), the old
     /// `count()-before − count()-after` could be skewed by any concurrent
     /// insert/delete on an unrelated row, whereas now only a concurrent
     /// change to rows matching `predicate` can affect the reported count.

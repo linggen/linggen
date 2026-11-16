@@ -39,7 +39,7 @@ pub struct Recall {
 
 impl Recall {
     /// Build from existing store handles. The daemon shares its `semantic`
-    /// handle with the CRUD write path (`AppState.store`), so recall and
+    /// handle with the CRUD write path (`Memory.store`), so recall and
     /// writes reuse one LanceDB connection for that table.
     pub fn new(semantic: Arc<MemoryStore>, episodic: Arc<MemoryStore>) -> Self {
         Self { semantic, episodic }

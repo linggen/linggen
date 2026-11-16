@@ -9,7 +9,8 @@
 //! call that embeds.
 
 use crate::embed::{Embedder, LoadOnce};
-use crate::http::state::{AppState, SharedState};
+use crate::handle::Memory;
+use crate::http::state::SharedState;
 use crate::memory::{Filters, MemoryStore, Recall, SortOrder};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -170,7 +171,7 @@ async fn open_with(
     let recall = Arc::new(Recall::new(Arc::clone(&semantic), Arc::clone(&episodic)));
     let embedder = Arc::new(LoadOnce::new(load));
     let bound = self_addr(&self_base);
-    let mut state = AppState::new(
+    let mut state = Memory::new(
         semantic,
         episodic,
         recall,

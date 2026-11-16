@@ -1834,7 +1834,7 @@ mod tests {
         fn no_model() -> anyhow::Result<crate::embed::Embedder> {
             anyhow::bail!("no model in unit tests")
         }
-        Arc::new(super::super::state::AppState::new(
+        Arc::new(crate::handle::Memory::new(
             semantic,
             episodic,
             recall,
