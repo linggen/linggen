@@ -108,8 +108,17 @@ commit_version_stamp() {
 }
 
 ensure_release() {
+  local head
+  head="$(git -C "$ROOT_DIR" rev-parse HEAD)"
   if gh release view "$VERSION" --repo "$REPO" &>/dev/null; then
-    echo "✅ Release ${VERSION} already exists"
+    # A recut draft is built from this HEAD: its target must follow, or the
+    # tag lands on the commit the old draft was cut from.
+    if [ "$(gh release view "$VERSION" --repo "$REPO" --json isDraft --jq .isDraft)" = true ]; then
+      gh release edit "$VERSION" --repo "$REPO" --target "$head" >/dev/null
+      echo "✅ Draft ${VERSION} already exists — target set to ${head:0:12}"
+    else
+      echo "✅ Release ${VERSION} already exists"
+    fi
     return 0
   fi
   # The tag is cut at publish, at the draft's target. Target the commit just
