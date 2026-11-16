@@ -106,9 +106,13 @@ async fn child_text_and_tools_stay_nested_live_and_after_reload() {
     assert!(entries[0].get("report").is_none());
     assert_eq!(entries[1]["report"], "REPORT_B");
     assert_eq!(entries[1]["resultText"], "PRIVATE_B");
-    let events = w.events();
-    assert!(events.iter().any(|event| event["phase"] == "subagent_result"
-        && event["data"]["report"] == "REPORT_B"));
+    let reported = |events: &[Value]| {
+        events
+            .iter()
+            .any(|event| event["phase"] == "subagent_result" && event["data"]["report"] == "REPORT_B")
+    };
+    let events = w.events_when(reported).await;
+    assert!(reported(&events));
     assert_eq!(
         events
             .iter()

@@ -204,6 +204,24 @@ impl World {
             .collect()
     }
 
+    /// The events once `seen` holds for them, read again for up to five
+    /// seconds: the engine writes its event log from a task of its own, so a
+    /// run can end a moment before its last events are on disk. Returns the
+    /// last read either way; the caller's own assertion names what is missing.
+    pub async fn events_when(
+        &self,
+        seen: impl Fn(&[serde_json::Value]) -> bool,
+    ) -> Vec<serde_json::Value> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let events = self.events();
+            if seen(&events) || std::time::Instant::now() >= deadline {
+                return events;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    }
+
     /// A session's rows on disk as JSON, every field kept.
     pub fn raw_rows(&self, sid: &str) -> Vec<serde_json::Value> {
         rows::read_raw(&self.home.linggen_home(), sid)
