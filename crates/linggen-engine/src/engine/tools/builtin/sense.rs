@@ -26,6 +26,9 @@ pub(crate) struct RightNow {
     pub local_time: String,
     pub hour: u32,
     pub part_of_day: &'static str,
+    /// The Linggen page in front, for the world's "in front" line.
+    pub front: Option<crate::engine::agent::Front>,
+    pub now: u64,
 }
 
 impl RightNow {
@@ -77,7 +80,20 @@ impl RightNow {
                 17..=21 => "evening",
                 _ => "night",
             },
+            front: manager.presence_front(now),
+            now,
         })
+    }
+
+    /// A look at the world that peeks — it never stamps the doorbell read.
+    pub(crate) fn world_look<'a>(&self, session_id: Option<&'a str>) -> crate::perception::world::Look<'a> {
+        crate::perception::world::Look {
+            session_id,
+            mark: false,
+            door: true,
+            front: Some(self.front.clone()),
+            now: self.now,
+        }
     }
 
     /// The `sense` tool's wire shape. Unchanged from when the tool built it
@@ -102,7 +118,7 @@ impl RightNow {
             },
             // A glance does not consume the doorbell — the turn that follows
             // still deserves to be told what happened.
-            "world": crate::perception::state::read_lines(session_id, false),
+            "world": crate::perception::world::read_lines(&self.world_look(session_id)),
         })
     }
 }

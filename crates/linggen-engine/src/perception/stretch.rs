@@ -50,10 +50,25 @@ pub const VERB: &str = "used";
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Open {
     pub app: String,
-    /// Unix seconds.
+    /// Unix seconds. Moves on as full hourly pieces are written.
     pub start: u64,
+    /// When this page came to the front; stays put while `start` moves.
+    /// A file saved before it existed reads as 0 — see [`Open::since`].
+    #[serde(default)]
+    pub front_since: u64,
     pub last_input: u64,
     pub last_seen: u64,
+}
+
+impl Open {
+    /// When the page came to the front.
+    pub fn since(&self) -> u64 {
+        if self.front_since == 0 {
+            self.start
+        } else {
+            self.front_since
+        }
+    }
 }
 
 /// A finished piece of use, ready to write.
@@ -104,6 +119,7 @@ impl Tracker {
         self.open = Some(Open {
             app,
             start: now,
+            front_since: now,
             last_input: last_input.max(now),
             last_seen: now,
         });
@@ -265,6 +281,15 @@ pub fn recover_saved() {
 /// The stretch still open, as a record a reader can count, if one is.
 pub fn open_record() -> Option<Activity> {
     with(|s| s.open_record())
+}
+
+/// The page in front now and since when, if a stretch is open and was heard
+/// from within [`GAP_SECS`] of `now`.
+pub fn in_front(now: u64) -> Option<(String, u64)> {
+    with(|s| {
+        let o = s.tracker.open.as_ref()?;
+        (now.saturating_sub(o.last_seen) <= GAP_SECS).then(|| (o.app.clone(), o.since()))
+    })
 }
 
 /// Look every [`TICK_SECS`] without waiting for a beat, so a page that stops

@@ -1,4 +1,5 @@
-//! What is true on this machine right now, as lines for the resident's prompt.
+//! What is true on this machine right now: its own readings, the other
+//! device's, and the doorbell — the lines [`super::world`] puts in the block.
 //!
 //! See `doc/perception-spec.md` §2 and §4. Two rules earn their keep:
 //!
@@ -40,43 +41,9 @@ fn gb(bytes: u64) -> String {
     format!("{:.1} GB", bytes as f64 / 1_000_000_000.0)
 }
 
-/// The block that rides every turn: what is true here, then whether history is
-/// worth opening. `None` when there is nothing to say.
-///
-/// Total by construction. Perception is additive — an unreadable source is one
-/// missing line, never a lost turn, because a status line is a bad reason to
-/// cost the user their reply.
-///
-/// `mark` stamps the doorbell as read. True when this is going into a turn,
-/// false when something is merely looking (the `sense` tool) — a glance must
-/// not consume "since you last looked" for the turn that follows it.
-pub fn block(session_id: Option<&str>, mark: bool) -> Option<String> {
-    let lines = read_lines(session_id, mark);
-    if lines.is_empty() {
-        return None;
-    }
-    Some(
-        lines
-            .iter()
-            .map(|l| format!("- {l}"))
-            .collect::<Vec<_>>()
-            .join("\n"),
-    )
-}
-
-/// The same readings, unformatted — what this host publishes to the other one
-/// (§6) and what `sense` reports, so the block, the tool and the peer's view
-/// can never disagree about the machine.
-pub fn read_lines(session_id: Option<&str>, mark: bool) -> Vec<String> {
-    let mut lines = own_lines();
-    lines.extend(peer_lines());
-    lines.extend(doorbell(session_id, mark));
-    lines
-}
-
 /// This machine's own readings — what it measured, without the other host's
 /// account of itself folded in.
-fn own_lines() -> Vec<String> {
+pub(crate) fn own_lines() -> Vec<String> {
     let mut lines = disk_lines();
     lines.extend(device_lines());
     lines
@@ -189,7 +156,7 @@ fn device_lines() -> Vec<String> {
 /// The other machine's own perception, as it last published it (§6). Never a
 /// synced file: each host writes its own and this is read at the moment it is
 /// needed, with its age, so a stale reading can never pass for a fresh one.
-fn peer_lines() -> Vec<String> {
+pub(crate) fn peer_lines() -> Vec<String> {
     let Some(peer) = read_peer() else {
         return Vec::new();
     };
@@ -283,12 +250,17 @@ fn read_peer() -> Option<Peer> {
     })
 }
 
-/// Two lines: whether anything happened, and the newest thing that did.
+/// Whether anything happened, the newest thing that did, and — for a reader
+/// that holds `recent_activity` (`door`) — where to read more.
 ///
 /// That is the whole always-on cost of history. It gives the agent the hook to
 /// remark and, most of the time, the answer as well — and when it needs more it
 /// calls `recent_activity`, which costs nothing until wanted.
-fn doorbell(session_id: Option<&str>, mark: bool) -> Vec<String> {
+///
+/// `mark` stamps the doorbell as read: true when this goes into a turn, false
+/// when something is merely looking (the `sense` tool, a prompt export) — a
+/// glance must not consume "since you last looked" for the turn after it.
+pub(crate) fn doorbell(session_id: Option<&str>, mark: bool, door: bool) -> Vec<String> {
     let log = super::activity::log();
     let Some(newest) = log.newest() else {
         return Vec::new();
@@ -303,10 +275,10 @@ fn doorbell(session_id: Option<&str>, mark: bool) -> Vec<String> {
     if let (Some(s), true) = (session_id, mark) {
         mark_seen(s, revision);
     }
-    ring(&newest, unseen)
+    ring(&newest, unseen, door)
 }
 
-fn ring(newest: &super::activity::Activity, unseen: Option<u64>) -> Vec<String> {
+fn ring(newest: &super::activity::Activity, unseen: Option<u64>, door: bool) -> Vec<String> {
     let when = newest
         .age_secs()
         .map(super::activity::ago)
@@ -323,7 +295,10 @@ fn ring(newest: &super::activity::Activity, unseen: Option<u64>) -> Vec<String> 
         None => {}
     }
     lines.push(format!("most recent: {} · {when}", newest.line()));
-    lines.push("call recent_activity to see more".to_string());
+    // A door the reader cannot open is not named.
+    if door {
+        lines.push("call recent_activity to see more".to_string());
+    }
     lines
 }
 
@@ -386,7 +361,7 @@ mod tests {
 
     #[test]
     fn the_doorbell_is_three_lines_and_never_the_log_itself() {
-        let lines = ring(&thing(), Some(6));
+        let lines = ring(&thing(), Some(6), true);
         assert_eq!(lines.len(), 3, "the always-on cost stays fixed: {lines:?}");
         assert_eq!(lines[0], "6 things happened since you last looked");
         assert!(lines[1].starts_with("most recent: you deleted 三天三夜 · "));
@@ -396,11 +371,11 @@ mod tests {
     #[test]
     fn one_thing_is_singular_and_none_is_said_plainly() {
         assert_eq!(
-            ring(&thing(), Some(1))[0],
+            ring(&thing(), Some(1), true)[0],
             "1 thing happened since you last looked"
         );
         assert_eq!(
-            ring(&thing(), Some(0))[0],
+            ring(&thing(), Some(0), true)[0],
             "nothing new since you last looked"
         );
     }
@@ -410,13 +385,20 @@ mod tests {
         // The prompt export builds without a session. Saying "nothing new since
         // you last looked" there is a claim about a reader we cannot identify,
         // in the one block whose instruction is to assert only what it read.
-        let lines = ring(&thing(), None);
+        let lines = ring(&thing(), None, true);
         assert_eq!(lines.len(), 2, "{lines:?}");
         assert!(lines[0].starts_with("most recent: "), "{lines:?}");
         assert!(
             !lines.iter().any(|l| l.contains("since you last looked")),
             "{lines:?}"
         );
+    }
+
+    #[test]
+    fn a_reader_without_the_tool_is_not_told_to_call_it() {
+        let lines = ring(&thing(), Some(2), false);
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(!lines.iter().any(|l| l.contains("recent_activity")), "{lines:?}");
     }
 
     #[test]

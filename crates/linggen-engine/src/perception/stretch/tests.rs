@@ -88,6 +88,7 @@ fn a_long_stretch_is_written_in_pieces_as_it_goes() {
     let out = active(&mut t, "notes", T0, T0 + 2 * MAX_SECS + 100);
     assert_eq!(out, vec![ended("notes", T0, MAX_SECS), ended("notes", T0 + MAX_SECS, MAX_SECS)]);
     assert_eq!(t.open.as_ref().unwrap().start, T0 + 2 * MAX_SECS);
+    assert_eq!(t.open.as_ref().unwrap().since(), T0, "in front since it came, not since the last piece");
     assert_eq!(pieces("x", T0, T0 + MAX_SECS + 30), vec![ended("x", T0, MAX_SECS)], "a short tail is dropped");
 }
 
@@ -194,4 +195,10 @@ fn a_busy_day_is_a_small_file() {
     eprintln!("busy day: {k} stretches, {rows} records, {bytes} bytes");
     assert_eq!(rows, k, "one record per stretch");
     assert!(bytes < 200 * 1024, "{bytes}");
+}
+
+#[test]
+fn a_stretch_saved_before_it_knew_when_it_came_to_the_front_reads_its_start() {
+    let old: Open = serde_json::from_str(r#"{"app":"notes","start":5,"last_input":9,"last_seen":9}"#).unwrap();
+    assert_eq!(old.since(), 5);
 }

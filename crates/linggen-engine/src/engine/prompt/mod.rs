@@ -1183,11 +1183,12 @@ impl AgentEngine {
             return None;
         }
         let now = tools::RightNow::gather(&self.tools.builtins)?;
-        let world = crate::perception::state::block(
-            self.tools.builtins.session_id.as_deref(),
-            purpose == PromptPurpose::Turn,
-        )
-        .unwrap_or_default();
+        let look = crate::perception::world::Look {
+            mark: purpose == PromptPurpose::Turn,
+            door: allowed_tools.is_some_and(|s| s.contains("recent_activity")),
+            ..now.world_look(self.tools.builtins.session_id.as_deref())
+        };
+        let world = crate::perception::world::block(&look).unwrap_or_default();
         let block = self.prompt_store.render_or_fallback(
             crate::prompts::keys::SYSTEM_RIGHT_NOW_BLOCK,
             &[
