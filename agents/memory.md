@@ -5,9 +5,9 @@ description: Memory keeper — judges episodic staging day by day, promotes dura
 # in the mission tool scope (attended calendar triggers) — tool scopes
 # intersect. Read / Glob / Grep / Bash are for evidence (look only): the
 # dream and solve missions grant READ over ~, so the engine refuses any
-# write and never prompts. The scan mission's Bash runs `ling mem scan`
-# in its own folder and its Read opens the candidates file — the only
-# grants it has.
+# write and never prompts. The scan mission has no Bash: the engine runs
+# `ling mem scan` before the run, and its Read opens only the candidates
+# file.
 tools: ["mcp__memory", "Read", "Glob", "Grep", "Bash", "AskUser"]
 # Run by the memory missions only (dream, memory-scan, memory-solve) —
 # no person addresses it from the chat.
@@ -398,20 +398,21 @@ capture missed. A scan only stages — it never promotes, merges,
 deletes, or marks a day dreamed; the next dream judges what it staged.
 It works on every machine, primary or replica.
 
-1. **Scan.** Bash, that command alone: `ling mem scan <date>`. It walks
-   this machine's session logs of that day (Claude Code, Codex,
-   OpenClaw, Linggen) — flattened, denoised, secret-filtered, no model,
-   no network — into `~/.linggen/memory/.scan-output.jsonl`, and prints
-   one line: `scan: window=<date> found=<n> scanned=<n> skipped=<n> …`.
-   A non-zero exit, or an error line instead of that one →
-   `SCAN <date> failed "<the line>"`, then reply exactly `FAILED` — no
-   stamp: the day was not scanned.
-2. **The candidates.** Line 1 of the file is the header (`_meta`); each
-   later line is one session: `filepath`, `source`
-   (`CC|Codex|OpenClaw|Linggen`), `date`, `user_turns`, `bytes`,
-   `transcript_bytes`, `transcript`. Read a session one line at a time
-   (`Read` with `line_range` [n, n]); list them without transcripts
-   with `jq` on the file. Never open the session logs themselves — the
+1. **The scan is done for you.** Before your first turn the engine ran
+   `ling mem scan <date>`: this machine's session logs of that day
+   (Claude Code, Codex, OpenClaw, Linggen) — flattened, denoised,
+   secret-filtered, no model, no network — are in
+   `~/.linggen/memory/.scan-output.jsonl`. You never run it and have no
+   shell. Read line 1, the header (`_meta`): the file is missing, or its
+   `window` is not the run's day → `SCAN <date> failed "<why>"`, then
+   reply exactly `FAILED` — no stamp: the day was not scanned.
+2. **The candidates.** Each line after the header is one session:
+   `filepath`, `source` (`CC|Codex|OpenClaw|Linggen`), `date`,
+   `user_turns`, `bytes`, `transcript_bytes`, then `transcript` last.
+   There are `sessions_scanned` of them. List them by reading only each
+   line's opening (`Read` with `line_range` [n, n] and a small
+   `max_bytes`, 600); read a whole line (`max_bytes` 250000) only when
+   you judge it. The session logs themselves are out of reach — the
    transcript is all you judge, and it is the filtered copy.
    A candidate's **session id** is what live capture stamps as
    `source_session`: Claude Code and OpenClaw — the file name without

@@ -1062,40 +1062,39 @@ mod tests {
         perm.paths.iter().map(|g| (g.path.clone(), g.mode.clone())).collect()
     }
 
-    /// The scan runs only when triggered with a day, one candidate per
-    /// fresh turn, with exactly two grants: admin on its own empty folder
-    /// (its cwd, where `ling mem scan` is judged) and read on the file the
-    /// scan writes.
+    /// The scan runs only when triggered with a day; the engine runs the
+    /// walk of the session logs itself (`prepare`), and the run reads the
+    /// candidates one per fresh turn, with one READ grant on that file.
     #[test]
-    fn the_builtin_scan_is_day_scoped_and_holds_two_narrow_grants() {
+    fn the_builtin_scan_is_prepared_by_the_engine_and_reads_only() {
         let scan = builtin("memory-scan", include_str!("../../../../../missions/memory-scan/mission.md"));
         assert!(!scan.enabled && scan.schedule.is_empty(), "never on a schedule");
         assert_eq!(scan.agent_id, "memory");
+        assert_eq!(scan.prepare, ["mem", "scan", "$DAY"]);
         assert!(scan.kickoff_fresh);
         assert_eq!(scan.kickoff_stop, ["DONE", "CLEAN", "FAILED"]);
-        assert!(scan.kickoff_day[0].contains("ling mem scan $DAY"), "{}", scan.kickoff_day[0]);
+        assert!(!scan.kickoff_day[0].contains("ling mem scan"), "the model runs no scan");
         assert!(scan.kickoff_day.len() > 10, "too few turns for a day's sessions");
         assert!(scan.kickoff_day.last().unwrap().contains("PARTIAL"));
-        assert_eq!(scan.allowed_tools, ["mcp__memory", "Read", "Bash"]);
-        let cwd = scan.cwd.clone().unwrap();
+        assert_eq!(scan.allowed_tools, ["mcp__memory", "Read"]);
         assert_eq!(
             grants(&scan),
-            [
-                (cwd, "admin".to_string()),
-                ("~/.linggen/memory/.scan-output.jsonl".to_string(), "read".to_string()),
-            ]
+            [("~/.linggen/memory/.scan-output.jsonl".to_string(), "read".to_string())]
         );
     }
 
-    /// The scan's grants through the real gate: its one command and its one
-    /// file go through; a raw session log, the store and the rest of the
-    /// Linggen home do not (a mission never prompts — it is refused).
+    /// The scan's tools and grant through the real tool scope and gate: no
+    /// Bash at all, and were a command to reach the gate, anything that runs
+    /// code or writes is refused (a mission never prompts); its one Read
+    /// goes through, and nothing else in the Linggen home or a session log.
     #[test]
-    fn the_scans_grants_admit_its_command_and_file_and_nothing_else() {
+    fn the_scans_grant_admits_its_one_read_and_refuses_running_anything() {
         use crate::engine::permission::{
             apply_grants, check_permission, PermissionCheckResult, SessionPermissions,
         };
         let scan = builtin("memory-scan", include_str!("../../../../../missions/memory-scan/mission.md"));
+        let scope = super::enter::tool_scope(&scan, None).unwrap();
+        assert!(!scope.contains("Bash"), "{scope:?}");
         let mut perms = SessionPermissions::default();
         apply_grants(scan.permission.as_ref().unwrap(), &mut perms);
         let cwd = crate::util::resolve_path(std::path::Path::new(scan.cwd.as_deref().unwrap()));
@@ -1104,13 +1103,19 @@ mod tests {
             matches!(got, PermissionCheckResult::Allowed)
         };
         let out = "~/.linggen/memory/.scan-output.jsonl";
-        assert!(allowed("Bash", Some("ling mem scan 2026-11-14"), None));
         assert!(allowed("Read", None, Some(out)));
-        assert!(allowed("Bash", Some(&format!("jq -c '{{source, filepath}}' {out}")), None));
+        for cmd in [
+            "python3 -c 'print(1)'",
+            "sh -c 'ls'",
+            &format!("echo x > {out}"),
+            "ling mem scan 2026-11-14",
+            "cat ~/.codex/sessions/r.jsonl",
+        ] {
+            assert!(!allowed("Bash", Some(cmd), None), "{cmd} went through");
+        }
         assert!(!allowed("Read", None, Some("~/.claude/projects/p/s.jsonl")));
-        assert!(!allowed("Bash", Some("cat ~/.codex/sessions/r.jsonl"), None));
-        assert!(!allowed("Bash", Some("rm ~/.linggen/memory/.days.json"), None));
         assert!(!allowed("Read", None, Some("~/.linggen/account.toml")));
+        assert!(!allowed("Read", None, Some("~/.linggen/memory/.days.json")));
     }
 
     /// The solve is triggered only, attended by its caller, and holds the

@@ -9,17 +9,19 @@
   already have rows, and stamps the day scanned; `memory-solve` (trigger with
   `{"attended":true}`) works the review queue from evidence and asks the user
   only what evidence cannot settle. A second start while one runs gets 409.
-  The scan's grants are admin on its own empty folder and read on the
-  candidates file (no grant names the session folders); the solve reads
-  only, like the dream.
+  The engine itself runs the walk of the session logs before the scan's
+  first turn; the scan agent has no shell and reads only the candidates
+  file. The solve reads only, like the dream.
 - **`ling mem scan <day>`.** The session scan (Claude Code, Codex, OpenClaw,
   Linggen logs → `~/.linggen/memory/.scan-output.jsonl`) is part of `ling`:
   the same file, header line and exit codes as the scripts it replaces, with
   the engine up or stopped. It needs `bash`, `jq` and `perl`.
 - **Built-in missions are seeded once each.** An upgrade that brings a new
   built-in mission adds it; a built-in the user deleted stays deleted.
-- **A mission's working folder inside the Linggen home is made when a run
-  starts**, if it is missing.
+- **Missions can declare a `prepare` step**: arguments to the engine's own
+  binary (`[mem, scan, $DAY]`), run by the engine when a run starts, before
+  any model call; a failure ends the run as failed, its exit status and
+  error tail in the run record.
 - **A mission run that had something fail no longer reads as a plain
   success.** Its `runs.jsonl` entry keeps each failed tool call (a declared
   script's non-zero exit, a tool error, a refused call: tool, status, the last

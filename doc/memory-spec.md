@@ -156,16 +156,19 @@ in `agents/memory.md` ("Procedure — scan one day", "Procedure — solve the
 review queue"); the mission files carry only the pacing and the grants.
 
 - **Scan a day** — `POST /api/missions/memory-scan/trigger`
-  `{"day":"YYYY-MM-DD","attended":true}`. The run calls
-  `ling mem scan <day>` (`cli.md` § mem: the day's session logs of Claude
-  Code, Codex, OpenClaw and Linggen, flattened and secret-filtered into
-  `~/.linggen/memory/.scan-output.jsonl`; no model, no network), lists the
-  candidates, skips every session that already has rows for the day (by
-  `source_session`), then judges one candidate per turn and stages what is
-  worth keeping as short-term rows, each carrying its session id and the
-  session's directory. It ends by stamping the day scanned
-  (`harvest_day`), also when nothing new was staged; a scan that fails
-  ends `FAILED`, unstamped. It never promotes:
+  `{"day":"YYYY-MM-DD","attended":true}`. Before the first turn the
+  engine itself runs `ling mem scan <day>` (the mission's `prepare` step;
+  `cli.md` § mem: the day's session logs of Claude Code, Codex, OpenClaw
+  and Linggen, flattened and secret-filtered into
+  `~/.linggen/memory/.scan-output.jsonl`; no model, no network); if that
+  fails the run ends failed, unstamped, with no model call. The agent then
+  checks the file's header is that day's, lists the candidates, skips
+  every session that already has rows for the day (by `source_session`),
+  judges one candidate per turn and stages what is worth keeping as
+  short-term rows, each carrying its session id and the session's
+  directory. It ends by stamping the day scanned (`harvest_day`), also
+  when nothing new was staged; a missing or stale file ends `FAILED`,
+  unstamped. It never promotes:
   the next dream judges the rows. Today can be staged but not stamped. A
   day with more sessions than one run's turns ends `PARTIAL`, unstamped;
   scanning again continues. Scan works on every machine.
@@ -184,15 +187,11 @@ review queue"); the mission files carry only the pacing and the grants.
   end is in `GET /api/missions/<id>/runs` (`status`, `failure_count`) and
   the day's `scanned` flag in `days`. Scan, solve and dream are separate
   missions, so one of each can run at once.
-- **Grants** — the scan holds admin on its own empty working folder
-  (`~/.linggen/missions/memory-scan/work`, its cwd: `ling mem scan` is an
-  admin-class command naming no path, so it is judged there) and read on
-  the candidates file. No grant names the session folders: `ling mem scan`
-  reads them itself, and the agent's own reads of them are refused. An
-  admin grant is not a shell sandbox — a command naming no path is judged
-  at the cwd (`permission-spec.md`). The solve holds the dream's READ over
-  the home directory. Missions never prompt: a call outside the grants is
-  refused.
+- **Grants** — the scan agent has memory's tools and `Read`, no shell,
+  and one grant: read on the candidates file. The session logs are read
+  by the engine's own step, not by the agent. The solve holds the dream's
+  READ over the home directory. Missions never prompt: a call outside the
+  grants is refused.
 
 ## Memory is hosted by the engine
 

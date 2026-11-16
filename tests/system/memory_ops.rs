@@ -216,14 +216,6 @@ fn ling_mem_scan_writes_one_days_candidates() {
     assert_eq!(candidates(&home.home()).len(), 3);
 }
 
-/// Put the built `ling` first on the engine's `$PATH` (`hermetic_env` puts
-/// `<root>/bin` there), so the mission's `ling mem scan` is this build's.
-fn link_ling(w: &World) {
-    let bin = w.home.root.join("bin");
-    std::fs::create_dir_all(&bin).unwrap();
-    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_ling"), bin.join("ling")).unwrap();
-}
-
 /// Trigger a built-in memory mission; its session id.
 async fn trigger(w: &World, mission: &str, body: Value) -> String {
     let resp = w
@@ -273,29 +265,72 @@ fn add(content: &str, session: &str, cwd: Option<&str>) -> Value {
     args
 }
 
-/// Settings → Memory's Scan for a day: the run calls `ling mem scan`, reads
-/// the candidates, stages one row per session carrying the session it came
-/// from, and stamps the day scanned — all inside the mission's two grants
-/// (nothing refused).
+/// Read one candidate line of the scan file: its opening only (`head`), or
+/// the whole of it.
+fn read_line(n: u64, head: bool) -> crate::support::model::Reply {
+    let max = if head { 600 } else { 250_000 };
+    tool(
+        "Read",
+        json!({"path": OUT, "line_range": [n, n], "max_bytes": max}),
+    )
+}
+
+/// Turn 1 of a scan: the header, each candidate's opening, the day's rows.
+fn plan_turn() -> Vec<crate::support::model::Reply> {
+    vec![
+        read_line(1, true),
+        read_line(2, true),
+        read_line(3, true),
+        tool(
+            "mcp__memory__memory_list",
+            json!({"tier": "episodic", "day": DAY, "limit": 100}),
+        ),
+        tool(
+            "mcp__memory__memory_list",
+            json!({"tier": "semantic", "day": DAY, "limit": 100}),
+        ),
+    ]
+}
+
+/// Wait until the mission's newest run is on record as running — its one-run
+/// slot is taken by then.
+async fn until_running(w: &World, mission: &str) {
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(30) {
+        let runs = w.api.get(&format!("/api/missions/{mission}/runs")).await;
+        if runs["runs"][0]["status"] == "running" {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("the {mission} run never started");
+}
+
+/// Settings → Memory's Scan for a day: the ENGINE walks the session logs
+/// before the first turn (the model calls no Bash — it has none); the run
+/// reads the candidates, stages one row per session carrying the session it
+/// came from, and stamps the day scanned, with nothing refused. A second
+/// Scan while it runs gets 409. Scanned again, the run's own day listing
+/// shows each session's id — what the covered-session skip reads.
 #[tokio::test]
 async fn a_scan_run_stages_the_days_sessions_and_stamps_the_day() {
     if !crate::support::memory::embedder_available() || !scan_tools() {
         eprintln!("SKIPPED (passes on nothing): no embedding model, or no jq/perl");
         return;
     }
-    let list = format!("jq -c '{{source, filepath, user_turns, transcript_bytes}}' {OUT}");
-    let script = vec![
-        tool("Bash", json!({"command": format!("ling mem scan {DAY}")})),
-        tool("Bash", json!({"command": list})),
+    // The first run plans from the header and the day's rows alone (the
+    // fixture config's step limit is 12 a run); the second reads each
+    // candidate's opening as well.
+    let mut script = vec![
+        read_line(1, true),
         tool(
             "mcp__memory__memory_list",
             json!({"tier": "episodic", "day": DAY, "limit": 100}),
         ),
+    ];
+    script.extend([
         text(&format!("SCAN {DAY} found=2 scanned=2\nTODO 2 3")),
-        tool(
-            "Read",
-            json!({"path": OUT, "line_range": [2, 2], "max_bytes": 250000}),
-        ),
+        read_line(2, false),
         tool(
             "mcp__memory__memory_add",
             add(
@@ -305,10 +340,7 @@ async fn a_scan_run_stages_the_days_sessions_and_stamps_the_day() {
             ),
         ),
         text(&format!("STAGE 2 {CC_SESSION} rows=1")),
-        tool(
-            "Read",
-            json!({"path": OUT, "line_range": [3, 3], "max_bytes": 250000}),
-        ),
+        read_line(3, false),
         tool(
             "mcp__memory__memory_add",
             add(
@@ -320,30 +352,30 @@ async fn a_scan_run_stages_the_days_sessions_and_stamps_the_day() {
         text(&format!("STAGE 3 {LING_SESSION} rows=1")),
         tool("mcp__memory__memory_harvest_day", json!({"date": DAY})),
         text("DONE"),
-        // The same day scanned again: both sessions already have rows.
-        tool("Bash", json!({"command": format!("ling mem scan {DAY}")})),
-        tool(
-            "mcp__memory__memory_list",
-            json!({"tier": "episodic", "day": DAY, "limit": 100}),
-        ),
-        tool(
-            "mcp__memory__memory_list",
-            json!({"tier": "semantic", "day": DAY, "limit": 100}),
-        ),
+    ]);
+    // The same day scanned again: both sessions already have rows.
+    script.extend(plan_turn());
+    script.extend([
         tool("mcp__memory__memory_harvest_day", json!({"date": DAY})),
         text(&format!(
             "SKIP {CC_SESSION} covered\nSKIP {LING_SESSION} covered\nCLEAN"
         )),
-    ];
+    ]);
     let w = World::start(Setup {
         embedder: true,
         ..Setup::default().script(Agent::Memory, script)
     })
     .await;
     write_sessions(&w.home.home());
-    link_ling(&w);
 
-    let sid = trigger(&w, "memory-scan", json!({"day": DAY, "attended": true})).await;
+    let body = json!({"day": DAY, "attended": true});
+    let sid = trigger(&w, "memory-scan", body.clone()).await;
+    until_running(&w, "memory-scan").await;
+    let again = w
+        .api
+        .post_status("/api/missions/memory-scan/trigger", body.clone())
+        .await;
+    assert_eq!(again, 409, "a second scan started while one was running");
     let run = finished_run(&w, "memory-scan", &sid).await;
     assert_eq!(run["status"], "completed", "{run}");
     assert!(
@@ -351,33 +383,32 @@ async fn a_scan_run_stages_the_days_sessions_and_stamps_the_day() {
         "a call failed or was refused: {run}"
     );
     assert_eq!(run["attended"], true, "{run}");
+    assert!(
+        run.get("hit_limit").is_none(),
+        "stopped at its step limit: {run}"
+    );
     w.assert_all_scripted();
 
-    let seen = tool_results(&w, &sid);
-    assert!(
-        seen.contains(&format!("scan: window={DAY} found=2 scanned=2")),
-        "the scan never ran"
-    );
-    let model_saw: String = w
-        .model
-        .calls_of(Agent::Memory)
-        .iter()
-        .map(|c| c.text())
-        .collect();
-    assert!(
-        model_saw.contains("I water the garden every Sunday"),
-        "the candidate was never read"
-    );
-    let prompts: String = w
-        .model
-        .calls_of(Agent::Memory)
-        .iter()
-        .map(|c| c.body.to_string())
-        .collect();
+    let calls = w.model.calls_of(Agent::Memory);
+    let prompts: String = calls.iter().map(|c| c.body.to_string()).collect();
     assert!(
         prompts.contains("Procedure — scan one day"),
         "the scan procedure is not in the run's prompt"
     );
+    assert!(
+        !prompts.contains("\"name\":\"Bash\""),
+        "the scan run was offered Bash"
+    );
+    let model_saw: String = calls.iter().map(|c| c.text()).collect();
+    assert!(
+        prompts.contains(&format!("\\\"window\\\":\\\"{DAY}\\\"")),
+        "the engine's scan never reached the model"
+    );
+    assert!(
+        model_saw.contains("I water the garden every Sunday"),
+        "the candidate was never read"
+    );
+    let seen = tool_results(&w, &sid);
     assert!(
         seen.contains(&format!("scanned {DAY}: its session logs staged")),
         "no report line"
@@ -398,18 +429,11 @@ async fn a_scan_run_stages_the_days_sessions_and_stamps_the_day() {
         .collect();
     sessions.sort();
     assert_eq!(sessions, [CC_SESSION, LING_SESSION], "{staged}");
-    let days = w.memory.call("days", json!({})).await;
-    let day = days["days"]
-        .as_array()
-        .and_then(|d| d.iter().find(|r| r["date"] == DAY))
-        .cloned()
-        .unwrap_or_else(|| panic!("no {DAY}: {days}"));
+    let day = day_record(&w).await;
     assert_eq!(day["scanned"], true, "{day}");
     assert_eq!(day["dreamed"], false, "a scan marks nothing dreamed: {day}");
 
-    // Scanned again, the run's own day listing shows each session's id —
-    // what the covered-session skip reads.
-    let again = trigger(&w, "memory-scan", json!({"day": DAY, "attended": true})).await;
+    let again = trigger(&w, "memory-scan", body).await;
     let run = finished_run(&w, "memory-scan", &again).await;
     assert_eq!(run["status"], "completed", "{run}");
     assert!(run.get("failure_count").is_none(), "{run}");
@@ -421,6 +445,66 @@ async fn a_scan_run_stages_the_days_sessions_and_stamps_the_day() {
             "the day listing does not show {session}: {listed}"
         );
     }
+}
+
+/// `DAY`'s record in the `days` rollup, if it has one.
+async fn day_record(w: &World) -> Value {
+    let days = w.memory.call("days", json!({})).await;
+    days["days"]
+        .as_array()
+        .and_then(|d| d.iter().find(|r| r["date"] == DAY))
+        .cloned()
+        .unwrap_or(Value::Null)
+}
+
+/// A mission whose `prepare` step fails: the memory scan's own shape, with
+/// a window `ling mem scan` refuses.
+const BROKEN_SCAN: &str = "---\n\
+name: Broken scan\n\
+enabled: false\n\
+agent: memory\n\
+cwd: ~/.linggen\n\
+prepare: [mem, scan, $DAY-x]\n\
+kickoff-day:\n  - \"Read the candidates for $DAY.\"\n\
+allowed-tools: [mcp__memory, Read]\n\
+---\n\nScan a day.\n";
+
+/// The engine's step fails: the run ends failed before any model call, its
+/// record names the step, its exit status and the tail of its error, the
+/// session says why, and the day stays unscanned.
+#[tokio::test]
+async fn a_failing_prepare_step_ends_the_run_failed_and_unstamped() {
+    let w = World::start(Setup::default()).await;
+    let dir = w.home.linggen_home().join("missions/broken-scan");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("mission.md"), BROKEN_SCAN).unwrap();
+
+    let sid = trigger(&w, "broken-scan", json!({"day": DAY, "attended": true})).await;
+    let run = finished_run(&w, "broken-scan", &sid).await;
+    assert_eq!(run["status"], "failed", "{run}");
+    let failure = &run["failures"][0];
+    assert_eq!(failure["tool"], "prepare", "{run}");
+    assert_eq!(failure["exit"], 1, "{run}");
+    assert!(
+        failure["tail"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("Usage: ling mem scan"),
+        "{run}"
+    );
+    assert!(
+        w.model.calls_of(Agent::Memory).is_empty(),
+        "the model was called"
+    );
+    assert!(
+        tool_results(&w, &sid).contains("This run did not start"),
+        "the session does not say why"
+    );
+    assert_ne!(
+        day_record(&w).await["scanned"],
+        true,
+        "a failed scan stamped the day"
+    );
 }
 
 /// Settings → Memory's Solve: the run reads the queue, asks the user (it is
