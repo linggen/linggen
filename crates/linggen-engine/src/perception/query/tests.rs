@@ -121,6 +121,7 @@ fn totals_count_and_sum_with_a_readable_form_and_the_span() {
     let f = filter(Some("2026-11-10T00:00:00Z"), "2026-11-10T12:00:00Z");
     let out = run(f, None, true, sample(dir.path()));
     assert!(out.get("rows").is_none(), "totals alone unless a limit is asked");
+    assert!(out.get("more").is_none() && out.get("note").is_none(), "{out}");
     assert_eq!(out["span"]["until"], local(t("2026-11-10T12:00:00Z")));
     assert_eq!(out["span"]["since"], local(t("2026-11-10T00:00:00Z")));
     let tot = &out["totals"];
@@ -218,4 +219,28 @@ fn reading_many_days_streams_them_one_at_a_time() {
     assert_eq!(out["totals"]["records"], 24_000);
     assert_eq!(out["totals"]["apps"][0]["seconds"], 8000 * 300);
     assert!(took < std::time::Duration::from_secs(10), "{took:?}");
+}
+
+#[test]
+fn arguments_read_as_the_tool_describes() {
+    let now = Local::now();
+    let plain = Args::default().ask(now).unwrap();
+    assert_eq!((plain.rows, plain.totals), (Some(ROWS_DEFAULT), false));
+    assert_eq!(plain.filter.until, now.with_timezone(&Utc));
+
+    let totals = Args { totals: true, ..Args::default() }.ask(now).unwrap();
+    assert_eq!(totals.rows, None, "totals alone");
+    let both = Args { totals: true, limit: Some(5), ..Args::default() }.ask(now).unwrap();
+    assert_eq!(both.rows, Some(5));
+    let huge = Args { limit: Some(10_000), ..Args::default() }.ask(now).unwrap();
+    assert_eq!(huge.rows, Some(ROWS_MAX));
+
+    let words = Args { app: Some(" notes ".into()), text: Some("Trip".into()), verb: Some("".into()), ..Args::default() };
+    let w = words.ask(now).unwrap();
+    assert_eq!(w.filter.app.as_deref(), Some("notes"));
+    assert_eq!(w.filter.text.as_deref(), Some("trip"));
+    assert_eq!(w.filter.verb, None, "an empty filter is no filter");
+
+    let bad = Args { since: Some("last spring".into()), ..Args::default() }.ask(now).unwrap_err();
+    assert!(bad.starts_with("since: ") && bad.contains("-6h"), "{bad}");
 }

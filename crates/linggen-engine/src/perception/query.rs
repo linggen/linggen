@@ -300,7 +300,9 @@ pub fn answer(ask: &Ask, src: Source<'_>) -> Value {
         batch.sort_by(|a, b| b.at.cmp(&a.at));
         for a in batch.iter().filter(|a| f.matches(a)) {
             totals.add(a, f.seconds_inside(a));
-            rows.offer(a);
+            if ask.rows.is_some() {
+                rows.offer(a);
+            }
         }
     }
 
