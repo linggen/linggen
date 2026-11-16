@@ -54,7 +54,6 @@ pub fn build_hosted_router(state: SharedState) -> Router {
         .merge(session::router())
         .merge(mcp::router())
         .merge(config::router())
-        .merge(network::router())
         .merge(connect::router())
         .merge(sync::router())
         .merge(primary::router())

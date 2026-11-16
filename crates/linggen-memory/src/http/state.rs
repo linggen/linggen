@@ -40,9 +40,6 @@ pub struct AppState {
     /// handler's self-POST base. `http://127.0.0.1:<port>` for the daemon;
     /// the host's prefix when another process hosts memory (`crate::hosted`).
     pub self_base: String,
-    /// The address the listener actually bound — what the console shows as
-    /// a fact beside the saved network choice.
-    pub bound: SocketAddr,
     /// Machines on the LAN asking to connect — see `http::connect`.
     pub connect: crate::http::connect::Broker,
     /// Paired devices seen by the gate, in memory — see `http::presence`.
@@ -83,7 +80,6 @@ impl AppState {
             data_dir,
             port: bound.port(),
             self_base: format!("http://127.0.0.1:{}", bound.port()),
-            bound,
             connect: Default::default(),
             presence: Default::default(),
 

@@ -38,10 +38,8 @@ pub struct Config {
     #[serde(default = "default_recall_min_score")]
     pub recall_min_score: f32,
 
-    /// Where the daemon listens — the LAN (default) or this machine only.
-    /// Read at bind time by `serve`; written only by `PUT /api/network`,
-    /// which checks the caller is this machine. `PUT /api/config` keeps
-    /// the value on disk, so a paired device can never flip it here.
+    /// Saved network choice; hosted memory listens where the engine does.
+    /// `PUT /api/config` preserves the value on disk.
     #[serde(default)]
     pub network: Network,
 }
