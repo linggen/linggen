@@ -22,6 +22,11 @@
   binary (`[mem, scan, $DAY]`), run by the engine when a run starts, before
   any model call; a failure ends the run as failed, its exit status and
   error tail in the run record.
+- **The plugin and the browser extension live in this repo.** The `linggen`
+  plugin for Claude Code and Codex is `plugins/linggen` (install
+  `linggen@linggen` from this repo's marketplace files) and the Chrome
+  extension is `browser-extension/`; the plugin has the engine's version, and
+  its session scan is `ling mem scan <day>`.
 - **A mission run that had something fail no longer reads as a plain
   success.** Its `runs.jsonl` entry keeps each failed tool call (a declared
   script's non-zero exit, a tool error, a refused call: tool, status, the last

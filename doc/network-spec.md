@@ -264,9 +264,9 @@ left in `src/`.)
 and replicas, each Linggen with its own store; a machine with only a plugin
 points it at another machine's `/mcp/memory` with that machine's token. Both
 paths run between two engines on one Mac over its LAN address; nobody has yet
-done it from a real second machine. The plugin's entries and hooks move from
-9528 to the engine's port in the plugin's own repo; until then they get no
-answer. A replica that saved a primary at `host:9528` pairs again with
+done it from a real second machine. The plugin lives in this repo
+(`plugins/linggen`); its entries and hooks use the engine's port, and an
+older install that still names 9528 gets no answer. A replica that saved a primary at `host:9528` pairs again with
 `host:9527`.
 
 **Two daemons, one relay instance.** Both registrations are accepted, and the

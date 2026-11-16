@@ -1,0 +1,20 @@
+{
+  "name": "linggen",
+  "interface": {
+    "displayName": "Linggen"
+  },
+  "plugins": [
+    {
+      "name": "linggen",
+      "source": {
+        "source": "local",
+        "path": "./plugins/linggen"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

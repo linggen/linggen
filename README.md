@@ -59,7 +59,7 @@ Opens the web UI at `http://localhost:9527`.
 - **Pulse** — GTM brain for solo founders. Reads your configured trends and feeds, then drafts on-voice posts and replies for X and Reddit.
 - **灵境 (Lingjing)** — a cultivation story with ink-wash scenes, card duels and small games. Plays on the Mac and the iPhone; your save syncs through your account.
 - **Games** — Chinese Chess and Gomoku where the model actually plays you, plus Snake, Pong, and Tetris.
-- **Memory** — cross-agent semantic memory via [`ling-mem`](https://github.com/linggen/linggen-memory): the same store reachable from Linggen, Claude Code, or Codex.
+- **Memory** — cross-agent semantic memory, part of Linggen: the same store reachable from Linggen, Claude Code, or Codex through the [`linggen` plugin](plugins/linggen).
 - **Model sharing** — open a room and let friends use your models over P2P WebRTC. No keys for the consumer, no cloud middleman; the owner controls budget and tools.
 
 Skills, agents, missions — all files. New apps are a folder away. Browse community skills at [github.com/linggen/skills](https://github.com/linggen/skills).
@@ -185,17 +185,25 @@ The story of using it day to day, with what the second agent got wrong:
 
 The same server carries `browser_*` (drive one visible tab in your own Chrome,
 with per-site permission prompts), `x_*` (structured reads of your logged-in X
-session) and the memory upkeep tools. Durable memory itself is served by
-[`ling-mem`](https://github.com/linggen/linggen-memory) on its own MCP server.
+session) and the memory upkeep tools. Durable memory is part of Linggen too,
+served on its own MCP server at `/mcp/memory` on the same port.
 
-On Claude Code / Codex, install the `linggen` plugin. It adds both servers and
-the per-turn memory recall hook, and installs both binaries on first session
-start:
+On Claude Code / Codex, install the `linggen` plugin (source:
+[`plugins/linggen`](plugins/linggen)). It adds both servers and the per-turn
+memory recall hook, and installs Linggen on first session start:
 
 ```bash
-claude plugin marketplace add linggen/linggen-memory
-claude plugin install linggen@linggen-memory
+# Claude Code
+claude plugin marketplace add linggen/linggen --sparse .claude-plugin plugins
+claude plugin install linggen@linggen
+
+# Codex
+codex plugin marketplace add linggen/linggen
+codex plugin add linggen@linggen
 ```
+
+`browser_*` needs the Chrome extension, whose source is in this repo:
+[`browser-extension/`](browser-extension).
 
 Without git (a fresh Mac): `curl -fsSL https://linggen.dev/install-plugin.sh | bash`.
 

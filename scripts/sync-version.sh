@@ -46,4 +46,10 @@ if [ -f "$ROOT_DIR/ui/package.json" ]; then
   echo "  ✅ Updated ui/package.json"
 fi
 
+# Update the plugin (plugins/linggen): VERSION and both manifests.
+if [ -d "$ROOT_DIR/plugins/linggen" ]; then
+  "$ROOT_DIR/scripts/plugin/build-plugin.sh" "$VERSION"
+  echo "  ✅ Updated plugins/linggen"
+fi
+
 echo "✅ Version sync complete!"

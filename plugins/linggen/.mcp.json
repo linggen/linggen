@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "linggen": {
+      "type": "http",
+      "url": "http://${LINGGEN_HOST:-127.0.0.1}:${LINGGEN_PORT:-9527}/mcp",
+      "headers": {
+        "x-linggen-device": "${LINGGEN_TOKEN:-}"
+      },
+      "headersHelper": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/headers.sh\""
+    },
+    "memory": {
+      "type": "http",
+      "url": "http://${LINGGEN_HOST:-127.0.0.1}:${LINGGEN_PORT:-9527}/mcp/memory",
+      "headers": {
+        "x-linggen-device": "${LINGGEN_TOKEN:-}"
+      },
+      "headersHelper": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/headers.sh\""
+    }
+  }
+}
