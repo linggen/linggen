@@ -10,6 +10,7 @@ import { ToolsTab } from '../../components/ToolsTab';
 import { GeneralTab } from '../../components/GeneralTab';
 import { PhoneTab } from '../../components/PhoneTab';
 import { MissionPage } from '../../components/MissionPage';
+import { MemoryTab } from '../../components/memory/MemoryTab';
 import { StoragePage } from '../../components/StoragePage';
 import { RoomTab } from '../../components/RoomTab';
 import { useSessionStore } from '../../stores/sessionStore';
@@ -39,6 +40,7 @@ const groups: { label?: string; tabs: { key: TabKey; label: string }[] }[] = [
     { key: 'room', label: 'Room' },
   ] },
   { label: 'Data', tabs: [
+    { key: 'memory', label: 'Memory' },
     { key: 'storage', label: 'Storage' },
   ] },
 ];
@@ -164,6 +166,12 @@ export const SettingsHome: React.FC = () => {
 
         {activeTab === 'mission' && (
           <MissionPage embedded onBack={onBack} projectRoot={projectRoot} agents={missionAgents ?? []} />
+        )}
+
+        {activeTab === 'memory' && (
+          <div className="h-full overflow-y-auto p-3 md:p-6">
+            <div className="max-w-6xl mx-auto"><MemoryTab /></div>
+          </div>
         )}
 
         {activeTab === 'storage' && <StoragePage embedded onBack={onBack} />}
