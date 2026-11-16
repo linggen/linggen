@@ -48,7 +48,7 @@ The mission name is the directory name. One mission per directory. Run history i
 
 ## Skill missions
 
-An app's scheduled work belongs to its skill, not to the engine. `dream` is built in because memory ships with every install; an app's mission ships with the app.
+An app's scheduled work belongs to its skill, not to the engine. `dream`, `memory-scan` and `memory-solve` are built in because memory ships with every install; an app's mission ships with the app.
 
 ```
 ~/.linggen/skills/cfo/missions/reports/
@@ -113,12 +113,12 @@ permission:
 |:------|:---------|:--------|
 | `name` | yes | Mission id (matches directory name) |
 | `description` | yes | Short human-readable summary — shown in UI |
-| `schedule` | yes | Cron expression (5-field standard) |
+| `schedule` | no | Cron expression (5-field standard). Empty = the mission runs only when triggered (the built-in `memory-scan` and `memory-solve`) |
 | `catchup_hours` | no | If set, the scheduler fires the mission when a scheduled time inside the last this-many hours has no run started at or after it. Used to recover from cron fires missed while the machine was off/asleep. Omit to leave the mission cron-only. `0` is treated as opt-out |
 | `enabled` | yes | On/off. For a skill mission this is the default; the user's choice wins |
 | `run-if` | no | Shell check run before a scheduled run (cron or catch-up). Exit 0 runs; anything else skips with no session or model call. See "run-if" |
 | `agent` | no | Engine agent that runs the mission (key into `agents/`). Defaults to `ling`. The mission body is still the system prompt — `agent:` just picks the routing identity, the model default, and the persona-level config |
-| `cwd` | yes | Working directory for the agent |
+| `cwd` | yes | Working directory for the agent. One inside the Linggen home that does not exist yet is made when a run starts, so a mission can work in an empty folder of its own; one anywhere else is left as it is |
 | `model` | no | Model override |
 | `kickoff` | no | Ordered list of user-turn messages persisted at run start. Item 0 fires immediately; later items drain one-per-assistant-final-reply via the engine's `kickoff_queue`. Empty list falls back to a single generic "Run the X mission" line. Use for staged onboarding (greet → start work) without batching everything into one model reply |
 | `kickoff-day` | no | Day-scoped kickoff variant, used when a trigger passes a target `day` (the memory app's calendar). `$DAY` in each item is replaced with the `YYYY-MM-DD` date |
@@ -352,7 +352,7 @@ All five are omitted when empty, and lines written before them read as before. E
 create → enabled → (triggers run on schedule, each run creates a session) → disabled → delete
 ```
 
-- **Create** — user defines via Web UI, CLI, or hand-authored file. Built-in missions (e.g. `dream`) are seeded by the engine on first start. Skill missions arrive with their skill.
+- **Create** — user defines via Web UI, CLI, or hand-authored file. Built-in missions (`dream`, `memory-scan`, `memory-solve`) are seeded by the engine once each: `missions/.builtin-missions-installed` lists the ones seeded, so an upgrade adds a built-in the install has never had, and one the user deleted stays deleted (an empty list, from older versions, means `dream`). A seeded mission is the user's file from then on. Skill missions arrive with their skill.
 - **Enable / disable** — toggle without deleting. Disabled missions keep config and history.
 - **Delete** — removes the directory. Sessions created by past runs are preserved (they live in the global session store).
 - **Edit** — update frontmatter or body. Takes effect on next tick. Entry script changes take effect on next run.

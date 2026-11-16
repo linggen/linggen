@@ -28,9 +28,11 @@ never writes to project files.
 - **Linggen engine** — memory tools for every agent, the always-on
   identity block in each session, per-turn recall, and the capture
   protocol in the system prompt.
-- **Memory agent + mission** — the offline judgment brain; runs the
-  nightly **dream** mission (remember → forget → condense). The memory
-  Settings → Memory in Linggen's UI shows rows, days and the review queue.
+- **Memory agent + missions** — the offline judgment brain; runs the
+  nightly **dream** mission (remember → forget → condense) and the two
+  manual operations, **scan** and **solve** (missions `memory-scan`,
+  `memory-solve`). Settings → Memory in Linggen's UI shows rows, days and
+  the review queue, and starts them.
 - **linggen plugin** — the same store in Claude Code and Codex:
   recall each turn, capture protocol, runbooks, and `/linggen:scan` for
   backfilling days. Third-party hosts reach the store through the engine's
@@ -91,7 +93,7 @@ never writes to project files.
   calendar. Ends with the condense stage once the worklist is clear.
 - **Scan** (user-triggered) — backfills a past day from host session
   logs, for days live capture missed. Safe to re-run: sessions that
-  already contributed are skipped.
+  already contributed are skipped. See **Scan and solve** below.
 - **Audit** (dream's last stage) — cures stale long-term memory by
   confidence: what the agent can solve it solves, the rest is queued
   for the user. Two confident lanes, both capped per night, store
@@ -138,12 +140,55 @@ never writes to project files.
 - **Solve** (attended, the rare leftover path) — a host agent drains
   what the dream could not settle, with the user present: gathers evidence at solve time (git history,
   files), fixes what the evidence proves, asks the user one item at a
-  time for the rest, closes each item. Surfaces: `/linggen solve` on
-  plugin hosts and Linggen's chat; Settings → Memory shows the queue. Dream reports and the recall footer
-  carry the open count.
+  time for the rest, closes each item. Surfaces: `/linggen:solve` on
+  plugin hosts; in Linggen the `memory-solve` mission, started from
+  Settings → Memory, which shows the queue. Dream reports and the recall
+  footer carry the open count.
 - **Across machines** — one memory shared by every machine the user
   works on; see the section below.
 - **Secrets** — credentials never enter memory; deleted on sight.
+
+## Scan and solve
+
+Both are built-in missions on the `memory` agent with no schedule: they run
+only when started, the way a calendar day's dream is. Their procedures are
+in `agents/memory.md` ("Procedure — scan one day", "Procedure — solve the
+review queue"); the mission files carry only the pacing and the grants.
+
+- **Scan a day** — `POST /api/missions/memory-scan/trigger`
+  `{"day":"YYYY-MM-DD","attended":true}`. The run calls
+  `ling mem scan <day>` (`cli.md` § mem: the day's session logs of Claude
+  Code, Codex, OpenClaw and Linggen, flattened and secret-filtered into
+  `~/.linggen/memory/.scan-output.jsonl`; no model, no network), lists the
+  candidates, skips every session that already has rows for the day (by
+  `source_session`), then judges one candidate per turn and stages what is
+  worth keeping as short-term rows, each carrying its session id and the
+  session's directory. It ends by stamping the day scanned
+  (`harvest_day`), also when nothing new was staged. It never promotes:
+  the next dream judges the rows. Today can be staged but not stamped. A
+  day with more sessions than one run's turns ends `PARTIAL`, unstamped;
+  scanning again continues. Scan works on every machine.
+- **Solve** — `POST /api/missions/memory-solve/trigger` `{"attended":true}`.
+  Works the open review items from evidence (rows, files, docs, git
+  history — read only); asks the user one plain question with a
+  recommendation only when evidence cannot settle an item; a row in the
+  user's words changes only after their answer. `attended` puts AskUser in
+  the run's tools; without it, items needing the user stay open. On a
+  replica it stops at once: solve runs on the primary.
+- **What the trigger answers** — `200 {"ok":true,"message":"Mission
+  triggered","session_id":"<id>"}`: the run's session, open at once, where
+  the user watches (and answers, for solve). `409 {"ok":false,
+  "in_flight":true,…}` while a run of the same mission is going;
+  `400` for a malformed day; `404` when the mission was deleted. The run's
+  end is in `GET /api/missions/<id>/runs` (`status`, `failure_count`) and
+  the day's `scanned` flag in `days`. Scan, solve and dream are separate
+  missions, so one of each can run at once.
+- **Grants** — the scan holds admin on its own empty working folder
+  (`~/.linggen/missions/memory-scan/work`, its cwd: `ling mem scan` is an
+  admin-class command naming no path, so it is judged there) and read on
+  the candidates file — nothing else; the session logs are read by
+  `ling mem scan`, not by the agent. The solve holds the dream's READ over
+  the home directory. Missions never prompt: anything else is refused.
 
 ## Memory is hosted by the engine
 
@@ -290,8 +335,9 @@ a real engine against a throwaway store and judges the end state.
 ## Where the detail lives
 
 Capture protocol: the engine system prompt + the skill's MCP
-instructions · offline judgment: `agents/memory.md` · dream/condense
-procedures: the linggen skill's runbooks · store schema and
+instructions · offline judgment, scan and solve: `agents/memory.md` ·
+the session scan: `crates/linggen-memory/scan/` (`ling mem scan`) ·
+dream/condense procedures on plugin hosts: the linggen skill's runbooks · store schema and
 CLI: `linggen-memory` docs · layout: `storage-spec.md` · tool
 dispatch: `tool-spec.md` · the phone's memory and the account stamp
 on rows from a phone: `phone-memory-spec.md`.

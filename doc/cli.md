@@ -38,6 +38,8 @@ ling update --rollback            # Swap back to ling.prev
 ling restart --binary PATH        # Restart the running engine on a build; interrupted sessions continue
 ling init                         # Bootstrap skills
 ling skills add/remove/list/search
+ling mem <verb>                   # Memory's data verbs (search, add, list, days, …)
+ling mem scan 2026-11-14          # One day's session logs → the scan candidates file
 ```
 
 ## Subcommands overview
@@ -60,6 +62,7 @@ ling skills add/remove/list/search
 | `account status` | Show subscription + trial status | No |
 | `skills` | Manage skills (add/remove/list/search) | No |
 | `claude` | Run Claude Code on Linggen's models | No (needs the daemon) |
+| `mem` | Memory's data verbs; `scan` walks session logs | No |
 
 "Needs full runtime" means the command initialises tracing, `AgentManager`, database, and skill loading. Lightweight commands only load `Config`.
 
@@ -310,6 +313,33 @@ gateway serves `anthropic` models with an API key — never `claude_oauth` —
 and forwards the request unchanged except the model id. `/model` lists the
 served models (gateway model discovery). Non-Anthropic models are not served
 yet.
+
+## mem
+
+```bash
+ling mem <verb> [args…]      # ling mem --help lists the verbs
+ling mem scan [WINDOW]       # WINDOW: YYYY-MM-DD, or today|24h (default)|week|month|<n>d|<n>w|<n>m|<n>y
+```
+
+Memory's data verbs run against the engine when it is up, else on the store
+directly under its lock (`memory-spec.md` § Memory is hosted by the engine).
+
+`scan` touches no store: it walks this machine's session logs for the day (or
+the window back from today) — Claude Code `~/.claude/projects`, Codex
+`~/.codex/sessions` and `~/.codex/archived_sessions`, OpenClaw
+`~/.openclaw/agents`, Linggen `~/.linggen/sessions` (sessions a person
+started) — flattens each, drops noise and secret-looking lines, and writes
+`~/.linggen/memory/.scan-output.jsonl` (overwritten each run): a header line
+(`_meta`, the window, the day range walked, sessions found / scanned /
+skipped, transcript bytes, duration), then one line per session that has
+something in it (`filepath`, `source`, `date`, `user_turns`, `bytes`,
+`transcript_bytes`, `transcript`). It prints one summary line
+(`scan: window=… found=… scanned=… skipped=… transcript_bytes=… ms=… out=…`).
+No model, no network; it works with the engine up or stopped. Exit 1 on a bad
+window (the usage line) or a missing `bash`, `jq` or `perl` (one line naming
+it). The scripts are embedded in `ling` and run from a private temporary
+folder. Judging the candidates into memory is the `memory-scan` mission's
+work (`memory-spec.md` § Scan and solve).
 
 ---
 
