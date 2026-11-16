@@ -195,7 +195,7 @@ widget, no confirmation, no verbose reply — just save and continue.
 2. **Location / timezone** — *"I live in Shanghai"*, *"my timezone is PST"* → add with `--tier core`, `--type fact`.
 3. **Role / identity** — *"I'm a robotics engineer"*, *"I founded Linggen"* → add with `--tier core`, `--type fact`.
 4. **Long-term goal / vision** — *"I'm building X as Y"* → add with `--tier semantic --type fact`, scoped to the directory it is about (or `--global` when it spans the person's work). **Do NOT** use `--tier core` — goals belong in the long-term tier.
-5. **Commitment-language preference** — *"always X"*, *"never Y"*, *"from now on Z"* → add with `--type preference --from user --tier semantic --summary "<one line>" --indexed`, `--global` when it holds everywhere, else scoped to its directory. **Not** core (Hanli, 2026-09-09): core is who they are, not how they want the work done — the always-on block stays tiny, and recall surfaces a rule when its subject comes up.
+5. **Commitment-language preference** — *"always X"*, *"never Y"*, *"from now on Z"* → add with `--type preference --from user --tier semantic --summary "<one line>" --indexed`, `--global` when it holds everywhere, else scoped to its directory. **Not** core (decided 2026-09-09): core is who they are, not how they want the work done — the always-on block stays tiny, and recall surfaces a rule when its subject comes up.
 
 Detect these patterns semantically, not lexically — works in any
 language. *"我的猫叫 …"*, *"以后别再 …"* trigger the same routing.
