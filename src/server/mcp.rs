@@ -325,7 +325,7 @@ const TOOLS: &[McpTool] = &[
     McpTool {
         name: "memory_dream_status",
         backend: Backend::DreamStatus,
-        description: "Dream-pipeline status — is memory upkeep due? Returns undreamed days (oldest first, each awaiting a dream pass) with first_undreamed / first_unscanned, past-day summary counts (total_days / scanned_days / dreamed_days), the open review-item count, whether a dream run is in flight, and the last run's outcome. If last_run_error is set, surface it to the user verbatim — the engine side may need attention (model not configured, sign-in required, quota). When days await a dream, offer to run it: /linggen:dream runs the pass with YOUR model (no Linggen model needed); memory_dream_run offloads it to the local Linggen engine. When open_issues > 0, offer /linggen:solve.",
+        description: "Dream-pipeline status — is memory upkeep due? Returns undreamed days (oldest first, each awaiting a dream pass) with first_undreamed / first_unscanned, past-day summary counts (total_days / scanned_days / dreamed_days), the open review-item count, whether a dream run is in flight, and the last run's outcome (with any tool calls that failed in it: failure_count, failures). If last_run_error is set, surface it to the user verbatim — the engine side may need attention (model not configured, sign-in required, quota). When days await a dream, offer to run it: /linggen:dream runs the pass with YOUR model (no Linggen model needed); memory_dream_run offloads it to the local Linggen engine. When open_issues > 0, offer /linggen:solve.",
         schema: || json!({
             "type": "object",
             "properties": {}
@@ -678,9 +678,13 @@ async fn compose_dream_status(
         .ok()
         .and_then(|runs| runs.into_iter().next());
 
-    // For a failed run, pull the session's last line — that's where the
+    // For a failed run, the error its record kept; a record from before
+    // errors were kept falls back to the session's last line — where the
     // engine said what broke ("Consolidation failed: …", provider errors).
     let last_run_error = match &last_run {
+        Some(run) if run.status == "failed" && run.error.is_some() => {
+            run.error.clone().map(Value::String)
+        }
         Some(run) if run.status == "failed" => run.session_id.as_deref().and_then(|sid| {
             let messages = state.manager.global_sessions.get_chat_history(sid).ok()?;
             let tail = messages
@@ -703,13 +707,23 @@ async fn compose_dream_status(
         "dreamed_days": rollup.get("dreamed_days").cloned().unwrap_or(json!(0)),
         "open_issues": open_issues,
         "today": rollup.get("today").cloned().unwrap_or(Value::Null),
-        "last_run": last_run.as_ref().map(|r| json!({
-            "status": r.status,
-            "triggered_at": r.triggered_at,
-            "session_id": r.session_id,
-        })).unwrap_or(Value::Null),
+        "last_run": last_run.as_ref().map(last_run_json).unwrap_or(Value::Null),
         "last_run_error": last_run_error.unwrap_or(Value::Null),
     }))
+}
+
+/// A dream run as `memory_dream_status` reports it: its outcome and the
+/// tool calls that failed in it. A record from before failures were kept
+/// reports none.
+fn last_run_json(run: &crate::engine::mission::record::MissionRunEntry) -> Value {
+    json!({
+        "status": run.status,
+        "triggered_at": run.triggered_at,
+        "session_id": run.session_id,
+        "failure_count": run.failure_count,
+        "failures": run.failures,
+        "hit_limit": run.hit_limit,
+    })
 }
 
 /// Handle one JSON-RPC message. `None` means a notification (no response).
@@ -816,6 +830,28 @@ mod tests {
 
     fn hub() -> BridgeHub {
         BridgeHub::new()
+    }
+
+    #[test]
+    fn the_dream_status_names_a_last_runs_failed_calls_and_old_rows_read_as_before() {
+        let line = r#"{"run_id":"r","triggered_at":1,"status":"completed","skipped":false,"failures":[{"tool":"fetch","kind":"exit","exit":3,"tail":"down"}],"failure_count":1}"#;
+        let run: crate::engine::mission::record::MissionRunEntry =
+            serde_json::from_str(line).unwrap();
+        let v = last_run_json(&run);
+        assert_eq!(v["status"], "completed");
+        assert_eq!(v["failure_count"], 1);
+        assert_eq!(v["failures"][0]["exit"], 3);
+
+        let old = r#"{"run_id":"r","triggered_at":1,"status":"failed","skipped":false}"#;
+        let run: crate::engine::mission::record::MissionRunEntry =
+            serde_json::from_str(old).unwrap();
+        let v = last_run_json(&run);
+        assert_eq!(
+            (v["status"].clone(), v["failure_count"].clone()),
+            (json!("failed"), json!(0))
+        );
+        assert_eq!(v["failures"], json!([]));
+        assert!(run.error.is_none(), "an old row grew an error");
     }
 
     // No ServerState in unit tests — agent_run errors cleanly, everything
