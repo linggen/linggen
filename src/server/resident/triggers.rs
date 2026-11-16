@@ -1,4 +1,4 @@
-//! What wakes her: the event bus, mission ends, finished and failed runs,
+//! What wakes her: the event bus, mission runs that had failures, finished and failed runs,
 //! pending asks, and where her words are delivered.
 
 use super::*;
@@ -162,8 +162,10 @@ pub(super) fn handle_notification(state: &Arc<ServerState>, payload: Notificatio
         return; // heralds are hers; before she is met there is no one to speak them
     }
     match payload {
-        // A background mission finished — wake Yinyue to decide whether it's worth
-        // a word. A real LLM reaction, because she may have something to say.
+        // A background mission finished. Only an unattended run that had
+        // something go wrong reaches her, with what its record says — the
+        // facts, not a verdict. A clean run hands her nothing: the record and
+        // the missions page hold it, and a run that went as planned is not news.
         NotificationPayload::MissionCompleted {
             mission_id,
             mission_name,
@@ -175,29 +177,20 @@ pub(super) fn handle_notification(state: &Arc<ServerState>, payload: Notificatio
             if mission_id.starts_with(YINYUE_AGENT) {
                 return;
             }
-            // A cancel is user-initiated — they know; announcing it as a
-            // finished mission is both wrong and noise (cancel != completion).
+            // A cancel is user-initiated — they know.
             if status == "cancelled" {
                 return;
             }
-            // An unattended run that had something go wrong: she is handed
-            // what the record says — the facts, not a verdict.
-            if let Some(fact) = mission_fact::for_run(state, &mission_id, &mission_name, &run_id) {
-                tracing::info!(
-                    "[yinyue-watch] mission '{mission_id}' run {run_id} had failures; handing Yinyue the fact"
-                );
-                let state = state.clone();
-                tokio::spawn(async move {
-                    wake_herald(state, fact, "neutral").await;
-                });
+            let Some(fact) = mission_fact::for_run(state, &mission_id, &mission_name, &run_id)
+            else {
                 return;
-            }
+            };
             tracing::info!(
-                "[yinyue-watch] mission '{mission_id}' completed ({status}); waking Yinyue"
+                "[yinyue-watch] mission '{mission_id}' run {run_id} had failures; handing Yinyue the fact"
             );
             let state = state.clone();
             tokio::spawn(async move {
-                wake_for_mission(state, &mission_name, &status).await;
+                wake_herald(state, fact, "neutral").await;
             });
         }
         // A run errored — Yinyue surfaces it in her own voice. A DETERMINISTIC
@@ -348,29 +341,6 @@ pub(super) fn error_line() -> String {
     ];
     let idx = (crate::util::now_ts_secs() as usize) % LINES.len();
     LINES[idx].to_string()
-}
-
-/// Wake the Yinyue agent to react to a finished background mission. She decides
-/// whether it's worth surfacing — replying `SILENT` means say nothing (the
-/// never-nag discipline). Anything else is spoken to her surfaces.
-pub(super) async fn wake_for_mission(state: Arc<ServerState>, mission_name: &str, status: &str) {
-    let task = format!(
-        "You've been woken to react to a background event on the user's machine. \
-         The background job \"{mission_name}\" just finished (status: {status}). \
-         Decide whether it's worth telling the user. If so, reply with one or two brief \
-         sentences in your voice — what happened and anything notable (you may search memory, \
-         Read, or Grep for context). Your reply will be SPOKEN ALOUD, so write plain prose, \
-         no markdown. If it's routine and not worth interrupting them, reply with exactly the \
-         single word SILENT and nothing else. Be brief. Never nag."
-    );
-
-    let emotion =
-        if status.eq_ignore_ascii_case("completed") || status.to_lowercase().contains("success") {
-            "happy"
-        } else {
-            "neutral"
-        };
-    wake_herald(state, task, emotion).await;
 }
 
 /// Whether the user is at the screen right now. A herald of what they can

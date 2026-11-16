@@ -331,8 +331,10 @@ conversation, and she already learns from it passively via shared memory.
 **Triggers.** Coarse events only; the per-token firehose
 (`Token`/`TextSegment`/`ContentBlock*`) is dropped at near-zero cost.
 
-- Shipped: `Notification(MissionCompleted)` for a non-Yinyue mission → an **LLM
-  reaction** (she may have something to say).
+- Shipped: `Notification(MissionCompleted)` for a non-Yinyue, unattended mission
+  run that had something go wrong → an **LLM reaction** on the run's recorded
+  facts (`doc/yinyue-companion-spec.md` § A mission run that went wrong). A
+  clean run wakes no one.
 - Shipped: `Notification(RunFailed)` — an interactive/agent run errored
   (`chat/runtime.rs`, genuine failures only, not cancels) → a **deterministic**
   in-character apology over the speak spine (`emit_speak`, `sad`). Never an LLM

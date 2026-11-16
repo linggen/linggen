@@ -90,7 +90,7 @@ Hook set (terminal / "stops the chat"):
 |---|---|---|
 | `AskUser` | Ling blocked, waiting on you (covers questions **and** permission prompts) | exists, **add hook** |
 | `Notification(RunFailed)` | run errored (a user cancel emits nothing) | wired |
-| `Notification(MissionCompleted)` | background mission done | wired |
+| `Notification(MissionCompleted)` | an unattended mission run that had something go wrong — she is handed its facts (§ A mission run that went wrong); a clean run wakes no one | wired |
 | **new** `RunCompleted` | success completion — emit at `chat/runtime.rs:31` (mirror `RunFailed`) | **add** |
 
 Guards: skip her own events (no self-loop), skip `Cancelled`, presence-gate

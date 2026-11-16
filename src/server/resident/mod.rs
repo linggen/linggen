@@ -1,8 +1,8 @@
 //! Yinyue's event-reactive watch loop.
 //!
 //! Taps the server event bus and, on a few coarse, report-worthy events, wakes
-//! the Yinyue agent to decide whether to tell the user. First slice: react only
-//! to a *non-Yinyue* mission finishing.
+//! the Yinyue agent to decide whether to tell the user — among them a
+//! *non-Yinyue* mission run that had something go wrong (`mission_fact`).
 //!
 //! The reaction is launched as a plain **agent run** (not a mission), so it (a)
 //! never persists a `missions/yinyue-react/` dir that would pollute the mission
