@@ -53,29 +53,12 @@ pub fn path(data_dir: &Path) -> PathBuf {
     data_dir.join("memory").join(".replica.json")
 }
 
-/// The old memory daemon's port. A replica that followed a primary there
-/// follows that machine's Linggen now, which serves memory on its own port.
-const OLD_DAEMON_PORT: &str = ":9528";
-const ENGINE_PORT: &str = ":9527";
-
-/// `host:9528` → `host:9527`; any other address as it is.
-fn followed_to_the_engine(primary: &str) -> Option<String> {
-    primary
-        .strip_suffix(OLD_DAEMON_PORT)
-        .map(|host| format!("{host}{ENGINE_PORT}"))
-}
-
 impl ReplicaFile {
     pub fn load(data_dir: &Path) -> Self {
-        let mut file: Self = std::fs::read_to_string(path(data_dir))
+        std::fs::read_to_string(path(data_dir))
             .ok()
             .and_then(|t| serde_json::from_str(&t).ok())
-            .unwrap_or_default();
-        if let Some(moved) = file.primary.as_deref().and_then(followed_to_the_engine) {
-            tracing::info!("replica: the primary's memory is at its Linggen now: {moved}");
-            file.primary = Some(moved);
-        }
-        file
+            .unwrap_or_default()
     }
 
     pub fn save(&self, data_dir: &Path) -> std::io::Result<()> {
@@ -157,25 +140,6 @@ mod tests {
         assert_eq!(r.upstream_url().unwrap(), "http://192.168.20.230:9527/mem");
     }
 
-    /// A replica made before memory moved into Linggen follows the same
-    /// machine at its engine port, token and cursor kept.
-    #[test]
-    fn a_primary_at_the_old_daemon_port_is_followed_at_its_linggen() {
-        let dir = tempfile::tempdir().unwrap();
-        let old = ReplicaFile {
-            primary: Some("192.168.20.230:9528".into()),
-            token: Some("t".into()),
-            cursor: 7,
-            ..Default::default()
-        };
-        old.save(dir.path()).unwrap();
-        let now = ReplicaFile::load(dir.path());
-        assert_eq!(now.primary.as_deref(), Some("192.168.20.230:9527"));
-        assert_eq!(now.token.as_deref(), Some("t"));
-        assert_eq!(now.cursor, 7);
-        assert_eq!(followed_to_the_engine("mac.local:4100"), None);
-    }
-
     #[test]
     fn the_view_never_carries_the_token() {
         let r = ReplicaFile {
@@ -191,12 +155,12 @@ mod tests {
     #[test]
     fn addresses_are_normalized() {
         assert_eq!(
-            normalize_primary("192.168.20.230:9528").as_deref(),
-            Some("192.168.20.230:9528")
+            normalize_primary("192.168.20.230:9527").as_deref(),
+            Some("192.168.20.230:9527")
         );
         assert_eq!(
-            normalize_primary("http://mac.local:9528/").as_deref(),
-            Some("mac.local:9528")
+            normalize_primary("http://mac.local:9527/").as_deref(),
+            Some("mac.local:9527")
         );
         assert!(normalize_primary("192.168.20.230").is_none());
         assert!(normalize_primary("h:0").is_none());

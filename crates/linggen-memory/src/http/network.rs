@@ -112,12 +112,12 @@ mod tests {
     #[test]
     fn the_view_says_whether_the_saved_choice_is_live() {
         let dir = tempfile::tempdir().unwrap();
-        let wide: SocketAddr = "0.0.0.0:9528".parse().unwrap();
+        let wide: SocketAddr = "0.0.0.0:9527".parse().unwrap();
         assert_eq!(view(Network::Lan, wide, dir.path())["applied"], true);
         assert_eq!(view(Network::Local, wide, dir.path())["applied"], false);
         assert_eq!(
             view(Network::Lan, wide, dir.path())["bound"],
-            "0.0.0.0:9528"
+            "0.0.0.0:9527"
         );
     }
 }

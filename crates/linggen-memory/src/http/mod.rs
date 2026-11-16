@@ -98,7 +98,7 @@ mod tests {
     #[tokio::test]
     async fn the_primary_enforces_the_user_voice_guard_on_forwarded_writes() {
         let dir = tempfile::tempdir().unwrap();
-        let state = state::scratch_state(dir.path(), "0.0.0.0:9528".parse().unwrap()).await;
+        let state = state::scratch_state(dir.path(), "0.0.0.0:9527".parse().unwrap()).await;
         std::fs::write(
             gate::devices_path(dir.path()),
             r#"[{"id":"r","name":"DS242","secret":"cafe1234","created_at":0}]"#,

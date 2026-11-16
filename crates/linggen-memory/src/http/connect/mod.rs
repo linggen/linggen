@@ -302,7 +302,7 @@ mod tests {
 
     fn local_headers() -> HeaderMap {
         let mut h = HeaderMap::new();
-        h.insert("host", "127.0.0.1:9528".parse().unwrap());
+        h.insert("host", "127.0.0.1:9527".parse().unwrap());
         h
     }
 
@@ -311,7 +311,7 @@ mod tests {
     }
 
     async fn state(dir: &std::path::Path) -> SharedState {
-        crate::http::state::scratch_state(dir, "0.0.0.0:9528".parse().unwrap()).await
+        crate::http::state::scratch_state(dir, "0.0.0.0:9527".parse().unwrap()).await
     }
 
     fn ask(state: &SharedState) -> Pending {
@@ -371,7 +371,7 @@ mod tests {
         let st = state(dir.path()).await;
         let p = ask(&st);
         let mut h = HeaderMap::new();
-        h.insert("host", "evil.example:9528".parse().unwrap());
+        h.insert("host", "evil.example:9527".parse().unwrap());
         assert!(forbidden(
             allow(State(st.clone()), peer("127.0.0.1"), h, Path(p.id.clone())).await
         ));

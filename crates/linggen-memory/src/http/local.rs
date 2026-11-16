@@ -10,7 +10,7 @@
 //!    some website that rebinds its DNS name to `127.0.0.1` reaches the socket
 //!    as loopback, but its requests still carry that site's name as `Host`.
 //! 3. **An `Origin`, if present, is this same origin.** A cross-site page that
-//!    posts to `127.0.0.1:9528` carries its own origin; the console's own
+//!    posts to `127.0.0.1:9527` carries its own origin; the console's own
 //!    fetches carry none or ours. There is no CORS layer to widen this.
 
 use super::envelope::ApiError;
@@ -70,48 +70,48 @@ mod tests {
 
     #[test]
     fn the_console_on_this_machine_passes() {
-        for host in ["127.0.0.1:9528", "localhost:9528", "[::1]:9528"] {
-            assert!(require_local(lo(), &headers(&[("host", host)]), 9528).is_ok());
+        for host in ["127.0.0.1:9527", "localhost:9527", "[::1]:9527"] {
+            assert!(require_local(lo(), &headers(&[("host", host)]), 9527).is_ok());
         }
         let same = headers(&[
-            ("host", "127.0.0.1:9528"),
-            ("origin", "http://127.0.0.1:9528"),
+            ("host", "127.0.0.1:9527"),
+            ("origin", "http://127.0.0.1:9527"),
         ]);
-        assert!(require_local(lo(), &same, 9528).is_ok());
+        assert!(require_local(lo(), &same, 9527).is_ok());
     }
 
     /// A paired device carries a valid token, but its socket is not loopback.
     #[test]
     fn a_peer_off_this_machine_is_refused_whatever_it_sends() {
         let lan: IpAddr = "192.168.20.31".parse().unwrap();
-        let h = headers(&[("host", "127.0.0.1:9528"), ("x-linggen-device", "cafe")]);
-        assert!(require_local(lan, &h, 9528).is_err());
+        let h = headers(&[("host", "127.0.0.1:9527"), ("x-linggen-device", "cafe")]);
+        assert!(require_local(lan, &h, 9527).is_err());
     }
 
     /// DNS rebinding: the socket is loopback, the Host is the attacker's name.
     #[test]
     fn a_rebound_host_name_is_refused() {
-        let h = headers(&[("host", "evil.example:9528")]);
-        assert!(require_local(lo(), &h, 9528).is_err());
+        let h = headers(&[("host", "evil.example:9527")]);
+        assert!(require_local(lo(), &h, 9527).is_err());
         let wrong_port = headers(&[("host", "127.0.0.1:80")]);
-        assert!(require_local(lo(), &wrong_port, 9528).is_err());
+        assert!(require_local(lo(), &wrong_port, 9527).is_err());
         let no_port = headers(&[("host", "localhost")]);
-        assert!(require_local(lo(), &no_port, 9528).is_err());
-        assert!(require_local(lo(), &HeaderMap::new(), 9528).is_err());
+        assert!(require_local(lo(), &no_port, 9527).is_err());
+        assert!(require_local(lo(), &HeaderMap::new(), 9527).is_err());
     }
 
     /// CSRF: a cross-site page posting to loopback carries its own Origin.
     #[test]
     fn a_cross_site_origin_is_refused() {
         let h = headers(&[
-            ("host", "127.0.0.1:9528"),
+            ("host", "127.0.0.1:9527"),
             ("origin", "https://evil.example"),
         ]);
-        assert!(require_local(lo(), &h, 9528).is_err());
+        assert!(require_local(lo(), &h, 9527).is_err());
         let other_port = headers(&[
-            ("host", "127.0.0.1:9528"),
-            ("origin", "http://127.0.0.1:9527"),
+            ("host", "127.0.0.1:9527"),
+            ("origin", "http://127.0.0.1:3000"),
         ]);
-        assert!(require_local(lo(), &other_port, 9528).is_err());
+        assert!(require_local(lo(), &other_port, 9527).is_err());
     }
 }
