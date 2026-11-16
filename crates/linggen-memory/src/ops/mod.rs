@@ -26,6 +26,7 @@
 
 pub mod chains;
 pub mod config;
+pub mod connect;
 pub mod days;
 pub mod issues;
 pub mod lease;
