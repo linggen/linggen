@@ -1,13 +1,18 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { startDream } from './dreamApi.mts';
 import { describeError, memory, MemoryError, type MemoryDays as Days } from './memoryApi.mts';
-import { ghostBtn, primaryBtn, sectionCls, tierChipCls } from './memoryStyle';
+import { ghostBtn, primaryBtn } from './memoryStyle';
+import { monthOf, shiftMonth } from './memoryCalendar.mts';
+import { MemoryCalendarGrid } from './MemoryCalendarGrid';
+import { MemoryDayDetail } from './MemoryDayDetail';
 
 export const MemoryDays: React.FC = () => {
   const [data, setData] = useState<Days | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
+  const [month, setMonth] = useState<{ year: number; month: number } | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
   const mounted = useRef(false);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const stop = useCallback(() => { if (timer.current) clearInterval(timer.current); timer.current = null; }, []);
@@ -24,25 +29,29 @@ export const MemoryDays: React.FC = () => {
     } catch (e) { setNotice(e instanceof Error ? e.message : 'Could not start dream.'); }
     finally { setBusy(false); }
   };
-  const days = [...(data?.days ?? [])].sort((a, b) => b.date.localeCompare(a.date));
-  const dreamed = (d: Days['days'][number]) => d.dreamed ?? (d.state === 'dreamed');
+  const days = data?.days ?? [];
   const waiting = days.filter((d) => d.date < (data?.today ?? '') && d.unjudged > 0).length;
+  const shown = month ?? (data ? monthOf(data.today) : null);
+  const current = data ? monthOf(data.today) : null;
+  const atCurrent = shown && current && shown.year * 12 + shown.month >= current.year * 12 + current.month;
+  const move = (delta: number) => { if (shown) setMonth(shiftMonth(shown.year, shown.month, delta)); setSelected(null); };
   return (
     <div className="space-y-3" data-testid="memory-subview-days">
-      <button className={primaryBtn} disabled={busy} onClick={() => start()}>Dream now</button>
+      <div className="flex flex-wrap items-center gap-2">
+        {shown && <>
+          <button className={ghostBtn} aria-label="Previous month" onClick={() => move(-1)}>‹</button>
+          <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300">{new Date(shown.year, shown.month - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</h3>
+          <button className={ghostBtn} aria-label="Next month" disabled={Boolean(atCurrent)} onClick={() => move(1)}>›</button>
+        </>}
+        <button className={primaryBtn} disabled={busy} onClick={() => start()}>Dream now</button>
+      </div>
       {notice && <p role="status" className="text-xs text-slate-500">{notice}</p>}
       {error != null && <div role="alert" className="text-xs text-red-600 dark:text-red-400">{describeError(error, 'read memory')}{!(error instanceof MemoryError && error.forbidden) && <button className={ghostBtn} onClick={load}>Try again</button>}</div>}
       {!data && !error && <p className="text-xs text-slate-500">Loading…</p>}
       {data && <p className="text-xs text-slate-500">{`${waiting} days wait for a dream.`}</p>}
       {data && days.length === 0 && <p className="text-xs text-slate-500">No days yet.</p>}
-      {days.map((day) => <section key={day.date} className={`${sectionCls} flex flex-wrap items-center gap-2`} data-testid="memory-day">
-        <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{day.date}</span>
-        <span className={tierChipCls(dreamed(day) ? 'episodic' : 'core')}>{day.state ?? (dreamed(day) ? 'Dreamed' : day.scanned ? 'Scanned' : 'Waiting')}</span>
-        <span className="text-xs text-slate-500">{`${day.rows} rows · ${day.unjudged} unjudged`}</span>
-        {day.promoted != null && <span className="text-xs text-slate-500">{`${day.promoted} promoted`}</span>}
-        {day.forgotten != null && <span className="text-xs text-slate-500">{`${day.forgotten} forgotten`}</span>}
-        {!dreamed(day) && <button className={ghostBtn} disabled={busy} onClick={() => start(day.date)}>Dream this day</button>}
-      </section>)}
+      {data && shown && <MemoryCalendarGrid {...shown} days={days} today={data.today} selected={selected} select={setSelected} />}
+      {data && selected && <MemoryDayDetail date={selected} day={days.find((day) => day.date === selected)} today={data.today} busy={busy} start={start} />}
     </div>
   );
 };
