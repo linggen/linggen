@@ -4,6 +4,7 @@
 //! `hosted::open*`; the Linggen engine serves its routes (`http`), and its
 //! data verbs run as `ling mem …` (`cli::run_data`).
 
+pub mod call;
 pub mod cli;
 pub mod embed;
 pub mod error;
@@ -15,6 +16,7 @@ pub mod memory;
 pub(crate) mod ops;
 pub mod replica;
 
+pub use call::Reply;
 pub use error::{ErrorCode, MemError};
 pub use handle::Memory;
 pub use memory::{MemoryType, Origin, Outcome};

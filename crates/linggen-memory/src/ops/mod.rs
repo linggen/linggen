@@ -39,3 +39,4 @@ pub mod session;
 pub mod stats;
 pub mod sync;
 pub mod upkeep;
+pub(crate) mod verbs;

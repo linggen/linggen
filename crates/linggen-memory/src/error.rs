@@ -12,6 +12,8 @@ pub enum ErrorCode {
     Forbidden,
     TooMany,
     Conflict,
+    /// A replica asked for what only its primary does.
+    Replica,
     Internal,
 }
 
@@ -25,6 +27,7 @@ impl ErrorCode {
             ErrorCode::Forbidden => 403,
             ErrorCode::TooMany => 429,
             ErrorCode::Conflict => 409,
+            ErrorCode::Replica => 409,
             ErrorCode::Internal => 500,
         }
     }
@@ -38,8 +41,31 @@ impl ErrorCode {
             ErrorCode::Forbidden => "FORBIDDEN",
             ErrorCode::TooMany => "TOO_MANY_REQUESTS",
             ErrorCode::Conflict => "CONFLICT",
+            ErrorCode::Replica => "REPLICA",
             ErrorCode::Internal => "INTERNAL",
         }
+    }
+
+    const ALL: [ErrorCode; 8] = [
+        ErrorCode::BadRequest,
+        ErrorCode::NotFound,
+        ErrorCode::Unauthorized,
+        ErrorCode::Forbidden,
+        ErrorCode::TooMany,
+        ErrorCode::Conflict,
+        ErrorCode::Replica,
+        ErrorCode::Internal,
+    ];
+
+    /// The code another store answered with: by its spelling, else by its
+    /// HTTP status, else a refusal (4xx) or an internal failure.
+    pub fn from_wire(code: Option<&str>, status: u16) -> Self {
+        let by_code = Self::ALL.into_iter().find(|c| Some(c.code()) == code);
+        let by_status = || Self::ALL.into_iter().find(|c| c.http_status() == status);
+        by_code.or_else(by_status).unwrap_or(match status {
+            400..=499 => ErrorCode::BadRequest,
+            _ => ErrorCode::Internal,
+        })
     }
 }
 
@@ -96,6 +122,14 @@ impl MemError {
     pub fn conflict(msg: impl Into<String>) -> Self {
         Self {
             code: ErrorCode::Conflict,
+            message: msg.into(),
+        }
+    }
+
+    /// A replica's refusal of what only its primary does.
+    pub fn replica(msg: impl Into<String>) -> Self {
+        Self {
+            code: ErrorCode::Replica,
             message: msg.into(),
         }
     }

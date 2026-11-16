@@ -44,7 +44,7 @@ pub const WRITES: &[&str] = &[
 ];
 
 /// The primary's alone: dreaming, the forget sweep, the schema step.
-const PRIMARY_ONLY: &[&str] = &[
+pub(crate) const PRIMARY_ONLY: &[&str] = &[
     "/api/memory/remember_day",
     "/api/memory/sweep",
     "/api/memory/dream_lease",
