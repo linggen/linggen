@@ -30,6 +30,7 @@ pub mod days;
 pub mod issues;
 pub mod lease;
 pub mod network;
+pub mod session;
 pub mod stats;
 pub mod sync;
 pub mod upkeep;
