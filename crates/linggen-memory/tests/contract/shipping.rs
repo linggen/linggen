@@ -37,16 +37,18 @@ fn memory_features(package: &str, edges: &str) -> Vec<String> {
 
 #[test]
 fn a_shipping_build_has_no_test_embedder() {
-    for package in ["linggen", "linggen-memory"] {
+    for package in ["linggen", "linggen-engine", "linggen-memory"] {
         let shipped = memory_features(package, "normal,build");
         assert!(
             !shipped.iter().any(|f| f == "test-support"),
             "{package} ships memory with {shipped:?}"
         );
     }
-    let tested = memory_features("linggen-memory", "all");
-    assert!(
-        tested.iter().any(|f| f == "test-support"),
-        "this suite runs with the test embedder: {tested:?}"
-    );
+    for package in ["linggen", "linggen-memory"] {
+        let tested = memory_features(package, "all");
+        assert!(
+            tested.iter().any(|f| f == "test-support"),
+            "{package}'s tests run with the test embedder: {tested:?}"
+        );
+    }
 }

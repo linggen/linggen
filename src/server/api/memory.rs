@@ -381,6 +381,9 @@ pub(crate) fn verb_mutates(verb: &str) -> Option<bool> {
 }
 
 #[cfg(test)]
+mod door_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::server::api::pair::{AccountRef, PairedDevice};
