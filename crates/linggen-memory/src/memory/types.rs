@@ -395,7 +395,7 @@ impl FromStr for Origin {
 ///
 /// The serde default is `Semantic`, for JSON written before the field
 /// existed (those rows came from the semantic table). A *write* with no
-/// tier is episodic — see `http::memory::resolve_tier`.
+/// tier is episodic — see `ops::memory::place::resolve_tier`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Tier {

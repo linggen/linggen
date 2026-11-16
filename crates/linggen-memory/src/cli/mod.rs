@@ -792,7 +792,7 @@ pub async fn run_data(cli: Cli, base: Option<String>) -> Result<()> {
 }
 
 /// Does a direct write belong in the staging table without `--episodic`?
-/// The same answer the engine gives (`http::memory::resolve_tier`): one add
+/// The same answer the engine gives (`ops::memory::place::resolve_tier`): one add
 /// that names no tier, or names episodic, is staged — unless it is indexed
 /// (long-term) or replaces rows (their tier). A `--stdin` batch carries its
 /// own tiers and stays as it was.
