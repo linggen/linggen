@@ -5,6 +5,7 @@ import { ForgetDialog } from './ForgetDialog';
 import { MemoryDetail } from './MemoryDetail';
 import { MemoryDays } from './MemoryDays';
 import { MemoryReview } from './MemoryReview';
+import { MemorySettings } from './MemorySettings';
 import { MemoryList } from './MemoryList';
 import { MemoryStats } from './MemoryStats';
 import { MemoryToolbar } from './MemoryToolbar';
@@ -27,7 +28,7 @@ export const MemoryTab: React.FC = () => {
   const rows = useMemoryRows();
   const { query, change } = rows;
   const [reviewCount, setReviewCount] = useState(0);
-  const [subview, setSubview] = useState<'Rows' | 'Days' | 'Review'>('Rows');
+  const [subview, setSubview] = useState<'Rows' | 'Days' | 'Review' | 'Settings'>('Rows');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [dialog, setDialog] = useState<Dialog>(null);
@@ -93,7 +94,7 @@ export const MemoryTab: React.FC = () => {
       <MemoryStats version={statsVersion} />
 
       <div className="flex gap-1">
-        {(['Rows', 'Days', 'Review'] as const).map((view) => (
+        {(['Rows', 'Days', 'Review', 'Settings'] as const).map((view) => (
           <button key={view} className={`px-3 py-1.5 rounded-lg text-xs font-bold ${subview === view ? 'bg-blue-600 text-white' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/5'}`} onClick={async () => { if (await mayLeave()) setSubview(view); }}>
             {view}{view === 'Review' && reviewCount > 0 && ` (${reviewCount})`}
           </button>
@@ -102,6 +103,7 @@ export const MemoryTab: React.FC = () => {
       {/* SUBVIEW MOUNT */}
       {subview === 'Days' && <MemoryDays />}
       {subview === 'Review' && <MemoryReview onCount={setReviewCount} />}
+      {subview === 'Settings' && <MemorySettings />}
       {subview === 'Rows' && <div data-testid="memory-subview-rows" className="space-y-3">
         <MemoryToolbar
           query={query}

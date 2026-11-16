@@ -6,7 +6,6 @@
 import React from 'react';
 import type { AppConfig } from '../types';
 import { Field, Grid, MoreGroup, NumberInput, Section, inputCls } from './settings/kit';
-import { LingMemPrimary } from './settings/LingMemPrimary';
 
 type AgentCfg = AppConfig['agent'];
 
@@ -113,18 +112,6 @@ export const SessionTab: React.FC<{
             <NumberInput min={0} max={1} step={0.05} value={a.memory_inject_min_score ?? 0.7} onCommit={(v) => set({ memory_inject_min_score: v })} />
           </Field>
         </Grid>
-        <MoreGroup label="Advanced">
-          <Grid>
-            <Field
-              label="Primary"
-              hint="Where memory is kept: this machine, or another on your LAN."
-              details={<>A replica keeps a copy here, syncs, and works offline. Set <code>local</code> to hold it here.</>}
-              wide
-            >
-              <LingMemPrimary />
-            </Field>
-          </Grid>
-        </MoreGroup>
       </Section>
     </div>
   );

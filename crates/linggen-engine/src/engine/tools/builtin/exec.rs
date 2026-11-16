@@ -21,7 +21,7 @@ impl Tool for BashTool {
         None
     }
     fn description(&self) -> &'static str {
-        "Run a shell command via sh -c on this machine — the person's own computer, the one you run on. Working directory persists across calls (cd is remembered). Use for builds, tests, git, and reading the machine's own live state (memory, disks, processes, network, settings). Prefer dedicated tools (Read, Glob, Grep) over Bash equivalents."
+        "Run a shell command via sh -c on this machine — the person's own computer, the one you run on. Working directory persists across calls (cd is remembered). Use for builds, tests, git, and reading the machine's own live state (memory, disks, processes, network, settings). Prefer dedicated tools (Read, Glob, Grep) over Bash equivalents, and create or change files with Write and Edit, not with here-documents or redirects."
     }
     fn tier(&self) -> PermissionMode {
         PermissionMode::Admin

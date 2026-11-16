@@ -46,3 +46,34 @@ test('the Memory tab shows review and days', async ({ page, world, httpRequests 
   await page.getByRole('button', { name: 'Days', exact: true }).click();
   await expect(page.getByTestId('memory-day').first().or(page.getByText('No days yet.'))).toBeVisible();
 });
+
+test('the Memory settings show the store\'s two values and keep a change after a reload', async ({ page, world, httpRequests }) => {
+  await page.addInitScript(watchAsked);
+  await openSettings(page, world.url, httpRequests);
+  await page.getByRole('button', { name: 'Memory' }).click();
+  await page.getByRole('button', { name: 'Settings', exact: true }).last().click();
+
+  const days = page.getByLabel('Keep short-term rows for (days)');
+  const score = page.getByLabel('Recall threshold (0–1)');
+  await expect(days).toHaveValue('7');
+  await expect(score).toHaveValue('0.7');
+  await expect(page.getByRole('heading', { name: 'Other machines' })).toBeVisible();
+
+  const save = page.getByRole('button', { name: 'Save', exact: true });
+  await expect(save).toBeDisabled();
+  await days.fill('21');
+  await expect(save).toBeEnabled();
+  await save.click();
+  await expect(page.getByText('Saved', { exact: true })).toBeVisible();
+  await expect(save).toBeDisabled();
+  expect(await asked(page)).toContain('PUT /api/ling-mem/config');
+
+  // A fresh load of the page (the address bar now reads /settings, whose
+  // direct load would be a plain-HTTP route), then back to the same place.
+  await openSettings(page, world.url, httpRequests);
+  await page.getByRole('button', { name: 'Memory' }).click();
+  await page.getByRole('button', { name: 'Settings', exact: true }).last().click();
+  await expect(page.getByLabel('Keep short-term rows for (days)')).toHaveValue('21');
+  await expect(page.getByLabel('Recall threshold (0–1)')).toHaveValue('0.7');
+  expect(await asked(page)).toContain('GET /api/ling-mem/config');
+});
