@@ -14,7 +14,7 @@ use crate::ops::memory::{pick_store, stores_for_read};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-pub async fn add(state: &Memory, req: AddRequest) -> Result<Value, MemError> {
+pub(in crate::ops) async fn add(state: &Memory, req: AddRequest) -> Result<Value, MemError> {
     if req.content.trim().is_empty() {
         return Err(MemError::bad_request("content must not be empty"));
     }
@@ -160,7 +160,7 @@ async fn locate_row(state: &Memory, id: &str) -> Result<Option<Row>, MemError> {
 /// contents (one gate acquisition), then commit each table's rows with a
 /// single `MemoryStore::insert` (one LanceDB version per table, not per
 /// row). Empty-content rows are skipped rather than failing the batch.
-pub async fn add_batch(state: &Memory, req: AddBatchRequest) -> Result<Value, MemError> {
+pub(in crate::ops) async fn add_batch(state: &Memory, req: AddBatchRequest) -> Result<Value, MemError> {
     // Partition by target table up front so each table commits exactly once.
     let mut semantic: Vec<Row> = Vec::new();
     let mut episodic: Vec<Row> = Vec::new();

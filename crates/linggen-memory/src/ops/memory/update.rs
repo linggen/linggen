@@ -14,7 +14,7 @@ use chrono::{SubsecRound, Utc};
 use serde_json::Value;
 use std::sync::Arc;
 
-pub async fn update(state: &Memory, req: UpdateRequest) -> Result<Value, MemError> {
+pub(in crate::ops) async fn update(state: &Memory, req: UpdateRequest) -> Result<Value, MemError> {
     let rewrites = req.content.is_some();
     let outcome_patch = match (req.outcome, req.clear_outcome) {
         (Some(o), _) => Some(Some(o)),

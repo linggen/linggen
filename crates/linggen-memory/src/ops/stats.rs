@@ -12,7 +12,7 @@ use crate::memory::types::Tier;
 
 /// Counts per tier, the archive, disk bytes, dream progress, open issues
 /// and the store's constants, in one answer.
-pub async fn stats(state: &Memory) -> Result<Value, MemError> {
+pub(in crate::ops) async fn stats(state: &Memory) -> Result<Value, MemError> {
     let core = state
         .store
         .count_filtered(&Filters {

@@ -72,7 +72,7 @@ impl FilterDTO {
     }
 }
 
-pub async fn get(state: &Memory, req: GetRequest) -> Result<Value, MemError> {
+pub(in crate::ops) async fn get(state: &Memory, req: GetRequest) -> Result<Value, MemError> {
     let scope = req.scope.scope();
     for store in stores_for_read(state, req.episodic) {
         if let Some(fact) = store.get(&req.id).await? {
@@ -85,7 +85,7 @@ pub async fn get(state: &Memory, req: GetRequest) -> Result<Value, MemError> {
     Err(MemError::not_found(format!("no fact with id {}", req.id)))
 }
 
-pub async fn search(state: &Memory, req: SearchRequest) -> Result<Value, MemError> {
+pub(in crate::ops) async fn search(state: &Memory, req: SearchRequest) -> Result<Value, MemError> {
     if req.query.trim().is_empty() {
         return Err(MemError::bad_request("query must not be empty"));
     }
@@ -158,7 +158,7 @@ async fn scored(
     })
 }
 
-pub async fn list(state: &Memory, mut req: ListRequest) -> Result<Value, MemError> {
+pub(in crate::ops) async fn list(state: &Memory, mut req: ListRequest) -> Result<Value, MemError> {
     // Resolve `past_ttl: true` into a concrete `until` cutoff. The mission
     // body sends `past_ttl: true` so it doesn't have to hardcode the TTL
     // number; the daemon owns the live value and applies it here.
@@ -226,7 +226,7 @@ fn sort_combined(rows: &mut [crate::memory::Memory], sort: crate::memory::SortOr
     });
 }
 
-pub async fn count(state: &Memory, req: CountRequest) -> Result<Value, MemError> {
+pub(in crate::ops) async fn count(state: &Memory, req: CountRequest) -> Result<Value, MemError> {
     let filters = req.filters.into_filters()?;
     let stores = stores_for_read(state, req.episodic);
 

@@ -13,7 +13,7 @@ pub struct ApplySchemaRequest {
     pub confirm: bool,
 }
 
-pub async fn apply_schema(state: &Memory, req: ApplySchemaRequest) -> Result<Value, MemError> {
+pub(in crate::ops) async fn apply_schema(state: &Memory, req: ApplySchemaRequest) -> Result<Value, MemError> {
     if !req.confirm {
         return Err(MemError::bad_request(
             "the v2 step drops the contexts and tags columns — pass confirm:true",

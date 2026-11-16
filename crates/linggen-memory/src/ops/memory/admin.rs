@@ -8,7 +8,7 @@ use crate::ops::memory::dto::{DeleteRequest, ForgetRequest, RestampRequest};
 use crate::ops::memory::{pick_store, stores_for_read};
 use serde_json::{json, Value};
 
-pub async fn delete(state: &Memory, req: DeleteRequest) -> Result<Value, MemError> {
+pub(in crate::ops) async fn delete(state: &Memory, req: DeleteRequest) -> Result<Value, MemError> {
     let scope = req.scope.scope();
     for store in stores_for_read(state, req.episodic) {
         // Fetch first: a row outside the caller's account is simply not
@@ -28,7 +28,7 @@ pub async fn delete(state: &Memory, req: DeleteRequest) -> Result<Value, MemErro
 
 /// `POST /api/memory/restamp` — re-own every row stamped `from` (both
 /// tables, archived rows included, so provenance follows the person).
-pub async fn restamp(state: &Memory, req: RestampRequest) -> Result<Value, MemError> {
+pub(in crate::ops) async fn restamp(state: &Memory, req: RestampRequest) -> Result<Value, MemError> {
     let from = req.from.trim().to_string();
     if from.is_empty() {
         return Err(MemError::bad_request("from must not be empty"));
@@ -50,7 +50,7 @@ pub async fn restamp(state: &Memory, req: RestampRequest) -> Result<Value, MemEr
 /// `POST /api/memory/accounts` — every person the store holds rows for
 /// besides the owner: `{account_id, account_name, rows}`. What a
 /// per-account maintenance pass iterates.
-pub async fn accounts(state: &Memory) -> Result<Value, MemError> {
+pub(in crate::ops) async fn accounts(state: &Memory) -> Result<Value, MemError> {
     let mut seen: std::collections::BTreeMap<String, (Option<String>, usize)> =
         std::collections::BTreeMap::new();
     for store in stores_for_read(state, None) {
@@ -69,7 +69,7 @@ pub async fn accounts(state: &Memory) -> Result<Value, MemError> {
     Ok(json!(list))
 }
 
-pub async fn forget(state: &Memory, req: ForgetRequest) -> Result<Value, MemError> {
+pub(in crate::ops) async fn forget(state: &Memory, req: ForgetRequest) -> Result<Value, MemError> {
     let filters = req.filters.into_filters()?;
     // Refuse empty filters — bulk delete must be intentional. Matches the
     // CLI's refusal when no filter flags are passed.

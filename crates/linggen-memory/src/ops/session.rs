@@ -64,7 +64,7 @@ impl Default for SessionStartRequest {
     }
 }
 
-pub async fn session_start(state: &Memory, req: SessionStartRequest) -> Result<Value, MemError> {
+pub(in crate::ops) async fn session_start(state: &Memory, req: SessionStartRequest) -> Result<Value, MemError> {
     let account = AccountScope::from_args(req.account.clone(), false);
     let core = if req.core {
         state

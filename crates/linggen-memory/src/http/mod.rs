@@ -1,5 +1,6 @@
 //! HTTP surface of memory, mounted by the host (`build_hosted_router`). Its
-//! handlers are becoming thin adapters over `crate::ops`.
+//! handlers are thin adapters: a verb's over `Memory::call` (`verb.rs`), the
+//! others' over `crate::ops`.
 //!
 //! Phase 3 ships the seven `Memory.*` methods at `/api/memory/<method>`
 //! plus the lifecycle probe at `/api/health`. All endpoints return the
@@ -42,8 +43,9 @@ use state::SharedState;
 
 /// The router for memory hosted inside another process (`crate::hosted`):
 /// the daemon's routes without its LAN gate (the host decides who reaches
-/// them), and without its telemetry layer. Replica write-forwarding and the
-/// activity stamp that background upkeep waits on stay.
+/// them), and without its telemetry layer. The activity stamp that
+/// background upkeep waits on stays a layer, for the routes that are not
+/// verbs; a verb's route forwards a replica's write through `Memory::call`.
 pub fn build_hosted_router(state: SharedState) -> Router {
     Router::new()
         .route("/api/health", get(health::handler))
@@ -61,10 +63,6 @@ pub fn build_hosted_router(state: SharedState) -> Router {
         .merge(lease::router())
         .merge(migration::router())
         .merge(compact::router())
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            crate::replica::forward::replica_writes,
-        ))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             mark_activity_layer,

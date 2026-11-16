@@ -121,7 +121,7 @@ fn default_action() -> String {
 }
 
 /// Acquire, renew or release `req.day`'s lease for `req.holder`.
-pub async fn dream_lease(state: &Memory, req: LeaseRequest) -> Result<Value, MemError> {
+pub(in crate::ops) async fn dream_lease(state: &Memory, req: LeaseRequest) -> Result<Value, MemError> {
     if !matches!(req.action.as_str(), "acquire" | "renew" | "release") {
         return Err(MemError::bad_request("action is acquire, renew or release"));
     }

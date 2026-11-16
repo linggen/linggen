@@ -1,9 +1,10 @@
 //! Writes on a replica: forwarded to the primary when it answers, queued in
 //! the outbox (and applied locally) when it does not.
 //!
-//! A middleware inside the gate, so every caller — the CLI, `/mcp` (which
-//! loops back through these routes), the engine — takes the same path.
-//! Reads are untouched: they are served from the local copy.
+//! `Memory::call` decides (`call::route`) and comes here for a write, so
+//! every caller — the routes (and through them the CLI, `/mcp`, the
+//! engine) and an in-process call — takes the same path. Reads are served
+//! from the local copy.
 //!
 //! - Online: the write goes to the primary with this replica's token, the
 //!   primary's own handler (and its guards) decide, and its answer is
@@ -13,78 +14,33 @@
 //! - Dreaming is the primary's (`remember_day`, `sweep`, the dream lease,
 //!   the schema step): a replica refuses those and names the primary.
 
-use axum::{
-    body::{to_bytes, Body},
-    extract::{Request, State},
-    http::{HeaderValue, Method, StatusCode},
-    middleware::Next,
-    response::{IntoResponse, Response},
-    Json,
-};
 use serde_json::{json, Value};
 
+use crate::call::Reply;
+use crate::error::MemError;
+use crate::handle::Memory;
 use crate::http::state::SharedState;
-use crate::replica::{outbox, Role};
+use crate::ops::verbs;
+use crate::replica::outbox;
 
 /// The review-queue kind for a queued write the primary did not take.
 pub const CONFLICT_KIND: &str = "replica-conflict";
 
 /// Writes a replica forwards (or queues) — with the pull and the connect
-/// routes, the whole of what a replica asks of its primary.
-pub const WRITES: &[&str] = &[
-    "/api/memory/add",
-    "/api/memory/add_batch",
-    "/api/memory/update",
-    "/api/memory/delete",
-    "/api/memory/forget",
-    "/api/memory/restamp",
-    "/api/memory/issue_add",
-    "/api/memory/issue_resolve",
-    "/api/memory/harvest_day",
-];
+/// routes, the whole of what a replica asks of its primary. Read off the
+/// verb table.
+pub const WRITES: &[&str] = &verbs::WRITE_PATHS;
 
 /// The primary's alone: dreaming, the forget sweep, the schema step.
-pub(crate) const PRIMARY_ONLY: &[&str] = &[
-    "/api/memory/remember_day",
-    "/api/memory/sweep",
-    "/api/memory/dream_lease",
-    "/api/schema/apply",
-];
-
-const MAX_BODY: usize = 16 * 1024 * 1024;
-
-pub async fn replica_writes(
-    State(state): State<SharedState>,
-    req: Request,
-    next: Next,
-) -> Response {
-    if req.method() != Method::POST || state.replica.role() != Role::Replica {
-        return next.run(req).await;
-    }
-    let path = req.uri().path().to_string();
-    if PRIMARY_ONLY.contains(&path.as_str()) {
-        return primary_only(&state);
-    }
-    if !WRITES.contains(&path.as_str()) {
-        return next.run(req).await;
-    }
-    let (parts, body) = req.into_parts();
-    let Ok(bytes) = to_bytes(body, MAX_BODY).await else {
-        return refusal(StatusCode::BAD_REQUEST, "request body too large");
-    };
-    let args: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
-    if let Some(answer) = forward_in_order(&state, &path, &args).await {
-        return answer;
-    }
-    let local = next
-        .run(Request::from_parts(parts, Body::from(bytes)))
-        .await;
-    queue_after_local(&state, &path, args, local).await
-}
+pub const PRIMARY_ONLY: &[&str] = &verbs::PRIMARY_ONLY_PATHS;
 
 /// Forward when nothing is queued ahead (replaying the queue first).
 /// `None` = the primary did not answer; the caller queues.
-async fn forward_in_order(state: &SharedState, path: &str, args: &Value) -> Option<Response> {
+pub(crate) async fn forward_in_order(
+    state: &SharedState,
+    path: &str,
+    args: &Value,
+) -> Option<Reply> {
     if outbox::len(&state.data_dir) > 0 {
         super::sync_once(state).await;
         if outbox::len(&state.data_dir) > 0 {
@@ -92,14 +48,14 @@ async fn forward_in_order(state: &SharedState, path: &str, args: &Value) -> Opti
         }
     }
     let answer = forward(state, path, args).await?;
-    if answer.status().is_success() {
+    if matches!(answer, Reply::Primary { status, .. } if (200..300).contains(&status)) {
         super::sync_once(state).await;
     }
     Some(answer)
 }
 
 /// One write to the primary. `None` when it did not answer.
-async fn forward(state: &SharedState, path: &str, args: &Value) -> Option<Response> {
+async fn forward(state: &SharedState, path: &str, args: &Value) -> Option<Reply> {
     let (base, token) = state.replica.upstream()?;
     let sent = super::http()
         .post(format!("{base}{path}"))
@@ -114,31 +70,18 @@ async fn forward(state: &SharedState, path: &str, args: &Value) -> Option<Respon
         });
         return None;
     };
-    let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    let status = resp.status().as_u16();
     let body: Value = resp.json().await.unwrap_or(Value::Null);
-    Some((status, Json(body)).into_response())
+    Some(Reply::Primary { status, body })
 }
 
-/// The local apply happened; queue the write for the primary, marked so a
-/// caller can tell.
-async fn queue_after_local(
-    state: &SharedState,
-    path: &str,
-    args: Value,
-    local: Response,
-) -> Response {
-    let (mut parts, body) = local.into_parts();
-    let bytes = to_bytes(body, MAX_BODY).await.unwrap_or_default();
-    if parts.status.is_success() {
-        let reply: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
-        if let Err(e) = outbox::push(state, path, args, created_ids(&reply)) {
-            tracing::warn!("replica: could not queue {path}: {e:#}");
-        }
-        parts
-            .headers
-            .insert("x-ling-mem-queued", HeaderValue::from_static("1"));
+/// The local apply happened and answered `data`; queue the write for the
+/// primary.
+pub(crate) fn queue(state: &SharedState, path: &str, args: Value, data: &Value) {
+    let reply = json!({ "data": data });
+    if let Err(e) = outbox::push(state, path, args, created_ids(&reply)) {
+        tracing::warn!("replica: could not queue {path}: {e:#}");
     }
-    Response::from_parts(parts, Body::from(bytes))
 }
 
 /// Rows the local apply CREATED (not merged into): dropped after replay,
@@ -157,20 +100,10 @@ pub fn created_ids(reply: &Value) -> Vec<String> {
     one.into_iter().chain(many).collect()
 }
 
-fn primary_only(state: &SharedState) -> Response {
+/// A replica's refusal of a primary-only verb, naming the primary.
+pub(crate) fn primary_only(state: &Memory) -> MemError {
     let host = state.replica.snapshot().primary.unwrap_or_default();
-    refusal(
-        StatusCode::CONFLICT,
-        &format!("Memory is dreamed on the primary ({host})"),
-    )
-}
-
-fn refusal(status: StatusCode, msg: &str) -> Response {
-    (
-        status,
-        Json(json!({ "ok": false, "error": msg, "code": "REPLICA" })),
-    )
-        .into_response()
+    MemError::replica(format!("Memory is dreamed on the primary ({host})"))
 }
 
 #[cfg(test)]

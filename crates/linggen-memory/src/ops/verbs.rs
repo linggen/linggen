@@ -44,8 +44,9 @@ pub(crate) struct Verb {
     pub path: &'static str,
     pub kind: Kind,
     pub run: Run,
-    /// The op it calls, as written (`memory::write::add`) — for the
+    /// The op it calls, as written (`memory :: write :: add`) — for the
     /// no-bypass check.
+    #[cfg(test)]
     pub op: &'static str,
 }
 
@@ -63,6 +64,7 @@ macro_rules! verb {
                     ops::$($op)::+(&state, req).await
                 })
             },
+            #[cfg(test)]
             op: stringify!($($op)::+),
         }
     };
@@ -72,6 +74,7 @@ macro_rules! verb {
             path: $path,
             kind: Kind::$kind,
             run: |state, _args| Box::pin(async move { ops::$($op)::+(&state).await }),
+            #[cfg(test)]
             op: stringify!($($op)::+),
         }
     };
@@ -270,46 +273,5 @@ pub(crate) const WRITE_PATHS: [&str; count(Kind::Write)] = paths(Kind::Write);
 pub(crate) const PRIMARY_ONLY_PATHS: [&str; count(Kind::PrimaryOnly)] = paths(Kind::PrimaryOnly);
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_derived_lists_are_the_replicas_lists() {
-        assert_eq!(&WRITE_PATHS[..], crate::replica::forward::WRITES);
-        assert_eq!(
-            &PRIMARY_ONLY_PATHS[..],
-            crate::replica::forward::PRIMARY_ONLY
-        );
-    }
-
-    #[test]
-    fn names_and_paths_are_unique() {
-        for (i, v) in VERBS.iter().enumerate() {
-            for w in &VERBS[i + 1..] {
-                assert_ne!(v.name, w.name);
-                assert_ne!(v.path, w.path);
-            }
-        }
-    }
-
-    /// Every verb's route is a route of the HTTP surface, read from the
-    /// routers' source (axum cannot list a router's routes).
-    #[test]
-    fn every_verb_is_routed_at_its_path() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/http");
-        let text: String = std::fs::read_dir(dir)
-            .unwrap()
-            .flatten()
-            .filter_map(|e| std::fs::read_to_string(e.path()).ok())
-            .collect();
-        for v in VERBS {
-            let line = format!(".route(\"{}\",", v.path);
-            assert!(
-                text.contains(&line),
-                "{} is not routed at {}",
-                v.name,
-                v.path
-            );
-        }
-    }
-}
+#[path = "verbs_tests.rs"]
+mod tests;

@@ -122,7 +122,7 @@ pub struct IssuesRequest {
     limit: Option<usize>,
 }
 
-pub async fn issues(
+pub(in crate::ops) async fn issues(
     state: &crate::handle::Memory,
     req: IssuesRequest,
 ) -> Result<serde_json::Value, crate::error::MemError> {
@@ -153,7 +153,7 @@ pub struct IssueAddRequest {
     note: String,
 }
 
-pub async fn issue_add(
+pub(in crate::ops) async fn issue_add(
     state: &crate::handle::Memory,
     req: IssueAddRequest,
 ) -> Result<serde_json::Value, crate::error::MemError> {
@@ -208,7 +208,7 @@ pub struct IssueResolveRequest {
     note: Option<String>,
 }
 
-pub async fn issue_resolve(
+pub(in crate::ops) async fn issue_resolve(
     state: &crate::handle::Memory,
     req: IssueResolveRequest,
 ) -> Result<serde_json::Value, crate::error::MemError> {

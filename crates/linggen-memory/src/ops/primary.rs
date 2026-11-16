@@ -16,7 +16,7 @@ fn view(state: &Memory) -> Value {
 
 /// Role, upstream, approved, online, last sync, queued writes and why a sync
 /// did not happen. Never the token.
-pub async fn role(state: &Memory) -> Result<Value, MemError> {
+pub(in crate::ops) async fn role(state: &Memory) -> Result<Value, MemError> {
     Ok(view(state))
 }
 

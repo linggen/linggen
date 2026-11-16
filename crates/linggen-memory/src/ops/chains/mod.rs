@@ -67,7 +67,7 @@ pub struct ChainsRequest {
     derived_only: bool,
 }
 
-pub async fn chains(state: &Memory, req: ChainsRequest) -> Result<Value, MemError> {
+pub(in crate::ops) async fn chains(state: &Memory, req: ChainsRequest) -> Result<Value, MemError> {
     let kind = req.kind.as_deref().unwrap_or("cited");
     let limit = req.limit.unwrap_or(DEFAULT_LIMIT).max(1);
     let offset = req.offset.unwrap_or(0);

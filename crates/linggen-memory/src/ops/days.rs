@@ -151,7 +151,7 @@ fn undreamed(date: &str, today: &str, live: &DayLive) -> bool {
     date < today && live.unjudged > 0
 }
 
-pub async fn days(state: &Memory, req: DaysRequest) -> Result<Value, MemError> {
+pub(in crate::ops) async fn days(state: &Memory, req: DaysRequest) -> Result<Value, MemError> {
     let from = req.from.as_deref().map(parse_day).transpose()?;
     let to = req.to.as_deref().map(parse_day).transpose()?;
 
@@ -301,7 +301,7 @@ pub struct RememberDayRequest {
     pub holder: Option<String>,
 }
 
-pub async fn remember_day(state: &Memory, req: RememberDayRequest) -> Result<Value, MemError> {
+pub(in crate::ops) async fn remember_day(state: &Memory, req: RememberDayRequest) -> Result<Value, MemError> {
     let date = parse_day(&req.date)?;
     let today = today_local();
     let key = date.format("%Y-%m-%d").to_string();
@@ -342,7 +342,7 @@ pub struct HarvestDayRequest {
 /// Stamp `harvested_at` only — a scan (session backfill) covered this
 /// day. Deliberately does NOT touch `remembered_at`: scanning stages
 /// rows; the day then goes pending and a dream pass judges it.
-pub async fn harvest_day(state: &Memory, req: HarvestDayRequest) -> Result<Value, MemError> {
+pub(in crate::ops) async fn harvest_day(state: &Memory, req: HarvestDayRequest) -> Result<Value, MemError> {
     let date = parse_day(&req.date)?;
     let today = today_local();
     let key = date.format("%Y-%m-%d").to_string();
@@ -371,7 +371,7 @@ pub struct SweepRequest {
     pub dry_run: bool,
 }
 
-pub async fn sweep(state: &Memory, req: SweepRequest) -> Result<Value, MemError> {
+pub(in crate::ops) async fn sweep(state: &Memory, req: SweepRequest) -> Result<Value, MemError> {
     let mut days_state = load(&state.data_dir).await;
     let cfg = crate::ops::config::load(&state.data_dir).await;
     let ttl_cutoff = Utc::now() - chrono::Duration::days(cfg.episodic_ttl_days as i64);
