@@ -1,5 +1,21 @@
 # Changelog
 
+## [Unreleased]
+
+Draft for 2.3.1: the two major library groups held back from 2.3.0.
+
+- **Embedding stack:** fastembed 5.13.4 → 5.17.4 on candle 0.10.2 → 0.11.0
+  (ort 2.0.0-rc.12 → rc.13). The embedding vectors are bit-equal to 2.3.0's,
+  so search over stored rows is unchanged. The Kokoro voice stays on candle
+  0.10 until its library moves.
+- **Vector database:** lancedb 0.31 → 0.41, lance 8.0.0 → 14.0.2,
+  datafusion 53.1 → 54.1; arrow stays 58.3. New tables are still written in
+  Lance file format 2.1 (lancedb 0.41 would default to 2.2).
+- **Your store:** 2.3.1 opens a 2.3.0 store as it is, rewrites nothing, and
+  takes its one backup before first opening it
+  (`memory/backups/takeover-<stamp>/`). Going back to 2.3.0 afterwards
+  works: it opens the store with every row, including rows 2.3.1 wrote.
+
 ## [2.3.0] - 2026-11-16 — memory is part of ling, one program
 
 - **Settings → Memory.** The memory console is a tab of the engine's own
