@@ -15,6 +15,11 @@ readme = "README.md"
 # Disable at compile time: cargo build --no-default-features.
 default = ["telemetry"]
 telemetry = []
+# Test helpers for this crate's tests and the engine's: a deterministic
+# embedder (`Embedder::fake`, `hosted::open_quiet_fake`) so a test can add and
+# search with no model. Turned on only by dev-dependencies, never by a build
+# that ships.
+test-support = []
 
 # The library keeps its old name for now (`use ling_mem::…`), so the move
 # into the engine's workspace changes no code that imports it.
@@ -86,6 +91,10 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 # without touching the async reqwest stack from sync embedder init.
 ureq = "3"
 
+
+[dev-dependencies]
+# This crate's own integration tests (tests/) run with `test-support` on.
+linggen-memory = { path = ".", default-features = false, features = ["test-support"] }
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.29", features = ["signal", "process", "socket", "net"] }

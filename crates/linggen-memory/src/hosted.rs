@@ -141,6 +141,21 @@ pub async fn open(data_dir: &Path, self_base: String) -> Result<SharedState> {
 /// [`open`] without the background work: for a short-lived caller (a
 /// `ling mem` verb run on the store directly) that only answers requests.
 pub async fn open_quiet(data_dir: &Path, self_base: String) -> Result<SharedState> {
+    open_with(data_dir, self_base, Embedder::new).await
+}
+
+/// [`open_quiet`] on the deterministic test embedder (`Embedder::fake`):
+/// the same stores, change log and state, no model. Tests only.
+#[cfg(any(test, feature = "test-support"))]
+pub async fn open_quiet_fake(data_dir: &Path, self_base: String) -> Result<SharedState> {
+    open_with(data_dir, self_base, Embedder::fake).await
+}
+
+async fn open_with(
+    data_dir: &Path,
+    self_base: String,
+    load: fn() -> Result<Embedder>,
+) -> Result<SharedState> {
     let semantic = Arc::new(
         MemoryStore::open_semantic(data_dir)
             .await
@@ -153,7 +168,7 @@ pub async fn open_quiet(data_dir: &Path, self_base: String) -> Result<SharedStat
     );
     attach_change_log(data_dir, &semantic, &episodic).await?;
     let recall = Arc::new(Recall::new(Arc::clone(&semantic), Arc::clone(&episodic)));
-    let embedder = Arc::new(LoadOnce::new(Embedder::new));
+    let embedder = Arc::new(LoadOnce::new(load));
     let bound = self_addr(&self_base);
     let mut state = AppState::new(
         semantic,
