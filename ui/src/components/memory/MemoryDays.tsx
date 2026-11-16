@@ -4,6 +4,7 @@ import { OpenRun } from './OpenRun';
 import { describeError, memory, MemoryError, type MemoryDays as Days } from './memoryApi.mts';
 import { ghostBtn, primaryBtn } from './memoryStyle';
 import { monthOf, shiftMonth } from './memoryCalendar.mts';
+import { uiLocale } from './memoryFormat.mts';
 import { MemoryCalendarGrid } from './MemoryCalendarGrid';
 import { MemoryDayDetail } from './MemoryDayDetail';
 
@@ -43,9 +44,9 @@ export const MemoryDays: React.FC = () => {
     <div className="space-y-3" data-testid="memory-subview-days">
       <div className="flex flex-wrap items-center gap-2">
         {shown && <>
-          <button className={ghostBtn} aria-label="Previous month" onClick={() => move(-1)}>‹</button>
-          <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300">{new Date(shown.year, shown.month - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</h3>
-          <button className={ghostBtn} aria-label="Next month" disabled={Boolean(atCurrent)} onClick={() => move(1)}>›</button>
+          <button className={`${ghostBtn} min-w-11 justify-center md:min-w-0`} aria-label="Previous month" onClick={() => move(-1)}>‹</button>
+          <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300">{new Date(shown.year, shown.month - 1, 1).toLocaleDateString(uiLocale(), { month: 'long', year: 'numeric' })}</h3>
+          <button className={`${ghostBtn} min-w-11 justify-center md:min-w-0`} aria-label="Next month" disabled={Boolean(atCurrent)} onClick={() => move(1)}>›</button>
         </>}
         <button className={primaryBtn} disabled={busy} onClick={() => start()}>Dream now</button>
       </div>

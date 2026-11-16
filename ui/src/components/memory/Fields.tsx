@@ -10,7 +10,7 @@ export const PickField: React.FC<{
   return (
     <div>
       <label htmlFor={id} className={labelCls}>{label}</label>
-      <select id={id} className={`${inputCls} mt-1`} value={value} onChange={(e) => onChange(e.target.value)}>
+      <select id={id} className={`${inputCls} min-h-11 md:min-h-0 mt-1`} value={value} onChange={(e) => onChange(e.target.value)}>
         {none !== undefined && <option value="">{none}</option>}
         {options.map((o) => <option key={o} value={o}>{show ? show(o) : o}</option>)}
       </select>
@@ -28,7 +28,7 @@ export const TextField: React.FC<{
       <input
         id={id}
         data-no-i18n
-        className={`${inputCls} mt-1 disabled:opacity-50`}
+        className={`${inputCls} min-h-11 md:min-h-0 mt-1 disabled:opacity-50`}
         value={value}
         disabled={disabled}
         placeholder={placeholder}

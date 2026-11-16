@@ -32,7 +32,7 @@ export const MemoryList: React.FC<Props> = (p) => {
         <Row key={r.id} row={r} selected={r.id === p.selectedId} checked={p.checked.has(r.id)} onSelect={p.onSelect} onCheck={p.onCheck} />
       ))}
       {p.hasMore && (
-        <button onClick={p.onLoadMore} disabled={p.loadingMore} className="w-full py-2 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50">
+        <button onClick={p.onLoadMore} disabled={p.loadingMore} className="w-full py-3 md:py-2 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50">
           {p.loadingMore ? 'Loading…' : 'Load more'}
         </button>
       )}
@@ -65,14 +65,17 @@ const Row: React.FC<{
         : 'border-slate-200 dark:border-white/5 bg-white dark:bg-[#141414] hover:bg-slate-50 dark:hover:bg-white/[0.03]'
     }`}
   >
-    <input
-      type="checkbox"
-      aria-label="Select row"
-      className="mt-0.5 shrink-0"
-      checked={checked}
-      onClick={(e) => e.stopPropagation()}
-      onChange={() => onCheck(row.id)}
-    />
+    {/* The box is small; its label gives a finger 44 px on a phone and
+        swallows the click so the row is not opened too. */}
+    <label className="-m-3 shrink-0 p-3 md:m-0 md:mt-0.5 md:p-0" onClick={(e) => e.stopPropagation()}>
+      <input
+        type="checkbox"
+        aria-label="Select row"
+        className="block h-5 w-5 md:h-auto md:w-auto"
+        checked={checked}
+        onChange={() => onCheck(row.id)}
+      />
+    </label>
     <div className="min-w-0 flex-1">
       <p data-no-i18n className="text-xs text-slate-800 dark:text-slate-200 break-words line-clamp-3">{preview(row.content)}</p>
       <div className="mt-1 flex flex-wrap items-center gap-1.5">

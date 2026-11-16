@@ -34,7 +34,7 @@ export const MemoryToolbar: React.FC<Props> = (p) => {
               role="tab"
               aria-selected={query.tab === t.key}
               onClick={() => p.onChange({ tab: t.key })}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+              className={`px-2 md:px-3 py-1.5 min-h-11 md:min-h-0 rounded-lg text-xs font-semibold transition-colors ${
                 query.tab === t.key
                   ? 'bg-blue-600/10 text-blue-600 dark:text-blue-400'
                   : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/5'
@@ -53,12 +53,12 @@ export const MemoryToolbar: React.FC<Props> = (p) => {
         <Choice label="Type" value={query.type} options={TYPES} onChange={(type) => p.onChange({ type })} />
         <Choice label="From" value={query.from} options={ORIGINS} onChange={(from) => p.onChange({ from })} />
         {!query.text && (
-          <select aria-label="Sort" className={`${inputCls} !w-auto`} value={query.sort} onChange={(e) => p.onChange({ sort: e.target.value as Sort })}>
+          <select aria-label="Sort" className={`${inputCls} min-h-11 md:min-h-0 !w-auto`} value={query.sort} onChange={(e) => p.onChange({ sort: e.target.value as Sort })}>
             <option value="newest">Newest</option>
             <option value="oldest">Oldest</option>
           </select>
         )}
-        {p.checkedCount > 0 && <span className="text-xs text-slate-500">{p.checkedCount} selected</span>}
+        {p.checkedCount > 0 && <span className="text-xs text-slate-500">{`${p.checkedCount} selected`}</span>}
       </div>
     </div>
   );
@@ -71,7 +71,7 @@ const SearchBox: React.FC<{ text: string; onSubmit: (text: string) => void }> = 
       <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
       <input
        
-        className={`${inputCls} pl-8 pr-8`}
+        className={`${inputCls} min-h-11 md:min-h-0 pl-8 pr-8`}
         placeholder="Search by meaning"
         aria-label="Search memory"
         value={typed}
@@ -91,8 +91,8 @@ const SearchBox: React.FC<{ text: string; onSubmit: (text: string) => void }> = 
 };
 
 const Choice: React.FC<{ label: string; value: string; options: readonly string[]; onChange: (v: string) => void }> = ({ label, value, options, onChange }) => (
-  <select aria-label={label} className={`${inputCls} !w-auto`} value={value} onChange={(e) => onChange(e.target.value)}>
-    <option value="">{label}: any</option>
+  <select aria-label={label} className={`${inputCls} min-h-11 md:min-h-0 !w-auto`} value={value} onChange={(e) => onChange(e.target.value)}>
+    <option value="">{`${label}: any`}</option>
     {options.map((o) => <option key={o} value={o}>{o}</option>)}
   </select>
 );
@@ -102,14 +102,14 @@ const MoreMenu: React.FC<Props> = (p) => {
   const pick = (fn: () => void) => () => { setOpen(false); fn(); };
   return (
     <div className="relative">
-      <button className={ghostBtn} aria-label="More actions" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+      <button className={`${ghostBtn} min-w-11 justify-center md:min-w-0`} aria-label="More actions" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         <MoreHorizontal size={14} />
       </button>
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
           <div role="menu" className="absolute right-0 z-20 mt-1 w-52 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-[#1c1c1c] shadow-lg py-1 text-xs">
-            <Item disabled={p.checkedCount === 0} danger onClick={pick(p.onDeleteChecked)}>Delete selected ({p.checkedCount})</Item>
+            <Item disabled={p.checkedCount === 0} danger onClick={pick(p.onDeleteChecked)}>{`Delete selected (${p.checkedCount})`}</Item>
             <Item disabled={p.checkedCount === 0} onClick={pick(p.onClearChecked)}>Clear selection</Item>
             <Item danger onClick={pick(p.onForget)}>Forget by filter…</Item>
           </div>
@@ -124,7 +124,7 @@ const Item: React.FC<{ onClick: () => void; disabled?: boolean; danger?: boolean
     role="menuitem"
     disabled={disabled}
     onClick={onClick}
-    className={`w-full text-left px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-white/5 disabled:opacity-40 disabled:hover:bg-transparent ${danger ? 'text-red-600 dark:text-red-400' : 'text-slate-700 dark:text-slate-200'}`}
+    className={`w-full text-left px-3 py-3.5 md:py-1.5 hover:bg-slate-100 dark:hover:bg-white/5 disabled:opacity-40 disabled:hover:bg-transparent ${danger ? 'text-red-600 dark:text-red-400' : 'text-slate-700 dark:text-slate-200'}`}
   >
     {children}
   </button>

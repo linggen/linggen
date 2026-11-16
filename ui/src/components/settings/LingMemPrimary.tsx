@@ -75,7 +75,7 @@ export const LingMemPrimary: React.FC = () => {
     <div className="flex flex-col gap-1.5">
       <div className="flex gap-2">
         <input
-          className={inputCls}
+          className={`${inputCls} min-h-11 md:min-h-0`}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onBlur={save}

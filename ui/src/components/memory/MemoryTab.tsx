@@ -95,7 +95,7 @@ export const MemoryTab: React.FC = () => {
 
       <div className="flex gap-1">
         {(['Rows', 'Days', 'Review', 'Settings'] as const).map((view) => (
-          <button key={view} className={`px-3 py-1.5 rounded-lg text-xs font-bold ${subview === view ? 'bg-blue-600 text-white' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/5'}`} onClick={async () => { if (await mayLeave()) setSubview(view); }}>
+          <button key={view} className={`px-3 py-1.5 min-h-11 md:min-h-0 rounded-lg text-xs font-bold ${subview === view ? 'bg-blue-600 text-white' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/5'}`} onClick={async () => { if (await mayLeave()) setSubview(view); }}>
             {view}{view === 'Review' && reviewCount > 0 && ` (${reviewCount})`}
           </button>
         ))}

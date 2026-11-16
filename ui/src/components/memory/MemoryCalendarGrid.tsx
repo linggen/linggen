@@ -1,5 +1,6 @@
 import { dayState, monthGrid, type DayState } from './memoryCalendar.mts';
 import type { MemoryDay } from './memoryApi.mts';
+import { rowCount } from './memoryFormat.mts';
 
 // These are the foreground colours of the Memory tab's existing tier chips.
 // A day with nothing in it carries no mark; a day still to come is dimmed.
@@ -26,7 +27,7 @@ export function MemoryCalendarGrid({ year, month, days, today, selected, select 
         <span className="flex items-center justify-center gap-1">
           {Number(date.slice(8))}{marks[state] && <span className={`h-1.5 w-1.5 rounded-full ${marks[state]}`} />}
         </span>
-        {day && day.rows > 0 && <span className="block text-[10px] text-slate-500">{`${day.rows} rows`}</span>}
+        {day && day.rows > 0 && <span className="block text-[10px] text-slate-500">{rowCount(day.rows)}</span>}
       </button>;
     })}
   </div>;

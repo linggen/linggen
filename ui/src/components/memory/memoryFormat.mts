@@ -36,8 +36,19 @@ export function preview(content: string, max = 220): string {
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
 
+/** The language the page is in (`lib/i18n` sets it on <html>), as a date locale;
+ *  undefined = the browser's own. */
+export function uiLocale(): string | undefined {
+  return typeof document !== 'undefined' && document.documentElement.lang === 'zh-Hans' ? 'zh-CN' : undefined;
+}
+
+/** "1 row", "3 rows". */
+export function rowCount(n: number): string {
+  return `${n} row${n === 1 ? '' : 's'}`;
+}
+
 /** A local calendar day as a short readable date, or the original text. */
 export function fmtTime(iso: string | null | undefined): string {
   const t = iso ? new Date(iso) : null;
-  return t && !Number.isNaN(t.getTime()) ? t.toLocaleString() : '';
+  return t && !Number.isNaN(t.getTime()) ? t.toLocaleString(uiLocale()) : '';
 }

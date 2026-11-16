@@ -18,7 +18,7 @@ export const MemoryStats: React.FC<{ version: number }> = ({ version }) => {
   const dream = stats.last_remembered_at ? relAge(stats.last_remembered_at) : 'never';
   return (
     <div data-testid="memory-stats" className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500 dark:text-slate-400">
-      <span><b className="text-slate-700 dark:text-slate-200">{stats.total}</b> rows</span>
+      <span><b className="text-slate-700 dark:text-slate-200">{stats.total}</b> {stats.total === 1 ? 'row' : 'rows'}</span>
       <span>Core {stats.per_tier.core}</span>
       <span>Long-term {stats.per_tier.semantic}</span>
       <span>Episodic {stats.per_tier.episodic}</span>

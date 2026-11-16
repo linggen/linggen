@@ -1,5 +1,5 @@
 import { dayState } from './memoryCalendar.mts';
-import { fmtTime } from './memoryFormat.mts';
+import { fmtTime, rowCount } from './memoryFormat.mts';
 import type { MemoryDay } from './memoryApi.mts';
 import { ghostBtn, sectionCls, tierChipCls, chipCls } from './memoryStyle';
 
@@ -17,7 +17,7 @@ export function MemoryDayDetail({ date, day, today, busy, start, scan }: {
       <span className={state === 'empty' ? chipCls : tierChipCls(tiers[state])}>{labels[state]}</span>
     </div>
     <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
-      <span>{`${day?.rows ?? 0} rows`}</span><span>{`${day?.unjudged ?? 0} unjudged`}</span>
+      <span>{rowCount(day?.rows ?? 0)}</span><span>{`${day?.unjudged ?? 0} unjudged`}</span>
       {day?.promoted != null && <span>{`${day.promoted} promoted`}</span>}
       {day?.forgotten != null && <span>{`${day.forgotten} forgotten`}</span>}
     </div>

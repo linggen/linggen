@@ -1,7 +1,8 @@
 /** Class strings the Memory tab shares, in the Settings house style. */
 export { inputCls, labelCls, sectionCls } from '../settings/kit';
 
-const btn = 'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed';
+// 44 px tall on a phone (a finger), the compact size from md up.
+const btn = 'inline-flex items-center gap-1.5 px-3 py-1.5 min-h-11 md:min-h-0 rounded-lg text-xs font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed';
 export const primaryBtn = `${btn} bg-blue-600 text-white hover:bg-blue-700`;
 export const ghostBtn = `${btn} text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/5`;
 export const dangerBtn = `${btn} text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10`;

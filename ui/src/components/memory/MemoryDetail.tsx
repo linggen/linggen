@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { confirmDialog } from '../../lib/confirmDialog';
 import { describeError, memory, ORIGINS, OUTCOMES, TYPES, type MemoryRow, type Tier } from './memoryApi.mts';
@@ -23,10 +23,15 @@ export const MemoryDetail: React.FC<Props> = ({ row, onSaved, onDeleted, onClose
   const [draft, setDraft] = useState<Draft>(() => draftOf(row));
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState('');
+  const top = useRef<HTMLElement>(null);
   const patch = useMemo(() => patchOf(row, draft), [row, draft]);
   const problem = problemWith(draft);
 
   useEffect(() => { setDraft(draftOf(row)); setFailure(''); }, [row]);
+  // On a phone the list gives way to the row: show it from its top, not from where the list was scrolled to.
+  useEffect(() => {
+    if (window.matchMedia('(max-width: 1023px)').matches) top.current?.scrollIntoView({ block: 'start' });
+  }, [row.id]);
   useEffect(() => { onDirty(patch !== null); }, [patch, onDirty]);
   useEffect(() => () => onDirty(false), [onDirty]);
 
@@ -59,10 +64,10 @@ export const MemoryDetail: React.FC<Props> = ({ row, onSaved, onDeleted, onClose
 
   const isCore = draft.tier === 'core';
   return (
-    <section className={`${sectionCls} space-y-4`} data-testid="memory-detail">
+    <section ref={top} className={`${sectionCls} space-y-4`} data-testid="memory-detail">
       <div className="flex items-center gap-2">
         <button onClick={onClose} className={`${ghostBtn} lg:hidden`}><ArrowLeft size={14} /> List</button>
-        <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">{tierLabel(row.tier)} row</h2>
+        <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">{`${tierLabel(row.tier)} row`}</h2>
       </div>
 
       <textarea
@@ -82,7 +87,7 @@ export const MemoryDetail: React.FC<Props> = ({ row, onSaved, onDeleted, onClose
         <TextField label="Scope" value={isCore ? '' : draft.scope} disabled={isCore} hint={isCore ? 'Core rows are about the person.' : 'A directory. Empty means the person.'} onChange={(v) => set('scope', v)} />
       </div>
 
-      <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+      <label className="flex items-center gap-2 min-h-11 md:min-h-0 text-xs text-slate-600 dark:text-slate-300">
         <input type="checkbox" checked={draft.indexed && !isCore} disabled={isCore} onChange={(e) => set('indexed', e.target.checked)} />
         In its scope's index
       </label>
