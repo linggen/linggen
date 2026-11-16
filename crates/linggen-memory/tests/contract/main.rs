@@ -10,6 +10,7 @@ mod guards;
 mod layers;
 mod mcp;
 mod person;
+mod replica;
 mod shipping;
 mod support;
 mod upkeep;

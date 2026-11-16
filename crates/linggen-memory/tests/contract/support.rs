@@ -69,22 +69,9 @@ impl Mem {
         }));
     }
 
-    /// Stop answering (the store stays open): the port refuses connections.
-    pub async fn go_down(&mut self) {
-        if let Some(task) = self.server.take() {
-            task.abort();
-            let _ = task.await;
-        }
-    }
-
-    /// Answer again, on the same port.
-    pub async fn come_back(&mut self) {
-        let listener = TcpListener::bind(self.addr).await.expect("rebind");
-        self.serve(listener);
-    }
-
-    pub fn host_port(&self) -> String {
-        self.addr.to_string()
+    /// The address the routes are served on, `127.0.0.1:<port>`.
+    pub fn addr(&self) -> SocketAddr {
+        self.addr
     }
 
     pub fn data_dir(&self) -> &Path {
@@ -285,4 +272,50 @@ pub fn local_noon(day: &str) -> String {
         .unwrap()
         .with_timezone(&chrono::Utc)
         .to_rfc3339()
+}
+
+/// A loopback port in front of another that can be "down": while down it
+/// takes each connection and drops it at once, so a caller sees a failed
+/// request (a transport error, never a 5xx); while up it pipes bytes
+/// through. The port stays this test's the whole time — no other test can
+/// take it between down and up.
+pub struct Front {
+    pub addr: SocketAddr,
+    up: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    task: JoinHandle<()>,
+}
+
+impl Front {
+    pub async fn to(target: SocketAddr) -> Self {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let up = std::sync::Arc::new(AtomicBool::new(true));
+        let flag = up.clone();
+        let task = tokio::spawn(async move {
+            while let Ok((mut inbound, _)) = listener.accept().await {
+                if !flag.load(Ordering::SeqCst) {
+                    drop(inbound);
+                    continue;
+                }
+                tokio::spawn(async move {
+                    let Ok(mut outbound) = tokio::net::TcpStream::connect(target).await else {
+                        return;
+                    };
+                    let _ = tokio::io::copy_bidirectional(&mut inbound, &mut outbound).await;
+                });
+            }
+        });
+        Self { addr, up, task }
+    }
+
+    pub fn set_up(&self, up: bool) {
+        self.up.store(up, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+impl Drop for Front {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
 }
