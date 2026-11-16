@@ -1,5 +1,6 @@
 use crate::engine::agent::AgentManager;
 use crate::engine::skill::QueueMode;
+use crate::engine::turn_place::running::Meets;
 use crate::server::chat::helpers::{
     emit_queue_updated, persist_and_emit_with_images, queue_key, queue_preview, take_turn_place,
 };
@@ -369,17 +370,23 @@ enum BusyMessage {
     /// Leave the turn alone; the message runs once the run is over, unless
     /// the person steers it in.
     WaitForRun,
+    /// Leave the turn alone; the message runs once the run is over, and no
+    /// Steer takes it in.
+    WaitForEnd,
 }
 
 /// A message never cancels an open question: the turn stands still on it,
 /// so the message joins at the step after it is answered, as in Claude Code.
 /// A skill declaring `queue: after-turn` has every message wait for the
 /// whole turn.
-fn busy_message(queue: QueueMode) -> BusyMessage {
-    if queue == QueueMode::AfterTurn {
-        return BusyMessage::WaitForRun;
+/// A message from another app's page than the running turn's waits for the
+/// run, and cannot be steered into it.
+fn busy_message(meets: Meets) -> BusyMessage {
+    match meets {
+        Meets::Rule(QueueMode::Steer) => BusyMessage::JoinTurn,
+        Meets::Rule(QueueMode::AfterTurn) => BusyMessage::WaitForRun,
+        Meets::AfterRun => BusyMessage::WaitForEnd,
     }
-    BusyMessage::JoinTurn
 }
 
 /// When the agent is busy, enqueue this turn and broadcast the queue update.
@@ -393,12 +400,13 @@ pub(crate) async fn enqueue_if_busy(
     target_id: &str,
     clean_msg: &str,
     sent: (&str, &[String]),
-    queue: QueueMode,
+    queue: Meets,
 ) -> Option<(QueuedChatItem, bool)> {
     if !was_busy {
         return None;
     }
-    let joins = busy_message(queue) == BusyMessage::JoinTurn;
+    let busy = busy_message(queue);
+    let joins = busy == BusyMessage::JoinTurn;
     let item = QueuedChatItem {
         id: format!(
             "{}-{}",
@@ -411,7 +419,7 @@ pub(crate) async fn enqueue_if_busy(
         timestamp: crate::util::now_ts_secs(),
         // Steer means now (`fold.rs`); the chat hides it while a question
         // is open, and the engine refuses it then.
-        steerable: true,
+        steerable: busy != BusyMessage::WaitForEnd,
         text: sent.0.to_string(),
         images: sent.1.to_vec(),
     };
@@ -820,6 +828,11 @@ pub(crate) async fn run_session_turn(
 ) {
     // Delegated tasks must inherit the session, regardless of the turn's driver.
     bind_turn_session(engine, ctx.session_id.clone());
+    // Its place is the running one while it runs, unless whoever took the
+    // turn lock for it kept it already.
+    let _mark = ctx.session_id.as_deref().and_then(|sid| {
+        manager.global_sessions.running_places.mark(sid, &ctx.place)
+    });
     // What closes this turn names this turn's run, never the last one's.
     engine.last_run_id = None;
     seat_member(engine, ctx).await;
@@ -1155,7 +1168,7 @@ pub(crate) async fn start_turn(
     };
     let turn = state.manager.session_turn(&effective_session_id);
     let (was_busy, place) = take_turn_place(turn);
-    let queue = match turn_place.skill.as_deref() {
+    let rule = match turn_place.skill.as_deref() {
         _ if origin != TurnOrigin::Person => QueueMode::AfterTurn,
         Some(name) if was_busy => state
             .manager
@@ -1166,6 +1179,18 @@ pub(crate) async fn start_turn(
             .unwrap_or_default(),
         _ => QueueMode::Steer,
     };
+    let running_places = &state.manager.global_sessions.running_places;
+    // The running turn's place meets this one: another app's never folds
+    // in or steers a message from this page.
+    let running = was_busy
+        .then(|| running_places.of(&effective_session_id))
+        .flatten();
+    let queue = crate::engine::turn_place::running::meets_running(running.as_ref(), &turn_place, rule);
+    // Not queued: this turn holds the lock now, and its place is kept
+    // before its message is.
+    let mark = (!was_busy)
+        .then(|| running_places.mark(&effective_session_id, &turn_place))
+        .flatten();
     let queued_item = enqueue_if_busy(
         &state,
         was_busy,
@@ -1207,8 +1232,8 @@ pub(crate) async fn start_turn(
     let state_clone = state.clone();
     let queued_item_id = queued_item.as_ref().map(|(q, _)| q.id.clone());
     // A queued message waits for its own turn, or for a step of the running
-    // one to take it in (`fold.rs`).
-    let fold_call = queued_item.as_ref().map(|(q, joins)| {
+    // one to take it in (`fold.rs`) — never one it may not steer.
+    let fold_call = queued_item.as_ref().filter(|(q, _)| q.steerable).map(|(q, joins)| {
         state.fold.wait(
             &super::helpers::fold_key(session_id.as_deref(), &target_id),
             &q.id,
@@ -1270,6 +1295,14 @@ pub(crate) async fn start_turn(
         if let Some(queued_id) = queued_item_id.as_deref() {
             state_clone.fold.forget(queued_id);
         }
+        // Its own turn now: its place is the running one until it ends.
+        let _mark = mark.or_else(|| {
+            state_clone
+                .manager
+                .global_sessions
+                .running_places
+                .mark(&session_id_for_queue, &turn_place)
+        });
         let queued_item_id = queued_item_id.filter(|_| !shown);
         let mut engine = agent.lock().await;
 
@@ -1521,12 +1554,14 @@ mod tests {
     };
     use super::{busy_message, BusyMessage};
     use crate::engine::skill::QueueMode;
+    use crate::engine::turn_place::running::Meets;
     use crate::state_fs::sessions::SessionMember;
 
     #[test]
     fn a_busy_message_steers_unless_a_question_is_open_or_the_skill_waits() {
-        assert_eq!(busy_message(QueueMode::Steer), BusyMessage::JoinTurn);
-        assert_eq!(busy_message(QueueMode::AfterTurn), BusyMessage::WaitForRun);
+        assert_eq!(busy_message(Meets::Rule(QueueMode::Steer)), BusyMessage::JoinTurn);
+        assert_eq!(busy_message(Meets::Rule(QueueMode::AfterTurn)), BusyMessage::WaitForRun);
+        assert_eq!(busy_message(Meets::AfterRun), BusyMessage::WaitForEnd);
     }
 
     /// Steer waits while a question is open anywhere in the message's

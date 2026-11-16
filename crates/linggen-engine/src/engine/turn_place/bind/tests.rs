@@ -3,6 +3,8 @@
 
 use crate::engine::skill::{Skill, SkillSource};
 use crate::engine::skill_activation::ActivationMode;
+use crate::engine::skill::QueueMode;
+use crate::engine::turn_place::running::{meets_running, Meets};
 use crate::engine::turn_place::TurnPlace;
 use crate::engine::{AgentEngine, AgentRole, EngineConfig, InterfaceMode};
 use std::collections::BTreeMap;
@@ -141,6 +143,17 @@ async fn a_second_place_sees_nothing_of_the_first() {
     assert!(in_y.params.is_empty(), "x's save read in y");
     assert_eq!(in_y.tool_skill.as_deref(), Some("zz-y"));
     assert_eq!(engine.turn_place().and_then(|p| p.skill.as_deref()), Some("zz-y"));
+    // Queue: a message in y meets y's turn by y's rule, never x's after-turn;
+    // one from x's page waits for y's turn to end.
+    let y_rule = y_app(&y_dir).queue;
+    assert_eq!(
+        meets_running(engine.turn_place(), &place("zz-y", false), y_rule),
+        Meets::Rule(QueueMode::Steer)
+    );
+    assert_eq!(
+        meets_running(engine.turn_place(), &place("zz-x", true), x_app(&x_dir).queue),
+        Meets::AfterRun
+    );
     engine.leave_place();
 
     // Back in the session's own app: as it was, and the folder its own.

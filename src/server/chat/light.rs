@@ -31,6 +31,8 @@ pub(crate) async fn reply_in_session(
         .ok()?;
     // One agent speaks at a time: the session's turn lock, then the engine.
     let _turn = state.manager.session_turn(session_id).lock_owned().await;
+    let place = crate::engine::turn_place::TurnPlace::of_session(Some(&meta));
+    let _mark = state.manager.global_sessions.running_places.mark(session_id, &place);
     let mut engine = engine.lock().await;
     let ctx = ChatRunCtx {
         state: state.clone(),
@@ -45,7 +47,7 @@ pub(crate) async fn reply_in_session(
         sender: None,
         via: None,
         silence_ok: true,
-        place: crate::engine::turn_place::TurnPlace::of_session(Some(&meta)),
+        place,
     };
     ready(&ctx, &mut engine).await;
     let tail = super::thread::spoken_tail(&ctx, TAIL_MESSAGES).await;

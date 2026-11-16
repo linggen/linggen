@@ -21,6 +21,9 @@ pub struct SessionStore {
     /// compaction, a clear) through this store. A member's cached thread
     /// from before a rewrite is stale (`chat::thread`).
     rewrites: Mutex<std::collections::HashMap<String, u64>>,
+    /// The place of each session's running turn, kept beside its turn lock
+    /// (`turn_place::running`).
+    pub running_places: crate::engine::turn_place::running::RunningPlaces,
 }
 
 fn default_creator() -> String {
@@ -385,6 +388,7 @@ impl SessionStore {
             sessions_dir,
             append_lock: Mutex::new(()),
             rewrites: Mutex::new(std::collections::HashMap::new()),
+            running_places: Default::default(),
         }
     }
 

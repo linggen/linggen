@@ -204,6 +204,11 @@ async fn run_at(
     let spoken = {
         // Past a restart's snapshot her turn waits in its plan instead.
         let (_held, gate) = her_place(state, turn, &task, trigger_source).await?;
+        let _mark = state
+            .manager
+            .global_sessions
+            .running_places
+            .mark(session_id, &turn.place);
         // Persist the incoming message to the session store so it survives
         // reload and every member's thread holds it. (The turn core only
         // mirrors it into in-memory history.) Inside the turn lock: two

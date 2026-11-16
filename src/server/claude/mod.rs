@@ -275,7 +275,7 @@ pub(crate) async fn start_turn(
         // A follow-up joins the running turn at its next tool round, as
         // Claude Code folds in what is typed while it works; Steer sends it
         // at once. Until then it can be edited or removed. Only Stop cancels.
-        crate::engine::skill::QueueMode::AfterTurn,
+        crate::engine::turn_place::running::Meets::Rule(crate::engine::skill::QueueMode::AfterTurn),
     )
     .await
     .map(|(item, _)| item);
