@@ -44,8 +44,8 @@ pub struct Cli {
 
     /// Target the episodic store (the staging table) instead of the
     /// curated `semantic` table. Episodic rows are the raw, undeduped pool the
-    /// consolidation pass later promotes or evicts. Bypasses the HTTP
-    /// daemon — episodic is a direct-store concern only.
+    /// consolidation pass later promotes or evicts. Opens the store
+    /// itself, whether or not the engine is running.
     #[arg(long, global = true)]
     pub episodic: bool,
 
@@ -96,7 +96,7 @@ pub enum Command {
 
     /// Bulk-delete by filter. Refuses empty filters. Accepts the same
     /// filter args as `list`/`search`, including `--older-than 30d` and
-    /// the global `--episodic` flag, so `ling-mem --episodic forget
+    /// the global `--episodic` flag, so `ling mem --episodic forget
     /// --older-than 30d --yes` covers the past-TTL decay sweep that
     /// used to be a separate `evict` verb.
     Forget(ForgetArgs),

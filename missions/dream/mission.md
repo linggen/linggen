@@ -219,7 +219,7 @@ permission:
   paths:
     - { path: "~", mode: read }
   warning: >-
-    Talks to the local ling-mem daemon on 127.0.0.1 only. Promotes
+    Talks to this machine's own memory on 127.0.0.1 only. Promotes
     rows and stamps per-day dream state via /api/memory/* ; the only
     deletions are the daemon's forget sweep over already-judged,
     past-TTL episodic rows. Atomic replace_ids merges of the agent's

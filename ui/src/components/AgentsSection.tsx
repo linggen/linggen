@@ -120,6 +120,7 @@ export const AgentsSection: React.FC<{
                 <NumberInput min={0} max={1} step={0.05} value={her.recall_min_score ?? 0.8} onCommit={(v) => setHer({ recall_min_score: v })} />
               </Field>
             </Grid>
+            <p className="mt-3 text-[10px] text-slate-400 dark:text-slate-500">Character animation credits to pixiv Inc.&apos;s VRoid Project</p>
           </AgentCard>
         )}
       </div>

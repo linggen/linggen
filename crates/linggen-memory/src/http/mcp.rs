@@ -29,7 +29,7 @@ use serde_json::{json, Value};
 use std::time::Duration;
 
 const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
-const SERVER_NAME: &str = "ling-mem";
+const SERVER_NAME: &str = "memory";
 /// How long a tool call waits on the daemon's own HTTP API. A write can pay
 /// for a LanceDB auto-cleanup inside its commit (9s once, 2026-09-15), so
 /// 10s cut off adds that then landed anyway. Kept under the 30s the engine
@@ -47,7 +47,7 @@ const LOOPBACK_TIMEOUT: Duration = Duration::from_secs(25);
 /// core, search first, the merge law) never arrived. Only rules that decide
 /// a save live here; the long form, with examples and the cleanup taxonomy,
 /// is the memory skill. `instructions_fit_claude_codes_cap` holds the line.
-const INSTRUCTIONS: &str = r#"ling-mem is this user's memory, shared by Claude Code, Codex, OpenClaw and Linggen. Save what makes a future session predict the user better — the person, not the task.
+const INSTRUCTIONS: &str = r#"This is the user's memory, shared by Claude Code, Codex, OpenClaw and Linggen. Save what makes a future session predict the user better — the person, not the task.
 
 # Tiers
 - core — who they are, always loaded: name, role/job, location, timezone, languages, family/pets. One short fact per row.
@@ -212,7 +212,7 @@ fn tool_defs() -> Vec<Value> {
                     "root":     {"type": "string", "description": "HOST-FILLED — leave it out; the host stamps the session root that `scope` resolves against."},
                     "global":   {"type": "boolean", "description": "true = the row is about the person, not a directory: stored with no scope, recalled everywhere."},
                     "replace_ids": {"type": "array", "items": {"type": "string"}, "description": "Row ids this row replaces — inserted and deleted atomically. For merges and resolved conflicts; never separate add + delete calls."},
-                    "user_directed": {"type": "boolean", "description": "Assert the user directed this change (a settled command/declaration, or they just answered your ask). Required when replace_ids targets from=user rows — the daemon BLOCKS such writes otherwise. Hedged reflections don't qualify; see the server instructions."}
+                    "user_directed": {"type": "boolean", "description": "Assert the user directed this change (a settled command/declaration, or they just answered your ask). Required when replace_ids targets from=user rows — memory BLOCKS such writes otherwise. Hedged reflections don't qualify; see the server instructions."}
                 },
                 "required": ["content"]
             }

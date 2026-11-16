@@ -215,6 +215,10 @@ Any other MCP client just points at the endpoint. Details in
 - [Skill spec](doc/skill-spec.md) — how to write skills
 - [Full docs](https://linggen.dev/docs) — guides and reference
 
+## Credits
+
+- Character animation credits to pixiv Inc.'s VRoid Project.
+
 ---
 
 ## License

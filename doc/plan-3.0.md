@@ -24,9 +24,9 @@ Every number is tagged **(measured)** — taken on his Mac on 2026-11-15 — or
 |---|---|
 | 0 Architecture review | Done — `architecture-review.md` |
 | 1 Build speed | Done — `fast` profile, `scripts/worktree-setup.sh` |
-| 2 The merge | Done on main and live on Hanli's Mac: memory runs inside the engine; an old daemon is taken over at start-up; `ling-mem` is a stand-in; 9528 answers on loopback. Open: who may reach memory from another machine (off until decided), the plugins and install scripts, the gate scripts |
+| 2 The merge | Done on main: memory runs inside the engine; an old daemon is taken over at start-up; `ling-mem` is a stand-in; 9528 answers on loopback. Who reaches memory from another machine is built (approved machines only; a phone sees its own person's rows — `memory-spec.md`). Open: the plugins (in work), the install scripts, the gate scripts, a real second machine |
 | 3 Modules | 3.2 done — `ling` (server, cli) and `crates/linggen-engine`. The further cuts (base, model, store, skills) wait: with incremental builds a one-file rebuild is already 5–10 s, so they would buy tidiness, not time |
-| 4 Upgrades | Not started |
+| 4 Upgrades | Patch and minor batch done (329 crates; checks equal before and after; the store still opens in the previous program). The two major groups — the vector database, the embedding stack — wait until the rest of 2.3 is stable |
 | Slimming | Yinyue's clips baked (done); packaged skills leave out tools, tests and unloaded source art (done); asset packs — engine side built, art sorted into packs; publishing, the app's packaging by pack and the phone are open |
 | 2.4 | Not started |
 
