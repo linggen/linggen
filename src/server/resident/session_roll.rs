@@ -14,7 +14,13 @@ pub(crate) fn is_own_session(session_id: &str) -> bool {
 /// extra segment when the active day's live engine nears its context limit. A
 /// fresh day (or an unloaded session) always has headroom; continuity across
 /// rolls rides shared memory, not the transcript.
+///
+/// With one session a day on, her thread is the day's session
+/// (`server::day_session`): she is seated there with Ling.
 pub(super) async fn resolve_current_session(state: &Arc<ServerState>) -> String {
+    if let Some(day) = crate::server::day_session::current_if_on(&state.manager).await {
+        return day;
+    }
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     let base = format!("{}-{today}", yinyue_session_prefix());
     let mut seg = 1usize;
@@ -105,7 +111,8 @@ pub(super) fn seed_previously_if_fresh(
 pub(super) fn last_spoken_line(state: &Arc<ServerState>, current_sid: &str) -> Option<String> {
     let store = &state.manager.global_sessions;
     let mut sessions = store.list_sessions().ok()?;
-    sessions.retain(|m| m.id.starts_with(&yinyue_session_prefix()) && m.id != current_sid);
+    let kind = thread_kind(current_sid);
+    sessions.retain(|m| thread_kind(&m.id) == kind && m.id != current_sid);
     sessions.sort_by_key(|m| std::cmp::Reverse(m.created_at));
     for meta in sessions {
         let Ok(history) = store.get_chat_history(&meta.id) else {
@@ -130,6 +137,18 @@ pub(super) fn last_spoken_line(state: &Arc<ServerState>, current_sid: &str) -> O
         }
     }
     None
+}
+
+/// Which of her threads `session_id` is: a day's session, one of her own
+/// rolling ones, or neither. A fresh thread is seeded from the last of its
+/// own kind.
+fn thread_kind(session_id: &str) -> Option<bool> {
+    if crate::state_fs::day_session::is_day_session(session_id) {
+        return Some(true);
+    }
+    session_id
+        .starts_with(&yinyue_session_prefix())
+        .then_some(false)
 }
 
 #[cfg(test)]

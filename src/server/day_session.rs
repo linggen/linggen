@@ -8,8 +8,9 @@
 //! The id is the day's (`state_fs::day_session`), so it is found again after
 //! a restart; it is made on first use.
 
-use crate::engine::agent::AgentManager;
+use crate::engine::agent::{AgentManager, COMPANION_AGENT_ID};
 use crate::state_fs::day_session;
+use crate::state_fs::sessions::SessionMeta;
 
 /// The agent that leads the day's session and answers what is not
 /// addressed to Yinyue.
@@ -44,6 +45,33 @@ pub(crate) fn current(manager: &AgentManager) -> String {
     sid
 }
 
+/// Whether a request for a new session of `skill` is an app's chat, which
+/// the day's session takes: not a session bound to its own values (a test
+/// save), not one made with tools withheld (an app's one-off job — an NPC's
+/// talk, a prefetch), not a consumer's or another runtime's.
+pub(crate) fn takes_new_chat(
+    skill: Option<&str>,
+    bound: bool,
+    withheld: bool,
+    owner_linggen: bool,
+) -> bool {
+    skill.is_some() && !bound && !withheld && owner_linggen
+}
+
+/// Whether `meta` is a session an app keeps apart from the day's — bound
+/// to its own values, or made with tools withheld.
+pub(crate) fn kept_apart(meta: &SessionMeta) -> bool {
+    !meta.params.is_empty() || !meta.withheld_tools.is_empty()
+}
+
+/// Seat Yinyue in the day's session: she is seated when she first speaks
+/// there.
+pub(crate) async fn seat_her(manager: &AgentManager, session_id: &str) {
+    if crate::state_fs::day_session::is_day_session(session_id) {
+        crate::server::chat::members::seat(manager, session_id, COMPANION_AGENT_ID).await;
+    }
+}
+
 /// GET /api/sessions/day — the day's session for a surface that joins it
 /// (the phone's hand-off): `{on, id, cwd}`; `id` is null while the setting
 /// is off.
@@ -61,4 +89,41 @@ pub(crate) async fn day_session_api(
         .flatten()
         .map(|m| m.cwd);
     axum::Json(serde_json::json!({ "on": true, "id": id, "cwd": cwd }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_apps_chat_joins_and_its_one_off_jobs_stay_apart() {
+        assert!(takes_new_chat(Some("cfo"), false, false, true));
+        assert!(
+            !takes_new_chat(None, false, false, true),
+            "a New chat stays apart"
+        );
+        assert!(
+            !takes_new_chat(Some("lingjing"), true, false, true),
+            "a test save"
+        );
+        assert!(
+            !takes_new_chat(Some("lingjing"), false, true, true),
+            "an NPC talk"
+        );
+        assert!(
+            !takes_new_chat(Some("cfo"), false, false, false),
+            "a consumer"
+        );
+    }
+
+    #[test]
+    fn a_session_bound_or_withholding_is_kept_apart() {
+        let mut meta = SessionMeta::default();
+        assert!(!kept_apart(&meta));
+        meta.withheld_tools = vec!["mcp__memory".into()];
+        assert!(kept_apart(&meta));
+        let mut bound = SessionMeta::default();
+        bound.params.insert("save".into(), "test".into());
+        assert!(kept_apart(&bound));
+    }
 }

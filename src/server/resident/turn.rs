@@ -92,6 +92,7 @@ pub(super) async fn run_home(
     // Rolling session: one per day, segmented when a day's thread fills up.
     let session_id = resolve_current_session(state).await;
     ensure_session_exists(state, &session_id, &root);
+    crate::server::day_session::seat_her(&state.manager, &session_id).await;
 
     // Engine-authored kickoffs (heralds, agent_chat, asked) carry the
     // spoken-line contract; a person's own words are never appended to.

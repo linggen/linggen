@@ -1035,6 +1035,23 @@ pub(crate) fn resend_chat(
     })
 }
 
+/// An app's chat sent with no session yet, with one session a day on: it
+/// is the day's session's (`server::day_session`). A mission's, a
+/// consumer's, or a plain chat's (no app) keeps making its own.
+async fn into_the_day(state: &Arc<ServerState>, mut req: ChatRequest) -> ChatRequest {
+    let joins = crate::server::day_session::takes_new_chat(
+        req.skill_name.as_deref(),
+        false,
+        false,
+        req.user_type != "consumer",
+    );
+    if req.session_id.is_some() || req.mission_id.is_some() || !joins {
+        return req;
+    }
+    req.session_id = crate::server::day_session::current_if_on(&state.manager).await;
+    req
+}
+
 pub(crate) async fn start_turn(
     state: Arc<ServerState>,
     req: ChatRequest,
@@ -1054,6 +1071,7 @@ pub(crate) async fn start_turn(
         // watching it arrive.
         state.manager.mark_user_turn_presence();
     }
+    let req = into_the_day(&state, req).await;
 
     let meta = req.session_id.as_deref().and_then(|sid| {
         state

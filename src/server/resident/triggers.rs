@@ -510,7 +510,11 @@ pub(super) async fn deliver_to_chat_agent(
     // the recipient runs with that app's tools. Otherwise prefer the session the
     // user is viewing; else the agent's latest.
     let mut candidates = Vec::new();
-    if let Some(skill) = app.as_deref() {
+    let day = crate::server::day_session::current_if_on(&state.manager).await;
+    if let Some(day) = day.as_deref() {
+        // One session a day: the table they share, in the app's place.
+        candidates.extend(session_and_root(&state, day));
+    } else if let Some(skill) = app.as_deref() {
         if let Ok(sessions) = state.manager.global_sessions.list_sessions() {
             let mut sessions: Vec<_> = sessions
                 .into_iter()
@@ -537,7 +541,13 @@ pub(super) async fn deliver_to_chat_agent(
     let (session_id, root, _turn) = match selected {
         Some(selected) => selected,
         None => {
-            let Some((sid, root)) = new_handoff_session(&state, app.as_deref(), &to).await else {
+            // The day's session busy: the message waits for its turn there.
+            let waits = day.as_deref().and_then(|d| session_and_root(&state, d));
+            let made = match waits {
+                Some(found) => Some(found),
+                None => new_handoff_session(&state, app.as_deref(), &to).await,
+            };
+            let Some((sid, root)) = made else {
                 return;
             };
             let held = state.manager.session_turn(&sid).lock_owned().await;
@@ -630,13 +640,36 @@ pub(super) async fn deliver_to_chat_agent(
             policy: crate::engine::session_policy::SessionPolicy::owner(),
             sender: Some(from.clone()),
             silence_ok: false,
-            place: crate::server::chat::turn_place::of_session_id(&state.manager, &session_id),
+            place: delivered_place(&state, &session_id, app.as_deref()),
         };
         crate::server::chat::run_session_turn(&ctx, &mut engine, &state.manager, None).await;
         state.manager.clear_agent_chat_session(&session_id);
     }
 
     tracing::info!("[agent-chat] delivered '{from}'→'{to}' in {session_id}");
+}
+
+/// A session's id and folder, when it is there.
+fn session_and_root(
+    state: &Arc<ServerState>,
+    session_id: &str,
+) -> Option<(String, std::path::PathBuf)> {
+    let meta = state.manager.global_sessions.get_session_meta(session_id).ok()??;
+    Some((meta.id, std::path::PathBuf::from(meta.cwd)))
+}
+
+/// Where a delivered message's turn stands: in the day's session, the app
+/// it names (home when none); anywhere else, the session's own place.
+fn delivered_place(
+    state: &Arc<ServerState>,
+    session_id: &str,
+    app: Option<&str>,
+) -> crate::engine::turn_place::TurnPlace {
+    if !crate::state_fs::day_session::is_day_session(session_id) {
+        return crate::server::chat::turn_place::of_session_id(&state.manager, session_id);
+    }
+    let meta = state.manager.global_sessions.get_session_meta(session_id).ok().flatten();
+    crate::engine::turn_place::TurnPlace::of_request(app, meta.as_ref())
 }
 
 /// The session the user is currently viewing (`set_view_context`), if any — so

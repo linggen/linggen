@@ -7,7 +7,8 @@
 //! zone (`TZ`), chosen so that it is half past three, or half past four,
 //! right now.
 
-use crate::support::{Setup, World};
+use crate::support::model::Agent;
+use crate::support::{text, Setup, World};
 use serde_json::{json, Value};
 
 /// A POSIX `TZ` whose local time is now `hour:30`, and the local date then.
@@ -91,4 +92,201 @@ async fn with_the_setting_off_there_is_no_day_session() {
         .filter(|e| e.file_name().to_string_lossy().starts_with("sess-day-"))
         .collect();
     assert!(made.is_empty(), "no day session is made while off");
+}
+
+/// One message from a page: `page` is the app the page belongs to (none:
+/// the main page).
+pub(crate) async fn say(w: &World, sid: &str, page: Option<&str>, message: &str) -> Value {
+    let mut body = json!({"session_id": sid, "project_root": w.work(), "message": message});
+    if let Some(app) = page {
+        body["skill_name"] = json!(app);
+    }
+    w.api.post("/api/chat", body).await
+}
+
+/// [`say`], waiting for `agent`'s run to finish.
+pub(crate) async fn turn_at(w: &World, sid: &str, page: Option<&str>, message: &str, agent: Agent) {
+    let mark = w.mark();
+    let resp = say(w, sid, page, message).await;
+    assert_eq!(resp["agent_id"], agent.id(), "routed elsewhere: {resp}");
+    w.finish_run(sid, agent, mark).await;
+}
+
+/// The place each person's message in `sid` was kept in, in order.
+pub(crate) fn user_places(w: &World, sid: &str) -> Vec<String> {
+    w.raw_rows(sid)
+        .iter()
+        .filter(|r| r["from_id"] == "user" && r["is_observation"] == false)
+        .map(|r| r["place"].as_str().unwrap_or("-").to_string())
+        .collect()
+}
+
+/// The sessions on disk whose creator is `creator`.
+fn sessions_made_by(w: &World, creator: &str) -> Vec<String> {
+    let dir = w.home.linggen_home().join("sessions");
+    let line = format!("creator: {creator}");
+    std::fs::read_dir(dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|id| meta(w, id).lines().any(|l| l.trim() == line))
+        .collect()
+}
+
+fn offers(call: &crate::support::model::Call, tool: &str) -> bool {
+    call.tool_names().iter().any(|t| t == tool)
+}
+
+#[tokio::test]
+async fn an_apps_page_finds_the_day_and_its_one_off_jobs_stay_apart() {
+    let (w, _) = day_world_at(12, Setup::default()).await;
+    let day = w.api.get("/api/sessions/day").await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let dice = w
+        .api
+        .create_session(json!({"title": "Dice", "skill": "dice"}))
+        .await;
+    let quiet = w
+        .api
+        .create_session(json!({"title": "Quiet", "skill": "quiet"}))
+        .await;
+    assert_eq!(
+        (dice.as_str(), quiet.as_str()),
+        (day.as_str(), day.as_str())
+    );
+
+    let npc = json!({"title": "NPC", "skill": "dice", "withheld_tools": ["mcp__memory"]});
+    let npc = w.api.create_session(npc).await;
+    let chat = w.api.create_session(json!({"title": "Chat"})).await;
+    assert_ne!(npc, day, "an app's one-off job keeps its own session");
+    assert_ne!(chat, day, "a New chat stays apart");
+
+    let listed = w.api.get("/api/skill-sessions?skill=dice").await;
+    let ids: Vec<&str> = listed["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s["id"].as_str())
+        .collect();
+    assert_eq!(
+        ids,
+        vec![day.as_str(), npc.as_str()],
+        "the day's first: {listed}"
+    );
+}
+
+/// The first scenario: a day that moves between two apps and the main page,
+/// Ling and Yinyue both there — one thread, each turn with its own place's
+/// tools and nothing of the other's.
+#[tokio::test]
+async fn a_day_between_two_apps_and_the_main_page_is_one_thread() {
+    let setup = Setup::default()
+        .script(
+            Agent::Ling,
+            vec![
+                text("Rolled a four."),
+                text("Just talking."),
+                text("Home again."),
+            ],
+        )
+        .script(Agent::Yinyue, vec![text("I saw the four.")]);
+    let (w, _) = day_world_at(12, setup).await;
+    let day = w
+        .api
+        .create_session(json!({"title": "Dice", "skill": "dice"}))
+        .await;
+
+    turn_at(&w, &day, Some("dice"), "Roll for me", Agent::Ling).await;
+    turn_at(&w, &day, Some("quiet"), "Just talk", Agent::Ling).await;
+    let mark = w.mark();
+    w.api
+        .post("/api/yinyue/chat", json!({"text": "Did you see?"}))
+        .await;
+    w.wait_agent(Agent::Yinyue, mark).await;
+    turn_at(&w, &day, None, "Back on the main page", Agent::Ling).await;
+
+    let ling = w.model.calls_of(Agent::Ling);
+    assert_eq!(ling.len(), 3, "one call a turn");
+    assert!(
+        offers(&ling[0], "Look") && offers(&ling[0], "Roll"),
+        "{:?}",
+        ling[0].tool_names()
+    );
+    for (i, call) in ling.iter().enumerate().skip(1) {
+        for dice in ["Look", "Roll", "Peek"] {
+            assert!(!offers(call, dice), "turn {i} was offered dice's {dice}");
+        }
+    }
+    assert!(ling[0].text().contains("You run the dice table"));
+    assert!(!ling[1].text().contains("You run the dice table"));
+    assert!(ling[1].text().contains("You only talk"));
+    assert!(!ling[2].text().contains("You only talk"));
+
+    // One thread: she reads the day's talk, and Ling reads hers.
+    let hers = w.model.calls_of(Agent::Yinyue);
+    assert_eq!(hers.len(), 1);
+    assert!(
+        hers[0].text().contains("Rolled a four."),
+        "her thread holds the dice turn"
+    );
+    assert!(
+        ling[2].text().contains("I saw the four."),
+        "Ling's holds her line"
+    );
+
+    // Her kickoff is kept as a person's row, at home like her turn.
+    assert_eq!(
+        user_places(&w, &day),
+        vec!["dice", "quiet", ":home", ":home"]
+    );
+    let seated = meta(&w, &day);
+    assert!(
+        seated.contains("id: ling") && seated.contains("id: yinyue"),
+        "{seated}"
+    );
+    assert!(
+        w.raw_rows(&day).iter().any(|r| r["agent_id"] == "yinyue"),
+        "her turn is a row of the day"
+    );
+}
+
+/// With the setting on, a mission run and a delegated run keep sessions of
+/// their own.
+#[tokio::test]
+async fn a_mission_and_a_delegated_run_stay_outside_the_day() {
+    let setup = Setup::default().script(Agent::Ling, vec![text("Last roll: 3."), text("Done.")]);
+    let (w, _) = day_world_at(12, setup).await;
+    let day = w.api.get("/api/sessions/day").await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let mark = w.mark();
+    let fired = w
+        .api
+        .post("/api/missions/table-check/trigger", json!({}))
+        .await;
+    let mission = fired["session_id"]
+        .as_str()
+        .expect("a mission session")
+        .to_string();
+    w.finish_run(&mission, Agent::Ling, mark).await;
+    assert_ne!(mission, day);
+
+    let call = json!({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "agent_run", "arguments": {"prompt": "Say done."}}
+    });
+    let ran = w.api.post("/mcp", call).await;
+    assert_eq!(ran["result"]["content"][0]["text"], "Done.", "{ran}");
+    assert!(
+        sessions_made_by(&w, "external").len() == 1,
+        "a delegated run runs in a session of its own"
+    );
+    assert!(
+        w.raw_rows(&day).is_empty(),
+        "nothing of either reached the day's thread"
+    );
 }

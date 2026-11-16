@@ -73,6 +73,27 @@ fn session_cwd(skill: Option<&crate::engine::skill::Skill>, project_root: Option
     dir.to_string_lossy().to_string()
 }
 
+/// An app's new chat, with one session a day on: the day's session, as a
+/// new session's answer (`server::day_session::takes_new_chat`).
+async fn day_for_new_chat(
+    state: &Arc<ServerState>,
+    req: &CreateSessionRequest,
+) -> Option<Json<serde_json::Value>> {
+    let owner = req.user_type != "consumer";
+    let joins = crate::server::day_session::takes_new_chat(
+        req.skill.as_deref(),
+        !req.params.is_empty(),
+        !req.withheld_tools.is_empty(),
+        owner,
+    );
+    if !joins {
+        return None;
+    }
+    let id = crate::server::day_session::current_if_on(&state.manager).await?;
+    let meta = state.manager.global_sessions.get_session_meta(&id).ok()??;
+    Some(Json(serde_json::json!({ "id": id, "cwd": meta.cwd })))
+}
+
 pub(crate) async fn create_session(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<CreateSessionRequest>,
@@ -103,6 +124,9 @@ pub(crate) async fn create_session(
             .events_tx
             .send(crate::server::ServerEvent::StateUpdated);
         return Json(serde_json::json!({"id": meta.id, "cwd": meta.cwd, "runtime": meta.runtime, "agents": meta.agents})).into_response();
+    }
+    if let Some(day) = day_for_new_chat(&state, &req).await {
+        return day.into_response();
     }
     let id = format!(
         "sess-{}-{}",
@@ -204,36 +228,58 @@ pub(crate) async fn list_skill_sessions(
     State(state): State<Arc<ServerState>>,
     Query(query): Query<SkillSessionQuery>,
 ) -> impl IntoResponse {
+    let day = crate::server::day_session::current_if_on(&state.manager).await;
     match state.manager.global_sessions.list_sessions() {
         Ok(sessions) => {
-            let api_sessions: Vec<serde_json::Value> = sessions
-                .into_iter()
-                .filter(|s| s.skill.as_deref() == Some(&query.skill))
-                .map(|s| {
-                    serde_json::json!({
-                        "id": s.id,
-                        "title": s.title,
-                        "created_at": s.created_at,
-                        "updated_at": s.updated_at,
-                        "skill": s.skill,
-                        "creator": s.creator,
-                        // A skill embed has no other way to learn its session's
-                        // members and their models: page_state omits
-                        // all_sessions for embed views, and no GET returns a
-                        // single session's meta. The embed reads this to echo
-                        // the model on every send — without it the engine
-                        // falls to the global default.
-                        "agents": s.agents,
-                        // The values the session is bound to (`params`): a
-                        // page resumes only a session bound as it is.
-                        "params": s.params,
-                    })
-                })
-                .collect();
+            let api_sessions = match day {
+                Some(day) => with_the_day(sessions, &query.skill, &day),
+                None => sessions
+                    .into_iter()
+                    .filter(|s| s.skill.as_deref() == Some(&query.skill))
+                    .map(skill_session_row)
+                    .collect(),
+            };
             Json(serde_json::json!({ "sessions": api_sessions })).into_response()
         }
         Err(_) => Json(serde_json::json!({ "sessions": [] })).into_response(),
     }
+}
+
+/// An app's sessions with one session a day on: the day's first — the one
+/// its page picks up — then the ones the app keeps apart (a test save, an
+/// NPC's talk). Its chats from before stay in the main list, not here.
+fn with_the_day(
+    sessions: Vec<crate::state_fs::sessions::SessionMeta>,
+    skill: &str,
+    day: &str,
+) -> Vec<serde_json::Value> {
+    let (days, rest): (Vec<_>, Vec<_>) = sessions.into_iter().partition(|s| s.id == day);
+    let apart = rest
+        .into_iter()
+        .filter(|s| s.skill.as_deref() == Some(skill))
+        .filter(crate::server::day_session::kept_apart);
+    days.into_iter().chain(apart).map(skill_session_row).collect()
+}
+
+fn skill_session_row(s: crate::state_fs::sessions::SessionMeta) -> serde_json::Value {
+    serde_json::json!({
+        "id": s.id,
+        "title": s.title,
+        "created_at": s.created_at,
+        "updated_at": s.updated_at,
+        "skill": s.skill,
+        "creator": s.creator,
+        // A skill embed has no other way to learn its session's
+        // members and their models: page_state omits
+        // all_sessions for embed views, and no GET returns a
+        // single session's meta. The embed reads this to echo
+        // the model on every send — without it the engine
+        // falls to the global default.
+        "agents": s.agents,
+        // The values the session is bound to (`params`): a
+        // page resumes only a session bound as it is.
+        "params": s.params,
+    })
 }
 
 #[derive(Deserialize)]
