@@ -2,7 +2,8 @@
 //! real routes: B asks (`PUT /api/sync/primary`), A allows
 //! (`/api/connect/{id}/allow`), B picks the token up on its own 2 s poll.
 //! Then a write on B is forwarded to A, B pulls A's rows, and B's write
-//! while A is unreachable waits in B's outbox and replays when A returns.
+//! while A is unreachable waits in B's outbox and replays when A returns;
+//! a queued edit of a row A changed meanwhile ends as a conflict issue.
 //!
 //! What this does not cover: B's 30 s background loop (`replica::spawn`
 //! is not started by `open_quiet`; this test calls `replica::sync_once`
@@ -163,5 +164,62 @@ async fn a_replica_forwards_pulls_and_replays_its_outbox() {
     assert_eq!(
         (r["online"].clone(), r["error"].clone(), r["queued"].clone()),
         (json!(true), Value::Null, json!(0))
+    );
+}
+
+/// An edit B queued while A was unreachable, of a row A changed in the
+/// meantime: A's version stands, B gets it back, and A's review queue
+/// holds a `replica-conflict` issue naming the row.
+#[tokio::test]
+async fn a_queued_edit_of_a_row_the_primary_changed_is_a_conflict() {
+    let (a, b, front) = paired().await;
+    let row = b
+        .post(
+            "/api/memory/add",
+            json!({"content": "Alex keeps two hives", "tier": "semantic"}),
+        )
+        .await
+        .1["data"]["fact"]
+        .clone();
+    let id = row["id"].as_str().unwrap().to_string();
+
+    front.set_up(false);
+    let (_, headers, _) = b
+        .post_with_headers(
+            "/api/memory/update",
+            json!({"id": id, "content": "Alex keeps three hives"}),
+        )
+        .await;
+    assert_eq!(headers.get("x-ling-mem-queued").unwrap(), "1");
+    // The primary's own edit, a moment later than the queued one.
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    a.ok(
+        "update",
+        json!({"id": id, "content": "Alex keeps four hives"}),
+    )
+    .await;
+
+    front.set_up(true);
+    ling_mem::replica::sync_once(&b.state).await;
+    assert_eq!(outbox_len(&b), 0);
+    assert_eq!(
+        a.ok("get", json!({"id": id})).await["content"],
+        "Alex keeps four hives"
+    );
+    assert_eq!(
+        b.ok("get", json!({"id": id})).await["content"],
+        "Alex keeps four hives"
+    );
+    let issues = a.ok("issues", json!({})).await;
+    assert_eq!(issues["open_count"], 1, "{issues}");
+    let issue = &issues["issues"][0];
+    assert_eq!(issue["kind"], "replica-conflict");
+    assert_eq!(issue["row_ids"], json!([id]));
+    let device = b.state.replica.snapshot().device_id.unwrap();
+    assert_eq!(
+        issue["note"],
+        json!(format!(
+            "changed on the primary while this machine was offline; the primary's version stands (/api/memory/update from replica {device})"
+        ))
     );
 }
