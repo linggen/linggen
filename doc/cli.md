@@ -319,6 +319,7 @@ yet.
 ling mem <verb> [args…]      # ling mem --help lists the verbs
 ling mem scan [WINDOW]       # WINDOW: YYYY-MM-DD, or today|24h (default)|week|month|<n>d|<n>w|<n>m|<n>y
 ling mem scan --sessions YYYY-MM-DD  # List session metadata as NDJSON; no candidates file
+ling mem scan --extract FILE --source SOURCE [--day YYYY-MM-DD] [--max-chars N]  # Filtered text; no candidates file
 ```
 
 Memory's data verbs run against the engine when it is up, else on the store

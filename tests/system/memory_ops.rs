@@ -253,6 +253,56 @@ fn ling_mem_scan_sessions_requires_a_day() {
     }
 }
 
+#[test]
+fn ling_mem_scan_extract_reads_one_session_without_candidates() {
+    if !scan_tools() {
+        eprintln!("SKIPPED (passes on nothing): no jq or perl in /usr/bin");
+        return;
+    }
+    let home = crate::support::home::Home::new();
+    let env = crate::support::process::hermetic_env(&home);
+    let file = home.home().join("session.jsonl");
+    let rows = [
+        json!({"type":"user", "timestamp":"2026-11-10T12:00:00Z", "message":{"role":"user", "content":"Alex likes gardens."}}),
+        json!({"type":"assistant", "timestamp":"2026-11-10T12:00:01Z", "message":{"role":"assistant", "content":[{"type":"text", "text":"Alex grows herbs."}]}}),
+    ];
+    std::fs::write(&file, rows.iter().map(Value::to_string).collect::<Vec<_>>().join("\n") + "\n").unwrap();
+    let file = file.to_str().unwrap();
+    let out = scan(&env, None, &["--extract", file, "--source", "CC", "--day", DAY, "--max-chars", "0"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "[user]: Alex likes gardens.\n[assistant]: Alex grows herbs.\n");
+    assert!(out.stderr.is_empty());
+    assert!(!home.home().join(".linggen/memory/.scan-output.jsonl").exists());
+    let missing = scan(&env, None, &["--extract", "/missing-session", "--source", "CC"]);
+    assert_eq!(missing.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("file not found"));
+    let default_day = scan(&env, None, &["--extract", file, "--source", "CC", "--max-chars", "0"]);
+    assert!(default_day.status.success());
+}
+
+#[test]
+fn ling_mem_scan_extract_refuses_bad_arguments() {
+    let home = crate::support::home::Home::new();
+    let env = crate::support::process::hermetic_env(&home);
+    let cases: &[(&[&str], &str)] = &[
+        (&["--extract", "file"], "--extract needs --source"),
+        (&["--extract", "file", "--source", "bad"], "--source must be CC, Codex, OpenClaw, or Linggen"),
+        (&["--extract", "file", "--source", "CC", "--day", "week"], "--day needs one day, YYYY-MM-DD"),
+        (&["--extract", "file", "--source", "CC", "--max-chars", "abc"], "--max-chars needs a non-negative whole number"),
+        (&["--extract", "file", "--sessions", DAY], "--extract cannot be combined with --sessions"),
+        (&["--extract", "file", "--source", "CC", "week"], "--extract does not take a window"),
+        (&["--source", "CC"], "--source needs --extract"),
+        (&["--day", DAY], "--day needs --extract"),
+        (&["--max-chars", "10"], "--max-chars needs --extract"),
+    ];
+    for (args, message) in cases {
+        let out = scan(&env, None, args);
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+        assert!(out.stdout.is_empty());
+        assert_eq!(String::from_utf8_lossy(&out.stderr), format!("ling mem scan {message}\n"));
+    }
+}
+
 /// Trigger a built-in memory mission; its session id.
 async fn trigger(w: &World, mission: &str, body: Value) -> String {
     let resp = w

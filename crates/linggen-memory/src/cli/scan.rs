@@ -39,6 +39,18 @@ pub struct ScanArgs {
     /// List one day's sessions as NDJSON without writing candidates.
     #[arg(long)]
     pub sessions: bool,
+    /// Print one session as filtered text; requires --source.
+    #[arg(long)]
+    pub extract: Option<String>,
+    /// Session source: CC, Codex, OpenClaw, or Linggen.
+    #[arg(long)]
+    pub source: Option<String>,
+    /// Extract messages from this day (YYYY-MM-DD; default today).
+    #[arg(long)]
+    pub day: Option<String>,
+    /// Maximum transcript bytes (0 means unlimited).
+    #[arg(long)]
+    pub max_chars: Option<String>,
 }
 
 /// A scan that did not succeed: the status to exit with, and the one line to
@@ -61,13 +73,7 @@ impl std::fmt::Display for ScanExit {
 impl std::error::Error for ScanExit {}
 
 pub fn run(args: ScanArgs) -> anyhow::Result<()> {
-    if args.sessions && !args.window.as_deref().is_some_and(is_day) {
-        return Err(ScanExit {
-            code: 2,
-            line: Some("ling mem scan --sessions needs one day, YYYY-MM-DD".into()),
-        }
-        .into());
-    }
+    let (script, script_args) = select_script(args)?;
     if let Some(tool) = TOOLS.iter().find(|t| !on_path(t)) {
         return Err(ScanExit {
             code: 1,
@@ -81,14 +87,9 @@ pub fn run(args: ScanArgs) -> anyhow::Result<()> {
     for (name, text) in SCRIPTS {
         std::fs::write(dir.path().join(name), text)?;
     }
-    let script = if args.sessions {
-        "collect_sessions.sh"
-    } else {
-        "scan.sh"
-    };
     let status = Command::new("bash")
         .arg(dir.path().join(script))
-        .args(args.window)
+        .args(script_args)
         .status()?;
     match status.code() {
         Some(0) => Ok(()),
@@ -98,6 +99,64 @@ pub fn run(args: ScanArgs) -> anyhow::Result<()> {
         }
         .into()),
     }
+}
+
+fn select_script(args: ScanArgs) -> Result<(&'static str, Vec<String>), ScanExit> {
+    let refuse = |line: &str| ScanExit {
+        code: 2,
+        line: Some(format!("ling mem scan {line}")),
+    };
+    if args.sessions && args.extract.is_some() {
+        return Err(refuse("--extract cannot be combined with --sessions"));
+    }
+    if let Some(file) = args.extract {
+        if args.window.is_some() {
+            return Err(refuse("--extract does not take a window"));
+        }
+        let source = args
+            .source
+            .ok_or_else(|| refuse("--extract needs --source"))?;
+        if !["CC", "Codex", "OpenClaw", "Linggen"].contains(&source.as_str()) {
+            return Err(refuse("--source must be CC, Codex, OpenClaw, or Linggen"));
+        }
+        if args.day.as_deref().is_some_and(|day| !is_day(day)) {
+            return Err(refuse("--day needs one day, YYYY-MM-DD"));
+        }
+        if args
+            .max_chars
+            .as_deref()
+            .is_some_and(|n| n.is_empty() || !n.bytes().all(|b| b.is_ascii_digit()))
+        {
+            return Err(refuse("--max-chars needs a non-negative whole number"));
+        }
+        let mut values = vec![file, source];
+        if args.day.is_some() || args.max_chars.is_some() {
+            // Empty invokes the script's own local-date default.
+            values.push(args.day.unwrap_or_default());
+        }
+        values.extend(args.max_chars);
+        return Ok(("extract_session.sh", values));
+    }
+    for (option, present) in [
+        ("--source", args.source.is_some()),
+        ("--day", args.day.is_some()),
+        ("--max-chars", args.max_chars.is_some()),
+    ] {
+        if present {
+            return Err(refuse(&format!("{option} needs --extract")));
+        }
+    }
+    if args.sessions && !args.window.as_deref().is_some_and(is_day) {
+        return Err(refuse("--sessions needs one day, YYYY-MM-DD"));
+    }
+    Ok((
+        if args.sessions {
+            "collect_sessions.sh"
+        } else {
+            "scan.sh"
+        },
+        args.window.into_iter().collect(),
+    ))
 }
 
 fn is_day(value: &str) -> bool {
