@@ -25,7 +25,8 @@ pub const RECENT_DAYS: i64 = 3;
 
 /// Verbs the engine writes itself. No skill may declare one, so a record with
 /// one of these verbs was always written by the engine.
-pub const ENGINE_VERBS: [&str; 5] = ["pair", "connect", "disconnect", "restart", "used"];
+/// `hold` is what Yinyue's guardrails write when they hold an unprompted line.
+pub const ENGINE_VERBS: [&str; 6] = ["pair", "connect", "disconnect", "restart", "used", "hold"];
 
 /// Who a record may name. Closed, because `by` is rendered as the subject of a
 /// sentence inside the agent's system prompt (§4), and a subject nobody defined
@@ -112,6 +113,7 @@ fn past(verb: &str) -> &str {
         "disconnect" => "disconnected",
         "restart" => "restarted",
         "fault" => "recorded a failure in",
+        "hold" => "held",
         other => other,
     }
 }

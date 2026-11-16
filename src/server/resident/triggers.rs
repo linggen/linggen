@@ -409,12 +409,42 @@ pub(super) async fn wake_and_speak(
         tracing::info!("[yinyue-watch] Yinyue chose silence");
         return None;
     };
+    if let Some(source) = unprompted_source(reach, trigger_source) {
+        // Checked before the turn too; this is the last word, for two
+        // unprompted turns that ran at once.
+        let pet = state.manager.get_config_snapshot().await.pet;
+        if let Some(held) = super::guard::held_now(&pet) {
+            let item = super::guard::Withheld {
+                what: "a line".to_string(),
+                source,
+                key: format!("line-{}", crate::util::now_ts_secs()),
+            };
+            super::guard::record_held(&item, &held);
+            return None;
+        }
+        super::guard::spoke_unprompted();
+    }
     tracing::info!(
         "[yinyue-watch] Yinyue heralds ({} chars, {emotion})",
         line.len()
     );
     crate::server::api::yinyue::emit_speak(&state, line.clone(), Some(emotion.to_string()));
     Some(line)
+}
+
+/// What woke an unprompted turn of hers — `None` for a reply: her ordinary
+/// turns (a person's words, a herald of a run they started) and anything
+/// asked. Only these are under the guardrails.
+pub(super) fn unprompted_source(reach: Reach, trigger_source: &str) -> Option<&'static str> {
+    if trigger_source == "asked" {
+        return None;
+    }
+    match reach {
+        Reach::Open => None,
+        Reach::Sealed => Some("moment"),
+        Reach::SpeakOnly if trigger_source == super::look_again::LOOK_AGAIN_SOURCE => Some("note"),
+        Reach::SpeakOnly => Some("glance"),
+    }
 }
 
 /// Deliver an `agent_chat` message to a CHAT agent (Ling, …): show it in that

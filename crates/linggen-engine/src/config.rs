@@ -75,6 +75,26 @@ pub struct PetConfig {
     /// This Mac only: a phone keeps its own.
     #[serde(default)]
     pub muted: bool,
+    /// The most lines she says unprompted in any rolling hour — a glance, an
+    /// app moment, a woken note; a reply is never counted. 0: none at all.
+    #[serde(default = "default_unprompted_per_hour")]
+    pub unprompted_per_hour: u32,
+    /// Local hours in which she says nothing unprompted, `HH:MM-HH:MM` (it
+    /// may cross midnight). Empty: none.
+    #[serde(default = "default_quiet_hours")]
+    pub quiet_hours: String,
+}
+
+/// The unprompted lines an hour may hold unless the settings say otherwise.
+pub const DEFAULT_UNPROMPTED_PER_HOUR: u32 = 6;
+/// Her quiet hours unless the settings say otherwise.
+pub const DEFAULT_QUIET_HOURS: &str = "23:00-07:00";
+
+fn default_unprompted_per_hour() -> u32 {
+    DEFAULT_UNPROMPTED_PER_HOUR
+}
+fn default_quiet_hours() -> String {
+    DEFAULT_QUIET_HOURS.to_string()
 }
 
 fn default_pet_voice() -> String {
@@ -92,6 +112,8 @@ impl Default for PetConfig {
             model: default_pet_model(),
             voice: default_pet_voice(),
             muted: false,
+            unprompted_per_hour: default_unprompted_per_hour(),
+            quiet_hours: default_quiet_hours(),
         }
     }
 }

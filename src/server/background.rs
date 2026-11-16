@@ -289,6 +289,9 @@ fn spawn_companion(state: &Arc<ServerState>) {
     // A mission run that went wrong while nobody was at a screen: its fact
     // waits here until someone is. See server/resident/mission_fact.rs.
     tokio::spawn(resident::mission_fact_loop(state.clone()));
+    // Look again: a note of hers whose time has come wakes her once, with
+    // that note as the reason. See server/resident/look_again.rs.
+    tokio::spawn(resident::yinyue_look_again_loop(state.clone()));
 }
 
 /// Perception. Three loops: one keeps the stretch of use of the page in

@@ -269,6 +269,48 @@ fn room_now(state: &Arc<ServerState>, now: u64) -> Room {
     }
 }
 
+/// Whether the user is typing now — the gate's own reading, which the
+/// look-again wake waits on too.
+pub(crate) fn user_typing(state: &Arc<ServerState>, now: u64) -> bool {
+    room_now(state, now).typing
+}
+
+/// Whether a moment's wake is under way.
+pub(crate) fn wake_in_flight() -> bool {
+    !IN_FLIGHT
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .is_empty()
+}
+
+/// The guardrail that holds these moments, if one does. An asked moment is
+/// a reply, never held; a `big` one is unprompted like any other.
+fn held_for(
+    moments: &[Moment],
+    held: Option<super::resident::guard::Held>,
+) -> Option<super::resident::guard::Held> {
+    if moments.iter().any(|m| m.asked) {
+        return None;
+    }
+    held
+}
+
+/// Moments a guardrail held: dropped (they would be stale by the time it
+/// passes), and written once to the activity log.
+fn drop_held(moments: &[Moment], held: &super::resident::guard::Held, now: u64) {
+    let n = moments.len();
+    let item = super::resident::guard::Withheld {
+        what: format!(
+            "{n} app moment{} from {}",
+            if n == 1 { "" } else { "s" },
+            app_names(moments)
+        ),
+        source: "moment",
+        key: format!("moments-{now}"),
+    };
+    super::resident::guard::record_held(&item, held);
+}
+
 /// Asked moments nobody will answer — the pet is off. The page that asked
 /// hears so (`device_topic` yinyue/unanswered) instead of waiting on silence.
 pub(crate) fn tell_unanswered(state: &Arc<ServerState>, moments: &[Moment], reason: &str) {
@@ -404,11 +446,7 @@ pub async fn yinyue_moment_loop(state: Arc<ServerState>) {
     loop {
         tokio::time::sleep(Duration::from_secs(TICK_SECS)).await;
         let now = crate::util::now_ts_secs();
-        if !IN_FLIGHT
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .is_empty()
-        {
+        if wake_in_flight() {
             continue; // one wake at a time; what arrives meanwhile goes next, together
         }
         let taken = {
@@ -429,10 +467,14 @@ pub async fn yinyue_moment_loop(state: Arc<ServerState>) {
             q.extend(stay);
             taken
         };
-        let pet_on = state.manager.get_config_snapshot().await.pet.enabled;
-        if !pet_on || !super::resident::here(&state).await {
+        let pet = state.manager.get_config_snapshot().await.pet;
+        if !pet.enabled || !super::resident::here(&state).await {
             tell_unanswered(&state, &taken, "pet-off");
             continue; // pet off, or not met: the moments are dropped, nobody to say them
+        }
+        if let Some(held) = held_for(&taken, super::resident::guard::held_now(&pet)) {
+            drop_held(&taken, &held, now);
+            continue;
         }
         LAST_WAKE_AT.store(now, Ordering::Relaxed);
         let asked = taken[0].asked;
@@ -512,6 +554,32 @@ mod tests {
         assert!(!ready(1000, &away, std::slice::from_ref(&shown), 999));
         // A plain big moment still waits for the screen to settle.
         assert!(!ready(1000, &HERE, &[m(1000, true)], 0));
+    }
+
+    /// A `big` moment is unprompted like any other: quiet hours and the
+    /// hourly ceiling hold it. An asked one is a reply and never held.
+    #[test]
+    fn a_big_moment_is_held_by_each_guardrail_and_an_asked_one_by_none() {
+        use crate::server::resident::guard::Held;
+        let quiet = Held::Quiet {
+            until: "07:00".into(),
+        };
+        let full = Held::Ceiling { per_hour: 6 };
+        let big = [m(1000, true)];
+        assert_eq!(held_for(&big, Some(quiet.clone())), Some(quiet.clone()));
+        assert_eq!(held_for(&big, Some(full.clone())), Some(full.clone()));
+        assert_eq!(held_for(&big, None), None);
+        let shown = [Moment {
+            now: true,
+            ..m(1000, true)
+        }];
+        assert_eq!(held_for(&shown, Some(full.clone())), Some(full.clone()));
+        let asked = [Moment {
+            asked: true,
+            ..m(1000, false)
+        }];
+        assert_eq!(held_for(&asked, Some(quiet)), None);
+        assert_eq!(held_for(&asked, Some(full)), None);
     }
 
     #[test]

@@ -259,7 +259,7 @@ export interface AppConfig {
   agents: { id: string; spec_path: string; model?: string | null }[];
   routing?: { default_models?: string[]; claude_default_model?: string | null; auto_fallback?: boolean };
   /** Yinyue's settings. The key stays `pet` on disk so old files and phones keep working. */
-  pet?: { enabled?: boolean; pet?: string; show_text?: boolean; recall_count?: number; recall_min_score?: number; model?: string; voice?: string; muted?: boolean };
+  pet?: { enabled?: boolean; pet?: string; show_text?: boolean; recall_count?: number; recall_min_score?: number; model?: string; voice?: string; muted?: boolean; unprompted_per_hour?: number; quiet_hours?: string };
 }
 
 export type ModelHealthStatus = 'healthy' | 'quota_exhausted' | 'down' | 'unknown';

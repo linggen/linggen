@@ -28,6 +28,8 @@ use crate::engine::events::{NotificationPayload, ServerEvent};
 
 mod ambient;
 mod mission_fact;
+pub(crate) mod guard;
+mod look_again;
 mod session_roll;
 mod spoken;
 mod triggers;
@@ -35,6 +37,7 @@ mod turn;
 
 pub use ambient::yinyue_ambient_loop;
 pub use mission_fact::mission_fact_loop;
+pub use look_again::yinyue_look_again_loop;
 pub(crate) use session_roll::is_own_session;
 use session_roll::*;
 use spoken::*;

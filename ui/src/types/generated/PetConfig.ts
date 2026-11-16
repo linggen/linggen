@@ -46,4 +46,14 @@ voice: string,
  * `/unmute`, the `Voice` tool, or Settings; kept until turned back on.
  * This Mac only: a phone keeps its own.
  */
-muted: boolean, };
+muted: boolean, 
+/**
+ * The most lines she says unprompted in any rolling hour — a glance, an
+ * app moment, a woken note; a reply is never counted. 0: none at all.
+ */
+unprompted_per_hour: number, 
+/**
+ * Local hours in which she says nothing unprompted, `HH:MM-HH:MM` (it
+ * may cross midnight). Empty: none.
+ */
+quiet_hours: string, };
