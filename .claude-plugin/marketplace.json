@@ -1,0 +1,17 @@
+{
+  "name": "linggen",
+  "description": "Linggen's plugin marketplace.",
+  "owner": {
+    "name": "Linggen",
+    "url": "https://linggen.dev"
+  },
+  "plugins": [
+    {
+      "name": "linggen",
+      "description": "Linggen for Claude Code — durable cross-host memory, browser control in your own Chrome, and logged-in X reads, all from one local program (Linggen, `ling`) at one address: memory at /mcp/memory, the browser, X and agents at /mcp. Installs Linggen (background download) on first session start.",
+      "category": "productivity",
+      "homepage": "https://linggen.dev",
+      "source": "./plugins/linggen"
+    }
+  ]
+}
