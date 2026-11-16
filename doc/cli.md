@@ -214,17 +214,16 @@ ling restart --binary target/fast/ling [--wait 120]
 
 `LINGGEN_RELEASE_BASE=<url>` replaces GitHub and the linggen.dev mirror for
 every installer and updater: `ling install`/`update`, `ling status`'s
-latest-version line, `install.sh`, `install-app.sh`, `install-bin.sh`,
-`ling-mem upgrade`, and Linggen.app's updater. It is how the release gate
+latest-version line, `install.sh`, `install-app.sh`, `install-plugin.sh`,
+and Linggen.app's updater. It is how the release gate
 installs and upgrades from a draft before it is published.
 
 The base serves one release per repo, as `gh release download` writes it:
 
 ```
-<url>/install-bin.sh                      optional; install.sh prefers it
 <url>/<owner>/<repo>/<asset>              manifest.json, *.tar.gz, *.sha256
 <url>/<owner>/<repo>/release.json         {"tag_name", "assets": [{"name"}]}
-                                          (linggen-memory, linggen-releases)
+                                          (linggen, linggen-releases)
 ```
 
 The sha256 check stays and becomes mandatory (a manifest without one is
