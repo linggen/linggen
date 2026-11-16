@@ -16,13 +16,19 @@ pub struct RowsQuery {
 }
 
 pub async fn rows(state: &Memory, q: RowsQuery) -> Result<Value, MemError> {
-    let entries: Vec<Entry> = q.ids.split(',').map(str::trim).filter(|id| !id.is_empty())
-        .take(MAX_LIMIT).map(|id| Entry {
+    let entries: Vec<Entry> = q
+        .ids
+        .split(',')
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .take(MAX_LIMIT)
+        .map(|id| Entry {
             seq: 0,
             id: id.to_string(),
             table: String::new(),
             op: crate::memory::changes::Op::Upsert,
-        }).collect();
+        })
+        .collect();
     let (rows, tombstones) = bodies(state, &entries).await?;
     Ok(json!({ "rows": rows, "tombstones": tombstones }))
 }
@@ -35,7 +41,9 @@ pub struct ChangesQuery {
 }
 
 pub async fn changes(state: &Memory, q: ChangesQuery) -> Result<Value, MemError> {
-    let log = state.store.changes()
+    let log = state
+        .store
+        .changes()
         .ok_or_else(|| MemError::internal(anyhow::anyhow!("no change log on this daemon")))?;
     let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let (entries, next, more) = log.since(q.since, limit);
@@ -68,10 +76,16 @@ async fn bodies(state: &Memory, entries: &[Entry]) -> Result<(Vec<Value>, Vec<St
 async fn current(state: &Memory, id: &str) -> Result<Option<(&'static str, Value)>, MemError> {
     let err = |e: anyhow::Error| MemError::internal(e);
     if let Some(row) = state.store.get(id).await.map_err(err)? {
-        return Ok(Some(("semantic", serde_json::to_value(row).unwrap_or(Value::Null))));
+        return Ok(Some((
+            "semantic",
+            serde_json::to_value(row).unwrap_or(Value::Null),
+        )));
     }
     if let Some(row) = state.episodic.get(id).await.map_err(err)? {
-        return Ok(Some(("episodic", serde_json::to_value(row).unwrap_or(Value::Null))));
+        return Ok(Some((
+            "episodic",
+            serde_json::to_value(row).unwrap_or(Value::Null),
+        )));
     }
     Ok(None)
 }

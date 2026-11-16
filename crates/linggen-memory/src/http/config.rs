@@ -30,4 +30,3 @@ async fn put_config(
 ) -> Result<Response, ApiError> {
     Ok(ok(ops::config::put_config(&state, cfg).await?))
 }
-

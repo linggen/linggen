@@ -10,11 +10,16 @@
 //!
 //! Who may ask: the gate's rule — this machine, or a paired device.
 
-use axum::{extract::{Query, State}, response::Response, routing::get, Router};
 use crate::http::envelope::{ok, ApiError};
 use crate::http::state::SharedState;
 use crate::ops;
 use crate::ops::sync::{ChangesQuery, RowsQuery};
+use axum::{
+    extract::{Query, State},
+    response::Response,
+    routing::get,
+    Router,
+};
 
 pub fn router() -> Router<SharedState> {
     Router::new()
@@ -24,10 +29,16 @@ pub fn router() -> Router<SharedState> {
 
 /// `GET /api/sync/rows?ids=a,b` — these rows as they are now (or tombstones):
 /// how a replica restores rows after the primary refused a queued write.
-async fn rows(State(state): State<SharedState>, Query(q): Query<RowsQuery>) -> Result<Response, ApiError> {
+async fn rows(
+    State(state): State<SharedState>,
+    Query(q): Query<RowsQuery>,
+) -> Result<Response, ApiError> {
     Ok(ok(ops::sync::rows(&state, q).await?))
 }
 
-async fn changes(State(state): State<SharedState>, Query(q): Query<ChangesQuery>) -> Result<Response, ApiError> {
+async fn changes(
+    State(state): State<SharedState>,
+    Query(q): Query<ChangesQuery>,
+) -> Result<Response, ApiError> {
     Ok(ok(ops::sync::changes(&state, q).await?))
 }

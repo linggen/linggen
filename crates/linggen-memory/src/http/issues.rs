@@ -37,14 +37,23 @@ pub fn router() -> Router<SharedState> {
         .route("/api/memory/issue_resolve", post(issue_resolve))
 }
 
-async fn issues(State(state): State<SharedState>, Json(req): Json<IssuesRequest>) -> Result<Response, ApiError> {
+async fn issues(
+    State(state): State<SharedState>,
+    Json(req): Json<IssuesRequest>,
+) -> Result<Response, ApiError> {
     Ok(ok(ops::issues::issues(&state, req).await?))
 }
 
-async fn issue_add(State(state): State<SharedState>, Json(req): Json<IssueAddRequest>) -> Result<Response, ApiError> {
+async fn issue_add(
+    State(state): State<SharedState>,
+    Json(req): Json<IssueAddRequest>,
+) -> Result<Response, ApiError> {
     Ok(ok(ops::issues::issue_add(&state, req).await?))
 }
 
-async fn issue_resolve(State(state): State<SharedState>, Json(req): Json<IssueResolveRequest>) -> Result<Response, ApiError> {
+async fn issue_resolve(
+    State(state): State<SharedState>,
+    Json(req): Json<IssueResolveRequest>,
+) -> Result<Response, ApiError> {
     Ok(ok(ops::issues::issue_resolve(&state, req).await?))
 }

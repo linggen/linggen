@@ -82,12 +82,17 @@ pub(crate) async fn save(data_dir: &std::path::Path, cfg: &Config) -> Result<(),
     Ok(())
 }
 
-pub async fn get_config(state: &crate::handle::Memory) -> Result<serde_json::Value, crate::error::MemError> {
+pub async fn get_config(
+    state: &crate::handle::Memory,
+) -> Result<serde_json::Value, crate::error::MemError> {
     let cfg = load(&state.data_dir).await;
     Ok(serde_json::to_value(cfg).expect("Config serializes"))
 }
 
-pub async fn put_config(state: &crate::handle::Memory, mut cfg: Config) -> Result<serde_json::Value, crate::error::MemError> {
+pub async fn put_config(
+    state: &crate::handle::Memory,
+    mut cfg: Config,
+) -> Result<serde_json::Value, crate::error::MemError> {
     use crate::error::MemError;
     // The network choice is not this route's to change — see `network.rs`.
     cfg.network = load(&state.data_dir).await.network;
@@ -117,10 +122,19 @@ mod tests {
     #[tokio::test]
     async fn the_config_route_never_changes_the_network() {
         let dir = tempfile::tempdir().unwrap();
-        let state = crate::handle::scratch_state(dir.path(), std::net::SocketAddr::from(([0, 0, 0, 0], 0))).await;
-        let cfg = Config { network: Network::Local, ..Config::default() };
+        let state =
+            crate::handle::scratch_state(dir.path(), std::net::SocketAddr::from(([0, 0, 0, 0], 0)))
+                .await;
+        let cfg = Config {
+            network: Network::Local,
+            ..Config::default()
+        };
         save(dir.path(), &cfg).await.unwrap();
-        let sent = Config { network: Network::Lan, episodic_ttl_days: 9, ..Config::default() };
+        let sent = Config {
+            network: Network::Lan,
+            episodic_ttl_days: 9,
+            ..Config::default()
+        };
         put_config(&state, sent).await.unwrap();
         let stored = load(dir.path()).await;
         assert_eq!(stored.network, Network::Local);

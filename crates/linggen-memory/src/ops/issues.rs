@@ -122,7 +122,10 @@ pub struct IssuesRequest {
     limit: Option<usize>,
 }
 
-pub async fn issues(state: &crate::handle::Memory, req: IssuesRequest) -> Result<serde_json::Value, crate::error::MemError> {
+pub async fn issues(
+    state: &crate::handle::Memory,
+    req: IssuesRequest,
+) -> Result<serde_json::Value, crate::error::MemError> {
     use crate::error::MemError;
     use serde_json::json;
     let want = req.status.as_deref().unwrap_or("open");
@@ -134,7 +137,11 @@ pub async fn issues(state: &crate::handle::Memory, req: IssuesRequest) -> Result
     let all = load(&state.data_dir).await.issues;
     let open = all.iter().filter(|i| i.status == "open").count();
     let limit = req.limit.unwrap_or(50);
-    let items: Vec<&IssueRecord> = all.iter().filter(|i| want == "all" || i.status == want).take(limit).collect();
+    let items: Vec<&IssueRecord> = all
+        .iter()
+        .filter(|i| want == "all" || i.status == want)
+        .take(limit)
+        .collect();
     Ok(json!({ "open_count": open, "issues": items }))
 }
 
@@ -146,13 +153,18 @@ pub struct IssueAddRequest {
     note: String,
 }
 
-pub async fn issue_add(state: &crate::handle::Memory, req: IssueAddRequest) -> Result<serde_json::Value, crate::error::MemError> {
+pub async fn issue_add(
+    state: &crate::handle::Memory,
+    req: IssueAddRequest,
+) -> Result<serde_json::Value, crate::error::MemError> {
     use crate::error::MemError;
     use crate::memory::types::short_id;
     use serde_json::json;
     let kind = req.kind.trim();
     if !KINDS.contains(&kind) {
-        return Err(MemError::bad_request(format!("invalid kind {kind:?}: expected one of {KINDS:?}")));
+        return Err(MemError::bad_request(format!(
+            "invalid kind {kind:?}: expected one of {KINDS:?}"
+        )));
     }
     if req.note.trim().is_empty() {
         return Err(MemError::bad_request("note is required".to_string()));
@@ -180,7 +192,8 @@ pub async fn issue_add(state: &crate::handle::Memory, req: IssueAddRequest) -> R
         resolution: None,
     };
     all.issues.push(record.clone());
-    save(&state.data_dir, &all).await
+    save(&state.data_dir, &all)
+        .await
         .map_err(|e| MemError::internal(anyhow::anyhow!("persisting .issues.json: {e}")))?;
     Ok(json!({ "issue": record, "deduped": false }))
 }
@@ -195,16 +208,24 @@ pub struct IssueResolveRequest {
     note: Option<String>,
 }
 
-pub async fn issue_resolve(state: &crate::handle::Memory, req: IssueResolveRequest) -> Result<serde_json::Value, crate::error::MemError> {
+pub async fn issue_resolve(
+    state: &crate::handle::Memory,
+    req: IssueResolveRequest,
+) -> Result<serde_json::Value, crate::error::MemError> {
     use crate::error::MemError;
     use serde_json::json;
     let outcome = req.outcome.trim();
     if !OUTCOMES.contains(&outcome) {
-        return Err(MemError::bad_request(format!("invalid outcome {outcome:?}: expected resolved | dismissed")));
+        return Err(MemError::bad_request(format!(
+            "invalid outcome {outcome:?}: expected resolved | dismissed"
+        )));
     }
     let mut all = load(&state.data_dir).await;
     let Some(item) = all.issues.iter_mut().find(|i| i.id == req.id) else {
-        return Err(MemError::bad_request(format!("no issue with id {:?}", req.id)));
+        return Err(MemError::bad_request(format!(
+            "no issue with id {:?}",
+            req.id
+        )));
     };
     if item.status != "open" {
         let already = item.clone();
@@ -216,7 +237,8 @@ pub async fn issue_resolve(state: &crate::handle::Memory, req: IssueResolveReque
         item.resolution = Some(note.trim().to_string());
     }
     let updated = item.clone();
-    save(&state.data_dir, &all).await
+    save(&state.data_dir, &all)
+        .await
         .map_err(|e| MemError::internal(anyhow::anyhow!("persisting .issues.json: {e}")))?;
     Ok(json!({ "issue": updated, "already_closed": false }))
 }
