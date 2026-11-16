@@ -49,7 +49,7 @@ async fn store() -> Store {
 enum Who {
     Owner,
     OwnersPhone,
-    SamsPhone,
+    GuestsPhone,
     SignedOutPhone,
 }
 
@@ -90,9 +90,9 @@ async fn door(url: &str, who: Who, verb: &str, body: Value) -> (u16, Value) {
         Who::OwnersPhone => scope_phone(verb, &mut args, None)
             .err()
             .map(|(status, message, code)| unreachable_envelope(status, message, code)),
-        Who::SamsPhone => {
-            let sam = phone("dev-sam", Some(("u-sam", "Sam")));
-            scope_to_caller(&Caller::Phone(sam), verb, &mut args).err()
+        Who::GuestsPhone => {
+            let guest = phone("dev-guest", Some(("u-guest", "Guest")));
+            scope_to_caller(&Caller::Phone(guest), verb, &mut args).err()
         }
         Who::SignedOutPhone => {
             scope_to_caller(&Caller::Phone(phone("dev-2", None)), verb, &mut args).err()
@@ -198,7 +198,7 @@ async fn each_caller_runs_exactly_its_verbs() {
     for who in [
         Who::Owner,
         Who::OwnersPhone,
-        Who::SamsPhone,
+        Who::GuestsPhone,
         Who::SignedOutPhone,
     ] {
         let s = store().await;
@@ -232,16 +232,16 @@ async fn a_phone_is_stamped_with_its_person_and_cannot_claim_another() {
     .1["data"]["fact"]
         .clone();
     let claim = json!({"content": "likes tea", "tier": "semantic", "account_id": "u-other", "account_name": "Other", "account": "u-other", "all_accounts": true});
-    let (status, env) = door(&s.base, Who::SamsPhone, "add", claim).await;
+    let (status, env) = door(&s.base, Who::GuestsPhone, "add", claim).await;
     assert_eq!(status, 200, "{env}");
-    assert_eq!(env["data"]["fact"]["account_id"], "u-sam");
-    assert_eq!(env["data"]["fact"]["account_name"], "Sam");
+    assert_eq!(env["data"]["fact"]["account_id"], "u-guest");
+    assert_eq!(env["data"]["fact"]["account_name"], "Guest");
     let batch = json!({"facts": [{"content": "likes jazz", "account_id": "u-other"}, {"content": "went to a gig", "all_accounts": true}]});
-    let (_, env) = door(&s.base, Who::SamsPhone, "add_batch", batch).await;
+    let (_, env) = door(&s.base, Who::GuestsPhone, "add_batch", batch).await;
     for f in env["data"]["facts"].as_array().unwrap() {
         assert_eq!(
             (f["account_id"].clone(), f["account_name"].clone()),
-            (json!("u-sam"), json!("Sam")),
+            (json!("u-guest"), json!("Guest")),
             "{f}"
         );
     }
@@ -258,15 +258,15 @@ async fn a_phone_is_stamped_with_its_person_and_cannot_claim_another() {
         &s.base,
         Who::OwnersPhone,
         "add",
-        json!({"content": "the owner likes rye", "account_id": "u-sam"}),
+        json!({"content": "the owner likes rye", "account_id": "u-guest"}),
     )
     .await;
     assert!(env["data"]["fact"].get("account_id").is_none(), "{env}");
 
-    // Reads: Sam's own rows only, even when the body asks for everyone's.
+    // Reads: the guest's own rows only, even when the body asks for everyone's.
     let (_, env) = door(
         &s.base,
-        Who::SamsPhone,
+        Who::GuestsPhone,
         "count",
         json!({"all_accounts": true, "account": "u-other"}),
     )
@@ -279,12 +279,12 @@ async fn a_phone_is_stamped_with_its_person_and_cannot_claim_another() {
         env["data"],
         json!([
             {"account_id": "device:dev-2", "account_name": "dev-2 phone", "rows": 1},
-            {"account_id": "u-sam", "account_name": "Sam", "rows": 3},
+            {"account_id": "u-guest", "account_name": "Guest", "rows": 3},
         ])
     );
-    // The owner's row by id, from Sam's phone: exactly a missing row.
+    // The owner's row by id, from the guest's phone: exactly a missing row.
     let id = owners["id"].as_str().unwrap();
-    let theirs = door(&s.base, Who::SamsPhone, "get", json!({"id": id})).await;
+    let theirs = door(&s.base, Who::GuestsPhone, "get", json!({"id": id})).await;
     assert_eq!(
         theirs,
         (
@@ -292,7 +292,7 @@ async fn a_phone_is_stamped_with_its_person_and_cannot_claim_another() {
             json!({"ok": false, "error": format!("no fact with id {id}"), "code": "NOT_FOUND"})
         )
     );
-    let gone = door(&s.base, Who::SamsPhone, "delete", json!({"id": id})).await;
+    let gone = door(&s.base, Who::GuestsPhone, "delete", json!({"id": id})).await;
     assert_eq!(
         gone,
         (
@@ -304,7 +304,7 @@ async fn a_phone_is_stamped_with_its_person_and_cannot_claim_another() {
     // A body the stamp cannot mark is refused for another person.
     let (status, env) = door(
         &s.base,
-        Who::SamsPhone,
+        Who::GuestsPhone,
         "add_batch",
         json!({"facts": ["likes tea"]}),
     )
@@ -386,7 +386,7 @@ async fn an_unreachable_memory_is_a_502() {
     );
     let (status, env) = door(
         "http://127.0.0.1:1",
-        Who::SamsPhone,
+        Who::GuestsPhone,
         "search",
         json!({"query": "x"}),
     )
@@ -403,4 +403,87 @@ async fn an_unreachable_memory_is_a_502() {
         env["error"], "POST /api/memory/list failed: builder error: relative URL without a base",
         "{env}"
     );
+}
+
+/// The stamp scopes every verb another person's phone may run, not only
+/// the writes: `forget`, `update`, `search`, `list` and `session_start`
+/// never reach the owner's rows.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn every_person_verb_stays_inside_the_persons_rows() {
+    let s = store().await;
+    let owner = |verb: &'static str, body: Value| door(&s.base, Who::Owner, verb, body);
+    let guest = |verb: &'static str, body: Value| door(&s.base, Who::GuestsPhone, verb, body);
+    let oat = owner(
+        "add",
+        json!({"content": "tried oat milk", "type": "tried", "tier": "semantic"}),
+    )
+    .await
+    .1["data"]["fact"]
+        .clone();
+    owner(
+        "add",
+        json!({"content": "Alex lives in Lisbon", "tier": "core"}),
+    )
+    .await;
+    guest(
+        "add",
+        json!({"content": "tried soy milk", "type": "tried", "tier": "semantic"}),
+    )
+    .await;
+    guest(
+        "add",
+        json!({"content": "the guest lives in Porto", "tier": "core"}),
+    )
+    .await;
+
+    let id = oat["id"].as_str().unwrap();
+    assert_eq!(
+        guest("update", json!({"id": id, "content": "tried rice milk"})).await,
+        (
+            404,
+            json!({"ok": false, "error": format!("no fact with id {id}"), "code": "NOT_FOUND"})
+        )
+    );
+    let (_, env) = guest("search", json!({"query": "tried oat milk"})).await;
+    let hits: Vec<Value> = env["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["content"].clone())
+        .collect();
+    assert_eq!(
+        hits,
+        vec![json!("tried soy milk")],
+        "the owner's exact row is not found"
+    );
+    let (_, env) = guest("list", json!({"sort": "oldest"})).await;
+    let seen: Vec<Value> = env["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["content"].clone())
+        .collect();
+    assert_eq!(
+        seen,
+        vec![json!("tried soy milk"), json!("the guest lives in Porto")]
+    );
+    let (_, env) = guest("session_start", json!({})).await;
+    let core: Vec<Value> = env["data"]["core"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["content"].clone())
+        .collect();
+    assert_eq!(core, vec![json!("the guest lives in Porto")]);
+
+    assert_eq!(
+        guest("forget", json!({"type": "tried"})).await,
+        (200, json!({"ok": true, "data": {"removed": 1}}))
+    );
+    assert_eq!(
+        owner("get", json!({"id": id})).await.1["data"]["content"],
+        "tried oat milk"
+    );
+    let (_, env) = owner("count", json!({"type": "tried"})).await;
+    assert_eq!(env["data"]["count"], 1);
 }

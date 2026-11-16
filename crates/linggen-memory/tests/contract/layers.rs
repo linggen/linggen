@@ -131,3 +131,77 @@ async fn a_request_stamps_the_activity_clock() {
         );
     }
 }
+
+/// All nine write routes, as literals: each is answered locally and queued
+/// in order; no other POST verb is.
+#[tokio::test]
+async fn every_write_route_and_only_those_is_queued() {
+    let m = replica_of_nobody().await;
+    let row = m
+        .add(json!({"content": "Alex keeps bees", "tier": "semantic"}))
+        .await;
+    let issue = m
+        .ok("issue_add", json!({"kind": "chain", "note": "n"}))
+        .await["issue"]["id"]
+        .clone();
+    std::fs::remove_file(m.data_dir().join("memory/.outbox.json")).unwrap();
+    let writes = [
+        ("/api/memory/add", json!({"content": "Alex sells honey"})),
+        (
+            "/api/memory/add_batch",
+            json!({"facts": [{"content": "Alex bought a smoker"}]}),
+        ),
+        (
+            "/api/memory/update",
+            json!({"id": row["id"], "summary": "bees"}),
+        ),
+        ("/api/memory/delete", json!({"id": "no-such-row"})),
+        ("/api/memory/forget", json!({"type": "tried"})),
+        ("/api/memory/restamp", json!({"from": "device:zz"})),
+        (
+            "/api/memory/issue_add",
+            json!({"kind": "subject", "note": "m"}),
+        ),
+        (
+            "/api/memory/issue_resolve",
+            json!({"id": issue, "outcome": "resolved"}),
+        ),
+        ("/api/memory/harvest_day", json!({"date": days_ago(1)})),
+    ];
+    for (path, body) in &writes {
+        let (status, headers, env) = m.post_with_headers(path, body.clone()).await;
+        assert_eq!(status, 200, "{path}: {env}");
+        assert_eq!(headers.get("x-ling-mem-queued").unwrap(), "1", "{path}");
+    }
+    let reads = [
+        ("search", json!({"query": "bees"})),
+        ("list", json!({})),
+        ("count", json!({})),
+        ("get", json!({"id": row["id"]})),
+        ("accounts", json!({})),
+        ("days", json!({})),
+        ("session_start", json!({})),
+        ("chains", json!({})),
+        ("issues", json!({})),
+        ("stats", json!({})),
+        ("role", json!({})),
+    ];
+    for (verb, body) in reads {
+        let (status, headers, env) = m
+            .post_with_headers(&format!("/api/memory/{verb}"), body)
+            .await;
+        assert_eq!(status, 200, "{verb}: {env}");
+        assert!(headers.get("x-ling-mem-queued").is_none(), "{verb}");
+    }
+    let q = outbox(&m);
+    let verbs: Vec<&str> = q
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["verb"].as_str().unwrap())
+        .collect();
+    assert_eq!(verbs, writes.iter().map(|(p, _)| *p).collect::<Vec<_>>());
+    for (e, (_, body)) in q.as_array().unwrap().iter().zip(&writes) {
+        assert_eq!(&e["args"], body);
+    }
+}

@@ -5,7 +5,7 @@ use crate::support::*;
 use serde_json::{json, Value};
 
 const ALEX: &str = "u-alex";
-const SAM: &str = "u-sam";
+const GUEST: &str = "u-guest";
 
 fn id(v: &Value) -> String {
     v["id"].as_str().unwrap().to_string()
@@ -21,8 +21,8 @@ async fn answer(m: &Mem, verb: &str, body: Value, row_id: &str) -> (u16, String)
 #[tokio::test]
 async fn another_persons_row_answers_like_a_missing_one() {
     let m = Mem::start().await;
-    let sams = m
-        .add(json!({"content": "Sam collects stamps", "tier": "semantic", "account_id": SAM, "account_name": "Sam"}))
+    let guests = m
+        .add(json!({"content": "the guest collects stamps", "tier": "semantic", "account_id": GUEST, "account_name": "Guest"}))
         .await;
     let owners = m
         .add(json!({"content": "the owner collects coins", "tier": "semantic"}))
@@ -34,7 +34,7 @@ async fn another_persons_row_answers_like_a_missing_one() {
         ("update", json!({"content": "Alex collects stamps"})),
         ("delete", json!({})),
     ] {
-        for theirs in [&sams, &owners] {
+        for theirs in [&guests, &owners] {
             let mut body = json!({"id": id(theirs), "account": ALEX});
             let mut gone = json!({"id": missing, "account": ALEX});
             for (k, v) in extra.as_object().unwrap() {
@@ -51,34 +51,35 @@ async fn another_persons_row_answers_like_a_missing_one() {
     }
     // The answers themselves.
     assert_refused(
-        &m.call("get", json!({"id": id(&sams), "account": ALEX}))
+        &m.call("get", json!({"id": id(&guests), "account": ALEX}))
             .await,
         404,
         "NOT_FOUND",
-        &format!("no fact with id {}", id(&sams)),
+        &format!("no fact with id {}", id(&guests)),
     );
     assert_eq!(
-        m.ok("delete", json!({"id": id(&sams), "account": ALEX}))
+        m.ok("delete", json!({"id": id(&guests), "account": ALEX}))
             .await,
-        json!({"id": id(&sams), "removed": false})
+        json!({"id": id(&guests), "removed": false})
     );
     // The owner (no account) does not see a person's row either.
     assert_refused(
-        &m.call("get", json!({"id": id(&sams)})).await,
+        &m.call("get", json!({"id": id(&guests)})).await,
         404,
         "NOT_FOUND",
-        &format!("no fact with id {}", id(&sams)),
+        &format!("no fact with id {}", id(&guests)),
     );
     // ...unless asking for everyone's (maintenance).
     assert_eq!(
-        m.ok("get", json!({"id": id(&sams), "all_accounts": true}))
+        m.ok("get", json!({"id": id(&guests), "all_accounts": true}))
             .await["id"],
-        json!(id(&sams))
+        json!(id(&guests))
     );
     // Nothing changed.
     assert_eq!(
-        m.ok("get", json!({"id": id(&sams), "account": SAM})).await,
-        sams
+        m.ok("get", json!({"id": id(&guests), "account": GUEST}))
+            .await,
+        guests
     );
     assert_eq!(m.ok("get", json!({"id": id(&owners)})).await, owners);
 }
@@ -89,8 +90,8 @@ async fn another_persons_row_answers_like_a_missing_one() {
 #[tokio::test]
 async fn a_persons_replace_may_name_only_their_own_rows() {
     let m = Mem::start().await;
-    let sams = m
-        .add(json!({"content": "Sam likes tea", "from": "user", "tier": "semantic", "account_id": SAM}))
+    let guests = m
+        .add(json!({"content": "the guest likes tea", "from": "user", "tier": "semantic", "account_id": GUEST}))
         .await;
     let alexs = m
         .add(json!({"content": "Alex likes tea", "tier": "semantic", "account_id": ALEX}))
@@ -98,14 +99,14 @@ async fn a_persons_replace_may_name_only_their_own_rows() {
     let write = |ids: Value| json!({"content": "Alex likes coffee", "account_id": ALEX, "replace_ids": ids});
     let missing = "no-such-row";
     assert_eq!(
-        answer(&m, "add", write(json!([id(&sams)])), &id(&sams)).await,
+        answer(&m, "add", write(json!([id(&guests)])), &id(&guests)).await,
         answer(&m, "add", write(json!([missing])), missing).await
     );
     assert_refused(
-        &m.call("add", write(json!([id(&alexs), id(&sams)]))).await,
+        &m.call("add", write(json!([id(&alexs), id(&guests)]))).await,
         404,
         "NOT_FOUND",
-        &format!("no fact with id {}", id(&sams)),
+        &format!("no fact with id {}", id(&guests)),
     );
     assert_eq!(
         m.ok("count", json!({"all_accounts": true})).await["count"],

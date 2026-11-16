@@ -235,7 +235,7 @@ async fn session_start_answers_core_memory_as_a_block() {
     let core = m
         .add(json!({"content": "Alex lives in Lisbon", "tier": "core", "from": "user"}))
         .await;
-    m.add(json!({"content": "Sam lives in Porto", "tier": "core", "account_id": "u-sam"}))
+    m.add(json!({"content": "the guest lives in Porto", "tier": "core", "account_id": "u-guest"}))
         .await;
     m.add(json!({"content": "Alex keeps bees", "tier": "semantic"}))
         .await;
@@ -250,8 +250,8 @@ async fn session_start_answers_core_memory_as_a_block() {
             "core": [core], "core_block": block, "index": [], "index_block": "", "index_skipped": 0,
         })
     );
-    let sams = m.ok("session_start", json!({"account": "u-sam"})).await;
-    assert_eq!(sams["core"][0]["content"], "Sam lives in Porto");
+    let guests = m.ok("session_start", json!({"account": "u-guest"})).await;
+    assert_eq!(guests["core"][0]["content"], "the guest lives in Porto");
     assert_eq!(
         m.ok("session_start", json!({"core": false})).await["core"],
         json!([])
