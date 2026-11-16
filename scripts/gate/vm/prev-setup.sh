@@ -37,6 +37,7 @@ info "prev: store" "$(jq -c '{total, schema_version, per_tier}' "$OUT/stats-prev
 # linggen@linggen-memory from the linggen-memory repo (its last release
 # carries the same marketplace as a bundle).
 OLD_BUNDLE=https://github.com/linggen/linggen-memory/releases/latest/download/linggen-plugin.tar.gz
+OLD_MARKETPLACE="$HOME/.gate-old-plugin/marketplace"
 if curl -fsSL https://claude.ai/install.sh | bash >"$OUT/claude-install.log" 2>&1 && command -v claude >/dev/null; then
   # The GitHub marketplace needs git, and a clean Mac's git is the Command
   # Line Tools stub (an install dialog) — then use that release's bundle.
@@ -45,9 +46,11 @@ if curl -fsSL https://claude.ai/install.sh | bash >"$OUT/claude-install.log" 2>&
     check "prev: claude plugin (published)" $? "$(tail -3 "$OUT/claude-plugin.log")"
   else
     warn "prev: claude plugin (published)" "GitHub marketplace needs git (CLT dialog on a clean Mac); using linggen-memory's release bundle"
-    mkdir -p "$OUT/marketplace"
-    curl -fsSL "$OLD_BUNDLE" | tar -xzf - -C "$OUT/marketplace" \
-      && claude plugin marketplace add "$OUT/marketplace" >>"$OUT/claude-plugin.log" 2>&1 \
+    # Outside ~/gate: the host empties that folder before every VM script, and
+    # the old plugin must still load when upgrade.sh looks at it.
+    mkdir -p "$OLD_MARKETPLACE"
+    curl -fsSL "$OLD_BUNDLE" | tar -xzf - -C "$OLD_MARKETPLACE" \
+      && claude plugin marketplace add "$OLD_MARKETPLACE" >>"$OUT/claude-plugin.log" 2>&1 \
       && claude plugin install linggen@linggen-memory >>"$OUT/claude-plugin.log" 2>&1
     check "prev: claude plugin (release bundle)" $? "$(tail -3 "$OUT/claude-plugin.log")"
   fi
