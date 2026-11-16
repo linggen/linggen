@@ -1,0 +1,44 @@
+{
+  "name": "linggen",
+  "version": "1.8.0",
+  "description": "Linggen for Codex — one local program, one address: durable cross-host memory (/mcp/memory) and browser control and logged-in X reads (/mcp), both from the Linggen engine. Installs Linggen (background download) on first session start.",
+  "author": {
+    "name": "Linggen",
+    "url": "https://linggen.dev"
+  },
+  "homepage": "https://linggen.dev",
+  "repository": "https://github.com/linggen/linggen-memory",
+  "license": "MIT",
+  "keywords": [
+    "linggen",
+    "memory",
+    "browser",
+    "mcp",
+    "cross-host"
+  ],
+  "skills": "./skills/",
+  "hooks": "./hooks/codex.hooks.json",
+  "mcpServers": "./.codex-plugin/mcp.json",
+  "interface": {
+    "displayName": "Linggen",
+    "shortDescription": "Memory, browser control, and session reads from Linggen.",
+    "longDescription": "One Linggen, one address: durable cross-host memory (core identity, long-term semantic, episodic staging), agent browser control in your own Chrome with per-site permission prompts, and structured reads of your logged-in X session.",
+    "developerName": "Linggen",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://linggen.dev",
+    "privacyPolicyURL": "https://linggen.dev/privacy",
+    "termsOfServiceURL": "https://linggen.dev/terms",
+    "defaultPrompt": [
+      "What do you remember about me?",
+      "Remember that I prefer concise responses.",
+      "Clean up duplicate memories about my preferences."
+    ],
+    "brandColor": "#6366F1",
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/logo.png"
+  }
+}

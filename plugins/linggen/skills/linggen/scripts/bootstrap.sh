@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# bootstrap.sh — ensure Linggen (`ling`, the engine that also hosts memory) is
+# installed. Run from SKILL.md's first-use gate; a no-op when `ling` is present.
+#
+# Only when Linggen lives on THIS machine. A host pointed at another machine's
+# Linggen (~/.linggen/client.json, or LINGGEN_HOST) installs nothing: a local
+# Linggen would open a second, empty store — memory forked in two.
+#
+# Install-channel labels: this script derives via/agent from WHERE THIS FILE
+# IS RUNNING FROM — the skill dir's path is a fingerprint of the channel that
+# delivered it, measured at run time. Never hardcode a channel here: this one
+# file ships through the CC/Codex plugin and skills.sh, so any
+# static label would be wrong on the other channels. An unrecognized path
+# labels nothing and the installer uses its own defaults. The labels only
+# reach a local marker file (~/.linggen/.linggen-install-source) that the
+# binary reports once on first launch; this script never POSTs anywhere.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Where Linggen lives, read the way the plugin hooks read it (client.json's
+# `ling`, else LINGGEN_HOST). Plain text tools only — no jq on a fresh Mac.
+# An old file's memory address (`ling_mem`) on another machine counts too:
+# this host used that machine's memory.
+client="${LINGGEN_DATA_DIR:-$HOME/.linggen}/client.json"
+key() { [ -r "$client" ] && tr -d '\n' <"$client" | sed -n 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'; }
+host_of() { local h="${1#*://}"; h="${h%%/*}"; printf '%s' "${h%:*}"; }
+is_local() { case "$1" in 127.0.0.1|localhost|::1|"") return 0 ;; *) return 1 ;; esac; }
+host="$(host_of "$(key ling)")"
+[ -n "$host" ] || host="${LINGGEN_HOST:-}"
+old="$(host_of "$(key ling_mem)")"
+is_local "$host" && ! is_local "$old" && host="$old"
+if ! is_local "$host"; then
+  echo "bootstrap: this host uses the Linggen on $host — nothing to install here."
+  exit 0
+fi
+
+via="" agent=""
+case "$here" in
+  */.claude/plugins/*)            via=plugin   agent=cc ;;
+  */.codex/*)                     via=plugin   agent=codex ;;
+  */.agents/skills/*)             via=skills-sh ;;   # shared dir — host unknowable
+  */.claude/skills/*)             agent=cc ;;        # manual stub — door unknowable
+esac
+[ -n "$via" ]   && export LINGGEN_SOURCE="$via"
+[ -n "$agent" ] && export LINGGEN_AGENT="$agent"
+
+# The installer ships IN this bundle and LINGGEN_NO_REMOTE_SCRIPT=1 makes it
+# refuse any curl fallback outright — this flow never executes a remotely
+# fetched script. What does come over the network is the release binary,
+# checked against its published SHA-256 (and bun, against bun's own sums).
+export LINGGEN_NO_REMOTE_SCRIPT=1
+
+if ! command -v ling >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/ling" ]; then
+  bash "$here/install-engine.sh"
+fi

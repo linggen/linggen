@@ -1,0 +1,18 @@
+{
+  "name": "linggen",
+  "version": "1.8.0",
+  "description": "Linggen for Claude Code — one local program, one address: durable cross-host memory (MCP server `memory`, /mcp/memory) and browser control in your own Chrome, logged-in X reads and agents (MCP server `linggen`, /mcp), both from the Linggen engine. Per-turn memory recall built in, and /linggen:config points this host at a Linggen on another machine. Installs Linggen (background download) on first session start.",
+  "author": {
+    "name": "Linggen"
+  },
+  "homepage": "https://linggen.dev",
+  "repository": "https://github.com/linggen/linggen-memory",
+  "license": "MIT",
+  "keywords": [
+    "linggen",
+    "memory",
+    "browser",
+    "mcp",
+    "cross-host"
+  ]
+}

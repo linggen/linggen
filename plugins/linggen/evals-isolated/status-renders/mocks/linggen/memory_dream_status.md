@@ -1,0 +1,1 @@
+{"total_days":12,"scanned_days":11,"dreamed_days":9,"first_unscanned":"2026-10-04","first_undreamed":"2026-10-02","undreamed_days":3,"open_issues":2,"last_run":{"status":"ok","finished_at":"2026-10-04T03:00:12Z"},"last_run_error":null}

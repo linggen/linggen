@@ -1,0 +1,2 @@
+[{"id":"r-dup-aaa1","content":"release.sh --draft uploads the assets to a draft GitHub release; publish happens later with gh release edit.","tier":"semantic","type":"learned","from":"derived","created_at":"2026-09-20T10:00:00Z","score":0.82},
+ {"id":"r-dup-bbb2","content":"Run release.sh with --draft first: it uploads assets to a draft release, which is published afterwards via gh release edit --draft=false.","tier":"semantic","type":"learned","from":"derived","created_at":"2026-09-28T16:30:00Z","score":0.80}]

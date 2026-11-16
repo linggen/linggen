@@ -1,0 +1,488 @@
+{
+  "tools": [
+    {
+      "description": "Semantic search over user-biography memory. Returns rows ranked by relevance to the query. Memory holds cross-session identity, preferences, and decisions — not codebase facts.",
+      "inputSchema": {
+        "properties": {
+          "limit": {
+            "description": "Max rows. Default 10.",
+            "type": "integer"
+          },
+          "query": {
+            "description": "Natural-language description of what to find.",
+            "type": "string"
+          },
+          "scope_root": {
+            "description": "HOST-FILLED — leave it out; the host stamps the session root, which narrows results to rows whose stored scope is under it or at its parents, and rows about the person (no scope).",
+            "type": "string"
+          },
+          "tier": {
+            "description": "Restrict to one tier. Omit to span all.",
+            "enum": [
+              "core",
+              "semantic",
+              "episodic"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "name": "memory_search"
+    },
+    {
+      "description": "Filter-only browse (no relevance ranking). For audits, sweeps, or showing recent rows. Pass minimal filters — narrow schemas avoid the over-constrain-to-zero failure.",
+      "inputSchema": {
+        "properties": {
+          "day": {
+            "description": "One local calendar day, YYYY-MM-DD — the remember stage lists a single day's worklist with this.",
+            "type": "string"
+          },
+          "indexed": {
+            "description": "Only indexed rows (true) or only the rest (false).",
+            "type": "boolean"
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "past_ttl": {
+            "description": "Return only rows past the configured episodic TTL. Implies tier=episodic.",
+            "type": "boolean"
+          },
+          "scope_root": {
+            "description": "A session root: rows whose stored scope is under it or at its parents, and rows about the person (no scope).",
+            "type": "string"
+          },
+          "sort": {
+            "enum": [
+              "newest",
+              "oldest"
+            ],
+            "type": "string"
+          },
+          "tier": {
+            "enum": [
+              "core",
+              "semantic",
+              "episodic"
+            ],
+            "type": "string"
+          },
+          "types": {
+            "description": "Only rows of these types.",
+            "items": {
+              "enum": [
+                "fact",
+                "preference",
+                "decision",
+                "tried",
+                "fixed",
+                "learned",
+                "built"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "unjudged": {
+            "description": "With day: only the rows no remember pass has judged yet — a re-opened day's new rows, not the whole day.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "name": "memory_list"
+    },
+    {
+      "description": "What a session loads at start: the core rows (who the user is), and — for a cwd — the scope candidates line and the index (summaries of indexed rows filed at that directory or a parent). Returns {core, index, candidates, block, chars}; `block` is markdown ready to inject. Hosts call this; a model rarely needs to.",
+      "inputSchema": {
+        "properties": {
+          "cwd": {
+            "description": "HOST-FILLED — the session's working directory.",
+            "type": "string"
+          },
+          "root": {
+            "description": "HOST-FILLED — the session's root (git root, or where it started).",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "memory_session_start"
+    },
+    {
+      "description": "Fetch one row by id.",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "memory_get"
+    },
+    {
+      "description": "Insert a new memory row. Only durable, cross-session signal — identity facts, behavioural preferences, decisions with their reasoning. NOT project-internal architecture or implementation detail.",
+      "inputSchema": {
+        "properties": {
+          "content": {
+            "description": "The fact text the model will see when this row is recalled.",
+            "type": "string"
+          },
+          "cwd": {
+            "description": "HOST-FILLED, request only — leave it out; the host stamps the session's working directory: the stored scope when you name none, and the base a named one is checked against. Never stored under this name.",
+            "type": "string"
+          },
+          "from": {
+            "description": "Whose words: user = the user stated it (a preference, a decision, a fact about them); agent = you did or observed it; derived (default) = your inference.",
+            "enum": [
+              "user",
+              "agent",
+              "derived"
+            ],
+            "type": "string"
+          },
+          "global": {
+            "description": "true = the row is about the person, not a directory: stored with no scope, recalled everywhere.",
+            "type": "boolean"
+          },
+          "host": {
+            "description": "HOST-FILLED — leave it out; the host stamps the committing runtime.",
+            "type": "string"
+          },
+          "indexed": {
+            "description": "true = put the row in its scope's index: its summary loads at every session start in that directory or below. For standing rules the user states (\"always…\", \"from now on…\").",
+            "type": "boolean"
+          },
+          "replace_ids": {
+            "description": "Row ids this row replaces — inserted and deleted atomically. For merges and resolved conflicts; never separate add + delete calls.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "root": {
+            "description": "HOST-FILLED — leave it out; the host stamps the session root that `scope` resolves against.",
+            "type": "string"
+          },
+          "scope": {
+            "description": "The directory this row is about, when it is not where you stand: one of the session's \"Memory scopes here\" candidates (e.g. skills/lingjing, ~/workspace). Omit for the session's own directory. Stored as the row's `scope` (absolute path; none = about the person).",
+            "type": "string"
+          },
+          "source_session": {
+            "description": "HOST-FILLED — leave it out; the host stamps this session. Only a promote pass carrying an original row's session forward passes it.",
+            "type": "string"
+          },
+          "summary": {
+            "description": "One line, ≤ 80 chars: what this row is for — what the index shows in its place. Matters on indexed rows; without one the index shows the row's opening.",
+            "type": "string"
+          },
+          "tier": {
+            "description": "Destination tier: episodic = per-turn staging (the default when omitted, no search-first); semantic = curated durable facts (search-first); core = tiny always-injected universals (search-first). Doctrine in the server instructions.",
+            "enum": [
+              "core",
+              "semantic",
+              "episodic"
+            ],
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "fact",
+              "preference",
+              "decision",
+              "tried",
+              "fixed",
+              "learned",
+              "built"
+            ],
+            "type": "string"
+          },
+          "user_directed": {
+            "description": "Assert the user directed this change (a settled command/declaration, or they just answered your ask). Required when replace_ids targets from=user rows — the daemon BLOCKS such writes otherwise. Hedged reflections don't qualify; see the server instructions.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "content"
+        ],
+        "type": "object"
+      },
+      "name": "memory_add"
+    },
+    {
+      "description": "Hard-delete one row by id. For explicit user forgets, exact duplicates, and secrets. For conflict or merge resolution prefer memory_add with replace_ids — one atomic call, never add + delete.",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "memory_delete"
+    },
+    {
+      "description": "Edit one row in place by id (content, type, tier, scope, summary, indexed). A tier change moves the row across tables (episodic ↔ semantic/core) keeping its id. Rewriting content on a from=user row requires user_directed (same floor as memory_add's replace_ids). For merging MULTIPLE rows prefer memory_add with replace_ids.",
+      "inputSchema": {
+        "properties": {
+          "content": {
+            "description": "Replacement fact text.",
+            "type": "string"
+          },
+          "global": {
+            "description": "true = clear the row's stored scope so it applies everywhere.",
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "indexed": {
+            "description": "Put the row in (true) or take it out of (false) its scope's index.",
+            "type": "boolean"
+          },
+          "scope": {
+            "description": "Move the row: its stored scope, the absolute directory it is about (~/… allowed).",
+            "type": "string"
+          },
+          "summary": {
+            "description": "New one-line summary (≤ 80 chars) — what the index shows for an indexed row.",
+            "type": "string"
+          },
+          "tier": {
+            "description": "Moving tier relocates the row across tables, id preserved.",
+            "enum": [
+              "core",
+              "semantic",
+              "episodic"
+            ],
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "fact",
+              "preference",
+              "decision",
+              "tried",
+              "fixed",
+              "learned",
+              "built"
+            ],
+            "type": "string"
+          },
+          "user_directed": {
+            "description": "Required when rewriting content on a from=user row — see memory_add.user_directed.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "memory_update"
+    },
+    {
+      "description": "Stamp a day harvested after a scan/backfill pass staged its episodic rows (does NOT mark it remembered — the dream's remember pass still judges it). Only past local days.",
+      "inputSchema": {
+        "properties": {
+          "date": {
+            "description": "Local calendar day, YYYY-MM-DD.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "date"
+        ],
+        "type": "object"
+      },
+      "name": "memory_harvest_day"
+    },
+    {
+      "description": "Per-day dream-state rollup: each day's episodic row counts + per-verb flags (scanned = a scan walked its session logs; dreamed = a dream pass judged it, late rows clear the flag). Top level carries first_unscanned / first_undreamed / open_issues plus past-day summary counts (total_days / scanned_days / dreamed_days). Use undreamed_only to get the dream worklist — days awaiting a dream pass, oldest first.",
+      "inputSchema": {
+        "properties": {
+          "from": {
+            "description": "Inclusive YYYY-MM-DD lower bound.",
+            "type": "string"
+          },
+          "to": {
+            "description": "Inclusive YYYY-MM-DD upper bound.",
+            "type": "string"
+          },
+          "undreamed_only": {
+            "description": "Only days awaiting a dream pass (the worklist).",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "name": "memory_days"
+    },
+    {
+      "description": "Stamp a day remembered after judging its episodic rows (promote the durable ones first via memory_add, then stamp). Counts accumulate. Only past local days can be stamped.",
+      "inputSchema": {
+        "properties": {
+          "date": {
+            "description": "Local calendar day, YYYY-MM-DD.",
+            "type": "string"
+          },
+          "judged": {
+            "description": "Rows judged in this pass.",
+            "type": "integer"
+          },
+          "promoted": {
+            "description": "Rows promoted to semantic in this pass.",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "date"
+        ],
+        "type": "object"
+      },
+      "name": "memory_remember_day"
+    },
+    {
+      "description": "Forget sweep — mechanically evict episodic rows that are past TTL, belong to a remembered day, and were judged (created before the day's remembered_at). Never deletes un-judged rows; safe to call anytime.",
+      "inputSchema": {
+        "properties": {
+          "dry_run": {
+            "description": "Report what would be evicted without deleting.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "name": "memory_sweep"
+    },
+    {
+      "description": "Review queue — the leftovers the dream could not settle itself: a user-voice row that would change, rows the user must pick between, or evidence the dream could not read (status=resolved/dismissed lists what the dream settled, with its why). Returns the facts only; YOU are the solver: solve each item yourself first — gather evidence (full rows, git history, code, docs) until it settles the question — and write the fix via memory_add + replace_ids, then close the item with memory_issue_resolve. Ask the user only when evidence cannot settle it or a user-voice row is involved: ONE item at a time, phrased as a simple fact question in plain words with your recommendation — no row ids, commit hashes, or cluster jargon.",
+      "inputSchema": {
+        "properties": {
+          "limit": {
+            "description": "Max items (default 50).",
+            "type": "integer"
+          },
+          "status": {
+            "description": "Which items to list (default open).",
+            "enum": [
+              "open",
+              "resolved",
+              "dismissed",
+              "all"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "memory_issues"
+    },
+    {
+      "description": "Queue one review item. Settle it yourself first from evidence (full rows, a newer row on the subject, git/code/docs when you have them); queue an open item only when a from=user row would change, the user must pick between rows, or the evidence is out of reach here. A ruling you settled yourself is recorded by queuing it and closing it at once with memory_issue_resolve — the closed item is the record and stops the scans re-serving those rows. Idempotent per (kind, row_ids) while open: re-queuing returns the existing item. The note is one plain-word question with your recommendation — it may reach the user as is.",
+      "inputSchema": {
+        "properties": {
+          "kind": {
+            "description": "What you saw: `chain` = uncertain merge candidate; `stale-status` = a status claim likely overtaken by the world (verify against git/files at solve time); `contradiction` = conflicting rows needing the user's pick; `subject` = digest cluster of doubtful subject coherence (list ALL member ids). Scope, index and summary fixes are not queued — the dream applies them itself.",
+            "enum": [
+              "chain",
+              "stale-status",
+              "contradiction",
+              "subject"
+            ],
+            "type": "string"
+          },
+          "note": {
+            "description": "What you saw and what a solver should check — the item's whole context, since the solver starts from this line alone. Write it in plain words; it may become the user's question.",
+            "type": "string"
+          },
+          "row_ids": {
+            "description": "The memory row ids this item is about.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "kind",
+          "note"
+        ],
+        "type": "object"
+      },
+      "name": "memory_issue_add"
+    },
+    {
+      "description": "Close one review-queue item by id after solving it (outcome=resolved) or deciding it isn't worth fixing (outcome=dismissed). Pass a one-line note of what was done. Closing an already-closed item is a no-op success.",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "description": "The issue id from memory_issues.",
+            "type": "string"
+          },
+          "note": {
+            "description": "One-line record of what was done.",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "resolved",
+              "dismissed"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "outcome"
+        ],
+        "type": "object"
+      },
+      "name": "memory_issue_resolve"
+    },
+    {
+      "description": "Condense scan — mechanical, read-only detection of stale same-subject clusters in long-term memory. kind=cited: rows citing another row's id verbatim, grouped into chains (auto-accept quality). kind=marker: rows with provisional-state language (\"OPEN:\", \"uncommitted\", …) plus nearest-neighbor rows — confirm a real supersession before merging. kind=subject: same-subject vector clusters (3+ rows) for the digest pass — condense into ONE focused per-subject row, never a mega state row. Each cluster carries derived_only: merge unattended ONLY when true (the merge law); user-voice clusters need the user. Apply merges via memory_add with replace_ids.",
+      "inputSchema": {
+        "properties": {
+          "derived_only": {
+            "description": "Only clusters mergeable unattended (every row from=derived, tier=semantic). Unattended condense passes MUST set true.",
+            "type": "boolean"
+          },
+          "kind": {
+            "description": "cited (default) = id-citation chains; marker = provisional-state candidates; subject = same-subject clusters for digests.",
+            "enum": [
+              "cited",
+              "marker",
+              "subject"
+            ],
+            "type": "string"
+          },
+          "limit": {
+            "description": "Clusters per page (default 10).",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Pagination offset over the cluster list.",
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "name": "memory_chains"
+    }
+  ]
+}
