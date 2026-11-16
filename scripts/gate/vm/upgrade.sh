@@ -1,12 +1,11 @@
 # Release gate — upgrade an old user (a clone of linggen-prev) to the release
 # in the mirror, then the refusal and rollback cases (doc/test-design.md § 4).
 # Env from the host: MIRROR, MODEL, DREAM_SHA (the release's built-in dream
-# mission), and expect.env. ONE_BINARY=1 (engine 2.3.0 on): memory is inside
-# the engine — no ling-mem upgrade; the takeover checks (takeover.sh) instead.
+# mission), and expect.env. Memory is inside the engine: no ling-mem upgrade,
+# the takeover checks (takeover.sh) instead.
 . ./common.sh
 . ./expect.env
-ONE_BINARY="${ONE_BINARY:-0}"
-[ "$ONE_BINARY" = 1 ] && . ./takeover.sh
+. ./takeover.sh
 
 LING="$(ling_bin)"; MEM="$(mem_bin)"
 
@@ -24,9 +23,9 @@ engine_restarted() { # label old-pid want-version [log]
   fi
 }
 PREV_LING="$(ver_of "$LING")"; PREV_MEM="$(ver_of "$MEM")"; PREV_APP="$(app_version)"
-# The old binaries, for the rollback checks: install.sh keeps no .prev and a
+# The old binary, for the rollback checks: install.sh keeps no .prev and a
 # relabel swap keeps the release's own bytes, so a swap to it proves nothing.
-cp "$LING" "$OUT/ling.old"; cp "$MEM" "$OUT/ling-mem.old"
+cp "$LING" "$OUT/ling.old"
 
 # Make <bin>.prev an older binary than <bin>: the update's own, else the
 # pre-upgrade copy. 1 = nothing older to roll back to (GAP).
@@ -57,7 +56,7 @@ info "upgrade: from" "ling $PREV_LING, ling-mem $PREV_MEM, app ${PREV_APP:-none}
 start_engine 90 || fail "upgrade: old engine runs" "no health"
 # A baseline that hosts memory has the stand-in and nothing on 9528 to wait for.
 is_standin "$MEM" || mem_health 30 || start_mem 60
-[ "$ONE_BINARY" = 1 ] && takeover_seed
+takeover_seed
 rows_before="$("$MEM" stats 2>/dev/null | jq -r '.total // empty')"
 sessions_before="$(ls "$LG/sessions" 2>/dev/null | wc -l | tr -d ' ')"
 info "upgrade: old state" "$rows_before memory rows, $sessions_before sessions"
@@ -65,7 +64,7 @@ info "upgrade: old state" "$rows_before memory rows, $sessions_before sessions"
 tcc_watch_start
 
 # ── Engine ─────────────────────────────────────────────────────────────────
-engine_pid="$(listener_pid 9527)"; mem_pid="$(listener_pid 9528)"
+engine_pid="$(listener_pid 9527)"
 OLD_RESTARTS=false
 "$LING" update --help 2>/dev/null | grep -qi 'restart' && OLD_RESTARTS=true
 # A local build can carry the baseline's own version number (the version is
@@ -111,78 +110,24 @@ else
   gap "upgrade: 9527 restarted on the new ling" "ling $PREV_LING's \`ling update\` predates the engine restart — the release's own is checked under § Restart"
 fi
 
-# ── Memory: taken over by the engine (one program) ─────────────────────────
-if [ "$ONE_BINARY" = 1 ] && [ "$TK_SEEDED" = 1 ]; then
+# ── Memory: taken over by the engine ──────────────────────────────────────
+if [ "$TK_SEEDED" = 1 ]; then
   # An old updater that does not restart the engine leaves the old one serving.
   engine_mem_health 5 || { stop_engine; start_engine 90; }
   takeover_after upgrade "$((TK_BACKUPS_BEFORE + 1))"
   TK_BACKUPS_AFTER="$((TK_BACKUPS_BEFORE + 1))"
-elif [ "$ONE_BINARY" = 1 ]; then
+else
   gap "takeover" "no old ling-mem daemon served the baseline (a baseline already on 2.3?) — the takeover checks did not run"
 fi
 
-# ── ling-mem (two programs: engine before 2.3.0) ───────────────────────────
-if [ "$ONE_BINARY" = 1 ]; then
-  :
-elif [ "$(ver_of "$MEM")" != "$MEM_VERSION" ] || [ "$(sha "$MEM")" != "$MEM_SHA" ]; then
-  if "$MEM" upgrade --help 2>/dev/null | grep -q -- '--rollback'; then
-    LINGGEN_RELEASE_BASE="$GOOD" "$MEM" upgrade --yes >"$OUT/mem-upgrade.log" 2>&1
-    rc=$?
-    # ling-mem 1.9.1 and earlier give the daemon 10 s to exit after SIGTERM
-    # and never escalate; a daemon with a warm embedder (the engine pre-warms
-    # it since 2.0) outlives that on its way out, and the old updater gives up
-    # before the swap. A user re-runs install.sh, so the gate does too; its
-    # install-bin.sh restarts the daemon with the release's `ling-mem
-    # restart`, which escalates to SIGKILL.
-    if [ $rc != 0 ] && grep -q 'did not exit within' "$OUT/mem-upgrade.log"; then
-      gap "ling-mem upgrade --yes (from $PREV_MEM)" "the old binary's stop waits 10 s for SIGTERM and never escalates — the daemon outlived it; upgraded by re-running install.sh"
-      hung="$(sed -nE 's/.*daemon \(pid ([0-9]+)\) did not exit.*/\1/p' "$OUT/mem-upgrade.log" | head -n1)"
-      if [ -n "$hung" ] && kill -0 "$hung" 2>/dev/null; then
-        sample "$hung" 2 -file "$OUT/mem-exit-sample.txt" >/dev/null 2>&1 \
-          && info "ling-mem $PREV_MEM: where the exiting daemon hung" "pid $hung — mem-exit-sample.txt"
-      fi
-      curl -fsSL "$GOOD/install.sh" | LINGGEN_RELEASE_BASE="$GOOD" bash >"$OUT/install-mem.log" 2>&1
-      check "install.sh after the old ling-mem upgrade gave up" $? "$(tail -3 "$OUT/install-mem.log")"
-    else
-      check "ling-mem upgrade --yes (from $PREV_MEM)" $rc "$(tail -3 "$OUT/mem-upgrade.log")"
-    fi
-  else
-    gap "ling-mem upgrade --yes (from $PREV_MEM)" "the old binary predates LINGGEN_RELEASE_BASE — upgraded with install-bin.sh"
-    curl -fsSL "$GOOD/install-bin.sh" | LINGGEN_RELEASE_BASE="$GOOD" bash -s -- --version "^${MEM_VERSION%%.*}" >"$OUT/install-bin.log" 2>&1
-    check "install-bin.sh from the mirror" $? "$(tail -3 "$OUT/install-bin.log")"
-  fi
-else
-  info "ling-mem: upgraded by install.sh" "install.sh runs install-bin.sh (^1)"
-fi
-[ "$ONE_BINARY" = 1 ] || check_installed "upgrade: ling-mem is the release" "$MEM" "$MEM_VERSION" "$MEM_SHA"
-
 # ── The upgraded engine on the old home ────────────────────────────────────
-if [ "$ONE_BINARY" = 1 ]; then
-  stop_engine
-  start_engine 90
-  check "upgrade: new engine starts on the old home" $? "no health — $(tail -3 "$LG/ling.log" 2>/dev/null)"
-  engine_mem_health 60
-  check "upgrade: memory answers through the engine after a restart" $? "no ok from $ENGINE_MEM/api/health"
-  nothing_on "$LP"
-  check "upgrade: nothing listens on the old port $LP" $? "$PORT_DETAIL" "$PORT_DETAIL"
-else
-  mem_health 30
-  v="$(mem_version)"; new_pid="$(listener_pid 9528)"
-  if [ "$(sha "$OUT/ling-mem.old")" = "$MEM_SHA" ]; then
-    gap "upgrade: 9528 restarted on the new ling-mem" "the baseline already runs these bytes (v$PREV_MEM) — nothing to swap"
-  else
-    [ "$v" = "$MEM_VERSION" ] && [ -n "$new_pid" ] && [ "$new_pid" != "$mem_pid" ]
-    check "upgrade: 9528 restarted on the new ling-mem" $? \
-      "9528 answers v${v:-none} (pid ${mem_pid:-none} → ${new_pid:-none}) after the binary swap — restarting it by hand" \
-      "v$PREV_MEM → v$v, pid $mem_pid → $new_pid"
-  fi
-  stop_engine
-  [ "$v" = "$MEM_VERSION" ] || { stop_mem; start_mem 60; }
-  start_engine 90
-  check "upgrade: new engine starts on the old home" $? "no health — $(tail -3 "$LG/ling.log" 2>/dev/null)"
-  v="$(mem_version)"
-  [ "$v" = "$MEM_VERSION" ]; check "upgrade: 9528 is the new ling-mem" $? "v${v:-none}" "v$v"
-fi
+stop_engine
+start_engine 90
+check "upgrade: new engine starts on the old home" $? "no health — $(tail -3 "$LG/ling.log" 2>/dev/null)"
+engine_mem_health 60
+check "upgrade: memory answers through the engine after a restart" $? "no ok from $ENGINE_MEM/api/health"
+nothing_on "$LP"
+check "upgrade: nothing listens on the old port $LP" $? "$PORT_DETAIL" "$PORT_DETAIL"
 
 "$LING" status >"$OUT/status.txt" 2>&1
 grep -q 'fake-ling' "$OUT/status.txt" || grep -qiE 'models?[^0-9]*[1-9]' "$OUT/status.txt"
@@ -218,7 +163,7 @@ check "store: session_start answers" $? "$(head -c 160 "$OUT/session-start.json"
 check "store: the old rows read back" $? "$(head -c 160 "$OUT/list.json")"
 
 # ── Takeover: writes after it, a rollback to both old programs, again ─────
-if [ "$ONE_BINARY" = 1 ] && [ "$TK_SEEDED" = 1 ]; then
+if [ "$TK_SEEDED" = 1 ]; then
   takeover_writes
   takeover_rollback "$OUT/ling.old"
   takeover_again
@@ -232,15 +177,7 @@ rc=$?
 [ "$rc" != 0 ] && [ "$(sha "$LING")" = "$before" ] && "$LING" --version >/dev/null 2>&1
 check "ling update: a wrong sha256 is refused, old binary runs" $? "exit $rc — $(tail -2 "$OUT/ling-update-bad.log")" "$(grep -m1 -i 'integrity\|sha' "$OUT/ling-update-bad.log")"
 
-if [ "$ONE_BINARY" = 1 ]; then
-  info "ling-mem upgrade: refusal and rollback" "not run — ling-mem is the engine's stand-in, with no updater of its own"
-else
-  before="$(sha "$MEM")"
-  LINGGEN_RELEASE_BASE="$BAD" "$MEM" upgrade --yes --force >"$OUT/mem-upgrade-bad.log" 2>&1
-  rc=$?
-  [ "$rc" != 0 ] && [ "$(sha "$MEM")" = "$before" ] && "$MEM" --version >/dev/null 2>&1 && mem_health 20
-  check "ling-mem upgrade: a wrong sha256 is refused, old binary runs" $? "exit $rc — $(tail -2 "$OUT/mem-upgrade-bad.log")"
-fi
+info "ling-mem upgrade: refusal and rollback" "not run — ling-mem is the engine's stand-in, with no updater of its own"
 
 # ── Rollback (the engine running: the release's swap restarts it) ─────────
 if [ ! -f "$LING.prev" ]; then # install.sh path: give `ling update` one real swap first
@@ -262,19 +199,17 @@ if real_prev "ling" "$LING" "$OUT/ling.old"; then
   # An engine from before 2.3.0 starts its memory as `ling-mem start`, and
   # ~/.local/bin/ling-mem is the stand-in, which starts nothing: the rollback
   # puts ling-mem.prev back before that engine starts.
-  if [ "$ONE_BINARY" = 1 ] && [ "$TK_SEEDED" = 1 ]; then
+  if [ "$TK_SEEDED" = 1 ]; then
     takeover_engine_rollback "$pv" "$prev_hosts_memory"
-  elif [ "$ONE_BINARY" = 1 ]; then
+  else
     gap "ling update --rollback: memory on ling.prev" "the baseline had no old ling-mem daemon, so there is no memory to find on the rolled-back engine"
   fi
   if "$LING" update --help 2>/dev/null | grep -q -- '--rollback'; then
     "$LING" update --rollback >>"$OUT/ling-rollback.log" 2>&1
     [ "$(sha "$LING")" = "$a" ]; check "ling update --rollback again returns" $? "sha ${a:0:12} not back"
-    if [ "$ONE_BINARY" = 1 ] && $prev_restarts; then
+    if $prev_restarts; then
       if [ "$TK_SEEDED" = 1 ]; then takeover_engine_forward
       else engine_mem_health 60; check "ling update --rollback again: memory answers through the engine" $? "no ok from $ENGINE_MEM/api/health"; fi
-    fi
-    if $prev_restarts; then
       engine_restarted "ling update --rollback again: 9527 back on the release" "$engine_pid" "$LING_VERSION" "$OUT/ling-rollback.log"
     else
       info "ling update --rollback again: 9527 back on the release" "ling $pv's rollback predates the engine restart"
@@ -292,31 +227,6 @@ LINGGEN_RELEASE_BASE="$RELABEL" "$LING" update >"$OUT/ling-update-restart.log" 2
 check "restart: ling update (the release, to ${LING_VERSION}-gate)" $? "$(tail -3 "$OUT/ling-update-restart.log")"
 engine_restarted "restart: ling update restarts 9527 on the new ling" "$engine_pid" "$LING_VERSION" "$OUT/ling-update-restart.log"
 stop_engine
-
-if [ "$ONE_BINARY" = 1 ]; then
-  : # ling-mem has no updater of its own: nothing to roll back
-elif [ ! -f "$MEM.prev" ]; then
-  mem_pid="$(listener_pid 9528)"
-  LINGGEN_RELEASE_BASE="$GOOD" "$MEM" upgrade --yes --force >"$OUT/mem-upgrade-force.log" 2>&1
-  check "ling-mem upgrade --force keeps ling-mem.prev" $? "$(tail -2 "$OUT/mem-upgrade-force.log")"
-  new_pid="$(listener_pid 9528)"; v="$(mem_version)"
-  [ -n "$mem_pid" ] && [ -n "$new_pid" ] && [ "$new_pid" != "$mem_pid" ] && [ "$v" = "$MEM_VERSION" ]
-  check "ling-mem upgrade: 9528 restarted on the new binary" $? "pid ${mem_pid:-none} → ${new_pid:-none}, v${v:-none}" "pid $mem_pid → $new_pid, v$v"
-fi
-if [ "$ONE_BINARY" != 1 ] && real_prev "ling-mem" "$MEM" "$OUT/ling-mem.old"; then
-  a="$(sha "$MEM")"; p="$(sha "$MEM.prev")"; pv="$(ver_of "$MEM.prev")"
-  "$MEM" upgrade --rollback >"$OUT/mem-rollback.log" 2>&1
-  rc=$?
-  [ "$rc" = 0 ] && [ "$(sha "$MEM")" = "$p" ] && [ "$(ver_of "$MEM")" = "$pv" ] && mem_health 30
-  check "ling-mem upgrade --rollback swaps to ling-mem.prev" $? "exit $rc, now v$(ver_of "$MEM") (want v$pv) — $(tail -2 "$OUT/mem-rollback.log")" "v$MEM_VERSION → v$pv"
-  if "$MEM" upgrade --help 2>/dev/null | grep -q -- '--rollback'; then
-    "$MEM" upgrade --rollback >>"$OUT/mem-rollback.log" 2>&1
-    [ "$(sha "$MEM")" = "$a" ] && mem_health 30; check "ling-mem upgrade --rollback again returns" $? "sha ${a:0:12} not back"
-  else
-    gap "ling-mem upgrade --rollback again returns" "ling-mem $pv has no --rollback — the gate swaps the release back"
-    stop_mem; swap_back "$MEM"; start_mem 60
-  fi
-fi
 
 # ── App ────────────────────────────────────────────────────────────────────
 # What the in-app updater leaves behind: the bundle swapped, the OLD engine
@@ -418,8 +328,14 @@ fi
 
 tcc_watch_stop "upgrade"
 
-# ── Plugins: the old plugin → this release's bundle, via install-plugin.sh ─
+# ── Plugins: linggen@linggen-memory → this release's linggen@linggen ──────
+# install-plugin.sh retires the old plugin and installs the bundle. linggen-prev
+# has no Codex; the host's CLI is handed in so the new plugin is checked there.
+[ -x "$OUT/codex" ] && ! command -v codex >/dev/null && mkdir -p "$HOME/.local/bin" && cp "$OUT/codex" "$HOME/.local/bin/codex"
 if command -v claude >/dev/null; then
+  claude_plugin_block "$OLD_PLUGIN_ID" | grep -q enabled \
+    && info "upgrade: before — claude has $OLD_PLUGIN_ID" "as the previous release installed it" \
+    || gap "upgrade: before — claude has $OLD_PLUGIN_ID" "linggen-prev has no old plugin enabled — the retire step is not exercised"
   clt_dialog_close
   install_plugin "$OUT/install-plugin.log"
   check_plugins "upgrade" $? "$OUT/install-plugin.log"

@@ -5,7 +5,7 @@
 # through the running old daemon, so every baseline gets them.) Published
 # 2.3 on, memory is inside the engine: the store is written through it.
 # Env from the host: MODEL (the fake model tunnel). Files: ~/gate/home (the
-# rendered tests/fixtures/home), ~/gate/alex.json, ~/gate/marketplace.
+# rendered tests/fixtures/home), ~/gate/alex.json.
 . ./common.sh
 
 curl -fsSL https://linggen.dev/install.sh | bash >"$OUT/install.log" 2>&1
@@ -33,18 +33,23 @@ check "prev: old ling-mem stores the fixture facts" $? "$(tail -3 "$OUT/mem-add.
 "$(mem_bin)" stats >"$OUT/stats-prev.json" 2>&1
 info "prev: store" "$(jq -c '{total, schema_version, per_tier}' "$OUT/stats-prev.json" 2>/dev/null | head -c 200)"
 
-# The published Claude Code plugin (GitHub marketplace), as a user has it.
+# The previous release's Claude Code plugin, as a user has it: 2.2.x took
+# linggen@linggen-memory from the linggen-memory repo (its last release
+# carries the same marketplace as a bundle).
+OLD_BUNDLE=https://github.com/linggen/linggen-memory/releases/latest/download/linggen-plugin.tar.gz
 if curl -fsSL https://claude.ai/install.sh | bash >"$OUT/claude-install.log" 2>&1 && command -v claude >/dev/null; then
   # The GitHub marketplace needs git, and a clean Mac's git is the Command
-  # Line Tools stub (an install dialog) — then use the gate's copy instead.
+  # Line Tools stub (an install dialog) — then use that release's bundle.
   if claude plugin marketplace add linggen/linggen-memory >"$OUT/claude-plugin.log" 2>&1; then
     claude plugin install linggen@linggen-memory >>"$OUT/claude-plugin.log" 2>&1
     check "prev: claude plugin (published)" $? "$(tail -3 "$OUT/claude-plugin.log")"
   else
-    warn "prev: claude plugin (published)" "GitHub marketplace needs git (CLT dialog on a clean Mac); using the gate's copy"
-    claude plugin marketplace add "$OUT/marketplace" >>"$OUT/claude-plugin.log" 2>&1 \
+    warn "prev: claude plugin (published)" "GitHub marketplace needs git (CLT dialog on a clean Mac); using linggen-memory's release bundle"
+    mkdir -p "$OUT/marketplace"
+    curl -fsSL "$OLD_BUNDLE" | tar -xzf - -C "$OUT/marketplace" \
+      && claude plugin marketplace add "$OUT/marketplace" >>"$OUT/claude-plugin.log" 2>&1 \
       && claude plugin install linggen@linggen-memory >>"$OUT/claude-plugin.log" 2>&1
-    check "prev: claude plugin (gate copy)" $? "$(tail -3 "$OUT/claude-plugin.log")"
+    check "prev: claude plugin (release bundle)" $? "$(tail -3 "$OUT/claude-plugin.log")"
   fi
 else
   gap "prev: claude plugin (published)" "claude CLI did not install"

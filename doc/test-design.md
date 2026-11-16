@@ -143,7 +143,7 @@ Claude Code's own harness tests the linggen plugin (memory hooks, the
 plugin loaded, graded by `tool_used` / `tool_order` / `regex`, gated with
 `--threshold`. It calls a real model on the signed-in account (a subscription
 works, no API key), so it runs before a release, not on every change:
-`./scripts/check.sh eval` in linggen-memory. `scripts/plugin-check.sh` stays
+`./scripts/plugin/plugin-eval.sh`. `scripts/plugin/plugin-check.sh` stays
 for parity of the installed copies and the hook proxy runs.
 
 Built (2026-10-05) differently from the plan in three ways:
@@ -167,10 +167,9 @@ driven over SSH. Apple's licence allows two macOS VMs per Mac — enough for
 one fresh VM and one old-user VM. GitHub's macOS runners are not clean (brew,
 node, python preinstalled) and cannot run Tart, so the gate runs on Hanli's
 Mac: `just release-gate --draft "engine=… app=…"` (or `--local` for local
-builds) — `scripts/gate/`. Its shape follows the engine's version: from 2.3.0
-memory is inside `ling` and checked through it; before 2.3.0 ling-mem is its
-own draft (`mem=…`) and gated with the engine (`GATE_ONE_BINARY=1|0` names
-the shape for a local build that still carries the last release's number). Image: `linggen-gate-base` when it exists —
+builds) — `scripts/gate/`. Memory is inside `ling` and checked through it;
+the plugin bundle is the engine draft's asset (packed from the checkout for
+`--local`). Image: `linggen-gate-base` when it exists —
 `macos-tahoe-vanilla` switched by hand to "App Store & Known Developers"
 (`release-checklist.md`) — else `macos-tahoe-vanilla` (~27 GB, pulled once);
 `GATE_IMAGE` overrides. Before any VM boots the gate runs `check.sh all` and
@@ -192,9 +191,9 @@ tunnels, so nothing on the host listens beyond loopback.
    the retired memory installer (says so, exits 0), the Claude Code and
    Codex plugin installs — pointed at the draft assets. A clean Mac's git is
    the Command Line Tools stub, so the plugins go through
-   `install-plugin.sh`: it must see no git and install linggen-memory's
-   `linggen-plugin.tar.gz` into both hosts with no CLT dialog (FAIL if the
-   dialog is up). The GitHub marketplace form is still tried and reported.
+   `install-plugin.sh`: it must see no git and install the engine release's
+   `linggen-plugin.tar.gz` as `linggen@linggen` into both hosts with no CLT
+   dialog (FAIL if the dialog is up). The GitHub marketplace form is still tried and reported.
    Codex has no unattended installer without node; the host's CLI is copied in.
    Claude Code comes from the live claude.ai/install.sh: its version is INFO,
    its failure a GAP.
@@ -204,7 +203,7 @@ tunnels, so nothing on the host listens beyond loopback.
    app opened must bring bun back by itself and a 灵境 Look must answer ok
    (unsigned, the door is 401, so the Look runs as the declared command).
 2. Also a browser-style download of each asset — the app, `ling` (and
-   `ling-mem` before 2.3.0) — with `com.apple.quarantine` set (curl and `install-app.sh`
+   no `ling-mem`: it is not an asset) — with `com.apple.quarantine` set (curl and `install-app.sh`
    leave none, so they alone hide Gatekeeper). The vanilla image ships with
    Gatekeeper off; the gate turns it on first, but only as "App Store" —
    macOS 15+ cannot switch to "App Store & Known Developers" from a shell, so
@@ -222,9 +221,8 @@ tunnels, so nothing on the host listens beyond loopback.
    session-start` and `stats` — with `~/.local/bin/ling-mem` the stand-in
    (the published binary `install.sh` laid down kept as `ling-mem.prev`), no
    ling-mem process, nothing listening on 9528, `/mem/mcp` answering on 9527
-   and the stand-in's `status` naming 9527 (before 2.3.0: ling-mem
-   `session_start` answers); after the plugin installs the stand-in
-   stays and no daemon runs; one chat turn completes on the fake model.
+   and the stand-in's `status` naming 9527; after the plugin installs the
+   stand-in stays, no daemon runs and nothing listens on 9528; one chat turn completes on the fake model.
 4. Fail when: a TCC prompt appears on the first-run path — `log stream` of
    tccd; a Linggen request with `preflight=no` that a person answered, timed
    out or never answered is a prompt.
@@ -232,15 +230,14 @@ tunnels, so nothing on the host listens beyond loopback.
    one real Linggen Cloud turn.
 
 **Upgrade** (old-user VM `linggen-prev`: previous release + fixtures home with
-sessions, config, saves, a memory store in the old schema, both plugins):
-1. `ling update`, `install-app.sh`, plugin updates (and `ling-mem upgrade
-   --yes` before 2.3.0). A local build with the baseline's own version
+sessions, config, saves, a memory store in the old schema, the Claude Code
+plugin `linggen@linggen-memory`; Codex is handed in at the plugin step):
+1. `ling update`, `install-app.sh`, plugin updates. A local build with the baseline's own version
    number updates from the relabelled manifest. Releases up to engine 1.8.2 / ling-mem 1.8.2 / app 0.3.3 predate
    `LINGGEN_RELEASE_BASE`, so from them the gate re-runs `install.sh` (a GAP
    row) over the running install — its first run caught `install.sh` copying
    over a live `ling` (killed on launch; fixed: fresh inode + rename). After
-   the swap 9527 must be a new process (before 2.3.0 9528 too, on the new
-   version). An old `ling update` from before
+   the swap 9527 must be a new process. An old `ling update` from before
    the engine restart is a GAP; the release's own `ling update` and
    `--rollback` are then checked over a running engine (PASS/FAIL).
    The in-app updater asks through a native dialog and is not driven.
@@ -260,11 +257,13 @@ sessions, config, saves, a memory store in the old schema, both plugins):
    A baseline with no old daemon makes these a GAP.
 3. Pass when: the store opens with every row (and `apply-schema --yes` keeps
    them); old sessions, config and a chat turn on the old config work;
-   `install-plugin.sh` moves both plugins to the new bundle's hooks. Built-in missions are install-once
+   `install-plugin.sh` retires `linggen@linggen-memory` (the 2.2.x plugin
+   `linggen-prev` has, as the builder's Macs do) and leaves `linggen@linggen`
+   enabled in Claude Code and Codex on the new bundle's hooks, the old id in
+   neither, nothing on 9528. Built-in missions are install-once
    (`cli/init.rs`), so an old copy is reported, not failed.
 4. Rollback: a release with a wrong sha256 is refused and the old binary
-   still runs; `ling update --rollback` (and `ling-mem upgrade --rollback`
-   before 2.3.0) swap to `.prev` — the pre-upgrade version (the gate keeps the old binary
+   still runs; `ling update --rollback` swaps to `.prev` — the pre-upgrade version (the gate keeps the old binary
    aside and puts it there when the update kept none or kept the release's own
    bytes) — and back. With nothing older to return to (the baseline already
    runs the release) the rollback and restart checks are GAPs, not passes.
@@ -284,7 +283,7 @@ sessions, config, saves, a memory store in the old schema, both plugins):
 
 Needs from the engine first — built 2026-10-05: `LINGGEN_RELEASE_BASE`
 points every installer and updater at the gate's mirror of the drafts
-(`cli.md` § Release override); `ling update` (and `ling-mem upgrade`) keep
+(`cli.md` § Release override); `ling update` keeps
 `.prev`, restore it when the new binary doesn't start, and take
 `--rollback`; the app's updater keeps and restores the previous bundle.
 

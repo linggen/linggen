@@ -1,9 +1,8 @@
 # Release gate — first install on a fresh VM (doc/test-design.md § 4).
 # Env from the host: MIRROR (http://127.0.0.1:18765), MODEL, and expect.env.
-# ONE_BINARY=1 (engine 2.3.0 on): memory is inside the engine, checked there.
+# Memory is inside the engine and checked there.
 . ./common.sh
 . ./expect.env
-ONE_BINARY="${ONE_BINARY:-0}"
 
 [ ! -e "$LG" ] && pass "fresh VM (no ~/.linggen)" || fail "fresh VM (no ~/.linggen)" "$LG exists"
 
@@ -14,24 +13,20 @@ tcc_watch_start
 curl -fsSL "$SITE/install.sh" | env $RB bash >"$OUT/install.log" 2>&1
 check "install.sh exits 0" $? "exit $? — $(tail -3 "$OUT/install.log")"
 check_installed "install.sh: ling is the release" "$(ling_bin)" "$LING_VERSION" "$LING_SHA"
-if [ "$ONE_BINARY" = 1 ]; then
-  # One program: install.sh lays down no ling-mem (the engine writes its
-  # stand-in there when it starts). Anything there now was fetched.
-  INSTALLED_MEM_SHA="$(sha "$HOME/.local/bin/ling-mem")"
-  [ -z "$INSTALLED_MEM_SHA" ]
-  check "install.sh: installs no ling-mem" $? "v$(ver_of "$HOME/.local/bin/ling-mem") at ~/.local/bin/ling-mem (sha ${INSTALLED_MEM_SHA:0:12})" "nothing at ~/.local/bin/ling-mem"
-  # The old memory installer's address runs the same installation.
-  if curl -fsSL "$SITE/install-ling-mem.sh" -o "$OUT/install-ling-mem.sh" 2>/dev/null; then
-    env $RB LINGGEN_INSTALL_HOST="$SITE" bash "$OUT/install-ling-mem.sh" --version '^1' >"$OUT/install-ling-mem.log" 2>&1
-    check "install-ling-mem.sh exits 0" $? "$(tail -3 "$OUT/install-ling-mem.log")"
-    check_installed "install-ling-mem.sh: ling is the release" "$(ling_bin)" "$LING_VERSION" "$LING_SHA"
-    [ ! -e "$HOME/.local/bin/ling-mem" ]
-    check "install-ling-mem.sh: installs no ling-mem" $? "v$(ver_of "$HOME/.local/bin/ling-mem") at ~/.local/bin/ling-mem"
-  else
-    gap "install-ling-mem.sh" "not served by the mirror"
-  fi
+# install.sh lays down no ling-mem (the engine writes its stand-in there when
+# it starts). Anything there now was fetched.
+INSTALLED_MEM_SHA="$(sha "$HOME/.local/bin/ling-mem")"
+[ -z "$INSTALLED_MEM_SHA" ]
+check "install.sh: installs no ling-mem" $? "v$(ver_of "$HOME/.local/bin/ling-mem") at ~/.local/bin/ling-mem (sha ${INSTALLED_MEM_SHA:0:12})" "nothing at ~/.local/bin/ling-mem"
+# The old memory installer's address runs the same installation.
+if curl -fsSL "$SITE/install-ling-mem.sh" -o "$OUT/install-ling-mem.sh" 2>/dev/null; then
+  env $RB LINGGEN_INSTALL_HOST="$SITE" bash "$OUT/install-ling-mem.sh" --version '^1' >"$OUT/install-ling-mem.log" 2>&1
+  check "install-ling-mem.sh exits 0" $? "$(tail -3 "$OUT/install-ling-mem.log")"
+  check_installed "install-ling-mem.sh: ling is the release" "$(ling_bin)" "$LING_VERSION" "$LING_SHA"
+  [ ! -e "$HOME/.local/bin/ling-mem" ]
+  check "install-ling-mem.sh: installs no ling-mem" $? "v$(ver_of "$HOME/.local/bin/ling-mem") at ~/.local/bin/ling-mem"
 else
-  check_installed "install.sh: ling-mem is the release" "$(mem_bin)" "$MEM_VERSION" "$MEM_SHA"
+  gap "install-ling-mem.sh" "not served by the mirror"
 fi
 grep -q 'Verified SHA-256' "$OUT/install.log"
 check "install.sh: verifies ling's sha256" $? "no 'Verified SHA-256' line"
@@ -51,35 +46,25 @@ check "ling: UI page served" $? "GET / gave $(printf '%s' "$page" | head -c 120)
 sleep 5
 pgrep -qx Safari && info "ling: browser opened" "Safari running" || info "ling: browser opened" "no Safari process"
 
-if [ "$ONE_BINARY" = 1 ]; then
-  # Memory is served by the engine itself, on its own port only: /mem/*,
-  # /mcp/memory, `ling mem`. No ling-mem process, nothing on 9528.
-  engine_mem_health 60
-  check "memory: /mem/api/health through the engine" $? "no ok from $ENGINE_MEM/api/health — $(tail -3 "$LG/ling.log" 2>/dev/null)" "v$(curl -fsS -m 3 "$ENGINE_MEM/api/health" | jq -r '.data.version // empty')"
-  mcp_answers "http://127.0.0.1:$EP/mcp/memory"
-  check "memory: $EP/mcp/memory initialize + tools/list" $? "$MCP_DETAIL" "$MCP_DETAIL"
-  "$(ling_bin)" mem session-start --format json >"$OUT/session-start.json" 2>&1
-  check "memory: ling mem session-start answers" $? "$(head -c 200 "$OUT/session-start.json")" "$(head -c 80 "$OUT/session-start.json")"
-  "$(ling_bin)" mem stats >"$OUT/stats.json" 2>&1 && jq -e '.total' "$OUT/stats.json" >/dev/null 2>&1
-  check "memory: ling mem stats answers" $? "$(head -c 200 "$OUT/stats.json")" "$(jq -c '{total, schema_version}' "$OUT/stats.json" 2>/dev/null)"
-  check_standin "memory" "$LING_VERSION" "$INSTALLED_MEM_SHA"
-  left="$(ling_mem_procs)"; [ -z "$left" ]
-  check "memory: no ling-mem process runs" $? "running: $left"
-  nothing_on "$LP"
-  check "memory: nothing listens on the old port $LP" $? "$PORT_DETAIL" "$PORT_DETAIL"
-  engine_alone_on_its_port "$(listener_pid "$EP")"
-  check "memory: the engine is the one listener on $EP" $? "$PORT_DETAIL" "$PORT_DETAIL"
-  mcp_answers "$ENGINE_MEM/mcp"
-  check "memory: $EP/mem/mcp initialize + tools/list" $? "$MCP_DETAIL" "$MCP_DETAIL"
-else
-  # ling-mem: the engine starts its daemon; session_start must answer.
-  # The engine starts ling-mem on first use (memory_http.rs autostart), or at
-  # boot only when a skill uses scoped memory — a fresh install has none.
-  if mem_health 20; then info "ling-mem: 9528 at first run" "up, v$(mem_version)"
-  else info "ling-mem: 9528 at first run" "not started yet (lazy); starting it by hand"; start_mem 60; fi
-  "$(mem_bin)" session-start --format json >"$OUT/session-start.json" 2>&1
-  check "ling-mem: session_start answers" $? "$(head -c 200 "$OUT/session-start.json")" "$(head -c 80 "$OUT/session-start.json")"
-fi
+# Memory is served by the engine itself, on its own port only: /mem/*,
+# /mcp/memory, `ling mem`. No ling-mem process, nothing on 9528.
+engine_mem_health 60
+check "memory: /mem/api/health through the engine" $? "no ok from $ENGINE_MEM/api/health — $(tail -3 "$LG/ling.log" 2>/dev/null)" "v$(curl -fsS -m 3 "$ENGINE_MEM/api/health" | jq -r '.data.version // empty')"
+mcp_answers "http://127.0.0.1:$EP/mcp/memory"
+check "memory: $EP/mcp/memory initialize + tools/list" $? "$MCP_DETAIL" "$MCP_DETAIL"
+"$(ling_bin)" mem session-start --format json >"$OUT/session-start.json" 2>&1
+check "memory: ling mem session-start answers" $? "$(head -c 200 "$OUT/session-start.json")" "$(head -c 80 "$OUT/session-start.json")"
+"$(ling_bin)" mem stats >"$OUT/stats.json" 2>&1 && jq -e '.total' "$OUT/stats.json" >/dev/null 2>&1
+check "memory: ling mem stats answers" $? "$(head -c 200 "$OUT/stats.json")" "$(jq -c '{total, schema_version}' "$OUT/stats.json" 2>/dev/null)"
+check_standin "memory" "$LING_VERSION" "$INSTALLED_MEM_SHA"
+left="$(ling_mem_procs)"; [ -z "$left" ]
+check "memory: no ling-mem process runs" $? "running: $left"
+nothing_on "$LP"
+check "memory: nothing listens on the old port $LP" $? "$PORT_DETAIL" "$PORT_DETAIL"
+engine_alone_on_its_port "$(listener_pid "$EP")"
+check "memory: the engine is the one listener on $EP" $? "$PORT_DETAIL" "$PORT_DETAIL"
+mcp_answers "$ENGINE_MEM/mcp"
+check "memory: $EP/mem/mcp initialize + tools/list" $? "$MCP_DETAIL" "$MCP_DETAIL"
 
 # ── One chat turn on the fake model ────────────────────────────────────────
 stop_engine
@@ -251,7 +236,7 @@ gatekeeper_check() { # label path [run…] — spctl verdict, then a quarantined
 run_cli() { # bin — exec it quarantined; Gatekeeper kills a refused one
   local out; out="$(perl -e 'alarm 30; exec @ARGV' "$1" --version 2>&1)"
   QRUN_DETAIL="$(printf '%s' "$out" | head -1)"
-  grep -qE '^ling(-mem)? [0-9]' <<<"$out"
+  grep -qE '^ling [0-9]' <<<"$out"
 }
 
 QAPP='gate-quarantine/Linggen.app/Contents/MacOS/linggen-shell|AppTranslocation/.*/Linggen.app/Contents/MacOS/linggen-shell'
@@ -272,11 +257,6 @@ run_app() { # app — LaunchServices launch, as a double-click is
 if download_quarantined "$(asset_url linggen/linggen ling-macos-aarch64.tar.gz)"; then
   gatekeeper_check "ling" "$q/ling" run_cli "$q/ling"
 else gap "quarantined ling" "download from the mirror failed"; fi
-if [ "$ONE_BINARY" = 1 ]; then
-  info "quarantined ling-mem" "not an asset of this train — memory ships inside ling"
-elif download_quarantined "$(asset_url linggen/linggen-memory ling-mem-macos-aarch64.tar.gz)"; then
-  gatekeeper_check "ling-mem" "$q/ling-mem" run_cli "$q/ling-mem"
-else gap "quarantined ling-mem" "download from the mirror failed"; fi
 if [ -n "$APP_VERSION" ]; then
   if download_quarantined "$(asset_url linggen/linggen-releases "linggen-$APP_VERSION-darwin-arm64.tar.gz")"; then
     # A --draft run without app= serves the published app: not this train's.
@@ -322,7 +302,7 @@ if [ -z "$dev" ]; then
 fi
 install_plugin "$OUT/install-plugin.log"
 check_plugins "first install" $? "$OUT/install-plugin.log"
-if [ "$ONE_BINARY" = 1 ] && [ -z "$INSTALLED_MEM_SHA" ]; then
+if [ -z "$INSTALLED_MEM_SHA" ]; then
   # Nothing was installed to move aside: a ling-mem.prev means something fetched one.
   [ ! -e "$HOME/.local/bin/ling-mem.prev" ] && is_standin "$HOME/.local/bin/ling-mem"
   check "first install: no ling-mem binary on this Mac" $? "~/.local/bin: $(ls "$HOME/.local/bin" 2>/dev/null | grep ling-mem | tr '\n' ' '); ling-mem.prev v$(ver_of "$HOME/.local/bin/ling-mem.prev")"
@@ -333,8 +313,8 @@ fi
 # after it: the dialog this opens was still up after a pkill in the first
 # gate run, so before it would mask the check above.
 if command -v claude >/dev/null; then
-  claude plugin marketplace remove linggen-memory >/dev/null 2>&1
-  if claude plugin marketplace add linggen/linggen-memory >"$OUT/claude-public.log" 2>&1; then
+  claude plugin marketplace remove linggen >/dev/null 2>&1
+  if claude plugin marketplace add linggen/linggen --sparse .claude-plugin plugins >"$OUT/claude-public.log" 2>&1; then
     info "claude: GitHub marketplace add" "works here (git present)"
   else
     sleep 2

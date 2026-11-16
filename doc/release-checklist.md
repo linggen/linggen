@@ -1,8 +1,8 @@
 # Release checklist
 
-One train, in order: engine → Mac app (before engine 2.3.0: ling-mem →
-engine → Mac app). From 2.3.0 memory runs inside `ling`: there is no ling-mem
-release in the train. Each step names the script that does it; the script is
+One train, in order: engine → Mac app. Memory runs inside `ling`, and the
+Claude Code / Codex plugin bundle is an asset of the engine release: there is
+no ling-mem or plugin release of its own. Each step names the script that does it; the script is
 the truth, this page is the order.
 
 ## Release gate — between each draft and its publish
@@ -12,12 +12,12 @@ through `LINGGEN_RELEASE_BASE` (`doc/cli.md` § Release override). It builds
 a mirror of every draft in the train and serves it to the VM:
 
 ```
-for r in linggen/linggen linggen/linggen-memory linggen/linggen-releases; do
+for r in linggen/linggen linggen/linggen-releases; do
   gh release download <tag-of-r> --repo $r --dir mirror/$r
   gh release view <tag-of-r> --repo $r --json tagName,assets \
     --jq '{tag_name: .tagName, assets: [.assets[] | {name}]}' > mirror/$r/release.json
 done
-cp linggen-memory/plugins/linggen/scripts/install-bin.sh linggensite/public/install-plugin.sh mirror/
+cp linggensite/public/install*.sh mirror/
 python3 -m http.server --directory mirror <port>
 ```
 
@@ -28,29 +28,21 @@ its latest published release), boots a fresh Tart VM and a clone of
 `--local` gates local builds instead of drafts. Exit 0 is the go to publish;
 a green `--draft` run saves its upgraded VM as the next `linggen-prev`.
 
-The gate's shape follows the engine's version. From 2.3.0 it is one program:
-the mirror serves the published ling-mem only because `install.sh` and the
-plugin installers still fetch it (the engine makes it its stand-in), and
-memory is checked through the engine. Before 2.3.0 `mem=vX.Y.Z` names the
-ling-mem draft gated with the engine.
+The plugin bundle comes from the engine draft (`linggen-plugin.tar.gz` +
+`.sha256`; a draft without them stops the gate — `--public` too, until a
+published engine carries them) or, for `--local`, is packed from this
+checkout with `scripts/plugin/package-plugin.sh`. The installers are
+not release assets: the mirror takes them from `linggensite/public`; to gate
+the release-day ones, `GATE_SITE_PUBLIC=<worktree of the site branch>/public`.
+The first install also runs `install-ling-mem.sh` when served and FAILs on
+any ling-mem binary laid down or asked of the mirror. The host suites run on
+a scratch home under `~/.cache/linggen-gate/host-home`.
 
-The installers and the plugin bundle are not engine assets: the mirror takes
-the installers from `linggensite/public` and the bundle from the ling-mem
-release named (else packed from `linggen-memory`). To gate the release-day
-ones instead: `GATE_SITE_PUBLIC=<worktree of the site branch>/public`,
-`GATE_PLUGIN_RELEASE=<linggen-memory draft tag>` (its
-`linggen-plugin.tar.gz`), `GATE_MEM_REPO=<linggen-memory checkout>`. From
-2.3.0 the first install also runs `install-ling-mem.sh` when served and FAILs
-on any ling-mem binary laid down or asked of the mirror. The host suites run
-on a scratch home under `~/.cache/linggen-gate/host-home`.
-
-A local build carries the last release's number until `release.sh` stamps
-it, so name the shape: `GATE_ONE_BINARY=1 GATE_LING_BIN=target/fast/ling
-GATE_APP=/nonexistent just release-gate --local --upgrade-only
---skip-host-checks --skip-playbot` gates a `cargo build --profile fast`
-binary as 2.3, from `linggen-prev`, without the app, and publishes nothing.
-When the baseline holds the same version number, the upgrade runs from the
-relabelled manifest (same bytes).
+`GATE_LING_BIN=target/fast/ling GATE_APP=/nonexistent just release-gate
+--local --upgrade-only --skip-host-checks --skip-playbot` gates a `cargo
+build --profile fast` binary from `linggen-prev`, without the app, and
+publishes nothing. When the baseline holds the same version number, the
+upgrade runs from the relabelled manifest (same bytes).
 
 Before the first green 2.3 `--draft` replaces `linggen-prev`, freeze the
 2.2.1 baseline (`tart clone linggen-prev linggen-prev-2.2.1`): the takeover
@@ -117,11 +109,10 @@ One-time setup, by hand:
   (or `GATE_PREV_VMS`) upgrades it too in the same run, never saved over.
 
 In the VM: `LINGGEN_RELEASE_BASE=http://<host>:<port>` for `install.sh`,
-`install-app.sh`, `ling update` (and `ling-mem upgrade --yes` before 2.3.0);
+`install-app.sh`, `install-plugin.sh`, `ling update`;
 `launchctl setenv LINGGEN_RELEASE_BASE …` before launching Linggen.app.
 Rollback check: corrupt one tarball in the mirror → the update is refused
-and the old binary still runs; `ling update --rollback` (and before 2.3.0
-`ling-mem upgrade --rollback`) return to the kept `.prev` — the pre-upgrade
+and the old binary still runs; `ling update --rollback` returns to the kept `.prev` — the pre-upgrade
 version (the gate puts that binary there when the update kept none), and back.
 
 Takeover (2.3.0 on, `scripts/gate/vm/takeover.sh`): on the old user, rows are
@@ -140,15 +131,20 @@ before that engine starts (it starts memory through `ling-mem`): the gate
 checks that the old daemon answers on 9528 with every row, including those
 written after the upgrade, and that rolling forward takes the store over again.
 
+Plugins: `linggen-prev` (2.2.x) has `linggen@linggen-memory` in Claude Code,
+as the builder's own Macs do. After `install-plugin.sh`, first install and
+upgrade alike: `linggen@linggen` enabled in Claude Code and Codex, no
+`linggen@linggen-memory` in either, Claude Code on this release's hooks, the
+stand-in kept, nothing listening on 9528.
+
 ## Signing — every Mac asset
 
 A browser download carries the quarantine flag, and Gatekeeper refuses an
-ad-hoc build as "damaged". So `ling`, Linggen.app (and before 2.3.0 `ling-mem`) ship
+ad-hoc build as "damaged". So `ling` and Linggen.app ship
 Developer ID signed with the hardened runtime and notarized (the app is
 also stapled; a bare binary cannot be, and Gatekeeper checks it online).
 Credentials: `linggen-app/secrets/signing.env` (identity + App Store
-Connect API key), which `scripts/sign-mac.sh` in the engine and ling-mem
-repos also sources. Without the identity those builds fall back to ad-hoc,
+Connect API key), which the engine's `scripts/sign-mac.sh` also sources. Without the identity those builds fall back to ad-hoc,
 and `release.sh` refuses to upload them (`LINGGEN_ADHOC_RELEASE=1` forces
 it). Local deploys stay ad-hoc (`codesign -f -s -`). The gate's quarantine
 checks FAIL a draft whose asset is not Developer ID signed.
@@ -164,43 +160,19 @@ checks FAIL a draft whose asset is not Developer ID signed.
   `gh workflow run build-linux.yml --repo linggen/linggen -f ref=$(git rev-parse HEAD)`
 - Weekend cuts and releases are fine (Hanli 2026-11-07); publishing still waits for his yes.
 
-## 1. ling-mem — engines before 2.3.0 only
+## 1. Plugin — part of the engine release
 
-From engine 2.3.0 there is no ling-mem binary release: the store's code is
-`crates/linggen-memory` in the engine repo and ships inside `ling`. The
-plugin (`plugins/linggen`, installed as `linggen@linggen` from the marketplace
-files at this repo's root) and the Chrome extension (`browser-extension/`) live
-in this repo too. `scripts/plugin/package-plugin.sh <out.tar.gz>` packs the
-bundle `install-plugin.sh` installs. Until `release.sh` and the gate are
-changed, the `linggen/linggen-memory` releases still carry
-`linggen-plugin.tar.gz` and the gate serves that bundle.
-
-For a train before 2.3.0, only when `src/` changed since the last `v*` tag —
-repo `linggen/linggen-memory`, tag `vX.Y.Z`:
-
-1. `Cargo.toml` version + `CHANGELOG.md`; commit, push.
-2. `./scripts/release.sh vX.Y.Z --draft` — mac aarch64 tarball + `.sha256`
-   on a draft.
-3. `gh workflow run build-linux.yml --repo linggen/linggen-memory -f ref=<sha> -f release_tag=vX.Y.Z`
-   — both Linux tarballs land on the draft (~10 min).
-4. Local swap: kill the 9528 daemon; `rm` + `cp` into `~/.local/bin/ling-mem`
-   (fresh inode, never overwrite in place), `codesign -f -s -`, keep the old
-   binary aside, `ling-mem serve --port 9528`.
-5. After the release gate passes:
-   `gh release edit vX.Y.Z --draft=false --latest --repo linggen/linggen-memory`
-   — eight assets (the six binaries + `linggen-plugin.tar.gz` and its
-   `.sha256`, which `install-plugin.sh` needs). Publishing is the distribution: every host resolves `^1`.
-
-The plugin has no version of its own: `scripts/sync-version.sh` stamps the
-engine's version into `plugins/linggen/VERSION`,
-`plugins/linggen/.claude-plugin/plugin.json` and
-`plugins/linggen/.codex-plugin/plugin.json` (through
-`scripts/plugin/build-plugin.sh`), and
-`bash scripts/plugin/plugin-check.sh` fails when they differ. Run that check
-(and `plugins/linggen/hooks/tests/*.test.sh`) before a release that touched
-the plugin.
-Where each channel pins:
-`linggen-memory/doc/release-targets.md`.
+The plugin (`plugins/linggen`, `linggen@linggen` from the marketplace files
+at this repo's root) has no version or release of its own:
+`scripts/sync-version.sh` stamps the engine's version into
+`plugins/linggen/VERSION` and both `plugin.json` files (through
+`scripts/plugin/build-plugin.sh`), `release.sh` commits them with the stamp,
+packs `linggen-plugin.tar.gz` (+ `.sha256`) with
+`scripts/plugin/package-plugin.sh` and attaches both to the engine release.
+`linggen.dev/install-plugin.sh` installs that bundle when there is no git, and
+retires an old `linggen@linggen-memory`. Before a release that touched the
+plugin: `bash scripts/plugin/plugin-check.sh` (fails when the versions differ)
+and `plugins/linggen/hooks/tests/*.test.sh`.
 
 ## 2. Engine
 
@@ -209,7 +181,8 @@ and `ui/package.json` are stamped by the script — do not bump by hand.
 
 1. `CHANGELOG.md` entry; commit, push.
 2. `./scripts/release.sh X.Y.Z --draft` — builds the UI and `ling`, commits
-   and pushes `chore: release X.Y.Z`, uploads `ling-macos-aarch64.tar.gz`.
+   and pushes `chore: release X.Y.Z`, uploads `ling-macos-aarch64.tar.gz` and
+   `linggen-plugin.tar.gz` + `.sha256`.
 3. `./scripts/release.sh X.Y.Z --linux-ci` — `ling-linux-x86_64` +
    `ling-linux-aarch64` onto the draft (~10 min).
 4. `./scripts/release.sh X.Y.Z --manifest-only` — `manifest.json` lists all

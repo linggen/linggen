@@ -16,6 +16,10 @@ set -euo pipefail
 #   ./scripts/release.sh 1.6.1 --draft      # mac assets + a first manifest
 #   ./scripts/release.sh 1.6.1 --linux-ci   # cloud build uploads the linux ones
 #   ./scripts/release.sh 1.6.1 --manifest-only   # rewrite the manifest with all three
+#
+# A full run also attaches the Claude Code / Codex plugin bundle
+# (linggen-plugin.tar.gz + .sha256, scripts/plugin/package-plugin.sh) that
+# linggen.dev/install-plugin.sh installs. It carries the engine's version.
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT_DIR/scripts/lib-common.sh"
@@ -85,7 +89,8 @@ delete_asset() {
 # the default branch at that moment — so the version stamp has to be pushed
 # first, or the tag lands on a commit that still carries the old version.
 commit_version_stamp() {
-  local stamped=(Cargo.toml Cargo.lock ui/package.json)
+  local stamped=(Cargo.toml Cargo.lock ui/package.json plugins/linggen/VERSION
+    plugins/linggen/.claude-plugin/plugin.json plugins/linggen/.codex-plugin/plugin.json)
   cd "$ROOT_DIR"
 
   for file in "${stamped[@]}"; do
@@ -117,6 +122,23 @@ ensure_release() {
     --notes "Release ${VERSION}" \
     --draft
   echo "✅ Created draft release ${VERSION}"
+}
+
+PLUGIN_BUNDLE="$DIST_DIR/linggen-plugin.tar.gz"
+
+# The plugin bundle, packed after the version stamp so it carries this version
+# (plugin-check.sh, which also compares installed copies, is run by hand first).
+package_plugin() {
+  "$ROOT_DIR/scripts/plugin/package-plugin.sh" "$PLUGIN_BUNDLE"
+}
+
+upload_plugin_bundle() {
+  local f
+  for f in "$PLUGIN_BUNDLE" "$PLUGIN_BUNDLE.sha256"; do
+    echo "  Uploading: $(basename "$f")"
+    delete_asset "$(basename "$f")"
+    gh release upload "$VERSION" "$f" --repo "$REPO"
+  done
 }
 
 upload_artifacts() {
@@ -240,6 +262,7 @@ esac
 echo "📦 Step 1: Building all artifacts..."
 "$ROOT_DIR/scripts/build.sh" "$VERSION" ${PASS_ARGS[@]+"${PASS_ARGS[@]}"}
 require_developer_id
+package_plugin
 
 # Step 2: Commit the version stamp the build just wrote
 echo ""
@@ -255,6 +278,7 @@ ensure_release
 echo ""
 echo "📤 Step 4: Uploading artifacts..."
 upload_artifacts
+upload_plugin_bundle
 
 # Step 5: Generate and Upload Manifest
 echo ""

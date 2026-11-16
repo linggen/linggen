@@ -51,7 +51,7 @@ engine_health() { wait_http http://127.0.0.1:9527/api/health "${1:-60}"; }
 mem_health() { wait_http http://127.0.0.1:9528/api/health "${1:-60}"; }
 mem_version() { curl -fsS -m 3 http://127.0.0.1:9528/api/health 2>/dev/null | jq -r '.data.version // empty'; }
 
-# ── Memory inside the engine (ONE_BINARY=1 in expect.env: engine 2.3.0 on) ──
+# ── Memory inside the engine ──────────────────────────────────────────────
 # The engine serves memory at /mem/* and /mcp/memory on its own port, and
 # nothing listens on 127.0.0.1:9528 any more. EP is the engine's port, LP the
 # old ling-mem daemon's (a 2.2.1 baseline and a rollback to it serve there);
@@ -238,41 +238,62 @@ install_plugin() { # log
   curl -fsSL "$SITE/install-plugin.sh" | env $RB bash >"$1" 2>&1
 }
 
+# The plugin is linggen@linggen (this repo's marketplace). The id is a prefix
+# of the old linggen@linggen-memory, so every match on it excludes that one.
+PLUGIN_ID=linggen@linggen
+OLD_PLUGIN_ID=linggen@linggen-memory
+NEW_ID_RE='linggen@linggen([^-[:alnum:]]|$)'
+
+# The block `claude plugin list` prints for one plugin id (an ERE).
+claude_plugin_block() { # id-re
+  claude plugin list 2>/dev/null | awk -v re="$1" '/❯/{f = ($0 ~ re)} f'
+}
+
 # The folder Claude Code loads the linggen plugin from: "Read from:" for a
 # folder marketplace, else its cache copy.
 claude_plugin_root() {
   local root
-  root="$(claude plugin list 2>/dev/null | awk '/linggen@linggen-memory/{f=1} f && /Read from:/{print $NF; exit}')"
-  [ -n "$root" ] || root="$(ls -td "$HOME"/.claude/plugins/cache/linggen-memory/linggen/*/ 2>/dev/null | head -1)"
+  root="$(claude_plugin_block "$NEW_ID_RE" | awk '/Read from:/{print $NF; exit}')"
+  [ -n "$root" ] || root="$(ls -td "$HOME"/.claude/plugins/cache/linggen/linggen/*/ 2>/dev/null | head -1)"
   printf '%s' "${root%/}"
 }
 
-# The plugin checks after install-plugin.sh, shared by both phases.
+# The plugin checks after install-plugin.sh, shared by both phases: the new
+# plugin enabled in each host, the old one gone, the stand-in kept and
+# nothing on the old memory port.
 check_plugins() { # label rc log
-  local root
+  local root left
   check "$1: install-plugin.sh exits 0" "$2" "$(tail -3 "$3")"
   sleep 3
   clt_dialog_up; [ $? != 0 ]
   check "$1: no Command Line Tools dialog" $? "the CLT install dialog is up after install-plugin.sh"
   if command -v claude >/dev/null; then
     root="$(claude_plugin_root)"
-    claude plugin list 2>/dev/null | grep -A5 'linggen@linggen-memory' | grep -q enabled
-    check "$1: claude has linggen enabled" $? "$(claude plugin list 2>&1 | tr '\n' ' ' | cut -c1-200)" "$root"
-    [ -n "$root" ] && diff -rq "$root/hooks" "$OUT/marketplace/plugins/linggen/hooks" >/dev/null
+    claude_plugin_block "$NEW_ID_RE" | grep -q enabled
+    check "$1: claude has $PLUGIN_ID enabled" $? "$(claude plugin list 2>&1 | tr '\n' ' ' | cut -c1-200)" "$root"
+    [ -z "$(claude_plugin_block "$OLD_PLUGIN_ID")" ]
+    check "$1: claude has no $OLD_PLUGIN_ID" $? "$(claude_plugin_block "$OLD_PLUGIN_ID" | tr '\n' ' ' | cut -c1-200)"
+    [ -n "$root" ] && diff -rq "$root/hooks" "$OUT/bundle/plugins/linggen/hooks" >/dev/null
     check "$1: claude loads this release's hooks" $? "hooks at '${root:-none}' differ from the release's"
+  else
+    gap "$1: claude plugin" "no claude CLI here"
   fi
   if command -v codex >/dev/null; then
-    codex plugin list 2>/dev/null | grep -q 'linggen@linggen-memory.*enabled'
-    check "$1: codex has linggen enabled" $? "$(codex plugin list 2>&1 | tail -2 | tr '\n' ' ' | cut -c1-200)"
+    codex plugin list 2>/dev/null | grep -E "$NEW_ID_RE" | grep -q 'enabled'
+    check "$1: codex has $PLUGIN_ID enabled" $? "$(codex plugin list 2>&1 | grep -i linggen | tr '\n' ' ' | cut -c1-200)"
+    ! codex plugin list 2>/dev/null | grep -qF "$OLD_PLUGIN_ID"
+    check "$1: codex has no $OLD_PLUGIN_ID" $? "$(codex plugin list 2>&1 | grep -F "$OLD_PLUGIN_ID" | tr '\n' ' ' | cut -c1-200)"
+  else
+    gap "$1: codex plugin" "no codex CLI here"
   fi
-  # A plugin from before 2.3 installs and starts ling-mem when it finds none
-  # it trusts; the engine's stand-in must stay, and no daemon run beside it.
-  if [ "${ONE_BINARY:-0}" = 1 ]; then
-    local left; sleep 2; left="$(ling_mem_procs)"
-    [ -z "$left" ] && is_standin "$HOME/.local/bin/ling-mem"
-    check "$1: after the plugins, the stand-in stays and no ling-mem daemon runs" $? \
-      "ling-mem processes: ${left:-none}; ~/.local/bin/ling-mem: $(head -c 60 "$HOME/.local/bin/ling-mem" 2>/dev/null | tr '\n' ' ')"
-  fi
+  # The plugin's start hook ran: the engine's stand-in must stay, no daemon
+  # run beside it, and nothing listen on the old memory port.
+  sleep 2; left="$(ling_mem_procs)"
+  [ -z "$left" ] && is_standin "$HOME/.local/bin/ling-mem"
+  check "$1: after the plugins, the stand-in stays and no ling-mem daemon runs" $? \
+    "ling-mem processes: ${left:-none}; ~/.local/bin/ling-mem: $(head -c 60 "$HOME/.local/bin/ling-mem" 2>/dev/null | tr '\n' ' ')"
+  nothing_on "$LP"
+  check "$1: after the plugins, nothing listens on the old port $LP" $? "$PORT_DETAIL" "$PORT_DETAIL"
 }
 
 app_version() { plutil -extract CFBundleShortVersionString raw /Applications/Linggen.app/Contents/Info.plist 2>/dev/null; }

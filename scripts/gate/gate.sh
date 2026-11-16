@@ -4,9 +4,8 @@
 #
 #   just release-gate --local                       local builds (target/release)
 #   just release-gate --draft "engine=2.3.0 app=linggen-v2.3.0"
-#                                                   (engine 2.3.0 on: memory is inside
-#                                                   ling, no mem= in the train; before it,
-#                                                   "engine=… mem=v… app=…")
+#                                                   drafts; the engine's carries the
+#                                                   plugin bundle (memory is inside ling)
 #   just release-gate --public                      after publishing: the VM installs
 #                                                   from linggen.dev + GitHub Latest,
 #                                                   no mirror (first install only)
@@ -24,9 +23,8 @@
 #   --keep                          leave the scratch VMs (stopped) for a look
 #
 # Exit 0 only when no check FAILs; the table at the end lists every check.
-# Local builds can be overridden: GATE_LING_BIN, GATE_APP (GATE_MEM_BIN for an
-# engine before 2.3.0). The shape follows the engine's version; GATE_ONE_BINARY=1
-# gates a local build that still carries the last release's number as 2.3.
+# Local builds can be overridden: GATE_LING_BIN, GATE_APP; the plugin bundle
+# is packed from this checkout. The installers: GATE_SITE_PUBLIC (mirror.sh).
 # The VM image: GATE_IMAGE, else linggen-gate-base if present, else vanilla.
 
 set -uo pipefail
@@ -34,7 +32,7 @@ set -uo pipefail
 . "$GATE_SRC/mirror.sh"
 . "$GATE_SRC/playbot.sh"
 
-usage() { echo "release-gate: $*" >&2; sed -n '2,30p' "$0" >&2; exit 2; }
+usage() { echo "release-gate: $*" >&2; sed -n '2,28p' "$0" >&2; exit 2; }
 needs_arg() { [ $# -ge 2 ] && [ -n "$2" ] && [ "${2#--}" = "$2" ] || usage "$1 needs a value"; }
 
 SOURCE=local SPECS="" FIRST=1 UPGRADE=1 REBUILD_PREV=0 SAVE_PREV="" KEEP=0 HOST_CHECKS=1 PLAYBOT_RUN=1
@@ -53,7 +51,7 @@ while [ $# -gt 0 ]; do
     --rebuild-prev) REBUILD_PREV=1; shift ;;
     --save-prev) SAVE_PREV=1; shift ;;
     --keep) KEEP=1; shift ;;
-    -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
     *) usage "unknown flag $1" ;;
   esac
 done
@@ -154,11 +152,12 @@ build_mirror "$SOURCE" "$SPECS"
 VMFILES="$RUN/vmfiles"
 stage_vmfiles() {
   local f
-  mkdir -p "$VMFILES/marketplace"
+  mkdir -p "$VMFILES/bundle"
   cp "$GATE_SRC"/vm/*.sh "$GATE_SRC/vm/gate.runtime.toml" "$RUN/mirror/expect.env" "$VMFILES/"
   # The plugin bundle of this release (what install-plugin.sh installs), to
-  # compare against and as linggen-prev's local marketplace.
-  tar -xzf "$RUN/mirror/good/linggen/linggen-memory/linggen-plugin.tar.gz" -C "$VMFILES/marketplace"
+  # compare against. Not ~/gate/marketplace: a frozen baseline may still read
+  # its old plugin from there.
+  tar -xzf "$RUN/mirror/good/$ENGINE_REPO/$PLUGIN_ASSET" -C "$VMFILES/bundle"
   # Codex has no unattended installer without node; hand in this Mac's CLI.
   f="$(realpath "$(command -v codex 2>/dev/null)" 2>/dev/null || true)"
   [ -n "$f" ] && file "$f" | grep -q 'Mach-O.*arm64' && cp "$f" "$VMFILES/codex"
@@ -204,11 +203,9 @@ if [ "$FIRST" = 1 ]; then
   log_from=$(( $(wc -l <"$RUN/mirror-http.log") + 1 ))
   vm_run gate-first first-install.sh "${VMENV[@]}"
   # One program: nothing on the first-install path asks the mirror for ling-mem.
-  if [ "${ONE_BINARY:-0}" = 1 ]; then
-    asked="$(tail -n +"$log_from" "$RUN/mirror-http.log" | grep -oE '"GET [^ ]*ling-mem-[^ ]*' | cut -c6- | sort -u | tr '\n' ' ')"
-    [ -z "$asked" ] && record PASS "first install: no ling-mem fetched from the mirror" "$(( $(wc -l <"$RUN/mirror-http.log") - log_from + 1 )) requests logged" \
-      || record FAIL "first install: no ling-mem fetched from the mirror" "requested: $asked"
-  fi
+  asked="$(tail -n +"$log_from" "$RUN/mirror-http.log" | grep -oE '"GET [^ ]*ling-mem-[^ ]*' | cut -c6- | sort -u | tr '\n' ' ')"
+  [ -z "$asked" ] && record PASS "first install: no ling-mem fetched from the mirror" "$(( $(wc -l <"$RUN/mirror-http.log") - log_from + 1 )) requests logged" \
+    || record FAIL "first install: no ling-mem fetched from the mirror" "requested: $asked"
   ui_check gate-first first-install
   vm_shutdown gate-first
   [ "$KEEP" = 1 ] || { tart delete gate-first >/dev/null 2>&1; SCRATCH_VMS=("${SCRATCH_VMS[@]/gate-first}"); }
