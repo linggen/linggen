@@ -24,6 +24,7 @@
 //! - One handler file per agent. Add your `pub mod` line here in alphabetical
 //!   order to keep merges trivial.
 
+pub mod chains;
 pub mod config;
 pub mod days;
 pub mod issues;
