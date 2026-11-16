@@ -46,8 +46,8 @@ own world and throws it away:
   `HOME`/`LINGGEN_HOME`/`TMPDIR`/`XDG_*` in the test's root, env cleared
   (`env -i` + an allow-list), outbound HTTP sent to a closed proxy. A guard
   panics before anything starts if a world would reach `~/.linggen` or
-  9527/9528 (env, every file of the rendered home, the config's
-  `ling_mem_url`); after a passing test the engine log and every model request
+  9527/9528 (env, every file of the rendered home; 9528 is the old
+  memory daemon's, still real on a machine before 2.3); after a passing test the engine log and every model request
   must never name 9527/9528. Each child leads its own process group: a stop is
   TERM to the group, KILL after 5 s, also when the test process dies. A server
   counts as up only when it answers health and is alone on its port (the
@@ -95,8 +95,7 @@ own world and throws it away:
   never a sleep; selectors are `data-testid`/roles. A bug found but not fixed
   stays a `test.fail` with a dated note. The first-run world has no
   config at all (`Setup::no_config`, scenario `noConfig`): the engine on its
-  defaults, its port from `--port`, its ling-mem from `LING_MEM_URL` (guarded
-  like a config).
+  defaults, its port from `--port`, its memory the store it hosts there.
 
 **Fixtures** live in the repo (`tests/fixtures/home/`), copied and rendered
 (`{{PORT}}`-style placeholders) per test: config pointing at the fake model;
@@ -195,8 +194,9 @@ tunnels, so nothing on the host listens beyond loopback.
    `/mem/api/health`, `/mcp/memory` initialize + tools/list, `ling mem
    session-start` and `stats` — with `~/.local/bin/ling-mem` the stand-in
    (the published binary `install.sh` laid down kept as `ling-mem.prev`), no
-   ling-mem process, and only the engine on 127.0.0.1:9528 (before 2.3.0:
-   ling-mem `session_start` answers); after the plugin installs the stand-in
+   ling-mem process, nothing listening on 9528, `/mem/mcp` answering on 9527
+   and the stand-in's `status` naming 9527 (before 2.3.0: ling-mem
+   `session_start` answers); after the plugin installs the stand-in
    stays and no daemon runs; one chat turn completes on the fake model.
 4. Fail when: a TCC prompt appears on the first-run path — `log stream` of
    tccd; a Linggen request with `preflight=no` that a person answered, timed
@@ -220,12 +220,12 @@ sessions, config, saves, a memory store in the old schema, both plugins):
 2. Takeover (2.3.0 on, `vm/takeover.sh`; the baseline is 2.2.1 + ling-mem
    1.13.0 with its daemon running): rows written through the old daemon —
    three long-term, one staged, one core. After the upgrade, each a check:
-   the old daemon is gone; only the engine listens on 9528, loopback only;
+   the old daemon is gone; nothing listens on 9528;
    one `memory/backups/takeover-<stamp>/` and `takeover-<version>.done`; the
    store lock names the engine's pid; every earlier row is found by id
    through the engine, at its tier, and the core row is in `ling mem
    session-start`; `~/.local/bin/ling-mem` is the stand-in and
-   `ling-mem.prev` the old binary; MCP answers at `127.0.0.1:9528/mcp` and
+   `ling-mem.prev` the old binary; MCP answers at `9527/mem/mcp` and
    `9527/mcp/memory`; a write through the stand-in lands. Rollback: the
    previous engine and `ling-mem.prev` back and started find every row,
    including those written after the upgrade; the release again stops the
@@ -244,7 +244,8 @@ sessions, config, saves, a memory store in the old schema, both plugins):
    `ling update --rollback` from 2.3 to an engine that does not host memory
    puts `ling-mem.prev` back over the stand-in before that engine starts (it
    starts memory through `ling-mem`): the old daemon answers on 9528 with every
-   row, including those written after the upgrade, and rolling forward takes
+   row, including those written after the upgrade (to one that hosts memory:
+   9527/mem does), and rolling forward takes
    the store over again (PASS/FAIL). The automatic roll-back of an unhealthy
    restart does the same.
 5. A green `--draft` gate saves its VM as the next `linggen-prev`, so the

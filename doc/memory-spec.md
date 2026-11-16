@@ -154,13 +154,15 @@ at start-up and serves it (`src/memory_host/`, code in `crates/linggen-memory`).
 - **One writer.** The engine holds `memory/.store.lock` (flock) for its life;
   the file names its pid and port. A second opener is refused.
 - **Doors.** `/mem/*` (memory's own routes) and `/mcp/memory` on the engine's
-  port; the phone's `/api/memory/<verb>`. Who reaches which is below.
-- **The old address.** `127.0.0.1:9528` answers with the same routes while
-  nothing else holds it — for plugins that still say 9528; goes one release
-  after they move.
+  port — the only port; the phone's `/api/memory/<verb>`. Who reaches which
+  is below. Nothing listens on the old daemon's 9528.
+- **No address to set.** The engine's own callers use the store it hosts
+  (`memory_host::url`); `[agent].ling_mem_url` and `$LING_MEM_URL` are gone,
+  and an old config's key is ignored.
 - **The old binary.** `~/.local/bin/ling-mem` becomes a stand-in: data verbs
-  run as `ling mem`, `status` says running at the engine's version, lifecycle
-  verbs do nothing. The real binary is kept as `ling-mem.prev`.
+  run as `ling mem`, `status` says running at the engine's version and port,
+  lifecycle verbs do nothing; a stand-in that differs from what this engine
+  writes is rewritten. The real binary is kept as `ling-mem.prev`.
 - **Takeover.** A running `ling-mem` named in `daemon.json` is stopped
   first; each engine version copies the store once to
   `memory/backups/takeover-<stamp>/` before it first opens it.
@@ -207,8 +209,7 @@ with a **kind**:
   checks the row's person before the user-voice guard reads it. The
   owner's writes (no `account_id`) deduplicate and replace as before.
 - **Allow / Deny** happen only at this machine.
-- **On by default**, for approved machines only. `127.0.0.1:9528` is never on
-  the network.
+- **On by default**, for approved machines only.
 - **Old rows** are classified once: a row the Allow ceremony recorded
   (`memory/connect-devices.json`) is a machine; any other is a phone.
 
@@ -223,8 +224,8 @@ building). The stores form a star: one **primary**, any number of
   *local* (default) or another machine's Linggen (`host:port`, its engine
   port). Set it in Settings → Memory → Primary. An engine never uses
   another machine's store by address; an old config that names one is
-  ignored (a log line, and `ling status` says so). A replica that followed
-  a primary at the old daemon's `host:9528` follows `host:9527`.
+  ignored. A replica that saved a primary at the old daemon's `host:9528`
+  reaches nothing there: it pairs again with `host:9527`.
 - **Plugin only** — a machine with a plugin and no Linggen has no store: the
   plugin points at another machine's `/mcp/memory` with that machine's
   token (`/linggen:config`).

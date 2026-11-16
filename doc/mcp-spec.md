@@ -56,7 +56,8 @@ arc exists to remove — self-inflicted. Anyone who wired `:9527` by hand gets
 
 Gone: `memory_search`, `memory_add`, `memory_get`, `memory_update`,
 `memory_delete`, `memory_list`, `memory_issues`, `memory_issue_resolve`. They
-are ling-mem's, served on `127.0.0.1:9528/mcp`. Add that server.
+are memory's, served on `/mcp/memory` on the engine's port (before 2.3:
+ling-mem's `127.0.0.1:9528/mcp`). Add that server.
 
 **`memory_dream_status` and `memory_dream_run` stay** — they wear the
 `memory_` prefix but are *engine* capabilities: the first composes ling-mem's
@@ -77,7 +78,7 @@ mission executor. ling-mem can serve neither.
   rule, and when to offer dream/solve) — same text the ling-mem MCP ships
   today.
 - Proxy through the engine's existing ling-mem HTTP client path so the
-  first-use autostart (install missing ling-mem, start `:9528`) fires for MCP
+  first-use autostart (install missing ling-mem, start its port) fires for MCP
   callers too. ling-mem unreachable after autostart → friendly install-guidance
   tool error, mirroring `no_bridge`.
 

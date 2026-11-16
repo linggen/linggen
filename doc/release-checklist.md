@@ -126,12 +126,12 @@ version (the gate puts that binary there when the update kept none), and back.
 
 Takeover (2.3.0 on, `scripts/gate/vm/takeover.sh`): on the old user, rows are
 written through the old daemon (three long-term, one staged, one core); after
-the upgrade each is its own check — the old daemon gone, only the engine on
-9528 and loopback only, `memory/backups/takeover-<stamp>/` and
+the upgrade each is its own check — the old daemon gone, nothing listening on
+9528, `memory/backups/takeover-<stamp>/` and
 `takeover-<version>.done`, `memory/.store.lock` naming the engine's pid, every
 row found by id through the engine with its tier, the core row in `ling mem
 session-start`, `~/.local/bin/ling-mem` the stand-in and `ling-mem.prev` the
-old binary, MCP answering at `127.0.0.1:9528/mcp` and `9527/mcp/memory`, a
+old binary, MCP answering at `9527/mem/mcp` and `9527/mcp/memory`, a
 write through the stand-in. Then a rollback — the previous engine and
 `ling-mem.prev` put back and started — must find every row, and the release
 again must take over without a second backup. `ling update --rollback` to an

@@ -33,10 +33,13 @@
 - **One restart cuts a machine over.** At start-up the engine stops a
   `ling-mem` daemon still serving the store, copies the store once per
   version (`memory/backups/takeover-…`), and holds it under
-  `memory/.store.lock`. Old callers keep working: `127.0.0.1:9528` answers
-  as the old daemon did (this machine only), and `~/.local/bin/ling-mem`
-  becomes a stand-in for `ling mem` (the real binary stays as
-  `ling-mem.prev` for a rollback).
+  `memory/.store.lock`. `~/.local/bin/ling-mem` becomes a stand-in for
+  `ling mem` (the real binary stays as `ling-mem.prev` for a rollback).
+- **One port.** The engine listens on its own port only (9527, or
+  `--port` / `LINGGEN_PORT`); nothing answers on 9528. The plugins move to
+  the engine's port. `[agent].ling_mem_url` and `$LING_MEM_URL` are gone:
+  the engine's callers use the store it hosts, and an old config's key is
+  ignored.
 - **Memory across machines: approved machines only.** Each paired device is
   a `phone` or a `machine` (approved with Allow; existing rows are
   classified by how they were made). A machine is the owner's other
@@ -45,13 +48,11 @@
   replica protocol under `/mem`. A phone sees only its person's rows, at
   `/api/memory/<verb>` and from skill pages, and is refused on the machine
   routes. One rule decides this for every memory route. Replicas now call
-  the primary at its Linggen port (`host:9527`; a replica that followed
-  `host:9528` follows `host:9527`). `127.0.0.1:9528` stays this machine's
-  only.
+  the primary at its Linggen port (`host:9527`); a replica set up against
+  the old daemon's `host:9528` pairs again.
 - **An engine uses its own memory.** "Use another machine's store by
   address" is gone (Settings → Memory → "Ling-mem URL" and its routes); an
-  old config naming one is ignored, with a log line and a line in
-  `ling status`. Share memory with Primary instead. A plugin-only machine
+  old config naming one is ignored. Share memory with Primary instead. A plugin-only machine
   still points its plugin at another machine.
 - **Allow / Deny at this Mac, in its web UI.** The local page's channel
   says it was opened on this machine, so the Share-memory prompt shows

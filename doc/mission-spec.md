@@ -247,7 +247,7 @@ The engine's hardcoded deny floor (`sudo`, `rm -rf /`, forkbomb, etc.) applies t
 Missions and skills are independent subsystems — a mission **cannot** delegate to a skill, and the `Skill` tool is not part of any mission's tool surface. A mission lists what it needs in `allowed-tools` and the engine resolves each name against:
 
 1. **Built-in engine tools** — `Read`, `Write`, `Edit`, `Bash`, `Glob`, `Grep`, `WebFetch`, `WebSearch`, `Task`, etc.
-2. **The built-in memory server's tools** — `mcp__memory__memory_*`. ling-mem ships with the product and is connected as an MCP server at `agent.ling_mem_url` + `/mcp` (see `doc/mcp-client-spec.md`); the daemon is installed alongside `ling` by the Linggen installer, and no skill is consulted. A mission may name the whole server (`mcp__memory`), which expands to the tools it advertises.
+2. **The built-in memory server's tools** — `mcp__memory__memory_*`. ling-mem ships with the product and is connected as an MCP server at the engine's own `/mem/mcp` (see `doc/mcp-client-spec.md`); the daemon is installed alongside `ling` by the Linggen installer, and no skill is consulted. A mission may name the whole server (`mcp__memory`), which expands to the tools it advertises.
 
 3. **Its own skill's tools** — skill missions only: the `tools:` its skill declares (e.g. CFO's `LatestAnalysis`), available without listing them. Other skills' tools never resolve.
 

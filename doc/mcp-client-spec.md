@@ -27,7 +27,7 @@ program. Verified against the running daemon with nothing but curl — no
 agent, no model, no `initialize` handshake, because the server is stateless:
 
 ```
-POST 127.0.0.1:9528/mcp
+POST 127.0.0.1:9527/mcp/memory
 {"jsonrpc":"2.0","id":1,"method":"tools/call",
  "params":{"name":"memory_search","arguments":{"query":"…","limit":2}}}
 → 2 rows
@@ -254,9 +254,10 @@ advertises, through one rule shared by prompt assembly and the scope sets
 (`extensions/scope.rs`). Pulse is the exception — it reads the founder's
 context and never curates it, so it names the three read tools.
 
-`[agent].ling_mem_url` was resolved and **stays**: it is where the built-in
-memory server's endpoint comes from (`+ /mcp`), and where the engine's
-program-side REST calls go. Not a knob without a consumer — a knob with two.
+`[agent].ling_mem_url` is **gone** (2.3): the engine hosts the store, so the
+built-in memory server's endpoint is its own `/mem/mcp` and the program-side
+REST calls go to `/mem/api/memory/<verb>` on the same port
+(`memory_host::url`). An old config's key is ignored.
 
 Four things a raw pass-through would have lost, and where they went: the
 calling host's name, the authoring session id, where the session stands
@@ -275,6 +276,10 @@ A second machine's `ling` reaches the store by being an MCP client of
 ```
 DS242 ling ──LAN──► Mac ling-mem :9528/mcp   (x-linggen-device)
 ```
+
+*2.3:* nothing listens on 9528. A machine with only a plugin uses the Mac's
+`:9527/mcp/memory` with its machine token; a machine with Linggen shares
+memory as a replica (`memory-spec.md` § Across machines).
 
 LAN is the scope. No relay, no VPN, no tunnel, no proxy hop.
 
