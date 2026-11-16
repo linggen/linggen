@@ -22,8 +22,8 @@
 //!
 //! Where there is no `ling-mem` at all the stand-in is written too: a plugin
 //! from before 2.3 would otherwise install the old daemon and start it beside
-//! the engine. A stand-in from an older engine is rewritten; any other script
-//! is left.
+//! the engine. A stand-in that differs from what this engine writes (an older
+//! version, another port) is rewritten; any other script is left.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -136,7 +136,9 @@ fn install_at(
                 path.display()
             )))
         }
-        Found::StandIn { version: v } if v == version => Ok(None),
+        // Ours, word for word what this engine would write: nothing to do.
+        // Any difference (another version, port or engine path) rewrites it.
+        Found::StandIn { .. } if is_current(path, engine, version, port) => Ok(None),
         Found::StandIn { .. } => {
             write_standin(path, engine, version, port)?;
             Ok(Some(format!(
@@ -154,6 +156,11 @@ fn install_at(
             )))
         }
     }
+}
+
+/// Whether the stand-in at `path` is exactly the script this engine writes.
+fn is_current(path: &Path, engine: &Path, version: &str, port: u16) -> bool {
+    std::fs::read_to_string(path).is_ok_and(|text| text == script(engine, version, port))
 }
 
 /// Move the binary to `ling-mem.prev`, first renaming an older `.prev`
@@ -364,7 +371,7 @@ mod tests {
         std::fs::write(&engine, "#!/bin/sh\necho \"engine: $*\"\n").unwrap();
         set_executable(&engine).unwrap();
 
-        let changed = install_at(&bin, &engine, "2.3.0", 9528).unwrap();
+        let changed = install_at(&bin, &engine, "2.3.0", 9527).unwrap();
         assert!(changed.is_some());
         assert_eq!(
             std::fs::read(dir.path().join("ling-mem.prev")).unwrap(),
@@ -389,7 +396,7 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["state"], "running");
         assert_eq!(v["version"], "2.3.0");
-        assert_eq!(v["port"], 9528);
+        assert_eq!(v["port"], 9527);
         let (_, out, _) = sh(&bin, &["--format", "json", "status"], no_ling);
         assert!(out.contains("\"running\""), "{out}");
         for verb in ["start", "restart", "stop", "serve", "upgrade"] {
@@ -412,9 +419,25 @@ mod tests {
         assert_eq!(out.trim(), "engine: mem list");
 
         // Again: nothing to do. A newer engine rewrites its own stand-in.
-        assert!(install_at(&bin, &engine, "2.3.0", 9528).unwrap().is_none());
-        assert!(install_at(&bin, &engine, "2.3.1", 9528).unwrap().is_some());
+        assert!(install_at(&bin, &engine, "2.3.0", 9527).unwrap().is_none());
+        assert!(install_at(&bin, &engine, "2.3.1", 9527).unwrap().is_some());
         assert_eq!(sh(&bin, &["-V"], no_ling).1.trim(), "ling-mem 2.3.1");
+    }
+
+    /// A stand-in of this same version that names another port — the old
+    /// daemon's, as engines that also listened there wrote it — is rewritten,
+    /// so its `status` says the engine's port.
+    #[test]
+    fn a_stand_in_of_the_same_version_on_another_port_is_rewritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("ling-mem");
+        let engine = Path::new("/nonexistent/ling");
+        write_standin(&bin, engine, "2.3.0", 9528).unwrap();
+        assert!(install_at(&bin, engine, "2.3.0", 4100).unwrap().is_some());
+        let (_, out, _) = sh(&bin, &["status"], "/usr/bin:/bin");
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["port"], 4100);
+        assert!(install_at(&bin, engine, "2.3.0", 4100).unwrap().is_none());
     }
 
     #[test]
@@ -423,14 +446,14 @@ mod tests {
         let bin = dir.path().join("bin/ling-mem");
         let engine = Path::new("/nonexistent/ling");
         // No `ling-mem` yet (and no folder for it): an old plugin must find ours, not install the daemon.
-        assert!(install_at(&bin, engine, "2.3.0", 9528).unwrap().is_some());
+        assert!(install_at(&bin, engine, "2.3.0", 9527).unwrap().is_some());
         assert_eq!(
             sh(&bin, &["-V"], "/usr/bin:/bin").1.trim(),
             "ling-mem 2.3.0"
         );
         assert!(!dir.path().join("bin/ling-mem.prev").exists());
         std::fs::write(&bin, "#!/bin/sh\necho mine\n").unwrap();
-        assert!(install_at(&bin, engine, "2.3.0", 9528).unwrap().is_none());
+        assert!(install_at(&bin, engine, "2.3.0", 9527).unwrap().is_none());
         assert_eq!(
             std::fs::read_to_string(&bin).unwrap(),
             "#!/bin/sh\necho mine\n"
@@ -439,7 +462,7 @@ mod tests {
 
     fn stand_in(dir: &Path) -> PathBuf {
         let bin = dir.join("ling-mem");
-        install_at(&bin, Path::new("/nonexistent/ling"), "2.3.0", 9528).unwrap();
+        install_at(&bin, Path::new("/nonexistent/ling"), "2.3.0", 9527).unwrap();
         bin
     }
 
@@ -472,7 +495,7 @@ mod tests {
     fn restoring_renames_the_kept_binary_over_the_stand_in_and_rolling_forward_keeps_it_aside_again() {
         let dir = tempfile::tempdir().unwrap();
         let bin = old_binary(dir.path(), "ling-mem", 1);
-        install_at(&bin, Path::new("/nonexistent/ling"), "2.3.0", 9528).unwrap();
+        install_at(&bin, Path::new("/nonexistent/ling"), "2.3.0", 9527).unwrap();
         let prev = dir.path().join("ling-mem.prev");
         assert_eq!(std::fs::read(&prev).unwrap()[4], 1);
 
@@ -494,7 +517,7 @@ mod tests {
         assert_eq!(std::fs::read(&bin).unwrap()[4], 1);
 
         // Rolling forward: the engine that hosts memory keeps the binary aside again.
-        assert!(install_at(&bin, Path::new("/nonexistent/ling"), "2.3.0", 9528)
+        assert!(install_at(&bin, Path::new("/nonexistent/ling"), "2.3.0", 9527)
             .unwrap()
             .is_some());
         assert!(matches!(inspect(&bin).unwrap(), Found::StandIn { .. }));
