@@ -286,6 +286,9 @@ fn spawn_companion(state: &Arc<ServerState>) {
     // user has gone quiet, then she is woken once to judge a word. See
     // server/yinyue_moments.rs.
     tokio::spawn(yinyue_moments::yinyue_moment_loop(state.clone()));
+    // A mission run that went wrong while nobody was at a screen: its fact
+    // waits here until someone is. See server/resident/mission_fact.rs.
+    tokio::spawn(resident::mission_fact_loop(state.clone()));
 }
 
 /// Perception. Two loops: one tells the user's connected devices what is

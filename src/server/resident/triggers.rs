@@ -181,17 +181,12 @@ pub(super) fn handle_notification(state: &Arc<ServerState>, payload: Notificatio
             if status == "cancelled" {
                 return;
             }
-            let Some(fact) = mission_fact::for_run(state, &mission_id, &mission_name, &run_id)
-            else {
-                return;
+            let run = mission_fact::Held {
+                mission_id,
+                label: mission_name,
+                run_id,
             };
-            tracing::info!(
-                "[yinyue-watch] mission '{mission_id}' run {run_id} had failures; handing Yinyue the fact"
-            );
-            let state = state.clone();
-            tokio::spawn(async move {
-                wake_herald(state, fact, "neutral").await;
-            });
+            mission_fact::hand_or_hold(state, run);
         }
         // A run errored — Yinyue surfaces it in her own voice. A DETERMINISTIC
         // line over the speak spine, never an LLM wake: the failure may be the

@@ -49,7 +49,7 @@ pub struct Streak {
 /// A run that ran to an end of its own — the only kind that is evidence
 /// either way. Skips, runs still going, runs a dead daemon cut off and runs
 /// the person cancelled say nothing about whether the failure is still there.
-fn ran(run: &MissionRunEntry) -> bool {
+pub fn ran(run: &MissionRunEntry) -> bool {
     !run.skipped && !matches!(run.status.as_str(), "running" | "interrupted" | "cancelled")
 }
 

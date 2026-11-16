@@ -34,6 +34,7 @@ mod triggers;
 mod turn;
 
 pub use ambient::yinyue_ambient_loop;
+pub use mission_fact::mission_fact_loop;
 pub(crate) use session_roll::is_own_session;
 use session_roll::*;
 use spoken::*;

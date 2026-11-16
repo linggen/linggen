@@ -106,34 +106,39 @@ run ends, the mission herald (`Notification(MissionCompleted)` →
 `server/resident/mission_fact.rs`) reads the run's record in `runs.jsonl`
 (`doc/mission-spec.md` § Run history) and, when no person watched it
 (`attended` is not set) and something went wrong — a tool call failed, the run
-failed, or it stopped at its step limit — wakes her once with the facts:
+failed, or it stopped at its step limit — hands her the facts:
 
 ```text
-The background job "Harbor digest" ran unattended at 01:00 on 2026-11-16
+The background job "Harbor digest" ran on its own at 01:00 on 2026-11-16
 (status: completed). What the engine recorded about the run:
 - fetch exited with status 3; the last of its error output: "fetch: could not reach host"
 - the same failure showed in each of the last 3 runs, on 3 different day(s), since 2026-11-14
 ```
 
 …then the herald's usual choice: one or two sentences in her voice, or
-`SILENT`. Up to three failed calls are named (each with its capped tail), the
-rest counted; a failed run's error is quoted; the streak line is computed from
-`runs.jsonl` (the same tool failing the same way, runs that ran, older records
-without failures end it) — the one fact a model woken for one run cannot know.
-Nothing tells her it matters; nothing is said by code.
+`SILENT`. Up to three failed calls are named (each with its capped tail; a
+refused call has none — its text is the engine's), the rest counted; a failed
+run's error is quoted; the streak line is computed from `runs.jsonl` (the same
+tool failing the same way, over runs that ran; older records without failures
+end it) — the one fact a model woken for one run cannot know. A later run
+that had nothing go wrong is named too. Nothing tells her it matters; nothing
+is said by code.
 
+- **Held for the person.** Missions run while nobody watches. When the person
+  is at a screen (presence is not `away`) she is woken at once; otherwise the
+  fact waits (a 5 s check) until presence says someone is back, and only then
+  is she woken. One held run per mission, the newest, its fact built from the
+  record when she is woken: a mission failing every night while they are away
+  is one wake when they return, its streak naming the nights. The hold is in
+  memory — a restart loses it, never the record.
 - A clean run, an attended run and a cancelled one hand her nothing.
-- One wake per finished run: a mission failing every night is one fact a
-  night, never a burst. Her turn is a plain agent run, not a mission run, so it
-  emits no `MissionCompleted` and cannot wake her again.
-- She runs on her own rolling thread, so the fact stays in it for her next
-  turns; the run also leaves a `fault` line in the activity log
-  (`doc/perception-spec.md` § 3), which her doorbell reads. Pet off or not yet
-  met: no wake — the record, the missions page and the activity log still hold
-  it.
-- Woken at 01:00, she speaks to whoever is there. The fact is not held for the
-  person's return: the moments gate (below) drops a moment after 15 minutes and
-  waits for the app it names, so it cannot carry a night's fact to the morning.
+- No loop, no burst: her turn is a plain agent run, not a mission run, so it
+  emits no `MissionCompleted`; each finished run is handed at most once.
+- Her turn runs on her own rolling thread (the kickoff is a `[HIDDEN]` row
+  there). The run also leaves a `fault` line in the activity log
+  (`doc/perception-spec.md` § 3), which `recent_activity` returns. Pet off or
+  not yet met: nothing is held or handed — the record, the missions page and
+  the activity log still hold it.
 
 ## Interactive loop-back — the approve case
 

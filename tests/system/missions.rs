@@ -92,10 +92,26 @@ fn pet_lines(w: &World) -> Vec<String> {
         .collect()
 }
 
+async fn beat_present(w: &World) {
+    let body = json!({"surface": "main-ui", "focused": true, "typing": false, "idle_ms": 1000});
+    w.api.post("/api/presence", body).await;
+}
+
+/// Her kickoffs so far, oldest first.
+fn her_facts(w: &World) -> Vec<String> {
+    w.model
+        .calls_of(Agent::Yinyue)
+        .iter()
+        .filter_map(|c| c.thread().last().map(|(_, t)| t.clone()))
+        .collect()
+}
+
 /// A declared tool exits 3 and the model still closes as usual: the run is
-/// recorded with the failure, she is handed one fact naming the tool and the
-/// status, and the only line spoken is hers. The same mission with the tool
-/// succeeding hands her nothing.
+/// recorded with the failure, and its fact waits while nobody is at a
+/// screen; once someone is, she is handed it — once, naming the tool and the
+/// status — and the only line spoken is hers. The same mission with the tool
+/// succeeding hands her nothing; failing again while someone is there, she
+/// is handed it at once.
 #[tokio::test]
 async fn a_failed_tool_in_an_unattended_run_reaches_her_as_one_fact() {
     let ling = vec![
@@ -103,18 +119,20 @@ async fn a_failed_tool_in_an_unattended_run_reaches_her_as_one_fact() {
         text("The lamp check did not complete. DONE"),
         tool("Ping", json!({})),
         text("The lamp answered. DONE"),
+        tool("Ping", json!({})),
+        text("The lamp check did not complete. DONE"),
     ];
     let w = World::start(
         Setup::default()
             .script(Agent::Ling, ling)
-            .script(Agent::Yinyue, vec![text(HER_LINE)]),
+            .script(Agent::Yinyue, vec![text(HER_LINE), text(HER_LINE)]),
     )
     .await;
     install_beacon(&w.home.linggen_home().join("skills"));
     w.api.post("/api/skills/reload", json!({})).await;
 
+    // Nobody at a screen (no surface has beaten): the run fails at "night".
     set_exit(&w, 3);
-    let her_mark = w.mark();
     let failed = run_once(&w).await;
     assert_eq!(failed["status"], "completed", "{failed}");
     assert_eq!(failed["failure_count"], 1, "{failed}");
@@ -128,12 +146,18 @@ async fn a_failed_tool_in_an_unattended_run_reaches_her_as_one_fact() {
         !failed.to_string().contains("rows the model reads"),
         "stdout reached the record: {failed}"
     );
+    // The hold checks every 5 s; past one check, nothing has reached her.
+    tokio::time::sleep(Duration::from_secs(6)).await;
+    assert!(her_facts(&w).is_empty(), "handed to an empty room");
 
+    // Someone is back: she is handed the fact, once.
+    let her_mark = w.mark();
+    beat_present(&w).await;
     w.wait_agent(Agent::Yinyue, her_mark).await;
-    let hers = w.model.calls_of(Agent::Yinyue);
-    assert_eq!(hers.len(), 1, "she was woken {} times", hers.len());
-    let (_, fact) = hers[0].thread().last().cloned().expect("her kickoff");
-    assert!(fact.contains("\"Beacon check\" ran unattended"), "{fact}");
+    let facts = her_facts(&w);
+    assert_eq!(facts.len(), 1, "she was woken {} times", facts.len());
+    let fact = &facts[0];
+    assert!(fact.contains("\"Beacon check\" ran on its own"), "{fact}");
     assert!(fact.contains("Ping exited with status 3"), "{fact}");
     assert!(fact.contains("beacon: the lamp did not answer"), "{fact}");
     assert!(
@@ -146,18 +170,16 @@ async fn a_failed_tool_in_an_unattended_run_reaches_her_as_one_fact() {
     );
     assert_eq!(pet_lines(&w), [HER_LINE], "a line not hers was spoken");
 
+    // A clean run, someone there: nothing for her.
     set_exit(&w, 0);
+    beat_present(&w).await;
     let clean = run_once(&w).await;
     assert_eq!(clean["status"], "completed", "{clean}");
     assert!(clean.get("failure_count").is_none(), "{clean}");
     assert!(clean.get("failures").is_none(), "{clean}");
-    // Time for a herald to have started, were one coming.
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    assert_eq!(
-        w.model.calls_of(Agent::Yinyue).len(),
-        1,
-        "a clean run woke her"
-    );
+    // Past a hold check, were anything coming.
+    tokio::time::sleep(Duration::from_secs(6)).await;
+    assert_eq!(her_facts(&w).len(), 1, "a clean run woke her");
     assert_eq!(pet_lines(&w), [HER_LINE]);
 
     let listed = w.api.get("/api/missions").await;
@@ -168,5 +190,19 @@ async fn a_failed_tool_in_an_unattended_run_reaches_her_as_one_fact() {
         .unwrap_or_else(|| panic!("not listed: {listed}"));
     assert_eq!(beacon["last_run"]["status"], "completed", "{beacon}");
     assert_eq!(beacon["last_run"]["failure_count"], 0, "{beacon}");
+
+    // Failing again with someone there: handed at once, no hold.
+    set_exit(&w, 3);
+    beat_present(&w).await;
+    let her_mark = w.mark();
+    run_once(&w).await;
+    w.wait_agent(Agent::Yinyue, her_mark).await;
+    let facts = her_facts(&w);
+    assert_eq!(facts.len(), 2, "{facts:?}");
+    assert!(
+        facts[1].contains("Ping exited with status 3"),
+        "{}",
+        facts[1]
+    );
     w.assert_all_scripted();
 }
