@@ -74,6 +74,25 @@ impl AccountScope {
             Self::Any => true,
         }
     }
+
+    /// The SQL twin of [`Self::admits`]; `None` = no clause (everyone's).
+    fn sql(&self) -> Option<String> {
+        match self {
+            Self::Owner => Some("account_id IS NULL".to_string()),
+            Self::Id(id) => Some(format!("account_id = '{}'", escape_sql(id))),
+            Self::Any => None,
+        }
+    }
+
+    /// The rows a new row of `account_id` may be deduplicated into: a
+    /// person's write meets only that person's rows; the owner's
+    /// (unstamped) write meets every row, as it always has.
+    pub fn for_dedup(account_id: Option<&str>) -> Self {
+        match account_id {
+            Some(id) => Self::Id(id.to_string()),
+            None => Self::Any,
+        }
+    }
 }
 
 /// Filter criteria shared by [`MemoryStore::search`] and [`MemoryStore::list`].
@@ -221,10 +240,8 @@ impl Filters {
             clauses.push(format!("{} IN ({list})", self.col()));
         }
 
-        match &self.account {
-            AccountScope::Owner => clauses.push("account_id IS NULL".to_string()),
-            AccountScope::Id(id) => clauses.push(format!("account_id = '{}'", escape_sql(id))),
-            AccountScope::Any => {}
+        if let Some(clause) = self.account.sql() {
+            clauses.push(clause);
         }
 
         if !self.types.is_empty() {
@@ -1118,8 +1135,9 @@ impl MemoryStore {
         // existing row and each insert a fresh copy.
         let _guard = self.write_lock.lock().await;
 
+        let whose = AccountScope::for_dedup(fact.account_id.as_deref());
         if let Some(existing) = self
-            .find_exact_content(&fact.content, fact.r#type, except)
+            .find_exact_content(&fact.content, fact.r#type, except, &whose)
             .await?
         {
             let previous_id = existing.id.clone();
@@ -1146,8 +1164,9 @@ impl MemoryStore {
         content: &str,
         ty: MemoryType,
         except: &[String],
+        whose: &AccountScope,
     ) -> Result<Option<Memory>> {
-        self.find_exact_content(content, ty, except).await
+        self.find_exact_content(content, ty, except, whose).await
     }
 
     /// Move every row stamped `from` (live or archived) to `to` — `None`
@@ -1232,18 +1251,22 @@ impl MemoryStore {
     ///
     /// Live rows only: an archived (superseded) row is history, and merging
     /// a new write into it left the write invisible. Rows in `except` are
-    /// never a match.
+    /// never a match, nor rows outside `whose`.
     async fn find_exact_content(
         &self,
         content: &str,
         ty: MemoryType,
         except: &[String],
+        whose: &AccountScope,
     ) -> Result<Option<Memory>> {
         let mut filter = format!(
             "content = '{}' AND type = '{}' AND expired_at IS NULL",
             escape_sql(content),
             ty.as_str()
         );
+        if let Some(clause) = whose.sql() {
+            filter.push_str(&format!(" AND {clause}"));
+        }
         if !except.is_empty() {
             let ids: Vec<String> = except
                 .iter()
@@ -3428,6 +3451,34 @@ mod tests {
         };
         assert_eq!(got.id, candidate.id);
         assert_ne!(got.id, loser_id);
+        assert_eq!(store.count().await.unwrap(), 2);
+    }
+
+    /// A person's write is never merged into another person's row, nor
+    /// into the owner's; the owner's write still meets every row.
+    #[tokio::test]
+    async fn dedup_stays_inside_the_writers_person() {
+        let (store, _dir) = fresh_store().await;
+        let mut alex = make_fact("same words", MemoryType::Fact);
+        alex.account_id = Some("u-alex".into());
+        let alex_id = alex.id.clone();
+        store.insert(&[alex]).await.unwrap();
+
+        let mut other = make_fact("same words", MemoryType::Fact);
+        other.account_id = Some("u-other".into());
+        let outcome = store.insert_with_dedup(other.clone()).await.unwrap();
+        assert!(matches!(&outcome, InsertOutcome::Added(f) if f.id == other.id));
+
+        let mut again = make_fact("same words", MemoryType::Fact);
+        again.account_id = Some("u-alex".into());
+        let outcome = store.insert_with_dedup(again).await.unwrap();
+        assert!(
+            matches!(&outcome, InsertOutcome::Merged { previous_id, .. } if *previous_id == alex_id)
+        );
+
+        let owner = make_fact("same words", MemoryType::Fact);
+        let outcome = store.insert_with_dedup(owner).await.unwrap();
+        assert!(matches!(outcome, InsertOutcome::Merged { .. }));
         assert_eq!(store.count().await.unwrap(), 2);
     }
 

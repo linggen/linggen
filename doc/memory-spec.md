@@ -190,6 +190,22 @@ with a **kind**:
   (`/mem/api/connect/request`, `/mem/api/connect/status/<id>`) needs no
   token. Everything else under `/mem` is this machine's. A phone's token is
   refused on all of these (403); its door is `/api/memory/<verb>`.
+- **A phone that is another person** (not signed in to this machine's own
+  account) runs only the verbs kept per person: `search`, `list`, `count`,
+  `get`, `add`, `add_batch`, `update`, `delete`, `forget`,
+  `session_start`. Any other verb — including one memory gains later — is
+  refused (403 `FORBIDDEN`), and so is a body the stamp cannot mark (not a
+  JSON object). The owner's own phone runs every verb but `restamp` and
+  `accounts`.
+- **Memory checks the person too.** A write stamped with a person
+  (`account_id`) may name only that person's rows in `replace_ids`; any
+  other id refuses the whole call before anything is written, with the
+  same not-found answer whether the id is missing or someone else's. Its
+  duplicate check (same table and the other table) looks only at that
+  person's rows, so it never merges into, promotes over or deletes another
+  person's row. `add_batch` stamps every row with its person. `update`
+  checks the row's person before the user-voice guard reads it. The
+  owner's writes (no `account_id`) deduplicate and replace as before.
 - **Allow / Deny** happen only at this machine.
 - **On by default**, for approved machines only. `127.0.0.1:9528` is never on
   the network.

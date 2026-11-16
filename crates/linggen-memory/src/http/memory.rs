@@ -228,7 +228,9 @@ pub struct AddRequest {
     /// resolution. Lookup spans both tables, so the caller doesn't need
     /// to know which tier each loser lives in. Empty / omitted = a plain
     /// add. Failed deletes are reported in the response under
-    /// `replaced_failed` but never abort the insert.
+    /// `replaced_failed` but never abort the insert. A write that carries
+    /// `account_id` may name only that person's rows; any other id refuses
+    /// the call before anything is written.
     #[serde(default)]
     pub replace_ids: Vec<String>,
     /// Assert that the user directed this change — their current message
@@ -692,14 +694,16 @@ async fn add(
     if req.content.trim().is_empty() {
         return Err(ApiError::bad_request("content must not be empty"));
     }
+    let account_id = req.account_id.clone().filter(|a| !a.trim().is_empty());
+    // The rows this one replaces: their tier and scope carry over. A
+    // person may name only their own rows; that is settled before the
+    // user-voice guard reads any row, and before anything is written.
+    let losers = locate_rows(&state, &req.replace_ids, account_id.as_deref()).await?;
     guard_user_voice(&state, &req.replace_ids, req.user_directed).await?;
 
     let skip_dedup = req.skip_dedup;
     let replace_ids = req.replace_ids.clone();
-    // The rows this one replaces: their tier and scope carry over.
-    let losers = locate_rows(&state, &replace_ids).await?;
     let tier = resolve_tier(req.tier, req.episodic, &losers, req.indexed);
-    let episodic = tier == Tier::Episodic;
     let scope = resolve_scope(&req, &losers, tier);
     let mut fact = Memory::new(
         req.content,
@@ -714,7 +718,7 @@ async fn add(
     fact.occurred_at = req.occurred_at;
     fact.source_session = req.source_session;
     fact.host = req.host;
-    fact.account_id = req.account_id.filter(|a| !a.trim().is_empty());
+    fact.account_id = account_id;
     fact.account_name = req.account_name.filter(|a| !a.trim().is_empty());
 
     // Embed the content so the row is immediately searchable. Serialized +
@@ -727,16 +731,27 @@ async fn add(
         .map_err(ApiError::internal)?;
     fact.vector = Some(vector);
 
-    let store = pick_store(&state, episodic);
+    Ok(ok(write_row(&state, fact, &replace_ids, skip_dedup).await?))
+}
+
+/// Write an embedded row: as given (`skip_dedup`), or merged into an exact
+/// duplicate of the same person (the other table first, then its own);
+/// then retire `replace_ids`. Returns the add verb's `data`.
+async fn write_row(
+    state: &SharedState,
+    fact: Memory,
+    replace_ids: &[String],
+    skip_dedup: bool,
+) -> Result<Value, ApiError> {
+    let episodic = fact.tier == Tier::Episodic;
+    let store = pick_store(state, episodic);
     if skip_dedup {
         store.insert(std::slice::from_ref(&fact)).await?;
         let body = json!({
             "action": "added",
             "fact": fact_public(&fact),
         });
-        return Ok(ok(
-            apply_replace_ids(&state, &replace_ids, &fact.id, body).await
-        ));
+        return Ok(apply_replace_ids(state, replace_ids, &fact.id, body).await);
     }
 
     // Cross-tier dedup. The single-table `insert_with_dedup` below only
@@ -745,13 +760,15 @@ async fn add(
     // would coexist. Tier rank: Core > Semantic > Episodic. The higher-
     // tier row wins; on equal rank (e.g. both semantic) the in-table
     // dedup handles it. See linggen `agents/ling-mem.md` tier-discipline.
+    // A person's write meets only that person's rows, here and in-table.
+    let whose = AccountScope::for_dedup(fact.account_id.as_deref());
     let other = if episodic {
         Arc::clone(&state.store)
     } else {
         Arc::clone(&state.episodic)
     };
     if let Some(existing) = other
-        .find_exact_content_public(&fact.content, fact.r#type, &replace_ids)
+        .find_exact_content_public(&fact.content, fact.r#type, replace_ids, &whose)
         .await?
     {
         let new_rank = tier_rank(fact.tier);
@@ -767,13 +784,7 @@ async fn add(
                 "previous_id": existing.id,
                 "fact": fact_public(&merged),
             });
-            return Ok(ok(apply_replace_ids(
-                &state,
-                &replace_ids,
-                &existing.id,
-                body,
-            )
-            .await));
+            return Ok(apply_replace_ids(state, replace_ids, &existing.id, body).await);
         }
         // New row is at a higher tier — promote: delete the lower-tier
         // copy from the other table, then proceed with single-table insert.
@@ -781,27 +792,44 @@ async fn add(
     }
 
     // Never into a row this call replaces: that row is about to be retired.
-    let outcome = store.insert_with_dedup_except(fact, &replace_ids).await?;
+    let outcome = store.insert_with_dedup_except(fact, replace_ids).await?;
     let survivor = match &outcome {
         crate::memory::InsertOutcome::Added(f) => f.id.clone(),
         crate::memory::InsertOutcome::Merged { fact, .. } => fact.id.clone(),
     };
-    let body = apply_replace_ids(&state, &replace_ids, &survivor, outcome_public(&outcome)).await;
-    Ok(ok(body))
+    Ok(apply_replace_ids(state, replace_ids, &survivor, outcome_public(&outcome)).await)
 }
 
-/// The rows `replace_ids` names, wherever they live (missing ids skipped).
-async fn locate_rows(state: &SharedState, ids: &[String]) -> Result<Vec<Memory>, ApiError> {
+/// The rows `replace_ids` names, wherever they live. The owner's write
+/// (`person` absent) skips missing ids. A person's write must name only
+/// their own rows: any other id — missing, or another person's — refuses
+/// the whole call, with the same answer either way.
+async fn locate_rows(
+    state: &SharedState,
+    ids: &[String],
+    person: Option<&str>,
+) -> Result<Vec<Memory>, ApiError> {
     let mut found = Vec::new();
     for id in ids {
-        for store in stores_for_read(state, None) {
-            if let Some(row) = store.get(id).await? {
-                found.push(row);
-                break;
-            }
+        let row = locate_row(state, id).await?;
+        match (row, person) {
+            (Some(row), None) => found.push(row),
+            (None, None) => {}
+            (Some(row), Some(p)) if AccountScope::Id(p.to_string()).admits(&row) => found.push(row),
+            (_, Some(_)) => return Err(ApiError::not_found(format!("no fact with id {id}"))),
         }
     }
     Ok(found)
+}
+
+/// One row by id, semantic table first.
+async fn locate_row(state: &SharedState, id: &str) -> Result<Option<Memory>, ApiError> {
+    for store in stores_for_read(state, None) {
+        if let Some(row) = store.get(id).await? {
+            return Ok(Some(row));
+        }
+    }
+    Ok(None)
 }
 
 /// The tier a write lands in. Asked-for wins (`episodic: true` or `tier`);
@@ -917,25 +945,9 @@ async fn add_batch(
     // Partition by target table up front so each table commits exactly once.
     let mut semantic: Vec<Memory> = Vec::new();
     let mut episodic: Vec<Memory> = Vec::new();
-    for r in req.facts {
-        if r.content.trim().is_empty() {
-            continue; // skip blanks; don't abort the whole import for one
-        }
-        let tier = resolve_tier(r.tier, r.episodic, &[], r.indexed);
-        let mut fact = Memory::new(
-            r.content,
-            r.r#type.unwrap_or(MemoryType::Fact),
-            r.from.unwrap_or_default(),
-        );
-        fact.tier = tier;
-        fact.outcome = r.outcome;
-        fact.scope = written_scope(r.scope.or(r.cwd), r.global || tier == Tier::Core);
-        fact.summary = clean_summary(r.summary);
-        fact.indexed = r.indexed && tier != Tier::Core;
-        fact.occurred_at = r.occurred_at;
-        fact.source_session = r.source_session;
-        fact.host = r.host;
-        if tier == Tier::Episodic {
+    // Blanks are skipped; one doesn't abort the whole import.
+    for fact in req.facts.into_iter().filter_map(batch_row) {
+        if fact.tier == Tier::Episodic {
             episodic.push(fact);
         } else {
             semantic.push(fact);
@@ -968,6 +980,31 @@ async fn add_batch(
         "count": added.len(),
         "facts": added,
     })))
+}
+
+/// One batch-imported row, stamped with the person it was written for;
+/// `None` for blank content.
+fn batch_row(r: AddRequest) -> Option<Memory> {
+    if r.content.trim().is_empty() {
+        return None;
+    }
+    let tier = resolve_tier(r.tier, r.episodic, &[], r.indexed);
+    let mut fact = Memory::new(
+        r.content,
+        r.r#type.unwrap_or(MemoryType::Fact),
+        r.from.unwrap_or_default(),
+    );
+    fact.tier = tier;
+    fact.outcome = r.outcome;
+    fact.scope = written_scope(r.scope.or(r.cwd), r.global || tier == Tier::Core);
+    fact.summary = clean_summary(r.summary);
+    fact.indexed = r.indexed && tier != Tier::Core;
+    fact.occurred_at = r.occurred_at;
+    fact.source_session = r.source_session;
+    fact.host = r.host;
+    fact.account_id = r.account_id.filter(|a| !a.trim().is_empty());
+    fact.account_name = r.account_name.filter(|a| !a.trim().is_empty());
+    Some(fact)
 }
 
 /// The merge law's floor, enforced at the store: a write that replaces
@@ -1341,11 +1378,7 @@ async fn update(
     State(state): State<SharedState>,
     Json(req): Json<UpdateRequest>,
 ) -> Result<Response, ApiError> {
-    // A content rewrite of an existing row is the same violation class
-    // as an add-with-replace_ids; metadata-only patches stay unguarded.
-    if req.content.is_some() {
-        guard_user_voice(&state, std::slice::from_ref(&req.id), req.user_directed).await?;
-    }
+    let rewrites = req.content.is_some();
     let outcome_patch = match (req.outcome, req.clear_outcome) {
         (Some(o), _) => Some(Some(o)),
         (None, true) => Some(None),
@@ -1412,6 +1445,13 @@ async fn update(
     };
     if !req.scope.scope().admits(&existing) {
         return Err(ApiError::not_found(format!("no fact with id {}", req.id)));
+    }
+    // A content rewrite of an existing row is the same violation class
+    // as an add-with-replace_ids; metadata-only patches stay unguarded.
+    // Checked after the account, so the guard never quotes another
+    // person's row.
+    if rewrites {
+        guard_user_voice(&state, std::slice::from_ref(&req.id), req.user_directed).await?;
     }
 
     let target_tier = patch.tier.unwrap_or(existing.tier);
@@ -1860,5 +1900,182 @@ mod tests {
         assert!(!state.embedder.is_ready(), "nothing asked for the model");
         // A call that embeds reports the load failure instead of hanging.
         assert!(state.embedder().await.is_err());
+    }
+
+    // ── one person's write never reaches another person's rows ──────────
+
+    fn row_of(content: &str, account: Option<&str>, tier: Tier) -> Memory {
+        let mut m = Memory::new(content, MemoryType::Fact, Origin::User);
+        m.account_id = account.map(str::to_string);
+        m.tier = tier;
+        m
+    }
+
+    async fn post(state: &SharedState, path: &str, body: Value) -> (u16, Value) {
+        let app = router().with_state(Arc::clone(state));
+        let res = tower::ServiceExt::oneshot(
+            app,
+            axum::http::Request::post(path)
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        let status = res.status().as_u16();
+        let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    /// Alex's row, in the user's voice. Another person naming it in
+    /// `replace_ids` — or rewriting it — is refused before anything is
+    /// written (the test state has no model, so nothing could be embedded
+    /// either), with the same answer as an id that does not exist, and the
+    /// user-voice guard never gets to quote it.
+    #[tokio::test]
+    async fn another_persons_rows_cannot_be_replaced_or_rewritten() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let state = scratch_state(dir.path()).await;
+        let alex = row_of("Alex prefers tea", Some("u-alex"), Tier::Semantic);
+        state.store.insert(&[alex.clone()]).await.unwrap();
+
+        let replace = |id: &str| json!({"content": "prefers coffee", "account_id": "u-other", "replace_ids": [id]});
+        let (theirs, body) = post(&state, "/api/memory/add", replace(&alex.id)).await;
+        let (missing, missing_body) = post(&state, "/api/memory/add", replace("nope")).await;
+        assert_eq!(theirs, 404, "{body}");
+        assert_eq!(missing, 404, "{missing_body}");
+        assert_eq!(body["code"], missing_body["code"]);
+        assert!(!body.to_string().contains("tea"), "{body}");
+
+        let (status, body) = post(
+            &state,
+            "/api/memory/update",
+            json!({"id": alex.id, "content": "prefers coffee", "account": "u-other"}),
+        )
+        .await;
+        assert_eq!(status, 404, "{body}");
+        assert!(!body.to_string().contains("tea"), "{body}");
+
+        let kept = state.store.get(&alex.id).await.unwrap().unwrap();
+        assert!(kept.expired_at.is_none());
+        assert_eq!(kept.content, "Alex prefers tea");
+        assert_eq!(state.store.count().await.unwrap(), 1);
+        assert_eq!(state.episodic.count().await.unwrap(), 0);
+    }
+
+    /// A person naming their own row gets past the check (and on to the
+    /// embedder, which this test state does not have).
+    #[tokio::test]
+    async fn a_person_may_replace_their_own_row() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let state = scratch_state(dir.path()).await;
+        let alex = Memory::new("Alex prefers tea", MemoryType::Fact, Origin::Derived);
+        let alex = Memory {
+            account_id: Some("u-alex".into()),
+            ..alex
+        };
+        state.store.insert(&[alex.clone()]).await.unwrap();
+        let losers = locate_rows(&state, &[alex.id.clone()], Some("u-alex"))
+            .await
+            .unwrap();
+        assert_eq!(losers.len(), 1);
+        // The owner's write: a missing id is skipped, any row is found.
+        let losers = locate_rows(&state, &[alex.id.clone(), "nope".into()], None)
+            .await
+            .unwrap();
+        assert_eq!(losers.len(), 1);
+    }
+
+    /// Exact duplicates of another person's row, in the same table and
+    /// across tables, become rows of their own; the other row is not
+    /// merged into, promoted over or deleted.
+    #[tokio::test]
+    async fn a_duplicate_of_another_persons_row_is_a_row_of_its_own() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let state = scratch_state(dir.path()).await;
+        let same_tier = row_of("same words", Some("u-alex"), Tier::Semantic);
+        let staged = row_of("staged words", Some("u-alex"), Tier::Episodic);
+        state.store.insert(&[same_tier.clone()]).await.unwrap();
+        state.episodic.insert(&[staged.clone()]).await.unwrap();
+
+        let cases = [
+            ("same words", Tier::Semantic),
+            ("same words", Tier::Episodic),
+            ("staged words", Tier::Episodic),
+            ("staged words", Tier::Semantic),
+        ];
+        // A writer per case: each one's first copy is a row of its own.
+        for (i, (content, tier)) in cases.into_iter().enumerate() {
+            let mine = row_of(content, Some(&format!("u-other-{i}")), tier);
+            let data = write_row(&state, mine.clone(), &[], false).await.unwrap();
+            assert_eq!(data["action"], "added", "{content} {tier:?}: {data}");
+            assert_eq!(data["fact"]["id"], mine.id.as_str());
+        }
+
+        let a = state.store.get(&same_tier.id).await.unwrap().unwrap();
+        assert_eq!(
+            (a.content.as_str(), a.account_id.as_deref()),
+            ("same words", Some("u-alex"))
+        );
+        assert!(a.expired_at.is_none());
+        let b = state.episodic.get(&staged.id).await.unwrap().unwrap();
+        assert_eq!(b.account_id.as_deref(), Some("u-alex"));
+        assert_eq!(state.store.count().await.unwrap(), 3);
+        assert_eq!(state.episodic.count().await.unwrap(), 3);
+    }
+
+    /// The owner's write deduplicates and replaces as it always has.
+    #[tokio::test]
+    async fn the_owners_write_still_merges_and_replaces() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let state = scratch_state(dir.path()).await;
+        let mut kept = row_of("owner words", None, Tier::Semantic);
+        kept.origin = Origin::Derived;
+        let mut staged = row_of("staged words", None, Tier::Episodic);
+        staged.origin = Origin::Derived;
+        let mut loser = row_of("old words", None, Tier::Semantic);
+        loser.origin = Origin::Derived;
+        state
+            .store
+            .insert(&[kept.clone(), loser.clone()])
+            .await
+            .unwrap();
+        state.episodic.insert(&[staged.clone()]).await.unwrap();
+
+        let again = row_of("owner words", None, Tier::Semantic);
+        let data = write_row(&state, again, &[loser.id.clone()], false)
+            .await
+            .unwrap();
+        assert_eq!(data["action"], "merged", "{data}");
+        assert_eq!(data["previous_id"], kept.id.as_str());
+        assert_eq!(data["replaced"], json!([loser.id]));
+
+        // Cross tier: a long-term copy promotes over the staged one.
+        let promoted = row_of("staged words", None, Tier::Semantic);
+        let data = write_row(&state, promoted, &[], false).await.unwrap();
+        assert_eq!(data["action"], "added", "{data}");
+        assert!(state.episodic.get(&staged.id).await.unwrap().is_none());
+    }
+
+    /// A batch row carries the person it was written for — a person's
+    /// import is never filed as the owner's — and a batch never merges.
+    #[test]
+    fn a_batch_row_is_the_persons_it_was_written_for() {
+        let req: AddBatchRequest = serde_json::from_value(json!({"facts": [
+            {"content": "Alex prefers tea", "account_id": "u-other", "account_name": "Sam"},
+            {"content": "  "},
+            {"content": "owner row", "tier": "core"},
+        ]}))
+        .unwrap();
+        let rows: Vec<Memory> = req.facts.into_iter().filter_map(batch_row).collect();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].account_id.as_deref(), Some("u-other"));
+        assert_eq!(rows[0].account_name.as_deref(), Some("Sam"));
+        assert_eq!(rows[1].account_id, None);
     }
 }
