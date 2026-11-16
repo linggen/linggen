@@ -49,6 +49,13 @@ pub struct Mission {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_if: Option<String>,
 
+    /// A step the engine runs itself when any run of this mission starts
+    /// (frontmatter `prepare`): arguments to the engine's own binary, never
+    /// a shell line. `$DAY` is the run's day. A failure ends the run as
+    /// failed before any model call. Empty = none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prepare: Vec<String>,
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

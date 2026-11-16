@@ -641,6 +641,14 @@ async fn dispatch_mission_prompt(
         attended,
     );
 
+    // The mission's own step, run by the engine before any model call (the
+    // memory scan's walk of the session logs). A failure ends the run here.
+    if let Err(end) = super::prepare::run(mission, day.as_deref(), &root).await {
+        note_unprepared(&state, mission, session_id.as_deref(), &end);
+        end_mission_run(&state, mission, &mission_run_id, session_id, end);
+        return;
+    }
+
     // Memory-agent runs end in the condense stage, whose replace_ids
     // merges retire long-term rows with no undo — snapshot the store
     // first (one export per day, 7 kept, best-effort).
@@ -1112,6 +1120,48 @@ fn end_mission_run(
             session_id,
         },
     ));
+}
+
+/// Tell the run's session why it never started: the step that failed and
+/// the tail of its error, the same words its record keeps.
+fn note_unprepared(
+    state: &Arc<SchedulerHost>,
+    mission: &Mission,
+    session_id: Option<&str>,
+    end: &RunEnd,
+) {
+    let Some(sid) = session_id else { return };
+    let why = end.faults.failures.first().map(|f| {
+        let tail = f
+            .tail
+            .as_deref()
+            .map(|t| format!(": {t}"))
+            .unwrap_or_default();
+        format!("{}{tail}", f.phrase())
+    });
+    let content = format!(
+        "This run did not start — `ling {}`: {}.",
+        mission.prepare.join(" "),
+        why.unwrap_or_else(|| "it failed".to_string())
+    );
+    let _ = state.manager.global_sessions.add_chat_message(
+        sid,
+        &crate::state_fs::sessions::ChatMsg {
+            run_id: None,
+            via: None,
+            via_note: None,
+            agent_id: mission.agent_id.clone(),
+            from_id: mission.agent_id.clone(),
+            to_id: "user".to_string(),
+            content,
+            timestamp: crate::util::now_ts_secs(),
+            is_observation: false,
+            client_id: None,
+            failed: true,
+            images: Vec::new(),
+        },
+    );
+    let _ = state.events_tx.send(ServerEvent::StateUpdated);
 }
 
 /// A mission-level run id: `mission-run-<ts>-<uuid8>`.

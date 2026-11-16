@@ -3,6 +3,7 @@ pub mod draft;
 pub mod enter;
 pub mod outcome;
 pub mod parser;
+mod prepare;
 mod report;
 mod run_if;
 pub mod scheduler;
@@ -217,6 +218,7 @@ impl MissionLoader {
             enabled: draft.enabled.unwrap_or(true),
             catchup_hours: draft.catchup_hours.flatten(),
             run_if: None,
+            prepare: Vec::new(),
             cwd: draft.cwd.clone().flatten(),
             model: draft.model.clone().flatten(),
             kickoff: draft.kickoff.clone().unwrap_or_default(),

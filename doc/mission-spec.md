@@ -117,8 +117,9 @@ permission:
 | `catchup_hours` | no | If set, the scheduler fires the mission when a scheduled time inside the last this-many hours has no run started at or after it. Used to recover from cron fires missed while the machine was off/asleep. Omit to leave the mission cron-only. `0` is treated as opt-out |
 | `enabled` | yes | On/off. For a skill mission this is the default; the user's choice wins |
 | `run-if` | no | Shell check run before a scheduled run (cron or catch-up). Exit 0 runs; anything else skips with no session or model call. See "run-if" |
+| `prepare` | no | Arguments to the engine's own binary, run by the engine when any run starts, before the first turn (`[mem, scan, $DAY]`). A failure ends the run as failed. See "prepare" |
 | `agent` | no | Engine agent that runs the mission (key into `agents/`). Defaults to `ling`. The mission body is still the system prompt — `agent:` just picks the routing identity, the model default, and the persona-level config |
-| `cwd` | yes | Working directory for the agent. One inside the Linggen home that does not exist yet is made when a run starts, so a mission can work in an empty folder of its own; one anywhere else is left as it is |
+| `cwd` | yes | Working directory for the agent |
 | `model` | no | Model override |
 | `kickoff` | no | Ordered list of user-turn messages persisted at run start. Item 0 fires immediately; later items drain one-per-assistant-final-reply via the engine's `kickoff_queue`. Empty list falls back to a single generic "Run the X mission" line. Use for staged onboarding (greet → start work) without batching everything into one model reply |
 | `kickoff-day` | no | Day-scoped kickoff variant, used when a trigger passes a target `day` (the memory app's calendar). `$DAY` in each item is replaced with the `YYYY-MM-DD` date |
@@ -136,13 +137,15 @@ A mission body is the **runbook**: step-by-step instructions, explicit tool call
 
 The agent referenced in frontmatter (`agent: ling`, default `ling`) contributes its `## Identity` block — the first paragraph of its spec body (typically `"You are X — <short self-description>"`) plus the YAML `personality` field. This block is prepended to the mission body, giving the run a consistent voice without forcing every mission author to duplicate "You are Ling" prose.
 
-The agent's **spec body** (workflow, delegation, planning, memory protocol, etc.) is NOT concatenated — that guidance is tuned for interactive coding sessions, not for headless cron. Missions get persona + body only.
+The rest of the agent's **spec body** follows the identity block, then the mission body. An agent made for mission work keeps its doctrine there — the `memory` agent's remember, scan and solve procedures — so every mission on it, and every install, gets the same text (agents are rewritten on each start; a seeded mission file is the user's). Missions on `ling` therefore carry Ling's whole soul.
 
 So the assembled system prompt for a mission is:
 
 ```
 ## Identity
 <agent.personality + agent spec's first-paragraph identity preface>
+
+<the rest of the agent's spec body>
 
 <mission body — verbatim, with $MISSION_DIR substituted>
 
@@ -192,6 +195,14 @@ Each drained item follows the final reply it answers, so the model sees its own 
 `kickoff-then:` maps a sentinel to its own items. A final reply ending on one (same matching as `kickoff-stop`) replaces whatever is left of the queue with that sentinel's items; the branch fires once per run. The dream replies `CLEAR` when its worklist is empty, which swaps the leftover day nudges for its finish-up — sweep + condense, markers, subjects — one stage per turn, so with `kickoff-fresh` each stage's scan folds away before the next.
 
 There is no pre-agent shell stage. Deterministic data fetches happen inside the agent loop via the mission's `allowed-tools` (typically a memory tool like `memory_list`, or `Bash` when the mission declares it). For missions that previously relied on a shell pre-fetch to dodge LLM-judgment risk on empty results, the protection now lives at ling-mem's own MCP dispatch boundary — see the `past_ttl=true` strip rule.
+
+### prepare
+
+Work a run needs done before its first turn, which the run itself should not be able to do — the memory scan walks a day of session logs, and its agent, which then reads untrusted transcripts, has no shell at all.
+
+- **What** — a list of arguments to the engine's own binary: `prepare: [mem, scan, $DAY]` runs the running `ling` (never one found on `PATH`) with those words. No shell parses them, so a mission file can name a `ling` verb and nothing else. `$DAY` in a word is the run's day.
+- **When** — on every run, a person's trigger too (unlike `run-if`): after the run is recorded as running, before any model call. It runs in the mission's `cwd`, with the engine's environment, for at most 5 minutes.
+- **Failure** — a non-zero exit, a timeout, or a `$DAY` with no day given: the run ends `failed`, no model call. Its record keeps the step as a failure (`tool: "prepare"`, its exit status, the last two lines of its stderr) and the session gets one line saying why.
 
 ### run-if
 
@@ -272,6 +283,7 @@ Background task evaluates all enabled missions against their cron schedules ever
 2. **Match** — for each, check if its cron expression matches the current minute window.
 3. **Busy-skip** — if the previous run is still executing, record `skipped` and move on.
 4. **run-if** — if the mission declares one, run it; a non-zero exit records a `run-if` skip and moves on.
+4a. **prepare** — on every run (manual ones too), once it is recorded as running: the engine runs the mission's `prepare` step; a failure ends the run as failed.
 5. **Agent** — create session, persist `kickoff[0]` as the first user turn, seed `kickoff[1..]` into the engine queue, run the agent loop with the body as system prompt.
 6. **Record** — write `runs.jsonl` entry; emit events; finalize run record.
 

@@ -40,6 +40,8 @@ struct MissionFrontmatter {
     catchup_hours: Option<u64>,
     #[serde(rename = "run-if", default, skip_serializing_if = "Option::is_none")]
     run_if: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    prepare: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     cwd: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -156,6 +158,7 @@ pub(super) fn parse_mission_md(id: &str, content: &str) -> Result<Mission> {
         enabled: fm.enabled,
         catchup_hours: fm.catchup_hours,
         run_if: fm.run_if,
+        prepare: fm.prepare,
         cwd: fm.cwd,
         model: fm.model,
         kickoff: fm.kickoff,
@@ -183,6 +186,7 @@ fn default_mission(id: String, prompt: String) -> Mission {
         enabled: false,
         catchup_hours: None,
         run_if: None,
+        prepare: Vec::new(),
         cwd: None,
         model: None,
         kickoff: Vec::new(),
@@ -233,6 +237,7 @@ fn parse_legacy(id: &str, yaml: &str, body: String) -> Result<Mission> {
         enabled: fm.enabled,
         catchup_hours: None,
         run_if: None,
+        prepare: Vec::new(),
         cwd: fm.project.clone(),
         model: fm.model,
         kickoff: Vec::new(),
@@ -268,6 +273,7 @@ pub(super) fn mission_to_md(mission: &Mission) -> String {
         enabled: mission.enabled,
         catchup_hours: mission.catchup_hours,
         run_if: mission.run_if.clone(),
+        prepare: mission.prepare.clone(),
         cwd: mission.cwd.clone(),
         model: mission.model.clone(),
         agent: agent_fm,
