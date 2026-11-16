@@ -6,8 +6,8 @@ import { ghostBtn, sectionCls, tierChipCls, chipCls } from './memoryStyle';
 const labels = { today: 'Today', dreamed: 'Dreamed', scanned: 'Scanned', waiting: 'Waiting for a dream', empty: 'Empty' };
 const tiers = { today: 'semantic', dreamed: 'episodic', scanned: 'semantic', waiting: 'core', empty: '' };
 
-export function MemoryDayDetail({ date, day, today, busy, start }: {
-  date: string; day?: MemoryDay; today: string; busy: boolean; start: (date: string) => void;
+export function MemoryDayDetail({ date, day, today, busy, start, scan }: {
+  date: string; day?: MemoryDay; today: string; busy: boolean; start: (date: string) => void; scan: (date: string) => void;
 }) {
   const state = dayState(day ?? { date, rows: 0, unjudged: 0 }, today);
   const dreamed = day?.dreamed || day?.state === 'dreamed';
@@ -25,7 +25,7 @@ export function MemoryDayDetail({ date, day, today, busy, start }: {
     {day?.remembered_at && <p className="text-xs text-slate-500">{`Dreamed at: ${fmtTime(day.remembered_at)}`}</p>}
     {date === today && <p className="text-xs text-slate-500">Today's rows are staged; they can be dreamed after midnight.</p>}
     {date < today && <div className="flex flex-wrap gap-2">
-      {!day?.scanned && <button className={ghostBtn} disabled title="Coming with the next update.">Scan this day</button>}
+      {!day?.scanned && <button className={ghostBtn} disabled={busy} onClick={() => scan(date)}>Scan this day</button>}
       {!dreamed && <button className={ghostBtn} disabled={busy} onClick={() => start(date)}>Dream this day</button>}
     </div>}
   </section>;

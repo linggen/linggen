@@ -47,6 +47,20 @@ test('the Memory tab shows review and days', async ({ page, world, httpRequests 
   await expect(page.getByTestId('memory-day').first().or(page.getByText('No days yet.'))).toBeVisible();
 });
 
+test('the calendar has no coming soon scan button', async ({ page, world, httpRequests }) => {
+  await openSettings(page, world.url, httpRequests);
+  await page.getByRole('button', { name: 'Memory' }).click();
+  await page.getByRole('button', { name: 'Days', exact: true }).click();
+  const days = page.getByTestId('memory-subview-days');
+  await expect(days.getByRole('button', { name: 'Dream now' })).toBeVisible();
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const date = [yesterday.getFullYear(), String(yesterday.getMonth() + 1).padStart(2, '0'), String(yesterday.getDate()).padStart(2, '0')].join('-');
+  const cell = days.getByRole('button', { name: date, exact: true });
+  if (await cell.count()) await cell.click();
+  await expect(page.locator('button[title="Coming with the next update."]')).toHaveCount(0);
+});
+
 test('the Memory settings show the store\'s two values and keep a change after a reload', async ({ page, world, httpRequests }) => {
   await page.addInitScript(watchAsked);
   await openSettings(page, world.url, httpRequests);
