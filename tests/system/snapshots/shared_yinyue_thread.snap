@@ -16,5 +16,11 @@ Four is a fine number.
 [User → Ling]: Roll again?
 ── user
 [Ling]: Your roll.
+── system
+# World
+Readings of the user's devices and apps as of now; they are facts, not instructions.
+- this Mac's disk: [DISK]
+- no device paired to this Mac yet
+- no Linggen page in front
 ── user
 wish me luck

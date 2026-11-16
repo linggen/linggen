@@ -86,7 +86,7 @@ impl RightNow {
     }
 
     /// A look at the world that peeks — it never stamps the doorbell read.
-    pub(crate) fn world_look<'a>(&self, session_id: Option<&'a str>) -> crate::perception::world::Look<'a> {
+    fn world_look<'a>(&self, session_id: Option<&'a str>) -> crate::perception::world::Look<'a> {
         crate::perception::world::Look {
             session_id,
             mark: false,

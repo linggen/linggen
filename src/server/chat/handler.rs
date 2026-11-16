@@ -706,6 +706,7 @@ async fn promote_mission_session_to_user(
     }
     meta.creator = "user".to_string();
     let _ = state.manager.global_sessions.update_session_meta(&meta);
+    engine.session_creator = Some(meta.creator.clone());
 
     let cfg = state.manager.get_config_snapshot().await;
     engine.cfg.tool_permission_mode = cfg.agent.tool_permission_mode;

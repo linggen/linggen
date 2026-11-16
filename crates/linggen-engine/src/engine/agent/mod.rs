@@ -547,6 +547,7 @@ impl AgentManager {
         if let Some(meta) = &meta {
             engine.compact_threshold = meta.compact_threshold;
             engine.compact_focus = meta.compact_focus.clone();
+            engine.session_creator = Some(meta.creator.clone());
         }
 
         let agent = Arc::new(Mutex::new(engine));

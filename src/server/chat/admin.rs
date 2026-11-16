@@ -166,6 +166,8 @@ pub(crate) async fn get_system_prompt_api(
     // shows a "cold engine" view missing SKILL.md / mission body.
     if let Some(meta) = session_meta {
         engine.withheld_tools.extend(meta.withheld_tools.clone());
+        // Who made it decides the world block, as on a real turn.
+        engine.session_creator = Some(meta.creator.clone());
         // The same creator rule a real turn follows: a skill's or a
         // mission's session gets no core block and no memory protocol.
         engine
@@ -255,6 +257,14 @@ fn export_prompt(mut engine: crate::engine::AgentEngine) -> axum::response::Resp
         .first()
         .map(|m| m.content.clone())
         .unwrap_or_default();
+    // What rides beside the turn rather than in the system prompt — the
+    // world block, the room — as the model gets it on a turn built now.
+    let beside_turn: Vec<String> = messages
+        .iter()
+        .skip(1)
+        .filter(|m| m.role == "system")
+        .map(|m| m.content.clone())
+        .collect();
     // Tool schemas are delivered to the model via the native function-calling
     // `tools` API parameter — not embedded in the system prompt text. Expose
     // them alongside so the debug export shows the full model-facing surface.
@@ -279,6 +289,7 @@ fn export_prompt(mut engine: crate::engine::AgentEngine) -> axum::response::Resp
         .collect();
     Json(serde_json::json!({
         "system_prompt": system_prompt,
+        "beside_turn": beside_turn,
         "tools": tools,
         "provider": provider,
         "model_id": engine.model_id,

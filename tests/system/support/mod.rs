@@ -312,5 +312,7 @@ pub fn snap_text(name: &str, w: &World, text: &str) {
         r"(?m)^- (Platform|OS|Timezone|Locale): .*$",
         "- $1: [MACHINE]",
     );
+    // This machine's own disk, as the world block reads it each turn.
+    settings.add_filter(r"(?m)^- this Mac's disk: .*$", "- this Mac's disk: [DISK]");
     settings.bind(|| insta::assert_snapshot!(name, text));
 }

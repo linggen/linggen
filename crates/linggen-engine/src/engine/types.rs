@@ -418,6 +418,11 @@ pub struct AgentEngine {
     /// knows it — an app moment that names its own (`/api/yinyue/event` `lang`).
     /// Set per turn by whoever drives it; `None` is the Linggen language.
     pub turn_language: Option<String>,
+    /// Who made the session this engine serves (`SessionMeta::creator`):
+    /// `user`, `skill`, `agent`, `mission`, `external`. `None` for an engine
+    /// no stored session owns — a delegated `Task` child, a headless run.
+    /// Decides whether its turns carry the world block (`prompt::world`).
+    pub session_creator: Option<String>,
     /// Prompt profile — which system prompt sections to include (owner vs consumer).
     pub prompt_profile: super::prompt::profile::PromptProfile,
     /// Directory for the current session (for persisting permission.json).
@@ -675,6 +680,7 @@ impl AgentEngine {
             withheld_tools: Default::default(),
             turn_tool_allowlist: None,
             turn_language: None,
+            session_creator: None,
             prompt_profile: super::prompt::profile::PromptProfile::default(),
             session_dir: None,
             default_models: Vec::new(),

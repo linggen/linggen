@@ -386,3 +386,27 @@ async fn the_environment_block_honours_tz() {
     assert_eq!(line, Some("- Timezone: UTC"), "{prompt}");
     w.assert_all_scripted();
 }
+
+/// The world rides beside the turn for every member at an app's table — the
+/// export shows it under `beside_turn`, and never in the system prompt.
+#[tokio::test]
+async fn every_member_at_an_apps_table_is_given_the_world_beside_the_turn() {
+    let w = World::start(Setup::default()).await;
+    let sid = w
+        .api
+        .create_session(json!({"title": "table", "skill": "dice"}))
+        .await;
+    for who in ["ling", "yinyue"] {
+        let e = w.api.export(&sid, who, "").await;
+        let beside: Vec<&str> = e["beside_turn"]
+            .as_array()
+            .map(|a| a.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
+        assert!(
+            beside.iter().any(|n| n.starts_with("# World\n")),
+            "{who}: {beside:?}"
+        );
+        let prompt = e["system_prompt"].as_str().unwrap_or("");
+        assert!(!prompt.contains("# World"), "{who}: in the cached prompt");
+    }
+}

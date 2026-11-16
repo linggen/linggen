@@ -12,6 +12,7 @@
 pub mod core_block;
 pub mod place;
 pub mod profile;
+pub mod world;
 
 #[cfg(test)]
 mod persona_tests;
@@ -1100,11 +1101,11 @@ impl AgentEngine {
             serde_json::json!({ "source": "run_agent_loop" }),
         );
 
-        // Right now rides at the end of the request, never in the system
-        // prompt: its clock and idle time change every turn, and a system
+        // The world and the room ride at the end of the request, never in
+        // the system prompt: their readings change every turn, and a system
         // prompt that changes is a cache that never hits.
-        if let Some(block) = self.right_now_block(allowed_tools.as_ref(), purpose) {
-            insert_before_turn(&mut messages, ChatMessage::new("system", block));
+        if let Some(note) = self.per_turn_note(allowed_tools.as_ref(), purpose) {
+            insert_before_turn(&mut messages, ChatMessage::new("system", note));
         }
 
         // Pre-populate read_paths from prior context.
@@ -1148,8 +1149,26 @@ impl AgentEngine {
         (messages, allowed_tools, read_paths)
     }
 
-    /// This turn's read of the room and the machine, for a session that
-    /// declares `sense` — `None` for every other.
+    /// What rides beside this turn: the world block for a session a person
+    /// is in ([`world::world_rides`]), then the room for one that holds
+    /// `sense`. One system message, or `None` when neither applies.
+    fn per_turn_note(
+        &self,
+        allowed_tools: Option<&HashSet<String>>,
+        purpose: PromptPurpose,
+    ) -> Option<String> {
+        let parts: Vec<String> = [
+            self.world_note(allowed_tools, purpose),
+            self.right_now_block(allowed_tools),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        (!parts.is_empty()).then(|| parts.join("\n\n"))
+    }
+
+    /// This turn's read of the room, for a session that declares `sense` —
+    /// `None` for every other.
     ///
     /// This block IS the `sense` tool's answer, handed over before it can be
     /// asked for. `sense` takes no arguments and reads only local state, so
@@ -1160,35 +1179,16 @@ impl AgentEngine {
     ///
     /// Gated on the session EXPLICITLY declaring `sense`, never on an agent's
     /// name: an unrestricted tool set (`None` = everything allowed) must not
-    /// pull presence data into every coding session.
+    /// pull presence data into every coding session. The machine's own
+    /// readings are not here: they are the world block, which every session
+    /// a person is in is given.
     ///
-    /// The same block carries the world this machine is: what is true here
-    /// now, and the doorbell saying whether the activity log is worth
-    /// opening (`doc/perception-spec.md` §2, §4). One block, because the
-    /// room and the machine are one perception. The machine's lines ride on
-    /// the room's: no manager, no block at all.
-    ///
-    /// It goes to the model as a system message just before the turn's own
-    /// words (a developer item / system-reminder on the providers that split
-    /// them),
-    /// not into the system prompt: volatile values there would change the
-    /// request's beginning every turn, and nothing after it could be cached.
     /// Built per request, never kept in history — the next turn has its own.
-    fn right_now_block(
-        &self,
-        allowed_tools: Option<&HashSet<String>>,
-        purpose: PromptPurpose,
-    ) -> Option<String> {
+    fn right_now_block(&self, allowed_tools: Option<&HashSet<String>>) -> Option<String> {
         if !allowed_tools.is_some_and(|s| s.contains("sense")) {
             return None;
         }
         let now = tools::RightNow::gather(&self.tools.builtins)?;
-        let look = crate::perception::world::Look {
-            mark: purpose == PromptPurpose::Turn,
-            door: allowed_tools.is_some_and(|s| s.contains("recent_activity")),
-            ..now.world_look(self.tools.builtins.session_id.as_deref())
-        };
-        let world = crate::perception::world::block(&look).unwrap_or_default();
         let block = self.prompt_store.render_or_fallback(
             crate::prompts::keys::SYSTEM_RIGHT_NOW_BLOCK,
             &[
@@ -1198,7 +1198,6 @@ impl AgentEngine {
                 ("runs_today", &now.runs_today.to_string()),
                 ("local_time", &now.local_time),
                 ("part_of_day", now.part_of_day),
-                ("world", &world),
             ],
         );
         Some(block.trim().to_string())
