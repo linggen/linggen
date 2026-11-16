@@ -19,6 +19,9 @@ default_models = ["fake-ling"]
 auto_fallback = false
 
 [pet]
+# No quiet hours: what she says unprompted must not depend on the hour a
+# test runs at (TZ=UTC). A test that wants them sets them through /api/config.
+quiet_hours = ""
 enabled = true
 model = "fake-yinyue"
 # She writes every line; no audio is made.
