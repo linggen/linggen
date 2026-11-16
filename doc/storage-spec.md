@@ -94,6 +94,8 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 │       └── runs.jsonl                # Mission run history (JSONL)
 ├── quests/
 │   └── {app}.json                    # Real-life quests an app publishes; linggen.json = setup milestones
+├── notes/
+│   └── {agent}.json                  # An agent's own open notes, with their look-again times (yinyue-companion-spec § Notes)
 ├── met/
 │   └── {agent}.json                  # The one-way "met" latch of an agent that appears only once met (agent-spec.md)
 ├── senses/
@@ -192,6 +194,20 @@ There is no `[permissions]` block in `linggen.toml` and no project-level `permis
 ```
 
 One file per agent that declares `met_when` (`agent-spec.md` § Appearing only once met). `reason` is `trigger` (the declared skill state was seen set) or `history` (the agent already had chat history with this person when the engine started). Written once, atomically; never rewritten and never removed by the engine — the agent stays present whatever the skill's state later reads.
+
+### Agent notes (`notes/{agent}.json`)
+
+```json
+{ "next": 3, "notes": [
+  { "id": "n2", "text": "the parcel arrives tomorrow", "written_at": 1790000000,
+    "device": "Alex's Mac", "look_again_at": 1790002400 } ] }
+```
+
+One file per agent that writes notes (`note_write`), rewritten whole and
+atomically under one lock. `next` numbers the next id (never reused). A
+finished note is removed. `look_again_at` (unix seconds) is cleared, and the
+file saved, before that wake's turn runs, so a time fires once. At most 8
+notes of 200 characters. Never synced to another device.
 
 ### Session metadata (`session.yaml`)
 

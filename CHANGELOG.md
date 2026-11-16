@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+- **Yinyue keeps notes of her own and looks again when she said she would.**
+  `note_write` (at most 8 notes of 200 characters, an optional look-again
+  such as `+40m`, `HH:MM`, `tomorrow 09:00`) and `note_done`; her open notes
+  are in front of her at every turn of hers. When a look-again time comes she
+  is woken once with that note, and may speak, ask, keep notes or stay
+  silent, never act. What she says unprompted (glances, app moments, woken
+  notes) is capped per hour (`pet.unprompted_per_hour`, default 6) and held
+  in quiet hours (`pet.quiet_hours`, default 23:00-07:00), both in Settings →
+  Agents; a held line is recorded in the activity log (verb `hold`).
 - **Every session a person is in sees the same world.** Ling's chats, app chats
   and Yinyue's thread now get the world block beside each turn (the machine,
   the Linggen page in front, the phone, the doorbell); missions and delegated

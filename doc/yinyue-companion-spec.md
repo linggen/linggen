@@ -249,6 +249,80 @@ ends the skill agent's run, question or spinner. The bridge hands `onStreamToken
 the other members', each call naming `info.agent`. A page's hidden
 reports always go to its own agent.
 
+## Notes — her own, in front of her next time
+
+Without notes every "come back to this later" would need a coded condition.
+With them she decides what is worth coming back to, what the note says and
+when; the engine only keeps it in front of her and wakes her at the time she
+set. Nothing in code decides when she writes one or whether a woken note is
+worth a sentence.
+
+- **Two tools** (`tool-spec.md`): `note_write {text, look_again?, id?}` writes
+  a note, or with `id` rewrites one (text and time replaced); `note_done {id}`
+  finishes one. Two, not one with an op, because their params differ (the
+  app-action rule); no third, because reading needs none.
+- **Kept per agent** in `~/.linggen/notes/<agent>.json` (`storage-spec.md`):
+  id (`n1`, `n2`, … never reused), text (at most **200** characters), when and
+  on which device it was written, an optional look-again time. At most **8**
+  open notes; one more is refused with the open ones listed, so she chooses
+  which to finish — nothing is dropped. The tools are listed-only: Yinyue's
+  spec lists them; Ling (`*`) has none until his spec names them.
+- **In front of her** at every turn of hers — her thread, a moment, a glance,
+  a woken note, an app's table — as a per-request block beside the turn
+  (`session-spec.md` § Beside the turn), never a kept row: her notes are hers,
+  and a kept row is read by every member of a table. Within **2400**
+  characters; nothing when she has none:
+
+  ```
+  # Your notes
+  Notes you wrote for yourself; only you see them. note_done finishes one; note_write with its id rewrites it.
+  - n1 · written 2h ago · look again 18:00 today: the parcel arrives tomorrow
+  ```
+
+### Look again
+
+`look_again` takes local times: `+40m`, `+3h`, `+2d`, `HH:MM` (the next time
+the clock reads it), `tomorrow HH:MM`, `YYYY-MM-DD HH:MM`. A time already
+past is refused. When it comes (`server/resident/look_again.rs`, a 5 s tick):
+
+- she gets a turn of her own on her thread, the note named as the reason — a
+  **quiet turn** like a glance (`Reach::SpeakOnly`): she may speak, ask, write
+  or finish notes, or end `SILENT`; the turn is offered `sense`,
+  `recent_activity`, `note_write`, `note_done` and nothing else (a test lists
+  them), so it never acts;
+- the time is cleared and saved **before** the turn runs: it never fires
+  twice; the note stays open without a time until she finishes it or sets
+  another;
+- times that passed while the engine was down fire once after start-up (20 s
+  settle), oldest first, at least **120 s** apart;
+- it waits while the user is typing (the moments gate's reading) or a turn of
+  hers is running anywhere (a run of hers, or a moment's wake in flight); it
+  waits, unspent, while she is off or not met.
+
+## Guardrails — what she says unprompted
+
+Unprompted is a glance, an app moment she was not asked for (`big` and `now`
+ones included), a woken note. Never held: her replies, `asked` moments, and
+heralds of runs the user started (their own presence gates stand).
+
+| Guardrail | Setting (`[pet]`, Settings → Agents) | Default |
+|---|---|---|
+| A ceiling on unprompted lines in any rolling hour | `unprompted_per_hour` (0 = none) | 6 |
+| Quiet hours, local time, may cross midnight | `quiet_hours` (`HH:MM-HH:MM`, empty = none) | 23:00-07:00 |
+
+Both are checked **before** her turn, so a held line is never written (at an
+app's table her line would already be a row of its chat): a glance is skipped
+(the machine's conditions wait, unspent, for the next one); held moments are
+dropped (they would be stale by the time it passes); a woken note waits until
+quiet hours end or the hour has room — one record, however many ticks. They
+are checked once more before her voice, for two unprompted turns that ran at
+once. The count is kept in memory: a restart starts the hour afresh.
+
+What was held is one activity record (engine verb `hold`, by `yinyue`):
+`yinyue held a look-again on n1 (quiet hours)`, `… 2 app moments from dice
+(hourly ceiling)`; `detail` says the reason, the source and until when. It
+rings the doorbell like any change — once per held thing, so never a loop.
+
 ## `agent_chat` — general inter-agent messaging
 
 A built-in tool any agent can call: `agent_chat(to, message)`. Replaces a

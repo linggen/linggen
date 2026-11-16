@@ -54,9 +54,22 @@ Built-in tools are the kernel API. Skills are userspace.
 | `AskUser` | `questions` | Ask user structured questions mid-execution |
 | `sense` | — | The room: presence, how busy the day is, the hour, and this machine's world block |
 | `recent_activity` | `since?`, `until?`, `app?`, `verb?`, `text?`, `limit?`, `totals?` | This Mac's activity log (kept 400 days): what changed, who did it, stretches of use; `totals` sums counts and durations per app and verb for the span. JSON (perception-spec.md §3) |
+| `note_write` | `text`, `look_again?`, `id?` | A note of the agent's own (at most 200 characters; at most 8 open, one more is refused with the open ones listed), shown to it beside every turn until finished. `look_again` wakes it once at that local time: `+40m`, `+3h`, `+2d`, `HH:MM` (next time the clock reads it), `tomorrow HH:MM`, `YYYY-MM-DD HH:MM`; a past time is refused. With `id`, rewrites that note (text and time replaced). Listed-only (below) |
+| `note_done` | `id` | Finish one of the agent's notes: no longer shown, wakes no one. Listed-only |
 | `EnterPlanMode` | `reason?` | Enter plan mode (research-only) |
 | `ExitPlanMode` | `plan_text` | Exit plan mode with completed plan |
 | `UpdatePlan` | `plan_text?, items?` | Update plan progress during execution |
+
+**Listed-only tools.** `Express` (the pet's avatar) and the note tools
+(`note_write`, `note_done`) are never part of the `*` wildcard: only an
+agent whose tool list names them has them, and a call from any other is
+refused at dispatch. Notes belong to the agent that wrote them
+(`~/.linggen/notes/<agent>.json`); an agent whose own spec lists the note
+tools keeps them at every table it sits at, whatever the session's set.
+Yinyue lists them; Ling (`*`) has none. Two tools, not one with an op:
+their params differ (app-action-spec § one tool per verb). Reading needs
+no tool — the open notes ride beside each turn (session-spec § Beside the
+turn).
 
 **Offered only where it runs.** A built-in may say it cannot run here
 (`Tool::offered`); such a tool is left out of every tool list, so the model

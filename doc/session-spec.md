@@ -182,7 +182,7 @@ The system prompt is rebuilt each turn from layers. Which layers are included de
 
 ### Beside the turn
 
-Two notes ride outside the system prompt, so a changed reading never moves
+Three notes ride outside the system prompt, so a changed reading never moves
 the cached prefix:
 
 - **The world** (`perception-spec.md` §2) — every native turn of a session made
@@ -198,9 +198,13 @@ the cached prefix:
   the last kept block's but for the clock keeps no new one.
 - **The room** (presence, work, the hour) — a session whose tools name `sense`;
   built per request, just before the turn's words, never kept.
+- **The agent's own notes** (`# Your notes`, yinyue-companion-spec § Notes) — a
+  turn that offers `note_done`; built per request after the room, never kept:
+  they are the speaking agent's alone, and a kept row is read by every member
+  of a table. Nothing when it has no open notes.
 
 The prompt export (`GET /api/chat/system-prompt`, "Copy System Prompt") shows
-under `beside_turn` the room and the block the next turn would keep. Sessions
+under `beside_turn` the room, the notes and the block the next turn would keep. Sessions
 run by the Claude runtime are built elsewhere and get neither yet.
 
 Layers 5-7 are sensitive to the working folder. When the session transitions between home mode and project mode, the system prompt is rebuilt with the appropriate project instructions and memory.

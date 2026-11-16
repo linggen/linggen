@@ -198,8 +198,8 @@ the user makes are unlimited and stay apart; they are given the same world.
 | Now | World state: one line per app (declared by the skill), the machine, the body; in every session | Built (2.4 branch): app lines a skill declares (`world-line:`), the Linggen page in front, the same block in every session a person is in. The body appears once health declares its line |
 | Past | One tool to read the activity log, filtered by time and app, returning totals | Built (2.4 branch): filters, totals with summed durations, stretches of use, verbs checked at the door, kept 400 days |
 | Memory | Search and write | Built |
-| Notes | A small note of her own, in front of her next time | New |
-| Alarm | "Look again at / after" that she sets herself | New |
+| Notes | A small note of her own, in front of her next time | Built (2.4 branch): `note_write` / `note_done`, per agent (Yinyue lists them), beside every turn of hers |
+| Alarm | "Look again at / after" that she sets herself | Built (2.4 branch): a note's look-again wakes her once, a quiet turn |
 | Voice and hands | Her words reach the user wherever they are; app actions the skills declare | Built |
 
 Everything else is theirs: what to look up, what to connect, whether it is
@@ -228,7 +228,9 @@ rolls to a fresh segment near its context limit.
 
 **Guardrails, in code:** a ceiling on unprompted lines per hour and quiet
 hours; a quiet moment may speak and ask, never act; privacy lines (holdings
-are never told to her).
+are never told to her). Built (2.4 branch): the ceiling and quiet hours
+(`yinyue-companion-spec.md` § Guardrails); a glance or woken note offers
+only tools that do not act.
 
 **Scenario tests** are how it gets smarter without more code: a world state
 and a memory in, "should she speak, and naming what" out; rerun on every model
