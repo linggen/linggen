@@ -260,7 +260,12 @@ fn read_peer() -> Option<Peer> {
 /// `mark` stamps the doorbell as read: true when this goes into a turn, false
 /// when something is merely looking (the `sense` tool, a prompt export) — a
 /// glance must not consume "since you last looked" for the turn after it.
-pub(crate) fn doorbell(session_id: Option<&str>, mark: bool, door: bool) -> Vec<String> {
+pub(crate) fn doorbell(
+    session_id: Option<&str>,
+    mark: bool,
+    door: bool,
+    told_fault: bool,
+) -> Vec<String> {
     let log = super::activity::log();
     let Some(newest) = log.newest() else {
         return Vec::new();
@@ -275,10 +280,22 @@ pub(crate) fn doorbell(session_id: Option<&str>, mark: bool, door: bool) -> Vec<
     if let (Some(s), true) = (session_id, mark) {
         mark_seen(s, revision);
     }
-    ring(&newest, unseen, door)
+    // A turn that hands the reader a fault in its own words does not also
+    // hear the Mac recorded it: the newest record, if it is that fault, is
+    // left out.
+    ring(&newest, unseen, door, told_fault && is_fault(&newest))
 }
 
-fn ring(newest: &super::activity::Activity, unseen: Option<u64>, door: bool) -> Vec<String> {
+fn is_fault(record: &super::activity::Activity) -> bool {
+    record.verb == crate::extensions::missions::outcome::FAULT_VERB
+}
+
+fn ring(
+    newest: &super::activity::Activity,
+    unseen: Option<u64>,
+    door: bool,
+    told: bool,
+) -> Vec<String> {
     let when = newest
         .age_secs()
         .map(super::activity::ago)
@@ -294,7 +311,9 @@ fn ring(newest: &super::activity::Activity, unseen: Option<u64>, door: bool) -> 
         // for anyone.
         None => {}
     }
-    lines.push(format!("most recent: {} · {when}", newest.line()));
+    if !told {
+        lines.push(format!("most recent: {} · {when}", newest.line()));
+    }
     // A door the reader cannot open is not named.
     if door {
         lines.push("call recent_activity to see more".to_string());
@@ -361,7 +380,7 @@ mod tests {
 
     #[test]
     fn the_doorbell_is_three_lines_and_never_the_log_itself() {
-        let lines = ring(&thing(), Some(6), true);
+        let lines = ring(&thing(), Some(6), true, false);
         assert_eq!(lines.len(), 3, "the always-on cost stays fixed: {lines:?}");
         assert_eq!(lines[0], "6 things happened since you last looked");
         assert!(lines[1].starts_with("most recent: you deleted 三天三夜 · "));
@@ -371,11 +390,11 @@ mod tests {
     #[test]
     fn one_thing_is_singular_and_none_is_said_plainly() {
         assert_eq!(
-            ring(&thing(), Some(1), true)[0],
+            ring(&thing(), Some(1), true, false)[0],
             "1 thing happened since you last looked"
         );
         assert_eq!(
-            ring(&thing(), Some(0), true)[0],
+            ring(&thing(), Some(0), true, false)[0],
             "nothing new since you last looked"
         );
     }
@@ -385,7 +404,7 @@ mod tests {
         // The prompt export builds without a session. Saying "nothing new since
         // you last looked" there is a claim about a reader we cannot identify,
         // in the one block whose instruction is to assert only what it read.
-        let lines = ring(&thing(), None, true);
+        let lines = ring(&thing(), None, true, false);
         assert_eq!(lines.len(), 2, "{lines:?}");
         assert!(lines[0].starts_with("most recent: "), "{lines:?}");
         assert!(
@@ -394,9 +413,37 @@ mod tests {
         );
     }
 
+    fn fault() -> Activity {
+        Activity {
+            by: "system".into(),
+            app: "system".into(),
+            verb: crate::extensions::missions::outcome::FAULT_VERB.into(),
+            object: Some("Harbor digest: fetch exited with status 3".into()),
+            ..thing()
+        }
+    }
+
+    /// The turn that hands her the fault does not hear it twice; the count
+    /// and the door stay, and any other turn hears the record as ever.
+    #[test]
+    fn the_turn_that_hands_a_fault_does_not_also_hear_the_mac_record_it() {
+        let told = ring(&fault(), Some(1), true, true);
+        assert_eq!(told.len(), 2, "{told:?}");
+        assert_eq!(told[0], "1 thing happened since you last looked");
+        assert!(told[1].contains("recent_activity"), "{told:?}");
+        assert!(!told.iter().any(|l| l.contains("most recent")), "{told:?}");
+        let other = ring(&fault(), Some(1), true, false);
+        assert!(
+            other[1].starts_with("most recent: the Mac recorded a failure in Harbor digest"),
+            "{other:?}"
+        );
+        // Only a fault is left out, and only when the turn is told it.
+        assert!(is_fault(&fault()) && !is_fault(&thing()));
+    }
+
     #[test]
     fn a_reader_without_the_tool_is_not_told_to_call_it() {
-        let lines = ring(&thing(), Some(2), false);
+        let lines = ring(&thing(), Some(2), false, false);
         assert_eq!(lines.len(), 2, "{lines:?}");
         assert!(!lines.iter().any(|l| l.contains("recent_activity")), "{lines:?}");
     }

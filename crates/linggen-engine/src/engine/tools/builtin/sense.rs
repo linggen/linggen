@@ -92,6 +92,7 @@ impl RightNow {
             mark: false,
             door: true,
             front: Some(self.front.clone()),
+            told_fault: false,
             now: self.now,
         }
     }

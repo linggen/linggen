@@ -53,6 +53,7 @@ impl AgentEngine {
                 .builtins
                 .get_manager()
                 .map(|m| m.presence_front(now)),
+            told_fault: self.turn_fault,
             now,
         };
         let lines = crate::perception::world::block(&look)?;

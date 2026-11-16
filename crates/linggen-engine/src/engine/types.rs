@@ -421,6 +421,10 @@ pub struct AgentEngine {
     /// knows it — an app moment that names its own (`/api/yinyue/event` `lang`).
     /// Set per turn by whoever drives it; `None` is the Linggen language.
     pub turn_language: Option<String>,
+    /// This turn's kickoff hands the agent a mission fault in the engine's
+    /// own words, so the world block's doorbell does not also say the Mac
+    /// recorded it. Set per turn by whoever drives it; false for any other.
+    pub turn_fault: bool,
     /// Who made the session this engine serves (`SessionMeta::creator`):
     /// `user`, `skill`, `agent`, `mission`, `external`. `None` for an engine
     /// no stored session owns — a delegated `Task` child, a headless run.
@@ -684,6 +688,7 @@ impl AgentEngine {
             withheld_tools: Default::default(),
             turn_tool_allowlist: None,
             turn_language: None,
+            turn_fault: false,
             session_creator: None,
             prompt_profile: super::prompt::profile::PromptProfile::default(),
             session_dir: None,
@@ -856,6 +861,7 @@ impl AgentEngine {
         self.turn_tool_allowlist = None;
         self.last_assistant_text = None;
         self.turn_language = None;
+        self.turn_fault = false;
     }
 }
 

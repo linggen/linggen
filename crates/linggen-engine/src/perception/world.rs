@@ -45,6 +45,9 @@ pub struct Look<'a> {
     pub door: bool,
     /// The page in front, from presence; `None` when presence cannot be read.
     pub front: Option<Option<Front>>,
+    /// This turn hands the reader a mission fault as its kickoff: the doorbell
+    /// does not also say the Mac recorded it.
+    pub told_fault: bool,
     /// Unix seconds.
     pub now: u64,
 }
@@ -70,7 +73,7 @@ pub fn groups(look: &Look) -> Vec<Group> {
     out.extend(Group::of(Keep::Peer, super::state::peer_lines()));
     out.extend(Group::of(
         Keep::Always,
-        super::state::doorbell(look.session_id, look.mark, look.door),
+        super::state::doorbell(look.session_id, look.mark, look.door, look.told_fault),
     ));
     out
 }

@@ -236,6 +236,8 @@ async fn run_at(
             state.manager.mark_agent_chat_session(session_id);
         }
         let policy = ready_for_turn(&mut engine, turn, pet);
+        // Per turn, like the tools: the next one hears its doorbell whole.
+        engine.turn_fault = trigger_source == super::triggers::FAULT_SOURCE;
         apply_her_model(state, &mut engine, session_id, pet).await;
         // At an app's table the session's recall policy is the app's: no
         // biography, no core block (`chat::turn_place::turn_creator`).

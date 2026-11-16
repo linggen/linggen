@@ -142,7 +142,9 @@ is said by code.
   emits no `MissionCompleted`; each finished run is handed at most once.
 - Her turn runs on her own rolling thread (the kickoff is a `[HIDDEN]` row
   there). The run also leaves a `fault` line in the activity log
-  (`doc/perception-spec.md` § 3), which `recent_activity` returns. Pet off or
+  (`doc/perception-spec.md` § 3), which `recent_activity` returns; her world
+  block does not repeat it in this turn — the doorbell's latest line is left
+  out when the newest record is a fault (`perception-spec.md` § 4). Pet off or
   not yet met: nothing is held or handed — the record, the missions page and
   the activity log still hold it.
 

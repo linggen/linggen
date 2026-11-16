@@ -132,11 +132,10 @@ async fn a_failed_tool_in_an_unattended_run_reaches_her_as_one_fact() {
         tool("Ping", json!({})),
         text("The lamp check did not complete. DONE"),
     ];
-    let w = World::start(
-        Setup::default()
-            .script(Agent::Ling, ling)
-            .script(Agent::Yinyue, vec![text(HER_LINE), text(HER_LINE)]),
-    )
+    let w = World::start(Setup::default().script(Agent::Ling, ling).script(
+        Agent::Yinyue,
+        vec![text(HER_LINE), text(HER_LINE), text("Hello.")],
+    ))
     .await;
     install_beacon(&w.home.linggen_home().join("skills"));
     w.api.post("/api/skills/reload", json!({})).await;
@@ -179,6 +178,16 @@ async fn a_failed_tool_in_an_unattended_run_reaches_her_as_one_fact() {
         "stdout reached her: {fact}"
     );
     assert_eq!(pet_lines(&w), [HER_LINE], "a line not hers was spoken");
+    // The fault is in her call once: the world block's doorbell, which
+    // names the newest record, does not tell it a second time.
+    let first = w.model.calls_of(Agent::Yinyue).remove(0);
+    let told = first.text().matches("Ping exited with status 3").count();
+    assert_eq!(told, 1, "the fault is in her call {told} times");
+    assert!(
+        first.text().contains("happened since you last looked"),
+        "the doorbell is still there: {:?}",
+        first.thread()
+    );
 
     // A clean run, someone there: nothing for her.
     set_exit(&w, 0);
@@ -213,6 +222,20 @@ async fn a_failed_tool_in_an_unattended_run_reaches_her_as_one_fact() {
         facts[1].contains("Ping exited with status 3"),
         "{}",
         facts[1]
+    );
+
+    // An ordinary turn of hers hears the doorbell whole: the Mac recorded it.
+    let mark = w.mark();
+    w.api
+        .post("/api/yinyue/chat", json!({"text": "Anything else?"}))
+        .await;
+    w.wait_agent(Agent::Yinyue, mark).await;
+    let chat = w.model.calls_of(Agent::Yinyue).remove(2);
+    assert!(
+        chat.text()
+            .contains("most recent: the Mac recorded a failure in Beacon check"),
+        "{:?}",
+        chat.thread()
     );
     w.assert_all_scripted();
 }

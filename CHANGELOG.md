@@ -24,6 +24,9 @@
   that hands Yinyue a failed unattended run is held by quiet hours (a wait is
   one `hold` record), is not counted by the hourly cap, and is never held or
   dropped by it.
+- **A fault is told to Yinyue once.** The turn that hands her a failed
+  mission run no longer also hears, in the world block, that the Mac recorded
+  it.
 - **Ling keeps notes too.** `note_write` and `note_done` are in Ling's tool
   list, with his own open notes in front of him at his next turn; only
   Yinyue's notes can carry a look-again time (on another's it is refused), so

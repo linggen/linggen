@@ -313,6 +313,12 @@ no session there is no reader, so the first line is omitted rather than
 guessed — a claim about a reader we cannot identify has no place in the one
 block whose instruction is to assert only what it read.
 
+One turn hears it shorter: the turn whose kickoff hands her a mission run's
+fault (`yinyue-companion-spec.md` § A mission run that went wrong). The Mac
+recorded that fault too, so when the newest record is a `fault`, that turn's
+`latest` line is left out — the fault is in her call once, in the engine's own
+words. The count and the door stay; every other turn keeps the line.
+
 ---
 
 ## 5. Speaking unprompted
