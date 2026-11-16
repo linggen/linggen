@@ -49,8 +49,11 @@ call-out fires only on **truly away** — never nag a present-but-reading user.
 ### Delivery: injected, not fetched
 
 The snapshot is rendered into the **`# Right now`** prompt block and injected on
-every turn for any session whose tool set explicitly declares `sense`. The
-`sense` tool still exists and returns the identical JSON, but she rarely needs it.
+every turn for any session whose tool set explicitly declares `sense`, after
+the `# World` block (the machine, the page in front, the apps, the phone, the
+doorbell) that every session a person is in is given (`perception-spec.md` §2).
+The `sense` tool still exists and returns the identical JSON, but she rarely
+needs it.
 
 This is a latency decision, measured: `sense` takes no arguments and reads only
 local state, so nothing the model says can change its answer — yet fetching it
