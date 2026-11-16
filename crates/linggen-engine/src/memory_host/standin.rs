@@ -16,6 +16,10 @@
 //!   starts nor restarts anything;
 //! - `serve`, `start`, `stop`, `restart`, `upgrade` do nothing, and say so.
 //!
+//! A rollback to an engine that does not host memory puts the kept binary
+//! back over the stand-in (`restore_previous`): that engine starts memory by
+//! running `ling-mem start`.
+//!
 //! Where there is no `ling-mem` at all the stand-in is written too: a plugin
 //! from before 2.3 would otherwise install the old daemon and start it beside
 //! the engine. A stand-in from an older engine is rewritten; any other script
@@ -31,6 +35,12 @@ const MARK: &str = "# linggen-ling-mem-stand-in";
 fn canonical_path() -> Option<PathBuf> {
     let home = std::env::var_os("HOME")?;
     Some(PathBuf::from(home).join(".local/bin/ling-mem"))
+}
+
+/// Where the old installers put `ling-mem` (and where the stand-in goes):
+/// `$HOME/.local/bin/ling-mem`.
+pub fn ling_mem_path() -> Option<PathBuf> {
+    canonical_path()
 }
 
 /// Put the stand-in in place, if a real `ling-mem` binary is there. Best
@@ -155,6 +165,103 @@ fn keep_aside(path: &Path) -> std::io::Result<PathBuf> {
     }
     std::fs::rename(path, &prev)?;
     Ok(prev)
+}
+
+/// What a rollback does about the `ling-mem` program.
+#[derive(Debug, PartialEq)]
+pub enum Restore {
+    /// The engine that comes back hosts memory itself: nothing to do.
+    TargetHostsMemory,
+    /// The stand-in is not at the path: whatever is there stays.
+    NoStandIn,
+    /// There is no executable `ling-mem.prev` to put back.
+    NoPrevious,
+    /// Put `ling-mem.prev` back over the stand-in.
+    Yes,
+}
+
+/// Whether a rollback to an engine puts the old `ling-mem` back, from what
+/// is known: does that engine host memory, what is at the `ling-mem` path,
+/// what is at `ling-mem.prev`.
+fn restore_decision(target_hosts_memory: bool, at_path: &Found, prev: &Found) -> Restore {
+    if target_hosts_memory {
+        return Restore::TargetHostsMemory;
+    }
+    if !matches!(at_path, Found::StandIn { .. }) {
+        return Restore::NoStandIn;
+    }
+    if *prev != Found::Binary {
+        return Restore::NoPrevious;
+    }
+    Restore::Yes
+}
+
+/// A file that is a real program and may be run; anything else reads as `Other`.
+fn inspect_runnable(path: &Path) -> std::io::Result<Found> {
+    let found = inspect(path)?;
+    if found == Found::Binary && !is_executable_file(path) {
+        return Ok(Found::Other);
+    }
+    Ok(found)
+}
+
+#[cfg(unix)]
+fn is_executable_file(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path).is_ok_and(|m| m.permissions().mode() & 0o111 != 0)
+}
+
+#[cfg(not(unix))]
+fn is_executable_file(_path: &Path) -> bool {
+    true
+}
+
+/// After a rollback to an engine that starts memory by running `ling-mem
+/// start`: put the old program back where the stand-in is. Returns the one
+/// plain line to print (`None` when the engine hosts memory itself or the
+/// path is unknown).
+pub fn restore_previous(target_hosts_memory: bool, path: Option<&Path>) -> Option<String> {
+    let path = path?;
+    match restore_previous_at(path, target_hosts_memory) {
+        Ok(line) => line,
+        Err(e) => Some(format!(
+            "memory: the previous ling-mem was not put back ({e}); an engine of this version needs it at {}",
+            path.display()
+        )),
+    }
+}
+
+fn restore_previous_at(path: &Path, target_hosts_memory: bool) -> std::io::Result<Option<String>> {
+    if target_hosts_memory {
+        return Ok(None);
+    }
+    let prev = path.with_file_name("ling-mem.prev");
+    let decision = restore_decision(
+        target_hosts_memory,
+        &inspect(path)?,
+        &inspect_runnable(&prev)?,
+    );
+    Ok(match decision {
+        Restore::TargetHostsMemory => None,
+        Restore::NoStandIn => Some(format!(
+            "memory: {} is not the stand-in; left as it is",
+            path.display()
+        )),
+        Restore::NoPrevious => Some(format!(
+            "memory: no ling-mem.prev to put back beside {}; left as it is",
+            path.display()
+        )),
+        Restore::Yes => {
+            // One rename: the stand-in's file goes (a script, written again
+            // by an engine that hosts memory), the old program is never
+            // missing from the path, and nothing is copied.
+            std::fs::rename(&prev, path)?;
+            Some(format!(
+                "memory: the previous ling-mem is back in place at {}",
+                path.display()
+            ))
+        }
+    })
 }
 
 /// Write the script beside `path` and rename it over — a new inode, never
@@ -327,5 +434,99 @@ mod tests {
             std::fs::read_to_string(&bin).unwrap(),
             "#!/bin/sh\necho mine\n"
         );
+    }
+
+    fn stand_in(dir: &Path) -> PathBuf {
+        let bin = dir.join("ling-mem");
+        install_at(&bin, Path::new("/nonexistent/ling"), "2.3.0", 9528).unwrap();
+        bin
+    }
+
+    fn old_binary(dir: &Path, name: &str, tail: u8) -> PathBuf {
+        let p = dir.join(name);
+        std::fs::write(&p, [0xcf, 0xfa, 0xed, 0xfe, tail]).unwrap();
+        set_executable(&p).unwrap();
+        p
+    }
+
+    #[test]
+    fn the_old_program_comes_back_only_for_an_engine_without_memory_and_only_over_the_stand_in() {
+        let si = Found::StandIn { version: "2.3.0".into() };
+        let cases = [
+            (true, &si, &Found::Binary, Restore::TargetHostsMemory),
+            (false, &Found::Binary, &Found::Binary, Restore::NoStandIn),
+            (false, &Found::Nothing, &Found::Binary, Restore::NoStandIn),
+            (false, &Found::Other, &Found::Binary, Restore::NoStandIn),
+            (false, &si, &Found::Nothing, Restore::NoPrevious),
+            (false, &si, &Found::Other, Restore::NoPrevious),
+            (false, &si, &Found::StandIn { version: "1".into() }, Restore::NoPrevious),
+            (false, &si, &Found::Binary, Restore::Yes),
+        ];
+        for (hosts, at, prev, want) in cases {
+            assert_eq!(restore_decision(hosts, at, prev), want, "{hosts} {at:?} {prev:?}");
+        }
+    }
+
+    #[test]
+    fn restoring_renames_the_kept_binary_over_the_stand_in_and_rolling_forward_keeps_it_aside_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = old_binary(dir.path(), "ling-mem", 1);
+        install_at(&bin, Path::new("/nonexistent/ling"), "2.3.0", 9528).unwrap();
+        let prev = dir.path().join("ling-mem.prev");
+        assert_eq!(std::fs::read(&prev).unwrap()[4], 1);
+
+        // An engine that hosts memory: nothing happens.
+        assert_eq!(restore_previous_at(&bin, true).unwrap(), None);
+        assert!(matches!(inspect(&bin).unwrap(), Found::StandIn { .. }));
+
+        let line = restore_previous_at(&bin, false).unwrap().unwrap();
+        assert!(line.contains("the previous ling-mem is back"), "{line}");
+        assert_eq!(inspect(&bin).unwrap(), Found::Binary);
+        assert_eq!(std::fs::read(&bin).unwrap()[4], 1);
+        assert!(!prev.exists());
+        let kept: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
+        assert_eq!(kept.len(), 1, "only ling-mem is left");
+
+        // Again: the binary is not a stand-in, so nothing changes.
+        let line = restore_previous_at(&bin, false).unwrap().unwrap();
+        assert!(line.contains("not the stand-in"), "{line}");
+        assert_eq!(std::fs::read(&bin).unwrap()[4], 1);
+
+        // Rolling forward: the engine that hosts memory keeps the binary aside again.
+        assert!(install_at(&bin, Path::new("/nonexistent/ling"), "2.3.0", 9528)
+            .unwrap()
+            .is_some());
+        assert!(matches!(inspect(&bin).unwrap(), Found::StandIn { .. }));
+        assert_eq!(std::fs::read(&prev).unwrap()[4], 1);
+    }
+
+    #[test]
+    fn without_a_runnable_kept_binary_the_stand_in_stays_and_one_line_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = stand_in(dir.path());
+        let before = std::fs::read(&bin).unwrap();
+
+        let line = restore_previous_at(&bin, false).unwrap().unwrap();
+        assert!(line.contains("no ling-mem.prev"), "{line}");
+
+        // Present but not executable, or not a program: the same.
+        let prev = old_binary(dir.path(), "ling-mem.prev", 2);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&prev, std::fs::Permissions::from_mode(0o644)).unwrap();
+            let line = restore_previous_at(&bin, false).unwrap().unwrap();
+            assert!(line.contains("no ling-mem.prev"), "{line}");
+        }
+        std::fs::write(&prev, "#!/bin/sh\n").unwrap();
+        assert!(restore_previous_at(&bin, false).unwrap().unwrap().contains("no ling-mem.prev"));
+        assert_eq!(std::fs::read(&bin).unwrap(), before);
+
+        // Nothing at the path at all: nothing is made.
+        let none = dir.path().join("empty/ling-mem");
+        let line = restore_previous(false, Some(&none)).unwrap();
+        assert!(line.contains("not the stand-in"), "{line}");
+        assert!(!none.exists());
+        assert_eq!(restore_previous(false, None), None);
     }
 }

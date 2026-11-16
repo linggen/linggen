@@ -15,6 +15,8 @@ use anyhow::Result;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use super::memory_rollback;
+
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
@@ -47,6 +49,9 @@ pub struct Opts {
     pub health_timeout: Duration,
     /// For the `--version` probe of a rollback.
     pub probe_timeout: Duration,
+    /// Where the old `ling-mem` program goes back to when a rollback lands
+    /// on an engine that does not host memory (`None`: not touched).
+    pub ling_mem: Option<PathBuf>,
 }
 
 impl Opts {
@@ -58,6 +63,7 @@ impl Opts {
             stop_timeout: Duration::from_secs(10),
             health_timeout: Duration::from_secs(60),
             probe_timeout: Duration::from_secs(10),
+            ling_mem: crate::memory_host::ling_mem_path(),
         }
     }
 }
@@ -301,6 +307,7 @@ pub async fn restart(
     stop_all(&failure.started, opts).await;
     let (from, to) = crate::cli::self_update::rollback_binary(dir, binary_name, opts.probe_timeout)
         .map_err(|e| anyhow::anyhow!("{} and the swap back failed: {e:#}", failure.why))?;
+    memory_rollback::restore_after_rollback(&target, opts.ling_mem.as_deref(), opts.probe_timeout);
     let restarted = failure.stopped_old;
     match relaunch(&target, &engines[..restarted.min(engines.len())], opts).await {
         Ok(pids) => {
@@ -592,6 +599,14 @@ mod tests {
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
+    /// Like `fake`, but an engine from before memory moved into it: it
+    /// rejects `mem` as an unknown subcommand.
+    fn fake_without_memory(path: &Path, version: &str, web: &str) {
+        fake(path, version, web);
+        let body = std::fs::read_to_string(path).unwrap();
+        std::fs::write(path, body.replace("case \"$1\" in\n", "case \"$1\" in\nmem) exit 2 ;;\n")).unwrap();
+    }
+
     /// Serves its working directory, where api/health is a file.
     const SERVES: &str = "exec python3 -m http.server \"$3\" --bind 127.0.0.1";
 
@@ -623,6 +638,8 @@ mod tests {
             opts.log = work.path().join("ling.log");
             opts.health_timeout = Duration::from_secs(15);
             opts.stop_timeout = Duration::from_secs(3);
+            // Never the real ~/.local/bin/ling-mem.
+            opts.ling_mem = Some(work.path().join("bin/ling-mem"));
             Rig {
                 bin,
                 work,
@@ -733,6 +750,59 @@ mod tests {
         let back = rig.engine_pid();
         assert_ne!(back, old.pid);
         assert!(wait_health(back, "127.0.0.1", rig.port, Duration::from_secs(2)).await);
+    }
+
+    /// A stand-in at the rig's ling-mem path and the kept binary beside it.
+    fn standin_and_kept_binary(rig: &Rig) -> PathBuf {
+        let path = rig.opts.ling_mem.clone().unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "#!/bin/sh\n# linggen-ling-mem-stand-in v=2.0.0\n").unwrap();
+        std::fs::write(path.with_file_name("ling-mem.prev"), [0xcf, 0xfa, 0xed, 0xfe, 7]).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        let perm = std::fs::Permissions::from_mode(0o755);
+        std::fs::set_permissions(path.with_file_name("ling-mem.prev"), perm).unwrap();
+        path
+    }
+
+    #[tokio::test]
+    async fn an_unhealthy_engine_rolls_back_to_one_without_memory_and_the_old_ling_mem_comes_back() {
+        if !have_python() {
+            return;
+        }
+        let rig = Rig::new();
+        fake_without_memory(&rig.target(), "1.0.0", SERVES);
+        let old = rig.running().await;
+        std::fs::rename(rig.target(), rig.bin.path().join("ling.prev")).unwrap();
+        fake(&rig.target(), "2.0.0", "exit 1");
+        let ling_mem = standin_and_kept_binary(&rig);
+
+        let err = restart(rig.bin.path(), "ling", &[old.clone()], &rig.opts)
+            .await
+            .unwrap_err();
+
+        assert!(format!("{err:#}").contains("rolled back v2.0.0 -> v1.0.0"), "{err:#}");
+        assert_eq!(std::fs::read(&ling_mem).unwrap(), [0xcf, 0xfa, 0xed, 0xfe, 7]);
+        assert!(!ling_mem.with_file_name("ling-mem.prev").exists());
+    }
+
+    #[tokio::test]
+    async fn an_unhealthy_engine_rolling_back_to_one_with_memory_leaves_ling_mem_alone() {
+        if !have_python() {
+            return;
+        }
+        let rig = Rig::new();
+        fake(&rig.target(), "1.0.0", SERVES);
+        let old = rig.running().await;
+        std::fs::rename(rig.target(), rig.bin.path().join("ling.prev")).unwrap();
+        fake(&rig.target(), "2.0.0", "exit 1");
+        let ling_mem = standin_and_kept_binary(&rig);
+
+        restart(rig.bin.path(), "ling", &[old.clone()], &rig.opts)
+            .await
+            .unwrap_err();
+
+        assert!(std::fs::read_to_string(&ling_mem).unwrap().contains("stand-in"));
+        assert!(ling_mem.with_file_name("ling-mem.prev").exists());
     }
 
     #[tokio::test]

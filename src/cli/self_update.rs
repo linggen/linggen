@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use super::engine_restart;
+use super::memory_rollback;
 use super::prev_binary::{move_file, prev_location};
 
 /// Env var naming a release mirror that replaces GitHub for every
@@ -168,6 +169,11 @@ pub async fn run(rollback: bool, engine: (String, u16)) -> Result<()> {
         let (from, to) = rollback_binary(&dir, "ling", START_TIMEOUT)?;
         println!("[ling] Rolled back v{from} -> v{to}");
         println!("  Run `ling update --rollback` again to return to v{from}.");
+        memory_rollback::restore_after_rollback(
+            &dir.join("ling"),
+            crate::memory_host::ling_mem_path().as_deref(),
+            START_TIMEOUT,
+        );
         true
     } else {
         update().await?

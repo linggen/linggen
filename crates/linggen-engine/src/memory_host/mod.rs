@@ -27,6 +27,7 @@ mod standin;
 mod takeover;
 
 pub use routes::{is_open_path, routes};
+pub use standin::{ling_mem_path, restore_previous};
 
 use ling_mem::hosted::StoreLock;
 use std::path::{Path, PathBuf};
