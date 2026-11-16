@@ -93,7 +93,7 @@ fn guard_refuses_the_real_engine_port() {
 #[test]
 #[should_panic(expected = "HERMETIC GUARD")]
 fn guard_refuses_the_real_memory_port_in_config() {
-    guard::config_text("ling_mem_url = \"http://127.0.0.1:9528\"");
+    guard::config_text("url = \"127.0.0.1:9528\"");
 }
 
 #[test]

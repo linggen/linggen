@@ -1123,8 +1123,10 @@ mod tests {
         let old: AgentConfig =
             toml::from_str("max_iters = 5\nling_mem_url = \"http://127.0.0.1:4100\"").unwrap();
         assert_eq!(old.max_iters, 5);
-        let mut cfg = Config::default();
-        cfg.agent = old;
+        let cfg = Config {
+            agent: old,
+            ..Config::default()
+        };
         let text = toml::to_string_pretty(&cfg).unwrap();
         assert!(!text.contains("ling_mem_url"), "{text}");
     }
