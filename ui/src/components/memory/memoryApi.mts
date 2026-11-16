@@ -33,6 +33,11 @@ export interface MemoryRow {
   [field: string]: unknown;
 }
 
+export interface ReviewIssue {
+  id: string; kind: string; note: string; row_ids: string[]; created_at: string; status: string;
+}
+export interface ReviewQueue { open_count: number; issues: ReviewIssue[] }
+
 export interface MemoryStats {
   total: number;
   per_tier: Record<Tier, number>;
@@ -209,6 +214,9 @@ export function updateBody(id: string, patch: Patch): Record<string, unknown> {
 
 export const memory = {
   stats: () => call<MemoryStats>('stats'),
+  issues: () => call<ReviewQueue>('issues', { status: 'open', limit: 1000 }),
+  get: (id: string) => call<MemoryRow | null>('get', { id }),
+  dismiss: (id: string) => call<unknown>('issue_resolve', { id, outcome: 'dismissed', note: 'dismissed from the browse page' }),
 
   list: (tab: TabKey, f: Filter, sort: Sort, offset: number) =>
     call<MemoryRow[]>('list', listBody(tab, f, sort, offset)),
