@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 pub mod dto;
 mod place;
+pub mod read;
 pub mod update;
 pub mod write;
 
