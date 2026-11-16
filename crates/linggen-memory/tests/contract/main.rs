@@ -6,4 +6,8 @@
 //!
 //! One binary, one module per area (each test binary links all of LanceDB).
 
+mod guards;
+mod person;
 mod shipping;
+mod support;
+mod verbs;
