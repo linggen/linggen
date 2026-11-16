@@ -30,6 +30,11 @@ use lancedb::{
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+/// The Lance file format new tables are written in (lancedb's
+/// `new_table_data_storage_version`), pinned at the version memory has
+/// always written. Existing tables keep the format they were made with.
+const NEW_TABLE_FILE_FORMAT: (&str, &str) = ("new_table_data_storage_version", "2.1");
+
 /// Whose rows a query sees. One person at a time, always: the store holds
 /// the owner's memory and, once a phone with another account has paired,
 /// that person's too — and a recall that mixed them would hand one person
@@ -558,7 +563,9 @@ async fn ensure_late_schema_additions(table: &lancedb::Table) -> Result<()> {
     let names: Vec<&str> = missing.iter().map(|f| f.name().as_str()).collect();
     let add_schema = Arc::new(ArrowSchema::new(missing.clone()));
     table
-        .add_columns(NewColumnTransform::AllNulls(add_schema), None)
+        .add_columns()
+        .transform(NewColumnTransform::AllNulls(add_schema))
+        .execute()
         .await
         .with_context(|| format!("adding {names:?} column(s) to existing memory table"))?;
     tracing::info!("memory table: added {names:?} column(s) (NULL for pre-existing rows)");
@@ -819,8 +826,12 @@ impl MemoryStore {
         // open-time version and daemon reads (`list`, `get`, `days`) miss
         // every external commit until restart. Zero = check the manifest on
         // every read; local-disk cost is negligible at this store's scale.
+        // A table this store creates is written in Lance file format 2.1,
+        // what lancedb 0.31 (memory 2.3.0) wrote: lancedb 0.41 would default
+        // to 2.2, and a new store must stay readable by the release before.
         let conn = connect(uri)
             .read_consistency_interval(std::time::Duration::ZERO)
+            .storage_option(NEW_TABLE_FILE_FORMAT.0, NEW_TABLE_FILE_FORMAT.1)
             .execute()
             .await
             .with_context(|| format!("opening LanceDB at {uri}"))?;
@@ -3603,5 +3614,26 @@ mod tests {
         let after = store.search(&probe, &Filters::default(), 1).await.unwrap();
         assert_eq!(after.len(), 1);
         assert_eq!(after[0].id, before[0].id);
+    }
+
+    /// A new table's data files are Lance format 2.1 (`NEW_TABLE_FILE_FORMAT`),
+    /// so a store made by this build opens in the release before it. The
+    /// footer of a Lance file ends with major (u16), minor (u16), `LANC`.
+    #[tokio::test]
+    async fn a_new_table_is_written_in_file_format_2_1() {
+        let (store, dir) = fresh_store().await;
+        store
+            .insert(&[make_fact("one row", MemoryType::Fact)])
+            .await
+            .unwrap();
+        let data = dir.path().join("memory/memory.lancedb/semantic.lance/data");
+        let file = std::fs::read_dir(&data)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| p.extension().is_some_and(|x| x == "lance"))
+            .expect("a data file");
+        let bytes = std::fs::read(file).unwrap();
+        let tail = &bytes[bytes.len() - 8..];
+        assert_eq!(tail, [2, 0, 1, 0, b'L', b'A', b'N', b'C']);
     }
 }

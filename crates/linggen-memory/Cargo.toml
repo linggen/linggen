@@ -70,13 +70,15 @@ candle-core = "0.11"
 # Storage — keep arrow aligned with the lance version lancedb pins internally.
 # Bumping arrow past that duplicates the arrow types ling-mem uses directly
 # (schema.rs RecordBatch/Field/DataType). Check `cargo tree -p lancedb` after
-# any lancedb bump. NOTE the requirement is a caret: "0.30" never resolves 0.31,
+# any lancedb bump. NOTE the requirement is a caret: "0.40" never resolves 0.41,
 # so bump this string to move a minor version, don't just `cargo update`.
+# lancedb 0.41 pins lance =14.0.2 and takes datafusion 54 and arrow 58. A new
+# table's Lance file format is pinned in store.rs (NEW_TABLE_FILE_FORMAT).
 # roaring is pinned to 0.11.4 in Cargo.lock: 0.11.3 dropped the Eq impl lance 7
 # needs and cargo's minimal update parks there ("RoaringBitmap: Eq is not
 # satisfied" in lance transaction.rs). Re-pin with
 # `cargo update -p roaring --precise 0.11.4` if the lock is ever regenerated.
-lancedb = "0.31"
+lancedb = "0.41"
 arrow = "58"
 arrow-array = "58"
 arrow-schema = "58"
