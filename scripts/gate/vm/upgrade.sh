@@ -55,7 +55,8 @@ info "upgrade: from" "ling $PREV_LING, ling-mem $PREV_MEM, app ${PREV_APP:-none}
 
 # The old user, running: engine (fixtures config → the fake model) + ling-mem.
 start_engine 90 || fail "upgrade: old engine runs" "no health"
-mem_health 30 || start_mem 60
+# A baseline that hosts memory has the stand-in and nothing on 9528 to wait for.
+is_standin "$MEM" || mem_health 30 || start_mem 60
 [ "$ONE_BINARY" = 1 ] && takeover_seed
 rows_before="$("$MEM" stats 2>/dev/null | jq -r '.total // empty')"
 sessions_before="$(ls "$LG/sessions" 2>/dev/null | wc -l | tr -d ' ')"

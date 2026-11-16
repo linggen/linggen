@@ -274,12 +274,7 @@ fn restore_previous_at(path: &Path, target_hosts_memory: bool) -> std::io::Resul
 
 /// Write the script beside `path` and rename it over — a new inode, never
 /// an overwrite of a file something may be running.
-fn write_standin(
-    path: &Path,
-    engine: &Path,
-    version: &str,
-    port: u16,
-) -> std::io::Result<()> {
+fn write_standin(path: &Path, engine: &Path, version: &str, port: u16) -> std::io::Result<()> {
     let tmp = path.with_file_name(format!(".ling-mem.standin.{}", std::process::id()));
     {
         let mut f = std::fs::File::create(&tmp)?;
