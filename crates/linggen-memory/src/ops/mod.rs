@@ -25,6 +25,7 @@
 //!   order to keep merges trivial.
 
 pub mod chains;
+pub mod compact;
 pub mod config;
 pub mod connect;
 pub mod days;
