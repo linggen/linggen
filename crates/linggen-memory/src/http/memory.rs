@@ -6,20 +6,20 @@
 //! the network-facing path to the same `MemoryStore` operations. Once
 //! Phase 4 lands in Linggen, the CLI data-ops wrappers are removed and
 //! HTTP becomes the only dispatch path. The verbs themselves are
-//! `crate::ops::memory`; each handler here extracts, calls and wraps.
+//! `crate::ops::memory`; each handler here hands its request to `http::verb`,
+//! which runs it through `Memory::call` and the verb table.
 
-use super::envelope::{ok, ApiError};
 use super::state::SharedState;
-use crate::ops;
+use super::verb;
 pub(crate) use crate::ops::memory::dto::AddRequest;
 use crate::ops::memory::dto::{
     AddBatchRequest, CountRequest, DeleteRequest, ForgetRequest, GetRequest, ListRequest,
     RestampRequest, SearchRequest, UpdateRequest,
 };
-use axum::extract::State;
+use axum::extract::{Request, State};
 use axum::response::Response;
 use axum::routing::post;
-use axum::{Json, Router};
+use axum::Router;
 
 /// Memory subrouter. Mounted at `/api/memory/` by the parent router.
 pub fn router() -> Router<SharedState> {
@@ -39,83 +39,53 @@ pub fn router() -> Router<SharedState> {
 
 // ── Handlers ────────────────────────────────────────────────────────────────
 
-async fn add(
-    State(state): State<SharedState>,
-    Json(req): Json<AddRequest>,
-) -> Result<Response, ApiError> {
-    Ok(ok(ops::memory::write::add(&state, req).await?))
+async fn add(State(state): State<SharedState>, req: Request) -> Response {
+    verb::serve::<AddRequest>(state, "add", req).await
 }
 
-async fn add_batch(
-    State(state): State<SharedState>,
-    Json(req): Json<AddBatchRequest>,
-) -> Result<Response, ApiError> {
-    Ok(ok(ops::memory::write::add_batch(&state, req).await?))
+async fn add_batch(State(state): State<SharedState>, req: Request) -> Response {
+    verb::serve::<AddBatchRequest>(state, "add_batch", req).await
 }
 
-async fn get(
-    State(state): State<SharedState>,
-    Json(req): Json<GetRequest>,
-) -> Result<Response, ApiError> {
-    Ok(ok(ops::memory::read::get(&state, req).await?))
+async fn get(State(state): State<SharedState>, req: Request) -> Response {
+    verb::serve::<GetRequest>(state, "get", req).await
 }
 
-async fn search(
-    State(state): State<SharedState>,
-    Json(req): Json<SearchRequest>,
-) -> Result<Response, ApiError> {
-    Ok(ok(ops::memory::read::search(&state, req).await?))
+async fn search(State(state): State<SharedState>, req: Request) -> Response {
+    verb::serve::<SearchRequest>(state, "search", req).await
 }
 
-async fn list(
-    State(state): State<SharedState>,
-    Json(req): Json<ListRequest>,
-) -> Result<Response, ApiError> {
-    Ok(ok(ops::memory::read::list(&state, req).await?))
+async fn list(State(state): State<SharedState>, req: Request) -> Response {
+    verb::serve::<ListRequest>(state, "list", req).await
 }
 
-async fn count(
-    State(state): State<SharedState>,
-    Json(req): Json<CountRequest>,
-) -> Result<Response, ApiError> {
-    Ok(ok(ops::memory::read::count(&state, req).await?))
+async fn count(State(state): State<SharedState>, req: Request) -> Response {
+    verb::serve::<CountRequest>(state, "count", req).await
 }
 
-async fn update(
-    State(state): State<SharedState>,
-    Json(req): Json<UpdateRequest>,
-) -> Result<Response, ApiError> {
-    Ok(ok(ops::memory::update::update(&state, req).await?))
+async fn update(State(state): State<SharedState>, req: Request) -> Response {
+    verb::serve::<UpdateRequest>(state, "update", req).await
 }
 
-async fn delete(
-    State(state): State<SharedState>,
-    Json(req): Json<DeleteRequest>,
-) -> Result<Response, ApiError> {
-    Ok(ok(ops::memory::admin::delete(&state, req).await?))
+async fn delete(State(state): State<SharedState>, req: Request) -> Response {
+    verb::serve::<DeleteRequest>(state, "delete", req).await
 }
 
 /// `POST /api/memory/restamp` — re-own every row stamped `from` (both
 /// tables, archived rows included, so provenance follows the person).
-async fn restamp(
-    State(state): State<SharedState>,
-    Json(req): Json<RestampRequest>,
-) -> Result<Response, ApiError> {
-    Ok(ok(ops::memory::admin::restamp(&state, req).await?))
+async fn restamp(State(state): State<SharedState>, req: Request) -> Response {
+    verb::serve::<RestampRequest>(state, "restamp", req).await
 }
 
 /// `POST /api/memory/accounts` — every person the store holds rows for
 /// besides the owner: `{account_id, account_name, rows}`. What a
 /// per-account maintenance pass iterates.
-async fn accounts(State(state): State<SharedState>) -> Result<Response, ApiError> {
-    Ok(ok(ops::memory::admin::accounts(&state).await?))
+async fn accounts(State(state): State<SharedState>) -> Response {
+    verb::bare(state, "accounts").await
 }
 
-async fn forget(
-    State(state): State<SharedState>,
-    Json(req): Json<ForgetRequest>,
-) -> Result<Response, ApiError> {
-    Ok(ok(ops::memory::admin::forget(&state, req).await?))
+async fn forget(State(state): State<SharedState>, req: Request) -> Response {
+    verb::serve::<ForgetRequest>(state, "forget", req).await
 }
 
 #[cfg(test)]

@@ -6,25 +6,21 @@
 //! (values carried). Stamps the sidecar `2` once no table is left on the v1
 //! layout. Idempotent: a second call finds nothing to change.
 
-use super::envelope::{ok, ApiError};
 use super::state::SharedState;
-use crate::ops;
+use super::verb;
 use crate::ops::migration::ApplySchemaRequest;
-use axum::extract::State;
+use axum::extract::{Request, State};
 use axum::response::Response;
 use axum::routing::post;
-use axum::{Json, Router};
+use axum::Router;
 use std::path::Path;
 
 pub fn router() -> Router<SharedState> {
     Router::new().route("/api/schema/apply", post(apply_schema))
 }
 
-async fn apply_schema(
-    State(state): State<SharedState>,
-    Json(req): Json<ApplySchemaRequest>,
-) -> Result<Response, ApiError> {
-    Ok(ok(ops::migration::apply_schema(&state, req).await?))
+async fn apply_schema(State(state): State<SharedState>, req: Request) -> Response {
+    verb::serve::<ApplySchemaRequest>(state, "apply_schema", req).await
 }
 
 pub(crate) fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {

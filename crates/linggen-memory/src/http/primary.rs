@@ -20,6 +20,7 @@ use std::net::SocketAddr;
 use crate::http::envelope::{ok, ApiError};
 use crate::http::local::require_local;
 use crate::http::state::SharedState;
+use crate::http::verb;
 use crate::ops;
 use crate::ops::primary::SetPrimary;
 
@@ -31,8 +32,8 @@ pub fn router() -> Router<SharedState> {
         .route("/api/sync/primary", put(set_primary))
 }
 
-async fn role(State(state): State<SharedState>) -> Result<Response, ApiError> {
-    Ok(ok(ops::primary::role(&state).await?))
+async fn role(State(state): State<SharedState>) -> Response {
+    verb::bare(state, "role").await
 }
 
 async fn set_primary(

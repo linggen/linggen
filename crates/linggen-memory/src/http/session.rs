@@ -12,22 +12,18 @@
 //! sends no `cwd` gets core alone; `budget_chars` (sent by 1.9.0-era hosts)
 //! is ignored.
 
-use super::envelope::{ok, ApiError};
 use super::state::SharedState;
-use crate::ops;
+use super::verb;
 use crate::ops::session::SessionStartRequest;
-use axum::extract::State;
+use axum::extract::{Request, State};
 use axum::response::Response;
 use axum::routing::post;
-use axum::{Json, Router};
+use axum::Router;
 
 pub fn router() -> Router<SharedState> {
     Router::new().route("/api/memory/session_start", post(session_start))
 }
 
-async fn session_start(
-    State(state): State<SharedState>,
-    Json(req): Json<SessionStartRequest>,
-) -> Result<Response, ApiError> {
-    Ok(ok(ops::session::session_start(&state, req).await?))
+async fn session_start(State(state): State<SharedState>, req: Request) -> Response {
+    verb::serve::<SessionStartRequest>(state, "session_start", req).await
 }

@@ -11,7 +11,12 @@ use axum::Json;
 use serde::Serialize;
 use serde_json::{json, Value};
 
+use crate::call::Reply;
 pub use crate::error::{ErrorCode, MemError};
+use axum::http::HeaderValue;
+
+/// The header a replica's queued write answers with.
+pub const QUEUED_HEADER: &str = "x-ling-mem-queued";
 
 /// Emit a success envelope `{ok:true, data}` with a given status code.
 pub fn ok<T: Serialize>(data: T) -> Response {
@@ -32,6 +37,26 @@ impl IntoResponse for ApiError {
         let status = StatusCode::from_u16(self.code.http_status())
             .expect("every error code maps to a valid status");
         (status, Json(body)).into_response()
+    }
+}
+
+/// A verb's answer as its route gives it: the envelope (marked when the
+/// write was queued), or the primary's status and body as they came.
+impl IntoResponse for Reply {
+    fn into_response(self) -> Response {
+        match self {
+            Reply::Done(data) => ok(data),
+            Reply::Queued(data) => {
+                let mut res = ok(data);
+                res.headers_mut()
+                    .insert(QUEUED_HEADER, HeaderValue::from_static("1"));
+                res
+            }
+            Reply::Primary { status, body } => {
+                let status = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY);
+                (status, Json(body)).into_response()
+            }
+        }
     }
 }
 

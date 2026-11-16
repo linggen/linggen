@@ -28,13 +28,12 @@
 //! `effective_timestamp()` (`occurred_at ?? created_at`) — the calendar
 //! is a human-facing surface, so local days, not UTC.
 
-use super::envelope::{ok, ApiError};
 use super::state::SharedState;
-use crate::ops;
+use super::verb;
 use crate::ops::days::{DaysRequest, HarvestDayRequest, RememberDayRequest, SweepRequest};
-use axum::extract::State;
+use axum::extract::{Request, State};
 use axum::response::Response;
-use axum::{Json, Router};
+use axum::Router;
 
 pub fn router() -> Router<SharedState> {
     use axum::routing::post;
@@ -45,30 +44,18 @@ pub fn router() -> Router<SharedState> {
         .route("/api/memory/sweep", post(sweep))
 }
 
-async fn days(
-    State(state): State<SharedState>,
-    Json(req): Json<DaysRequest>,
-) -> Result<Response, ApiError> {
-    Ok(ok(ops::days::days(&state, req).await?))
+async fn days(State(state): State<SharedState>, req: Request) -> Response {
+    verb::serve::<DaysRequest>(state, "days", req).await
 }
 
-async fn remember_day(
-    State(state): State<SharedState>,
-    Json(req): Json<RememberDayRequest>,
-) -> Result<Response, ApiError> {
-    Ok(ok(ops::days::remember_day(&state, req).await?))
+async fn remember_day(State(state): State<SharedState>, req: Request) -> Response {
+    verb::serve::<RememberDayRequest>(state, "remember_day", req).await
 }
 
-async fn harvest_day(
-    State(state): State<SharedState>,
-    Json(req): Json<HarvestDayRequest>,
-) -> Result<Response, ApiError> {
-    Ok(ok(ops::days::harvest_day(&state, req).await?))
+async fn harvest_day(State(state): State<SharedState>, req: Request) -> Response {
+    verb::serve::<HarvestDayRequest>(state, "harvest_day", req).await
 }
 
-async fn sweep(
-    State(state): State<SharedState>,
-    Json(req): Json<SweepRequest>,
-) -> Result<Response, ApiError> {
-    Ok(ok(ops::days::sweep(&state, req).await?))
+async fn sweep(State(state): State<SharedState>, req: Request) -> Response {
+    verb::serve::<SweepRequest>(state, "sweep", req).await
 }

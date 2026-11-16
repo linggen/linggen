@@ -17,20 +17,21 @@
 //!
 //! State: `<data_dir>/memory/.dream-lease.json`, `{day: {holder, expires_at}}`.
 
-use axum::{extract::State, response::Response, routing::post, Json, Router};
+use axum::{
+    extract::{Request, State},
+    response::Response,
+    routing::post,
+    Router,
+};
 
-use crate::http::envelope::{ok, ApiError};
 use crate::http::state::SharedState;
-use crate::ops;
+use crate::http::verb;
 use crate::ops::lease::LeaseRequest;
 
 pub fn router() -> Router<SharedState> {
     Router::new().route("/api/memory/dream_lease", post(dream_lease))
 }
 
-async fn dream_lease(
-    State(state): State<SharedState>,
-    Json(req): Json<LeaseRequest>,
-) -> Result<Response, ApiError> {
-    Ok(ok(ops::lease::dream_lease(&state, req).await?))
+async fn dream_lease(State(state): State<SharedState>, req: Request) -> Response {
+    verb::serve::<LeaseRequest>(state, "dream_lease", req).await
 }
