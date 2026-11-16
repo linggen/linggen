@@ -162,6 +162,8 @@ if [ "$ONE_BINARY" = 1 ]; then
   check "upgrade: new engine starts on the old home" $? "no health — $(tail -3 "$LG/ling.log" 2>/dev/null)"
   engine_mem_health 60
   check "upgrade: memory answers through the engine after a restart" $? "no ok from $ENGINE_MEM/api/health"
+  nothing_on "$LP"
+  check "upgrade: nothing listens on the old port $LP" $? "$PORT_DETAIL" "$PORT_DETAIL"
 else
   mem_health 30
   v="$(mem_version)"; new_pid="$(listener_pid 9528)"

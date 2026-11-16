@@ -53,8 +53,9 @@ mem_version() { curl -fsS -m 3 http://127.0.0.1:9528/api/health 2>/dev/null | jq
 
 # ── Memory inside the engine (ONE_BINARY=1 in expect.env: engine 2.3.0 on) ──
 # The engine serves memory at /mem/* and /mcp/memory on its own port, and
-# keeps 127.0.0.1:9528 answering for old callers. EP/LP are the two ports
-# (other values only for a rehearsal outside a VM).
+# nothing listens on 127.0.0.1:9528 any more. EP is the engine's port, LP the
+# old ling-mem daemon's (a 2.2.1 baseline and a rollback to it serve there);
+# other values only for a rehearsal outside a VM.
 EP="${GATE_ENGINE_PORT:-9527}"
 LP="${GATE_LEGACY_PORT:-9528}"
 ENGINE_MEM="http://127.0.0.1:$EP/mem"
@@ -91,24 +92,38 @@ is_standin() { head -c 300 "$1" 2>/dev/null | grep -qF "$STANDIN_MARK"; }
 # Real ling-mem daemons still running (the stand-in is a script: its process is sh).
 ling_mem_procs() { { pgrep -x ling-mem; pgrep -x ling-mem.prev; } 2>/dev/null | tr '\n' ' '; }
 
-# Every listener on a port is the engine's pid, on loopback only.
-# PORT_DETAIL lists what listens.
-only_engine_on() { # port engine-pid
+# Nothing listens on a port. PORT_DETAIL says what does, if anything.
+nothing_on() { # port
   local lines pids addrs
   lines="$(lsof -nP -iTCP:"$1" -sTCP:LISTEN -Fpn 2>/dev/null)"
   pids="$(grep '^p' <<<"$lines" | cut -c2- | sort -u | tr '\n' ' ')"
   addrs="$(grep '^n' <<<"$lines" | cut -c2- | sort -u | tr '\n' ' ')"
-  PORT_DETAIL="pid ${pids:-none}on ${addrs:-nothing}(engine pid ${2:-none})"
-  [ -n "$2" ] && [ "$pids" = "$2 " ] && [ "$addrs" = "127.0.0.1:$1 " ]
+  PORT_DETAIL="nothing on $1"
+  [ -z "$pids" ] && return 0
+  PORT_DETAIL="pid ${pids}on ${addrs:-?}"
+  return 1
+}
+
+# The engine's pid is the one listener on every address of its port.
+# PORT_DETAIL lists what listens.
+engine_alone_on_its_port() { # engine-pid
+  local lines pids
+  lines="$(lsof -nP -iTCP:"$EP" -sTCP:LISTEN -Fp 2>/dev/null)"
+  pids="$(grep '^p' <<<"$lines" | cut -c2- | sort -u | tr '\n' ' ')"
+  PORT_DETAIL="pid ${pids:-none}on $EP (engine pid ${1:-none})"
+  [ -n "$1" ] && [ "$pids" = "$1 " ]
 }
 
 # The stand-in at ~/.local/bin/ling-mem, and the binary it moved aside.
 # want-prev-sha empty: nothing was there to move (no ling-mem.prev expected).
 check_standin() { # label want-version want-prev-sha
-  local bin="$HOME/.local/bin/ling-mem" v
+  local bin="$HOME/.local/bin/ling-mem" v port
   v="$(ver_of "$bin")"
   is_standin "$bin" && [ "$v" = "$2" ]
   check "$1: ~/.local/bin/ling-mem is the stand-in" $? "$(head -c 80 "$bin" 2>/dev/null | tr '\n' ' ') — answers v${v:-none}, want the engine's v$2" "answers v$v"
+  port="$("$bin" status 2>/dev/null | jq -r '.port // empty' 2>/dev/null)"
+  [ "$port" = "$EP" ]
+  check "$1: the stand-in's status names the engine's port" $? "status says port ${port:-none}, want $EP" "port $port"
   if [ -n "$3" ]; then
     [ "$(sha "$bin.prev")" = "$3" ]
     check "$1: ling-mem.prev is the old binary" $? "sha $(sha "$bin.prev" | cut -c1-12) (v$(ver_of "$bin.prev")), want ${3:0:12}" "v$(ver_of "$bin.prev"), sha ${3:0:12}"

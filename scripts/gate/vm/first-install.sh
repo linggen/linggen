@@ -52,8 +52,8 @@ sleep 5
 pgrep -qx Safari && info "ling: browser opened" "Safari running" || info "ling: browser opened" "no Safari process"
 
 if [ "$ONE_BINARY" = 1 ]; then
-  # Memory is served by the engine itself: /mem/*, /mcp/memory, `ling mem`,
-  # and 127.0.0.1:9528 for old callers. No ling-mem process.
+  # Memory is served by the engine itself, on its own port only: /mem/*,
+  # /mcp/memory, `ling mem`. No ling-mem process, nothing on 9528.
   engine_mem_health 60
   check "memory: /mem/api/health through the engine" $? "no ok from $ENGINE_MEM/api/health — $(tail -3 "$LG/ling.log" 2>/dev/null)" "v$(curl -fsS -m 3 "$ENGINE_MEM/api/health" | jq -r '.data.version // empty')"
   mcp_answers "http://127.0.0.1:$EP/mcp/memory"
@@ -65,10 +65,12 @@ if [ "$ONE_BINARY" = 1 ]; then
   check_standin "memory" "$LING_VERSION" "$INSTALLED_MEM_SHA"
   left="$(ling_mem_procs)"; [ -z "$left" ]
   check "memory: no ling-mem process runs" $? "running: $left"
-  only_engine_on "$LP" "$(listener_pid "$EP")"
-  check "memory: only the engine listens on $LP, loopback only" $? "$PORT_DETAIL" "$PORT_DETAIL"
-  mcp_answers "http://127.0.0.1:$LP/mcp"
-  check "memory: old plugins' 127.0.0.1:$LP/mcp answers" $? "$MCP_DETAIL" "$MCP_DETAIL"
+  nothing_on "$LP"
+  check "memory: nothing listens on the old port $LP" $? "$PORT_DETAIL" "$PORT_DETAIL"
+  engine_alone_on_its_port "$(listener_pid "$EP")"
+  check "memory: the engine is the one listener on $EP" $? "$PORT_DETAIL" "$PORT_DETAIL"
+  mcp_answers "$ENGINE_MEM/mcp"
+  check "memory: $EP/mem/mcp initialize + tools/list" $? "$MCP_DETAIL" "$MCP_DETAIL"
 else
   # ling-mem: the engine starts its daemon; session_start must answer.
   # The engine starts ling-mem on first use (memory_http.rs autostart), or at
