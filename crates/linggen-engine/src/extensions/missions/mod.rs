@@ -1051,6 +1051,77 @@ mod tests {
         assert_eq!(m2.id, "test-2");
     }
 
+    fn builtin(name: &str, text: &str) -> Mission {
+        parse_mission_md(name, text).unwrap_or_else(|e| panic!("{name} must parse: {e}"))
+    }
+
+    fn grants(m: &Mission) -> Vec<(String, String)> {
+        let perm = m.permission.as_ref().expect("grants");
+        perm.paths.iter().map(|g| (g.path.clone(), g.mode.clone())).collect()
+    }
+
+    /// The scan runs only when triggered with a day, one candidate per
+    /// fresh turn, with exactly two grants: admin on its own empty folder
+    /// (its cwd, where `ling mem scan` is judged) and read on the file the
+    /// scan writes.
+    #[test]
+    fn the_builtin_scan_is_day_scoped_and_holds_two_narrow_grants() {
+        let scan = builtin("memory-scan", include_str!("../../../../../missions/memory-scan/mission.md"));
+        assert!(!scan.enabled && scan.schedule.is_empty(), "never on a schedule");
+        assert_eq!(scan.agent_id, "memory");
+        assert!(scan.kickoff_fresh);
+        assert!(scan.kickoff_day[0].contains("ling mem scan $DAY"), "{}", scan.kickoff_day[0]);
+        assert!(scan.kickoff_day.len() > 10, "too few turns for a day's sessions");
+        assert!(scan.kickoff_day.last().unwrap().contains("PARTIAL"));
+        assert_eq!(scan.allowed_tools, ["mcp__memory", "Read", "Bash"]);
+        let cwd = scan.cwd.clone().unwrap();
+        assert_eq!(
+            grants(&scan),
+            [
+                (cwd, "admin".to_string()),
+                ("~/.linggen/memory/.scan-output.jsonl".to_string(), "read".to_string()),
+            ]
+        );
+    }
+
+    /// The scan's grants through the real gate: its one command and its one
+    /// file go through; a raw session log, the store and the rest of the
+    /// Linggen home do not (a mission never prompts — it is refused).
+    #[test]
+    fn the_scans_grants_admit_its_command_and_file_and_nothing_else() {
+        use crate::engine::permission::{
+            apply_grants, check_permission, PermissionCheckResult, SessionPermissions,
+        };
+        let scan = builtin("memory-scan", include_str!("../../../../../missions/memory-scan/mission.md"));
+        let mut perms = SessionPermissions::default();
+        apply_grants(scan.permission.as_ref().unwrap(), &mut perms);
+        let cwd = crate::util::resolve_path(std::path::Path::new(scan.cwd.as_deref().unwrap()));
+        let allowed = |tool: &str, cmd: Option<&str>, file: Option<&str>| {
+            let got = check_permission(tool, cmd, file, &cwd, &perms, None);
+            matches!(got, PermissionCheckResult::Allowed)
+        };
+        let out = "~/.linggen/memory/.scan-output.jsonl";
+        assert!(allowed("Bash", Some("ling mem scan 2026-11-14"), None));
+        assert!(allowed("Read", None, Some(out)));
+        assert!(allowed("Bash", Some(&format!("jq -c '{{source, filepath}}' {out}")), None));
+        assert!(!allowed("Read", None, Some("~/.claude/projects/p/s.jsonl")));
+        assert!(!allowed("Bash", Some("cat ~/.codex/sessions/r.jsonl"), None));
+        assert!(!allowed("Bash", Some("rm ~/.linggen/memory/.days.json"), None));
+        assert!(!allowed("Read", None, Some("~/.linggen/account.toml")));
+    }
+
+    /// The solve is triggered only, attended by its caller, and holds the
+    /// dream's one READ grant over ~ — evidence is looked at, never changed.
+    #[test]
+    fn the_builtin_solve_reads_only() {
+        let solve = builtin("memory-solve", include_str!("../../../../../missions/memory-solve/mission.md"));
+        assert!(!solve.enabled && solve.schedule.is_empty(), "never on a schedule");
+        assert_eq!(solve.agent_id, "memory");
+        assert_eq!(solve.kickoff.len(), 1);
+        assert!(!solve.allowed_tools.iter().any(|t| t == "Write" || t == "Edit"));
+        assert_eq!(grants(&solve), [("~".to_string(), "read".to_string())]);
+    }
+
     #[test]
     fn test_builtin_dream_mission_parses() {
         // Guard against YAML regressions in the bundled dream mission.
