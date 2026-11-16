@@ -1,5 +1,5 @@
 //! `POST /api/debug/compact` — run the storage upkeep now: compact and prune
-//! both tables, the pass `daemon::maintenance` otherwise runs only after a
+//! both tables, the pass `ops::upkeep` otherwise runs only after a
 //! quiet spell. Hidden (no CLI verb); for measuring what a compaction does to
 //! everything else while it runs. Memory's routes answer this machine only.
 
