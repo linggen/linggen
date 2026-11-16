@@ -561,6 +561,11 @@ pub struct Skill {
     /// any other. See `doc/perception-spec.md` §3.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub activity_verbs: Vec<String>,
+    /// The small file in its own folder, and the fields of it, that make the
+    /// app's one line in the world block (`world-line:`). Installed skills
+    /// only. See `doc/perception-spec.md` §2.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub world_line: Option<crate::perception::apps::WorldLine>,
     /// The values a session of this skill may be bound to (`session-params:`)
     /// — see [`super::params`] and `doc/skill-spec.md` § Session parameters.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]

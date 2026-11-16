@@ -399,6 +399,10 @@ struct SkillFrontmatter {
     /// The verbs it writes to the activity log — see `Skill::activity_verbs`.
     #[serde(default, rename = "activity-verbs")]
     activity_verbs: Vec<String>,
+    /// Its one line in the world block — see `Skill::world_line`. Read as
+    /// plain YAML so a malformed one is dropped, never the whole skill.
+    #[serde(default, rename = "world-line")]
+    world_line: Option<serde_norway::Value>,
     /// What a session of this skill may be bound to — see `doc/skill-spec.md`
     /// § Session parameters.
     #[serde(default, rename = "session-params")]
@@ -494,6 +498,7 @@ impl SkillLoader {
                 }
             }
         }
+        mirror_world_lines(&skills);
         self.announce();
 
         Ok(())
@@ -596,10 +601,11 @@ impl SkillLoader {
                 return None;
             }
         };
-        self.skills
-            .lock()
-            .await
-            .insert(parsed.name.clone(), parsed.clone());
+        {
+            let mut skills = self.skills.lock().await;
+            skills.insert(parsed.name.clone(), parsed.clone());
+            mirror_world_lines(&skills);
+        }
         self.announce();
         Some(parsed)
     }
@@ -617,6 +623,22 @@ impl SkillLoader {
     pub(crate) async fn insert_for_test(&self, skill: Skill) {
         self.skills.lock().await.insert(skill.name.clone(), skill);
     }
+}
+
+/// Hand the world the skills that declare a line, so a turn reads them
+/// without waiting on this loader's lock.
+fn mirror_world_lines(skills: &HashMap<String, Skill>) {
+    let apps = skills
+        .values()
+        .filter_map(|s| {
+            Some(crate::perception::apps::App {
+                name: s.name.clone(),
+                dir: s.skill_dir.clone()?,
+                line: s.world_line.clone()?,
+            })
+        })
+        .collect();
+    crate::perception::apps::declare(apps);
 }
 
 /// `SkillRegistry` impl — the engine reaches `SkillLoader` only through
@@ -677,6 +699,11 @@ pub fn parse_skill_text(text: &str, source: SkillSource) -> Result<Skill> {
     let notices = usable_notices(frontmatter.notices, &frontmatter.name);
     let senses = known_senses(frontmatter.senses, &frontmatter.name);
     let activity_verbs = usable_verbs(frontmatter.activity_verbs, &frontmatter.name);
+    let world_line = crate::perception::apps::declare::usable(
+        frontmatter.world_line.and_then(|v| serde_json::to_value(v).ok()),
+        &frontmatter.name,
+        matches!(source, SkillSource::Global),
+    );
     let session_params =
         crate::engine::skill::params::usable(&frontmatter.name, frontmatter.session_params);
     for tool_def in &mut tool_defs {
@@ -730,6 +757,7 @@ pub fn parse_skill_text(text: &str, source: SkillSource) -> Result<Skill> {
             .collect(),
         senses,
         activity_verbs,
+        world_line,
         session_params,
         skill_dir: None,
     })
@@ -1019,6 +1047,22 @@ This is the skill content."#;
         assert_eq!(skill.activity_verbs, vec!["archive".to_string(), "import_csv".to_string()]);
         let bare = parse_skill_text("---\nname: x\ndescription: y\n---\nBody", SkillSource::Project);
         assert!(bare.unwrap().activity_verbs.is_empty());
+    }
+
+    #[test]
+    fn a_skill_declares_its_world_line_and_a_bad_one_never_costs_the_skill() {
+        let text = "---\nname: notes\ndescription: Keep\nworld-line:\n  file: data/world.json\n  fields: [notes, pinned]\n---\nBody";
+        let skill = parse_skill_text(text, SkillSource::Global).unwrap();
+        let line = skill.world_line.unwrap();
+        assert_eq!(line.file, "data/world.json");
+        assert_eq!(line.fields, vec!["notes".to_string(), "pinned".to_string()]);
+
+        let bad = "---\nname: notes\ndescription: Keep\nworld-line:\n  file: ../x.json\n  fields: notes\n---\nBody";
+        let skill = parse_skill_text(bad, SkillSource::Global).unwrap();
+        assert!(skill.world_line.is_none(), "dropped, and the skill still loads");
+
+        let project = parse_skill_text(text, SkillSource::Project).unwrap();
+        assert!(project.world_line.is_none(), "installed skills only");
     }
 
     #[test]

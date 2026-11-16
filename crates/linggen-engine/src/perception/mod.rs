@@ -12,10 +12,14 @@
 //!   a turn: an agent whose context fills with its own event stream remembers
 //!   the user's clicks and forgets the user.
 //!
+//! [`apps`] is one line per app, declared by its skill and read from its own
+//! file — the engine names no app.
+//!
 //! [`conditions`] is what lets a resident start a sentence, and [`trend`] is
 //! what lets it say "in two days" rather than "nearly full".
 
 pub mod activity;
+pub mod apps;
 pub mod conditions;
 pub mod devices;
 pub mod publish;
