@@ -1,4 +1,3 @@
-import React from 'react';
 import { dayState, monthGrid, type DayState } from './memoryCalendar.mts';
 import type { MemoryDay } from './memoryApi.mts';
 

@@ -1,4 +1,3 @@
-import React from 'react';
 import { dayState } from './memoryCalendar.mts';
 import { fmtTime } from './memoryFormat.mts';
 import type { MemoryDay } from './memoryApi.mts';
