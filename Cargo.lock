@@ -5644,6 +5644,7 @@ dependencies = [
  "futures",
  "lancedb",
  "libc",
+ "linggen-memory",
  "nix 0.29.0",
  "once_cell",
  "rand 0.9.5",

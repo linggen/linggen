@@ -35,6 +35,33 @@ Each stack's own framework: `cargo test` (engine, ling-mem), `node --test`
 what CI runs. Use `cargo nextest` so tests that touch processes or ports run
 isolated.
 
+### Memory's contract suites
+
+Before memory's handlers move from "a service the engine hosts" to "a
+library the engine calls", its current behaviour is pinned by offline tests
+(no model, no network beyond loopback, ~3 s):
+
+- **Test embedder** (`linggen-memory`'s `test-support` feature, never in a
+  normal build — `tests/contract/shipping.rs` checks the resolution):
+  feature hashing of the text's words into the 1024 dimensions, so equal
+  texts are equal vectors and similarity follows shared words.
+  `hosted::open_quiet_fake` opens a store on it.
+- **`crates/linggen-memory/tests/contract/`** — the real hosted router over
+  loopback HTTP on a scratch store; each test asserts the status and the
+  whole envelope (ids and stamps scrubbed). `verbs` every row verb's happy
+  path; `guards` the refusals and merge rules, word for word where a model
+  reads them; `person` per-person rows; `upkeep` days, sweep, chains,
+  issues, session start, stats, config, sync, the schema step, health;
+  `layers` replica write-forwarding into `.outbox.json`, primary-only
+  refusals, the activity clock; `mcp` the `/mcp` endpoint; `replica` two
+  stores, B made A's replica through the real routes — forward, pull, and
+  an outbox replayed after A was unreachable. A behaviour that looks wrong
+  is pinned as it is today and changed only on purpose.
+- **`src/server/api/memory/door_tests.rs`** — the engine's door
+  `/api/memory/<verb>` on such a store, as the owner, the owner's phone and
+  another person's phone: which verbs each runs, the person stamp, statuses
+  passed through, 502 `UNREACHABLE`.
+
 ## 2. System tests — hermetic, on fixtures
 
 `tests/system` (`./scripts/check.sh system`, i.e. `cargo nextest run --test

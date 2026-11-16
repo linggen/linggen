@@ -219,7 +219,19 @@ pub(crate) fn hosted_url() -> Option<String> {
 /// Machines share memory as primary and replicas, each engine with its own
 /// store; there is no address to configure.
 pub fn url() -> String {
+    #[cfg(any(test, feature = "test-support"))]
+    if let Ok(url) = TEST_URL.try_with(Clone::clone) {
+        return url;
+    }
     hosted_url().unwrap_or_default()
+}
+
+#[cfg(any(test, feature = "test-support"))]
+tokio::task_local! {
+    /// Tests only: inside `TEST_URL.scope(url, fut)`, [`url`] answers `url`
+    /// for that future alone — a test points the engine's memory callers at
+    /// a scratch store without touching the process-wide host.
+    pub static TEST_URL: String;
 }
 
 /// Write every curated row (no vectors) to `path` as NDJSON — the store

@@ -108,6 +108,8 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 regex = "1"
 # The engine's empty registries and wire-type derives, for this package's tests.
 linggen-engine = { path = "crates/linggen-engine", default-features = false, features = ["test-support"] }
+# Memory's deterministic test embedder, for the door tests of /api/memory/<verb>.
+linggen-memory = { path = "crates/linggen-memory", default-features = false, features = ["test-support"] }
 # TypeScript bindings for the wire types the UI reads — emitted by
 # `cargo test export_bindings` into ui/src/types/generated/ (scripts/gen-types.sh).
 ts-rs = { version = "12", features = ["serde-json-impl", "no-serde-warnings"] }

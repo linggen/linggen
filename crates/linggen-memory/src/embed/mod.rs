@@ -27,6 +27,8 @@
 //! load (~1–2 s warm, more on a cold disk) happens once, and never in front
 //! of a request that does not embed (`session_start`, `list`, `get`).
 
+#[cfg(any(test, feature = "test-support"))]
+mod fake;
 mod load_once;
 mod model_fetch;
 pub use load_once::LoadOnce;
@@ -62,7 +64,7 @@ const MAX_EMBED_INPUT_BYTES: usize = 16 * 1024;
 const MAX_EMBED_BATCH: usize = 32;
 
 pub struct Embedder {
-    inner: Qwen3TextEmbedding,
+    inner: Inner,
     /// Serializes candle forward passes. The daemon shares one [`Embedder`]
     /// across a multi-thread Tokio runtime; without this, N concurrent
     /// `/api/memory/*` calls ran N simultaneous forward passes on the same
@@ -70,6 +72,24 @@ pub struct Embedder {
     /// bound for the daemon's whole life (the 109 GB OOM). One inference
     /// at a time keeps resident memory flat.
     gate: tokio::sync::Mutex<()>,
+}
+
+/// What turns text into vectors: the Qwen3 model, or — in tests only — a
+/// deterministic stand-in (`fake.rs`, the `test-support` feature).
+enum Inner {
+    Qwen3(Box<Qwen3TextEmbedding>),
+    #[cfg(any(test, feature = "test-support"))]
+    Fake,
+}
+
+impl Inner {
+    fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+        match self {
+            Inner::Qwen3(model) => model.embed(texts).context("running Qwen3 embedding model"),
+            #[cfg(any(test, feature = "test-support"))]
+            Inner::Fake => Ok(texts.iter().map(|t| fake::vector(t)).collect()),
+        }
+    }
 }
 
 impl Embedder {
@@ -107,7 +127,17 @@ impl Embedder {
             }
         };
         Ok(Self {
-            inner,
+            inner: Inner::Qwen3(Box::new(inner)),
+            gate: tokio::sync::Mutex::new(()),
+        })
+    }
+
+    /// The deterministic stand-in (`fake.rs`): no model, no download. Shaped
+    /// for [`LoadOnce::new`] like [`Self::new`]. Tests only.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn fake() -> Result<Self> {
+        Ok(Self {
+            inner: Inner::Fake,
             gate: tokio::sync::Mutex::new(()),
         })
     }
@@ -198,10 +228,7 @@ impl Embedder {
         let mut vectors: Vec<Vec<f32>> = Vec::with_capacity(prefixed.len());
         for chunk in prefixed.chunks(MAX_EMBED_BATCH) {
             let refs: Vec<&str> = chunk.iter().map(String::as_str).collect();
-            let part = self
-                .inner
-                .embed(&refs)
-                .context("running Qwen3 embedding model")?;
+            let part = self.inner.embed(&refs)?;
             vectors.extend(part);
         }
 
