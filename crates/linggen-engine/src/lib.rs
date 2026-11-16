@@ -15,6 +15,7 @@ pub mod mcp_client;
 pub mod memory_host;
 pub mod message;
 pub mod mirror;
+pub mod notes;
 pub mod paths;
 pub mod perception;
 pub mod pictures;

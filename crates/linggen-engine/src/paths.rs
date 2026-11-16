@@ -110,6 +110,18 @@ pub fn met_dir() -> PathBuf {
     linggen_home().join("met")
 }
 
+/// `~/.linggen/notes/` — each agent's own notes, `<agent>.json`. See
+/// `notes`.
+pub fn notes_dir() -> PathBuf {
+    // A test run never writes the user's own notes (as `activity_dir`).
+    #[cfg(test)]
+    {
+        std::env::temp_dir().join(format!("ling-notes-test-{}", std::process::id()))
+    }
+    #[cfg(not(test))]
+    linggen_home().join("notes")
+}
+
 /// Resolve the workspace root: the explicit `--root` argument when given,
 /// otherwise the cwd canonicalized to the nearest enclosing git root (or
 /// cwd itself when not in a repo).
