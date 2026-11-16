@@ -10,7 +10,7 @@ import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import {
   MessageSquare, Bot, Sparkles, Search, X, Trash2,
   Play, Pause, ChevronDown, ChevronRight, Settings, RefreshCw,
-  CheckSquare, Loader2, MoreHorizontal, Pencil,
+  CheckSquare, Loader2, MoreHorizontal, Pencil, CalendarDays,
 } from 'lucide-react';
 import { cn } from '../lib/cn';
 import type { SessionInfo, CronMission, ManagementTab } from '../types';
@@ -34,7 +34,11 @@ import { fetchMissions, triggerMission, updateMission } from '../lib/missions-ap
 const sessionKind = (s: { creator?: string | null; mission_id?: string | null }): string =>
   s.mission_id ? 'mission' : (s.creator || 'user');
 
-const creatorIcon = (creator?: string) => {
+/** The day's session (`sess-day-YYYY-MM-DD`): one row a day, every app's chat. */
+const isDaySession = (id: string): boolean => /^sess-day-\d{4}-\d{2}-\d{2}$/.test(id);
+
+const creatorIcon = (creator?: string, day = false) => {
+  if (day) return <CalendarDays size={13} className="text-teal-500 shrink-0" />;
   switch (creator) {
     case 'mission': return <Bot size={13} className="text-amber-500 shrink-0" />;
     case 'skill':   return <Sparkles size={13} className="text-purple-500 shrink-0" />;
@@ -520,7 +524,7 @@ export const SessionList: React.FC<{
                     <div className="mt-0.5">
                       {runningSessionIds.has(session.id)
                         ? <div className="w-[13px] h-[13px] rounded-full border-2 border-blue-500 border-t-transparent animate-spin shrink-0" />
-                        : creatorIcon(sessionKind(session))}
+                        : creatorIcon(sessionKind(session), isDaySession(session.id))}
                     </div>
                   )}
                   <div className="flex-1 min-w-0">

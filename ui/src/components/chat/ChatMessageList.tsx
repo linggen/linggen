@@ -17,6 +17,7 @@ import { MemoryRecallMessage } from './MemoryRecallMessage';
 import { CompactionMessage } from './CompactionMessage';
 import { ChatImages } from './ChatImages';
 import { showsInterruptedNote } from '../../lib/interruptedRun.mts';
+import { foldOthers, pagePlace, placeName } from '../../lib/dayFold.mts';
 
 /** Plumbing rows — context, not a speaker, so never labelled. */
 const UNSPOKEN = UNSPOKEN_SENDERS;
@@ -190,6 +191,28 @@ const ChatSkeleton: React.FC = () => (
   </div>
 );
 
+/** Whether a message is drawn at all: an engine kickoff ([HIDDEN]) and a
+ *  silent reply with no calls to show are no row. */
+function isShown(msg: ChatMessage): boolean {
+  if (msg.role === 'user' && msg.text.startsWith('[HIDDEN]')) return false;
+  return !(msg.silent && !(msg.content || []).some((b) => b.type === 'tool_use'));
+}
+
+/** Another place's stretch of the day's session: its app and how many
+ *  messages, one line that opens it. */
+function FoldedStretch({ place, count, onOpen }: { place: string; count: number; onOpen: () => void }) {
+  const what = count === 1 ? `${placeName(place)} · 1 message` : `${placeName(place)} · ${count} messages`;
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="self-center my-1 px-3 py-0.5 rounded-full text-[11px] text-slate-500 dark:text-slate-400 border border-dashed border-slate-200 dark:border-white/10 hover:bg-slate-50 dark:hover:bg-white/5"
+    >
+      {what}
+    </button>
+  );
+}
+
 /** Memoized historical message list — skips re-render during streaming & typing. */
 export const ChatMessageList = React.memo<{
   messages: ChatMessage[];
@@ -220,6 +243,9 @@ export const ChatMessageList = React.memo<{
   const skillChat = useSessionStore((s) => s.isSkillSession && !!s.activeSkillName);
   const claude = useSessionStore((s) => s.allSessions.find((session) => session.id === s.activeSessionId)?.runtime === 'claude_agent_sdk');
   const loading = useChatLoading();
+  // The page's place: other places' stretches of a day's session fold.
+  const here = useSessionStore((s) => pagePlace(s.isSkillSession ? s.activeSkillName : null));
+  const [opened, setOpened] = React.useState<Set<string>>(() => new Set());
   // One toggle for every row (keyed by the row's key), so a row's props
   // stay equal across renders and its memo holds.
   const toggleExpanded = useCallback((key: string) => {
@@ -230,6 +256,37 @@ export const ChatMessageList = React.memo<{
       return next;
     });
   }, [setExpandedMessages]);
+  const renderRow = (i: number) => {
+    // Keys and the floating banner's indexes are positions in the whole
+    // history, so they hold as the window grows.
+    const msg = messages[i];
+    if (!isShown(msg)) return null;
+    const key = `${msg.timestamp}-${i}-${msg.from || msg.role}-${msg.text.slice(0, 24)}`;
+    if (msg.via) return <HandOffRow key={key} msg={msg} />;
+    const isUser = msg.role === 'user';
+    const isExpanded = verboseMode || expandedMessages.has(key);
+    const userMsgIndex = isUser ? i : undefined;
+    return (
+      <ChatMessageRow
+        key={key}
+        msg={msg}
+        msgKey={key}
+        isUser={isUser}
+        senderTag={
+          isUser && (!msg.from || msg.from === 'user')
+            ? (coreName ?? 'Hanli')
+            : agentLabel(msg, selectedAgent)
+        }
+        recipient={isUser ? recipients?.[(msg.to || '').toLowerCase()] : undefined}
+        isExpanded={isExpanded}
+        onToggle={toggleExpanded}
+        userMsgIndex={userMsgIndex}
+        userMsgRefs={userMsgRefs}
+        showInterrupted={showsInterruptedNote(msg, messages[i + 1])}
+        planProps={planProps}
+      />
+    );
+  };
   return (
     <>
       {messages.length === 0 && loading && <ChatSkeleton />}
@@ -252,37 +309,19 @@ export const ChatMessageList = React.memo<{
           ↑ {from} earlier message{from === 1 ? '' : 's'}
         </button>
       )}
-      {messages.slice(from).map((msg, j) => {
-        // Keys and the floating banner's indexes are positions in the whole
-        // history, so they hold as the window grows.
-        const i = from + j;
-        // Skip hidden system messages (used by app skills for internal prompts)
-        if (msg.role === 'user' && msg.text.startsWith('[HIDDEN]')) return null;
-        // A silent reply with no calls to show is no row at all.
-        if (msg.silent && !(msg.content || []).some((b) => b.type === 'tool_use')) return null;
-        const key = `${msg.timestamp}-${i}-${msg.from || msg.role}-${msg.text.slice(0, 24)}`;
-        if (msg.via) return <HandOffRow key={key} msg={msg} />;
-        const isUser = msg.role === 'user';
-        const isExpanded = verboseMode || expandedMessages.has(key);
-        const userMsgIndex = isUser ? i : undefined;
+      {foldOthers(messages.slice(from), here).map((item) => {
+        if (item.kind === 'message') return renderRow(from + item.index);
+        const rows = item.indexes.map((j) => from + j);
+        const count = rows.filter((i) => isShown(messages[i])).length;
+        const key = `fold-${messages[rows[0]].timestamp}-${rows[0]}`;
+        if (opened.has(key)) return rows.map(renderRow);
+        if (count === 0) return null;
         return (
-          <ChatMessageRow
+          <FoldedStretch
             key={key}
-            msg={msg}
-            msgKey={key}
-            isUser={isUser}
-            senderTag={
-              isUser && (!msg.from || msg.from === 'user')
-                ? (coreName ?? 'Hanli')
-                : agentLabel(msg, selectedAgent)
-            }
-            recipient={isUser ? recipients?.[(msg.to || '').toLowerCase()] : undefined}
-            isExpanded={isExpanded}
-            onToggle={toggleExpanded}
-            userMsgIndex={userMsgIndex}
-            userMsgRefs={userMsgRefs}
-            showInterrupted={showsInterruptedNote(msg, messages[i + 1])}
-            planProps={planProps}
+            place={item.place}
+            count={count}
+            onOpen={() => setOpened((prev) => new Set(prev).add(key))}
           />
         );
       })}

@@ -106,6 +106,9 @@ export interface ChatMessage {
   /** The reply was the spoken contract's silence: no words show, its tool
    *  calls may. */
   silent?: boolean;
+  /** In a day's session, the place the row was written in: an app's name,
+   *  or `:home` (lib/dayFold.mts). */
+  place?: string;
   /** On a "Message failed to send" line: what was sent, so a tap can resend it. */
   resend?: { text: string; agentId: string; images?: string[]; persisted?: boolean; clientId?: string };
   /** A run that ended without a reply: its tool calls, then a short note. */
@@ -148,6 +151,8 @@ export interface PersistedMeta {
   /** Device the session's agent continues the user's task from. */
   via?: string | null;
   via_note?: string | null;
+  /** A day's session: the place the row was written in (lib/dayFold.mts). */
+  place?: string;
   /** A person's message: the engine's URLs for the pictures it kept. */
   images?: string[];
   [key: string]: unknown;
@@ -254,7 +259,7 @@ export interface AppConfig {
   language?: string | null;
   /** `url` is "host:port"; `host`/`port` are the legacy pair. Use lib/serverAddr. */
   server: { url?: string | null; port?: number; host?: string };
-  agent: { max_iters: number; write_safety_mode: string; tool_permission_mode: string; prompt_loop_breaker?: string | null; compact_threshold?: number | null; memory_inject_min_score?: number; memory_recall_count?: number; suggest_followups?: boolean };
+  agent: { max_iters: number; write_safety_mode: string; tool_permission_mode: string; prompt_loop_breaker?: string | null; compact_threshold?: number | null; memory_inject_min_score?: number; memory_recall_count?: number; suggest_followups?: boolean; one_session_a_day?: boolean };
   logging: { level?: string | null; directory?: string | null; retention_days?: number | null };
   agents: { id: string; spec_path: string; model?: string | null }[];
   routing?: { default_models?: string[]; claude_default_model?: string | null; auto_fallback?: boolean };

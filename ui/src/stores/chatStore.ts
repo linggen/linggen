@@ -789,6 +789,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
               ...(meta.client_id ? { clientId: String(meta.client_id) } : {}),
               ...(meta.via ? { via: String(meta.via) } : {}),
               ...(meta.via_note ? { viaNote: String(meta.via_note) } : {}),
+              // A day's session: the place it was written in, for the page to fold.
+              ...(typeof meta.place === 'string' ? { place: meta.place } : {}),
               // The pictures the row kept: the engine's URLs for each.
               ...(Array.isArray(meta.images) && meta.images.length ? { images: meta.images.map(String) } : {}),
             }];
