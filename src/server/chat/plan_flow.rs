@@ -195,6 +195,19 @@ pub(super) async fn run_plan_execution(ctx: &ChatRunCtx, engine: &mut crate::eng
     let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
 }
 
+/// Where an approved plan runs: the place of the turn that made it — the
+/// newest plan row kept with a place — in a day's session; anywhere else
+/// the session's own (`turn_place::told_in`).
+fn plan_place(manager: &crate::engine::agent::AgentManager, session_id: &str) -> crate::engine::turn_place::TurnPlace {
+    let rows = manager.global_sessions.get_chat_history(session_id).unwrap_or_default();
+    let made_in = rows
+        .iter()
+        .rev()
+        .filter(|r| r.content.contains("\"type\":\"plan\""))
+        .find_map(|r| r.place.clone());
+    super::turn_place::told_in(manager, session_id, made_in.as_deref())
+}
+
 /// Recover a pending plan from persisted session messages after server restart.
 /// Scans the session history backwards for the last plan message — the most
 /// recent plan's status decides whether there is a pending plan.
@@ -368,7 +381,7 @@ async fn run_approved_plan_task(
         sender: None,
         via: None,
         silence_ok: false,
-        place: super::turn_place::of_session_id(&manager, &sid_default),
+        place: plan_place(&manager, &sid_default),
     };
     // The plan runs in the place its session's turns stand in: the app's
     // tools and folder, as the turn that made the plan had them.

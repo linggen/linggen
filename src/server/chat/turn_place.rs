@@ -49,14 +49,23 @@ pub(crate) async fn keep_private_if_hidden(
     session_id: &str,
     place: &TurnPlace,
 ) {
-    let store = &manager.global_sessions;
-    let Ok(Some(meta)) = store.get_session_meta(session_id) else {
-        return;
-    };
-    let sight = crate::engine::turn_place::sight::Sight::of(place, &*manager.skills).await;
-    if sight.hides_from_others(place, &meta) {
-        store.running_places.keep_talk_private(session_id);
+    if hidden_app(manager, session_id, place).await.is_some() {
+        manager.global_sessions.running_places.keep_talk_private(session_id);
     }
+}
+
+/// The app `place` keeps its talk to in session `session_id`, when it is
+/// hidden from the session's other places (`turn_place::sight`).
+pub(crate) async fn hidden_app(
+    manager: &crate::engine::agent::AgentManager,
+    session_id: &str,
+    place: &TurnPlace,
+) -> Option<String> {
+    let meta = manager.global_sessions.get_session_meta(session_id).ok()??;
+    let sight = crate::engine::turn_place::sight::Sight::of(place, &*manager.skills).await;
+    sight
+        .hides_from_others(place, &meta)
+        .then(|| place.key().to_string())
 }
 
 /// The turn is over: nothing of its place stays on the engine.
@@ -106,6 +115,28 @@ pub(crate) fn of_session_id(
     TurnPlace::of_session(meta.as_ref())
 }
 
+/// Where a turn the engine starts on its own stands — a background task's
+/// end, an approved plan's run: in a day's session, the place `key` its work
+/// began in (the app it is about, so a private app's output stays there);
+/// anywhere else, and with no key, the session's own.
+pub(crate) fn told_in(
+    manager: &crate::engine::agent::AgentManager,
+    session_id: &str,
+    key: Option<&str>,
+) -> TurnPlace {
+    let meta = manager.global_sessions.get_session_meta(session_id).ok().flatten();
+    told_place(meta.as_ref(), key)
+}
+
+fn told_place(meta: Option<&crate::state_fs::sessions::SessionMeta>, key: Option<&str>) -> TurnPlace {
+    let day = meta.is_some_and(|m| crate::state_fs::day_session::is_day_session(&m.id));
+    let (true, Some(key)) = (day, key) else {
+        return TurnPlace::of_session(meta);
+    };
+    let skill = (key != crate::engine::turn_place::HOME_KEY).then_some(key);
+    TurnPlace::of_request(skill, meta)
+}
+
 /// Who a turn belongs to: "mission", "skill" or "user" — a mission's, else
 /// the app's its place stands in (`TurnPlace::of_request`: the page's skill
 /// for a new session; a session already bound to a skill stays the skill's
@@ -125,7 +156,19 @@ pub(super) fn turn_creator(mission_id: Option<&str>, place: &TurnPlace) -> &'sta
 
 #[cfg(test)]
 mod tests {
-    use super::turn_creator;
+    use super::{told_place, turn_creator};
+
+    /// A task's end and an approved plan stand where their work began — in
+    /// a day's session; anywhere else in the session's own place, as before.
+    #[test]
+    fn work_the_engine_tells_of_stands_where_it_began_in_a_day() {
+        let day = SessionMeta { id: "sess-day-2026-11-16".into(), ..Default::default() };
+        assert_eq!(told_place(Some(&day), Some("ledger")).skill.as_deref(), Some("ledger"));
+        assert_eq!(told_place(Some(&day), Some(":home")), TurnPlace::home());
+        assert_eq!(told_place(Some(&day), None), TurnPlace::home());
+        let game = SessionMeta { id: "sess-1-g".into(), skill: Some("game".into()), ..Default::default() };
+        assert_eq!(told_place(Some(&game), Some("ledger")), TurnPlace::of_session(Some(&game)));
+    }
     use crate::engine::turn_place::TurnPlace;
     use crate::state_fs::sessions::SessionMeta;
 

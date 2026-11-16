@@ -216,8 +216,8 @@ mod tests {
         ),
         (
             "src/server/chat/plan_flow.rs",
-            1,
-            "the plan the page approves, in its own session",
+            2,
+            "the plan the page approves; the place it was made in, where it runs",
         ),
         (
             "src/server/restart.rs",

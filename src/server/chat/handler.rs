@@ -400,11 +400,18 @@ pub(crate) async fn enqueue_if_busy(
     target_id: &str,
     clean_msg: &str,
     sent: (&str, &[String]),
-    queue: Meets,
+    (queue, kept_to): (Meets, Option<String>),
 ) -> Option<(QueuedChatItem, bool)> {
     if !was_busy {
         return None;
     }
+    // A private app's message waits with no preview: what it says is that
+    // app's (`turn_place::sight`).
+    let preview = queue_preview(clean_msg);
+    let (preview, kept_to) = match kept_to {
+        Some(app) => (String::new(), Some((app, preview))),
+        None => (preview, None),
+    };
     let busy = busy_message(queue);
     let joins = busy == BusyMessage::JoinTurn;
     let item = QueuedChatItem {
@@ -415,13 +422,14 @@ pub(crate) async fn enqueue_if_busy(
         ),
         agent_id: target_id.to_string(),
         session_id: effective_session_id.to_string(),
-        preview: queue_preview(clean_msg),
+        preview,
         timestamp: crate::util::now_ts_secs(),
         // Steer means now (`fold.rs`); the chat hides it while a question
         // is open, and the engine refuses it then.
         steerable: busy != BusyMessage::WaitForEnd,
         text: sent.0.to_string(),
         images: sent.1.to_vec(),
+        kept_to,
     };
 
     let key = queue_key(effective_session_id, target_id);
@@ -1216,6 +1224,10 @@ pub(crate) async fn start_turn(
         super::turn_place::keep_private_if_hidden(&state.manager, &effective_session_id, &turn_place)
             .await;
     }
+    let kept_to = match was_busy {
+        true => super::turn_place::hidden_app(&state.manager, &effective_session_id, &turn_place).await,
+        false => None,
+    };
     let queued_item = enqueue_if_busy(
         &state,
         was_busy,
@@ -1223,7 +1235,7 @@ pub(crate) async fn start_turn(
         &target_id,
         &clean_msg,
         (&req.message, &req.images),
-        queue,
+        (queue, kept_to),
     )
     .await;
 
@@ -1507,6 +1519,7 @@ mod tests {
             steerable: true,
             text: "hi".into(),
             images: Vec::new(),
+            kept_to: None,
         };
         let queue = Arc::new(tokio::sync::Mutex::new(HashMap::from([(
             "s|ling".to_string(),

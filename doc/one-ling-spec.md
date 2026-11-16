@@ -130,8 +130,12 @@ session, prompt and row is as before. On (decided by the builder 2026-11-15/16):
 - **A private app** (`private-talk: true`): its rows — talk, tool calls,
   results, a summary written in its turn — are given to no turn in another
   place, nor to Yinyue outside it, nor shown or streamed to a surface
-  outside it. Its world line stays. No note is written in its turn (a note
-  is in front of its agent everywhere). A row in an app's own session is
+  outside it — its questions, its queued messages, its turn's whole event
+  stream but the turn's end. Its world line stays. No note is written in
+  its turn (a note is in front of its agent everywhere). A background
+  task's end and an approved plan's run stand where their work began. The
+  day's session is made by `agent`, so the memory scan (which reads a
+  person's own chats) never reads it. A row in an app's own session is
   never hidden, so nothing changes outside the day's session. Cost,
   accepted: asked elsewhere what was said there, Ling cannot answer.
 - **Her moments** run in the day's session too, standing in the app they

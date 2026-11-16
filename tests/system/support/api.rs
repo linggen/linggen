@@ -62,6 +62,18 @@ impl Api {
         body(resp, path).await
     }
 
+    /// `DELETE`, answering only the status (a refusal is not a panic).
+    pub async fn delete_status(&self, path: &str, payload: Value) -> u16 {
+        let resp = self
+            .client
+            .delete(format!("{}{path}", self.base))
+            .json(&payload)
+            .send()
+            .await
+            .unwrap_or_else(|e| panic!("DELETE {path}: {e}"));
+        resp.status().as_u16()
+    }
+
     pub async fn delete(&self, path: &str, payload: Value) -> Value {
         let resp = self
             .client

@@ -347,22 +347,14 @@ pub(super) fn forward_event_to_channels(
     }
 }
 
-/// The kinds of event that carry a turn's talk: words, tool use, questions.
-/// A turn's run and its end carry none, so a page still sees the session
-/// busy and free.
-const TALK_KINDS: &[&str] = &[
-    "message",
-    "token",
-    "text_segment",
-    "content_block",
-    "activity",
-    "ask_user",
-    "followups",
-    "tool_progress",
-    "widget_resolved",
-];
+/// The kinds of a session's event that carry nothing of a turn's talk:
+/// its end. Every other kind may (words, tool use, a delegated task's
+/// prompt and result, a plan, a question, the queue's previews, background
+/// tasks' commands), so while a private turn runs only these reach a page
+/// outside its app; the page sees the session busy from its page state.
+const CONTENT_FREE_KINDS: &[&str] = &["turn_complete"];
 
-/// Whether `ui_msg` is the talk of a turn that keeps it to a private app
+/// Whether `ui_msg` may carry the talk of a turn that keeps it to a private app
 /// (`turn_place::sight`) and this peer is not that app's page.
 fn talk_kept_from(state: &ServerState, ui_msg: &crate::engine::events::UiEvent, skill: Option<&str>) -> bool {
     let places = &state.manager.global_sessions.running_places;
@@ -374,7 +366,7 @@ fn kept_from(
     (kind, session): (&str, Option<&str>),
     skill: Option<&str>,
 ) -> bool {
-    if !TALK_KINDS.contains(&kind) {
+    if CONTENT_FREE_KINDS.contains(&kind) {
         return false;
     }
     let Some(sid) = session else {
@@ -420,13 +412,12 @@ mod yinyue_cue_tests {
         let day = Some("sess-day-2026-11-16");
         assert!(!kept_from(&places, ("token", day), None), "not private yet");
         places.keep_talk_private("sess-day-2026-11-16");
-        for kind in ["token", "message", "content_block", "ask_user"] {
+        for kind in ["token", "message", "content_block", "ask_user", "run", "tasks", "queue"] {
             assert!(kept_from(&places, (kind, day), None), "{kind} reached the main page");
             assert!(kept_from(&places, (kind, day), Some("dice")), "{kind} reached dice");
             assert!(!kept_from(&places, (kind, day), Some("ledger")), "{kind} kept from its own page");
         }
-        // A run's start and end carry no talk: every page sees the session busy.
-        assert!(!kept_from(&places, ("run", day), None));
+        // A turn's end carries no talk: every page sees the turn end.
         assert!(!kept_from(&places, ("turn_complete", day), None));
         assert!(!kept_from(&places, ("token", Some("sess-other")), None));
     }

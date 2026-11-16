@@ -438,7 +438,12 @@ pub(crate) async fn run_delegation(
     engine.set_task(task);
     engine.tools.builtins.set_session_id(session_id.clone());
     // It stands where its parent's turn stands: the app's memory, values
-    // and grants are the parent's place's.
+    // and grants are the parent's place's, and what it may be given of the
+    // session's rows (`turn_place::sight`).
+    if let Some(place) = &parent_place {
+        let sight = crate::engine::turn_place::sight::Sight::of(place, &*manager.skills).await;
+        engine.tools.builtins.turn_sight = Some(sight);
+    }
     engine.tools.builtins.turn_place = parent_place;
     engine.withhold_session_tools(&manager.global_sessions, session_id.as_deref());
 

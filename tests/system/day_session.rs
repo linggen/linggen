@@ -616,3 +616,64 @@ async fn a_restart_late_at_night_keeps_the_days_thread() {
     );
     assert_eq!(user_places(&w, &day), vec!["dice", "dice"]);
 }
+
+/// Switching it off goes back to a session per app, and loses nothing: the
+/// day's session still reads, the app's own chat is its own; on again, the
+/// same day is found and the app's chat is still there.
+#[tokio::test]
+async fn switching_off_and_on_again_loses_no_session() {
+    let setup =
+        Setup::default().script(Agent::Ling, vec![text("In the day."), text("On its own.")]);
+    let (w, _) = day_world_at(12, setup).await;
+    let day = w
+        .api
+        .create_session(json!({"title": "Dice", "skill": "dice"}))
+        .await;
+    turn_at(&w, &day, Some("dice"), "Roll", Agent::Ling).await;
+
+    set_agent(&w, json!({ "one_session_a_day": false })).await;
+    let own = w
+        .api
+        .create_session(json!({"title": "Dice", "skill": "dice"}))
+        .await;
+    assert_ne!(own, day, "off: the app makes its own session");
+    let listed = w
+        .api
+        .get("/api/skill-sessions?skill=dice")
+        .await
+        .to_string();
+    assert!(
+        !listed.contains(&day),
+        "off: the app's list has no day: {listed}"
+    );
+    turn_at(&w, &own, Some("dice"), "Roll again", Agent::Ling).await;
+    assert_eq!(w.api.get("/api/sessions/day").await["on"], false);
+    let still = w.api.history(&day, &w.work()).await;
+    assert!(
+        history_text(&still).contains("In the day."),
+        "the day still reads"
+    );
+    // A page cannot remove the day's session as if it were its own.
+    let refused = w
+        .api
+        .delete_status(
+            "/api/skill-sessions",
+            json!({"skill": "dice", "session_id": day}),
+        )
+        .await;
+    assert_eq!(refused, 403);
+    assert!(w.rows_opt(&day).is_some());
+
+    set_agent(&w, json!({ "one_session_a_day": true })).await;
+    let again = w
+        .api
+        .create_session(json!({"title": "Dice", "skill": "dice"}))
+        .await;
+    assert_eq!(again, day, "on again: the same day");
+    assert!(
+        w.raw_rows(&own)
+            .iter()
+            .any(|r| r["content"] == "On its own."),
+        "the app's chat stays"
+    );
+}

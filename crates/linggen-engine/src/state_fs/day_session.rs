@@ -48,13 +48,16 @@ pub fn day_in(session_id: &str) -> Option<NaiveDate> {
 
 /// A new day's session as it is first kept: Ling seated as its lead (she
 /// answers every message not addressed to Yinyue), Yinyue seated when she
-/// first speaks in it, home's folder `cwd`.
+/// first speaks in it, home's folder `cwd`. Made by `agent`, as Yinyue's own
+/// thread is: the memory scan reads only a person's own chats (`user`), and
+/// app chats and her thread were never read by it — nor is the day, which
+/// holds a private app's talk.
 pub fn new_meta(session_id: &str, day: NaiveDate, cwd: &str, lead: &str) -> SessionMeta {
     SessionMeta {
         id: session_id.to_string(),
         title: format!("Linggen · {}", day.format("%Y-%m-%d")),
         created_at: crate::util::now_ts_secs(),
-        creator: "user".to_string(),
+        creator: "agent".to_string(),
         cwd: cwd.to_string(),
         title_locked: true,
         agents: vec![SessionMember::new(lead)],
@@ -105,5 +108,6 @@ mod tests {
         assert_eq!(meta.agents[0].id, "ling");
         assert_eq!(meta.skill, None);
         assert!(meta.title_locked);
+        assert_eq!(meta.creator, "agent", "the memory scan never reads the day");
     }
 }

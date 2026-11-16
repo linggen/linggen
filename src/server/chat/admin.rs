@@ -554,12 +554,29 @@ pub(super) fn may_answer(
 
 /// Return any pending AskUser questions so the UI can restore the widget
 /// after navigating away and back, or after a page refresh.
+#[derive(serde::Deserialize)]
+pub(crate) struct PendingQuery {
+    /// The app whose page asks; none for the main page and the phone. A
+    /// private app's turn's questions are its pages' alone.
+    #[serde(default)]
+    skill: Option<String>,
+}
+
 pub(crate) async fn pending_ask_user_handler(
     State(state): State<Arc<ServerState>>,
+    axum::extract::Query(q): axum::extract::Query<PendingQuery>,
 ) -> impl IntoResponse {
     let pending = state.pending_ask_user.lock().await;
+    let places = &state.manager.global_sessions.running_places;
     let items: Vec<serde_json::Value> = pending
         .iter()
+        .filter(|(_, entry)| {
+            crate::server::rtc::page_state::question_shown(
+                places,
+                entry.session_id.as_deref(),
+                q.skill.as_deref(),
+            )
+        })
         .map(|(qid, entry)| {
             serde_json::json!({
                 "question_id": qid,

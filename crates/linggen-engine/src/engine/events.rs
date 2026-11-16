@@ -58,6 +58,12 @@ pub struct QueuedChatItem {
     #[serde(skip)]
     #[cfg_attr(any(test, feature = "test-support"), ts(skip))]
     pub images: Vec<String>,
+    /// The private app the message was sent from (`turn_place::sight`):
+    /// its `preview` is then blank, and only that app's pages are shown this
+    /// one. Never pushed.
+    #[serde(skip)]
+    #[cfg_attr(any(test, feature = "test-support"), ts(skip))]
+    pub kept_to: Option<(String, String)>,
 }
 /// One background task of a session (doc/background-tasks-spec.md).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -99,6 +105,11 @@ pub struct BackgroundTask {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(any(test, feature = "test-support"), ts(optional))]
     pub subagent_id: Option<String>,
+    /// The place of the turn that started it (`TurnPlace::key`): its end is
+    /// told there. Never pushed.
+    #[serde(skip)]
+    #[cfg_attr(any(test, feature = "test-support"), ts(skip))]
+    pub place: Option<String>,
 }
 
 impl BackgroundTask {
@@ -116,6 +127,7 @@ impl BackgroundTask {
             summary: None,
             output_file: None,
             subagent_id: None,
+            place: None,
         }
     }
 

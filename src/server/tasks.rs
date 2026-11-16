@@ -212,6 +212,7 @@ pub(crate) async fn native_watch(state: std::sync::Arc<super::ServerState>) {
             .get(&session, &task.id)
             .is_none_or(|t| t.is_running());
         let ended = was_running && !task.is_running();
+        let started_in = task.place.clone();
         if state.tasks.upsert(&session, task) {
             emit(&state, &session);
         }
@@ -227,7 +228,9 @@ pub(crate) async fn native_watch(state: std::sync::Arc<super::ServerState>) {
         else {
             continue;
         };
-        tokio::spawn(tell(state.clone(), session, agent_id, notice));
+        let (_, place) = super::chat::helpers::take_turn_place(state.manager.session_turn(&session));
+        let told = (session, agent_id, notice, "system".to_string());
+        tokio::spawn(tell_in_place(state.clone(), told, (place, started_in), None));
     }
 }
 
@@ -264,7 +267,7 @@ pub(crate) fn tell_from(
     sender: String,
 ) -> impl std::future::Future<Output = ()> + Send + 'static {
     let (_, place) = super::chat::helpers::take_turn_place(state.manager.session_turn(&session));
-    tell_in_place(state, session, agent, notice, sender, place, None)
+    tell_in_place(state, (session, agent, notice, sender), (place, None), None)
 }
 
 /// [`tell`], its notice kept under `mark` (the row's `client_id`); `kept`
@@ -279,22 +282,18 @@ pub(crate) fn tell_marked(
     let (_, place) = super::chat::helpers::take_turn_place(state.manager.session_turn(&session));
     tell_in_place(
         state,
-        session,
-        agent,
-        notice,
-        "system".into(),
-        place,
+        (session, agent, notice, "system".into()),
+        (place, None),
         Some(mark),
     )
 }
 
+/// `started_in`: the place of the turn that started the task being told
+/// of — in a day's session its end is told there; else the session's own.
 async fn tell_in_place(
     state: std::sync::Arc<super::ServerState>,
-    session: String,
-    agent: String,
-    notice: String,
-    sender: String,
-    place: super::chat::helpers::TurnSlot,
+    (session, agent, notice, sender): (String, String, String, String),
+    (place, started_in): (super::chat::helpers::TurnSlot, Option<String>),
     mark: Option<(String, tokio::sync::oneshot::Sender<()>)>,
 ) {
     let Some(meta) = state
@@ -392,7 +391,7 @@ async fn tell_in_place(
         policy: crate::engine::session_policy::SessionPolicy::owner(),
         sender: Some(sender),
         silence_ok: false,
-        place: super::chat::turn_place::of_session_id(&state.manager, &session),
+        place: super::chat::turn_place::told_in(&state.manager, &session, started_in.as_deref()),
     };
     super::chat::run_session_turn(&ctx, &mut engine, &state.manager, None).await;
 }

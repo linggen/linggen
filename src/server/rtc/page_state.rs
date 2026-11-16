@@ -143,19 +143,56 @@ pub struct PageState {
 /// segment rather than splitting on '|' — a project root is a path and may
 /// contain one. Agents with an empty queue are omitted: absent means nothing
 /// queued, which is what lets the snapshot express a drained queue.
+///
+/// A private app's message (`QueuedChatItem::kept_to`) is listed only to
+/// that app's pages (`skill`), with its preview.
 fn queued_entries(
     all: &std::collections::HashMap<String, Vec<crate::engine::events::QueuedChatItem>>,
     session_id: &str,
+    skill: Option<&str>,
 ) -> Vec<serde_json::Value> {
     all.values()
         .filter_map(|items| {
             let first = items.first().filter(|item| item.session_id == session_id)?;
+            let shown: Vec<_> = items.iter().filter_map(|i| shown_to(i, skill)).collect();
             Some(serde_json::json!({
                 "agent_id": first.agent_id,
-                "items": items,
+                "items": shown,
             }))
         })
         .collect()
+}
+
+/// A queued message as a page of `skill` is shown it: a private app's to
+/// its own pages only, its preview put back.
+fn shown_to(
+    item: &crate::engine::events::QueuedChatItem,
+    skill: Option<&str>,
+) -> Option<crate::engine::events::QueuedChatItem> {
+    let Some((app, preview)) = &item.kept_to else {
+        return Some(item.clone());
+    };
+    if skill != Some(app.as_str()) {
+        return None;
+    }
+    Some(crate::engine::events::QueuedChatItem {
+        preview: preview.clone(),
+        ..item.clone()
+    })
+}
+
+/// Whether a question asked in `session` is shown to a page of `skill`: not
+/// when a private app's turn asks it and this is not its page
+/// (`turn_place::sight`).
+pub(crate) fn question_shown(
+    places: &crate::engine::turn_place::running::RunningPlaces,
+    session: Option<&str>,
+    skill: Option<&str>,
+) -> bool {
+    let Some(app) = session.and_then(|s| places.private_app(s)) else {
+        return true;
+    };
+    skill == Some(app.as_str())
 }
 
 /// Dirty-flag bits for tracking which data categories changed.
@@ -374,6 +411,7 @@ pub async fn build_page_state(
 
         // Pending ask-user — filtered to user's sessions (+ pinned for embed)
         let pending = state.pending_ask_user.lock().await;
+        let places = &state.manager.global_sessions.running_places;
         let items: Vec<serde_json::Value> = pending
             .iter()
             .filter(|(_, entry)| {
@@ -382,6 +420,7 @@ pub async fn build_page_state(
                     .as_deref()
                     .map_or(is_admin && pinned.is_none(), &scope_check)
             })
+            .filter(|(_, entry)| question_shown(places, entry.session_id.as_deref(), ctx.skill.as_deref()))
             .map(|(qid, entry)| {
                 serde_json::json!({
                     "question_id": qid,
@@ -462,7 +501,7 @@ pub async fn build_page_state(
 
             let queued = {
                 let guard = state.queued_chats.lock().await;
-                queued_entries(&guard, session_id)
+                queued_entries(&guard, session_id, ctx.skill.as_deref())
             };
             ps.queued = Some(queued);
             ps.tasks = Some(state.tasks.list(session_id));
@@ -520,7 +559,39 @@ mod tests {
             steerable: false,
             text: "hello".into(),
             images: Vec::new(),
+            kept_to: None,
         }
+    }
+
+    /// A private app's queued message is listed to that app's pages alone,
+    /// its preview put back; the others are everyone's.
+    #[test]
+    fn a_private_apps_queued_message_is_its_pages_alone() {
+        let mut private = item("sess-1", "ling");
+        private.preview = String::new();
+        private.kept_to = Some(("ledger".into(), "hello".into()));
+        let all = HashMap::from([("k".to_string(), vec![private, item("sess-1", "ling")])]);
+        let shown = |skill| queued_entries(&all, "sess-1", skill)[0]["items"].as_array().unwrap().len();
+        assert_eq!(shown(None), 1);
+        assert_eq!(shown(Some("dice")), 1);
+        assert_eq!(shown(Some("ledger")), 2);
+        let ledger = queued_entries(&all, "sess-1", Some("ledger"));
+        assert_eq!(ledger[0]["items"][0]["preview"], "hello");
+    }
+
+    /// A question a private app's turn asks is shown on its pages alone.
+    #[test]
+    fn a_private_turns_question_is_its_pages_alone() {
+        use crate::engine::turn_place::{running::RunningPlaces, TurnPlace};
+        let places = RunningPlaces::default();
+        let ledger = TurnPlace { skill: Some("ledger".into()), ..TurnPlace::home() };
+        let _mark = places.mark("sess-1", &ledger).unwrap();
+        assert!(question_shown(&places, Some("sess-1"), None), "not private yet");
+        places.keep_talk_private("sess-1");
+        assert!(!question_shown(&places, Some("sess-1"), None));
+        assert!(!question_shown(&places, Some("sess-1"), Some("dice")));
+        assert!(question_shown(&places, Some("sess-1"), Some("ledger")));
+        assert!(question_shown(&places, Some("sess-2"), None));
     }
 
     #[test]
@@ -539,7 +610,7 @@ mod tests {
     fn names_the_agent_its_items_are_for() {
         let mut all = HashMap::new();
         all.insert("sess-1|ling".to_string(), vec![item("sess-1", "ling")]);
-        let out = queued_entries(&all, "sess-1");
+        let out = queued_entries(&all, "sess-1", None);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0]["agent_id"], "ling");
     }
@@ -550,7 +621,7 @@ mod tests {
         // a cancelled run leaves behind, and the one clients used to miss.
         let mut all = HashMap::new();
         all.insert("sess-1|ling".to_string(), Vec::new());
-        assert!(queued_entries(&all, "sess-1").is_empty());
+        assert!(queued_entries(&all, "sess-1", None).is_empty());
     }
 
     #[test]
@@ -558,7 +629,7 @@ mod tests {
         let mut all = HashMap::new();
         all.insert("sess-1|ling".to_string(), vec![item("sess-1", "ling")]);
         all.insert("sess-2|ling".to_string(), vec![item("sess-2", "ling")]);
-        let out = queued_entries(&all, "sess-1");
+        let out = queued_entries(&all, "sess-1", None);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0]["items"][0]["session_id"], "sess-1");
     }

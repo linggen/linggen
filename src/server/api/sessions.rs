@@ -386,6 +386,11 @@ pub(crate) async fn remove_skill_session_api(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<RemoveSkillSessionRequest>,
 ) -> impl IntoResponse {
+    // An app's page removes its own sessions; the day's session is every
+    // app's, and the person removes it from the list.
+    if crate::server::day_session::is_day(&req.session_id) {
+        return StatusCode::FORBIDDEN;
+    }
     state.manager.remove_session_engine(&req.session_id).await;
     match state
         .manager

@@ -359,6 +359,7 @@ pub async fn watch_shell(
     }
     let mut task = BackgroundTask::running(&id, "shell", cmd);
     task.owner_agent = if child_owner { None } else { owner.or(Some(agent)).map(str::to_owned) };
+    task.place = started_in(manager, session);
     task.child_owner = child_owner;
     task.output_file = Some(output.to_string_lossy().into_owned());
     let (stop_tx, mut stop_rx) = oneshot::channel();
@@ -472,6 +473,13 @@ fn kill_group(pid: Option<u32>, signal: i32) {
 #[cfg(not(unix))]
 fn kill_group(_pid: Option<u32>, _signal: i32) {}
 
+/// The place of the turn running in `session` as a task starts in it: the
+/// task's end is told there (`server::tasks`).
+fn started_in(manager: &AgentManager, session: &str) -> Option<String> {
+    let place = manager.global_sessions.running_places.of(session)?;
+    Some(place.key().to_string())
+}
+
 /// List a background subagent once its run exists. `run` resolves to its
 /// outcome text; the subagent's own run id comes on `started`.
 pub async fn track_subagent(
@@ -489,6 +497,7 @@ pub async fn track_subagent(
     let title: String = task_text.chars().take(200).collect();
     let mut task = BackgroundTask::running(&id, "subagent", &format!("{target}: {title}"));
     task.owner_agent = if child_owner { None } else { owner.or(Some(agent)).map(str::to_owned) };
+    task.place = started_in(manager, session);
     task.child_owner = child_owner;
     let (stop_tx, mut stop_rx) = oneshot::channel();
     manager
