@@ -97,12 +97,20 @@ async fn beat_present(w: &World) {
     w.api.post("/api/presence", body).await;
 }
 
-/// Her kickoffs so far, oldest first.
+/// Her kickoffs so far, oldest first: each call's last user row (the world
+/// block follows it).
 fn her_facts(w: &World) -> Vec<String> {
     w.model
         .calls_of(Agent::Yinyue)
         .iter()
-        .filter_map(|c| c.thread().last().map(|(_, t)| t.clone()))
+        .filter_map(|c| {
+            let thread = c.thread();
+            thread
+                .iter()
+                .rev()
+                .find(|(role, _)| role == "user")
+                .map(|(_, t)| t.clone())
+        })
         .collect()
 }
 
