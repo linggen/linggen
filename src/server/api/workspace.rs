@@ -314,13 +314,10 @@ pub(crate) async fn get_workspace_state(
     };
 
     let sid = query.session_id.as_deref().unwrap_or_default();
-    let messages = match sid {
-        "" => Vec::new(),
-        sid => state
-            .manager
-            .global_sessions
-            .get_chat_history(sid)
-            .unwrap_or_default(),
+    // The main page stands at home: a private app's talk is not shown here.
+    let (messages, day) = match sid {
+        "" => (Vec::new(), None),
+        sid => crate::server::day_session::rows_for_page(&state.manager, sid, None).await,
     };
     let running = !sid.is_empty() && run_calls::session_running(&state.manager, sid).await;
 
@@ -345,6 +342,7 @@ pub(crate) async fn get_workspace_state(
                 false => sanitize_message_for_ui(&m.from_id, &m.content)?,
             };
             let images = std::mem::take(&mut m.images);
+            let place = day.as_ref().map(|d| m.place_in(d));
             let meta = crate::state_fs::StateFile::Message {
                 id: format!("msg-{}", m.timestamp),
                 from: m.from_id,
@@ -355,7 +353,10 @@ pub(crate) async fn get_workspace_state(
                 via: m.via,
                 via_note: m.via_note,
             };
-            let meta = serde_json::to_value(meta).ok()?;
+            let mut meta = serde_json::to_value(meta).ok()?;
+            if let Some(place) = place {
+                meta["place"] = serde_json::Value::from(place);
+            }
             let meta = crate::state_fs::session_images::with_urls(meta, sid, &images);
             Some((
                 run_calls::with_tools(meta, m.run_id.as_deref(), calls),

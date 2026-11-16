@@ -833,6 +833,9 @@ pub(crate) async fn run_session_turn(
     let _mark = ctx.session_id.as_deref().and_then(|sid| {
         manager.global_sessions.running_places.mark(sid, &ctx.place)
     });
+    if let (Some(_), Some(sid)) = (&_mark, ctx.session_id.as_deref()) {
+        super::turn_place::keep_private_if_hidden(manager, sid, &ctx.place).await;
+    }
     // What closes this turn names this turn's run, never the last one's.
     engine.last_run_id = None;
     seat_member(engine, ctx).await;
@@ -1209,6 +1212,10 @@ pub(crate) async fn start_turn(
     let mark = (!was_busy)
         .then(|| running_places.mark(&effective_session_id, &turn_place))
         .flatten();
+    if mark.is_some() {
+        super::turn_place::keep_private_if_hidden(&state.manager, &effective_session_id, &turn_place)
+            .await;
+    }
     let queued_item = enqueue_if_busy(
         &state,
         was_busy,
@@ -1314,13 +1321,20 @@ pub(crate) async fn start_turn(
             state_clone.fold.forget(queued_id);
         }
         // Its own turn now: its place is the running one until it ends.
-        let _mark = mark.or_else(|| {
-            state_clone
-                .manager
-                .global_sessions
-                .running_places
-                .mark(&session_id_for_queue, &turn_place)
-        });
+        let _mark = match mark {
+            Some(mark) => Some(mark),
+            None => {
+                let places = &state_clone.manager.global_sessions.running_places;
+                let mark = places.mark(&session_id_for_queue, &turn_place);
+                super::turn_place::keep_private_if_hidden(
+                    &state_clone.manager,
+                    &session_id_for_queue,
+                    &turn_place,
+                )
+                .await;
+                mark
+            }
+        };
         let queued_item_id = queued_item_id.filter(|_| !shown);
         let mut engine = agent.lock().await;
 

@@ -323,6 +323,10 @@ pub struct AgentEngine {
     /// after this mark written by another member, or a rewrite since, make
     /// the cache stale and the thread is rebuilt from the file.
     pub thread_mark: Option<ThreadMark>,
+    /// The place (`TurnPlace::key`) `chat_history` was last caught up for:
+    /// a turn in another place is given its own rows (`turn_place::sight`),
+    /// so the thread is rebuilt for it.
+    pub thread_place: Option<String>,
     /// The in-loop compactor wrote a summary into the session file. `mark`
     /// would otherwise treat the cache as caught up — the rewrite happened
     /// before it — so the next sync rebuilds from that summary.
@@ -655,6 +659,7 @@ impl AgentEngine {
             next_context_id: 1,
             chat_history: Vec::new(),
             thread_mark: None,
+            thread_place: None,
             reload_thread: false,
             active_skill: None,
             active_mission: None,

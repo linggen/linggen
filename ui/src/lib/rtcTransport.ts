@@ -15,7 +15,7 @@ import type {
   ChatRequest,
   AskUserResponse,
   PlanAction,
-  ViewName,
+  ViewContext,
 } from './transport';
 import { connection } from './transport';
 import type { ProxyReply } from './channelFetch.mts';
@@ -230,9 +230,9 @@ export class RtcTransport implements Transport {
   // client is looking at; re-registering the view makes it push fresh
   // scoped page_state (agent_runs included), clearing stale `running`
   // rows that would otherwise tick "Thinking" forever.
-  private pendingViewContext: { sessionId: string | null; projectRoot: string | null; view: ViewName } | null = null;
+  private pendingViewContext: ViewContext | null = null;
 
-  sendViewContext(ctx: { sessionId: string | null; projectRoot: string | null; view: ViewName }): void {
+  sendViewContext(ctx: ViewContext): void {
     this.pendingViewContext = ctx;
     if (this.controlChannel?.readyState === 'open') {
       this.controlChannel.send(JSON.stringify({
@@ -240,6 +240,7 @@ export class RtcTransport implements Transport {
         session_id: ctx.sessionId,
         project_root: ctx.projectRoot,
         view: ctx.view,
+        skill: ctx.skill ?? null,
       }));
     }
   }

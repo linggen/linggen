@@ -37,6 +37,26 @@ pub(super) async fn bind_turn_place(engine: &mut crate::engine::AgentEngine, ctx
     if grants_changed {
         let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
     }
+    let sight = crate::engine::turn_place::sight::Sight::of(&ctx.place, &*ctx.manager.skills).await;
+    engine.see_from_place(sight);
+}
+
+/// Keep the turn running in `session_id` private to its app when its talk
+/// is hidden from the session's other places (`turn_place::sight`): what it
+/// streams then reaches no surface outside the app (`rtc::peer::forward`).
+pub(crate) async fn keep_private_if_hidden(
+    manager: &crate::engine::agent::AgentManager,
+    session_id: &str,
+    place: &TurnPlace,
+) {
+    let store = &manager.global_sessions;
+    let Ok(Some(meta)) = store.get_session_meta(session_id) else {
+        return;
+    };
+    let sight = crate::engine::turn_place::sight::Sight::of(place, &*manager.skills).await;
+    if sight.hides_from_others(place, &meta) {
+        store.running_places.keep_talk_private(session_id);
+    }
 }
 
 /// The turn is over: nothing of its place stays on the engine.

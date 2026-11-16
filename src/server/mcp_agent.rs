@@ -744,10 +744,16 @@ fn validate_model(model: &str, resolved: Option<String>, ids: &[String]) -> Resu
     resolved.ok_or_else(|| format!("unknown model '{model}'. Available: {}", ids.join(", ")))
 }
 
+/// A delegated run's session. The day's session is none: a host neither
+/// reads nor continues it (`server::day_session`) — a private app's talk is
+/// in it.
 fn session_meta(
     state: &ServerState,
     session: &str,
 ) -> Result<crate::state_fs::sessions::SessionMeta, String> {
+    if crate::state_fs::day_session::is_day_session(session) {
+        return Err(format!("'{session}' is the day's session, not a delegated run"));
+    }
     let meta = state
         .manager
         .global_sessions

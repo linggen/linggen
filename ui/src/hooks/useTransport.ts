@@ -25,7 +25,7 @@ import { COMPANION_ID } from '../lib/agentsMet.mts';
 export function sendViewContext() {
   try {
     const transport = getTransport();
-    const { activeSessionId, selectedProjectRoot } = useSessionStore.getState();
+    const { activeSessionId, selectedProjectRoot, isSkillSession, activeSkillName } = useSessionStore.getState();
     // View is baked in by the entry file (main.tsx / embed.tsx / consumer.tsx)
     // via window.__LINGGEN_VIEW__. Defaults to 'main' for safety.
     const view = ((window as { __LINGGEN_VIEW__?: string }).__LINGGEN_VIEW__ || 'main') as 'main' | 'embed' | 'consumer';
@@ -33,6 +33,7 @@ export function sendViewContext() {
       sessionId: activeSessionId,
       projectRoot: selectedProjectRoot,
       view,
+      skill: isSkillSession ? activeSkillName : null,
     });
   } catch { /* transport not ready */ }
 }

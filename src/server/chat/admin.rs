@@ -342,11 +342,13 @@ pub(crate) async fn compact_chat_api(
             .flatten()
             .and_then(|m| m.compact_focus)
     });
+    // `/compact` stands in the session's own place.
+    let place = super::turn_place::of_session_id(&state.manager, &session_id);
     let result = super::compact_rows::compact_session(
         &state.manager,
         &session_id,
         &models,
-        focus.as_deref(),
+        (focus.as_deref(), &place),
     )
     .await;
     if result.is_some() {

@@ -1088,6 +1088,7 @@ impl PeerLoop {
             user_id: &self.user_ctx.user_id,
             is_admin: self.user_ctx.permission.is_admin(),
             view: self.view_ctx.view.as_deref(),
+            skill: self.view_ctx.skill.as_deref(),
             pinned_session_id: if self.view_ctx.view.as_deref() == Some("embed") {
                 self.view_ctx.session_id.as_deref()
             } else {

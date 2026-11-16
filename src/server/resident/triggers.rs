@@ -247,10 +247,11 @@ pub(super) fn handle_notification(state: &Arc<ServerState>, payload: Notificatio
                 // reply that "broke off" (2026-09-01), and a content-free
                 // "finished" once let her announce a deletion that never
                 // happened. "They need you" is the AskUser hook's job.
-                let asked = session_id
-                    .as_deref()
-                    .and_then(|sid| last_user_line(&state, sid))
-                    .unwrap_or_default();
+                let asked = match session_id.as_deref() {
+                    Some(sid) => last_user_line(&state, sid).await,
+                    None => None,
+                }
+                .unwrap_or_default();
                 let topic_block = if asked.is_empty() {
                     String::new()
                 } else {
@@ -290,13 +291,11 @@ fn is_delegated(meta: Option<&crate::state_fs::sessions::SessionMeta>) -> bool {
 
 /// The user's most recent message in a session — the topic of the reply
 /// Yinyue announces — trimmed to a short quote. Hidden prompts and tool
-/// payloads are skipped. `None` when the session has nothing quotable.
-pub(super) fn last_user_line(state: &Arc<ServerState>, session_id: &str) -> Option<String> {
-    let history = state
-        .manager
-        .global_sessions
-        .get_chat_history(session_id)
-        .ok()?;
+/// payloads are skipped. `None` when the session has nothing quotable. She
+/// stands outside every app: a private app's words are never quoted to her.
+pub(super) async fn last_user_line(state: &Arc<ServerState>, session_id: &str) -> Option<String> {
+    let (history, _) =
+        crate::server::day_session::rows_for_page(&state.manager, session_id, None).await;
     let line = history
         .iter()
         .rev()

@@ -10,7 +10,14 @@ use std::sync::{Arc, Mutex};
 /// Each session's running turn's place, while one runs.
 #[derive(Debug, Default, Clone)]
 pub struct RunningPlaces {
-    by_session: Arc<Mutex<HashMap<String, TurnPlace>>>,
+    by_session: Arc<Mutex<HashMap<String, Running>>>,
+}
+
+/// A running turn's place, and whether its talk is kept to it.
+#[derive(Debug, Clone)]
+struct Running {
+    place: TurnPlace,
+    private: bool,
 }
 
 /// A running turn's place, kept until this is dropped.
@@ -27,7 +34,7 @@ impl Drop for PlaceMark {
 }
 
 impl RunningPlaces {
-    fn map(&self) -> std::sync::MutexGuard<'_, HashMap<String, TurnPlace>> {
+    fn map(&self) -> std::sync::MutexGuard<'_, HashMap<String, Running>> {
         self.by_session
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -41,7 +48,11 @@ impl RunningPlaces {
         if map.contains_key(session) {
             return None;
         }
-        map.insert(session.to_string(), place.clone());
+        let running = Running {
+            place: place.clone(),
+            private: false,
+        };
+        map.insert(session.to_string(), running);
         Some(PlaceMark {
             places: self.clone(),
             session: session.to_string(),
@@ -50,7 +61,22 @@ impl RunningPlaces {
 
     /// The place of the turn running in `session`, when one is kept.
     pub fn of(&self, session: &str) -> Option<TurnPlace> {
-        self.map().get(session).cloned()
+        self.map().get(session).map(|r| r.place.clone())
+    }
+
+    /// The turn running in `session` keeps its talk to its app
+    /// (`turn_place::sight`): what it streams goes to no surface outside it.
+    pub fn keep_talk_private(&self, session: &str) {
+        if let Some(running) = self.map().get_mut(session) {
+            running.private = true;
+        }
+    }
+
+    /// The app the turn running in `session` keeps its talk to, if any.
+    pub fn private_app(&self, session: &str) -> Option<String> {
+        let map = self.map();
+        let running = map.get(session).filter(|r| r.private)?;
+        Some(running.place.key().to_string())
     }
 }
 
@@ -115,5 +141,20 @@ mod tests {
         assert_eq!(places.of("sess-1").and_then(|p| p.skill), Some("zz-game".into()));
         drop(first);
         assert_eq!(places.of("sess-1"), None);
+    }
+
+    /// A running turn's talk is private only once it is said to be, and
+    /// only while it runs.
+    #[test]
+    fn a_running_turns_talk_is_private_while_it_runs() {
+        let places = RunningPlaces::default();
+        let mark = places.mark("sess-1", &app("zz-ledger")).unwrap();
+        assert_eq!(places.private_app("sess-1"), None);
+        places.keep_talk_private("sess-1");
+        assert_eq!(places.private_app("sess-1").as_deref(), Some("zz-ledger"));
+        drop(mark);
+        assert_eq!(places.private_app("sess-1"), None);
+        places.keep_talk_private("sess-1");
+        assert_eq!(places.private_app("sess-1"), None, "nothing runs");
     }
 }

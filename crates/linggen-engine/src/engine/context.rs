@@ -629,12 +629,18 @@ impl AgentEngine {
             return false;
         };
         let agent = self.agent_id.clone().unwrap_or_else(|| "ling".to_string());
+        let kept_to = manager
+            .global_sessions
+            .get_session_meta(&sid)
+            .ok()
+            .flatten()
+            .and_then(|meta| self.summary_kept_to(&meta));
         let tail_budget = self.context_tail_token_budget();
         let before = manager.global_sessions.rewrite_count(&sid);
         if let Err(e) = manager.global_sessions.edit_chat_history(&sid, |rows| {
             super::compaction::commit_compaction(
                 rows,
-                summary.clone(),
+                (summary.clone(), kept_to.clone()),
                 &agent,
                 tail_budget,
                 live_budget,

@@ -383,6 +383,10 @@ pub struct Tools {
     /// The place the running turn stands in (`turn_place`), set when it
     /// enters and cleared when it leaves; a delegated run gets its parent's.
     pub(crate) turn_place: Option<crate::engine::turn_place::TurnPlace>,
+    /// What the running turn's place may be given of the session's rows
+    /// (`turn_place::sight`), set by the server as the turn enters its
+    /// place and cleared when it leaves.
+    pub(crate) turn_sight: Option<crate::engine::turn_place::sight::Sight>,
     /// The running turn's Steer (`engine/steer.rs`), wired by the server for
     /// a person's turn: a foreground Bash moves to the background on it.
     pub(crate) steer: Option<Arc<crate::engine::steer::SteerSignal>>,
@@ -411,6 +415,7 @@ impl Tools {
             browser_bridge: None,
             active_skill: None,
             turn_place: None,
+            turn_sight: None,
             steer: None,
         })
     }
@@ -560,7 +565,7 @@ impl Tools {
         let mut env = vec![("LINGGEN_SESSION_ID".to_string(), sid.clone())];
         env.extend(restricted);
         if let Some(manager) = self.get_manager() {
-            if let Ok(history) = manager.global_sessions.get_chat_history(sid) {
+            if let Ok(history) = self.seen_history(&manager.global_sessions, sid) {
                 let turns = history.iter().filter(|m| m.from_id == "user").count();
                 env.push(("LINGGEN_USER_TURNS".to_string(), turns.to_string()));
                 if senses.iter().any(|s| s == crate::senses::USER_WORDS) {
@@ -569,6 +574,37 @@ impl Tools {
             }
         }
         env
+    }
+
+    /// Whether the running turn stands in an app whose talk is hidden from
+    /// the session's other places (`turn_place::sight`).
+    pub(crate) fn talk_is_private_here(&self) -> bool {
+        let (Some(place), Some(sight), Some(sid)) =
+            (&self.turn_place, &self.turn_sight, &self.session_id)
+        else {
+            return false;
+        };
+        let Some(manager) = self.get_manager() else {
+            return false;
+        };
+        let Ok(Some(meta)) = manager.global_sessions.get_session_meta(sid) else {
+            return false;
+        };
+        sight.hides_from_others(place, &meta)
+    }
+
+    /// The session's rows the running turn's place may be given
+    /// ([`Self::turn_sight`]); all of them when no sight is set.
+    fn seen_history(
+        &self,
+        store: &crate::state_fs::SessionStore,
+        sid: &str,
+    ) -> anyhow::Result<Vec<crate::state_fs::sessions::ChatMsg>> {
+        let rows = store.get_chat_history(sid)?;
+        let (Some(sight), Ok(Some(meta))) = (&self.turn_sight, store.get_session_meta(sid)) else {
+            return Ok(rows);
+        };
+        Ok(sight.visible(rows, &meta))
     }
 
     /// The values the running turn's place is bound to, for a tool of

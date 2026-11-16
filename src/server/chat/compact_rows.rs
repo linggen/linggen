@@ -16,6 +16,8 @@ use super::ChatRunCtx;
 use crate::engine::agent::AgentManager;
 use crate::engine::compaction::{since_compaction, tail_cut, with_summary, COMPACTION_SENDER};
 use crate::engine::AgentEngine;
+use crate::engine::turn_place::sight::Sight;
+use crate::engine::turn_place::TurnPlace;
 use crate::state_fs::sessions::{ChatMsg, SessionMember};
 use std::path::Path;
 
@@ -131,18 +133,34 @@ pub(crate) async fn session_models(
 
 /// Compact the session's thread into one summary row. Returns the summary
 /// when one was written.
+///
+/// `place` is where the compacting turn stands (the session's own for
+/// `/compact`): the summary is made of what that place is given, and is
+/// kept to that place when its talk is private (`turn_place::sight`).
 pub(crate) async fn compact_session(
     manager: &AgentManager,
     session_id: &str,
     models: &SessionModels,
-    focus: Option<&str>,
+    (focus, place): (Option<&str>, &TurnPlace),
 ) -> Option<String> {
     let store = &manager.global_sessions;
-    let rows = store.get_chat_history(session_id).ok()?;
+    let all = store.get_chat_history(session_id).ok()?;
+    let meta = store.get_session_meta(session_id).ok()??;
+    let sight = Sight::of(place, &*manager.skills).await;
+    let (at, rows): (Vec<usize>, Vec<ChatMsg>) = all
+        .into_iter()
+        .enumerate()
+        .filter(|(_, r)| sight.sees(r, &meta))
+        .unzip();
     let tail_budget = (smallest_window(&models.windows) as f64 * TAIL_SHARE) as usize;
     let cut = tail_cut(&rows, tail_budget)?;
     let base = rows.len() - since_compaction(&rows).len();
     let span = &rows[base..cut];
+    // Where the summary goes in the file: before the row the tail begins at.
+    let file_cut = at[cut];
+    let kept_to = sight
+        .hides_from_others(place, &meta)
+        .then(|| place.key().to_string());
     let model_manager = manager.models.read().await.clone();
     let prompt = summary_prompt(span.len(), &transcript(span), focus);
     let (text, _) =
@@ -165,11 +183,11 @@ pub(crate) async fn compact_session(
         client_id: None,
         failed: false,
         images: Vec::new(),
-        place: None,
+        place: kept_to,
     };
     // The prefix up to `cut` is the snapshot's — rows written meanwhile
     // only append after it — so the summary goes in at the same place.
-    if let Err(e) = store.edit_chat_history(session_id, |now| with_summary(now, cut, row)) {
+    if let Err(e) = store.edit_chat_history(session_id, |now| with_summary(now, file_cut, row)) {
         tracing::warn!("[compact] could not write the summary into {session_id}: {e}");
         return None;
     }
@@ -212,7 +230,7 @@ pub(super) async fn compact_if_due(engine: &mut AgentEngine, ctx: &ChatRunCtx) -
     }
     tracing::info!("[compact] {sid}: thread ~{used} tokens over {limit} — compacting");
     let focus = engine.compact_focus.clone();
-    if compact_session(&ctx.manager, sid, &models, focus.as_deref())
+    if compact_session(&ctx.manager, sid, &models, (focus.as_deref(), &ctx.place))
         .await
         .is_none()
     {

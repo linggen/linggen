@@ -28,6 +28,8 @@ pub(super) struct EventFilter<'a> {
     pub(super) view: Option<&'a str>,
     /// For embed: the pinned session id. Broadcasts from other sessions are dropped.
     pub(super) pinned_session_id: Option<&'a str>,
+    /// The app whose page this peer is, when it is one (`ViewContext::skill`).
+    pub(super) skill: Option<&'a str>,
     /// This peer's id in the Yinyue presenter registry — used to decide whether
     /// THIS surface is the singleton holder (gets her voice/expression) or not.
     pub(super) peer_id: u64,
@@ -205,6 +207,11 @@ pub(super) fn forward_event_to_channels(
         }
     }
 
+    if talk_kept_from(state, &ui_msg, filter.skill) {
+        tracing::trace!("[fwd] DROP(private-talk) sid={} kind={}", dbg_sid, dbg_kind);
+        return;
+    }
+
     let json = match serde_json::to_string(&ui_msg) {
         Ok(j) => j,
         Err(_) => return,
@@ -340,6 +347,42 @@ pub(super) fn forward_event_to_channels(
     }
 }
 
+/// The kinds of event that carry a turn's talk: words, tool use, questions.
+/// A turn's run and its end carry none, so a page still sees the session
+/// busy and free.
+const TALK_KINDS: &[&str] = &[
+    "message",
+    "token",
+    "text_segment",
+    "content_block",
+    "activity",
+    "ask_user",
+    "followups",
+    "tool_progress",
+    "widget_resolved",
+];
+
+/// Whether `ui_msg` is the talk of a turn that keeps it to a private app
+/// (`turn_place::sight`) and this peer is not that app's page.
+fn talk_kept_from(state: &ServerState, ui_msg: &crate::engine::events::UiEvent, skill: Option<&str>) -> bool {
+    let places = &state.manager.global_sessions.running_places;
+    kept_from(places, (&ui_msg.kind, ui_msg.session_id.as_deref()), skill)
+}
+
+fn kept_from(
+    places: &crate::engine::turn_place::running::RunningPlaces,
+    (kind, session): (&str, Option<&str>),
+    skill: Option<&str>,
+) -> bool {
+    if !TALK_KINDS.contains(&kind) {
+        return false;
+    }
+    let Some(sid) = session else {
+        return false;
+    };
+    places.private_app(sid).is_some_and(|app| skill != Some(app.as_str()))
+}
+
 /// True when an event kind is a high-frequency streaming frame whose value
 /// expires within seconds (token deltas, bash stdout chunks, content-block
 /// mid-stream progress). These are meaningful only to a viewer watching in
@@ -362,12 +405,32 @@ fn yinyue_cue_reaches(kind: &str, holder: Option<u64>, peer_id: u64) -> bool {
 
 #[cfg(test)]
 mod yinyue_cue_tests {
-    use super::yinyue_cue_reaches;
+    use super::{kept_from, yinyue_cue_reaches};
     use crate::server::state::{yinyue_holder_of, YinyuePresenter};
 
     /// Two Lingjing tabs, each a stage (2026-09-24): her line is addressed
     /// to the newest stage only; the other tab, and the desktop corner, get
     /// nothing to speak.
+    #[test]
+    fn a_private_turns_talk_reaches_only_its_own_apps_pages() {
+        use crate::engine::turn_place::{running::RunningPlaces, TurnPlace};
+        let places = RunningPlaces::default();
+        let ledger = TurnPlace { skill: Some("ledger".into()), ..TurnPlace::home() };
+        let _mark = places.mark("sess-day-2026-11-16", &ledger).unwrap();
+        let day = Some("sess-day-2026-11-16");
+        assert!(!kept_from(&places, ("token", day), None), "not private yet");
+        places.keep_talk_private("sess-day-2026-11-16");
+        for kind in ["token", "message", "content_block", "ask_user"] {
+            assert!(kept_from(&places, (kind, day), None), "{kind} reached the main page");
+            assert!(kept_from(&places, (kind, day), Some("dice")), "{kind} reached dice");
+            assert!(!kept_from(&places, (kind, day), Some("ledger")), "{kind} kept from its own page");
+        }
+        // A run's start and end carry no talk: every page sees the session busy.
+        assert!(!kept_from(&places, ("run", day), None));
+        assert!(!kept_from(&places, ("turn_complete", day), None));
+        assert!(!kept_from(&places, ("token", Some("sess-other")), None));
+    }
+
     #[test]
     fn her_voice_reaches_the_presenter_alone() {
         let reg = [

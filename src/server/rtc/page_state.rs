@@ -18,6 +18,10 @@ pub struct ViewContext {
     /// Which UI entry is connected: "main" | "embed" | "consumer" |
     /// "channel". None means the client hasn't reported yet — treat as "main".
     pub view: Option<String>,
+    /// The app whose page this is, when it is one (an app's chat embed).
+    /// A private app's talk streams only to its own pages
+    /// (`turn_place::sight`).
+    pub skill: Option<String>,
 }
 
 impl ViewContext {

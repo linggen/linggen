@@ -65,6 +65,9 @@ pub(super) async fn sync(engine: &mut AgentEngine, ctx: &ChatRunCtx) -> bool {
     }
     let sid = ctx.session_id.as_deref().unwrap_or("default");
     let store = &ctx.manager.global_sessions;
+    if moved_place(engine, ctx) {
+        return rebuild(engine, ctx).await;
+    }
     if !engine.chat_history.is_empty() {
         let skip = engine.thread_mark.map_or(usize::MAX, |m| m.rows);
         let (total, since) = store.rows_since(sid, skip).unwrap_or_default();
@@ -80,9 +83,10 @@ pub(super) async fn sync(engine: &mut AgentEngine, ctx: &ChatRunCtx) -> bool {
 /// message this turn answers. False when the file can't be read.
 pub(super) async fn rebuild(engine: &mut AgentEngine, ctx: &ChatRunCtx) -> bool {
     let sid = ctx.session_id.as_deref().unwrap_or("default");
-    let Ok(mut rows) = ctx.manager.global_sessions.get_chat_history(sid) else {
+    let Ok(rows) = ctx.manager.global_sessions.get_chat_history(sid) else {
         return false;
     };
+    let mut rows = seen_rows(ctx, rows).await;
     if rows.last().is_some_and(|m| {
         !m.is_observation && m.from_id == ctx.from_id() && m.content == ctx.clean_msg
     }) {
@@ -113,6 +117,7 @@ pub(super) async fn spoken_tail(ctx: &ChatRunCtx, keep: usize) -> Vec<ChatMessag
     let Ok(rows) = ctx.manager.global_sessions.get_chat_history(sid) else {
         return Vec::new();
     };
+    let rows = seen_rows(ctx, rows).await;
     let words: Vec<ChatMsg> = since_compaction(&rows)
         .iter()
         .filter(|r| !r.is_observation && !crate::engine::prompt::world::is_world_row(r))
@@ -142,6 +147,27 @@ pub(super) fn mark(engine: &mut AgentEngine, ctx: &ChatRunCtx) {
         rows,
         rewrites: store.rewrite_count(sid),
     });
+    engine.thread_place = Some(ctx.place.key().to_string());
+}
+
+/// Whether the cached thread was caught up for another place than this
+/// turn's: what each place is given differs (`turn_place::sight`).
+fn moved_place(engine: &AgentEngine, ctx: &ChatRunCtx) -> bool {
+    engine
+        .thread_place
+        .as_deref()
+        .is_some_and(|key| key != ctx.place.key())
+}
+
+/// The rows of the turn's session its place may be given: a private app's
+/// talk stays in that app (`turn_place::sight`).
+pub(super) async fn seen_rows(ctx: &ChatRunCtx, rows: Vec<ChatMsg>) -> Vec<ChatMsg> {
+    let sid = ctx.session_id.as_deref().unwrap_or("default");
+    let Ok(Some(meta)) = ctx.manager.global_sessions.get_session_meta(sid) else {
+        return rows;
+    };
+    let sight = crate::engine::turn_place::sight::Sight::of(&ctx.place, &*ctx.manager.skills).await;
+    sight.visible(rows, &meta)
 }
 
 /// Whether a cached thread marked at `mark` no longer matches the file: it

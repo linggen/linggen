@@ -210,6 +210,14 @@ async fn run_at(
             .global_sessions
             .running_places
             .mark(session_id, &turn.place);
+        if _mark.is_some() {
+            crate::server::chat::turn_place::keep_private_if_hidden(
+                &state.manager,
+                session_id,
+                &turn.place,
+            )
+            .await;
+        }
         // Persist the incoming message to the session store so it survives
         // reload and every member's thread holds it. (The turn core only
         // mirrors it into in-memory history.) Inside the turn lock: two
@@ -251,7 +259,7 @@ async fn run_at(
         // Deeper continuity rides shared memory (auto-recall + core), injected
         // by the turn core.
         if turn.home {
-            seed_previously_if_fresh(state, &mut engine, session_id);
+            seed_previously_if_fresh(state, &mut engine, session_id).await;
         }
 
         let ctx = crate::server::chat::ChatRunCtx {

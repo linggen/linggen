@@ -136,6 +136,7 @@ impl AgentEngine {
         self.active_skill = None;
         self.skill_bound = false;
         self.tools.builtins.turn_place = None;
+        self.tools.builtins.turn_sight = None;
         self.cached_system_prompt = None;
         for name in &entered.registered {
             self.tools.skill_tools.remove(name);
@@ -150,6 +151,23 @@ impl AgentEngine {
             self.back_to_folder(folder);
         }
         self.back_to_own_grants();
+    }
+
+    /// What the running turn's place may be given of the session's rows,
+    /// kept until the turn leaves its place (`turn_place::sight`).
+    pub fn see_from_place(&mut self, sight: super::sight::Sight) {
+        self.tools.builtins.turn_sight = Some(sight);
+    }
+
+    /// The place a summary written in the running turn is kept to: its own,
+    /// when its talk is hidden from the session's other places; `None` —
+    /// everyone's — otherwise.
+    pub(crate) fn summary_kept_to(&self, meta: &crate::state_fs::sessions::SessionMeta) -> Option<String> {
+        let place = self.turn_place()?;
+        let sight = self.tools.builtins.turn_sight.as_ref()?;
+        sight
+            .hides_from_others(place, meta)
+            .then(|| place.key().to_string())
     }
 
     /// The key of the slot the running turn's grants live in, in the

@@ -16,6 +16,16 @@ export const connection = createGate();
  *  is pinned to one session, a `channel` (a skill page's data path) gets none. */
 export type ViewName = 'main' | 'embed' | 'consumer' | 'channel';
 
+/** What the page shows: its session and folder, its entry, and — for an
+ *  app's chat — the app, so a private app's talk streams to its own pages
+ *  only. */
+export interface ViewContext {
+  sessionId: string | null;
+  projectRoot: string | null;
+  view: ViewName;
+  skill?: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -121,7 +131,7 @@ export interface Transport {
 
   /** Tell the server which session/project the frontend has active.
    *  The server uses this to scope its page_state push. */
-  sendViewContext(ctx: { sessionId: string | null; projectRoot: string | null; view: ViewName }): void;
+  sendViewContext(ctx: ViewContext): void;
 
   /** Send a room chat message (fire-and-forget). */
   sendRoomChat?(text: string, senderName: string): void;

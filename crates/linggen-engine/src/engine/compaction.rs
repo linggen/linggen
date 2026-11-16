@@ -124,9 +124,12 @@ fn shrink_live_observations(rows: &mut [ChatMsg], from: usize, budget: usize) ->
 /// the verbatim tail begins; rows before it stay. Tool rows still in the
 /// live tail are shortened until that tail fits in `live_budget`. No summary
 /// and an already-fitting tail leaves the rows untouched.
+///
+/// `kept_to`: the place the summary is kept to (a private app's, when its
+/// turn wrote it — `turn_place::sight`); `None` is everyone's.
 pub(crate) fn commit_compaction(
     mut rows: Vec<ChatMsg>,
-    summary: Option<String>,
+    (summary, kept_to): (Option<String>, Option<String>),
     agent_id: &str,
     tail_budget: usize,
     live_budget: usize,
@@ -151,7 +154,7 @@ pub(crate) fn commit_compaction(
         client_id: None,
         failed: false,
         images: Vec::new(),
-        place: None,
+        place: kept_to,
     };
     rows = with_summary(rows, cut, row);
     // The summary sits at `cut`. Only the tail after it is shortened; the
@@ -251,7 +254,7 @@ mod tests {
             row("user", "now"),
             huge,
         ];
-        let out = commit_compaction(rows, Some("S".into()), "ling", 100, 500);
+        let out = commit_compaction(rows, (Some("S".into()), None), "ling", 100, 500);
         let summary_at = out
             .iter()
             .position(|r| r.from_id == COMPACTION_SENDER)
@@ -265,11 +268,24 @@ mod tests {
         assert!(live <= 500, "live tail {live} over budget");
     }
 
+    /// A summary written in a private app's turn is kept to that app; one
+    /// written anywhere else is everyone's.
+    #[test]
+    fn a_summary_is_kept_to_the_place_it_is_told() {
+        let long = "x".repeat(4000);
+        let rows = || vec![row("user", &long), row("ling", &long), row("user", "now")];
+        let kept = commit_compaction(rows(), (Some("S".into()), Some("ledger".into())), "ling", 100, 500);
+        let everyone = commit_compaction(rows(), (Some("S".into()), None), "ling", 100, 500);
+        let summary = |out: &[ChatMsg]| out.iter().find(|r| r.from_id == COMPACTION_SENDER).cloned().unwrap();
+        assert_eq!(summary(&kept).place.as_deref(), Some("ledger"));
+        assert_eq!(summary(&everyone).place, None);
+    }
+
     /// Nothing to write and a tail that already fits does not rewrite the file.
     #[test]
     fn a_fitting_thread_is_left_unchanged() {
         let rows = vec![row("user", "hi"), row("ling", "hello")];
-        let out = commit_compaction(rows.clone(), None, "ling", 1000, 1000);
+        let out = commit_compaction(rows.clone(), (None, None), "ling", 1000, 1000);
         assert_eq!(out, rows);
     }
 }

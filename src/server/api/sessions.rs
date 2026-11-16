@@ -295,7 +295,7 @@ pub(crate) async fn get_skill_session_state(
     State(state): State<Arc<ServerState>>,
     Query(query): Query<SkillSessionStateQuery>,
 ) -> impl IntoResponse {
-    let Some(_skill) = query.skill.filter(|s| !s.is_empty()) else {
+    let Some(skill) = query.skill.filter(|s| !s.is_empty()) else {
         return Json(serde_json::json!({ "messages": [] })).into_response();
     };
     let Some(session_id) = query.session_id.filter(|s| !s.is_empty()) else {
@@ -316,11 +316,9 @@ pub(crate) async fn get_skill_session_state(
             .into_response();
     }
 
-    let messages = state
-        .manager
-        .global_sessions
-        .get_chat_history(&session_id)
-        .unwrap_or_default();
+    // An app's page: a private app's talk is shown on its own pages only.
+    let (messages, day) =
+        crate::server::day_session::rows_for_page(&state.manager, &session_id, Some(&skill)).await;
 
     let running = run_calls::session_running(&state.manager, &session_id).await;
     let mapped = run_calls::with_run_calls(
@@ -354,6 +352,7 @@ pub(crate) async fn get_skill_session_state(
                 "via": m.via,
                 "via_note": m.via_note
             });
+            let meta = crate::server::day_session::with_place(meta, &m, day.as_ref());
             let meta = crate::state_fs::session_images::with_urls(meta, &session_id, &m.images);
             Some(serde_json::json!([
                 run_calls::with_tools(meta, m.run_id.as_deref(), calls),

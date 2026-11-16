@@ -146,6 +146,11 @@ pub(super) fn handle_control_message(
                 .get("view")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
+            view_ctx.skill = msg
+                .get("skill")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
             // Remember the focused session so agent_chat can deliver into the
             // chat the user actually has open.
             if let Some(sid) = &view_ctx.session_id {

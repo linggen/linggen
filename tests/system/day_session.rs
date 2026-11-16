@@ -290,3 +290,182 @@ async fn a_mission_and_a_delegated_run_stay_outside_the_day() {
         "nothing of either reached the day's thread"
     );
 }
+
+/// What the person told the private app — none of it may reach another place.
+const SECRET: &str = "LEDGER-ONLY 120 shares of ACME";
+const LEDGER_REPLY: &str = "LEDGER-REPLY: holding steady at 120.";
+
+/// A made-up private app (`private-talk: true`), written into the world's
+/// home after start and reloaded, as `missions.rs` installs its beacon.
+pub(crate) async fn install_ledger(w: &World) {
+    let dir = w.home.linggen_home().join("skills/ledger");
+    std::fs::create_dir_all(&dir).expect("ledger dir");
+    std::fs::write(
+        dir.join("SKILL.md"),
+        "---\nname: ledger\ndescription: A private test ledger.\nallowed-tools: []\n\
+         private-talk: true\nmembers: [ling, yinyue]\n---\n\nYou keep the ledger. Answer in one line.\n",
+    )
+    .expect("SKILL.md");
+    w.api.post("/api/skills/reload", json!({})).await;
+}
+
+fn holds_secret(text: &str) -> bool {
+    text.contains("LEDGER-ONLY") || text.contains("LEDGER-REPLY")
+}
+
+fn history_text(v: &Value) -> String {
+    v["messages"].to_string()
+}
+
+/// The second scenario: a private app's talk never reaches another place's
+/// turn, nor her outside it — in the bytes each is sent — nor a page
+/// outside it; in its own place it is all there.
+#[tokio::test]
+async fn a_private_apps_talk_reaches_no_other_place_nor_her() {
+    let setup = Setup::default()
+        .script(
+            Agent::Ling,
+            vec![
+                text(LEDGER_REPLY),
+                text("Rolled a two."),
+                text("Home."),
+                text("Still 120."),
+            ],
+        )
+        .script(Agent::Yinyue, vec![text("I'm here.")]);
+    let (w, _) = day_world_at(12, setup).await;
+    install_ledger(&w).await;
+    let day = w
+        .api
+        .create_session(json!({"title": "Ledger", "skill": "ledger"}))
+        .await;
+
+    turn_at(&w, &day, Some("ledger"), SECRET, Agent::Ling).await;
+    turn_at(&w, &day, Some("dice"), "Roll for me", Agent::Ling).await;
+    turn_at(&w, &day, None, "Hello from the main page", Agent::Ling).await;
+    let mark = w.mark();
+    w.api
+        .post("/api/yinyue/chat", json!({"text": "Anything new?"}))
+        .await;
+    w.wait_agent(Agent::Yinyue, mark).await;
+    turn_at(&w, &day, Some("ledger"), "And now?", Agent::Ling).await;
+
+    let ling = w.model.calls_of(Agent::Ling);
+    assert_eq!(ling.len(), 4);
+    assert!(
+        !holds_secret(&ling[1].text()),
+        "the dice turn was given the ledger's talk"
+    );
+    assert!(
+        !holds_secret(&ling[2].text()),
+        "the main page's turn was given it"
+    );
+    let hers = w.model.calls_of(Agent::Yinyue);
+    assert!(
+        !holds_secret(&hers[0].text()),
+        "she was given the ledger's talk"
+    );
+    // Its own place is given all of it, its own reply included.
+    assert!(ling[3].text().contains("LEDGER-ONLY") && ling[3].text().contains("LEDGER-REPLY"));
+    // The other places' talk is everyone's, the ledger's included.
+    assert!(ling[3].text().contains("Rolled a two."));
+
+    // Shown on its own page only.
+    let main = w.api.history(&day, &w.work()).await;
+    assert!(
+        !holds_secret(&history_text(&main)),
+        "the main page shows it"
+    );
+    assert!(history_text(&main).contains("Rolled a two."));
+    let page = |app: &str| format!("/api/skill-sessions/state?skill={app}&session_id={day}");
+    assert!(!holds_secret(&history_text(
+        &w.api.get(&page("dice")).await
+    )));
+    assert!(holds_secret(&history_text(
+        &w.api.get(&page("ledger")).await
+    )));
+    // Each row of the day names its place, for the page to fold.
+    let places: Vec<String> = main["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|m| m[0]["place"].as_str().map(String::from))
+        .collect();
+    assert!(places.contains(&"dice".to_string()) && !places.contains(&"ledger".to_string()));
+}
+
+/// A summary made outside the private app is made without its talk.
+#[tokio::test]
+async fn a_summary_made_at_home_leaves_the_private_apps_talk_out() {
+    let filler: String = (0..900)
+        .map(|i| format!("filler-{i:05} the quick brown fox jumps over the lazy dog."))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let setup = Setup::default()
+        .script(
+            Agent::Ling,
+            vec![text(LEDGER_REPLY), text("OK."), text("Fine.")],
+        )
+        .extra("context compaction assistant", "SUMMARY: filler was sent.");
+    let (w, _) = day_world_at(12, setup).await;
+    install_ledger(&w).await;
+    let day = w
+        .api
+        .create_session(json!({"title": "Ledger", "skill": "ledger"}))
+        .await;
+    turn_at(&w, &day, Some("ledger"), SECRET, Agent::Ling).await;
+    turn_at(
+        &w,
+        &day,
+        None,
+        &format!("Ignore this.\n{filler}"),
+        Agent::Ling,
+    )
+    .await;
+    turn_at(&w, &day, None, "Short one.", Agent::Ling).await;
+
+    let resp = w
+        .api
+        .post(
+            "/api/chat/compact",
+            json!({"session_id": day, "project_root": w.work()}),
+        )
+        .await;
+    assert_eq!(resp["compacted"], true, "{resp}");
+    let asked: Vec<String> = w
+        .model
+        .calls()
+        .iter()
+        .map(|c| c.text())
+        .filter(|t| t.contains("ENTRIES TO SUMMARIZE"))
+        .collect();
+    assert_eq!(asked.len(), 1);
+    assert!(
+        asked[0].contains("filler-00001"),
+        "the summary is of the day's talk"
+    );
+    assert!(
+        !holds_secret(&asked[0]),
+        "the summarizer was given the ledger's talk"
+    );
+}
+
+/// With no private app's talk, and the setting off, a session's history and
+/// rows are as before: no place is shown on them.
+#[tokio::test]
+async fn with_the_setting_off_an_apps_session_is_its_own() {
+    let w = World::start(Setup::default().script(Agent::Ling, vec![text("Rolled.")])).await;
+    let sid = w
+        .api
+        .create_session(json!({"title": "Dice", "skill": "dice"}))
+        .await;
+    assert!(!sid.starts_with("sess-day-"), "{sid}");
+    turn_at(&w, &sid, Some("dice"), "Roll", Agent::Ling).await;
+    let page = format!("/api/skill-sessions/state?skill=dice&session_id={sid}");
+    let shown = w.api.get(&page).await;
+    assert!(shown["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|m| m[0].get("place").is_none()));
+}
