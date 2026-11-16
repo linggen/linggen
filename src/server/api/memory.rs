@@ -697,9 +697,11 @@ mod tests {
     /// The engine never POSTs a memory verb to itself: every verb call is
     /// in-process (`memory_host::post_verb`). What the scan allows: the
     /// door's own route (`/api/memory/{verb}`, the phone's way in), the
-    /// words of `memory_host::routes`' refusal of a phone, and the address
-    /// memory's MCP server is reached at by `mcp_client` (`memory_host::url`
-    /// handed to `with_builtin`), which stays HTTP on purpose. Its limits:
+    /// words of `memory_host::routes`' refusal of a phone, the address a
+    /// memory call's log line names (`memory_host::route_of`), and the
+    /// address memory's MCP server is reached at by `mcp_client`
+    /// (`memory_host::url` handed to `with_builtin`), which stays HTTP on
+    /// purpose. Its limits:
     /// it reads each file up to its first `#[cfg(test)]`, skips comment
     /// lines, and knows a memory verb by `api/memory` in the line — an
     /// address built from pieces elsewhere would get past it.
@@ -709,7 +711,8 @@ mod tests {
         let mut files = code_under(&root.join("src"));
         files.extend(code_under(&root.join("crates/linggen-engine/src")));
         assert!(files.len() > 100, "scanned {} files", files.len());
-        const ALLOWED: [&str; 2] = [
+        const ALLOWED: [&str; 3] = [
+            "format!(\"{}/api/memory/{verb}\", url())",
             ".route(\"/api/memory/{verb}\", post(api::memory::passthrough))",
             "\"a phone reaches memory at /api/memory/<verb>, and sees its own person's rows\",",
         ];

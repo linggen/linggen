@@ -226,6 +226,12 @@ pub fn url() -> String {
     HOST.get().map(|h| url_for(h.port)).unwrap_or_default()
 }
 
+/// The address of `verb`'s route on this engine — for the log line of a
+/// call that is answered as that route answers it (no request is made).
+pub fn route_of(verb: &str) -> String {
+    format!("{}/api/memory/{verb}", url())
+}
+
 /// Write every curated row (no vectors) to `path` as NDJSON — the store
 /// snapshot a memory mission takes before it runs. Runs on memory's runtime.
 pub(crate) async fn export_to(path: &Path) -> anyhow::Result<()> {

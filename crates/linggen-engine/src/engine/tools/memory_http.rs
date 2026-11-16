@@ -129,7 +129,10 @@ fn log_call(verb: &str, args: &Value) {
     } else {
         preview
     };
-    tracing::info!("ling-mem client → {verb} body={preview}");
+    // The line keeps its wording: the address is the route the call is
+    // answered as (`memory_host::route_of`), though no request is made.
+    let url = crate::memory_host::route_of(verb);
+    tracing::info!("ling-mem client → POST {url} body={preview}");
 }
 
 /// Memory's answer, unwrapped to `data`. The status is the door's business,
