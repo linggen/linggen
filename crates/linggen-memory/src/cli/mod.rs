@@ -24,6 +24,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 mod client;
+pub mod scan;
 
 /// Top-level CLI. All subcommands share the flags declared here (data dir,
 /// output format, quiet).
@@ -112,6 +113,12 @@ pub enum Command {
     /// Called by the agent that ran the pass (Linggen mission / skill
     /// page / CC host agent).
     RememberDay(RememberDayArgs),
+
+    /// Walk one day's local session logs (Claude Code, Codex, OpenClaw,
+    /// Linggen) into the scan candidates file,
+    /// `~/.linggen/memory/.scan-output.jsonl`. Reads session files and
+    /// writes that one file — no store, no engine, no network.
+    Scan(scan::ScanArgs),
 
     /// Stamp a day scanned (`harvested_at` only): a scan pass covered
     /// this day's session logs. Does not touch `remembered_at` — the
@@ -823,6 +830,12 @@ async fn run_data_at(
     data_dir: &std::path::Path,
     base: Option<String>,
 ) -> Result<()> {
+    // The scan reads session files and writes its own file; it never needs
+    // the store.
+    let cmd = match cmd {
+        Command::Scan(args) => return scan::run(args),
+        cmd => cmd,
+    };
     // Export/import are direct-store maintenance ops — never routed through the
     // daemon (bulk local I/O; export must read every row, import bulk-inserts).
     // Handled here so they bypass both the daemon branch and the store match.
@@ -869,7 +882,9 @@ async fn run_data_at(
                 Command::IssueAdd(args) => client::issue_add(&base_url, args, format).await,
                 Command::IssueResolve(args) => client::issue_resolve(&base_url, args, format).await,
                 Command::ApplySchema(args) => client::apply_schema(&base_url, args, format).await,
-                Command::Export { .. } | Command::Import { .. } => unreachable!("handled above"),
+                Command::Export { .. } | Command::Import { .. } | Command::Scan(_) => {
+                    unreachable!("handled above")
+                }
             };
         }
     }
@@ -909,7 +924,9 @@ async fn run_data_at(
         | Command::IssueAdd(_)
         | Command::IssueResolve(_)
         | Command::ApplySchema(_) => Err(anyhow!("this verb has no --episodic form")),
-        Command::Export { .. } | Command::Import { .. } => unreachable!("handled above"),
+        Command::Export { .. } | Command::Import { .. } | Command::Scan(_) => {
+            unreachable!("handled above")
+        }
     }
 }
 

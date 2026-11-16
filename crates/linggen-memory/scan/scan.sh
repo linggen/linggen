@@ -33,7 +33,8 @@
 # Empty-session filter: skip when `user_turns < 2 AND bytes < 2000`
 # (matches dream-flow.md). Counted under `skipped_empty`.
 #
-# Usage:  ./scan.sh [WINDOW]
+# Usage:  ling mem scan [WINDOW]   (the engine runs this file; it is embedded
+#         in `ling` with the two scripts beside it)
 #         WINDOW is one of:
 #           today | 24h            -> last 1 day   (default)
 #           week                   -> last 7 days
@@ -67,7 +68,7 @@ case "$WINDOW" in
         y) DAYS_BACK=$(( n * 365 )) ;;
       esac
     else
-      echo "Usage: $0 [today|24h|week|month|<n>d|<n>w|<n>m|<n>y|YYYY-MM-DD]  (e.g. 14d, 2m, 2026-05-20)" >&2
+      echo "Usage: ling mem scan [today|24h|week|month|<n>d|<n>w|<n>m|<n>y|YYYY-MM-DD]  (e.g. 14d, 2m, 2026-05-20)" >&2
       exit 1
     fi
     ;;
@@ -81,16 +82,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COLLECT="$SCRIPT_DIR/collect_sessions.sh"
 EXTRACT="$SCRIPT_DIR/extract_session.sh"
 
-# Fall back to the installed skill location if either tool isn't
-# alongside this script (e.g. dev-mode invocation from a checkout).
-for var in COLLECT EXTRACT; do
-  path="${!var}"
+for path in "$COLLECT" "$EXTRACT"; do
   if [[ ! -f "$path" ]]; then
-    base="$(basename "$path")"
-    eval "$var=\"\$HOME/.linggen/skills/linggen/scripts/$base\""
-  fi
-  if [[ ! -f "${!var}" ]]; then
-    echo "$(basename "${!var}") not found" >&2
+    echo "$(basename "$path") not found" >&2
     exit 1
   fi
 done

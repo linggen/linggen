@@ -5,12 +5,14 @@
 //! the same lock, so an engine starting meanwhile waits rather than opening a
 //! second writer. The verbs that have no HTTP form (`--episodic`, `export`,
 //! `import`) open the store themselves beside a running engine, as they did
-//! beside the old daemon. A CLI call never starts the engine. The lifecycle verbs of
+//! beside the old daemon. `scan` touches no store at all: it runs without the
+//! lock, engine or not. A CLI call never starts the engine. The lifecycle verbs of
 //! the old daemon (serve, start, stop, restart, status, upgrade) are not here:
 //! memory runs inside the engine.
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
+use ling_mem::cli::scan::ScanExit;
 use ling_mem::cli::{Cli, Command};
 use ling_mem::hosted::StoreLock;
 use std::io::Write;
@@ -27,10 +29,22 @@ pub async fn run(args: Vec<String>) -> Result<()> {
         Err(e) => e.exit(),
     };
     if let Err(e) = dispatch(cli).await {
-        print_error(&e);
-        std::process::exit(1);
+        exit_with(&e);
     }
     Ok(())
+}
+
+/// A scan exits as its scripts did (they printed their own error), or with
+/// its one plain line; every other verb by the old CLI's JSON contract.
+fn exit_with(err: &anyhow::Error) -> ! {
+    if let Some(scan) = err.downcast_ref::<ScanExit>() {
+        if let Some(line) = &scan.line {
+            eprintln!("{line}");
+        }
+        std::process::exit(scan.code);
+    }
+    print_error(err);
+    std::process::exit(1);
 }
 
 async fn dispatch(mut cli: Cli) -> Result<()> {
@@ -38,6 +52,9 @@ async fn dispatch(mut cli: Cli) -> Result<()> {
         .data_dir
         .get_or_insert_with(|| crate::paths::linggen_home().clone())
         .clone();
+    if matches!(cli.cmd, Command::Scan(_)) {
+        return ling_mem::cli::run_data(cli, None).await;
+    }
     match StoreLock::acquire(&data_dir, None) {
         // No engine holds the store: open it here, under the lock.
         Ok(_lock) => ling_mem::cli::run_data(cli, None).await,
