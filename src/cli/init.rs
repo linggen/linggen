@@ -101,29 +101,88 @@ pub fn install_default_agents() -> Result<()> {
     Ok(())
 }
 
-/// Seed built-in missions (the memory `dream` consolidation pass) into
-/// `~/.linggen/missions/`. **Install-once, then user-owned:** a sentinel
-/// (`.builtin-missions-installed`) records that seeding has happened, so
-/// upgrades never clobber a user's schedule/enabled edits and — crucially
-/// — never resurrect a mission the user deliberately deleted (deleting
-/// `dream` is a supported choice, not a bug). Idempotent and safe to call
-/// on every daemon start.
+/// Seed built-in missions (the memory `dream`, `memory-scan` and
+/// `memory-solve`) into `~/.linggen/missions/`. **Once per mission, then
+/// user-owned:** the sentinel (`.builtin-missions-installed`) lists the
+/// missions already seeded, one name a line, so an upgrade adds a mission
+/// this binary brings for the first time, never clobbers a user's
+/// schedule/enabled edits, and never resurrects a mission the user
+/// deliberately deleted (deleting `dream` is a supported choice, not a bug).
+/// The empty sentinel older versions wrote means `dream` was seeded.
+/// Idempotent and safe to call on every daemon start.
 pub fn install_default_missions() -> Result<()> {
-    let missions_dir = crate::paths::global_missions_dir();
-    let sentinel = missions_dir.join(".builtin-missions-installed");
-    if sentinel.exists() {
-        return Ok(());
+    let count = seed_missions(&crate::paths::global_missions_dir())?;
+    if count > 0 {
+        println!(
+            "  {}[OK]{} Seeded {} built-in mission(s)",
+            GREEN, RESET, count
+        );
     }
-    fs::create_dir_all(&missions_dir)?;
+    Ok(())
+}
 
+const SEEDED: &str = ".builtin-missions-installed";
+
+/// Seed every built-in mission `missions_dir` has not had yet; returns how
+/// many files were written.
+fn seed_missions(missions_dir: &std::path::Path) -> Result<usize> {
+    let sentinel = missions_dir.join(SEEDED);
+    let mut seeded = seeded_missions(&sentinel);
+    let new: Vec<String> = builtin_mission_names()
+        .into_iter()
+        .filter(|name| !seeded.contains(name))
+        .collect();
+    if new.is_empty() {
+        return Ok(0);
+    }
+    fs::create_dir_all(missions_dir)?;
     let mut count = 0;
-    for filename in MissionAssets::iter() {
+    for name in &new {
+        count += seed_mission(missions_dir, name)?;
+    }
+    seeded.extend(new);
+    fs::write(&sentinel, seeded.join("\n") + "\n")?;
+    Ok(count)
+}
+
+/// The missions the sentinel lists. An empty sentinel is the old
+/// install-once marker: `dream` was the only built-in then.
+fn seeded_missions(sentinel: &std::path::Path) -> Vec<String> {
+    let Ok(text) = fs::read_to_string(sentinel) else {
+        return Vec::new();
+    };
+    let names: Vec<String> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect();
+    if names.is_empty() {
+        return vec!["dream".to_string()];
+    }
+    names
+}
+
+/// The built-in missions, by folder name.
+fn builtin_mission_names() -> Vec<String> {
+    let mut names: Vec<String> = MissionAssets::iter()
+        .filter_map(|f| f.split('/').next().map(str::to_string))
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// Write one built-in mission's files, skipping any already there (a
+/// user's own file of that name wins).
+fn seed_mission(missions_dir: &std::path::Path, name: &str) -> Result<usize> {
+    let prefix = format!("{name}/");
+    let mut count = 0;
+    for filename in MissionAssets::iter().filter(|f| f.starts_with(&prefix)) {
         let Some(file) = MissionAssets::get(&filename) else {
             continue;
         };
         let dest = missions_dir.join(filename.as_ref());
-        // Only seed if absent — never overwrite an existing (possibly
-        // user-edited) mission.
         if dest.exists() {
             continue;
         }
@@ -133,17 +192,7 @@ pub fn install_default_missions() -> Result<()> {
         fs::write(&dest, file.data.as_ref())?;
         count += 1;
     }
-
-    // Mark seeding done regardless of count, so a user-deleted built-in
-    // mission is not re-created on the next start.
-    fs::write(&sentinel, b"")?;
-    if count > 0 {
-        println!(
-            "  {}[OK]{} Seeded {} built-in mission(s)",
-            GREEN, RESET, count
-        );
-    }
-    Ok(())
+    Ok(count)
 }
 
 /// Create a default `linggen.runtime.toml` if no config file exists.
@@ -271,5 +320,51 @@ async fn install_default_skills() {
                 YELLOW, RESET
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn seeded(dir: &std::path::Path) -> Vec<String> {
+        seeded_missions(&dir.join(SEEDED))
+    }
+
+    #[test]
+    fn a_fresh_home_gets_every_built_in_mission_once() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(seed_missions(dir.path()).unwrap() >= 3);
+        for name in ["dream", "memory-scan", "memory-solve"] {
+            assert!(dir.path().join(name).join("mission.md").is_file(), "{name}");
+        }
+        assert_eq!(seeded(dir.path()), builtin_mission_names());
+        assert_eq!(seed_missions(dir.path()).unwrap(), 0);
+    }
+
+    #[test]
+    fn an_old_install_gets_the_new_missions_and_not_a_deleted_dream() {
+        let dir = tempfile::tempdir().unwrap();
+        // What an older engine left: the empty sentinel, and the user had
+        // deleted `dream`.
+        fs::write(dir.path().join(SEEDED), b"").unwrap();
+        seed_missions(dir.path()).unwrap();
+        assert!(
+            !dir.path().join("dream").exists(),
+            "a deleted dream came back"
+        );
+        assert!(dir.path().join("memory-scan/mission.md").is_file());
+        assert!(dir.path().join("memory-solve/mission.md").is_file());
+        assert!(seeded(dir.path()).contains(&"dream".to_string()));
+    }
+
+    #[test]
+    fn a_users_own_file_is_never_overwritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let mine = dir.path().join("memory-scan/mission.md");
+        fs::create_dir_all(mine.parent().unwrap()).unwrap();
+        fs::write(&mine, "mine").unwrap();
+        seed_missions(dir.path()).unwrap();
+        assert_eq!(fs::read_to_string(&mine).unwrap(), "mine");
     }
 }
