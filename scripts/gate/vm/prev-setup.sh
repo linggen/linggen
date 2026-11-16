@@ -1,6 +1,9 @@
 # Release gate — make the old-user VM (linggen-prev): the PUBLISHED releases
 # installed the normal way (no mirror), then a fixtures home on top: sessions,
 # config, skills, a mission, and a ling-mem store written by the old binary.
+# (The takeover rows — long-term, staged, core — are written by upgrade.sh
+# through the running old daemon, so every baseline gets them.) Published
+# 2.3 on, memory is inside the engine: the store is written through it.
 # Env from the host: MODEL (the fake model tunnel). Files: ~/gate/home (the
 # rendered tests/fixtures/home), ~/gate/alex.json, ~/gate/marketplace.
 . ./common.sh
@@ -13,7 +16,7 @@ check "prev: install-app.sh (published)" $? "$(tail -3 "$OUT/install-app.log")" 
 # First run of the old engine, so its own state exists (db, built-in missions).
 start_engine 90
 check "prev: old engine first run" $? "no health"
-mem_health 60 || start_mem 60
+is_standin "$(mem_bin)" || mem_health 60 || start_mem 60
 stop_engine
 
 # The fixtures home over it. The old engine's own built-in-mission seed stays.
@@ -22,7 +25,7 @@ info "prev: fixtures home" "$(ls "$LG/sessions" | wc -l | tr -d ' ') sessions, s
 
 # A memory store written by the old ling-mem (needs its embedder: the first
 # add downloads the model, ~1.2 GB).
-start_mem 60
+if is_standin "$(mem_bin)"; then start_engine 90; else start_mem 60; fi
 jq -c '.facts[]' "$OUT/alex.json" | sed "s#{{WORK}}#$HOME/work#g" >"$OUT/facts.ndjson"
 mkdir -p "$HOME/work"
 "$(mem_bin)" add --stdin <"$OUT/facts.ndjson" >"$OUT/mem-add.log" 2>&1

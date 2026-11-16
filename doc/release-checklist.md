@@ -1,7 +1,9 @@
 # Release checklist
 
-One train, in order: ling-mem → engine → Mac app. Each step names the script
-that does it; the script is the truth, this page is the order.
+One train, in order: engine → Mac app (before engine 2.3.0: ling-mem →
+engine → Mac app). From 2.3.0 memory runs inside `ling`: there is no ling-mem
+release in the train. Each step names the script that does it; the script is
+the truth, this page is the order.
 
 ## Release gate — between each draft and its publish
 
@@ -19,13 +21,31 @@ cp linggen-memory/plugins/linggen/scripts/install-bin.sh linggensite/public/inst
 python3 -m http.server --directory mirror <port>
 ```
 
-`just release-gate --draft "engine=X.Y.Z mem=vX.Y.Z app=linggen-vX.Y.Z"`
-(engine repo, `scripts/gate/`) does all of it: builds that mirror (a repo
-left out serves its latest published release), boots a fresh Tart VM and a
-clone of `linggen-prev`, runs the checks, prints a table, exits non-zero on
-any FAIL. `--local` gates local builds instead of drafts. Exit 0 is the go to
-publish; a green `--draft` run saves its upgraded VM as the next
-`linggen-prev`.
+`just release-gate --draft "engine=X.Y.Z app=linggen-vX.Y.Z"` (engine repo,
+`scripts/gate/`) does all of it: builds that mirror (a repo left out serves
+its latest published release), boots a fresh Tart VM and a clone of
+`linggen-prev`, runs the checks, prints a table, exits non-zero on any FAIL.
+`--local` gates local builds instead of drafts. Exit 0 is the go to publish;
+a green `--draft` run saves its upgraded VM as the next `linggen-prev`.
+
+The gate's shape follows the engine's version. From 2.3.0 it is one program:
+the mirror serves the published ling-mem only because `install.sh` and the
+plugin installers still fetch it (the engine makes it its stand-in), and
+memory is checked through the engine. Before 2.3.0 `mem=vX.Y.Z` names the
+ling-mem draft gated with the engine.
+
+A local build carries the last release's number until `release.sh` stamps
+it, so name the shape: `GATE_ONE_BINARY=1 GATE_LING_BIN=target/fast/ling
+GATE_APP=/nonexistent just release-gate --local --upgrade-only
+--skip-host-checks --skip-playbot` gates a `cargo build --profile fast`
+binary as 2.3, from `linggen-prev`, without the app, and publishes nothing.
+When the baseline holds the same version number, the upgrade runs from the
+relabelled manifest (same bytes).
+
+Before the first green 2.3 `--draft` replaces `linggen-prev`, freeze the
+2.2.1 baseline (`tart clone linggen-prev linggen-prev-2.2.1`): the takeover
+checks need an old ling-mem daemon, and a baseline already on 2.3 has none
+(they are a GAP there). Pass it with `--prev linggen-prev-2.2.1`.
 
 A train with a new engine and a new app is gated in ONE run, both drafts
 together (`--draft "engine=X.Y.Z app=linggen-vX.Y.Z"`). An engine-only run
@@ -87,17 +107,31 @@ One-time setup, by hand:
   (or `GATE_PREV_VMS`) upgrades it too in the same run, never saved over.
 
 In the VM: `LINGGEN_RELEASE_BASE=http://<host>:<port>` for `install.sh`,
-`install-app.sh`, `ling update`, `ling-mem upgrade --yes`;
+`install-app.sh`, `ling update` (and `ling-mem upgrade --yes` before 2.3.0);
 `launchctl setenv LINGGEN_RELEASE_BASE …` before launching Linggen.app.
 Rollback check: corrupt one tarball in the mirror → the update is refused
-and the old binary still runs; `ling update --rollback` /
-`ling-mem upgrade --rollback` return to the kept `.prev` — the pre-upgrade
+and the old binary still runs; `ling update --rollback` (and before 2.3.0
+`ling-mem upgrade --rollback`) return to the kept `.prev` — the pre-upgrade
 version (the gate puts that binary there when the update kept none), and back.
+
+Takeover (2.3.0 on, `scripts/gate/vm/takeover.sh`): on the old user, rows are
+written through the old daemon (three long-term, one staged, one core); after
+the upgrade each is its own check — the old daemon gone, only the engine on
+9528 and loopback only, `memory/backups/takeover-<stamp>/` and
+`takeover-<version>.done`, `memory/.store.lock` naming the engine's pid, every
+row found by id through the engine with its tier, the core row in `ling mem
+session-start`, `~/.local/bin/ling-mem` the stand-in and `ling-mem.prev` the
+old binary, MCP answering at `127.0.0.1:9528/mcp` and `9527/mcp/memory`, a
+write through the stand-in. Then a rollback — the previous engine and
+`ling-mem.prev` put back and started — must find every row, and the release
+again must take over without a second backup. A rollback of the engine alone
+leaves memory down (the old engine starts memory through `ling-mem`, now the
+stand-in): the gate WARNs it; roll back both.
 
 ## Signing — every Mac asset
 
 A browser download carries the quarantine flag, and Gatekeeper refuses an
-ad-hoc build as "damaged". So `ling`, `ling-mem` and Linggen.app ship
+ad-hoc build as "damaged". So `ling`, Linggen.app (and before 2.3.0 `ling-mem`) ship
 Developer ID signed with the hardened runtime and notarized (the app is
 also stapled; a bare binary cannot be, and Gatekeeper checks it online).
 Credentials: `linggen-app/secrets/signing.env` (identity + App Store
@@ -118,9 +152,16 @@ checks FAIL a draft whose asset is not Developer ID signed.
   `gh workflow run build-linux.yml --repo linggen/linggen -f ref=$(git rev-parse HEAD)`
 - Weekend cuts and releases are fine (Hanli 2026-11-07); publishing still waits for his yes.
 
-## 1. ling-mem — only when `src/` changed since the last `v*` tag
+## 1. ling-mem — engines before 2.3.0 only
 
-Repo `linggen/linggen-memory`, tag `vX.Y.Z`.
+From engine 2.3.0 there is no ling-mem binary release: the store's code is
+`crates/linggen-memory` in the engine repo and ships inside `ling`. The
+`linggen/linggen-memory` releases still carry `linggen-plugin.tar.gz` (what
+`install-plugin.sh` installs) until the plugins move; a plugin-only release
+there is not part of the engine's train, and the gate serves its bundle.
+
+For a train before 2.3.0, only when `src/` changed since the last `v*` tag —
+repo `linggen/linggen-memory`, tag `vX.Y.Z`:
 
 1. `Cargo.toml` version + `CHANGELOG.md`; commit, push.
 2. `./scripts/release.sh vX.Y.Z --draft` — mac aarch64 tarball + `.sha256`

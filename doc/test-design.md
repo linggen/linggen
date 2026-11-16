@@ -140,8 +140,11 @@ Tart clones a vanilla macOS image copy-on-write in about a second and is
 driven over SSH. Apple's licence allows two macOS VMs per Mac — enough for
 one fresh VM and one old-user VM. GitHub's macOS runners are not clean (brew,
 node, python preinstalled) and cannot run Tart, so the gate runs on Hanli's
-Mac: `just release-gate --draft "engine=… mem=… app=…"` (or `--local` for
-local builds) — `scripts/gate/`. Image: `linggen-gate-base` when it exists —
+Mac: `just release-gate --draft "engine=… app=…"` (or `--local` for local
+builds) — `scripts/gate/`. Its shape follows the engine's version: from 2.3.0
+memory is inside `ling` and checked through it; before 2.3.0 ling-mem is its
+own draft (`mem=…`) and gated with the engine (`GATE_ONE_BINARY=1|0` names
+the shape for a local build that still carries the last release's number). Image: `linggen-gate-base` when it exists —
 `macos-tahoe-vanilla` switched by hand to "App Store & Known Developers"
 (`release-checklist.md`) — else `macos-tahoe-vanilla` (~27 GB, pulled once);
 `GATE_IMAGE` overrides. Before any VM boots the gate runs `check.sh all` and
@@ -174,8 +177,8 @@ tunnels, so nothing on the host listens beyond loopback.
    down, bun removed, no bun/node where `run-js.sh` looks (else a GAP) — the
    app opened must bring bun back by itself and a 灵境 Look must answer ok
    (unsigned, the door is 401, so the Look runs as the declared command).
-2. Also a browser-style download of each asset — the app, `ling`,
-   `ling-mem` — with `com.apple.quarantine` set (curl and `install-app.sh`
+2. Also a browser-style download of each asset — the app, `ling` (and
+   `ling-mem` before 2.3.0) — with `com.apple.quarantine` set (curl and `install-app.sh`
    leave none, so they alone hide Gatekeeper). The vanilla image ships with
    Gatekeeper off; the gate turns it on first, but only as "App Store" —
    macOS 15+ cannot switch to "App Store & Known Developers" from a shell, so
@@ -188,9 +191,13 @@ tunnels, so nothing on the host listens beyond loopback.
    `--draft` with no `app=` serves the published app, not this train's, so
    its verdict is a GAP.
 3. Pass when: 9527 health; the UI loads (Chromium from `tests/e2e`'s
-   Playwright over an SSH tunnel); ling-mem `session_start` answers (ling-mem
-   starts on first use, so the gate starts it); one chat turn completes on
-   the fake model.
+   Playwright over an SSH tunnel); memory answers through the engine —
+   `/mem/api/health`, `/mcp/memory` initialize + tools/list, `ling mem
+   session-start` and `stats` — with `~/.local/bin/ling-mem` the stand-in
+   (the published binary `install.sh` laid down kept as `ling-mem.prev`), no
+   ling-mem process, and only the engine on 127.0.0.1:9528 (before 2.3.0:
+   ling-mem `session_start` answers); after the plugin installs the stand-in
+   stays and no daemon runs; one chat turn completes on the fake model.
 4. Fail when: a TCC prompt appears on the first-run path — `log stream` of
    tccd; a Linggen request with `preflight=no` that a person answered, timed
    out or never answered is a prompt.
@@ -199,28 +206,44 @@ tunnels, so nothing on the host listens beyond loopback.
 
 **Upgrade** (old-user VM `linggen-prev`: previous release + fixtures home with
 sessions, config, saves, a memory store in the old schema, both plugins):
-1. `ling update`, `ling-mem upgrade --yes`, `install-app.sh`, plugin
-   updates. Releases up to engine 1.8.2 / ling-mem 1.8.2 / app 0.3.3 predate
+1. `ling update`, `install-app.sh`, plugin updates (and `ling-mem upgrade
+   --yes` before 2.3.0). A local build with the baseline's own version
+   number updates from the relabelled manifest. Releases up to engine 1.8.2 / ling-mem 1.8.2 / app 0.3.3 predate
    `LINGGEN_RELEASE_BASE`, so from them the gate re-runs `install.sh` (a GAP
    row) over the running install — its first run caught `install.sh` copying
    over a live `ling` (killed on launch; fixed: fresh inode + rename). After
-   the swap 9527 and 9528 must be new processes, 9528 on the new version
-   (`install.sh` restarts the engine, `install-bin.sh` and `ling-mem upgrade`
-   the daemon, `ling update` the engine). An old `ling update` from before
+   the swap 9527 must be a new process (before 2.3.0 9528 too, on the new
+   version). An old `ling update` from before
    the engine restart is a GAP; the release's own `ling update` and
    `--rollback` are then checked over a running engine (PASS/FAIL).
    The in-app updater asks through a native dialog and is not driven.
-2. Pass when: the store opens with every row (and `apply-schema --yes` keeps
+2. Takeover (2.3.0 on, `vm/takeover.sh`; the baseline is 2.2.1 + ling-mem
+   1.13.0 with its daemon running): rows written through the old daemon —
+   three long-term, one staged, one core. After the upgrade, each a check:
+   the old daemon is gone; only the engine listens on 9528, loopback only;
+   one `memory/backups/takeover-<stamp>/` and `takeover-<version>.done`; the
+   store lock names the engine's pid; every earlier row is found by id
+   through the engine, at its tier, and the core row is in `ling mem
+   session-start`; `~/.local/bin/ling-mem` is the stand-in and
+   `ling-mem.prev` the old binary; MCP answers at `127.0.0.1:9528/mcp` and
+   `9527/mcp/memory`; a write through the stand-in lands. Rollback: the
+   previous engine and `ling-mem.prev` back and started find every row,
+   including those written after the upgrade; the release again stops the
+   old daemon again and the marker keeps a second backup from being made.
+   A baseline with no old daemon makes these a GAP.
+3. Pass when: the store opens with every row (and `apply-schema --yes` keeps
    them); old sessions, config and a chat turn on the old config work;
    `install-plugin.sh` moves both plugins to the new bundle's hooks. Built-in missions are install-once
    (`cli/init.rs`), so an old copy is reported, not failed.
-3. Rollback: a release with a wrong sha256 is refused and the old binary
-   still runs; `ling update --rollback` and `ling-mem upgrade --rollback`
-   swap to `.prev` — the pre-upgrade version (the gate keeps the old binary
+4. Rollback: a release with a wrong sha256 is refused and the old binary
+   still runs; `ling update --rollback` (and `ling-mem upgrade --rollback`
+   before 2.3.0) swap to `.prev` — the pre-upgrade version (the gate keeps the old binary
    aside and puts it there when the update kept none or kept the release's own
    bytes) — and back. With nothing older to return to (the baseline already
    runs the release) the rollback and restart checks are GAPs, not passes.
-4. A green `--draft` gate saves its VM as the next `linggen-prev`, so the
+   An engine-only rollback from 2.3 leaves memory down (the older engine
+   starts it through `ling-mem`, now the stand-in): a WARN.
+5. A green `--draft` gate saves its VM as the next `linggen-prev`, so the
    old-user baseline rolls forward each release; `--local` keeps it unless
    `--save-prev`. `linggen-prev` is built once from the published releases.
    That rolling baseline tests N-1 → N only; `--prev <vm>` (or
@@ -229,7 +252,7 @@ sessions, config, saves, a memory store in the old schema, both plugins):
 
 Needs from the engine first — built 2026-10-05: `LINGGEN_RELEASE_BASE`
 points every installer and updater at the gate's mirror of the drafts
-(`cli.md` § Release override); `ling update` and `ling-mem upgrade` keep
+(`cli.md` § Release override); `ling update` (and `ling-mem upgrade`) keep
 `.prev`, restore it when the new binary doesn't start, and take
 `--rollback`; the app's updater keeps and restores the previous bundle.
 
