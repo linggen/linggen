@@ -4,10 +4,9 @@
 //!
 //! 1. **A state sample** for the trend series, so a condition can talk about
 //!    slope rather than level.
-//! 2. **The sweep.** A day that falls out of the live window is deleted.
-//!    Activities never become memory: what the person did is perceived live
-//!    for the last [`KEEP_DAYS`](super::activity::KEEP_DAYS) days, and nothing
-//!    of it is written anywhere else.
+//! 2. **The sweep.** A day file older than
+//!    [`RETAIN_DAYS`](super::activity::RETAIN_DAYS) is deleted. Activities
+//!    never become memory: the log is read, never copied anywhere else.
 
 use std::time::Duration;
 
@@ -36,10 +35,10 @@ fn rotate() {
     // window a reader sees must not depend on who happened to read first.
     let log = super::activity::log();
     for day in log.sweep() {
-        tracing::info!("[perception] {day} aged out of the live window");
+        tracing::info!("[perception] {day} passed the retention and was removed");
     }
-    // What is left is the window, and the window may have moved since the last
-    // pass — a daemon up across midnight is still holding yesterday-minus-three
-    // in memory until someone reads the days again.
+    // The doorbell's window may have moved since the last pass — a daemon up
+    // across midnight still holds a day that left it until the days are read
+    // again.
     log.restore();
 }

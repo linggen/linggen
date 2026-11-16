@@ -13,10 +13,19 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
-/// Long enough that "recent" still means something late at night, short enough
-/// that this never becomes a second memory. Activities never reach `ling-mem`:
-/// what the person does is perceived live for these days, then swept.
-pub const KEEP_DAYS: i64 = 3;
+/// How long a day file is kept on disk (§7). Long enough that "this month" and
+/// "the same week last year" can be asked; rotation deletes what is older.
+/// Activities never reach `ling-mem`: memory may read the log, never copy it.
+pub const RETAIN_DAYS: i64 = 400;
+
+/// The days held in memory for the doorbell (§4). "Since you last looked" and
+/// "most recent" are about now, so the window stays short whatever is kept on
+/// disk; reading further back is `recent_activity`'s job, from the files.
+pub const RECENT_DAYS: i64 = 3;
+
+/// Verbs the engine writes itself. No skill may declare one, so a record with
+/// one of these verbs was always written by the engine.
+pub const ENGINE_VERBS: [&str; 5] = ["pair", "connect", "disconnect", "restart", "used"];
 
 /// Who a record may name. Closed, because `by` is rendered as the subject of a
 /// sentence inside the agent's system prompt (§4), and a subject nobody defined
@@ -142,8 +151,26 @@ impl Activity {
 
     /// Seconds since this happened, or `None` when the stamp is unreadable.
     pub fn age_secs(&self) -> Option<i64> {
+        Some((chrono::Utc::now() - self.at_utc()?).num_seconds())
+    }
+
+    /// When it happened (or began), or `None` when the stamp is unreadable.
+    pub fn at_utc(&self) -> Option<chrono::DateTime<chrono::Utc>> {
         let at = chrono::DateTime::parse_from_rfc3339(&self.at).ok()?;
-        Some((chrono::Utc::now() - at.with_timezone(&chrono::Utc)).num_seconds())
+        Some(at.with_timezone(&chrono::Utc))
+    }
+
+    /// How long it lasted, when the record says: `detail.seconds`. Any writer
+    /// may carry one; the engine's own stretches of use always do.
+    pub fn seconds(&self) -> Option<u64> {
+        self.detail.as_ref()?.get("seconds")?.as_u64()
+    }
+
+    /// The doorbell shows changes, not durations: a record that says how long
+    /// something lasted is a reading of time spent, read through
+    /// `recent_activity`, never rung as news.
+    pub fn is_change(&self) -> bool {
+        self.seconds().is_none()
     }
 }
 
@@ -183,18 +210,23 @@ pub(crate) fn parse_day(day: &str) -> Option<chrono::NaiveDate> {
     chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d").ok()
 }
 
-/// The days still inside the window, today first.
-fn kept_days() -> std::collections::HashSet<String> {
-    (0..KEEP_DAYS)
+/// The days the doorbell window holds, today first.
+fn recent_days() -> std::collections::HashSet<String> {
+    (0..RECENT_DAYS)
         .map(|i| day_key(chrono::Local::now() - chrono::Duration::days(i)))
         .collect()
+}
+
+/// The oldest day still kept on disk.
+fn oldest_kept_day() -> String {
+    day_key(chrono::Local::now() - chrono::Duration::days(RETAIN_DAYS - 1))
 }
 
 /// The machine's log. One per process; every writer goes through it so the
 /// in-memory window and the file can never disagree.
 pub struct ActivityLog {
-    /// Newest last. Small by construction, and every read wants the whole
-    /// window anyway.
+    /// The doorbell's window: the last [`RECENT_DAYS`] of changes, newest
+    /// last. Records carrying a duration are on disk only.
     recent: Mutex<Vec<Activity>>,
     /// Bumped on every append, so "since you last looked" can be per agent
     /// without storing a cursor per agent.
@@ -259,11 +291,12 @@ impl ActivityLog {
         // In memory first, so this process sees it even when the disk can't
         // take it. Deliberately does not reload: a load replaces the window
         // and would drop the entry just made.
-        {
+        if a.is_change() {
             let mut guard = self.recent.lock().unwrap_or_else(|e| e.into_inner());
             guard.push(a.clone());
+            drop(guard);
+            self.revision.fetch_add(1, Ordering::Relaxed);
         }
-        self.revision.fetch_add(1, Ordering::Relaxed);
 
         let day = chrono::DateTime::parse_from_rfc3339(&a.at)
             .map(|t| day_key(t.with_timezone(&chrono::Local)))
@@ -298,7 +331,7 @@ impl ActivityLog {
     /// A `.jsonl` whose name is not a day is not one of ours: it is neither
     /// read nor swept. Deleting a file we cannot date would not be rotation,
     /// it would be tidying someone else's directory.
-    fn day_files(&self) -> Vec<(String, PathBuf)> {
+    pub(crate) fn day_files(&self) -> Vec<(String, PathBuf)> {
         let Ok(entries) = std::fs::read_dir(&self.dir) else {
             return Vec::new();
         };
@@ -321,11 +354,11 @@ impl ActivityLog {
     /// Sweeping is not a side effect of reading (§7): rotation is the only
     /// sweeper, so what a reader sees never depends on who read first.
     pub fn restore(&self) {
-        let keep = kept_days();
+        let keep = recent_days();
         let mut fresh: Vec<Activity> = Vec::new();
         for (day, path) in self.day_files() {
             if keep.contains(&day) {
-                fresh.extend(read_day(&path));
+                fresh.extend(read_day(&path).into_iter().filter(Activity::is_change));
             }
         }
         fresh.sort_by(|a, b| a.at.cmp(&b.at));
@@ -341,14 +374,17 @@ impl ActivityLog {
         *guard = fresh;
     }
 
-    /// Delete the days that have fallen out of the window, and name them.
-    /// Only rotation calls this (§7): a day is gone when it ages out, and
-    /// nothing of it is handed anywhere.
+    /// Delete the days older than [`RETAIN_DAYS`], and name them. Only
+    /// rotation calls this (§7): a day is gone when it ages out, and nothing
+    /// of it is handed anywhere.
     pub fn sweep(&self) -> Vec<String> {
-        let keep = kept_days();
+        self.sweep_before(&oldest_kept_day())
+    }
+
+    fn sweep_before(&self, oldest: &str) -> Vec<String> {
         self.day_files()
             .into_iter()
-            .filter(|(day, _)| !keep.contains(day))
+            .filter(|(day, _)| day.as_str() < oldest)
             .filter(|(_, path)| std::fs::remove_file(path).is_ok())
             .map(|(day, _)| day)
             .collect()
@@ -356,7 +392,7 @@ impl ActivityLog {
 }
 
 /// A torn line is one lost entry, not a lost day.
-fn read_day(path: &std::path::Path) -> Vec<Activity> {
+pub(crate) fn read_day(path: &std::path::Path) -> Vec<Activity> {
     let Ok(text) = std::fs::read_to_string(path) else {
         return Vec::new();
     };
@@ -397,8 +433,21 @@ pub fn record_from(
     object: Option<String>,
     detail: Option<serde_json::Value>,
 ) {
-    log().add(Activity {
-        at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+    log().add(stamped(chrono::Utc::now(), device, by, app, verb, object, detail));
+}
+
+/// One record as every writer's door makes it: stamped, attributed, cleaned.
+pub(crate) fn stamped(
+    at: chrono::DateTime<chrono::Utc>,
+    device: Option<String>,
+    by: &str,
+    app: &str,
+    verb: &str,
+    object: Option<String>,
+    detail: Option<serde_json::Value>,
+) -> Activity {
+    Activity {
+        at: at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         by: clean(by, SLUG_MAX),
         device: Some(device.unwrap_or_else(super::host_name)),
         app: clean(app, SLUG_MAX),
@@ -407,7 +456,7 @@ pub fn record_from(
             .map(|o| clean(&o, OBJECT_MAX))
             .filter(|o| !o.is_empty()),
         detail,
-    });
+    }
 }
 
 #[cfg(test)]
@@ -448,32 +497,63 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    #[test]
-    fn an_aged_day_is_swept_by_rotation_not_by_reading() {
-        let dir = std::env::temp_dir().join(format!("ling-act-old-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-
-        let old_day = (chrono::Local::now() - chrono::Duration::days(9))
+    fn write_day(dir: &std::path::Path, days_ago: i64, rows: &[Activity]) -> PathBuf {
+        std::fs::create_dir_all(dir).unwrap();
+        let day = (chrono::Local::now() - chrono::Duration::days(days_ago))
             .format("%Y-%m-%d")
             .to_string();
-        let old_file = dir.join(format!("{old_day}.jsonl"));
-        let row = serde_json::to_string(&activity(at(9), "backup", "200 photos")).unwrap();
-        std::fs::write(&old_file, format!("{row}\n")).unwrap();
+        let path = dir.join(format!("{day}.jsonl"));
+        let body: String = rows
+            .iter()
+            .map(|r| format!("{}\n", serde_json::to_string(r).unwrap()))
+            .collect();
+        std::fs::write(&path, body).unwrap();
+        path
+    }
+
+    #[test]
+    fn a_day_is_kept_for_the_retention_and_swept_by_rotation_not_by_reading() {
+        let dir = std::env::temp_dir().join(format!("ling-act-old-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let last_week = write_day(&dir, 9, &[activity(at(9), "backup", "200 photos")]);
+        let edge = write_day(&dir, RETAIN_DAYS - 1, &[activity(at(RETAIN_DAYS - 1), "add", "a")]);
+        let aged = write_day(&dir, RETAIN_DAYS, &[activity(at(RETAIN_DAYS), "add", "b")]);
 
         let log = ActivityLog::new(dir.clone());
         log.add(activity(at(0), "sync", "12 songs"));
 
-        // Reading the log must not sweep it: the day belongs to rotation, and
-        // rotation is never the first to read.
+        // Reading the log must not sweep it: the day belongs to rotation.
         log.restore();
-        assert!(old_file.exists(), "reading is not sweeping");
-        assert_eq!(log.recent().len(), 1, "the window holds only today");
+        assert!(aged.exists(), "reading is not sweeping");
+        assert_eq!(log.recent().len(), 1, "the doorbell window holds only recent days");
 
-        assert_eq!(log.sweep(), vec![old_day], "rotation sweeps the aged day");
-        assert!(!old_file.exists());
+        let swept = log.sweep();
+        assert_eq!(swept.len(), 1, "only the day past the retention: {swept:?}");
+        assert!(!aged.exists());
+        assert!(last_week.exists() && edge.exists(), "kept days stay on disk");
         assert!(log.sweep().is_empty(), "a swept day is gone");
         assert_eq!(log.recent().len(), 1, "the window is untouched");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_duration_never_rings_the_doorbell_even_after_a_restart() {
+        let dir = std::env::temp_dir().join(format!("ling-act-dur-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let log = ActivityLog::new(dir.clone());
+        let mut used = activity(at(0), "used", "");
+        used.object = None;
+        used.detail = Some(serde_json::json!({ "seconds": 600 }));
+        log.add(activity(at(0), "delete", "a song"));
+        log.add(used.clone());
+        assert_eq!(log.revision(), 1, "a duration is not news");
+        assert_eq!(log.newest().unwrap().verb, "delete");
+
+        let restarted = ActivityLog::new(dir.clone());
+        restarted.restore();
+        assert_eq!(restarted.recent().len(), 1, "on disk, but out of the window");
+        assert_eq!(restarted.revision(), 1);
+        assert_eq!(read_day(&restarted.day_files()[0].1).len(), 2, "both on disk");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
