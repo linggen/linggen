@@ -16,8 +16,9 @@
 //! That put a second copy of ling-mem's tools — same names, same schemas — in
 //! front of a model, and the model had to guess between them. Nothing here is a
 //! tool. There is no `TOOLS` entry, no schema, no dispatch translation: one
-//! verb segment forwarded to the daemon that owns it, and its answer returned
-//! whole. It is transport, exactly like the tunnel it rides on.
+//! verb segment handed to the memory this engine hosts (in-process,
+//! `memory_host::post_verb`), and its answer returned whole. It is
+//! transport, exactly like the tunnel it rides on.
 //!
 //! The phone is a *program*, not an agent — three fixed verbs with fixed
 //! argument shapes, choosing nothing — which is precisely the case
@@ -629,6 +630,65 @@ mod tests {
         }
         assert_eq!(verb_mutates("wat"), None);
         assert_eq!(verb_mutates(""), None);
+    }
+
+    /// Every `.rs` file under `dir`, with its text up to its test module and
+    /// without comment lines.
+    fn code_under(dir: &std::path::Path) -> Vec<(std::path::PathBuf, String)> {
+        let mut out = Vec::new();
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                out.extend(code_under(&path));
+                continue;
+            }
+            if path.extension().is_none_or(|e| e != "rs") || path.ends_with("door_tests.rs") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).unwrap_or_default();
+            let code = text.split("#[cfg(test)]").next().unwrap_or("");
+            let lines: Vec<&str> = code
+                .lines()
+                .filter(|l| !l.trim_start().starts_with("//"))
+                .collect();
+            out.push((path, lines.join("\n")));
+        }
+        out
+    }
+
+    /// The engine never POSTs a memory verb to itself: every verb call is
+    /// in-process (`memory_host::post_verb`). What the scan allows: the
+    /// door's own route (`/api/memory/{verb}`, the phone's way in), the
+    /// words of `memory_host::routes`' refusal of a phone, and the address
+    /// memory's MCP server is reached at by `mcp_client` (`memory_host::url`
+    /// handed to `with_builtin`), which stays HTTP on purpose.
+    #[test]
+    fn no_memory_verb_is_posted_to_this_engine() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut files = code_under(&root.join("src"));
+        files.extend(code_under(&root.join("crates/linggen-engine/src")));
+        assert!(files.len() > 100, "scanned {} files", files.len());
+        const ALLOWED: [&str; 2] = [
+            ".route(\"/api/memory/{verb}\", post(api::memory::passthrough))",
+            "\"a phone reaches memory at /api/memory/<verb>, and sees its own person's rows\",",
+        ];
+        for (path, code) in &files {
+            for line in code.lines().map(str::trim) {
+                if line.contains("api/memory") {
+                    assert!(ALLOWED.contains(&line), "{}: {line}", path.display());
+                }
+                for gone in ["post_memory_verb", "call_memory_http", "TEST_URL"] {
+                    assert!(!line.contains(gone), "{}: {line}", path.display());
+                }
+                if line.contains("memory_host::url()") {
+                    assert!(
+                        line.contains("mcp_client::with_builtin("),
+                        "{}: {line}",
+                        path.display()
+                    );
+                }
+            }
+        }
     }
 
     /// A percent-encoded traversal is decoded before it reaches us, so these

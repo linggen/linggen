@@ -174,10 +174,6 @@ pub struct EngineConfig {
     /// Recalled rows injected per turn — the top-K cap applied after the
     /// project-scope filter. See `config::AgentConfig::memory_recall_count`.
     pub memory_recall_count: usize,
-    /// Base URL of memory's routes: the store this process hosts
-    /// (`memory_host::url`). The engine's built-in memory dispatcher and the
-    /// core block use this; a test points it at its own server.
-    pub ling_mem_url: String,
 }
 
 impl EngineConfig {
@@ -206,7 +202,6 @@ impl EngineConfig {
             compact_threshold_default: config.agent.compact_threshold,
             memory_inject_min_score: config.agent.memory_inject_min_score,
             memory_recall_count: config.agent.memory_recall_count,
-            ling_mem_url: crate::memory_host::url(),
         }
     }
 

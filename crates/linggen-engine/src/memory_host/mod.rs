@@ -17,9 +17,14 @@
 //!   stopped (`takeover`), and each engine version copies the store once
 //!   (`memory/backups/takeover-<stamp>/`, marker `takeover-<version>.done`).
 //!
-//! The engine's own callers still reach memory over loopback HTTP and MCP
-//! (`url` points them at [`PREFIX`] on this port); calling the
-//! library directly is a later step.
+//! The engine's own callers run a verb in-process (`call`: the verb answered
+//! as its route answers it, for a [`ling_mem::Who`], on memory's runtime,
+//! the engine's task awaiting the join). What stays HTTP: MCP clients —
+//! Claude Code, Codex, the Claude runner and the engine's own agents through
+//! `mcp_client` (`url` points them at [`PREFIX`] on this port) — the
+//! replica protocol between machines, and `ling mem` beside a running
+//! engine. Memory's own settings and connect routes, which read the
+//! connection, are reached through its router (`local_call`).
 
 mod call;
 pub mod caller;
@@ -212,30 +217,13 @@ pub async fn local_call(
     }
 }
 
-/// The base URL of the memory this process hosts, once `start` has run.
-pub(crate) fn hosted_url() -> Option<String> {
-    HOST.get().map(|h| url_for(h.port))
-}
-
-/// Where the engine's own callers reach memory: the store this process hosts,
-/// on its own port. Empty when this process hosts none (a CLI command, a unit
-/// test) — a call to it then fails at once and never reaches another process.
-/// Machines share memory as primary and replicas, each engine with its own
-/// store; there is no address to configure.
+/// Where an MCP client of this engine reaches memory's MCP server (`/mem/mcp`
+/// under this base): the store this process hosts, on its own port. Empty
+/// when this process hosts none (a CLI command, a unit test) — a call to it
+/// then fails at once and never reaches another process. The engine's own
+/// verb calls do not use it: they call memory in-process ([`post_verb`]).
 pub fn url() -> String {
-    #[cfg(any(test, feature = "test-support"))]
-    if let Ok(url) = TEST_URL.try_with(Clone::clone) {
-        return url;
-    }
-    hosted_url().unwrap_or_default()
-}
-
-#[cfg(any(test, feature = "test-support"))]
-tokio::task_local! {
-    /// Tests only: inside `TEST_URL.scope(url, fut)`, [`url`] answers `url`
-    /// for that future alone — a test points the engine's memory callers at
-    /// a scratch store without touching the process-wide host.
-    pub static TEST_URL: String;
+    HOST.get().map(|h| url_for(h.port)).unwrap_or_default()
 }
 
 /// Write every curated row (no vectors) to `path` as NDJSON — the store

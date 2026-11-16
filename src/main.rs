@@ -369,8 +369,8 @@ async fn main() -> Result<()> {
             let migrated_legacy_addr = config.server.migrated_legacy_addr;
 
             // Memory is hosted in this process: open its store before the
-            // listener binds; the engine's own memory calls go to it
-            // (`memory_host::url`).
+            // listener binds; the engine's own memory calls reach it
+            // in-process (`memory_host::post_verb`).
             memory_host::start(port).await;
 
             // Install/update built-in agent specs to ~/.linggen/agents/
