@@ -171,9 +171,9 @@ session sees none).
 
 - **Which place.** A chat request takes the skill its page names, else the
   session's own. A turn no page sent — Yinyue's own turns, her turn at an
-  app's table, a light turn, a look-again wake, a relayed message, a message
-  resent after a restart, a background task's end — stands in the session's
-  own place. A delegated run stands where its parent's turn stands. A mission
+  app's table, a light turn, a look-again wake, a relayed message, a
+  background task's end, an approved plan's run — stands in the session's own
+  place. A message resent after a restart stands where it was sent. A delegated run stands where its parent's turn stands. A mission
   run and an `agent_run` session have no skill: home.
 - **Set and cleared.** When the turn starts, its place sets the skill's
   SKILL.md in the prompt, its tools (`allowed-tools`; `place.<agent>.tools`
@@ -194,7 +194,9 @@ session sees none).
   never folded in or steered into it.
 - **Rows.** Each row a turn saves to `messages.jsonl` carries its place
   (`place`: the skill's name, or `:home`). A row without one — every row
-  written before places, and rows no turn wrote — is the session's own place.
+  written before places, and rows saved while no place is kept (a mission or
+  `agent_run` run, a plan's run, a subagent outliving its turn, a page's own
+  writes) — is the session's own place.
 
 Today a page always names the skill its session was made for, so every turn of
 a session shares one place: the session's.

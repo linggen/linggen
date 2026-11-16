@@ -235,7 +235,7 @@ A person's row may carry `client_id` — the id the sending surface gave its bub
 
 Every row a run writes (its calls, their results, its words and reply, its error line, its plan) carries `run_id` — the run that wrote it (see `chat-spec.md` § Runs). A person's row has none. Rows written before 2026-10-22 have none.
 
-A row saved while a turn runs carries `place` — the turn's place, a skill's name or `:home` (`session-spec.md` § A turn's place). A row without one is the session's own place; today every turn of a session stands there.
+A row saved while a chat, Yinyue, light or relayed turn runs carries `place` — the turn's place, a skill's name or `:home` (`session-spec.md` § A turn's place). A row without one is the session's own place; today every turn of a session stands there.
 
 A person's row that carried pictures names them: `"images": ["3f2a…9c.png"]`, files under the session's `images/` (named by content; PNG, JPEG, GIF, WebP; at most 8 a message, 8 MB each — anything else isn't kept). The state endpoints hand each as a URL, `GET /api/sessions/images?session_id=&name=`, fetched over the data channel. Rows before 2026-10-19 kept none.
 
