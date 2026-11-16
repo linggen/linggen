@@ -15,13 +15,13 @@ use axum::{
     routing::{get, put},
     Json, Router,
 };
-use serde::Deserialize;
 use std::net::SocketAddr;
 
 use crate::http::envelope::{ok, ApiError};
 use crate::http::local::require_local;
 use crate::http::state::SharedState;
-use crate::replica::{link, outbox, state::normalize_primary};
+use crate::ops;
+use crate::ops::primary::SetPrimary;
 
 pub fn router() -> Router<SharedState> {
     Router::new()
@@ -31,17 +31,8 @@ pub fn router() -> Router<SharedState> {
         .route("/api/sync/primary", put(set_primary))
 }
 
-fn view(state: &SharedState) -> serde_json::Value {
-    state.replica.snapshot().view(outbox::len(&state.data_dir))
-}
-
 async fn role(State(state): State<SharedState>) -> Result<Response, ApiError> {
-    Ok(ok(view(&state)))
-}
-
-#[derive(Deserialize)]
-struct SetPrimary {
-    primary: String,
+    Ok(ok(ops::primary::role(&state).await?))
 }
 
 async fn set_primary(
@@ -51,16 +42,5 @@ async fn set_primary(
     Json(body): Json<SetPrimary>,
 ) -> Result<Response, ApiError> {
     require_local(peer.ip(), &headers, state.port)?;
-    let wanted = body.primary.trim();
-    if wanted.is_empty() || wanted.eq_ignore_ascii_case("local") {
-        link::become_primary(&state);
-        return Ok(ok(view(&state)));
-    }
-    let primary = normalize_primary(wanted).ok_or_else(|| {
-        ApiError::bad_request("an address like 192.168.1.5:9527 (the primary's Linggen), or local")
-    })?;
-    link::ask(&state, primary)
-        .await
-        .map_err(|e| ApiError::bad_request(format!("{e:#}")))?;
-    Ok(ok(view(&state)))
+    Ok(ok(ops::primary::set_primary(&state, body).await?))
 }
