@@ -3,11 +3,13 @@
 //! The engine holding the store (its lock names its port) → the verb goes to
 //! it over loopback HTTP. No engine → the store is opened right here, under
 //! the same lock, so an engine starting meanwhile waits rather than opening a
-//! second writer. A CLI call never starts the engine. The lifecycle verbs of
+//! second writer. The verbs that have no HTTP form (`--episodic`, `export`,
+//! `import`) open the store themselves beside a running engine, as they did
+//! beside the old daemon. A CLI call never starts the engine. The lifecycle verbs of
 //! the old daemon (serve, start, stop, restart, status, upgrade) are not here:
 //! memory runs inside the engine.
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, Result};
 use clap::Parser;
 use ling_mem::cli::{Cli, Command};
 use ling_mem::hosted::StoreLock;
@@ -41,13 +43,8 @@ async fn dispatch(mut cli: Cli) -> Result<()> {
         Ok(_lock) => ling_mem::cli::run_data(cli, None).await,
         Err(busy) => {
             let base = engine_base(&data_dir).await.ok_or(busy)?;
-            if needs_the_store(&cli) {
-                bail!(
-                    "this verb opens the store itself, and the engine at {base} has it open — \
-                     stop the engine (`ling stop`) and run it again"
-                );
-            }
-            ling_mem::cli::run_data(cli, Some(base)).await
+            let base = (!needs_the_store(&cli)).then_some(base);
+            ling_mem::cli::run_data(cli, base).await
         }
     }
 }
@@ -64,7 +61,7 @@ async fn engine_base(data_dir: &std::path::Path) -> Option<String> {
     health.status().is_success().then_some(base)
 }
 
-/// Verbs the old CLI always ran on the store directly, never over HTTP.
+/// Verbs with no HTTP form: they run on the store directly, engine or not.
 fn needs_the_store(cli: &Cli) -> bool {
     cli.episodic || matches!(cli.cmd, Command::Export { .. } | Command::Import { .. })
 }
