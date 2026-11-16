@@ -198,8 +198,15 @@ session sees none).
   `agent_run` run, a plan's run, a subagent outliving its turn, a page's own
   writes) — is the session's own place.
 
-Today a page always names the skill its session was made for, so every turn of
-a session shares one place: the session's.
+With `agent.one_session_a_day` off, a page names the skill its session was
+made for, so every turn of a session shares one place: the session's. On,
+an app's chat is the day's session (`sess-day-YYYY-MM-DD`, from 04:00
+local; `one-ling-spec.md` § One session a day): a page's turn stands in its
+app, other turns at home. The day's session is made by `user`, Ling its
+lead. A private app's rows (`private-talk: true`) are left out of what any
+other place's turn is given — its thread, a light turn's tail, a summary's
+input — and a summary written in its turn is kept to it
+(`turn_place::sight`).
 
 ## System prompt assembly
 

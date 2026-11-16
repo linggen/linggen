@@ -1,7 +1,7 @@
 ---
 type: spec
 reader: Coding agent and users
-status: designed 2026-10-08, not built
+status: designed 2026-10-08; one session a day built behind a setting 2026-11-16 (2.4 branch)
 guide: |
   Product specification — what the system should do and why. Brief; guides
   design and implementation, not a code walk-through.
@@ -130,17 +130,28 @@ session, prompt and row is as before. On (decided by the builder 2026-11-15/16):
 - **A private app** (`private-talk: true`): its rows — talk, tool calls,
   results, a summary written in its turn — are given to no turn in another
   place, nor to Yinyue outside it, nor shown or streamed to a surface
-  outside it. Its world line stays.
+  outside it. Its world line stays. No note is written in its turn (a note
+  is in front of its agent everywhere). A row in an app's own session is
+  never hidden, so nothing changes outside the day's session. Cost,
+  accepted: asked elsewhere what was said there, Ling cannot answer.
+- **Her moments** run in the day's session too, standing in the app they
+  came from; her line is a row there and lands nowhere else. With the
+  setting on there is no app session for her to sit in.
+- **The list** marks the day's session, one row a day; a page folds each
+  stretch from another place to a line (the app, how many messages), which
+  opens on a tap. The chats from before stay listed and readable either way.
+- **The phone** (engine side): a hand-off takes the first of
+  `GET /api/skill-sessions?skill=` (the day's) or `GET /api/sessions/day`
+  for the Mac's own chat, and names its app as `skill_name`; open notes read
+  back from `GET /api/notes?agent=`, read-only. Its own thread is unchanged.
 
-How a session is bound today, and where this goes in (the plan, 2026-11-16):
-a page lists its app's sessions (`GET /api/skill-sessions`) and resumes one
-or makes one (`POST /api/sessions {skill}`); a chat request names its session
-and page (`skill_name`), and `TurnPlace::of_request` sets the turn's place.
-With the setting on, those two calls answer with the day's session
-(`server::day_session`), so no page changes; Yinyue's rolling thread
-(`resident::session_roll`) resolves to it; the thread each member is given
-(`chat::thread`), the light turn's tail, compaction, the history views and
-the event stream leave out a private app's rows outside it.
+Built (2.4 branch, 2026-11-16): all of the above, in `server::day_session`,
+`state_fs::day_session` and `turn_place::sight`. Every reader of a session's
+rows is listed in a lock test with why it may read them. Not built: the
+phone's side (it must send `skill_name` and use the day's id); a light
+turn after her moment stands at home, not in the moment's app; recall of
+the day's thread beyond the folded view, a summary cache, any change to
+compaction (decided out of this step).
 
 ## Tool names and packs
 

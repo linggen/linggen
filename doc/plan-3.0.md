@@ -28,7 +28,7 @@ Every number is tagged **(measured)** — taken on his Mac on 2026-11-15 — or
 | 3 Modules | 3.2 done — `ling` (server, cli) and `crates/linggen-engine`. The further cuts (base, model, store, skills) are put off until 2.4 has landed, or dropped (decided 2026-11-16): they move files wholesale, would collide with the 2.4 branch, and with incremental builds a one-file rebuild is already 5–10 s — they would buy tidiness, not time |
 | 4 Upgrades | Patch and minor batch done (329 crates; checks equal before and after; the store still opens in the previous program). The two major groups — the vector database, the embedding stack — moved out of 2.3 into **2.3.1**, a release of their own (decided 2026-11-16): a database upgrade may change the store on disk, and that risk gets its own gate run |
 | Slimming | Yinyue's clips baked (done); packaged skills leave out tools, tests and unloaded source art (done); asset packs — engine side built, art sorted into packs; publishing, the app's packaging by pack and the phone are open |
-| 2.4 | Groundwork on the local `next/2.4` branches (engine and skills), rebased as main moves: the activity log, the world block, notes and look-again, the guardrails, a turn's place. The one session a day is not started. Runs in parallel with 2.3; lands on main only after 2.3 is published |
+| 2.4 | On the local `next/2.4` branches (engine and skills), rebased as main moves: the activity log, the world block, notes and look-again, the guardrails, a turn's place; and the one session a day, built behind `agent.one_session_a_day` (off by default): app chats, her moments and phone hand-offs in one session a day from 04:00, each turn in its page's place, a private app's talk kept to it, other apps' stretches folded on a page. Open: the phone's side, the live check of the three scenarios. Lands on main only after 2.3 is published |
 
 ## 2. Milestones
 
@@ -201,6 +201,7 @@ the user makes are unlimited and stay apart; they are given the same world.
 | Notes | A small note of her own, in front of her next time | Built (2.4 branch): `note_write` / `note_done`, per agent (Yinyue and Ling list them), beside every turn of the one who wrote them; only hers can carry a look-again time |
 | Alarm | "Look again at / after" that she sets herself | Built (2.4 branch): a note's look-again wakes her once, a quiet turn |
 | Voice and hands | Her words reach the user wherever they are; app actions the skills declare | Built |
+| One session a day | App chats, her moments and phone hand-offs in one session a day (from 04:00); Ling and Yinyue seated; skill, tools, folder and grants per turn by the page; a private app's talk kept to it | Built (2.4 branch) behind `agent.one_session_a_day`, off by default: the day's session, routing, the private filter on every reader of a session's rows, her moments in the app's place, the folded list. The phone's own change is not built |
 
 Everything else is theirs: what to look up, what to connect, whether it is
 worth a sentence, how to say it, whether to come back to it.

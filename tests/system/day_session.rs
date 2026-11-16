@@ -577,3 +577,42 @@ async fn a_phone_hand_off_lands_in_the_day_in_its_apps_place() {
     );
     assert_eq!(w.api.get("/api/notes?agent=../x").await["notes"], json!([]));
 }
+
+/// The third scenario: late at night, before 04:00, it is still the day
+/// that began the morning before; a restart in the middle of it changes
+/// nothing — the page finds the same session and the thread goes on.
+#[tokio::test]
+async fn a_restart_late_at_night_keeps_the_days_thread() {
+    let setup = Setup::default().script(
+        Agent::Ling,
+        vec![
+            text("Rolled a five before midnight."),
+            text("Still the same night."),
+        ],
+    );
+    let (mut w, local) = day_world_at(3, setup).await;
+    let day = w
+        .api
+        .create_session(json!({"title": "Dice", "skill": "dice"}))
+        .await;
+    assert_eq!(
+        day,
+        day_id(local.pred_opt().unwrap()),
+        "half past three is yesterday's day"
+    );
+    turn_at(&w, &day, Some("dice"), "Roll once more", Agent::Ling).await;
+
+    w.engine.restart(&w.home).await;
+    let again = w
+        .api
+        .create_session(json!({"title": "Dice", "skill": "dice"}))
+        .await;
+    assert_eq!(again, day, "the same day after the restart");
+    turn_at(&w, &again, Some("dice"), "Are we still on?", Agent::Ling).await;
+    let after = w.model.calls_of(Agent::Ling).pop().unwrap();
+    assert!(
+        after.text().contains("Rolled a five before midnight."),
+        "the thread goes on"
+    );
+    assert_eq!(user_places(&w, &day), vec!["dice", "dice"]);
+}
