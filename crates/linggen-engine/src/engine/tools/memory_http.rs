@@ -1,49 +1,66 @@
-//! The engine's own REST client for `ling-mem`, and the daemon it depends on.
-//!
-//! **No model reaches memory through this file.** A model's memory tools are
-//! ling-mem's own, discovered over MCP (`mcp_client`, and `memory_mcp` for
-//! what the engine adds to such a call). What is left here is the engine
-//! talking to memory as a *program*:
+//! The engine's own memory client, for the engine talking to memory as a
+//! *program*:
 //!
 //! - `/apps/<skill>/capability/*`, the door a skill's webpage uses
 //! - the dream rollup and the mission scheduler's stats
-//! - the core-block reconcile fetch
-//! - `api::memory`, the phone's passthrough: Yinyue runs on the phone, so her
-//!   memory calls arrive over the WebRTC channel and terminate here rather
-//!   than on memory's own loopback routes
+//! - the core block (`prompt::core_block`)
 //!
-//! Memory is hosted in this process (`memory_host`); the address these calls
-//! go to is its loopback prefix on the engine's own port. Nothing here starts,
-//! installs or looks for a separate `ling-mem` daemon any more.
+//! **No model reaches memory through this file.** A model's memory tools are
+//! memory's own, discovered over MCP (`mcp_client`, and `memory_mcp` for what
+//! the engine adds to such a call). The phone's door (`api::memory`) calls
+//! `memory_host` itself: it wants memory's whole envelope, not its `data`.
 //!
-//! Wire behaviour that comes with this path: verb-dispatched endpoints,
+//! Memory is hosted in this process (`memory_host`), and these calls reach it
+//! in-process (`memory_host::post_verb`), on memory's own runtime.
+//!
+//! What this client adds on the way: the verb taken from `args["verb"]`,
 //! soft-empty cleanup, `tier: "episodic"` → `episodic: true`. The same fixes
-//! exist in ling-mem's MCP layer for model callers, which is where they belong
+//! exist in memory's MCP layer for model callers, which is where they belong
 //! — models fill arguments sloppily, programs don't. Naming the calling host
 //! is each caller's own job, not this function's; see `memory_mcp::HOST`.
 
 use anyhow::{anyhow, Result};
-use serde_json::{json, Value};
+use ling_mem::Who;
+use serde_json::Value;
 use std::time::Duration;
 
-/// Per-call HTTP timeout. Matches the old `capability_tools.rs` budget.
+/// How long a call waits for memory. Matches the old `capability_tools.rs`
+/// budget; the phone's door waits as long.
 pub const DISPATCH_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// POST `args` to `<ling_mem_url>/api/memory/<verb>` (verb taken from
-/// `args["verb"]` and stripped) and return the daemon's `data` payload.
-/// Handles soft-empty cleanup, the `tier=episodic` → `episodic=true` wire
-/// translation.
+/// Run the verb `args["verb"]` (stripped from the args) for `who` and return
+/// memory's `data` payload, after the clean-ups above.
 ///
 /// `caller` names who is asking, for the error and the log line only — it
-/// changes nothing on the wire. Stamping `host` on a row is the caller's own
+/// changes nothing memory sees. Stamping `host` on a row is the caller's own
 /// business, and each one does it: the `/mcp` group says `mcp`, a skill's
 /// webpage door says `linggen`. A default buried here would have named this
 /// engine on behalf of a caller that isn't it.
-pub async fn call_memory_http(ling_mem_url: &str, caller: &str, mut args: Value) -> Result<Value> {
-    let ling_mem_url = ling_mem_url.trim_end_matches('/');
+pub async fn call_memory(who: Who, caller: &str, args: Value) -> Result<Value> {
+    let (verb, args) = prepare(caller, args)?;
+    let answer = crate::memory_host::post_verb(who, &verb, args, DISPATCH_TIMEOUT).await?;
+    finish(caller, &verb, answer)
+}
 
-    // Verb → endpoint. Strip the verb from the body so the daemon sees
-    // the same shape it accepts from the CLI.
+/// [`call_memory`] for a caller that is not async, waiting up to `timeout`:
+/// `None` when memory did not answer in time.
+pub fn call_memory_blocking(
+    who: Who,
+    caller: &str,
+    args: Value,
+    timeout: Duration,
+) -> Option<Result<Value>> {
+    let (verb, args) = match prepare(caller, args) {
+        Ok(prepared) => prepared,
+        Err(e) => return Some(Err(e)),
+    };
+    let answer = crate::memory_host::post_verb_blocking(who, &verb, args, timeout)?;
+    Some(answer.and_then(|answer| finish(caller, &verb, answer)))
+}
+
+/// The verb, and the args as memory should see them.
+fn prepare(caller: &str, mut args: Value) -> Result<(String, Value)> {
+    // Strip the verb from the body so memory sees the shape its route takes.
     let verb = args
         .get("verb")
         .and_then(|v| v.as_str())
@@ -51,92 +68,109 @@ pub async fn call_memory_http(ling_mem_url: &str, caller: &str, mut args: Value)
         .to_string();
     if let Some(obj) = args.as_object_mut() {
         obj.remove("verb");
+        drop_soft_empty(obj);
+        episodic_as_flag(obj);
+        unnarrow_ttl_sweep(obj);
     }
-    let url = format!("{ling_mem_url}/api/memory/{verb}");
+    log_call(&verb, &args);
+    Ok((verb, args))
+}
 
-    // Drop soft-empty fields the model often fills in. `until: ""` would
-    // otherwise crash the daemon's RFC-3339 parse; empty arrays narrow
-    // unintentionally; nulls are noise.
-    if let Some(obj) = args.as_object_mut() {
-        obj.retain(|_, v| match v {
-            Value::String(s) => !s.is_empty(),
-            Value::Array(a) => !a.is_empty(),
-            Value::Null => false,
-            _ => true,
-        });
+/// Drop soft-empty fields the model often fills in. `until: ""` would
+/// otherwise crash memory's RFC-3339 parse; empty arrays narrow
+/// unintentionally; nulls are noise.
+fn drop_soft_empty(obj: &mut serde_json::Map<String, Value>) {
+    obj.retain(|_, v| match v {
+        Value::String(s) => !s.is_empty(),
+        Value::Array(a) => !a.is_empty(),
+        Value::Null => false,
+        _ => true,
+    });
+}
+
+/// tier="episodic" → episodic=true (memory splits the episodic store into a
+/// separate table). Other tier values are kept as filters within the
+/// semantic store.
+fn episodic_as_flag(obj: &mut serde_json::Map<String, Value>) {
+    if obj.get("tier").and_then(|v| v.as_str()) == Some("episodic") {
+        obj.insert("episodic".to_string(), Value::Bool(true));
+        obj.remove("tier");
     }
+}
 
-    // tier="episodic" → episodic=true on the wire (daemon splits the
-    // episodic store into a separate table). Other tier values are kept
-    // as filters within the semantic store.
-    if let Some(obj) = args.as_object_mut() {
-        if let Some(tier) = obj.get("tier").and_then(|v| v.as_str()) {
-            if tier == "episodic" {
-                obj.insert("episodic".to_string(), Value::Bool(true));
-                obj.remove("tier");
-            }
+/// TTL-sweep guard: when the caller is doing a `past_ttl: true` list
+/// (the dream consolidator's worklist query), strip `type`, `from`,
+/// and `outcome` filters. Observed failure mode: `gpt-5.5` ignores
+/// the schema's "DEFAULT: do not pass" hints and fills these in with
+/// arbitrary defaults (`type=fact, from=derived, outcome=neutral`),
+/// which over-constrains the query to 0 rows. The dream is a
+/// bulk-eviction sweep — it wants every past-TTL episodic row
+/// regardless of type/origin/outcome. Scope fields (`scope_root`) stay
+/// intact for callers that legitimately scope by path.
+fn unnarrow_ttl_sweep(obj: &mut serde_json::Map<String, Value>) {
+    let is_ttl_sweep = obj
+        .get("past_ttl")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if !is_ttl_sweep {
+        return;
+    }
+    for k in ["type", "from", "outcome"] {
+        if obj.remove(k).is_some() {
+            tracing::debug!("ling-mem client: dropped over-constraining `{k}` on past_ttl sweep");
         }
     }
+}
 
-    // TTL-sweep guard: when the caller is doing a `past_ttl: true` list
-    // (the dream consolidator's worklist query), strip `type`, `from`,
-    // and `outcome` filters. Observed failure mode: `gpt-5.5` ignores
-    // the schema's "DEFAULT: do not pass" hints and fills these in with
-    // arbitrary defaults (`type=fact, from=derived, outcome=neutral`),
-    // which over-constrains the query to 0 rows. The dream is a
-    // bulk-eviction sweep — it wants every past-TTL episodic row
-    // regardless of type/origin/outcome. Scope fields (`scope_root`) stay
-    // intact for callers that legitimately scope by path.
-    if let Some(obj) = args.as_object_mut() {
-        let is_ttl_sweep = obj
-            .get("past_ttl")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        if is_ttl_sweep {
-            for k in ["type", "from", "outcome"] {
-                if obj.remove(k).is_some() {
-                    tracing::debug!(
-                        "ling-mem client: dropped over-constraining `{k}` on past_ttl sweep"
-                    );
-                }
-            }
-        }
-    }
-
-    let args_preview = serde_json::to_string(&args).unwrap_or_else(|_| "<unserializable>".into());
-    let args_preview = if args_preview.len() > 200 {
-        format!("{}…", &args_preview[..199])
+fn log_call(verb: &str, args: &Value) {
+    let preview = serde_json::to_string(args).unwrap_or_else(|_| "<unserializable>".into());
+    let preview = if preview.len() > 200 {
+        format!("{}…", &preview[..199])
     } else {
-        args_preview
+        preview
     };
-    tracing::info!("ling-mem client → POST {url} body={args_preview}");
+    tracing::info!("ling-mem client → {verb} body={preview}");
+}
 
-    // The status is the passthrough's business, not a program's — an error is
-    // an error here, and `parse_envelope` already carries ling-mem's own code.
-    let (_status, envelope) = post_memory_verb(ling_mem_url, &verb, &args).await?;
+/// Memory's answer, unwrapped to `data`. The status is the door's business,
+/// not a program's — an error is an error here, and `parse_envelope`
+/// already carries memory's own code.
+fn finish(
+    caller: &str,
+    verb: &str,
+    (_status, envelope): crate::memory_host::Answer,
+) -> Result<Value> {
     let mut value = parse_envelope(envelope)?;
-
-    // Deleting an already-absent row is success, not an anomaly — the row is
-    // gone either way (commonly the daemon's cross-tier dedup removed the
-    // episodic copy during a promote add). A bare `removed:false` reads as
-    // an error signal to LLM callers (observed: three dream runs aborted
-    // claiming "store inconsistency" over it), so say what it means.
     if verb == "delete" {
-        if let Some(obj) = value.as_object_mut() {
-            if obj.get("removed").and_then(|v| v.as_bool()) == Some(false) {
-                obj.insert("already_gone".to_string(), Value::Bool(true));
-                obj.insert(
-                    "note".to_string(),
-                    Value::String(
-                        "row was already absent — treat as success; do not retry or verify"
-                            .to_string(),
-                    ),
-                );
-            }
-        }
+        mark_already_gone(&mut value);
     }
+    tracing::info!("ling-mem client ← {caller}: {}", summary(&value));
+    Ok(value)
+}
 
-    let summary = match &value {
+/// Deleting an already-absent row is success, not an anomaly — the row is
+/// gone either way (commonly memory's cross-tier dedup removed the episodic
+/// copy during a promote add). A bare `removed:false` reads as an error
+/// signal to LLM callers (observed: three dream runs aborted claiming
+/// "store inconsistency" over it), so say what it means.
+fn mark_already_gone(value: &mut Value) {
+    let Some(obj) = value.as_object_mut() else {
+        return;
+    };
+    if obj.get("removed").and_then(|v| v.as_bool()) != Some(false) {
+        return;
+    }
+    obj.insert("already_gone".to_string(), Value::Bool(true));
+    obj.insert(
+        "note".to_string(),
+        Value::String(
+            "row was already absent — treat as success; do not retry or verify".to_string(),
+        ),
+    );
+}
+
+fn summary(value: &Value) -> String {
+    match value {
         Value::Array(a) => format!("array len={}", a.len()),
         Value::Object(o) => {
             let n = o.get("rows").and_then(|v| v.as_array()).map(|a| a.len());
@@ -149,103 +183,6 @@ pub async fn call_memory_http(ling_mem_url: &str, caller: &str, mut args: Value)
         }
         Value::Null => "null".to_string(),
         _ => "scalar".to_string(),
-    };
-    tracing::info!("ling-mem client ← {caller}: {summary}");
-
-    Ok(value)
-}
-
-#[derive(Debug)]
-enum DispatchError {
-    /// Memory isn't reachable at that address.
-    NoDaemon,
-    /// Anything else — surface to the model.
-    Other(anyhow::Error),
-}
-
-impl From<DispatchError> for anyhow::Error {
-    fn from(e: DispatchError) -> Self {
-        match e {
-            DispatchError::NoDaemon => {
-                anyhow!("memory is not reachable — check `ling status`")
-            }
-            DispatchError::Other(e) => e,
-        }
-    }
-}
-
-/// The one way anything in this engine reaches memory's REST surface.
-///
-/// Returns the daemon's envelope **verbatim** — `{ok, data}` or
-/// `{ok:false, error, code}` — because its two callers want different halves
-/// of it. `call_memory_http` unwraps to `data` for programs inside the engine;
-/// `api::memory`'s passthrough hands the whole thing to the phone, which reads
-/// the same documented shape a loopback caller would. Neither reimplements the
-/// request or the error classification.
-///
-/// The daemon's HTTP status rides along with it. A non-2xx is not automatically
-/// a failure of this hop — a 404 is ling-mem saying that verb doesn't exist and
-/// a 400 is it rejecting the arguments, both of which the caller should see as
-/// themselves rather than as "memory is down". Only a daemon that never
-/// answered is our error.
-pub async fn post_memory_verb(
-    ling_mem_url: &str,
-    verb: &str,
-    body: &Value,
-) -> Result<(u16, Value)> {
-    let url = format!("{}/api/memory/{verb}", ling_mem_url.trim_end_matches('/'));
-    post_raw(&url, body).await.map_err(anyhow::Error::from)
-}
-
-/// One request. Returns `(status, envelope)` whenever the daemon answered at
-/// all — including a non-2xx, whose body is normally the error envelope and
-/// carries a `code` a bare status would throw away. A reply that isn't JSON
-/// (an empty 404 body from an unrouted path, say) is given the envelope shape
-/// here, so everything downstream parses exactly one thing.
-async fn post_raw(url: &str, args: &Value) -> Result<(u16, Value), DispatchError> {
-    let client = reqwest::Client::builder()
-        .timeout(DISPATCH_TIMEOUT)
-        .build()
-        .map_err(|e| DispatchError::Other(anyhow!(e)))?;
-
-    let response = match client.post(url).json(args).send().await {
-        Ok(r) => r,
-        Err(e) if e.is_connect() || e.is_timeout() => return Err(DispatchError::NoDaemon),
-        Err(e) => {
-            return Err(DispatchError::Other(
-                anyhow::Error::from(e).context(format!("POST {url} failed")),
-            ));
-        }
-    };
-
-    let status = response.status();
-    let body = response.text().await.map_err(|e| {
-        DispatchError::Other(anyhow::Error::from(e).context(format!("reading {url} response")))
-    })?;
-
-    match serde_json::from_str::<Value>(&body) {
-        Ok(envelope) if envelope.is_object() => Ok((status.as_u16(), envelope)),
-        _ => {
-            let trimmed = body.trim();
-            let message = format!(
-                "ling-mem error [{}]: {}",
-                status.as_u16(),
-                if trimmed.is_empty() {
-                    "<empty body>"
-                } else {
-                    trimmed
-                }
-            );
-            if status.is_success() {
-                // A 2xx that isn't the envelope is the daemon misbehaving,
-                // not a routine rejection — surface it.
-                return Err(DispatchError::Other(anyhow!(message)));
-            }
-            Ok((
-                status.as_u16(),
-                json!({ "ok": false, "error": message, "code": format!("HTTP_{}", status.as_u16()) }),
-            ))
-        }
     }
 }
 

@@ -187,9 +187,8 @@ impl ClaudeSession {
     async fn session_memory(&self) -> String {
         let store = self.state.prompt_store.clone();
         let cwd = PathBuf::from(&self.meta.cwd);
-        let url = crate::memory_host::url();
         tokio::task::spawn_blocking(move || {
-            crate::engine::prompt::core_block::owner_block(&store, &url, &cwd)
+            crate::engine::prompt::core_block::owner_block(&store, &cwd)
         })
         .await
         .unwrap_or_default()

@@ -23,11 +23,9 @@ pub(crate) async fn get_user_name(
         // Not "no name": a caller that keeps a name must not drop it on this.
         OwnName::NoOne => return axum::http::StatusCode::FORBIDDEN.into_response(),
     }
-    let ling_mem_url = crate::memory_host::url();
-    // The extractor blocks on its own bounded thread; keep the worker free.
-    let name = tokio::task::spawn_blocking(move || {
-        crate::engine::prompt::core_block::user_name_from_core(&ling_mem_url)
-    })
+    // The read waits on memory's runtime from a blocking thread; keep the
+    // worker free.
+    let name = tokio::task::spawn_blocking(crate::engine::prompt::core_block::user_name_from_core)
     .await
     .ok()
     .flatten();

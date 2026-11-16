@@ -30,9 +30,9 @@ pub(crate) fn ui_build(dev_mode: bool) -> Option<String> {
 /// Dispatch a Memory_* tool on behalf of a skill's webpage.
 /// Route: POST /apps/{skill_name}/capability/{tool_name}
 ///
-/// Memory is engine-built-in (HTTP to `ling-mem`); this endpoint is a
-/// thin wrapper around `tools::memory_http::call_memory_http` so skill
-/// webpages can call Memory_* without hardcoding the daemon URL. The
+/// Memory is engine-built-in (hosted in this process); this endpoint is a
+/// thin wrapper around `tools::memory_http::call_memory` so skill
+/// webpages can call Memory_* without knowing where memory lives. The
 /// call also rides the existing WebRTC fetch proxy in remote mode
 /// (control channel forwards `/apps/*` to the host's linggen server).
 ///
@@ -128,8 +128,9 @@ pub(super) async fn capability_dispatch(
         }
     }
 
-    let ling_mem_url = crate::memory_host::url();
-    match crate::engine::tools::memory_http::call_memory_http(&ling_mem_url, &tool_name, args).await
+    // The args are fitted to their caller above, so memory runs them as given.
+    match crate::engine::tools::memory_http::call_memory(ling_mem::Who::Owner, &tool_name, args)
+        .await
     {
         Ok(data) => axum::Json(data).into_response(),
         Err(e) => {

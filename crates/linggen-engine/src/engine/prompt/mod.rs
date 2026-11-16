@@ -669,8 +669,8 @@ impl AgentEngine {
 
         // --- Core memory (owner only) ---
         // Core = `tier=core` rows from the memory store, inlined
-        // unconditionally (no similarity gate). Pulled over HTTP from
-        // the hosted store (`cfg.ling_mem_url`) in `core_block::load_core` —
+        // unconditionally (no similarity gate). Read in-process from
+        // the hosted store in `core_block::owner_block` —
         // the same store every other memory surface reads. Empty / unreachable
         // store ⇒ the bootstrap block fires instead, telling the model
         // how to populate core. Semantic retrieval over the rest of the
@@ -690,7 +690,6 @@ impl AgentEngine {
             // the index) adds the scope candidates and the index.
             stable.push_str(&core_block::owner_block(
                 &self.prompt_store,
-                &self.cfg.ling_mem_url,
                 &self.tools.builtins.cwd(),
             ));
             // The memory *protocol* is no longer engine text: the memory
@@ -704,7 +703,6 @@ impl AgentEngine {
             let dir = self.prompt_profile.memory_app_dir.as_deref();
             let place = dir.and_then(crate::engine::tools::place_of);
             if let Some(text) = core_block::load_app_start(
-                &self.cfg.ling_mem_url,
                 place.as_ref(),
                 self.prompt_profile.include_core,
             ) {

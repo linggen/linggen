@@ -6,8 +6,8 @@
 //! subject through per-turn recall.
 //!
 //! Per `doc/memory-spec.md` §1/§2 the core tier lives as rows in the
-//! `semantic` LanceDB table, not as files on disk. The engine queries
-//! them over HTTP from the store the engine hosts (`memory_host::url`) — the same
+//! `semantic` LanceDB table, not as files on disk. The engine reads
+//! them in-process from the store it hosts (`memory_host`) — the same
 //! store every memory surface reads, reached here as a program rather
 //! than as a tool call — and renders the bodies as a bullet list for
 //! the prompt template. Promotion in and out of the core tier happens
@@ -16,8 +16,6 @@
 //! in sync.
 
 use serde::Deserialize;
-use std::sync::mpsc;
-use std::thread;
 use std::time::Duration;
 
 /// Upper bound on rows pulled into the system prompt. Core is meant to
@@ -79,7 +77,7 @@ pub const RECONCILE_FOOTER: &str = "\n\nNote: If duplicates or conflicting rows 
 /// routing live in `[memory_protocol]` (session start); this only nudges.
 pub const CAPTURE_REMINDER: &str = "Memory capture: before finishing this turn, recognize anything worth remembering and write it at the right tier per the memory protocol (core/semantic = search-first; episodic = incidental); anchor relative time to absolute dates (\"last month\" → \"2026-06\"). Nothing worth keeping? Skip silently.";
 
-/// What a session loads at start, from the daemon at `ling_mem_url`: the
+/// What a session loads at start, from the store this engine hosts: the
 /// core rows and, given a `place`, its scope candidates and index. One
 /// `session_start` call; the daemon renders the block, so this engine
 /// injects the same text as every other host. `core: false` asks for the
@@ -92,7 +90,6 @@ pub const CAPTURE_REMINDER: &str = "Memory capture: before finishing this turn, 
 /// but too slow gets [`CORE_NOT_LOADED`] instead, never the empty block. A daemon older than
 /// `session_start` (ling-mem < 1.9) gets the core rows alone, as before.
 pub(crate) fn load_session_start(
-    ling_mem_url: &str,
     place: Option<&crate::engine::tools::MemoryPlace>,
     core: bool,
 ) -> Option<CoreContent> {
@@ -101,9 +98,7 @@ pub(crate) fn load_session_start(
         args["cwd"] = serde_json::json!(p.cwd);
         args["root"] = serde_json::json!(p.root);
     }
-    resolve_session_start(fetch(ling_mem_url, args, LOAD_CORE_TIMEOUT), core, || {
-        load_core_rows_only(ling_mem_url)
-    })
+    resolve_session_start(fetch(args, LOAD_CORE_TIMEOUT), core, load_core_rows_only)
 }
 
 /// An owner session's memory section, for a session standing in `cwd`:
@@ -111,12 +106,11 @@ pub(crate) fn load_session_start(
 /// tail. Native and Claude sessions start with the same text.
 pub fn owner_block(
     store: &crate::prompts::PromptStore,
-    ling_mem_url: &str,
     cwd: &std::path::Path,
 ) -> String {
     use crate::prompts::keys;
     let place = crate::engine::tools::place_of(cwd);
-    let head = match load_session_start(ling_mem_url, place.as_ref(), true) {
+    let head = match load_session_start(place.as_ref(), true) {
         Some(c) => store.render_or_fallback(keys::CORE_MEMORY_BLOCK, &[("core_facts", &c.facts)]),
         None => store.render_or_fallback(keys::CORE_MEMORY_BLOCK_EMPTY, &[]),
     };
@@ -128,7 +122,6 @@ pub fn owner_block(
 /// or the reconcile footer, which speak to memory tools it doesn't have.
 /// Nothing from any other project or app.
 pub(crate) fn load_app_start(
-    ling_mem_url: &str,
     place: Option<&crate::engine::tools::MemoryPlace>,
     core: bool,
 ) -> Option<String> {
@@ -140,7 +133,7 @@ pub(crate) fn load_app_start(
         args["cwd"] = serde_json::json!(p.cwd);
         args["root"] = serde_json::json!(p.root);
     }
-    app_block(&fetch(ling_mem_url, args, LOAD_CORE_TIMEOUT)?.ok()?)
+    app_block(&fetch(args, LOAD_CORE_TIMEOUT)?.ok()?)
 }
 
 /// The core and index parts of a `session_start` answer, joined.
@@ -199,8 +192,8 @@ fn session_block(value: &serde_json::Value) -> Option<CoreContent> {
 }
 
 /// The pre-1.9 path: `tier=core` rows only, rendered here.
-fn load_core_rows_only(ling_mem_url: &str) -> Option<CoreContent> {
-    let rows = fetch_core_rows(ling_mem_url, LOAD_CORE_TIMEOUT)?;
+fn load_core_rows_only() -> Option<CoreContent> {
+    let rows = fetch_core_rows(LOAD_CORE_TIMEOUT)?;
     if rows.is_empty() {
         return None;
     }
@@ -220,8 +213,8 @@ fn load_core_rows_only(ling_mem_url: &str) -> Option<CoreContent> {
 /// saying "…name is X" wins; else the identity row shape "X — …". `None`
 /// until the name is genuinely in core — callers show nothing rather than
 /// a placeholder.
-pub fn user_name_from_core(ling_mem_url: &str) -> Option<String> {
-    let rows = fetch_core_rows(ling_mem_url, LOAD_CORE_TIMEOUT)?;
+pub fn user_name_from_core() -> Option<String> {
+    let rows = fetch_core_rows(LOAD_CORE_TIMEOUT)?;
     user_name_from_rows(&rows)
 }
 
@@ -282,69 +275,41 @@ fn render_row(r: &CoreRow) -> String {
     }
 }
 
-/// List `tier=core` rows over HTTP, bounded by `timeout`.
-fn fetch_core_rows(ling_mem_url: &str, timeout: Duration) -> Option<Vec<CoreRow>> {
+/// List `tier=core` rows, bounded by `timeout`.
+fn fetch_core_rows(timeout: Duration) -> Option<Vec<CoreRow>> {
     let args = serde_json::json!({"verb": "list", "tier": "core", "limit": CORE_LIMIT});
-    let value = fetch(ling_mem_url, args, timeout)?.ok()?;
+    let value = fetch(args, timeout)?.ok()?;
     parse_rows(&value)
 }
 
-/// One memory call over HTTP, bounded by `timeout`. Goes through
-/// `call_memory_http`, so the core block reads the URL it is given like
-/// every other memory surface (a test's own server, say). The request runs on a side
-/// thread with its own tiny runtime because prompt assembly is sync; on
-/// timeout the engine proceeds with no core injected this turn and the
-/// orphan request finishes in the background (including the dispatch
-/// layer's one autostart retry, which helps the next turn).
+/// One memory call as the owner, bounded by `timeout` (`memory_http`'s
+/// blocking form: the verb runs on memory's runtime while prompt assembly,
+/// which is sync, waits). On timeout the engine proceeds with no core
+/// injected this turn and the verb finishes on memory's runtime.
 ///
-/// `None` = no answer in time; `Some(Err)` = the daemon answered with an
-/// error (e.g. an older daemon without this verb).
+/// `None` = no answer in time; `Some(Err)` = memory answered with an
+/// error (e.g. an older store without this verb), or there is none here.
 fn fetch(
-    ling_mem_url: &str,
     args: serde_json::Value,
     timeout: Duration,
 ) -> Option<Result<serde_json::Value, String>> {
-    let (tx, rx) = mpsc::channel();
-    let url = ling_mem_url.to_string();
-    thread::spawn(move || {
-        let result = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| e.to_string())
-            .and_then(|rt| {
-                rt.block_on(crate::engine::tools::memory_http::call_memory_http(
-                    &url,
-                    "core block",
-                    args,
-                ))
-                .map_err(|e| e.to_string())
-            });
-        if let Err(e) = &result {
-            tracing::debug!(error = %e, "core block over ling-mem HTTP failed");
-        }
-        let _ = tx.send(result);
-    });
-
-    // Prompt assembly is sync and often runs on an engine worker. Waiting
-    // there must not hold that worker's queued tasks: memory is served by
-    // this same process now (`memory_host`), so the answer needs them.
-    let wait = || rx.recv_timeout(timeout);
-    let answer = match tokio::runtime::Handle::try_current() {
-        Ok(h) if h.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
-            tokio::task::block_in_place(wait)
-        }
-        _ => wait(),
+    let answer = crate::engine::tools::memory_http::call_memory_blocking(
+        ling_mem::Who::Owner,
+        "core block",
+        args,
+        timeout,
+    );
+    let Some(answer) = answer else {
+        tracing::warn!(
+            ?timeout,
+            "core block over ling-mem HTTP timed out; core not loaded this turn"
+        );
+        return None;
     };
-    match answer {
-        Ok(result) => Some(result),
-        Err(_) => {
-            tracing::warn!(
-                ?timeout,
-                "core block over ling-mem HTTP timed out; core not loaded this turn"
-            );
-            None
-        }
+    if let Err(e) = &answer {
+        tracing::debug!(error = %e, "core block over ling-mem HTTP failed");
     }
+    Some(answer.map_err(|e| e.to_string()))
 }
 
 /// Parse the daemon's list payload (a JSON array of rows). A malformed
@@ -379,7 +344,7 @@ mod tests {
         });
         assert_eq!(app_block(&v).as_deref(), Some("## Core\n- a\n\n## Index — app\n- b"));
         assert_eq!(app_block(&serde_json::json!({"core_block": "", "index_block": ""})), None);
-        assert_eq!(load_app_start("http://127.0.0.1:1", None, false), None, "no core, no app: nothing asked");
+        assert_eq!(load_app_start(None, false), None, "no core, no app: nothing asked");
     }
     use super::*;
 

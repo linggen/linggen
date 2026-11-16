@@ -190,3 +190,53 @@ impl TestHost {
 tokio::task_local! {
     pub static TEST_HOST: TestHost;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Instant;
+
+    async fn blocking_at(host: TestHost, timeout: Duration) -> Option<Result<Answer>> {
+        TEST_HOST
+            .scope(host, async move {
+                post_verb_blocking(Who::Owner, "count", json!({}), timeout)
+            })
+            .await
+    }
+
+    /// Prompt assembly is never held past its bound by a store that does not
+    /// answer; one that is not open answers as its routes do; with none in
+    /// this process the caller hears so at once.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_blocking_call_keeps_its_bound() {
+        let bound = Duration::from_millis(300);
+        let started = Instant::now();
+        assert!(blocking_at(TestHost::Silent, bound).await.is_none());
+        let waited = started.elapsed();
+        assert!(waited >= bound && waited < bound * 4, "{waited:?}");
+
+        let not_open = blocking_at(TestHost::NotOpen("locked".into()), bound).await;
+        assert_eq!(
+            not_open.unwrap().unwrap(),
+            (
+                503,
+                json!({"ok": false, "error": "locked", "code": "MEMORY_UNAVAILABLE"})
+            )
+        );
+        let absent = blocking_at(TestHost::Absent, bound).await.unwrap();
+        assert_eq!(
+            absent.unwrap_err().to_string(),
+            "memory is not hosted by this process"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_async_call_gives_up_after_its_timeout() {
+        let call = post_verb(Who::Owner, "count", json!({}), Duration::from_millis(50));
+        let err = TEST_HOST.scope(TestHost::Silent, call).await.unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "memory is not reachable — check `ling status`"
+        );
+    }
+}

@@ -479,7 +479,6 @@ fn render_data(tool: &McpTool, data: &Value) -> Value {
 /// shape — agent_run needs it and errors cleanly without it.
 struct McpDeps<'a> {
     bridge: &'a BridgeHub,
-    ling_mem_url: &'a str,
     state: Option<&'a Arc<ServerState>>,
 }
 
@@ -584,7 +583,7 @@ async fn call_tool(deps: &McpDeps<'_>, name: &str, args: Value) -> Result<Value,
                     true,
                 ));
             };
-            match compose_dream_status(state, deps.ling_mem_url).await {
+            match compose_dream_status(state).await {
                 Ok(status) => Ok(tool_content(status.to_string(), false)),
                 Err(e) => Ok(tool_content(
                     format!("dream status unavailable — memory unreachable: {e:#}"),
@@ -645,12 +644,9 @@ async fn call_tool(deps: &McpDeps<'_>, name: &str, args: Value) -> Result<Value,
 /// carried as `last_run_error` so MCP callers can show the user WHY a
 /// dream failed (model not configured, sign-in expired, quota) instead
 /// of a silent dead pipeline.
-async fn compose_dream_status(
-    state: &Arc<ServerState>,
-    ling_mem_url: &str,
-) -> anyhow::Result<Value> {
-    let rollup = crate::engine::tools::memory_http::call_memory_http(
-        ling_mem_url,
+async fn compose_dream_status(state: &Arc<ServerState>) -> anyhow::Result<Value> {
+    let rollup = crate::engine::tools::memory_http::call_memory(
+        ling_mem::Who::Owner,
         "memory_dream_status",
         json!({ "verb": "days", "undreamed_only": true }),
     )
@@ -803,10 +799,8 @@ pub(crate) async fn post_handler(
     if !door_open_to(&crate::memory_host::caller::resolve(peer.ip(), &headers)) {
         return one_shot((StatusCode::FORBIDDEN, "this door is for computers").into_response());
     }
-    let ling_mem_url = crate::memory_host::url();
     let deps = McpDeps {
         bridge: &state.bridge,
-        ling_mem_url: &ling_mem_url,
         state: Some(&state),
     };
     match handle_rpc(&deps, &body).await {
@@ -823,10 +817,6 @@ pub(crate) async fn get_handler() -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // Unroutable per RFC 5737 — memory tests must never reach a real daemon
-    // (the client path would autostart/install ling-mem on connection refusal).
-    const TEST_MEM_URL: &str = "http://192.0.2.1:9";
 
     fn hub() -> BridgeHub {
         BridgeHub::new()
@@ -859,7 +849,6 @@ mod tests {
     fn deps(hub: &BridgeHub) -> McpDeps<'_> {
         McpDeps {
             bridge: hub,
-            ling_mem_url: TEST_MEM_URL,
             state: None,
         }
     }

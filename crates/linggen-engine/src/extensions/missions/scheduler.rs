@@ -1044,9 +1044,8 @@ async fn append_run_report(state: &Arc<SchedulerHost>, agent_id: &str, session_i
 
     // Close with where the store stands — one `stats` call to the
     // daemon; skipped silently if it's unreachable.
-    let ling_mem_url = crate::memory_host::url();
-    if let Ok(stats) = crate::engine::tools::memory_http::call_memory_http(
-        &ling_mem_url,
+    if let Ok(stats) = crate::engine::tools::memory_http::call_memory(
+        ling_mem::Who::Owner,
         "mission report",
         serde_json::json!({ "verb": "stats" }),
     )
