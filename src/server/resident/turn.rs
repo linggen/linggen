@@ -30,12 +30,12 @@ pub(crate) async fn run_yinyue_turn(
 /// thread. `language`: the app's own, when it named one — her line is in it.
 pub(crate) async fn run_moment_turn(
     state: &Arc<ServerState>,
-    (task, table): (String, Option<String>),
+    (task, table): (String, Option<super::Table>),
     trigger_source: &str,
     language: Option<String>,
 ) -> Option<String> {
     match table {
-        Some(session_id) => run_at_table(state, session_id, task, trigger_source, language).await,
+        Some(table) => run_at_table(state, table, task, trigger_source, language).await,
         None => run_home(state, task, trigger_source, Reach::Sealed, language).await,
     }
 }
@@ -113,13 +113,17 @@ pub(super) async fn run_home(
 /// Her moment turn at an app chat's table: seated there (for good, as an
 /// addressed member is), woken by a hidden kickoff that is hers alone —
 /// another member never reads it (`chat::thread`).
+///
+/// In a day's session every app is at the one table: her turn stands in the
+/// place of the app the moment came from, and runs from her own folder.
 async fn run_at_table(
     state: &Arc<ServerState>,
-    session_id: String,
+    table: super::Table,
     task: String,
     trigger_source: &str,
     language: Option<String>,
 ) -> Option<String> {
+    let session_id = table.session;
     let pet = state.manager.get_config_snapshot().await.pet;
     if !pet.enabled {
         return None;
@@ -138,10 +142,18 @@ async fn run_at_table(
         return None;
     }
     crate::server::chat::members::seat(&state.manager, &session_id, YINYUE_AGENT).await;
-    let root = crate::util::resolve_path(std::path::Path::new(&meta.cwd));
+    let day = crate::server::day_session::is_day(&session_id);
+    let root = match day {
+        true => her_root(),
+        false => crate::util::resolve_path(std::path::Path::new(&meta.cwd)),
+    };
     let task = with_contract(task, trigger_source);
-    // No page sent it: she stands in the table's own app.
-    let place = crate::engine::turn_place::TurnPlace::of_session(Some(&meta));
+    // No page sent it: she stands in the table's own app — in a day's
+    // session, the app the moment came from.
+    let place = match day {
+        true => crate::engine::turn_place::TurnPlace::of_request(table.app.as_deref(), Some(&meta)),
+        false => crate::engine::turn_place::TurnPlace::of_session(Some(&meta)),
+    };
     let turn = Turn {
         session_id,
         root,

@@ -388,6 +388,32 @@ fn table_of(moments: &[Moment]) -> Option<String> {
     moments.iter().find_map(|m| m.session.clone())
 }
 
+/// Where her turn for `moments` runs. With one session a day on there is
+/// one table: the day's session, in the place of the app the moments came
+/// from, and every moment's line lands there alone. Otherwise the app chat
+/// the moments name first.
+async fn at_the_table(
+    state: &Arc<ServerState>,
+    mut moments: Vec<Moment>,
+) -> (Vec<Moment>, Option<super::resident::Table>) {
+    let Some(day) = super::day_session::current_if_on(&state.manager).await else {
+        let table = table_of(&moments).map(|session| super::resident::Table { session, app: None });
+        return (moments, table);
+    };
+    let app = app_of(&moments);
+    for m in moments.iter_mut() {
+        m.session = Some(day.clone());
+    }
+    (moments, Some(super::resident::Table { session: day, app }))
+}
+
+/// The app her turn stands in, of moments that may come from several: the
+/// one whose chat they name first, else the newest.
+fn app_of(moments: &[Moment]) -> Option<String> {
+    let named = moments.iter().find(|m| m.session.is_some());
+    named.or(moments.last()).map(|m| m.app.clone())
+}
+
 /// When each session last had a conversational exchange.
 static LAST_CONVERSE: Mutex<Vec<(String, u64)>> = Mutex::new(Vec::new());
 
@@ -540,7 +566,7 @@ pub async fn yinyue_moment_loop(state: Arc<ServerState>) {
             } else {
                 kickoff(&taken)
             };
-            let table = table_of(&taken);
+            let (taken, table) = at_the_table(&state, taken).await;
             let line = super::resident::wake_for_moment(
                 state.clone(),
                 (words, table.clone()),
@@ -555,7 +581,8 @@ pub async fn yinyue_moment_loop(state: Arc<ServerState>) {
             if asked && line.is_none() {
                 tell_unanswered(&state, &taken, "no-line");
             }
-            land_in_chats(&state, &taken, line.as_deref(), table.as_deref()).await;
+            let at = table.as_ref().map(|t| t.session.as_str());
+            land_in_chats(&state, &taken, line.as_deref(), at).await;
         });
     }
 }

@@ -469,3 +469,50 @@ async fn with_the_setting_off_an_apps_session_is_its_own() {
         .iter()
         .all(|m| m[0].get("place").is_none()));
 }
+
+/// With the setting on there is no app session for her to sit in: an app's
+/// moment wakes her in the day's session, standing in that app — its tools
+/// for her (`place.yinyue.tools`), her line one row there and nowhere else —
+/// even when the moment names an app chat from before.
+#[tokio::test]
+async fn an_apps_moment_wakes_her_in_the_day_in_that_apps_place() {
+    let setup = Setup::default().script(Agent::Yinyue, vec![text("Clouds over the harbor.")]);
+    let (w, _) = day_world_at(12, setup).await;
+    // A dice chat from before the setting, held by a page that did not move.
+    set_agent(&w, json!({ "one_session_a_day": false })).await;
+    let old = w
+        .api
+        .create_session(json!({"title": "table", "skill": "dice"}))
+        .await;
+    set_agent(&w, json!({ "one_session_a_day": true })).await;
+    let day = w.api.get("/api/sessions/day").await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_ne!(old, day);
+
+    let mark = w.mark();
+    let moment = json!({"app": "dice", "text": "The player looks at the sky.", "asked": true, "session": old});
+    assert_eq!(w.api.post("/api/yinyue/event", moment).await, json!("ok"));
+    w.finish_run(&day, Agent::Yinyue, mark).await;
+
+    let rows = w.raw_rows(&day);
+    let hers: Vec<&Value> = rows
+        .iter()
+        .filter(|r| r["from_id"] == "yinyue" && r["is_observation"] == false)
+        .collect();
+    assert_eq!(hers.len(), 1, "{rows:?}");
+    assert_eq!(hers[0]["content"], "Clouds over the harbor.");
+    assert_eq!(hers[0]["place"], "dice");
+    assert!(
+        w.rows_opt(&old).unwrap_or_default().is_empty(),
+        "her line landed in the old chat"
+    );
+    let call = w.model.calls_of(Agent::Yinyue).pop().expect("her call");
+    assert!(
+        offers(&call, "Peek"),
+        "dice's tool for her: {:?}",
+        call.tool_names()
+    );
+    w.assert_all_scripted();
+}

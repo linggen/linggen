@@ -388,6 +388,15 @@ pub(crate) fn moment_source(asked: bool, in_use: bool) -> &'static str {
     }
 }
 
+/// The app chat a moment's turn runs at: its session, and the app the
+/// moment came from — the turn's place in a day's session, where every app
+/// is at the one table (`server::day_session`).
+#[derive(Clone, Debug)]
+pub(crate) struct Table {
+    pub session: String,
+    pub app: Option<String>,
+}
+
 /// Wake her to tell a mission run's fault. Unprompted: quiet hours make it
 /// wait, and the hourly ceiling neither counts nor holds it ([`Source::Fault`]).
 pub(super) async fn wake_fault(state: Arc<ServerState>, fact: String) -> Option<String> {
@@ -409,7 +418,7 @@ pub(super) async fn wake_fault(state: Arc<ServerState>, fact: String) -> Option<
 /// her turn runs there.
 pub(crate) async fn wake_for_moment(
     state: Arc<ServerState>,
-    moment: (String, Option<String>),
+    moment: (String, Option<Table>),
     emotion: &str,
     source: &str,
     language: Option<String>,
@@ -421,7 +430,7 @@ pub(crate) async fn wake_for_moment(
 /// when the run failed, she produced nothing, or chose silence.
 pub(super) async fn wake_and_speak(
     state: Arc<ServerState>,
-    (kickoff, table): (String, Option<String>),
+    (kickoff, table): (String, Option<Table>),
     emotion: &str,
     trigger_source: &str,
     reach: Reach,
