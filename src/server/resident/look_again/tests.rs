@@ -144,14 +144,28 @@ fn the_kickoff_marks_the_note_as_the_reason_and_leaves_the_judging_to_her() {
 
 #[test]
 fn a_woken_note_glances_and_moments_are_unprompted_and_replies_are_not() {
-    use super::super::triggers::unprompted_source;
+    use super::super::guard::Source;
+    use super::super::triggers::{moment_source, unprompted_source};
     assert_eq!(
         unprompted_source(Reach::SpeakOnly, LOOK_AGAIN_SOURCE),
-        Some("note")
+        Some(Source::Note)
     );
-    assert_eq!(unprompted_source(Reach::SpeakOnly, "timer"), Some("glance"));
-    assert_eq!(unprompted_source(Reach::Sealed, "event"), Some("moment"));
-    assert_eq!(unprompted_source(Reach::Sealed, "asked"), None);
+    assert_eq!(
+        unprompted_source(Reach::SpeakOnly, "timer"),
+        Some(Source::Glance)
+    );
+    assert_eq!(
+        unprompted_source(Reach::Sealed, moment_source(false, false)),
+        Some(Source::Moment)
+    );
+    assert_eq!(
+        unprompted_source(Reach::Sealed, moment_source(false, true)),
+        Some(Source::InUse)
+    );
+    assert_eq!(
+        unprompted_source(Reach::Sealed, moment_source(true, true)),
+        None
+    );
     assert_eq!(unprompted_source(Reach::Open, "event"), None, "a herald");
     assert_eq!(unprompted_source(Reach::Open, "user"), None);
 }

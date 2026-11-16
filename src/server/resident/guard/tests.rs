@@ -57,14 +57,17 @@ fn quiet_hours_hold_and_say_until_when() {
     let rules = Rules::of(&pet(6, "23:00-07:00"));
     let lines = Lines::new();
     assert_eq!(
-        rules.check(NOW, at(1, 0), &lines),
+        rules.check(Source::Glance, NOW, at(1, 0), &lines),
         Some(Held::Quiet {
             until: "07:00".into()
         })
     );
-    assert_eq!(rules.check(NOW, at(9, 0), &lines), None);
+    assert_eq!(rules.check(Source::Glance, NOW, at(9, 0), &lines), None);
     // No quiet hours set: none at night either.
-    assert_eq!(Rules::of(&pet(6, "")).check(NOW, at(1, 0), &lines), None);
+    assert_eq!(
+        Rules::of(&pet(6, "")).check(Source::Glance, NOW, at(1, 0), &lines),
+        None
+    );
 }
 
 #[test]
@@ -73,21 +76,28 @@ fn the_ceiling_counts_a_rolling_hour() {
     let mut lines = Lines::new();
     lines.note(NOW - 3500);
     lines.note(NOW - 1000);
-    assert_eq!(rules.check(NOW, at(12, 0), &lines), None, "two in the hour");
+    assert_eq!(
+        rules.check(Source::Glance, NOW, at(12, 0), &lines),
+        None,
+        "two in the hour"
+    );
     lines.note(NOW - 10);
     assert_eq!(
-        rules.check(NOW, at(12, 0), &lines),
+        rules.check(Source::Glance, NOW, at(12, 0), &lines),
         Some(Held::Ceiling { per_hour: 3 })
     );
     // The oldest leaves the window: room for one more.
-    assert_eq!(rules.check(NOW + 101, at(12, 2), &lines), None);
+    assert_eq!(
+        rules.check(Source::Glance, NOW + 101, at(12, 2), &lines),
+        None
+    );
 }
 
 #[test]
 fn a_ceiling_of_zero_holds_every_unprompted_line() {
     let rules = Rules::of(&pet(0, ""));
     assert_eq!(
-        rules.check(NOW, at(12, 0), &Lines::new()),
+        rules.check(Source::Glance, NOW, at(12, 0), &Lines::new()),
         Some(Held::Ceiling { per_hour: 0 })
     );
 }
@@ -137,4 +147,34 @@ fn hold_is_an_engine_verb_that_reads_as_held() {
         detail: None,
     };
     assert_eq!(a.line(), "yinyue held a line (hourly ceiling)");
+}
+
+/// Quiet hours let a moment from the app the person is using by; the ceiling
+/// still counts it and can hold it. Another app's moment is held at night.
+#[test]
+fn quiet_hours_do_not_hold_a_moment_from_the_app_in_use() {
+    let rules = Rules::of(&pet(2, "23:00-07:00"));
+    let mut lines = Lines::new();
+    let night = at(23, 30);
+    assert_eq!(rules.check(Source::InUse, NOW, night, &lines), None);
+    assert_eq!(
+        rules.check(Source::Moment, NOW, night, &lines),
+        Some(Held::Quiet {
+            until: "07:00".into()
+        }),
+        "another app's moment waits for the morning"
+    );
+    lines.note(NOW - 100);
+    lines.note(NOW - 50);
+    assert_eq!(
+        rules.check(Source::InUse, NOW, night, &lines),
+        Some(Held::Ceiling { per_hour: 2 }),
+        "the ceiling holds it all the same"
+    );
+}
+
+#[test]
+fn a_source_is_named_by_what_the_record_says() {
+    assert_eq!(Source::InUse.name(), "moment");
+    assert_eq!(Source::Moment.name(), "moment");
 }

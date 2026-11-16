@@ -1,6 +1,7 @@
 //! What wakes her: the event bus, mission runs that had failures, finished and failed runs,
 //! pending asks, and where her words are delivered.
 
+use super::guard::Source;
 use super::*;
 
 pub async fn yinyue_watch_loop(state: Arc<ServerState>) {
@@ -372,18 +373,31 @@ pub(crate) async fn wake_herald(
     wake_and_speak(state, (kickoff, None), emotion, "event", Reach::Open, None).await
 }
 
-/// Wake her for an app moment. `asked`: the user asked her for this — the
-/// same spoken final paragraph, under the contract that offers no SILENT.
-/// Sealed either way: her line is the whole of her answer (`Reach::Sealed`).
-/// `table`: the app chat the moment names — her turn runs there.
+/// What woke a moment's turn from the app the person is using.
+const IN_USE_SOURCE: &str = "event-in-use";
+
+/// The trigger source of an app moment's turn: asked for, from the app the
+/// person is using, or neither.
+pub(crate) fn moment_source(asked: bool, in_use: bool) -> &'static str {
+    match (asked, in_use) {
+        (true, _) => "asked",
+        (false, true) => IN_USE_SOURCE,
+        (false, false) => "event",
+    }
+}
+
+/// Wake her for an app moment; `source` is [`moment_source`]. `asked`: the
+/// user asked her for this — the same spoken final paragraph, under the
+/// contract that offers no SILENT. Sealed either way: her line is the whole
+/// of her answer (`Reach::Sealed`). `table`: the app chat the moment names —
+/// her turn runs there.
 pub(crate) async fn wake_for_moment(
     state: Arc<ServerState>,
     moment: (String, Option<String>),
     emotion: &str,
-    asked: bool,
+    source: &str,
     language: Option<String>,
 ) -> Option<String> {
-    let source = if asked { "asked" } else { "event" };
     wake_and_speak(state, moment, emotion, source, Reach::Sealed, language).await
 }
 
@@ -410,16 +424,7 @@ pub(super) async fn wake_and_speak(
         return None;
     };
     if let Some(source) = unprompted_source(reach, trigger_source) {
-        // Checked before the turn too; this is the last word, for two
-        // unprompted turns that ran at once.
-        let pet = state.manager.get_config_snapshot().await.pet;
-        if let Some(held) = super::guard::held_now(&pet) {
-            let item = super::guard::Withheld {
-                what: "a line".to_string(),
-                source,
-                key: format!("line-{}", crate::util::now_ts_secs()),
-            };
-            super::guard::record_held(&item, &held);
+        if !passes_last_word(&state, source).await {
             return None;
         }
         super::guard::spoke_unprompted();
@@ -435,16 +440,35 @@ pub(super) async fn wake_and_speak(
 /// What woke an unprompted turn of hers — `None` for a reply: her ordinary
 /// turns (a person's words, a herald of a run they started) and anything
 /// asked. Only these are under the guardrails.
-pub(super) fn unprompted_source(reach: Reach, trigger_source: &str) -> Option<&'static str> {
+pub(super) fn unprompted_source(reach: Reach, trigger_source: &str) -> Option<Source> {
     if trigger_source == "asked" {
         return None;
     }
     match reach {
         Reach::Open => None,
-        Reach::Sealed => Some("moment"),
-        Reach::SpeakOnly if trigger_source == super::look_again::LOOK_AGAIN_SOURCE => Some("note"),
-        Reach::SpeakOnly => Some("glance"),
+        Reach::Sealed if trigger_source == IN_USE_SOURCE => Some(Source::InUse),
+        Reach::Sealed => Some(Source::Moment),
+        Reach::SpeakOnly if trigger_source == super::look_again::LOOK_AGAIN_SOURCE => {
+            Some(Source::Note)
+        }
+        Reach::SpeakOnly => Some(Source::Glance),
     }
+}
+
+/// The last word before her voice: checked before the turn too, this is for
+/// two unprompted turns that ran at once.
+async fn passes_last_word(state: &Arc<ServerState>, source: Source) -> bool {
+    let pet = state.manager.get_config_snapshot().await.pet;
+    let Some(held) = super::guard::held_now(&pet, source) else {
+        return true;
+    };
+    let item = super::guard::Withheld {
+        what: "a line".to_string(),
+        source: source.name(),
+        key: format!("line-{}", crate::util::now_ts_secs()),
+    };
+    super::guard::record_held(&item, &held);
+    false
 }
 
 /// Deliver an `agent_chat` message to a CHAT agent (Ling, …): show it in that

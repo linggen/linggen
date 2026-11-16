@@ -5,6 +5,9 @@
 //! - **A ceiling** on unprompted lines in any rolling hour (`pet.unprompted_per_hour`).
 //! - **Quiet hours** in local time (`pet.quiet_hours`), when nothing unprompted is said.
 //!
+//! What woke the line ([`Source`]) decides how they apply: a moment from the
+//! app the person is using passes quiet hours.
+//!
 //! Both are checked before her turn runs, so a held line is never written:
 //! at an app's table her line would already be a row of its chat. What a
 //! guardrail held is written once to the activity log (verb `hold`).
@@ -15,6 +18,28 @@ use std::sync::Mutex;
 
 /// The rolling window the ceiling counts over.
 const WINDOW_SECS: u64 = 3600;
+
+/// What woke an unprompted line. It decides which guardrail holds it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Source {
+    Glance,
+    /// An app moment from an app the person is not using.
+    Moment,
+    /// An app moment from the app the person is using: quiet hours let it by.
+    InUse,
+    Note,
+}
+
+impl Source {
+    /// The word the activity log's `hold` record carries.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Source::Glance => "glance",
+            Source::Moment | Source::InUse => "moment",
+            Source::Note => "note",
+        }
+    }
+}
 
 /// Why something unprompted is not said now.
 #[derive(Clone, Debug, PartialEq)]
@@ -90,11 +115,20 @@ impl Rules {
         }
     }
 
-    /// What holds an unprompted line at `now`, the local clock at `minute`,
-    /// with `lines` said so far. Quiet hours first: they say until when.
-    pub(crate) fn check(&self, now: u64, minute: u32, lines: &Lines) -> Option<Held> {
-        if let Some(q) = self.quiet.filter(|q| q.contains(minute)) {
-            return Some(Held::Quiet { until: q.ends() });
+    /// What holds an unprompted line from `source` at `now`, the local clock
+    /// at `minute`, with `lines` said so far. Quiet hours first: they say
+    /// until when.
+    pub(crate) fn check(
+        &self,
+        source: Source,
+        now: u64,
+        minute: u32,
+        lines: &Lines,
+    ) -> Option<Held> {
+        if source != Source::InUse {
+            if let Some(q) = self.quiet.filter(|q| q.contains(minute)) {
+                return Some(Held::Quiet { until: q.ends() });
+            }
         }
         if lines.in_hour(now) >= self.per_hour as usize {
             return Some(Held::Ceiling {
@@ -131,11 +165,11 @@ impl Lines {
 /// starts the hour afresh.
 static LINES: Mutex<Lines> = Mutex::new(Lines::new());
 
-/// What holds an unprompted line right now, if anything.
-pub(crate) fn held_now(pet: &PetConfig) -> Option<Held> {
+/// What holds an unprompted line from `source` right now, if anything.
+pub(crate) fn held_now(pet: &PetConfig, source: Source) -> Option<Held> {
     let now = crate::util::now_ts_secs();
     let lines = LINES.lock().unwrap_or_else(|e| e.into_inner());
-    Rules::of(pet).check(now, local_minute(), &lines)
+    Rules::of(pet).check(source, now, local_minute(), &lines)
 }
 
 /// An unprompted line was said aloud.

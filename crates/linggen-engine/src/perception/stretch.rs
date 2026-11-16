@@ -283,6 +283,16 @@ pub fn open_record() -> Option<Activity> {
     with(|s| s.open_record())
 }
 
+/// Whether the person is using `app` at `now`: its page is the one in front
+/// and they gave it input within [`IDLE_LIMIT_SECS`] — the reading that keeps
+/// a stretch of use open.
+pub fn is_using(front: Option<&Front>, app: &str, now: u64) -> bool {
+    front.is_some_and(|f| {
+        f.app.as_deref().unwrap_or(MAIN_PAGE) == app
+            && now.saturating_sub(f.last_input_at) <= IDLE_LIMIT_SECS
+    })
+}
+
 /// The page in front now and since when, if a stretch is open and was heard
 /// from within [`GAP_SECS`] of `now`.
 pub fn in_front(now: u64) -> Option<(String, u64)> {

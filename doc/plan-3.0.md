@@ -228,7 +228,8 @@ rolls to a fresh segment near its context limit.
 
 **Guardrails, in code:** a ceiling on unprompted lines per hour and quiet
 hours; a quiet moment may speak and ask, never act; privacy lines (holdings
-are never told to her). Built (2.4 branch): the ceiling and quiet hours
+are never told to her). Built (2.4 branch): the ceiling and quiet hours, quiet
+hours letting through an unasked moment from the app in use
 (`yinyue-companion-spec.md` § Guardrails); a glance or woken note offers
 only tools that do not act.
 

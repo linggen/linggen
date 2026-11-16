@@ -153,7 +153,7 @@ async fn set_ceiling(w: &World, per_hour: u32) {
 }
 
 /// The activity log's `hold` records.
-fn held(w: &World) -> Vec<Value> {
+pub(crate) fn held(w: &World) -> Vec<Value> {
     let dir = w.home.linggen_home().join("activity");
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -171,7 +171,7 @@ fn held(w: &World) -> Vec<Value> {
         .collect()
 }
 
-async fn wait_for(what: &str, mut done: impl FnMut() -> bool) {
+pub(crate) async fn wait_for(what: &str, mut done: impl FnMut() -> bool) {
     let start = Instant::now();
     while start.elapsed() < Duration::from_secs(40) {
         if done() {

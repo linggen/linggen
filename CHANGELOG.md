@@ -17,7 +17,9 @@
   silent, never act. What she says unprompted (glances, app moments, woken
   notes) is capped per hour (`pet.unprompted_per_hour`, default 6) and held
   in quiet hours (`pet.quiet_hours`, default 23:00-07:00), both in Settings →
-  Agents; a held line is recorded in the activity log (verb `hold`).
+  Agents; a held line is recorded in the activity log (verb `hold`). Quiet
+  hours do not hold an unasked moment from the app being used (its page in
+  front, input in the last 5 minutes); the hourly cap still does.
 - **Every session a person is in sees the same world.** Ling's chats, app chats
   and Yinyue's thread now get the world block beside each turn (the machine,
   the Linggen page in front, the phone, the doorbell); missions and delegated

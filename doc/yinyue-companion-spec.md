@@ -313,6 +313,14 @@ heralds of runs the user started (their own presence gates stand).
 | A ceiling on unprompted lines in any rolling hour | `unprompted_per_hour` (0 = none) | 6 |
 | Quiet hours, local time, may cross midnight | `quiet_hours` (`HH:MM-HH:MM`, empty = none) | 23:00-07:00 |
 
+**The app in use.** Quiet hours do not hold an unasked moment from the app the
+person is using: its page is the one in front (`perception::stretch::is_using`,
+the reading a stretch of use is kept by) with input in the last **5 min**. Such
+a moment still counts toward the hourly ceiling and can be held by it. Every
+other moment, and one from the app in front after five idle minutes, waits for
+the morning as before; a wake that holds moments from two apps is split, the
+in-use ones going on and the rest held.
+
 Both are checked **before** her turn, so a held line is never written (at an
 app's table her line would already be a row of its chat): a glance is skipped
 (the machine's conditions wait, unspent, for the next one); held moments are

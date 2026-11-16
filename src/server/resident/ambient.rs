@@ -39,7 +39,7 @@ pub(super) async fn ambient_glance(state: &Arc<ServerState>) {
     }
     // Quiet hours, or the hour's ceiling reached: no glance at all — and the
     // machine's conditions wait for the next one, unspent.
-    if super::guard::held_now(&pet).is_some() {
+    if super::guard::held_now(&pet, super::guard::Source::Glance).is_some() {
         return;
     }
     if let Some(notice) = crate::perception::conditions::sweep() {

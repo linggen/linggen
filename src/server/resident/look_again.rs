@@ -15,7 +15,7 @@
 //! - In quiet hours, or with the hour's ceiling reached, the wake is held
 //!   until they pass (`guard`), recorded once.
 
-use super::guard::{self, Held, Withheld};
+use super::guard::{self, Held, Source, Withheld};
 use super::triggers::wake_and_speak;
 use super::*;
 use crate::notes::Note;
@@ -128,7 +128,7 @@ pub(super) const LOOK_AGAIN_SOURCE: &str = "note";
 fn withheld(note: &Note, at: u64) -> Withheld<'static> {
     Withheld {
         what: format!("a look-again on {}", note.id),
-        source: "note",
+        source: Source::Note.name(),
         key: format!("note-{}-{at}", note.id),
     }
 }
@@ -139,7 +139,7 @@ async fn room_now(state: &Arc<ServerState>, now: u64) -> Room {
         ready: pet.enabled && here(state).await,
         typing: crate::server::yinyue_moments::user_typing(state, now),
         her_turn: her_turn_running(state),
-        held: guard::held_now(&pet),
+        held: guard::held_now(&pet, Source::Note),
     }
 }
 

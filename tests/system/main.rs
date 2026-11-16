@@ -30,4 +30,5 @@ mod sessions;
 mod shared_table;
 mod skills;
 mod support;
+mod unprompted;
 mod workspace;

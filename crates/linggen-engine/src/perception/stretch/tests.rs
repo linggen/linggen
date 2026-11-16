@@ -202,3 +202,14 @@ fn a_stretch_saved_before_it_knew_when_it_came_to_the_front_reads_its_start() {
     let old: Open = serde_json::from_str(r#"{"app":"notes","start":5,"last_input":9,"last_seen":9}"#).unwrap();
     assert_eq!(old.since(), 5);
 }
+
+#[test]
+fn using_an_app_is_its_page_in_front_with_input_in_the_last_five_minutes() {
+    let front = page("notes", T0);
+    assert!(is_using(front.as_ref(), "notes", T0 + IDLE_LIMIT_SECS));
+    assert!(!is_using(front.as_ref(), "notes", T0 + IDLE_LIMIT_SECS + 1), "idle past the limit");
+    assert!(!is_using(front.as_ref(), "tiles", T0), "another app");
+    assert!(!is_using(None, "notes", T0), "no page in front");
+    let main = Some(Front { app: None, last_input_at: T0 });
+    assert!(is_using(main.as_ref(), MAIN_PAGE, T0));
+}

@@ -295,6 +295,39 @@ fn held_for(
     held
 }
 
+/// The moments from an app the person is using now, and the rest. Only the
+/// first pass quiet hours (`resident::guard::Source::InUse`).
+fn split_by_use(
+    moments: Vec<Moment>,
+    front: Option<&crate::engine::agent::Front>,
+    now: u64,
+) -> (Vec<Moment>, Vec<Moment>) {
+    moments
+        .into_iter()
+        .partition(|m| crate::perception::stretch::is_using(front, &m.app, now))
+}
+
+/// What the guardrails let through of `moments`, all of one `source`: all of
+/// them, or none — held moments are dropped and recorded.
+fn pass_guards(
+    moments: Vec<Moment>,
+    source: super::resident::guard::Source,
+    pet: &crate::config::PetConfig,
+    now: u64,
+) -> Vec<Moment> {
+    if moments.is_empty() {
+        return moments;
+    }
+    let held = super::resident::guard::held_now(pet, source);
+    match held_for(&moments, held) {
+        Some(held) => {
+            drop_held(&moments, &held, now);
+            Vec::new()
+        }
+        None => moments,
+    }
+}
+
 /// Moments a guardrail held: dropped (they would be stale by the time it
 /// passes), and written to the activity log at most once an hour for each
 /// reason — moments keep coming while it holds, and every record would ring
@@ -478,10 +511,18 @@ pub async fn yinyue_moment_loop(state: Arc<ServerState>) {
             tell_unanswered(&state, &taken, "pet-off");
             continue; // pet off, or not met: the moments are dropped, nobody to say them
         }
-        if let Some(held) = held_for(&taken, super::resident::guard::held_now(&pet)) {
-            drop_held(&taken, &held, now);
+        use super::resident::guard::Source;
+        let front = state.manager.presence_front(now);
+        let (using, others) = split_by_use(taken, front.as_ref(), now);
+        let using = pass_guards(using, Source::InUse, &pet, now);
+        let others = pass_guards(others, Source::Moment, &pet, now);
+        let in_use = others.is_empty();
+        let mut taken = using;
+        taken.extend(others);
+        if taken.is_empty() {
             continue;
         }
+        taken.sort_by_key(|m| m.at);
         LAST_WAKE_AT.store(now, Ordering::Relaxed);
         let asked = taken[0].asked;
         tracing::info!(
@@ -504,7 +545,7 @@ pub async fn yinyue_moment_loop(state: Arc<ServerState>) {
                 state.clone(),
                 (words, table.clone()),
                 &emotion,
-                asked,
+                super::resident::moment_source(asked, in_use),
                 language_of(&taken),
             )
             .await;
@@ -617,6 +658,78 @@ mod tests {
             &quiet
         )
         .is_some());
+    }
+
+    /// At 23:30 a moment from the app in front is delivered; one from another
+    /// app, or from the app in front after more than five idle minutes, is
+    /// held by quiet hours.
+    #[test]
+    fn at_night_only_a_moment_from_the_app_in_use_passes_quiet_hours() {
+        use crate::engine::agent::Front;
+        use crate::server::resident::guard::{Held, Lines, Rules, Source};
+        let now = 1_790_000_000;
+        let rules = Rules::of(&crate::config::PetConfig {
+            quiet_hours: "23:00-07:00".into(),
+            ..Default::default()
+        });
+        let night = 23 * 60 + 30;
+        let from = |app: &str| Moment {
+            app: app.into(),
+            ..m(now - 30, true)
+        };
+        let front = |idle: u64| {
+            Some(Front {
+                app: Some("game".into()),
+                last_input_at: now - idle,
+            })
+        };
+        let verdict = |moment: Moment, front: Option<Front>| {
+            let (using, others) = split_by_use(vec![moment], front.as_ref(), now);
+            let source = if using.is_empty() {
+                Source::Moment
+            } else {
+                Source::InUse
+            };
+            assert_eq!(others.is_empty(), !using.is_empty());
+            rules.check(source, now, night, &Lines::new())
+        };
+        assert_eq!(verdict(from("game"), front(20)), None, "the app in front");
+        assert_eq!(
+            verdict(from("game"), front(300)),
+            None,
+            "five minutes is still use"
+        );
+        let quiet = Some(Held::Quiet {
+            until: "07:00".into(),
+        });
+        assert_eq!(verdict(from("dice"), front(20)), quiet, "another app");
+        assert_eq!(
+            verdict(from("game"), front(301)),
+            quiet,
+            "idle past five minutes"
+        );
+        assert_eq!(verdict(from("game"), None), quiet, "no page in front");
+    }
+
+    #[test]
+    fn a_batch_from_two_apps_is_split_by_use() {
+        use crate::engine::agent::Front;
+        let now = 1_790_000_000;
+        let front = Some(Front {
+            app: Some("game".into()),
+            last_input_at: now - 5,
+        });
+        let other = Moment {
+            app: "dice".into(),
+            ..m(now - 20, false)
+        };
+        let (using, others) = split_by_use(
+            vec![m(now - 30, true), other.clone(), m(now - 10, false)],
+            front.as_ref(),
+            now,
+        );
+        assert_eq!(using.len(), 2);
+        assert_eq!(others, vec![other]);
     }
 
     #[test]
