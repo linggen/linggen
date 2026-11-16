@@ -733,7 +733,7 @@ impl FilterArgs {
         if let Some(day) = &self.day {
             let date = chrono::NaiveDate::parse_from_str(day.trim(), "%Y-%m-%d")
                 .map_err(|_| anyhow!("invalid --day {day:?}: expected YYYY-MM-DD"))?;
-            let (start, end) = crate::http::days::local_day_bounds(date);
+            let (start, end) = crate::ops::days::local_day_bounds(date);
             since = since.or(Some(start));
             until = until.or(Some(end));
         }

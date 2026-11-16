@@ -50,11 +50,11 @@ pub async fn pull_all(state: &SharedState) {
             Ok(p) => p,
             Err(e) => return note(state, e),
         };
-        if page.model != crate::http::sync::model_id() {
+        if page.model != crate::ops::sync::model_id() {
             let why = format!(
                 "embedding model differs: primary {}, here {}",
                 page.model,
-                crate::http::sync::model_id()
+                crate::ops::sync::model_id()
             );
             return state.replica.update(|f| {
                 f.online = true;
@@ -125,9 +125,9 @@ async fn fetch(base: &str, token: &str, cursor: u64) -> Result<Page, UpstreamErr
 
 async fn apply(state: &SharedState, page: &Page) -> Result<(), UpstreamError> {
     apply_rows(state, &page.rows, &page.tombstones).await?;
-    mirror(&crate::http::days::days_path(&state.data_dir), &page.days)?;
+    mirror(&crate::ops::days::days_path(&state.data_dir), &page.days)?;
     mirror(
-        &crate::http::issues::issues_path(&state.data_dir),
+        &crate::ops::issues::issues_path(&state.data_dir),
         &page.issues,
     )?;
     Ok(())

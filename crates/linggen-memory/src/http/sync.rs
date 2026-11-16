@@ -68,11 +68,6 @@ struct ChangesQuery {
     limit: Option<usize>,
 }
 
-/// The embedding model this store's vectors come from.
-pub fn model_id() -> &'static str {
-    crate::embed::MODEL_REPO
-}
-
 async fn changes(
     State(state): State<SharedState>,
     Query(q): Query<ChangesQuery>,
@@ -85,14 +80,14 @@ async fn changes(
     let (entries, next, more) = log.since(q.since, limit);
     let (rows, tombstones) = bodies(&state, &entries).await?;
     Ok(ok(json!({
-        "model": model_id(),
+        "model": crate::ops::sync::model_id(),
         "head": log.head(),
         "next": next,
         "more": more,
         "rows": rows,
         "tombstones": tombstones,
-        "days": read_sidecar(&crate::http::days::days_path(&state.data_dir)),
-        "issues": read_sidecar(&crate::http::issues::issues_path(&state.data_dir)),
+        "days": read_sidecar(&crate::ops::days::days_path(&state.data_dir)),
+        "issues": read_sidecar(&crate::ops::issues::issues_path(&state.data_dir)),
     })))
 }
 

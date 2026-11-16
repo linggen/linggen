@@ -129,7 +129,7 @@ async fn chains(
     match kind {
         "cited" => Ok(ok(cited_chains(&rows, limit, offset, req.derived_only))),
         "marker" => {
-            let issued = super::issues::issued_row_ids(&state.data_dir).await;
+            let issued = crate::ops::issues::issued_row_ids(&state.data_dir).await;
             Ok(ok(marker_candidates(
                 &rows,
                 limit,
@@ -139,7 +139,7 @@ async fn chains(
             )))
         }
         "subject" => {
-            let ruled = super::issues::subject_ruled_ids(&state.data_dir).await;
+            let ruled = crate::ops::issues::subject_ruled_ids(&state.data_dir).await;
             Ok(ok(subject_clusters(
                 &rows,
                 limit,

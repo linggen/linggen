@@ -60,7 +60,7 @@ async fn stats(State(state): State<SharedState>) -> Result<Response, ApiError> {
     let total_bytes = dir_size(&mem_dir);
 
     // Last completed remember pass across all days — "last dream".
-    let days = super::days::load(&state.data_dir).await;
+    let days = crate::ops::days::load(&state.data_dir).await;
     let last_remembered_at = days
         .days
         .values()
@@ -73,8 +73,8 @@ async fn stats(State(state): State<SharedState>) -> Result<Response, ApiError> {
         .filter(|r| r.remembered_at.is_some())
         .count();
 
-    let config = super::config::load(&state.data_dir).await;
-    let open_issues = super::issues::open_count(&state.data_dir).await;
+    let config = crate::ops::config::load(&state.data_dir).await;
+    let open_issues = crate::ops::issues::open_count(&state.data_dir).await;
 
     Ok(ok(json!({
         "total": core + semantic + episodic,

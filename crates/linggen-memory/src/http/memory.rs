@@ -409,7 +409,7 @@ impl FilterDTO {
         let date = chrono::NaiveDate::parse_from_str(day.trim(), "%Y-%m-%d").map_err(|_| {
             ApiError::bad_request(format!("invalid day {day:?}: expected YYYY-MM-DD"))
         })?;
-        let (start, end) = super::days::local_day_bounds(date);
+        let (start, end) = crate::ops::days::local_day_bounds(date);
         if self.since.is_none() {
             self.since = Some(start);
         }
@@ -1208,7 +1208,7 @@ async fn search(
     let min_score = match req.min_score {
         Some(s) => Some(s),
         None => Some(
-            crate::http::config::load(&state.data_dir)
+            crate::ops::config::load(&state.data_dir)
                 .await
                 .recall_min_score,
         ),
@@ -1271,7 +1271,7 @@ async fn list(
     // An explicit `until`/`older_than` from the caller wins (caller knows
     // best); we only fill in when nothing is set.
     if req.filters.past_ttl && req.filters.until.is_none() {
-        let cfg = crate::http::config::load(&state.data_dir).await;
+        let cfg = crate::ops::config::load(&state.data_dir).await;
         let cutoff = chrono::Utc::now() - chrono::Duration::days(cfg.episodic_ttl_days as i64);
         req.filters.until = Some(cutoff);
     }
@@ -1316,7 +1316,7 @@ async fn unjudged_since(
     let Some(day) = req.filters.day.as_deref() else {
         return Err(ApiError::bad_request("unjudged needs a day"));
     };
-    let days = super::days::load(&state.data_dir).await;
+    let days = crate::ops::days::load(&state.data_dir).await;
     Ok(days.days.get(day.trim()).and_then(|r| r.remembered_at))
 }
 

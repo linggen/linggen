@@ -13,6 +13,7 @@ mod hash;
 pub mod hosted;
 pub mod http;
 pub mod memory;
+pub(crate) mod ops;
 pub mod replica;
 
 pub use error::{ErrorCode, MemError};
