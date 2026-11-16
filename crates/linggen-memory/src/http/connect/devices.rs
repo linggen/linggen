@@ -46,12 +46,6 @@ pub fn devices_path(data_dir: &Path) -> PathBuf {
     data_dir.join("paired-devices.json")
 }
 
-/// Has this machine ever paired a device? A fact the console shows: with no
-/// file, every request from off-machine is refused.
-pub fn has_paired_devices_file(data_dir: &Path) -> bool {
-    devices_path(data_dir).is_file()
-}
-
 fn paired_path(data_dir: &Path) -> PathBuf {
     devices_path(data_dir)
 }
@@ -233,7 +227,7 @@ mod tests {
     #[test]
     fn a_missing_file_grants_nothing() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(!has_paired_devices_file(dir.path()));
+        assert!(!devices_path(dir.path()).is_file());
     }
 
     fn ip() -> IpAddr {
