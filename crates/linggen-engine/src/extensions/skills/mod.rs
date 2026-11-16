@@ -396,6 +396,9 @@ struct SkillFrontmatter {
     members: Vec<String>,
     #[serde(default)]
     senses: Vec<String>,
+    /// The verbs it writes to the activity log — see `Skill::activity_verbs`.
+    #[serde(default, rename = "activity-verbs")]
+    activity_verbs: Vec<String>,
     /// What a session of this skill may be bound to — see `doc/skill-spec.md`
     /// § Session parameters.
     #[serde(default, rename = "session-params")]
@@ -673,6 +676,7 @@ pub fn parse_skill_text(text: &str, source: SkillSource) -> Result<Skill> {
     let cloud = cloud_if_allowed(frontmatter.cloud, &frontmatter.name, &source);
     let notices = usable_notices(frontmatter.notices, &frontmatter.name);
     let senses = known_senses(frontmatter.senses, &frontmatter.name);
+    let activity_verbs = usable_verbs(frontmatter.activity_verbs, &frontmatter.name);
     let session_params =
         crate::engine::skill::params::usable(&frontmatter.name, frontmatter.session_params);
     for tool_def in &mut tool_defs {
@@ -725,6 +729,7 @@ pub fn parse_skill_text(text: &str, source: SkillSource) -> Result<Skill> {
             .filter(|m| !m.is_empty())
             .collect(),
         senses,
+        activity_verbs,
         session_params,
         skill_dir: None,
     })
@@ -741,6 +746,26 @@ fn known_senses(declared: Vec<String>, name: &str) -> Vec<String> {
                 tracing::warn!("skill '{name}': unknown sense '{s}'; ignored");
             }
             known
+        })
+        .collect()
+}
+
+/// The `activity-verbs:` a skill may hold: short slugs, none of them the
+/// engine's own. The rest are logged and dropped; the skill still loads.
+fn usable_verbs(declared: Vec<String>, name: &str) -> Vec<String> {
+    let slug = |v: &str| {
+        (1..=32).contains(&v.len())
+            && v.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
+    };
+    declared
+        .into_iter()
+        .filter(|v| {
+            let engine = crate::perception::activity::ENGINE_VERBS.contains(&v.as_str());
+            let ok = slug(v) && !engine;
+            if !ok {
+                tracing::warn!("skill '{name}': activity verb '{v}' is not a free slug; ignored");
+            }
+            ok
         })
         .collect()
 }
@@ -985,6 +1010,15 @@ This is the skill content."#;
         assert_eq!(words.senses, vec!["user_words".to_string()]);
         let bare = parse_skill_text("---\nname: x\ndescription: y\n---\n", SkillSource::Global);
         assert!(bare.unwrap().senses.is_empty());
+    }
+
+    #[test]
+    fn a_skill_declares_the_verbs_it_logs_and_the_engines_are_not_its_to_take() {
+        let text = "---\nname: notes\ndescription: Keep\nactivity-verbs: [archive, import_csv, used, Bad Verb, connect]\n---\nBody";
+        let skill = parse_skill_text(text, SkillSource::Project).unwrap();
+        assert_eq!(skill.activity_verbs, vec!["archive".to_string(), "import_csv".to_string()]);
+        let bare = parse_skill_text("---\nname: x\ndescription: y\n---\nBody", SkillSource::Project);
+        assert!(bare.unwrap().activity_verbs.is_empty());
     }
 
     #[test]

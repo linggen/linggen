@@ -556,6 +556,11 @@ pub struct Skill {
     /// [weather]`) — see `crate::senses` and `doc/skill-spec.md` § Senses.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub senses: Vec<String>,
+    /// The verbs the skill may write to the activity log under its own name
+    /// (`activity-verbs: [archive, import]`) — `POST /api/activity` refuses
+    /// any other. See `doc/perception-spec.md` §3.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub activity_verbs: Vec<String>,
     /// The values a session of this skill may be bound to (`session-params:`)
     /// — see [`super::params`] and `doc/skill-spec.md` § Session parameters.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
