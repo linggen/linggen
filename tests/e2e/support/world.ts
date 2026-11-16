@@ -35,7 +35,8 @@ export type World = {
   engineLog(): string;
 };
 
-/** The real Linggen ports — a world never uses them (as tests/system's guard). */
+/** The person's engine port and the old memory daemon's — a world never uses
+ *  them (as tests/system's guard). */
 const REAL_PORTS = ['9527', '9528'];
 const ROOT_BASE = '/var/tmp/linggen-system-tests/';
 

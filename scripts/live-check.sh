@@ -8,8 +8,7 @@
 #
 # Flags: --url URL (engine; default http://127.0.0.1:9527, env LIVE_URL),
 #        --mem URL (the engine's memory, read only; default: the engine's
-#          own /mem when it hosts memory (2.3 on), else http://127.0.0.1:9528;
-#          env LIVE_MEM_URL),
+#          own /mem; env LIVE_MEM_URL),
 #        --home DIR (the engine's state dir; default ~/.linggen, env LIVE_LINGGEN_HOME),
 #        --alt-model ID (Yinyue's model in the two-models case; default
 #          deepseek-flash, env LIVE_ALT_MODEL),
@@ -334,15 +333,19 @@ else
 fi
 
 section "Memory inside the engine (read only)"
-# 2.3 on, the engine serves memory itself at /mem/* and /mcp/memory; before
-# that, a ling-mem daemon on 9528 did.
+# The engine serves memory itself at /mem/* and /mcp/memory, on its own port
+# only (2.3 on; an engine before 2.3 had a ling-mem daemon beside it).
 HOSTED=0
 curl -s -m10 "$API/mem/api/health" | jq -e '.ok == true' >/dev/null 2>&1 && HOSTED=1
-[ -n "$MEM" ] || { [ "$HOSTED" = 1 ] && MEM="$API/mem" || MEM="http://127.0.0.1:9528"; }
+[ -n "$MEM" ] || MEM="$API/mem"
 if [ "$HOSTED" = 0 ]; then
   skip "memory is served by the engine" "no /mem/api/health on $API (an engine before 2.3; memory at $MEM)"
 else
   pass "memory is served by the engine" "$API/mem, v$(curl -s -m10 "$API/mem/api/health" | jq -r '.data.version // empty')"
+  # One port: nothing answers at the old daemon's address.
+  OLD_PORT_PIDS="$(lsof -nP -iTCP:9528 -sTCP:LISTEN -t 2>/dev/null | sort -u | tr '\n' ' ')"
+  [ -z "$OLD_PORT_PIDS" ]
+  check "nothing listens on the old memory port 9528" $? "pid(s) ${OLD_PORT_PIDS}listen there" "free"
   mcp() { curl -sS -m30 -X POST -H 'content-type: application/json' -d "$1" "$API/mcp/memory" 2>&1; }
   I="$(mcp '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"live-check","version":"1"}}}')"
   expect "/mcp/memory: initialize" "$I" '.result.protocolVersion != null' "no protocolVersion" "$(printf '%s' "$I" | jq -r '.result.serverInfo.name // empty' 2>/dev/null)"

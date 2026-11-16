@@ -428,28 +428,34 @@ mod tests {
         registry().connect_all(&BTreeMap::new()).await;
     }
 
+    /// A memory store of the test's own, served on a free loopback port the
+    /// way the engine serves it (memory's router, MCP at `/mcp`) — never the
+    /// person's. Returns the folder (kept alive by the caller) and the MCP URL.
+    async fn scratch_memory() -> (tempfile::TempDir, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let state = ling_mem::hosted::open_quiet(dir.path(), base.clone())
+            .await
+            .unwrap();
+        let app = ling_mem::hosted::router(state)
+            .into_make_service_with_connect_info::<std::net::SocketAddr>();
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        (dir, format!("{base}/mcp"))
+    }
+
     /// Auto-recall's exact call shape, including `min_score` — which is
     /// deliberately NOT in `memory_search`'s advertised schema, because a
     /// model guessing a relevance threshold narrows recall to nothing.
     ///
     /// That makes it the one argument whose passthrough isn't covered by the
-    /// schema, so it is the one worth a test: if ling-mem's MCP layer ever
+    /// schema, so it is the one worth a test: if memory's MCP layer ever
     /// dropped unadvertised fields, recall would silently lose its floor and
-    /// inject weak rows.
+    /// inject weak rows. It embeds, so it needs the embedding model.
     #[tokio::test]
+    #[ignore = "needs the embedding model in ~/.cache/huggingface"]
     async fn auto_recalls_min_score_survives_the_mcp_passthrough() {
-        let up = reqwest::Client::new()
-            .get("http://127.0.0.1:9528/api/health")
-            .timeout(Duration::from_millis(800))
-            .send()
-            .await
-            .map(|r| r.status().is_success())
-            .unwrap_or(false);
-        if !up {
-            eprintln!("skipped: no ling-mem on 9528");
-            return;
-        }
-
+        let (_dir, url) = scratch_memory().await;
         let reg = McpRegistry {
             state: RwLock::new(State::default()),
         };
@@ -457,11 +463,27 @@ mod tests {
         cfgs.insert(
             "memory".to_string(),
             McpServerConfig {
-                url: Some("http://127.0.0.1:9528/mcp".into()),
+                url: Some(url.clone()),
                 ..Default::default()
             },
         );
         reg.connect_all(&cfgs).await;
+        let facts: Vec<Value> = [
+            "Linggen memory keeps who the user is across sessions.",
+            "Linggen's memory store holds core and long-term rows.",
+            "The nightly dream promotes Linggen memory from staging.",
+            "Linggen memory is shared by every coding host on the machine.",
+        ]
+        .iter()
+        .map(|c| serde_json::json!({"content": c, "type": "fact", "tier": "semantic"}))
+        .collect();
+        let added = reqwest::Client::new()
+            .post(url.replace("/mcp", "/api/memory/add_batch"))
+            .json(&serde_json::json!({ "facts": facts }))
+            .send()
+            .await
+            .expect("seed the scratch store");
+        assert!(added.status().is_success(), "seeding: {}", added.status());
         let tool = qualify("memory", "memory_search");
 
         let rows = |v: &str| -> usize {
@@ -474,7 +496,7 @@ mod tests {
         let loose = reg
             .call(
                 &tool,
-                serde_json::json!({"query": "linggen memory", "limit": 10}),
+                serde_json::json!({"query": "linggen memory", "limit": 10, "min_score": 0.0}),
             )
             .await
             .expect("dispatch");
@@ -493,7 +515,7 @@ mod tests {
 
         assert!(
             rows(&loose) > 1,
-            "need a few rows for this to mean anything"
+            "need a few rows for this to mean anything: {loose}"
         );
         assert!(
             rows(&strict) < rows(&loose),
@@ -507,18 +529,7 @@ mod tests {
     /// ungated, so a pass can't come from a global default.
     #[tokio::test]
     async fn the_gate_follows_the_servers_own_declaration() {
-        let up = reqwest::Client::new()
-            .get("http://127.0.0.1:9528/api/health")
-            .timeout(Duration::from_millis(800))
-            .send()
-            .await
-            .map(|r| r.status().is_success())
-            .unwrap_or(false);
-        if !up {
-            eprintln!("skipped: no ling-mem on 9528");
-            return;
-        }
-
+        let (_dir, url) = scratch_memory().await;
         let reg = McpRegistry {
             state: RwLock::new(State::default()),
         };
@@ -526,7 +537,7 @@ mod tests {
         cfgs.insert(
             "trusted".to_string(),
             McpServerConfig {
-                url: Some("http://127.0.0.1:9528/mcp".into()),
+                url: Some(url.clone()),
                 gated: false,
                 ..Default::default()
             },
@@ -534,7 +545,7 @@ mod tests {
         cfgs.insert(
             "guarded".to_string(),
             McpServerConfig {
-                url: Some("http://127.0.0.1:9528/mcp".into()),
+                url: Some(url),
                 ..Default::default()
             },
         );

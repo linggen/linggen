@@ -240,17 +240,17 @@ mod tests {
     #[test]
     fn the_builtin_memory_server_is_added_ungated() {
         let none = BTreeMap::new();
-        let merged = with_builtin(&none, "http://127.0.0.1:9528");
+        let merged = with_builtin(&none, "http://127.0.0.1:9527/mem");
         let mem = &merged[BUILTIN_MEMORY];
-        assert_eq!(mem.url.as_deref(), Some("http://127.0.0.1:9528/mcp"));
+        assert_eq!(mem.url.as_deref(), Some("http://127.0.0.1:9527/mem/mcp"));
         assert!(!mem.gated, "memory ships ungated");
         assert!(mem.enabled);
 
         // A trailing slash on the configured base must not double up.
-        let slashed = with_builtin(&none, "http://127.0.0.1:9528/");
+        let slashed = with_builtin(&none, "http://127.0.0.1:9527/mem/");
         assert_eq!(
             slashed[BUILTIN_MEMORY].url.as_deref(),
-            Some("http://127.0.0.1:9528/mcp")
+            Some("http://127.0.0.1:9527/mem/mcp")
         );
     }
 
@@ -267,7 +267,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let merged = with_builtin(&user, "http://127.0.0.1:9528");
+        let merged = with_builtin(&user, "http://127.0.0.1:9527/mem");
         assert!(
             !merged[BUILTIN_MEMORY].enabled,
             "turning memory off must stick"
@@ -289,7 +289,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let merged = with_builtin(&user, "http://127.0.0.1:9528");
+        let merged = with_builtin(&user, "http://127.0.0.1:9527/mem");
         assert_eq!(merged.len(), 2);
         assert!(merged["gh"].gated);
         assert!(!merged[BUILTIN_MEMORY].gated);
