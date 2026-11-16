@@ -337,6 +337,13 @@ pub struct AgentConfig {
     /// buttons still show. See `chat-spec.md` § Suggestions.
     #[serde(default = "default_true")]
     pub suggest_followups: bool,
+    /// One session a day (`doc/one-ling-spec.md` § One session a day): app
+    /// chats, Yinyue's unprompted moments and the phone's hand-offs are one
+    /// session a day, Ling and Yinyue both seated, each turn in the place
+    /// of the page it came from. Off (the default): a session per app, as
+    /// before. Not written to the file while off.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub one_session_a_day: bool,
 }
 
 fn default_episodic_ttl_days() -> u64 {
@@ -649,6 +656,7 @@ impl Default for Config {
                 memory_inject_min_score: default_memory_inject_min_score(),
                 memory_recall_count: default_memory_recall_count(),
                 suggest_followups: true,
+                one_session_a_day: false,
             },
             logging: LoggingConfig {
                 level: None,

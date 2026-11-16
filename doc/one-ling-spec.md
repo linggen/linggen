@@ -110,6 +110,38 @@ become typed tool calls with no second turn at all.
   nothing piles up. A 90-day retention rule and a Settings clear button come
   only if the phone ever keeps many sessions.
 
+## One session a day (2.4, behind a setting)
+
+`agent.one_session_a_day` (Settings → Session), off by default. Off, every
+session, prompt and row is as before. On (decided by the builder 2026-11-15/16):
+
+- **The day's session** — `sess-day-YYYY-MM-DD`, the day beginning at 04:00
+  local; made on first use, found again by its id after a restart; Ling its
+  lead, Yinyue seated when she first speaks there. It does not roll to
+  segments; a full thread compacts as a shared session does.
+- **What joins it**: an app's chat (a page asking for its app's session),
+  Yinyue's own and unprompted turns, a hand-off from the phone. **What stays
+  apart**: missions, delegated runs (`agent_run`), a New chat the person
+  makes, and an app's one-off sessions — one bound to its own values (a test
+  save) or made with tools withheld (an NPC's talk, a prefetch).
+- **Each turn in its place** (`session-spec.md` § A turn's place): the page's
+  app gives the turn its skill, tools, folder and grants; one turn at a
+  time, a message from another app waiting for the running one.
+- **A private app** (`private-talk: true`): its rows — talk, tool calls,
+  results, a summary written in its turn — are given to no turn in another
+  place, nor to Yinyue outside it, nor shown or streamed to a surface
+  outside it. Its world line stays.
+
+How a session is bound today, and where this goes in (the plan, 2026-11-16):
+a page lists its app's sessions (`GET /api/skill-sessions`) and resumes one
+or makes one (`POST /api/sessions {skill}`); a chat request names its session
+and page (`skill_name`), and `TurnPlace::of_request` sets the turn's place.
+With the setting on, those two calls answer with the day's session
+(`server::day_session`), so no page changes; Yinyue's rolling thread
+(`resident::session_roll`) resolves to it; the thread each member is given
+(`chat::thread`), the light turn's tail, compaction, the history views and
+the event stream leave out a private app's rows outside it.
+
 ## Tool names and packs
 
 - **Every app tool is named `<app>_<verb>`**: `dj_play`, `dj_delete_playlist`,

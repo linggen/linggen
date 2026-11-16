@@ -43,4 +43,12 @@ memory_recall_count: number,
  * them (the Mac chat). Off: no asking; a skill's starters and a page's
  * buttons still show. See `chat-spec.md` § Suggestions.
  */
-suggest_followups: boolean, };
+suggest_followups: boolean, 
+/**
+ * One session a day (`doc/one-ling-spec.md` § One session a day): app
+ * chats, Yinyue's unprompted moments and the phone's hand-offs are one
+ * session a day, Ling and Yinyue both seated, each turn in the place
+ * of the page it came from. Off (the default): a session per app, as
+ * before. Not written to the file while off.
+ */
+one_session_a_day?: boolean, };

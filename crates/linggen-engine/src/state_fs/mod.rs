@@ -1,3 +1,4 @@
+pub mod day_session;
 pub mod devices;
 pub mod session_images;
 pub mod sessions;

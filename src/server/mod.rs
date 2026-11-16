@@ -5,6 +5,7 @@ pub(crate) mod app_pages;
 pub(crate) mod background;
 pub(crate) mod bridge;
 mod chat;
+pub(crate) mod day_session;
 pub(crate) mod claude;
 mod event_log;
 mod facts;

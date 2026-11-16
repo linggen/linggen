@@ -26,6 +26,10 @@ pub(super) fn routes() -> Routes {
             get(crate::server::claude::capabilities),
         )
         .route("/api/sessions/images", get(get_session_image))
+        .route(
+            "/api/sessions/day",
+            get(crate::server::day_session::day_session_api),
+        )
         .route("/api/sessions/running", get(running_work_api))
         .route("/api/agent/wait", get(crate::server::mcp_agent::wait_socket))
         .route(

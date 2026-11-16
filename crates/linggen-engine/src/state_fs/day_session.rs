@@ -1,0 +1,109 @@
+//! The day's session: one session a day that every app's chat, Yinyue's
+//! unprompted moments and the phone's hand-offs are part of, when
+//! `agent.one_session_a_day` is on (`doc/one-ling-spec.md` § One session a
+//! day). What it is called and when a day begins; who resolves it is the
+//! server's (`server::day_session`).
+//!
+//! A day begins at 04:00 local, so late-night play stays in one day. Its id
+//! is fixed by the day — `sess-day-YYYY-MM-DD` — so a restart finds it again
+//! without a record. It does not roll to segments as Yinyue's own thread
+//! does: a full thread compacts, as every shared session's does.
+
+use super::sessions::{SessionMember, SessionMeta};
+use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone};
+
+/// The hour, local, a new day begins.
+pub const DAY_STARTS_AT_HOUR: i64 = 4;
+
+const PREFIX: &str = "sess-day-";
+
+/// The day `now` belongs to: the calendar date of `now` four hours earlier.
+pub fn day_of<Tz: TimeZone>(now: &DateTime<Tz>) -> NaiveDate {
+    (now.clone() - Duration::hours(DAY_STARTS_AT_HOUR)).date_naive()
+}
+
+/// The day it is now, on this machine's clock.
+pub fn today() -> NaiveDate {
+    day_of(&Local::now())
+}
+
+/// The id of `day`'s session.
+pub fn id_of(day: NaiveDate) -> String {
+    format!("{PREFIX}{}", day.format("%Y-%m-%d"))
+}
+
+/// Whether `session_id` is a day's session.
+pub fn is_day_session(session_id: &str) -> bool {
+    day_in(session_id).is_some()
+}
+
+/// The day a day's session id names.
+pub fn day_in(session_id: &str) -> Option<NaiveDate> {
+    let date = session_id.strip_prefix(PREFIX)?;
+    if date.len() != 10 {
+        return None;
+    }
+    NaiveDate::parse_from_str(date, "%Y-%m-%d").ok()
+}
+
+/// A new day's session as it is first kept: Ling seated as its lead (she
+/// answers every message not addressed to Yinyue), Yinyue seated when she
+/// first speaks in it, home's folder `cwd`.
+pub fn new_meta(session_id: &str, day: NaiveDate, cwd: &str, lead: &str) -> SessionMeta {
+    SessionMeta {
+        id: session_id.to_string(),
+        title: format!("Linggen · {}", day.format("%Y-%m-%d")),
+        created_at: crate::util::now_ts_secs(),
+        creator: "user".to_string(),
+        cwd: cwd.to_string(),
+        title_locked: true,
+        agents: vec![SessionMember::new(lead)],
+        ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::FixedOffset;
+
+    fn at(s: &str) -> DateTime<FixedOffset> {
+        DateTime::parse_from_rfc3339(s).unwrap()
+    }
+
+    fn date(s: &str) -> NaiveDate {
+        NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+    }
+
+    #[test]
+    fn a_day_begins_at_four_in_the_morning_local() {
+        assert_eq!(day_of(&at("2026-11-16T03:59:59+08:00")), date("2026-11-15"));
+        assert_eq!(day_of(&at("2026-11-16T04:00:00+08:00")), date("2026-11-16"));
+        assert_eq!(day_of(&at("2026-11-16T23:59:59+08:00")), date("2026-11-16"));
+        assert_eq!(day_of(&at("2026-11-17T00:30:00+08:00")), date("2026-11-16"));
+        // Local, not UTC: the same instant is another day elsewhere.
+        assert_eq!(day_of(&at("2026-11-16T03:00:00-05:00")), date("2026-11-15"));
+    }
+
+    #[test]
+    fn the_id_names_the_day() {
+        let d = date("2026-11-16");
+        assert_eq!(id_of(d), "sess-day-2026-11-16");
+        assert_eq!(day_in("sess-day-2026-11-16"), Some(d));
+        assert!(is_day_session("sess-day-2026-11-16"));
+        assert!(!is_day_session("sess-yinyue-2026-11-16"));
+        assert!(!is_day_session("sess-day-2026-11-16x"));
+        assert!(!is_day_session("sess-day-2026-11-16-2"));
+        assert!(!is_day_session("sess-1758700000-abcd1234"));
+    }
+
+    #[test]
+    fn a_new_day_seats_its_lead_and_names_the_day() {
+        let meta = new_meta("sess-day-2026-11-16", date("2026-11-16"), "/w", "ling");
+        assert_eq!(meta.title, "Linggen · 2026-11-16");
+        assert_eq!(meta.agents.len(), 1);
+        assert_eq!(meta.agents[0].id, "ling");
+        assert_eq!(meta.skill, None);
+        assert!(meta.title_locked);
+    }
+}
