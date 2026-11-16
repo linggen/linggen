@@ -11,8 +11,15 @@ plus everything else Linggen offers. Never run both.
 ## Install
 
 ```text
-/plugin marketplace add linggen/linggen-memory
-/plugin install linggen@linggen-memory
+claude plugin marketplace add linggen/linggen --sparse .claude-plugin plugins
+claude plugin install linggen@linggen
+```
+
+Codex:
+
+```text
+codex plugin marketplace add linggen/linggen
+codex plugin add linggen@linggen
 ```
 
 No git (a fresh Mac)? `curl -fsSL https://linggen.dev/install-plugin.sh | bash`
@@ -66,8 +73,8 @@ run Linggen on this machine too and use `/linggen:config --primary 192.168.1.5`.
 - **Browser control** — `browser_navigate / read_page / click / type /
   key / scroll / screenshot / wait / tabs / read_console` drive one
   visible tab in your own Chrome via the
-  [linggen-browser](https://github.com/linggen/linggen-browser)
-  extension. First action on a new site asks you in the browser;
+  [Linggen browser extension](https://github.com/linggen/linggen/tree/main/browser-extension)
+  (Chrome). First action on a new site asks you in the browser;
   payment / credentials / deletes / posting always confirm.
 - **X session reads** — `x_search / x_targets / x_following /
   x_whotofollow / x_own` return structured JSON from your logged-in
@@ -77,12 +84,12 @@ run Linggen on this machine too and use `/linggen:config --primary 192.168.1.5`.
 
 - Linggen (`ling`) on `127.0.0.1:9527` — installed by the session-start hook,
   or another machine's Linggen set with `/linggen:config --linggen`.
-- For browser tools: the linggen-browser Chrome extension.
+- For browser tools: the Linggen browser Chrome extension ([source](https://github.com/linggen/linggen/tree/main/browser-extension)).
 
 ## Uninstall
 
 ```text
-/plugin uninstall linggen@linggen-memory
+claude plugin uninstall linggen@linggen
 ```
 
 The memory store under `~/.linggen/memory/` is yours and stays.

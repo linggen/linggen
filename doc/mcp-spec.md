@@ -102,9 +102,19 @@ Claude Code and Codex plugins, one product name: **linggen**.
     supersedes the old plugin's CLI-only rule; CLI remains the fallback) plus
     a short browser-control section (visible tab, permission prompt in the
     browser).
-  - Lives in the `linggen-memory` repo beside the old plugin, same
-    marketplace; the repo can be renamed later without breaking installs.
-- **Codex plugin `linggen`** supports the same memory store and scan workflow.
+  - Lives in this repo: the plugin at `plugins/linggen`, the marketplace
+    files at the root (`.claude-plugin/marketplace.json`,
+    `.agents/plugins/marketplace.json`; marketplace name `linggen`), one
+    version with the engine. Install:
+    `claude plugin marketplace add linggen/linggen --sparse .claude-plugin plugins`
+    then `claude plugin install linggen@linggen`. Source:
+    `github.com/linggen/linggen/tree/main/plugins/linggen`.
+- **Codex plugin `linggen`** supports the same memory store and scan workflow
+  (`ling mem scan <day>`). Install: `codex plugin marketplace add linggen/linggen`
+  then `codex plugin add linggen@linggen`.
+- **Chrome extension** (the `browser_*` and `x_*` groups need it): source in
+  this repo, `browser-extension/`
+  (`github.com/linggen/linggen/tree/main/browser-extension`).
 - **Manual** (any MCP client):
   `claude mcp add --transport http linggen http://127.0.0.1:9527/mcp` or the
   equivalent in Cursor/Codex config. Any MCP-capable agent can add

@@ -2,6 +2,11 @@
 
 ## [2.3.0] - 2026-11-16 — memory is part of ling, one program
 
+- **The plugin and the browser extension live in this repo.** The `linggen`
+  plugin for Claude Code and Codex is `plugins/linggen` (install
+  `linggen@linggen` from this repo's marketplace files) and the Chrome
+  extension is `browser-extension/`; the plugin has the engine's version, and
+  its session scan is `ling mem scan <day>`.
 - **A mission run that had something fail no longer reads as a plain
   success.** Its `runs.jsonl` entry keeps each failed tool call (a declared
   script's non-zero exit, a tool error, a refused call: tool, status, the last

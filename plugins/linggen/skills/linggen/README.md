@@ -19,8 +19,9 @@ a CLI.
 ## Quick start
 
 Install from your agent's marketplace (pick one per host): Claude Code
-`/plugin install linggen@linggen-memory`, Codex `codex plugin add
-linggen@linggen-memory`. Any MCP agent can add `http://127.0.0.1:9527/mcp/memory` as an MCP server (tools only). Linggen (`ling`)
+`claude plugin marketplace add linggen/linggen --sparse .claude-plugin plugins` then
+`claude plugin install linggen@linggen`; Codex `codex plugin marketplace add
+linggen/linggen` then `codex plugin add linggen@linggen`. Any MCP agent can add `http://127.0.0.1:9527/mcp/memory` as an MCP server (tools only). Linggen (`ling`)
 installs on first use.
 
 ```bash
@@ -60,8 +61,8 @@ Intel Macs are not supported yet.
 ## Links
 
 - **Linggen platform: [linggen.dev](https://linggen.dev)** · [github.com/linggen/linggen](https://github.com/linggen/linggen)
-- Plugin + skill source: [github.com/linggen/linggen-memory](https://github.com/linggen/linggen-memory)
-- Issues: [github.com/linggen/linggen-memory/issues](https://github.com/linggen/linggen-memory/issues)
+- Plugin + skill source: [github.com/linggen/linggen/tree/main/plugins/linggen](https://github.com/linggen/linggen/tree/main/plugins/linggen)
+- Issues: [github.com/linggen/linggen/issues](https://github.com/linggen/linggen/issues)
 
 ## License
 

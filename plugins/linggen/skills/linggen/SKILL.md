@@ -531,10 +531,10 @@ Install from your agent's own marketplace — it manages updates and, on
 Claude Code / Codex, the per-turn recall hook. Pick **one** channel per host:
 
 ```text
-Claude Code   /plugin marketplace add linggen/linggen-memory
-              /plugin install linggen@linggen-memory
-Codex         codex plugin marketplace add linggen/linggen-memory
-              codex plugin add linggen@linggen-memory
+Claude Code   claude plugin marketplace add linggen/linggen --sparse .claude-plugin plugins
+              claude plugin install linggen@linggen
+Codex         codex plugin marketplace add linggen/linggen
+              codex plugin add linggen@linggen
 Any MCP agent  add http://127.0.0.1:9527/mcp/memory as an MCP server (tools only)
 ```
 
@@ -546,7 +546,7 @@ Macs and Linux x86_64 / aarch64; Intel Macs are not supported yet.
 The skill works in Claude Code, Codex, Linggen, or standalone —
 one Linggen, one store, same semantics across all hosts.
 
-Source: [github.com/linggen/linggen-memory](https://github.com/linggen/linggen-memory) · [linggen.dev](https://linggen.dev)
+Source: [github.com/linggen/linggen](https://github.com/linggen/linggen/tree/main/plugins/linggen) · [linggen.dev](https://linggen.dev)
 
 ## Delegating work to Linggen
 
@@ -576,7 +576,7 @@ Use the Linggen engine's MCP agent tools for delegated coding work:
 ## Browser control (via the same MCP server)
 
 The `linggen` MCP server also exposes the user's own Chrome (through the
-linggen-browser extension) — one **visible** controlled tab:
+Linggen browser extension) — one **visible** controlled tab:
 
 - `browser_navigate` / `browser_read_page` (accessibility tree with `[nN]`
   refs) / `browser_click` / `browser_type` / `browser_key` /
@@ -590,7 +590,7 @@ linggen-browser extension) — one **visible** controlled tab:
 - `x_search` / `x_targets` / `x_following` / `x_whotofollow` / `x_own`
   return structured JSON from the user's logged-in x.com session — no
   API keys.
-- A `no_bridge` error means the linggen-browser extension isn't connected;
+- A `no_bridge` error means the Linggen browser extension isn't connected;
   ask the user to install or enable it.
 - If the `linggen` MCP server itself is unreachable (nothing listening on
   `127.0.0.1:9527`), Linggen may still be installing in the background

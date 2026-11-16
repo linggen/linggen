@@ -168,9 +168,12 @@ checks FAIL a draft whose asset is not Developer ID signed.
 
 From engine 2.3.0 there is no ling-mem binary release: the store's code is
 `crates/linggen-memory` in the engine repo and ships inside `ling`. The
-`linggen/linggen-memory` releases still carry `linggen-plugin.tar.gz` (what
-`install-plugin.sh` installs) until the plugins move; a plugin-only release
-there is not part of the engine's train, and the gate serves its bundle.
+plugin (`plugins/linggen`, installed as `linggen@linggen` from the marketplace
+files at this repo's root) and the Chrome extension (`browser-extension/`) live
+in this repo too. `scripts/plugin/package-plugin.sh <out.tar.gz>` packs the
+bundle `install-plugin.sh` installs. Until `release.sh` and the gate are
+changed, the `linggen/linggen-memory` releases still carry
+`linggen-plugin.tar.gz` and the gate serves that bundle.
 
 For a train before 2.3.0, only when `src/` changed since the last `v*` tag —
 repo `linggen/linggen-memory`, tag `vX.Y.Z`:
@@ -188,9 +191,14 @@ repo `linggen/linggen-memory`, tag `vX.Y.Z`:
    — eight assets (the six binaries + `linggen-plugin.tar.gz` and its
    `.sha256`, which `install-plugin.sh` needs). Publishing is the distribution: every host resolves `^1`.
 
-Plugin bundles bump only when hooks or `SKILL.md` changed, independent of the
-binary: `plugins/linggen/.claude-plugin/plugin.json`,
-`plugins/linggen/.codex-plugin/plugin.json`.
+The plugin has no version of its own: `scripts/sync-version.sh` stamps the
+engine's version into `plugins/linggen/VERSION`,
+`plugins/linggen/.claude-plugin/plugin.json` and
+`plugins/linggen/.codex-plugin/plugin.json` (through
+`scripts/plugin/build-plugin.sh`), and
+`bash scripts/plugin/plugin-check.sh` fails when they differ. Run that check
+(and `plugins/linggen/hooks/tests/*.test.sh`) before a release that touched
+the plugin.
 Where each channel pins:
 `linggen-memory/doc/release-targets.md`.
 
