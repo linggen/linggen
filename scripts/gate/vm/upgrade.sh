@@ -261,6 +261,8 @@ if real_prev "ling" "$LING" "$OUT/ling.old"; then
   # puts ling-mem.prev back before that engine starts.
   if [ "$ONE_BINARY" = 1 ] && [ "$TK_SEEDED" = 1 ]; then
     takeover_engine_rollback "$pv" "$prev_hosts_memory"
+  elif [ "$ONE_BINARY" = 1 ]; then
+    gap "ling update --rollback: memory on ling.prev" "the baseline had no old ling-mem daemon, so there is no memory to find on the rolled-back engine"
   fi
   if "$LING" update --help 2>/dev/null | grep -q -- '--rollback'; then
     "$LING" update --rollback >>"$OUT/ling-rollback.log" 2>&1
