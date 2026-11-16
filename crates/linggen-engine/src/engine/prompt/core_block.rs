@@ -231,7 +231,7 @@ fn user_name_from_rows(rows: &[CoreRow]) -> Option<String> {
     for r in rows {
         let c = r.content.trim();
         let lower = c.to_lowercase();
-        for pat in ["name is ", "call them ", "call me ", "goes by "] {
+        for pat in ["name is ", "call them ", "call me ", "be called ", "goes by "] {
             if let Some(i) = lower.find(pat) {
                 let name: String = c[i + pat.len()..]
                     .chars()
@@ -476,6 +476,12 @@ mod tests {
     fn name_from_explicit_statement() {
         let rows = [row("The user's name is Wei; they run a bakery.")];
         assert_eq!(user_name_from_rows(&rows).as_deref(), Some("Wei"));
+    }
+
+    #[test]
+    fn name_from_a_preference_to_be_called() {
+        let rows = [row("User prefers to be called Alex.")];
+        assert_eq!(user_name_from_rows(&rows).as_deref(), Some("Alex"));
     }
 
     #[test]
