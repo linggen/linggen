@@ -78,4 +78,4 @@ Distribution: Chrome Web Store listing pending; until then, load unpacked.
 
 ## License
 
-MIT — see `LICENSE`.
+Apache 2.0, the same as the rest of this repository — see `LICENSE`.

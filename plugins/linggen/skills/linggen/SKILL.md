@@ -10,7 +10,7 @@ description: >-
   machine with only the plugin (`/linggen:config`). Browser: agent
   control of the user's own Chrome with per-site permission prompts, and
   logged-in X session reads.
-license: MIT-0
+license: Apache-2.0
 homepage: https://linggen.dev
 allowed-tools:
   - Read

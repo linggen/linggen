@@ -8,7 +8,7 @@
   },
   "homepage": "https://linggen.dev",
   "repository": "https://github.com/linggen/linggen",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "keywords": [
     "linggen",
     "memory",

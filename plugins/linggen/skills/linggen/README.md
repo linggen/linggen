@@ -66,5 +66,4 @@ Intel Macs are not supported yet.
 
 ## License
 
-- **Skill code** (SKILL.md, install scripts, hooks): MIT-0 — see `LICENSE`.
-- **Linggen (`ling`)**: see [github.com/linggen/linggen](https://github.com/linggen/linggen).
+Apache 2.0, the same as Linggen — see `LICENSE`.
