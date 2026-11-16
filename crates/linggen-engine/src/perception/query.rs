@@ -105,14 +105,16 @@ fn mentions(a: &Activity, text: &str) -> bool {
     in_object || in_detail
 }
 
-/// "45 s", "12 min", "2 h 10 min" — a duration a model reads, never adds.
+/// "45 s", "1 min 40 s", "2 h 10 min" — a duration a model reads, never
+/// adds. Seconds are kept under an hour, dropped above it.
 pub fn readable(secs: u64) -> String {
-    let (h, m) = (secs / 3600, secs % 3600 / 60);
-    match (h, m) {
-        (0, 0) => format!("{secs} s"),
-        (0, m) => format!("{m} min"),
-        (h, 0) => format!("{h} h"),
-        (h, m) => format!("{h} h {m} min"),
+    let (h, m, s) = (secs / 3600, secs % 3600 / 60, secs % 60);
+    match (h, m, s) {
+        (0, 0, s) => format!("{s} s"),
+        (0, m, 0) => format!("{m} min"),
+        (0, m, s) => format!("{m} min {s} s"),
+        (h, 0, _) => format!("{h} h"),
+        (h, m, _) => format!("{h} h {m} min"),
     }
 }
 

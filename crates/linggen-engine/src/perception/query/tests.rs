@@ -151,6 +151,8 @@ fn readable_durations() {
     assert_eq!(readable(0), "0 s");
     assert_eq!(readable(45), "45 s");
     assert_eq!(readable(720), "12 min");
+    assert_eq!(readable(100), "1 min 40 s");
+    assert_eq!(readable(7259), "2 h", "seconds are dropped above an hour");
     assert_eq!(readable(7200), "2 h");
     assert_eq!(readable(7800), "2 h 10 min");
     assert_eq!(readable(400 * 3600 + 60), "400 h 1 min");
