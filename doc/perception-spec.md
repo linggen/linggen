@@ -107,7 +107,8 @@ because two schemas for one idea fork on contact.
   host whose file it is.
 - `app` — `dj`, `photos`, `cfo`, `shifu`, `health`, `lingjing`, `system`.
 - `verb` — a short slug from a closed set. The engine owns its own (`pair`,
-  `connect`, `disconnect`, `restart`); every other verb is declared by the app
+  `connect`, `disconnect`, `restart`, `fault` — a mission run that had
+  something go wrong); every other verb is declared by the app
   that writes it, in its skill (DJ `download`, `delete`; Health `workout`;
   灵境 `chapter_done`; CFO `import`). A verb no skill declared is refused at the
   door, so the set stays closed without the engine naming an app.

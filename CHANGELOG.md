@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+- **A mission run that had something fail no longer reads as a plain
+  success.** Its `runs.jsonl` entry keeps each failed tool call (a declared
+  script's non-zero exit, a tool error, a refused call: tool, status, the last
+  line or two of its error output, capped), a step-limit stop and a failed
+  run's error; the missions page and the toast mark it, the activity log gets
+  one line, and an unattended run hands Yinyue the facts — including how many
+  runs in a row showed the same failure — for her to say or not. A clean
+  mission run no longer wakes her.
 - **The engine stays up.** It hosts memory now, and other tools on the machine
   use memory whether or not a Linggen window is open, so it no longer exits
   when idle. `--idle-shutdown-secs` is accepted and ignored.

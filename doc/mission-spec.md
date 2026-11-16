@@ -314,6 +314,26 @@ The mission-level `run_id` (format `mission-run-<ts>-<uuid8>`) keys the `runs.js
 
 Skipped triggers (busy, or a `run-if` that said no) are logged with `skipped: true` and no `session_id`; they still get a real `run_id` so downstream tooling can reference them. The daily cap logs nothing; the tick simply stops firing.
 
+### What went wrong in a run
+
+`status` is the run's end — `completed` (its turns finished), `failed` (the engine errored), `cancelled`, or `interrupted` (a dead daemon cut it off). A run that finished its turns can still have had something fail inside it, so the finished entry also keeps, as optional fields beside an unchanged `status`:
+
+```json
+{ "run_id": "…", "triggered_at": 1700000000, "status": "completed", "skipped": false,
+  "failures": [{ "tool": "fetch", "kind": "exit", "exit": 3, "tail": "fetch: could not reach host" }],
+  "failure_count": 1 }
+```
+
+- `failures` — the first 8 tool calls that ended in failure, each with `tool`, `kind` and, for `exit`, the exit status (absent: killed with none, a timeout or a signal), plus `tail`: the last two lines of its error output (stderr, or the error's own text), flattened and capped at 160 characters. Never its stdout.
+- `failure_count` — every failed call, the unnamed ones included.
+- `hit_limit` — the run stopped at its step limit (`max_iters`) rather than on a final reply.
+- `error` — a `failed` run's engine error, capped the same way.
+- `attended` — a person was watching (a manual run started as attended).
+
+What counts as a failure (`engine/run_faults.rs`): a skill-declared command tool that exited non-zero or was killed; a tool call that errored (bad arguments, a timeout, an execution error — not the error a cancel hands back); a call the engine refused (permission, tool scope, a withheld tool). What does not: a built-in tool's ordinary answer — a search with no matches, a `Bash` command's non-zero exit (the model's own probe; `grep` exits 1 on every miss) — a cached replay, and calls inside a delegated agent's run. No judgement of whether a failure matters is made.
+
+All five are omitted when empty, and lines written before them read as before. Every reader keys on `status`, which is unchanged: catch-up, the toast, the phone's `after` lines, `memory_dream_status` (which now also reports `failure_count`, `failures` and `hit_limit`, and quotes `error` as `last_run_error`). `GET /api/missions` gives each mission its newest run that ran as `last_run`, and the missions page marks one that failed, had failed calls or hit its limit. A run with something wrong writes one `fault` line to the activity log, and an unattended one hands Yinyue its facts (`doc/yinyue-companion-spec.md` § A mission run that went wrong).
+
 ## Safety
 
 | Guard | Value | Rationale |

@@ -99,6 +99,42 @@ speaks: a finished reply or a question with its buttons is already on the
 screen the user is looking at (2026-09-11: she narrated every choice of a game
 being played). Always-look on `RunFailed`.
 
+## A mission run that went wrong — a fact, not a verdict
+
+A mission run is unattended; what went wrong in it has no one to see it. When a
+run ends, the mission herald (`Notification(MissionCompleted)` →
+`server/resident/mission_fact.rs`) reads the run's record in `runs.jsonl`
+(`doc/mission-spec.md` § Run history) and, when no person watched it
+(`attended` is not set) and something went wrong — a tool call failed, the run
+failed, or it stopped at its step limit — wakes her once with the facts:
+
+```text
+The background job "Harbor digest" ran unattended at 01:00 on 2026-11-16
+(status: completed). What the engine recorded about the run:
+- fetch exited with status 3; the last of its error output: "fetch: could not reach host"
+- the same failure showed in each of the last 3 runs, on 3 different day(s), since 2026-11-14
+```
+
+…then the herald's usual choice: one or two sentences in her voice, or
+`SILENT`. Up to three failed calls are named (each with its capped tail), the
+rest counted; a failed run's error is quoted; the streak line is computed from
+`runs.jsonl` (the same tool failing the same way, runs that ran, older records
+without failures end it) — the one fact a model woken for one run cannot know.
+Nothing tells her it matters; nothing is said by code.
+
+- A clean run, an attended run and a cancelled one hand her nothing.
+- One wake per finished run: a mission failing every night is one fact a
+  night, never a burst. Her turn is a plain agent run, not a mission run, so it
+  emits no `MissionCompleted` and cannot wake her again.
+- She runs on her own rolling thread, so the fact stays in it for her next
+  turns; the run also leaves a `fault` line in the activity log
+  (`doc/perception-spec.md` § 3), which her doorbell reads. Pet off or not yet
+  met: no wake — the record, the missions page and the activity log still hold
+  it.
+- Woken at 01:00, she speaks to whoever is there. The fact is not held for the
+  person's return: the moments gate (below) drops a moment after 15 minutes and
+  waits for the app it names, so it cannot carry a night's fact to the morning.
+
 ## Interactive loop-back — the approve case
 
 When Ling parks on `AskUser`/permission, the event carries a `question_id`, and
