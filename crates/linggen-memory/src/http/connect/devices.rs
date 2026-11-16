@@ -42,8 +42,18 @@ pub struct Denied {
     pub denied_at: i64,
 }
 
+pub fn devices_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("paired-devices.json")
+}
+
+/// Has this machine ever paired a device? A fact the console shows: with no
+/// file, every request from off-machine is refused.
+pub fn has_paired_devices_file(data_dir: &Path) -> bool {
+    devices_path(data_dir).is_file()
+}
+
 fn paired_path(data_dir: &Path) -> PathBuf {
-    crate::http::gate::devices_path(data_dir)
+    devices_path(data_dir)
 }
 
 fn allowed_path(data_dir: &Path) -> PathBuf {
@@ -219,6 +229,12 @@ pub fn undeny(data_dir: &Path, device_id: &str) -> io::Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_missing_file_grants_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!has_paired_devices_file(dir.path()));
+    }
 
     fn ip() -> IpAddr {
         "192.168.20.31".parse().unwrap()

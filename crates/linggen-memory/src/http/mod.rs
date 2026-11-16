@@ -17,7 +17,6 @@ pub(crate) mod config;
 pub(crate) mod connect;
 pub(crate) mod days;
 pub mod envelope;
-pub mod gate;
 mod health;
 pub(crate) mod issues;
 pub(crate) mod lease;
@@ -99,21 +98,11 @@ mod tests {
     async fn the_primary_enforces_the_user_voice_guard_on_forwarded_writes() {
         let dir = tempfile::tempdir().unwrap();
         let state = state::scratch_state(dir.path(), "0.0.0.0:9527".parse().unwrap()).await;
-        std::fs::write(
-            gate::devices_path(dir.path()),
-            r#"[{"id":"r","name":"DS242","secret":"cafe1234","created_at":0}]"#,
-        )
-        .unwrap();
         let voice = Memory::new("Alex prefers tea", MemoryType::Preference, Origin::User);
         let id = voice.id.clone();
         state.store.insert(&[voice]).await.unwrap();
 
-        let app = memory::router()
-            .layer(middleware::from_fn_with_state(
-                state.clone(),
-                gate::lan_gate,
-            ))
-            .with_state(state.clone());
+        let app = memory::router().with_state(state.clone());
         let body = serde_json::json!({ "content": "Alex prefers coffee", "replace_ids": [id] });
         let mut req = axum::http::Request::post("/api/memory/add")
             .header("content-type", "application/json")

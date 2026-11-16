@@ -23,7 +23,7 @@ use std::path::Path;
 
 use crate::http::config;
 use crate::http::envelope::{ok, ApiError};
-use crate::http::gate;
+use crate::http::connect::devices;
 use crate::http::local;
 use crate::http::state::SharedState;
 use axum::http::HeaderMap;
@@ -64,7 +64,7 @@ fn view(saved: Network, bound: SocketAddr, data_dir: &Path) -> serde_json::Value
         "network": saved,
         "bound": bound.to_string(),
         "applied": bound.ip() == saved.host(),
-        "paired_devices": gate::has_paired_devices_file(data_dir),
+        "paired_devices": devices::has_paired_devices_file(data_dir),
     })
 }
 
