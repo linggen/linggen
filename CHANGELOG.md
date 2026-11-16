@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- **Every session a person is in sees the same world.** Ling's chats, app chats
+  and Yinyue's thread now get the world block beside each turn (the machine,
+  the Linggen page in front, the phone, the doorbell); missions and delegated
+  runs do not. A skill adds its app's line with `world-line: {file, fields}`.
 - **The activity log answers longer questions.** It is kept 400 days, and
   `recent_activity` (and `GET /api/activity`) filters by `since`/`until`
   (ISO times, dates, `today`, `yesterday`, `-6h`, `-3d`), `app`, `verb` and

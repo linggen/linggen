@@ -143,6 +143,7 @@ Three groups of fields. Standard fields work across tools; the others are extens
 | `place` | Where the skill's sessions stand for each agent, and whether an agent is there yet (see "Place") |
 | `senses` | Real-world facts the engine reads for the skill, e.g. `[weather]` (see "Senses") |
 | `activity-verbs` | The verbs it may write to the activity log under its own name, e.g. `[archive, import]`; `POST /api/activity` refuses others. Not the engine's own (`pair`, `connect`, `disconnect`, `restart`, `used`) — see `perception-spec.md` §3 |
+| `world-line` | The small file in its folder, and the fields of it, that make the app's one line in the world block (see "World line") |
 | `session-params` | Values a session of the skill may be bound to when it is made, e.g. a save (see "Session parameters") |
 | `requires` | External dependencies to resolve at install |
 | `renamed-from` | Slugs this skill used to be called (see "Renaming a skill") |
@@ -404,6 +405,33 @@ senses: [weather]
   - The engine also serves `/shared/sky.js`, the weather painter: the main web UI draws the falling weather over itself with it (`overlay: true` — particles only, no tint, clicks pass through; off in Settings → General → Weather), and its top bar shows the reading. A skill page may opt in (`import { mountSky } from '/shared/sky.js'`), as an overlay or as a sky background; pages that don't are untouched.
 - **`user_words`** — the person's own last messages in the session, as typed, so a script that keeps a quote can check it was really said instead of trusting the model's copy. Every tool command the model calls in a session gets `LINGGEN_USER_WORDS`: a JSON array of strings, newest last, at most 8, each cut at 500 characters; hidden rows and tool observations left out. Never handed to a skill that does not declare it; a page's own tool call has no session, so none.
 - An unknown sense is logged and ignored. The engine names no app: every sense is general, and any skill may declare it.
+
+## World line
+
+An installed skill may give its app one line in the world block every session
+a person is in is given (`perception-spec.md` §2):
+
+```yaml
+world-line:
+  file: data/world.json
+  fields: [notes, pinned_title]
+```
+
+- `file` — a `.json` file inside the skill's folder (a plain relative path; a
+  link that leads out of the folder gives no line). The skill's own code keeps
+  it current; the engine only reads it, at most 16 KB.
+- `fields` — 1 to 6 top-level keys of it (`[a-z0-9_]`, each once), in the order
+  the line shows them. A string is shown as written, a number or boolean as
+  JSON prints it; anything else is left out.
+- The line: `notes-demo: notes 12 · pinned title Garden plan · 5m ago` — the
+  name, each field as `label value` (`_` read as a space), the file's age.
+  48 characters a value, 160 a line; at most 8 app lines (the most recently
+  changed stay); a file older than 7 days gives no line.
+- The engine never interprets a value. A comparison the agent should see is
+  the skill's to write (`hrv: "27 ms · usual 35"`). Nothing private belongs in
+  it: every agent in every person's session reads it.
+- A bad declaration, or one in a project or compat copy, is logged once and
+  ignored; the skill still loads.
 
 ## App skills
 

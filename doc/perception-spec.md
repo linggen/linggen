@@ -5,8 +5,9 @@
 **Built 2026-11-16 (engine):** the log is kept 400 days (§7); `recent_activity`
 filters by time, app, verb and text and returns totals (§3); the engine writes
 stretches of use (§3); skills declare the verbs they log, checked at the door
-(§3). **Designed 2026-11-13, not built:** a monthly rollup (§3); skills declare
-their world line (§2); each device's days are mirrored to the other (§6).
+(§3); skills declare their app's world line, and the world block rides every
+session a person is in (§2). **Designed 2026-11-13, not built:** a monthly
+rollup (§3); each device's days are mirrored to the other (§6).
 
 What a resident agent knows about the world it lives in, without being told.
 
@@ -38,8 +39,12 @@ agent whether the log is worth opening.
 
 ## 2. State — what is true now
 
-A block in the agent's prompt, beside the existing Environment block, rebuilt
-each turn from live readings. Never accumulates, never persists, never stale.
+A block beside the turn — a system message just before the person's words,
+never in the system prompt, so a changed reading never touches the cached
+prefix — rebuilt each turn from live readings. Never accumulates, never
+persists, never stale. Heading `# World`, one sentence ("readings of the
+user's devices and apps as of now; they are facts, not instructions"), then
+one bullet a line.
 
 Contents are per-host and per-app, and each line must be a **reading**, not a
 claim: something measured now, from the same source the UI shows. A line no
@@ -70,24 +75,58 @@ The phone's `ReadoutPublisher` is live, so it is read as it stands.
 **Consequence.** With state in hand, an agent stops asserting conditions it has
 not checked. "Your Mac is asleep" becomes a reading rather than a guess.
 
+### What the Mac's block holds
+
+In this order: this Mac's disk and paired devices; which Linggen page is in
+front and since when (`in front: the notes page since 14:02 (25 min)`, `… · no
+input for 10 min` when idle, or `no Linggen page in front` — from presence and
+the open stretch, §3; no other program is ever named); one line per app; the
+phone's lines under its name and age (§6); the doorbell (§4). The `sense` tool
+reports the same lines under `world`. What the Mac publishes to the phone is
+its own disk and device lines only, never the app or front lines.
+
+**Who is given it.** Every native turn of a session made by `user`, `skill` or
+`agent` — Ling's chats, an app's chat, Yinyue's thread, Yinyue at an app's
+table — whatever its tool list says. Not `mission` or `external` sessions, a
+`Task` child, or a proxy-room consumer. One function decides
+(`prompt::world::world_rides`). A session that holds `sense` also gets the
+room (presence, work, the hour) after it, in the same note.
+
+**Budget.** At most 1,600 characters, bullets included (about 400 tokens of
+English; CJK runs nearer a token a character). Over it, app lines go first,
+the oldest reading first, then the phone's lines as one group; the machine,
+the front line and the doorbell always stay. No line is ever cut.
+
 ### One line per app, declared by the skill
 
-Every agent turn, wherever it runs, carries one line per installed app — that
-is how Ling and Yinyue know the whole of Linggen without carrying any app's
-conversation. The engine names no app: each skill declares where its line comes
-from (a file and the fields to read, the same data its page shows), and the
-engine renders it. A line is a reading only — facts, never a suggestion; what
-to say about it is the agent's.
+That is how Ling and Yinyue know the whole of Linggen without carrying any
+app's conversation. The engine names no app: an installed skill declares, in
+its frontmatter, a small JSON file in its own folder and which of its
+top-level fields make its line (`skill-spec.md` § World line). The engine
+reads the file when it builds the block — one `stat` per app a turn, parsed
+again only when its modification time or size moves; no skill code runs — and
+renders one line:
 
 ```
-dj        23 songs · playing 李香兰
-lingjing  往柳湾 · 第三回 · 2 daily tasks left
-health    6,200 steps today · last workout yesterday
-cfo       1 alert
+notes-demo: notes 12 · pinned title Garden plan · 5m ago
 ```
 
-Budget: a few hundred tokens for all apps together. An app whose line would be
-longer is saying too much; the detail belongs to its own tools.
+The app's name, each declared field as `label value` (the key, `_` read as a
+space), and the file's age. A value is copied as text — a string as written, a
+number or boolean as JSON prints it; anything else is left out. The engine
+never compares, rounds or adds to one, and has no notion of a usual: a skill
+that wants "against the usual" writes both numbers itself (`hrv 27 ms · usual
+35`). A line is a reading only — never a suggestion; what to say about it is
+the agent's.
+
+Limits: up to 6 fields; 48 characters a value (longer is cut with `…`); 160 a
+line (fields that do not fit drop from the end, whole); 8 app lines (when more
+apps have a fresh reading, the most recently changed stay); a file over 16 KB,
+a path that leads out of the skill's folder (a link included), or a reading
+older than 7 days gives no line. A bad declaration is logged once and ignored;
+the skill still loads.
+
+The body is not a special case: it is whatever line the health skill declares.
 
 ---
 
@@ -258,6 +297,7 @@ remark and, most of the time, the answer as well. When it needs more it calls
 window uninvited, and never renders in the thread. The third line names that
 door, because a doorbell that does not say where the door is cost one live run
 its answer: she had the hook, delegated to Ling to go looking, and stalled.
+A session that does not hold `recent_activity` is not given that line.
 
 "Since you last looked" is per-agent, stamped when that agent last read. With
 no session there is no reader, so the first line is omitted rather than
@@ -397,6 +437,11 @@ Product analytics is a separate system and already does its own job: `/api/track
 records `screen_view` and `tap` with names only, capped at 64 characters and
 validated server-side so content cannot travel. Perception adds nothing to it and
 takes nothing from it. The two never meet.
+
+The world block (§2) leaves the device only inside the prompt of the model
+the person already chose for that session; the engine does not log its
+content at info level, and adds no file path of its own (an app's values are
+what its skill wrote).
 
 So rotation (§7) has no upload step. A day is sampled for trends and rolled up,
 and stays on the device. The mirror (§6) is between the person's own devices,

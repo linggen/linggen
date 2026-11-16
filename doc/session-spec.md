@@ -180,6 +180,21 @@ The system prompt is rebuilt each turn from layers. Which layers are included de
 [11] Plan execution context  — when plan is approved/executing
 ```
 
+### Beside the turn
+
+Two notes ride as one system message just before the turn's own words, never
+in the system prompt, so a changed reading never moves the cached prefix:
+
+- **The world** (`perception-spec.md` §2) — every native turn of a session made
+  by `user`, `skill` or `agent`, whatever its tool list (`["*"]` included);
+  never `mission` or `external`, a `Task` child, or a proxy-room consumer.
+  `prompt::world::world_rides` decides from the stored `creator`.
+- **The room** (presence, work, the hour) — a session whose tools name `sense`.
+
+The prompt export (`GET /api/chat/system-prompt`, "Copy System Prompt") shows
+them under `beside_turn`. Sessions run by the Claude runtime are built
+elsewhere and get neither yet.
+
 Layers 5-7 are sensitive to the working folder. When the session transitions between home mode and project mode, the system prompt is rebuilt with the appropriate project instructions and memory.
 
 A zero-tool session (e.g., game-table skill with `allowed-tools: []`) gets layers 1-7 only — a minimal, focused prompt for pure conversation.
