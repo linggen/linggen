@@ -19,7 +19,7 @@ export function handleNotification(item: UiEventOf<'notification'>): void {
       const name = String(data.mission_name || data.mission_id || 'Mission');
       const status = String(data.status || 'completed');
       const failures = Number(data.failure_count || 0);
-      useUiStore.getState().addToast(missionToast(name, status, failures));
+      useUiStore.getState().addToast(missionToast(name, status, failures, data.hit_limit === true));
       useUiStore.getState().bumpMissionRefreshKey();
       return;
     }
@@ -33,13 +33,16 @@ export function handleNotification(item: UiEventOf<'notification'>): void {
 
 /** The toast for a finished mission run: a run whose turns finished but in
  *  which tool calls failed is not shown as a plain success. */
-function missionToast(name: string, status: string, failures: number) {
+function missionToast(name: string, status: string, failures: number, hitLimit: boolean) {
   if (status !== 'completed') {
     return { message: `Mission "${name}" failed`, variant: 'error' as const };
   }
   if (failures > 0) {
     const calls = failures === 1 ? '1 tool call' : `${failures} tool calls`;
     return { message: `Mission "${name}" completed — ${calls} failed`, variant: 'error' as const };
+  }
+  if (hitLimit) {
+    return { message: `Mission "${name}" stopped at its step limit`, variant: 'error' as const };
   }
   return { message: `Mission "${name}" completed`, variant: 'success' as const };
 }

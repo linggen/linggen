@@ -9,4 +9,8 @@ export type NotificationPayload = { "kind": "mission_completed", mission_id: str
  * Tool calls in the run that ended in failure (`run_faults`); 0 for
  * a clean run. The run's record holds which.
  */
-failure_count: number, run_id: string, session_id: string | null, } | { "kind": "run_failed", agent_id: string, session_id: string | null, auth_required: boolean, } | { "kind": "run_completed", agent_id: string, session_id: string | null, };
+failure_count: number, 
+/**
+ * The run stopped at its step limit rather than on a final reply.
+ */
+hit_limit: boolean, run_id: string, session_id: string | null, } | { "kind": "run_failed", agent_id: string, session_id: string | null, auth_required: boolean, } | { "kind": "run_completed", agent_id: string, session_id: string | null, };

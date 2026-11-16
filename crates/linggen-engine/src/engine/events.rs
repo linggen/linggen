@@ -143,6 +143,8 @@ pub enum NotificationPayload {
         /// Tool calls in the run that ended in failure (`run_faults`); 0 for
         /// a clean run. The run's record holds which.
         failure_count: u32,
+        /// The run stopped at its step limit rather than on a final reply.
+        hit_limit: bool,
         run_id: String,
         session_id: Option<String>,
     },

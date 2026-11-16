@@ -657,12 +657,8 @@ async fn dispatch_mission_prompt(
         Ok(a) => a,
         Err(e) => {
             warn!("Mission scheduler: failed to get mission agent: {}", e);
-            finalize_mission_run(
-                &state,
-                mission,
-                &mission_run_id,
-                RunEnd::failed(e.to_string()),
-            );
+            let end = RunEnd::failed(e.to_string());
+            end_mission_run(&state, mission, &mission_run_id, session_id.clone(), end);
             return;
         }
     };
@@ -705,6 +701,8 @@ async fn dispatch_mission_prompt(
         Ok(id) => id,
         Err(e) => {
             warn!("Mission scheduler: failed to begin run: {}", e);
+            let end = RunEnd::failed(e.to_string());
+            end_mission_run(&state, mission, &mission_run_id, session_id.clone(), end);
             return;
         }
     };
@@ -1022,20 +1020,7 @@ async fn dispatch_mission_prompt(
         faults,
         error,
     };
-    let failure_count = end.faults.count;
-    finalize_mission_run(&state, mission, &mission_run_id, end);
-
-    // Notify UI that the mission finished.
-    let _ = state.events_tx.send(ServerEvent::Notification(
-        NotificationPayload::MissionCompleted {
-            mission_id: mission.id.clone(),
-            mission_name: mission.name.clone().unwrap_or_else(|| mission.id.clone()),
-            status: status.to_string(),
-            failure_count,
-            run_id: mission_run_id.clone(),
-            session_id: session_id.clone(),
-        },
-    ));
+    end_mission_run(&state, mission, &mission_run_id, session_id, end);
 }
 
 /// Append the engine-composed run report (see `super::report`) to the
@@ -1088,12 +1073,20 @@ async fn append_run_report(state: &Arc<SchedulerHost>, agent_id: &str, session_i
     let _ = state.events_tx.send(ServerEvent::StateUpdated);
 }
 
-/// Flip the up-front `running` entry to its terminal status, with what the
-/// run spent and what went wrong in it. The entry keeps its original
-/// `triggered_at` (the actual start time). A run that had something go wrong
-/// also leaves one line in the activity log.
-fn finalize_mission_run(state: &Arc<SchedulerHost>, mission: &Mission, run_id: &str, end: RunEnd) {
+/// End a run: flip its up-front `running` entry to its terminal status,
+/// with what the run spent and what went wrong in it (the entry keeps its
+/// original `triggered_at`, the actual start time), leave one activity line
+/// when something went wrong, and tell the UI and the heralds it finished.
+/// Every path out of a run that was recorded as `running` ends here.
+fn end_mission_run(
+    state: &Arc<SchedulerHost>,
+    mission: &Mission,
+    run_id: &str,
+    session_id: Option<String>,
+    end: RunEnd,
+) {
     let status = end.status;
+    let (failure_count, hit_limit) = (end.faults.count, end.faults.hit_limit);
     let mut finished = None;
     let written = state.missions.update_mission_run(&mission.id, run_id, |e| {
         end.apply(e);
@@ -1108,6 +1101,17 @@ fn finalize_mission_run(state: &Arc<SchedulerHost>, mission: &Mission, run_id: &
     if let Some(entry) = finished {
         super::outcome::record_fault(mission, &entry);
     }
+    let _ = state.events_tx.send(ServerEvent::Notification(
+        NotificationPayload::MissionCompleted {
+            mission_id: mission.id.clone(),
+            mission_name: mission.name.clone().unwrap_or_else(|| mission.id.clone()),
+            status: status.to_string(),
+            failure_count,
+            hit_limit,
+            run_id: run_id.to_string(),
+            session_id,
+        },
+    ));
 }
 
 /// A mission-level run id: `mission-run-<ts>-<uuid8>`.
