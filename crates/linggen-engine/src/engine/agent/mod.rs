@@ -36,7 +36,7 @@ pub mod runs;
 pub mod runs_api;
 
 pub use event::AgentEvent;
-pub use presence::{Beat, Presence, PresenceBoard};
+pub use presence::{Beat, Front, Presence, PresenceBoard, USER_TURN_SURFACE};
 pub use runs::{AgentRunRecord, AgentRunStatus, RunStore};
 
 pub struct ProjectContext {
@@ -409,7 +409,18 @@ impl AgentManager {
     /// own reading (`presence.rs`), so one surface never overwrites another.
     pub fn update_presence(&self, beat: Beat) {
         let now = crate::util::now_ts_secs();
-        self.presence.lock_ok().record(beat, now);
+        let front = {
+            let mut board = self.presence.lock_ok();
+            board.record(beat, now);
+            board.front(now)
+        };
+        crate::perception::stretch::observe(now, front);
+    }
+
+    /// The page in front of the person now — what a stretch of use is kept
+    /// for (`perception::stretch`).
+    pub fn presence_front(&self, now: u64) -> Option<Front> {
+        self.presence.lock_ok().front(now)
     }
 
     /// A person who just typed to an agent is present, wherever they typed it.
@@ -423,7 +434,7 @@ impl AgentManager {
     pub fn mark_user_turn_presence(&self) {
         let app = self.presence_snapshot().app;
         self.update_presence(Beat {
-            surface: Some("user-turn".to_string()),
+            surface: Some(USER_TURN_SURFACE.to_string()),
             focused: true,
             typing: true,
             idle_ms: 0,

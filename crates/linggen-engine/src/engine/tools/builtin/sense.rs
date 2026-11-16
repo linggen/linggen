@@ -152,13 +152,6 @@ impl Tool for SenseTool {
 // recent_activity — what changed on this machine, and who did it
 // ---------------------------------------------------------------------------
 
-#[derive(serde::Deserialize)]
-struct RecentActivityArgs {
-    /// How many entries, newest first. Default 20.
-    #[serde(default)]
-    limit: Option<usize>,
-}
-
 /// History as a tool, deliberately (`doc/perception-spec.md` §3): the log grows,
 /// and an agent whose context fills with its own event stream remembers the
 /// user's clicks and forgets the user. The doorbell in the prompt says whether
@@ -173,65 +166,53 @@ impl Tool for RecentActivityTool {
         &["RecentActivity"]
     }
     fn description(&self) -> &'static str {
-        "What has changed lately — deletes, syncs, backups, imports, devices coming and \
-         going — newest first, each with who did it and how long ago. Covers this machine \
-         AND the user's other one (their phone), listed separately, so it answers \"what \
-         happened\" whichever device they meant. Call it when they ask what has been going \
-         on, or when the doorbell in your prompt says something did and you need more than \
-         the headline. Returns plain lines, not JSON. Last few days only; older days are gone."
+        "Read this Mac's activity log: what changed in Linggen and its apps, who did it, \
+         and stretches of use (verb `used`: which Linggen page was in front, with \
+         `seconds`). Kept 400 days. Filters: since, until (ISO time, YYYY-MM-DD, today, \
+         yesterday, now, -30m, -6h, -3d; days start at local midnight), app, verb, text \
+         (in object or detail), limit (rows, newest first; default 20). totals: true \
+         adds counts and summed seconds per app and verb, with a readable time, for the \
+         span shown; with totals, rows come only when limit is set. Read the totals; do \
+         not add durations yourself. A plain call also lists the other device's latest \
+         lines. Returns JSON."
     }
     fn tier(&self) -> PermissionMode {
         PermissionMode::Read
     }
     fn args_schema(&self) -> Value {
+        let time = "ISO time, YYYY-MM-DD, today, yesterday, now, or -30m / -6h / -3d";
         json!({
             "type": "object",
             "properties": {
-                "limit": { "type": "integer", "description": "How many entries, newest first. Default 20." }
+                "since": { "type": "string", "description": time },
+                "until": { "type": "string", "description": format!("{time}. Default now.") },
+                "app": { "type": "string", "description": "Only this app." },
+                "verb": { "type": "string", "description": "Only this verb." },
+                "text": { "type": "string", "description": "Only records whose object or detail contains this." },
+                "limit": { "type": "integer", "description": "How many rows, newest first. Default 20, at most 200." },
+                "totals": { "type": "boolean", "description": "Add counts and summed durations per app and verb for the span." }
             }
         })
     }
     fn legacy_schema_entry(&self) -> Value {
         json!({
             "name": "recent_activity",
-            "args": { "limit": "number?" },
-            "returns": "recent changes to this machine, newest first, as plain lines",
-            "notes": "What changed here lately and who did it. The doorbell in your prompt \
-                      says whether it is worth calling."
+            "args": {
+                "since": "string?", "until": "string?", "app": "string?", "verb": "string?",
+                "text": "string?", "limit": "number?", "totals": "boolean?"
+            },
+            "returns": "JSON: span, rows (newest first), totals per app and verb when asked",
+            "notes": "This Mac's activity log, kept 400 days; totals sum durations so you never add them."
         })
     }
     async fn execute(&self, _tools: &Tools, call: ToolCall) -> Result<ToolResult> {
-        let args: RecentActivityArgs =
-            serde_json::from_value(call.args).unwrap_or(RecentActivityArgs { limit: None });
-        let limit = args.limit.unwrap_or(20).clamp(1, 200);
-        let here = crate::perception::activity::log().lines(limit);
-        // The merge §6 asks for, at read time. The state block carries one line
-        // of the other machine's history; this is the rest of it. Without this
-        // the agent answers "what happened" from this machine's log alone, and
-        // a song the user deleted on their phone a minute ago reads as nothing
-        // having happened at all.
-        let (peer_host, there) = crate::perception::state::peer_history();
-
-        let mut out = Vec::new();
-        if !here.is_empty() {
-            out.push("On this Mac:".to_string());
-            out.extend(here.iter().map(|l| format!("  {l}")));
-        }
-        if !there.is_empty() {
-            if !out.is_empty() {
-                out.push(String::new());
+        let args: crate::perception::query::Args = match serde_json::from_value(call.args) {
+            Ok(a) => a,
+            Err(e) => {
+                return Ok(ToolResult::Success(json!({ "error": e.to_string() }).to_string()));
             }
-            out.push(format!(
-                "On {}:",
-                peer_host.unwrap_or_else(|| "their other device".into())
-            ));
-            out.extend(there.iter().take(limit).map(|l| format!("  {l}")));
-        }
-        if out.is_empty() {
-            return Ok(ToolResult::Success(
-                "Nothing has changed on this machine in the last few days.".to_string(),
-            ));
-        }
-        Ok(ToolResult::Success(out.join("\n")))
+        };
+        let out = crate::perception::query::read(&args);
+        Ok(ToolResult::Success(out.to_string()))
     }
 }

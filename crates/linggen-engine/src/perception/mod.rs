@@ -19,9 +19,12 @@ pub mod activity;
 pub mod conditions;
 pub mod devices;
 pub mod publish;
+pub mod query;
 pub mod rotation;
 pub mod state;
+pub mod stretch;
 pub mod trend;
+pub mod when;
 
 /// This machine, as the log names it.
 pub fn host_name() -> String {

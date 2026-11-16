@@ -13,6 +13,7 @@ use axum::{extract::Query, http::HeaderMap, response::IntoResponse, Json};
 use serde::Deserialize;
 
 use crate::perception::activity;
+use crate::perception::query as activity_query;
 
 #[derive(Deserialize)]
 pub(crate) struct RecordBody {
@@ -91,21 +92,13 @@ pub(crate) async fn record(headers: HeaderMap, Json(body): Json<RecordBody>) -> 
     )
 }
 
-#[derive(Deserialize)]
-pub(crate) struct RecentQuery {
-    #[serde(default)]
-    limit: Option<usize>,
-}
-
-/// GET /api/activity?limit= — the same lines the agent's `recent_activity`
-/// tool returns, for a page that wants to show them.
+/// GET /api/activity?since=&until=&app=&verb=&text=&limit=&totals= — the
+/// same answer the agent's `recent_activity` tool returns, for a page that
+/// wants to show it.
 ///
 /// One reader and one writer for one log: a page rendering its own version of
 /// "what happened" from some other source is how two accounts of one day start
 /// to disagree.
-pub(crate) async fn recent(Query(q): Query<RecentQuery>) -> impl IntoResponse {
-    let limit = q.limit.unwrap_or(50).clamp(1, 500);
-    Json(serde_json::json!({
-        "lines": activity::log().lines(limit),
-    }))
+pub(crate) async fn recent(Query(q): Query<activity_query::Args>) -> impl IntoResponse {
+    Json(activity_query::read(&q))
 }

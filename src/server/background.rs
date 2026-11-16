@@ -291,15 +291,21 @@ fn spawn_companion(state: &Arc<ServerState>) {
     tokio::spawn(resident::mission_fact_loop(state.clone()));
 }
 
-/// Perception. Two loops: one tells the user's connected devices what is
-/// true on this Mac (§6, and only when a device is there to hear it), the
-/// other rotates the day — a trend sample, the day's activities handed to
-/// the dream pass, then the sweep (§7).
+/// Perception. Three loops: one keeps the stretch of use of the page in
+/// front (§3), one tells the user's connected devices what is true on this
+/// Mac (§6, and only when a device is there to hear it), and one rotates the
+/// day — a trend sample, then the sweep of days past the retention (§7).
 fn spawn_perception(state: &Arc<ServerState>) {
     // First, account for the last run: a daemon that died holding a device
     // could not write that device's departure, and an unexplained gap in
     // the log is worse than the restart it hides.
     crate::perception::devices::note_restart();
+    // And the stretch of use it left open, closed where it was last saved.
+    crate::perception::stretch::recover_saved();
+    let manager = state.manager.clone();
+    tokio::spawn(crate::perception::stretch::stretch_loop(move |now| {
+        manager.presence_front(now)
+    }));
     let topic_state = state.clone();
     tokio::spawn(crate::perception::publish::publish_loop(
         move |topic, op, payload| {

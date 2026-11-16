@@ -2,8 +2,9 @@
  * Presence beat — a tiny throttled liveness signal so Yinyue can tell whether
  * the user is here (typing), present but reading, or away.
  *
- * Sends ONLY recency + focus + a typing flag to `POST /api/presence` — never
- * keystroke content — over the data channel, like every call the UI makes.
+ * Sends ONLY recency + focus + a typing flag (and, for an app's chat, the app's
+ * name) to `POST /api/presence` — never keystroke content — over the data
+ * channel, like every call the UI makes.
  * A beat is a reading, not an action: while the channel is down it is skipped
  * rather than queued (the next one says the same, fresher), and the engine
  * ages out a surface that stops beating, so a closed tab needs no last word. Input listeners just stamp timestamps (cheap); the network
@@ -21,7 +22,11 @@ let lastKeyAt = 0;
 // beside this one (focused but idle, or blurred) never overwrites it.
 const SURFACE = `ui-${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`;
 
-function snapshot(): { surface: string; focused: boolean; typing: boolean; idle_ms: number } {
+// The skill this surface shows, when it is an app's chat (the embed under an
+// app page); none on the main page.
+let app: string | null = null;
+
+function snapshot(): { surface: string; focused: boolean; typing: boolean; idle_ms: number; app?: string } {
   const now = Date.now();
   // "Active in Linggen" means Linggen is the focused surface — keystrokes in
   // another app never reach this page, and a blurred/hidden tab reads as away.
@@ -33,6 +38,7 @@ function snapshot(): { surface: string; focused: boolean; typing: boolean; idle_
     focused,
     typing: focused && now - lastKeyAt < TYPING_WINDOW_MS,
     idle_ms: now - lastInputAt,
+    ...(app ? { app } : {}),
   };
 }
 
@@ -47,8 +53,13 @@ function beat(): void {
   });
 }
 
-/** Start the presence beat. Returns a cleanup function. */
-export function startPresenceBeat(): () => void {
+/**
+ * Start the presence beat. `skill` names the app this surface belongs to — an
+ * app's chat, whose keys never reach the app page around it. Returns a
+ * cleanup function.
+ */
+export function startPresenceBeat(skill?: string): () => void {
+  app = skill || null;
   const onKey = () => {
     lastInputAt = Date.now();
     lastKeyAt = Date.now();

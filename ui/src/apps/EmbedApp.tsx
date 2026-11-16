@@ -30,6 +30,7 @@ import { lastRefusal, openModelsSettings, resendOnOwnModel } from '../lib/ownMod
 import { pageAgent, setPageAgent } from '../lib/pageAgent';
 import { boundTo, parseBinding } from '../lib/sessionBinding.mts';
 import { startNewChat } from '../lib/newChat';
+import { startPresenceBeat } from '../lib/presence';
 
 const params = new URLSearchParams(window.location.search);
 const pinnedSession = params.get('session') || '';
@@ -106,6 +107,10 @@ export const EmbedApp: React.FC = () => {
     if (!pinnedSkill) return projectStore.createSession();
     return startNewChat().then(() => loadSkillSessions());
   }, [projectStore, loadSkillSessions]);
+
+  // An app's chat beats as that app: typing here never reaches the app page's
+  // own beat, and the engine keeps the time each app is in use from both.
+  useEffect(() => (pinnedSkill ? startPresenceBeat(pinnedSkill) : undefined), []);
 
   // --- Run info + chat actions (for clipboard bridge) ---
   const { runningMainRunIds } = useRunInfo();

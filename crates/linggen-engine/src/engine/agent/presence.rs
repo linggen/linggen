@@ -37,6 +37,18 @@ const BEAT_LIVE_SECS: u64 = 60;
 const SURFACE_EXPIRES_SECS: u64 = 300;
 /// The most surfaces kept; the longest silent go first.
 const MAX_SURFACES: usize = 32;
+/// The surface a typed turn stamps (`AgentManager::mark_user_turn_presence`).
+/// It says the person is here, not which page is in front of them.
+pub const USER_TURN_SURFACE: &str = "user-turn";
+
+/// The page in front of the person: the focused live surface with the
+/// freshest input. `app` is the skill the page names; `None` is Linggen's own
+/// main page (or a page too old to name itself).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Front {
+    pub app: Option<String>,
+    pub last_input_at: u64,
+}
 
 impl Presence {
     /// Whether a beat saying "not focused" must be ignored: the same slot said
@@ -151,6 +163,22 @@ impl PresenceBoard {
             .unwrap_or_default()
     }
 
+    /// Which page is in front at `now`, from the pages' own beats only — a
+    /// typed turn (the phone, the CLI) says nothing about what is on screen.
+    pub fn front(&self, now: u64) -> Option<Front> {
+        let turn = format!("s:{USER_TURN_SURFACE}");
+        self.surfaces
+            .iter()
+            .filter(|(key, _)| **key != turn)
+            .map(|(_, p)| p)
+            .filter(|p| p.focused && now.saturating_sub(p.updated_at) <= BEAT_LIVE_SECS)
+            .max_by_key(|p| (p.last_input_at, p.updated_at))
+            .map(|p| Front {
+                app: p.app.clone(),
+                last_input_at: p.last_input_at,
+            })
+    }
+
     #[cfg(test)]
     fn len(&self) -> usize {
         self.surfaces.len()
@@ -262,6 +290,25 @@ mod tests {
         // Beside a surface that names itself, the more present one wins.
         b.record(beat(Some("x"), true, false, 30), now + 15);
         assert_eq!(b.snapshot(now + 15).state(now + 15), "present_reading");
+    }
+
+    #[test]
+    fn the_front_page_is_the_focused_live_one_with_the_freshest_input() {
+        let now = 1_000;
+        let mut b = PresenceBoard::default();
+        assert_eq!(b.front(now), None, "nothing beats: nothing in front");
+        let mut page = beat(Some("page"), true, false, 30);
+        page.app = Some("tiles".into());
+        b.record(page, now);
+        b.record(beat(Some("main"), false, false, 0), now);
+        assert_eq!(b.front(now).unwrap().app.as_deref(), Some("tiles"), "a blurred page is not in front");
+
+        // A typed turn stamps presence but is no page.
+        b.record(beat(Some(USER_TURN_SURFACE), true, true, 0), now);
+        assert_eq!(b.front(now).unwrap().app.as_deref(), Some("tiles"));
+
+        // The page stops beating: nothing is in front once it is not live.
+        assert_eq!(b.front(now + BEAT_LIVE_SECS + 1), None);
     }
 
     #[test]
