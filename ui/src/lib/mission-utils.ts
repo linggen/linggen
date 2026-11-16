@@ -1,5 +1,7 @@
 /** Mission display helpers — pure functions, no I/O. */
 
+import type { MissionLastRun } from '../types';
+
 const DAY_NAMES: Record<string, string> = {
   '0': 'Sun', '1': 'Mon', '2': 'Tue', '3': 'Wed', '4': 'Thu', '5': 'Fri', '6': 'Sat', '7': 'Sun',
 };
@@ -35,3 +37,16 @@ export const PERMISSION_MODES = [
   { value: 'edit', label: 'Edit', desc: 'Write + edit files within the working directory and declared paths.', color: 'blue' },
   { value: 'admin', label: 'Admin', desc: 'Full access, no restrictions. Use with caution.', color: 'amber' },
 ] as const;
+
+/** What went wrong in a mission's last run, in a few words — `null` when it
+ *  went as planned (or there is none yet). */
+export function lastRunTrouble(run: MissionLastRun | null | undefined): string | null {
+  if (!run) return null;
+  if (run.status === 'failed') return 'Last run failed';
+  if (run.failure_count > 0) {
+    const calls = run.failure_count === 1 ? '1 tool call' : `${run.failure_count} tool calls`;
+    return `Last run: ${calls} failed`;
+  }
+  if (run.hit_limit) return 'Last run stopped at its step limit';
+  return null;
+}

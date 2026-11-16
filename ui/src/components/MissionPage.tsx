@@ -3,7 +3,7 @@ import { ArrowLeft, Target, Plus, Trash2, Check, X, Pause, Play } from 'lucide-r
 import { cn } from '../lib/cn';
 import type { AgentInfo, CronMission } from '../types';
 import { useSessionStore } from '../stores/sessionStore';
-import { describeCron, folderLabel } from '../lib/mission-utils';
+import { describeCron, folderLabel, lastRunTrouble } from '../lib/mission-utils';
 import { fetchMissions, updateMission, deleteMission } from '../lib/missions-api';
 import { MissionEditor } from './mission/MissionEditor';
 import { agentFiles } from '../lib/endpoints';
@@ -61,6 +61,7 @@ const MissionNav: React.FC<{
 
         {missions.map(mission => {
           const projLabel = folderLabel(mission.cwd || mission.project);
+          const trouble = lastRunTrouble(mission.last_run);
 
           return (
             <div key={mission.id} className="rounded-lg">
@@ -92,6 +93,11 @@ const MissionNav: React.FC<{
                       {mission.skill && <> &middot; from {mission.skill}</>}
                       {projLabel && <> &middot; {projLabel}</>}
                     </div>
+                    {trouble && (
+                      <div className="text-[11px] text-red-500 dark:text-red-400 truncate mt-0.5">
+                        {trouble}
+                      </div>
+                    )}
                   </button>
                 </div>
 

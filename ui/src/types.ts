@@ -433,6 +433,22 @@ export interface CronMission {
   skill?: string | null;
 
   created_at: number;
+
+  /** The newest run that ran (skips left out); absent before the first. */
+  last_run?: MissionLastRun | null;
+}
+
+/** A mission's newest run, as the mission list shows it. */
+export interface MissionLastRun {
+  run_id: string;
+  triggered_at: number;
+  /** running | completed | failed | cancelled | interrupted */
+  status: string;
+  /** Tool calls in the run that ended in failure. */
+  failure_count: number;
+  /** The run stopped at its step limit rather than on a final reply. */
+  hit_limit: boolean;
+  session_id?: string | null;
 }
 
 // --- Storage browser types ---

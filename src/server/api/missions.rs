@@ -38,13 +38,45 @@ fn validate_mode(mode: &str) -> Result<(), String> {
 /// GET /api/missions — list all global missions.
 pub(crate) async fn list_missions(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
     match state.missions.list_all_missions() {
-        Ok(missions) => Json(serde_json::json!({ "missions": missions })).into_response(),
+        Ok(missions) => {
+            let listed: Vec<serde_json::Value> = missions
+                .iter()
+                .map(|m| with_last_run(&state, m))
+                .collect();
+            Json(serde_json::json!({ "missions": listed })).into_response()
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Failed to list missions: {}", e),
         )
             .into_response(),
     }
+}
+
+/// A mission as the list shows it, with its newest run that ran (skips left
+/// out) as `last_run`: when, its status, and how many tool calls failed in
+/// it — so the list can mark a run that had something go wrong.
+fn with_last_run(state: &ServerState, mission: &crate::engine::mission::record::Mission) -> serde_json::Value {
+    let mut value = serde_json::to_value(mission).unwrap_or_default();
+    let last = state
+        .missions
+        .list_mission_runs(&mission.id)
+        .ok()
+        .and_then(|runs| runs.into_iter().find(|r| !r.skipped));
+    if let (Some(obj), Some(run)) = (value.as_object_mut(), last) {
+        obj.insert(
+            "last_run".into(),
+            serde_json::json!({
+                "run_id": run.run_id,
+                "triggered_at": run.triggered_at,
+                "status": run.status,
+                "failure_count": run.failure_count,
+                "hit_limit": run.hit_limit,
+                "session_id": run.session_id,
+            }),
+        );
+    }
+    value
 }
 
 #[derive(Deserialize)]
