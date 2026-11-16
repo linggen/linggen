@@ -148,6 +148,7 @@ impl Tools {
             self.max_delegation_depth,
             self.ask_user_bridge.clone(),
             self.session_id.clone(),
+            self.turn_place.clone(),
             self.session_policy.clone(),
             self.parent_allowed_tools.clone(),
             self.parent_path_modes.clone(),
@@ -357,6 +358,7 @@ pub(crate) async fn run_delegation(
     max_delegation_depth: usize,
     ask_user_bridge: Option<Arc<AskUserBridge>>,
     session_id: Option<String>,
+    parent_place: Option<crate::engine::turn_place::TurnPlace>,
     parent_policy: Option<crate::engine::session_policy::SessionPolicy>,
     parent_allowed_tools: Option<std::collections::HashSet<String>>,
     parent_path_modes: Vec<crate::engine::permission::PathMode>,
@@ -435,6 +437,9 @@ pub(crate) async fn run_delegation(
     engine.set_run_id(Some(run_id.clone()));
     engine.set_task(task);
     engine.tools.builtins.set_session_id(session_id.clone());
+    // It stands where its parent's turn stands: the app's memory, values
+    // and grants are the parent's place's.
+    engine.tools.builtins.turn_place = parent_place;
     engine.withhold_session_tools(&manager.global_sessions, session_id.as_deref());
 
     // Inherit consumer restrictions from parent — subagents can only tighten, never widen.

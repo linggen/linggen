@@ -368,6 +368,7 @@ async fn run_approved_plan_task(
         sender: None,
         via: None,
         silence_ok: false,
+        place: super::turn_place::of_session_id(&manager, &sid_default),
     };
     run_plan_execution(&ctx, &mut engine).await;
 

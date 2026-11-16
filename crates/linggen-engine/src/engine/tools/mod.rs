@@ -380,6 +380,9 @@ pub struct Tools {
     /// write a skill's own files (pictures) resolve the folder here and
     /// build the `/apps/<name>/...` URL the web UI and phone can load.
     pub(crate) active_skill: Option<(String, PathBuf)>,
+    /// The place the running turn stands in (`turn_place`), set when it
+    /// enters and cleared when it leaves; a delegated run gets its parent's.
+    pub(crate) turn_place: Option<crate::engine::turn_place::TurnPlace>,
     /// The running turn's Steer (`engine/steer.rs`), wired by the server for
     /// a person's turn: a foreground Bash moves to the background on it.
     pub(crate) steer: Option<Arc<crate::engine::steer::SteerSignal>>,
@@ -407,6 +410,7 @@ impl Tools {
             last_ask_user: Arc::new(std::sync::Mutex::new(None)),
             browser_bridge: None,
             active_skill: None,
+            turn_place: None,
             steer: None,
         })
     }
@@ -562,21 +566,31 @@ impl Tools {
         env
     }
 
-    /// The values this session is bound to (`SessionMeta::params`), for a
-    /// tool of `skill` — only when the session is that skill's: a session's
-    /// params are its own skill's declarations, never another skill's.
+    /// The values the running turn's place is bound to, for a tool of
+    /// `skill` — only when the place is that skill's: a session's params are
+    /// its own skill's declarations, never another skill's.
     pub fn session_params_for(
         &self,
         skill: Option<&str>,
     ) -> crate::engine::skill::params::SessionParams {
-        let (Some(sid), Some(skill), Some(manager)) = (&self.session_id, skill, self.get_manager())
-        else {
-            return Default::default();
+        let place = self.place();
+        match skill {
+            Some(name) if place.skill.as_deref() == Some(name) => place.params,
+            _ => Default::default(),
+        }
+    }
+
+    /// Where a call stands: the running turn's place, else — a call no turn
+    /// made — the session's own (`TurnPlace::of_session`).
+    pub fn place(&self) -> crate::engine::turn_place::TurnPlace {
+        if let Some(place) = &self.turn_place {
+            return place.clone();
+        }
+        let meta = match (&self.session_id, self.get_manager()) {
+            (Some(sid), Some(manager)) => manager.global_sessions.get_session_meta(sid).ok().flatten(),
+            _ => None,
         };
-        manager
-            .global_sessions
-            .params_for(sid, skill)
-            .unwrap_or_default()
+        crate::engine::turn_place::TurnPlace::of_session(meta.as_ref())
     }
 
     pub fn cwd(&self) -> PathBuf {
@@ -597,6 +611,23 @@ impl Tools {
         let Some(sid) = &self.session_id else { return };
         let mut map = self.cwd_by_session.lock_ok();
         map.entry(sid.clone()).or_insert(path);
+    }
+
+    /// Set this session's folder (`None`: forget it, so it is `root` again)
+    /// and return the one it replaced — a place other than the session's
+    /// own works in its own folder for its turn.
+    pub(crate) fn replace_session_cwd(&self, path: Option<PathBuf>) -> Option<PathBuf> {
+        let sid = self.session_id.as_ref()?;
+        let mut map = self.cwd_by_session.lock_ok();
+        match path {
+            Some(p) => map.insert(sid.clone(), p),
+            None => map.remove(sid),
+        }
+    }
+
+    /// The running turn stands in a place other than the session's own.
+    pub(crate) fn in_foreign_place(&self) -> bool {
+        self.turn_place.as_ref().is_some_and(|p| !p.own)
     }
 
     // ── Execute dispatcher ──────────────────────────────────────────────

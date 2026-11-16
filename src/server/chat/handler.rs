@@ -829,7 +829,7 @@ pub(crate) async fn run_session_turn(
     // are pushed), the buffer holds only completed prior turns — safe to
     // trim.
     trim_capped(engine, max_live_msgs);
-    super::turn_place::apply_session_bound_skill(engine, ctx).await;
+    super::turn_place::bind_turn_place(engine, ctx).await;
     apply_session_bound_mission(engine, ctx).await;
     // The thread outgrew the smallest member's window: one summary for
     // every member, then this member's thread from it on.
@@ -838,6 +838,7 @@ pub(crate) async fn run_session_turn(
     }
     dispatch_turn(ctx, engine, manager, &ctx.clean_msg).await;
     super::thread::mark(engine, ctx);
+    super::turn_place::leave_turn_place(engine);
 }
 
 fn bind_turn_session(engine: &mut crate::engine::AgentEngine, session_id: Option<String>) {
@@ -981,10 +982,13 @@ fn refused_reply(
 /// companion can't come (a proxy-room consumer's session — her turn would
 /// answer with the owner's memory — or the pet is off), or the session's
 /// skill keeps the agent away for now (`absent`). `None`: the turn runs.
+/// `place`: the turn's, whose skill's gate decides who is there — `None`
+/// for a session this request is about to make, where only the machine's
+/// presence counts.
 async fn refusal(
     state: &Arc<ServerState>,
     target: &str,
-    session_id: &str,
+    (session_id, place): (&str, Option<&crate::engine::turn_place::TurnPlace>),
     user_type: &str,
 ) -> Option<&'static str> {
     if super::members::is_companion(target) && !crate::server::resident::is_own_session(session_id)
@@ -995,7 +999,7 @@ async fn refusal(
             return Some("unavailable");
         }
     }
-    super::presence::absent_in_session(&state.manager, session_id, target)
+    super::presence::absent_at(&state.manager, place, target)
         .await
         .then_some("absent")
 }
@@ -1049,13 +1053,11 @@ pub(crate) async fn start_turn(
     if let Some(meta) = meta.as_ref().filter(|m| !m.runtime.is_linggen()) {
         return crate::server::claude::start_turn(state, req, meta.clone()).await;
     }
-    let bound_skill = meta.as_ref().and_then(|m| m.skill.clone());
-    let session_creator = super::turn_place::turn_creator(
-        req.mission_id.as_deref(),
-        req.skill_name.as_deref(),
-        bound_skill.as_deref(),
-    );
-    let skill = match req.skill_name.as_deref().or(bound_skill.as_deref()) {
+    // Where this turn stands: the page's app, else the session's own.
+    let turn_place =
+        crate::engine::turn_place::TurnPlace::of_request(req.skill_name.as_deref(), meta.as_ref());
+    let session_creator = super::turn_place::turn_creator(req.mission_id.as_deref(), &turn_place);
+    let skill = match turn_place.skill.as_deref() {
         Some(name) => state.manager.skills.get_skill(name).await,
         None => None,
     };
@@ -1071,7 +1073,8 @@ pub(crate) async fn start_turn(
     // Not there yet in this skill's world, or not one who can come here: no
     // turn and nothing kept — no session made or retitled. The page says its
     // own line.
-    if let Some(status) = refusal(&state, &target_id, &sid, &req.user_type).await {
+    let gate_place = meta.as_ref().map(|_| &turn_place);
+    if let Some(status) = refusal(&state, &target_id, (&sid, gate_place), &req.user_type).await {
         return refused_reply(status, req.session_id.as_deref(), &target_id);
     }
     if !state.manager.agent_exists(&root, &target_id).await {
@@ -1152,7 +1155,7 @@ pub(crate) async fn start_turn(
     };
     let turn = state.manager.session_turn(&effective_session_id);
     let (was_busy, place) = take_turn_place(turn);
-    let queue = match bound_skill.as_deref() {
+    let queue = match turn_place.skill.as_deref() {
         _ if origin != TurnOrigin::Person => QueueMode::AfterTurn,
         Some(name) if was_busy => state
             .manager
@@ -1386,6 +1389,7 @@ pub(crate) async fn start_turn(
             sender,
             via: via.clone(),
             silence_ok: false,
+            place: turn_place,
         };
 
         run_session_turn(&ctx, &mut engine, &manager, None).await;

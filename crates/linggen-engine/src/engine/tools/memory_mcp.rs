@@ -231,18 +231,12 @@ fn set(args: &mut Value, field: &str, value: Value) {
     }
 }
 
-/// The dir of the skill this session is bound to, when that skill uses
-/// memory (declares `memory-context`). Skills that don't (e.g. Pulse) stand
-/// at their session cwd like any other session.
+/// The dir of the skill the call's place stands in (`Tools::place`), when
+/// that skill uses memory (declares `memory-context`). Skills that don't
+/// (e.g. Pulse) stand at their session cwd like any other session.
 async fn bound_skill_dir(tools: &Tools) -> Option<std::path::PathBuf> {
     let manager = tools.get_manager()?;
-    let sid = tools.session_id.clone()?;
-    let meta = manager
-        .global_sessions
-        .get_session_meta(&sid)
-        .ok()
-        .flatten()?;
-    let skill_name = meta.skill?;
+    let skill_name = tools.place().skill?;
     let skill = manager.skills.reload_one(&skill_name).await?;
     skill
         .memory_context

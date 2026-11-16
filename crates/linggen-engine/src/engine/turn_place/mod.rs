@@ -97,5 +97,7 @@ impl TurnPlace {
     }
 }
 
+pub(crate) mod bind;
+
 #[cfg(test)]
 mod tests;

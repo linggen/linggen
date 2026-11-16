@@ -89,7 +89,7 @@ pub(super) async fn rebuild(engine: &mut AgentEngine, ctx: &ChatRunCtx) -> bool 
         rows.pop();
     }
     let agents = speaking_agents(ctx, &rows).await;
-    let others_read = declared_for_others(ctx, sid).await;
+    let others_read = declared_for_others(ctx).await;
     let reader = Reader {
         id: &ctx.agent_id,
         agents: &agents,
@@ -183,18 +183,11 @@ async fn speaking_agents(ctx: &ChatRunCtx, rows: &[ChatMsg]) -> HashSet<String> 
     agents
 }
 
-/// The session skill's tools that declare `others_read`: name → paths.
-/// Empty for a session without a skill.
-async fn declared_for_others(ctx: &ChatRunCtx, sid: &str) -> HashMap<String, Vec<String>> {
-    let skill_name = ctx
-        .manager
-        .global_sessions
-        .get_session_meta(sid)
-        .ok()
-        .flatten()
-        .and_then(|m| m.skill);
-    let Some(skill) = (match skill_name {
-        Some(name) => ctx.manager.skills.get_skill(&name).await,
+/// The turn's place's skill's tools that declare `others_read`: name →
+/// paths. Empty at home.
+async fn declared_for_others(ctx: &ChatRunCtx) -> HashMap<String, Vec<String>> {
+    let Some(skill) = (match ctx.place.skill.as_deref() {
+        Some(name) => ctx.manager.skills.get_skill(name).await,
         None => None,
     }) else {
         return HashMap::new();

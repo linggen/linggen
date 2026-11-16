@@ -170,19 +170,21 @@ pub(crate) async fn get_system_prompt_api(
         engine.session_creator = Some(meta.creator.clone());
         // The same creator rule a real turn follows: a skill's or a
         // mission's session gets no core block and no memory protocol.
+        // The export has no page: the session's own place, entered as a
+        // real turn enters it (its memory index, its tools, its SKILL.md).
+        let place = crate::engine::turn_place::TurnPlace::of_session(Some(&meta));
         engine
             .prompt_profile
             .narrow_for_creator(super::turn_place::turn_creator(
                 meta.mission_id.as_deref(),
-                None,
-                meta.skill.as_deref(),
+                &place,
             ));
-        if let Some(ref skill_name) = meta.skill {
-            if let Some(skill) = state.manager.skills.reload_one(skill_name).await {
-                // The app's own memory index, as a real turn wires it.
-                engine.prompt_profile.scope_to_app(&skill);
-                engine.activate_skill(skill, ActivationMode::Export).await;
-            }
+        let skill = match place.skill.as_deref() {
+            Some(name) => state.manager.skills.reload_one(name).await,
+            None => None,
+        };
+        if skill.is_some() {
+            engine.enter_place(place, skill, ActivationMode::Export).await;
         }
         if let Some(ref mission_id) = meta.mission_id {
             let mission = state

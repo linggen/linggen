@@ -391,7 +391,9 @@ impl Tools {
             .cwd_by_session
             .lock_ok()
             .insert(sid.clone(), new_cwd.clone());
-        if old_cwd.as_ref() == Some(&new_cwd) {
+        // A turn in another app's place moves only its own folder: the
+        // session's (its meta, the chat's folder line) stays where it is.
+        if old_cwd.as_ref() == Some(&new_cwd) || self.in_foreign_place() {
             return;
         }
         let Some(tx) = &self.progress_tx else { return };

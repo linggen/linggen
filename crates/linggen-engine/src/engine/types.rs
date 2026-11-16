@@ -407,6 +407,9 @@ pub struct AgentEngine {
     /// The active skill is the one the session is bound to, not one taken up
     /// mid-chat: like an app's, its SKILL.md is the agent's place.
     pub(crate) skill_bound: bool,
+    /// What entering the running turn's place changed, so leaving it puts
+    /// that back (`turn_place::bind`). `None` between turns.
+    pub(crate) entered_place: Option<super::turn_place::bind::Entered>,
     /// Tools the caller of this turn withholds: never offered to the model,
     /// and refused if called anyway. Set per turn by whoever drives it (a
     /// companion woken by an app moment speaks its own line and reaches no
@@ -677,6 +680,7 @@ impl AgentEngine {
             session_lead: None,
             session_tools: None,
             skill_bound: false,
+            entered_place: None,
             withheld_tools: Default::default(),
             turn_tool_allowlist: None,
             turn_language: None,

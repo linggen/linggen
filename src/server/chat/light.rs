@@ -45,10 +45,13 @@ pub(crate) async fn reply_in_session(
         sender: None,
         via: None,
         silence_ok: true,
+        place: crate::engine::turn_place::TurnPlace::of_session(Some(&meta)),
     };
     ready(&ctx, &mut engine).await;
     let tail = super::thread::spoken_tail(&ctx, TAIL_MESSAGES).await;
-    match engine.light_reply(tail, ask, session_id).await {
+    let reply = engine.light_reply(tail, ask, session_id).await;
+    super::turn_place::leave_turn_place(&mut engine);
+    match reply {
         Ok(line) => line,
         Err(e) => {
             super::helpers::announce_allowance_spent(
@@ -63,7 +66,7 @@ pub(crate) async fn reply_in_session(
 }
 
 /// The engine as a turn of this member's would have it: live models, the
-/// member's model, its seat, and the session's skill.
+/// member's model, its seat, and its place.
 async fn ready(ctx: &ChatRunCtx, engine: &mut crate::engine::AgentEngine) {
     engine.model_manager = ctx.manager.models.read().await.clone();
     let sid = ctx.session_id.as_deref().unwrap_or("default");
@@ -84,5 +87,5 @@ async fn ready(ctx: &ChatRunCtx, engine: &mut crate::engine::AgentEngine) {
     )
     .await;
     super::handler::seat_member(engine, ctx).await;
-    super::turn_place::apply_session_bound_skill(engine, ctx).await;
+    super::turn_place::bind_turn_place(engine, ctx).await;
 }

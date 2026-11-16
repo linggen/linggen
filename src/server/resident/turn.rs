@@ -96,12 +96,15 @@ pub(super) async fn run_home(
     // Engine-authored kickoffs (heralds, agent_chat, asked) carry the
     // spoken-line contract; a person's own words are never appended to.
     let task = with_contract(task, trigger_source);
+    // Her own thread holds no skill: home.
+    let place = crate::server::chat::turn_place::of_session_id(&state.manager, &session_id);
     let turn = Turn {
         session_id,
         root,
         reach,
         home: true,
         language,
+        place,
     };
     run_at(state, &turn, &pet, task, trigger_source).await
 }
@@ -136,12 +139,15 @@ async fn run_at_table(
     crate::server::chat::members::seat(&state.manager, &session_id, YINYUE_AGENT).await;
     let root = crate::util::resolve_path(std::path::Path::new(&meta.cwd));
     let task = with_contract(task, trigger_source);
+    // No page sent it: she stands in the table's own app.
+    let place = crate::engine::turn_place::TurnPlace::of_session(Some(&meta));
     let turn = Turn {
         session_id,
         root,
         reach: Reach::Sealed,
         home: false,
         language,
+        place,
     };
     run_at(state, &turn, &pet, task, trigger_source).await
 }
@@ -163,6 +169,8 @@ struct Turn {
     /// The language this turn answers in, when its caller names one (an app
     /// moment's `lang`); `None` is the Linggen language.
     language: Option<String>,
+    /// The place her turn stands in (`TurnPlace::of_session`).
+    place: crate::engine::turn_place::TurnPlace,
 }
 
 /// One turn of hers, through the shared turn-core, on her model. Returns
@@ -226,7 +234,7 @@ async fn run_at(
         apply_her_model(state, &mut engine, session_id, pet).await;
         // At an app's table the session's recall policy is the app's: no
         // biography, no core block (`chat::turn_place::turn_creator`).
-        if !turn.home && table_is_not_a_persons(state, session_id) {
+        if !turn.home && table_is_not_a_persons(state, turn) {
             engine.prompt_profile.include_memory = false;
         }
 
@@ -252,6 +260,7 @@ async fn run_at(
             sender: None,
             // At a table, silence is an answer and leaves no row there.
             silence_ok: !turn.home && trigger_source != "asked",
+            place: turn.place.clone(),
         };
         let cap = turn.home.then_some(YINYUE_MAX_LIVE_MSGS);
         crate::server::chat::run_session_turn(&ctx, &mut engine, &state.manager, cap).await;
@@ -326,16 +335,17 @@ fn resend_hers(
     })
 }
 
-/// Whether the session at this table belongs to a skill or a mission — not a
-/// person's own chat.
-fn table_is_not_a_persons(state: &Arc<ServerState>, session_id: &str) -> bool {
-    state
-        .manager
-        .global_sessions
-        .get_session_meta(session_id)
-        .ok()
-        .flatten()
-        .is_some_and(|m| m.skill.is_some() || m.mission_id.is_some())
+/// Whether her turn at this table stands in an app, or the table is a
+/// mission's — not a person's own chat.
+fn table_is_not_a_persons(state: &Arc<ServerState>, turn: &Turn) -> bool {
+    turn.place.skill.is_some()
+        || state
+            .manager
+            .global_sessions
+            .get_session_meta(&turn.session_id)
+            .ok()
+            .flatten()
+            .is_some_and(|m| m.mission_id.is_some())
 }
 
 /// Her model in this session: the one the session keeps for her, else her
@@ -536,6 +546,7 @@ mod tests {
             reach: Reach::Sealed,
             home,
             language: None,
+            place: crate::engine::turn_place::TurnPlace::home(),
         }
     }
 

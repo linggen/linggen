@@ -392,6 +392,7 @@ async fn tell_in_place(
         policy: crate::engine::session_policy::SessionPolicy::owner(),
         sender: Some(sender),
         silence_ok: false,
+        place: super::chat::turn_place::of_session_id(&state.manager, &session),
     };
     super::chat::run_session_turn(&ctx, &mut engine, &state.manager, None).await;
 }

@@ -37,7 +37,7 @@ pub(crate) use runtime::owner_turn_memory;
 mod skill_dispatch;
 mod structured;
 mod thread;
-mod turn_place;
+pub(crate) mod turn_place;
 pub(crate) mod types;
 
 pub(crate) use admin::{
@@ -81,6 +81,10 @@ pub(super) struct ChatRunCtx {
     /// The kickoff offers silence: a reply that is exactly `SILENT` is
     /// neither streamed, shown nor kept.
     pub(super) silence_ok: bool,
+    /// The place this turn stands in: what it takes from an app
+    /// (`turn_place`) is set from this when it starts and cleared when it
+    /// ends.
+    pub(crate) place: crate::engine::turn_place::TurnPlace,
 }
 
 impl ChatRunCtx {

@@ -14,16 +14,11 @@
 use crate::engine::agent::AgentManager;
 use crate::engine::skill::params::SessionParams;
 use crate::engine::skill::Skill;
+use crate::engine::turn_place::TurnPlace;
 
-/// The skill a session is bound to, and the values the session is bound to
-/// for it (`SessionMeta::params`).
-async fn session_skill(manager: &AgentManager, session_id: &str) -> Option<(Skill, SessionParams)> {
-    let meta = manager
-        .global_sessions
-        .get_session_meta(session_id)
-        .ok()??;
-    let skill = manager.skills.get_skill(&meta.skill?).await?;
-    Some((skill, meta.params))
+/// The skill a place stands in, when it has one that resolves.
+async fn place_skill(manager: &AgentManager, place: &TurnPlace) -> Option<Skill> {
+    manager.skills.get_skill(place.skill.as_deref()?).await
 }
 
 /// Whether `agent` is absent from `skill` right now: the skill's own gate
@@ -37,15 +32,27 @@ fn absent_from(skill: &Skill, params: &SessionParams, agent: &str, here: bool) -
 }
 
 /// Whether `agent` is absent from the skill bound to `session_id` — or, for
-/// a session with no skill, from the machine.
+/// a session with no skill, from the machine. A moment naming a session
+/// comes from no page: the session's own place.
 pub(crate) async fn absent_in_session(
     manager: &AgentManager,
     session_id: &str,
     agent: &str,
 ) -> bool {
+    let place = super::turn_place::of_session_id(manager, session_id);
+    absent_at(manager, Some(&place), agent).await
+}
+
+/// Whether `agent` is absent from the app a turn's `place` stands in, read
+/// through the place's bound values — or, at home or with no place yet,
+/// from the machine.
+pub(crate) async fn absent_at(manager: &AgentManager, place: Option<&TurnPlace>, agent: &str) -> bool {
     let here = manager.agent_present_now(agent).await;
-    match session_skill(manager, session_id).await {
-        Some((skill, params)) => absent_from(&skill, &params, agent, here),
+    let Some(place) = place else {
+        return !here;
+    };
+    match place_skill(manager, place).await {
+        Some(skill) => absent_from(&skill, &place.params, agent, here),
         None => !here,
     }
 }

@@ -582,6 +582,7 @@ pub(super) async fn deliver_to_chat_agent(
             policy: crate::engine::session_policy::SessionPolicy::owner(),
             sender: Some(from.clone()),
             silence_ok: false,
+            place: crate::server::chat::turn_place::of_session_id(&state.manager, &session_id),
         };
         crate::server::chat::run_session_turn(&ctx, &mut engine, &state.manager, None).await;
         state.manager.clear_agent_chat_session(&session_id);
