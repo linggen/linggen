@@ -5,6 +5,7 @@ use crate::handle::Memory;
 use crate::memory::MemoryStore;
 use std::sync::Arc;
 
+pub mod admin;
 pub mod dto;
 mod place;
 pub mod read;
@@ -13,7 +14,7 @@ pub mod write;
 
 /// Pick the semantic or episodic store based on the request's `episodic`
 /// flag. Centralized so every CRUD endpoint routes consistently.
-pub(crate) fn pick_store(state: &Memory, episodic: bool) -> Arc<MemoryStore> {
+pub(super) fn pick_store(state: &Memory, episodic: bool) -> Arc<MemoryStore> {
     if episodic {
         Arc::clone(&state.episodic)
     } else {
@@ -29,7 +30,7 @@ pub(crate) fn pick_store(state: &Memory, episodic: bool) -> Arc<MemoryStore> {
 /// Returned in the order semantic-first so locate-first-hit semantics
 /// preserve the higher-tier preference when an id collision exists
 /// across tables.
-pub(crate) fn stores_for_read(state: &Memory, episodic: Option<bool>) -> Vec<Arc<MemoryStore>> {
+pub(super) fn stores_for_read(state: &Memory, episodic: Option<bool>) -> Vec<Arc<MemoryStore>> {
     match episodic {
         Some(true) => vec![Arc::clone(&state.episodic)],
         Some(false) => vec![Arc::clone(&state.store)],

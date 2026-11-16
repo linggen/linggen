@@ -5,7 +5,8 @@
 //! Semantics mirror the CLI handlers in `crate::cli` — this module is
 //! the network-facing path to the same `MemoryStore` operations. Once
 //! Phase 4 lands in Linggen, the CLI data-ops wrappers are removed and
-//! HTTP becomes the only dispatch path.
+//! HTTP becomes the only dispatch path. The verbs themselves are
+//! `crate::ops::memory`; each handler here extracts, calls and wraps.
 
 use super::envelope::{ok, ApiError};
 use super::state::SharedState;
@@ -15,12 +16,10 @@ use crate::ops::memory::dto::{
     AddBatchRequest, CountRequest, DeleteRequest, ForgetRequest, GetRequest, ListRequest,
     RestampRequest, SearchRequest, UpdateRequest,
 };
-use crate::ops::memory::{pick_store, stores_for_read};
 use axum::extract::State;
 use axum::response::Response;
 use axum::routing::post;
 use axum::{Json, Router};
-use serde_json::{json, Value};
 
 /// Memory subrouter. Mounted at `/api/memory/` by the parent router.
 pub fn router() -> Router<SharedState> {
@@ -93,21 +92,7 @@ async fn delete(
     State(state): State<SharedState>,
     Json(req): Json<DeleteRequest>,
 ) -> Result<Response, ApiError> {
-    let scope = req.scope.scope();
-    for store in stores_for_read(&state, req.episodic) {
-        // Fetch first: a row outside the caller's account is simply not
-        // theirs to remove, and it answers exactly as a missing one does.
-        let Some(fact) = store.get(&req.id).await? else {
-            continue;
-        };
-        if !scope.admits(&fact) {
-            break;
-        }
-        if store.delete(&req.id).await? {
-            return Ok(ok(json!({"id": req.id, "removed": true})));
-        }
-    }
-    Ok(ok(json!({"id": req.id, "removed": false})))
+    Ok(ok(ops::memory::admin::delete(&state, req).await?))
 }
 
 /// `POST /api/memory/restamp` — re-own every row stamped `from` (both
@@ -116,76 +101,28 @@ async fn restamp(
     State(state): State<SharedState>,
     Json(req): Json<RestampRequest>,
 ) -> Result<Response, ApiError> {
-    let from = req.from.trim().to_string();
-    if from.is_empty() {
-        return Err(ApiError::bad_request("from must not be empty"));
-    }
-    let to = req
-        .account_id
-        .map(|a| a.trim().to_string())
-        .filter(|a| !a.is_empty());
-    let name = req.account_name.filter(|n| !n.trim().is_empty());
-    let mut moved = 0usize;
-    for store in stores_for_read(&state, None) {
-        moved += store
-            .restamp_account(&from, to.as_deref(), name.as_deref())
-            .await?;
-    }
-    Ok(ok(json!({"from": from, "account_id": to, "moved": moved})))
+    Ok(ok(ops::memory::admin::restamp(&state, req).await?))
 }
 
 /// `POST /api/memory/accounts` — every person the store holds rows for
 /// besides the owner: `{account_id, account_name, rows}`. What a
 /// per-account maintenance pass iterates.
 async fn accounts(State(state): State<SharedState>) -> Result<Response, ApiError> {
-    let mut seen: std::collections::BTreeMap<String, (Option<String>, usize)> =
-        std::collections::BTreeMap::new();
-    for store in stores_for_read(&state, None) {
-        for (id, name, n) in store.distinct_accounts().await? {
-            let e = seen.entry(id).or_insert((None, 0));
-            if e.0.is_none() {
-                e.0 = name;
-            }
-            e.1 += n;
-        }
-    }
-    let list: Vec<Value> = seen
-        .into_iter()
-        .map(|(id, (name, rows))| json!({"account_id": id, "account_name": name, "rows": rows}))
-        .collect();
-    Ok(ok(json!(list)))
+    Ok(ok(ops::memory::admin::accounts(&state).await?))
 }
 
 async fn forget(
     State(state): State<SharedState>,
     Json(req): Json<ForgetRequest>,
 ) -> Result<Response, ApiError> {
-    let filters = req.filters.into_filters()?;
-    // Refuse empty filters — bulk delete must be intentional. Matches the
-    // CLI's refusal when no filter flags are passed.
-    if filters.apps.is_empty()
-        && filters.types.is_empty()
-        && filters.origin.is_none()
-        && filters.outcome.is_none()
-        && filters.tier.is_none()
-        && filters.since.is_none()
-        && filters.until.is_none()
-        && filters.source_session.is_none()
-    {
-        return Err(ApiError::bad_request(
-            "forget refuses an empty filter — supply at least one of \
-             apps, type, tier, from, outcome, since, until, source_session",
-        ));
-    }
-    let store = pick_store(&state, req.episodic);
-    let removed = store.forget(&filters).await?;
-    Ok(ok(json!({"removed": removed})))
+    Ok(ok(ops::memory::admin::forget(&state, req).await?))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::memory::{Memory, MemoryStore, MemoryType, Origin, Tier};
+    use serde_json::{json, Value};
     use std::sync::Arc;
 
     /// A state over fresh stores, with an embedder that is never loaded.
@@ -305,5 +242,4 @@ mod tests {
         assert_eq!(state.store.count().await.unwrap(), 1);
         assert_eq!(state.episodic.count().await.unwrap(), 0);
     }
-
 }
