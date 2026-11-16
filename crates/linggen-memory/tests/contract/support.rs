@@ -115,6 +115,23 @@ impl Mem {
         read(res).await
     }
 
+    /// `POST` returning the response headers too.
+    pub async fn post_with_headers(
+        &self,
+        path: &str,
+        body: Value,
+    ) -> (u16, reqwest::header::HeaderMap, Value) {
+        let res = client()
+            .post(format!("{}{path}", self.base))
+            .json(&body)
+            .send()
+            .await
+            .expect("request");
+        let headers = res.headers().clone();
+        let (status, body) = read(res).await;
+        (status, headers, body)
+    }
+
     pub async fn get(&self, path: &str) -> (u16, Value) {
         let res = client()
             .get(format!("{}{path}", self.base))
