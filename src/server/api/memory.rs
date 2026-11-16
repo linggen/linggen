@@ -128,7 +128,8 @@ pub(crate) fn scope_to_caller(
 ) -> Result<(), Response> {
     match caller {
         Caller::Owner | Caller::Machine(_) => Ok(()),
-        Caller::Phone(device) => scope_phone(verb, args, person_of(device).as_ref()),
+        Caller::Phone(device) => scope_phone(verb, args, person_of(device).as_ref())
+            .map_err(|(status, message, code)| unreachable_envelope(status, message, code)),
         Caller::Unknown => Err(unreachable_envelope(
             StatusCode::FORBIDDEN,
             "memory does not know this caller".to_string(),
@@ -141,7 +142,7 @@ pub(crate) fn scope_to_caller(
 /// own phone). The owner's phone may run any verb but the Mac's own; a
 /// phone that is another person only the verbs in [`PERSON_VERBS`], with a
 /// body the stamp can mark.
-fn scope_phone(verb: &str, args: &mut Value, person: Option<&Person>) -> Result<(), Response> {
+fn scope_phone(verb: &str, args: &mut Value, person: Option<&Person>) -> Result<(), Refusal> {
     if DEVICE_FORBIDDEN_VERBS.contains(&verb) {
         return Err(forbidden(format!(
             "{verb} is the Mac's to run, not a phone's"
@@ -153,7 +154,7 @@ fn scope_phone(verb: &str, args: &mut Value, person: Option<&Person>) -> Result<
         )));
     }
     if person.is_some() && !stampable(verb, args) {
-        return Err(unreachable_envelope(
+        return Err((
             StatusCode::BAD_REQUEST,
             format!("{verb} takes a JSON object (and add_batch a list of them in facts)"),
             "BAD_REQUEST",
@@ -163,8 +164,11 @@ fn scope_phone(verb: &str, args: &mut Value, person: Option<&Person>) -> Result<
     Ok(())
 }
 
-fn forbidden(message: String) -> Response {
-    unreachable_envelope(StatusCode::FORBIDDEN, message, "FORBIDDEN")
+/// Why the door refused: status, message, envelope code.
+type Refusal = (StatusCode, String, &'static str);
+
+fn forbidden(message: String) -> Refusal {
+    (StatusCode::FORBIDDEN, message, "FORBIDDEN")
 }
 
 /// Verbs a phone may not run: they cross account lines by design, and only
