@@ -230,8 +230,11 @@ with a **kind**:
 | No token, an unknown token | no one | nothing |
 
 - **Whose rows** comes from the caller, never from the request body — unless
-  the caller is the owner or a machine. A phone's own claims are removed and
-  its person stamped (`/api/memory/<verb>`, a skill page's memory calls).
+  the caller is the owner or a machine. Every memory call names its caller
+  (`Who`: the owner, or one person); for a person, memory itself removes the
+  body's own claims and stamps the person (`/api/memory/<verb>`, a skill
+  page's memory calls). The engine's door decides which caller a request
+  is; memory decides what that caller may reach.
 - **Over the network** (through the LAN gate, with a token) a machine
   reaches `/mcp/memory` — for a machine with only a plugin — and the replica
   protocol under `/mem`: `/api/sync/changes`, `/api/sync/rows`,

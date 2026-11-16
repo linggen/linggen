@@ -88,14 +88,17 @@ The engine still speaks REST to `ling-mem` where it is a program rather than an
 agent — the dream rollup, the mission scheduler's stats, the core block,
 `/apps/<skill>/capability/*` for a skill webpage's own clicks (which reach
 `ling` over the page's data channel), and the phone's
-`POST /api/memory/<verb>` passthrough.
+`POST /api/memory/<verb>` passthrough. *2.3:* none of these is a request any
+more — the engine calls the store it hosts in-process, on memory's own
+runtime, and gets the answer the route would give.
 
 **The phone reaches memory through `ling`, and must** (2026-07-30). Yinyue is
 resident on the phone: her tool loop runs there, so she is the one caller that
 needs this store from off-machine — and off the LAN there is no IP route to the
 Mac at all, only `http_request` frames on the WebRTC channel, which terminate in
 the engine's router. So `POST /api/memory/<verb>` forwards to
-`[agent].ling_mem_url` and returns ling-mem's envelope whole. One route covers
+`[agent].ling_mem_url` (*2.3:* calls the hosted store in-process) and returns
+ling-mem's envelope whole. One route covers
 all eighteen verbs; ling-mem stays the authority on which exist. The phone never
 learns a port — moving `ling-mem` is a Mac-side config change and nothing else.
 
@@ -151,7 +154,7 @@ cannot point it elsewhere.
 | From | Transport | Path |
 |:--|:--|:--|
 | `ling`, on behalf of a model | HTTP MCP, JSON-RPC | `/mcp` — the built-in server, URL from `[agent].ling_mem_url` + `/mcp`. *2.3:* the hosted store, `/mem/mcp` on the engine's own port; no address to set |
-| `ling`, as a program | HTTP REST | `POST /api/memory/<verb>` — dream rollup, scheduler stats, core block, skill pages, the phone's passthrough |
+| `ling`, as a program | HTTP REST | `POST /api/memory/<verb>` — dream rollup, scheduler stats, core block, skill pages, the phone's passthrough. *2.3:* no edge — an in-process call on memory's runtime |
 | A second machine on the LAN | HTTP MCP, JSON-RPC | `/mcp` with `x-linggen-device`. *2.3:* not on the network — `/mcp/memory` on the engine's port |
 | `ling-mem` CLI | HTTP REST | port read from `daemon.json`. *2.3:* `ling mem <verb>` — the engine's port from the lock file, `/mem/api/memory/<verb>`; engine down, the store directly under the lock |
 | Plugin hooks | HTTP MCP, JSON-RPC | `/mcp` — `memory_search` per turn, `memory_list` for core, `memory_days` for upkeep. *2.3:* `/mcp/memory` on the engine's port; 9528 no longer answers |
