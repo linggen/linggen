@@ -221,7 +221,7 @@ building). The stores form a star: one **primary**, any number of
 - **Setup** — every machine runs its own Linggen with its own store;
   clients talk only to the local one. One setting picks the primary:
   *local* (default) or another machine's Linggen (`host:port`, its engine
-  port). Set it in Settings → Memory → Primary. An engine never uses
+  port). Set it in Settings → Memory → Settings → Other machines. An engine never uses
   another machine's store by address; an old config that names one is
   ignored. A replica that saved a primary at the old daemon's `host:9528`
   reaches nothing there: it pairs again with `host:9527`.
@@ -239,6 +239,10 @@ building). The stores form a star: one **primary**, any number of
   (a lock). Inline fixes and scan work on every machine.
 - **Status** — role, primary, online/away, queued writes: shown in the
   console, 9527 and `/linggen:config`.
+
+Settings → Memory → Settings holds memory's two own knobs, the days a
+short-term row is kept and the recall threshold (`GET`/`PUT
+/api/ling-mem/config`, the owner only), above the primary setting.
 
 A star needs one machine reliably online; multi-primary sync is in
 Future.
