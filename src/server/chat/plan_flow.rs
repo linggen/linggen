@@ -357,6 +357,10 @@ async fn run_approved_plan_task(
             .unwrap_or("Plan")
     ));
 
+    // Where it runs, kept before anything of the run is written: in a day's
+    // session its rows are the place it was made in (`turn_place::keep_in_day`).
+    let place = plan_place(&manager, &sid_default);
+    let _place = super::turn_place::keep_in_day(&manager, &sid_default, &place).await;
     // Emit PlanUpdate SSE and rewrite the persisted plan message in-place.
     let approved_snapshot = engine.plan.clone().unwrap();
     engine
@@ -381,7 +385,7 @@ async fn run_approved_plan_task(
         sender: None,
         via: None,
         silence_ok: false,
-        place: plan_place(&manager, &sid_default),
+        place,
     };
     // The plan runs in the place its session's turns stand in: the app's
     // tools and folder, as the turn that made the plan had them.

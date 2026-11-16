@@ -338,6 +338,10 @@ async fn tell_in_place(
     else {
         return;
     };
+    // Its place is kept before its notice is: the notice — a task's output
+    // tail — is a row of that place (`turn_place::sight`).
+    let told_at = super::chat::turn_place::told_in(&state.manager, &session, started_in.as_deref());
+    let _place = super::chat::turn_place::keep_in_day(&state.manager, &session, &told_at).await;
     match mark {
         Some((mark, kept)) => {
             let persisted = super::chat::helpers::persist_and_emit_with_images(
@@ -391,7 +395,7 @@ async fn tell_in_place(
         policy: crate::engine::session_policy::SessionPolicy::owner(),
         sender: Some(sender),
         silence_ok: false,
-        place: super::chat::turn_place::told_in(&state.manager, &session, started_in.as_deref()),
+        place: told_at,
     };
     super::chat::run_session_turn(&ctx, &mut engine, &state.manager, None).await;
 }

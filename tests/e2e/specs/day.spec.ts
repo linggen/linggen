@@ -57,7 +57,10 @@ test("a private app's reply reaches its own page alone; another app's stretch fo
   await send(dice, 'Roll for me');
   await expect(seen(dice, ROLLED)).toHaveCount(1);
   // The ledger's reply streamed to its own page alone.
-  for (const other of [dice, main]) await expect(seen(other, SECRET)).toHaveCount(0);
+  for (const other of [dice, main]) {
+    await expect(seen(other, SECRET)).toHaveCount(0);
+    await expect(seen(other, 'How many shares?')).toHaveCount(0);
+  }
 
   await main.reload();
   await expect(composer(main)).toBeVisible();

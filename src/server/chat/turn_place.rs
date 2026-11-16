@@ -54,6 +54,23 @@ pub(crate) async fn keep_private_if_hidden(
     }
 }
 
+/// In a day's session, keep `place` as the running turn's before a turn the
+/// engine starts on its own writes anything (a task's end notice, an
+/// approved plan's run): its rows are then that place's, and a private
+/// app's are kept to it. Elsewhere nothing is kept, and rows are as before.
+pub(crate) async fn keep_in_day(
+    manager: &crate::engine::agent::AgentManager,
+    session_id: &str,
+    place: &TurnPlace,
+) -> Option<crate::engine::turn_place::running::PlaceMark> {
+    if !crate::state_fs::day_session::is_day_session(session_id) {
+        return None;
+    }
+    let mark = manager.global_sessions.running_places.mark(session_id, place)?;
+    keep_private_if_hidden(manager, session_id, place).await;
+    Some(mark)
+}
+
 /// The app `place` keeps its talk to in session `session_id`, when it is
 /// hidden from the session's other places (`turn_place::sight`).
 pub(crate) async fn hidden_app(

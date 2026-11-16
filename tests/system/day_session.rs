@@ -677,3 +677,89 @@ async fn switching_off_and_on_again_loses_no_session() {
         "the app's chat stays"
     );
 }
+
+/// A made-up private app whose agent runs shell commands in its own folder.
+async fn install_worker(w: &World) {
+    let dir = w.home.linggen_home().join("skills/worker");
+    std::fs::create_dir_all(&dir).expect("worker dir");
+    std::fs::write(
+        dir.join("SKILL.md"),
+        "---\nname: worker\ndescription: A private test worker.\nallowed-tools: [Bash]\n\
+         private-talk: true\ncwd: ~/.linggen/skills/worker\n---\n\nRun what you are asked.\n",
+    )
+    .expect("SKILL.md");
+    w.api.post("/api/skills/reload", json!({})).await;
+}
+
+/// Answer every question the worker's page is shown until Ling has made
+/// `n` calls.
+async fn calls_granting_on_its_page(w: &World, n: usize) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while w.model.calls_of(Agent::Ling).len() < n {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "only {} calls",
+            w.model.calls_of(Agent::Ling).len()
+        );
+        let asks = w.api.get("/api/pending-ask-user?skill=worker").await;
+        for ask in asks.as_array().cloned().unwrap_or_default() {
+            w.api.answer(&ask, "grant:all").await;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
+/// A private app's background command ends after its turn: its end — the
+/// output's tail — is told in that app, a row of its place, and the next
+/// turn at home is given none of it. Every row of the day names its place.
+#[tokio::test]
+async fn a_private_apps_task_end_is_told_in_that_app() {
+    let setup = Setup::default().script(
+        Agent::Ling,
+        vec![
+            tool(
+                "Bash",
+                json!({"cmd": "sleep 1; echo WORKER-OUT-7", "run_in_background": true}),
+            ),
+            text("Started it."),
+            text("It finished."),
+            text("Home."),
+        ],
+    );
+    let (w, _) = day_world_at(12, setup).await;
+    install_worker(&w).await;
+    let day = w
+        .api
+        .create_session(json!({"title": "Worker", "skill": "worker"}))
+        .await;
+    say(&w, &day, Some("worker"), "Run it in the background").await;
+    calls_granting_on_its_page(&w, 3).await;
+    let told = w.model.calls_of(Agent::Ling)[2].text();
+    assert!(
+        told.contains("WORKER-OUT-7"),
+        "the end is told with its output: {told}"
+    );
+    turn_at(&w, &day, None, "Anything else?", Agent::Ling).await;
+
+    let home = w.model.calls_of(Agent::Ling).pop().unwrap();
+    assert!(
+        !home.text().contains("WORKER-OUT-7"),
+        "the task's output reached a home turn"
+    );
+    let rows = w.raw_rows(&day);
+    let notice = rows
+        .iter()
+        .find(|r| {
+            r["from_id"] == "system"
+                && r["content"]
+                    .as_str()
+                    .is_some_and(|c| c.contains("WORKER-OUT-7"))
+        })
+        .expect("the end notice row");
+    assert_eq!(notice["place"], "worker");
+    let unplaced: Vec<&Value> = rows.iter().filter(|r| r.get("place").is_none()).collect();
+    assert!(
+        unplaced.is_empty(),
+        "rows of the day with no place: {unplaced:?}"
+    );
+}
