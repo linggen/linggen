@@ -612,8 +612,6 @@ async fn dispatch_mission_prompt(
         return;
     };
 
-    ensure_home_cwd(&root);
-
     // The precondition, before any session or model call.
     if !passes_run_if(&state, mission, &root, &trigger).await {
         return;
@@ -1123,22 +1121,6 @@ pub(super) fn new_run_id() -> String {
         crate::util::now_ts_secs(),
         &uuid::Uuid::new_v4().to_string()[..8]
     )
-}
-
-/// A mission's working folder inside the Linggen home is the engine's to
-/// make: a built-in mission can work in a folder of its own (the memory
-/// scan's empty `work/`, where its one admin grant lands) without shipping
-/// one. A folder anywhere else is the user's, and is left as it is.
-fn ensure_home_cwd(root: &std::path::Path) {
-    let climbs = root
-        .components()
-        .any(|c| c == std::path::Component::ParentDir);
-    if root.is_dir() || climbs || !root.starts_with(crate::paths::linggen_home()) {
-        return;
-    }
-    if let Err(e) = std::fs::create_dir_all(root) {
-        warn!("mission cwd {}: {e}", root.display());
-    }
 }
 
 /// The `run-if` gate, with the owning skill looked up only when there is a
