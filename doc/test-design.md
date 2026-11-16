@@ -219,7 +219,7 @@ tunnels, so nothing on the host listens beyond loopback.
    Playwright over an SSH tunnel); memory answers through the engine —
    `/mem/api/health`, `/mcp/memory` initialize + tools/list, `ling mem
    session-start` and `stats` — with `~/.local/bin/ling-mem` the stand-in
-   (the published binary `install.sh` laid down kept as `ling-mem.prev`), no
+   (`install.sh` lays down no ling-mem, so there is no `ling-mem.prev`), no
    ling-mem process, nothing listening on 9528, `/mem/mcp` answering on 9527
    and the stand-in's `status` naming 9527; after the plugin installs the
    stand-in stays, no daemon runs and nothing listens on 9528; one chat turn completes on the fake model.

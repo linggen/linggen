@@ -65,6 +65,7 @@ mirror_local() {
       sha256: $s}]}' >"$good/$ENGINE_REPO/manifest.json"
   record INFO "mirror: engine" "local $ver, $ling, built $(stat -f %Sm -t '%F %R' "$ling"), $(signer "$ling")"
   pack_plugin "$good"
+  write_release_json "$good/$ENGINE_REPO" "$ver"
 
   mkdir -p "$good/$APP_REPO"
   if [ -d "$app" ]; then

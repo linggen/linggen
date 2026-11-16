@@ -176,8 +176,9 @@ and `plugins/linggen/hooks/tests/*.test.sh`.
 
 ## 2. Engine
 
-Repo `linggen/linggen`, tag `X.Y.Z` (no `v`). `Cargo.toml`, `Cargo.lock`
-and `ui/package.json` are stamped by the script — do not bump by hand.
+Repo `linggen/linggen`, tag `X.Y.Z` (no `v`). `Cargo.toml`, `Cargo.lock`,
+`ui/package.json` and the plugin's `VERSION` + both `plugin.json` are stamped
+by the script — do not bump by hand.
 
 1. `CHANGELOG.md` entry; commit, push.
 2. `./scripts/release.sh X.Y.Z --draft` — builds the UI and `ling`, commits

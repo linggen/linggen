@@ -262,7 +262,7 @@ claude_plugin_root() {
 # plugin enabled in each host, the old one gone, the stand-in kept and
 # nothing on the old memory port.
 check_plugins() { # label rc log
-  local root left
+  local root left list
   check "$1: install-plugin.sh exits 0" "$2" "$(tail -3 "$3")"
   sleep 3
   clt_dialog_up; [ $? != 0 ]
@@ -279,10 +279,11 @@ check_plugins() { # label rc log
     gap "$1: claude plugin" "no claude CLI here"
   fi
   if command -v codex >/dev/null; then
-    codex plugin list 2>/dev/null | grep -E "$NEW_ID_RE" | grep -q 'enabled'
-    check "$1: codex has $PLUGIN_ID enabled" $? "$(codex plugin list 2>&1 | grep -i linggen | tr '\n' ' ' | cut -c1-200)"
-    ! codex plugin list 2>/dev/null | grep -qF "$OLD_PLUGIN_ID"
-    check "$1: codex has no $OLD_PLUGIN_ID" $? "$(codex plugin list 2>&1 | grep -F "$OLD_PLUGIN_ID" | tr '\n' ' ' | cut -c1-200)"
+    list="$(codex plugin list 2>&1)"
+    grep -E "$NEW_ID_RE" <<<"$list" | grep -q 'enabled'
+    check "$1: codex has $PLUGIN_ID enabled" $? "$(grep -i linggen <<<"$list" | tr '\n' ' ' | cut -c1-200)"
+    ! grep -qF "$OLD_PLUGIN_ID" <<<"$list"
+    check "$1: codex has no $OLD_PLUGIN_ID" $? "$(grep -F "$OLD_PLUGIN_ID" <<<"$list" | tr '\n' ' ' | cut -c1-200)"
   else
     gap "$1: codex plugin" "no codex CLI here"
   fi
