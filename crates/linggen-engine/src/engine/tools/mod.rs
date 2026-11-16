@@ -804,6 +804,7 @@ mod tests {
             client_id: None,
             failed: false,
             images: Vec::new(),
+            place: None,
         };
         let mut history = vec![
             msg("user", "[HIDDEN] [scene] opened", false),

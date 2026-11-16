@@ -748,6 +748,7 @@ async fn dispatch_mission_prompt(
                     client_id: None,
                     failed: false,
                     images: Vec::new(),
+                    place: None,
                 },
             );
         }
@@ -982,6 +983,7 @@ async fn dispatch_mission_prompt(
                             client_id: None,
                             failed: false,
                             images: Vec::new(),
+                            place: None,
                         },
                     );
                     // Ping the UI so it reloads persisted messages immediately
@@ -1075,6 +1077,7 @@ async fn append_run_report(state: &Arc<SchedulerHost>, agent_id: &str, session_i
             client_id: None,
             failed: false,
             images: Vec::new(),
+            place: None,
         },
     );
     let _ = state.events_tx.send(ServerEvent::StateUpdated);
@@ -1158,6 +1161,7 @@ fn note_unprepared(
             client_id: None,
             failed: true,
             images: Vec::new(),
+            place: None,
         },
     );
     let _ = state.events_tx.send(ServerEvent::StateUpdated);

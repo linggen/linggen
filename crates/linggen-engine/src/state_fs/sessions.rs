@@ -379,6 +379,24 @@ pub struct ChatMsg {
     /// Rows before 2026-10-22 have none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_id: Option<String>,
+    /// The place the row was written in (`TurnPlace::key`: the skill's name,
+    /// or `:home`), stamped as it is saved while a turn runs in the session.
+    /// Rows before places, and rows no turn wrote, have none: they are the
+    /// session's own place ([`ChatMsg::place_in`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub place: Option<String>,
+}
+
+impl ChatMsg {
+    /// The key of the place this row was written in, in session `meta`.
+    pub fn place_in(&self, meta: &SessionMeta) -> String {
+        match &self.place {
+            Some(key) => key.clone(),
+            None => crate::engine::turn_place::TurnPlace::of_session(Some(meta))
+                .key()
+                .to_string(),
+        }
+    }
 }
 
 impl SessionStore {
@@ -617,7 +635,7 @@ impl SessionStore {
         let dir = self.session_dir(session_id);
         fs::create_dir_all(&dir)?;
         let msgs_path = dir.join("messages.jsonl");
-        let mut line = serde_json::to_string(msg)?;
+        let mut line = serde_json::to_string(&self.stamped(session_id, msg))?;
         line.push('\n');
         let _guard = self.append_lock.lock().unwrap_or_else(|e| e.into_inner());
         let mut file = fs::OpenOptions::new()
@@ -626,6 +644,21 @@ impl SessionStore {
             .open(msgs_path)?;
         file.write_all(line.as_bytes())?;
         Ok(())
+    }
+
+    /// `msg` with the place of the turn running in the session, when it
+    /// names none of its own and a turn's place is kept.
+    fn stamped<'a>(&self, session_id: &str, msg: &'a ChatMsg) -> std::borrow::Cow<'a, ChatMsg> {
+        if msg.place.is_some() {
+            return std::borrow::Cow::Borrowed(msg);
+        }
+        let Some(place) = self.running_places.of(session_id) else {
+            return std::borrow::Cow::Borrowed(msg);
+        };
+        std::borrow::Cow::Owned(ChatMsg {
+            place: Some(place.key().to_string()),
+            ..msg.clone()
+        })
     }
 
     pub fn get_chat_history(&self, session_id: &str) -> Result<Vec<ChatMsg>> {
@@ -1114,6 +1147,7 @@ mod tests {
             client_id: None,
             failed: false,
             images: Vec::new(),
+            place: None,
         };
         let msg2 = ChatMsg {
             run_id: None,
@@ -1128,6 +1162,7 @@ mod tests {
             client_id: None,
             failed: false,
             images: Vec::new(),
+            place: None,
         };
         store.add_chat_message("s1", &msg1).unwrap();
         store.add_chat_message("s1", &msg2).unwrap();
@@ -1155,6 +1190,7 @@ mod tests {
             client_id: client_id.map(str::to_string),
             failed: false,
             images: Vec::new(),
+            place: None,
         };
         let kept = serde_json::to_string(&row(Some("c-1-ab"))).unwrap();
         let back: ChatMsg = serde_json::from_str(&kept).unwrap();
@@ -1214,6 +1250,7 @@ mod tests {
                     client_id: None,
                     failed: false,
                     images: Vec::new(),
+                    place: None,
                 },
             )
             .unwrap();
@@ -1233,6 +1270,7 @@ mod tests {
                     client_id: None,
                     failed: false,
                     images: Vec::new(),
+                    place: None,
                 },
             )
             .unwrap();
@@ -1289,6 +1327,7 @@ mod tests {
                     client_id: None,
                     failed: false,
                     images: Vec::new(),
+                    place: None,
                 },
             )
             .unwrap();
@@ -1343,6 +1382,7 @@ mod tests {
                     client_id: None,
                     failed: false,
                     images: Vec::new(),
+                    place: None,
                 },
             )
             .unwrap();
@@ -1455,6 +1495,7 @@ mod tests {
                     client_id: None,
                     failed: false,
                     images: Vec::new(),
+                    place: None,
                 },
             )
             .unwrap();

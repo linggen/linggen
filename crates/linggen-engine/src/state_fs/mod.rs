@@ -1,6 +1,8 @@
 pub mod devices;
 pub mod session_images;
 pub mod sessions;
+#[cfg(test)]
+mod row_place_tests;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};

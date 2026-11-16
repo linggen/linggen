@@ -432,6 +432,7 @@ mod tests {
             via: None,
             via_note: None,
             images: Vec::new(),
+            place: None,
         }
     }
 

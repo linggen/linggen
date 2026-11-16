@@ -156,6 +156,7 @@ impl AgentEngine {
                     client_id: None,
                     failed: false,
                     images: Vec::new(),
+                    place: None,
                 },
             )
             .await;
@@ -367,6 +368,7 @@ impl AgentEngine {
                         client_id: None,
                         failed: false,
                         images: Vec::new(),
+                        place: None,
                     },
                 )
                 .await;

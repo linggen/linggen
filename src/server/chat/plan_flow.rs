@@ -425,6 +425,7 @@ async fn persist_plan_message(
         client_id: None,
         failed: false,
         images: Vec::new(),
+        place: None,
     };
     if !manager.update_last_plan_message(session_id, &msg).await {
         manager.add_chat_message(root, session_id, &msg).await;

@@ -352,6 +352,7 @@ mod tests {
             client_id: None,
             failed: false,
             images: Vec::new(),
+            place: None,
         }
     }
     fn user(text: &str, ts: u64) -> ChatMsg {

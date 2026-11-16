@@ -216,6 +216,7 @@ mod tests {
             client_id: None,
             failed: false,
             images: Vec::new(),
+            place: None,
         }
     }
     fn call(name: &str) -> ChatMsg {

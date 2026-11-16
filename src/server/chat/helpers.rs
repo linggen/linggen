@@ -234,6 +234,7 @@ pub(crate) async fn persist_and_emit_with_images(
         via: via.map(str::to_string),
         via_note: via_note.map(str::to_string),
         images: kept,
+        place: None,
     };
     if let Err(e) = store.add_chat_message(sid, &msg) {
         tracing::warn!("Failed to persist chat message to mission store: {}", e);
@@ -268,6 +269,7 @@ pub(crate) async fn persist_message_only(
         client_id: None,
         failed: false,
         images: Vec::new(),
+        place: None,
     };
     if let Err(e) = manager.global_sessions.add_chat_message(sid, &msg) {
         tracing::warn!("Failed to persist chat message: {}", e);
