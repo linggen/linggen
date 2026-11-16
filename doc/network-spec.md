@@ -162,24 +162,14 @@ cannot point it elsewhere.
 
 | Caller | Route | Needs the engine? |
 |:--|:--|:--|
-| Linggen's own agents | `mcp__memory__memory_*` → `ling-mem` `/mcp` | yes |
-| Outside agent via the plugin | `ling-mem` `/mcp` directly | **no** |
-| ClawHub skill, plugin hooks, any agent with Bash | `ling-mem` CLI → REST | **no** |
-| A second machine's agents | `ling-mem` `/mcp` + `x-linggen-device` | **no** |
+| Linggen's own agents | `mcp__memory__memory_*` → hosted `/mem/mcp` | yes |
+| Outside agent via the plugin | engine `/mcp/memory` | yes |
+| Plugin hooks, any agent with Bash | `ling mem` CLI → hosted store, or direct under lock | no |
+| A second machine's agents | engine `/mcp/memory` + `x-linggen-device` | yes |
 
-The CLI route is the engine-free channel and the reason it exists: a ClawHub
-user installs the skill, the skill installs the binary (`install-bin.sh
---version '^1'`), and memory works with no `ling` on the machine at all. The
-same `SKILL.md` also lists `mcp__memory` in `allowed-tools`,
-but that block is Linggen-only — "Claude Code / Codex ignore this block" — so
-one skill file takes the engine route on Linggen and the CLI route everywhere
-else.
-
-Worth holding next to the `mcp-spec.md` line that the engine is the base
-install for every channel: for the ClawHub channel today, it isn't — and the
-fourth door is the case where that stops being an accident and becomes the
-point. A second machine needs a URL and a token, not 107 MB of binary and a
-store of its own.
+Any MCP-capable agent can add `http://127.0.0.1:9527/mcp/memory` as an
+MCP server (tools only). A plugin-only second machine needs the engine's URL
+and a device token, not a store of its own.
 
 **Out of the Mac**
 

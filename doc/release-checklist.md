@@ -190,9 +190,8 @@ repo `linggen/linggen-memory`, tag `vX.Y.Z`:
 
 Plugin bundles bump only when hooks or `SKILL.md` changed, independent of the
 binary: `plugins/linggen/.claude-plugin/plugin.json`,
-`plugins/linggen/.codex-plugin/plugin.json`,
-`plugins/openclaw/openclaw.plugin.json`; ClawHub via `clawhub skill publish`
-(versions are immutable). Where each channel pins:
+`plugins/linggen/.codex-plugin/plugin.json`.
+Where each channel pins:
 `linggen-memory/doc/release-targets.md`.
 
 ## 2. Engine

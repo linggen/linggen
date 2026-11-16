@@ -34,7 +34,7 @@ Every number is tagged **(measured)** — taken on his Mac on 2026-11-15 — or
 
 | Release | Holds | Done when |
 |---|---|---|
-| **2.3** | Structure: architecture review, build speed, the merge, the engine split into modules, library upgrades, app slimming | Gate green on first install and on 2.2.1 → 2.3 (the takeover of an existing memory store); one process serving memory to Claude Code, Codex and OpenClaw seen live on his Mac; sizes re-measured |
+| **2.3** | Structure: architecture review, build speed, the merge, the engine split into modules, library upgrades, app slimming | Gate green on first install and on 2.2.1 → 2.3 (the takeover of an existing memory store); one process serving memory to Claude Code and Codex seen live on his Mac; sizes re-measured |
 | **2.4** | Behaviour: one Ling and one Yinyue (§5) | Gate green; the scenario tests pass; his three scenarios seen live |
 | **3.0** | A release of its own, after 2.4 and likely a 2.5 of fixes | Hanli's call, once everything has settled |
 

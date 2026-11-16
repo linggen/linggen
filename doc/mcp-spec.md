@@ -4,13 +4,13 @@ reader: Coding agent and users
 guide: |
   Product specification — describe what the system should do and why.
   Keep it brief. Aim to guide design and implementation, not document code.
-status: all shipped — /mcp live (24 tools incl agent_run, agent_permit), linggen plugin + ClawHub skill published, site/docs routed
+status: all shipped — /mcp live (24 tools incl agent_run, agent_permit), linggen plugin published, site/docs routed
 ---
 
 # Linggen MCP — the capability front door
 
 One MCP server, on the daemon, for **every** outside agent (Claude Code, Codex,
-Cursor, OpenClaw…): `http://127.0.0.1:9527/mcp`, streamable HTTP, stateless
+Cursor and others): `http://127.0.0.1:9527/mcp`, streamable HTTP, stateless
 JSON-RPC (`src/server/mcp.rs`). Tools are grouped by prefix; each group fronts
 a Linggen component the daemon already talks to. One config line installs the
 whole platform's capabilities; every new group makes the same install more
@@ -84,7 +84,7 @@ mission executor. ling-mem can serve neither.
 
 ## Distribution
 
-Three channels, one product name: **linggen**.
+Claude Code and Codex plugins, one product name: **linggen**.
 
 - **Claude Code plugin `linggen`**:
   - `.mcp.json` → the daemon endpoint (`http://127.0.0.1:9527/mcp`).
@@ -96,8 +96,7 @@ Three channels, one product name: **linggen**.
     opts out) and disclose the install in the session context line. Both
     binaries are required components of the plugin — decided 2026-07-10,
     reversing the earlier hint-only rule. Awareness = context line + README +
-    plugin description; hook-less channels (ClawHub, skills.sh) get the same
-    via the SKILL.md first-use gate (agent announces, then installs).
+    plugin description.
     ling-mem still bootstraps itself (the recall hook needs its CLI).
   - SKILL.md: the memory protocol (ops via `memory_*` MCP tools — this
     supersedes the old plugin's CLI-only rule; CLI remains the fallback) plus
@@ -105,12 +104,11 @@ Three channels, one product name: **linggen**.
     browser).
   - Lives in the `linggen-memory` repo beside the old plugin, same
     marketplace; the repo can be renamed later without breaking installs.
-- **ClawHub skill `linggen`** (OpenClaw): the `ling-mem` listing was renamed
-  in place (old slug redirects, history kept) and republished as `linggen`
-  2.0.0 — same SKILL.md as the plugin.
+- **Codex plugin `linggen`** supports the same memory store and scan workflow.
 - **Manual** (any MCP client):
   `claude mcp add --transport http linggen http://127.0.0.1:9527/mcp` or the
-  equivalent in Cursor/Codex config.
+  equivalent in Cursor/Codex config. Any MCP-capable agent can add
+  `http://127.0.0.1:9527/mcp/memory` as an MCP server (tools only).
 
 ## Retirement map
 
@@ -119,7 +117,6 @@ deprecation window:
 
 - Memory rows, days and the review queue are in Settings → Memory in Linggen's
   UI; run `/linggen:scan` from the Claude Code / Codex plugin.
-- **ClawHub `ling-mem` skill** — renamed to `linggen` (slug redirect). Done.
 - **ling-mem's own MCP server** — ~~code stays (harmless) but is no longer
   promoted anywhere~~. **Reversed 2026-07-29**: it is the promoted memory
   endpoint. Everything of Linggen's is on it — the engine's agents via its MCP
@@ -187,6 +184,5 @@ deprecation window:
 
 1. **memory_* on `/mcp`** — proxy + instructions + autostart path (engine). Done.
 2. **`linggen` plugin** — new plugin. Done.
-3. **ClawHub `linggen` skill** + listing updates. Done.
-4. **Site/docs** — install pages route to the one endpoint. Done.
-5. Later: `agent_*`.
+3. **Site/docs** — install pages route to the one endpoint. Done.
+4. Later: `agent_*`.

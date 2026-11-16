@@ -31,10 +31,11 @@ never writes to project files.
 - **Memory agent + mission** — the offline judgment brain; runs the
   nightly **dream** mission (remember → forget → condense). The memory
   Settings → Memory in Linggen's UI shows rows, days and the review queue.
-- **linggen plugin** — the same store in Claude Code, Codex, and OpenClaw:
+- **linggen plugin** — the same store in Claude Code and Codex:
   recall each turn, capture protocol, runbooks, and `/linggen:scan` for
   backfilling days. Third-party hosts reach the store through the engine's
-  `/mcp/memory` endpoint (`mcp-spec.md`).
+  `/mcp/memory` endpoint (`mcp-spec.md`). Any MCP-capable agent can add
+  `http://127.0.0.1:9527/mcp/memory` as an MCP server (tools only).
 
 ## Tiers
 
