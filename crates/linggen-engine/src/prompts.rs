@@ -27,6 +27,7 @@ pub mod keys {
     pub const SYSTEM_ENVIRONMENT_BLOCK: &str = "system-prompt.environment_block";
     pub const SYSTEM_RIGHT_NOW_BLOCK: &str = "system-prompt.right_now_block";
     pub const SYSTEM_WORLD_BLOCK: &str = "system-prompt.world_block";
+    pub const SYSTEM_NOTES_BLOCK: &str = "system-prompt.notes_block";
     pub const SYSTEM_UNAVAILABLE_HEADER: &str = "system-prompt.unavailable_header";
     pub const SYSTEM_UNAVAILABLE_ENTRY: &str = "system-prompt.unavailable_entry";
     pub const SYSTEM_DELEGATION_HEADER: &str = "system-prompt.delegation_header";
@@ -440,6 +441,7 @@ mod tests {
             keys::SYSTEM_ENVIRONMENT_BLOCK,
             keys::SYSTEM_RIGHT_NOW_BLOCK,
             keys::SYSTEM_WORLD_BLOCK,
+            keys::SYSTEM_NOTES_BLOCK,
             keys::SYSTEM_UNAVAILABLE_HEADER,
             keys::SYSTEM_UNAVAILABLE_ENTRY,
             keys::SYSTEM_DELEGATION_HEADER,

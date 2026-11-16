@@ -20,6 +20,7 @@ mod exec;
 mod fs;
 mod image;
 mod media;
+mod notes;
 mod pet;
 mod sense;
 mod tasks;
@@ -37,6 +38,7 @@ pub use exec::*;
 pub use fs::*;
 pub use image::*;
 pub use media::*;
+pub use notes::*;
 pub use pet::*;
 pub use sense::*;
 pub use tasks::*;
@@ -152,6 +154,8 @@ pub(super) fn registry() -> &'static [Arc<dyn Tool>] {
             Arc::new(VoiceTool),
             Arc::new(SenseTool),
             Arc::new(RecentActivityTool),
+            Arc::new(NoteWriteTool),
+            Arc::new(NoteDoneTool),
             Arc::new(AnswerPromptTool),
             Arc::new(AgentChatTool),
             Arc::new(ClaudeSessionTool),

@@ -414,8 +414,9 @@ impl AgentEngine {
 
     /// Pet-scoping gate (defense-in-depth).
     ///
-    /// Pet/companion tools (Express) drive the on-screen avatar and only run
-    /// for an agent that lists them EXPLICITLY. The model-facing schema already
+    /// Listed-only tools — the pet's (Express drives the on-screen avatar) and
+    /// an agent's own notes — only run for an agent that lists them
+    /// EXPLICITLY. The model-facing schema already
     /// hides them from `*` (wildcard) agents (tool_registry `is_allowed`), but
     /// the permission gate below is skipped when allowed_tools is None (`*`), so
     /// a hallucinated or legacy emission by a worker agent would otherwise
@@ -426,13 +427,10 @@ impl AgentEngine {
         allowed_tools: &Option<HashSet<String>>,
         messages: &mut Vec<ChatMessage>,
     ) -> Option<PreExecOutcome> {
-        if tools::is_pet_scoped(t.canonical)
+        if tools::is_listed_only(t.canonical)
             && !matches!(allowed_tools, Some(set) if set.contains(t.canonical))
         {
-            let rendered = format!(
-                "tool_not_allowed: tool={} reason=pet_scoped: only the pet agent may drive the avatar; ask Yinyue via agent_chat instead",
-                t.canonical
-            );
+            let rendered = listed_only_refusal(t.canonical);
             self.upsert_observation("error", t.canonical, rendered.clone());
             return self.refuse_saved(t, messages, rendered).await;
         }
@@ -1627,6 +1625,16 @@ async fn attach_sheet(
     let mut on_sheet = built.on_sheet.into_iter();
     pictures.retain(|_| on_sheet.next().unwrap_or(false));
     *sheet = built.base64;
+}
+
+/// Why a listed-only tool did not run for an agent that never listed it.
+fn listed_only_refusal(tool: &str) -> String {
+    if tools::is_pet_scoped(tool) {
+        return format!(
+            "tool_not_allowed: tool={tool} reason=pet_scoped: only the pet agent may drive the avatar; ask Yinyue via agent_chat instead"
+        );
+    }
+    format!("tool_not_allowed: tool={tool} reason=listed_only: only an agent that lists this tool has it")
 }
 
 #[cfg(test)]

@@ -278,6 +278,13 @@ pub(crate) fn is_pet_scoped(name: &str) -> bool {
     matches!(name, "Express")
 }
 
+/// Tools only an agent that lists them EXPLICITLY gets — never part of the
+/// `*` wildcard: the pet's own ([`is_pet_scoped`]) and an agent's own notes
+/// (`crate::notes`), which belong to the agent whose spec lists them.
+pub(crate) fn is_listed_only(name: &str) -> bool {
+    is_pet_scoped(name) || crate::notes::is_note_tool(name)
+}
+
 /// Bridge between the synchronous tool executor and the async server state,
 /// allowing the AskUser tool to emit events and block on user responses.
 pub struct AskUserBridge {

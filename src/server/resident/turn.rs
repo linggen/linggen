@@ -51,12 +51,18 @@ pub(super) enum Reach {
     /// (2026-09-24: an idle moment's turn relayed its kickoff to Ling, which
     /// started her loop in the Lingjing chat).
     Sealed,
-    /// A quiet glance only reads proven read-only senses.
+    /// A quiet turn (a glance, a woken note): it reads proven read-only
+    /// senses and keeps her own notes ([`QUIET_TOOLS`]), nothing else.
     SpeakOnly,
 }
 
 /// The tools a sealed turn withholds: the ones that reach another agent.
 const SEALED_WITHHOLDS: &[&str] = &["agent_chat"];
+
+/// Everything a quiet turn — a glance, a woken note — may use: it may speak
+/// and ask, never act. Two senses that only read, and her own notes, which
+/// change nothing but what she sees next time.
+pub(super) const QUIET_TOOLS: &[&str] = &["sense", "recent_activity", "note_write", "note_done"];
 
 /// The tools withheld from a turn with this reach.
 pub(super) fn withheld_for(reach: Reach) -> std::collections::HashSet<String> {
@@ -381,7 +387,7 @@ fn ready_for_turn(
     engine.set_parent_agent(None);
     engine.withheld_tools = withheld_for(turn.reach);
     engine.turn_tool_allowlist = (turn.reach == Reach::SpeakOnly)
-        .then(|| ["sense", "recent_activity"].into_iter().map(String::from).collect());
+        .then(|| QUIET_TOOLS.iter().map(|t| t.to_string()).collect());
     // Per turn, like the tools: a moment's language never outlives it.
     engine.turn_language = turn.language.clone();
     // Clear so we read THIS turn's final line — the engine is reused across
@@ -450,14 +456,51 @@ mod tests {
         let quiet = Turn { reach: Reach::SpeakOnly, ..turn(true) };
         ready_for_turn(&mut engine, &quiet, &Default::default());
         let (spec, _) = crate::extensions::agents::parse_agent_markdown(include_str!("../../../agents/yinyue.md")).unwrap();
-        let classified = ["mcp__memory", "WebSearch", "WebFetch", "Express", "Voice", "sense", "recent_activity", "answer_prompt", "agent_chat", "AppTool"];
+        let classified = ["mcp__memory", "WebSearch", "WebFetch", "Express", "Voice", "sense", "recent_activity", "note_write", "note_done", "answer_prompt", "agent_chat", "AppTool"];
         for tool in &spec.tools {
             assert!(classified.contains(&tool.as_str()), "classify new tool: {tool}");
-            assert_eq!(!engine.is_withheld(tool), ["sense", "recent_activity"].contains(&tool.as_str()), "{tool}");
+            assert_eq!(!engine.is_withheld(tool), QUIET_TOOLS.contains(&tool.as_str()), "{tool}");
         }
         for tool in ["agent_chat", "AppTool", "Write", "mcp__memory__memory_add"] { assert!(engine.is_withheld(tool)); }
         ready_for_turn(&mut engine, &Turn { reach: Reach::Open, ..turn(true) }, &Default::default());
         for tool in ["agent_chat", "AppTool"] { assert!(!engine.is_withheld(tool)); }
+    }
+
+    /// A woken note's turn is a quiet one: what it is offered is the quiet
+    /// set and nothing else, and none of it acts — every one only reads, or
+    /// keeps her own notes (no file, app, agent, avatar or memory write).
+    #[test]
+    fn a_woken_note_turn_offers_only_tools_that_do_not_act() {
+        let mut engine = her_engine();
+        engine.agent_id = Some(YINYUE_AGENT.to_string());
+        let woken = Turn { reach: Reach::SpeakOnly, ..turn(true) };
+        ready_for_turn(&mut engine, &woken, &Default::default());
+        let (_, allowed, _) = engine.prepare_loop_messages(
+            "[HIDDEN] You set a time to look again at your note n1.",
+            true,
+            crate::engine::prompt::PromptPurpose::Preview,
+        );
+        let offered: Vec<String> = engine
+            .offered_tool_definitions(allowed.as_ref())
+            .iter()
+            .filter_map(|d| d.pointer("/function/name")?.as_str().map(String::from))
+            .collect();
+        let mut sorted = offered.clone();
+        sorted.sort();
+        let mut quiet: Vec<String> = QUIET_TOOLS.iter().map(|t| t.to_string()).collect();
+        quiet.sort();
+        assert_eq!(sorted, quiet, "a woken note's turn is offered exactly the quiet set");
+        for tool in &offered {
+            assert_eq!(
+                crate::engine::tools::builtin_tier(tool),
+                Some(crate::engine::permission::PermissionMode::Read),
+                "{tool} must only read"
+            );
+        }
+        let acting = ["agent_chat", "AppTool", "Express", "Voice", "answer_prompt", "Write", "Edit", "Bash", "Task", "RunApp", "AskUser", "WebFetch", "mcp__memory__memory_add"];
+        for tool in acting {
+            assert!(engine.is_withheld(tool), "{tool} is withheld from a woken note");
+        }
     }
 
     fn her_engine() -> crate::engine::AgentEngine {

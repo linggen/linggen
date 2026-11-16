@@ -10,6 +10,7 @@
 //! `engine::skill` / `engine::agent` / `engine::mission`.
 
 pub mod core_block;
+mod notes;
 pub mod place;
 pub mod profile;
 pub mod world;
@@ -1118,6 +1119,11 @@ impl AgentEngine {
         if let Some(room) = self.right_now_block(allowed_tools.as_ref()) {
             insert_before_turn(&mut messages, ChatMessage::new("system", room));
         }
+        // The agent's own notes ride the same way: hers alone, read fresh
+        // for each request, never a row another member of the table reads.
+        if let Some(notes) = self.notes_block(allowed_tools.as_ref()) {
+            insert_before_turn(&mut messages, ChatMessage::new("system", notes));
+        }
         if purpose == PromptPurpose::Preview {
             if let Some(world) = self.world_preview() {
                 messages.push(ChatMessage::new("system", world));
@@ -1205,7 +1211,24 @@ impl AgentEngine {
     // Tool filtering
     // -----------------------------------------------------------------------
 
+    /// The tools this turn may offer: the session's set, plus the agent's own
+    /// notes when its own spec lists them — its notes follow it to every
+    /// table it sits at. `None` is unrestricted, which never holds notes.
     pub(crate) fn allowed_tool_names(&self) -> Option<HashSet<String>> {
+        let mut allowed = self.session_tool_names()?;
+        allowed.extend(self.own_note_tools().map(String::from));
+        Some(allowed)
+    }
+
+    /// The note tools this agent's own spec lists.
+    pub(crate) fn own_note_tools(&self) -> impl Iterator<Item = &'static str> + '_ {
+        let listed = self.spec.as_ref().map(|s| s.tools.as_slice()).unwrap_or_default();
+        crate::notes::TOOLS
+            .into_iter()
+            .filter(move |t| listed.iter().any(|l| l == t))
+    }
+
+    fn session_tool_names(&self) -> Option<HashSet<String>> {
         // A member who isn't the skill's lead uses what the skill names for
         // it, when it names any — and nothing else of the skill's.
         if let Some(named) = self.member_tools() {

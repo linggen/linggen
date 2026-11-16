@@ -40,15 +40,16 @@ pub fn oai_tool_definitions(allowed: Option<&HashSet<String>>) -> Vec<Value> {
                     .unwrap_or(false)
             })
             .collect(),
-        // Wildcard (`*`): everything EXCEPT pet-scoped tools (Express) — a worker
-        // agent shouldn't drive the avatar; only an explicit lister (Yinyue) gets it.
+        // Wildcard (`*`): everything EXCEPT listed-only tools (Express, the
+        // note tools) — a worker agent shouldn't drive the avatar or hold
+        // notes it never listed; only an explicit lister gets them.
         None => all
             .into_iter()
             .filter(|def| {
                 def.get("function")
                     .and_then(|f| f.get("name"))
                     .and_then(|n| n.as_str())
-                    .map(|name| !super::is_pet_scoped(name))
+                    .map(|name| !super::is_listed_only(name))
                     .unwrap_or(true)
             })
             .collect(),

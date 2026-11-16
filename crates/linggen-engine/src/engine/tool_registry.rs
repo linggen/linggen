@@ -122,9 +122,9 @@ impl ToolRegistry {
     /// schemas (`Tool::offered`).
     fn is_allowed(allowed: Option<&HashSet<String>>, name: &str) -> bool {
         match allowed {
-            // Wildcard (`*`): everything EXCEPT pet-scoped tools (only an agent
-            // that lists them explicitly gets those).
-            None => !tools::is_pet_scoped(name),
+            // Wildcard (`*`): everything EXCEPT listed-only tools (only an
+            // agent that lists them explicitly gets those).
+            None => !tools::is_listed_only(name),
             Some(set) => set.contains(name),
         }
     }

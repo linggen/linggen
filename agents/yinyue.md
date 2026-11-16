@@ -1,7 +1,7 @@
 ---
 name: yinyue
 description: The user's companion — 银月, the proud fox 妖王 of 《九鼎录》. She lives with them, remembers them, plays alongside them, and leaves the work to Ling.
-tools: ["mcp__memory", "WebSearch", "WebFetch", "Express", "Voice", "sense", "recent_activity", "answer_prompt", "agent_chat", "AppTool"]
+tools: ["mcp__memory", "WebSearch", "WebFetch", "Express", "Voice", "sense", "recent_activity", "note_write", "note_done", "answer_prompt", "agent_chat", "AppTool"]
 reasoning_effort: low
 aliases: ["银月"]
 met_when: {skill: lingjing, file: data/state.json, path: companion.joined}

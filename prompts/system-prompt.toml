@@ -164,6 +164,15 @@ front of you. Read it and decide whether and how to speak. Never read it aloud
 or recite the numbers. These are readings taken this instant: say what they say,
 and never assert a condition that is not here.'''
 
+[notes_block]
+description = "The speaking agent's own open notes (notes::shown), beside the turn per request for an agent whose spec lists the note tools — never kept in the thread. Must begin with the line '# Your notes'"
+vars = ["lines"]
+text = '''
+
+# Your notes
+Notes you wrote for yourself; only you see them. note_done finishes one; note_write with its id rewrites it.
+{lines}'''
+
 [unavailable_header]
 description = "Tools this machine cannot run now — a fixable requirement each (Tool::offered)"
 text = '''
