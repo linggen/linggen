@@ -579,7 +579,8 @@ fn mcp_text_content(data: &Value) -> Value {
 /// it — the engine's `memory_host::routes`).
 async fn run_verb(state: &SharedState, verb: &str, body: Value) -> Result<Value, ApiError> {
     let (state, owned) = (state.clone(), verb.to_string());
-    let task = tokio::spawn(async move { super::verb::answer(state, Who::Owner, &owned, body).await });
+    let task =
+        tokio::spawn(async move { super::verb::answer(state, Who::Owner, &owned, body).await });
     match tokio::time::timeout(CALL_TIMEOUT, task).await {
         Err(_) => Err(timed_out(verb)),
         Ok(Err(e)) => Err(ApiError::internal(anyhow::Error::from(e))),

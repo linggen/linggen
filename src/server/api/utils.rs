@@ -26,9 +26,9 @@ pub(crate) async fn get_user_name(
     // The read waits on memory's runtime from a blocking thread; keep the
     // worker free.
     let name = tokio::task::spawn_blocking(crate::engine::prompt::core_block::user_name_from_core)
-    .await
-    .ok()
-    .flatten();
+        .await
+        .ok()
+        .flatten();
     axum::Json(json!({ "name": name })).into_response()
 }
 

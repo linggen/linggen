@@ -186,3 +186,114 @@ async fn a_persons_refusals_are_exact() {
         0
     );
 }
+
+/// The user-voice guard: another person's `from=user` row is not found
+/// before the guard reads it; a person's own gets the guard's refusal,
+/// exactly as the owner's own does.
+#[tokio::test]
+async fn the_user_voice_guard_meets_only_the_persons_own_rows() {
+    let m = Mem::start().await;
+    let owners = data(
+        &m,
+        &Who::Owner,
+        "add",
+        json!({"content": "the owner prefers tea", "type": "preference", "from": "user", "tier": "semantic"}),
+    )
+    .await;
+    let guests = data(
+        &m,
+        &guest(),
+        "add",
+        json!({"content": "the guest prefers cocoa", "type": "preference", "from": "user", "tier": "semantic"}),
+    )
+    .await;
+    let rewrite = |row: &Value| json!({"id": id(row), "content": "prefers water"});
+    let (code, message) = refused(&m, &guest(), "update", rewrite(&owners)).await;
+    assert_eq!(
+        (code, message),
+        ("NOT_FOUND", format!("no fact with id {}", id(&owners)))
+    );
+    let theirs = refused(&m, &guest(), "update", rewrite(&guests)).await;
+    let own = refused(&m, &Who::Owner, "update", rewrite(&owners)).await;
+    let row = |words: &str, row: &Value| words.replace(&id(row), "<ID>");
+    assert_eq!(
+        (
+            theirs.0,
+            row(&theirs.1, &guests).replace("the guest prefers cocoa", "<ROW>")
+        ),
+        (
+            own.0,
+            row(&own.1, &owners).replace("the owner prefers tea", "<ROW>")
+        )
+    );
+}
+
+/// `list` and `session_start` show a person their own rows only.
+#[tokio::test]
+async fn a_persons_list_and_session_start_are_their_own() {
+    let m = Mem::start().await;
+    data(
+        &m,
+        &Who::Owner,
+        "add",
+        json!({"content": "Alex lives in Lisbon", "tier": "core"}),
+    )
+    .await;
+    data(
+        &m,
+        &guest(),
+        "add",
+        json!({"content": "the guest lives in Porto", "tier": "core"}),
+    )
+    .await;
+    let contents = |rows: &Value| -> Vec<Value> {
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["content"].clone())
+            .collect()
+    };
+    let listed = data(&m, &guest(), "list", json!({"all_accounts": true})).await;
+    assert_eq!(contents(&listed), [json!("the guest lives in Porto")]);
+    let start = data(&m, &guest(), "session_start", json!({})).await;
+    assert_eq!(
+        contents(&start["core"]),
+        [json!("the guest lives in Porto")]
+    );
+}
+
+/// Dedup across the two tables keeps to the person: the guest's promote
+/// of a staged row never touches the owner's staged copy of the same words.
+#[tokio::test]
+async fn cross_table_dedup_keeps_to_the_person() {
+    let m = Mem::start().await;
+    let words = "walked to the harbour at dawn";
+    data(
+        &m,
+        &Who::Owner,
+        "add",
+        json!({"content": words, "episodic": true}),
+    )
+    .await;
+    data(
+        &m,
+        &guest(),
+        "add",
+        json!({"content": words, "episodic": true}),
+    )
+    .await;
+    data(
+        &m,
+        &guest(),
+        "add",
+        json!({"content": words, "tier": "semantic"}),
+    )
+    .await;
+    let owners = data(&m, &Who::Owner, "count", json!({"episodic": true})).await;
+    assert_eq!(owners["count"], 1, "the owner's staged row is still there");
+    // `count` without a table spans both: the staged row is all the owner has.
+    let all = data(&m, &Who::Owner, "count", json!({})).await;
+    assert_eq!(all["count"], 1, "and no promoted copy of it");
+    let theirs = data(&m, &guest(), "list", json!({"tier": "semantic"})).await;
+    assert_eq!(theirs.as_array().unwrap().len(), 1, "{theirs}");
+}

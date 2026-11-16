@@ -141,16 +141,19 @@ pub(crate) fn asker_of(caller: &Caller) -> Asker {
     }
 }
 
-/// Fit a memory verb's call to whoever is asking (`memory_host::caller`):
-/// the [`Who`] memory runs it for, after the checks that are the door's own.
-/// Every memory route a phone can reach on this port goes through here.
-pub(crate) fn scope_to_caller(
+/// Fit a memory verb's args to whoever is asking (`memory_host::caller`),
+/// for a caller that then runs them as given (the owner's call): the door's
+/// own checks, then memory's for the person behind a phone (`Who::scope` —
+/// refused, or stamped). A skill page's memory calls come through here, so
+/// the engine's clean-ups after it see the stamped body.
+pub(crate) fn stamp_for_caller(
     caller: &Caller,
     verb: &str,
     args: &mut Value,
-) -> Result<Who, Response> {
-    fit(&asker_of(caller), verb, args)
-        .map_err(|(status, message, code)| unreachable_envelope(status, message, code))
+) -> Result<(), Response> {
+    let who = fit(&asker_of(caller), verb, args)
+        .map_err(|(status, message, code)| unreachable_envelope(status, message, code))?;
+    who.scope(verb, args).map_err(refused)
 }
 
 fn fit(asker: &Asker, verb: &str, args: &mut Value) -> Result<Who, Refusal> {
@@ -191,7 +194,7 @@ type Refusal = (StatusCode, String, &'static str);
 
 /// Memory's refusal, in the shape the door answers its own refusals with
 /// (memory's own envelope).
-pub(crate) fn refused(e: ling_mem::MemError) -> Response {
+fn refused(e: ling_mem::MemError) -> Response {
     let status = StatusCode::from_u16(e.code.http_status()).unwrap_or(StatusCode::FORBIDDEN);
     unreachable_envelope(status, e.message, e.code.code())
 }
@@ -404,7 +407,7 @@ mod tests {
         let body = || json!({"query": "x", "account": "u-2", "all_accounts": true});
 
         let mut owner = body();
-        assert!(scope_to_caller(&Caller::Owner, "search", &mut owner).is_ok());
+        assert!(stamp_for_caller(&Caller::Owner, "search", &mut owner).is_ok());
         assert_eq!(owner, body());
 
         let mut machine = body();
@@ -412,26 +415,61 @@ mod tests {
             kind: Some(crate::state_fs::devices::DeviceKind::Machine),
             ..device(None)
         };
-        assert!(scope_to_caller(&Caller::Machine(mac), "search", &mut machine).is_ok());
+        assert!(stamp_for_caller(&Caller::Machine(mac), "search", &mut machine).is_ok());
         assert_eq!(machine, body());
 
         let mut phone = body();
         let alex = device(Some(("u-3", Some("Alex"))));
-        let who = scope_to_caller(&Caller::Phone(alex.clone()), "search", &mut phone).unwrap();
-        assert_eq!(
-            who,
-            Who::Person(Person {
-                id: "u-3".into(),
-                name: Some("Alex".into())
-            })
-        );
-        who.scope("search", &mut phone).unwrap();
+        assert!(stamp_for_caller(&Caller::Phone(alex.clone()), "search", &mut phone).is_ok());
         assert_eq!(phone["account"], "u-3");
         assert!(phone.get("all_accounts").is_none());
-        assert!(scope_to_caller(&Caller::Phone(alex), "accounts", &mut body()).is_err());
+        assert!(stamp_for_caller(&Caller::Phone(alex), "accounts", &mut body()).is_err());
 
         let mut unknown = body();
-        assert!(scope_to_caller(&Caller::Unknown, "search", &mut unknown).is_err());
+        assert!(stamp_for_caller(&Caller::Unknown, "search", &mut unknown).is_err());
+    }
+
+    /// A skill page open on another person's phone: its body is stamped
+    /// before the engine's clean-ups, and memory's refusals come back whole.
+    #[tokio::test]
+    async fn a_skill_pages_call_from_another_persons_phone_is_stamped_or_refused() {
+        let guest = Caller::Phone(device(Some(("u-3", Some("Alex")))));
+        let mut add = json!({"verb": "add", "content": "x", "account_id": "u-1", "all_accounts": true});
+        assert!(stamp_for_caller(&guest, "add", &mut add).is_ok());
+        assert_eq!(
+            add,
+            json!({"verb": "add", "content": "x", "account_id": "u-3", "account_name": "Alex"})
+        );
+        async fn refusal(res: Response) -> (u16, Value) {
+            let status = res.status().as_u16();
+            let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+            (status, serde_json::from_slice(&bytes).unwrap())
+        }
+        let accounts = stamp_for_caller(&guest, "accounts", &mut json!({})).unwrap_err();
+        assert_eq!(
+            refusal(accounts).await,
+            (
+                403,
+                json!({"ok": false, "code": "FORBIDDEN", "error": "accounts is the Mac's to run, not a phone's"})
+            )
+        );
+        let mut batch = json!({"verb": "add_batch", "facts": ["x"]});
+        let batch = stamp_for_caller(&guest, "add_batch", &mut batch).unwrap_err();
+        assert_eq!(
+            refusal(batch).await,
+            (
+                400,
+                json!({"ok": false, "code": "BAD_REQUEST", "error": "add_batch takes a JSON object (and add_batch a list of them in facts)"})
+            )
+        );
+        let stats = stamp_for_caller(&guest, "stats", &mut json!({})).unwrap_err();
+        assert_eq!(
+            refusal(stats).await,
+            (
+                403,
+                json!({"ok": false, "code": "FORBIDDEN", "error": "stats is not kept per person, so only the Mac's owner may run it"})
+            )
+        );
     }
 
     /// Every `/api/memory/<verb>` memory routes, read from its router's
@@ -520,7 +558,7 @@ mod tests {
 
             for caller in [Caller::Owner, Caller::Machine(mac.clone())] {
                 let mut args = body();
-                assert!(scope_to_caller(&caller, verb, &mut args).is_ok(), "{verb}");
+                assert!(stamp_for_caller(&caller, verb, &mut args).is_ok(), "{verb}");
                 assert_eq!(args, body(), "{verb} for the owner");
             }
         }
@@ -661,7 +699,10 @@ mod tests {
     /// door's own route (`/api/memory/{verb}`, the phone's way in), the
     /// words of `memory_host::routes`' refusal of a phone, and the address
     /// memory's MCP server is reached at by `mcp_client` (`memory_host::url`
-    /// handed to `with_builtin`), which stays HTTP on purpose.
+    /// handed to `with_builtin`), which stays HTTP on purpose. Its limits:
+    /// it reads each file up to its first `#[cfg(test)]`, skips comment
+    /// lines, and knows a memory verb by `api/memory` in the line — an
+    /// address built from pieces elsewhere would get past it.
     #[test]
     fn no_memory_verb_is_posted_to_this_engine() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));

@@ -102,7 +102,9 @@ async fn door(url: &str, who: Who, verb: &str, body: Value) -> (u16, Value) {
                 HeaderMap::new(),
                 Some(Json(body)),
             );
-            let res = crate::memory_host::TEST_HOST.scope(host_at(url), call).await;
+            let res = crate::memory_host::TEST_HOST
+                .scope(host_at(url), call)
+                .await;
             return read(res).await;
         }
         Who::OwnersPhone => Asker::Phone(None),
@@ -510,10 +512,19 @@ async fn door_at(
 async fn memory_that_is_not_open_or_silent_answers_as_before() {
     use crate::memory_host::TestHost;
     let why = "the memory store under /x is already open (pid 7); one process at a time";
-    let guest = asker_of(&Caller::Phone(phone("dev-guest", Some(("u-guest", "Guest")))));
+    let guest = asker_of(&Caller::Phone(phone(
+        "dev-guest",
+        Some(("u-guest", "Guest")),
+    )));
     for asker in [Asker::Owner, Asker::Phone(None), guest] {
         assert_eq!(
-            door_at(TestHost::NotOpen(why.into()), asker, "search", json!({"query": "x"})).await,
+            door_at(
+                TestHost::NotOpen(why.into()),
+                asker,
+                "search",
+                json!({"query": "x"})
+            )
+            .await,
             (
                 503,
                 json!({"ok": false, "error": why, "code": "MEMORY_UNAVAILABLE"})
@@ -558,7 +569,10 @@ async fn every_asker_is_answered_through_the_call() {
             json!({"ok": false, "error": "ling-mem error [404]: <empty body>", "code": "HTTP_404"})
         )
     );
-    let guest = asker_of(&Caller::Phone(phone("dev-guest", Some(("u-guest", "Guest")))));
+    let guest = asker_of(&Caller::Phone(phone(
+        "dev-guest",
+        Some(("u-guest", "Guest")),
+    )));
     assert_eq!(
         door_at(host(), guest.clone(), "apply_schema", json!({})).await,
         (
@@ -576,4 +590,24 @@ async fn every_asker_is_answered_through_the_call() {
     assert!(env["data"]["fact"].get("account_id").is_none(), "{env}");
     let (_, env) = door_at(host(), guest, "list", json!({"all_accounts": true})).await;
     assert_eq!(env["data"], json!([]), "the owner's row is not the guest's");
+}
+
+/// The core block reads the hosted store in-process, from sync prompt
+/// code waiting on an engine worker: a core row comes back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_core_block_reads_the_store_in_process() {
+    let s = store().await;
+    door(
+        &s.base,
+        Who::Owner,
+        "add",
+        json!({"content": "The user's name is Wei; they run a bakery.", "tier": "core"}),
+    )
+    .await;
+    let name = crate::memory_host::TEST_HOST
+        .scope(host_at(&s.base), async {
+            crate::engine::prompt::core_block::user_name_from_core()
+        })
+        .await;
+    assert_eq!(name.as_deref(), Some("Wei"));
 }
