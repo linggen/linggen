@@ -221,6 +221,7 @@ function describe(method: string, url: string, pageUrl: string): string {
  *  WebRTC signaling that brings the data channel up. */
 const HTTP_ALLOWED: RegExp[] = [
   /^GET \/$/, // the page (`/?session=…` too)
+  /^GET \/embed$/, // an app's chat, the page an app frames (`/embed?skill=…`)
   /^GET \/assets\//, // its scripts, styles, lazy chunks
   /^GET \/(yinyue\.vrm|logo\.svg|favicon\.ico)$/, // static files from ui/public
   /^GET \/anim\//, // Yinyue's animations
