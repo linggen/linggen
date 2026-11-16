@@ -374,7 +374,7 @@ impl AgentEngine {
         msg: String,
         notice: &str,
     ) -> Option<PreExecOutcome> {
-        self.run_faults.note_refused(t.canonical, notice);
+        self.run_faults.note_refused(t.canonical);
         let safe_args = sanitize_tool_args_for_display(t.canonical, t.args);
         let block_id = self.announce_tool_start(t, &safe_args).await;
         let _ = self
@@ -1807,6 +1807,26 @@ mod run_fault_tests {
             &Ok(tools::ToolResult::Success("(no matches)".into())),
         );
         assert!(engine.run_faults.is_empty(), "{:?}", engine.run_faults);
+    }
+
+    #[tokio::test]
+    async fn a_refused_call_is_kept_with_no_tail() {
+        let mut engine = engine_with_declared("fetch");
+        let (args, id) = (serde_json::json!({}), Some("c1".to_string()));
+        let t = ToolTurn {
+            tool: "Write",
+            canonical: "Write",
+            args: &args,
+            session_id: None,
+            tool_call_id: &id,
+        };
+        let scope = Some(HashSet::from(["Read".to_string()]));
+        let mut messages = Vec::new();
+        let stop = engine.gate_allowed_list(&t, &scope, &mut messages).await;
+        assert!(stop.is_some(), "Write was let through");
+        let f = &engine.run_faults.failures[0];
+        assert_eq!((f.tool.as_str(), f.kind), ("Write", FailureKind::Refused));
+        assert_eq!(f.tail, None, "the engine's refusal text became a tail");
     }
 
     #[test]

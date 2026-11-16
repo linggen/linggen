@@ -837,8 +837,8 @@ mod tests {
         store.append_mission_run(&m.id, &running).unwrap();
 
         let mut faults = RunFaults::default();
-        let stderr = format!("{}\nTraceback\n{}", "x".repeat(50), "e".repeat(400));
-        faults.note_exit("fetch", Some(255), &stderr);
+        let stderr = format!("{}\nfetch:\n{}", "x".repeat(50), "e".repeat(400));
+        faults.note_exit("fetch", Some(2), &stderr);
         let end = outcome::RunEnd {
             status: "completed",
             faults,
@@ -855,7 +855,7 @@ mod tests {
         assert_eq!(new.failure_count, 1);
         assert!(new.faulted());
         let tail = new.failures[0].tail.as_deref().unwrap();
-        assert!(tail.starts_with("Traceback / eee"), "{tail}");
+        assert!(tail.starts_with("fetch: / eee"), "{tail}");
         assert_eq!(
             tail.chars().count(),
             crate::engine::run_faults::TAIL_MAX_CHARS

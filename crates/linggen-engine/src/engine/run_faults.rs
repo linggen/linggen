@@ -120,13 +120,14 @@ impl RunFaults {
         });
     }
 
-    /// A call the engine refused, with the line it showed for it.
-    pub fn note_refused(&mut self, tool: &str, notice: &str) {
+    /// A call the engine refused. No tail: the refusal's text is the
+    /// engine's own words to the model, not the tool's output.
+    pub fn note_refused(&mut self, tool: &str) {
         self.push(ToolFailure {
             tool: tool.to_string(),
             kind: FailureKind::Refused,
             exit: None,
-            tail: tail(notice),
+            tail: None,
         });
     }
 }
