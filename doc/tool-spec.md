@@ -54,7 +54,7 @@ Built-in tools are the kernel API. Skills are userspace.
 | `AskUser` | `questions` | Ask user structured questions mid-execution |
 | `sense` | — | The room: presence, how busy the day is, the hour, and this machine's world block |
 | `recent_activity` | `since?`, `until?`, `app?`, `verb?`, `text?`, `limit?`, `totals?` | This Mac's activity log (kept 400 days): what changed, who did it, stretches of use; `totals` sums counts and durations per app and verb for the span. JSON (perception-spec.md §3) |
-| `note_write` | `text`, `look_again?`, `id?` | A note of the agent's own (at most 200 characters; at most 8 open, one more is refused with the open ones listed), shown to it beside every turn until finished. `look_again` wakes it once at that local time: `+40m`, `+3h`, `+2d`, `HH:MM` (next time the clock reads it), `tomorrow HH:MM`, `YYYY-MM-DD HH:MM`; a past time is refused. With `id`, rewrites that note (text and time replaced). Listed-only (below) |
+| `note_write` | `text`, `look_again?`, `id?` | A note of the agent's own (at most 200 characters; at most 8 open, one more is refused with the open ones listed), shown to it beside every turn until finished. `look_again` wakes it once at that local time: `+40m`, `+3h`, `+2d`, `HH:MM` (next time the clock reads it), `tomorrow HH:MM`, `YYYY-MM-DD HH:MM`; a past time is refused. With `id`, rewrites that note (text and time replaced). A time is Yinyue's alone: on any other agent's note it is refused. Listed-only (below) |
 | `note_done` | `id` | Finish one of the agent's notes: no longer shown, wakes no one. Listed-only |
 | `EnterPlanMode` | `reason?` | Enter plan mode (research-only) |
 | `ExitPlanMode` | `plan_text` | Exit plan mode with completed plan |
@@ -65,10 +65,11 @@ Built-in tools are the kernel API. Skills are userspace.
 agent whose tool list names them has them, and a call from any other is
 refused at dispatch. Notes belong to the agent that wrote them
 (`~/.linggen/notes/<agent>.json`); an agent whose own spec lists the note
-tools keeps them at every table with an explicit tool set (a skill's, or
-what it names for that member). In a session whose set is unrestricted (a
-`*` lead's chat it is addressed in) it has none, and is shown none.
-Yinyue lists them; Ling (`*`) has none. Two tools, not one with an op:
+tools keeps them at every table, with an explicit tool set (a skill's, or
+what it names for that member) or an unrestricted one (`*`): the wildcard
+holds them for the agent whose spec lists them alongside it, and for no
+other. Yinyue lists them; Ling lists them beside `*`. A stranger's session
+(a proxy room) has none. Two tools, not one with an op:
 their params differ (app-action-spec § one tool per verb). Reading needs
 no tool — the open notes ride beside each turn (session-spec § Beside the
 turn).

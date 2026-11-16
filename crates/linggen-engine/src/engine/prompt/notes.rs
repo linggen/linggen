@@ -13,7 +13,11 @@ impl AgentEngine {
     /// the agent has no open notes.
     pub(super) fn notes_block(&self, allowed_tools: Option<&HashSet<String>>) -> Option<String> {
         let done = crate::notes::DONE_TOOL;
-        if !allowed_tools.is_some_and(|s| s.contains(done)) || self.is_withheld(done) {
+        let offered = allowed_tools.map_or_else(
+            || self.holds_own_note_tool(None, done),
+            |s| s.contains(done),
+        );
+        if !offered || self.is_withheld(done) {
             return None;
         }
         let agent = self.agent_id.as_deref()?;
@@ -115,17 +119,83 @@ mod tests {
         clear(agent);
     }
 
+    /// An agent that is unrestricted and does not list the note tools has
+    /// none: they are never part of `*`.
     #[test]
-    fn an_unrestricted_agent_has_no_notes_and_is_shown_none() {
-        let agent = "test-notes-block-ling";
+    fn a_bare_wildcard_agent_has_no_notes_and_is_shown_none() {
+        const WORKER: &str = "---\nname: worker\ndescription: d\ntools: [\"*\"]\n---\nWork.";
+        let agent = "test-notes-block-worker";
         crate::notes::change(agent, |b| b.write("planted", None, "m", 1)).unwrap();
-        let mut e = engine(agent, LING);
+        let mut e = engine(agent, WORKER);
         let (block, offered) = notes_in(&mut e);
         assert_eq!(block, None);
         assert!(
             !offered.iter().any(|t| crate::notes::is_note_tool(t)),
             "{offered:?}"
         );
+        clear(agent);
+    }
+
+    /// Ling is unrestricted and lists the note tools: he is offered them and
+    /// his open notes ride beside his next turn — and not hers.
+    #[test]
+    fn ling_holds_notes_beside_the_unrestricted_set_and_they_are_his_alone() {
+        let (his, hers) = ("test-notes-block-ling", "test-notes-block-ling-hers");
+        clear(his);
+        clear(hers);
+        let mut ling = engine(his, LING);
+        assert!(ling.allowed_tool_names().is_none(), "his set stays unrestricted");
+        let (none, offered) = notes_in(&mut ling);
+        assert_eq!(none, None, "no notes, no block");
+        assert!(
+            offered.iter().any(|t| t == "note_write") && offered.iter().any(|t| t == "note_done")
+        );
+        assert!(offered.iter().any(|t| t == "Bash"), "the rest of his set is still there");
+        let now = crate::util::now_ts_secs();
+        crate::notes::change(his, |b| b.write("ask about the invoice", None, "m", now)).unwrap();
+        let (block, _) = notes_in(&mut ling);
+        assert!(block.unwrap().contains(": ask about the invoice"));
+        // Hers do not reach him, nor his her: one store per agent.
+        crate::notes::change(hers, |b| b.write("the parcel", None, "m", now)).unwrap();
+        let (block, _) = notes_in(&mut ling);
+        let block = block.unwrap();
+        assert!(!block.contains("the parcel"), "{block}");
+        let mut her = engine(hers, YINYUE);
+        let (block, _) = notes_in(&mut her);
+        let block = block.unwrap();
+        assert!(block.contains("the parcel") && !block.contains("the invoice"), "{block}");
+        clear(his);
+        clear(hers);
+    }
+
+    /// Her notes follow her to Ling's own chat, whose tool set is his `*`.
+    #[test]
+    fn her_notes_follow_her_into_lings_unrestricted_chat() {
+        let agent = "test-notes-block-hers-at-his";
+        clear(agent);
+        crate::notes::change(agent, |b| b.write("the parcel", None, "m", 1)).unwrap();
+        let mut her = engine(agent, YINYUE);
+        let (ling_spec, _) = crate::extensions::agents::parse_agent_markdown(LING).unwrap();
+        her.session_lead = Some("ling".into());
+        her.session_tools = Some(ling_spec.tools);
+        assert!(her.allowed_tool_names().is_none(), "the lead's set: everything");
+        let (block, offered) = notes_in(&mut her);
+        assert!(block.unwrap().contains(": the parcel"));
+        assert!(offered.iter().any(|t| t == "note_done"), "{offered:?}");
+        clear(agent);
+    }
+
+    /// A stranger's session of Ling (a proxy room) is never shown the owner's
+    /// notes, nor offered the tools.
+    #[test]
+    fn a_proxy_rooms_ling_has_no_notes() {
+        let agent = "test-notes-block-room";
+        crate::notes::change(agent, |b| b.write("private", None, "m", 1)).unwrap();
+        let mut e = engine(agent, LING);
+        e.prompt_profile.consumer_frame = true;
+        let (block, offered) = notes_in(&mut e);
+        assert_eq!(block, None);
+        assert!(!offered.iter().any(|t| crate::notes::is_note_tool(t)), "{offered:?}");
         clear(agent);
     }
 }

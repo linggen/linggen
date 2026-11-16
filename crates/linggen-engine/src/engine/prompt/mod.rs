@@ -920,9 +920,10 @@ impl AgentEngine {
                 }
             } else {
                 // Legacy mode: inject JSON action format + inline tool schemas.
-                let tools_json = self
-                    .tools
-                    .tool_schema_json(allowed_tools.as_ref(), |t| self.is_withheld(t));
+                let own: Vec<&str> = self.own_note_tools().collect();
+                let tools_json = self.tools.tool_schema_json(allowed_tools.as_ref(), &own, |t| {
+                    self.is_withheld(t)
+                });
                 if let Some(rendered) = self
                     .prompt_store
                     .render(crate::prompts::RESPONSE_FORMAT, &[("tools", &tools_json)])
@@ -1213,19 +1214,33 @@ impl AgentEngine {
 
     /// The tools this turn may offer: the session's set, plus the agent's own
     /// notes when its own spec lists them — its notes follow it to every
-    /// table it sits at. `None` is unrestricted, which never holds notes.
+    /// table it sits at. `None` is unrestricted: everything but the listed-only
+    /// tools, and the agent's own notes ([`Self::own_note_tools`]) when its
+    /// spec lists them.
     pub(crate) fn allowed_tool_names(&self) -> Option<HashSet<String>> {
         let mut allowed = self.session_tool_names()?;
         allowed.extend(self.own_note_tools().map(String::from));
         Some(allowed)
     }
 
-    /// The note tools this agent's own spec lists.
+    /// The note tools this agent's own spec lists. None for a stranger's
+    /// session (a proxy room): the notes are the owner's.
     pub(crate) fn own_note_tools(&self) -> impl Iterator<Item = &'static str> + '_ {
         let listed = self.spec.as_ref().map(|s| s.tools.as_slice()).unwrap_or_default();
+        let owner = !self.prompt_profile.consumer_frame;
         crate::notes::TOOLS
             .into_iter()
-            .filter(move |t| listed.iter().any(|l| l == t))
+            .filter(move |t| owner && listed.iter().any(|l| l == t))
+    }
+
+    /// Whether the agent's own spec lists the note tool `name`, and an
+    /// unrestricted set (`allowed` is `None`) therefore holds it too.
+    pub(crate) fn holds_own_note_tool(
+        &self,
+        allowed: Option<&HashSet<String>>,
+        name: &str,
+    ) -> bool {
+        allowed.is_none() && self.own_note_tools().any(|t| t == name)
     }
 
     fn session_tool_names(&self) -> Option<HashSet<String>> {
@@ -1334,6 +1349,10 @@ impl AgentEngine {
         allowed: Option<&HashSet<String>>,
     ) -> Vec<serde_json::Value> {
         let mut defs = self.tools.oai_tool_definitions(allowed);
+        if allowed.is_none() {
+            let own: Vec<&str> = self.own_note_tools().collect();
+            defs.extend(self.tools.own_tool_definitions(&own));
+        }
         defs.retain(|d| {
             d.pointer("/function/name")
                 .and_then(|n| n.as_str())

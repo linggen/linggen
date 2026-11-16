@@ -20,6 +20,10 @@
   Agents; a held line is recorded in the activity log (verb `hold`). Quiet
   hours do not hold an unasked moment from the app being used (its page in
   front, input in the last 5 minutes); the hourly cap still does.
+- **Ling keeps notes too.** `note_write` and `note_done` are in Ling's tool
+  list, with his own open notes in front of him at his next turn; only
+  Yinyue's notes can carry a look-again time (on another's it is refused), so
+  no wake fires for Ling.
 - **Every session a person is in sees the same world.** Ling's chats, app chats
   and Yinyue's thread now get the world block beside each turn (the machine,
   the Linggen page in front, the phone, the doorbell); missions and delegated

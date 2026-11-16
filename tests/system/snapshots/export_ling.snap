@@ -2,7 +2,7 @@
 source: tests/system/support/mod.rs
 expression: text
 ---
-tools: ["AskUser", "Look", "PageUpdate", "Roll", "Voice"]
+tools: ["AskUser", "Look", "PageUpdate", "Roll", "Voice", "note_done", "note_write"]
 
 ## Identity
 

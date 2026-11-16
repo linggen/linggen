@@ -266,12 +266,15 @@ worth a sentence.
   id (`n1`, `n2`, … never reused), text (at most **200** characters), when and
   on which device it was written, an optional look-again time. At most **8**
   open notes; one more is refused with the open ones listed, so she chooses
-  which to finish — nothing is dropped. The tools are listed-only: Yinyue's
-  spec lists them; Ling (`*`) has none until his spec names them.
+  which to finish — nothing is dropped. The tools are listed-only: an agent has
+  them when its own spec names them. Yinyue's does, and so does Ling's
+  (`*` plus the two): he keeps notes too, in his own file, which ride on his
+  next turn and never on hers. Only hers can carry a look-again time: on any
+  other agent's note a time is refused ("Only Yinyue's notes can carry a
+  time."), and no wake ever fires for another agent.
 - **In front of her** at every turn of hers — her thread, a moment, a glance,
-  a woken note, an app's table (whatever tools the skill names for her) —
-  but not in a person's chat she is addressed in, whose set is the lead's
-  `*` — as a per-request block beside the turn
+  a woken note, an app's table (whatever tools the skill names for her), a
+  person's chat she is addressed in — as a per-request block beside the turn
   (`session-spec.md` § Beside the turn), never a kept row: her notes are hers,
   and a kept row is read by every member of a table. Within **2400**
   characters; nothing when she has none:

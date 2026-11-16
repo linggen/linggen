@@ -41,11 +41,12 @@ impl Tool for NoteWriteTool {
     fn description(&self) -> &'static str {
         "Write a note of your own: at most 200 characters, a few short lines. Only you see \
          it; it is in front of you at every turn of yours, with its age, until you finish it \
-         with note_done. You may hold 8 open notes. look_again (optional, local time) wakes \
-         you once at that time with this note as the reason: +40m, +3h, +2d, HH:MM (the next \
-         time the clock reads it), tomorrow HH:MM, or YYYY-MM-DD HH:MM; a time already past \
-         is refused. After it wakes you the note stays open without a time. With id, \
-         rewrites that note: its text and look-again are replaced. Returns the note."
+         with note_done. You may hold 8 open notes. look_again (optional, local time, Yinyue's \
+         notes only; any other agent's note with a time is refused) wakes you once at that \
+         time with this note as the reason: +40m, +3h, +2d, HH:MM (the next time the clock \
+         reads it), tomorrow HH:MM, or YYYY-MM-DD HH:MM; a time already past is refused. \
+         After it wakes you the note stays open without a time. With id, rewrites that \
+         note: its text and look-again are replaced. Returns the note."
     }
     fn tier(&self) -> PermissionMode {
         PermissionMode::Read
@@ -55,7 +56,7 @@ impl Tool for NoteWriteTool {
             "type": "object",
             "properties": {
                 "text": { "type": "string", "description": "The note, at most 200 characters." },
-                "look_again": { "type": "string", "description": "When to wake you with it: +40m, +3h, +2d, HH:MM, tomorrow HH:MM, or YYYY-MM-DD HH:MM (local)." },
+                "look_again": { "type": "string", "description": "Yinyue only. When to wake you with it: +40m, +3h, +2d, HH:MM, tomorrow HH:MM, or YYYY-MM-DD HH:MM (local)." },
                 "id": { "type": "string", "description": "An open note's id, to rewrite it." }
             },
             "required": ["text"]
@@ -75,6 +76,9 @@ impl Tool for NoteWriteTool {
             Err(e) => return Ok(refused(format!("invalid args: {e}"))),
         };
         let agent = tools.agent_id().unwrap_or("agent").to_string();
+        if let Err(why) = refuse_time_for_others(&agent, &args) {
+            return Ok(refused(why));
+        }
         Ok(answer(write(&agent, args, chrono::Local::now())))
     }
 }
@@ -147,6 +151,16 @@ fn write<Tz: chrono::TimeZone>(
         "text": note.text,
         "look_again": note.look_again_at.map(local_time),
     }))
+}
+
+/// Only Yinyue's notes can carry a time: the engine wakes no other agent for
+/// one. Refused before anything is written.
+fn refuse_time_for_others(agent: &str, args: &WriteArgs) -> Result<(), String> {
+    let timed = args.look_again.as_deref().is_some_and(|s| !s.trim().is_empty());
+    if timed && agent != crate::engine::agent::COMPANION_AGENT_ID {
+        return Err("Only Yinyue's notes can carry a time.".to_string());
+    }
+    Ok(())
 }
 
 /// A unix time as the agent writes one: local `YYYY-MM-DD HH:MM`.
@@ -229,6 +243,22 @@ mod tests {
             Some(now().timestamp() as u64 + 23 * 3600)
         );
         let _ = std::fs::remove_file(crate::paths::notes_dir().join(format!("{agent}.json")));
+    }
+
+    /// The engine wakes only Yinyue for a note's time: on any other agent's
+    /// note a time is refused, and says so.
+    #[test]
+    fn only_yinyues_notes_can_carry_a_time() {
+        let timed = args("remind me", Some("+40m"), None);
+        assert_eq!(refuse_time_for_others("yinyue", &timed), Ok(()));
+        let why = refuse_time_for_others("ling", &timed).unwrap_err();
+        assert_eq!(why, "Only Yinyue's notes can carry a time.");
+        let untimed = args("remind me", None, None);
+        assert_eq!(refuse_time_for_others("ling", &untimed), Ok(()));
+        let blank = args("remind me", Some("  "), None);
+        assert_eq!(refuse_time_for_others("ling", &blank), Ok(()));
+        let rewrite = args("remind me", Some("tomorrow 09:00"), Some("n1"));
+        assert!(refuse_time_for_others("ling", &rewrite).is_err(), "a rewrite too");
     }
 
     #[test]

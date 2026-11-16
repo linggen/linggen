@@ -416,7 +416,8 @@ impl AgentEngine {
     ///
     /// Listed-only tools — the pet's (Express drives the on-screen avatar) and
     /// an agent's own notes — only run for an agent that lists them
-    /// EXPLICITLY. The model-facing schema already
+    /// EXPLICITLY (an unrestricted agent whose own spec lists its notes
+    /// included). The model-facing schema already
     /// hides them from `*` (wildcard) agents (tool_registry `is_allowed`), but
     /// the permission gate below is skipped when allowed_tools is None (`*`), so
     /// a hallucinated or legacy emission by a worker agent would otherwise
@@ -429,6 +430,7 @@ impl AgentEngine {
     ) -> Option<PreExecOutcome> {
         if tools::is_listed_only(t.canonical)
             && !matches!(allowed_tools, Some(set) if set.contains(t.canonical))
+            && !self.holds_own_note_tool(allowed_tools.as_ref(), t.canonical)
         {
             let rendered = listed_only_refusal(t.canonical);
             self.upsert_observation("error", t.canonical, rendered.clone());

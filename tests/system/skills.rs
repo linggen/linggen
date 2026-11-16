@@ -31,8 +31,10 @@ async fn skill_edit_tool_runs_under_its_own_grant() {
     w.assert_all_scripted();
 }
 
-/// `allowed-tools: []`: a zero-tool session — nothing in the export, nothing
-/// offered on the model call.
+/// `allowed-tools: []`: a zero-tool session — the skill's tools: none. The
+/// agent's own notes are not the skill's (`note_write`, `note_done` follow
+/// the agent to every table), so they are the only tools in the export and on
+/// the model call.
 #[tokio::test]
 async fn zero_tool_skill_offers_no_tools() {
     let w = World::start(Setup::default().script(Agent::Ling, vec![text("Hello.")])).await;
@@ -41,14 +43,17 @@ async fn zero_tool_skill_offers_no_tools() {
         .create_session(json!({"title": "quiet", "skill": "quiet"}))
         .await;
     let export = w.api.export(&sid, "ling", "").await;
-    assert_eq!(export["tools"], json!([]), "the export lists tools");
+    let mut listed: Vec<&str> = export["tools"]
+        .as_array()
+        .map(|all| all.iter().filter_map(|t| t["name"].as_str()).collect())
+        .unwrap_or_default();
+    listed.sort();
+    assert_eq!(listed, ["note_done", "note_write"], "the export lists {export}");
 
     w.turn(&sid, "", "Hi.", Agent::Ling).await;
     let call = w.model.calls_of(Agent::Ling).pop().expect("his call");
-    assert!(
-        call.tool_names().is_empty(),
-        "the call offered {:?}",
-        call.tool_names()
-    );
+    let mut offered = call.tool_names();
+    offered.sort();
+    assert_eq!(offered, ["note_done", "note_write"], "the call offered {offered:?}");
     w.assert_all_scripted();
 }

@@ -120,11 +120,13 @@ impl ToolRegistry {
     /// `true` if `name` passes the allowed-tools filter (or no filter set).
     /// A built-in this machine cannot run is already left out of the
     /// schemas (`Tool::offered`).
-    fn is_allowed(allowed: Option<&HashSet<String>>, name: &str) -> bool {
+    /// `own`: the listed-only tools the agent's own spec lists, which an
+    /// unrestricted set holds too.
+    fn is_allowed(allowed: Option<&HashSet<String>>, own: &[&str], name: &str) -> bool {
         match allowed {
             // Wildcard (`*`): everything EXCEPT listed-only tools (only an
             // agent that lists them explicitly gets those).
-            None => !tools::is_listed_only(name),
+            None => !tools::is_listed_only(name) || own.contains(&name),
             Some(set) => set.contains(name),
         }
     }
@@ -136,6 +138,7 @@ impl ToolRegistry {
     pub fn tool_schema_json(
         &self,
         allowed_tools: Option<&HashSet<String>>,
+        own: &[&str],
         withheld: impl Fn(&str) -> bool,
     ) -> String {
         let mut tools_arr = tools::full_tool_schema_entries();
@@ -143,12 +146,12 @@ impl ToolRegistry {
             entry
                 .get("name")
                 .and_then(|v| v.as_str())
-                .map(|name| Self::is_allowed(allowed_tools, name) && !withheld(name))
+                .map(|name| Self::is_allowed(allowed_tools, own, name) && !withheld(name))
                 .unwrap_or(false)
         });
 
         for (name, def) in &self.skill_tools {
-            if !Self::is_allowed(allowed_tools, name) || withheld(name) {
+            if !Self::is_allowed(allowed_tools, &[], name) || withheld(name) {
                 continue;
             }
             tools_arr.push(def.to_schema_json());
@@ -167,12 +170,22 @@ impl ToolRegistry {
         let mut defs = tools::json_schema::oai_tool_definitions(allowed);
 
         for (name, def) in &self.skill_tools {
-            if !Self::is_allowed(allowed, name) {
+            if !Self::is_allowed(allowed, &[], name) {
                 continue;
             }
             defs.push(def.to_oai_schema());
         }
         defs
+    }
+
+    /// The definitions of `own` — listed-only tools an unrestricted set
+    /// holds because the agent's own spec lists them.
+    pub fn own_tool_definitions(&self, own: &[&str]) -> Vec<serde_json::Value> {
+        if own.is_empty() {
+            return Vec::new();
+        }
+        let set: HashSet<String> = own.iter().map(|t| t.to_string()).collect();
+        tools::json_schema::oai_tool_definitions(Some(&set))
     }
 
     pub fn register_skill_tool(&mut self, tool: SkillToolDef) {
