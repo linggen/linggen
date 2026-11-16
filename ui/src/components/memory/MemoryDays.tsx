@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { startDream } from './dreamApi.mts';
+import { startDream, startScan } from './dreamApi.mts';
+import { OpenRun } from './OpenRun';
 import { describeError, memory, MemoryError, type MemoryDays as Days } from './memoryApi.mts';
 import { ghostBtn, primaryBtn } from './memoryStyle';
 import { monthOf, shiftMonth } from './memoryCalendar.mts';
@@ -10,6 +11,7 @@ export const MemoryDays: React.FC = () => {
   const [data, setData] = useState<Days | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState('');
+  const [run, setRun] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [month, setMonth] = useState<{ year: number; month: number } | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
@@ -20,15 +22,17 @@ export const MemoryDays: React.FC = () => {
     try { setData(await memory.days()); setError(null); } catch (e) { setError(e); }
   }, []);
   useEffect(() => { mounted.current = true; void load(); return () => { mounted.current = false; stop(); }; }, [load, stop]);
-  const start = async (day?: string) => {
-    setBusy(true); setNotice('');
+  const launch = async (request: () => Promise<string | null>, success: string, failure: string) => {
+    setBusy(true); setNotice(''); setRun(null);
     try {
-      await startDream(day); if (!mounted.current) return; setNotice('Dream started.'); void load(); stop();
+      const session = await request(); if (!mounted.current) return; setRun(session); setNotice(success); void load(); stop();
       const until = Date.now() + 180_000;
       timer.current = setInterval(() => { if (Date.now() >= until) { stop(); return; } void load(); }, 5000);
-    } catch (e) { setNotice(e instanceof Error ? e.message : 'Could not start dream.'); }
-    finally { setBusy(false); }
+    } catch (e) { if (mounted.current) setNotice(e instanceof Error ? e.message : failure); }
+    finally { if (mounted.current) setBusy(false); }
   };
+  const start = (day?: string) => launch(() => startDream(day), 'Dream started.', 'Could not start dream.');
+  const scan = (day: string) => launch(() => startScan(day), 'Scan started.', 'Could not start the scan.');
   const days = data?.days ?? [];
   const waiting = days.filter((d) => d.date < (data?.today ?? '') && d.unjudged > 0).length;
   const shown = month ?? (data ? monthOf(data.today) : null);
@@ -45,13 +49,13 @@ export const MemoryDays: React.FC = () => {
         </>}
         <button className={primaryBtn} disabled={busy} onClick={() => start()}>Dream now</button>
       </div>
-      {notice && <p role="status" className="text-xs text-slate-500">{notice}</p>}
+      {notice && <div role="status" className="flex items-center gap-2 text-xs text-slate-500"><span>{notice}</span>{run && <OpenRun sessionId={run} />}</div>}
       {error != null && <div role="alert" className="text-xs text-red-600 dark:text-red-400">{describeError(error, 'read memory')}{!(error instanceof MemoryError && error.forbidden) && <button className={ghostBtn} onClick={load}>Try again</button>}</div>}
       {!data && !error && <p className="text-xs text-slate-500">Loading…</p>}
       {data && <p className="text-xs text-slate-500">{`${waiting} days wait for a dream.`}</p>}
       {data && days.length === 0 && <p className="text-xs text-slate-500">No days yet.</p>}
       {data && shown && <MemoryCalendarGrid {...shown} days={days} today={data.today} selected={selected} select={setSelected} />}
-      {data && selected && <MemoryDayDetail date={selected} day={days.find((day) => day.date === selected)} today={data.today} busy={busy} start={start} />}
+      {data && selected && <MemoryDayDetail date={selected} day={days.find((day) => day.date === selected)} today={data.today} busy={busy} start={start} scan={scan} />}
     </div>
   );
 };
