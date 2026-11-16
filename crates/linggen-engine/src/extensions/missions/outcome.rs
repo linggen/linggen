@@ -84,6 +84,11 @@ mod tests {
     use crate::engine::run_faults::{FailureKind, ToolFailure};
 
     #[test]
+    fn no_skill_may_declare_the_fault_verb() {
+        assert!(crate::perception::activity::ENGINE_VERBS.contains(&FAULT_VERB));
+    }
+
+    #[test]
     fn a_failed_run_keeps_a_capped_last_line_of_its_error() {
         let mut entry = MissionRunEntry::default();
         let long = format!("provider said:\n{}", "e".repeat(500));
