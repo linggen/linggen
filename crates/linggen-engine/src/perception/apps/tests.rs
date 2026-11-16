@@ -200,13 +200,13 @@ fn an_unchanged_file_is_not_read_again_and_a_changed_one_is() {
     let at = now() - Duration::from_secs(120);
     set_time(&file, at);
     let mut cache = Cache::default();
-    let first = read::lines(&[app.clone()], now(), &mut cache);
+    let first = read::lines(std::slice::from_ref(&app), now(), &mut cache);
     assert_eq!(first, vec!["steps-demo: steps 1000 · 2m ago"]);
 
     // Same size, same time: the cached reading stands, the file is not parsed.
     std::fs::write(&file, r#"{"steps": 9999}"#).unwrap();
     set_time(&file, at);
-    assert_eq!(read::lines(&[app.clone()], now(), &mut cache), first);
+    assert_eq!(read::lines(std::slice::from_ref(&app), now(), &mut cache), first);
 
     // The time moves: read again.
     set_age(&file, 0);
