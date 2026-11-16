@@ -31,6 +31,7 @@ pub mod connect;
 pub mod days;
 pub mod issues;
 pub mod lease;
+pub mod memory;
 pub mod migration;
 pub mod network;
 pub mod primary;
