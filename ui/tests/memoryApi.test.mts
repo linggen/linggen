@@ -132,3 +132,18 @@ test('other failures say what was being done', () => {
   assert.equal(describeError(new MemoryError('boom', 500, 'INTERNAL'), 'save'), 'Could not save: boom');
   assert.equal(describeError(new MemoryError('x', 502, 'UNREACHABLE'), 'read memory'), 'Memory is not reachable right now.');
 });
+
+test('review and days use the expected memory requests', async () => {
+  const sent = door(() => ({ envelope: { ok: true, data: { id: 'a1', vector } } }));
+  await memory.issues();
+  const row = await memory.get('a1');
+  await memory.dismiss('issue1');
+  await memory.days();
+  assert.deepEqual(sent, [
+    { path: '/api/memory/issues', body: { status: 'open', limit: 1000 } },
+    { path: '/api/memory/get', body: { id: 'a1' } },
+    { path: '/api/memory/issue_resolve', body: { id: 'issue1', outcome: 'dismissed', note: 'dismissed from the browse page' } },
+    { path: '/api/memory/days', body: {} },
+  ]);
+  assert.ok(row && !('vector' in row));
+});

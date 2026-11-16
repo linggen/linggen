@@ -8,9 +8,10 @@ export const MemoryReview: React.FC<{ onCount: (count: number) => void }> = ({ o
   const [items, setItems] = useState<ReviewIssue[] | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [opened, setOpened] = useState<Record<string, MemoryRow | null>>({});
+  const [count, setCount] = useState(0);
   const [busy, setBusy] = useState('');
   const load = useCallback(async () => {
-    try { const q = await memory.issues(); setItems(q.issues); onCount(q.open_count); setError(null); }
+    try { const q = await memory.issues(); setItems(q.issues); setCount(q.open_count); onCount(q.open_count); setError(null); }
     catch (e) { setError(e); }
   }, [onCount]);
   useEffect(() => { void load(); }, [load]);
@@ -21,7 +22,7 @@ export const MemoryReview: React.FC<{ onCount: (count: number) => void }> = ({ o
   const dismiss = async (id: string) => {
     if (!(await confirmDialog('Dismiss this review item?'))) return;
     setBusy(id);
-    try { await memory.dismiss(id); setItems((cur) => cur?.filter((i) => i.id !== id) ?? null); onCount(Math.max(0, (items?.length ?? 1) - 1)); setError(null); }
+    try { await memory.dismiss(id); setItems((cur) => cur?.filter((i) => i.id !== id) ?? null); setCount(Math.max(0, count - 1)); onCount(Math.max(0, count - 1)); setError(null); }
     catch (e) { setError(e); }
     finally { setBusy(''); }
   };

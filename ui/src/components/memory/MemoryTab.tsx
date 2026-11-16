@@ -22,7 +22,7 @@ function emptyWhy(q: Query): string {
 }
 
 /** Settings → Memory: the store's rows, browsed and edited through the
- *  engine's own door (`POST /api/memory/<verb>`). */
+ *  engine's own door. */
 export const MemoryTab: React.FC = () => {
   const rows = useMemoryRows();
   const { query, change } = rows;

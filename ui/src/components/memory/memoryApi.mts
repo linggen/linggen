@@ -39,7 +39,7 @@ export interface ReviewIssue {
 export interface ReviewQueue { open_count: number; issues: ReviewIssue[] }
 
 export interface MemoryDay {
-  date: string; state: string; rows: number; unjudged: number; past_ttl: boolean;
+  date: string; state?: string; dreamed?: boolean; scanned?: boolean; rows: number; unjudged: number; past_ttl: number;
   harvested_at: string | null; remembered_at: string | null; judged: number; promoted: number | null; forgotten: number | null;
 }
 export interface MemoryDays {

@@ -37,3 +37,12 @@ test('the Memory entry sits in the Data group of the Settings sidebar', async ({
   await page.getByRole('button', { name: 'Memory' }).click();
   await expect(page.getByTestId('memory-subview-rows')).toBeVisible();
 });
+
+test('the Memory tab shows review and days', async ({ page, world, httpRequests }) => {
+  await openSettings(page, world.url, httpRequests);
+  await page.getByRole('button', { name: 'Memory' }).click();
+  await page.getByRole('button', { name: 'Review', exact: true }).click();
+  await expect(page.getByText('Nothing waits for review.')).toBeVisible();
+  await page.getByRole('button', { name: 'Days', exact: true }).click();
+  await expect(page.getByTestId('memory-day').first().or(page.getByText('No days yet.'))).toBeVisible();
+});
