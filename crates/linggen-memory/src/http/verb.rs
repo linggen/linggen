@@ -5,6 +5,11 @@
 //! store parses it: a body this store cannot read is still the primary's to
 //! judge, and is refused here (in axum's words, nothing queued) only when
 //! the primary does not answer. `call::route` makes that decision for both.
+//!
+//! [`answer`] is the same for a caller whose args are JSON already (memory's
+//! MCP server, the engine's door): the verb's route found by its path, its
+//! body checked as the route's `Json` checks it, then `call` — every answer,
+//! refusals included, as the route gives it, with no request made.
 
 use super::state::SharedState;
 use crate::call::{route_of, Reply, Route};
@@ -18,6 +23,58 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::de::{DeserializeOwned, IgnoredAny};
 use serde_json::{json, Value};
+
+/// A verb body's check, as its route's `Json` extractor makes it.
+pub(crate) type Probe = fn(&[u8]) -> Result<(), JsonRejection>;
+
+/// The [`Probe`] of a verb whose body is a `T`.
+pub(crate) fn probe<T: DeserializeOwned>(bytes: &[u8]) -> Result<(), JsonRejection> {
+    Json::<T>::from_bytes(bytes).map(drop)
+}
+
+/// `/api/memory/<verb>` as the router answers a JSON POST of `args`: an
+/// empty 404 for a path the router has no verb at, the body check's
+/// rejection, or the verb's answer through `call`.
+pub async fn answer(state: SharedState, verb: &str, args: Value) -> Response {
+    let Some(v) = verbs::at_path(&format!("/api/memory/{verb}")) else {
+        state.mark_request();
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Some(probe) = v.probe else {
+        return bare(state, v.name).await;
+    };
+    match route_of(&state, v.name) {
+        Route::Refuse => bare(state, v.name).await,
+        Route::Here => match probe(&body_of(&args)) {
+            Ok(()) => respond(state.call(v.name, args).await),
+            Err(rejection) => rejection.into_response(),
+        },
+        Route::Forward => forward_args(state, v.name, v.path, probe, args).await,
+    }
+}
+
+/// The bytes a JSON POST of `args` carries.
+fn body_of(args: &Value) -> Vec<u8> {
+    serde_json::to_vec(args).unwrap_or_default()
+}
+
+/// [`forward`] for args that are JSON already.
+async fn forward_args(
+    state: SharedState,
+    verb: &str,
+    path: &str,
+    probe: Probe,
+    args: Value,
+) -> Response {
+    let rejection = match probe(&body_of(&args)) {
+        Ok(()) => return respond(state.call(verb, args).await),
+        Err(rejection) => rejection,
+    };
+    match crate::replica::forward::forward_in_order(&state, path, &args).await {
+        Some(answer) => answer.into_response(),
+        None => rejection.into_response(),
+    }
+}
 
 /// The most a replica buffers of a write's body before it forwards it.
 const MAX_BODY: usize = 16 * 1024 * 1024;

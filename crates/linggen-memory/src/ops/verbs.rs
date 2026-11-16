@@ -44,6 +44,10 @@ pub(crate) struct Verb {
     pub path: &'static str,
     pub kind: Kind,
     pub run: Run,
+    /// The body check its route makes before the verb runs (`None`: the
+    /// route never reads a body) — what `http::verb::answer` gives a caller
+    /// whose args were never a request.
+    pub probe: Option<crate::http::verb::Probe>,
     /// The op it calls, as written (`memory :: write :: add`) — for the
     /// no-bypass check.
     #[cfg(test)]
@@ -64,6 +68,7 @@ macro_rules! verb {
                     ops::$($op)::+(&state, req).await
                 })
             },
+            probe: Some(crate::http::verb::probe::<$req>),
             #[cfg(test)]
             op: stringify!($($op)::+),
         }
@@ -74,6 +79,7 @@ macro_rules! verb {
             path: $path,
             kind: Kind::$kind,
             run: |state, _args| Box::pin(async move { ops::$($op)::+(&state).await }),
+            probe: None,
             #[cfg(test)]
             op: stringify!($($op)::+),
         }
@@ -235,6 +241,11 @@ pub(crate) const VERBS: &[Verb] = &[
 
 pub(crate) fn find(name: &str) -> Option<&'static Verb> {
     VERBS.iter().find(|v| v.name == name)
+}
+
+/// The verb routed at `path`, as the router finds it.
+pub(crate) fn at_path(path: &str) -> Option<&'static Verb> {
+    VERBS.iter().find(|v| v.path == path)
 }
 
 /// The args as the op's request type. The words are serde's, behind the

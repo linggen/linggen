@@ -1,6 +1,6 @@
 //! Memory's MCP endpoint on the router (`/mcp`): what Claude Code, Codex
-//! and the engine's own agents see. Its `tools/call` posts back to this
-//! store's own `/api/memory/<verb>` (the `self_base` loopback).
+//! and the engine's own agents see. Its `tools/call` answers a verb as the
+//! store's own `/api/memory/<verb>` route answers it, in-process.
 
 use crate::support::*;
 use serde_json::{json, Value};

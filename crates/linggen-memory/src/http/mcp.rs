@@ -7,9 +7,10 @@
 //! Single endpoint at `POST /mcp` accepting JSON-RPC 2.0. Methods:
 //! - `initialize` — protocol handshake, returns server capabilities.
 //! - `tools/list` — enumerate tools with their input schemas.
-//! - `tools/call` — execute a tool. The handler loopback-POSTs to
-//!   `http://127.0.0.1:<self_port>/api/memory/<verb>` so MCP calls share
-//!   the same dispatch path as the CLI client and direct HTTP callers.
+//! - `tools/call` — execute a tool. The verb is answered as its route
+//!   `/api/memory/<verb>` answers it (`http::verb::answer`, through
+//!   `Memory::call`, no request made), so MCP calls share the routes'
+//!   dispatch and refusals.
 //!
 //! Notifications (no `id`, no response expected) return HTTP 204.
 //!
@@ -30,11 +31,11 @@ use std::time::Duration;
 
 const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
 const SERVER_NAME: &str = "memory";
-/// How long a tool call waits on the daemon's own HTTP API. A write can pay
+/// How long a tool call waits on its verb. A write can pay
 /// for a LanceDB auto-cleanup inside its commit (9s once, 2026-09-15), so
 /// 10s cut off adds that then landed anyway. Kept under the 30s the engine
 /// and the CLI wait, so the caller hears this daemon's own timeout message.
-const LOOPBACK_TIMEOUT: Duration = Duration::from_secs(25);
+const CALL_TIMEOUT: Duration = Duration::from_secs(25);
 
 /// Always-on primer injected into the client's system prompt at session
 /// start. The MCP spec's `instructions` field is the daemon's way to teach
@@ -147,7 +148,7 @@ fn tool_defs() -> Vec<Value> {
                 "required": ["query"]
             }
             // `min_score` is deliberately absent. The REST handler accepts it
-            // and the loopback passes it through, so a *programmatic* caller
+            // and the tool call passes it through, so a *programmatic* caller
             // (Linggen's auto-recall) can set a floor — but advertising a
             // relevance threshold to a model invites exactly the over-fill
             // failure these narrow schemas exist to prevent: a guessed value
@@ -379,7 +380,7 @@ async fn handle_tools_call(state: &SharedState, params: Value) -> Result<Value, 
     coerce_to_schema(&name, &mut args);
     apply_dispatch_fixes(&mut args);
 
-    match loopback(state, verb, args).await {
+    match run_verb(state, verb, args).await {
         Ok(mut data) => {
             apply_response_fixes(verb, &mut data);
             Ok(mcp_text_content(&data))
@@ -567,45 +568,39 @@ fn mcp_text_content(data: &Value) -> Value {
     })
 }
 
-/// HTTP loopback to this daemon's own `/api/memory/<verb>` handler.
-/// Reuses the same dispatch path the CLI client uses so MCP and CLI
-/// share behaviour. Unwraps the `{ok, data}` envelope.
+/// Run the verb as its route answers it (`http::verb::answer`, on this
+/// runtime, no request made) and unwrap the `{ok, data}` envelope. The verb
+/// runs as its own task: one that outlives [`CALL_TIMEOUT`] still finishes,
+/// which is what the timeout's message tells the caller.
+async fn run_verb(state: &SharedState, verb: &str, body: Value) -> Result<Value, ApiError> {
+    let (state, owned) = (state.clone(), verb.to_string());
+    let task = tokio::spawn(async move { super::verb::answer(state, &owned, body).await });
+    match tokio::time::timeout(CALL_TIMEOUT, task).await {
+        Err(_) => Err(timed_out(verb)),
+        Ok(Err(e)) => Err(ApiError::internal(anyhow::Error::from(e))),
+        Ok(Ok(response)) => read_answer(verb, response).await,
+    }
+}
+
 /// A timeout says what it means for a write: the store may have finished the
 /// work after we stopped waiting, so look before doing it again.
-fn loopback_error(verb: &str, err: reqwest::Error) -> ApiError {
-    if !err.is_timeout() {
-        return ApiError::internal(anyhow::Error::from(err));
-    }
+fn timed_out(verb: &str) -> ApiError {
     ApiError::internal(anyhow::anyhow!(
         "{verb} timed out after {}s — a write may still have landed; search before retrying",
-        LOOPBACK_TIMEOUT.as_secs()
+        CALL_TIMEOUT.as_secs()
     ))
 }
 
-async fn loopback(state: &SharedState, verb: &str, body: Value) -> Result<Value, ApiError> {
-    loopback_url(&state.self_base, verb, body).await
-}
-
-async fn loopback_url(base: &str, verb: &str, body: Value) -> Result<Value, ApiError> {
-    let url = format!("{base}/api/memory/{verb}");
-    let client = reqwest::Client::builder()
-        .timeout(LOOPBACK_TIMEOUT)
-        .build()
-        .map_err(|e| ApiError::internal(anyhow::Error::from(e)))?;
-    let resp = client
-        .post(&url)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| loopback_error(verb, e))?;
-    let status = resp.status();
-    let body = resp
-        .text()
+/// The route's answer, read as the HTTP caller read it.
+async fn read_answer(verb: &str, response: Response) -> Result<Value, ApiError> {
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .map_err(|e| ApiError::internal(anyhow::Error::from(e)))?;
-    // A body the REST layer refused before its handler ran (axum's 422 for
-    // a field of the wrong type) is plain text. Say what it said — "error
-    // decoding response body" told nobody which field was wrong.
+    let body = String::from_utf8_lossy(&bytes);
+    // A body the route refused before its verb ran (axum's 422 for a field
+    // of the wrong type) is plain text. Say what it said — "error decoding
+    // response body" told nobody which field was wrong.
     let value: Value = serde_json::from_str(&body).map_err(|_| {
         ApiError::internal(anyhow::anyhow!(
             "{verb}: HTTP {}: {}",
@@ -629,26 +624,11 @@ async fn loopback_url(base: &str, verb: &str, body: Value) -> Result<Value, ApiE
 mod tests {
     use super::*;
 
-    /// A store that takes the request and never answers: the timeout must
-    /// tell the caller its write may have landed.
-    #[tokio::test]
-    async fn a_timed_out_call_says_the_write_may_have_landed() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}/api/memory/add", listener.local_addr().unwrap());
-        let _held = tokio::spawn(async move {
-            let (_socket, _) = listener.accept().await.unwrap();
-            tokio::time::sleep(Duration::from_secs(5)).await;
-        });
-        let err = reqwest::Client::builder()
-            .timeout(Duration::from_millis(100))
-            .build()
-            .unwrap()
-            .post(&url)
-            .json(&json!({}))
-            .send()
-            .await
-            .unwrap_err();
-        let message = loopback_error("add", err).message;
+    /// A verb that outlives the wait: the caller is told its write may
+    /// have landed.
+    #[test]
+    fn a_timed_out_call_says_the_write_may_have_landed() {
+        let message = timed_out("add").message;
         assert!(message.starts_with("add timed out after 25s"), "{message}");
         assert!(message.contains("may still have landed"), "{message}");
     }
@@ -713,25 +693,15 @@ mod tests {
         assert!(req.skip_dedup);
     }
 
-    /// A plain-text refusal from the REST layer reaches the caller verbatim.
+    /// A plain-text refusal from the route reaches the caller verbatim.
     #[tokio::test]
     async fn a_plain_text_refusal_is_reported_as_said() {
-        use axum::routing::post as axum_post;
-        let app = Router::new().route(
-            "/api/memory/add",
-            axum_post(|| async {
-                (
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "Failed to deserialize the JSON body: indexed: invalid type",
-                )
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let err = loopback_url(&format!("http://127.0.0.1:{port}"), "add", json!({}))
-            .await
-            .unwrap_err();
+        let refusal = (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "Failed to deserialize the JSON body: indexed: invalid type",
+        )
+            .into_response();
+        let err = read_answer("add", refusal).await.unwrap_err();
         assert!(err.message.contains("HTTP 422"), "{}", err.message);
         assert!(
             err.message.contains("indexed: invalid type"),

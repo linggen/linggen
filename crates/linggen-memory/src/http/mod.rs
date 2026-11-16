@@ -32,7 +32,7 @@ pub(crate) mod session;
 pub mod state;
 mod stats;
 pub(crate) mod sync;
-mod verb;
+pub mod verb;
 
 use axum::extract::Request;
 use axum::middleware::{self, Next};

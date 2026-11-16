@@ -33,15 +33,9 @@ pub struct Memory {
     /// (`.config.json` — episodic TTL etc.) live under
     /// `<data_dir>/memory/.config.json`.
     pub data_dir: PathBuf,
-    /// Bound TCP port of this daemon's HTTP server. The MCP handler uses
-    /// it to loopback POST against `/api/memory/<verb>` so MCP `tools/call`
-    /// reuses the same handlers (and their dispatch fixes) instead of
-    /// duplicating logic.
+    /// The loopback TCP port this memory's routes answer on, for the fields
+    /// that report it.
     pub port: u16,
-    /// Where this memory's routes are reachable over loopback — the MCP
-    /// handler's self-POST base. `http://127.0.0.1:<port>` for the daemon;
-    /// the host's prefix when another process hosts memory (`crate::hosted`).
-    pub self_base: String,
     /// Machines on the LAN asking to connect — see `http::connect`.
     pub connect: crate::http::connect::Broker,
     /// Paired devices seen by the gate, in memory — see `http::presence`.
@@ -81,7 +75,6 @@ impl Memory {
             embedder,
             data_dir,
             port: bound.port(),
-            self_base: format!("http://127.0.0.1:{}", bound.port()),
             connect: Default::default(),
             presence: Default::default(),
 

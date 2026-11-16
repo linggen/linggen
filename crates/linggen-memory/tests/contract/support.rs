@@ -1,7 +1,7 @@
 //! One hosted memory per test: a scratch store in a temp dir, the real
 //! router (`build_hosted_router`) served on a free loopback port, the
 //! deterministic embedder. Requests go over real HTTP, as the engine's own
-//! callers send them today (the MCP endpoint posts back to itself).
+//! callers send them.
 
 use ling_mem::http::state::SharedState;
 use serde_json::{json, Value};

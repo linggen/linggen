@@ -130,8 +130,8 @@ async fn attach_change_log(
 
 /// Open the stores under `data_dir` and start their background work on the
 /// current runtime. `self_base` is where this memory's routes are reachable
-/// over loopback (MCP calls reuse the HTTP handlers through it), e.g.
-/// `http://127.0.0.1:9527/mem`. The caller holds the [`StoreLock`].
+/// over loopback, e.g. `http://127.0.0.1:9527/mem` — its port is what the
+/// store reports as its own. The caller holds the [`StoreLock`].
 pub async fn open(data_dir: &Path, self_base: String) -> Result<SharedState> {
     let state = open_quiet(data_dir, self_base).await?;
     crate::ops::upkeep::spawn(Arc::clone(&state));
@@ -171,7 +171,7 @@ async fn open_with(
     let recall = Arc::new(Recall::new(Arc::clone(&semantic), Arc::clone(&episodic)));
     let embedder = Arc::new(LoadOnce::new(load));
     let bound = self_addr(&self_base);
-    let mut state = Memory::new(
+    let state = Memory::new(
         semantic,
         episodic,
         recall,
@@ -179,7 +179,6 @@ async fn open_with(
         data_dir.to_path_buf(),
         bound,
     );
-    state.self_base = self_base;
     Ok(Arc::new(state))
 }
 
