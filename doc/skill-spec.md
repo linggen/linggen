@@ -139,6 +139,7 @@ Three groups of fields. Standard fields work across tools; the others are extens
 | `product` | The Linggen Cloud product its turns bill to (see "Product") |
 | `closing-ask` | `true`: the skill's tools hand each turn its closing question; the engine asks it when the model doesn't (see "Closing question") |
 | `queue` | `steer` (default) or `after-turn`: whether a message sent mid-turn steers the turn or waits for it (see "Queue") |
+| `private-talk` | `true`: what is said in this app's turns is private to it (see "Private talk") |
 | `quests` | Which phone facts stamp which of the skill's quests, and the skill's own writer that stamps them (see "Quests") |
 | `place` | Where the skill's sessions stand for each agent, and whether an agent is there yet (see "Place") |
 | `senses` | Real-world facts the engine reads for the skill, e.g. `[weather]` (see "Senses") |
@@ -325,6 +326,11 @@ A message sent while a session's agent is mid-turn is queued. What happens to th
 - **`steer`** (default) — the turn stops at its next step and the message is taken up next (ordinary chat: the user redirects the agent).
 - **`after-turn`** — the turn plays out: its tools, its words, its question. The message runs when the run ends, unless the person presses Steer on it (`chat-spec.md` § Message queue).
 - Either way, **a message never cancels an open question**: an AskUser (or a permission prompt) stays on screen until it is answered or skipped, and the message waits behind it.
+- The rule is the skill's of the place both stand in. A message from another app's page than the running turn's waits for that turn to end, whatever either skill declares (`session-spec.md` § A turn's place).
+
+## Private talk
+
+`private-talk: true` declares that what is said in the app's turns is the app's alone. It is read with the rest of the frontmatter (a value that is not `true` or `false` is refused like any wrong frontmatter type) and kept on the skill; a turn's place can tell it. Nothing acts on it yet: today every turn of a session stands in one place, so there are no other apps' turns to keep its rows from.
 
 ## Quests
 
@@ -567,7 +573,7 @@ Skill tools are available only while the skill is active (transient invocation o
 | Mode | Trigger | Scope |
 | :--- | :------ | :---- |
 | **Transient** | `/skill-name` in chat | Single invocation, then restored |
-| **Session-bound** | Session created with `skill:` field | Entire session |
+| **Session-bound** | Session created with `skill:` field | Each turn whose place is the skill — today every turn of the session (`session-spec.md` § A turn's place) |
 
 Session-bound effective tools are `intersection(agent.tools, skill.allowed-tools)`. When that intersection is empty, tool-related prompt sections (schemas, delegation, plan mode) are skipped — the agent runs as a pure conversational skill.
 

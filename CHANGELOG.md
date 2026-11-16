@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- **What an app gives a turn now belongs to the turn.** A turn's place (the
+  page's skill, or home) sets the skill's instructions, tools, folder, memory
+  scope and values when it starts and clears them when it ends; grants are
+  kept per place in `permission.json`, a message from another app's page waits
+  for the running turn, saved rows carry their `place`, and a skill may
+  declare `private-talk: true`. Today every turn of a session stands in the
+  session's own place, so nothing changes in use.
 - **Yinyue keeps notes of her own and looks again when she said she would.**
   `note_write` (at most 8 notes of 200 characters, an optional look-again
   such as `+40m`, `HH:MM`, `tomorrow 09:00`) and `note_done`; her open notes

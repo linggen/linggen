@@ -137,7 +137,7 @@ Each session carries:
 | `title` | creation | yes | Human-readable name, can be auto-generated |
 | `created_at` | creation | no | Unix timestamp |
 | `creator` | creation | promotion only | Who owns this session: `user`, `skill`, `agent`, `mission`. Changes from `mission` → `user` on promotion. |
-| `skill` | creation | no | Bound skill name (if any) — active for the session's lifetime |
+| `skill` | creation | no | Bound skill name (if any) — the app the session was made for, and the place of its turns (§ A turn's place) |
 | `params` | creation | no | The values the session is bound to, by the bound skill's declared session params (`skill-spec.md` § Session parameters) — e.g. `{save: test}`. Checked against the declaration when the session is made and on every use. Absent: the skill as it runs unbound. |
 | `mission_id` | creation | no | Originating mission (if creator is `mission`) |
 | `agents` | creation | grows | The members `[{id, model}]`, the lead first; `@name` seats one for good. Old sessions' `agent_id`/`model_id` migrate to a one-member list. |
@@ -160,6 +160,44 @@ Each session carries:
 - **Bound skill** — set at creation, cannot be changed. Start a new session for a different skill.
 - **Bound params** — one session, one value per param: a different save is a different session.
 - **Creator** — immutable except for promotion (mission → user when a human takes over).
+
+## A turn's place
+
+What an app gives a turn belongs to the turn, not the session. A turn's
+**place** is the skill of the page it came from — or none, **home**: Yinyue's
+own surfaces, a plain chat — with the values the session is bound to for that
+skill (§ Session parameters in `skill-spec.md`; another skill's turn in the
+session sees none).
+
+- **Which place.** A chat request takes the skill its page names, else the
+  session's own. A turn no page sent — Yinyue's own turns, her turn at an
+  app's table, a light turn, a look-again wake, a relayed message, a message
+  resent after a restart, a background task's end — stands in the session's
+  own place. A delegated run stands where its parent's turn stands. A mission
+  run and an `agent_run` session have no skill: home.
+- **Set and cleared.** When the turn starts, its place sets the skill's
+  SKILL.md in the prompt, its tools (`allowed-tools`; `place.<agent>.tools`
+  for a member who isn't the lead; the skill's own tools), its memory scope
+  (core and the app's own memory), the values its commands read, and — for a
+  place other than the session's own — its folder (the skill's `cwd`, else its
+  folder; home's is the default workspace). When the turn ends all of it is
+  put back: the next turn, in whatever place, sees nothing of this one. A
+  skill taken up mid-turn (`/name`, the Skill tool) is not the place: its
+  tools stay for later turns as before. A `cd` in another app's place moves
+  only that place's folder, never the session's.
+- **Grants per place.** Each place keeps its own grants in the session's
+  `permission.json`: a grant given in one app is not honoured in another
+  (`permission-spec.md` § Session grants).
+- **Queue.** A message sent while a turn runs meets it by the places of both:
+  in the same place, the skill's `queue` rule (`skill-spec.md` § Queue); in
+  different places the message waits for the running turn to end, and is
+  never folded in or steered into it.
+- **Rows.** Each row a turn saves to `messages.jsonl` carries its place
+  (`place`: the skill's name, or `:home`). A row without one — every row
+  written before places, and rows no turn wrote — is the session's own place.
+
+Today a page always names the skill its session was made for, so every turn of
+a session shares one place: the session's.
 
 ## System prompt assembly
 
@@ -220,7 +258,7 @@ The session's effective permission mode for the current working folder controls 
 - **Session is the single source of truth** for permissions. No tool lists in agent specs or skill frontmatter control access.
 - **Four modes** (chat/read/edit/admin) define the ceiling. Mode is always path-scoped and persisted per-session as `(path, mode)`.
 - **Current cwd determines the visible mode**. After `cd`, the backend recomputes the effective mode by longest matching path grant. No matching grant means `chat`.
-- **Skills** that need elevated permissions declare a `permission` section in frontmatter — the user approves when invoking, and the grant is written to the session's `permission.json`.
+- **Skills** that need elevated permissions declare a `permission` section in frontmatter — the user approves when invoking, and the grant is written to the session's `permission.json`, under the turn's place (§ A turn's place).
 - **Missions** set mode + paths at creation time. If a mission needs more permission than its grants allow, it records permission-needed instead of silently widening access.
 
 Available tools depend on the session's effective mode for the current path:

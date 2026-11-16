@@ -183,7 +183,7 @@ Stored at `~/.linggen/credentials.json`. Keyed by model `id` from `linggen.toml`
 }
 ```
 
-Stored at `~/.linggen/sessions/{session_id}/permission.json`. Per-session, cleared on session end. `path_modes[]` is the only field — the entire permission state. Only explicit user approvals, mission frontmatter, and skill frontmatter write to it. See `permission-spec.md` for the full model.
+Stored at `~/.linggen/sessions/{session_id}/permission.json`. Per-session, cleared on session end. `path_modes[]` is the grant table of the session's own place (its skill, or home); `places` (absent until used) holds every other place's table by its key, `{"zz-game": [{path, mode}]}` (`session-spec.md` § A turn's place). Only explicit user approvals, mission frontmatter, and skill frontmatter write to it. See `permission-spec.md` for the full model.
 
 There is no `[permissions]` block in `linggen.toml` and no project-level `permissions.json`. The engine's hardcoded deny floor is baked into the binary, not user-configurable.
 
@@ -234,6 +234,8 @@ One JSON object per line, append-only.
 A person's row may carry `client_id` — the id the sending surface gave its bubble (see `chat-spec.md` § Addressing an agent).
 
 Every row a run writes (its calls, their results, its words and reply, its error line, its plan) carries `run_id` — the run that wrote it (see `chat-spec.md` § Runs). A person's row has none. Rows written before 2026-10-22 have none.
+
+A row saved while a turn runs carries `place` — the turn's place, a skill's name or `:home` (`session-spec.md` § A turn's place). A row without one is the session's own place; today every turn of a session stands there.
 
 A person's row that carried pictures names them: `"images": ["3f2a…9c.png"]`, files under the session's `images/` (named by content; PNG, JPEG, GIF, WebP; at most 8 a message, 8 MB each — anything else isn't kept). The state endpoints hand each as a URL, `GET /api/sessions/images?session_id=&name=`, fetched over the data channel. Rows before 2026-10-19 kept none.
 

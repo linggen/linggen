@@ -46,7 +46,9 @@ Each grant pairs a permission level with a scope: a directory and its children, 
 
 These levels apply uniformly to individual directories and all directories. All-directories admin is broad access, not macOS administrator or root privilege. The system's hardcoded deny floor still blocks certain dangerous agent commands regardless of grants.
 
-A new user session starts with the configured default level on its starting directory, normally `read`. Session grants survive reopening the same session; they are not automatically inherited from another session. Missions and skills may provide their own grants. Skills may also persist and reapply user-configured grants across sessions; this is distinct from inheriting another session's grants.
+**Grants are kept per place.** A session's turns each stand in a place — the app whose page the turn came from, or home (`session-spec.md` § A turn's place) — and each place has its own grants in the session's permission file: a grant the user gave while in one app is not honoured in another app's turn of the same session, and is still honoured when a turn is back in the first app. The session's own place (its skill, or home) keeps its grants where the file always held them, so a file written before places reads as the grants of the session's own place; another place's grants sit under that place's name. A subagent uses the grants of the place its parent's turn stands in. The permission modes and the hardcoded deny floor are the same in every place. Today every turn of a session stands in the session's own place, so a session has one set of grants in practice; the badge, the per-chat grants and `agent_permit` show and change that set.
+
+A new user session starts with the configured default level on its starting directory, normally `read`. A place's first turn in a session starts the same way, on the place's folder. Session grants survive reopening the same session; they are not automatically inherited from another session. Missions and skills may provide their own grants. Skills may also persist and reapply user-configured grants across sessions; this is distinct from inheriting another session's grants.
 
 ## Asking for permission
 
@@ -74,7 +76,7 @@ The chat shows the effective level for the current working directory. Changing t
 - Skills and some chat-tier or explicitly ungated MCP tools can operate outside the ordinary path-mode gate. A skill may request its own grants. The owner should not assume that `chat` alone is a complete isolation boundary.
 - Browser actions use site trust and separate confirmations for sensitive actions; see `browser-control-spec.md`.
 - Agent permissions do not gate the owner's own typed commands or deterministic skill interface actions. This is not a substitute for enforcing identity and access boundaries on remote interfaces.
-- A chat has one set of grants. Subagents at every depth use it live instead of keeping their own copy. A subagent's permission prompt asks the person for the chat, and a grant made there applies at once to the main chat, the badge and every subagent. A subagent can never raise a grant without the person. A delegated run with no session to share runs on a copy of its parent's grants.
+- A chat has one set of grants for each place (§ Session grants). Subagents at every depth use the set of their parent turn's place live instead of keeping their own copy. A subagent's permission prompt asks the person for the chat, and a grant made there applies at once to the main chat, the badge and every subagent. A subagent can never raise a grant without the person. A delegated run with no session to share runs on a copy of its parent's grants.
 
 ## Related documents
 
