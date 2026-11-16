@@ -153,9 +153,13 @@ Built (2.4 branch, 2026-11-16): all of the above, in `server::day_session`,
 `state_fs::day_session` and `turn_place::sight`. Every reader of a session's
 rows is listed in a lock test with why it may read them. Not built: the
 phone's side (it must send `skill_name` and use the day's id); a light
-turn after her moment stands at home, not in the moment's app; recall of
-the day's thread beyond the folded view, a summary cache, any change to
-compaction (decided out of this step).
+turn after her moment stands at home, not in the moment's app; a private
+app's background tasks (command line, last output line) still show in
+every page's task list; one day per engine, not per person; a page left
+open past 04:00 keeps yesterday's session; which apps are private is read
+from the installed skills, so a removed app's rows are no longer hidden;
+recall of the day's thread beyond the folded view, a summary cache, any
+change to compaction (decided out of this step).
 
 ## Tool names and packs
 
