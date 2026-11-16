@@ -16,6 +16,7 @@ mod claude_subagents;
 mod drawing;
 mod fixtures;
 mod met;
+mod missions;
 mod pictures;
 mod plan;
 mod presence;
