@@ -358,7 +358,12 @@ const CONTENT_FREE_KINDS: &[&str] = &["turn_complete"];
 /// (`turn_place::sight`) and this peer is not that app's page.
 fn talk_kept_from(state: &ServerState, ui_msg: &crate::engine::events::UiEvent, skill: Option<&str>) -> bool {
     let places = &state.manager.global_sessions.running_places;
-    kept_from(places, (&ui_msg.kind, ui_msg.session_id.as_deref()), skill)
+    if kept_from(places, (&ui_msg.kind, ui_msg.session_id.as_deref()), skill) {
+        return true;
+    }
+    // An ended private turn's events may arrive after its mark is gone.
+    let ended = ui_msg.run_id.as_deref().and_then(|run| places.private_run(run));
+    ended.is_some_and(|app| skill != Some(app.as_str()) && !CONTENT_FREE_KINDS.contains(&ui_msg.kind.as_str()))
 }
 
 fn kept_from(

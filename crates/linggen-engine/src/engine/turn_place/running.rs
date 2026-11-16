@@ -11,7 +11,14 @@ use std::sync::{Arc, Mutex};
 #[derive(Debug, Default, Clone)]
 pub struct RunningPlaces {
     by_session: Arc<Mutex<HashMap<String, Running>>>,
+    /// The runs of private turns that ended, newest last, with their app:
+    /// their events may still be on their way to a page when the turn's
+    /// mark is gone.
+    private_runs: Arc<Mutex<std::collections::VecDeque<(String, String)>>>,
 }
+
+/// How many ended private runs are remembered.
+const PRIVATE_RUNS_KEPT: usize = 256;
 
 /// A running turn's place, and whether its talk is kept to it.
 #[derive(Debug, Clone)]
@@ -70,6 +77,22 @@ impl RunningPlaces {
         if let Some(running) = self.map().get_mut(session) {
             running.private = true;
         }
+    }
+
+    /// Run `run`, of a turn whose talk is kept to `app`, has ended: its
+    /// events still on their way are kept from other pages too.
+    pub fn remember_private_run(&self, run: &str, app: &str) {
+        let mut runs = self.private_runs.lock().unwrap_or_else(|p| p.into_inner());
+        runs.push_back((run.to_string(), app.to_string()));
+        while runs.len() > PRIVATE_RUNS_KEPT {
+            runs.pop_front();
+        }
+    }
+
+    /// The app a private turn's run `run` kept its talk to, once it ended.
+    pub fn private_run(&self, run: &str) -> Option<String> {
+        let runs = self.private_runs.lock().unwrap_or_else(|p| p.into_inner());
+        runs.iter().rev().find(|(r, _)| r == run).map(|(_, app)| app.clone())
     }
 
     /// The app the turn running in `session` keeps its talk to, if any.
@@ -156,5 +179,8 @@ mod tests {
         assert_eq!(places.private_app("sess-1"), None);
         places.keep_talk_private("sess-1");
         assert_eq!(places.private_app("sess-1"), None, "nothing runs");
+        places.remember_private_run("run-1", "zz-ledger");
+        assert_eq!(places.private_run("run-1").as_deref(), Some("zz-ledger"));
+        assert_eq!(places.private_run("run-2"), None);
     }
 }

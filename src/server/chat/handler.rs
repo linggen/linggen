@@ -861,8 +861,19 @@ pub(crate) async fn run_session_turn(
         trim_capped(engine, max_live_msgs);
     }
     dispatch_turn(ctx, engine, manager, &ctx.clean_msg).await;
+    remember_if_private(manager, ctx, engine);
     super::thread::mark(engine, ctx);
     super::turn_place::leave_turn_place(engine);
+}
+
+/// A private turn's run is remembered as it ends: its events still on their
+/// way to a page are kept from pages outside its app (`rtc::peer::forward`).
+fn remember_if_private(manager: &AgentManager, ctx: &ChatRunCtx, engine: &crate::engine::AgentEngine) {
+    let places = &manager.global_sessions.running_places;
+    let app = ctx.session_id.as_deref().and_then(|sid| places.private_app(sid));
+    if let (Some(app), Some(run)) = (app, engine.last_run_id.as_deref()) {
+        places.remember_private_run(run, &app);
+    }
 }
 
 fn bind_turn_session(engine: &mut crate::engine::AgentEngine, session_id: Option<String>) {
