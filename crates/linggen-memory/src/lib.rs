@@ -11,6 +11,5 @@ pub mod hosted;
 pub mod http;
 pub mod memory;
 pub mod replica;
-pub mod telemetry;
 
 pub use memory::{Memory, MemoryType, Origin, Outcome};

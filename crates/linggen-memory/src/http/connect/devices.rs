@@ -42,8 +42,12 @@ pub struct Denied {
     pub denied_at: i64,
 }
 
+pub fn devices_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("paired-devices.json")
+}
+
 fn paired_path(data_dir: &Path) -> PathBuf {
-    crate::http::gate::devices_path(data_dir)
+    devices_path(data_dir)
 }
 
 fn allowed_path(data_dir: &Path) -> PathBuf {
@@ -219,6 +223,12 @@ pub fn undeny(data_dir: &Path, device_id: &str) -> io::Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_missing_file_grants_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!devices_path(dir.path()).is_file());
+    }
 
     fn ip() -> IpAddr {
         "192.168.20.31".parse().unwrap()

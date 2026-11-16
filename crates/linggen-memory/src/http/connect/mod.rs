@@ -1,8 +1,7 @@
 //! `/api/connect/*` — a machine on the LAN asks to share this memory, and
 //! someone at this machine clicks Allow or Deny. Nobody sees or types a token.
 //!
-//! Two open routes, for the machine asking (the gate lets them through, like
-//! `/api/health`):
+//! Two routes for the machine asking:
 //! - `POST /api/connect/request {device_name, device_id}` → `{request_id,
 //!   expires_in}`. A machine on the denied list is refused at once (403).
 //! - `GET /api/connect/status/{request_id}` → pending | denied | expired |
@@ -14,11 +13,10 @@
 //! - `GET /api/connect/devices`, `DELETE /api/connect/devices/{id}` (revoke)
 //! - `GET /api/connect/denied`, `DELETE /api/connect/denied/{device_id}`
 //!
-//! Allow writes the token into `paired-devices.json` — the engine's file, the
-//! one `gate.rs` reads — so `lan_gate` itself is unchanged.
+//! Allow writes the token into `paired-devices.json` — the engine's file.
 
 mod broker;
-mod devices;
+pub(crate) mod devices;
 
 pub use broker::Broker;
 
@@ -39,11 +37,6 @@ use crate::http::envelope::{ok, ApiError};
 use crate::http::local::require_local;
 use crate::http::presence::{Presence, Seen};
 use crate::http::state::SharedState;
-
-/// Paths the gate leaves open: the asking machine has no token yet.
-pub fn is_open_path(path: &str) -> bool {
-    path == "/api/connect/request" || path.starts_with("/api/connect/status/")
-}
 
 pub fn router() -> Router<SharedState> {
     Router::new()
@@ -265,21 +258,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_the_asking_routes_are_open() {
-        assert!(is_open_path("/api/connect/request"));
-        assert!(is_open_path("/api/connect/status/abc"));
-        for path in [
-            "/api/connect/pending",
-            "/api/connect/abc/allow",
-            "/api/connect/abc/deny",
-            "/api/connect/devices",
-            "/api/connect/denied/x",
-        ] {
-            assert!(!is_open_path(path), "{path}");
-        }
-    }
-
-    #[test]
     fn names_and_ids_are_checked() {
         assert_eq!(clean_name("  DS242\n").as_deref(), Some("DS242"));
         assert_eq!(clean_name(" \u{7} "), None);
@@ -403,13 +381,10 @@ mod tests {
             st.connect.status(&p.id, Instant::now()),
             Status::Allowed(None)
         );
-        let lan = "192.168.20.31".parse().unwrap();
-        assert!(crate::http::gate::admits_for_test(
-            lan,
-            "/mcp",
-            &token,
-            dir.path()
-        ));
+        let paired: Vec<serde_json::Value> = serde_json::from_slice(
+            &std::fs::read(devices::devices_path(dir.path())).unwrap(),
+        ).unwrap();
+        assert_eq!(paired[0]["secret"], token);
     }
 
     #[test]

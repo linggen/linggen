@@ -59,8 +59,7 @@ cron = "0.16"
 chrono = "0.4"
 gethostname = "1.1.0"
 urlencoding = "2.1.3"
-# Memory, hosted in this process (`memory_host`). Its own telemetry stays
-# off: the engine's is the one that counts.
+# Memory, hosted in this process (`memory_host`).
 linggen-memory = { path = "../linggen-memory", default-features = false }
 # The TypeScript derives, for the `test-support` feature (see [features]).
 ts-rs = { version = "12", features = ["serde-json-impl", "no-serde-warnings"], optional = true }

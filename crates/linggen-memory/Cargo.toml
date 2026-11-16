@@ -9,12 +9,7 @@ license = "MIT"
 readme = "README.md"
 
 [features]
-# Anonymous usage telemetry (install/upgrade/heartbeat/command events sent to
-# linggen.dev/api/track). See src/telemetry/mod.rs for the exact field list.
-# Disable at runtime: env LING_MEM_NO_TELEMETRY=1 OR file ~/.linggen/no-telemetry.
-# Disable at compile time: cargo build --no-default-features.
-default = ["telemetry"]
-telemetry = []
+default = []
 
 # The library keeps its old name for now (`use ling_mem::…`), so the move
 # into the engine's workspace changes no code that imports it.

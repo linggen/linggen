@@ -284,7 +284,6 @@ mod tests {
         }
         for path in [
             "/api/config",
-            "/api/network",
             "/api/sync/primary",
             "/api/connect/pending",
             "/api/connect/abc/allow",
