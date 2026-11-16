@@ -6,6 +6,7 @@
 //!
 //! One binary, one module per area (each test binary links all of LanceDB).
 
+mod call;
 mod guards;
 mod layers;
 mod mcp;
