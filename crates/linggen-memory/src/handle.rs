@@ -98,9 +98,10 @@ impl Memory {
             .map_err(|e| MemError::internal(e.context("loading the embedding model")))
     }
 
-    /// Record that a request just arrived. Called from middleware on every
-    /// route; `Relaxed` is right because the only reader is a background
-    /// timer that tolerates being a moment stale.
+    /// Record that a request just arrived. Called by `Memory::call` and by
+    /// the router's activity layer on every route; `Relaxed` is right
+    /// because the only reader is a background timer that tolerates being a
+    /// moment stale.
     pub fn mark_request(&self) {
         self.last_request_ms
             .store(self.started.elapsed().as_millis() as u64, Ordering::Relaxed);

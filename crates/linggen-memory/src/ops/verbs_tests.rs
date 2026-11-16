@@ -79,6 +79,37 @@ fn every_verb_is_routed_at_its_path() {
     }
 }
 
+/// And the other way: every `/api/memory/` route is a verb of the table, so
+/// a new one cannot reach its op around `call`.
+#[test]
+fn every_memory_route_is_a_verb() {
+    for (path, code) in sources(&src().join("http")) {
+        let routed = code
+            .split(".route(\"")
+            .skip(1)
+            .filter_map(|r| r.split('"').next())
+            .filter(|r| r.starts_with("/api/memory/"));
+        for route in routed {
+            assert!(
+                VERBS.iter().any(|v| v.path == route),
+                "{} routes {route} outside the verb table",
+                path.display()
+            );
+        }
+    }
+}
+
+/// A `use` line that imports `name` from `module`, grouped or not.
+fn imports(code: &str, module: &str, name: &str) -> bool {
+    code.lines()
+        .filter(|l| l.trim_start().starts_with("use ") || l.trim_start().starts_with("pub"))
+        .filter(|l| l.contains(&format!("{module}::")))
+        .any(|l| {
+            l.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                .any(|word| word == name)
+        })
+}
+
 /// `memory :: write :: add` → (`src/ops/memory/write.rs`, `write`, `add`).
 fn op_parts(op: &str) -> (PathBuf, String, String) {
     let segs: Vec<&str> = op.split("::").map(str::trim).collect();
@@ -86,7 +117,11 @@ fn op_parts(op: &str) -> (PathBuf, String, String) {
     let mut file = src().join("ops");
     modules.iter().for_each(|m| file.push(m));
     let flat = file.with_extension("rs");
-    let file = if flat.exists() { flat } else { file.join("mod.rs") };
+    let file = if flat.exists() {
+        flat
+    } else {
+        file.join("mod.rs")
+    };
     (file, modules.last().unwrap().to_string(), name.to_string())
 }
 
@@ -109,7 +144,8 @@ fn calls_of(code: &str, module: &str, name: &str) -> usize {
 /// refuse: such a call on a replica would skip its primary. The compiler
 /// keeps every verb op inside `ops` (`pub(in crate::ops)`); this reads the
 /// `ops` tree itself, test modules aside. An unqualified call counts in the
-/// op's own file; a path through its module, or an import of it, anywhere.
+/// op's own file; a path through its module, or an import of it (grouped
+/// too), anywhere. A glob import or a renamed module would get past it.
 #[test]
 fn no_write_op_is_called_around_the_table() {
     let files = sources(&src().join("ops"));
@@ -119,9 +155,7 @@ fn no_write_op_is_called_around_the_table() {
         assert!(home.exists(), "{}: no {}", v.name, home.display());
         for (path, code) in files.iter().filter(|(p, _)| *p != table) {
             let qualified = format!("{module}::{name}");
-            let imported = [";", ",", "}"]
-                .iter()
-                .any(|end| code.contains(&format!("{qualified}{end}")));
+            let imported = imports(code, &module, &name);
             let calls = if *path == home {
                 calls_of(code, &module, &name)
             } else {
