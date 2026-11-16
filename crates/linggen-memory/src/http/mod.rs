@@ -1,4 +1,5 @@
-//! HTTP surface served by the daemon.
+//! HTTP surface of memory, mounted by the host (`build_hosted_router`). Its
+//! handlers are becoming thin adapters over `crate::ops`.
 //!
 //! Phase 3 ships the seven `Memory.*` methods at `/api/memory/<method>`
 //! plus the lifecycle probe at `/api/health`. All endpoints return the
