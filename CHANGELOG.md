@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2.3.0] - 2026-11-16 — memory is part of ling, one program
 
 - **A mission run that had something fail no longer reads as a plain
   success.** Its `runs.jsonl` entry keeps each failed tool call (a declared
