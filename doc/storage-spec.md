@@ -79,7 +79,8 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 │   ├── backups/takeover-<ver>.done   # …marker: that version has taken it (`.failed` holds a failure's reason)
 │   └── ...
 ├── activity/                         # Perception's record of what changed here
-│   ├── {YYYY-MM-DD}.jsonl            # One day of activities (JSONL, last few days)
+│   ├── {YYYY-MM-DD}.jsonl            # One day of activities (JSONL, kept 400 days)
+│   ├── open-stretch.json             # The stretch of use still open (closed on the next start)
 │   ├── trend.json                    # Daily free-space samples (a fortnight)
 │   └── conditions.json               # When each condition last fired (re-arm)
 ├── credentials.json                  # API keys for model providers (JSON)
