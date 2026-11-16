@@ -5,7 +5,6 @@
 //! data verbs run as `ling mem …` (`cli::run_data`).
 
 pub mod cli;
-pub mod daemon;
 pub mod embed;
 pub mod error;
 pub mod handle;

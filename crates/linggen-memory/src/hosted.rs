@@ -134,7 +134,7 @@ async fn attach_change_log(
 /// `http://127.0.0.1:9527/mem`. The caller holds the [`StoreLock`].
 pub async fn open(data_dir: &Path, self_base: String) -> Result<SharedState> {
     let state = open_quiet(data_dir, self_base).await?;
-    crate::daemon::maintenance::spawn(Arc::clone(&state));
+    crate::ops::upkeep::spawn(Arc::clone(&state));
     crate::replica::spawn(Arc::clone(&state));
     Ok(state)
 }

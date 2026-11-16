@@ -1,8 +1,8 @@
 //! Background storage maintenance — the scheduler half.
 //!
 //! `memory::maintenance` decides *whether* a table needs work; this decides
-//! *when* to ask, and runs the pass. It is deliberately part of the daemon
-//! rather than of any host: `ling-mem` also serves Claude Code, Codex and
+//! *when* to ask, and runs the pass. It is deliberately part of memory
+//! rather than of any caller: memory also serves Claude Code, Codex and
 //! OpenClaw, where nobody ever runs a dream and nothing would ever call in.
 //! A store that only stays healthy when some other process remembers to
 //! maintain it is not maintained.
@@ -22,7 +22,7 @@
 //! often and act only on the measured condition. Upstream guidance says
 //! the same thing, loosely: run "after large writes or on a schedule".
 
-use crate::http::state::SharedState;
+use crate::handle::Memory;
 use crate::memory::maintenance::{self, Footprint, Report, PRUNE_OLDER_THAN_DAYS};
 use crate::memory::MemoryStore;
 use std::sync::Arc;
@@ -30,7 +30,7 @@ use std::time::Duration;
 
 /// How often to look.
 ///
-/// Short on purpose. A check that lands while the daemon is busy does
+/// Short on purpose. A check that lands while memory is busy does
 /// nothing and waits for the next one, so the interval is really "how long
 /// a missed window costs" — at an hour, an active day could skip
 /// maintenance entirely by never having its one instant fall in a quiet
@@ -38,8 +38,8 @@ use std::time::Duration;
 /// itself is a directory walk plus two metadata reads.
 const CHECK_EVERY: Duration = Duration::from_secs(10 * 60);
 
-/// Wait this long after startup before the first check, so a daemon that
-/// was launched to serve one urgent request answers it first.
+/// Wait this long after startup before the first check, so a store that
+/// was opened to serve one urgent request answers it first.
 const FIRST_CHECK_DELAY: Duration = Duration::from_secs(90);
 
 /// Require this much quiet before rewriting a table. Compaction holds the
@@ -49,8 +49,8 @@ const FIRST_CHECK_DELAY: Duration = Duration::from_secs(90);
 const IDLE_FOR: Duration = Duration::from_secs(5 * 60);
 
 /// Spawn the maintenance loop. Returns immediately; the task lives as long
-/// as the daemon does and is dropped with it on shutdown.
-pub fn spawn(state: SharedState) {
+/// as the runtime does and is dropped with it on shutdown.
+pub fn spawn(state: Arc<Memory>) {
     tokio::spawn(async move {
         tokio::time::sleep(FIRST_CHECK_DELAY).await;
         let mut ticker = tokio::time::interval(CHECK_EVERY);
@@ -66,9 +66,9 @@ pub fn spawn(state: SharedState) {
 /// One evaluation: measure both tables, maintain whichever is due.
 ///
 /// Never returns an error — a failed pass logs and leaves the store exactly
-/// as it was. Maintenance falling behind is a slow disk problem; a daemon
-/// that dies because compaction failed is an outage.
-async fn run_if_due(state: &SharedState) {
+/// as it was. Maintenance falling behind is a slow disk problem; a store
+/// that goes down because compaction failed is an outage.
+async fn run_if_due(state: &Memory) {
     // Backup expiry is a directory walk, not a table rewrite — it never
     // waits for a lull.
     prune_backups(state).await;
@@ -84,7 +84,7 @@ async fn run_if_due(state: &SharedState) {
 }
 
 /// Expire old backups under `memory/backups/` (`memory::backups`).
-async fn prune_backups(state: &SharedState) {
+async fn prune_backups(state: &Memory) {
     let dir = crate::memory::backups::backups_dir(&state.data_dir);
     let now = chrono::Utc::now();
     let pass = tokio::task::spawn_blocking(move || crate::memory::backups::prune(&dir, now));
@@ -100,13 +100,13 @@ async fn prune_backups(state: &SharedState) {
     }
 }
 
-/// Whether the daemon has been quiet long enough to rewrite tables.
-fn idle_long_enough(state: &SharedState) -> bool {
+/// Whether memory has been quiet long enough to rewrite tables.
+fn idle_long_enough(state: &Memory) -> bool {
     state.idle_for() >= IDLE_FOR
 }
 
 /// Measure one table, and if it is due, compact + prune it.
-async fn maintain_table(state: &SharedState, store: &Arc<MemoryStore>) {
+async fn maintain_table(state: &Memory, store: &Arc<MemoryStore>) {
     let table = store.table_name().to_string();
 
     let before = match footprint(state, store).await {
@@ -148,7 +148,7 @@ async fn maintain_table(state: &SharedState, store: &Arc<MemoryStore>) {
 
 /// Current footprint of a table, or `None` if it can't be read — in which
 /// case we decline to act rather than guess at whether a rewrite is safe.
-async fn footprint(state: &SharedState, store: &Arc<MemoryStore>) -> Option<Footprint> {
+async fn footprint(state: &Memory, store: &Arc<MemoryStore>) -> Option<Footprint> {
     let rows = match store.count().await {
         Ok(n) => n,
         Err(e) => {
