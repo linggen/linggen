@@ -7,12 +7,19 @@
 //! the primary does not answer. `call::route` makes that decision for both.
 //!
 //! [`answer`] is the same for a caller whose args are JSON already (memory's
-//! MCP server, the engine's door): the verb's route found by its path, its
-//! body checked as the route's `Json` checks it, then `call` — every answer,
-//! refusals included, as the route gives it, with no request made.
+//! MCP server, the engine's door): the args fitted to the caller
+//! ([`Who::scope`]), the verb's route found by its path, its body checked as
+//! the route's `Json` checks it, then the verb — every answer, refusals
+//! included, as the route gives it, with no request made.
+//!
+//! Who a route's call is for: memory's routes are reached only by callers
+//! the host has already admitted as this machine or a machine it approved
+//! (the engine's `memory_host::routes`), and a body that came through the
+//! host's own door is stamped already — so a route's call is the owner's
+//! ([`as_route`]).
 
 use super::state::SharedState;
-use crate::call::{route_of, Reply, Route};
+use crate::call::{route_of, Reply, Route, Who};
 use crate::error::MemError;
 use crate::ops::verbs;
 use axum::body::{to_bytes, Body, Bytes};
@@ -32,10 +39,13 @@ pub(crate) fn probe<T: DeserializeOwned>(bytes: &[u8]) -> Result<(), JsonRejecti
     Json::<T>::from_bytes(bytes).map(drop)
 }
 
-/// `/api/memory/<verb>` as the router answers a JSON POST of `args`: an
-/// empty 404 for a path the router has no verb at, the body check's
-/// rejection, or the verb's answer through `call`.
-pub async fn answer(state: SharedState, verb: &str, args: Value) -> Response {
+/// `/api/memory/<verb>` as the router answers a JSON POST of `args` for
+/// `who`: the caller's refusal, an empty 404 for a path the router has no
+/// verb at, the body check's rejection, or the verb's answer.
+pub async fn answer(state: SharedState, who: Who, verb: &str, mut args: Value) -> Response {
+    if let Err(refused) = who.scope(verb, &mut args) {
+        return refused.into_response();
+    }
     let Some(v) = verbs::at_path(&format!("/api/memory/{verb}")) else {
         state.mark_request();
         return StatusCode::NOT_FOUND.into_response();
@@ -46,7 +56,7 @@ pub async fn answer(state: SharedState, verb: &str, args: Value) -> Response {
     match route_of(&state, v.name) {
         Route::Refuse => bare(state, v.name).await,
         Route::Here => match probe(&body_of(&args)) {
-            Ok(()) => respond(state.call(v.name, args).await),
+            Ok(()) => as_route(state, v.name, args).await,
             Err(rejection) => rejection.into_response(),
         },
         Route::Forward => forward_args(state, v.name, v.path, probe, args).await,
@@ -67,13 +77,19 @@ async fn forward_args(
     args: Value,
 ) -> Response {
     let rejection = match probe(&body_of(&args)) {
-        Ok(()) => return respond(state.call(verb, args).await),
+        Ok(()) => return as_route(state, verb, args).await,
         Err(rejection) => rejection,
     };
     match crate::replica::forward::forward_in_order(&state, path, &args).await {
         Some(answer) => answer.into_response(),
         None => rejection.into_response(),
     }
+}
+
+/// The verb run for the owner — every route's call (see the module's
+/// head), and an [`answer`]'s once its args are fitted to their caller.
+async fn as_route(state: SharedState, verb: &str, args: Value) -> Response {
+    respond(state.call(&Who::Owner, verb, args).await)
 }
 
 /// The most a replica buffers of a write's body before it forwards it.
@@ -90,7 +106,7 @@ pub(crate) async fn serve<T: DeserializeOwned>(
         // Refused before the body is read.
         Route::Refuse => bare(state, verb).await,
         Route::Here => match args::<T>(req).await {
-            Ok(args) => respond(state.call(verb, args).await),
+            Ok(args) => as_route(state, verb, args).await,
             Err(rejection) => rejection.into_response(),
         },
     }
@@ -106,7 +122,7 @@ async fn forward<T: DeserializeOwned>(state: SharedState, verb: &str, req: Reque
     };
     let raw: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
     let rejection = match args::<T>(Request::from_parts(parts, Body::from(bytes))).await {
-        Ok(args) => return respond(state.call(verb, args).await),
+        Ok(args) => return as_route(state, verb, args).await,
         Err(rejection) => rejection,
     };
     let Some(path) = verbs::find(verb).map(|v| v.path) else {
@@ -125,7 +141,7 @@ fn too_large() -> Response {
 
 /// A verb that takes no arguments: its body is never read.
 pub(crate) async fn bare(state: SharedState, verb: &str) -> Response {
-    respond(state.call(verb, Value::Null).await)
+    as_route(state, verb, Value::Null).await
 }
 
 fn respond(answer: Result<Reply, MemError>) -> Response {

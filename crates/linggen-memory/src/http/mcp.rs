@@ -21,6 +21,7 @@
 
 use super::envelope::ApiError;
 use super::state::SharedState;
+use crate::call::Who;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -572,9 +573,13 @@ fn mcp_text_content(data: &Value) -> Value {
 /// runtime, no request made) and unwrap the `{ok, data}` envelope. The verb
 /// runs as its own task: one that outlives [`CALL_TIMEOUT`] still finishes,
 /// which is what the timeout's message tells the caller.
+///
+/// The call is the owner's: this server is reached only by callers the host
+/// admitted as this machine or a machine it approved (a phone never reaches
+/// it — the engine's `memory_host::routes`).
 async fn run_verb(state: &SharedState, verb: &str, body: Value) -> Result<Value, ApiError> {
     let (state, owned) = (state.clone(), verb.to_string());
-    let task = tokio::spawn(async move { super::verb::answer(state, &owned, body).await });
+    let task = tokio::spawn(async move { super::verb::answer(state, Who::Owner, &owned, body).await });
     match tokio::time::timeout(CALL_TIMEOUT, task).await {
         Err(_) => Err(timed_out(verb)),
         Ok(Err(e)) => Err(ApiError::internal(anyhow::Error::from(e))),

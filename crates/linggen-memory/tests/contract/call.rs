@@ -3,7 +3,7 @@
 //! side.
 
 use crate::support::*;
-use ling_mem::{MemError, Reply};
+use ling_mem::{MemError, Reply, Who};
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 
@@ -27,7 +27,7 @@ fn refused(e: MemError) -> (&'static str, String) {
 }
 
 async fn call(m: &Mem, verb: &str, args: Value) -> Result<Reply, MemError> {
-    m.state.call(verb, args).await
+    m.state.call(&Who::Owner, verb, args).await
 }
 
 #[tokio::test]

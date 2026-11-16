@@ -1,5 +1,5 @@
 //! The verb table: every JSON verb memory answers, its route, what a replica
-//! does with it, and how it runs. `Memory::call` and the HTTP adapters both
+//! does with it, who may run it, and how it runs. `Memory::call` and the HTTP adapters both
 //! go through it; the replica's lists (`replica::forward::WRITES`,
 //! `PRIMARY_ONLY`) are read off it.
 //!
@@ -35,6 +35,19 @@ pub(crate) enum Kind {
     PrimaryOnly,
 }
 
+/// Who may run a verb (`call::Who`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reach {
+    /// Kept per person: it reads or changes only the rows of the person the
+    /// stamp names, so a person may run it.
+    Person,
+    /// The owner's alone: it is not kept per person.
+    Owner,
+    /// This machine's owner alone — not a phone, even the owner's: it crosses
+    /// account lines by design.
+    ThisMachine,
+}
+
 /// A verb's body: the args as given, the op's result.
 pub(crate) type Run = fn(Arc<Memory>, Value) -> BoxFuture<'static, Result<Value, MemError>>;
 
@@ -43,6 +56,7 @@ pub(crate) struct Verb {
     /// The route it answers at, and the `verb` of a queued write.
     pub path: &'static str,
     pub kind: Kind,
+    pub reach: Reach,
     pub run: Run,
     /// The body check its route makes before the verb runs (`None`: the
     /// route never reads a body) — what `http::verb::answer` gives a caller
@@ -57,11 +71,12 @@ pub(crate) struct Verb {
 /// One row: deserialise the args into the op's request type, call the op.
 /// A verb without `$req` takes no arguments and ignores them.
 macro_rules! verb {
-    ($name:literal, $path:literal, $kind:ident, $($op:ident)::+, $req:ty) => {
+    ($name:literal, $path:literal, $kind:ident, $reach:ident, $($op:ident)::+, $req:ty) => {
         Verb {
             name: $name,
             path: $path,
             kind: Kind::$kind,
+            reach: Reach::$reach,
             run: |state, args| {
                 Box::pin(async move {
                     let req: $req = parse($name, args)?;
@@ -73,11 +88,12 @@ macro_rules! verb {
             op: stringify!($($op)::+),
         }
     };
-    ($name:literal, $path:literal, $kind:ident, $($op:ident)::+) => {
+    ($name:literal, $path:literal, $kind:ident, $reach:ident, $($op:ident)::+) => {
         Verb {
             name: $name,
             path: $path,
             kind: Kind::$kind,
+            reach: Reach::$reach,
             run: |state, _args| Box::pin(async move { ops::$($op)::+(&state).await }),
             probe: None,
             #[cfg(test)]
@@ -92,6 +108,7 @@ pub(crate) const VERBS: &[Verb] = &[
         "add",
         "/api/memory/add",
         Write,
+        Person,
         memory::write::add,
         AddRequest
     ),
@@ -99,6 +116,7 @@ pub(crate) const VERBS: &[Verb] = &[
         "add_batch",
         "/api/memory/add_batch",
         Write,
+        Person,
         memory::write::add_batch,
         AddBatchRequest
     ),
@@ -106,6 +124,7 @@ pub(crate) const VERBS: &[Verb] = &[
         "get",
         "/api/memory/get",
         Read,
+        Person,
         memory::read::get,
         GetRequest
     ),
@@ -113,6 +132,7 @@ pub(crate) const VERBS: &[Verb] = &[
         "search",
         "/api/memory/search",
         Read,
+        Person,
         memory::read::search,
         SearchRequest
     ),
@@ -120,6 +140,7 @@ pub(crate) const VERBS: &[Verb] = &[
         "list",
         "/api/memory/list",
         Read,
+        Person,
         memory::read::list,
         ListRequest
     ),
@@ -127,6 +148,7 @@ pub(crate) const VERBS: &[Verb] = &[
         "count",
         "/api/memory/count",
         Read,
+        Person,
         memory::read::count,
         CountRequest
     ),
@@ -134,6 +156,7 @@ pub(crate) const VERBS: &[Verb] = &[
         "update",
         "/api/memory/update",
         Write,
+        Person,
         memory::update::update,
         UpdateRequest
     ),
@@ -141,6 +164,7 @@ pub(crate) const VERBS: &[Verb] = &[
         "delete",
         "/api/memory/delete",
         Write,
+        Person,
         memory::admin::delete,
         DeleteRequest
     ),
@@ -148,6 +172,7 @@ pub(crate) const VERBS: &[Verb] = &[
         "forget",
         "/api/memory/forget",
         Write,
+        Person,
         memory::admin::forget,
         ForgetRequest
     ),
@@ -155,6 +180,7 @@ pub(crate) const VERBS: &[Verb] = &[
         "restamp",
         "/api/memory/restamp",
         Write,
+        ThisMachine,
         memory::admin::restamp,
         RestampRequest
     ),
@@ -162,12 +188,14 @@ pub(crate) const VERBS: &[Verb] = &[
         "accounts",
         "/api/memory/accounts",
         Read,
+        ThisMachine,
         memory::admin::accounts
     ),
     verb!(
         "issues",
         "/api/memory/issues",
         Read,
+        Owner,
         issues::issues,
         IssuesRequest
     ),
@@ -175,6 +203,7 @@ pub(crate) const VERBS: &[Verb] = &[
         "issue_add",
         "/api/memory/issue_add",
         Write,
+        Owner,
         issues::issue_add,
         IssueAddRequest
     ),
@@ -182,14 +211,23 @@ pub(crate) const VERBS: &[Verb] = &[
         "issue_resolve",
         "/api/memory/issue_resolve",
         Write,
+        Owner,
         issues::issue_resolve,
         IssueResolveRequest
     ),
-    verb!("days", "/api/memory/days", Read, days::days, DaysRequest),
+    verb!(
+        "days",
+        "/api/memory/days",
+        Read,
+        Owner,
+        days::days,
+        DaysRequest
+    ),
     verb!(
         "remember_day",
         "/api/memory/remember_day",
         PrimaryOnly,
+        Owner,
         days::remember_day,
         RememberDayRequest
     ),
@@ -197,6 +235,7 @@ pub(crate) const VERBS: &[Verb] = &[
         "harvest_day",
         "/api/memory/harvest_day",
         Write,
+        Owner,
         days::harvest_day,
         HarvestDayRequest
     ),
@@ -204,6 +243,7 @@ pub(crate) const VERBS: &[Verb] = &[
         "sweep",
         "/api/memory/sweep",
         PrimaryOnly,
+        Owner,
         days::sweep,
         SweepRequest
     ),
@@ -211,6 +251,7 @@ pub(crate) const VERBS: &[Verb] = &[
         "dream_lease",
         "/api/memory/dream_lease",
         PrimaryOnly,
+        Owner,
         lease::dream_lease,
         LeaseRequest
     ),
@@ -218,6 +259,7 @@ pub(crate) const VERBS: &[Verb] = &[
         "apply_schema",
         "/api/schema/apply",
         PrimaryOnly,
+        Owner,
         migration::apply_schema,
         ApplySchemaRequest
     ),
@@ -225,18 +267,20 @@ pub(crate) const VERBS: &[Verb] = &[
         "chains",
         "/api/memory/chains",
         Read,
+        Owner,
         chains::chains,
         ChainsRequest
     ),
-    verb!("stats", "/api/memory/stats", Read, stats::stats),
+    verb!("stats", "/api/memory/stats", Read, Owner, stats::stats),
     verb!(
         "session_start",
         "/api/memory/session_start",
         Read,
+        Person,
         session::session_start,
         SessionStartRequest
     ),
-    verb!("role", "/api/memory/role", Read, primary::role),
+    verb!("role", "/api/memory/role", Read, Owner, primary::role),
 ];
 
 pub(crate) fn find(name: &str) -> Option<&'static Verb> {

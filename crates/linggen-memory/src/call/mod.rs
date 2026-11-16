@@ -1,12 +1,14 @@
 //! [`Memory::call`] — memory's one JSON entry point: a verb's name and its
-//! args, run through the verb table (`ops::verbs`), with a replica's writes
-//! going to its primary.
+//! args, for a caller ([`Who`]), run through the verb table (`ops::verbs`),
+//! with a replica's writes going to its primary.
 
 mod reply;
 mod route;
+mod who;
 
 pub use reply::Reply;
 pub(crate) use route::{route_of, Route};
+pub use who::{machine_only, stamp, Person, Who};
 
 use crate::error::MemError;
 use crate::handle::Memory;
@@ -16,19 +18,29 @@ use serde_json::Value;
 use std::sync::Arc;
 
 impl Memory {
-    /// Run the verb `verb` with `args` (the JSON body its route takes), as
-    /// a request to its route would: the activity clock is stamped, then
+    /// Run the verb `verb` with `args` (the JSON body its route takes) for
+    /// `who`: fitted to the caller first ([`Who::scope`] — a person's call
+    /// refused, or stamped with the person), then as a request to its route
+    /// would run: the activity clock is stamped, and
     ///
     /// - on a primary (or a store on its own) the verb runs here;
     /// - on a replica a read runs here, a primary-only verb is refused
     ///   (`REPLICA`, 409), and a write goes to the primary as these raw args
     ///   (anything queued earlier first; a pull after a success) — or, when
-    ///   the primary does not answer, runs here and is queued for it.
-    ///
-    /// The caller's person is whatever the args carry, as the engine's door
-    /// stamped them; `call` adds no identity of its own. The next stage adds
-    /// a required caller.
-    pub async fn call(self: &Arc<Self>, verb: &str, args: Value) -> Result<Reply, MemError> {
+    ///   the primary does not answer, runs here and is queued for it — the
+    ///   stamped args, so the primary scopes them as this store would.
+    pub async fn call(
+        self: &Arc<Self>,
+        who: &Who,
+        verb: &str,
+        mut args: Value,
+    ) -> Result<Reply, MemError> {
+        who.scope(verb, &mut args)?;
+        self.run(verb, args).await
+    }
+
+    /// [`call`](Self::call) for args already fitted to their caller.
+    pub(crate) async fn run(self: &Arc<Self>, verb: &str, args: Value) -> Result<Reply, MemError> {
         self.mark_request();
         let verb = find(verb)?;
         match route::route(self, verb) {

@@ -50,13 +50,14 @@ use serde_json::{json, Value};
 use std::net::SocketAddr;
 
 use crate::memory_host::caller::{self, Caller};
+use ling_mem::{Person, Who};
 
 /// `POST /api/memory/<verb>` — forward to the daemon that owns memory.
 ///
 /// For the owner the verb is passed through rather than checked against a
 /// list: memory is the authority on which verbs exist, and an unknown one
 /// gets memory's own 404. A phone that is another person may run only the
-/// verbs scoped to one person end to end ([`PERSON_VERBS`]).
+/// verbs memory keeps per person (`ling_mem::Who`).
 ///
 /// The verb goes to the store this engine hosts (`memory_host::url`); the
 /// phone never learns a port, stores one, or needs a rebuild.
@@ -134,80 +135,34 @@ pub(crate) fn scope_to_caller(
 }
 
 /// A phone's request: `person` is who is behind it (`None` = the owner's
-/// own phone). The owner's phone may run any verb but the Mac's own; a
-/// phone that is another person only the verbs in [`PERSON_VERBS`], with a
-/// body the stamp can mark.
+/// own phone). No phone runs a verb only this machine's owner may
+/// (`ling_mem::call::machine_only`); the owner's own phone runs any other,
+/// its account claims taken off; a phone that is another person is fitted
+/// by memory itself (`Who::scope`: only the verbs kept per person, with a
+/// body the stamp can mark).
 fn scope_phone(verb: &str, args: &mut Value, person: Option<&Person>) -> Result<(), Refusal> {
-    if DEVICE_FORBIDDEN_VERBS.contains(&verb) {
-        return Err(forbidden(format!(
-            "{verb} is the Mac's to run, not a phone's"
-        )));
-    }
-    if person.is_some() && !PERSON_VERBS.contains(&verb) {
-        return Err(forbidden(format!(
-            "{verb} is not kept per person, so only the Mac's owner may run it"
-        )));
-    }
-    if person.is_some() && !stampable(verb, args) {
+    if ling_mem::call::machine_only(verb) {
         return Err((
-            StatusCode::BAD_REQUEST,
-            format!("{verb} takes a JSON object (and add_batch a list of them in facts)"),
-            "BAD_REQUEST",
+            StatusCode::FORBIDDEN,
+            format!("{verb} is the Mac's to run, not a phone's"),
+            "FORBIDDEN",
         ));
     }
-    stamp_person(verb, args, person);
-    Ok(())
+    let Some(person) = person else {
+        ling_mem::call::stamp(verb, args, None);
+        return Ok(());
+    };
+    Who::Person(person.clone())
+        .scope(verb, args)
+        .map_err(refusal_of)
 }
 
 /// Why the door refused: status, message, envelope code.
 type Refusal = (StatusCode, String, &'static str);
 
-fn forbidden(message: String) -> Refusal {
-    (StatusCode::FORBIDDEN, message, "FORBIDDEN")
-}
-
-/// Verbs a phone may not run: they cross account lines by design, and only
-/// the Mac's own logic ever has cause to.
-const DEVICE_FORBIDDEN_VERBS: &[&str] = &["restamp", "accounts"];
-
-/// The verbs a phone that is another person may run: each one reads or
-/// changes only the rows of the person the stamp names. Every other verb
-/// (one memory gains later included) stays closed to such a phone until it
-/// is scoped to one person and named here.
-const PERSON_VERBS: &[&str] = &[
-    "search",
-    "list",
-    "count",
-    "get",
-    "add",
-    "add_batch",
-    "update",
-    "delete",
-    "forget",
-    "session_start",
-];
-
-/// Can the stamp mark this body? It must be an object, and every element of
-/// `add_batch`'s `facts` an object too — anything else would reach memory
-/// unmarked, which memory reads as the owner.
-fn stampable(verb: &str, args: &Value) -> bool {
-    let Some(obj) = args.as_object() else {
-        return false;
-    };
-    if verb != "add_batch" {
-        return true;
-    }
-    obj.get("facts")
-        .and_then(Value::as_array)
-        .is_some_and(|facts| facts.iter().all(Value::is_object))
-}
-
-/// The person a phone's memory rows belong to, as the store names them.
-/// `None` = the Mac's owner: rows stay unstamped.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Person {
-    pub id: String,
-    pub name: Option<String>,
+fn refusal_of(e: ling_mem::MemError) -> Refusal {
+    let status = StatusCode::from_u16(e.code.http_status()).unwrap_or(StatusCode::FORBIDDEN);
+    (status, e.message, e.code.code())
 }
 
 /// Whose name labels a caller's own messages.
@@ -266,51 +221,6 @@ fn person_for(
 /// The stamp a signed-out phone writes under.
 fn device_stamp(device_id: &str) -> String {
     format!("device:{device_id}")
-}
-
-/// Put the person on the wire, and take off anything the phone said about
-/// accounts itself — the pairing record is the only authority here. `add`
-/// and `add_batch` mark the rows they write; every other verb is scoped to
-/// the person's rows. The owner's request ends up carrying nothing, which
-/// the daemon reads as the owner.
-fn stamp_person(verb: &str, args: &mut Value, person: Option<&Person>) {
-    const CLAIMS: &[&str] = &["account", "account_id", "account_name", "all_accounts"];
-    let strip = |o: &mut serde_json::Map<String, Value>| {
-        for k in CLAIMS {
-            o.remove(*k);
-        }
-    };
-    let Some(obj) = args.as_object_mut() else {
-        return;
-    };
-    strip(obj);
-    match verb {
-        "add" => {
-            if let Some(p) = person {
-                obj.insert("account_id".into(), json!(p.id));
-                obj.insert("account_name".into(), json!(p.name));
-            }
-        }
-        "add_batch" => {
-            if let Some(facts) = obj.get_mut("facts").and_then(|f| f.as_array_mut()) {
-                for f in facts.iter_mut() {
-                    let Some(fo) = f.as_object_mut() else {
-                        continue;
-                    };
-                    strip(fo);
-                    if let Some(p) = person {
-                        fo.insert("account_id".into(), json!(p.id));
-                        fo.insert("account_name".into(), json!(p.name));
-                    }
-                }
-            }
-        }
-        _ => {
-            if let Some(p) = person {
-                obj.insert("account".into(), json!(p.id));
-            }
-        }
-    }
 }
 
 /// A phone that signed in just now: hand the rows it wrote as `device:<id>`
@@ -436,38 +346,6 @@ mod tests {
         assert_eq!(person_for(&device(None), None).unwrap().id, "device:dev-1");
     }
 
-    #[test]
-    fn stamp_marks_writes_and_scopes_reads() {
-        let mei = Person {
-            id: "u-2".into(),
-            name: Some("Mei".into()),
-        };
-        // The phone's own claims come off first, whoever it is.
-        let mut add =
-            json!({"content": "likes 90s HK songs", "account_id": "u-owner", "all_accounts": true});
-        stamp_person("add", &mut add, Some(&mei));
-        assert_eq!(add["account_id"], "u-2");
-        assert_eq!(add["account_name"], "Mei");
-        assert!(add.get("all_accounts").is_none());
-
-        let mut list = json!({"tier": "core", "account": "u-owner"});
-        stamp_person("list", &mut list, Some(&mei));
-        assert_eq!(list["account"], "u-2");
-
-        let mut batch =
-            json!({"facts": [{"content": "a", "account": "u-owner"}, {"content": "b"}]});
-        stamp_person("add_batch", &mut batch, Some(&mei));
-        for f in batch["facts"].as_array().unwrap() {
-            assert_eq!(f["account_id"], "u-2");
-            assert!(f.get("account").is_none());
-        }
-
-        // The owner's phone: claims stripped, nothing added.
-        let mut owner = json!({"query": "x", "account": "u-2", "account_id": "u-2"});
-        stamp_person("search", &mut owner, None);
-        assert_eq!(owner, json!({"query": "x"}));
-    }
-
     /// A phone that is another person is shown its own name, never the
     /// owner's; a signed-out phone has none; the owner and an approved
     /// machine get core memory's; a caller nobody knows gets no answer.
@@ -554,6 +432,19 @@ mod tests {
     /// machine and the owner's own phone nothing changed.
     #[test]
     fn a_phone_that_is_another_person_runs_only_its_persons_verbs() {
+        const PERSON_VERBS: [&str; 10] = [
+            "search",
+            "list",
+            "count",
+            "get",
+            "add",
+            "add_batch",
+            "update",
+            "delete",
+            "forget",
+            "session_start",
+        ];
+        const DEVICE_FORBIDDEN_VERBS: [&str; 2] = ["restamp", "accounts"];
         let verbs = memory_router_verbs();
         assert!(verbs.len() >= 20, "router scan found {verbs:?}");
         for v in PERSON_VERBS {
@@ -579,7 +470,7 @@ mod tests {
 
             let mut args = body();
             let mut owner_phone = body();
-            stamp_person(verb, &mut owner_phone, None);
+            ling_mem::call::stamp(verb, &mut owner_phone, None);
             let mac_forbidden = DEVICE_FORBIDDEN_VERBS.contains(&verb);
             assert_eq!(
                 scope_phone(verb, &mut args, None).is_ok(),

@@ -16,7 +16,7 @@ pub mod memory;
 pub(crate) mod ops;
 pub mod replica;
 
-pub use call::Reply;
+pub use call::{Person, Reply, Who};
 pub use error::{ErrorCode, MemError};
 pub use handle::Memory;
 pub use memory::{MemoryType, Origin, Outcome};
