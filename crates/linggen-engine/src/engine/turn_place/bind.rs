@@ -20,9 +20,21 @@ pub(crate) struct Entered {
     /// The scopes before the skill's were applied — `None` when the place
     /// has no skill and so set none.
     scopes: Option<Scopes>,
-    /// The session's folder before a place other than its own moved it:
-    /// `Some(None)` when it had none of its own yet.
-    cwd: Option<Option<PathBuf>>,
+    /// Where the session stood before a place other than its own moved
+    /// it to its own folder.
+    folder: Option<Folder>,
+}
+
+/// Where a session's turns stand: its folder, and the workspace root the
+/// prompt (environment, project instructions) and the file tools read
+/// from it.
+#[derive(Debug)]
+struct Folder {
+    /// The session's folder; `None` when it had none of its own yet.
+    cwd: Option<PathBuf>,
+    ws_root: PathBuf,
+    tools_root: PathBuf,
+    memory_cwd: Option<PathBuf>,
 }
 
 /// The engine's settings a skill's place overrides.
@@ -80,7 +92,7 @@ impl AgentEngine {
     ) -> ActivationOutcome {
         self.leave_place();
         let mut entered = Entered {
-            cwd: self.move_to_place_folder(&place, skill.as_ref()),
+            folder: self.move_to_place_folder(&place, skill.as_ref()),
             ..Entered::default()
         };
         self.tools.builtins.turn_place = Some(place);
@@ -134,8 +146,8 @@ impl AgentEngine {
             self.tools.builtins.active_skill = scopes.tools_active_skill;
             scopes.memory.restore(self);
         }
-        if let Some(prev) = entered.cwd {
-            self.tools.builtins.replace_session_cwd(prev);
+        if let Some(folder) = entered.folder {
+            self.back_to_folder(folder);
         }
         self.back_to_own_grants();
     }
@@ -169,13 +181,10 @@ impl AgentEngine {
 
     /// A place other than the session's own works in its own folder — the
     /// skill's, or the default workspace for home — never in the folder
-    /// the session's own place left. Returns the folder it replaced; `None`
-    /// when the place is the session's own (its folder is the session's).
-    fn move_to_place_folder(
-        &mut self,
-        place: &TurnPlace,
-        skill: Option<&Skill>,
-    ) -> Option<Option<PathBuf>> {
+    /// the session's own place left: its cwd, and the workspace root found
+    /// from it. Returns where the session stood; `None` when the place is
+    /// the session's own (its folder is the session's).
+    fn move_to_place_folder(&mut self, place: &TurnPlace, skill: Option<&Skill>) -> Option<Folder> {
         if place.own {
             return None;
         }
@@ -183,7 +192,22 @@ impl AgentEngine {
             Some(s) => s.working_dir(),
             None => crate::util::resolve_path(&crate::paths::default_workspace()),
         };
-        Some(self.tools.builtins.replace_session_cwd(Some(folder)))
+        let stood = Folder {
+            cwd: self.tools.builtins.replace_session_cwd(Some(folder)),
+            ws_root: self.cfg.ws_root.clone(),
+            tools_root: self.tools.builtins.root().to_path_buf(),
+            memory_cwd: self.memory_cwd.clone(),
+        };
+        self.check_working_folder_change();
+        Some(stood)
+    }
+
+    /// Stand where the session stood before another place moved it.
+    fn back_to_folder(&mut self, folder: Folder) {
+        self.tools.builtins.replace_session_cwd(folder.cwd);
+        self.cfg.ws_root = folder.ws_root;
+        self.tools.builtins.set_workspace_root(folder.tools_root);
+        self.memory_cwd = folder.memory_cwd;
     }
 }
 
@@ -191,3 +215,5 @@ impl AgentEngine {
 mod tests;
 #[cfg(test)]
 mod grants_tests;
+#[cfg(test)]
+mod loop_tests;

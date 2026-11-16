@@ -116,6 +116,7 @@ async fn a_second_place_sees_nothing_of_the_first() {
     let (x_dir, y_dir) = (dir.path().join("x"), dir.path().join("y"));
     let mut engine = engine();
     let at_home = seen(&engine);
+    let ws_root_before = engine.cfg.ws_root.clone();
 
     // Turn 1: the session's own app.
     engine
@@ -139,6 +140,10 @@ async fn a_second_place_sees_nothing_of_the_first() {
     assert!(!in_y.offers_xlook && !in_y.offers_read, "x's tools offered in y");
     assert!(in_y.offers_grep);
     assert_eq!(in_y.cwd, y_dir, "y works in its own folder");
+    // The prompt's workspace (environment, project instructions) is y's.
+    assert!(!engine.cfg.ws_root.starts_with(&x_dir), "x's folder is y's workspace");
+    assert!(engine.cfg.ws_root.ends_with("y"), "{:?}", engine.cfg.ws_root);
+    assert!(!engine.system_prompt().contains(&x_dir.display().to_string()));
     assert_eq!(in_y.memory_app_dir, None, "x's memory recalled in y");
     assert!(in_y.params.is_empty(), "x's save read in y");
     assert_eq!(in_y.tool_skill.as_deref(), Some("zz-y"));
@@ -163,7 +168,9 @@ async fn a_second_place_sees_nothing_of_the_first() {
     assert_eq!(seen(&engine), in_x);
     engine.leave_place();
 
-    // Between turns the engine stands nowhere: as it was before any place.
+    // Between turns the engine stands nowhere: as it was before any place,
+    // its workspace root its own again.
+    assert_eq!(engine.cfg.ws_root, ws_root_before);
     let after = seen(&engine);
     assert_eq!(Seen { cwd: at_home.cwd.clone(), ..after }, at_home);
     assert!(engine.turn_place().is_none());

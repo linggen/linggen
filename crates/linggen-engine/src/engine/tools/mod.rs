@@ -526,6 +526,11 @@ impl Tools {
         self.agent_id.as_deref()
     }
 
+    /// The workspace root: where a session with no folder of its own works.
+    pub(crate) fn root(&self) -> &std::path::Path {
+        &self.root
+    }
+
     /// Update the workspace root (e.g. when the agent enters a new git project).
     /// This makes Read/Write/Edit/Glob/Grep resolve relative paths from the new root.
     pub fn set_workspace_root(&mut self, new_root: PathBuf) {
