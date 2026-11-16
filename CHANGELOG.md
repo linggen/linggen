@@ -2,6 +2,23 @@
 
 ## [2.3.0] - 2026-11-16 — memory is part of ling, one program
 
+- **Settings → Memory.** The memory console is a tab of the engine's own
+  settings: Rows (search by meaning, filter, add, edit, delete), Days (a
+  month calendar; "Scan this day", "Dream this day", "Dream now"), Review
+  (dismiss an item, or start a solve) and Settings (how long short-term rows
+  are kept, the recall threshold, other machines). It fits a phone-width
+  window and follows the page language. The separate `shared-memory` app is
+  no longer bundled.
+- **The engine calls the memory it hosts directly.** Memory is a library with
+  one entry point and one table of verbs; the engine's own calls no longer
+  travel over loopback HTTP, a caller is named on every call, and a phone
+  that is another person is fitted to its own rows inside memory. Memory's
+  HTTP and MCP routes stay for plugins, the CLI and other machines.
+- **Claude Code and Codex are the plugin's hosts.** OpenClaw is no longer
+  supported. The plugin bundle (`linggen-plugin.tar.gz`) is an asset of the
+  engine's release.
+- **One license.** Everything in this repository — the memory crate, the
+  plugin with its skill, the browser extension — is Apache 2.0.
 - **Scan and solve are started from the engine.** Two built-in missions on
   the memory agent, with no schedule: `memory-scan` (trigger with
   `{"day":"YYYY-MM-DD","attended":true}`) backfills one day from this
