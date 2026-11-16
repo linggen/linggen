@@ -5536,7 +5536,7 @@ dependencies = [
 
 [[package]]
 name = "linggen"
-version = "2.2.1"
+version = "2.3.0"
 dependencies = [
  "any-tts",
  "anyhow",
@@ -5584,7 +5584,7 @@ dependencies = [
 
 [[package]]
 name = "linggen-engine"
-version = "2.2.1"
+version = "2.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5629,7 +5629,7 @@ dependencies = [
 
 [[package]]
 name = "linggen-memory"
-version = "2.2.1"
+version = "2.3.0"
 dependencies = [
  "anyhow",
  "arrow",
