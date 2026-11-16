@@ -351,8 +351,8 @@ async fn run_approved_plan_task(
         .await;
     persist_plan_message(&manager, &root, &sid_default, &agent_id, &approved_snapshot).await;
 
-    // Plan execution only calls run_agent_loop (no skill dispatch), so
-    // ctx.policy is not consulted. Engine-level restrictions
+    // Plan execution only calls run_agent_loop (no skill dispatch); ctx.policy
+    // is consulted only for the place's skill. Engine-level restrictions
     // (consumer_allowed_tools, locked) are already set from the original
     // chat request.
     let ctx = ChatRunCtx {
@@ -370,7 +370,11 @@ async fn run_approved_plan_task(
         silence_ok: false,
         place: super::turn_place::of_session_id(&manager, &sid_default),
     };
+    // The plan runs in the place its session's turns stand in: the app's
+    // tools and folder, as the turn that made the plan had them.
+    super::turn_place::bind_turn_place(&mut engine, &ctx).await;
     run_plan_execution(&ctx, &mut engine).await;
+    super::turn_place::leave_turn_place(&mut engine);
 
     // Mark plan as completed and rewrite the persisted plan message. The run's
     // end may already have settled a done checklist to Completed
