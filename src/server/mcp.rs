@@ -803,7 +803,7 @@ pub(crate) async fn post_handler(
     if !door_open_to(&crate::memory_host::caller::resolve(peer.ip(), &headers)) {
         return one_shot((StatusCode::FORBIDDEN, "this door is for computers").into_response());
     }
-    let ling_mem_url = state.manager.get_config_snapshot().await.agent.ling_mem_url;
+    let ling_mem_url = crate::memory_host::url();
     let deps = McpDeps {
         bridge: &state.bridge,
         ling_mem_url: &ling_mem_url,

@@ -12,7 +12,6 @@ use std::sync::Arc;
 /// pairing record holds, never the owner's. `name` is null until one is
 /// genuinely known — callers show nothing rather than a placeholder.
 pub(crate) async fn get_user_name(
-    State(state): State<Arc<ServerState>>,
     axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
     headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
@@ -24,7 +23,7 @@ pub(crate) async fn get_user_name(
         // Not "no name": a caller that keeps a name must not drop it on this.
         OwnName::NoOne => return axum::http::StatusCode::FORBIDDEN.into_response(),
     }
-    let ling_mem_url = state.manager.get_config_snapshot().await.agent.ling_mem_url;
+    let ling_mem_url = crate::memory_host::url();
     // The extractor blocks on its own bounded thread; keep the worker free.
     let name = tokio::task::spawn_blocking(move || {
         crate::engine::prompt::core_block::user_name_from_core(&ling_mem_url)

@@ -328,7 +328,7 @@ async fn trust_then_an_owner_only_permission_with_session_rules_in_memory() {
     assert!(!legacy.exists());
     let env =
         std::fs::read_to_string(std::path::Path::new(&w.work()).join(".sdk-env.log")).unwrap();
-    for leaked in ["LINGGEN_HOME", "LING_MEM_URL", "LINGGEN_EVENT_LOG"] {
+    for leaked in ["LINGGEN_HOME", "LINGGEN_EVENT_LOG"] {
         assert!(
             !env.lines().any(|k| k == leaked),
             "{leaked} reached the SDK"

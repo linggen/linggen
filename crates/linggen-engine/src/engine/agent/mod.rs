@@ -822,10 +822,7 @@ impl AgentManager {
         self.config.read().await.clone()
     }
 
-    pub async fn apply_config(&self, mut new_config: Config) -> Result<()> {
-        // The memory address is settled at start-up (`memory_host`) and never
-        // changed by a whole-config write, which a paired device may also send.
-        new_config.agent.ling_mem_url = self.config.read().await.agent.ling_mem_url.clone();
+    pub async fn apply_config(&self, new_config: Config) -> Result<()> {
         new_config.validate()?;
         // Write to disk first — if this fails, in-memory state remains unchanged.
         new_config.save_runtime(self.config_dir.as_deref())?;

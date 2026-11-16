@@ -310,15 +310,6 @@ pub struct AgentConfig {
     #[serde(default = "default_memory_recall_count")]
     pub memory_recall_count: usize,
 
-    /// Base URL of memory for the engine's own callers: the built-in memory
-    /// MCP server's endpoint (`<url>/mcp`, how a model reaches memory) and
-    /// the program-side calls. Memory is hosted by this process, so at
-    /// start-up any address on this machine becomes the hosted one and an
-    /// address on another machine is ignored, with a log line and a line in
-    /// `ling status` (`memory_host::effective_url`). From the toml, else
-    /// `$LING_MEM_URL`, else the old daemon's port; never written.
-    #[serde(default = "default_ling_mem_url", skip_serializing)]
-    pub ling_mem_url: String,
     /// Ask the model for follow-up buttons on the turns of a chat that shows
     /// them (the Mac chat). Off: no asking; a skill's starters and a page's
     /// buttons still show. See `chat-spec.md` § Suggestions.
@@ -336,38 +327,6 @@ fn default_memory_inject_min_score() -> Option<f32> {
 
 fn default_memory_recall_count() -> usize {
     3
-}
-
-/// ling-mem daemon's default port. Must match `linggen-memory`'s
-/// `daemon::DEFAULT_PORT`; overridable per install via `[agent].ling_mem_url`
-/// or, as the default, `$LING_MEM_URL`.
-pub const DEFAULT_LING_MEM_PORT: u16 = 9528;
-
-/// The environment variable that sets the DEFAULT ling-mem URL — the one used
-/// when the config does not set `[agent].ling_mem_url` (no config file at
-/// all, on a first run). A URL the config names still wins.
-pub const LING_MEM_URL_ENV: &str = "LING_MEM_URL";
-
-/// `[agent].ling_mem_url` when the config leaves it out:
-/// `$LING_MEM_URL`, else `http://127.0.0.1:9528`.
-pub fn default_ling_mem_url() -> String {
-    ling_mem_url_default_from(std::env::var(LING_MEM_URL_ENV).ok().as_deref())
-}
-
-/// The default given the env value: a usable `http(s)://` URL (trailing
-/// slashes dropped), else the daemon's own port. An unusable value is
-/// ignored, with a warning — it would otherwise fail config validation.
-fn ling_mem_url_default_from(env: Option<&str>) -> String {
-    match env.map(str::trim).filter(|v| !v.is_empty()) {
-        Some(v) if v.starts_with("http://") || v.starts_with("https://") => {
-            v.trim_end_matches('/').to_string()
-        }
-        Some(v) => {
-            tracing::warn!("{LING_MEM_URL_ENV}={v:?} ignored: not an http(s) URL");
-            format!("http://127.0.0.1:{DEFAULT_LING_MEM_PORT}")
-        }
-        None => format!("http://127.0.0.1:{DEFAULT_LING_MEM_PORT}"),
-    }
 }
 
 impl AgentConfig {
@@ -623,13 +582,6 @@ impl Config {
                 self.agent.memory_recall_count
             );
         }
-        let url = self.agent.ling_mem_url.trim();
-        if url.is_empty() {
-            anyhow::bail!("Agent ling_mem_url must not be empty");
-        }
-        if !(url.starts_with("http://") || url.starts_with("https://")) {
-            anyhow::bail!("Agent ling_mem_url must start with http:// or https:// (got {url})");
-        }
         // Warn (log) if default_models references non-existent model IDs.
         // Built-in models (injected at ModelManager build) are valid defaults.
         for dm in &self.routing.default_models {
@@ -674,7 +626,6 @@ impl Default for Config {
                 episodic_ttl_days: default_episodic_ttl_days(),
                 memory_inject_min_score: default_memory_inject_min_score(),
                 memory_recall_count: default_memory_recall_count(),
-                ling_mem_url: default_ling_mem_url(),
                 suggest_followups: true,
             },
             logging: LoggingConfig {
@@ -1164,46 +1115,16 @@ mod tests {
         assert_eq!(parsed.agent.max_iters, cfg.agent.max_iters);
     }
 
-    // ── ling_mem_url precedence: config > $LING_MEM_URL > 9528 ──
-
+    /// Memory is the store this engine hosts; there is no address to set. A
+    /// config from an older engine that still names one loads, the key
+    /// ignored, and is not written back.
     #[test]
-    fn ling_mem_url_env_sets_the_default() {
-        assert_eq!(
-            ling_mem_url_default_from(Some("http://127.0.0.1:4100/")),
-            "http://127.0.0.1:4100"
-        );
-        assert_eq!(
-            ling_mem_url_default_from(Some(" https://mem.lan:9528 ")),
-            "https://mem.lan:9528"
-        );
-    }
-
-    #[test]
-    fn ling_mem_url_without_env_is_the_daemon_port() {
-        let builtin = format!("http://127.0.0.1:{DEFAULT_LING_MEM_PORT}");
-        assert_eq!(ling_mem_url_default_from(None), builtin);
-        assert_eq!(ling_mem_url_default_from(Some("  ")), builtin);
-        // Not a URL: ignored rather than failing validation at startup.
-        assert_eq!(ling_mem_url_default_from(Some("127.0.0.1:4100")), builtin);
-    }
-
-    /// A URL the config names wins over the env; one it leaves out is the
-    /// default (env-resolved), as with no config file at all.
-    #[test]
-    fn ling_mem_url_in_the_config_wins_over_the_default() {
-        let set: AgentConfig =
-            toml::from_str("max_iters = 5\nling_mem_url = \"http://10.0.0.2:7000\"").unwrap();
-        assert_eq!(set.ling_mem_url, "http://10.0.0.2:7000");
-        let unset: AgentConfig = toml::from_str("max_iters = 5").unwrap();
-        assert_eq!(unset.ling_mem_url, default_ling_mem_url());
-        assert_eq!(Config::default().agent.ling_mem_url, default_ling_mem_url());
-    }
-
-    /// The address lives in client.json; the toml never carries it.
-    #[test]
-    fn ling_mem_url_is_never_saved_to_the_toml() {
+    fn an_old_memory_address_in_the_config_is_ignored() {
+        let old: AgentConfig =
+            toml::from_str("max_iters = 5\nling_mem_url = \"http://127.0.0.1:4100\"").unwrap();
+        assert_eq!(old.max_iters, 5);
         let mut cfg = Config::default();
-        cfg.agent.ling_mem_url = "http://127.0.0.1:4100".into();
+        cfg.agent = old;
         let text = toml::to_string_pretty(&cfg).unwrap();
         assert!(!text.contains("ling_mem_url"), "{text}");
     }

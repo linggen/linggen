@@ -12,7 +12,6 @@ use std::time::{Duration, Instant};
 pub struct Engine {
     pub port: u16,
     proc: Owned,
-    mem_url: String,
     has_config: bool,
     extra_env: Vec<(String, String)>,
 }
@@ -34,17 +33,15 @@ pub struct Mark(usize);
 impl Engine {
     /// Start `ling --web` on `port` (the one the config names; a fresh one
     /// if it was taken meanwhile, and the config rewritten to name it).
-    /// `mem_url` is the world's ling-mem (`LING_MEM_URL`). With no config
-    /// (`has_config` false) the flag alone names the port, and the env alone
-    /// names ling-mem — a first install.
+    /// With no config (`has_config` false) the flag alone names the port — a
+    /// first install. Memory is the store the engine hosts, on that port.
     pub async fn start(
         home: &Home,
         port: u16,
-        mem_url: &str,
         has_config: bool,
         extra_env: &[(String, String)],
     ) -> Self {
-        let mut env = hermetic_env(home, Some(mem_url));
+        let mut env = hermetic_env(home);
         env.extend_from_slice(extra_env);
         let spawn = |port: u16| {
             if has_config {
@@ -65,7 +62,6 @@ impl Engine {
         Self {
             port: server.port,
             proc: server.proc,
-            mem_url: mem_url.to_string(),
             has_config,
             extra_env: extra_env.to_vec(),
         }
@@ -75,9 +71,8 @@ impl Engine {
     /// environment, as a restart does.
     pub async fn restart(&mut self, home: &Home) {
         self.proc.stop();
-        let (port, mem, has_config, env) =
-            (self.port, self.mem_url.clone(), self.has_config, self.extra_env.clone());
-        *self = Engine::start(home, port, &mem, has_config, &env).await;
+        let (port, has_config, env) = (self.port, self.has_config, self.extra_env.clone());
+        *self = Engine::start(home, port, has_config, &env).await;
     }
 
     pub fn new_port() -> u16 {

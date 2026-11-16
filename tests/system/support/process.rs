@@ -10,10 +10,8 @@ use std::time::{Duration, Instant};
 /// that honours the proxy variables is sent to a closed local port.
 const DEAD_PROXY: &str = "http://127.0.0.1:9";
 
-/// The only environment a child gets (`env -i` + this list). `mem_url` is
-/// the world's ling-mem, passed as `LING_MEM_URL` — the engine's default
-/// memory address when no config names one (a world with no config).
-pub fn hermetic_env(home: &Home, mem_url: Option<&str>) -> Vec<(String, String)> {
+/// The only environment a child gets (`env -i` + this list).
+pub fn hermetic_env(home: &Home) -> Vec<(String, String)> {
     let root = &home.root;
     let path = |p: &str| root.join(p).display().to_string();
     let mut vars = vec![
@@ -52,9 +50,6 @@ pub fn hermetic_env(home: &Home, mem_url: Option<&str>) -> Vec<(String, String)>
     }
     for key in ["NO_PROXY", "no_proxy"] {
         vars.push((key, "127.0.0.1,localhost,::1".to_string()));
-    }
-    if let Some(url) = mem_url {
-        vars.push(("LING_MEM_URL", url.to_string()));
     }
     let vars: Vec<(String, String)> = vars.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
     guard::env(&vars, root);

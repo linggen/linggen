@@ -167,7 +167,7 @@ stage_vmfiles() {
   cp "$REPO/tests/fixtures/memory/alex.json" "$VMFILES/alex.json"
   grep -rlE '\{\{[A-Z_]+\}\}' "$VMFILES/home" "$VMFILES/alex.json" | while read -r f; do
     perl -pi -e 's#\{\{LINGGEN_HOME\}\}#/Users/admin/.linggen#g; s#\{\{ENGINE_PORT\}\}#9527#g;
-                 s#\{\{MEM_URL\}\}#http://127.0.0.1:9528#g; s#\{\{MODEL_URL\}\}#'"$VM_MODEL"'#g;
+                 s#\{\{MODEL_URL\}\}#'"$VM_MODEL"'#g;
                  s#\{\{WORK\}\}#/Users/admin/work#g' "$f"
   done
 }

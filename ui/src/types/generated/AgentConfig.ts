@@ -39,16 +39,6 @@ memory_inject_min_score: number | null,
  */
 memory_recall_count: number, 
 /**
- * Base URL of memory for the engine's own callers: the built-in memory
- * MCP server's endpoint (`<url>/mcp`, how a model reaches memory) and
- * the program-side calls. Memory is hosted by this process, so at
- * start-up any address on this machine becomes the hosted one and an
- * address on another machine is ignored, with a log line and a line in
- * `ling status` (`memory_host::effective_url`). From the toml, else
- * `$LING_MEM_URL`, else the old daemon's port; never written.
- */
-ling_mem_url?: string, 
-/**
  * Ask the model for follow-up buttons on the turns of a chat that shows
  * them (the Mac chat). Off: no asking; a skill's starters and a page's
  * buttons still show. See `chat-spec.md` § Suggestions.

@@ -124,7 +124,7 @@ pub(super) async fn capability_dispatch(
         }
     }
 
-    let ling_mem_url = state.manager.get_config_snapshot().await.agent.ling_mem_url;
+    let ling_mem_url = crate::memory_host::url();
     match crate::engine::tools::memory_http::call_memory_http(&ling_mem_url, &tool_name, args).await
     {
         Ok(data) => axum::Json(data).into_response(),

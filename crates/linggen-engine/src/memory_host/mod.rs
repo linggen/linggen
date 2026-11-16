@@ -18,7 +18,7 @@
 //!   (`memory/backups/takeover-<stamp>/`, marker `takeover-<version>.done`).
 //!
 //! The engine's own callers still reach memory over loopback HTTP and MCP
-//! (`effective_url` points them at [`PREFIX`] on this port); calling the
+//! (`url` points them at [`PREFIX`] on this port); calling the
 //! library directly is a later step.
 
 pub mod caller;
@@ -213,44 +213,13 @@ pub(crate) fn hosted_url() -> Option<String> {
     HOST.get().map(|h| url_for(h.port))
 }
 
-/// The memory address the engine's own callers use: the store this process
-/// hosts, whatever the config names. Machines share memory as primary and
-/// replicas, each engine with its own store; an engine never uses another
-/// machine's store by address. A configured address on another machine is
-/// ignored, with one log line (`ling status` says so too).
-pub fn effective_url(configured: &str) -> String {
-    if let Some(other) = ignored_address(configured) {
-        tracing::warn!(
-            "memory: {other} names another machine's memory — ignored; this engine uses its \
-             own store (share memory across machines with Settings → Memory → Primary)"
-        );
-    }
-    match hosted_url() {
-        Some(own) => own,
-        None => configured.trim_end_matches('/').to_string(),
-    }
-}
-
-/// An address on another machine that a config names for the engine's
-/// memory — `[agent].ling_mem_url` / `$LING_MEM_URL`, or `ling_mem` in
-/// `client.json` (which older engines followed) — and that the engine
-/// ignores. `None` when everything named is on this machine.
-pub fn ignored_address(configured: &str) -> Option<String> {
-    std::iter::once(configured.trim_end_matches('/').to_string())
-        .chain(crate::state_fs::client::memory_address())
-        .find(|url| !is_loopback_url(url))
-}
-
-fn is_loopback_url(raw: &str) -> bool {
-    let Ok(url) = url::Url::parse(raw.trim()) else {
-        return false;
-    };
-    match url.host() {
-        Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
-        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
-        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
-        None => false,
-    }
+/// Where the engine's own callers reach memory: the store this process hosts,
+/// on its own port. Empty when this process hosts none (a CLI command, a unit
+/// test) — a call to it then fails at once and never reaches another process.
+/// Machines share memory as primary and replicas, each engine with its own
+/// store; there is no address to configure.
+pub fn url() -> String {
+    hosted_url().unwrap_or_default()
 }
 
 /// Write every curated row (no vectors) to `path` as NDJSON — the store
@@ -268,19 +237,4 @@ pub(crate) async fn export_to(path: &Path) -> anyhow::Result<()> {
     host.runtime
         .spawn(async move { ling_mem::hosted::export(&store, &path).await })
         .await?
-}
-
-#[cfg(test)]
-mod tests {
-    use super::is_loopback_url;
-
-    #[test]
-    fn addresses_on_this_machine_are_the_hosted_memory() {
-        assert!(is_loopback_url("http://127.0.0.1:9528"));
-        assert!(is_loopback_url("http://localhost:4100/"));
-        assert!(is_loopback_url("http://[::1]:9528"));
-        assert!(!is_loopback_url("http://192.168.1.5:9528"));
-        assert!(!is_loopback_url("http://mem.lan:9528"));
-        assert!(!is_loopback_url("not a url"));
-    }
 }

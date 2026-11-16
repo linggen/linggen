@@ -2,12 +2,13 @@
 //!
 //! Every check here panics with `HERMETIC GUARD:` — loudly, before anything
 //! starts — when a test world would reach the real `~/.linggen`, the real
-//! engine port (9527) or the real ling-mem port (9528).
+//! engine port (9527) or the old memory daemon's port (9528, where a machine
+//! still on an engine before 2.3 serves the person's memory).
 
 use super::home::Home;
 use std::path::{Path, PathBuf};
 
-/// The ports of the person's own engine and memory daemon.
+/// The person's own engine port, and the old memory daemon's.
 pub const REAL_PORTS: [u16; 2] = [9527, 9528];
 
 fn real_linggen_home() -> Option<PathBuf> {
@@ -75,9 +76,6 @@ pub fn env(vars: &[(String, String)], root: &Path) {
         if is_path {
             path_in_root(Path::new(value), root, key);
         }
-        if key == "LING_MEM_URL" {
-            mem_url(value);
-        }
     }
 }
 
@@ -116,31 +114,6 @@ pub fn no_config(home: &Home) {
         refuse(format!(
             "a world with no config has a config folder {}",
             dir.display()
-        ));
-    }
-}
-
-/// The memory URL a child is told (`LING_MEM_URL`): loopback, and not
-/// the real ling-mem's port. A path after the port (the engine's `/mem`) is
-/// fine.
-pub fn mem_url(url: &str) {
-    let rest = url
-        .strip_prefix("http://127.0.0.1:")
-        .unwrap_or_else(|| refuse(format!("LING_MEM_URL {url} is not a loopback http URL")));
-    let port_text = rest.split('/').next().unwrap_or_default();
-    match port_text.parse::<u16>() {
-        Ok(p) => port(p, "LING_MEM_URL"),
-        Err(_) => refuse(format!("LING_MEM_URL {url} names no port")),
-    }
-}
-
-/// The rendered config sends memory to the world's own ling-mem — the one
-/// address every memory path in the engine reads (`[agent].ling_mem_url`;
-/// unset, it would default to 9528).
-pub fn config_mem_url(text: &str, mem_url: &str) {
-    if !text.contains(&format!("ling_mem_url = \"{mem_url}\"")) {
-        refuse(format!(
-            "the rendered config does not send memory to the test's ling-mem {mem_url}"
         ));
     }
 }

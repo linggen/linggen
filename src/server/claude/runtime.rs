@@ -185,10 +185,9 @@ impl ClaudeSession {
     /// Memory as a native owner session has it: the session-start block in
     /// the system prompt, once per runner.
     async fn session_memory(&self) -> String {
-        let config = self.state.manager.get_config_snapshot().await;
         let store = self.state.prompt_store.clone();
         let cwd = PathBuf::from(&self.meta.cwd);
-        let url = config.agent.ling_mem_url.clone();
+        let url = crate::memory_host::url();
         tokio::task::spawn_blocking(move || {
             crate::engine::prompt::core_block::owner_block(&store, &url, &cwd)
         })
@@ -215,7 +214,7 @@ impl ClaudeSession {
         let config = self.state.manager.get_config_snapshot().await;
         let mut servers = serde_json::Map::new();
         for (name, server) in
-            crate::mcp_client::with_builtin(&config.mcp_servers, &config.agent.ling_mem_url)
+            crate::mcp_client::with_builtin(&config.mcp_servers, &crate::memory_host::url())
         {
             if !server.enabled
                 || self

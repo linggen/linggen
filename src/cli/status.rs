@@ -80,7 +80,7 @@ pub async fn run(config: &Config, config_path: Option<&Path>) -> Result<()> {
 
     // 9. ling-mem (memory backend)
     println!();
-    check_ling_mem(&config.agent.ling_mem_url).await;
+    check_ling_mem().await;
 
     println!();
     Ok(())
@@ -90,7 +90,7 @@ pub async fn run(config: &Config, config_path: Option<&Path>) -> Result<()> {
 /// store's lock names the process holding it and the port it serves on, and
 /// that port's `/mem/api/health` says whether it answers. Then the on-disk
 /// store and the canonical skill bundle — each independent.
-async fn check_ling_mem(ling_mem_url: &str) {
+async fn check_ling_mem() {
     println!("  Memory:");
 
     let holder = ling_mem::hosted::StoreLock::holder(crate::paths::linggen_home());
@@ -122,14 +122,6 @@ async fn check_ling_mem(ling_mem_url: &str) {
             &format!("taken once for {version} (memory/backups/)"),
         ),
         None => info("Backup    ", &format!("not yet taken for {version}")),
-    }
-    if let Some(other) = crate::memory_host::ignored_address(ling_mem_url) {
-        info(
-            "Address   ",
-            &format!(
-                "{other} is another machine's memory — ignored; the engine uses its own store"
-            ),
-        );
     }
 
     // Store. Memory rows live under ~/.linggen/memory/memory.lancedb/

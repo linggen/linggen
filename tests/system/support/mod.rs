@@ -45,8 +45,8 @@ pub struct Setup {
     /// The `tests/fixtures/<dir>` the home is copied from; `home` when unset.
     pub fixture: Option<&'static str>,
     /// A true first install: no fixture and no config at all — the engine
-    /// runs on its own defaults, its port from `--port` and its ling-mem
-    /// from `LING_MEM_URL`. (`fixture` is ignored.)
+    /// runs on its own defaults, its port from `--port`. (`fixture` is
+    /// ignored.)
     pub no_config: bool,
     /// Where the engine sends a picture request (`LINGGEN_IMAGE_API_URL`):
     /// a loopback stand-in for ChatGPT's image generation.
@@ -85,11 +85,8 @@ impl World {
         let model = FakeModel::start(&setup.scripts, &setup.extras).await;
         Memory::prepare(&home, setup.embedder);
         let port = Engine::new_port();
-        // The engine hosts memory; an address on this machine names it.
-        let mem_url = memory::url_on(port);
         let mut vars = home.base_vars();
         vars.insert("ENGINE_PORT", port.to_string());
-        vars.insert("MEM_URL", mem_url.clone());
         vars.insert("MODEL_URL", model.url());
         if setup.no_config {
             guard::no_config(&home);
@@ -108,7 +105,6 @@ impl World {
             }
             let config = std::fs::read_to_string(home.config_path()).expect("config");
             guard::config_text(&config);
-            guard::config_mem_url(&config, &mem_url);
         }
         guard::home_files(&home.home(), &home.model_cache());
         if setup.signed_out {
@@ -123,7 +119,7 @@ impl World {
             extra_env.push(("LINGGEN_MACHINE_MEMORY_GB".to_string(), gb.to_string()));
         }
         extra_env.extend(setup.env.iter().map(|(k, v)| (k.to_string(), v.clone())));
-        let engine = Engine::start(&home, port, &mem_url, !setup.no_config, &extra_env).await;
+        let engine = Engine::start(&home, port, !setup.no_config, &extra_env).await;
         let memory = Memory::hosted(engine.port);
         if let Some(file) = setup.memory_rows {
             memory.seed(file, &vars).await;

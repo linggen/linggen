@@ -1,9 +1,8 @@
 // First run: a real first install — no config folder at all (`noConfig`), so
 // the engine runs on its own defaults: no models of the person's, Linggen
 // Cloud the default, signed out. What a new user sees. The world stays
-// hermetic without a config: its port comes from `--port` and its ling-mem
-// from `LING_MEM_URL` (the engine's default memory address when no config
-// names one). Never click a sign-in button here: the daemon would open the
+// hermetic without a config: its port comes from `--port`, and its memory is
+// the store it hosts on that port. Never click a sign-in button here: the daemon would open the
 // system browser.
 import type { Page } from '@playwright/test';
 import { existsSync } from 'node:fs';

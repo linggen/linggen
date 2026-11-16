@@ -670,8 +670,8 @@ impl AgentEngine {
         // --- Core memory (owner only) ---
         // Core = `tier=core` rows from the memory store, inlined
         // unconditionally (no similarity gate). Pulled over HTTP from
-        // `agent.ling_mem_url` in `core_block::load_core` — the same
-        // daemon every other memory surface reads. Empty / unreachable
+        // the hosted store (`cfg.ling_mem_url`) in `core_block::load_core` —
+        // the same store every other memory surface reads. Empty / unreachable
         // store ⇒ the bootstrap block fires instead, telling the model
         // how to populate core. Semantic retrieval over the rest of the
         // store reaches the model through the memory server's own tools

@@ -18,7 +18,7 @@ export type Scenario = {
   /** tests/fixtures/<fixture>; `home` when unset. */
   fixture?: string;
   /** A true first install: no fixture, no config folder at all (the engine's
-   *  own defaults; its ling-mem named only by `LING_MEM_URL`). */
+   *  own defaults; its memory the store it hosts on its own port). */
   noConfig?: boolean;
   scripts?: { ling?: Reply[]; yinyue?: Reply[] };
 };

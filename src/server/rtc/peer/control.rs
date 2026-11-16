@@ -78,10 +78,9 @@ pub(super) fn handle_control_message(
             // Once, here, because this is the only place a sign-in is seen.
             if let Some(id) = identified.as_ref() {
                 if let Some(gained) = id.signed_in.clone() {
-                    let state = Arc::clone(state);
                     let device = id.actor.device.clone();
                     tokio::spawn(async move {
-                        crate::server::api::memory::restamp_device(&state, &device, &gained).await;
+                        crate::server::api::memory::restamp_device(&device, &gained).await;
                     });
                 }
             }

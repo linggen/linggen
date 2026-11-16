@@ -42,17 +42,14 @@
 //! (`restamp_device`). See `phone-memory-spec.md`.
 
 use axum::{
-    extract::{ConnectInfo, Json, Path, State},
+    extract::{ConnectInfo, Json, Path},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
 use serde_json::{json, Value};
 use std::net::SocketAddr;
-use std::sync::Arc;
 
 use crate::memory_host::caller::{self, Caller};
-
-use crate::server::state::ServerState;
 
 /// `POST /api/memory/<verb>` — forward to the daemon that owns memory.
 ///
@@ -61,11 +58,9 @@ use crate::server::state::ServerState;
 /// gets memory's own 404. A phone that is another person may run only the
 /// verbs scoped to one person end to end ([`PERSON_VERBS`]).
 ///
-/// The address is resolved per request from `[agent].ling_mem_url`, so moving
-/// ling-mem to another port is a Mac-side config change and nothing else — the
-/// phone never learns a port, stores one, or needs a rebuild when it moves.
+/// The verb goes to the store this engine hosts (`memory_host::url`); the
+/// phone never learns a port, stores one, or needs a rebuild.
 pub async fn passthrough(
-    State(state): State<Arc<ServerState>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Path(verb): Path<String>,
     headers: HeaderMap,
@@ -83,7 +78,7 @@ pub async fn passthrough(
     if let Err(refused) = scope_to_caller(&caller::resolve(peer.ip(), &headers), &verb, &mut args) {
         return refused;
     }
-    let ling_mem_url = state.manager.get_config_snapshot().await.agent.ling_mem_url;
+    let ling_mem_url = crate::memory_host::url();
 
     // The engine logs its own ling-mem calls (`call_memory_http`); this path
     // is the one that arrives from another machine, so it is the one worth
@@ -322,11 +317,7 @@ fn stamp_person(verb: &str, args: &mut Value, person: Option<&Person>) {
 /// to the person it turned out to be — or back to the owner, if it was the
 /// owner's phone all along. Failure is logged, not surfaced: the rows are
 /// still there under the device stamp, and the next sign-in tries again.
-pub async fn restamp_device(
-    state: &Arc<ServerState>,
-    device_id: &str,
-    gained: &crate::server::api::pair::AccountRef,
-) {
+pub async fn restamp_device(device_id: &str, gained: &crate::server::api::pair::AccountRef) {
     let owner = crate::account::load_account().and_then(|a| a.user_id);
     let to_owner = owner.as_deref() == Some(gained.id.as_str());
     let body = json!({
@@ -338,7 +329,7 @@ pub async fn restamp_device(
             json!(gained.name.clone().or_else(|| gained.email.clone()))
         },
     });
-    let ling_mem_url = state.manager.get_config_snapshot().await.agent.ling_mem_url;
+    let ling_mem_url = crate::memory_host::url();
     match crate::engine::tools::memory_http::post_memory_verb(&ling_mem_url, "restamp", &body).await
     {
         Ok((_, env)) => tracing::info!(

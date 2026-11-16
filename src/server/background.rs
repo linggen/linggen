@@ -167,7 +167,7 @@ fn connect_mcp_servers(state: &Arc<ServerState>) {
         // mechanism for every tool. Never empty as a result, so the
         // early return is gone.
         let cfg = manager.get_config_snapshot().await;
-        let servers = crate::mcp_client::with_builtin(&cfg.mcp_servers, &cfg.agent.ling_mem_url);
+        let servers = crate::mcp_client::with_builtin(&cfg.mcp_servers, &crate::memory_host::url());
         crate::mcp_client::registry().connect_all(&servers).await;
     });
 }

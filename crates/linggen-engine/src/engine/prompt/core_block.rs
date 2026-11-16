@@ -7,7 +7,7 @@
 //!
 //! Per `doc/memory-spec.md` §1/§2 the core tier lives as rows in the
 //! `semantic` LanceDB table, not as files on disk. The engine queries
-//! them over HTTP from the daemon at `agent.ling_mem_url` — the same
+//! them over HTTP from the store the engine hosts (`memory_host::url`) — the same
 //! store every memory surface reads, reached here as a program rather
 //! than as a tool call — and renders the bodies as a bullet list for
 //! the prompt template. Promotion in and out of the core tier happens
@@ -290,9 +290,8 @@ fn fetch_core_rows(ling_mem_url: &str, timeout: Duration) -> Option<Vec<CoreRow>
 }
 
 /// One memory call over HTTP, bounded by `timeout`. Goes through
-/// `call_memory_http`, so the core block honors `agent.ling_mem_url` like
-/// every other memory surface (a non-default URL, e.g. an eval's
-/// throwaway store, reads the right daemon). The request runs on a side
+/// `call_memory_http`, so the core block reads the URL it is given like
+/// every other memory surface (a test's own server, say). The request runs on a side
 /// thread with its own tiny runtime because prompt assembly is sync; on
 /// timeout the engine proceeds with no core injected this turn and the
 /// orphan request finishes in the background (including the dispatch

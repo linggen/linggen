@@ -7,7 +7,6 @@ url = "127.0.0.1:{{ENGINE_PORT}}"
 
 [agent]
 max_iters = 12
-ling_mem_url = "{{MEM_URL}}"
 # No follow-up buttons: a test turn makes only the model calls it scripts.
 suggest_followups = false
 

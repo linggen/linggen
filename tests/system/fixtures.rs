@@ -3,7 +3,6 @@
 
 use crate::support::engine::Engine;
 use crate::support::home::Home;
-use crate::support::memory;
 use crate::support::{guard, Setup, World};
 use serde_json::{json, Value};
 use std::path::Path;
@@ -42,9 +41,7 @@ async fn the_fixture_home_loads() {
 
 /// A true first install — no config folder, no client.json — boots on the
 /// engine's own defaults: its memory is the one it hosts itself, on its own
-/// port (an address on this machine, here the world's `LING_MEM_URL`, names
-/// it), never the real one on 9528. The address is in neither the config
-/// nor `~/.linggen/client.json`.
+/// port. No memory address is in the config or `~/.linggen/client.json`.
 #[tokio::test]
 async fn a_first_install_with_no_config_reaches_its_own_memory() {
     let w = World::start(Setup {
@@ -85,12 +82,6 @@ async fn a_first_install_with_no_config_reaches_its_own_memory() {
         "a default memory address was written to client.json"
     );
     w.assert_all_scripted();
-}
-
-#[test]
-#[should_panic(expected = "HERMETIC GUARD")]
-fn guard_refuses_the_real_memory_url_in_env() {
-    guard::mem_url("http://127.0.0.1:9528");
 }
 
 #[test]
@@ -144,7 +135,7 @@ async fn a_taken_port_is_never_mistaken_for_ours() {
     let taken = stranger.local_addr().expect("stranger addr").port();
     std::thread::spawn(move || answer_healthy(stranger));
     let home = Home::new();
-    let engine = Engine::start(&home, taken, &memory::url_on(taken), false, &[]).await;
+    let engine = Engine::start(&home, taken, false, &[]).await;
     assert_ne!(
         engine.port, taken,
         "took the stranger's port {taken} for ours"
