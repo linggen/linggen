@@ -161,12 +161,13 @@ prompt, not listening on an inbox.
 
 ## Ambient life-signs — scheduled heartbeat
 
-A server-side `tokio::interval` (sibling to `yinyue_watch`, **not** the mission
-system — it's an internal liveness tick, not a user cron job). Jittered ~10 min,
-interval in config + disable-able. Each tick → read `sense` → glance → **mostly
-silent**, occasionally a varied line → `PetSpeak`. Anti-repeat via her last line.
-Most ticks say nothing; a remark every 10 min on the dot is a cuckoo clock, not a
-companion.
+A server-side timer (sibling to `yinyue_watch`, **not** the mission system —
+it's an internal liveness tick, not a user cron job). A glance every **30–50
+min**: 30 min plus up to 20 of jitter, fixed in `resident/ambient.rs` (start-up
+adds a 4 min settle before the first wait); the Pet switch turns it off. Each
+tick → read `sense` → glance → **mostly silent**, occasionally a varied line →
+`PetSpeak`. Anti-repeat via her last line. Most ticks say nothing; a remark every
+40 min on the dot is a cuckoo clock, not a companion.
 
 ## App moments — an app tells her, she speaks when it has gone quiet
 
