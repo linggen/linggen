@@ -112,11 +112,15 @@ pub(super) async fn capability_dispatch(
     // `linggen` — including the `/mcp` front door, which is not. Each caller
     // says who it is now, and this one is a webpage running inside Linggen.
     let mut args = args;
+    // Fitted to the caller here, before the memory client's clean-ups, so
+    // they see the stamped body; memory then runs it as given.
     let caller = crate::memory_host::caller::resolve(peer.ip(), &headers);
-    if let Err(refused) =
-        crate::server::api::memory::scope_to_caller(&caller, verb.as_str(), &mut args)
-    {
-        return refused;
+    let who = match crate::server::api::memory::scope_to_caller(&caller, &verb, &mut args) {
+        Ok(who) => who,
+        Err(refused) => return refused,
+    };
+    if let Err(e) = who.scope(&verb, &mut args) {
+        return crate::server::api::memory::refused(e);
     }
     if let Some(obj) = args.as_object_mut() {
         if tool_name == "Memory_write" && !obj.contains_key("host") {

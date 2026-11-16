@@ -1,5 +1,5 @@
 //! The door `POST /api/memory/<verb>` against a real hosted store (scratch
-//! dir, memory's deterministic test embedder, served on a loopback port),
+//! dir, memory's deterministic test embedder, called in-process),
 //! as three callers: the owner (this machine), the owner's own phone, and
 //! the phone of another person. What each may run is pinned verb by verb
 //! as literals, so a later table-driven door must reproduce it exactly.
@@ -7,15 +7,14 @@
 //! How the callers are made, without touching this machine's pairing
 //! records or account file:
 //! - the owner: the real `passthrough` handler from loopback;
-//! - another person's phone: `scope_to_caller` with a phone row signed in
-//!   to another account, then `passthrough` with the body it produced (the
-//!   owner's scope leaves a body as it is, so the wire is the phone's);
-//! - the owner's own phone: `scope_phone` with no person — which phone is
-//!   the owner's is decided from `account.toml` (`person_of`, unit-tested
-//!   above), and a test must not write that file.
+//! - another person's phone: the door's `answer` for the asker a phone row
+//!   signed in to another account resolves to (`asker_of`);
+//! - the owner's own phone: `answer` for a phone with no person — which
+//!   phone is the owner's is decided from `account.toml` (`person_of`,
+//!   unit-tested above), and a test must not write that file.
 //!
-//! `memory_host::url` is pointed at the scratch store for each test's
-//! future alone (`memory_host::TEST_URL`).
+//! `memory_host` reaches the scratch store in-process, for each test's
+//! future alone (`memory_host::TEST_HOST`).
 
 use super::*;
 use crate::server::api::pair::{AccountRef, PairedDevice};
@@ -27,22 +26,32 @@ struct Store {
     _dir: tempfile::TempDir,
 }
 
+/// The scratch stores by name, for `door` to hand to `memory_host`.
+static STORES: std::sync::Mutex<Vec<(String, ling_mem::http::state::SharedState)>> =
+    std::sync::Mutex::new(Vec::new());
+
 async fn store() -> Store {
     let dir = tempfile::tempdir().unwrap();
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let base = format!("http://{}", listener.local_addr().unwrap());
+    let base = format!("scratch://{}", dir.path().display());
     let state = ling_mem::hosted::open_quiet_fake(dir.path(), base.clone())
         .await
         .unwrap();
-    let app = ling_mem::hosted::router(state);
-    tokio::spawn(async move {
-        let _ = axum::serve(
-            listener,
-            app.into_make_service_with_connect_info::<SocketAddr>(),
-        )
-        .await;
-    });
+    STORES.lock().unwrap().push((base.clone(), state));
     Store { base, _dir: dir }
+}
+
+/// What `url` names for `memory_host`: a scratch store; `""` — no memory
+/// in this process; anything else — a store that never answers.
+fn host_at(url: &str) -> crate::memory_host::TestHost {
+    use crate::memory_host::TestHost;
+    if url.is_empty() {
+        return TestHost::Absent;
+    }
+    let stores = STORES.lock().unwrap();
+    match stores.iter().find(|(base, _)| base == url) {
+        Some((_, state)) => TestHost::Store(state.clone()),
+        None => TestHost::Silent,
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -84,31 +93,24 @@ async fn read(res: Response) -> (u16, Value) {
 
 /// The door's answer for `who` sending `verb` with `body`, at `url`.
 async fn door(url: &str, who: Who, verb: &str, body: Value) -> (u16, Value) {
-    let mut args = body;
-    let refused = match who {
-        Who::Owner => None,
-        Who::OwnersPhone => scope_phone(verb, &mut args, None)
-            .err()
-            .map(|(status, message, code)| unreachable_envelope(status, message, code)),
-        Who::GuestsPhone => {
-            let guest = phone("dev-guest", Some(("u-guest", "Guest")));
-            scope_to_caller(&Caller::Phone(guest), verb, &mut args).err()
+    let guest = phone("dev-guest", Some(("u-guest", "Guest")));
+    let asker = match who {
+        Who::Owner => {
+            let call = passthrough(
+                ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 50000))),
+                Path(verb.to_string()),
+                HeaderMap::new(),
+                Some(Json(body)),
+            );
+            let res = crate::memory_host::TEST_HOST.scope(host_at(url), call).await;
+            return read(res).await;
         }
-        Who::SignedOutPhone => {
-            scope_to_caller(&Caller::Phone(phone("dev-2", None)), verb, &mut args).err()
-        }
+        Who::OwnersPhone => Asker::Phone(None),
+        Who::GuestsPhone => asker_of(&Caller::Phone(guest)),
+        Who::SignedOutPhone => asker_of(&Caller::Phone(phone("dev-2", None))),
     };
-    if let Some(refusal) = refused {
-        return read(refusal).await;
-    }
-    let call = passthrough(
-        ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 50000))),
-        Path(verb.to_string()),
-        HeaderMap::new(),
-        Some(Json(args)),
-    );
-    let res = crate::memory_host::TEST_URL
-        .scope(url.to_string(), call)
+    let res = crate::memory_host::TEST_HOST
+        .scope(host_at(url), answer(&asker, verb, body))
         .await;
     read(res).await
 }
@@ -400,7 +402,7 @@ async fn an_unreachable_memory_is_a_502() {
         "{env}"
     );
     assert_eq!(
-        env["error"], "POST /api/memory/list failed: builder error: relative URL without a base",
+        env["error"], "memory is not hosted by this process",
         "{env}"
     );
 }
@@ -486,4 +488,92 @@ async fn every_person_verb_stays_inside_the_persons_rows() {
     );
     let (_, env) = owner("count", json!({"type": "tried"})).await;
     assert_eq!(env["data"]["count"], 1);
+}
+
+/// The door's answer for `asker` with memory as `host` says.
+async fn door_at(
+    host: crate::memory_host::TestHost,
+    asker: Asker,
+    verb: &str,
+    body: Value,
+) -> (u16, Value) {
+    let res = crate::memory_host::TEST_HOST
+        .scope(host, answer(&asker, verb, body))
+        .await;
+    read(res).await
+}
+
+/// Memory that failed to open answers as its routes did: 503
+/// `MEMORY_UNAVAILABLE` with the reason, for anyone the door lets through;
+/// one that never answers is given up on after the door's own wait.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn memory_that_is_not_open_or_silent_answers_as_before() {
+    use crate::memory_host::TestHost;
+    let why = "the memory store under /x is already open (pid 7); one process at a time";
+    let guest = asker_of(&Caller::Phone(phone("dev-guest", Some(("u-guest", "Guest")))));
+    for asker in [Asker::Owner, Asker::Phone(None), guest] {
+        assert_eq!(
+            door_at(TestHost::NotOpen(why.into()), asker, "search", json!({"query": "x"})).await,
+            (
+                503,
+                json!({"ok": false, "error": why, "code": "MEMORY_UNAVAILABLE"})
+            )
+        );
+    }
+    let started = std::time::Instant::now();
+    let silent = door_at(TestHost::Silent, Asker::Owner, "count", json!({})).await;
+    let waited = started.elapsed();
+    assert_eq!(
+        silent,
+        (
+            502,
+            json!({"ok": false, "error": "memory is not reachable — check `ling status`", "code": "UNREACHABLE"})
+        )
+    );
+    assert!(
+        waited >= VERB_TIMEOUT && waited < VERB_TIMEOUT + std::time::Duration::from_secs(2),
+        "{waited:?}"
+    );
+}
+
+/// The four askers through the in-process call: a caller memory does not
+/// know is refused before memory; `apply_schema` is not a route at
+/// `/api/memory/` (memory's 404 for the owner, the person refusal for a
+/// guest); the owner's own phone loses its account claims.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn every_asker_is_answered_through_the_call() {
+    let s = store().await;
+    let host = || host_at(&s.base);
+    assert_eq!(
+        door_at(host(), Asker::Unknown, "search", json!({"query": "x"})).await,
+        (
+            403,
+            json!({"ok": false, "error": "memory does not know this caller", "code": "FORBIDDEN"})
+        )
+    );
+    assert_eq!(
+        door_at(host(), Asker::Owner, "apply_schema", json!({})).await,
+        (
+            404,
+            json!({"ok": false, "error": "ling-mem error [404]: <empty body>", "code": "HTTP_404"})
+        )
+    );
+    let guest = asker_of(&Caller::Phone(phone("dev-guest", Some(("u-guest", "Guest")))));
+    assert_eq!(
+        door_at(host(), guest.clone(), "apply_schema", json!({})).await,
+        (
+            403,
+            json!({"ok": false, "code": "FORBIDDEN", "error": "apply_schema is not kept per person, so only the Mac's owner may run it"})
+        )
+    );
+    let (_, env) = door_at(
+        host(),
+        Asker::Phone(None),
+        "add",
+        json!({"content": "the owner likes rye", "tier": "semantic", "account_id": "u-guest", "account_name": "Guest"}),
+    )
+    .await;
+    assert!(env["data"]["fact"].get("account_id").is_none(), "{env}");
+    let (_, env) = door_at(host(), guest, "list", json!({"all_accounts": true})).await;
+    assert_eq!(env["data"], json!([]), "the owner's row is not the guest's");
 }

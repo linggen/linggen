@@ -21,11 +21,15 @@
 //! (`url` points them at [`PREFIX`] on this port); calling the
 //! library directly is a later step.
 
+mod call;
 pub mod caller;
 mod routes;
 mod standin;
 mod takeover;
 
+pub use call::{post_verb, post_verb_blocking, Answer};
+#[cfg(any(test, feature = "test-support"))]
+pub use call::{TestHost, TEST_HOST};
 pub use routes::{is_open_path, routes};
 pub use standin::{ling_mem_path, restore_previous};
 

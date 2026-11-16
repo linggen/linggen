@@ -52,36 +52,44 @@ use std::net::SocketAddr;
 use crate::memory_host::caller::{self, Caller};
 use ling_mem::{Person, Who};
 
-/// `POST /api/memory/<verb>` — forward to the daemon that owns memory.
+/// `POST /api/memory/<verb>` — the verb, answered by the store this engine
+/// hosts (`memory_host::post_verb`, in-process); the phone never learns a
+/// port, stores one, or needs a rebuild.
 ///
 /// For the owner the verb is passed through rather than checked against a
 /// list: memory is the authority on which verbs exist, and an unknown one
 /// gets memory's own 404. A phone that is another person may run only the
 /// verbs memory keeps per person (`ling_mem::Who`).
-///
-/// The verb goes to the store this engine hosts (`memory_host::url`); the
-/// phone never learns a port, stores one, or needs a rebuild.
 pub async fn passthrough(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Path(verb): Path<String>,
     headers: HeaderMap,
     body: Option<Json<Value>>,
 ) -> Response {
-    if !is_safe_verb(&verb) {
+    let args = body.map(|Json(v)| v).unwrap_or_else(|| json!({}));
+    let asker = asker_of(&caller::resolve(peer.ip(), &headers));
+    answer(&asker, &verb, args).await
+}
+
+/// How long the door, and the engine's own memory helpers, wait for a verb.
+pub(crate) const VERB_TIMEOUT: std::time::Duration =
+    crate::engine::tools::memory_http::DISPATCH_TIMEOUT;
+
+/// The door's answer to `asker` for `verb` with `args`.
+async fn answer(asker: &Asker, verb: &str, mut args: Value) -> Response {
+    if !is_safe_verb(verb) {
         return unreachable_envelope(
             StatusCode::BAD_REQUEST,
             format!("invalid memory verb: {verb}"),
             "BAD_REQUEST",
         );
     }
+    let who = match fit(asker, verb, &mut args) {
+        Ok(who) => who,
+        Err((status, message, code)) => return unreachable_envelope(status, message, code),
+    };
 
-    let mut args = body.map(|Json(v)| v).unwrap_or_else(|| json!({}));
-    if let Err(refused) = scope_to_caller(&caller::resolve(peer.ip(), &headers), &verb, &mut args) {
-        return refused;
-    }
-    let ling_mem_url = crate::memory_host::url();
-
-    // The engine logs its own ling-mem calls (`call_memory_http`); this path
+    // The engine logs its own memory calls (`call_memory_http`); this path
     // is the one that arrives from another machine, so it is the one worth
     // seeing in the log at all. Keys only — a memory row's content is the
     // user's, and this line is not where it should turn up.
@@ -92,10 +100,10 @@ pub async fn passthrough(
             .unwrap_or_default()
     );
 
-    match crate::engine::tools::memory_http::post_memory_verb(&ling_mem_url, &verb, &args).await {
-        // The daemon answered. Its envelope is the answer — `{ok, data}` or
+    match crate::memory_host::post_verb(who, verb, args, VERB_TIMEOUT).await {
+        // Memory answered. Its envelope is the answer — `{ok, data}` or
         // `{ok:false, error, code}` — and it goes back untouched, code and all,
-        // under ling-mem's own status. Rewriting a failure into a bare status
+        // under memory's own status. Rewriting a failure into a bare status
         // would throw away the one field that says what went wrong; flattening
         // a 404 into 200 would claim a verb exists that doesn't.
         Ok((status, envelope)) => (
@@ -103,9 +111,9 @@ pub async fn passthrough(
             Json(envelope),
         )
             .into_response(),
-        // The daemon could not be reached, even after the autostart retry. That
-        // is a fact about this hop, not about the operation, so it gets a status
-        // of its own — in the same envelope shape, so a caller parses one thing.
+        // No answer: no memory in this process, or none in time. That is a
+        // fact about this hop, not about the operation, so it gets a status of
+        // its own — in the same envelope shape, so a caller parses one thing.
         Err(e) => {
             tracing::warn!("memory passthrough: {verb} failed: {e:#}");
             unreachable_envelope(StatusCode::BAD_GATEWAY, format!("{e:#}"), "UNREACHABLE")
@@ -113,20 +121,42 @@ pub async fn passthrough(
     }
 }
 
-/// Fit a memory verb's arguments to whoever is asking (`memory_host::caller`):
-/// the owner's go as given; a phone's are stamped with its person, and the
-/// verbs that cross account lines are refused; anyone else is refused. Every
-/// memory route a phone can reach on this port goes through here.
+/// Who is asking memory, as the door tells them apart.
+#[derive(Debug, Clone)]
+pub(crate) enum Asker {
+    /// This machine, or a machine it approved.
+    Owner,
+    /// A phone: `None` = the owner's own, else the person behind it.
+    Phone(Option<Person>),
+    /// No one memory knows.
+    Unknown,
+}
+
+pub(crate) fn asker_of(caller: &Caller) -> Asker {
+    match caller {
+        Caller::Owner | Caller::Machine(_) => Asker::Owner,
+        Caller::Phone(device) => Asker::Phone(person_of(device)),
+        Caller::Unknown => Asker::Unknown,
+    }
+}
+
+/// Fit a memory verb's call to whoever is asking (`memory_host::caller`):
+/// the [`Who`] memory runs it for, after the checks that are the door's own.
+/// Every memory route a phone can reach on this port goes through here.
 pub(crate) fn scope_to_caller(
     caller: &Caller,
     verb: &str,
     args: &mut Value,
-) -> Result<(), Response> {
-    match caller {
-        Caller::Owner | Caller::Machine(_) => Ok(()),
-        Caller::Phone(device) => scope_phone(verb, args, person_of(device).as_ref())
-            .map_err(|(status, message, code)| unreachable_envelope(status, message, code)),
-        Caller::Unknown => Err(unreachable_envelope(
+) -> Result<Who, Response> {
+    fit(&asker_of(caller), verb, args)
+        .map_err(|(status, message, code)| unreachable_envelope(status, message, code))
+}
+
+fn fit(asker: &Asker, verb: &str, args: &mut Value) -> Result<Who, Refusal> {
+    match asker {
+        Asker::Owner => Ok(Who::Owner),
+        Asker::Phone(person) => scope_phone(verb, args, person.as_ref()),
+        Asker::Unknown => Err((
             StatusCode::FORBIDDEN,
             "memory does not know this caller".to_string(),
             "FORBIDDEN",
@@ -136,11 +166,11 @@ pub(crate) fn scope_to_caller(
 
 /// A phone's request: `person` is who is behind it (`None` = the owner's
 /// own phone). No phone runs a verb only this machine's owner may
-/// (`ling_mem::call::machine_only`); the owner's own phone runs any other,
-/// its account claims taken off; a phone that is another person is fitted
-/// by memory itself (`Who::scope`: only the verbs kept per person, with a
-/// body the stamp can mark).
-fn scope_phone(verb: &str, args: &mut Value, person: Option<&Person>) -> Result<(), Refusal> {
+/// (`ling_mem::call::machine_only`). The owner's own phone runs any other as
+/// the owner, its account claims taken off; a phone that is another person
+/// is that person, and memory fits the call to them (`Who::scope`: only the
+/// verbs kept per person, with a body the stamp can mark, then the stamp).
+fn scope_phone(verb: &str, args: &mut Value, person: Option<&Person>) -> Result<Who, Refusal> {
     if ling_mem::call::machine_only(verb) {
         return Err((
             StatusCode::FORBIDDEN,
@@ -150,19 +180,19 @@ fn scope_phone(verb: &str, args: &mut Value, person: Option<&Person>) -> Result<
     }
     let Some(person) = person else {
         ling_mem::call::stamp(verb, args, None);
-        return Ok(());
+        return Ok(Who::Owner);
     };
-    Who::Person(person.clone())
-        .scope(verb, args)
-        .map_err(refusal_of)
+    Ok(Who::Person(person.clone()))
 }
 
 /// Why the door refused: status, message, envelope code.
 type Refusal = (StatusCode, String, &'static str);
 
-fn refusal_of(e: ling_mem::MemError) -> Refusal {
+/// Memory's refusal, in the shape the door answers its own refusals with
+/// (memory's own envelope).
+pub(crate) fn refused(e: ling_mem::MemError) -> Response {
     let status = StatusCode::from_u16(e.code.http_status()).unwrap_or(StatusCode::FORBIDDEN);
-    (status, e.message, e.code.code())
+    unreachable_envelope(status, e.message, e.code.code())
 }
 
 /// Whose name labels a caller's own messages.
@@ -239,9 +269,7 @@ pub async fn restamp_device(device_id: &str, gained: &crate::server::api::pair::
             json!(gained.name.clone().or_else(|| gained.email.clone()))
         },
     });
-    let ling_mem_url = crate::memory_host::url();
-    match crate::engine::tools::memory_http::post_memory_verb(&ling_mem_url, "restamp", &body).await
-    {
+    match crate::memory_host::post_verb(Who::Owner, "restamp", body, VERB_TIMEOUT).await {
         Ok((_, env)) => tracing::info!(
             "memory restamp for device {device_id}: {}",
             env.get("data").map(|d| d.to_string()).unwrap_or_default()
@@ -388,7 +416,15 @@ mod tests {
 
         let mut phone = body();
         let alex = device(Some(("u-3", Some("Alex"))));
-        assert!(scope_to_caller(&Caller::Phone(alex.clone()), "search", &mut phone).is_ok());
+        let who = scope_to_caller(&Caller::Phone(alex.clone()), "search", &mut phone).unwrap();
+        assert_eq!(
+            who,
+            Who::Person(Person {
+                id: "u-3".into(),
+                name: Some("Alex".into())
+            })
+        );
+        who.scope("search", &mut phone).unwrap();
         assert_eq!(phone["account"], "u-3");
         assert!(phone.get("all_accounts").is_none());
         assert!(scope_to_caller(&Caller::Phone(alex), "accounts", &mut body()).is_err());
@@ -461,7 +497,7 @@ mod tests {
         let body = || json!({"query": "x", "facts": [{"content": "a"}], "account": "u-9"});
         for verb in verbs.iter().map(String::as_str).chain(["wat"]) {
             let mut args = body();
-            let allowed = scope_phone(verb, &mut args, Some(&alex)).is_ok();
+            let allowed = fitted(verb, &mut args, &alex);
             assert_eq!(
                 allowed,
                 PERSON_VERBS.contains(&verb),
@@ -489,6 +525,11 @@ mod tests {
         }
     }
 
+    /// The door's checks, then memory's for the person: may it run?
+    fn fitted(verb: &str, args: &mut Value, person: &Person) -> bool {
+        scope_phone(verb, args, Some(person)).is_ok_and(|who| who.scope(verb, args).is_ok())
+    }
+
     /// A body the stamp cannot mark would reach memory as the owner's; for
     /// another person it is refused instead.
     #[test]
@@ -503,13 +544,10 @@ mod tests {
             ("add_batch", json!({"facts": [{"content": "a"}, "b"]})),
             ("add_batch", json!({"facts": "a"})),
         ] {
-            assert!(
-                scope_phone(verb, &mut args, Some(&alex)).is_err(),
-                "{verb} {args}"
-            );
+            assert!(!fitted(verb, &mut args, &alex), "{verb} {args}");
         }
         let mut ok = json!({"facts": [{"content": "a"}]});
-        assert!(scope_phone("add_batch", &mut ok, Some(&alex)).is_ok());
+        assert!(fitted("add_batch", &mut ok, &alex));
         assert_eq!(ok["facts"][0]["account_id"], "u-3");
     }
 

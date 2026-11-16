@@ -27,7 +27,7 @@ use serde_json::{json, Value};
 use std::time::Duration;
 
 /// Per-call HTTP timeout. Matches the old `capability_tools.rs` budget.
-const DISPATCH_TIMEOUT: Duration = Duration::from_secs(5);
+pub const DISPATCH_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// POST `args` to `<ling_mem_url>/api/memory/<verb>` (verb taken from
 /// `args["verb"]` and stripped) and return the daemon's `data` payload.
