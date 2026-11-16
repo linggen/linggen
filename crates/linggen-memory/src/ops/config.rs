@@ -82,9 +82,50 @@ pub(crate) async fn save(data_dir: &std::path::Path, cfg: &Config) -> Result<(),
     Ok(())
 }
 
+pub async fn get_config(state: &crate::handle::Memory) -> Result<serde_json::Value, crate::error::MemError> {
+    let cfg = load(&state.data_dir).await;
+    Ok(serde_json::to_value(cfg).expect("Config serializes"))
+}
+
+pub async fn put_config(state: &crate::handle::Memory, mut cfg: Config) -> Result<serde_json::Value, crate::error::MemError> {
+    use crate::error::MemError;
+    // The network choice is not this route's to change — see `network.rs`.
+    cfg.network = load(&state.data_dir).await.network;
+    // Light range check — the dream pass treats a 0 TTL as "evict
+    // everything," which is rarely what the user wants. Allow it but
+    // pin the lower bound; cap is generous to keep this future-proof.
+    if cfg.episodic_ttl_days > 3650 {
+        return Err(MemError::bad_request(
+            "episodic_ttl_days must be <= 3650 (10 years)",
+        ));
+    }
+    if !(0.0..=1.0).contains(&cfg.recall_min_score) {
+        return Err(MemError::bad_request(
+            "recall_min_score must be between 0.0 and 1.0",
+        ));
+    }
+    save(&state.data_dir, &cfg)
+        .await
+        .map_err(|e| MemError::internal(anyhow::anyhow!(e)))?;
+    Ok(serde_json::to_value(cfg).expect("Config serializes"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn the_config_route_never_changes_the_network() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::handle::scratch_state(dir.path(), std::net::SocketAddr::from(([0, 0, 0, 0], 0))).await;
+        let cfg = Config { network: Network::Local, ..Config::default() };
+        save(dir.path(), &cfg).await.unwrap();
+        let sent = Config { network: Network::Lan, episodic_ttl_days: 9, ..Config::default() };
+        put_config(&state, sent).await.unwrap();
+        let stored = load(dir.path()).await;
+        assert_eq!(stored.network, Network::Local);
+        assert_eq!(stored.episodic_ttl_days, 9);
+    }
 
     #[tokio::test]
     async fn an_old_config_file_reads_as_shared_on_the_lan() {
