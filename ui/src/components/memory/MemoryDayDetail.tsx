@@ -26,7 +26,7 @@ export function MemoryDayDetail({ date, day, today, busy, start, scan }: {
     {date === today && <p className="text-xs text-slate-500">Today's rows are staged; they can be dreamed after midnight.</p>}
     {date < today && <div className="flex flex-wrap gap-2">
       {!day?.scanned && <button className={ghostBtn} disabled={busy} onClick={() => scan(date)}>Scan this day</button>}
-      {!dreamed && <button className={ghostBtn} disabled={busy} onClick={() => start(date)}>Dream this day</button>}
+      {!dreamed && (day?.rows ?? 0) > 0 && <button className={ghostBtn} disabled={busy} onClick={() => start(date)}>Dream this day</button>}
     </div>}
   </section>;
 }
