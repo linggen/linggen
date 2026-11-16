@@ -14,6 +14,7 @@
  * in Settings reloads the page into the new language.
  */
 import { ZH } from './strings-zh';
+import { translatePlaceholder } from './placeholder.mts';
 
 export type Language = 'en' | 'zh-Hans';
 let lang: Language = 'en';
@@ -114,8 +115,20 @@ function swapText(node: Text) {
   node.nodeValue = (v.match(/^\s*/)?.[0] ?? '') + said + (v.match(/\s*$/)?.[0] ?? '');
 }
 
+function swapPlaceholder(el: Element) {
+  const value = el.getAttribute('placeholder');
+  if (!value) return;
+  const said = translatePlaceholder(value, el.hasAttribute('data-no-i18n-placeholder'), translate);
+  if (said != null) el.setAttribute('placeholder', said);
+}
+
 function swapAttrs(el: Element) {
+  if (el.closest(SKIP)) {
+    if (el.matches('input, textarea') && !el.parentElement?.closest(SKIP)) swapPlaceholder(el);
+    return;
+  }
   for (const a of ATTRS) {
+    if (a === 'placeholder' && el.hasAttribute('data-no-i18n-placeholder')) continue;
     const v = el.getAttribute(a);
     if (!v) continue;
     const said = translate(v);
@@ -129,13 +142,16 @@ export function translateDom(root: Node = document.body) {
     if (!root.parentElement?.closest(SKIP)) swapText(root as Text);
     return;
   }
-  if (root.nodeType !== Node.ELEMENT_NODE || (root as Element).closest(SKIP)) return;
-  swapAttrs(root as Element);
+  if (root.nodeType !== Node.ELEMENT_NODE) return;
+  const el = root as Element;
+  if (el.closest(SKIP)) { swapAttrs(el); return; }
+  swapAttrs(el);
   const walk = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
-    acceptNode: (n) =>
-      n.nodeType === Node.ELEMENT_NODE && (n as Element).matches(SKIP)
-        ? NodeFilter.FILTER_REJECT
-        : NodeFilter.FILTER_ACCEPT,
+    acceptNode: (n) => {
+      if (n.nodeType !== Node.ELEMENT_NODE || !(n as Element).matches(SKIP)) return NodeFilter.FILTER_ACCEPT;
+      if ((n as Element).matches('input, textarea')) swapAttrs(n as Element);
+      return NodeFilter.FILTER_REJECT;
+    },
   });
   for (let n = walk.nextNode(); n; n = walk.nextNode()) {
     if (n.nodeType === Node.TEXT_NODE) swapText(n as Text);

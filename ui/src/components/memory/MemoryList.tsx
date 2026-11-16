@@ -1,6 +1,6 @@
 import React from 'react';
 import { describeError, MemoryError, type MemoryRow } from './memoryApi.mts';
-import { preview, relAge, shortPath, tierLabel } from './memoryFormat.mts';
+import { preview, relAge, rowWord, shortPath, tierLabel } from './memoryFormat.mts';
 import { chipCls, tierChipCls } from './memoryStyle';
 
 interface Props {
@@ -80,8 +80,8 @@ const Row: React.FC<{
       <p data-no-i18n className="text-xs text-slate-800 dark:text-slate-200 break-words line-clamp-3">{preview(row.content)}</p>
       <div className="mt-1 flex flex-wrap items-center gap-1.5">
         <span className={tierChipCls(row.tier)}>{tierLabel(row.tier)}</span>
-        <span className={chipCls}>{row.type}</span>
-        <span className={chipCls}>{row.from}</span>
+        <span className={chipCls}>{rowWord(row.type)}</span>
+        <span className={chipCls}>{rowWord(row.from)}</span>
         {row.indexed && <span className={chipCls}>indexed</span>}
         {row.scope && <span data-no-i18n className={chipCls} title={row.scope}>{shortPath(row.scope)}</span>}
         {typeof row.hybrid_score === 'number' && <span className={chipCls} title="Relevance">{row.hybrid_score.toFixed(2)}</span>}

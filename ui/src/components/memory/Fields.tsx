@@ -1,5 +1,6 @@
 import React, { useId } from 'react';
 import { inputCls, labelCls } from './memoryStyle';
+import { rowWord } from './memoryFormat.mts';
 
 /** A labelled drop-down. `none` adds an empty choice with that label. */
 export const PickField: React.FC<{
@@ -12,7 +13,7 @@ export const PickField: React.FC<{
       <label htmlFor={id} className={labelCls}>{label}</label>
       <select id={id} className={`${inputCls} min-h-11 md:min-h-0 mt-1`} value={value} onChange={(e) => onChange(e.target.value)}>
         {none !== undefined && <option value="">{none}</option>}
-        {options.map((o) => <option key={o} value={o}>{show ? show(o) : o}</option>)}
+        {options.map((o) => <option key={o} value={o}>{show ? show(o) : rowWord(o)}</option>)}
       </select>
     </div>
   );

@@ -75,7 +75,7 @@ export const MemorySettings: React.FC = () => {
           <h3 className="text-xs font-bold text-slate-700 dark:text-slate-300">Other machines</h3>
           <p className="text-[11px] text-slate-400">Where memory is kept: this machine, or another on your LAN.</p>
           <LingMemPrimary />
-          <p className="text-[11px] text-slate-400">A replica keeps a copy here, syncs, and works offline. Type local to hold it here.</p>
+          <p className="text-[11px] text-slate-400">{'A replica keeps a copy here, syncs, and works offline. Type local to hold it here.'}</p>
         </section>
       )}
     </div>

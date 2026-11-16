@@ -42,6 +42,15 @@ export function uiLocale(): string | undefined {
   return typeof document !== 'undefined' && document.documentElement.lang === 'zh-Hans' ? 'zh-CN' : undefined;
 }
 
+const ROW_WORDS: Record<string, string> = {
+  fact: '事实', preference: '偏好', decision: '决定', tried: '试过', fixed: '修复', learned: '心得', built: '完成',
+  user: '用户', agent: '智能体', derived: '推断', positive: '正面', negative: '负面', neutral: '中性',
+};
+
+export function rowWord(value: string): string {
+  return uiLocale() === 'zh-CN' ? ROW_WORDS[value] ?? value : value;
+}
+
 /** "1 row", "3 rows". */
 export function rowCount(n: number): string {
   return `${n} row${n === 1 ? '' : 's'}`;

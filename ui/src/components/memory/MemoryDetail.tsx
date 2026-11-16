@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { confirmDialog } from '../../lib/confirmDialog';
+import { translate } from '../../lib/i18n';
 import { describeError, memory, ORIGINS, OUTCOMES, TYPES, type MemoryRow, type Tier } from './memoryApi.mts';
 import { draftOf, patchOf, problemWith, SHOWN_FIELDS, type Draft } from './memoryDraft.mts';
 import { fmtTime, preview, tierLabel } from './memoryFormat.mts';
@@ -51,7 +52,9 @@ export const MemoryDetail: React.FC<Props> = ({ row, onSaved, onDeleted, onClose
   };
 
   const remove = async () => {
-    if (!(await confirmDialog(`Delete this row?\n\n“${preview(row.content, 90)}”\n\nThis cannot be undone.`))) return;
+    const question = translate('Delete this row?') ?? 'Delete this row?';
+    const warning = translate('This cannot be undone.') ?? 'This cannot be undone.';
+    if (!(await confirmDialog(`${question}\n\n“${preview(row.content, 90)}”\n\n${warning}`))) return;
     setBusy(true);
     try {
       await memory.remove(row.id);

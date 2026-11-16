@@ -3,6 +3,7 @@ import { MoreHorizontal, Plus, Search, X } from 'lucide-react';
 import { ORIGINS, TYPES, type Sort, type TabKey } from './memoryApi.mts';
 import type { Query } from './useMemoryRows';
 import { ghostBtn, inputCls, primaryBtn } from './memoryStyle';
+import { rowWord } from './memoryFormat.mts';
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'all', label: 'All' },
@@ -93,7 +94,7 @@ const SearchBox: React.FC<{ text: string; onSubmit: (text: string) => void }> = 
 const Choice: React.FC<{ label: string; value: string; options: readonly string[]; onChange: (v: string) => void }> = ({ label, value, options, onChange }) => (
   <select aria-label={label} className={`${inputCls} min-h-11 md:min-h-0 !w-auto`} value={value} onChange={(e) => onChange(e.target.value)}>
     <option value="">{`${label}: any`}</option>
-    {options.map((o) => <option key={o} value={o}>{o}</option>)}
+    {options.map((o) => <option key={o} value={o}>{rowWord(o)}</option>)}
   </select>
 );
 

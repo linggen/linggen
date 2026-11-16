@@ -18,6 +18,7 @@ import { useServerStore } from '../../stores/serverStore';
 import type { SettingsLocationState } from '../../hooks/useOpenSettings';
 import { useAutoSaveConfig } from './useAutoSaveConfig';
 import { SaveStatus } from './SaveStatus';
+import { language } from '../../lib/i18n';
 
 type TabKey = Exclude<ManagementTab, 'mcp'>;
 
@@ -45,6 +46,10 @@ const groups: { label?: string; tabs: { key: TabKey; label: string }[] }[] = [
   ] },
 ];
 const tabs = groups.flatMap((g) => g.tabs);
+const sidebarZh: Record<string, string> = {
+  Capabilities: '能力', 'Tools & MCP': '工具与 MCP', Devices: '设备', Phone: '手机', Room: '房间', Data: '数据',
+};
+const sidebarLabel = (label: string) => language() === 'zh-Hans' ? sidebarZh[label] ?? label : label;
 
 /** An old tab key (`mcp`) opens where that content lives now. */
 const toTab = (key: string | null | undefined): TabKey | undefined =>
@@ -110,7 +115,7 @@ export const SettingsHome: React.FC = () => {
         <aside className="hidden md:flex flex-col w-48 shrink-0 border-r border-slate-200 dark:border-white/5 bg-white/60 dark:bg-[#0f0f0f]/60 overflow-y-auto py-3 px-2">
           {groups.map((g, i) => (
             <div key={g.label ?? i} className={i ? 'mt-4' : undefined}>
-              {g.label && <div className="px-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">{g.label}</div>}
+              {g.label && <div className="px-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">{sidebarLabel(g.label)}</div>}
               {g.tabs.map((tab) => (
                 <TabButton key={tab.key} label={tab.label} active={activeTab === tab.key} onClick={() => setActiveTab(tab.key)} block />
               ))}
@@ -194,6 +199,6 @@ const TabButton: React.FC<{ label: string; active: boolean; onClick: () => void;
         : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/5'
     }`}
   >
-    {label}
+    {sidebarLabel(label)}
   </button>
 );
