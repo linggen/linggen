@@ -177,12 +177,10 @@ build_mirror() { # local | draft "<specs>"
     public) mirror_draft "$good" "" ;;
   esac
   local pub="$SITE_PUBLIC" f
-  for f in install.sh install-app.sh install-shared-memory.sh install-plugin.sh; do
+  for f in install.sh install-app.sh install-plugin.sh; do
     [ -f "$pub/$f" ] || die "mirror: installers" "missing $pub/$f"
     cp "$pub/$f" "$good/$f"
   done
-  # The old memory installer's address; first-install.sh runs it when served.
-  [ -f "$pub/install-ling-mem.sh" ] && cp "$pub/install-ling-mem.sh" "$good/install-ling-mem.sh"
   record INFO "mirror: installers" "$pub ($(git -C "$pub" rev-parse --abbrev-ref HEAD 2>/dev/null) $(git -C "$pub" rev-parse --short HEAD 2>/dev/null))"
   derive_tree "$good" "$root/relabel" "-gate" 0
   derive_tree "$good" "$root/bad" "-gate" 1

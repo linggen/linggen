@@ -34,8 +34,8 @@ published engine carries them) or, for `--local`, is packed from this
 checkout with `scripts/plugin/package-plugin.sh`. The installers are
 not release assets: the mirror takes them from `linggensite/public`; to gate
 the release-day ones, `GATE_SITE_PUBLIC=<worktree of the site branch>/public`.
-The first install also runs `install-ling-mem.sh` when served and FAILs on
-any ling-mem binary laid down or asked of the mirror. The host suites run on
+The first install FAILs on any ling-mem binary laid down or asked of the
+mirror. The host suites run on
 a scratch home under `~/.cache/linggen-gate/host-home`.
 
 `GATE_LING_BIN=target/fast/ling GATE_APP=/nonexistent just release-gate

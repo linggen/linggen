@@ -18,24 +18,8 @@ check_installed "install.sh: ling is the release" "$(ling_bin)" "$LING_VERSION" 
 INSTALLED_MEM_SHA="$(sha "$HOME/.local/bin/ling-mem")"
 [ -z "$INSTALLED_MEM_SHA" ]
 check "install.sh: installs no ling-mem" $? "v$(ver_of "$HOME/.local/bin/ling-mem") at ~/.local/bin/ling-mem (sha ${INSTALLED_MEM_SHA:0:12})" "nothing at ~/.local/bin/ling-mem"
-# The old memory installer's address runs the same installation.
-if curl -fsSL "$SITE/install-ling-mem.sh" -o "$OUT/install-ling-mem.sh" 2>/dev/null; then
-  env $RB LINGGEN_INSTALL_HOST="$SITE" bash "$OUT/install-ling-mem.sh" --version '^1' >"$OUT/install-ling-mem.log" 2>&1
-  check "install-ling-mem.sh exits 0" $? "$(tail -3 "$OUT/install-ling-mem.log")"
-  check_installed "install-ling-mem.sh: ling is the release" "$(ling_bin)" "$LING_VERSION" "$LING_SHA"
-  [ ! -e "$HOME/.local/bin/ling-mem" ]
-  check "install-ling-mem.sh: installs no ling-mem" $? "v$(ver_of "$HOME/.local/bin/ling-mem") at ~/.local/bin/ling-mem"
-else
-  gap "install-ling-mem.sh" "not served by the mirror"
-fi
 grep -q 'Verified SHA-256' "$OUT/install.log"
 check "install.sh: verifies ling's sha256" $? "no 'Verified SHA-256' line"
-
-# ── install-shared-memory.sh — retired: says so and exits 0 ────────────────
-curl -fsSL "$SITE/install-shared-memory.sh" | bash >"$OUT/install-shared-memory.log" 2>&1
-rc=$?
-grep -q 'retired' "$OUT/install-shared-memory.log"
-check "install-shared-memory.sh: retired notice, exit 0" $(( rc + $? )) "exit $rc — $(tail -2 "$OUT/install-shared-memory.log")"
 
 # ── First run, as a person: bare `ling` (daemon + browser) ─────────────────
 start_engine 90
