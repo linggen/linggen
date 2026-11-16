@@ -168,6 +168,7 @@ pub(super) fn handle_notification(state: &Arc<ServerState>, payload: Notificatio
             mission_id,
             mission_name,
             status,
+            run_id,
             ..
         } => {
             // Guard: never react to a Yinyue-shaped mission (belt-and-suspenders).
@@ -177,6 +178,18 @@ pub(super) fn handle_notification(state: &Arc<ServerState>, payload: Notificatio
             // A cancel is user-initiated — they know; announcing it as a
             // finished mission is both wrong and noise (cancel != completion).
             if status == "cancelled" {
+                return;
+            }
+            // An unattended run that had something go wrong: she is handed
+            // what the record says — the facts, not a verdict.
+            if let Some(fact) = mission_fact::for_run(state, &mission_id, &mission_name, &run_id) {
+                tracing::info!(
+                    "[yinyue-watch] mission '{mission_id}' run {run_id} had failures; handing Yinyue the fact"
+                );
+                let state = state.clone();
+                tokio::spawn(async move {
+                    wake_herald(state, fact, "neutral").await;
+                });
                 return;
             }
             tracing::info!(

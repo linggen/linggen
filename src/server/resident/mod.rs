@@ -27,6 +27,7 @@ use super::state::ServerState;
 use crate::engine::events::{NotificationPayload, ServerEvent};
 
 mod ambient;
+mod mission_fact;
 mod session_roll;
 mod spoken;
 mod triggers;
