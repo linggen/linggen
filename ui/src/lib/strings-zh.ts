@@ -615,4 +615,17 @@ export const ZH: Record<string, string> = {
   'A directory. Empty means the person.': '一个目录。留空表示关于这个人。',
   'This device is not allowed to open memory.': '这台设备无权打开记忆。',
   'Memory is not reachable right now.': '暂时无法连接记忆。',
+  // ── Memory settings ──
+  'Keep short-term rows for (days)': '短期记忆保留天数',
+  'Short-term rows older than this are forgotten once a dream has judged them.': '梦境判断过之后，超过这个天数的短期记忆会被遗忘。',
+  'Recall threshold (0–1)': '召回阈值（0–1）',
+  'Higher brings back fewer, closer matches. Lower brings back more.': '越高召回越少、越贴近；越低召回越多。',
+  "Only this Mac's owner can change these.": '只有这台 Mac 的主人可以修改这些。',
+  'Days must be a whole number from 1 to 3650.': '天数必须是 1 到 3650 的整数。',
+  'The threshold must be a number from 0 to 1.': '阈值必须是 0 到 1 之间的数。',
+  'Could not save the settings: {why}': '无法保存设置：{why}',
+  'Could not read the settings: {why}': '无法读取设置：{why}',
+  'Other machines': '其他机器',
+  'Where memory is kept: this machine, or another on your LAN.': '记忆存放的位置：这台机器，或局域网里的另一台。',
+  'A replica keeps a copy here, syncs, and works offline. Type local to hold it here.': '副本会在这里保留一份、同步，并可离线使用。输入 local 则由这台机器保管。',
 };
