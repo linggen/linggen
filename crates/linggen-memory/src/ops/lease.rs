@@ -1,13 +1,16 @@
-//! The dream-lease sidecar, `<data_dir>/memory/.dream-lease.json`: one
-//! executor per day (`{day: {holder, expires_at}}`). The `dream_lease` verb
-//! lives in `http::lease`; `remember_day` refuses a day another holder leased.
+//! The dream lease — one executor per day — and its sidecar,
+//! `<data_dir>/memory/.dream-lease.json` (`{day: {holder, expires_at}}`).
+//! `dream_lease` is the verb behind `POST /api/memory/dream_lease`;
+//! `remember_day` refuses a day another holder leased (`held_by_other`).
 
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::error::MemError;
+use crate::handle::Memory;
 
 pub const LEASE_FOR_MINUTES: i64 = 30;
 
@@ -103,6 +106,45 @@ pub fn busy(day: &str, l: &Lease) -> MemError {
         l.holder,
         l.expires_at.to_rfc3339()
     ))
+}
+
+#[derive(Deserialize)]
+pub struct LeaseRequest {
+    day: String,
+    holder: String,
+    #[serde(default = "default_action")]
+    action: String,
+}
+
+fn default_action() -> String {
+    "acquire".into()
+}
+
+/// Acquire, renew or release `req.day`'s lease for `req.holder`.
+pub async fn dream_lease(state: &Memory, req: LeaseRequest) -> Result<Value, MemError> {
+    if !matches!(req.action.as_str(), "acquire" | "renew" | "release") {
+        return Err(MemError::bad_request("action is acquire, renew or release"));
+    }
+    if req.holder.trim().is_empty()
+        || chrono::NaiveDate::parse_from_str(&req.day, "%Y-%m-%d").is_err()
+    {
+        return Err(MemError::bad_request(
+            "day is YYYY-MM-DD and holder is required",
+        ));
+    }
+    let verdict = decide(
+        &state.data_dir,
+        &req.day,
+        req.holder.trim(),
+        &req.action,
+        Utc::now(),
+    )
+    .map_err(|e| MemError::internal(anyhow::anyhow!(e)))?;
+    match verdict {
+        Verdict::Held(l) => Err(busy(&req.day, &l)),
+        Verdict::Granted(l) => Ok(json!({ "day": req.day, "lease": l })),
+        Verdict::Released => Ok(json!({ "day": req.day, "released": true })),
+    }
 }
 
 #[cfg(test)]
