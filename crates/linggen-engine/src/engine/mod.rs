@@ -40,6 +40,7 @@ pub mod tool_registry;
 pub mod tool_render;
 pub mod tool_scope;
 pub mod tools;
+pub mod turn_place;
 mod types;
 pub mod video_search;
 pub mod web_fetch;
