@@ -225,7 +225,7 @@ async fn run_at(
         let policy = ready_for_turn(&mut engine, turn, pet);
         apply_her_model(state, &mut engine, session_id, pet).await;
         // At an app's table the session's recall policy is the app's: no
-        // biography, no core block (`handler::turn_creator`).
+        // biography, no core block (`chat::turn_place::turn_creator`).
         if !turn.home && table_is_not_a_persons(state, session_id) {
             engine.prompt_profile.include_memory = false;
         }

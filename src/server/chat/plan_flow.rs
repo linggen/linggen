@@ -324,7 +324,7 @@ async fn run_approved_plan_task(
     root: PathBuf,
     agent_id: String,
     session_id: Option<String>,
-    place: super::helpers::TurnPlace,
+    place: super::helpers::TurnSlot,
 ) {
     let _turn = place.await;
     let mut engine = agent.lock().await;

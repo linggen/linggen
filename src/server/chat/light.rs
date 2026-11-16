@@ -84,5 +84,5 @@ async fn ready(ctx: &ChatRunCtx, engine: &mut crate::engine::AgentEngine) {
     )
     .await;
     super::handler::seat_member(engine, ctx).await;
-    super::handler::apply_session_bound_skill(engine, ctx).await;
+    super::turn_place::apply_session_bound_skill(engine, ctx).await;
 }

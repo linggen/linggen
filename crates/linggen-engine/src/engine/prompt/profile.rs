@@ -76,7 +76,7 @@ impl PromptProfile {
         }
     }
 
-    /// Narrow memory to who opened the session (`handler::turn_creator`):
+    /// Narrow memory to who opened the session (`chat::turn_place::turn_creator`):
     /// a person's keeps everything; an app's (`skill`) keeps core and its own
     /// memory only; a mission's keeps neither.
     pub fn narrow_for_creator(&mut self, creator: &str) {

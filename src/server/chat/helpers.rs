@@ -292,15 +292,15 @@ pub(crate) fn fold_key(session_id: Option<&str>, agent_id: &str) -> String {
 }
 
 /// A turn's place in its session's line, waited on by the turn's task.
-pub(crate) type TurnPlace =
+pub(crate) type TurnSlot =
     std::pin::Pin<Box<dyn std::future::Future<Output = tokio::sync::OwnedMutexGuard<()>> + Send>>;
 
 /// Take a place in the session's turn line now, at submit, not when the
 /// turn's task first runs: the turn lock serves waiters in the order they
 /// asked, so turns run in the order they were sent however their tasks are
 /// scheduled. True when another turn holds the lock (the turn is queued).
-pub(crate) fn take_turn_place(turn: Arc<tokio::sync::Mutex<()>>) -> (bool, TurnPlace) {
-    let mut place: TurnPlace = Box::pin(turn.lock_owned());
+pub(crate) fn take_turn_place(turn: Arc<tokio::sync::Mutex<()>>) -> (bool, TurnSlot) {
+    let mut place: TurnSlot = Box::pin(turn.lock_owned());
     let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
     match place.as_mut().poll(&mut cx) {
         std::task::Poll::Ready(guard) => (false, Box::pin(std::future::ready(guard))),

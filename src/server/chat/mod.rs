@@ -37,6 +37,7 @@ pub(crate) use runtime::owner_turn_memory;
 mod skill_dispatch;
 mod structured;
 mod thread;
+mod turn_place;
 pub(crate) mod types;
 
 pub(crate) use admin::{

@@ -294,7 +294,7 @@ async fn tell_in_place(
     agent: String,
     notice: String,
     sender: String,
-    place: super::chat::helpers::TurnPlace,
+    place: super::chat::helpers::TurnSlot,
     mark: Option<(String, tokio::sync::oneshot::Sender<()>)>,
 ) {
     let Some(meta) = state
@@ -401,7 +401,7 @@ async fn tell_in_place(
 /// meanwhile (or could not, which is logged).
 async fn place_or_plan(
     state: &std::sync::Arc<super::ServerState>,
-    place: super::chat::helpers::TurnPlace,
+    place: super::chat::helpers::TurnSlot,
     (session, agent, notice, sender): (&str, &str, &str, &str),
 ) -> Option<(tokio::sync::OwnedMutexGuard<()>, super::admission::Gate)> {
     let incoming = super::admission::Incoming {

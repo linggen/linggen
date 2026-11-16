@@ -172,7 +172,7 @@ pub(crate) async fn get_system_prompt_api(
         // mission's session gets no core block and no memory protocol.
         engine
             .prompt_profile
-            .narrow_for_creator(super::handler::turn_creator(
+            .narrow_for_creator(super::turn_place::turn_creator(
                 meta.mission_id.as_deref(),
                 None,
                 meta.skill.as_deref(),
