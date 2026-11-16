@@ -20,6 +20,10 @@
   Agents; a held line is recorded in the activity log (verb `hold`). Quiet
   hours do not hold an unasked moment from the app being used (its page in
   front, input in the last 5 minutes); the hourly cap still does.
+- **A mission fault waits for the morning, and is never dropped.** The wake
+  that hands Yinyue a failed unattended run is held by quiet hours (a wait is
+  one `hold` record), is not counted by the hourly cap, and is never held or
+  dropped by it.
 - **Ling keeps notes too.** `note_write` and `note_done` are in Ling's tool
   list, with his own open notes in front of him at his next turn; only
   Yinyue's notes can carry a look-again time (on another's it is refused), so

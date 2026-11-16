@@ -15,7 +15,7 @@ use std::time::Duration;
 const LINE: &str = "That was a hard one. Breathe.";
 
 /// An hour either side of now, as `[pet] quiet_hours` writes it.
-fn quiet_around_now() -> String {
+pub(crate) fn quiet_around_now() -> String {
     let now = chrono::Utc::now();
     let edge = |hours: i64| {
         (now + chrono::Duration::hours(hours))
@@ -25,7 +25,7 @@ fn quiet_around_now() -> String {
     format!("{}-{}", edge(-1), edge(1))
 }
 
-async fn set_pet(w: &World, fields: Value) {
+pub(crate) async fn set_pet(w: &World, fields: Value) {
     let mut config = w.api.get("/api/config").await;
     for (key, value) in fields.as_object().unwrap() {
         config["pet"][key] = value.clone();

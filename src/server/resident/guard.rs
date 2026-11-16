@@ -6,7 +6,8 @@
 //! - **Quiet hours** in local time (`pet.quiet_hours`), when nothing unprompted is said.
 //!
 //! What woke the line ([`Source`]) decides how they apply: a moment from the
-//! app the person is using passes quiet hours.
+//! app the person is using passes quiet hours, a mission fault waits through
+//! them and is outside the ceiling.
 //!
 //! Both are checked before her turn runs, so a held line is never written:
 //! at an app's table her line would already be a row of its chat. What a
@@ -28,6 +29,9 @@ pub(crate) enum Source {
     /// An app moment from the app the person is using: quiet hours let it by.
     InUse,
     Note,
+    /// A mission run that went wrong: quiet hours make it wait; the ceiling
+    /// neither counts it nor holds it.
+    Fault,
 }
 
 impl Source {
@@ -37,7 +41,13 @@ impl Source {
             Source::Glance => "glance",
             Source::Moment | Source::InUse => "moment",
             Source::Note => "note",
+            Source::Fault => "fault",
         }
+    }
+
+    /// Whether her line counts toward the hourly ceiling.
+    pub(crate) fn counts(self) -> bool {
+        self != Source::Fault
     }
 }
 
@@ -130,7 +140,7 @@ impl Rules {
                 return Some(Held::Quiet { until: q.ends() });
             }
         }
-        if lines.in_hour(now) >= self.per_hour as usize {
+        if source.counts() && lines.in_hour(now) >= self.per_hour as usize {
             return Some(Held::Ceiling {
                 per_hour: self.per_hour,
             });

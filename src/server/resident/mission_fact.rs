@@ -4,11 +4,15 @@
 //! is worth a word, and which words, is hers.
 //!
 //! A mission runs while nobody watches — at night, mostly. A fact handed to
-//! her then would be a line said to an empty room, so it is held until the
-//! person is back at a screen, and only then is she woken with it. One held
-//! run per mission, the newest: a mission failing every night while they are
-//! away is one wake when they return, its streak saying how many nights. The
-//! hold lives in memory; a restart loses it, never the record.
+//! her then would be a line said to an empty room, so it waits until quiet
+//! hours are over and the person is back at a screen, and only then is she
+//! woken with it. It is an unprompted source of its own kind
+//! ([`Source::Fault`]): quiet hours hold it, the hourly ceiling neither
+//! counts nor holds it, and nothing drops it. A wait through quiet hours is
+//! written once to the activity log (verb `hold`). One held run per mission,
+//! the newest: a mission failing every night while they are away is one wake
+//! when they return, its streak saying how many nights. The hold lives in
+//! memory; a restart loses it, never the record.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -16,6 +20,7 @@ use std::time::Duration;
 use crate::engine::mission::record::MissionRunEntry;
 use crate::extensions::missions::streak::{self, Streak};
 
+use super::guard::{self, Held as Waits, Source};
 use super::ServerState;
 
 /// The most failed calls named in one fact; the rest are counted.
@@ -24,6 +29,9 @@ const NAMED: usize = 3;
 /// How often the hold checks whether the person is back. Cheap: a lock and
 /// the presence reading, no model.
 const TICK_SECS: u64 = 5;
+
+/// How much of a mission's name its hold record carries.
+const LABEL_CHARS: usize = 30;
 
 /// A run whose fact waits for the person.
 #[derive(Clone, Debug, PartialEq)]
@@ -36,25 +44,30 @@ pub(super) struct Held {
 static HELD: Mutex<Vec<Held>> = Mutex::new(Vec::new());
 
 /// A mission run ended. When there is a fact to hand her, she gets it now
-/// if the person is at a screen; otherwise it waits for them.
+/// if the person is at a screen and it is not quiet hours; otherwise it
+/// waits.
 pub(super) fn hand_or_hold(state: &Arc<ServerState>, run: Held) {
     if for_run(state, &run).is_none() {
         return; // nothing went wrong, or a person watched it
     }
-    if super::triggers::user_sees_screen(state) {
+    let state = state.clone();
+    tokio::spawn(async move {
+        let quiet = quiet_now(&state).await;
+        if quiet.is_none() && super::triggers::user_sees_screen(&state) {
+            tracing::info!(
+                "[yinyue-watch] mission run {} had failures; handing Yinyue the fact",
+                run.run_id
+            );
+            hand(&state, &run).await;
+            return;
+        }
         tracing::info!(
-            "[yinyue-watch] mission run {} had failures; handing Yinyue the fact",
+            "[yinyue-watch] mission run {} had failures; held until quiet hours end and the person is back",
             run.run_id
         );
-        let state = state.clone();
-        tokio::spawn(async move { hand(&state, &run).await });
-        return;
-    }
-    tracing::info!(
-        "[yinyue-watch] mission run {} had failures; held until the person is back",
-        run.run_id
-    );
-    hold(&mut HELD.lock().unwrap_or_else(|e| e.into_inner()), run);
+        record_waits(std::slice::from_ref(&run), quiet.as_ref());
+        hold(&mut HELD.lock().unwrap_or_else(|e| e.into_inner()), run);
+    });
 }
 
 /// Keep `run` as its mission's one held run, replacing an older one.
@@ -63,16 +76,58 @@ fn hold(held: &mut Vec<Held>, run: Held) {
     held.push(run);
 }
 
-/// Hand her what the hold kept, once the person is back at a screen —
-/// one wake per mission, in the order they were held.
+/// What the hold gives up when `ready`: all of it, in the order it was held;
+/// nothing, when not ready, however many ticks go by.
+fn take_ready(held: &mut Vec<Held>, ready: bool) -> Vec<Held> {
+    if ready {
+        std::mem::take(held)
+    } else {
+        Vec::new()
+    }
+}
+
+/// Quiet hours, if they hold a fault now.
+async fn quiet_now(state: &Arc<ServerState>) -> Option<Waits> {
+    let pet = state.manager.get_config_snapshot().await.pet;
+    guard::held_now(&pet, Source::Fault)
+}
+
+/// The activity record of a fault waiting through quiet hours: once per run,
+/// however many ticks it waits. Nothing when no guardrail holds it (it waits
+/// for a screen only).
+fn record_waits(runs: &[Held], quiet: Option<&Waits>) {
+    let Some(held) = quiet else {
+        return;
+    };
+    for run in runs {
+        guard::record_held(&withheld(run), held);
+    }
+}
+
+fn withheld(run: &Held) -> guard::Withheld<'static> {
+    guard::Withheld {
+        what: format!(
+            "a fault in {}",
+            run.label.chars().take(LABEL_CHARS).collect::<String>()
+        ),
+        source: Source::Fault.name(),
+        key: format!("fault-{}", run.run_id),
+    }
+}
+
+/// Hand her what the hold kept, once quiet hours are over and the person is
+/// back at a screen — one wake per mission, in the order they were held.
 pub async fn mission_fact_loop(state: Arc<ServerState>) {
     loop {
         tokio::time::sleep(Duration::from_secs(TICK_SECS)).await;
-        let waiting = !HELD.lock().unwrap_or_else(|e| e.into_inner()).is_empty();
-        if !waiting || !super::triggers::user_sees_screen(&state) {
+        let waiting = HELD.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        if waiting.is_empty() {
             continue;
         }
-        let taken = std::mem::take(&mut *HELD.lock().unwrap_or_else(|e| e.into_inner()));
+        let quiet = quiet_now(&state).await;
+        record_waits(&waiting, quiet.as_ref());
+        let ready = quiet.is_none() && super::triggers::user_sees_screen(&state);
+        let taken = take_ready(&mut HELD.lock().unwrap_or_else(|e| e.into_inner()), ready);
         for run in taken {
             hand(&state, &run).await;
         }
@@ -84,7 +139,7 @@ async fn hand(state: &Arc<ServerState>, run: &Held) {
     let Some(fact) = for_run(state, run) else {
         return;
     };
-    super::wake_herald(state.clone(), fact, "neutral").await;
+    super::triggers::wake_fault(state.clone(), fact).await;
 }
 
 /// Her kickoff for `run`, or `None` when there is nothing to hand her: the
@@ -281,6 +336,100 @@ mod tests {
         hold(&mut h, held("b", "b1"));
         hold(&mut h, held("a", "a2"));
         assert_eq!(h, vec![held("b", "b1"), held("a", "a2")]);
+    }
+
+    /// What the tick asks: someone at a screen and no quiet hours.
+    fn goes(rules: &guard::Rules, lines: &guard::Lines, minute: u32, at_screen: bool) -> bool {
+        rules
+            .check(Source::Fault, 1_790_000_000, minute, lines)
+            .is_none()
+            && at_screen
+    }
+
+    fn rules(per_hour: u32) -> guard::Rules {
+        guard::Rules::of(&crate::config::PetConfig {
+            unprompted_per_hour: per_hour,
+            quiet_hours: "23:00-07:00".into(),
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn a_fault_at_two_waits_for_quiet_hours_to_end_and_a_screen_to_be_back() {
+        let (rules, lines) = (rules(6), guard::Lines::new());
+        assert!(!goes(&rules, &lines, 2 * 60, true), "02:00, someone there");
+        assert!(
+            !goes(&rules, &lines, 6 * 60 + 59, true),
+            "a minute before 07:00"
+        );
+        assert!(
+            !goes(&rules, &lines, 7 * 60, false),
+            "quiet hours over, nobody there"
+        );
+        assert!(
+            goes(&rules, &lines, 7 * 60, true),
+            "07:00 and someone is back"
+        );
+    }
+
+    #[test]
+    fn with_the_hourly_ceiling_reached_a_fault_outside_quiet_hours_still_goes() {
+        let rules = rules(2);
+        let mut lines = guard::Lines::new();
+        lines.note(1_790_000_000 - 20);
+        lines.note(1_790_000_000 - 10);
+        assert!(goes(&rules, &lines, 12 * 60, true));
+        assert_eq!(
+            rules.check(Source::Glance, 1_790_000_000, 12 * 60, &lines),
+            Some(Waits::Ceiling { per_hour: 2 }),
+            "the same ceiling holds a glance"
+        );
+    }
+
+    #[test]
+    fn a_waiting_fault_is_not_lost_while_it_waits_and_goes_in_the_order_held() {
+        let mut h = Vec::new();
+        hold(&mut h, held("a", "a1"));
+        hold(&mut h, held("b", "b1"));
+        for _ in 0..500 {
+            assert!(take_ready(&mut h, false).is_empty());
+        }
+        assert_eq!(
+            h,
+            vec![held("a", "a1"), held("b", "b1")],
+            "ticks took nothing"
+        );
+        assert_eq!(
+            take_ready(&mut h, true),
+            vec![held("a", "a1"), held("b", "b1")]
+        );
+        assert!(h.is_empty(), "handed once");
+    }
+
+    /// A wait is one record per run, short, without the run's words.
+    #[test]
+    fn a_wait_through_quiet_hours_is_recorded_once_per_run() {
+        let quiet = Waits::Quiet {
+            until: "07:00".into(),
+        };
+        let run = Held {
+            label: "A mission with a very long name that goes on and on".into(),
+            ..held("m", "wait-run-1")
+        };
+        let (object, detail) = guard::held_record(&withheld(&run), &quiet).unwrap();
+        assert!(
+            object.starts_with("a fault in A mission with a very long na"),
+            "{object}"
+        );
+        assert!(object.ends_with("(quiet hours)"), "{object}");
+        assert!(object.chars().count() <= 64, "{object}");
+        assert_eq!(detail["source"], "fault");
+        assert_eq!(detail["reason"], "quiet-hours");
+        for _ in 0..100 {
+            assert!(guard::held_record(&withheld(&run), &quiet).is_none());
+        }
+        let other = held("m", "wait-run-2");
+        assert!(guard::held_record(&withheld(&other), &quiet).is_some());
     }
 
     #[test]

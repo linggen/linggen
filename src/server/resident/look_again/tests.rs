@@ -145,7 +145,7 @@ fn the_kickoff_marks_the_note_as_the_reason_and_leaves_the_judging_to_her() {
 #[test]
 fn a_woken_note_glances_and_moments_are_unprompted_and_replies_are_not() {
     use super::super::guard::Source;
-    use super::super::triggers::{moment_source, unprompted_source};
+    use super::super::triggers::{moment_source, unprompted_source, FAULT_SOURCE};
     assert_eq!(
         unprompted_source(Reach::SpeakOnly, LOOK_AGAIN_SOURCE),
         Some(Source::Note)
@@ -168,4 +168,9 @@ fn a_woken_note_glances_and_moments_are_unprompted_and_replies_are_not() {
     );
     assert_eq!(unprompted_source(Reach::Open, "event"), None, "a herald");
     assert_eq!(unprompted_source(Reach::Open, "user"), None);
+    assert_eq!(
+        unprompted_source(Reach::Open, FAULT_SOURCE),
+        Some(Source::Fault),
+        "a mission fault is a source of its own, not a reply"
+    );
 }

@@ -128,12 +128,15 @@ that had nothing go wrong is named too. Nothing tells her it matters; nothing
 is said by code.
 
 - **Held for the person.** Missions run while nobody watches. When the person
-  is at a screen (presence is not `away`) she is woken at once; otherwise the
-  fact waits (a 5 s check) until presence says someone is back, and only then
-  is she woken. One held run per mission, the newest, its fact built from the
-  record when she is woken: a mission failing every night while they are away
-  is one wake when they return, its streak naming the nights. The hold is in
-  memory — a restart loses it, never the record.
+  is at a screen (presence is not `away`) and it is not quiet hours she is
+  woken at once; otherwise the fact waits (a 5 s check) until quiet hours are
+  over and presence says someone is back, and only then is she woken. The wake
+  is an unprompted source of its own kind (§ Guardrails): quiet hours hold it,
+  the hourly ceiling neither counts it nor holds it, and nothing drops it. One
+  held run per mission, the newest, its fact built from the record when she is
+  woken: a mission failing every night while they are away is one wake when
+  they return, its streak naming the nights. The hold is in memory — a restart
+  loses it, never the record.
 - A clean run, an attended run and a cancelled one hand her nothing.
 - No loop, no burst: her turn is a plain agent run, not a mission run, so it
   emits no `MissionCompleted`; each finished run is handed at most once.
@@ -308,8 +311,9 @@ past is refused. When it comes (`server/resident/look_again.rs`, a 5 s tick):
 ## Guardrails — what she says unprompted
 
 Unprompted is a glance, an app moment she was not asked for (`big` and `now`
-ones included), a woken note. Never held: her replies, `asked` moments, and
-heralds of runs the user started (their own presence gates stand).
+ones included), a woken note, and a mission fault. Never held: her replies,
+`asked` moments, and heralds of runs the user started (their own presence
+gates stand).
 
 | Guardrail | Setting (`[pet]`, Settings → Agents) | Default |
 |---|---|---|
@@ -323,6 +327,13 @@ a moment still counts toward the hourly ceiling and can be held by it. Every
 other moment, and one from the app in front after five idle minutes, waits for
 the morning as before; a wake that holds moments from two apps is split, the
 in-use ones going on and the rest held.
+
+**A mission fault** (§ A mission run that went wrong) is held by quiet hours
+and by nothing else: it waits through them (and for a screen) and is handed
+when they end; it does not count toward `unprompted_per_hour`, the ceiling
+never holds it, and it is not checked again before her voice, so nothing drops
+it. A wait through quiet hours is one activity record per run (`yinyue held a
+fault in Harbor digest (quiet hours)`).
 
 Both are checked **before** her turn, so a held line is never written (at an
 app's table her line would already be a row of its chat): a glance is skipped

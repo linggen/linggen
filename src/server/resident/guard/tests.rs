@@ -173,8 +173,38 @@ fn quiet_hours_do_not_hold_a_moment_from_the_app_in_use() {
     );
 }
 
+/// A fault waits through quiet hours, and the hourly ceiling is not for it.
+#[test]
+fn a_fault_waits_through_quiet_hours_and_is_outside_the_ceiling() {
+    let rules = Rules::of(&pet(1, "23:00-07:00"));
+    let mut lines = Lines::new();
+    assert_eq!(
+        rules.check(Source::Fault, NOW, at(2, 0), &lines),
+        Some(Held::Quiet {
+            until: "07:00".into()
+        })
+    );
+    lines.note(NOW - 10);
+    assert_eq!(
+        rules.check(Source::Fault, NOW, at(12, 0), &lines),
+        None,
+        "the ceiling is reached, a fault still goes"
+    );
+    assert_eq!(
+        rules.check(Source::Glance, NOW, at(12, 0), &lines),
+        Some(Held::Ceiling { per_hour: 1 })
+    );
+    assert!(!Source::Fault.counts() && Source::InUse.counts() && Source::Note.counts());
+    let zero = Rules::of(&pet(0, ""));
+    assert_eq!(
+        zero.check(Source::Fault, NOW, at(12, 0), &Lines::new()),
+        None
+    );
+}
+
 #[test]
 fn a_source_is_named_by_what_the_record_says() {
     assert_eq!(Source::InUse.name(), "moment");
     assert_eq!(Source::Moment.name(), "moment");
+    assert_eq!(Source::Fault.name(), "fault");
 }

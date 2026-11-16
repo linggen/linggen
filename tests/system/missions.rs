@@ -2,8 +2,10 @@
 //! (doc/mission-spec.md § Run history, doc/yinyue-companion-spec.md § A
 //! mission run that went wrong).
 
+use crate::notes::{held, wait_for};
 use crate::support::model::Agent;
 use crate::support::{text, tool, Setup, World};
+use crate::unprompted::{quiet_around_now, set_pet};
 use serde_json::{json, Value};
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -212,5 +214,87 @@ async fn a_failed_tool_in_an_unattended_run_reaches_her_as_one_fact() {
         "{}",
         facts[1]
     );
+    w.assert_all_scripted();
+}
+
+/// Two failing-then-closing runs' worth of script: Ling pings and closes.
+fn failing_run_script() -> Setup {
+    Setup::default()
+        .script(
+            Agent::Ling,
+            vec![
+                tool("Ping", json!({})),
+                text("The lamp check did not complete. DONE"),
+            ],
+        )
+        .script(Agent::Yinyue, vec![text(HER_LINE)])
+}
+
+async fn beacon_world() -> World {
+    let w = World::start(failing_run_script()).await;
+    install_beacon(&w.home.linggen_home().join("skills"));
+    w.api.post("/api/skills/reload", json!({})).await;
+    set_exit(&w, 3);
+    w
+}
+
+/// A fault in the night with someone at a screen: quiet hours hold it, the
+/// wait is one `hold` record, and she is handed it, once, when they end —
+/// it is not lost along the way.
+#[tokio::test]
+async fn a_fault_in_quiet_hours_waits_and_comes_when_they_end() {
+    let w = beacon_world().await;
+    set_pet(&w, json!({ "quiet_hours": quiet_around_now() })).await;
+    beat_present(&w).await;
+    run_once(&w).await;
+    wait_for("a hold record", || !held(&w).is_empty()).await;
+    tokio::time::sleep(Duration::from_secs(12)).await;
+    beat_present(&w).await;
+    tokio::time::sleep(Duration::from_secs(6)).await;
+    assert!(her_facts(&w).is_empty(), "handed through quiet hours");
+    let records = held(&w);
+    assert_eq!(
+        records.len(),
+        1,
+        "one record for the whole wait: {records:?}"
+    );
+    assert_eq!(records[0]["by"], "yinyue");
+    assert_eq!(
+        records[0]["object"],
+        "a fault in Beacon check (quiet hours)"
+    );
+    assert_eq!(records[0]["detail"]["source"], "fault");
+    assert!(pet_lines(&w).is_empty());
+
+    // Quiet hours end with someone at the screen: the fault comes.
+    let her_mark = w.mark();
+    set_pet(&w, json!({ "quiet_hours": "" })).await;
+    beat_present(&w).await;
+    w.wait_agent(Agent::Yinyue, her_mark).await;
+    let facts = her_facts(&w);
+    assert_eq!(facts.len(), 1, "{facts:?}");
+    assert!(
+        facts[0].contains("Ping exited with status 3"),
+        "{}",
+        facts[0]
+    );
+    assert_eq!(pet_lines(&w), [HER_LINE]);
+    assert_eq!(held(&w).len(), 1, "the wait is not recorded again");
+    w.assert_all_scripted();
+}
+
+/// The hourly ceiling is not for a fault: with the hour's allowance already
+/// at nothing, a fault outside quiet hours is handed at once.
+#[tokio::test]
+async fn the_hourly_ceiling_does_not_hold_a_fault() {
+    let w = beacon_world().await;
+    set_pet(&w, json!({ "unprompted_per_hour": 0 })).await;
+    beat_present(&w).await;
+    let her_mark = w.mark();
+    run_once(&w).await;
+    w.wait_agent(Agent::Yinyue, her_mark).await;
+    assert_eq!(her_facts(&w).len(), 1);
+    assert_eq!(pet_lines(&w), [HER_LINE]);
+    assert!(held(&w).is_empty(), "{:?}", held(&w));
     w.assert_all_scripted();
 }

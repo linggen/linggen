@@ -373,6 +373,9 @@ pub(crate) async fn wake_herald(
     wake_and_speak(state, (kickoff, None), emotion, "event", Reach::Open, None).await
 }
 
+/// What woke a fault's turn: a mission run that went wrong.
+pub(super) const FAULT_SOURCE: &str = "fault";
+
 /// What woke a moment's turn from the app the person is using.
 const IN_USE_SOURCE: &str = "event-in-use";
 
@@ -384,6 +387,20 @@ pub(crate) fn moment_source(asked: bool, in_use: bool) -> &'static str {
         (false, true) => IN_USE_SOURCE,
         (false, false) => "event",
     }
+}
+
+/// Wake her to tell a mission run's fault. Unprompted: quiet hours make it
+/// wait, and the hourly ceiling neither counts nor holds it ([`Source::Fault`]).
+pub(super) async fn wake_fault(state: Arc<ServerState>, fact: String) -> Option<String> {
+    wake_and_speak(
+        state,
+        (fact, None),
+        "neutral",
+        FAULT_SOURCE,
+        Reach::Open,
+        None,
+    )
+    .await
 }
 
 /// Wake her for an app moment; `source` is [`moment_source`]. `asked`: the
@@ -427,7 +444,9 @@ pub(super) async fn wake_and_speak(
         if !passes_last_word(&state, source).await {
             return None;
         }
-        super::guard::spoke_unprompted();
+        if source.counts() {
+            super::guard::spoke_unprompted();
+        }
     }
     tracing::info!(
         "[yinyue-watch] Yinyue heralds ({} chars, {emotion})",
@@ -445,7 +464,7 @@ pub(super) fn unprompted_source(reach: Reach, trigger_source: &str) -> Option<So
         return None;
     }
     match reach {
-        Reach::Open => None,
+        Reach::Open => (trigger_source == FAULT_SOURCE).then_some(Source::Fault),
         Reach::Sealed if trigger_source == IN_USE_SOURCE => Some(Source::InUse),
         Reach::Sealed => Some(Source::Moment),
         Reach::SpeakOnly if trigger_source == super::look_again::LOOK_AGAIN_SOURCE => {
@@ -456,8 +475,13 @@ pub(super) fn unprompted_source(reach: Reach, trigger_source: &str) -> Option<So
 }
 
 /// The last word before her voice: checked before the turn too, this is for
-/// two unprompted turns that ran at once.
+/// two unprompted turns that ran at once. A fault is never dropped here: it
+/// waited for its hour before the turn, and a line that comes out as quiet
+/// hours begin is still hers to say.
 async fn passes_last_word(state: &Arc<ServerState>, source: Source) -> bool {
+    if source == Source::Fault {
+        return true;
+    }
     let pet = state.manager.get_config_snapshot().await.pet;
     let Some(held) = super::guard::held_now(&pet, source) else {
         return true;
