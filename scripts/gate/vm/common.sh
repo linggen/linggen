@@ -299,6 +299,67 @@ check_plugins() { # label rc log
 
 app_version() { plutil -extract CFBundleShortVersionString raw /Applications/Linggen.app/Contents/Info.plist 2>/dev/null; }
 
+# ── 灵境's asset pack (the engine's doc/asset-pack-spec.md) ────────────────
+# The app ships 灵境 without the files its assets.json lists; the engine
+# fetches them by hash into ~/.linggen/assets/sha256/ and GET /api/assets/
+# lingjing counts what is held. `held` also counts a file the skill folder
+# holds, so the check proves a fetch only when the folder lacks them.
+ASSET_DIR="$LG/skills/lingjing"
+ASSET_STORE="$LG/assets/sha256"
+
+assets_in_folder() { # manifest paths the installed skill folder holds
+  local p n=0
+  while IFS= read -r p; do [ -f "$ASSET_DIR/$p" ] && n=$((n + 1)); done \
+    < <(jq -r '.files[].path' "$ASSET_DIR/assets.json" 2>/dev/null)
+  echo "$n"
+}
+assets_in_store() { ls "$ASSET_STORE" 2>/dev/null | grep -vc '\.part$'; }
+
+# The first listed object's URL, by the engine's rule: <base><2 hex>/<sha>[.<ext>].
+assets_probe_url() {
+  jq -r '.base as $b | .files[0] | $b + .sha256[0:2] + "/" + .sha256
+    + (.path | if test("\\.[A-Za-z0-9]{1,8}$") then "." + (split(".") | last) else "" end)' "$ASSET_DIR/assets.json"
+}
+
+# label seconds mode t0 — mode: first (the folder must lack every listed file)
+# or upgrade (a baseline copy that keeps them is a GAP for the fetch). t0: $SECONDS
+# when the app was opened. Run while the app's engine is up.
+check_assets_heal() {
+  local label="$1" wait="$2" mode="$3" t0="$4" total folder store0 url code rep held failing i
+  if [ ! -f "$ASSET_DIR/assets.json" ]; then
+    fail "$label: 灵境 carries assets.json" "no $ASSET_DIR/assets.json — $(ls "$ASSET_DIR" 2>/dev/null | head -c 120)"
+    return
+  fi
+  total="$(jq '.files | length' "$ASSET_DIR/assets.json")"
+  folder="$(assets_in_folder)"; store0="$(assets_in_store)"
+  url="$(assets_probe_url)"
+  code="$(curl -sS -o /dev/null -I -m 20 -w '%{http_code}' "$url" 2>/dev/null)"
+  if [ "$code" = 000 ] || [ -z "$code" ]; then
+    gap "$label: 灵境's pictures fetched after install" "the VM cannot reach $url — needs outside network to assets.linggen.dev"
+    return
+  fi
+  [ "$code" = 200 ]
+  check "$label: the asset service serves 灵境's objects" $? "HEAD $url → $code" "HEAD of the first object → 200"
+  if [ "$folder" = 0 ]; then
+    pass "$label: the installed 灵境 lacks the manifest's files" "0 of $total in $ASSET_DIR (store held $store0 then)"
+  elif [ "$mode" = first ]; then
+    fail "$label: the installed 灵境 lacks the manifest's files" "$folder of $total are in $ASSET_DIR — the bundle was not slimmed"
+  else
+    gap "$label: the installed 灵境 lacks the manifest's files" "$folder of $total still in $ASSET_DIR (marker: $(jq -c '{by,app_version}' "$ASSET_DIR/.installed" 2>/dev/null || echo none)) — the baseline's copy kept them, so no fetch is proved here"
+  fi
+  for ((i = 0; i < wait; i += 5)); do
+    rep="$(curl -fsS -m 5 "http://127.0.0.1:$EP/api/assets/lingjing" 2>/dev/null)"
+    held="$(jq -r '.held_files // empty' <<<"$rep" 2>/dev/null)"
+    failing="$(jq -r '[.packs[]?.failing] | add // 0' <<<"$rep" 2>/dev/null)"
+    [ "$held" = "$total" ] && [ "$failing" = 0 ] && break
+    sleep 5
+  done
+  [ "$held" = "$total" ] && [ "$failing" = 0 ] && [ "$(assets_in_folder)" = "$folder" ]
+  check "$label: the engine holds 灵境's pictures" $? \
+    "after ${wait}s: held ${held:-?} of $total, failing ${failing:-?}, store $(assets_in_store) objects — $(head -c 160 <<<"${rep:-no report}")" \
+    "held $held of $total, 0 failing, $((SECONDS - t0)) s after the app opened; store $store0 → $(assets_in_store) objects, folder $folder"
+}
+
 # pkill, not osascript: an Apple Event from sshd would itself be a TCC ask.
 quit_app() {
   pkill -TERM -f '/Linggen.app/Contents/MacOS/' 2>/dev/null || true

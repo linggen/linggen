@@ -137,6 +137,10 @@ upgrade alike: `linggen@linggen` enabled in Claude Code and Codex, no
 `linggen@linggen-memory` in either, Claude Code on this release's hooks, the
 stand-in kept, nothing listening on 9528.
 
+Asset pack: after the app's first launch, on first install and upgrade,
+灵境's folder lacks the files its `assets.json` lists and the engine holds
+them all within 10 min, fetched from assets.linggen.dev (`check_assets_heal`).
+
 ## Signing — every Mac asset
 
 A browser download carries the quarantine flag, and Gatekeeper refuses an

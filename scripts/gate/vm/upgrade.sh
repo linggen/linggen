@@ -316,9 +316,11 @@ if [ -n "$APP_VERSION" ]; then
   check "app: install-app.sh over ${PREV_APP:-nothing}" $? "$(tail -3 "$OUT/install-app.log")"
   [ "$(app_version)" = "$APP_VERSION" ]; check "app: Linggen.app is the release" $? "got $(app_version)"
   launchctl setenv LINGGEN_RELEASE_BASE "$GOOD"
+  t_open=$SECONDS
   open /Applications/Linggen.app
   engine_health 120; check "app: launches on the old home" $? "no 9527 health 120 s after open"
   for _ in $(seq 20); do [ "$(jq -r '.by // empty' "$LG/skills/lingjing/.installed" 2>/dev/null)" = app ] && break; sleep 3; done
+  check_assets_heal "app (upgrade)" 600 upgrade "$t_open"
   sleep 5; quit_app
   skill_update_check
   app_engine_upgrade_check

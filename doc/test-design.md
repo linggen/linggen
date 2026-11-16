@@ -202,6 +202,11 @@ tunnels, so nothing on the host listens beyond loopback.
    down, bun removed, no bun/node where `run-js.sh` looks (else a GAP) — the
    app opened must bring bun back by itself and a 灵境 Look must answer ok
    (unsigned, the door is 401, so the Look runs as the declared command).
+   The app's first launch heals its slimmed 灵境: the installed folder lacks
+   every file its `assets.json` lists, and within 10 min `GET /api/assets/lingjing`
+   holds them all with 0 failing (the VM reaches assets.linggen.dev; no route
+   there is a GAP). After the upgrade the same; a baseline copy that keeps the
+   files is a GAP for the fetch.
 2. Also a browser-style download of each asset — the app, `ling` (and
    no `ling-mem`: it is not an asset) — with `com.apple.quarantine` set (curl and `install-app.sh`
    leave none, so they alone hide Gatekeeper). The vanilla image ships with

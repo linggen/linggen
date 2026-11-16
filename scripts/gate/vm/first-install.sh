@@ -140,11 +140,15 @@ if [ -n "$APP_VERSION" ]; then
   [ $? != 0 ]; check "install-app.sh: no quarantine on the app" $? "com.apple.quarantine present"
 
   [ -n "$RB" ] && launchctl setenv LINGGEN_RELEASE_BASE "$GOOD"
+  t_open=$SECONDS
   open /Applications/Linggen.app
   engine_health 120
   check "app: first launch brings up 9527" $? "no health 120 s after open"
   pgrep -f '/Linggen.app/Contents/MacOS/' >/dev/null
   check "app: still running after first launch" $? "no Linggen.app process"
+  # The slimmed bundle heals itself: 灵境's pictures are fetched, not shipped.
+  for _ in $(seq 40); do [ -f "$ASSET_DIR/assets.json" ] && break; sleep 3; done
+  check_assets_heal "app" 600 first "$t_open"
   sleep 10
   quit_app
   dmg_runtime_check
