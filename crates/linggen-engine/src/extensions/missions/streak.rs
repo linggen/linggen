@@ -124,7 +124,14 @@ mod tests {
     #[test]
     fn five_nights_of_the_same_exit_count_as_five() {
         let mut runs: Vec<_> = (0..5)
-            .map(|i| run(&format!("r{i}"), NIGHT + i * DAY, "completed", vec![fetch_failed(3)]))
+            .map(|i| {
+                run(
+                    &format!("r{i}"),
+                    NIGHT + i * DAY,
+                    "completed",
+                    vec![fetch_failed(3)],
+                )
+            })
             .collect();
         runs.insert(0, run("clean", NIGHT - DAY, "completed", vec![]));
         runs.reverse(); // newest first
@@ -155,7 +162,12 @@ mod tests {
         let mut skipped = run("skip", NIGHT + DAY + 60, "skipped", vec![]);
         skipped.skipped = true;
         let runs = vec![
-            run("late", NIGHT + DAY + 3600, "completed", vec![fetch_failed(3)]),
+            run(
+                "late",
+                NIGHT + DAY + 3600,
+                "completed",
+                vec![fetch_failed(3)],
+            ),
             skipped,
             run("cancel", NIGHT + DAY + 30, "cancelled", vec![]),
             run("early", NIGHT + DAY, "completed", vec![fetch_failed(3)]),
@@ -167,10 +179,14 @@ mod tests {
 
     #[test]
     fn an_old_record_without_failures_ends_the_streak() {
-        let line = r#"{"run_id":"old","triggered_at":1789002000,"status":"completed","skipped":false}"#;
+        let line =
+            r#"{"run_id":"old","triggered_at":1789002000,"status":"completed","skipped":false}"#;
         let old: MissionRunEntry = serde_json::from_str(line).unwrap();
         assert!(old.failures.is_empty() && !old.faulted());
-        let runs = vec![run("new", NIGHT + DAY, "completed", vec![fetch_failed(3)]), old];
+        let runs = vec![
+            run("new", NIGHT + DAY, "completed", vec![fetch_failed(3)]),
+            old,
+        ];
         assert_eq!(streak(&runs, "new").unwrap().runs, 1);
     }
 

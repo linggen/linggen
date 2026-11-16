@@ -39,10 +39,8 @@ fn validate_mode(mode: &str) -> Result<(), String> {
 pub(crate) async fn list_missions(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
     match state.missions.list_all_missions() {
         Ok(missions) => {
-            let listed: Vec<serde_json::Value> = missions
-                .iter()
-                .map(|m| with_last_run(&state, m))
-                .collect();
+            let listed: Vec<serde_json::Value> =
+                missions.iter().map(|m| with_last_run(&state, m)).collect();
             Json(serde_json::json!({ "missions": listed })).into_response()
         }
         Err(e) => (
@@ -56,7 +54,10 @@ pub(crate) async fn list_missions(State(state): State<Arc<ServerState>>) -> impl
 /// A mission as the list shows it, with its newest run that ran (skips left
 /// out) as `last_run`: when, its status, and how many tool calls failed in
 /// it — so the list can mark a run that had something go wrong.
-fn with_last_run(state: &ServerState, mission: &crate::engine::mission::record::Mission) -> serde_json::Value {
+fn with_last_run(
+    state: &ServerState,
+    mission: &crate::engine::mission::record::Mission,
+) -> serde_json::Value {
     let mut value = serde_json::to_value(mission).unwrap_or_default();
     let last = state
         .missions

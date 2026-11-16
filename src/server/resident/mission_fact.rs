@@ -46,7 +46,12 @@ pub(super) fn kickoff(label: &str, entry: &MissionRunEntry, streak: Option<&Stre
 
 /// One line per fact, in the record's own terms.
 fn fact_lines(entry: &MissionRunEntry, streak: Option<&Streak>) -> Vec<String> {
-    let mut lines: Vec<String> = entry.failures.iter().take(NAMED).map(failure_line).collect();
+    let mut lines: Vec<String> = entry
+        .failures
+        .iter()
+        .take(NAMED)
+        .map(failure_line)
+        .collect();
     let unnamed = (entry.failure_count as usize).saturating_sub(lines.len());
     if unnamed > 0 {
         lines.push(format!("- {unnamed} more tool call(s) failed"));
@@ -127,10 +132,15 @@ mod tests {
         assert!(text.contains("\"Harbor digest\" ran unattended"), "{text}");
         assert!(text.contains("(status: completed)"), "{text}");
         assert!(
-            text.contains("- fetch exited with status 3; the last of its error output: \"host unreachable\""),
+            text.contains(
+                "- fetch exited with status 3; the last of its error output: \"host unreachable\""
+            ),
             "{text}"
         );
-        assert!(text.contains("each of the last 5 runs, on 5 different day(s), since "), "{text}");
+        assert!(
+            text.contains("each of the last 5 runs, on 5 different day(s), since "),
+            "{text}"
+        );
         assert!(text.contains("SILENT"), "{text}");
         assert!(!text.to_lowercase().contains("important"), "{text}");
     }
@@ -144,7 +154,10 @@ mod tests {
         e.error = Some("provider quota reached".into());
         let lines = fact_lines(&e, None);
         assert_eq!(lines.len(), NAMED + 2, "{lines:?}");
-        assert!(lines.contains(&"- 6 more tool call(s) failed".to_string()), "{lines:?}");
+        assert!(
+            lines.contains(&"- 6 more tool call(s) failed".to_string()),
+            "{lines:?}"
+        );
         assert!(lines.contains(&"- the run failed: \"provider quota reached\"".to_string()));
     }
 

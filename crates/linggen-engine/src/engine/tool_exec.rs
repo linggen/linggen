@@ -1802,7 +1802,10 @@ mod run_fault_tests {
         let mut engine = engine_with_declared("fetch");
         engine.note_run_fault("fetch", &output(Some(0), ""));
         engine.note_run_fault("Bash", &output(Some(1), "no match"));
-        engine.note_run_fault("Grep", &Ok(tools::ToolResult::Success("(no matches)".into())));
+        engine.note_run_fault(
+            "Grep",
+            &Ok(tools::ToolResult::Success("(no matches)".into())),
+        );
         assert!(engine.run_faults.is_empty(), "{:?}", engine.run_faults);
     }
 
@@ -1811,7 +1814,10 @@ mod run_fault_tests {
         let mut engine = engine_with_declared("fetch");
         engine.note_run_fault("fetch", &Err(anyhow::anyhow!("run cancelled")));
         assert!(engine.run_faults.is_empty());
-        engine.note_run_fault("Read", &Err(anyhow::anyhow!("timeout: Read did not finish")));
+        engine.note_run_fault(
+            "Read",
+            &Err(anyhow::anyhow!("timeout: Read did not finish")),
+        );
         assert_eq!(engine.run_faults.failures[0].kind, FailureKind::Error);
         assert_eq!(engine.run_faults.count, 1);
     }

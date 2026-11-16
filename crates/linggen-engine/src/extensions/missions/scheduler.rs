@@ -1,7 +1,7 @@
+use super::outcome::RunEnd;
 use super::run_if::{self, Trigger};
 use crate::engine::events::{AgentStatusKind, NotificationPayload, ServerEvent};
 use crate::engine::mission::record::{Mission, MissionRunEntry, SkipKind};
-use super::outcome::RunEnd;
 use crate::util::LockExt;
 use chrono::Local;
 use std::collections::HashMap;
@@ -633,7 +633,13 @@ async fn dispatch_mission_prompt(
     // function — a hang, crash, or daemon restart must leave a visible
     // row (healed to `interrupted` on the next start), never an
     // invisible zombie (2026-07-10 dream hang left no record at all).
-    record_running(&state, mission, &mission_run_id, session_id.as_deref(), attended);
+    record_running(
+        &state,
+        mission,
+        &mission_run_id,
+        session_id.as_deref(),
+        attended,
+    );
 
     // Memory-agent runs end in the condense stage, whose replace_ids
     // merges retire long-term rows with no undo — snapshot the store
@@ -651,7 +657,12 @@ async fn dispatch_mission_prompt(
         Ok(a) => a,
         Err(e) => {
             warn!("Mission scheduler: failed to get mission agent: {}", e);
-            finalize_mission_run(&state, mission, &mission_run_id, RunEnd::failed(e.to_string()));
+            finalize_mission_run(
+                &state,
+                mission,
+                &mission_run_id,
+                RunEnd::failed(e.to_string()),
+            );
             return;
         }
     };

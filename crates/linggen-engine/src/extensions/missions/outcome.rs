@@ -141,7 +141,11 @@ mod tests {
                 .recent()
                 .into_iter()
                 .filter(|a| a.verb == FAULT_VERB)
-                .filter(|a| a.object.as_deref().is_some_and(|o| o.starts_with("Harbor digest")))
+                .filter(|a| {
+                    a.object
+                        .as_deref()
+                        .is_some_and(|o| o.starts_with("Harbor digest"))
+                })
                 .collect::<Vec<_>>()
         };
         record_fault(&mission, &MissionRunEntry::default());
@@ -161,7 +165,9 @@ mod tests {
         assert_eq!(rows[0].by, "system");
         let line = rows[0].line_on("this-mac");
         assert!(
-            line.starts_with("the Mac recorded a failure in Harbor digest: fetch exited with status 3"),
+            line.starts_with(
+                "the Mac recorded a failure in Harbor digest: fetch exited with status 3"
+            ),
             "{line}"
         );
         assert!(!line.contains("private detail"), "{line}");

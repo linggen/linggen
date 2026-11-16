@@ -179,7 +179,11 @@ mod tests {
     #[test]
     fn a_non_zero_exit_keeps_the_last_two_lines_of_stderr() {
         let mut f = RunFaults::default();
-        f.note_exit("fetch", Some(3), "starting\nstep 2\ncould not reach host\n\n");
+        f.note_exit(
+            "fetch",
+            Some(3),
+            "starting\nstep 2\ncould not reach host\n\n",
+        );
         assert_eq!(f.count, 1);
         let got = &f.failures[0];
         assert_eq!(got.kind, FailureKind::Exit);
@@ -194,7 +198,10 @@ mod tests {
         f.note_exit("fetch", None, "");
         assert_eq!(f.failures[0].exit, None);
         assert_eq!(f.failures[0].tail, None);
-        assert_eq!(f.failures[0].phrase(), "fetch was killed with no exit status");
+        assert_eq!(
+            f.failures[0].phrase(),
+            "fetch was killed with no exit status"
+        );
     }
 
     #[test]
