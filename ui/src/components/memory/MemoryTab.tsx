@@ -24,6 +24,7 @@ function emptyWhy(q: Query): string {
 export const MemoryTab: React.FC = () => {
   const rows = useMemoryRows();
   const { query, change } = rows;
+  const [subview, setSubview] = useState<'Rows' | 'Days' | 'Review'>('Rows');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [dialog, setDialog] = useState<Dialog>(null);
@@ -86,9 +87,15 @@ export const MemoryTab: React.FC = () => {
     <div className="space-y-4">
       <MemoryStats version={statsVersion} />
 
-      {/* SUBVIEW MOUNT — the later "Days" and "Review" sub-views mount here,
-          beside "Rows" (what follows), behind a small switch above it. */}
-      <div data-testid="memory-subview-rows" className="space-y-3">
+      <div className="flex gap-1">
+        {(['Rows', 'Days', 'Review'] as const).map((view) => (
+          <button key={view} className={`px-3 py-1.5 rounded-lg text-xs font-bold ${subview === view ? 'bg-blue-600 text-white' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/5'}`} onClick={async () => { if (await mayLeave()) setSubview(view); }}>
+            {view}
+          </button>
+        ))}
+      </div>
+      {/* SUBVIEW MOUNT */}
+      {subview === 'Rows' && <div data-testid="memory-subview-rows" className="space-y-3">
         <MemoryToolbar
           query={query}
           checkedCount={checked.size}
@@ -130,7 +137,7 @@ export const MemoryTab: React.FC = () => {
             <p className="hidden lg:block text-xs text-slate-400 pt-2">Select a row to read or edit it.</p>
           )}
         </div>
-      </div>
+      </div>}
 
       {dialog === 'add' && (
         <AddRowDialog
