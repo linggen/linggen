@@ -11,6 +11,7 @@ mod layers;
 mod mcp;
 mod person;
 mod replica;
+mod replica_edges;
 mod shipping;
 mod support;
 mod upkeep;
