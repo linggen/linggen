@@ -38,6 +38,14 @@ export interface ReviewIssue {
 }
 export interface ReviewQueue { open_count: number; issues: ReviewIssue[] }
 
+export interface MemoryDay {
+  date: string; state: string; rows: number; unjudged: number; past_ttl: boolean;
+  harvested_at: string | null; remembered_at: string | null; judged: number; promoted: number | null; forgotten: number | null;
+}
+export interface MemoryDays {
+  today: string; ttl_days: number; first_unscanned: string | null; first_undreamed: string | null; days: MemoryDay[];
+}
+
 export interface MemoryStats {
   total: number;
   per_tier: Record<Tier, number>;
@@ -214,6 +222,7 @@ export function updateBody(id: string, patch: Patch): Record<string, unknown> {
 
 export const memory = {
   stats: () => call<MemoryStats>('stats'),
+  days: () => call<MemoryDays>('days', {}),
   issues: () => call<ReviewQueue>('issues', { status: 'open', limit: 1000 }),
   get: (id: string) => call<MemoryRow | null>('get', { id }),
   dismiss: (id: string) => call<unknown>('issue_resolve', { id, outcome: 'dismissed', note: 'dismissed from the browse page' }),

@@ -3,6 +3,7 @@ import { confirmDialog } from '../../lib/confirmDialog';
 import { AddRowDialog } from './AddRowDialog';
 import { ForgetDialog } from './ForgetDialog';
 import { MemoryDetail } from './MemoryDetail';
+import { MemoryDays } from './MemoryDays';
 import { MemoryReview } from './MemoryReview';
 import { MemoryList } from './MemoryList';
 import { MemoryStats } from './MemoryStats';
@@ -99,6 +100,7 @@ export const MemoryTab: React.FC = () => {
         ))}
       </div>
       {/* SUBVIEW MOUNT */}
+      {subview === 'Days' && <MemoryDays />}
       {subview === 'Review' && <MemoryReview onCount={setReviewCount} />}
       {subview === 'Rows' && <div data-testid="memory-subview-rows" className="space-y-3">
         <MemoryToolbar
