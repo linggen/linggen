@@ -117,9 +117,19 @@ if [ "$SOURCE" = public ]; then
 elif [ "$HOST_CHECKS" = 0 ]; then
   record GAP "host: check.sh all + e2e" "skipped (--skip-host-checks)"
 else
+  # The suites run on a scratch home (never ~/.linggen, the live engine's
+  # store): the Rust and Playwright caches stay the real ones, and the
+  # embedding model is linked in so the memory system test still runs.
+  HOST_HOME="$GATE_HOME/host-home"
+  rm -rf "$HOST_HOME"; mkdir -p "$HOST_HOME/.linggen/skills" "$HOST_HOME/.cache"
+  [ -d "$HOME/.cache/huggingface" ] && ln -s "$HOME/.cache/huggingface" "$HOST_HOME/.cache/huggingface"
+  host_env=(HOME="$HOST_HOME" CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
+            PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-$HOME/Library/Caches/ms-playwright}"
+            LINGGEN_HOME="$HOST_HOME/.linggen" LINGGEN_DATA_DIR="$HOST_HOME/.linggen"
+            LINGGEN_LEGACY_MEMORY_PORT=0 LINGGEN_NO_BONJOUR=1)
   for suite in all e2e; do
     say "Host suites: check.sh $suite"
-    (cd "$REPO" && ./scripts/check.sh "$suite") >"$RUN/host-check-$suite.log" 2>&1
+    (cd "$REPO" && env "${host_env[@]}" ./scripts/check.sh "$suite") >"$RUN/host-check-$suite.log" 2>&1
     if [ $? = 0 ]; then record PASS "host: check.sh $suite" "${ENGINE_HEAD:0:12}"
     else record FAIL "host: check.sh $suite" "$(grep -m3 '^FAILED' "$RUN/host-check-$suite.log" | tr '\n' ' ') (see $RUN/host-check-$suite.log)"; fi
   done
@@ -191,7 +201,14 @@ if [ "$FIRST" = 1 ]; then
   vm_boot gate-first
   record INFO "vm" "$(vm_ssh gate-first 'sw_vers -productVersion') at $(vm_ip gate-first)"
   vm_tunnels gate-first
+  log_from=$(( $(wc -l <"$RUN/mirror-http.log") + 1 ))
   vm_run gate-first first-install.sh "${VMENV[@]}"
+  # One program: nothing on the first-install path asks the mirror for ling-mem.
+  if [ "${ONE_BINARY:-0}" = 1 ]; then
+    asked="$(tail -n +"$log_from" "$RUN/mirror-http.log" | grep -oE '"GET [^ ]*ling-mem-[^ ]*' | cut -c6- | sort -u | tr '\n' ' ')"
+    [ -z "$asked" ] && record PASS "first install: no ling-mem fetched from the mirror" "$(( $(wc -l <"$RUN/mirror-http.log") - log_from + 1 )) requests logged" \
+      || record FAIL "first install: no ling-mem fetched from the mirror" "requested: $asked"
+  fi
   ui_check gate-first first-install
   vm_shutdown gate-first
   [ "$KEEP" = 1 ] || { tart delete gate-first >/dev/null 2>&1; SCRATCH_VMS=("${SCRATCH_VMS[@]/gate-first}"); }

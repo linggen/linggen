@@ -20,11 +20,24 @@
 #             update` run when the installed binary already is <v>
 #   bad/      relabel with every sha256 wrong — every updater must refuse it
 # and $RUN/mirror/expect.env: the versions and binary sha256s to check for.
+#
+# Where the pieces that are not release binaries come from (defaults: the
+# sibling checkouts' working trees):
+#   GATE_SITE_PUBLIC     the installers (install.sh, install-plugin.sh, …):
+#                        a folder like linggensite/public — point it at a
+#                        worktree of the release-day site branch
+#   GATE_MEM_REPO        the linggen-memory checkout (install-bin.sh, and the
+#                        plugin bundle when no release carries one)
+#   GATE_PLUGIN_RELEASE  a linggen-memory release (a draft too) whose
+#                        linggen-plugin.tar.gz is served, in --local and
+#                        --draft runs alike
 
 ENGINE_REPO=linggen/linggen
 MEM_REPO=linggen/linggen-memory
 APP_REPO=linggen/linggen-releases
 ZERO_SHA=0000000000000000000000000000000000000000000000000000000000000000
+SITE_PUBLIC="${GATE_SITE_PUBLIC:-$WS/linggensite/public}"
+MEM_CHECKOUT="${GATE_MEM_REPO:-$WS/linggen-memory}"
 
 sha() { shasum -a 256 "$1" | awk '{print $1}'; }
 
@@ -105,7 +118,7 @@ mirror_local() {
 
   if [ "$ONE_BINARY" = 1 ]; then
     mirror_published_mem "$good"
-    pack_plugin "$good"
+    mirror_plugin "$good" ""
     [ -f "$good/$MEM_REPO/release.json" ] || write_release_json "$good/$MEM_REPO" "v0.0.0"
   else
     [ -x "$mem" ] || die "mirror: ling-mem" "no local build at $mem (GATE_MEM_BIN)"
@@ -114,7 +127,7 @@ mirror_local() {
     MEM_SHA="$(pack_binary "$mem" ling-mem "$good/$MEM_REPO/ling-mem-macos-aarch64.tar.gz")"
     MEM_VERSION="$ver"
     (cd "$good/$MEM_REPO" && shasum -a 256 ling-mem-macos-aarch64.tar.gz >ling-mem-macos-aarch64.tar.gz.sha256)
-    pack_plugin "$good"
+    mirror_plugin "$good" ""
     write_release_json "$good/$MEM_REPO" "v$ver"
     record INFO "mirror: ling-mem" "local $ver, $mem, built $(stat -f %Sm -t '%F %R' "$mem"), $(signer "$mem")"
   fi
@@ -142,8 +155,27 @@ mirror_local() {
 # The plugin marketplace bundle install-plugin.sh installs from (linggen-
 # memory's release asset), packed from the working tree.
 pack_plugin() { # good
-  "$WS/linggen-memory/scripts/package-plugin.sh" "$1/$MEM_REPO/linggen-plugin.tar.gz" >/dev/null \
-    || die "mirror: plugin bundle" "linggen-memory/scripts/package-plugin.sh failed"
+  mkdir -p "$1/$MEM_REPO"
+  "$MEM_CHECKOUT/scripts/package-plugin.sh" "$1/$MEM_REPO/linggen-plugin.tar.gz" >/dev/null \
+    || die "mirror: plugin bundle" "$MEM_CHECKOUT/scripts/package-plugin.sh failed"
+}
+
+# The plugin bundle: GATE_PLUGIN_RELEASE's, else the release named (draft
+# runs: the ling-mem tag), else packed from $MEM_CHECKOUT. A --draft run that
+# packs from the working tree is a GAP: no release carries what it serves.
+mirror_plugin() { # good release
+  local good="$1" tag="${GATE_PLUGIN_RELEASE:-$2}"
+  mkdir -p "$good/$MEM_REPO"
+  if [ -n "$tag" ] && gh release download "$tag" --repo $MEM_REPO --dir "$good/$MEM_REPO" --clobber \
+       --pattern 'linggen-plugin.tar.gz*' >/dev/null 2>&1; then
+    record INFO "mirror: plugin bundle" "release $tag$([ -n "${GATE_PLUGIN_RELEASE:-}" ] && echo ' (GATE_PLUGIN_RELEASE)'), sha256 $(sha "$good/$MEM_REPO/linggen-plugin.tar.gz" | cut -c1-12)"
+    return
+  fi
+  [ -z "${GATE_PLUGIN_RELEASE:-}" ] || die "mirror: plugin bundle" "GATE_PLUGIN_RELEASE=$tag: no linggen-plugin.tar.gz downloaded"
+  pack_plugin "$good"
+  local from="packed from $MEM_CHECKOUT ($(git -C "$MEM_CHECKOUT" rev-parse --abbrev-ref HEAD 2>/dev/null) $(git -C "$MEM_CHECKOUT" rev-parse --short HEAD 2>/dev/null))"
+  if [ -n "$tag" ]; then record GAP "mirror: plugin bundle" "release $tag has no linggen-plugin.tar.gz — $from"
+  else record INFO "mirror: plugin bundle" "$from"; fi
 }
 
 latest_tag() { gh release view --repo "$1" --json tagName --jq .tagName; }
@@ -197,12 +229,7 @@ mirror_draft() { # good specs
     MEM_SHA="$(tar_member_sha "$good/$MEM_REPO/ling-mem-macos-aarch64.tar.gz" ling-mem)"
     record INFO "mirror: ling-mem" "release $mem"
   fi
-  if gh release download "$mem" --repo $MEM_REPO --dir "$good/$MEM_REPO" --clobber --pattern 'linggen-plugin.tar.gz*' 2>/dev/null; then
-    record INFO "mirror: plugin bundle" "release $mem"
-  else
-    pack_plugin "$good"
-    record GAP "mirror: plugin bundle" "release $mem has no linggen-plugin.tar.gz — packed from the working tree"
-  fi
+  mirror_plugin "$good" "$mem"
 
   draft_repo "$good" $APP_REPO "$app" 'linggen-*-darwin-arm64.tar.gz*'
   APP_VERSION="${app#linggen-v}"
@@ -241,12 +268,17 @@ build_mirror() { # local | draft "<specs>"
     # from linggen.dev + GitHub (vm/common.sh SITE, asset_url).
     public) mirror_draft "$good" "" ;;
   esac
-  local pub="$WS/linggensite/public" f
+  local pub="$SITE_PUBLIC" f bin="$MEM_CHECKOUT/plugins/linggen/scripts/install-bin.sh"
   for f in install.sh install-app.sh install-shared-memory.sh install-plugin.sh; do
     [ -f "$pub/$f" ] || die "mirror: installers" "missing $pub/$f"
     cp "$pub/$f" "$good/$f"
   done
-  cp "$WS/linggen-memory/plugins/linggen/scripts/install-bin.sh" "$good/install-bin.sh"
+  # The old memory installer's address; first-install.sh runs it when served.
+  [ -f "$pub/install-ling-mem.sh" ] && cp "$pub/install-ling-mem.sh" "$good/install-ling-mem.sh"
+  record INFO "mirror: installers" "$pub ($(git -C "$pub" rev-parse --abbrev-ref HEAD 2>/dev/null) $(git -C "$pub" rev-parse --short HEAD 2>/dev/null))"
+  # install-bin.sh installs ling-mem: only an engine before 2.3.0 needs it.
+  if [ -f "$bin" ]; then cp "$bin" "$good/install-bin.sh"
+  elif [ "${ONE_BINARY:-0}" != 1 ]; then die "mirror: install-bin.sh" "missing $bin"; fi
   derive_tree "$good" "$root/relabel" "-gate" 0
   derive_tree "$good" "$root/bad" "-gate" 1
   cat >"$root/expect.env" <<EOF

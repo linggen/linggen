@@ -15,9 +15,21 @@ curl -fsSL "$SITE/install.sh" | env $RB bash >"$OUT/install.log" 2>&1
 check "install.sh exits 0" $? "exit $? — $(tail -3 "$OUT/install.log")"
 check_installed "install.sh: ling is the release" "$(ling_bin)" "$LING_VERSION" "$LING_SHA"
 if [ "$ONE_BINARY" = 1 ]; then
-  # install.sh may still lay down the published ling-mem; the engine makes it the stand-in.
+  # One program: install.sh lays down no ling-mem (the engine writes its
+  # stand-in there when it starts). Anything there now was fetched.
   INSTALLED_MEM_SHA="$(sha "$HOME/.local/bin/ling-mem")"
-  info "install.sh: ling-mem" "$([ -n "$INSTALLED_MEM_SHA" ] && echo "v$(ver_of "$HOME/.local/bin/ling-mem") installed (published, not this train)" || echo "none installed")"
+  [ -z "$INSTALLED_MEM_SHA" ]
+  check "install.sh: installs no ling-mem" $? "v$(ver_of "$HOME/.local/bin/ling-mem") at ~/.local/bin/ling-mem (sha ${INSTALLED_MEM_SHA:0:12})" "nothing at ~/.local/bin/ling-mem"
+  # The old memory installer's address runs the same installation.
+  if curl -fsSL "$SITE/install-ling-mem.sh" -o "$OUT/install-ling-mem.sh" 2>/dev/null; then
+    env $RB LINGGEN_INSTALL_HOST="$SITE" bash "$OUT/install-ling-mem.sh" --version '^1' >"$OUT/install-ling-mem.log" 2>&1
+    check "install-ling-mem.sh exits 0" $? "$(tail -3 "$OUT/install-ling-mem.log")"
+    check_installed "install-ling-mem.sh: ling is the release" "$(ling_bin)" "$LING_VERSION" "$LING_SHA"
+    [ ! -e "$HOME/.local/bin/ling-mem" ]
+    check "install-ling-mem.sh: installs no ling-mem" $? "v$(ver_of "$HOME/.local/bin/ling-mem") at ~/.local/bin/ling-mem"
+  else
+    gap "install-ling-mem.sh" "not served by the mirror"
+  fi
 else
   check_installed "install.sh: ling-mem is the release" "$(mem_bin)" "$MEM_VERSION" "$MEM_SHA"
 fi
@@ -308,6 +320,11 @@ if [ -z "$dev" ]; then
 fi
 install_plugin "$OUT/install-plugin.log"
 check_plugins "first install" $? "$OUT/install-plugin.log"
+if [ "$ONE_BINARY" = 1 ] && [ -z "$INSTALLED_MEM_SHA" ]; then
+  # Nothing was installed to move aside: a ling-mem.prev means something fetched one.
+  [ ! -e "$HOME/.local/bin/ling-mem.prev" ] && is_standin "$HOME/.local/bin/ling-mem"
+  check "first install: no ling-mem binary on this Mac" $? "~/.local/bin: $(ls "$HOME/.local/bin" 2>/dev/null | grep ling-mem | tr '\n' ' '); ling-mem.prev v$(ver_of "$HOME/.local/bin/ling-mem.prev")"
+fi
 
 # The manual GitHub form still clones with git: on this Mac it opens the
 # dialog. Reported, not failed — install-plugin.sh is the no-git path. Run

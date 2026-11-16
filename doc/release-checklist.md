@@ -34,6 +34,16 @@ plugin installers still fetch it (the engine makes it its stand-in), and
 memory is checked through the engine. Before 2.3.0 `mem=vX.Y.Z` names the
 ling-mem draft gated with the engine.
 
+The installers and the plugin bundle are not engine assets: the mirror takes
+the installers from `linggensite/public` and the bundle from the ling-mem
+release named (else packed from `linggen-memory`). To gate the release-day
+ones instead: `GATE_SITE_PUBLIC=<worktree of the site branch>/public`,
+`GATE_PLUGIN_RELEASE=<linggen-memory draft tag>` (its
+`linggen-plugin.tar.gz`), `GATE_MEM_REPO=<linggen-memory checkout>`. From
+2.3.0 the first install also runs `install-ling-mem.sh` when served and FAILs
+on any ling-mem binary laid down or asked of the mirror. The host suites run
+on a scratch home under `~/.cache/linggen-gate/host-home`.
+
 A local build carries the last release's number until `release.sh` stamps
 it, so name the shape: `GATE_ONE_BINARY=1 GATE_LING_BIN=target/fast/ling
 GATE_APP=/nonexistent just release-gate --local --upgrade-only
