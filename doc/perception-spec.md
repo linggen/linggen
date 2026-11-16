@@ -2,9 +2,11 @@
 
 **Status: built on both hosts** — engine (`src/perception/`) and phone
 (`lib/services/perception/`). One condition ships enabled: storage filling.
-**Redesigned 2026-11-13, not built:** the log is kept, not swept (§7); a
-monthly rollup and a filtered query (§3); skills declare their world line (§2)
-and the verbs they log (§3); each device's days are mirrored to the other (§6).
+**Built 2026-11-16 (engine):** the log is kept 400 days (§7); `recent_activity`
+filters by time, app, verb and text and returns totals (§3); the engine writes
+stretches of use (§3); skills declare the verbs they log, checked at the door
+(§3). **Designed 2026-11-13, not built:** a monthly rollup (§3); skills declare
+their world line (§2); each device's days are mirrored to the other (§6).
 
 What a resident agent knows about the world it lives in, without being told.
 
@@ -105,16 +107,42 @@ because two schemas for one idea fork on contact.
   the family/multi-user design already calls for; it is the same field, not a
   second one. Optional: a file is one host's, so an absent `device` means the
   host whose file it is.
-- `app` — `dj`, `photos`, `cfo`, `shifu`, `health`, `lingjing`, `system`.
+- `app` — the writing skill's name, or `system` for the engine's own records.
 - `verb` — a short slug from a closed set. The engine owns its own (`pair`,
-  `connect`, `disconnect`, `restart`, `fault` — a mission run that had
-  something go wrong); every other verb is declared by the app
-  that writes it, in its skill (DJ `download`, `delete`; Health `workout`;
-  灵境 `chapter_done`; CFO `import`). A verb no skill declared is refused at the
-  door, so the set stays closed without the engine naming an app.
+  `connect`, `disconnect`, `restart`, `used`, `fault` — a mission run that had
+  something go wrong); every other verb is declared by the skill that writes
+  it, in its frontmatter (`activity-verbs: [archive, import]`). A verb its
+  skill did not declare is refused at the door, so the set stays closed
+  without the engine naming an app. A skill may not declare an engine verb.
 - `object` — what it happened to, in the user's terms. A song title, not a path.
-- `detail` — optional, small, structured.
+- `detail` — optional, small, structured. `detail.seconds` is a duration:
+  any writer may carry one, and totals sum it (below).
 
+### Stretches of use
+
+The engine records how long each of Linggen's own pages was in front while the
+person was active — one record per stretch, the same for every app:
+
+```json
+{"at":"2026-11-16T13:02:10Z","by":"user","device":"test-mac","app":"notes",
+ "verb":"used","detail":{"seconds":1260}}
+```
+
+It is built from the presence beat every page sends (app pages name their
+skill, an app's chat beats as that app, the main page is `linggen`) and a
+15-second tick. A stretch ends when another page comes to the front (used
+until then), when the person has made no input for 5 minutes or every page
+stops beating (used until the last input), or when nothing has been heard for
+a minute (the Mac slept). Under a minute is dropped; a stretch is written in
+pieces of at most an hour. The open stretch is saved every 30 seconds; the
+engine has no stop hook, so a stop, a kill and a crash are one case — the
+next start closes the saved stretch where it was last saved, losing at most
+those 30 seconds. A record names the app, never what was on it. Time in the
+terminal, the CLI or any other program sends no beat and is not counted.
+
+The doorbell shows changes, not durations: a record that carries
+`detail.seconds` is written to disk and read through `recent_activity`, but
+never counted in "since you last looked" nor shown as the latest thing.
 ### What counts
 
 An entry records **a change to the world**. Not a glance at it.
@@ -154,9 +182,9 @@ failed while the user was away. Both are needed and they are not the same fact.
 
 - Phone: the app's documents directory, beside the app data it describes.
 - Mac: `~/.linggen/activity/`, one file per day.
-- Beside the days, `rollup/YYYY-MM.jsonl`: one line per day — counts per app and
-  verb, and the day's top few objects. Written mechanically at rotation (§7), no
-  model involved.
+- Beside the days, `open-stretch.json`: the stretch of use still open.
+- Designed, not built: `rollup/YYYY-MM.jsonl`, one line per day — counts per
+  app and verb. Totals over the day files are fast enough without it (below).
 
 Files, not a database. The date is the index: a question about a span opens
 only that span's days, and a question about months or years reads the rollup.
@@ -165,6 +193,10 @@ events a day — 73k rows, 10 MB — counts by month in 56 ms, finds a text matc
 8 ms, reads a week in 1 ms. Five years at 1,000 a day (1.8M rows) takes 1.2 s
 for the full count, which is what the rollup is for. Real days carry tens of
 events, not hundreds. The phone was not measured; expect a few times slower.
+Measured 2026-11-16 in the engine's tests: a very busy synthetic day of
+stretches (sixteen hours, the front page changing every two to six minutes) is
+240 records, 27 KB; totals over 400 days of 60 records each (24,000 rows) take
+about 70 ms.
 
 The move to SQLite comes when a question needs joins across months, ranked
 full-text search, or a full scan the user can feel in a turn — a few hundred
@@ -174,20 +206,30 @@ append, and holds who the person is — not what happened.
 
 ### Reading it
 
-`recent_activity` is the one door, with filters: `app`, `verb`, `since`,
-`until`, `text` (a substring of `object`), `limit`, and `rollup: true` for the
-per-day counts over a span instead of the entries. Both devices' entries come
-back, each under its device's name. Plain lines, newest first.
+`recent_activity` is the one door (and `GET /api/activity` the same answer for
+a page), with filters: `since`, `until` (an ISO time, a date, `today`,
+`yesterday`, `now`, `-30m`, `-6h`, `-3d`; a day starts at local midnight),
+`app`, `verb`, `text` (a substring of `object` or `detail`), `limit` (rows,
+newest first, default 20, at most 200), and `totals: true` — for the span,
+counts per app and verb and, where records carry `detail.seconds`, the summed
+seconds and a readable form (`2 h 10 min`). The model reads a total; it never
+adds durations. A duration counts by the part of it inside the span, and the
+stretch still open is counted, marked `open`. One JSON shape: `span`, `rows`,
+`more` when the limit stopped them, `note` when the 16 KB row cap cut them,
+`totals`. Day files are read one at a time, newest first; rows stop at the
+limit or the cap, totals read the whole span. Filters and totals cover this
+Mac's log; a plain call also carries the other device's latest lines, as text
+under `other_device`.
 
 ### Who writes it
 
 The engine records what it owns: a device paired, a route lost or regained.
 Everything else is the app's own act, so the app says so — the phone's services
 call the log directly, and anything on the Mac with no way into the engine's
-memory (skills, app pages, scripts) posts to `POST /api/activity`. The engine
-names no app there; it takes the caller's word for what it is, exactly as
-`/api/topic/publish` does, and checks only that the verb is one the app's
-skill declared.
+memory (skills, app pages, scripts) posts to `POST /api/activity` with `app`
+set to its skill's name. The engine names no app there; it refuses the record
+unless an installed skill of that name declares the verb in `activity-verbs`.
+The engine's own records (devices, stretches) never pass the door.
 
 As of 2026-11-13 only the engine writes: three days of the Mac's log held 65
 entries, every one `system connect/disconnect`. The apps writing their own acts
@@ -315,17 +357,19 @@ to be hostile to end a bullet early and start reading as an instruction.
 
 ## 7. Rotation and lifecycle
 
-The log rotates daily. Rotation is one moment with two jobs:
+The log rotates hourly (cheap, idempotent). Rotation is one moment with two
+jobs:
 
 1. **A state sample** — the day's numbers appended to the trend series (§5).
-2. **The rollup** — the closed day's counts appended to its month's file (§3).
+2. **The sweep** — day files older than 400 days (`RETAIN_DAYS`) are deleted.
+   (Designed, not built: the closed day's counts appended to a monthly rollup.)
 
-**Nothing is swept.** The log is the record of what the person did in Linggen
-— a workout, three songs, a 回 closed — and a question about last spring is as
-fair as one about this morning. It costs a few MB a year. The person clears it
-in Settings, all of it or before a date; nothing else deletes it. (Until
-2026-11-13 the log kept three days and swept the rest; that answered "what just
-happened" and nothing longer.)
+**Kept 400 days.** The log is the record of what the person did in Linggen,
+and a question about last month — or the same week last year — is as fair as
+one about this morning. At tens to a few hundred records a day it costs a few
+MB a year. (Until 2026-11-16 the log kept three days and swept the rest; that
+answered "what just happened" and nothing longer. Clearing it from Settings is
+designed, not built.)
 
 **The doorbell stays recent.** "Since you last looked" and its latest line read
 the last few days only. Keeping the log is about what can be asked, never about

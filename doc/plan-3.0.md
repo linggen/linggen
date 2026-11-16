@@ -196,7 +196,7 @@ the user makes are unlimited and stay apart; they are given the same world.
 | | What | Today |
 |---|---|---|
 | Now | World state: one line per app (declared by the skill), the machine, the body; in every session | Built; app-declared lines designed 2026-11-13, not built |
-| Past | One tool to read the activity log, filtered by time and app, returning totals | Built; totals to add — the model must read a duration, never add one up |
+| Past | One tool to read the activity log, filtered by time and app, returning totals | Built (2.4 branch): filters, totals with summed durations, stretches of use, verbs checked at the door, kept 400 days |
 | Memory | Search and write | Built |
 | Notes | A small note of her own, in front of her next time | New |
 | Alarm | "Look again at / after" that she sets herself | New |

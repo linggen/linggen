@@ -53,7 +53,7 @@ Built-in tools are the kernel API. Skills are userspace.
 | `RunApp` | `skill, args?` | Launch an app-enabled skill |
 | `AskUser` | `questions` | Ask user structured questions mid-execution |
 | `sense` | — | The room: presence, how busy the day is, the hour, and this machine's world block |
-| `recent_activity` | `limit?` | What changed on this machine lately, and who did it (perception-spec.md §3) |
+| `recent_activity` | `since?`, `until?`, `app?`, `verb?`, `text?`, `limit?`, `totals?` | This Mac's activity log (kept 400 days): what changed, who did it, stretches of use; `totals` sums counts and durations per app and verb for the span. JSON (perception-spec.md §3) |
 | `EnterPlanMode` | `reason?` | Enter plan mode (research-only) |
 | `ExitPlanMode` | `plan_text` | Exit plan mode with completed plan |
 | `UpdatePlan` | `plan_text?, items?` | Update plan progress during execution |

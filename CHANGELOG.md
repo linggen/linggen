@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+- **The activity log answers longer questions.** It is kept 400 days, and
+  `recent_activity` (and `GET /api/activity`) filters by `since`/`until`
+  (ISO times, dates, `today`, `yesterday`, `-6h`, `-3d`), `app`, `verb` and
+  `text`, with `totals: true` for counts and summed durations per app and
+  verb, in seconds and as a readable time. It returns JSON. The engine records
+  how long each Linggen page was in front while the user was active (verb
+  `used`); these stay out of the doorbell. `POST /api/activity` takes a verb
+  only when the skill named by `app` declares it in `activity-verbs:`.
+
 ## [2.3.0] - 2026-11-16 — memory is part of ling, one program
 
 - **Settings → Memory.** The memory console is a tab of the engine's own
