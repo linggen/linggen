@@ -738,7 +738,9 @@ impl AgentEngine {
             return None;
         }
         let mut transcript = String::new();
-        for msg in dropped {
+        // Kept world blocks are readings as of a past moment: dropped with
+        // the span, never repeated by the summary.
+        for msg in dropped.iter().filter(|m| !crate::engine::prompt::world::is_world_note(m)) {
             let content = if msg.content.chars().count() > 2000 {
                 let head: String = msg.content.chars().take(2000).collect();
                 format!("{head}...[truncated]")

@@ -116,6 +116,7 @@ pub(super) fn last_spoken_line(state: &Arc<ServerState>, current_sid: &str) -> O
                 && m.from_id != "user"
                 && m.from_id != "system"
                 && m.from_id != "memory"
+                && !crate::engine::prompt::world::is_world_row(m)
                 && !m.content.trim().is_empty()
         });
         if let Some(m) = line {

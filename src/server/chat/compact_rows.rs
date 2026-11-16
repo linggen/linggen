@@ -47,10 +47,13 @@ fn smallest_window(windows: &[Option<usize>]) -> usize {
 }
 
 /// The rows a summary stands for, as one transcript: each line names its
-/// speaker, so the summary keeps who said and did what.
+/// speaker, so the summary keeps who said and did what. Kept world blocks
+/// are left out: readings as of a past moment, which the summary need not
+/// repeat — the thread after it carries the newest.
 pub(crate) fn transcript(rows: &[ChatMsg]) -> String {
     rows.iter()
         .filter(|r| !r.content.trim().is_empty())
+        .filter(|r| !crate::engine::prompt::world::is_world_row(r))
         .map(|r| {
             let who = match (r.is_observation, r.from_id.as_str()) {
                 (true, "system") => format!("tool result for {}", r.to_id),
@@ -261,5 +264,14 @@ mod tests {
             t,
             "[user] 去临淄\n[ling tool call] {\"type\":\"tool\",\"tool\":\"Look\"}\n[yinyue] 小心。"
         );
+    }
+
+    /// Kept world blocks are readings as of a past moment: the summary
+    /// leaves them behind with the span.
+    #[test]
+    fn the_transcript_leaves_old_world_blocks_out() {
+        let world = row(crate::engine::prompt::world::WORLD_SENDER, "# World\n- disk");
+        let t = transcript(&[row("user", "hi"), world, row("ling", "hello")]);
+        assert_eq!(t, "[user] hi\n[ling] hello");
     }
 }

@@ -916,10 +916,13 @@ fn bind_turn_session(engine: &mut crate::engine::AgentEngine, session_id: Option
 }
 
 /// Keep a capped session's live thread near its cap (`trim_live_history`),
-/// never opening on a tool result whose call was cut away.
+/// never opening on a tool result whose call was cut away. Kept world
+/// blocks are not messages and do not count toward the cap.
 fn trim_capped(engine: &mut crate::engine::AgentEngine, cap: Option<usize>) {
     if let Some(cap) = cap {
-        trim_live_history(&mut engine.chat_history, cap);
+        trim_live_history_by(&mut engine.chat_history, cap, |m| {
+            !crate::engine::prompt::world::is_world_note(m)
+        });
         restored_tools::drop_leading_results(&mut engine.chat_history);
     }
 }
@@ -953,10 +956,18 @@ pub(super) async fn seat_member(engine: &mut crate::engine::AgentEngine, ctx: &C
 /// request a new beginning and the provider's prompt cache nothing to match;
 /// letting it grow half a cap past before cutting back to `cap` keeps the
 /// prefix the same for several turns between cuts.
+#[cfg(test)]
 fn trim_live_history<T>(history: &mut Vec<T>, cap: usize) {
-    let len = history.len();
-    if len > cap + cap / 2 {
-        history.drain(0..len - cap);
+    trim_live_history_by(history, cap, |_| true);
+}
+
+/// [`trim_live_history`], counting only the entries `counts` names: the cut
+/// leaves `cap` of them, and whatever lies among them.
+fn trim_live_history_by<T>(history: &mut Vec<T>, cap: usize, counts: impl Fn(&T) -> bool) {
+    let counted: Vec<usize> = (0..history.len()).filter(|&i| counts(&history[i])).collect();
+    if counted.len() > cap + cap / 2 {
+        let keep_from = counted[counted.len() - cap];
+        history.drain(0..keep_from);
     }
 }
 
@@ -1591,7 +1602,8 @@ mod tests {
     }
 
     use super::{
-        allowed_model, auto_session_title, leading_mention, trim_live_history, turn_creator,
+        allowed_model, auto_session_title, leading_mention, trim_live_history,
+        trim_live_history_by, turn_creator,
         turn_model, TurnModel,
     };
     use super::{busy_message, BusyMessage};
@@ -1626,6 +1638,17 @@ mod tests {
             (6..16).collect::<Vec<_>>(),
             "past it: cut back to the cap, newest kept"
         );
+    }
+
+    /// Kept world blocks are not messages: a capped thread (Yinyue's) keeps
+    /// its count of messages whatever blocks lie among them.
+    #[test]
+    fn kept_world_blocks_do_not_count_toward_the_cap() {
+        let mut h: Vec<(bool, u32)> = (0..16).flat_map(|i| [(false, i), (true, i)]).collect();
+        trim_live_history_by(&mut h, 10, |(world, _)| !world);
+        let messages: Vec<u32> = h.iter().filter(|(w, _)| !w).map(|(_, i)| *i).collect();
+        assert_eq!(messages, (6..16).collect::<Vec<_>>(), "ten messages kept");
+        assert_eq!(h.len(), 20, "with the blocks among them");
     }
 
     #[test]

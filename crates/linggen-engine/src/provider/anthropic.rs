@@ -724,4 +724,26 @@ mod tests {
             "<system-reminder>\nFrom memory: holds NVDA\n</system-reminder>"
         );
     }
+
+    /// The world block a turn keeps follows the turn's words, so even on a
+    /// first turn it is never folded into `system`: the first request stays
+    /// a prefix of the second.
+    #[test]
+    fn a_first_turns_kept_block_is_not_folded_into_system() {
+        let first = vec![
+            ChatMessage::new("system", "You are Ling."),
+            ChatMessage::new("user", "hi"),
+            ChatMessage::new("system", "# World\nas of 14:02\n- disk"),
+        ];
+        let mut second = first.clone();
+        second.extend([
+            ChatMessage::new("assistant", "hello"),
+            ChatMessage::new("user", "and now?"),
+            ChatMessage::new("system", "# World\nas of 14:09\n- disk"),
+        ]);
+        let (a, b) = (translate_messages(&first), translate_messages(&second));
+        assert_eq!(a.system, Some(serde_json::json!("You are Ling.")));
+        assert_eq!(a.system, b.system);
+        assert_eq!(a.messages[..], b.messages[..a.messages.len()]);
+    }
 }

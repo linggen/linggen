@@ -329,7 +329,9 @@ pub(crate) async fn get_workspace_state(
         messages,
         running,
         |mut m, calls| {
-            if m.is_observation || crate::server::resident::is_engine_prompt(&m.from_id, &m.content)
+            if m.is_observation
+                || crate::engine::prompt::world::is_world_row(&m)
+                || crate::server::resident::is_engine_prompt(&m.from_id, &m.content)
             {
                 return None;
             }

@@ -136,7 +136,9 @@ fn locale_tag() -> String {
 /// "last message is theirs and ends with the turn text".
 fn turn_already_delivered(messages: &[ChatMessage], task: &str) -> bool {
     messages
-        .last()
+        .iter()
+        .rev()
+        .find(|m| !world::is_world_note(m))
         .map(|m| {
             m.role == "user"
                 && crate::engine::shown_images::without_notes(&m.content).ends_with(task.trim())
@@ -145,11 +147,17 @@ fn turn_already_delivered(messages: &[ChatMessage], task: &str) -> bool {
 }
 
 /// Put a per-turn note just before the turn's own message, where a turn's
-/// memory recall sits too — the turn still ends on the person's words.
+/// memory recall sits too — before the world block the turn kept after it.
 fn insert_before_turn(messages: &mut Vec<ChatMessage>, note: ChatMessage) {
-    let at = match messages.last() {
-        Some(last) if last.role == "user" => messages.len() - 1,
-        _ => messages.len(),
+    let kept = messages
+        .iter()
+        .rev()
+        .take_while(|m| world::is_world_note(m))
+        .count();
+    let end = messages.len() - kept;
+    let at = match messages[..end].last() {
+        Some(last) if last.role == "user" => end - 1,
+        _ => end,
     };
     messages.insert(at, note);
 }
@@ -1101,11 +1109,19 @@ impl AgentEngine {
             serde_json::json!({ "source": "run_agent_loop" }),
         );
 
-        // The world and the room ride at the end of the request, never in
-        // the system prompt: their readings change every turn, and a system
-        // prompt that changes is a cache that never hits.
-        if let Some(note) = self.per_turn_note(allowed_tools.as_ref(), purpose) {
-            insert_before_turn(&mut messages, ChatMessage::new("system", note));
+        // The room rides beside the turn, built per request, never in the
+        // system prompt: its clock and idle time change every turn, and a
+        // system prompt that changes is a cache that never hits. The world
+        // is not built here: the turn kept it in the thread when it started
+        // (`world::keep`). An export shows the block the next turn would
+        // keep.
+        if let Some(room) = self.right_now_block(allowed_tools.as_ref()) {
+            insert_before_turn(&mut messages, ChatMessage::new("system", room));
+        }
+        if purpose == PromptPurpose::Preview {
+            if let Some(world) = self.world_preview() {
+                messages.push(ChatMessage::new("system", world));
+            }
         }
 
         // Pre-populate read_paths from prior context.
@@ -1149,24 +1165,6 @@ impl AgentEngine {
         (messages, allowed_tools, read_paths)
     }
 
-    /// What rides beside this turn: the world block for a session a person
-    /// is in ([`world::world_rides`]), then the room for one that holds
-    /// `sense`. One system message, or `None` when neither applies.
-    fn per_turn_note(
-        &self,
-        allowed_tools: Option<&HashSet<String>>,
-        purpose: PromptPurpose,
-    ) -> Option<String> {
-        let parts: Vec<String> = [
-            self.world_note(allowed_tools, purpose),
-            self.right_now_block(allowed_tools),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
-        (!parts.is_empty()).then(|| parts.join("\n\n"))
-    }
-
     /// This turn's read of the room, for a session that declares `sense` —
     /// `None` for every other.
     ///
@@ -1180,8 +1178,8 @@ impl AgentEngine {
     /// Gated on the session EXPLICITLY declaring `sense`, never on an agent's
     /// name: an unrestricted tool set (`None` = everything allowed) must not
     /// pull presence data into every coding session. The machine's own
-    /// readings are not here: they are the world block, which every session
-    /// a person is in is given.
+    /// readings are not here: they are the world block, kept in the thread
+    /// of every session a person is in.
     ///
     /// Built per request, never kept in history — the next turn has its own.
     fn right_now_block(&self, allowed_tools: Option<&HashSet<String>>) -> Option<String> {
@@ -1477,5 +1475,15 @@ mod tests {
         let mut no_turn = vec![ChatMessage::new("system", "s")];
         insert_before_turn(&mut no_turn, ChatMessage::new("system", "now"));
         assert_eq!(roles(&no_turn), ["system", "system"]);
+
+        // A world block the turn kept after its words stays after them.
+        let mut kept = vec![
+            ChatMessage::new("system", "s"),
+            ChatMessage::new("user", "first"),
+            ChatMessage::new("system", "# World\n- disk"),
+        ];
+        insert_before_turn(&mut kept, ChatMessage::new("system", "room"));
+        let order: Vec<&str> = kept.iter().map(|m| m.content.as_str()).collect();
+        assert_eq!(order, ["s", "room", "first", "# World\n- disk"]);
     }
 }

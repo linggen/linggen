@@ -492,6 +492,29 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// A first turn's kept world block follows the turn's words, so it never
+    /// joins the instructions: the first request stays a prefix of the next.
+    #[test]
+    fn a_first_turns_kept_block_stays_out_of_the_instructions() {
+        use crate::message::ChatMessage;
+        let first = vec![
+            ChatMessage::new("system", "You are Ling."),
+            ChatMessage::new("user", "hi"),
+            ChatMessage::new("system", "# World\nas of 14:02\n- disk"),
+        ];
+        let mut second = first.clone();
+        second.extend([
+            ChatMessage::new("assistant", "hello"),
+            ChatMessage::new("user", "and now?"),
+            ChatMessage::new("system", "# World\nas of 14:09\n- disk"),
+        ]);
+        let (a, rest_a) = responses_instructions(&first);
+        let (b, rest_b) = responses_instructions(&second);
+        assert_eq!((a.as_str(), b.as_str()), ("You are Ling.", "You are Ling."));
+        let items = |r: &[ChatMessage]| r.iter().map(responses_api_input_item).collect::<Vec<_>>();
+        assert_eq!(items(rest_a)[..], items(rest_b)[..rest_a.len()]);
+    }
+
     #[test]
     fn only_the_opening_system_messages_are_instructions() {
         use crate::message::ChatMessage;

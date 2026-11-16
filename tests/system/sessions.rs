@@ -272,3 +272,39 @@ async fn a_message_without_a_folder_runs_in_the_sessions_own() {
     assert!(!w.home.home().join("probe.txt").exists(), "written in ~");
     w.assert_all_scripted();
 }
+
+/// A user session's turns keep the world block in the thread: each turn's
+/// model request begins with the whole of the last one's, the blocks stay
+/// in order with their `as of` times, and the history view lists none.
+#[tokio::test]
+async fn kept_world_blocks_let_each_request_begin_with_the_last() {
+    let w = World::start(
+        Setup::default().script(Agent::Ling, vec![text("one"), text("two"), text("three")]),
+    )
+    .await;
+    let sid = w.api.create_session(json!({"title": "world"})).await;
+    for words in ["first", "second", "third"] {
+        w.turn(&sid, &w.work(), words, Agent::Ling).await;
+    }
+    let calls = w.model.calls_of(Agent::Ling);
+    assert_eq!(calls.len(), 3);
+    for pair in calls.windows(2) {
+        let (a, b) = (pair[0].thread(), pair[1].thread());
+        assert_eq!(pair[0].body["messages"][0], pair[1].body["messages"][0]);
+        assert_eq!(a[..], b[..a.len()], "a request begins with the last one");
+    }
+    let last = calls[2].thread();
+    let kept: Vec<&String> = last
+        .iter()
+        .filter(|(role, text)| role == "system" && text.starts_with("# World\n"))
+        .map(|(_, text)| text)
+        .collect();
+    assert!(!kept.is_empty(), "{last:?}");
+    assert!(kept.iter().all(|t| t.contains("as of ")), "{kept:?}");
+    let first_words = last.iter().position(|(_, t)| t == "first").unwrap();
+    assert!(last[first_words + 1].1.starts_with("# World\n"), "the first block follows its turn");
+
+    let history = w.api.history(&sid, &w.work()).await;
+    assert!(!history["messages"].to_string().contains("# World"), "listed: {history}");
+    w.assert_all_scripted();
+}

@@ -554,6 +554,35 @@ pub(super) async fn push_user_turn_with_recall(
     engine
         .chat_history
         .push(crate::message::ChatMessage::new("user", ctx.labeled_msg()));
+    keep_world(ctx, engine);
+}
+
+/// The world as of this turn's start, kept in the thread after its words and
+/// saved as the session's row of its own sender — a note every member reads
+/// back, never a listed message. Nothing when the session is not given it,
+/// or the last kept block still says the same.
+fn keep_world(ctx: &ChatRunCtx, engine: &mut crate::engine::AgentEngine) {
+    let Some(block) = engine.keep_world() else {
+        return;
+    };
+    let row = crate::state_fs::sessions::ChatMsg {
+        run_id: None,
+        via: None,
+        via_note: None,
+        agent_id: ctx.agent_id.clone(),
+        from_id: crate::engine::prompt::world::WORLD_SENDER.to_string(),
+        to_id: ctx.agent_id.clone(),
+        content: block,
+        timestamp: crate::util::now_ts_secs(),
+        is_observation: false,
+        client_id: None,
+        failed: false,
+        images: Vec::new(),
+    };
+    let sid = ctx.session_id.as_deref().unwrap_or("default");
+    if let Err(e) = ctx.manager.global_sessions.add_chat_message(sid, &row) {
+        tracing::warn!("Failed to keep the world block: {e}");
+    }
 }
 
 /// What the user sees: persisted as a chat message with

@@ -2,13 +2,20 @@
 //!
 //! One block, the same in every session a person is in — Ling's chats, an
 //! app's chat, Yinyue's thread, Yinyue at an app's table — whatever the
-//! session's tool list says (`doc/session-spec.md` § Who is given the world).
-//! It goes beside the turn, never into the system prompt, so a changed reading
-//! never touches the cached prefix.
+//! session's tool list says (`doc/session-spec.md` § Beside the turn).
+//!
+//! It is built once when a turn starts and kept in the thread right after the
+//! turn's words ([`keep`]): every model request of the turn sends the same
+//! bytes, and later turns find it where it was, so a changed reading never
+//! moves the prefix a provider caches.
+
+pub mod keep;
 
 use super::PromptPurpose;
 use crate::engine::AgentEngine;
 use std::collections::HashSet;
+
+pub use keep::{is_world_note, is_world_row, WORLD_HEADING, WORLD_SENDER};
 
 /// Whether a session's turns are given the world.
 ///
@@ -22,8 +29,8 @@ pub fn world_rides(creator: Option<&str>, consumer: bool) -> bool {
 }
 
 impl AgentEngine {
-    /// This turn's world block, rendered, or `None` when the session is not
-    /// given it or there is nothing to say.
+    /// The world block as of now, rendered, or `None` when the session is not
+    /// given it or there is nothing to say. `Turn` stamps the doorbell read.
     pub(super) fn world_note(
         &self,
         allowed_tools: Option<&HashSet<String>>,
@@ -51,10 +58,21 @@ impl AgentEngine {
         let lines = crate::perception::world::block(&look)?;
         let note = self.prompt_store.render_or_fallback(
             crate::prompts::keys::SYSTEM_WORLD_BLOCK,
-            &[("lines", &lines)],
+            &[("as_of", &as_of(now)), ("lines", &lines)],
         );
         Some(note.trim().to_string())
     }
+}
+
+/// When a block was read, as a reader of the thread sees it later.
+fn as_of(secs: u64) -> String {
+    chrono::DateTime::from_timestamp(secs as i64, 0)
+        .map(|t| {
+            t.with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M")
+                .to_string()
+        })
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

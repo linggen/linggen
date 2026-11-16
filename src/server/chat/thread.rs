@@ -106,8 +106,8 @@ pub(super) async fn rebuild(engine: &mut AgentEngine, ctx: &ChatRunCtx) -> bool 
 }
 
 /// The newest `keep` messages of the session's thread as `ctx`'s agent reads
-/// it, words only: tool rows are left out, so nothing in it asks for a tool
-/// the turn doesn't offer. The engine's cached thread is not touched.
+/// it, words only: tool rows and kept world blocks are left out, so nothing
+/// in it asks for a tool the turn doesn't offer. The engine's cached thread is not touched.
 pub(super) async fn spoken_tail(ctx: &ChatRunCtx, keep: usize) -> Vec<ChatMessage> {
     let sid = ctx.session_id.as_deref().unwrap_or("default");
     let Ok(rows) = ctx.manager.global_sessions.get_chat_history(sid) else {
@@ -115,7 +115,7 @@ pub(super) async fn spoken_tail(ctx: &ChatRunCtx, keep: usize) -> Vec<ChatMessag
     };
     let words: Vec<ChatMsg> = since_compaction(&rows)
         .iter()
-        .filter(|r| !r.is_observation)
+        .filter(|r| !r.is_observation && !crate::engine::prompt::world::is_world_row(r))
         .cloned()
         .collect();
     let agents = speaking_agents(ctx, &words).await;
