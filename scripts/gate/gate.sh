@@ -3,7 +3,10 @@
 # before it is published. doc/test-design.md § 4, doc/release-checklist.md.
 #
 #   just release-gate --local                       local builds (target/release)
-#   just release-gate --draft "engine=1.8.3 mem=v1.9.0 app=linggen-v0.3.4"
+#   just release-gate --draft "engine=2.3.0 app=linggen-v2.3.0"
+#                                                   (engine 2.3.0 on: memory is inside
+#                                                   ling, no mem= in the train; before it,
+#                                                   "engine=… mem=v… app=…")
 #   just release-gate --public                      after publishing: the VM installs
 #                                                   from linggen.dev + GitHub Latest,
 #                                                   no mirror (first install only)
@@ -21,7 +24,9 @@
 #   --keep                          leave the scratch VMs (stopped) for a look
 #
 # Exit 0 only when no check FAILs; the table at the end lists every check.
-# Local builds can be overridden: GATE_LING_BIN, GATE_MEM_BIN, GATE_APP.
+# Local builds can be overridden: GATE_LING_BIN, GATE_APP (GATE_MEM_BIN for an
+# engine before 2.3.0). The shape follows the engine's version; GATE_ONE_BINARY=1
+# gates a local build that still carries the last release's number as 2.3.
 # The VM image: GATE_IMAGE, else linggen-gate-base if present, else vanilla.
 
 set -uo pipefail
@@ -29,7 +34,7 @@ set -uo pipefail
 . "$GATE_SRC/mirror.sh"
 . "$GATE_SRC/playbot.sh"
 
-usage() { echo "release-gate: $*" >&2; sed -n '2,25p' "$0" >&2; exit 2; }
+usage() { echo "release-gate: $*" >&2; sed -n '2,30p' "$0" >&2; exit 2; }
 needs_arg() { [ $# -ge 2 ] && [ -n "$2" ] && [ "${2#--}" = "$2" ] || usage "$1 needs a value"; }
 
 SOURCE=local SPECS="" FIRST=1 UPGRADE=1 REBUILD_PREV=0 SAVE_PREV="" KEEP=0 HOST_CHECKS=1 PLAYBOT_RUN=1
@@ -48,7 +53,7 @@ while [ $# -gt 0 ]; do
     --rebuild-prev) REBUILD_PREV=1; shift ;;
     --save-prev) SAVE_PREV=1; shift ;;
     --keep) KEEP=1; shift ;;
-    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
     *) usage "unknown flag $1" ;;
   esac
 done

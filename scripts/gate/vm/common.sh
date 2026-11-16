@@ -51,6 +51,70 @@ engine_health() { wait_http http://127.0.0.1:9527/api/health "${1:-60}"; }
 mem_health() { wait_http http://127.0.0.1:9528/api/health "${1:-60}"; }
 mem_version() { curl -fsS -m 3 http://127.0.0.1:9528/api/health 2>/dev/null | jq -r '.data.version // empty'; }
 
+# ── Memory inside the engine (ONE_BINARY=1 in expect.env: engine 2.3.0 on) ──
+# The engine serves memory at /mem/* and /mcp/memory on its own port, and
+# keeps 127.0.0.1:9528 answering for old callers. EP/LP are the two ports
+# (other values only for a rehearsal outside a VM).
+EP="${GATE_ENGINE_PORT:-9527}"
+LP="${GATE_LEGACY_PORT:-9528}"
+ENGINE_MEM="http://127.0.0.1:$EP/mem"
+STANDIN_MARK='# linggen-ling-mem-stand-in'
+
+engine_mem_health() { # seconds
+  local i
+  for ((i = 0; i < ${1:-30}; i++)); do
+    curl -fsS -m 3 "$ENGINE_MEM/api/health" 2>/dev/null | jq -e '.ok == true' >/dev/null 2>&1 && return 0
+    sleep 1
+  done
+  return 1
+}
+
+mem_post() { # base path json → memory's envelope
+  curl -sS -m 120 -X POST -H 'content-type: application/json' -d "$3" "$1$2" 2>&1
+}
+
+# initialize + tools/list on an MCP URL; MCP_DETAIL says what answered.
+mcp_answers() { # url
+  local init list n
+  init="$(mem_post "$1" "" '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"linggen-gate","version":"1"}}}')"
+  list="$(mem_post "$1" "" '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')"
+  n="$(jq -r '[.result.tools[]?.name] | length' <<<"$list" 2>/dev/null)"
+  MCP_DETAIL="server $(jq -r '.result.serverInfo.name // "?"' <<<"$init" 2>/dev/null) $(jq -r '.result.serverInfo.version // ""' <<<"$init" 2>/dev/null), $n tools"
+  jq -e '.result.protocolVersion' >/dev/null 2>&1 <<<"$init" \
+    && jq -e '[.result.tools[]?.name] | index("memory_search") != null' >/dev/null 2>&1 <<<"$list" && return 0
+  MCP_DETAIL="initialize: $(head -c 120 <<<"$init") / tools/list: $(head -c 120 <<<"$list")"
+  return 1
+}
+
+is_standin() { head -c 300 "$1" 2>/dev/null | grep -qF "$STANDIN_MARK"; }
+
+# Real ling-mem daemons still running (the stand-in is a script: its process is sh).
+ling_mem_procs() { { pgrep -x ling-mem; pgrep -x ling-mem.prev; } 2>/dev/null | tr '\n' ' '; }
+
+# Every listener on a port is the engine's pid, on loopback only.
+# PORT_DETAIL lists what listens.
+only_engine_on() { # port engine-pid
+  local lines pids addrs
+  lines="$(lsof -nP -iTCP:"$1" -sTCP:LISTEN -Fpn 2>/dev/null)"
+  pids="$(grep '^p' <<<"$lines" | cut -c2- | sort -u | tr '\n' ' ')"
+  addrs="$(grep '^n' <<<"$lines" | cut -c2- | sort -u | tr '\n' ' ')"
+  PORT_DETAIL="pid ${pids:-none}on ${addrs:-nothing}(engine pid ${2:-none})"
+  [ -n "$2" ] && [ "$pids" = "$2 " ] && [ "$addrs" = "127.0.0.1:$1 " ]
+}
+
+# The stand-in at ~/.local/bin/ling-mem, and the binary it moved aside.
+# want-prev-sha empty: nothing was there to move (no ling-mem.prev expected).
+check_standin() { # label want-version want-prev-sha
+  local bin="$HOME/.local/bin/ling-mem" v
+  v="$(ver_of "$bin")"
+  is_standin "$bin" && [ "$v" = "$2" ]
+  check "$1: ~/.local/bin/ling-mem is the stand-in" $? "$(head -c 80 "$bin" 2>/dev/null | tr '\n' ' ') — answers v${v:-none}, want the engine's v$2" "answers v$v"
+  if [ -n "$3" ]; then
+    [ "$(sha "$bin.prev")" = "$3" ]
+    check "$1: ling-mem.prev is the old binary" $? "sha $(sha "$bin.prev" | cut -c1-12) (v$(ver_of "$bin.prev")), want ${3:0:12}" "v$(ver_of "$bin.prev"), sha ${3:0:12}"
+  fi
+}
+
 # The installed binary is the one the release carries (versions can match a
 # published release in --local runs, so compare bytes).
 check_installed() { # label bin want-version want-sha
@@ -185,6 +249,14 @@ check_plugins() { # label rc log
   if command -v codex >/dev/null; then
     codex plugin list 2>/dev/null | grep -q 'linggen@linggen-memory.*enabled'
     check "$1: codex has linggen enabled" $? "$(codex plugin list 2>&1 | tail -2 | tr '\n' ' ' | cut -c1-200)"
+  fi
+  # A plugin from before 2.3 installs and starts ling-mem when it finds none
+  # it trusts; the engine's stand-in must stay, and no daemon run beside it.
+  if [ "${ONE_BINARY:-0}" = 1 ]; then
+    local left; sleep 2; left="$(ling_mem_procs)"
+    [ -z "$left" ] && is_standin "$HOME/.local/bin/ling-mem"
+    check "$1: after the plugins, the stand-in stays and no ling-mem daemon runs" $? \
+      "ling-mem processes: ${left:-none}; ~/.local/bin/ling-mem: $(head -c 60 "$HOME/.local/bin/ling-mem" 2>/dev/null | tr '\n' ' ')"
   fi
 }
 

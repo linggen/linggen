@@ -7,8 +7,9 @@
 #   ./scripts/check.sh live [flags]        the same, from the check entry point
 #
 # Flags: --url URL (engine; default http://127.0.0.1:9527, env LIVE_URL),
-#        --mem URL (the engine's ling-mem, read only; default
-#          http://127.0.0.1:9528, env LIVE_MEM_URL),
+#        --mem URL (the engine's memory, read only; default: the engine's
+#          own /mem when it hosts memory (2.3 on), else http://127.0.0.1:9528;
+#          env LIVE_MEM_URL),
 #        --home DIR (the engine's state dir; default ~/.linggen, env LIVE_LINGGEN_HOME),
 #        --alt-model ID (Yinyue's model in the two-models case; default
 #          deepseek-flash, env LIVE_ALT_MODEL),
@@ -41,7 +42,7 @@ set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 API="${LIVE_URL:-http://127.0.0.1:9527}"
-MEM="${LIVE_MEM_URL:-http://127.0.0.1:9528}"
+MEM="${LIVE_MEM_URL:-}"
 LG="${LIVE_LINGGEN_HOME:-$HOME/.linggen}"
 ALT_MODEL="${LIVE_ALT_MODEL:-deepseek-flash}"
 MEDIA_MODELS="${LIVE_MEDIA_MODELS:-claude-sonnet-5-5 gpt-6.1-sol}"
@@ -63,7 +64,7 @@ while [ $# -gt 0 ]; do
     --speak) SPEAK=1 ;;
     --no-presence) PRESENCE=0 ;;
     --keep) KEEP=1 ;;
-    -h|--help) sed -n '2,37p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,39p' "$0"; exit 0 ;;
     *) echo "live-check: unknown flag $1" >&2; exit 2 ;;
   esac
   shift
@@ -330,6 +331,40 @@ if [ -n "$PID" ]; then
   check "engine resolves its state dir to $LG" $? "process $PID resolves $RESOLVED (LINGGEN_HOME=${ENV_LH:-unset}, HOME=${ENV_HOME:-?})" "pid $PID, LINGGEN_HOME ${ENV_LH:-unset}"
 else
   skip "engine resolves its state dir to $LG" "no LISTEN process found on port $PORT (remote engine?)"
+fi
+
+section "Memory inside the engine (read only)"
+# 2.3 on, the engine serves memory itself at /mem/* and /mcp/memory; before
+# that, a ling-mem daemon on 9528 did.
+HOSTED=0
+curl -s -m10 "$API/mem/api/health" | jq -e '.ok == true' >/dev/null 2>&1 && HOSTED=1
+[ -n "$MEM" ] || { [ "$HOSTED" = 1 ] && MEM="$API/mem" || MEM="http://127.0.0.1:9528"; }
+if [ "$HOSTED" = 0 ]; then
+  skip "memory is served by the engine" "no /mem/api/health on $API (an engine before 2.3; memory at $MEM)"
+else
+  pass "memory is served by the engine" "$API/mem, v$(curl -s -m10 "$API/mem/api/health" | jq -r '.data.version // empty')"
+  mcp() { curl -sS -m30 -X POST -H 'content-type: application/json' -d "$1" "$API/mcp/memory" 2>&1; }
+  I="$(mcp '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"live-check","version":"1"}}}')"
+  expect "/mcp/memory: initialize" "$I" '.result.protocolVersion != null' "no protocolVersion" "$(printf '%s' "$I" | jq -r '.result.serverInfo.name // empty' 2>/dev/null)"
+  T="$(mcp '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')"
+  expect "/mcp/memory: tools/list offers memory_search" "$T" '[.result.tools[]?.name] | index("memory_search") != null' "no memory_search" \
+    "$(printf '%s' "$T" | jq '[.result.tools[]?] | length' 2>/dev/null) tools"
+  if [ -n "$PID" ]; then
+    LOCK_PID="$(jq -r '.pid // empty' "$LG/memory/.store.lock" 2>/dev/null)"
+    [ "$LOCK_PID" = "$PID" ]
+    check "the store lock names the engine's pid" $? "memory/.store.lock says ${LOCK_PID:-nothing}, engine is $PID" "pid $PID"
+    EXE="$(ps -o comm= -p "$PID" 2>/dev/null)"
+    if [ -x "$EXE" ]; then
+      # JSON lines, one per row (none for an empty store), exit 0.
+      L="$("$EXE" mem --data-dir "$LG" list --limit 1 2>&1)"; rc=$?
+      [ "$rc" = 0 ] && { [ -z "$L" ] || printf '%s\n' "$L" | jq -e . >/dev/null 2>&1; }
+      check "ling mem list (through the engine)" $? "exit $rc — $(printf '%s' "$L" | head -c 200)" "$EXE"
+    else
+      skip "ling mem list (through the engine)" "can't tell the engine's binary (ps says '${EXE:-nothing}')"
+    fi
+  else
+    skip "the store lock names the engine's pid" "no LISTEN process found on port $PORT"
+  fi
 fi
 
 section "Sessions"

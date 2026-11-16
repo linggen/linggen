@@ -6,6 +6,14 @@
 #                                      "engine=1.8.3 mem=v1.9.0 app=linggen-v0.3.4";
 #                                      a repo left out serves its latest release
 #
+# The shape follows the engine under test: from 2.3.0 memory is inside `ling`
+# (ONE_BINARY=1) — no ling-mem release is part of the train, and the mirror
+# serves the published ling-mem only because install.sh and the plugin
+# installers still fetch it (the engine turns it into its stand-in). Before
+# 2.3.0 ling-mem is its own release, gated with the engine. GATE_ONE_BINARY=1|0
+# overrides the version (a local build carries the last release's number until
+# the release stamps it).
+#
 # Three trees under $RUN/mirror, each a complete LINGGEN_RELEASE_BASE:
 #   good/     the release under test
 #   relabel/  same bytes, engine manifest version "<v>-gate" — lets `ling
@@ -19,6 +27,42 @@ APP_REPO=linggen/linggen-releases
 ZERO_SHA=0000000000000000000000000000000000000000000000000000000000000000
 
 sha() { shasum -a 256 "$1" | awk '{print $1}'; }
+
+ONE_BINARY_FROM=2.3.0
+version_at_least() { [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -1)" = "$2" ]; } # v min
+
+# ONE_BINARY from the engine under test (LING_VERSION), unless overridden.
+decide_shape() {
+  case "${GATE_ONE_BINARY:-}" in
+    1) ONE_BINARY=1; record INFO "mirror: shape" "one program (GATE_ONE_BINARY=1; engine v$LING_VERSION)"; return ;;
+    0) ONE_BINARY=0; record INFO "mirror: shape" "engine + ling-mem (GATE_ONE_BINARY=0; engine v$LING_VERSION)"; return ;;
+  esac
+  if version_at_least "${LING_VERSION%%-*}" "$ONE_BINARY_FROM"; then ONE_BINARY=1
+    record INFO "mirror: shape" "one program — engine v$LING_VERSION hosts memory (≥ $ONE_BINARY_FROM)"
+  else ONE_BINARY=0
+    record INFO "mirror: shape" "engine + ling-mem — engine v$LING_VERSION is before $ONE_BINARY_FROM"
+  fi
+}
+
+# One program: the published ling-mem (or the release named), served for the
+# installers that still fetch it; never part of the train. Soft: without it
+# install.sh says it could not install ling-mem and goes on.
+mirror_published_mem() { # good [tag]
+  local good="$1" tag="${2:-}"
+  tag="${tag:-$(latest_tag $MEM_REPO 2>/dev/null)}"
+  mkdir -p "$good/$MEM_REPO"
+  if [ -n "$tag" ] && gh release download "$tag" --repo $MEM_REPO --dir "$good/$MEM_REPO" --clobber \
+       --pattern 'ling-mem-macos-aarch64.tar.gz*' >/dev/null 2>&1; then
+    gh release view "$tag" --repo $MEM_REPO --json tagName,assets \
+      --jq '{tag_name: .tagName, assets: [.assets[] | {name}]}' >"$good/$MEM_REPO/release.json"
+    MEM_VERSION="${tag#v}"
+    MEM_SHA="$(tar_member_sha "$good/$MEM_REPO/ling-mem-macos-aarch64.tar.gz" ling-mem)"
+    record INFO "mirror: ling-mem" "published $tag — for install.sh and the plugins only, not part of this train"
+  else
+    MEM_VERSION="" MEM_SHA=""
+    record INFO "mirror: ling-mem" "none served (${tag:-no published release found}) — install.sh skips it, the engine writes its stand-in"
+  fi
+}
 
 # {"tag_name", "assets": [{"name"}]} for the files in a repo dir.
 write_release_json() { # dir tag
@@ -47,7 +91,6 @@ mirror_local() {
   mem="${GATE_MEM_BIN:-$WS/linggen-memory/target/release/ling-mem}"
   app="${GATE_APP:-$WS/linggen-app/shell/target/aarch64-apple-darwin/release/bundle/macos/Linggen.app}"
   [ -x "$ling" ] || die "mirror: engine" "no local build at $ling (cargo build --release)"
-  [ -x "$mem" ] || die "mirror: ling-mem" "no local build at $mem"
 
   ver="$("$ling" --version | awk '{print $2}')"
   mkdir -p "$good/$ENGINE_REPO"
@@ -58,15 +101,23 @@ mirror_local() {
       url: ("https://github.com/linggen/linggen/releases/download/" + $v + "/ling-macos-aarch64.tar.gz"),
       sha256: $s}]}' >"$good/$ENGINE_REPO/manifest.json"
   record INFO "mirror: engine" "local $ver, $ling, built $(stat -f %Sm -t '%F %R' "$ling"), $(signer "$ling")"
+  decide_shape
 
-  ver="$("$mem" --version | awk '{print $2}')"
-  mkdir -p "$good/$MEM_REPO"
-  MEM_SHA="$(pack_binary "$mem" ling-mem "$good/$MEM_REPO/ling-mem-macos-aarch64.tar.gz")"
-  MEM_VERSION="$ver"
-  (cd "$good/$MEM_REPO" && shasum -a 256 ling-mem-macos-aarch64.tar.gz >ling-mem-macos-aarch64.tar.gz.sha256)
-  pack_plugin "$good"
-  write_release_json "$good/$MEM_REPO" "v$ver"
-  record INFO "mirror: ling-mem" "local $ver, $mem, built $(stat -f %Sm -t '%F %R' "$mem"), $(signer "$mem")"
+  if [ "$ONE_BINARY" = 1 ]; then
+    mirror_published_mem "$good"
+    pack_plugin "$good"
+    [ -f "$good/$MEM_REPO/release.json" ] || write_release_json "$good/$MEM_REPO" "v0.0.0"
+  else
+    [ -x "$mem" ] || die "mirror: ling-mem" "no local build at $mem (GATE_MEM_BIN)"
+    ver="$("$mem" --version | awk '{print $2}')"
+    mkdir -p "$good/$MEM_REPO"
+    MEM_SHA="$(pack_binary "$mem" ling-mem "$good/$MEM_REPO/ling-mem-macos-aarch64.tar.gz")"
+    MEM_VERSION="$ver"
+    (cd "$good/$MEM_REPO" && shasum -a 256 ling-mem-macos-aarch64.tar.gz >ling-mem-macos-aarch64.tar.gz.sha256)
+    pack_plugin "$good"
+    write_release_json "$good/$MEM_REPO" "v$ver"
+    record INFO "mirror: ling-mem" "local $ver, $mem, built $(stat -f %Sm -t '%F %R' "$mem"), $(signer "$mem")"
+  fi
 
   mkdir -p "$good/$APP_REPO"
   if [ -d "$app" ]; then
@@ -125,6 +176,7 @@ mirror_draft() { # good specs
     esac
   done
   engine="${engine:-$(latest_tag $ENGINE_REPO)}"
+  local mem_named="${mem:-}"
   mem="${mem:-$(latest_tag $MEM_REPO)}"
   # No app= draft: the app is cut after the engine ships, so the mirror
   # serves the published app — not this train's, and not gated as one.
@@ -135,17 +187,22 @@ mirror_draft() { # good specs
   LING_VERSION="$(jq -r .version "$good/$ENGINE_REPO/manifest.json")"
   LING_SHA="$(tar_member_sha "$good/$ENGINE_REPO/ling-macos-aarch64.tar.gz" ling)"
   record INFO "mirror: engine" "release $engine (manifest $LING_VERSION)"
+  decide_shape
 
-  draft_repo "$good" $MEM_REPO "$mem" 'ling-mem-macos-aarch64.tar.gz*'
-  MEM_VERSION="${mem#v}"
+  if [ "$ONE_BINARY" = 1 ]; then
+    mirror_published_mem "$good" "$mem_named"
+  else
+    draft_repo "$good" $MEM_REPO "$mem" 'ling-mem-macos-aarch64.tar.gz*'
+    MEM_VERSION="${mem#v}"
+    MEM_SHA="$(tar_member_sha "$good/$MEM_REPO/ling-mem-macos-aarch64.tar.gz" ling-mem)"
+    record INFO "mirror: ling-mem" "release $mem"
+  fi
   if gh release download "$mem" --repo $MEM_REPO --dir "$good/$MEM_REPO" --clobber --pattern 'linggen-plugin.tar.gz*' 2>/dev/null; then
     record INFO "mirror: plugin bundle" "release $mem"
   else
     pack_plugin "$good"
     record GAP "mirror: plugin bundle" "release $mem has no linggen-plugin.tar.gz — packed from the working tree"
   fi
-  MEM_SHA="$(tar_member_sha "$good/$MEM_REPO/ling-mem-macos-aarch64.tar.gz" ling-mem)"
-  record INFO "mirror: ling-mem" "release $mem"
 
   draft_repo "$good" $APP_REPO "$app" 'linggen-*-darwin-arm64.tar.gz*'
   APP_VERSION="${app#linggen-v}"
@@ -197,8 +254,13 @@ LING_VERSION=$LING_VERSION
 LING_SHA=$LING_SHA
 MEM_VERSION=$MEM_VERSION
 MEM_SHA=$MEM_SHA
+ONE_BINARY=${ONE_BINARY:-0}
 APP_VERSION=$APP_VERSION
 APP_IN_TRAIN=${APP_IN_TRAIN:-1}
 EOF
-  record PASS "mirror built" "ling $LING_VERSION, ling-mem $MEM_VERSION, app ${APP_VERSION:-none}"
+  if [ "${ONE_BINARY:-0}" = 1 ]; then
+    record PASS "mirror built" "ling $LING_VERSION (memory inside), app ${APP_VERSION:-none}; published ling-mem ${MEM_VERSION:-none} for the installers"
+  else
+    record PASS "mirror built" "ling $LING_VERSION, ling-mem $MEM_VERSION, app ${APP_VERSION:-none}"
+  fi
 }

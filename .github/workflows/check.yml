@@ -39,8 +39,9 @@ jobs:
           cargo clippy --all-targets --message-format=short 2>&1 | tee clippy.txt | tail -5
           echo "clippy: $(grep -c '^[^ ]*: warning' clippy.txt || true) warnings" >> "$GITHUB_STEP_SUMMARY"
 
-  # The hermetic system tests (tests/system) on the latest released ling-mem.
-  # The embedding model is not fetched: the memory test stays skipped here.
+  # The hermetic system tests (tests/system). Memory runs inside the engine
+  # under test. The embedding model is not fetched: the memory test stays
+  # skipped here.
   system:
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -53,17 +54,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
-      - name: ling-mem (latest release)
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          dir="$RUNNER_TEMP/ling-mem"
-          mkdir -p "$dir"
-          gh release download --repo linggen/linggen-memory \
-            --pattern 'ling-mem-linux-x86_64.tar.gz*' --dir "$dir"
-          (cd "$dir" && sha256sum -c ling-mem-linux-x86_64.tar.gz.sha256 &&
-            tar xzf ling-mem-linux-x86_64.tar.gz)
-          echo "LING_MEM_BIN=$dir/ling-mem" >> "$GITHUB_ENV"
       - name: System tests
         run: ./scripts/check.sh system
 
