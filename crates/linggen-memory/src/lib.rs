@@ -6,10 +6,12 @@
 pub mod cli;
 pub mod daemon;
 pub mod embed;
+pub mod error;
 mod hash;
 pub mod hosted;
 pub mod http;
 pub mod memory;
 pub mod replica;
 
+pub use error::{ErrorCode, MemError};
 pub use memory::{Memory, MemoryType, Origin, Outcome};
