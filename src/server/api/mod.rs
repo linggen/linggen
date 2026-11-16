@@ -14,6 +14,7 @@ pub(super) mod marketplace;
 pub(super) mod media;
 pub(super) mod memory;
 pub(super) mod missions;
+pub(super) mod notes;
 /// `pub(crate)` rather than `pub(super)`: this module owns the paired-device
 /// store, not just its handlers, and perception reads it to say whether a
 /// device exists at all.

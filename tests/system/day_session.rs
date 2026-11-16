@@ -8,7 +8,7 @@
 //! right now.
 
 use crate::support::model::Agent;
-use crate::support::{text, Setup, World};
+use crate::support::{text, tool, Setup, World};
 use serde_json::{json, Value};
 
 /// A POSIX `TZ` whose local time is now `hour:30`, and the local date then.
@@ -515,4 +515,65 @@ async fn an_apps_moment_wakes_her_in_the_day_in_that_apps_place() {
         call.tool_names()
     );
     w.assert_all_scripted();
+}
+
+/// The phone's side: a hand-off finds the day's session the way the phone
+/// looks for an app's session (the list's first), runs in that app's place
+/// when it names the app (`skill_name`), and the open notes read back as
+/// they are, read-only.
+#[tokio::test]
+async fn a_phone_hand_off_lands_in_the_day_in_its_apps_place() {
+    let setup = Setup::default()
+        .script(Agent::Ling, vec![text("Rolled a six for you.")])
+        .script(
+            Agent::Yinyue,
+            vec![
+                tool("note_write", json!({"text": "ask how the game went"})),
+                text("Noted."),
+            ],
+        );
+    let (w, _) = day_world_at(12, setup).await;
+    let day = w.api.get("/api/sessions/day").await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let listed = w.api.get("/api/skill-sessions?skill=dice").await;
+    assert_eq!(listed["sessions"][0]["id"], day.as_str(), "{listed}");
+
+    let mark = w.mark();
+    let body = json!({
+        "session_id": day, "project_root": w.work(), "message": "Roll a die for me",
+        "skill_name": "dice", "via": "iphone", "via_note": "Let me roll it on the Mac."
+    });
+    let resp = w.api.post("/api/chat", body).await;
+    assert_eq!(resp["agent_id"], "ling", "{resp}");
+    w.finish_run(&day, Agent::Ling, mark).await;
+    let call = w.model.calls_of(Agent::Ling).pop().unwrap();
+    assert!(
+        offers(&call, "Roll"),
+        "the hand-off stands in dice: {:?}",
+        call.tool_names()
+    );
+    let handed: Vec<Value> = w
+        .raw_rows(&day)
+        .into_iter()
+        .filter(|r| r["via"] == "iphone")
+        .collect();
+    assert_eq!(handed.len(), 1);
+    assert_eq!(handed[0]["place"], "dice");
+
+    let mark = w.mark();
+    w.api
+        .post(
+            "/api/yinyue/chat",
+            json!({"text": "Remember to ask me about the game."}),
+        )
+        .await;
+    w.wait_agent(Agent::Yinyue, mark).await;
+    let notes = w.api.get("/api/notes?agent=yinyue").await;
+    assert_eq!(
+        notes["notes"][0]["text"], "ask how the game went",
+        "{notes}"
+    );
+    assert_eq!(w.api.get("/api/notes?agent=../x").await["notes"], json!([]));
 }

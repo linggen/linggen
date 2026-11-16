@@ -30,6 +30,7 @@ pub(super) fn routes() -> Routes {
             "/api/sessions/day",
             get(crate::server::day_session::day_session_api),
         )
+        .route("/api/notes", get(crate::server::api::notes::list_notes))
         .route("/api/sessions/running", get(running_work_api))
         .route("/api/agent/wait", get(crate::server::mcp_agent::wait_socket))
         .route(
