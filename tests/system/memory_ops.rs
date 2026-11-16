@@ -216,6 +216,43 @@ fn ling_mem_scan_writes_one_days_candidates() {
     assert_eq!(candidates(&home.home()).len(), 3);
 }
 
+#[test]
+fn ling_mem_scan_sessions_lists_one_day_without_candidates() {
+    if !scan_tools() {
+        eprintln!("SKIPPED (passes on nothing): no jq or perl in /usr/bin");
+        return;
+    }
+    let home = crate::support::home::Home::new();
+    write_sessions(&home.home());
+    let env = crate::support::process::hermetic_env(&home);
+    let candidates = home.home().join(".linggen/memory/.scan-output.jsonl");
+    let out = scan(&env, None, &["--sessions", DAY]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(out.stderr.is_empty());
+    let rows: Vec<Value> = String::from_utf8(out.stdout).unwrap().lines()
+        .map(|line| serde_json::from_str(line).unwrap()).collect();
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|row| row["date"] == DAY && row["filepath"].is_string()));
+    assert!(!candidates.exists());
+    std::fs::create_dir_all(candidates.parent().unwrap()).unwrap();
+    std::fs::write(&candidates, "unchanged\n").unwrap();
+    assert!(scan(&env, None, &["--sessions", DAY]).status.success());
+    assert_eq!(std::fs::read_to_string(candidates).unwrap(), "unchanged\n");
+}
+
+#[test]
+fn ling_mem_scan_sessions_requires_a_day() {
+    let home = crate::support::home::Home::new();
+    let env = crate::support::process::hermetic_env(&home);
+    for args in [&["--sessions"][..], &["--sessions", "week"], &["--sessions", "3d"]] {
+        let out = scan(&env, None, args);
+        assert_eq!(out.status.code(), Some(2));
+        assert!(out.stdout.is_empty());
+        assert_eq!(String::from_utf8_lossy(&out.stderr),
+            "ling mem scan --sessions needs one day, YYYY-MM-DD\n");
+    }
+}
+
 /// Trigger a built-in memory mission; its session id.
 async fn trigger(w: &World, mission: &str, body: Value) -> String {
     let resp = w

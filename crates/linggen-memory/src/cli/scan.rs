@@ -36,6 +36,9 @@ pub struct ScanArgs {
     /// One day, `YYYY-MM-DD`; or a window back from today: `today`/`24h`
     /// (the default), `week`, `month`, `<n>d`, `<n>w`, `<n>m`, `<n>y`.
     pub window: Option<String>,
+    /// List one day's sessions as NDJSON without writing candidates.
+    #[arg(long)]
+    pub sessions: bool,
 }
 
 /// A scan that did not succeed: the status to exit with, and the one line to
@@ -58,6 +61,13 @@ impl std::fmt::Display for ScanExit {
 impl std::error::Error for ScanExit {}
 
 pub fn run(args: ScanArgs) -> anyhow::Result<()> {
+    if args.sessions && !args.window.as_deref().is_some_and(is_day) {
+        return Err(ScanExit {
+            code: 2,
+            line: Some("ling mem scan --sessions needs one day, YYYY-MM-DD".into()),
+        }
+        .into());
+    }
     if let Some(tool) = TOOLS.iter().find(|t| !on_path(t)) {
         return Err(ScanExit {
             code: 1,
@@ -71,8 +81,13 @@ pub fn run(args: ScanArgs) -> anyhow::Result<()> {
     for (name, text) in SCRIPTS {
         std::fs::write(dir.path().join(name), text)?;
     }
+    let script = if args.sessions {
+        "collect_sessions.sh"
+    } else {
+        "scan.sh"
+    };
     let status = Command::new("bash")
-        .arg(dir.path().join("scan.sh"))
+        .arg(dir.path().join(script))
         .args(args.window)
         .status()?;
     match status.code() {
@@ -83,6 +98,15 @@ pub fn run(args: ScanArgs) -> anyhow::Result<()> {
         }
         .into()),
     }
+}
+
+fn is_day(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 10
+        && bytes.iter().enumerate().all(|(i, b)| match i {
+            4 | 7 => *b == b'-',
+            _ => b.is_ascii_digit(),
+        })
 }
 
 /// Is `tool` a file in one of `$PATH`'s folders?
