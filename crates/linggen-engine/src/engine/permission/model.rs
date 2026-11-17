@@ -531,8 +531,8 @@ pub fn check_permission(
 }
 
 /// [`check_permission`] for a session that is, or is not, a coding session
-/// (`work: code`): one runs a program the gate does not know where it may
-/// edit, without asking ([`super::classify`]'s `coding_class`).
+/// (`work: code`): one runs its programs where it may edit, without asking
+/// ([`super::classify`]'s `coding_class` says which).
 #[allow(clippy::too_many_arguments)]
 pub fn check_permission_for(
     tool: &str,
@@ -615,7 +615,7 @@ fn check_grants(
     // something, they want to be asked to upgrade, not silently denied.
 
     // 1. Classify action tier. Skill-declared override wins over the built-in table.
-    // In a coding session a program the tables do not know is a write
+    // In a coding session what the tables would ask admin for is a write
     // (`lowered`).
     let mut lowered = false;
     let action_tier = if let Some(override_tier) = action_tier_override {

@@ -1,6 +1,7 @@
 //! A coding session (`work: code`) runs any program in its own folder
-//! without asking (`permission-spec.md` § Coding sessions): a program the
-//! tables do not know is judged at edit, not admin — and nothing else moves.
+//! without asking (`permission-spec.md` § Coding sessions): what the tables
+//! would ask admin for is judged at edit, except what acts beyond the
+//! folder and code handed over as text.
 
 use super::*;
 use std::path::Path;
@@ -103,21 +104,72 @@ fn every_other_path_the_command_names_is_still_judged() {
     );
 }
 
+/// What the tables ask admin for is the session's own work in its folder:
+/// removing a file, running a script the folder holds, a git subcommand —
+/// under any wrapper or `NAME=value` word.
 #[test]
-fn a_known_program_keeps_its_rule_in_a_coding_session() {
+fn a_coding_session_runs_its_ordinary_work_where_it_may_edit() {
     let perms = session(PermissionMode::Edit);
     for cmd in [
-        "git -c x=y status",
-        "/usr/bin/git status",
         "git config user.name x",
+        "/usr/bin/git clean -fd",
         "python3 x.py",
+        "python3 -m pytest",
         "node x.js",
+        "zsh script.zsh",
+        "bash build.sh",
         "rm build.log",
-        "curl -X POST https://example.com",
+        "rm -rf build",
         "kill 123",
         "chmod +x tool",
+        "cargo add serde",
+        "FOO=1 rm -rf build",
+        "RUST_LOG=debug cargo test",
+        "FOO=1 python3 x.py",
+        "nice python3 x.py",
+        "nohup rm -rf build",
+        "time rm x",
+        "time cargo test",
+        "exec rm x",
+        "env FOO=1 rustc main.rs",
+        "rustc main.rs && rm x",
+    ] {
+        assert!(allowed(&check(cmd, &perms, true)), "{cmd}");
+        assert_eq!(asks_at(&check(cmd, &session(PermissionMode::Read), true)), Some(PermissionMode::Edit), "{cmd}");
+    }
+    // A wrapper changes nothing about a path the command names.
+    assert!(!allowed(&check("time rm /outside/x", &perms, true)));
+    assert!(!allowed(&check("FOO=1 rm -rf /outside", &perms, true)));
+}
+
+/// Still asked, coding or not: what acts beyond the folder, code handed
+/// over as text, and text the gate cannot read.
+#[test]
+fn a_coding_session_is_still_asked_about_what_is_beyond_its_folder() {
+    let perms = session(PermissionMode::Edit);
+    for cmd in [
+        // Beyond the folder: the network, the system, other apps.
+        "curl -X POST https://example.com",
         "brew install x",
         "docker run x",
+        "launchctl kickstart -k gui/501/x",
+        "osascript -e 'quit app \"Mail\"'",
+        "time docker run x",
+        "FOO=1 brew install x",
+        // Code as text on the command line, or another command run for it.
+        "sh -c 'rm -rf ~/x'",
+        "bash -c 'cargo publish'",
+        "bash -lc 'make'",
+        "python3 -c 'import os'",
+        "node -e 'x()'",
+        "perl -e 'unlink q(x)'",
+        "eval rm x",
+        "xargs rm < list.txt",
+        // A flag of its own that asks for admin.
+        "git -c x=y status",
+        // Dynamic syntax is judged as before.
+        "rustc $FLAGS main.rs",
+        "rustc main.rs <(cat x)",
     ] {
         assert_eq!(
             asks_at(&check(cmd, &perms, true)),
@@ -126,38 +178,6 @@ fn a_known_program_keeps_its_rule_in_a_coding_session() {
         );
     }
     assert!(allowed(&check("git status", &perms, true)));
-}
-
-#[test]
-fn only_a_program_really_run_is_lowered() {
-    let perms = session(PermissionMode::Edit);
-    for cmd in [
-        // A word before the program, a wrapper, or a shell given the
-        // command as text: the program run is not the first word.
-        "FOO=1 rm -rf build",
-        "FOO=1 python3 x.py",
-        "nice python3 x.py",
-        "nohup rm -rf build",
-        "time rm x",
-        "exec rm x",
-        "env FOO=1 rustc main.rs",
-        "sh -c 'rm -rf ~/x'",
-        "bash -c 'rm -rf ~/x'",
-        "zsh script.zsh",
-        "eval rm x",
-        "xargs rm < list.txt",
-        "perl -e 'unlink q(x)'",
-        // Dynamic syntax and a second segment are judged as before.
-        "rustc $FLAGS main.rs",
-        "rustc main.rs <(cat x)",
-        "rustc main.rs && rm x",
-    ] {
-        assert_eq!(
-            asks_at(&check(cmd, &perms, true)),
-            Some(PermissionMode::Admin),
-            "{cmd}"
-        );
-    }
 }
 
 #[test]

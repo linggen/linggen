@@ -5,7 +5,7 @@
 //! programs, flags and dynamic shell syntax go up a tier, never down.
 
 use super::model::{
-    command_tokens, is_assignment, is_odd_space, BashClass, Joint, Token, RUNS_WHAT_FOLLOWS,
+    command_run, command_tokens, file_name, is_odd_space, BashClass, Joint, Token,
 };
 use super::scripts::{awk_class, sed_class};
 use super::shell_text::strip_heredoc_bodies;
@@ -175,61 +175,81 @@ fn classify_segment(raw: &[String], coding: bool) -> (BashClass, bool) {
     }
 }
 
-/// How a coding session judges a segment: a program the tables do not
-/// know (`rustc`, `./tool`, `/opt/x/flutter`), when it is the program the
-/// segment runs ([`runs_a_program`]), is a write where it would be admin.
-/// `None` leaves the segment to the tables: a known program keeps its rule.
+/// How a coding session judges a segment: what the tables would ask admin
+/// for is a write where the session may edit. Such a session already runs
+/// any code its folder holds (`cargo run`, a test), so the program is not
+/// what the gate holds back there — the paths a command names are (the
+/// target check), and what leaves the machine is (`outward`).
+///
+/// The program is the one really run: past `NAME=value` words and the
+/// programs that only run what follows (`time cargo test`,
+/// `RUST_LOG=debug cargo test`), as the deny floor finds it. `None` leaves
+/// the segment to the tables: they already allow it, the program acts
+/// beyond the folder ([`BEYOND_THE_FOLDER`]), it is handed code as text
+/// ([`runs_given_text`]), or a flag of its own asks for admin.
 fn coding_class(words: &[String]) -> Option<BashClass> {
-    let program = words.first()?;
-    let name = program.rsplit('/').next().unwrap_or(program);
-    if is_known_program(name) || !runs_a_program(program) {
+    if classify_words(words) != Admin {
         return None;
     }
-    Some(Write.max(arg_lift(name, &words[1..])))
+    let all: Vec<&str> = words.iter().map(String::as_str).collect();
+    let run = command_run(&all);
+    let program = file_name(run.first()?);
+    let args: Vec<String> = run[1..].iter().map(|w| w.to_string()).collect();
+    if BEYOND_THE_FOLDER.contains(&program) || runs_given_text(program, &args) {
+        return None;
+    }
+    // The command past its wrappers, judged by the tables under its plain
+    // name: `time cargo test` is `cargo test`.
+    let mut plain = vec![program.to_string()];
+    plain.extend(args.iter().cloned());
+    match classify_words(&plain) {
+        Admin => Some(Write.max(arg_lift(program, &args))),
+        class => Some(class),
+    }
 }
 
-/// Programs that run text they are given as code (`sh -c '…'`, `eval`,
-/// `perl -e`) or run another command (`xargs`): what they touch is not a
-/// word the path check can see, so a coding session does not lower them.
-const RUNS_TEXT: &[&str] = &[
-    "sh",
-    "bash",
-    "zsh",
-    "dash",
-    "ksh",
-    "fish",
-    "csh",
-    "tcsh",
-    "eval",
-    "source",
-    ".",
-    "xargs",
-    "perl",
-    "ruby",
-    "php",
-    "lua",
-    "osascript",
-    "deno",
-    "bun",
-    "su",
-    "doas",
+/// Programs a coding session is still asked about: what they do is beyond
+/// the session's folder and is not a path the target check can see —
+/// another user's rights, sending to the network, the system's packages,
+/// containers and services, other apps. Like the outward table, a tripwire
+/// for the plain forms, not a sandbox.
+const BEYOND_THE_FOLDER: &[&str] = &[
+    "sudo", "su", "doas",
+    "curl", "wget", "nc", "ncat", "netcat", "telnet", "ftp",
+    "brew", "port", "apt", "apt-get", "dnf", "yum", "pacman",
+    "docker", "podman",
+    "launchctl", "systemctl", "defaults", "osascript", "diskutil", "shutdown", "reboot", "halt",
 ];
 
-/// Whether `word`, the first word of a segment, is the program the segment
-/// runs: not a `NAME=value` word, not a wrapper that runs what follows
-/// (`env`, `nice`, `nohup`, …), and not a program that runs text as code.
-fn runs_a_program(word: &str) -> bool {
-    let name = word.rsplit('/').next().unwrap_or(word);
-    !name.is_empty()
-        && !is_assignment(word)
-        && !RUNS_WHAT_FOLLOWS.contains(&name)
-        && !RUNS_TEXT.contains(&name)
-}
+/// Programs that run code: a file of it is the folder's own code, but code
+/// given as text on the command line is not a word any check here reads.
+const RUNS_CODE: &[&str] = &[
+    "sh", "bash", "zsh", "dash", "ksh", "fish", "csh", "tcsh", "perl", "ruby", "php", "lua",
+    "python", "python3", "node", "deno", "bun",
+];
 
-/// A program the gate has a rule for: it is judged by that rule, in a
-/// coding session or not.
-fn is_known_program(name: &str) -> bool {
-    matches!(name, "env" | "cd") || known_program(name, &[]).is_some()
+/// Whether `program` is handed its code as text rather than as a file:
+/// `sh -c '…'`, `perl -e …`, `node -p …`, `git -c …`, `eval`, `source`,
+/// `xargs` (which runs another command). Such text could hold anything — an outward
+/// command the outward table cannot read — so the tables keep it.
+fn runs_given_text(program: &str, args: &[String]) -> bool {
+    if matches!(program, "eval" | "source" | "." | "xargs") {
+        return true;
+    }
+    // `git -c name=value …` sets configuration for one run, and some of it
+    // is a command git runs (`core.sshCommand`, an alias).
+    if program == "git" {
+        return args.iter().take_while(|a| a.starts_with('-')).any(|a| a == "-c");
+    }
+    if !RUNS_CODE.contains(&program) {
+        return false;
+    }
+    args.iter()
+        .take_while(|a| a.starts_with('-'))
+        .any(|a| match a.strip_prefix("--") {
+            Some(long) => matches!(long, "eval" | "print" | "command" | "exec"),
+            None => a.chars().any(|c| "ceErp".contains(c)),
+        })
 }
 
 /// The command's own words (dequoted), and whether output is redirected to
