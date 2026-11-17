@@ -263,6 +263,56 @@ mod tests {
         }
     }
 
+    /// The texts [`vectors_dump`] embeds: English and Chinese, short and
+    /// long, one past the 512-token window.
+    fn dump_texts() -> Vec<String> {
+        let long_en = "The memory store keeps who the user is, what they decided and why, \
+                       and what they tried that failed. "
+            .repeat(6);
+        let long_zh = "记忆库保存用户是谁、做过什么决定以及原因, 还有试过但失败的办法。".repeat(8);
+        let over_window =
+            "Every row is embedded once when it is written and again never. ".repeat(80);
+        vec![
+            "hello".into(),
+            "the user prefers concise replies without preamble".into(),
+            "用户喜欢简短的回答".into(),
+            "我的猫叫小满, 它三岁了".into(),
+            "WebRTC data channel closes after 30 seconds of inactivity".into(),
+            "混合 English 和中文 in one sentence 的句子".into(),
+            long_en,
+            long_zh,
+            over_window,
+        ]
+    }
+
+    /// Writes the embedder's vectors for [`dump_texts`] — passage and query
+    /// side one at a time, and the passages again as one batch — to the JSON
+    /// file `LINGGEN_EMBED_DUMP` names. Run on two builds and compare the
+    /// files to prove a library upgrade left the vector space as it was.
+    /// Ignored: it needs the Qwen3 model.
+    #[test]
+    #[ignore = "loads the 1.2GB Qwen3 model; writes vectors to $LINGGEN_EMBED_DUMP"]
+    fn vectors_dump() {
+        let out = std::env::var("LINGGEN_EMBED_DUMP").expect("LINGGEN_EMBED_DUMP");
+        let started = std::time::Instant::now();
+        let e = Embedder::new().expect("embedder");
+        let load_ms = started.elapsed().as_millis();
+        let texts = dump_texts();
+        let passage: Vec<_> = texts.iter().map(|t| e.embed_one(t).unwrap()).collect();
+        let query: Vec<_> = texts.iter().map(|t| e.embed_query(t).unwrap()).collect();
+        let batch = e.embed_many(&texts).unwrap();
+        let dump = serde_json::json!({
+            "load_ms": load_ms,
+            "embed_ms": started.elapsed().as_millis() - load_ms,
+            "texts": texts,
+            "passage": passage,
+            "query": query,
+            "batch": batch,
+        });
+        std::fs::write(&out, dump.to_string()).expect("write dump");
+        eprintln!("vectors_dump: load {load_ms} ms, wrote {out}");
+    }
+
     /// Empirical probe for the dedup threshold (Phase 1a, sub-step 4).
     /// Ignored by default — needs the ~1.2 GB Qwen3-Embedding-0.6B weights.
     /// Run with: `cargo test --lib embed::tests::dedup_threshold_probe

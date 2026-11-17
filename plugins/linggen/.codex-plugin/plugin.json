@@ -1,6 +1,6 @@
 {
   "name": "linggen",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "description": "Linggen for Codex — one local program, one address: durable cross-host memory (/mcp/memory) and browser control and logged-in X reads (/mcp), both from the Linggen engine. Installs Linggen (background download) on first session start.",
   "author": {
     "name": "Linggen",

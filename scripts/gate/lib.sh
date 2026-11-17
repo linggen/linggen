@@ -73,9 +73,21 @@ wait_url() { # url seconds
 
 PIDS=()
 
+# `python3 -m http.server` as it logs, minus the reverse lookup: its
+# server_bind calls getfqdn, which can hang (an mDNS stall) — then the
+# server is bound and never listens.
+MIRROR_PY='
+import functools, http.server as h, socketserver, sys
+class S(h.ThreadingHTTPServer):
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+S(("127.0.0.1", int(sys.argv[1])), functools.partial(h.SimpleHTTPRequestHandler, directory=sys.argv[2])).serve_forever()
+'
+
 start_mirror() { # dir → MIRROR_PORT
   MIRROR_PORT="$(free_port)"
-  python3 -m http.server "$MIRROR_PORT" --bind 127.0.0.1 --directory "$1" >"$RUN/mirror-http.log" 2>&1 &
+  python3 -c "$MIRROR_PY" "$MIRROR_PORT" "$1" >"$RUN/mirror-http.log" 2>&1 &
   PIDS+=($!)
   wait_url "http://127.0.0.1:$MIRROR_PORT/" 10 || die "mirror server" "did not start (see $RUN/mirror-http.log)"
 }

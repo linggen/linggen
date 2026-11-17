@@ -736,8 +736,12 @@ mod tests {
             "limit": 5
         });
         apply_dispatch_fixes(&mut args);
-        let obj = args.as_object().unwrap();
-        assert_eq!(obj.keys().collect::<Vec<_>>(), ["limit", "query"]);
+        // Key order is serde_json's: sorted, or as inserted where a crate in
+        // the build turns on `preserve_order` (the engine does; lancedb 0.41
+        // does too). Which keys are left is what counts.
+        let mut keys: Vec<_> = args.as_object().unwrap().keys().collect();
+        keys.sort();
+        assert_eq!(keys, ["limit", "query"]);
     }
 
     /// The episodic store is a separate table, so the tier is a routing
