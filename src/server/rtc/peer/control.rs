@@ -139,6 +139,11 @@ pub(super) fn handle_control_message(
         // A paired device saying a kind of thing happened, at a time. The
         // device is this channel's bound identity, never the payload.
         "fact" => {
+            // With one session a day on, another person's facts stamp
+            // nothing of the builder's.
+            if !shares_builders(state, user_ctx, actor) {
+                return None;
+            }
             let device = actor.lock_ok().as_ref().map(|a| a.device.clone());
             crate::server::facts::heard(state, device, &msg);
             None
@@ -214,6 +219,12 @@ pub(super) fn handle_control_message(
             let topic = msg.get("topic").and_then(|v| v.as_str()).unwrap_or("");
             let op = msg.get("op").and_then(|v| v.as_str()).unwrap_or("");
             if topic.is_empty() || op.is_empty() {
+                return None;
+            }
+            // With one session a day on, a topic is the builder's devices':
+            // another person's neither replaces a kept reading nor reaches
+            // the builder's surfaces.
+            if !shares_builders(state, user_ctx, actor) {
                 return None;
             }
             tracing::info!("[topic] {topic}/{op} published by a device");
@@ -304,6 +315,21 @@ pub(super) fn person_for(user_ctx: &crate::server::rtc::UserContext, device: Opt
         return if owner { user_ctx.user_id.clone() } else { no_one() };
     };
     crate::server::person::of_device(device)
+}
+
+/// Whether this peer is given what is the builder's alone
+/// (`day_session::shares_builders`): any peer with one session a day off;
+/// with it on, a peer whose person is the builder.
+fn shares_builders(
+    state: &Arc<ServerState>,
+    user_ctx: &crate::server::rtc::UserContext,
+    actor: &super::PeerActor,
+) -> bool {
+    if !state.manager.one_session_a_day() {
+        return true;
+    }
+    let device = actor.lock_ok().as_ref().map(|a| a.device.clone());
+    crate::server::day_session::is_builder(Some(&person_for(user_ctx, device.as_deref())))
 }
 
 /// The `http_request` answer for a request refused at the seam

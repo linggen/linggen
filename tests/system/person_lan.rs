@@ -290,3 +290,43 @@ async fn another_persons_phone_over_the_lan_is_refused_the_builders_day_by_every
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
+
+/// What a phone publishes is its person's: another person's phone, over the
+/// LAN, keeps no reading on this Mac and wakes nothing of the builder's — a
+/// topic it retains is not kept, its app moment is not taken up — while the
+/// builder's own publish is kept as before.
+#[tokio::test]
+async fn another_persons_phone_over_the_lan_changes_nothing_the_builder_reads() {
+    let setup = Setup {
+        lan: true,
+        ..Setup::default()
+    };
+    let (w, _) = day_world_at(12, setup).await;
+    pair_friends_phone(&w);
+    let lan = Lan::new(&w);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while lan.status("/api/pair/me", Some(TOKEN)).await != 200 {
+        assert!(std::time::Instant::now() < deadline, "the phone is not known");
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let mut wrong = Vec::new();
+    let publish = json!({"topic": "phone", "op": "status", "payload": {"who": "FRIEND"}, "retain": true});
+    let (status, _) = lan.send(reqwest::Method::POST, "/api/topic/publish", Some(publish)).await;
+    let latest = format!("{}/api/topic/latest?topic=phone&op=status", w.engine.base_url());
+    let kept = reqwest::get(&latest).await.expect("latest").text().await.unwrap_or_default();
+    if kept.contains("FRIEND") {
+        wrong.push(format!("the friend's reading was kept ({status}): {kept}"));
+    }
+    let moment = json!({"app": "dice", "text": "FRIEND-MOMENT", "asked": true});
+    let (status, _) = lan.send(reqwest::Method::POST, "/api/yinyue/event", Some(moment)).await;
+    if status != 409 {
+        wrong.push(format!("the friend's moment was taken up: {status}"));
+    }
+    let own = json!({"topic": "phone", "op": "status", "payload": {"who": "BUILDER"}, "retain": true});
+    w.api.post("/api/topic/publish", own).await;
+    let kept = w.api.get("/api/topic/latest?topic=phone&op=status").await;
+    if !kept.to_string().contains("BUILDER") {
+        wrong.push(format!("the builder's own reading was not kept: {kept}"));
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}

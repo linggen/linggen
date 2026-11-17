@@ -171,9 +171,14 @@ pub(crate) struct PublishBody {
     /// not connected when it is published.
     #[serde(default)]
     retain: bool,
+    /// The caller's person (the channel and the LAN gate set it).
+    #[serde(default)]
+    user_id: Option<String>,
 }
 
 /// POST /api/topic/publish — relay one control message to the user's devices.
+/// With one session a day on, another person's is taken and dropped: it
+/// neither replaces a kept reading nor reaches the builder's surfaces.
 pub(crate) async fn publish(
     State(state): State<Arc<ServerState>>,
     Json(body): Json<PublishBody>,
@@ -182,6 +187,12 @@ pub(crate) async fn publish(
         return (
             axum::http::StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": "topic and op are required" })),
+        );
+    }
+    if !crate::server::day_session::shares_builders(&state.manager, body.user_id.as_deref()).await {
+        return (
+            axum::http::StatusCode::OK,
+            Json(serde_json::json!({ "ok": true })),
         );
     }
     tracing::info!("[topic] {}/{} published over HTTP", body.topic, body.op);

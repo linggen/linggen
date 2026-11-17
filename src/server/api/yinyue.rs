@@ -353,17 +353,24 @@ pub(crate) struct PresenceBeat {
     /// one reading per surface. Old clients send none.
     #[serde(default)]
     pub surface: Option<String>,
+    /// The caller's person (the channel and the LAN gate set it).
+    #[serde(default)]
+    pub user_id: Option<String>,
 }
 
 /// POST /api/presence — a throttled liveness beat from a client surface. Carries
 /// only recency + focus + a typing flag (never keystroke content); feeds the
 /// `sense` tool so Yinyue can tell whether the user is here, reading, or away.
 /// Generic (not Yinyue-specific) but lives here as the companion is its only
-/// consumer today.
+/// consumer today. With one session a day on, it is the builder's presence:
+/// another person's beat is taken and dropped.
 pub(crate) async fn presence_handler(
     State(state): State<Arc<ServerState>>,
     Json(beat): Json<PresenceBeat>,
 ) -> impl IntoResponse {
+    if !crate::server::day_session::shares_builders(&state.manager, beat.user_id.as_deref()).await {
+        return (StatusCode::OK, "ok").into_response();
+    }
     let short = |v: &String| !v.is_empty() && v.len() <= 64;
     state.manager.update_presence(crate::engine::agent::Beat {
         surface: beat.surface.filter(short),

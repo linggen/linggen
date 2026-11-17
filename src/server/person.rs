@@ -34,6 +34,8 @@ pub(crate) const PERSON_BODIES: &[&str] = &[
     "/api/queue/steer",
     "/api/yinyue/chat",
     "/api/yinyue/event",
+    "/api/presence",
+    "/api/topic/publish",
 ];
 
 /// The names a request gives a session by: [`send_as`] looks for them in
