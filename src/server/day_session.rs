@@ -86,6 +86,11 @@ pub(crate) fn may_enter(session_id: &str, user_id: Option<&str>) -> bool {
     day_session::id_for(day, person.as_deref()) == session_id
 }
 
+/// Whether the person `user_id` names is the builder (no id is).
+pub(crate) fn is_builder(user_id: Option<&str>) -> bool {
+    person_of(user_id) == Whose::Builder
+}
+
 /// Whether session `session_id` is the builder's: their day, or — with the
 /// setting on — any session not made for another person. With the setting
 /// off every session is, as before days.

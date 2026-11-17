@@ -81,7 +81,7 @@ impl Lan {
 /// Another person's paired phone, over plain HTTP from the LAN, is given
 /// their own day and refused the builder's by its id: the day's lookup,
 /// a page's history of it, and a chat naming it — whatever `user_id` the
-/// request names.
+/// request names; nor is it given the builder's notes.
 #[tokio::test]
 async fn another_persons_phone_over_the_lan_gets_its_own_day_and_never_the_builders() {
     let setup = Setup {
@@ -125,6 +125,13 @@ async fn another_persons_phone_over_the_lan_gets_its_own_day_and_never_the_build
         wrong.push(format!("a chat naming the builder's day landed in it: {sent}"));
     } else if !landed.is_empty() {
         w.finish_run(&landed, Agent::Ling, mark).await;
+    }
+    let notes = w.home.linggen_home().join("notes");
+    std::fs::create_dir_all(&notes).unwrap();
+    let book = json!({"next": 2, "notes": [{"id": "n1", "text": "BUILDER-NOTE", "written_at": 0, "device": "mac"}]});
+    std::fs::write(notes.join("yinyue.json"), book.to_string()).unwrap();
+    if lan.get("/api/notes?agent=yinyue&user_id=__local__").await.to_string().contains("BUILDER-NOTE") {
+        wrong.push("the builder's notes were read".into());
     }
     let rows = serde_json::to_string(&w.raw_rows(&mine)).unwrap();
     if rows.contains("FRIEND-WORDS") {

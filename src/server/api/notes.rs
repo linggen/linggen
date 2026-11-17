@@ -2,7 +2,8 @@
 //! device (the phone shows them; `doc/one-ling-spec.md` § One session a
 //! day). Notes are written by their agent's own tools alone; nothing here
 //! changes them. A private app's turn writes none (`tools::exit_gate`),
-//! so nothing of its talk is in them.
+//! so nothing of its talk is in them. They are the builder's: another
+//! person is given none (the channel and the LAN gate name the person).
 
 use axum::extract::Query;
 use axum::Json;
@@ -11,13 +12,16 @@ use serde::Deserialize;
 #[derive(Deserialize)]
 pub(crate) struct NotesQuery {
     agent: String,
+    #[serde(default)]
+    user_id: Option<String>,
 }
 
 /// `{agent, notes: [{id, text, written_at, device, look_again_at?}]}`;
-/// an agent id that is not one gets no notes.
+/// an agent id that is not one, and a person other than the builder, get
+/// no notes.
 pub(crate) async fn list_notes(Query(q): Query<NotesQuery>) -> Json<serde_json::Value> {
     let agent = q.agent.trim();
-    if !is_agent_id(agent) {
+    if !is_agent_id(agent) || !crate::server::day_session::is_builder(q.user_id.as_deref()) {
         return Json(serde_json::json!({ "agent": agent, "notes": [] }));
     }
     let book = crate::notes::read(agent);

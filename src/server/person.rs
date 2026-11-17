@@ -4,13 +4,14 @@
 //! both send their requests through [`send_as`], with the person resolved
 //! from the device through memory's own seam ([`of_device`]).
 
-/// The ways into the day a page reads by URL: each is answered for the
-/// person on this channel, never for one the page names.
+/// The ways into the day a page reads by URL, and a person's notes: each is
+/// answered for the person on this channel, never for one the page names.
 pub(crate) const PERSON_PATHS: &[&str] = &[
     "/api/sessions/day",
     "/api/skill-sessions",
     "/api/skill-sessions/state",
     "/api/workspace/state",
+    "/api/notes",
 ];
 
 /// The ways into a session a page sends a body to: each body is sent as
