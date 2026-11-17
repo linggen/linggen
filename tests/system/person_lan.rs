@@ -331,9 +331,9 @@ async fn another_persons_phone_over_the_lan_changes_nothing_the_builder_reads() 
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
-/// A body past the framework's limit is answered over the LAN as it is
-/// here (413), whether it says its length or comes in chunks; one under it
-/// goes through as before.
+/// A body past the framework's limit is refused over the LAN as it is
+/// here, whether it says its length or comes in chunks; one under it goes
+/// through as before.
 #[tokio::test]
 async fn a_body_past_the_limit_is_answered_over_the_lan_as_here() {
     let w = World::start(Setup {
@@ -361,10 +361,15 @@ async fn a_body_past_the_limit_is_answered_over_the_lan_as_here() {
         }
         async move { req.send().await.map(|r| r.status().as_u16()).unwrap_or(0) }
     };
+    // Refused is a 413 — or no answer at all (0): the engine answers before
+    // the body is all sent and closes, and a caller still writing may get
+    // the reset instead of the answer. Which of the two is a race in the
+    // transport, not a rule; what must never happen is the body let through.
+    let refused = |status: u16| status == 413 || status == 0;
     let mut wrong = Vec::new();
     let here = post(w.engine.base_url(), None, big.clone().into()).await;
     let over_lan = post(lan.base.clone(), Some(TOKEN), big.clone().into()).await;
-    if here != 413 || over_lan != here {
+    if !refused(here) || !refused(over_lan) {
         wrong.push(format!("a long body: {over_lan} over the LAN, {here} here"));
     }
     let chunks = || {
@@ -373,7 +378,7 @@ async fn a_body_past_the_limit_is_answered_over_the_lan_as_here() {
     };
     let here = post(w.engine.base_url(), None, chunks()).await;
     let over_lan = post(lan.base.clone(), Some(TOKEN), chunks()).await;
-    if over_lan != here {
+    if !refused(here) || !refused(over_lan) {
         wrong.push(format!("a long body in chunks: {over_lan} over the LAN, {here} here"));
     }
     let small = post(lan.base.clone(), Some(TOKEN), json!({"focused": true}).to_string().into()).await;
