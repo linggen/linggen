@@ -313,7 +313,8 @@ pub(super) fn handle_control_message(
 }
 
 /// The standing a peer's request is judged by, resolved from the device it
-/// named (`person::standing_of`). A peer with no device named is its
+/// named (`person::standing_of`). A room consumer is its own account
+/// (`person::consumer`). A peer with no device named is its
 /// channel's user at admin when the tunnel knows it as the owner (this
 /// machine's page, the owner's account on the relay), else no one at chat
 /// (`person::unnamed`) — never the owner by default.
@@ -322,6 +323,9 @@ pub(super) fn standing_for(
     device: Option<&str>,
 ) -> crate::server::person::Standing {
     use crate::server::api::pair::{TUNNEL_LOCAL, TUNNEL_OWNER};
+    if user_ctx.is_consumer() {
+        return crate::server::person::consumer(&user_ctx.user_id);
+    }
     let Some(device) = device else {
         let owner = matches!(user_ctx.tunnel_mark(), TUNNEL_LOCAL | TUNNEL_OWNER);
         return crate::server::person::unnamed(owner, &user_ctx.user_id);

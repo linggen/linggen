@@ -74,16 +74,58 @@ pub(crate) fn own_chat(manager: &AgentManager, app: &str, user_id: Option<&str>)
 }
 
 /// Whether the person `user_id` names may read and write session
-/// `session_id`: a day is its own person's alone; any other session is
-/// left as it is.
+/// `session_id` — chat into it, read its state or images, steer, cancel or
+/// clear its runs, answer its questions. The builder enters every session.
+/// Anyone else: a day is its own person's alone, and any other session is
+/// the person it was made for (its meta's `user_id`, [`person_of`]); a
+/// session not kept yet is theirs to make. No one (a peer that named no
+/// device) enters no kept session. The one rule every check point asks.
 pub(crate) fn may_enter(session_id: &str, user_id: Option<&str>) -> bool {
-    let Some(day) = day_session::day_in(session_id) else {
+    let store = crate::state_fs::SessionStore::with_sessions_dir(crate::paths::global_sessions_dir());
+    may_enter_in(&store, session_id, user_id)
+}
+
+/// [`may_enter`] against the sessions kept in `store`.
+fn may_enter_in(store: &crate::state_fs::SessionStore, session_id: &str, user_id: Option<&str>) -> bool {
+    let asker = person_of(user_id);
+    if let Some(day) = day_session::day_in(session_id) {
+        let Some(person) = asker.day_key() else {
+            return false;
+        };
+        return day_session::id_for(day, person.as_deref()) == session_id;
+    }
+    if asker == Whose::Builder {
         return true;
-    };
-    let Some(person) = person_of(user_id).day_key() else {
-        return false;
-    };
-    day_session::id_for(day, person.as_deref()) == session_id
+    }
+    match kept_for(store, session_id) {
+        Kept::No => true,
+        Kept::For(whose) => asker != Whose::NoOne && whose == asker,
+        Kept::Unreadable => false,
+    }
+}
+
+/// Whether a session is kept, and for whom.
+enum Kept {
+    No,
+    For(Whose),
+    /// Named in a way no session is, or kept but not readable: no one's but
+    /// the builder's.
+    Unreadable,
+}
+
+fn kept_for(store: &crate::state_fs::SessionStore, session_id: &str) -> Kept {
+    let plain = !session_id.is_empty()
+        && session_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if !plain {
+        return Kept::Unreadable;
+    }
+    match store.get_session_meta(session_id) {
+        Ok(None) => Kept::No,
+        Ok(Some(meta)) => Kept::For(person_of(meta.user_id.as_deref())),
+        Err(_) => Kept::Unreadable,
+    }
 }
 
 /// Whether the person `user_id` names is the builder (no id is).
@@ -308,6 +350,37 @@ mod tests {
             !takes_new_chat(Some("cfo"), false, false, false),
             "a consumer"
         );
+    }
+
+    /// A session is its person's: another person may not name it — nor no
+    /// one, nor by an id no session has; a session not kept yet is theirs
+    /// to make; the builder enters every one.
+    #[test]
+    fn a_session_is_its_persons() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = crate::state_fs::SessionStore::with_sessions_dir(dir.path().into());
+        let made_for = |id: &str, user: Option<&str>| {
+            let mut meta = crate::server::claude::new_meta("t".into(), "/p".into(), None);
+            meta.id = id.into();
+            meta.user_id = user.map(str::to_string);
+            store.add_session(&meta).unwrap();
+        };
+        made_for("sess-1-builder", None);
+        made_for("sess-2-friend", Some("u-friend"));
+        made_for("sess-3-local", Some("__local__"));
+        let enters = |sid: &str, who: Option<&str>| may_enter_in(&store, sid, who);
+        assert!(!enters("sess-1-builder", Some("u-friend")));
+        assert!(!enters("sess-3-local", Some("u-friend")));
+        assert!(enters("sess-2-friend", Some("u-friend")));
+        assert!(!enters("sess-2-friend", Some("u-other")));
+        assert!(!enters("sess-2-friend", Some(crate::server::rtc::NO_ONE)));
+        assert!(enters("sess-9-new", Some("u-friend")), "a session not kept yet");
+        assert!(!enters("../sess-2-friend", Some("u-friend")));
+        assert!(!enters("", Some("u-friend")), "no session named: a run of no session");
+        for sid in ["sess-1-builder", "sess-2-friend", "sess-3-local", ""] {
+            assert!(enters(sid, None), "the builder: {sid}");
+            assert!(enters(sid, Some("__local__")), "this machine: {sid}");
+        }
     }
 
     #[test]

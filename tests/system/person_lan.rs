@@ -492,3 +492,55 @@ async fn a_phone_over_the_lan_stands_at_its_level() {
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
+
+/// A session is its person's (doc/permission-spec.md § A paired device's
+/// standing): another person's phone, even at edit, may not name the
+/// builder's ordinary session — chat into it, clear it, read its pictures
+/// or state — while a session it made itself is its own.
+#[tokio::test]
+async fn another_persons_phone_over_the_lan_may_not_name_the_builders_session() {
+    use reqwest::Method;
+    let w = World::start(Setup {
+        lan: true,
+        ..Setup::default()
+    })
+    .await;
+    pair_friends_phone_with(&w, json!({"contract": 1, "permission": "edit"}));
+    let lan = Lan::new(&w);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while lan.status("/api/pair/me", Some(TOKEN)).await != 200 {
+        assert!(std::time::Instant::now() < deadline, "the phone is not known");
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let made = w.api.post("/api/sessions", json!({"title": "Builder's"})).await;
+    let mine = made["id"].as_str().expect("the builder's session").to_string();
+    let enc = |s: &str| urlencoding::encode(s).into_owned();
+    let not_theirs = json!({"error": "that session is another person's"});
+    let mut wrong = Vec::new();
+    let mut probe = |what: &str, got: (u16, Value)| {
+        if got != (403, not_theirs.clone()) {
+            wrong.push(format!("{what}: {got:?}"));
+        }
+    };
+    let chat = json!({"session_id": mine, "project_root": w.work(), "message": "FRIEND-WORDS"});
+    probe("chat", lan.send(Method::POST, "/api/chat", Some(chat)).await);
+    probe("clear", lan.send(Method::POST, "/api/chat/clear", Some(json!({"session_id": mine}))).await);
+    let pic = format!("/api/sessions/images?session_id={}&name=x.png", enc(&mine));
+    probe("pictures", lan.send(Method::GET, &pic, None).await);
+    let state = format!("/api/skill-sessions/state?skill=dice&session_id={}", enc(&mine));
+    probe("state", lan.send(Method::GET, &state, None).await);
+    let steer = json!({"session_id": mine, "agent_id": "ling", "id": "q-1"});
+    probe("remove a queued message", lan.send(Method::POST, "/api/queue/remove", Some(steer)).await);
+
+    let own = lan.send(Method::POST, "/api/sessions", Some(json!({"title": "Friend's"}))).await;
+    let theirs = own.1["id"].as_str().unwrap_or_default().to_string();
+    let cleared = lan.send(Method::POST, "/api/chat/clear", Some(json!({"session_id": theirs}))).await;
+    if theirs.is_empty() || cleared.0 == 403 {
+        wrong.push(format!("the friend's own session: {own:?} then {cleared:?}"));
+    }
+    let rows = serde_json::to_string(&w.raw_rows(&mine)).unwrap();
+    if rows.contains("FRIEND-WORDS") {
+        wrong.push("the friend's words are in the builder's session".into());
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}

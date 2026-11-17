@@ -3,8 +3,9 @@
 //! request is sent as its person. The channel's tunnel and the LAN gate
 //! both send their requests through [`send_as`], with the person resolved
 //! from the device through memory's own seam ([`of_device`]). It is the one
-//! seam a session id from off this machine passes: a request naming a day
-//! its person may not enter (`session_id` or `session`, in the query or at
+//! seam a session id from off this machine passes: a request naming a
+//! session its person may not enter (`day_session::may_enter`: another
+//! person's day or session; `session_id` or `session`, in the query or at
 //! the top of a JSON body, any method) is refused there.
 
 /// The ways into the day a page reads by URL, and a person's notes: each is
@@ -44,22 +45,22 @@ pub(crate) const PERSON_BODIES: &[&str] = &[
 /// the seam.
 pub(crate) const SESSION_KEYS: &[&str] = &["session_id", "session"];
 
-/// A request refused at the seam: it names `0`, a day its person may not
-/// enter.
+/// A request refused at the seam: it names `0`, a session its person may
+/// not enter.
 #[derive(Debug, PartialEq)]
 pub(crate) struct NotTheirs(pub(crate) String);
 
 impl NotTheirs {
     /// The words a refused caller is answered with.
     pub(crate) fn reason(&self) -> &'static str {
-        "that day is another person's"
+        "that session is another person's"
     }
 }
 
 /// Why the seam refused a request.
 #[derive(Debug, PartialEq)]
 pub(crate) enum Refused {
-    /// It names a day its person may not enter.
+    /// It names a session its person may not enter.
     NotTheirs(NotTheirs),
     /// Its route's class (`routes::classes`) is above the caller's level.
     BeyondLevel {
@@ -146,7 +147,7 @@ fn names_user_id(pair: &str) -> bool {
 }
 
 /// A request into a session sent as `person`, of `user_type`: refused
-/// ([`NotTheirs`]) when it names a day that person may not enter; else a
+/// ([`NotTheirs`]) when it names a session that person may not enter; else a
 /// way into the day by URL asks for that person, a way in by body (any
 /// method but GET) carries them, and any `user_id` the caller put in a
 /// body is theirs. Returns the URL to send.
@@ -194,7 +195,7 @@ use crate::engine::permission::PermissionMode;
 /// Who a request from off this machine is for, and the level it stands at:
 /// the one answer every check point takes (a request, a frame, the media
 /// channel, a session stream). Made only here ([`standing_of`],
-/// [`unnamed`]).
+/// [`consumer`], [`unnamed`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Standing {
     person: String,
@@ -271,6 +272,15 @@ fn most_for_contract(device: &crate::state_fs::devices::PairedDevice) -> Permiss
         return PermissionMode::Chat;
     }
     PermissionMode::Admin
+}
+
+/// The standing of a proxy room's consumer: its own account, at chat (its
+/// room judges what it reaches, `PeerLoop::may_make_request`).
+pub(crate) fn consumer(user_id: &str) -> Standing {
+    Standing {
+        person: user_id.to_string(),
+        level: PermissionMode::Chat,
+    }
 }
 
 /// The standing of a peer that has named no device: its channel's user at
