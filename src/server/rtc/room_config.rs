@@ -4,6 +4,7 @@
 //! This is separate from the room metadata on linggen.dev (which stores name, type, etc.)
 //! because the model list is local to each instance.
 
+use crate::util::default_true;
 use serde::{Deserialize, Serialize};
 
 /// Default allowed tools for consumers — safe, no filesystem access.
@@ -47,10 +48,6 @@ pub struct RoomConfig {
     /// None = unlimited (still subject to room budget).
     #[serde(default)]
     pub token_budget_consumer_daily: Option<i64>,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 impl Default for RoomConfig {

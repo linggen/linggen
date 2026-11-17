@@ -3,6 +3,8 @@
 //! Chinese line is "one word". Here a line with CJK in it is measured by
 //! its characters instead.
 
+use crate::util::is_cjk;
+
 /// A suggestion longer than this is not something a person types.
 const MAX_WORDS: usize = 12;
 /// A line this long is a paragraph, whatever its words.
@@ -193,19 +195,6 @@ fn multiple_sentences(l: &Line) -> bool {
 fn claude_voice(l: &Line) -> bool {
     let let_me = l.text.starts_with("让我") && !l.text.starts_with("让我们");
     let_me || starts_with_any(&l.lower, VOICE_OPENERS)
-}
-
-/// Han, kana and Hangul: scripts written without spaces between words.
-fn is_cjk(c: char) -> bool {
-    matches!(c,
-        '\u{3040}'..='\u{30FF}'   // Hiragana, Katakana
-        | '\u{3400}'..='\u{4DBF}' // CJK Extension A
-        | '\u{4E00}'..='\u{9FFF}' // CJK Unified Ideographs
-        | '\u{F900}'..='\u{FAFF}' // CJK Compatibility Ideographs
-        | '\u{1100}'..='\u{11FF}' // Hangul Jamo
-        | '\u{AC00}'..='\u{D7AF}' // Hangul Syllables
-        | '\u{20000}'..='\u{2A6DF}' // CJK Extension B
-    )
 }
 
 #[cfg(test)]

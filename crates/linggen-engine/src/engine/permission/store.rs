@@ -1,13 +1,10 @@
 use super::model::{expand_tilde, PathMode, PermissionMode};
+use crate::util::default_true;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::warn;
-
-fn default_true() -> bool {
-    true
-}
 
 /// Per-session permission state, persisted to `permission.json`, for one
 /// place of the session (`turn_place`): its own place's grants are the

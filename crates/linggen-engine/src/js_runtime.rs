@@ -269,18 +269,7 @@ fn unpack(zip: &[u8], entry: &str, to: &Path) -> Result<()> {
     let mut out = std::fs::File::create(to)?;
     std::io::copy(&mut file, &mut out)?;
     out.sync_all()?;
-    set_executable(to)
-}
-
-#[cfg(unix)]
-fn set_executable(path: &Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn set_executable(_path: &Path) -> Result<()> {
+    crate::util::set_executable(to)?;
     Ok(())
 }
 

@@ -1,3 +1,55 @@
+#[cfg(unix)]
+pub fn set_executable(path: &std::path::Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+}
+
+#[cfg(not(unix))]
+pub fn set_executable(_path: &std::path::Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
+pub fn kill_group(pid: Option<u32>, signal: i32) {
+    if let Some(pid) = pid {
+        unsafe { libc::killpg(pid as i32, signal); }
+    }
+}
+
+#[cfg(not(unix))]
+pub fn kill_group(_pid: Option<u32>, _signal: i32) {}
+
+pub fn default_true() -> bool {
+    true
+}
+
+/// Han, kana and Hangul: scripts written without spaces between words.
+pub fn is_cjk(c: char) -> bool {
+    matches!(c,
+        '\u{3040}'..='\u{30FF}'   // Hiragana, Katakana
+        | '\u{3400}'..='\u{4DBF}' // CJK Extension A
+        | '\u{4E00}'..='\u{9FFF}' // CJK Unified Ideographs
+        | '\u{F900}'..='\u{FAFF}' // CJK Compatibility Ideographs
+        | '\u{1100}'..='\u{11FF}' // Hangul Jamo
+        | '\u{AC00}'..='\u{D7AF}' // Hangul Syllables
+        | '\u{20000}'..='\u{2A6DF}' // CJK Extension B
+    )
+}
+
+#[cfg(test)]
+mod cjk_tests {
+    #[test]
+    fn scripts_and_non_cjk() {
+        for (c, expected) in [
+            ('中', true), ('あ', true), ('ア', true), ('한', true),
+            ('ᄀ', true), ('𠀀', true), ('a', false), ('é', false),
+            ('1', false), (' ', false), ('😀', false),
+        ] {
+            assert_eq!(super::is_cjk(c), expected, "{c:?}");
+        }
+    }
+}
+
 pub fn now_ts_secs() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

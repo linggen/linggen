@@ -495,19 +495,6 @@ fn default_bash_timeout() -> u64 {
     30_000
 }
 
-/// Kill a timed-out command's whole process group (it was spawned leading one).
-fn kill_group(pgid: Option<u32>) {
-    #[cfg(unix)]
-    if let Some(pgid) = pgid {
-        // SAFETY: a signal to a group this server created; no memory is touched.
-        unsafe {
-            libc::kill(-(pgid as i32), libc::SIGKILL);
-        }
-    }
-    #[cfg(not(unix))]
-    let _ = pgid;
-}
-
 /// Where a `!` command starts: where the last one in this session ended,
 /// else the session's own folder, else the request's, else the default
 /// workspace. The session's folder beats the request's — a surface's idea of
@@ -602,7 +589,7 @@ pub(crate) async fn run_bash_api(
             Ok(Err(e)) => (-1, String::new(), format!("Command error: {e}")),
             Err(_) => {
                 // The dropped future already killed `sh`; take its group too.
-                kill_group(pgid);
+                crate::util::kill_group(pgid, libc::SIGKILL);
                 (-1, String::new(), "Command timed out".to_string())
             }
         };

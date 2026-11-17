@@ -1,3 +1,4 @@
+use crate::util::default_true;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -432,10 +433,6 @@ pub struct RoutingConfig {
     /// on this machine (localhost, loopback) is exempt.
     #[serde(default)]
     pub first_event_timeout_secs: Option<u64>,
-}
-
-pub(crate) fn default_true() -> bool {
-    true
 }
 
 impl Config {

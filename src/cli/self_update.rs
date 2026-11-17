@@ -11,6 +11,7 @@
 //! only if `ling --version` answers in time — else the previous one is put
 //! back. `--rollback` swaps `ling` and `ling.prev` by hand.
 
+use crate::util::set_executable;
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -370,18 +371,6 @@ fn stage_and_swap(
     let prev = prev_location(dir, binary_name);
     commit_with_probe(&extracted, &target, &prev, binary_name, timeout)?;
     Ok(target)
-}
-
-#[cfg(unix)]
-fn set_executable(path: &Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn set_executable(_path: &Path) -> Result<()> {
-    Ok(())
 }
 
 /// Move `target` aside to `prev`, rename `new` into place, and keep it only

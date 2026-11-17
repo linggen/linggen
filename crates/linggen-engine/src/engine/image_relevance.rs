@@ -4,6 +4,8 @@
 //! A query in a script without spaces between words (Chinese, Japanese,
 //! Korean) is not split into words here, so it is not filtered at all.
 
+use crate::util::is_cjk;
+
 /// Words that carry no subject: English function words and search filler.
 const STOP: &[&str] = &[
     "a",
@@ -166,11 +168,6 @@ fn url_path(url: &str) -> String {
     url::Url::parse(url)
         .map(|u| u.path().to_string())
         .unwrap_or_default()
-}
-
-fn is_cjk(c: char) -> bool {
-    matches!(c as u32,
-        0x3040..=0x30FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF)
 }
 
 #[cfg(test)]

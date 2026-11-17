@@ -5,6 +5,7 @@ use crate::server::chat::helpers::{
     emit_queue_updated, persist_and_emit_with_images, queue_key, queue_preview, take_turn_place,
 };
 use crate::server::{AgentStatusKind, QueuedChatItem, ServerEvent, ServerState};
+use crate::util::is_cjk;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
@@ -56,15 +57,6 @@ fn opens_with_name(rest: &str, name: &str) -> bool {
         || MENTION_ENDS.contains(&next)
         || is_cjk(next)
         || name.chars().last().is_some_and(is_cjk)
-}
-
-/// CJK script: a name in it needs no space before the words.
-fn is_cjk(c: char) -> bool {
-    matches!(c,
-        '\u{3040}'..='\u{30ff}'
-        | '\u{3400}'..='\u{9fff}'
-        | '\u{f900}'..='\u{faff}'
-        | '\u{ac00}'..='\u{d7af}')
 }
 
 /// Lead-in filler the auto-titler strips before picking words. Matched

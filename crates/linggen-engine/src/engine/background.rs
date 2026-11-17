@@ -5,6 +5,7 @@
 //! gives the agent that started it a turn saying so.
 use crate::engine::agent::{AgentEvent, AgentManager};
 use crate::engine::events::BackgroundTask;
+use crate::util::kill_group;
 use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -459,18 +460,6 @@ pub async fn end_owned(manager: &AgentManager, run: &str) {
         }
     }
 }
-
-#[cfg(unix)]
-fn kill_group(pid: Option<u32>, signal: i32) {
-    if let Some(pid) = pid {
-        unsafe {
-            libc::killpg(pid as i32, signal);
-        }
-    }
-}
-
-#[cfg(not(unix))]
-fn kill_group(_pid: Option<u32>, _signal: i32) {}
 
 /// The place of the turn running in `session` as a task starts in it: the
 /// task's end is told there (`server::tasks`).

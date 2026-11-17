@@ -25,6 +25,7 @@
 //! the engine. A stand-in that differs from what this engine writes (an older
 //! version, another port) is rewritten; any other script is left.
 
+use crate::util::set_executable;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -282,17 +283,6 @@ fn write_standin(path: &Path, engine: &Path, version: &str, port: u16) -> std::i
     }
     set_executable(&tmp)?;
     std::fs::rename(&tmp, path)
-}
-
-#[cfg(unix)]
-fn set_executable(path: &Path) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
-}
-
-#[cfg(not(unix))]
-fn set_executable(_path: &Path) -> std::io::Result<()> {
-    Ok(())
 }
 
 /// A value for the script, single-quoted for sh.

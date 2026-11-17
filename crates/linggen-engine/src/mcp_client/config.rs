@@ -56,7 +56,7 @@ pub struct McpServerConfig {
     /// losing how it was configured. This, not a permission rule, is how you
     /// turn a server off: `gated` below decides whether its tools *prompt*,
     /// never whether they exist.
-    #[serde(default = "crate::config::default_true")]
+    #[serde(default = "crate::util::default_true")]
     pub enabled: bool,
 
     /// Whether this server's tools go through the permission gate.
@@ -73,7 +73,7 @@ pub struct McpServerConfig {
     /// permission code needs to know ling-mem's name. If gating memory were a
     /// hardcoded exemption instead of a declared one it would be invisible;
     /// as a field it round-trips through the config, the API, and the tab.
-    #[serde(default = "crate::config::default_true")]
+    #[serde(default = "crate::util::default_true")]
     pub gated: bool,
 }
 

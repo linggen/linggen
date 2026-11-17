@@ -1,3 +1,4 @@
+use crate::util::default_true;
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -164,10 +165,6 @@ pub struct SessionMeta {
     /// `doc/skill-spec.md` § Session parameters.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub params: std::collections::BTreeMap<String, String>,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 /// One agent at a session's table.
