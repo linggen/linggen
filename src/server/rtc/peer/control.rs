@@ -104,7 +104,6 @@ pub(super) fn handle_control_message(
             if resolved.is_none() && !token.is_empty() {
                 tracing::warn!("[rtc] identify with an unknown device token — staying anonymous");
             }
-            let was_identified = actor.lock_ok().is_some();
             let now_identified = resolved.is_some();
             // This is the moment the Mac learns a device is on the other end,
             // on the LAN as over the relay — so it is where perception learns
@@ -114,18 +113,14 @@ pub(super) fn handle_control_message(
             }
             *actor.lock_ok() = resolved;
 
-            // On the relay the Mac already knew this was a paired device; on
-            // the LAN it could not, and greeted the phone as the owner. Now it
-            // knows, so it says so — the peer is told rather than left holding
-            // a label the rest of this connection contradicts.
-            if now_identified != was_identified
-                && user_ctx.effective_kind(now_identified)
-                    != user_ctx.effective_kind(was_identified)
-            {
-                if let Some(mut ch) = rtc.channel(channel_id) {
-                    let msg = super::user_info_msg(user_ctx, now_identified);
-                    let _ = ch.write(false, msg.to_string().as_bytes());
-                }
+            // Every identify is answered with the greeting: what the peer is
+            // now (on the LAN the Mac greeted a phone as the owner until it
+            // knew), and the level its device stands at.
+            let device = actor.lock_ok().as_ref().map(|a| a.device.clone());
+            let level = standing_for(user_ctx, device.as_deref()).level();
+            if let Some(mut ch) = rtc.channel(channel_id) {
+                let msg = super::user_info_msg(user_ctx, now_identified, level);
+                let _ = ch.write(false, msg.to_string().as_bytes());
             }
             None
         }

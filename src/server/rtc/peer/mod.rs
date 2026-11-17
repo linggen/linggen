@@ -64,17 +64,24 @@ fn exit_on_control_close() -> Flow {
 /// written by an anonymous peer carry no `by` — unattributed beats wrong.
 pub(super) type PeerActor = Arc<std::sync::Mutex<Option<crate::server::api::pair::Actor>>>;
 
-/// The `user_info` frame: who we think this peer is, and what its room allows.
+/// The `user_info` frame: who we think this peer is, the level it stands at
+/// (`person::standing_of`), and what its room allows.
 ///
 /// Built in one place because it is sent twice — once when the control channel
-/// opens, and again if `identify` changes the answer. Two builders would be two
-/// chances to describe the same peer differently.
-pub(super) fn user_info_msg(user_ctx: &super::UserContext, identified: bool) -> serde_json::Value {
+/// opens, and again after every `identify`, which is how a device learns its
+/// level. Two builders would be two chances to describe the same peer
+/// differently.
+pub(super) fn user_info_msg(
+    user_ctx: &super::UserContext,
+    identified: bool,
+    level: crate::engine::permission::PermissionMode,
+) -> serde_json::Value {
     let user = serde_json::json!({
         "user_id": user_ctx.user_id,
         "user_type": user_ctx.user_type_for(identified),
         "user_name": user_ctx.user_name,
         "avatar_url": user_ctx.avatar_url,
+        "level": level,
     });
     let data = if user_ctx.is_consumer() {
         let room_cfg = super::room_config::load_room_config();
@@ -716,11 +723,11 @@ impl PeerLoop {
                 self.born.elapsed().as_millis()
             );
             // Send connection metadata: user info + room info.
-            // A LAN peer has not identified yet, so this says
-            // "owner" for a phone; `identify` corrects it with
-            // a second one of these rather than leaving the
-            // greeting to disagree with everything after it.
-            let info_msg = user_info_msg(&self.user_ctx, false);
+            // A peer that has not identified yet is greeted as
+            // what the channel knows; `identify` answers with a
+            // second one of these, with the device's level.
+            let level = self.standing().level();
+            let info_msg = user_info_msg(&self.user_ctx, false, level);
             self.queue_text(id, info_msg.to_string());
             // Privacy warning for consumers
             if self.user_ctx.is_consumer() {
@@ -1318,5 +1325,19 @@ mod tests {
             stall_deadline(&mut since, t0 + SPIN_LIMIT + Duration::from_millis(1)),
             Some(t0)
         );
+    }
+}
+
+#[cfg(test)]
+mod greeting_tests {
+    use crate::engine::permission::PermissionMode;
+
+    /// The greeting says the level the peer stands at.
+    #[test]
+    fn the_greeting_says_the_level() {
+        let msg = super::user_info_msg(&crate::server::rtc::UserContext::paired(), true, PermissionMode::Read);
+        assert_eq!(msg["kind"], "user_info");
+        assert_eq!(msg["data"]["user"]["level"], "read");
+        assert_eq!(msg["data"]["user"]["user_type"], "paired");
     }
 }

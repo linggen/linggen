@@ -29,6 +29,10 @@ pub(crate) async fn get_pair_info(
                 "kind": d.kind(),
                 "settings": d.settings,
                 "account": d.account,
+                // What it stands at: the owner's device is admin; any other
+                // the level set here (read when none is).
+                "level": crate::server::person::standing_of(&d.id).level(),
+                "verified": d.verified_claim().is_some(),
                 // Who to call them on screen. `account` above is the truth and
                 // stays absent for a signed-out phone; this is what to print.
                 "person": person_label(&d.account),
@@ -246,6 +250,53 @@ pub(crate) async fn delete_pair_device(
     Json(serde_json::json!({ "status": "ok" })).into_response()
 }
 
+#[derive(Deserialize)]
+pub(crate) struct LevelUpdate {
+    permission: crate::engine::permission::PermissionMode,
+}
+
+/// PUT /api/pair/devices/{id}/permission — the level a device that is not
+/// the owner's stands at (`server::person::standing_of`): chat, read or edit.
+/// Set only by someone at this Mac (`is_at_this_mac`): never from a paired
+/// device, nor from another machine. The owner's own device stands at admin
+/// whatever is set.
+pub(crate) async fn set_device_level(
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    headers: axum::http::HeaderMap,
+    Path(id): Path<String>,
+    Json(req): Json<LevelUpdate>,
+) -> axum::response::Response {
+    if !crate::server::api::ling_mem_connect::is_at_this_mac(peer, &headers) {
+        return err(StatusCode::FORBIDDEN, "only at this Mac");
+    }
+    let found = modify_devices(|devices| apply_level(devices, &id, req.permission));
+    match found {
+        Ok(Ok(())) => {}
+        Ok(Err(why)) => return err(StatusCode::BAD_REQUEST, why),
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, format!("persist: {e}")),
+    }
+    tracing::info!("[pair] device {id} set to {}", req.permission);
+    Json(serde_json::json!({ "status": "ok", "permission": req.permission })).into_response()
+}
+
+/// Set device `id`'s level: one a device that is not the owner's may stand
+/// at (up to `person::MOST_FOR_ANOTHER`).
+fn apply_level(
+    devices: &mut [PairedDevice],
+    id: &str,
+    level: crate::engine::permission::PermissionMode,
+) -> Result<(), &'static str> {
+    if level > crate::server::person::MOST_FOR_ANOTHER {
+        return Err("admin is the owner's own; set chat, read or edit");
+    }
+    let device = devices
+        .iter_mut()
+        .find(|d| d.id == id)
+        .ok_or("no such device")?;
+    device.permission = Some(level);
+    Ok(())
+}
+
 /// Whether the caller may revoke device `id`: at admin any device; below
 /// it, only the device asking.
 fn may_revoke(headers: &axum::http::HeaderMap, id: &str) -> bool {
@@ -280,6 +331,63 @@ mod tests {
         assert_eq!(got[1]["kind"], "byok");
         assert_eq!(got[1]["model"], "claude-next");
         assert_eq!(got[2], serde_json::json!({"id": "gpt-6-luna", "kind": "oauth"}));
+    }
+
+    /// The level is set only at this Mac: a paired device's request through
+    /// the tunnel, a relay peer's, and another machine's are refused.
+    #[tokio::test]
+    async fn a_level_is_set_only_at_this_mac() {
+        use crate::engine::permission::PermissionMode;
+        use axum::extract::ConnectInfo;
+        let h = |pairs: &[(&'static str, &'static str)]| {
+            let mut m = axum::http::HeaderMap::new();
+            for (k, v) in pairs {
+                m.insert(*k, v.parse().unwrap());
+            }
+            m
+        };
+        let lo: std::net::SocketAddr = "127.0.0.1:5000".parse().unwrap();
+        let lan: std::net::SocketAddr = "192.168.1.5:5000".parse().unwrap();
+        let tries = [
+            (
+                lo,
+                h(&[
+                    ("host", "127.0.0.1:9527"),
+                    (ACTOR_DEVICE_HEADER, "phone-1"),
+                    (TUNNEL_HEADER, "1"),
+                ]),
+            ),
+            (
+                lo,
+                h(&[("host", "127.0.0.1:9527"), (TUNNEL_HEADER, TUNNEL_OWNER)]),
+            ),
+            (lan, h(&[("host", "192.168.1.2:9527")])),
+        ];
+        for (peer, headers) in tries {
+            let body = Json(LevelUpdate {
+                permission: PermissionMode::Edit,
+            });
+            let res =
+                set_device_level(ConnectInfo(peer), headers, Path("phone-1".into()), body).await;
+            assert_eq!(res.status(), StatusCode::FORBIDDEN);
+        }
+    }
+
+    /// A device is raised to edit or lowered to chat; admin is refused, and
+    /// so is a device that is not there.
+    #[test]
+    fn a_level_up_to_edit_is_set() {
+        use crate::engine::permission::PermissionMode;
+        let mut rows = vec![PairedDevice {
+            id: "p".into(),
+            ..Default::default()
+        }];
+        assert_eq!(apply_level(&mut rows, "p", PermissionMode::Edit), Ok(()));
+        assert_eq!(rows[0].permission, Some(PermissionMode::Edit));
+        assert_eq!(apply_level(&mut rows, "p", PermissionMode::Chat), Ok(()));
+        assert!(apply_level(&mut rows, "p", PermissionMode::Admin).is_err());
+        assert_eq!(rows[0].permission, Some(PermissionMode::Chat));
+        assert!(apply_level(&mut rows, "q", PermissionMode::Read).is_err());
     }
 
     /// Below admin a device revokes itself and no other; this machine and

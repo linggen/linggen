@@ -195,6 +195,7 @@ pub(crate) const CLASSES: &[(&str, &str, RouteClass)] = &[
     ("GET", "/api/pair/info", At(Admin)),
     ("GET", "/api/pair/qr", At(Admin)),
     ("PATCH", "/api/pair/devices/{id}", At(Admin)),
+    ("PUT", "/api/pair/devices/{id}/permission", At(Admin)),
     ("GET", "/pair", At(Admin)),
     ("GET", "/api/ling-mem/connect/pending", At(Admin)),
     ("POST", "/api/ling-mem/connect/{id}/{verdict}", At(Admin)),
