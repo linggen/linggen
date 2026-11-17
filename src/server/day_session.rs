@@ -202,7 +202,7 @@ pub(crate) fn takes_new_chat(
 /// Whether `meta` is a session an app keeps apart from the day's — bound
 /// to its own values, or made with tools withheld.
 pub(crate) fn kept_apart(meta: &SessionMeta) -> bool {
-    !meta.params.is_empty() || !meta.withheld_tools.is_empty()
+    crate::engine::session_spec::is_kept_apart(meta)
 }
 
 /// Seat Yinyue in the day's session: she is seated when she first speaks

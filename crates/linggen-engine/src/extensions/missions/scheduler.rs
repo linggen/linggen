@@ -353,7 +353,7 @@ pub fn mission_kickoff_messages(
 
 /// A mission run's session: it works in the mission's `cwd:` (else its
 /// project, else where a plain chat does), on the mission's agent and model.
-fn mission_session_meta(
+pub(crate) fn mission_session_meta(
     mission: &Mission,
     session_id: &str,
 ) -> crate::state_fs::sessions::SessionMeta {

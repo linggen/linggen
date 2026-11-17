@@ -28,40 +28,7 @@ use std::sync::Arc;
 use crate::engine::permission::PermissionMode;
 use crate::server::ServerState;
 
-/// The delegate's tool allowlist. Read / search / memory / browser only —
-/// no Bash, Write, Edit, or Task, so the read-only boundary can't be worked
-/// around (e.g. `echo > file` via Bash). Browser mutations still pass the
-/// extension's own permission prompt. Widening to write is a future opt-in.
-const AGENT_RUN_TOOLS: &[&str] = &[
-    "Read",
-    "Grep",
-    "Glob",
-    "WebSearch",
-    "ImageSearch",
-    "VideoSearch",
-    "WebFetch",
-    // The memory server by name, expanded to the tools it advertises — so
-    // this list doesn't have to be re-edited when ling-mem gains a verb.
-    "mcp__memory",
-    "Skill",
-    // Its checklist shows in the session, as in any chat (it writes nothing).
-    "UpdatePlan",
-    // Pictures, as in any chat; ChatGPT's lane when the caller asks for it.
-    "GenerateImage",
-    "Browser_navigate",
-    "Browser_readPage",
-    "Browser_screenshot",
-    "Browser_click",
-    "Browser_type",
-    "Browser_key",
-    "Browser_scroll",
-    "Browser_wait",
-    "Browser_readConsole",
-    "Browser_tabs",
-];
-
-/// What a write run adds to the read-only toolset.
-const WRITE_TOOLS: &[&str] = &["Bash", "Write", "Edit"];
+use crate::engine::session_spec::delegate::{tool_scope as delegate_tool_scope, TOOLS_PARAM};
 
 /// The folder a write run may change: an existing directory, absolute, and
 /// never `/` or the home folder itself — a task gets a checkout, not a disk.
@@ -401,9 +368,6 @@ const WAIT_SECS: u64 = 45;
 
 const NO_REPLY: &str = "(the agent finished without a textual reply)";
 
-/// The session param that keeps a delegate's toolset: `read` or `write`.
-const TOOLS_PARAM: &str = "agent_run_tools";
-
 /// Wait a while for the run; hand back its session sooner when it asks the
 /// caller for a permission (the caller can't answer while blocked here).
 async fn await_run(
@@ -427,18 +391,6 @@ async fn await_run(
             },
         }
     }
-}
-
-/// The delegate's toolset: read / search / memory / browser, plus Bash,
-/// Write and Edit for a write run.
-fn delegate_tool_scope(write: bool) -> Option<std::collections::HashSet<String>> {
-    let extra: &[&str] = if write { WRITE_TOOLS } else { &[] };
-    let declared: Vec<String> = AGENT_RUN_TOOLS
-        .iter()
-        .chain(extra)
-        .map(|s| s.to_string())
-        .collect();
-    crate::engine::tool_scope::compute_tool_scope(&declared)
 }
 
 /// A continued session keeps the toolset it was started with — its grants
@@ -650,7 +602,7 @@ fn delegate_meta(
     // `keep_delegate_tools`).
     meta.params.insert(
         TOOLS_PARAM.into(),
-        if write { "write" } else { "read" }.into(),
+        crate::engine::session_spec::delegate::toolset_param(write).into(),
     );
     meta.set_member_model(agent_id, model);
     meta
@@ -1980,6 +1932,21 @@ mod permit_tests {
         assert_eq!(meta(Some(true)).model_fallback, Some(true));
         assert!(!meta(None).allows_model_fallback());
         assert!(meta(Some(true)).allows_model_fallback());
+    }
+
+    /// The meta `run` keeps is a delegate's: its spec keeps its toolset and
+    /// answers to its caller (`engine::session_spec`).
+    #[test]
+    fn a_delegated_session_is_the_delegate_preset() {
+        use crate::engine::session_spec::{Permission, Preset, SessionSpec, Tools};
+        for write in [false, true] {
+            let meta = delegate_meta("s", "t", "ling", None, "claude-code", write, None);
+            let spec = SessionSpec::of(&meta);
+            assert_eq!(spec.preset, Preset::Delegate);
+            assert_eq!(spec.tools, Tools::Delegate { write });
+            assert_eq!(spec.permission, Permission::AskCaller);
+            assert_eq!(spec.model_fallback, Some(false));
+        }
     }
 
     #[test]

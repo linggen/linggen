@@ -4,7 +4,7 @@
 //! No scattered if/else — the profile is the single decision point.
 
 /// Which prompt sections to include for this session.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PromptProfile {
     /// Environment block: ws_root, shell, platform.
     pub include_environment: bool,

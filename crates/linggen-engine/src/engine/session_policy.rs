@@ -26,7 +26,7 @@ pub struct ConsumerCeiling {
 /// Built from user type via `from_user_type()`, applied to the engine
 /// via `apply()`. Skill checks use `is_skill_allowed()`. Tool checks
 /// go through `EngineConfig::is_tool_allowed()` (the engine enforcement layer).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SessionPolicy {
     /// Tools the session is allowed to use. None = unrestricted (owner).
     pub allowed_tools: Option<HashSet<String>>,

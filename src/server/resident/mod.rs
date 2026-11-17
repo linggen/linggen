@@ -66,11 +66,11 @@ fn yinyue_session_prefix() -> String {
 /// Roll to a fresh segment once the live engine crosses this fraction of its
 /// soft context limit — she starts clean and leans on memory rather than
 /// compacting a long companion transcript.
-const ROLL_TOKEN_FRACTION: f32 = 0.7;
+const ROLL_TOKEN_FRACTION: f32 = crate::engine::session_spec::COMPANION_ROLL_FRACTION;
 /// Cap on how many recent messages stay in Yinyue's live prompt. Her one rolling
 /// session would otherwise drag a whole day of turns into every quick reply; the
 /// rest lives on disk + in recalled memory. Small = snappy.
-const YINYUE_MAX_LIVE_MSGS: usize = 10;
+const YINYUE_MAX_LIVE_MSGS: usize = crate::engine::session_spec::COMPANION_LIVE_MESSAGES;
 /// The metered Linggen Cloud model — Yinyue's default brain for signed-in
 /// (paid/free) users when `pet.model` is "auto". BYOK users keep the engine
 /// default unless they pick a model in settings.

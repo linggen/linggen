@@ -887,7 +887,7 @@ async fn new_handoff_session(
     agent: &str,
 ) -> Option<(String, std::path::PathBuf)> {
     let now = crate::util::now_ts_secs();
-    let sid = format!("sess-handoff-{}", uuid::Uuid::new_v4());
+    let sid = format!("{}{}", crate::engine::session_spec::HANDOFF_PREFIX, uuid::Uuid::new_v4());
     let found = match skill {
         Some(name) => state.manager.skills.get_skill(name).await,
         None => None,

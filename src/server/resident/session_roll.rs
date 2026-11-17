@@ -5,9 +5,7 @@ use super::*;
 
 /// Whether `session_id` is one of her own rolling sessions.
 pub(crate) fn is_own_session(session_id: &str) -> bool {
-    session_id
-        .strip_prefix(&yinyue_session_prefix())
-        .is_some_and(|rest| rest.is_empty() || rest.starts_with('-'))
+    crate::engine::session_spec::is_companion_thread(session_id)
 }
 
 /// Pick Yinyue's current rolling session id: one per calendar day, rolling to an

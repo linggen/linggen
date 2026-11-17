@@ -430,6 +430,9 @@ pub struct AgentEngine {
     /// no stored session owns — a delegated `Task` child, a headless run.
     /// Decides whether its turns carry the world block (`prompt::world`).
     pub session_creator: Option<String>,
+    /// The spec this engine runs under; written with the fields it sets by
+    /// `SessionSpec::apply` alone.
+    pub(crate) session_spec: super::session_spec::SessionSpec,
     /// Prompt profile — which system prompt sections to include (owner vs consumer).
     pub prompt_profile: super::prompt::profile::PromptProfile,
     /// Directory for the current session (for persisting permission.json).
@@ -690,6 +693,7 @@ impl AgentEngine {
             turn_language: None,
             turn_fault: false,
             session_creator: None,
+            session_spec: super::session_spec::SessionSpec::unclaimed(None),
             prompt_profile: super::prompt::profile::PromptProfile::default(),
             session_dir: None,
             default_models: Vec::new(),

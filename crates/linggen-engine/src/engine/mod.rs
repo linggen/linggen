@@ -25,6 +25,7 @@ mod render_media;
 pub mod run_faults;
 mod run_scope;
 pub mod session_policy;
+pub mod session_spec;
 pub mod shown_images;
 pub mod skill;
 pub mod skill_activation;

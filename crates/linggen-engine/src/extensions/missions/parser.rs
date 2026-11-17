@@ -134,7 +134,7 @@ fn yaml_looks_legacy(yaml: &str) -> bool {
 /// Parse a mission `.md` file. Tries the new format first; on
 /// failure (or when the YAML looks legacy) falls back to the
 /// legacy parser. Returns an error for `mode: app`.
-pub(super) fn parse_mission_md(id: &str, content: &str) -> Result<Mission> {
+pub(crate) fn parse_mission_md(id: &str, content: &str) -> Result<Mission> {
     let id = id.to_string();
     let (yaml_opt, body_raw) = split_frontmatter(content);
     let body = body_raw.trim_start_matches('\n').trim_end().to_string();
