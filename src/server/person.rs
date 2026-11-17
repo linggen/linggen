@@ -144,36 +144,78 @@ pub(crate) fn of_device(device: &str) -> String {
     }
 }
 
+/// The most of a body the LAN gate reads to send a request as its person:
+/// the framework's own limit for a route's body (axum's `DefaultBodyLimit`,
+/// which no route here changes).
+const LAN_BODY_LIMIT: usize = 2 * 1024 * 1024;
+
 /// The LAN gate's request from paired device `device`, sent as its person
 /// (as the channel sends a peer's): the URL's `user_id` and a JSON body's
-/// replaced, and refused when it names another person's day. A body that
-/// is not a JSON object is passed through untouched — it names no session
-/// and carries no person.
+/// replaced, and refused (403) when it names another person's day. A body
+/// that is not a JSON object is passed through untouched — it names no
+/// session and carries no person. A body read under the framework's limit
+/// and over it is answered as the framework answers it (413); one that says
+/// it is longer goes on unread, for its route to read under its own limit.
 pub(crate) async fn lan_request_as(
     req: axum::extract::Request,
     device: &str,
-) -> Result<axum::extract::Request, NotTheirs> {
+) -> Result<axum::extract::Request, axum::response::Response> {
+    use axum::extract::FromRequest;
     use axum::http::header::CONTENT_LENGTH;
+    use axum::response::IntoResponse;
     let person = of_device(device);
     let user_type = crate::server::rtc::PeerKind::Paired.as_str();
     let (mut parts, body) = req.into_parts();
     let url_path = parts.uri.path_and_query().map_or("/", |pq| pq.as_str()).to_string();
-    let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap_or_default();
+    let mut none = serde_json::Value::Null;
+    if declared_length(&parts.headers).is_some_and(|n| n > LAN_BODY_LIMIT) {
+        let url = send_as(parts.method.as_str(), &url_path, &mut none, (&person, user_type)).map_err(refused)?;
+        set_uri(&mut parts, &url);
+        return Ok(axum::extract::Request::from_parts(parts, body));
+    }
+    let read = axum::extract::Request::from_parts(parts.clone(), body);
+    let bytes = axum::body::Bytes::from_request(read, &())
+        .await
+        .map_err(IntoResponse::into_response)?;
     let mut value = match serde_json::from_slice::<serde_json::Value>(&bytes) {
         Ok(v) if v.is_object() => Some(v),
         _ => None,
     };
-    let mut none = serde_json::Value::Null;
-    let url = send_as(parts.method.as_str(), &url_path, value.as_mut().unwrap_or(&mut none), (&person, user_type))?;
-    if let Ok(uri) = url.parse() {
-        parts.uri = uri;
-    }
+    let url = send_as(parts.method.as_str(), &url_path, value.as_mut().unwrap_or(&mut none), (&person, user_type))
+        .map_err(refused)?;
+    set_uri(&mut parts, &url);
     let bytes = match value {
         Some(v) => serde_json::to_vec(&v).map(axum::body::Bytes::from).unwrap_or(bytes),
         None => bytes,
     };
     parts.headers.insert(CONTENT_LENGTH, bytes.len().into());
     Ok(axum::extract::Request::from_parts(parts, axum::body::Body::from(bytes)))
+}
+
+/// The length a request says its body is.
+fn declared_length(headers: &axum::http::HeaderMap) -> Option<usize> {
+    headers
+        .get(axum::http::header::CONTENT_LENGTH)?
+        .to_str()
+        .ok()?
+        .parse()
+        .ok()
+}
+
+fn set_uri(parts: &mut axum::http::request::Parts, url: &str) {
+    if let Ok(uri) = url.parse() {
+        parts.uri = uri;
+    }
+}
+
+/// A request refused at the seam, answered 403 as the channel answers it.
+fn refused(refused: NotTheirs) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    (
+        axum::http::StatusCode::FORBIDDEN,
+        axum::Json(serde_json::json!({ "error": refused.reason() })),
+    )
+        .into_response()
 }
 
 #[cfg(test)]

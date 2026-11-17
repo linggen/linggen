@@ -228,11 +228,7 @@ async fn lan_gate(
         // Sent as the device's person, as the channel sends a peer's.
         return match person::lan_request_as(req, &device.id).await {
             Ok(req) => next.run(req).await,
-            Err(refused) => (
-                axum::http::StatusCode::FORBIDDEN,
-                axum::Json(serde_json::json!({ "error": refused.reason() })),
-            )
-                .into_response(),
+            Err(answer) => answer,
         };
     }
     tracing::info!("[gate] rejected {} {} from {}", req.method(), path, addr);

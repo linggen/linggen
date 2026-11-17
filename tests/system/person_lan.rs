@@ -330,3 +330,54 @@ async fn another_persons_phone_over_the_lan_changes_nothing_the_builder_reads() 
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
+
+/// A body past the framework's limit is answered over the LAN as it is
+/// here (413), whether it says its length or comes in chunks; one under it
+/// goes through as before.
+#[tokio::test]
+async fn a_body_past_the_limit_is_answered_over_the_lan_as_here() {
+    let w = World::start(Setup {
+        lan: true,
+        ..Setup::default()
+    })
+    .await;
+    pair_friends_phone(&w);
+    let lan = Lan::new(&w);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while lan.status("/api/pair/me", Some(TOKEN)).await != 200 {
+        assert!(std::time::Instant::now() < deadline, "the phone is not known");
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let big = json!({"text": "x".repeat(3 * 1024 * 1024)}).to_string();
+    let post = |base: String, token: Option<&'static str>, body: reqwest::Body| {
+        let mut req = lan
+            .client
+            .post(format!("{base}/api/presence"))
+            .header("content-type", "application/json")
+            .body(body);
+        if let Some(t) = token {
+            req = req.header("x-linggen-device", t);
+        }
+        async move { req.send().await.map(|r| r.status().as_u16()).unwrap_or(0) }
+    };
+    let mut wrong = Vec::new();
+    let here = post(w.engine.base_url(), None, big.clone().into()).await;
+    let over_lan = post(lan.base.clone(), Some(TOKEN), big.clone().into()).await;
+    if here != 413 || over_lan != here {
+        wrong.push(format!("a long body: {over_lan} over the LAN, {here} here"));
+    }
+    let chunks = || {
+        let parts: Vec<_> = big.as_bytes().chunks(64 * 1024).map(|c| Ok::<_, std::io::Error>(c.to_vec())).collect();
+        reqwest::Body::wrap_stream(futures_util::stream::iter(parts))
+    };
+    let here = post(w.engine.base_url(), None, chunks()).await;
+    let over_lan = post(lan.base.clone(), Some(TOKEN), chunks()).await;
+    if over_lan != here {
+        wrong.push(format!("a long body in chunks: {over_lan} over the LAN, {here} here"));
+    }
+    let small = post(lan.base.clone(), Some(TOKEN), json!({"focused": true}).to_string().into()).await;
+    if small != 200 {
+        wrong.push(format!("a short body over the LAN: {small}"));
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
