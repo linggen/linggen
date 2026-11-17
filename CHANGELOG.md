@@ -9,6 +9,12 @@
   for the running turn, saved rows carry their `place`, and a skill may
   declare `private-talk: true`. Today every turn of a session stands in the
   session's own place, so nothing changes in use.
+- **A private app's talk is kept where it is said** (with
+  `agent.one_session_a_day` on). Rows and events are stamped with the app
+  they are kept to as they are made, and readers judge the stamp alone; a
+  message to another agent, a note or a wider memory write from such an app
+  is refused; her line said there is heard only there. Each person has a
+  day of their own, and Clear on an app's page takes only that app's part.
 - **Yinyue keeps notes of her own and looks again when she said she would.**
   `note_write` (at most 8 notes of 200 characters, an optional look-again
   such as `+40m`, `HH:MM`, `tomorrow 09:00`) and `note_done`; her open notes

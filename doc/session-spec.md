@@ -193,10 +193,13 @@ session sees none).
   different places the message waits for the running turn to end, and is
   never folded in or steered into it.
 - **Rows.** Each row a turn saves to `messages.jsonl` carries its place
-  (`place`: the skill's name, or `:home`). A row without one — every row
-  written before places, and rows saved while no place is kept (a mission or
-  `agent_run` run, a plan's run, a subagent outliving its turn, a page's own
-  writes) — is the session's own place.
+  (`place`: the skill's name, or `:home`), and — when its talk is kept to a
+  private app — `kept_to`, stamped as it is saved and never looked up again.
+  A run in a kept place stamps its own rows, a subagent outliving its turn
+  included; a plan's rows keep the stamp of the plan's row. A row without a
+  place — every row written before places, and rows saved while no place is
+  kept (a mission or `agent_run` run, a page's own writes) — is the
+  session's own place.
 
 With `agent.one_session_a_day` off, a page names the skill its session was
 made for, so every turn of a session shares one place: the session's. On,
@@ -205,8 +208,8 @@ local; `one-ling-spec.md` § One session a day): a page's turn stands in its
 app, other turns at home. The day's session is made by `agent` (as Yinyue's
 own thread; the memory scan reads only `user` chats), Ling its lead. A private app's rows (`private-talk: true`) are left out of what any
 other place's turn is given — its thread, a light turn's tail, a summary's
-input — and a summary written in its turn is kept to it
-(`turn_place::sight`).
+input — and a summary written in its turn is kept to it; its own thread
+starts from its own summary (`turn_place::sight`).
 
 ## System prompt assembly
 

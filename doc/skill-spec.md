@@ -330,7 +330,7 @@ A message sent while a session's agent is mid-turn is queued. What happens to th
 
 ## Private talk
 
-`private-talk: true` declares that what is said in the app's turns is the app's alone. It is read with the rest of the frontmatter (a value that is not `true` or `false` is refused like any wrong frontmatter type) and kept on the skill; a turn's place can tell it. Nothing acts on it yet: today every turn of a session stands in one place, so there are no other apps' turns to keep its rows from.
+`private-talk: true` declares that what is said in the app's turns is the app's alone. It is read with the rest of the frontmatter (a value that is not `true` or `false` is refused like any wrong frontmatter type) and kept on the skill. It acts where turns of several apps share one session — the day's session (`one-ling-spec.md` § One session a day): what the app's turns write and stream is stamped as kept to it when made, and no turn, page, herald or spoken line outside the app is given it; its world line stays. Its own session, holding only its talk, is unchanged.
 
 ## Quests
 

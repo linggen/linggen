@@ -150,16 +150,35 @@ session, prompt and row is as before. On (decided by the builder 2026-11-15/16):
   back from `GET /api/notes?agent=`, read-only. Its own thread is unchanged.
 
 Built (2.4 branch, 2026-11-16): all of the above, in `server::day_session`,
-`state_fs::day_session` and `turn_place::sight`. Every reader of a session's
-rows is listed in a lock test with why it may read them. Not built: the
-phone's side (it must send `skill_name` and use the day's id); a light
-turn after her moment stands at home, not in the moment's app; a private
-app's background tasks (command line, last output line) still show in
-every page's task list; one day per engine, not per person; a page left
-open past 04:00 keeps yesterday's session; which apps are private is read
-from the installed skills, so a removed app's rows are no longer hidden;
-recall of the day's thread beyond the folded view, a summary cache, any
-change to compaction (decided out of this step).
+`state_fs::day_session`, `turn_place::sight` and `engine::event_bus`.
+
+- **Kept once, where it is made.** A row is stamped as it is saved with its
+  place and the app it is kept to, decided from the skill at that moment
+  (an app that does not resolve in the day's session keeps its rows); a plan
+  rewritten, approved or rejected keeps its row's stamp, and its run reads
+  its place's thread. Every event is stamped as it is sent, from the run
+  that made it (a subagent's from its parent's, decided as the run began) or
+  the turn running then; a background task's entry carries its own. Readers
+  judge the stamp alone: a page is sent a kept event only on its app's
+  page, but its turn's end; the task list shows a kept task only there.
+- **One reader.** Rows reach a model, Yinyue or a page through
+  `rows_seen_by`; a lock test lists every other reader of rows and every
+  listener of the event bus with why it may.
+- **One exit.** From a kept place, `agent_chat`, `note_write` and a memory
+  write asking for `global`, `cwd` or `scope` are refused with a plain reason.
+- **Her.** Asked while away, she is told only that the app waits for an
+  answer. A line she says in a kept place is heard only on its app's page;
+  a wake takes one app's moments, the others wait for the next.
+- **A day per person**: a person other than the builder has a day of their
+  own (`sess-day-YYYY-MM-DD-p-<person>`), listed only to them; a day is made
+  once and never written over.
+- **Clear** on an app's page takes that app's part of the day.
+- **Compaction**: a private app's thread starts from its own summary.
+
+Not built: the phone's side (it must send `skill_name` and use the day's
+id); a light turn after her moment stands at home, not in the moment's app;
+a page left open past 04:00 keeps yesterday's session; recall of the day's
+thread beyond the folded view, a summary cache.
 
 ## Tool names and packs
 
