@@ -58,6 +58,11 @@ pub(super) fn routes() -> Routes {
         .route("/api/skills", get(list_skills))
         .route("/api/models/health", get(get_models_health))
         .route("/api/config", get(get_config_api).post(update_config_api))
+        // The owner's list of build tools — someone at this Mac only
+        .route(
+            "/api/toolchains",
+            get(api::toolchains::get_toolchains).put(api::toolchains::put_toolchains),
+        )
         .route(
             "/api/credentials",
             get(get_credentials_api).put(update_credentials_api),

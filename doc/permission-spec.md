@@ -50,6 +50,10 @@ These levels apply uniformly to individual directories and all directories. All-
 
 A new user session starts with the configured default level on its starting directory, normally `read`. A place's first turn in a session starts the same way, on the place's folder. Session grants survive reopening the same session; they are not automatically inherited from another session. Missions and skills may provide their own grants. Skills may also persist and reapply user-configured grants across sessions; this is distinct from inheriting another session's grants.
 
+## Granted tools
+
+The owner keeps a list of build tools a session may be granted by name, in its own file, `~/.linggen/config/toolchains.toml` (`[[tool]]` entries of `name` and `path`). The first time the list is wanted (Settings reads it, or a caller names a tool) it is written once from the build tools and package managers found on the engine's shell path — cargo, rustup, go, npm, pnpm, yarn, bun, deno, flutter, dart, swift, xcodebuild, gradle, mvn, make, cmake, uv, git; never an interpreter such as node or python3. After that only the owner changes it: a removed entry stays removed, and a tool installed later is offered, never added by itself. It is read and replaced through `GET`/`PUT /api/toolchains`, for someone at this Mac only; the `PUT` also needs a page Origin of this engine — a speed bump against a plain request, not a lock. It is not part of `/api/config`.
+
 ## Asking for permission
 
 When an interactive agent action needs a higher level, the chat asks the current session's user. The request names the action and shows the target path. It offers the needed level on each directory from the repository root down to the file's directory, so one click can cover the whole repository:

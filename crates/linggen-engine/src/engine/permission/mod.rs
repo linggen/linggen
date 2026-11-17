@@ -23,6 +23,7 @@ mod prompt;
 mod scripts;
 mod shell_text;
 mod store;
+pub mod toolchains;
 #[cfg(test)]
 mod gate_copy_tests;
 
