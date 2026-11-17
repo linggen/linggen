@@ -308,3 +308,36 @@ async fn kept_world_blocks_let_each_request_begin_with_the_last() {
     assert!(!history["messages"].to_string().contains("# World"), "listed: {history}");
     w.assert_all_scripted();
 }
+
+/// A message sent while a turn runs keeps the surface's `client_id` on its
+/// row when it leaves the queue, so the surface can follow it to its end.
+#[tokio::test]
+async fn a_queued_message_keeps_its_client_id() {
+    let ask = json!({"questions": [{"question": "Which box?", "header": "Box",
+        "options": [{"label": "Red"}, {"label": "Blue"}]}]});
+    let setup = Setup::default().script(
+        Agent::Ling,
+        vec![tool("AskUser", ask), text("Red."), text("Queued one answered.")],
+    );
+    let w = World::start(setup).await;
+    let sid = w.api.create_session(json!({"title": "Queue"})).await;
+    let mark = w.mark();
+    w.api.chat(&sid, &w.work(), "Pick a box").await;
+    let RunEnd::Asked(asked) = w.wait_run(&sid, Agent::Ling, mark).await else {
+        panic!("no question");
+    };
+    let body = json!({"session_id": sid, "project_root": w.work(), "message": "QUEUED words", "client_id": "c-queued-1"});
+    let sent = w.api.post("/api/chat", body).await;
+    w.api.answer(&asked, "Red").await;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let rows = w.raw_rows(&sid);
+        let row = rows.iter().find(|r| r.to_string().contains("QUEUED words"));
+        if let Some(row) = row {
+            assert_eq!(row["client_id"], "c-queued-1", "{row} (sent: {sent})");
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "the queued message never left the queue: {sent}");
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
