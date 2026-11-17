@@ -152,6 +152,7 @@ impl Tools {
             self.session_policy.clone(),
             self.parent_allowed_tools.clone(),
             self.parent_path_modes.clone(),
+            self.parent_granted_tools.clone(),
             self.parent_interactive,
             self.parent_work,
             false,
@@ -337,6 +338,16 @@ fn inherit_permissions(
     permissions.interactive = parent_interactive;
 }
 
+/// A delegated run runs the build tools its parent may (`permission-spec.md`
+/// § Granted tools). The session's grant table, read live, never carries
+/// them, so they are set here.
+pub(crate) fn inherit_granted_tools(
+    permissions: &mut crate::engine::permission::SessionPermissions,
+    parent: &[String],
+) {
+    permissions.granted_tools = parent.to_vec();
+}
+
 #[derive(Debug)]
 pub(crate) struct DelegationCancelled;
 
@@ -369,6 +380,7 @@ pub(crate) async fn run_delegation(
     parent_policy: Option<crate::engine::session_policy::SessionPolicy>,
     parent_allowed_tools: Option<std::collections::HashSet<String>>,
     parent_path_modes: Vec<crate::engine::permission::PathMode>,
+    parent_granted_tools: Vec<String>,
     parent_interactive: bool,
     parent_work: Option<crate::engine::session_spec::Work>,
     background: bool,
@@ -471,6 +483,7 @@ pub(crate) async fn run_delegation(
     // snapshot verbatim: set_path_mode prunes more-specific entries and can
     // turn a wildcard or parent grant into an unintended elevation.
     inherit_permissions(&mut engine.session_permissions, &parent_path_modes, parent_interactive);
+    inherit_granted_tools(&mut engine.session_permissions, &parent_granted_tools);
     // One chat, one permission set: a subagent of a session uses the chat's
     // own grants, read live — the snapshot above stands only for a run with
     // no session to share.
@@ -478,6 +491,7 @@ pub(crate) async fn run_delegation(
         engine.join_session_permissions(sid);
     }
     engine.tools.builtins.parent_path_modes = parent_path_modes;
+    engine.tools.builtins.parent_granted_tools = parent_granted_tools;
     engine.tools.builtins.parent_interactive = parent_interactive;
 
     // Wire AskUser bridge so the subagent can ask for permissions and questions.

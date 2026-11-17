@@ -4,7 +4,7 @@
 //! All pure logic — no I/O, no UI prompts. The store layer lives in
 //! [`super::store`]; prompt construction in [`super::prompt`].
 
-use super::classify::{classify_bash_command, dequote};
+use super::classify::{classify_bash_command, classify_bash_command_granted, dequote};
 use super::pattern_text::text_words;
 use super::shell_text::strip_heredoc_bodies;
 use super::store::SessionPermissions;
@@ -515,6 +515,70 @@ pub fn check_permission(
     session_perms: &SessionPermissions,
     action_tier_override: Option<PermissionMode>,
 ) -> PermissionCheckResult {
+    let file = super::toolchains::owner_file();
+    let source = ToolSource {
+        file: &file,
+        search: crate::util::shell_path(),
+    };
+    check_permission_with(
+        tool,
+        bash_command,
+        file_path,
+        session_cwd,
+        session_perms,
+        action_tier_override,
+        &source,
+    )
+}
+
+/// Where a session's granted build tools are looked up: the owner's list,
+/// and the `PATH` a bare program name is found on.
+pub(crate) struct ToolSource<'a> {
+    pub file: &'a Path,
+    pub search: &'a str,
+}
+
+/// The session's granted tools that the owner's list holds now, each at its
+/// file. A session with none never reads the list.
+fn granted_tools(perms: &SessionPermissions, source: &ToolSource) -> Vec<super::toolchains::Tool> {
+    if perms.granted_tools.is_empty() {
+        return Vec::new();
+    }
+    super::toolchains::load(source.file)
+        .tools
+        .into_iter()
+        .filter(|tool| perms.granted_tools.contains(&tool.name))
+        .collect()
+}
+
+/// Whether a command's program `word` runs one of `tools`: its last part is
+/// the entry's name, and the file it names — found on `search` when bare,
+/// as written when absolute — is the entry's file. A relative path is none.
+fn runs_granted(word: &str, tools: &[super::toolchains::Tool], search: &str) -> bool {
+    let name = word.rsplit('/').next().unwrap_or(word);
+    let file = if word.contains('/') {
+        Path::new(word).is_absolute().then(|| PathBuf::from(word))
+    } else {
+        super::toolchains::find(word, search)
+    };
+    let Some(file) = file.and_then(|f| std::fs::canonicalize(f).ok()) else {
+        return false;
+    };
+    tools.iter().any(|tool| {
+        tool.name == name && std::fs::canonicalize(&tool.path).is_ok_and(|path| path == file)
+    })
+}
+
+/// [`check_permission`] with the session's granted tools looked up in `source`.
+pub(crate) fn check_permission_with(
+    tool: &str,
+    bash_command: Option<&str>,
+    file_path: Option<&str>,
+    session_cwd: &Path,
+    session_perms: &SessionPermissions,
+    action_tier_override: Option<PermissionMode>,
+    source: &ToolSource,
+) -> PermissionCheckResult {
     // 0a. Hardcoded deny floor (admin mode does not bypass).
     if tool == "Bash" {
         if let Some(cmd) = bash_command {
@@ -561,15 +625,21 @@ pub fn check_permission(
     // something, they want to be asked to upgrade, not silently denied.
 
     // 1. Classify action tier. Skill-declared override wins over the built-in table.
+    // A granted build tool the tables do not know is a write (`by_grant`).
+    let mut by_grant = false;
     let action_tier = if let Some(override_tier) = action_tier_override {
         override_tier
     } else if tool == "Bash" {
         match bash_command {
-            Some(cmd) => match classify_bash_command(cmd) {
-                BashClass::Read => PermissionMode::Read,
-                BashClass::Write => PermissionMode::Edit,
-                BashClass::Admin => PermissionMode::Admin,
-            },
+            Some(cmd) => {
+                let class = bash_class(cmd, session_perms, source);
+                by_grant = class.1;
+                match class.0 {
+                    BashClass::Read => PermissionMode::Read,
+                    BashClass::Write => PermissionMode::Edit,
+                    BashClass::Admin => PermissionMode::Admin,
+                }
+            }
             None => PermissionMode::Admin,
         }
     } else {
@@ -623,8 +693,9 @@ pub fn check_permission(
                 // A scratch path is free; a command that runs code is not.
                 // With no other path to judge it (`sh /tmp/x.sh`,
                 // `python3 -c … > /tmp/out`), it is judged where it runs,
-                // like a command with no path at all.
-                if judged || action_tier < PermissionMode::Admin {
+                // like a command with no path at all — and so is a granted
+                // build tool: its grant holds where the session may edit.
+                if judged || (action_tier < PermissionMode::Admin && !by_grant) {
                     return PermissionCheckResult::Allowed;
                 }
             }
@@ -676,6 +747,15 @@ pub fn check_permission(
         action_tier,
         format!("{} {}", tool, summary),
     )
+}
+
+/// A Bash command's class, and whether a granted build tool decided it.
+fn bash_class(cmd: &str, perms: &SessionPermissions, source: &ToolSource) -> (BashClass, bool) {
+    let tools = granted_tools(perms, source);
+    if tools.is_empty() {
+        return (classify_bash_command(cmd), false);
+    }
+    classify_bash_command_granted(cmd, &|word| runs_granted(word, &tools, source.search))
 }
 
 fn needs_prompt(

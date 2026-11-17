@@ -26,9 +26,13 @@ mod store;
 pub mod toolchains;
 #[cfg(test)]
 mod gate_copy_tests;
+#[cfg(test)]
+mod granted_tools_tests;
 
 pub use declined::DeclinedScopes;
 pub use manifest::{apply_grants, Grants, PathGrant};
+#[cfg(test)]
+use model::{check_permission_with, ToolSource};
 pub use model::{
     check_permission, display_path, effective_mode_for_path, parse_skill_tier, PathMode,
     PermissionAction, PermissionCheckResult, PermissionMode, PromptKind,

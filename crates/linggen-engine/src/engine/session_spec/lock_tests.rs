@@ -126,7 +126,13 @@ fn the_spec_is_the_one_writer_of_a_sessions_behaviour() {
 }
 
 /// Calls that write a session's grant table.
-const GRANTS: &[&str] = &["set_path_mode(", "apply_grants("];
+const GRANTS: &[&str] = &[
+    "set_path_mode(",
+    "apply_grants(",
+    ".granted_tools = ",
+    ".granted_tools.push(",
+    ".granted_tools.extend(",
+];
 
 /// The grant writers allowed outside the spec's preset grants (`grants.rs`),
 /// by file: how many, and why. A skill's, a mission's and a delegate's
@@ -170,8 +176,8 @@ const GRANT_WRITERS: &[(&str, usize, &str)] = &[
     ),
     (
         "crates/linggen-engine/src/engine/tools/delegation.rs",
-        2,
-        "a test",
+        3,
+        "a Task child takes its parent's granted tools; a test",
     ),
     (
         "crates/linggen-engine/src/engine/turn_place/bind/grants_tests.rs",
@@ -181,6 +187,11 @@ const GRANT_WRITERS: &[(&str, usize, &str)] = &[
     (
         "crates/linggen-engine/src/engine/permission/mod.rs",
         31,
+        "tests",
+    ),
+    (
+        "crates/linggen-engine/src/engine/permission/granted_tools_tests.rs",
+        2,
         "tests",
     ),
     (

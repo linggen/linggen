@@ -1455,6 +1455,8 @@ impl AgentEngine {
                 // rather than at engine construction time.
                 self.tools.builtins.parent_allowed_tools = allowed_tools.clone();
                 self.tools.builtins.parent_path_modes = self.session_permissions.path_modes.clone();
+                self.tools.builtins.parent_granted_tools =
+                    self.session_permissions.granted_tools.clone();
                 self.tools.builtins.parent_interactive = self.session_permissions.interactive;
                 let tools_clone = self.tools.clone();
                 // Each tool declares its own ceiling (`Tool::max_duration`);

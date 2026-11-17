@@ -115,6 +115,7 @@ pub fn find(name: &str, search: &str) -> Option<PathBuf> {
         return None;
     }
     std::env::split_paths(search)
+        .filter(|dir| dir.is_absolute())
         .map(|dir| dir.join(name))
         .find(|candidate| is_executable(candidate))
 }

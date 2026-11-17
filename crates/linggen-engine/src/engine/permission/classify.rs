@@ -10,11 +10,23 @@ use super::shell_text::strip_heredoc_bodies;
 use BashClass::{Admin, Read, Write};
 
 pub fn classify_bash_command(cmd: &str) -> BashClass {
+    classify_bash_command_granted(cmd, &|_| false).0
+}
+
+/// [`classify_bash_command`] for a session with granted build tools:
+/// `granted` says whether a program word runs one. Such a program the
+/// tables do not know is judged a write where it would be admin; a known
+/// one keeps its tables. Also whether a grant decided any segment.
+pub fn classify_bash_command_granted(
+    cmd: &str,
+    granted: &dyn Fn(&str) -> bool,
+) -> (BashClass, bool) {
     let cmd = &strip_heredoc_bodies(cmd);
     if cmd.trim().is_empty() || has_dynamic_syntax(cmd) {
-        return Admin;
+        return (Admin, false);
     }
     let mut highest = Read;
+    let mut by_grant = false;
     let mut words = Vec::new();
     for token in command_tokens(cmd)
         .into_iter()
@@ -23,13 +35,15 @@ pub fn classify_bash_command(cmd: &str) -> BashClass {
         match token {
             Token::Word(w) => words.push(w),
             Token::Op(_) if !words.is_empty() => {
-                highest = highest.max(classify_segment(&words));
+                let (class, lowered) = classify_segment(&words, granted);
+                highest = highest.max(class);
+                by_grant |= lowered;
                 words.clear();
             }
             Token::Op(_) => {}
         }
     }
-    highest
+    (highest, by_grant)
 }
 
 /// Backticks and `$` outside single quotes change the command or its
@@ -143,17 +157,37 @@ fn has_process_substitution(words: &[String]) -> bool {
     })
 }
 
-fn classify_segment(raw: &[String]) -> BashClass {
+fn classify_segment(raw: &[String], granted: &dyn Fn(&str) -> bool) -> (BashClass, bool) {
     if has_process_substitution(raw) {
-        return Admin;
+        return (Admin, false);
     }
     let (words, redirect) = split_redirects(raw);
-    let class = classify_words(&words);
+    let (class, by_grant) = match granted_class(&words, granted) {
+        Some(class) => (class, true),
+        None => (classify_words(&words), false),
+    };
     if redirect {
-        class.max(Write)
+        (class.max(Write), by_grant)
     } else {
-        class
+        (class, by_grant)
     }
+}
+
+/// A segment whose program is a granted build tool the tables do not know
+/// (by its name, written bare or by path): a write, where it would be admin.
+fn granted_class(words: &[String], granted: &dyn Fn(&str) -> bool) -> Option<BashClass> {
+    let program = words.first()?;
+    let name = program.rsplit('/').next().unwrap_or(program);
+    if is_known_program(name) || !granted(program) {
+        return None;
+    }
+    Some(Write.max(arg_lift(name, &words[1..])))
+}
+
+/// A program the gate has a rule for: it is judged by that rule, granted
+/// or not.
+fn is_known_program(name: &str) -> bool {
+    matches!(name, "env" | "cd") || known_program(name, &[]).is_some()
 }
 
 /// The command's own words (dequoted), and whether output is redirected to
@@ -571,6 +605,11 @@ fn short_flags_safe(arg: &str, plain: &str, valued: &str) -> bool {
 // ---------------------------------------------------------------------------
 
 fn classify_program(program: &str, args: &[String]) -> BashClass {
+    known_program(program, args).unwrap_or(Admin)
+}
+
+/// The tables' class for `program`; `None` for a program they do not know.
+fn known_program(program: &str, args: &[String]) -> Option<BashClass> {
     const READ_PROGRAMS: &[&str] = &[
         "ls",
         "cat",
@@ -767,13 +806,13 @@ fn classify_program(program: &str, args: &[String]) -> BashClass {
     ];
 
     if ADMIN_PROGRAMS.contains(&program) {
-        return Admin;
+        return Some(Admin);
     }
     if READ_PROGRAMS.contains(&program) {
-        return Read;
+        return Some(Read);
     }
     if WRITE_PROGRAMS.contains(&program) {
-        return Write;
+        return Some(Write);
     }
 
     let sub = args.first().map(String::as_str).unwrap_or("");
@@ -786,7 +825,7 @@ fn classify_program(program: &str, args: &[String]) -> BashClass {
             Admin
         }
     };
-    match program {
+    Some(match program {
         "git" => by_sub(GIT_READ, GIT_WRITE),
         "cargo" => by_sub(CARGO_READ, CARGO_WRITE),
         "npm" | "yarn" | "pnpm" => by_sub(NPM_READ, NPM_WRITE),
@@ -798,6 +837,6 @@ fn classify_program(program: &str, args: &[String]) -> BashClass {
         "curl" => curl_class(args),
         "wget" => wget_class(args),
         "make" | "cmake" | "ninja" | "mvn" | "gradle" | "pytest" | "jest" | "vitest" => Write,
-        _ => Admin,
-    }
+        _ => return None,
+    })
 }
