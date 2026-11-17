@@ -31,77 +31,7 @@ pub(super) fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
             question_id,
             questions,
             session_id,
-        } => {
-            if delegated_session(state, session_id.as_deref()) {
-                return; // the external host answers its own prompts
-            }
-            if agent_id == YINYUE_AGENT {
-                return; // she's the one asking — not a herald
-            }
-            if !state.manager.agent_present(YINYUE_AGENT) {
-                return; // not met: the prompt waits on the screen, as it does for anyone
-            }
-            if user_sees_screen(state) {
-                return; // the question is on the screen they're looking at
-            }
-            let q0 = questions.first();
-            let summary = q0
-                .map(|q| q.question.clone())
-                .unwrap_or_else(|| "your input".to_string());
-            let options = q0
-                .map(|q| {
-                    q.options
-                        .iter()
-                        .map(|o| o.label.clone())
-                        .collect::<Vec<_>>()
-                        .join(" / ")
-                })
-                .unwrap_or_default();
-            let state = state.clone();
-            tokio::spawn(async move {
-                let opts = if options.is_empty() {
-                    String::new()
-                } else {
-                    format!(" The options are: {options}.")
-                };
-                let kickoff = format!(
-                    "The agent \"{agent_id}\" is blocked, waiting on the user to answer: \
-                     \"{summary}\".{opts} The user has stepped away from the screen. Call them \
-                     back in your voice — one brief line, spoken aloud, plain prose. When they give you their answer, relay \
-                     it with `answer_prompt` (question_id \"{question_id}\") — only their actual \
-                     words, never your own decision. If it truly doesn't warrant interrupting now, \
-                     reply with exactly SILENT."
-                );
-                // Her turn can queue behind other Yinyue runs; if the user
-                // answers the prompt meanwhile, announcing it is stale noise.
-                // Check before spending a turn and again right before speaking.
-                if !ask_still_pending(&state, &question_id).await {
-                    return;
-                }
-                let Some(reply) = run_yinyue_turn(&state, kickoff, "event").await else {
-                    return;
-                };
-                let Some(line) = spoken_line(&reply) else {
-                    tracing::info!("[yinyue-watch] Yinyue chose silence");
-                    return;
-                };
-                if !ask_still_pending(&state, &question_id).await {
-                    tracing::info!(
-                        "[yinyue-watch] ask {question_id} answered while heralding — dropped"
-                    );
-                    return;
-                }
-                if user_sees_screen(&state) {
-                    tracing::info!("[yinyue-watch] user back at the screen — herald dropped");
-                    return;
-                }
-                tracing::info!(
-                    "[yinyue-watch] Yinyue heralds ({} chars, neutral)",
-                    line.len()
-                );
-                crate::server::api::yinyue::emit_speak(&state, line, Some("neutral".to_string()));
-            });
-        }
+        } => herald_ask(state, agent_id, question_id, questions, session_id),
         // A peer agent sent a message. TO YINYUE → she receives it in her own
         // voice (herald). TO A CHAT AGENT (Ling, …) → it shows in that agent's
         // chat as a message from the sender, and that agent responds. Either way
@@ -111,49 +41,139 @@ pub(super) fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
             to,
             message,
             app,
-        } => {
-            if from == to {
-                return; // no self-send (also guarded in the tool)
-            }
-            let state = state.clone();
-            if to == YINYUE_AGENT {
-                if !state.manager.agent_present(YINYUE_AGENT) {
-                    return; // not met: nobody here to receive it
-                }
-                tokio::spawn(async move {
-                    let kickoff = format!(
-                        "The agent \"{from}\" sent you a message, addressed to YOU: \"{message}\". \
-                         Respond however fits — it's yours to act on:\n\
-                         • a nudge to move (dance, wave, nod, a little cheer…) → do it with Express;\n\
-                         • news worth telling the user → say one brief line in your voice (spoken, \
-                         plain prose), reading the room from Right now;\n\
-                         • you can do both — move and speak;\n\
-                         • if nothing fits, reply with exactly SILENT.\n\
-                         You're reached via agent_chat, so you can't pass it to a third agent."
-                    );
-                    if let Some(reply) = run_yinyue_turn(&state, kickoff, "agent_chat").await {
-                        if let Some(line) = spoken_line(&reply) {
-                            tracing::info!(
-                                "[yinyue-watch] relays agent_chat ({} chars)",
-                                line.len()
-                            );
-                            crate::server::api::yinyue::emit_speak(
-                                &state,
-                                line,
-                                Some("neutral".to_string()),
-                            );
-                        } else {
-                            tracing::info!("[yinyue-watch] chose silence (agent_chat)");
-                        }
-                    }
-                });
-            } else {
-                tokio::spawn(async move {
-                    deliver_to_chat_agent(state, from, to, message, app).await;
-                });
-            }
-        }
+        } => on_agent_chat(state, from, to, message, app),
         _ => {} // firehose + everything else dropped here, near-free
+    }
+}
+
+/// An agent parked on a question or a permission prompt — Yinyue heralds
+/// "they need you" while the person is away.
+fn herald_ask(
+    state: &Arc<ServerState>,
+    agent_id: String,
+    question_id: String,
+    questions: Vec<crate::engine::tools::AskUserQuestion>,
+    session_id: Option<String>,
+) {
+    if delegated_session(state, session_id.as_deref()) {
+        return; // the external host answers its own prompts
+    }
+    if agent_id == YINYUE_AGENT {
+        return; // she's the one asking — not a herald
+    }
+    if !state.manager.agent_present(YINYUE_AGENT) {
+        return; // not met: the prompt waits on the screen, as it does for anyone
+    }
+    if user_sees_screen(state) {
+        return; // the question is on the screen they're looking at
+    }
+    let (summary, options) = ask_summary(&questions);
+    let state = state.clone();
+    tokio::spawn(async move {
+        let opts = if options.is_empty() {
+            String::new()
+        } else {
+            format!(" The options are: {options}.")
+        };
+        let kickoff = format!(
+            "The agent \"{agent_id}\" is blocked, waiting on the user to answer: \
+             \"{summary}\".{opts} The user has stepped away from the screen. Call them \
+             back in your voice — one brief line, spoken aloud, plain prose. When they give you their answer, relay \
+             it with `answer_prompt` (question_id \"{question_id}\") — only their actual \
+             words, never your own decision. If it truly doesn't warrant interrupting now, \
+             reply with exactly SILENT."
+        );
+        // Her turn can queue behind other Yinyue runs; if the user
+        // answers the prompt meanwhile, announcing it is stale noise.
+        // Check before spending a turn and again right before speaking.
+        if !ask_still_pending(&state, &question_id).await {
+            return;
+        }
+        let Some(reply) = run_yinyue_turn(&state, kickoff, "event").await else {
+            return;
+        };
+        let Some(line) = spoken_line(&reply) else {
+            tracing::info!("[yinyue-watch] Yinyue chose silence");
+            return;
+        };
+        if !ask_still_pending(&state, &question_id).await {
+            tracing::info!(
+                "[yinyue-watch] ask {question_id} answered while heralding — dropped"
+            );
+            return;
+        }
+        if user_sees_screen(&state) {
+            tracing::info!("[yinyue-watch] user back at the screen — herald dropped");
+            return;
+        }
+        tracing::info!(
+            "[yinyue-watch] Yinyue heralds ({} chars, neutral)",
+            line.len()
+        );
+        crate::server::api::yinyue::emit_speak(&state, line, Some("neutral".to_string()));
+    });
+}
+
+/// The first question and its options, as her kickoff names them.
+fn ask_summary(questions: &[crate::engine::tools::AskUserQuestion]) -> (String, String) {
+    let q0 = questions.first();
+    let summary = q0
+        .map(|q| q.question.clone())
+        .unwrap_or_else(|| "your input".to_string());
+    let options = q0
+        .map(|q| {
+            q.options
+                .iter()
+                .map(|o| o.label.clone())
+                .collect::<Vec<_>>()
+                .join(" / ")
+        })
+        .unwrap_or_default();
+    (summary, options)
+}
+
+/// A peer agent's message: to her, she answers it; to a chat agent, it
+/// lands in that agent's chat.
+fn on_agent_chat(state: &Arc<ServerState>, from: String, to: String, message: String, app: Option<String>) {
+    if from == to {
+        return; // no self-send (also guarded in the tool)
+    }
+    let state = state.clone();
+    if to == YINYUE_AGENT {
+        if !state.manager.agent_present(YINYUE_AGENT) {
+            return; // not met: nobody here to receive it
+        }
+        tokio::spawn(async move {
+            let kickoff = format!(
+                "The agent \"{from}\" sent you a message, addressed to YOU: \"{message}\". \
+                 Respond however fits — it's yours to act on:\n\
+                 • a nudge to move (dance, wave, nod, a little cheer…) → do it with Express;\n\
+                 • news worth telling the user → say one brief line in your voice (spoken, \
+                 plain prose), reading the room from Right now;\n\
+                 • you can do both — move and speak;\n\
+                 • if nothing fits, reply with exactly SILENT.\n\
+                 You're reached via agent_chat, so you can't pass it to a third agent."
+            );
+            if let Some(reply) = run_yinyue_turn(&state, kickoff, "agent_chat").await {
+                if let Some(line) = spoken_line(&reply) {
+                    tracing::info!(
+                        "[yinyue-watch] relays agent_chat ({} chars)",
+                        line.len()
+                    );
+                    crate::server::api::yinyue::emit_speak(
+                        &state,
+                        line,
+                        Some("neutral".to_string()),
+                    );
+                } else {
+                    tracing::info!("[yinyue-watch] chose silence (agent_chat)");
+                }
+            }
+        });
+    } else {
+        tokio::spawn(async move {
+            deliver_to_chat_agent(state, from, to, message, app).await;
+        });
     }
 }
 
