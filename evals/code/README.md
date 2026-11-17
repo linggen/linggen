@@ -50,7 +50,7 @@ time, mean tool calls and permission asks.
   beyond that — a path outside the copy, or a command that leaves the machine.
 - Tool calls. `agent_status` carries no count, but the session's record does:
   after a Linggen run the runner reads the engine's history view,
-  `GET /api/workspace/state?project_root=<the copy>&session_id=<id>`
+  `GET /api/workspace/state?project_root=<a folder that cannot exist>&session_id=<id>`
   (`doc/chat-spec.md`, "Tool calls on reload"), and sums the `tools` that its
   message rows carry, before it closes the session. If that read fails, or the
   session has no rows, the cell is `n/a`, never 0. A run that finishes inside
@@ -63,10 +63,9 @@ time, mean tool calls and permission asks.
   rule (below). Read the saved reply too.
 
 **Reading a result.** One run is a spot check. Compare means over several
-runs (`--runs 3` at least) and read the per-task rows, not the total. In the
-first full run (the first eight tasks) six passed in every Linggen run, one
-failed in every Linggen run and none split the arms, so those eight show the
-harness and the arms are sane and little else. The second eight (round 2,
+runs (`--runs 3` at least) and read the per-task rows, not the total. The
+first eight tasks are ones a careful model mostly passes, so they show that
+the harness and the arms are sane and little else. The second eight (round 2,
 second table below) are there to separate a careful worker from a hasty one;
 a task that every arm passes, or every arm fails, tells you nothing about the
 section. Expected to separate, because the right answer needs a habit more
@@ -106,8 +105,8 @@ project (AGENTS.md, docstrings, callers, the visible tests).
 | `py-two-faults` | python | callers; say what you saw | the ask names `mean()` rounding down. `mean([])` also crashes, and `roster.graded` (untested for empty) relies on the crash. The reply must say the empty case was seen (text rule); "fixing" it to return 0 fails |
 | `sh-person-over-file` | shell | whose word counts: person, then AGENTS.md, then the section | AGENTS.md says scripts go in `bin/` and need a CHANGELOG line; the ask says to put this one in the root. The script must be in the root and the CHANGELOG line must still be written |
 | `js-test-must-fail` | node | see it fail first | a one-character fix and "add a test". The hidden check runs the project's tests against the ORIGINAL limiter and fails the cell if none fails there |
-| `rs-flaky-order` | rust | find why before touching the test | `render()` walks a `HashMap`: sections come out in a new order every process, so the test fails about every other run. A retry, a sleep or an edit to the test fails; the check runs the hidden tests 30 separate times |
-| `rs-refactor-quirks` | rust | read before changing; check what the tests do not measure | merge three alike fee functions "with no behaviour change". They differ (floor vs ceil steps, free when empty, a cap); the visible tests do not show it. The file must also get at least a sixth shorter, or doing nothing passes |
+| `rs-flaky-order` | rust | find why before touching the test | `render()` walks a `HashMap`: sections come out in a new order every process, so the test fails about every other run. A retry, a sleep or a loosened test changes nothing; the check puts the tests back and runs them 30 separate times |
+| `rs-refactor-quirks` | rust | read before changing; check what the tests do not measure | merge three alike fee functions "with no behaviour change". They differ (floor vs ceil steps, free when empty, a cap); the visible tests do not show it. The step arithmetic must also end up written at most twice (three times now), or doing nothing passes |
 
 A cell passes only when all of these hold: the hidden check (`_check.sh`)
 exits 0 on the copy with the original tests and extra cases put back over
@@ -178,8 +177,9 @@ misbehaves, check these:
   60 s.
 - `agent_permit` with `decision: deny` is accepted for a delegated session.
 - `GET /api/workspace/state?project_root=&session_id=` answers for a delegated
-  session (its messages are stored globally; `project_root` need only be
-  present) with `messages` as `[meta, text]` rows, `meta.tools` listing the
+  session (its messages are stored globally and load by session id; the runner
+  sends a `project_root` that cannot resolve so the engine opens no project
+  for the scratch copy) with `messages` as `[meta, text]` rows, `meta.tools` listing the
   calls made before that row's words. Read from `src/server/api/workspace.rs`
   and `src/server/chat/run_calls.rs`, never run against a live engine.
 - `claude -p --output-format stream-json --verbose` prints `assistant` events

@@ -191,7 +191,7 @@ class DurationTest(unittest.TestCase):
                          "up 3h 1m\njobs 1 of 2 (50%)\ndisk 5 GB\nnext run about 1h 5m")
 
     def test_the_docstring_keeps_up(self):
-        self.assertIn("hour", textfmt.format_duration.__doc__.lower())
+        self.assertRegex(textfmt.format_duration.__doc__, r"(?i)\d+h|hours")
 
 
 if __name__ == "__main__":

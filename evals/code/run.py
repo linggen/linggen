@@ -54,6 +54,7 @@ DEFAULT_ENGINE = "http://127.0.0.1:9527"
 # what leaves the machine still asks, and is answered deny.
 DEFAULT_TOOLS = "python3,node,cargo,rustc,sh"
 ASK_TIMEOUT_S = 15
+NO_PROJECT = "/codeeval-no-such-folder"  # a project_root that cannot resolve (see count_tool_calls)
 MCP_CALL_TIMEOUT_S = 150  # agent_run itself waits up to ~45 s before it hands back
 
 
@@ -213,7 +214,7 @@ def run_linggen(args, work, ask, work_dir):
             return finish(out, t0)
         session = m.group(1)
         out["session"] = session
-        watch(mcp, args.engine, session, deadline, out, work_dir)
+        watch(mcp, args.engine, session, deadline, out)
     except McpError as e:
         out["error"] = str(e)
     except (OSError, ValueError) as e:
@@ -221,7 +222,7 @@ def run_linggen(args, work, ask, work_dir):
     return finish(out, t0)
 
 
-def watch(mcp, engine, session, deadline, out, work_dir=None):
+def watch(mcp, engine, session, deadline, out):
     """Follow a running session to its end: answer every ask 'deny', record it.
 
     The wait socket is the main path; every time it closes, expires or goes
@@ -283,14 +284,14 @@ def watch(mcp, engine, session, deadline, out, work_dir=None):
     if out["status"] == "failed":
         out["error"] = (final or st).get("error") or st.get("error") or "failed"
     # Read the count while the session is still there, before it is closed.
-    out["tool_calls"] = count_tool_calls(engine, session, work_dir)
+    out["tool_calls"] = count_tool_calls(engine, session)
     try:
         mcp.call("agent_session_close", {"session_id": session})
     except McpError:
         pass
 
 
-def count_tool_calls(engine, session, work_dir):
+def count_tool_calls(engine, session):
     """How many tool calls a delegated session made, or None when that cannot be read.
 
     `agent_status` carries no count. The session's record does: the history
@@ -300,8 +301,14 @@ def count_tool_calls(engine, session, work_dir):
     them as `meta.tools` (`[{tool, args, status}]`). The count is the sum over
     the rows. Any failure, or a session with no rows, gives None (shown as
     n/a), never a made-up 0. Nothing here reads the engine's data folder.
+
+    `project_root` is required by the route but only used to load the
+    project's own task files; messages load by session id alone. It is sent as
+    a folder that cannot exist, so the engine opens no project for the scratch
+    copy (it would register it) and nothing is read from or written to the copy
+    before it is scored.
     """
-    query = urllib.parse.urlencode({"project_root": str(work_dir or ""), "session_id": session})
+    query = urllib.parse.urlencode({"project_root": NO_PROJECT, "session_id": session})
     try:
         with urllib.request.urlopen("%s/api/workspace/state?%s" % (engine.rstrip("/"), query),
                                     timeout=ASK_TIMEOUT_S) as r:

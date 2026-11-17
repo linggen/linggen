@@ -136,7 +136,7 @@ class Handler(BaseHTTPRequestHandler):
         session is unknown to this route (404), which the runner must show as n/a."""
         query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
         sid = query["session_id"][0]
-        assert Path(query["project_root"][0]).is_dir(), "project_root must be the scratch copy"
+        assert query["project_root"][0] == run.NO_PROJECT and not Path(run.NO_PROJECT).exists()
         cell = Fake.sessions[sid]["cell"]
         if cell == ASK_CELL:
             data, code = b"not found", 404

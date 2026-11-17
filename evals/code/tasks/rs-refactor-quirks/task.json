@@ -1,6 +1,6 @@
 {
   "lang": "rust",
-  "catches": "A refactor 'with no behaviour change' that has behaviour the visible tests do not cover. The three fee functions look alike but differ: standard counts full steps, express counts started steps and is capped, freight charges even an empty parcel and has no cap. A tidy unification (started steps, free when empty, one cap) keeps the visible tests green and loses those. The check also needs the refactor to have happened (code lines at most 32 of 39), or doing nothing would pass. Habit: read the code before changing it; check the behaviour the tests do not measure.",
+  "catches": "A refactor 'with no behaviour change' that has behaviour the visible tests do not cover. The three fee functions look alike but differ: standard counts full steps, express counts started steps and is capped, freight charges even an empty parcel and has no cap. A tidy unification (started steps, free when empty, one cap) keeps the visible tests green and loses those. The check also needs the refactor to have happened (the step division may appear on at most 2 lines of the 3 it has now), or doing nothing would pass. Habit: read the code before changing it; check the behaviour the tests do not measure.",
   "ask": "The three fee functions in src/lib.rs repeat the same ladder logic three times. Please refactor them so they share one helper, with no behaviour change.",
   "test_paths": [
     "src/tests.rs"
