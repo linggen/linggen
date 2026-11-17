@@ -76,6 +76,10 @@ pub(crate) struct EditPlanRequest {
 #[derive(Deserialize)]
 pub(crate) struct ClearChatRequest {
     pub(super) session_id: Option<String>,
+    /// The app whose page asks (set by the page's channel): in the day's
+    /// session its part of the day alone is cleared (`chat::clear_place`).
+    #[serde(default)]
+    pub(super) skill_name: Option<String>,
 }
 
 #[derive(Deserialize)]

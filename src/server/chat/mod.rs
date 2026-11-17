@@ -21,6 +21,8 @@
 //! and per-turn auto-recall.
 
 mod admin;
+mod clear_place;
+pub(crate) use clear_place::clear_chat_api;
 mod cloud_gate;
 pub(crate) mod fold;
 mod compact_rows;
@@ -41,7 +43,7 @@ pub(crate) mod turn_place;
 pub(crate) mod types;
 
 pub(crate) use admin::{
-    ask_user_response_handler, clear_chat_history_api, compact_chat_api, compact_config_api,
+    ask_user_response_handler, compact_chat_api, compact_config_api,
     get_system_prompt_api, pending_ask_user_handler,
 };
 pub(crate) use handler::{
@@ -54,10 +56,9 @@ pub(crate) use plan_flow::{approve_plan_handler, edit_plan_handler, reject_plan_
 pub(crate) use runtime::close_turn;
 
 use crate::engine::agent::AgentManager;
-use crate::server::{ServerEvent, ServerState};
+use crate::server::ServerState;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::broadcast;
 
 /// Shared context passed to every per-turn dispatch flow (skill, trigger,
 /// plan, structured, plan-execution). Built once in `chat_handler` and
@@ -65,7 +66,7 @@ use tokio::sync::broadcast;
 pub(super) struct ChatRunCtx {
     pub(super) state: Arc<ServerState>,
     pub(super) manager: Arc<AgentManager>,
-    pub(super) events_tx: broadcast::Sender<ServerEvent>,
+    pub(super) events_tx: crate::engine::event_bus::EventBus,
     pub(super) root: PathBuf,
     pub(super) agent_id: String,
     pub(super) session_id: Option<String>,

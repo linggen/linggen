@@ -9,7 +9,7 @@ use crate::server::api::sessions::{
     list_skill_sessions, remove_skill_session_api, rename_session_api, running_work_api,
 };
 use crate::server::chat::{
-    approve_plan_handler, ask_user_response_handler, chat_handler, clear_chat_history_api,
+    approve_plan_handler, ask_user_response_handler, chat_handler,
     compact_chat_api, compact_config_api, edit_plan_handler, get_system_prompt_api,
     pending_ask_user_handler, reject_plan_handler,
 };
@@ -49,7 +49,7 @@ pub(super) fn routes() -> Routes {
         .route("/api/restart/current", post(crate::server::restart::restart_current))
         // Chat & plan
         .route("/api/chat", post(chat_handler))
-        .route("/api/chat/clear", post(clear_chat_history_api))
+        .route("/api/chat/clear", post(crate::server::chat::clear_chat_api))
         .route("/api/chat/compact", post(compact_chat_api))
         .route("/api/chat/compact_config", post(compact_config_api))
         .route("/api/chat/system-prompt", get(get_system_prompt_api))

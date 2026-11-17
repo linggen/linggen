@@ -116,12 +116,18 @@ pub(super) fn handle_control_message(
 
         "http_request" | "chat" | "clear" | "compact" | "plan_approve" | "plan_reject"
         | "plan_edit" | "ask_user_response" | "inference" | "list_models" => {
-            // These need async processing — return as pending request
+            // These need async processing — return as pending request.
+            // A clear names the app whose page asks: in the day's session
+            // that app's part alone is cleared.
+            let mut body = msg;
+            if let (Some(skill), "clear") = (view_ctx.skill.as_deref(), msg_type.as_str()) {
+                body["skill_name"] = serde_json::Value::String(skill.to_string());
+            }
             Some(ControlRequest {
                 request_id,
                 channel_id,
                 msg_type,
-                body: msg,
+                body,
             })
         }
 
