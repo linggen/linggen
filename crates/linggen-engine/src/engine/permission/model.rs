@@ -126,13 +126,72 @@ pub fn is_hardcoded_deny(cmd: &str) -> bool {
     false
 }
 
+/// Programs that only run the command that follows them.
+const RUNS_WHAT_FOLLOWS: &[&str] = &["env", "command", "exec", "nohup", "nice", "time", "builtin"];
+
+/// `NAME=value`, as a shell reads a word before the command.
+fn is_assignment(word: &str) -> bool {
+    let Some((name, _)) = word.split_once('=') else {
+        return false;
+    };
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// The command a segment really runs, for the floor: past leading
+/// `NAME=value` words and past the programs that only run what follows them
+/// (with their options), its program named by its file name whatever path
+/// it was given by. `/usr/bin/sudo ls`, `FOO=1 sudo ls`, `env -i sudo ls`
+/// and `nice -n 19 sudo ls` are all `sudo ls`.
+fn command_run<'a>(tokens: &'a [&'a str]) -> &'a [&'a str] {
+    let mut rest = tokens;
+    loop {
+        while rest.first().is_some_and(|w| is_assignment(w)) {
+            rest = &rest[1..];
+        }
+        let Some(first) = rest.first() else {
+            return rest;
+        };
+        let wrapper = file_name(first);
+        if !RUNS_WHAT_FOLLOWS.contains(&wrapper) {
+            return rest;
+        }
+        rest = &rest[1..];
+        // `command -v x` only asks where x is: nothing is run.
+        if wrapper == "command" && matches!(rest.first(), Some(&"-v" | &"-V")) {
+            return &[];
+        }
+        // The wrapper's own options: flags, a flag's name or number
+        // (`env -u HOME`, `nice -n 19`), and `env`'s assignments.
+        let mut takes_value = false;
+        while let Some(word) = rest.first() {
+            let flag = word.starts_with('-');
+            let value = takes_value && !flag;
+            if !(flag || value || is_assignment(word)) {
+                break;
+            }
+            takes_value = flag && matches!(*word, "-u" | "-n" | "-C" | "-P" | "-S" | "-a");
+            rest = &rest[1..];
+        }
+    }
+}
+
+/// A program's own name, whatever path it was run by.
+fn file_name(word: &str) -> &str {
+    word.rsplit('/').next().unwrap_or(word)
+}
+
 fn segment_is_hardcoded_deny(seg: &str) -> bool {
     let words: Vec<String> = seg.split_whitespace().map(dequote).collect();
-    let tokens: Vec<&str> = words.iter().map(String::as_str).collect();
+    let all: Vec<&str> = words.iter().map(String::as_str).collect();
+    let tokens = command_run(&all);
     if tokens.is_empty() {
         return false;
     }
-    let program = tokens[0];
+    let program = file_name(tokens[0]);
 
     // sudo / sudoedit — privilege escalation, never allowed.
     if program == "sudo" || program == "sudoedit" {

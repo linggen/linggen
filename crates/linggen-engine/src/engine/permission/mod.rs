@@ -407,6 +407,64 @@ mod tests {
         assert!(is_hardcoded_deny("rm -rf '/'"));
     }
 
+    /// The floor judges the program a segment runs, however it is named:
+    /// by its full path, behind `VAR=value` words, or behind a program that
+    /// only runs what follows it.
+    #[test]
+    fn deny_floor_sees_a_program_by_any_path_or_wrapper() {
+        for cmd in [
+            "/usr/bin/sudo ls",
+            "'/usr/bin/sudo' ls",
+            "/bin/rm -rf /",
+            "/bin/rm -rf ~",
+            "/sbin/mkfs.ext4 /dev/sda1",
+            "/bin/dd if=/dev/zero of=/dev/disk2",
+            "/usr/sbin/chown -R me /",
+            "/bin/chmod -R 777 /",
+            "cd /tmp && /usr/bin/sudo ls",
+            "FOO=1 sudo ls",
+            "FOO=1 BAR=2 /usr/bin/sudo ls",
+            "env sudo ls",
+            "env -i PATH=/bin sudo ls",
+            "env -u HOME sudo ls",
+            "/usr/bin/env sudo ls",
+            "command sudo ls",
+            "exec sudo ls",
+            "nohup sudo ls",
+            "nice -n 19 sudo ls",
+            "time sudo ls",
+            "time -p /usr/bin/sudo ls",
+            "exec -a other sudo ls",
+            "nohup nice env /bin/rm -rf /",
+        ] {
+            assert!(is_hardcoded_deny(cmd), "{cmd}");
+        }
+    }
+
+    /// A word that only names such a program is not a run of it, and an
+    /// ordinary use of the same program is not the catastrophe.
+    #[test]
+    fn deny_floor_leaves_what_only_names_a_program() {
+        for cmd in [
+            "echo sudo",
+            "man sudo",
+            "grep sudo notes.txt",
+            "which /usr/bin/sudo",
+            "command -v sudo",
+            "ls /bin/rm",
+            "cat ~/sudo/readme",
+            "/bin/rm -rf ./build",
+            "rm -rf /tmp/x",
+            "env FOO=1 ls",
+            "nice -n 19 cargo build",
+            "/bin/dd if=a.img of=b.img",
+            "/bin/chmod -R 755 ./dist",
+            "git commit -m 'drop sudo from the docs'",
+        ] {
+            assert!(!is_hardcoded_deny(cmd), "{cmd}");
+        }
+    }
+
     #[test]
     fn test_classify_bash_read() {
         assert_eq!(classify_bash_command("ls"), BashClass::Read);
