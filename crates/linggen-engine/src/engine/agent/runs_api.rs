@@ -107,6 +107,12 @@ impl AgentManager {
                 }
             }
         }
+        // Its events' stamp, decided now (`engine::event_bus`).
+        self.global_sessions.running_places.begin_run(
+            &run_id,
+            record.parent_run_id.as_deref(),
+            session_id,
+        );
         self.run_messages.lock().unwrap_or_else(|e| e.into_inner()).insert(run_id.clone(), Vec::new());
         if record.parent_run_id.is_none() {
             self.run_store.clear_outcome(&record.session_id);

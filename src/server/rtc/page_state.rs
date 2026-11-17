@@ -504,7 +504,10 @@ pub async fn build_page_state(
                 queued_entries(&guard, session_id, ctx.skill.as_deref())
             };
             ps.queued = Some(queued);
-            ps.tasks = Some(state.tasks.list(session_id));
+            let shown = |t: &crate::engine::events::BackgroundTask| {
+                crate::server::rtc::peer::task_shown(t, ctx.skill.as_deref())
+            };
+            ps.tasks = Some(state.tasks.list(session_id).into_iter().filter(shown).collect());
 
             let session_dir = crate::paths::global_sessions_dir().join(session_id);
             let perms = crate::engine::permission::SessionPermissions::load(&session_dir);

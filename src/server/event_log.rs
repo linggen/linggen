@@ -16,7 +16,7 @@ pub(super) fn spawn(state: &Arc<ServerState>) {
         let mut seq = 0u64;
         loop {
             let event = match rx.recv().await {
-                Ok(event) => event,
+                Ok(stamped) => stamped.event,
                 Err(RecvError::Lagged(_)) => continue,
                 Err(RecvError::Closed) => return,
             };

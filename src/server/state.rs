@@ -9,7 +9,7 @@ use crate::util::LockExt;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::Mutex;
 
 use super::{UI_PHASE_DOING, UI_PHASE_DONE};
 use crate::engine::events::{AgentStatusKind, QueuedChatItem, ServerEvent};
@@ -35,7 +35,7 @@ pub struct ServerState {
     /// with boot time so background catch-up work waits out a fresh daemon's
     /// first quiet window instead of firing one tick after start.
     pub last_user_turn_at: Arc<AtomicU64>,
-    pub events_tx: broadcast::Sender<ServerEvent>,
+    pub events_tx: crate::engine::event_bus::EventBus,
     pub skills: Arc<crate::extensions::skills::SkillLoader>,
     /// The skills' heavy files fetched after install (`crate::assets`).
     pub assets: Arc<crate::assets::Assets>,

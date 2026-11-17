@@ -129,9 +129,15 @@ pub(crate) fn is_silent_reply(from_id: &str, content: &str) -> bool {
 }
 
 /// Say her reply aloud: its spoken line, when it has one (not SILENT).
-pub(crate) fn speak_reply(state: &std::sync::Arc<crate::server::ServerState>, reply: &str) {
+/// `kept_to`: the app the turn's talk is kept to — the line is heard only
+/// on its pages.
+pub(crate) fn speak_reply(
+    state: &std::sync::Arc<crate::server::ServerState>,
+    reply: &str,
+    kept_to: Option<String>,
+) {
     if let Some(line) = spoken_line(reply) {
-        crate::server::api::yinyue::emit_speak(state, line, None);
+        crate::server::api::yinyue::emit_speak_kept(state, line, None, kept_to);
     }
 }
 

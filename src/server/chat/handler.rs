@@ -494,7 +494,7 @@ pub(crate) async fn mark_steered(state: &Arc<ServerState>, queued_id: &str) {
 /// not run a message the user watched disappear.
 pub(crate) async fn dequeue_and_emit(
     state: &Arc<ServerState>,
-    events_tx: &tokio::sync::broadcast::Sender<ServerEvent>,
+    events_tx: &crate::engine::event_bus::EventBus,
     queued_id: &str,
     session_id: &str,
     target_id: &str,
@@ -861,7 +861,6 @@ pub(crate) async fn run_session_turn(
         trim_capped(engine, max_live_msgs);
     }
     dispatch_turn(ctx, engine, manager, &ctx.clean_msg).await;
-    remember_if_private(manager, ctx, engine);
     super::thread::mark(engine, ctx);
     super::turn_place::leave_turn_place(engine);
 }
@@ -875,18 +874,11 @@ fn hear_her_at_table(
 ) {
     if super::members::is_companion(target_id) && !crate::server::resident::is_own_session(session_id) {
         if let Some(reply) = engine.last_assistant_text.clone() {
-            crate::server::resident::speak_reply(state, &reply);
+            // The turn's mark still stands: a line said in a kept place is
+            // heard only on its app's pages.
+            let kept = state.manager.global_sessions.running_places.private_app(session_id);
+            crate::server::resident::speak_reply(state, &reply, kept);
         }
-    }
-}
-
-/// A private turn's run is remembered as it ends: its events still on their
-/// way to a page are kept from pages outside its app (`rtc::peer::forward`).
-fn remember_if_private(manager: &AgentManager, ctx: &ChatRunCtx, engine: &crate::engine::AgentEngine) {
-    let places = &manager.global_sessions.running_places;
-    let app = ctx.session_id.as_deref().and_then(|sid| places.private_app(sid));
-    if let (Some(app), Some(run)) = (app, engine.last_run_id.as_deref()) {
-        places.remember_private_run(run, &app);
     }
 }
 
@@ -1084,7 +1076,8 @@ async fn into_the_day(state: &Arc<ServerState>, mut req: ChatRequest) -> ChatReq
     if req.session_id.is_some() || req.mission_id.is_some() || !joins {
         return req;
     }
-    req.session_id = crate::server::day_session::current_if_on(&state.manager).await;
+    req.session_id =
+        crate::server::day_session::current_for_if_on(&state.manager, req.user_id.as_deref()).await;
     req
 }
 

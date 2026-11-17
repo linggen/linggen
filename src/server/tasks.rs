@@ -193,7 +193,7 @@ pub(crate) async fn native_watch(state: std::sync::Arc<super::ServerState>) {
     let mut events = state.events_tx.subscribe();
     loop {
         let event = match events.recv().await {
-            Ok(event) => event,
+            Ok(stamped) => stamped.event,
             Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
             Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
         };

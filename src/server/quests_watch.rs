@@ -12,7 +12,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::broadcast;
 
 use super::state::ServerState;
 use crate::engine::events::ServerEvent;
@@ -49,7 +48,7 @@ pub(super) fn spawn(state: &Arc<ServerState>) {
 /// Arm the watcher on `dir`; changes are sent on `events` as they settle.
 fn watch(
     dir: PathBuf,
-    events: broadcast::Sender<ServerEvent>,
+    events: crate::engine::event_bus::EventBus,
     debounce: Duration,
 ) -> notify::Result<()> {
     use notify::Watcher;
@@ -104,7 +103,8 @@ mod tests {
     #[tokio::test]
     async fn a_written_file_is_announced_once_per_app() {
         let dir = tempfile::tempdir().unwrap();
-        let (tx, mut rx) = broadcast::channel(16);
+        let tx = crate::engine::event_bus::EventBus::detached(16);
+        let mut rx = tx.subscribe();
         watch(dir.path().to_path_buf(), tx, Duration::from_millis(200)).unwrap();
         // Written the way apps write: a temp file, then a rename, then again.
         let tmp = dir.path().join("health.json.tmp");
@@ -115,7 +115,8 @@ mod tests {
         let got = tokio::time::timeout(Duration::from_secs(5), rx.recv())
             .await
             .expect("announced")
-            .unwrap();
+            .unwrap()
+            .event;
         assert!(matches!(got, ServerEvent::QuestsChanged { ref app } if app == "health"));
         // The burst settled into that one event.
         let more = tokio::time::timeout(Duration::from_millis(600), rx.recv()).await;

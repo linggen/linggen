@@ -42,7 +42,7 @@ pub async fn connect_to_room(
     relay_url: &str,
     instance_id: &str,
     api_token: &str,
-    events_tx: Option<tokio::sync::broadcast::Sender<crate::server::ServerEvent>>,
+    events_tx: Option<crate::engine::event_bus::EventBus>,
 ) -> Result<ProxyConnection> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
@@ -176,8 +176,8 @@ async fn run_proxy_client_loop(
     request_rx: &mut mpsc::Receiver<String>,
     response_tx: &mpsc::Sender<String>,
     ready_tx: Option<tokio::sync::oneshot::Sender<()>>,
-    events_rx: &mut Option<tokio::sync::broadcast::Receiver<crate::server::ServerEvent>>,
-    events_broadcast_tx: Option<tokio::sync::broadcast::Sender<crate::server::ServerEvent>>,
+    events_rx: &mut Option<tokio::sync::broadcast::Receiver<crate::engine::event_bus::Stamped>>,
+    events_broadcast_tx: Option<crate::engine::event_bus::EventBus>,
 ) {
     let mut buf = vec![0u8; 65536];
     let mut inference_channel: Option<str0m::channel::ChannelId> = None;
@@ -311,7 +311,7 @@ async fn run_proxy_client_loop(
                     None => std::future::pending().await,
                 }
             } => {
-                if let Ok(crate::server::ServerEvent::RoomChat { sender_id, sender_name, avatar_url, text }) = result {
+                if let Ok(crate::engine::event_bus::Stamped { event: crate::server::ServerEvent::RoomChat { sender_id, sender_name, avatar_url, text }, .. }) = result {
                     // Only forward messages from the local user to the owner.
                     // Skip: owner's messages (echoed back), other remote senders.
                     if sender_id != local_user_id {

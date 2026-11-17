@@ -7,15 +7,13 @@
 use crate::account::cloud_save::{sync, target, SaveTarget};
 use crate::engine::{AgentEngine, AgentOutcome};
 use crate::server::api::skill_cloud::AUTH_REQUIRED;
-use crate::server::ServerEvent;
-use tokio::sync::broadcast;
 
 /// Run the turn inside its skill's cloud gate, when the skill declares one.
 /// Every other turn runs exactly as before.
 pub(super) async fn run_gated(
     engine: &mut AgentEngine,
     session_id: Option<&str>,
-    events_tx: &broadcast::Sender<ServerEvent>,
+    events_tx: &crate::engine::event_bus::EventBus,
 ) -> anyhow::Result<AgentOutcome> {
     // Read before the loop, which clears the active skill when it ends.
     let Some(save) = cloud_save(engine) else {
@@ -40,7 +38,7 @@ fn cloud_save(engine: &AgentEngine) -> Option<Option<SaveTarget>> {
 async fn sync_logged(
     save: Option<&SaveTarget>,
     when: &str,
-    events_tx: &broadcast::Sender<ServerEvent>,
+    events_tx: &crate::engine::event_bus::EventBus,
 ) {
     let Some(save) = save else { return };
     match sync(save).await {

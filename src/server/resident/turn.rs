@@ -356,7 +356,8 @@ fn resend_hers(
             tokio::spawn(async move {
                 let pet = state.manager.get_config_snapshot().await.pet;
                 if let Some(reply) = run_at(&state, &turn, &pet, task, &trigger_source).await {
-                    super::speak_reply(&state, &reply);
+                    let kept = crate::server::chat::turn_place::hidden_app(&state.manager, &turn.session_id, &turn.place).await;
+                    super::speak_reply(&state, &reply, kept);
                 }
             });
         })

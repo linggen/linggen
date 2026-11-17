@@ -3,7 +3,6 @@ use crate::server::chat::helpers::persist_and_emit_message;
 use crate::server::{AgentStatusKind, ServerEvent, ServerState};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::broadcast;
 
 use super::ChatRunCtx;
 
@@ -14,7 +13,7 @@ pub(super) async fn run_loop_with_tracking(
     agent_id: &str,
     session_id: Option<&str>,
     detail: &str,
-    events_tx: &broadcast::Sender<ServerEvent>,
+    events_tx: &crate::engine::event_bus::EventBus,
 ) -> Result<crate::engine::AgentOutcome, anyhow::Error> {
     let run_id = manager
         .begin_agent_run(root, session_id, agent_id, None, Some(detail.to_string()))
@@ -579,6 +578,7 @@ fn keep_world(ctx: &ChatRunCtx, engine: &mut crate::engine::AgentEngine) {
         failed: false,
         images: Vec::new(),
         place: None,
+        kept_to: None,
     };
     let sid = ctx.session_id.as_deref().unwrap_or("default");
     if let Err(e) = ctx.manager.global_sessions.add_chat_message(sid, &row) {
@@ -607,7 +607,7 @@ async fn persist_recall(ctx: &ChatRunCtx, model_text: &str) {
 
 async fn save_recall(
     store: &crate::state_fs::SessionStore,
-    events_tx: &broadcast::Sender<ServerEvent>,
+    events_tx: &crate::engine::event_bus::EventBus,
     agent_id: &str,
     model_text: &str,
     session_id: Option<&str>,
@@ -668,7 +668,7 @@ pub(crate) async fn owner_turn_memory(
 /// Spawned per-turn for plan dispatch, plan execution, and the structured loop.
 pub(super) fn spawn_thinking_forwarder(
     mut thinking_rx: tokio::sync::mpsc::UnboundedReceiver<crate::engine::StreamedToken>,
-    events_tx: broadcast::Sender<ServerEvent>,
+    events_tx: crate::engine::event_bus::EventBus,
     agent_id: String,
     session_id: Option<String>,
 ) {

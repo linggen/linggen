@@ -11,14 +11,14 @@ use std::sync::{Arc, Mutex};
 #[derive(Debug, Default, Clone)]
 pub struct RunningPlaces {
     by_session: Arc<Mutex<HashMap<String, Running>>>,
-    /// The runs of private turns that ended, newest last, with their app:
-    /// their events may still be on their way to a page when the turn's
-    /// mark is gone.
-    private_runs: Arc<Mutex<std::collections::VecDeque<(String, String)>>>,
+    /// Each run's stamp, decided as it began: the app its talk is kept to,
+    /// or `None` for everyone's. Newest last; a run's events carry it after
+    /// its turn's mark is gone, and a subagent's run takes its parent's.
+    runs: Arc<Mutex<std::collections::VecDeque<(String, Option<String>)>>>,
 }
 
-/// How many ended private runs are remembered.
-const PRIVATE_RUNS_KEPT: usize = 256;
+/// How many runs' stamps are remembered.
+const RUNS_KEPT: usize = 1024;
 
 /// A running turn's place, and whether its talk is kept to it.
 #[derive(Debug, Clone)]
@@ -71,6 +71,16 @@ impl RunningPlaces {
         self.map().get(session).map(|r| r.place.clone())
     }
 
+    /// The stamp a row saved in `session` now takes: the running turn's
+    /// place key, and the app its talk is kept to, if any.
+    pub fn stamp_of(&self, session: &str) -> Option<(String, Option<String>)> {
+        let map = self.map();
+        let running = map.get(session)?;
+        let key = running.place.key().to_string();
+        let kept = running.private.then(|| key.clone());
+        Some((key, kept))
+    }
+
     /// The turn running in `session` keeps its talk to its app
     /// (`turn_place::sight`): what it streams goes to no surface outside it.
     pub fn keep_talk_private(&self, session: &str) {
@@ -79,20 +89,27 @@ impl RunningPlaces {
         }
     }
 
-    /// Run `run`, of a turn whose talk is kept to `app`, has ended: its
-    /// events still on their way are kept from other pages too.
-    pub fn remember_private_run(&self, run: &str, app: &str) {
-        let mut runs = self.private_runs.lock().unwrap_or_else(|p| p.into_inner());
-        runs.push_back((run.to_string(), app.to_string()));
-        while runs.len() > PRIVATE_RUNS_KEPT {
+    /// Stamp run `run` as it begins: a subagent's run (`parent`) takes its
+    /// parent run's stamp; any other takes the stamp of the turn running in
+    /// `session`. Returns the stamp.
+    pub fn begin_run(&self, run: &str, parent: Option<&str>, session: Option<&str>) -> Option<String> {
+        let kept = match parent.and_then(|p| self.run_stamp(p)) {
+            Some(parents) => parents,
+            None => session.and_then(|s| self.private_app(s)),
+        };
+        let mut runs = self.runs.lock().unwrap_or_else(|p| p.into_inner());
+        runs.push_back((run.to_string(), kept.clone()));
+        while runs.len() > RUNS_KEPT {
             runs.pop_front();
         }
+        kept
     }
 
-    /// The app a private turn's run `run` kept its talk to, once it ended.
-    pub fn private_run(&self, run: &str) -> Option<String> {
-        let runs = self.private_runs.lock().unwrap_or_else(|p| p.into_inner());
-        runs.iter().rev().find(|(r, _)| r == run).map(|(_, app)| app.clone())
+    /// Run `run`'s stamp, when it was stamped as it began: `Some(None)` is
+    /// everyone's, `Some(Some(app))` kept to `app`.
+    pub fn run_stamp(&self, run: &str) -> Option<Option<String>> {
+        let runs = self.runs.lock().unwrap_or_else(|p| p.into_inner());
+        runs.iter().rev().find(|(r, _)| r == run).map(|(_, kept)| kept.clone())
     }
 
     /// The app the turn running in `session` keeps its talk to, if any.
@@ -179,8 +196,24 @@ mod tests {
         assert_eq!(places.private_app("sess-1"), None);
         places.keep_talk_private("sess-1");
         assert_eq!(places.private_app("sess-1"), None, "nothing runs");
-        places.remember_private_run("run-1", "zz-ledger");
-        assert_eq!(places.private_run("run-1").as_deref(), Some("zz-ledger"));
-        assert_eq!(places.private_run("run-2"), None);
+    }
+
+    /// A run is stamped as it begins, from the turn running then; its
+    /// subagents take its stamp, and the stamp outlives the turn's mark.
+    #[test]
+    fn a_runs_stamp_is_decided_as_it_begins_and_its_subagents_inherit_it() {
+        let places = RunningPlaces::default();
+        let mark = places.mark("sess-1", &app("zz-ledger")).unwrap();
+        places.keep_talk_private("sess-1");
+        assert_eq!(places.begin_run("run-1", None, Some("sess-1")).as_deref(), Some("zz-ledger"));
+        drop(mark);
+        assert_eq!(places.run_stamp("run-1"), Some(Some("zz-ledger".into())));
+        // Begun after the turn ended, a subagent still takes its parent's.
+        assert_eq!(places.begin_run("run-2", Some("run-1"), Some("sess-1")).as_deref(), Some("zz-ledger"));
+        // A home turn's run is everyone's, whatever runs later.
+        let _home = places.mark("sess-1", &TurnPlace::home()).unwrap();
+        assert_eq!(places.begin_run("run-3", None, Some("sess-1")), None);
+        assert_eq!(places.run_stamp("run-3"), Some(None));
+        assert_eq!(places.run_stamp("run-9"), None);
     }
 }

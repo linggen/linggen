@@ -19,6 +19,17 @@ use crate::server::{ServerEvent, ServerState};
 /// Push a speak cue to all of the user's surfaces. The single producer — the
 /// event-reactive watch loop calls this when Yinyue reacts.
 pub fn emit_speak(state: &Arc<ServerState>, text: String, emotion: Option<String>) {
+    emit_speak_kept(state, text, emotion, None);
+}
+
+/// [`emit_speak`] for a line born in a place whose talk is kept to
+/// `kept_to`: it is shown and spoken only on that app's pages.
+pub fn emit_speak_kept(
+    state: &Arc<ServerState>,
+    text: String,
+    emotion: Option<String>,
+    kept_to: Option<String>,
+) {
     // Not met yet: there is no one to speak.
     if !state
         .manager
@@ -32,11 +43,12 @@ pub fn emit_speak(state: &Arc<ServerState>, text: String, emotion: Option<String
     // waits for — a line an app had her say directly counts too.
     crate::server::yinyue_moments::note_spoke();
     // Err only means no surface is currently connected — nothing to hear her.
-    let _ = state.events_tx.send(ServerEvent::PetSpeak {
+    let speak = ServerEvent::PetSpeak {
         text,
         emotion,
         voice,
-    });
+    };
+    let _ = state.events_tx.send_kept(speak, kept_to);
 }
 
 /// `/mute` → turn her voice off, `/unmute` → back on; any other message is

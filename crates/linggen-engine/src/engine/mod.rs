@@ -9,6 +9,7 @@ pub mod compaction;
 mod context;
 mod dispatch;
 mod foreground_task;
+pub mod event_bus;
 pub mod events;
 pub mod mission;
 pub mod image_relevance;
@@ -157,6 +158,7 @@ impl AgentEngine {
                     failed: false,
                     images: Vec::new(),
                     place: None,
+                    kept_to: None,
                 },
             )
             .await;
@@ -369,6 +371,7 @@ impl AgentEngine {
                         failed: false,
                         images: Vec::new(),
                         place: None,
+                        kept_to: None,
                     },
                 )
                 .await;

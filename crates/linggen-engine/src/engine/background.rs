@@ -360,6 +360,7 @@ pub async fn watch_shell(
     let mut task = BackgroundTask::running(&id, "shell", cmd);
     task.owner_agent = if child_owner { None } else { owner.or(Some(agent)).map(str::to_owned) };
     task.place = started_in(manager, session);
+    task.kept_to = manager.global_sessions.running_places.private_app(session);
     task.child_owner = child_owner;
     task.output_file = Some(output.to_string_lossy().into_owned());
     let (stop_tx, mut stop_rx) = oneshot::channel();
@@ -498,6 +499,7 @@ pub async fn track_subagent(
     let mut task = BackgroundTask::running(&id, "subagent", &format!("{target}: {title}"));
     task.owner_agent = if child_owner { None } else { owner.or(Some(agent)).map(str::to_owned) };
     task.place = started_in(manager, session);
+    task.kept_to = manager.global_sessions.running_places.private_app(session);
     task.child_owner = child_owner;
     let (stop_tx, mut stop_rx) = oneshot::channel();
     manager

@@ -14,7 +14,7 @@ use tracing::{debug, info, warn};
 /// daemon builds one per spawn (`ServerState::scheduler_host`).
 pub struct SchedulerHost {
     pub manager: Arc<crate::engine::agent::AgentManager>,
-    pub events_tx: tokio::sync::broadcast::Sender<ServerEvent>,
+    pub events_tx: crate::engine::event_bus::EventBus,
     pub skills: Arc<crate::extensions::skills::SkillLoader>,
     pub missions: Arc<super::MissionLoader>,
     pub pending_ask_user:
@@ -749,6 +749,7 @@ async fn dispatch_mission_prompt(
                     failed: false,
                     images: Vec::new(),
                     place: None,
+                    kept_to: None,
                 },
             );
         }
@@ -984,6 +985,7 @@ async fn dispatch_mission_prompt(
                             failed: false,
                             images: Vec::new(),
                             place: None,
+                            kept_to: None,
                         },
                     );
                     // Ping the UI so it reloads persisted messages immediately
@@ -1078,6 +1080,7 @@ async fn append_run_report(state: &Arc<SchedulerHost>, agent_id: &str, session_i
             failed: false,
             images: Vec::new(),
             place: None,
+            kept_to: None,
         },
     );
     let _ = state.events_tx.send(ServerEvent::StateUpdated);
@@ -1162,6 +1165,7 @@ fn note_unprepared(
             failed: true,
             images: Vec::new(),
             place: None,
+            kept_to: None,
         },
     );
     let _ = state.events_tx.send(ServerEvent::StateUpdated);

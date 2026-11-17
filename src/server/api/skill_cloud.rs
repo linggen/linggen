@@ -29,7 +29,7 @@ pub(crate) use crate::engine::skill::tools::AUTH_REQUIRED;
 /// Tell every surface a pull replaced a skill's save (`SkillSaveChanged`):
 /// its page reads again instead of showing the files it had.
 pub(crate) fn announce(
-    events_tx: &tokio::sync::broadcast::Sender<ServerEvent>,
+    events_tx: &crate::engine::event_bus::EventBus,
     skill: &str,
     done: &Synced,
 ) {

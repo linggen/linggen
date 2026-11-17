@@ -36,7 +36,7 @@ pub(super) struct EventFilter<'a> {
 }
 
 pub(super) fn forward_event_to_channels(
-    event: &crate::server::ServerEvent,
+    stamped: &crate::engine::event_bus::Stamped,
     session_channels: &HashMap<String, str0m::channel::ChannelId>,
     control_channel_id: Option<str0m::channel::ChannelId>,
     inference_channel_id: Option<str0m::channel::ChannelId>,
@@ -46,6 +46,13 @@ pub(super) fn forward_event_to_channels(
     dirty_flags: &mut u64,
     filter: &mut EventFilter<'_>,
 ) {
+    // A kept event is judged by the stamp it was made with: only its app's
+    // pages are sent its words (`turn_place::sight`).
+    let Some(event) = shown_to_page(stamped, filter.skill) else {
+        tracing::trace!("[fwd] DROP(private-talk)");
+        return;
+    };
+    let event = &event;
     // StateUpdated → set dirty flag for page state push, don't forward to DC
     if matches!(event, crate::server::ServerEvent::StateUpdated) {
         *dirty_flags |= crate::server::rtc::page_state::DIRTY_ALL;
@@ -207,11 +214,6 @@ pub(super) fn forward_event_to_channels(
         }
     }
 
-    if talk_kept_from(state, &ui_msg, filter.skill) {
-        tracing::trace!("[fwd] DROP(private-talk) sid={} kind={}", dbg_sid, dbg_kind);
-        return;
-    }
-
     let json = match serde_json::to_string(&ui_msg) {
         Ok(j) => j,
         Err(_) => return,
@@ -350,34 +352,46 @@ pub(super) fn forward_event_to_channels(
 /// The kinds of a session's event that carry nothing of a turn's talk:
 /// its end. Every other kind may (words, tool use, a delegated task's
 /// prompt and result, a plan, a question, the queue's previews, background
-/// tasks' commands), so while a private turn runs only these reach a page
-/// outside its app; the page sees the session busy from its page state.
+/// tasks' commands, her spoken line), so a kept event reaches a page outside
+/// its app only as one of these; the page sees the session busy from its
+/// page state.
 const CONTENT_FREE_KINDS: &[&str] = &["turn_complete"];
 
-/// Whether `ui_msg` may carry the talk of a turn that keeps it to a private app
-/// (`turn_place::sight`) and this peer is not that app's page.
-fn talk_kept_from(state: &ServerState, ui_msg: &crate::engine::events::UiEvent, skill: Option<&str>) -> bool {
-    let places = &state.manager.global_sessions.running_places;
-    if kept_from(places, (&ui_msg.kind, ui_msg.session_id.as_deref()), skill) {
-        return true;
+/// What of `stamped` a page of `skill` (`None`: the main page, the phone)
+/// is sent: all of it when it is everyone's or this is its app's page; a
+/// task list without the entries kept to another app; nothing else of a
+/// kept event but its turn's end.
+fn shown_to_page(
+    stamped: &crate::engine::event_bus::Stamped,
+    skill: Option<&str>,
+) -> Option<crate::server::ServerEvent> {
+    use crate::server::ServerEvent;
+    if let ServerEvent::TasksUpdated { session_id, tasks } = &stamped.event {
+        let tasks = tasks.iter().filter(|t| task_shown(t, skill)).cloned().collect();
+        let session_id = session_id.clone();
+        return Some(ServerEvent::TasksUpdated { session_id, tasks });
     }
-    // An ended private turn's events may arrive after its mark is gone.
-    let ended = ui_msg.run_id.as_deref().and_then(|run| places.private_run(run));
-    ended.is_some_and(|app| skill != Some(app.as_str()) && !CONTENT_FREE_KINDS.contains(&ui_msg.kind.as_str()))
+    let Some(app) = stamped.kept_to.as_deref() else {
+        return Some(stamped.event.clone());
+    };
+    if skill == Some(app) || content_free(&stamped.event) {
+        return Some(stamped.event.clone());
+    }
+    None
 }
 
-fn kept_from(
-    places: &crate::engine::turn_place::running::RunningPlaces,
-    (kind, session): (&str, Option<&str>),
-    skill: Option<&str>,
-) -> bool {
-    if CONTENT_FREE_KINDS.contains(&kind) {
-        return false;
-    }
-    let Some(sid) = session else {
-        return false;
+/// Whether a background task's entry is shown to a page of `skill`.
+pub(crate) fn task_shown(task: &crate::engine::events::BackgroundTask, skill: Option<&str>) -> bool {
+    task.kept_to.as_deref().is_none_or(|app| skill == Some(app))
+}
+
+fn content_free(event: &crate::server::ServerEvent) -> bool {
+    let kind = match event {
+        crate::server::ServerEvent::TurnComplete { .. } => "turn_complete",
+        crate::server::ServerEvent::StateUpdated => return true,
+        _ => return false,
     };
-    places.private_app(sid).is_some_and(|app| skill != Some(app.as_str()))
+    CONTENT_FREE_KINDS.contains(&kind)
 }
 
 /// True when an event kind is a high-frequency streaming frame whose value
@@ -402,29 +416,59 @@ fn yinyue_cue_reaches(kind: &str, holder: Option<u64>, peer_id: u64) -> bool {
 
 #[cfg(test)]
 mod yinyue_cue_tests {
-    use super::{kept_from, yinyue_cue_reaches};
+    use super::{shown_to_page, yinyue_cue_reaches};
     use crate::server::state::{yinyue_holder_of, YinyuePresenter};
 
-    /// Two Lingjing tabs, each a stage (2026-09-24): her line is addressed
-    /// to the newest stage only; the other tab, and the desktop corner, get
-    /// nothing to speak.
+    /// A kept event reaches only its own app's pages, judged by the stamp
+    /// it was made with: its turn's end reaches every page, a task list
+    /// loses the entries kept to another app, her line kept to an app is
+    /// heard only there.
     #[test]
-    fn a_private_turns_talk_reaches_only_its_own_apps_pages() {
-        use crate::engine::turn_place::{running::RunningPlaces, TurnPlace};
-        let places = RunningPlaces::default();
-        let ledger = TurnPlace { skill: Some("ledger".into()), ..TurnPlace::home() };
-        let _mark = places.mark("sess-day-2026-11-16", &ledger).unwrap();
-        let day = Some("sess-day-2026-11-16");
-        assert!(!kept_from(&places, ("token", day), None), "not private yet");
-        places.keep_talk_private("sess-day-2026-11-16");
-        for kind in ["token", "message", "content_block", "ask_user", "run", "tasks", "queue"] {
-            assert!(kept_from(&places, (kind, day), None), "{kind} reached the main page");
-            assert!(kept_from(&places, (kind, day), Some("dice")), "{kind} reached dice");
-            assert!(!kept_from(&places, (kind, day), Some("ledger")), "{kind} kept from its own page");
+    fn a_kept_events_words_reach_only_its_own_apps_pages() {
+        use crate::engine::event_bus::Stamped;
+        use crate::server::ServerEvent;
+        let day = "sess-day-2026-11-16";
+        let kept = |event: ServerEvent| Stamped { event, kept_to: Some("ledger".into()) };
+        let token = kept(ServerEvent::Token {
+            agent_id: "ling".into(),
+            token: "t".into(),
+            done: false,
+            thinking: false,
+            session_id: Some(day.into()),
+            run_id: Some("run-1".into()),
+        });
+        let speak = kept(ServerEvent::PetSpeak { text: "hi".into(), emotion: None, voice: true });
+        for event in [&token, &speak] {
+            assert!(shown_to_page(event, None).is_none(), "reached the main page");
+            assert!(shown_to_page(event, Some("dice")).is_none(), "reached dice");
+            assert!(shown_to_page(event, Some("ledger")).is_some(), "kept from its own page");
         }
-        // A turn's end carries no talk: every page sees the turn end.
-        assert!(!kept_from(&places, ("turn_complete", day), None));
-        assert!(!kept_from(&places, ("token", Some("sess-other")), None));
+        let end = kept(ServerEvent::TurnComplete {
+            agent_id: "ling".into(),
+            duration_ms: None,
+            context_tokens: None,
+            parent_id: None,
+            session_id: Some(day.into()),
+            run_id: None,
+            parent_run_id: None,
+        });
+        assert!(shown_to_page(&end, None).is_some(), "every page sees the turn end");
+        let everyones = Stamped { kept_to: None, ..token.clone() };
+        assert!(shown_to_page(&everyones, None).is_some());
+
+        let mut private = crate::engine::events::BackgroundTask::running("t1", "shell", "secret");
+        private.kept_to = Some("ledger".into());
+        let open = crate::engine::events::BackgroundTask::running("t2", "shell", "ls");
+        let list = Stamped {
+            event: ServerEvent::TasksUpdated { session_id: day.into(), tasks: vec![private, open] },
+            kept_to: None,
+        };
+        let ids = |skill| match shown_to_page(&list, skill) {
+            Some(ServerEvent::TasksUpdated { tasks, .. }) => tasks.into_iter().map(|t| t.id).collect::<Vec<_>>(),
+            _ => panic!("a task list"),
+        };
+        assert_eq!(ids(None), ["t2"]);
+        assert_eq!(ids(Some("ledger")), ["t1", "t2"]);
     }
 
     #[test]

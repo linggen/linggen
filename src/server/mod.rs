@@ -35,7 +35,6 @@ use crate::engine::agent::AgentManager;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
-use tokio::sync::broadcast;
 use tokio::sync::Mutex;
 use tracing::info;
 
@@ -57,7 +56,8 @@ async fn prepare_server(
     info!("linggen server starting on {}:{}...", host, port);
 
     // Events can be bursty (tool/status steps). Use a larger buffer to reduce lag drops.
-    let (events_tx, _) = broadcast::channel(4096);
+    let events_tx =
+        crate::engine::event_bus::EventBus::new(4096, manager.global_sessions.running_places.clone());
 
     let prompt_store = Arc::new(crate::prompts::PromptStore::load(Some(
         &crate::prompts::PromptStore::default_override_dir(),

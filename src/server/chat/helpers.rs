@@ -7,7 +7,6 @@ use crate::engine::AgentOutcome;
 use crate::server::{ServerEvent, ServerState};
 use std::path::Path;
 use std::sync::Arc;
-use tokio::sync::broadcast;
 
 // ---------------------------------------------------------------------------
 // Turn-error formatting
@@ -60,7 +59,7 @@ pub(crate) fn format_turn_error(msg: &str) -> String {
 /// kickoff, a light turn — can show the way on instead of waiting. Anything
 /// else sends nothing.
 pub(crate) fn announce_allowance_spent(
-    events_tx: &broadcast::Sender<crate::server::ServerEvent>,
+    events_tx: &crate::engine::event_bus::EventBus,
     agent_id: &str,
     session_id: Option<&str>,
     msg: &str,
@@ -106,7 +105,7 @@ pub(crate) fn model_error_code(msg: &str) -> &'static str {
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn persist_and_emit_message(
     manager: &Arc<AgentManager>,
-    events_tx: &broadcast::Sender<ServerEvent>,
+    events_tx: &crate::engine::event_bus::EventBus,
     root: &Path,
     agent_id: &str,
     from: &str,
@@ -161,7 +160,7 @@ pub(crate) async fn persist_and_emit_message(
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn persist_and_emit_to_store(
     store: &crate::state_fs::SessionStore,
-    events_tx: &broadcast::Sender<ServerEvent>,
+    events_tx: &crate::engine::event_bus::EventBus,
     agent_id: &str,
     from: &str,
     to: &str,
@@ -193,7 +192,7 @@ pub(crate) async fn persist_and_emit_to_store(
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn persist_and_emit_with_images(
     store: &crate::state_fs::SessionStore,
-    events_tx: &broadcast::Sender<ServerEvent>,
+    events_tx: &crate::engine::event_bus::EventBus,
     agent_id: &str,
     (from, to, content): (&str, &str, &str),
     session_id: Option<&str>,
@@ -235,6 +234,7 @@ pub(crate) async fn persist_and_emit_with_images(
         via_note: via_note.map(str::to_string),
         images: kept,
         place: None,
+        kept_to: None,
     };
     if let Err(e) = store.add_chat_message(sid, &msg) {
         tracing::warn!("Failed to persist chat message to mission store: {}", e);
@@ -270,6 +270,7 @@ pub(crate) async fn persist_message_only(
         failed: false,
         images: Vec::new(),
         place: None,
+        kept_to: None,
     };
     if let Err(e) = manager.global_sessions.add_chat_message(sid, &msg) {
         tracing::warn!("Failed to persist chat message: {}", e);
@@ -478,7 +479,8 @@ mod via_tests {
     async fn a_hand_off_keeps_via_on_the_row_and_the_live_event() {
         let dir = tempfile::tempdir().unwrap();
         let store = crate::state_fs::SessionStore::with_sessions_dir(dir.path().to_path_buf());
-        let (tx, mut rx) = tokio::sync::broadcast::channel(8);
+        let tx = crate::engine::event_bus::EventBus::detached(8);
+        let mut rx = tx.subscribe();
         persist_and_emit_to_store(
             &store,
             &tx,
@@ -493,7 +495,7 @@ mod via_tests {
             Some("Let me check how many songs we have here."),
         )
         .await;
-        match rx.recv().await.unwrap() {
+        match rx.recv().await.unwrap().event {
             ServerEvent::Message { via, .. } => assert_eq!(via.as_deref(), Some("iphone")),
             _ => panic!("expected a message event"),
         }
@@ -512,7 +514,8 @@ mod via_tests {
         use base64::Engine as _;
         let dir = tempfile::tempdir().unwrap();
         let store = crate::state_fs::SessionStore::with_sessions_dir(dir.path().to_path_buf());
-        let (tx, mut rx) = tokio::sync::broadcast::channel(8);
+        let tx = crate::engine::event_bus::EventBus::detached(8);
+        let mut rx = tx.subscribe();
         // The smallest PNG header the keeper accepts as a picture.
         let mut png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
         png.extend_from_slice(&[0u8; 32]);
@@ -532,7 +535,7 @@ mod via_tests {
         let rows = store.get_chat_history("s1").unwrap();
         assert_eq!(rows[0].images.len(), 1, "the row keeps the picture");
         let want = crate::state_fs::session_images::url("s1", &rows[0].images[0]);
-        match rx.recv().await.unwrap() {
+        match rx.recv().await.unwrap().event {
             ServerEvent::Message {
                 images, client_id, ..
             } => {

@@ -393,7 +393,7 @@ async fn watch_events(state: Arc<ServerState>) {
         match rx.recv().await {
             Ok(ev) => {
                 let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-                note_event(&ev, &now);
+                note_event(&ev.event, &now);
             }
             Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
             Err(_) => return,

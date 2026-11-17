@@ -110,6 +110,12 @@ pub struct BackgroundTask {
     #[serde(skip)]
     #[cfg_attr(any(test, feature = "test-support"), ts(skip))]
     pub place: Option<String>,
+    /// The app its command line and output are kept to, decided as it
+    /// began (`turn_place::sight`): only that app's pages list it. Never
+    /// pushed.
+    #[serde(skip)]
+    #[cfg_attr(any(test, feature = "test-support"), ts(skip))]
+    pub kept_to: Option<String>,
 }
 
 impl BackgroundTask {
@@ -128,6 +134,7 @@ impl BackgroundTask {
             output_file: None,
             subagent_id: None,
             place: None,
+            kept_to: None,
         }
     }
 

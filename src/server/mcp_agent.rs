@@ -363,6 +363,7 @@ pub async fn run(
             failed: false,
             images: Vec::new(),
             place: None,
+            kept_to: None,
         },
     );
 
@@ -1324,6 +1325,7 @@ mod wait_ready_tests {
             images: vec![],
             run_id: None,
             place: None,
+            kept_to: None,
         }
     }
 
@@ -1661,7 +1663,7 @@ mod permit_tests {
 
     fn bridge(pending: &Pending, session: &str) -> AskUserBridge {
         AskUserBridge {
-            events_tx: tokio::sync::broadcast::channel(16).0,
+            events_tx: crate::engine::event_bus::EventBus::detached(16),
             pending: pending.clone(),
             session_id: Some(session.into()),
         }
