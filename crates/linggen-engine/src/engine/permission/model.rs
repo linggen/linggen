@@ -595,24 +595,27 @@ pub fn check_permission(
     // file it really reaches, not cwd.
     if tool == "Bash" {
         if let Some(cmd) = bash_command {
-            let targets = command_targets(cmd, session_cwd);
+            let targets = command_target_levels(cmd, session_cwd);
             if !targets.is_empty() {
                 let mut judged = false;
-                for arg_path in &targets {
+                for (arg_path, kind) in &targets {
+                    let tier = if *kind == TargetKind::Full {
+                        action_tier
+                    } else {
+                        PermissionMode::Read
+                    };
                     // OS temp dir is always-available scratch, and a session
                     // reads its own folder — don't gate them.
-                    if is_under_temp(arg_path)
-                        || reads_own_dir(session_perms, action_tier, arg_path)
-                    {
+                    if is_under_temp(arg_path) || reads_own_dir(session_perms, tier, arg_path) {
                         continue;
                     }
-                    judged = true;
+                    judged |= *kind == TargetKind::Full;
                     let mode = effective_mode_for_path(&session_perms.path_modes, arg_path);
-                    if mode.is_none_or(|m| action_tier > m) {
+                    if mode.is_none_or(|m| tier > m) {
                         return needs_prompt(
                             arg_path,
                             session_cwd,
-                            action_tier,
+                            tier,
                             format!("{} {}", tool, cmd),
                         );
                     }
@@ -735,7 +738,82 @@ fn path_token(word: &str) -> Option<String> {
 ///
 /// Text the command carries is not a target: a heredoc body, or the pattern
 /// of grep, sed, awk or jq (see `shell_text`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TargetKind {
+    Full,
+    Program,
+    Source,
+}
+
+#[cfg(test)]
 pub(super) fn command_targets(cmd: &str, session_cwd: &Path) -> Vec<PathBuf> {
+    command_target_levels(cmd, session_cwd)
+        .into_iter()
+        .map(|(p, _)| p)
+        .collect()
+}
+
+// Only simple, literal operands and known switch-only options qualify. Any
+// ambiguity leaves the entire segment at its original tier.
+fn copy_sources(tokens: &[Token]) -> Vec<usize> {
+    let mut sources = Vec::new();
+    let mut start = 0;
+    while start < tokens.len() {
+        let end = (start..tokens.len())
+            .find(|&i| matches!(tokens[i], Token::Op(_)))
+            .unwrap_or(tokens.len());
+        if let Some(Token::Word(program)) = tokens.get(start) {
+            let name = program.as_str();
+            if matches!(name, "cp" | "rsync" | "install" | "ln") {
+                let mut operands = Vec::new();
+                let mut safe = true;
+                let mut options = true;
+                for i in start + 1..end {
+                    let Token::Word(w) = &tokens[i] else {
+                        unreachable!()
+                    };
+                    if w.contains([
+                        '$', '`', '*', '?', '[', ']', '>', '<', '\\', '\'', '"', '(', ')', '{',
+                        '}', '#',
+                    ]) || w.chars().any(is_odd_space)
+                    {
+                        safe = false;
+                        break;
+                    }
+                    if options && w == "--" {
+                        options = false;
+                        continue;
+                    }
+                    if options && w.starts_with('-') {
+                        let allowed = match name {
+                            "cp" => "RrPpfinv",
+                            "rsync" => "arltpogDvz",
+                            "install" => "psv",
+                            "ln" => "sfivn",
+                            _ => "",
+                        };
+                        if w.len() < 2
+                            || w.starts_with("--")
+                            || !w[1..].chars().all(|c| allowed.contains(c))
+                        {
+                            safe = false;
+                            break;
+                        }
+                    } else {
+                        operands.push(i);
+                    }
+                }
+                if safe && operands.len() >= 2 {
+                    sources.extend_from_slice(&operands[..operands.len() - 1]);
+                }
+            }
+        }
+        start = end + 1;
+    }
+    sources
+}
+
+fn command_target_levels(cmd: &str, session_cwd: &Path) -> Vec<(PathBuf, TargetKind)> {
     let cmd = strip_heredoc_bodies(cmd);
     let cmd = cmd.as_str();
     let mut cwd = session_cwd.to_path_buf();
@@ -752,7 +830,8 @@ pub(super) fn command_targets(cmd: &str, session_cwd: &Path) -> Vec<PathBuf> {
     let mut file_operands = false;
     let tokens = command_tokens(cmd);
     let text = text_words(&tokens);
-    for (token, text) in tokens.into_iter().zip(text) {
+    let sources = copy_sources(&tokens);
+    for (index, (token, text)) in tokens.into_iter().zip(text).enumerate() {
         let w = match token {
             Token::Op(joint) => {
                 // A bare `cd` goes home — not followed.
@@ -775,7 +854,7 @@ pub(super) fn command_targets(cmd: &str, session_cwd: &Path) -> Vec<PathBuf> {
         // A redirection glued to its file (`>/x`, `2>>/x`, `hi>/x`, `</x`).
         for file in redirect_files(w) {
             if let Some(token) = path_token(file) {
-                out.push(resolve_bash_arg(&token, &cwd));
+                out.push((resolve_bash_arg(&token, &cwd), TargetKind::Full));
             }
         }
         if text {
@@ -783,7 +862,7 @@ pub(super) fn command_targets(cmd: &str, session_cwd: &Path) -> Vec<PathBuf> {
         } else if cd_pending && !is_cd_flag(&dequote(w)) {
             cd_pending = false;
             if let Some(token) = path_token(w) {
-                out.push(resolve_bash_arg(&token, &cwd));
+                out.push((resolve_bash_arg(&token, &cwd), TargetKind::Full));
             }
             if following {
                 match cd_destination(w, &cwd) {
@@ -803,7 +882,17 @@ pub(super) fn command_targets(cmd: &str, session_cwd: &Path) -> Vec<PathBuf> {
                     && !t.contains(['$', '`', '*', '?', '[', '>', '<'])))
             .then(|| t.to_string())
         }) {
-            out.push(resolve_bash_arg(&token, &cwd));
+            let kind = if at_command
+                && path_token(w).is_some()
+                && !w.contains(['>', '<', '$', '`', '*', '?', '[', '\\'])
+            {
+                TargetKind::Program
+            } else if sources.contains(&index) {
+                TargetKind::Source
+            } else {
+                TargetKind::Full
+            };
+            out.push((resolve_bash_arg(&token, &cwd), kind));
         }
         // Program names and cd flags as the shell passes them (`\rm`, `'cp'`).
         let word = dequote(w);

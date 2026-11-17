@@ -23,6 +23,8 @@ mod prompt;
 mod scripts;
 mod shell_text;
 mod store;
+#[cfg(test)]
+mod gate_copy_tests;
 
 pub use declined::DeclinedScopes;
 pub use manifest::{apply_grants, Grants, PathGrant};
