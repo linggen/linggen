@@ -14,7 +14,8 @@
   they are kept to as they are made, and readers judge the stamp alone; a
   message to another agent, a note or a wider memory write from such an app
   is refused; her line said there is heard only there. Each person has a
-  day of their own, and Clear on an app's page takes only that app's part.
+  day of their own, and Clear takes only the part of the place it is
+  pressed in.
 - **Yinyue keeps notes of her own and looks again when she said she would.**
   `note_write` (at most 8 notes of 200 characters, an optional look-again
   such as `+40m`, `HH:MM`, `tomorrow 09:00`) and `note_done`; her open notes

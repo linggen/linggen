@@ -152,27 +152,38 @@ session, prompt and row is as before. On (decided by the builder 2026-11-15/16):
 Built (2.4 branch, 2026-11-16): all of the above, in `server::day_session`,
 `state_fs::day_session`, `turn_place::sight` and `engine::event_bus`.
 
-- **Kept once, where it is made.** A row is stamped as it is saved with its
-  place and the app it is kept to, decided from the skill at that moment
-  (an app that does not resolve in the day's session keeps its rows); a plan
-  rewritten, approved or rejected keeps its row's stamp, and its run reads
-  its place's thread. Every event is stamped as it is sent, from the run
+- **Kept once, where it is made.** A row of the day is stamped as it is
+  saved with its place and whom it is kept to — its app, or everyone —
+  decided from the skill at that moment (an app that does not resolve keeps
+  its rows; a row naming a place with no stamp is kept to that place). A
+  plan edited, approved or rejected carries the stamp of the plan being
+  decided, and its run reads its place's thread. Every event is stamped as it is sent, from the run
   that made it (a subagent's from its parent's, decided as the run began) or
   the turn running then; a background task's entry carries its own. Readers
   judge the stamp alone: a page is sent a kept event only on its app's
   page, but its turn's end; the task list shows a kept task only there.
 - **One reader.** Rows reach a model, Yinyue or a page through
   `rows_seen_by`; a lock test lists every other reader of rows and every
-  listener of the event bus with why it may.
-- **One exit.** From a kept place, `agent_chat`, `note_write` and a memory
-  write asking for `global`, `cwd` or `scope` are refused with a plain reason.
-- **Her.** Asked while away, she is told only that the app waits for an
-  answer. A line she says in a kept place is heard only on its app's page;
-  a wake takes one app's moments, the others wait for the next.
+  listener of the event bus (`EventBus::listen`) with why it may.
+- **One exit.** Every tool says whether a call stays in its place or carries
+  words out (another agent, a note, another turn's question, a new session,
+  the memory review queue or a day record, a memory write asking for
+  `global`, `cwd` or `scope`); from a kept place the second kind is refused
+  with a plain reason. The person's own lookups (web, browser) stay.
+- **Her.** A question waiting while the person is away is heralded at once,
+  even while its turn holds the day: her line is spoken then and kept as her
+  row when the day is free. From a kept place she is told only that the app
+  waits for an answer. A line she says in a kept place is heard only on its
+  app's page; a wake takes one app's moments, the others wait for the next.
 - **A day per person**: a person other than the builder has a day of their
-  own (`sess-day-YYYY-MM-DD-p-<person>`), listed only to them; a day is made
-  once and never written over.
-- **Clear** on an app's page takes that app's part of the day.
+  own (`sess-day-YYYY-MM-DD-p-<person's id in hex>`). Every way a request
+  comes into the day — a chat, the day's lookup, an app's list, a page's
+  history — takes the person on the page's channel, and a day is read and
+  written only by its own person; what the engine starts itself (her
+  moments, her own thread) is the builder's. A day is made once and never
+  written over.
+- **Clear** takes the rows of the place it is pressed in: an app's page its
+  app's, the main page home's.
 - **Compaction**: a private app's thread starts from its own summary.
 
 Not built: the phone's side (it must send `skill_name` and use the day's
