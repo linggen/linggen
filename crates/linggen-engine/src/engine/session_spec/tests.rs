@@ -304,3 +304,26 @@ fn each_kind_keeps_its_seat_thread_and_runtime() {
     promoted.creator = "user".into();
     assert_eq!(preset_of(&promoted), Preset::Mission);
 }
+
+/// A person typing into a delegate's session: its toolset and its caller
+/// stay; the words reach the model verbatim.
+#[test]
+fn a_typed_turn_in_a_delegates_session_keeps_its_spec() {
+    let mut meta = meta("sess-4-d", "external", None);
+    meta.params
+        .insert(delegate::TOOLS_PARAM.into(), "write".into());
+    let spec = SessionSpec::of(&meta).typed(SessionPolicy::owner(), Memory::of_turn("user"));
+    assert_eq!(spec.tools, Tools::Delegate { write: true });
+    assert_eq!(spec.permission, Permission::AskCaller);
+    let mut e = engine_for(&meta);
+    spec.apply(&mut e);
+    let want = expected(
+        true,
+        true,
+        false,
+        delegate::tool_scope(true).map(|s| s.into_iter().collect()),
+        false,
+        false,
+    );
+    assert_eq!(Seen::of(&e, Some(false)), want);
+}

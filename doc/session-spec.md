@@ -134,7 +134,8 @@ The spec is the only writer of a session's prompt profile, tool
 restriction, interactivity, world and framing; a turn's place narrows the
 turn on top of it and puts it back when the turn ends (§ A turn's place). A
 person typing into a session runs it under their policy, verbatim, with the
-memory of whom the turn belongs to.
+memory of whom the turn belongs to; in an `agent_run` delegate's session the
+delegate's toolset stays and its caller still answers beyond the grants.
 
 ### Creator inheritance
 

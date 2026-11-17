@@ -301,16 +301,21 @@ impl SessionSpec {
     }
 
     /// A turn a person typed, under `policy`, its memory the turn's
-    /// (`Memory::of_turn`): verbatim, the lead's tools, prompting the person
+    /// (`Memory::of_turn`), verbatim. A delegate's session keeps its toolset
+    /// and its caller; any other gets the lead's tools and asks the person,
     /// unless a consumer's policy locks it.
     pub fn typed(mut self, policy: SessionPolicy, memory: Memory) -> Self {
-        self.permission = match policy.locked {
-            true => Permission::Unattended,
-            false => Permission::Interactive,
+        let keeps_caller = self.preset == Preset::Delegate;
+        self.permission = match (policy.locked, keeps_caller) {
+            (true, _) => Permission::Unattended,
+            (false, true) => Permission::AskCaller,
+            (false, false) => Permission::Interactive,
         };
+        if !keeps_caller {
+            self.tools = Tools::Lead;
+        }
         self.policy = Some(policy);
         self.memory = memory;
-        self.tools = Tools::Lead;
         self.framing = Framing::Turn;
         self
     }

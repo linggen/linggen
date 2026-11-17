@@ -14,6 +14,7 @@ mod claude_bridge;
 mod claude_host;
 mod claude_subagents;
 mod day_session;
+mod delegate;
 mod drawing;
 mod fixtures;
 mod memory_ops;
