@@ -179,6 +179,34 @@ pub fn build_caller_question(
     }
 }
 
+/// The question for an outward command (`PromptKind::ExceedsCeiling`
+/// with `outward`), to the person or the caller alike: this one command,
+/// once, or deny — no grant covers the next one.
+pub fn build_outward_question(
+    tool_summary: &str,
+    target_mode: &PermissionMode,
+    path: &str,
+) -> AskUserQuestion {
+    let option = |label: &str, description: &str| AskUserOption {
+        label: label.into(),
+        description: Some(description.into()),
+        preview: None,
+    };
+    AskUserQuestion {
+        question: tool_summary.to_string(),
+        header: "Permission".to_string(),
+        permission: Some(DirectoryPermissionMetadata {
+            path: path.to_string(),
+            mode: *target_mode,
+        }),
+        options: vec![
+            option(ALLOW_ONCE, "Run this one command; it leaves this machine"),
+            option("Deny", "Block this action"),
+        ],
+        multi_select: false,
+    }
+}
+
 /// A native permission answer must be exactly one offered option for question zero.
 /// A directory answer grants that offered path at the needed level. Anything
 /// that was not offered denies, so a client cannot name its own path.

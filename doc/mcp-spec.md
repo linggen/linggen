@@ -164,7 +164,7 @@ deprecation window:
   Claude Code's Monitor stops at 30 min) gets one `agent_status`; if that
   still says running, the caller starts a new watch. The stream sends JSON
   frames:
-  - `{"type":"permission_request","session_id","request":{id,tool,summary,command?,level,path,dir?,reason?}}`
+  - `{"type":"permission_request","session_id","request":{id,tool,summary,command?,level,path,dir?,reason?,outward?}}`
     — once per request, including those raised before the watcher connected.
   - `{"type":"finished","session_id","status","reply","denied","error","model"}`
     — last, then it closes. `status` is `completed`, `failed` or `cancelled`;
@@ -181,7 +181,10 @@ deprecation window:
   `allow_once` runs that action; `allow_session` grants its `path` or its
   folder (`dir`, the default when grantable) at the needed level for the rest
   of that session only; `deny` refuses it and closes its project to every
-  tool for the rest of that run. No answer in 10 min counts as deny; `agent_stop`
+  tool for the rest of that run. A request with `outward: true` is a command
+  whose effect leaves the machine (`permission-spec.md` § Outward commands):
+  it is asked whatever the run's grants and takes `allow_once` or `deny`
+  only. No answer in 10 min counts as deny; `agent_stop`
   ends a waiting run at once.
   `agent_run` returns early when a request is raised; `agent_status` lists
   open requests in `pending`. Refusals land in `denied` with their reason.

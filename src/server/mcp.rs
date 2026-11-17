@@ -378,7 +378,7 @@ const TOOLS: &[McpTool] = &[
     },
     McpTool {
         name: "agent_permit", backend: Backend::Agent,
-        description: "Answer a permission request from an agent_run session (a permission_request stream event, or agent_status pending). A Bash request whose summary is cut carries the whole text as command: read it before allowing. allow_once runs that one action; allow_session grants its path or folder at the needed level for the rest of that session only; deny refuses it. Unanswered requests count as denied after 10 min.",
+        description: "Answer a permission request from an agent_run session (a permission_request stream event, or agent_status pending). A Bash request whose summary is cut carries the whole text as command: read it before allowing. allow_once runs that one action; allow_session grants its path or folder at the needed level for the rest of that session only; a request marked outward (it publishes, operates another machine, or force-pushes or pushes main) takes allow_once or deny only; deny refuses it. Unanswered requests count as denied after 10 min.",
         schema: || json!({"type": "object", "properties": {
             "session_id": {"type": "string", "description": "Linggen session ID"},
             "request_id": {"type": "string", "description": "The request's id"},

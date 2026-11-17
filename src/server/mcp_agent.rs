@@ -937,6 +937,11 @@ fn decision_label(
         .as_ref()
         .filter(|_| entry.session_id.as_deref() == Some(session))
         .ok_or_else(|| "this request is not this session's to answer".to_string())?;
+    if request.outward && decision == "allow_session" {
+        return Err(
+            "this command's effect leaves the machine: answer allow_once or deny".to_string(),
+        );
+    }
     let label = match (decision, scope) {
         ("allow_once", _) => ALLOW_ONCE.to_string(),
         ("deny", _) => "Deny".to_string(),
@@ -1686,6 +1691,7 @@ mod permit_tests {
             path: "~/out/file".into(),
             dir: dir.map(str::to_string),
             reason: Some("make the marker".into()),
+            outward: false,
         }
     }
 
@@ -1778,6 +1784,55 @@ mod permit_tests {
         assert!(err.unwrap_err().contains("scope"));
         let (_, fallback) = ask_and_answer("allow_session", None, None).await;
         assert_eq!(fallback, path);
+    }
+
+    #[tokio::test]
+    async fn an_outward_request_is_answered_once_or_denied_never_for_the_session() {
+        use crate::engine::permission::build_outward_question;
+        for (decision, scope) in [("allow_session", None), ("allow_session", Some("path"))] {
+            let pending: Pending = Default::default();
+            let question =
+                build_outward_question("Bash cargo publish", &PermissionMode::Admin, "~/w");
+            let req = CallerPermissionRequest {
+                tool: "Bash".into(),
+                summary: "cargo publish".into(),
+                command: None,
+                level: PermissionMode::Admin,
+                path: "~/w".into(),
+                dir: None,
+                reason: None,
+                outward: true,
+            };
+            assert_eq!(serde_json::to_value(&req).unwrap()["outward"], true);
+            let b = bridge(&pending, "s1");
+            let ask = tokio::spawn(async move {
+                crate::engine::tool_exec::ask_on_bridge(
+                    &b,
+                    "ling".into(),
+                    question,
+                    Some(req),
+                    Duration::from_secs(5),
+                )
+                .await
+            });
+            let id = loop {
+                if let Some(id) = pending.lock().await.keys().next().cloned() {
+                    break id;
+                }
+                tokio::task::yield_now().await;
+            };
+            let refused = answer_request(&pending, "s1", &id, decision, scope).await;
+            assert!(
+                refused.as_ref().unwrap_err().contains("allow_once or deny"),
+                "{refused:?}"
+            );
+            // Still pending: the caller can answer it once.
+            let label = answer_request(&pending, "s1", &id, "allow_once", None)
+                .await
+                .unwrap();
+            assert_eq!(label, crate::engine::permission::ALLOW_ONCE);
+            assert!(ask.await.unwrap().flatten().is_some());
+        }
     }
 
     #[tokio::test]

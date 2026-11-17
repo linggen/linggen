@@ -708,6 +708,7 @@ impl AgentEngine {
                 path,
                 directories,
                 tool_summary,
+                outward,
             } = prompt_kind;
             if last_grant
                 .as_ref()
@@ -721,7 +722,18 @@ impl AgentEngine {
                 self.record_denial(t, &target_mode.to_string(), "Declined earlier in this run");
                 return self.refuse_declined(t, messages, &scope, None, true).await;
             }
-            let (question, caller_request, wait) = if asks_caller {
+            let (question, caller_request, wait) = if outward {
+                // Its effect leaves the machine: this one command, once or not.
+                let question =
+                    permission::build_outward_question(&tool_summary, &target_mode, &path);
+                let request = asks_caller.then(|| {
+                    let mut request = self.caller_request(t, target_mode, &path, &[]);
+                    request.outward = true;
+                    request
+                });
+                let wait = if asks_caller { CALLER_ASK_WAIT } else { PERSON_ASK_WAIT };
+                (question, request, wait)
+            } else if asks_caller {
                 let request = self.caller_request(t, target_mode, &path, &directories);
                 let question = permission::build_caller_question(
                     &tool_summary,
@@ -855,6 +867,7 @@ impl AgentEngine {
             path: path.to_string(),
             dir: directories.last().cloned(),
             reason,
+            outward: false,
         }
     }
 
@@ -1757,6 +1770,84 @@ mod declined_gate_tests {
         let again = gate(&mut engine, "Read", serde_json::json!({"path": head})).await;
         assert!(again.contains("declined access to"), "{again}");
         assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    /// Answer the first prompt with `answer`; what it offered and whether
+    /// it went to the caller.
+    fn answer_first(
+        pending: &Pending,
+        answer: &'static str,
+    ) -> tokio::sync::oneshot::Receiver<(Vec<String>, Option<tools::CallerPermissionRequest>)> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let pending = pending.clone();
+        tokio::spawn(async move {
+            loop {
+                let next = pending.lock().await.keys().next().cloned();
+                if let Some(id) = next {
+                    let entry = pending.lock().await.remove(&id).unwrap();
+                    let labels = entry.questions[0].options.iter().map(|o| o.label.clone()).collect();
+                    let _ = tx.send((labels, entry.caller_request.clone()));
+                    let reply = tools::AskUserAnswer { question_index: 0, selected: vec![answer.into()], custom_text: None };
+                    let _ = entry.sender.send(vec![reply]);
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+            }
+        });
+        rx
+    }
+
+    fn admin_engine(root: &std::path::Path, pending: &Pending, interactive: bool, ask_caller: bool) -> AgentEngine {
+        let mut engine = engine(root, pending, ask_caller);
+        engine.session_permissions = SessionPermissions { interactive, ask_caller, ..Default::default() };
+        engine.session_permissions.set_path_mode("*", PermissionMode::Admin);
+        engine.session_permissions.set_path_mode(&root.to_string_lossy(), PermissionMode::Admin);
+        engine
+    }
+
+    #[tokio::test]
+    async fn an_outward_command_is_refused_unattended_without_asking() {
+        let work = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
+        let pending: Pending = Default::default();
+        let asked = deny_all(&pending);
+        let mut engine = admin_engine(work.path(), &pending, false, false);
+        gate(&mut engine, "Bash", serde_json::json!({"command": "cargo publish"})).await;
+        assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 0, "nobody is asked");
+        // The same session runs local work at admin.
+        let args = serde_json::json!({"command": "cargo build"});
+        let id = Some("c2".to_string());
+        let t = ToolTurn { tool: "Bash", canonical: "Bash", args: &args, session_id: None, tool_call_id: &id };
+        assert!(engine.gate_permission(&t, &mut Vec::new()).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn an_outward_command_asks_the_caller_once_with_no_session_grant() {
+        let work = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
+        let pending: Pending = Default::default();
+        let seen = answer_first(&pending, crate::engine::permission::ALLOW_ONCE);
+        let mut engine = admin_engine(work.path(), &pending, false, true);
+        let args = serde_json::json!({"command": "git push --force origin feature"});
+        let id = Some("c1".to_string());
+        let t = ToolTurn { tool: "Bash", canonical: "Bash", args: &args, session_id: None, tool_call_id: &id };
+        assert!(engine.gate_permission(&t, &mut Vec::new()).await.is_none(), "allowed once");
+        let wait = std::time::Duration::from_secs(5);
+        let (labels, request) = tokio::time::timeout(wait, seen).await.expect("asked").unwrap();
+        assert_eq!(labels, [crate::engine::permission::ALLOW_ONCE, "Deny"]);
+        let request = request.expect("the caller is asked");
+        assert!(request.outward && request.dir.is_none(), "{request:?}");
+    }
+
+    #[tokio::test]
+    async fn an_outward_command_asks_the_person_once_even_with_admin_everywhere() {
+        let work = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
+        let pending: Pending = Default::default();
+        let seen = answer_first(&pending, "Deny");
+        let mut engine = admin_engine(work.path(), &pending, true, false);
+        gate(&mut engine, "Bash", serde_json::json!({"command": "ssh host uptime"})).await;
+        let wait = std::time::Duration::from_secs(5);
+        let (labels, request) = tokio::time::timeout(wait, seen).await.expect("asked").unwrap();
+        assert_eq!(labels, [crate::engine::permission::ALLOW_ONCE, "Deny"]);
+        assert!(request.is_none(), "the person, not a caller");
     }
 
     #[test]

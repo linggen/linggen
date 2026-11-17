@@ -150,8 +150,8 @@ const GRANT_WRITERS: &[(&str, usize, &str)] = &[
     ),
     (
         "crates/linggen-engine/src/engine/tool_exec.rs",
-        2,
-        "a person's answer to a prompt; a test",
+        4,
+        "a person's answer to a prompt; tests",
     ),
     (
         "src/server/api/permissions.rs",
@@ -197,6 +197,11 @@ const GRANT_WRITERS: &[(&str, usize, &str)] = &[
     (
         "crates/linggen-engine/src/engine/permission/gate_copy_tests.rs",
         2,
+        "tests",
+    ),
+    (
+        "crates/linggen-engine/src/engine/permission/outward_tests.rs",
+        4,
         "tests",
     ),
 ];

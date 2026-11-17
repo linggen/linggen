@@ -9,6 +9,8 @@
 //! Layers
 //! ------
 //! - [`classify`] — bash command classification (which tier a command needs).
+//! - [`outward`] — commands whose effect leaves the machine: asked whatever
+//!   the grants.
 //! - [`model`]  — types, path matching, tier mapping,
 //!   and `check_permission` (the core decision function).
 //! - [`store`]  — `SessionPermissions` (load/save permission.json, set_path_mode).
@@ -18,6 +20,7 @@ mod classify;
 mod declined;
 mod manifest;
 mod model;
+mod outward;
 mod pattern_text;
 mod prompt;
 mod scripts;
@@ -28,6 +31,8 @@ pub mod toolchains;
 mod gate_copy_tests;
 #[cfg(test)]
 mod granted_tools_tests;
+#[cfg(test)]
+mod outward_tests;
 
 pub use declined::DeclinedScopes;
 pub use manifest::{apply_grants, Grants, PathGrant};
@@ -38,7 +43,7 @@ pub use model::{
     PermissionAction, PermissionCheckResult, PermissionMode, PromptKind,
 };
 pub use prompt::{
-    build_caller_question, build_exceeds_ceiling_question, grant_at_label,
+    build_caller_question, build_exceeds_ceiling_question, build_outward_question, grant_at_label,
     parse_exceeds_ceiling_answer, permission_target_summary, ALLOW_ONCE,
 };
 pub use store::SessionPermissions;

@@ -325,6 +325,10 @@ pub struct CallerPermissionRequest {
     /// What the agent said the action is for, when the call carries it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// The command's effect leaves this machine: only `allow_once` or
+    /// `deny` answers it.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub outward: bool,
 }
 
 #[derive(Debug, Serialize)]

@@ -89,6 +89,9 @@ pub enum PromptKind {
         /// Grant choices, broadest first: the repo root down to the file's directory.
         directories: Vec<String>,
         tool_summary: String,
+        /// The command's effect leaves this machine (`outward`): one answer
+        /// covers this one command — allow once or deny, no grant offered.
+        outward: bool,
     },
 }
 
@@ -146,7 +149,7 @@ fn is_assignment(word: &str) -> bool {
 /// (with their options), its program named by its file name whatever path
 /// it was given by. `/usr/bin/sudo ls`, `FOO=1 sudo ls`, `env -i sudo ls`
 /// and `nice -n 19 sudo ls` are all `sudo ls`.
-fn command_run<'a>(tokens: &'a [&'a str]) -> &'a [&'a str] {
+pub(super) fn command_run<'a>(tokens: &'a [&'a str]) -> &'a [&'a str] {
     let mut rest = tokens;
     loop {
         while rest.first().is_some_and(|w| is_assignment(w)) {
@@ -180,7 +183,7 @@ fn command_run<'a>(tokens: &'a [&'a str]) -> &'a [&'a str] {
 }
 
 /// A program's own name, whatever path it was run by.
-fn file_name(word: &str) -> &str {
+pub(super) fn file_name(word: &str) -> &str {
     word.rsplit('/').next().unwrap_or(word)
 }
 
@@ -579,6 +582,32 @@ pub(crate) fn check_permission_with(
     action_tier_override: Option<PermissionMode>,
     source: &ToolSource,
 ) -> PermissionCheckResult {
+    let result = check_grants(
+        tool,
+        bash_command,
+        file_path,
+        session_cwd,
+        session_perms,
+        action_tier_override,
+        source,
+    );
+    match bash_command.filter(|cmd| tool == "Bash" && super::outward::is_outward(cmd)) {
+        Some(cmd) => ask_outward(result, cmd, session_cwd),
+        None => result,
+    }
+}
+
+/// The check against the session's grants: the deny floor, then the
+/// action's level on every path it touches.
+fn check_grants(
+    tool: &str,
+    bash_command: Option<&str>,
+    file_path: Option<&str>,
+    session_cwd: &Path,
+    session_perms: &SessionPermissions,
+    action_tier_override: Option<PermissionMode>,
+    source: &ToolSource,
+) -> PermissionCheckResult {
     // 0a. Hardcoded deny floor (admin mode does not bypass).
     if tool == "Bash" {
         if let Some(cmd) = bash_command {
@@ -774,6 +803,44 @@ fn needs_prompt(
         path: display_path(&target),
         directories,
         tool_summary: summary,
+        outward: false,
+    })
+}
+
+/// An outward command (`super::outward`) asks whatever the grants: what
+/// the check would allow is asked at admin where it runs, and an ask the
+/// check makes anyway (a path beyond the grants) becomes the same one-time
+/// ask for the whole command. The deny floor still blocks first.
+fn ask_outward(
+    result: PermissionCheckResult,
+    cmd: &str,
+    session_cwd: &Path,
+) -> PermissionCheckResult {
+    let ask = match result {
+        PermissionCheckResult::Blocked(_) => return result,
+        PermissionCheckResult::Allowed => match needs_prompt(
+            session_cwd,
+            session_cwd,
+            PermissionMode::Admin,
+            format!("Bash {cmd}"),
+        ) {
+            PermissionCheckResult::NeedsPrompt(kind) => kind,
+            other => return other,
+        },
+        PermissionCheckResult::NeedsPrompt(kind) => kind,
+    };
+    let PromptKind::ExceedsCeiling {
+        target_mode,
+        path,
+        tool_summary,
+        ..
+    } = ask;
+    PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling {
+        target_mode,
+        path,
+        directories: Vec::new(),
+        tool_summary,
+        outward: true,
     })
 }
 
