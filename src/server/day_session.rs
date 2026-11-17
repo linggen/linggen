@@ -22,25 +22,41 @@ pub(crate) async fn enabled(manager: &AgentManager) -> bool {
     manager.get_config_snapshot().await.agent.one_session_a_day
 }
 
-/// The day's session id when the setting is on — made if it is not there
-/// yet; `None` when it is off.
+/// The builder's day's session id when the setting is on — made if it is
+/// not there yet; `None` when it is off.
 pub(crate) async fn current_if_on(manager: &AgentManager) -> Option<String> {
+    current_for_if_on(manager, None).await
+}
+
+/// [`current_if_on`] for the person `user_id` names (a request's): their
+/// own day, the builder's when it names the builder or no one.
+pub(crate) async fn current_for_if_on(manager: &AgentManager, user_id: Option<&str>) -> Option<String> {
     if !enabled(manager).await {
         return None;
     }
-    Some(current(manager))
+    Some(current(manager, person_of(user_id).as_deref()))
 }
 
-/// Today's session id (`state_fs::day_session::today`), made if missing.
-pub(crate) fn current(manager: &AgentManager) -> String {
-    let day = day_session::today();
-    let sid = day_session::id_of(day);
-    if let Ok(Some(_)) = manager.global_sessions.get_session_meta(&sid) {
-        return sid;
+/// Whose day a request's `user_id` is: `None` for the builder — no id, this
+/// machine's own, a paired device not yet named, or the builder's account.
+fn person_of(user_id: Option<&str>) -> Option<String> {
+    let id = user_id.map(str::trim).filter(|id| !id.is_empty())?;
+    if matches!(id, "__local__" | "__paired__") {
+        return None;
     }
+    let builders = crate::account::load_account().and_then(|a| a.user_id);
+    (builders.as_deref() != Some(id)).then(|| id.to_string())
+}
+
+/// Today's session id for `person` (`state_fs::day_session::today`), made
+/// if missing. It is made once: a kept day is never written over, even when
+/// it cannot be read now or another request made it a moment ago.
+pub(crate) fn current(manager: &AgentManager, person: Option<&str>) -> String {
+    let day = day_session::today();
+    let sid = day_session::id_for(day, person);
     let cwd = crate::util::resolve_path(&crate::paths::ensure_default_workspace());
-    let meta = day_session::new_meta(&sid, day, &cwd.to_string_lossy(), LEAD);
-    if let Err(e) = manager.global_sessions.add_session(&meta) {
+    let meta = day_session::new_meta(&sid, day, &cwd.to_string_lossy(), (LEAD, person));
+    if let Err(e) = manager.global_sessions.add_session_if_new(&meta) {
         tracing::warn!("[day] could not make {sid}: {e}");
     }
     sid
@@ -84,13 +100,11 @@ pub(crate) async fn rows_for_page(
     page: Option<&str>,
 ) -> (Vec<ChatMsg>, Option<SessionMeta>) {
     let store = &manager.global_sessions;
-    let rows = store.get_chat_history(session_id).unwrap_or_default();
+    let reader = page.unwrap_or(crate::engine::turn_place::HOME_KEY);
+    let rows = store.rows_seen_by(session_id, &Sight::page(reader)).unwrap_or_default();
     let Ok(Some(meta)) = store.get_session_meta(session_id) else {
         return (rows, None);
     };
-    let reader = page.unwrap_or(crate::engine::turn_place::HOME_KEY);
-    let private = crate::engine::turn_place::sight::private_apps(&*manager.skills).await;
-    let rows = Sight::new(reader, private).visible(rows, &meta);
     let shown = is_day(session_id).then_some(meta);
     (rows, shown)
 }
@@ -168,83 +182,54 @@ mod tests {
         assert!(kept_apart(&bound));
     }
 
-    /// Every place that reads a session's rows, and why it may (each one
-    /// that hands rows to a model, to Yinyue or to a page goes through
-    /// `turn_place::sight`). A new reader fails here until it is looked at
-    /// and listed: a private app's talk must not reach another place by it.
+    /// Every place that reads a session's rows outside `rows_seen_by`, and
+    /// why it may: each one that hands rows to a model, to Yinyue or to a
+    /// page reads them through `rows_seen_by` (`turn_place::sight`). A new
+    /// reader fails here until it is looked at and listed.
     const ROW_READERS: &[(&str, usize, &str)] = &[
-        (
-            "src/server/chat/thread.rs",
-            4,
-            "a member's thread and the light turn's tail: seen_rows",
-        ),
-        (
-            "src/server/chat/compact_rows.rs",
-            1,
-            "the summary's input: Sight of the compacting place",
-        ),
-        (
-            "src/server/day_session.rs",
-            1,
-            "rows_for_page: history views, her herald quote and seed",
-        ),
-        (
-            "crates/linggen-engine/src/engine/tools/mod.rs",
-            1,
-            "a skill command's user words: turn_sight",
-        ),
-        (
-            "src/server/resident/session_roll.rs",
-            1,
-            "only whether her thread is empty",
-        ),
-        (
-            "src/server/mcp_agent.rs",
-            1,
-            "a delegated run's reply; refuses the day's session",
-        ),
+        ("src/server/chat/thread.rs", 2, "how far the thread is read: counts and senders, no words"),
+        ("src/server/chat/compact_rows.rs", 1, "the summary's input: filtered by the compacting place's Sight"),
+        ("crates/linggen-engine/src/engine/tools/mod.rs", 1, "a skill command's user words when no place is kept"),
+        ("src/server/resident/session_roll.rs", 1, "only whether her thread is empty"),
+        ("src/server/mcp_agent.rs", 1, "a delegated run's reply; refuses the day's session"),
         ("src/server/mcp.rs", 1, "a dream mission run's last line"),
-        (
-            "src/server/api/missions.rs",
-            1,
-            "a mission run's own session",
-        ),
-        (
-            "crates/linggen-engine/src/extensions/missions/scheduler.rs",
-            1,
-            "a mission run's report",
-        ),
-        (
-            "src/server/chat/plan_flow.rs",
-            2,
-            "the plan the page approves; the place it was made in, where it runs",
-        ),
-        (
-            "src/server/restart.rs",
-            1,
-            "whether a continue turn was told: a client id",
-        ),
-        (
-            "crates/linggen-engine/src/engine/agent/met.rs",
-            1,
-            "whether an agent ever spoke: no words",
-        ),
-        (
-            "crates/linggen-engine/src/state_fs/sessions.rs",
-            9,
-            "the store itself",
-        ),
+        ("src/server/api/missions.rs", 1, "a mission run's own session"),
+        ("crates/linggen-engine/src/extensions/missions/scheduler.rs", 1, "a mission run's report"),
+        ("src/server/chat/plan_flow.rs", 2, "the plan the page approves; the plan's own stamp"),
+        ("src/server/restart.rs", 1, "whether a continue turn was told: a client id"),
+        ("crates/linggen-engine/src/engine/agent/met.rs", 1, "whether an agent ever spoke: no words"),
+        ("crates/linggen-engine/src/state_fs/sessions.rs", 0, "the store itself (counted apart)"),
         ("src/server/chat/helpers.rs", 2, "tests"),
-        (
-            "crates/linggen-engine/src/state_fs/row_place_tests.rs",
-            2,
-            "tests",
-        ),
-        (
-            "crates/linggen-engine/src/engine/light_turn/tests.rs",
-            1,
-            "tests",
-        ),
+        ("crates/linggen-engine/src/state_fs/row_place_tests.rs", 2, "tests"),
+        ("crates/linggen-engine/src/engine/light_turn/tests.rs", 1, "tests"),
+    ];
+
+    /// Every place that rewrites rows already kept, and why each row keeps
+    /// its stamp: a rewrite never drops a row's place or `kept_to`.
+    const ROW_REWRITERS: &[(&str, usize, &str)] = &[
+        ("crates/linggen-engine/src/engine/agent/mod.rs", 2, "passes a plan row through, stamped by its caller"),
+        ("crates/linggen-engine/src/engine/context.rs", 1, "in-loop compaction: rows kept whole, the summary stamped"),
+        ("src/server/chat/compact_rows.rs", 1, "compaction: rows kept whole, the summary stamped"),
+        ("src/server/chat/clear_place.rs", 1, "a clear of one app's part: rows dropped, never changed"),
+        ("src/server/chat/plan_flow.rs", 1, "the plan row: written with the plan's own stamp"),
+        ("crates/linggen-engine/src/state_fs/row_place_tests.rs", 1, "tests"),
+    ];
+
+    /// Every listener of the event bus, and what it does with a kept event.
+    const BUS_LISTENERS: &[(&str, usize, &str)] = &[
+        ("src/server/rtc/peer/mod.rs", 1, "the pages: forward judges the stamp"),
+        ("src/server/resident/triggers.rs", 1, "her heralds: a kept question is told only as waiting"),
+        ("src/server/tasks.rs", 1, "the task list: entries carry their own stamp"),
+        ("src/server/push/mod.rs", 1, "a mission's end: no session's words"),
+        ("src/server/milestones.rs", 1, "kinds and times, no words"),
+        ("src/server/event_log.rs", 1, "the engine's own local log"),
+        ("src/server/mcp_agent.rs", 2, "a delegated run's end: refuses the day's session"),
+    ];
+
+    /// Every event sent with a stamp chosen by hand, and why it is right.
+    const HAND_STAMPS: &[(&str, usize, &str)] = &[
+        ("src/server/api/yinyue.rs", 1, "her line: the place it was said in"),
+        ("src/server/chat/plan_flow.rs", 2, "a plan acted on later: the plan row's stamp"),
     ];
 
     fn rust_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
@@ -258,30 +243,47 @@ mod tests {
         }
     }
 
-    #[test]
-    fn every_reader_of_a_sessions_rows_is_known() {
+    /// Each file's count of `patterns`, against the list it must match.
+    fn check(patterns: &[&str], listed: &[(&str, usize, &str)], what: &str) {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let mut files = Vec::new();
         for dir in ["src", "crates/linggen-engine/src"] {
             rust_files(&root.join(dir), &mut files);
         }
         for file in files {
-            let rel = file
-                .strip_prefix(root)
-                .unwrap()
-                .to_string_lossy()
-                .to_string();
+            let rel = file.strip_prefix(root).unwrap().to_string_lossy().to_string();
+            if rel == "src/server/day_session.rs" || rel == "crates/linggen-engine/src/state_fs/sessions.rs" {
+                continue;
+            }
             let text = std::fs::read_to_string(&file).unwrap();
-            let found = text.matches(concat!("get_chat_history", "(")).count()
-                + text.matches(concat!("rows_since", "(")).count();
-            let listed = ROW_READERS
-                .iter()
-                .find(|(f, _, _)| *f == rel)
-                .map_or(0, |e| e.1);
-            assert_eq!(
-                found, listed,
-                "{rel} reads a session's rows: look at it, then list it"
-            );
+            let found: usize = patterns.iter().map(|p| text.matches(p).count()).sum();
+            let want = listed.iter().find(|(f, _, _)| *f == rel).map_or(0, |e| e.1);
+            assert_eq!(found, want, "{rel} {what}: look at it, then list it");
         }
+    }
+
+    #[test]
+    fn every_reader_of_a_sessions_rows_is_known() {
+        let readers = [concat!("get_chat_history", "("), concat!("rows_since", "(")];
+        check(&readers, ROW_READERS, "reads a session's rows");
+    }
+
+    #[test]
+    fn every_rewrite_of_kept_rows_is_known() {
+        let writers = [
+            concat!("update_last_plan_message", "("),
+            concat!("edit_chat_history", "("),
+            concat!("rewrite_chat_history", "("),
+        ];
+        check(&writers, ROW_REWRITERS, "rewrites kept rows");
+    }
+
+    /// The bus is the only way an event goes out (`engine::event_bus`):
+    /// every listener is listed, and no event is stamped by hand unlisted.
+    #[test]
+    fn every_listener_and_hand_stamp_of_the_bus_is_known() {
+        check(&[concat!("events_tx", ".subscribe()")], BUS_LISTENERS, "listens on the bus");
+        check(&[concat!(".send", "_kept(")], HAND_STAMPS, "stamps an event by hand");
+        check(&[concat!("Sender<", "ServerEvent>")], &[], "sends events past the bus");
     }
 }
