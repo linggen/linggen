@@ -118,9 +118,7 @@ impl crate::engine::skill::SkillRegistry for OneApp {
 /// does not resolve — with one session a day on; off, nothing is kept.
 #[tokio::test]
 async fn a_place_keeps_its_talk_to_a_private_or_unknown_app() {
-    let text = "---\nname: zz-diary\ndescription: Write\nprivate-talk: true\n---\nBody";
-    let diary = crate::extensions::skills::parse_skill_text(text, crate::engine::skill::SkillSource::Global).unwrap();
-    let skills = OneApp(diary);
+    let skills = skills_with_private("zz-diary").await;
     let place = |name: &str| TurnPlace::of_request(Some(name), None);
     assert_eq!(place("zz-diary").private_app(&skills, true).await.as_deref(), Some("zz-diary"));
     assert_eq!(place("zz-gone").private_app(&skills, true).await.as_deref(), Some("zz-gone"));

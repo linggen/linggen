@@ -158,7 +158,6 @@ impl AgentEngine {
                     failed: false,
                     images: Vec::new(),
                     place: None,
-                    kept_to: None,
                 },
             )
             .await;
@@ -371,7 +370,6 @@ impl AgentEngine {
                         failed: false,
                         images: Vec::new(),
                         place: None,
-                        kept_to: None,
                     },
                 )
                 .await;

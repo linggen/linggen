@@ -9,7 +9,6 @@
 //! a restart; it is made on first use.
 
 use crate::engine::agent::{AgentManager, COMPANION_AGENT_ID};
-use crate::engine::turn_place::sight::Sight;
 use crate::state_fs::day_session;
 use crate::state_fs::sessions::{ChatMsg, SessionMeta};
 
@@ -173,24 +172,20 @@ pub(crate) async fn seat_her(manager: &AgentManager, session_id: &str) {
     }
 }
 
-/// The rows of session `session_id` a page of `page` (an app's, or `None`
-/// for the main page and the phone) may be shown, and — in a day's session
-/// — the place each was written in, for the page to fold other apps' talk.
-/// A private app's rows are shown only on its own pages
-/// (`turn_place::sight`).
-/// `asker`: the person the page's channel is (`None`: the builder) — a day
-/// is shown only to its own person.
-pub(crate) async fn rows_for_page(
+/// The rows of session `session_id` a page may be shown, and — in a day's
+/// session — its meta, for the page to show the place each row was written
+/// in and fold other apps' talk. `asker`: the person the page's channel is
+/// (`None`: the builder) — a day is shown only to its own person.
+pub(crate) fn rows_for_page(
     manager: &AgentManager,
     session_id: &str,
-    (page, asker): (Option<&str>, Option<&str>),
+    asker: Option<&str>,
 ) -> (Vec<ChatMsg>, Option<SessionMeta>) {
     if !may_enter(session_id, asker) {
         return (Vec::new(), None);
     }
     let store = &manager.global_sessions;
-    let reader = page.unwrap_or(crate::engine::turn_place::HOME_KEY);
-    let rows = store.rows_seen_by(session_id, &Sight::page(reader)).unwrap_or_default();
+    let rows = store.get_chat_history(session_id).unwrap_or_default();
     let Ok(Some(meta)) = store.get_session_meta(session_id) else {
         return (rows, None);
     };
@@ -285,59 +280,6 @@ mod tests {
         assert!(kept_apart(&bound));
     }
 
-    /// Every place that reads a session's rows outside `rows_seen_by`, and
-    /// why it may: each one that hands rows to a model, to Yinyue or to a
-    /// page reads them through `rows_seen_by` (`turn_place::sight`). A new
-    /// reader fails here until it is looked at and listed.
-    const ROW_READERS: &[(&str, usize, &str)] = &[
-        ("src/server/chat/thread.rs", 2, "how far the thread is read: counts and senders, no words"),
-        ("src/server/chat/compact_rows.rs", 1, "the summary's input: filtered by the compacting place's Sight"),
-        ("crates/linggen-engine/src/engine/tools/mod.rs", 1, "a skill command's user words when no place is kept"),
-        ("src/server/resident/session_roll.rs", 1, "only whether her thread is empty"),
-        ("src/server/mcp_agent.rs", 1, "a delegated run's reply; refuses the day's session"),
-        ("src/server/mcp.rs", 1, "a dream mission run's last line"),
-        ("src/server/api/missions.rs", 1, "a mission run's own session"),
-        ("crates/linggen-engine/src/extensions/missions/scheduler.rs", 1, "a mission run's report"),
-        ("src/server/chat/plan_flow.rs", 2, "the plan the page approves; the plan's own stamp"),
-        ("src/server/restart.rs", 1, "whether a continue turn was told: a client id"),
-        ("crates/linggen-engine/src/engine/agent/met.rs", 1, "whether an agent ever spoke: no words"),
-        ("crates/linggen-engine/src/state_fs/sessions.rs", 0, "the store itself (counted apart)"),
-        ("src/server/chat/helpers.rs", 2, "tests"),
-        ("crates/linggen-engine/src/state_fs/row_place_tests.rs", 2, "tests"),
-        ("crates/linggen-engine/src/engine/light_turn/tests.rs", 1, "tests"),
-    ];
-
-    /// Every place that rewrites rows already kept, and why each row keeps
-    /// its stamp: a rewrite never drops a row's place or `kept_to`.
-    const ROW_REWRITERS: &[(&str, usize, &str)] = &[
-        ("crates/linggen-engine/src/engine/context.rs", 1, "in-loop compaction: rows kept whole, the summary stamped"),
-        ("src/server/chat/compact_rows.rs", 1, "compaction: rows kept whole, the summary stamped"),
-        ("src/server/chat/clear_place.rs", 1, "a clear of one app's part: rows dropped, never changed"),
-        ("crates/linggen-engine/src/state_fs/row_place_tests.rs", 1, "tests"),
-    ];
-
-    /// Every listener of the event bus (`EventBus::listen`, its one way in),
-    /// and what it does with a kept event.
-    const BUS_LISTENERS: &[(&str, usize, &str)] = &[
-        ("src/server/rtc/peer/mod.rs", 1, "the pages: forward judges the stamp"),
-        ("src/server/rtc/proxy_client.rs", 1, "room chat only: no session's words"),
-        ("src/server/resident/triggers.rs", 1, "her heralds: a kept question is told only as waiting"),
-        ("src/server/tasks.rs", 1, "the task list: entries carry their own stamp"),
-        ("src/server/push/mod.rs", 1, "a mission's end: no session's words"),
-        ("src/server/milestones.rs", 1, "kinds and times, no words"),
-        ("src/server/event_log.rs", 1, "the engine's own local log"),
-        ("src/server/mcp_agent.rs", 2, "a delegated run's end: refuses the day's session"),
-        ("src/server/quests_watch.rs", 1, "tests"),
-        ("src/server/chat/helpers.rs", 2, "tests"),
-        ("crates/linggen-engine/src/engine/event_bus.rs", 2, "the bus's own tests"),
-    ];
-
-    /// Every event sent with a stamp chosen by hand, and why it is right.
-    const HAND_STAMPS: &[(&str, usize, &str)] = &[
-        ("src/server/api/yinyue.rs", 1, "her line: the place it was said in"),
-        ("src/server/chat/plan_flow.rs", 2, "a plan acted on later: the plan row's stamp"),
-    ];
-
     fn rust_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
         for entry in std::fs::read_dir(dir).unwrap().flatten() {
             let path = entry.path();
@@ -388,29 +330,5 @@ mod tests {
             concat!("day_session::", "today("),
         ];
         check(&own_ids, &[], "names or makes a day's id itself");
-    }
-
-    #[test]
-    fn every_reader_of_a_sessions_rows_is_known() {
-        let readers = [concat!("get_chat_history", "("), concat!("rows_since", "(")];
-        check(&readers, ROW_READERS, "reads a session's rows");
-    }
-
-    #[test]
-    fn every_rewrite_of_kept_rows_is_known() {
-        let writers = [
-            concat!("edit_chat_history", "("),
-            concat!("rewrite_chat_history", "("),
-        ];
-        check(&writers, ROW_REWRITERS, "rewrites kept rows");
-    }
-
-    /// The bus is the only way an event goes out (`engine::event_bus`):
-    /// every listener is listed, and no event is stamped by hand unlisted.
-    #[test]
-    fn every_listener_and_hand_stamp_of_the_bus_is_known() {
-        check(&[concat!(".lis", "ten()")], BUS_LISTENERS, "listens on the bus");
-        check(&[concat!(".send", "_kept(")], HAND_STAMPS, "stamps an event by hand");
-        check(&[concat!("Sender<", "ServerEvent>")], &[], "sends events past the bus");
     }
 }

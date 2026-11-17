@@ -80,7 +80,7 @@ pub(super) fn ensure_session_exists(state: &Arc<ServerState>, sid: &str, root: &
 /// AND no persisted history), seed a one-line "Previously" note from the prior
 /// Yinyue session's last spoken line so a thread mid-flight doesn't snap across
 /// a day/size roll.
-pub(super) async fn seed_previously_if_fresh(
+pub(super) fn seed_previously_if_fresh(
     state: &Arc<ServerState>,
     engine: &mut crate::engine::AgentEngine,
     session_id: &str,
@@ -98,7 +98,7 @@ pub(super) async fn seed_previously_if_fresh(
     {
         return;
     }
-    let Some(prev_line) = last_spoken_line(state, session_id).await else {
+    let Some(prev_line) = last_spoken_line(state, session_id) else {
         return;
     };
     engine.chat_history.push(crate::message::ChatMessage::new(
@@ -107,21 +107,17 @@ pub(super) async fn seed_previously_if_fresh(
     ));
 }
 
-/// The last spoken (assistant) line from the most recent *other* Yinyue
-/// session. She stands outside every app: a private app's lines are not
-/// hers to be seeded with.
-pub(super) async fn last_spoken_line(
-    state: &Arc<ServerState>,
-    current_sid: &str,
-) -> Option<String> {
+/// The last spoken (assistant) line from the most recent *other* Yinyue session.
+pub(super) fn last_spoken_line(state: &Arc<ServerState>, current_sid: &str) -> Option<String> {
     let store = &state.manager.global_sessions;
     let mut sessions = store.list_sessions().ok()?;
     let kind = thread_kind(current_sid);
     sessions.retain(|m| thread_kind(&m.id) == kind && m.id != current_sid);
     sessions.sort_by_key(|m| std::cmp::Reverse(m.created_at));
     for meta in sessions {
-        let (history, _) =
-            crate::server::day_session::rows_for_page(&state.manager, &meta.id, (None, None)).await;
+        let Ok(history) = store.get_chat_history(&meta.id) else {
+            continue;
+        };
         let line = history.iter().rev().find(|m| {
             !m.is_observation
                 && m.from_id != "user"

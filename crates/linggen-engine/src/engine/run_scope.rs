@@ -76,24 +76,9 @@ impl AgentEngine {
         if row.from_id != "user" {
             row.run_id = self.run_id.clone();
         }
-        self.stamp_kept(&mut row);
         manager
             .add_chat_message(&self.cfg.ws_root, session_id.unwrap_or("default"), &row)
             .await;
-    }
-
-    /// A row this run writes in a place whose talk is kept is stamped kept
-    /// by the run itself, so it stays kept when no turn's mark is there to
-    /// stamp it (a subagent that outlives its turn).
-    fn stamp_kept(&self, row: &mut ChatMsg) {
-        if row.kept_to.is_some() {
-            return;
-        }
-        let Some(app) = self.tools.builtins.kept_here() else {
-            return;
-        };
-        row.place = Some(app.to_string());
-        row.kept_to = Some(app.to_string());
     }
 
     /// End the run's tool blocks still open: failed, as a call whose result

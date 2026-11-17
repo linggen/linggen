@@ -9,7 +9,7 @@ pub async fn yinyue_watch_loop(state: Arc<ServerState>) {
     tracing::info!("[yinyue-watch] started");
     loop {
         match rx.recv().await {
-            Ok(stamped) => handle_event(&state, stamped),
+            Ok(event) => handle_event(&state, event),
             Err(RecvError::Lagged(n)) => {
                 tracing::warn!("[yinyue-watch] lagged; skipped {n} events");
             }
@@ -20,9 +20,8 @@ pub async fn yinyue_watch_loop(state: Arc<ServerState>) {
 
 /// Cheap, synchronous classifier. Matches the coarse triggers and spawns any
 /// async follow-up; every other event returns immediately.
-pub(super) fn handle_event(state: &Arc<ServerState>, stamped: crate::engine::event_bus::Stamped) {
-    let kept_to = stamped.kept_to;
-    match stamped.event {
+pub(super) fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
+    match event {
         ServerEvent::Notification(payload) => handle_notification(state, payload),
         // An agent parked on a question or a permission prompt — Yinyue heralds
         // "they need you". One hook covers both AskUser-tool questions and
@@ -43,7 +42,7 @@ pub(super) fn handle_event(state: &Arc<ServerState>, stamped: crate::engine::eve
             message,
             app,
             session_id,
-        } if kept_to.is_none() => on_agent_chat(state, from, to, message, (app, session_id)),
+        } => on_agent_chat(state, from, to, message, (app, session_id)),
         _ => {} // firehose + everything else dropped here, near-free
     }
 }
@@ -179,7 +178,8 @@ fn herald_kept_ask(state: &Arc<ServerState>, app: String, question_id: String, s
     });
 }
 
-/// Her kickoff for a question kept to `app`: that it waits, nothing of it.
+/// Her kickoff for a question asked in the private app `app`: that it
+/// waits, nothing of it.
 fn kept_ask_kickoff(app: &str) -> String {
     format!(
         "The app \"{app}\" is waiting for the user to answer a question there; what it \
@@ -187,14 +187,6 @@ fn kept_ask_kickoff(app: &str) -> String {
          to it in your voice — one brief line, spoken aloud, plain prose. If it truly \
          doesn't warrant interrupting now, reply with exactly SILENT."
     )
-}
-
-/// The app a line said at `table` is kept to: its app's, when that app's
-/// talk is kept in the table's session.
-async fn kept_at(state: &Arc<ServerState>, table: Option<&Table>) -> Option<String> {
-    let table = table?;
-    let place = crate::server::chat::turn_place::told_in(&state.manager, &table.session, table.app.as_deref());
-    crate::server::chat::turn_place::hidden_app(&state.manager, &table.session, &place).await
 }
 
 /// Her words for a herald. A question waits inside a turn that holds her
@@ -438,11 +430,15 @@ fn is_delegated(meta: Option<&crate::state_fs::sessions::SessionMeta>) -> bool {
 
 /// The user's most recent message in a session — the topic of the reply
 /// Yinyue announces — trimmed to a short quote. Hidden prompts and tool
-/// payloads are skipped. `None` when the session has nothing quotable. She
-/// stands outside every app: a private app's words are never quoted to her.
+/// payloads are skipped. `None` when the session has nothing quotable, and
+/// for a private app's session: its words are never quoted to her.
 pub(super) async fn last_user_line(state: &Arc<ServerState>, session_id: &str) -> Option<String> {
-    let (history, _) =
-        crate::server::day_session::rows_for_page(&state.manager, session_id, (None, None)).await;
+    let place = crate::server::chat::turn_place::of_session_id(&state.manager, session_id);
+    let day_on = crate::server::day_session::enabled(&state.manager).await;
+    if place.private_app(&*state.manager.skills, day_on).await.is_some() {
+        return None;
+    }
+    let history = state.manager.global_sessions.get_chat_history(session_id).ok()?;
     let line = history
         .iter()
         .rev()
@@ -583,8 +579,6 @@ pub(super) async fn wake_and_speak(
     reach: Reach,
     language: Option<String>,
 ) -> Option<String> {
-    // Decided before her turn, from where it stands.
-    let kept = kept_at(&state, table.as_ref()).await;
     // `None`: the run failed or she produced nothing.
     let reply = match reach {
         Reach::Open => run_yinyue_turn(&state, kickoff, trigger_source).await,
@@ -609,7 +603,7 @@ pub(super) async fn wake_and_speak(
         "[yinyue-watch] Yinyue heralds ({} chars, {emotion})",
         line.len()
     );
-    crate::server::api::yinyue::emit_speak_kept(&state, line.clone(), Some(emotion.to_string()), kept);
+    crate::server::api::yinyue::emit_speak(&state, line.clone(), Some(emotion.to_string()));
     Some(line)
 }
 

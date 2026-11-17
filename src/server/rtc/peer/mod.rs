@@ -23,7 +23,6 @@ use crate::server::ServerState;
 
 mod control;
 mod forward;
-pub(crate) use forward::task_shown;
 mod inbound;
 mod inference;
 mod media_channel;
@@ -365,7 +364,7 @@ async fn run_peer(
     socket: UdpSocket,
     local_candidate_addr: std::net::SocketAddr,
     state: Arc<ServerState>,
-    mut events_rx: tokio::sync::broadcast::Receiver<crate::engine::event_bus::Stamped>,
+    mut events_rx: tokio::sync::broadcast::Receiver<crate::server::ServerEvent>,
     user_ctx: super::UserContext,
     peer_id: u64,
     peer_actor: PeerActor,
@@ -494,10 +493,7 @@ async fn run_peer(
             // Forward server events to the appropriate session data channel
             result = events_rx.recv() => {
                 match result {
-                    Ok(stamped)
-                        if matches!(stamped.event, crate::server::ServerEvent::RoomDisabled)
-                            && p.user_ctx.is_consumer() =>
-                    {
+                    Ok(crate::server::ServerEvent::RoomDisabled) if p.user_ctx.is_consumer() => {
                         tracing::info!("Room disabled by owner — disconnecting consumer peer");
                         media_channel::abandon(&mut p.media_transfer).await;
                         return Ok(());
@@ -1083,7 +1079,7 @@ impl PeerLoop {
         Ok(())
     }
 
-    fn forward_server_event(&mut self, event: &crate::engine::event_bus::Stamped) {
+    fn forward_server_event(&mut self, event: &crate::server::ServerEvent) {
         if !self.view_ctx.wants_pushes() {
             return;
         }
@@ -1092,7 +1088,6 @@ impl PeerLoop {
             user_id: &self.user_ctx.user_id,
             is_admin: self.user_ctx.permission.is_admin(),
             view: self.view_ctx.view.as_deref(),
-            skill: self.view_ctx.skill.as_deref(),
             pinned_session_id: if self.view_ctx.view.as_deref() == Some("embed") {
                 self.view_ctx.session_id.as_deref()
             } else {

@@ -400,18 +400,11 @@ pub(crate) async fn enqueue_if_busy(
     target_id: &str,
     clean_msg: &str,
     sent: (&str, &[String]),
-    (queue, kept_to): (Meets, Option<String>),
+    queue: Meets,
 ) -> Option<(QueuedChatItem, bool)> {
     if !was_busy {
         return None;
     }
-    // A private app's message waits with no preview: what it says is that
-    // app's (`turn_place::sight`).
-    let preview = queue_preview(clean_msg);
-    let (preview, kept_to) = match kept_to {
-        Some(app) => (String::new(), Some((app, preview))),
-        None => (preview, None),
-    };
     let busy = busy_message(queue);
     let joins = busy == BusyMessage::JoinTurn;
     let item = QueuedChatItem {
@@ -422,14 +415,13 @@ pub(crate) async fn enqueue_if_busy(
         ),
         agent_id: target_id.to_string(),
         session_id: effective_session_id.to_string(),
-        preview,
+        preview: queue_preview(clean_msg),
         timestamp: crate::util::now_ts_secs(),
         // Steer means now (`fold.rs`); the chat hides it while a question
         // is open, and the engine refuses it then.
         steerable: busy != BusyMessage::WaitForEnd,
         text: sent.0.to_string(),
         images: sent.1.to_vec(),
-        kept_to,
     };
 
     let key = queue_key(effective_session_id, target_id);
@@ -839,7 +831,7 @@ pub(crate) async fn run_session_turn(
     // Its place is the running one while it runs, unless whoever took the
     // turn lock for it kept it already.
     let _mark = match ctx.session_id.as_deref() {
-        Some(sid) => super::turn_place::mark_turn(manager, sid, &ctx.place).await,
+        Some(sid) => super::turn_place::mark_turn(manager, sid, &ctx.place),
         None => None,
     };
     // What closes this turn names this turn's run, never the last one's.
@@ -872,10 +864,7 @@ fn hear_her_at_table(
 ) {
     if super::members::is_companion(target_id) && !crate::server::resident::is_own_session(session_id) {
         if let Some(reply) = engine.last_assistant_text.clone() {
-            // The turn's mark still stands: a line said in a kept place is
-            // heard only on its app's pages.
-            let kept = state.manager.global_sessions.running_places.private_app(session_id);
-            crate::server::resident::speak_reply(state, &reply, kept);
+            crate::server::resident::speak_reply(state, &reply);
         }
     }
 }
@@ -1247,12 +1236,8 @@ pub(crate) async fn start_turn(
     // Not queued: this turn holds the lock now, and its place is kept
     // before its message is.
     let mark = match was_busy {
-        false => super::turn_place::mark_turn(&state.manager, &effective_session_id, &turn_place).await,
+        false => super::turn_place::mark_turn(&state.manager, &effective_session_id, &turn_place),
         true => None,
-    };
-    let kept_to = match was_busy {
-        true => super::turn_place::hidden_app(&state.manager, &effective_session_id, &turn_place).await,
-        false => None,
     };
     let queued_item = enqueue_if_busy(
         &state,
@@ -1261,7 +1246,7 @@ pub(crate) async fn start_turn(
         &target_id,
         &clean_msg,
         (&req.message, &req.images),
-        (queue, kept_to),
+        queue,
     )
     .await;
 
@@ -1361,7 +1346,7 @@ pub(crate) async fn start_turn(
         // Its own turn now: its place is the running one until it ends.
         let _mark = match mark {
             Some(mark) => Some(mark),
-            None => super::turn_place::mark_turn(&state_clone.manager, &session_id_for_queue, &turn_place).await,
+            None => super::turn_place::mark_turn(&state_clone.manager, &session_id_for_queue, &turn_place),
         };
         let queued_item_id = queued_item_id.filter(|_| !shown);
         let mut engine = agent.lock().await;
@@ -1528,7 +1513,6 @@ mod tests {
             steerable: true,
             text: "hi".into(),
             images: Vec::new(),
-            kept_to: None,
         };
         let queue = Arc::new(tokio::sync::Mutex::new(HashMap::from([(
             "s|ling".to_string(),

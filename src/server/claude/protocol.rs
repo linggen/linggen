@@ -751,7 +751,6 @@ impl ClaudeSession {
             via_note: None,
             images: Vec::new(),
             place: None,
-            kept_to: None,
         };
         if let Err(error) = self
             .state

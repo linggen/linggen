@@ -97,7 +97,6 @@ impl AgentEngine {
                     failed,
                     images: Vec::new(),
                     place: None,
-                    kept_to: None,
                 },
             )
             .await;
@@ -158,7 +157,6 @@ impl AgentEngine {
                 failed: false,
                 images: Vec::new(),
                 place: None,
-                kept_to: None,
             },
         )
         .await;
@@ -233,7 +231,6 @@ impl AgentEngine {
                         failed: false,
                         images: Vec::new(),
                         place: None,
-                        kept_to: None,
                     },
                 )
                 .await;
@@ -632,13 +629,12 @@ impl AgentEngine {
             return false;
         };
         let agent = self.agent_id.clone().unwrap_or_else(|| "ling".to_string());
-        let kept_to = self.summary_kept_to();
         let tail_budget = self.context_tail_token_budget();
         let before = manager.global_sessions.rewrite_count(&sid);
         if let Err(e) = manager.global_sessions.edit_chat_history(&sid, |rows| {
             super::compaction::commit_compaction(
                 rows,
-                (summary.clone(), kept_to.clone()),
+                summary.clone(),
                 &agent,
                 tail_budget,
                 live_budget,

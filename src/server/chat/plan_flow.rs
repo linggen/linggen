@@ -195,8 +195,8 @@ pub(super) async fn run_plan_execution(ctx: &ChatRunCtx, engine: &mut crate::eng
     let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
 }
 
-/// A plan's stamp: the place it was made in, and the app it is kept to.
-type Stamp = (Option<String>, Option<String>);
+/// The place a plan was made in (`TurnPlace::key`), as its row names it.
+type Stamp = Option<String>;
 
 /// Where an approved plan runs: the place of the turn that made it, in a
 /// day's session; anywhere else the session's own (`turn_place::told_in`).
@@ -205,25 +205,24 @@ fn plan_place(
     session_id: &str,
     stamp: &Stamp,
 ) -> crate::engine::turn_place::TurnPlace {
-    super::turn_place::told_in(manager, session_id, stamp.0.as_deref())
+    super::turn_place::told_in(manager, session_id, stamp.as_deref())
 }
 
-/// The stamp of the plan `agent_id` waits on in `session_id`: that of its
+/// The place of the plan `agent_id` waits on in `session_id`: that of its
 /// newest plan row still waiting for the person — the plan being decided,
-/// whichever place made it. What is written or sent of the plan afterwards
-/// — an edit, an approval, its run, a rejection — carries it. Only a day's
-/// session stamps a plan; anywhere else its rows are as before.
+/// whichever place made it. What is written of the plan afterwards — an
+/// edit, an approval, its run, a rejection — names it. Only a day's session
+/// names a plan's place; anywhere else its rows are as before.
 fn plan_stamp(manager: &crate::engine::agent::AgentManager, session_id: &str, agent_id: &str) -> Stamp {
     if !crate::state_fs::day_session::is_day_session(session_id) {
-        return (None, None);
+        return None;
     }
     let rows = manager.global_sessions.get_chat_history(session_id).unwrap_or_default();
     rows.iter()
         .rev()
         .filter(|r| r.from_id == agent_id)
         .find(|r| waiting_plan(&r.content))
-        .map(|r| r.stamp())
-        .unwrap_or_default()
+        .and_then(|r| r.place.clone())
 }
 
 /// Whether `content` is a plan row still waiting for the person.
@@ -234,7 +233,7 @@ fn waiting_plan(content: &str) -> bool {
     row["type"] == "plan" && row["plan"]["status"] == "planned"
 }
 
-/// Keep `line` in the session and send it, stamped as the plan is.
+/// Keep `line` in the session, in the plan's place, and send it.
 async fn say_of_plan(
     state: &Arc<ServerState>,
     (agent_id, from, to): (&str, &str, &str),
@@ -242,7 +241,7 @@ async fn say_of_plan(
     (session_id, stamp): (Option<&str>, &Stamp),
 ) {
     let sid = session_id.unwrap_or("default");
-    let (place, kept_to) = stamp.clone();
+    let place = stamp.clone();
     let row = crate::state_fs::sessions::ChatMsg {
         run_id: None,
         via: None,
@@ -257,7 +256,6 @@ async fn say_of_plan(
         failed: false,
         images: Vec::new(),
         place,
-        kept_to: kept_to.clone(),
     };
     let event = ServerEvent::Message {
         from: from.to_string(),
@@ -271,21 +269,20 @@ async fn say_of_plan(
         via_note: None,
         images: Vec::new(),
     };
-    let _ = state.events_tx.send_kept(event, kept_to);
+    let _ = state.events_tx.send(event);
     if let Err(e) = state.manager.global_sessions.add_chat_message(sid, &row) {
         tracing::warn!("[plan] could not keep a line of {sid}: {e}");
     }
 }
 
-/// Send the plan's new state, stamped as the plan is.
-fn send_plan_update(state: &Arc<ServerState>, agent_id: String, plan: Plan, (session_id, stamp): (Option<String>, &Stamp)) {
-    let kept_to = stamp.1.clone();
+/// Send the plan's new state.
+fn send_plan_update(state: &Arc<ServerState>, agent_id: String, plan: Plan, session_id: Option<String>) {
     let event = ServerEvent::PlanUpdate {
         agent_id,
         plan,
         session_id,
     };
-    let _ = state.events_tx.send_kept(event, kept_to);
+    let _ = state.events_tx.send(event);
 }
 
 /// Recover a pending plan from persisted session messages after server restart.
@@ -435,7 +432,7 @@ async fn run_approved_plan_task(
     // Where it runs, kept before anything of the run is written: in a day's
     // session its rows are the place it was made in (`turn_place::keep_in_day`).
     let place = plan_place(&manager, &sid_default, &stamp);
-    let _place = super::turn_place::keep_in_day(&manager, &sid_default, &place).await;
+    let _place = super::turn_place::keep_in_day(&manager, &sid_default, &place);
     // Emit PlanUpdate SSE and rewrite the persisted plan message in-place.
     let approved_snapshot = engine.plan.clone().unwrap();
     engine
@@ -517,7 +514,7 @@ async fn complete_plan(
 /// Keep a plan's new state as the latest `{type:"plan", plan:...}` row of
 /// the session, appended: `recover_plan_from_session` reads the newest one,
 /// so the plan stays aligned with the in-memory state across restarts.
-/// Written with the plan's own stamp (`plan_stamp`).
+/// Written in the plan's own place (`plan_stamp`).
 async fn persist_plan_message(
     manager: &Arc<AgentManager>,
     root: &Path,
@@ -526,7 +523,7 @@ async fn persist_plan_message(
     plan: &Plan,
 ) {
     let plan_json = serde_json::json!({ "type": "plan", "plan": plan });
-    let (place, kept_to) = stamp.clone();
+    let place = stamp.clone();
     let msg = crate::state_fs::sessions::ChatMsg {
         run_id: None,
         via: None,
@@ -541,7 +538,6 @@ async fn persist_plan_message(
         failed: false,
         images: Vec::new(),
         place,
-        kept_to,
     };
     manager.add_chat_message(root, session_id, &msg).await;
 }
@@ -562,7 +558,7 @@ pub(crate) async fn reject_plan_handler(
     };
     let stamp = plan_stamp(&state.manager, req.session_id.as_deref().unwrap_or("default"), &req.agent_id);
     rejected_plan.status = crate::engine::PlanStatus::Rejected;
-    send_plan_update(&state, req.agent_id.clone(), rejected_plan.clone(), (req.session_id.clone(), &stamp));
+    send_plan_update(&state, req.agent_id.clone(), rejected_plan.clone(), req.session_id.clone());
 
     // Persist rejection so recover_plan_from_session sees the updated status
     // on reload and doesn't resurface the old "planned" buttons.
@@ -628,7 +624,7 @@ pub(crate) async fn edit_plan_handler(
     let sid = session_id.as_deref().unwrap_or("default");
     let stamp = plan_stamp(&state.manager, sid, &agent_id);
     persist_plan_message(&state.manager, &root, (sid, &stamp), &agent_id, &plan).await;
-    send_plan_update(&state, agent_id, plan, (session_id, &stamp));
+    send_plan_update(&state, agent_id, plan, session_id);
 
     (StatusCode::OK, Json(serde_json::json!({"ok": true}))).into_response()
 }

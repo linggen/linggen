@@ -66,8 +66,8 @@ fn memory_reach(name: &str) -> PlaceReach {
 }
 
 impl Tools {
-    /// Why `call` may not run here, when it would carry the turn's words out
-    /// of a place whose talk is kept.
+    /// Why `call` may not run here, when it would carry a private app's
+    /// words out of it.
     pub(crate) fn exit_refusal(&self, call: &ToolCall) -> Option<String> {
         let app = self.private_app.as_deref()?;
         leaves(reach_of(&call.tool), &call.args, app).then(|| refusal(app, &call.tool))

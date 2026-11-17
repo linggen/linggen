@@ -438,16 +438,9 @@ pub(crate) async fn run_delegation(
     engine.set_task(task);
     engine.tools.builtins.set_session_id(session_id.clone());
     // It stands where its parent's turn stands: the app's memory, values
-    // and grants are the parent's place's, and what it may be given of the
-    // session's rows (`turn_place::sight`).
+    // and grants are the parent's place's; a private app's subagent keeps
+    // its talk there too (`exit_gate`).
     if let Some(place) = &parent_place {
-        let meta = session_id
-            .as_deref()
-            .and_then(|sid| manager.global_sessions.get_session_meta(sid).ok().flatten())
-            .unwrap_or_default();
-        let sight = crate::engine::turn_place::sight::Sight::of(place, &meta, &*manager.skills).await;
-        engine.tools.builtins.turn_sight = Some(sight);
-        // A private app's subagent keeps its talk there too.
         let day_on = manager.get_config_snapshot().await.agent.one_session_a_day;
         engine.tools.builtins.private_app = place.private_app(&*manager.skills, day_on).await;
     }

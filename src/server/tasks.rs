@@ -193,7 +193,7 @@ pub(crate) async fn native_watch(state: std::sync::Arc<super::ServerState>) {
     let mut events = state.events_tx.listen();
     loop {
         let event = match events.recv().await {
-            Ok(stamped) => stamped.event,
+            Ok(event) => event,
             Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
             Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
         };
@@ -339,9 +339,9 @@ async fn tell_in_place(
         return;
     };
     // Its place is kept before its notice is: the notice — a task's output
-    // tail — is a row of that place (`turn_place::sight`).
+    // tail — is a row of that place.
     let told_at = super::chat::turn_place::told_in(&state.manager, &session, started_in.as_deref());
-    let _place = super::chat::turn_place::keep_in_day(&state.manager, &session, &told_at).await;
+    let _place = super::chat::turn_place::keep_in_day(&state.manager, &session, &told_at);
     match mark {
         Some((mark, kept)) => {
             let persisted = super::chat::helpers::persist_and_emit_with_images(

@@ -385,10 +385,6 @@ pub struct Tools {
     /// The place the running turn stands in (`turn_place`), set when it
     /// enters and cleared when it leaves; a delegated run gets its parent's.
     pub(crate) turn_place: Option<crate::engine::turn_place::TurnPlace>,
-    /// What the running turn's place may be given of the session's rows
-    /// (`turn_place::sight`), set by the server as the turn enters its
-    /// place and cleared when it leaves.
-    pub(crate) turn_sight: Option<crate::engine::turn_place::sight::Sight>,
     /// The app the running turn keeps its talk to (`TurnPlace::private_app`),
     /// set as it enters its place and cleared when it leaves; a delegated
     /// run gets its parent's. From it no call carries words out
@@ -422,7 +418,6 @@ impl Tools {
             browser_bridge: None,
             active_skill: None,
             turn_place: None,
-            turn_sight: None,
             private_app: None,
             steer: None,
         })
@@ -573,7 +568,7 @@ impl Tools {
         let mut env = vec![("LINGGEN_SESSION_ID".to_string(), sid.clone())];
         env.extend(restricted);
         if let Some(manager) = self.get_manager() {
-            if let Ok(history) = self.seen_history(&manager.global_sessions, sid) {
+            if let Ok(history) = manager.global_sessions.get_chat_history(sid) {
                 let turns = history.iter().filter(|m| m.from_id == "user").count();
                 env.push(("LINGGEN_USER_TURNS".to_string(), turns.to_string()));
                 if senses.iter().any(|s| s == crate::senses::USER_WORDS) {
@@ -582,25 +577,6 @@ impl Tools {
             }
         }
         env
-    }
-
-    /// The app the running turn's talk is kept to, if any — decided when
-    /// the turn entered its place (`turn_place::sight`).
-    pub(crate) fn kept_here(&self) -> Option<&str> {
-        self.turn_sight.as_ref()?.keeps()
-    }
-
-    /// The session's rows the running turn's place may be given
-    /// ([`Self::turn_sight`]); all of them when no sight is set.
-    fn seen_history(
-        &self,
-        store: &crate::state_fs::SessionStore,
-        sid: &str,
-    ) -> anyhow::Result<Vec<crate::state_fs::sessions::ChatMsg>> {
-        match &self.turn_sight {
-            Some(sight) => store.rows_seen_by(sid, sight),
-            None => store.get_chat_history(sid),
-        }
     }
 
     /// The values the running turn's place is bound to, for a tool of
@@ -845,7 +821,6 @@ mod tests {
             failed: false,
             images: Vec::new(),
             place: None,
-            kept_to: None,
         };
         let mut history = vec![
             msg("user", "[HIDDEN] [scene] opened", false),

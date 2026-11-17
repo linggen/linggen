@@ -363,7 +363,6 @@ pub async fn run(
             failed: false,
             images: Vec::new(),
             place: None,
-            kept_to: None,
         },
     );
 
@@ -746,8 +745,8 @@ fn validate_model(model: &str, resolved: Option<String>, ids: &[String]) -> Resu
 }
 
 /// A delegated run's session. The day's session is none: a host neither
-/// reads nor continues it (`server::day_session`) — a private app's talk is
-/// in it.
+/// reads nor continues it (`server::day_session`) — delegated runs keep
+/// sessions of their own.
 fn session_meta(
     state: &ServerState,
     session: &str,
@@ -1325,7 +1324,6 @@ mod wait_ready_tests {
             images: vec![],
             run_id: None,
             place: None,
-            kept_to: None,
         }
     }
 
@@ -1663,7 +1661,7 @@ mod permit_tests {
 
     fn bridge(pending: &Pending, session: &str) -> AskUserBridge {
         AskUserBridge {
-            events_tx: crate::engine::event_bus::EventBus::detached(16),
+            events_tx: crate::engine::event_bus::EventBus::new(16),
             pending: pending.clone(),
             session_id: Some(session.into()),
         }

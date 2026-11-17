@@ -121,7 +121,6 @@ impl TurnPlace {
 
 pub(crate) mod bind;
 pub mod running;
-pub mod sight;
 
 #[cfg(test)]
 mod tests;

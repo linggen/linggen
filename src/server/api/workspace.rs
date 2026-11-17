@@ -318,12 +318,12 @@ pub(crate) async fn get_workspace_state(
     };
 
     let sid = query.session_id.as_deref().unwrap_or_default();
-    // The main page stands at home: a private app's talk is not shown here.
+    // A day is shown to its own person, with each row's place.
     let (messages, day) = match sid {
         "" => (Vec::new(), None),
         sid => {
             let asker = query.user_id.as_deref();
-            crate::server::day_session::rows_for_page(&state.manager, sid, (None, asker)).await
+            crate::server::day_session::rows_for_page(&state.manager, sid, asker)
         }
     };
     let running = !sid.is_empty() && run_calls::session_running(&state.manager, sid).await;

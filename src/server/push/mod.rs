@@ -32,7 +32,7 @@ pub(crate) fn spawn(state: &Arc<ServerState>) {
 async fn listen(state: Arc<ServerState>) {
     let mut rx = state.events_tx.listen();
     loop {
-        match rx.recv().await.map(|stamped| stamped.event) {
+        match rx.recv().await {
             Ok(ServerEvent::Notification(NotificationPayload::MissionCompleted {
                 mission_id,
                 status,

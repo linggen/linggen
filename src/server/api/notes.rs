@@ -1,8 +1,8 @@
 //! GET /api/notes?agent= — an agent's open notes, read-only, for another
 //! device (the phone shows them; `doc/one-ling-spec.md` § One session a
 //! day). Notes are written by their agent's own tools alone; nothing here
-//! changes them. A private app's turn writes none, so nothing of its talk
-//! is in them.
+//! changes them. A private app's turn writes none (`tools::exit_gate`),
+//! so nothing of its talk is in them.
 
 use axum::extract::Query;
 use axum::Json;

@@ -95,7 +95,6 @@ mod tests {
             images: Vec::new(),
             run_id: None,
             place: place.map(str::to_string),
-            kept_to: None,
         }
     }
 

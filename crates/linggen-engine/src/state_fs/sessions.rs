@@ -385,20 +385,9 @@ pub struct ChatMsg {
     /// session's own place ([`ChatMsg::place_in`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub place: Option<String>,
-    /// The app this row is kept to (`turn_place::sight`), stamped once as it
-    /// is saved — from the skill the turn stood in at that moment — and
-    /// never looked up again: a reader standing anywhere else is not given
-    /// it, whatever is installed later. `None`: everyone's.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub kept_to: Option<String>,
 }
 
 impl ChatMsg {
-    /// The row's stamp: where it was written and the app it is kept to.
-    pub fn stamp(&self) -> (Option<String>, Option<String>) {
-        (self.place.clone(), self.kept_to.clone())
-    }
-
     /// The key of the place this row was written in, in session `meta`.
     pub fn place_in(&self, meta: &SessionMeta) -> String {
         match &self.place {
@@ -682,38 +671,19 @@ impl SessionStore {
         Ok(())
     }
 
-    /// `msg` with the stamp of the turn running in the session — its place,
-    /// and the app it is kept to — when it carries no stamp of its own and a
-    /// turn's place is kept.
+    /// `msg` with the place of the turn running in the session, when it
+    /// names none of its own and a turn's place is kept.
     fn stamped<'a>(&self, session_id: &str, msg: &'a ChatMsg) -> std::borrow::Cow<'a, ChatMsg> {
-        if msg.place.is_some() || msg.kept_to.is_some() {
+        if msg.place.is_some() {
             return std::borrow::Cow::Borrowed(msg);
         }
-        let Some((place, kept_to)) = self.running_places.stamp_of(session_id) else {
+        let Some(place) = self.running_places.of(session_id) else {
             return std::borrow::Cow::Borrowed(msg);
         };
-        // A day's row is stamped either way: everyone's, or kept.
-        let everyone = crate::state_fs::day_session::is_day_session(session_id)
-            .then(|| crate::engine::turn_place::sight::EVERYONE.to_string());
-        let kept_to = kept_to.or(everyone);
         std::borrow::Cow::Owned(ChatMsg {
-            place: Some(place),
-            kept_to,
+            place: Some(place.key().to_string()),
             ..msg.clone()
         })
-    }
-
-    /// The session's rows a reader standing where `sight` stands may be
-    /// given, in order — by each row's stamp (`turn_place::sight`). Every
-    /// reader that hands rows to a model, to Yinyue or to a page reads them
-    /// here.
-    pub fn rows_seen_by(
-        &self,
-        session_id: &str,
-        sight: &crate::engine::turn_place::sight::Sight,
-    ) -> Result<Vec<ChatMsg>> {
-        let sight = sight.clone().reading(session_id);
-        Ok(sight.visible(self.get_chat_history(session_id)?))
     }
 
     pub fn get_chat_history(&self, session_id: &str) -> Result<Vec<ChatMsg>> {
@@ -1165,7 +1135,6 @@ mod tests {
             failed: false,
             images: Vec::new(),
             place: None,
-            kept_to: None,
         };
         let msg2 = ChatMsg {
             run_id: None,
@@ -1181,7 +1150,6 @@ mod tests {
             failed: false,
             images: Vec::new(),
             place: None,
-            kept_to: None,
         };
         store.add_chat_message("s1", &msg1).unwrap();
         store.add_chat_message("s1", &msg2).unwrap();
@@ -1210,7 +1178,6 @@ mod tests {
             failed: false,
             images: Vec::new(),
             place: None,
-            kept_to: None,
         };
         let kept = serde_json::to_string(&row(Some("c-1-ab"))).unwrap();
         let back: ChatMsg = serde_json::from_str(&kept).unwrap();
@@ -1271,7 +1238,6 @@ mod tests {
                     failed: false,
                     images: Vec::new(),
                     place: None,
-                    kept_to: None,
                 },
             )
             .unwrap();
@@ -1292,7 +1258,6 @@ mod tests {
                     failed: false,
                     images: Vec::new(),
                     place: None,
-                    kept_to: None,
                 },
             )
             .unwrap();
@@ -1350,7 +1315,6 @@ mod tests {
                     failed: false,
                     images: Vec::new(),
                     place: None,
-                    kept_to: None,
                 },
             )
             .unwrap();
@@ -1406,7 +1370,6 @@ mod tests {
                     failed: false,
                     images: Vec::new(),
                     place: None,
-                    kept_to: None,
                 },
             )
             .unwrap();
@@ -1520,7 +1483,6 @@ mod tests {
                     failed: false,
                     images: Vec::new(),
                     place: None,
-                    kept_to: None,
                 },
             )
             .unwrap();

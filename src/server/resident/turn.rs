@@ -217,7 +217,7 @@ async fn run_at(
     let spoken = {
         // Past a restart's snapshot her turn waits in its plan instead.
         let (_held, gate) = her_place(state, turn, &task, trigger_source).await?;
-        let _mark = crate::server::chat::turn_place::mark_turn(&state.manager, session_id, &turn.place).await;
+        let _mark = crate::server::chat::turn_place::mark_turn(&state.manager, session_id, &turn.place);
         // Persist the incoming message to the session store so it survives
         // reload and every member's thread holds it. (The turn core only
         // mirrors it into in-memory history.) Inside the turn lock: two
@@ -259,7 +259,7 @@ async fn run_at(
         // Deeper continuity rides shared memory (auto-recall + core), injected
         // by the turn core.
         if turn.home {
-            seed_previously_if_fresh(state, &mut engine, session_id).await;
+            seed_previously_if_fresh(state, &mut engine, session_id);
         }
 
         let ctx = crate::server::chat::ChatRunCtx {
@@ -344,8 +344,7 @@ fn resend_hers(
             tokio::spawn(async move {
                 let pet = state.manager.get_config_snapshot().await.pet;
                 if let Some(reply) = run_at(&state, &turn, &pet, task, &trigger_source).await {
-                    let kept = crate::server::chat::turn_place::hidden_app(&state.manager, &turn.session_id, &turn.place).await;
-                    super::speak_reply(&state, &reply, kept);
+                    super::speak_reply(&state, &reply);
                 }
             });
         })

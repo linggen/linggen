@@ -57,7 +57,7 @@ async fn prepare_server(
 
     // Events can be bursty (tool/status steps). Use a larger buffer to reduce lag drops.
     let events_tx =
-        crate::engine::event_bus::EventBus::new(4096, manager.global_sessions.running_places.clone());
+        crate::engine::event_bus::EventBus::new(4096);
 
     let prompt_store = Arc::new(crate::prompts::PromptStore::load(Some(
         &crate::prompts::PromptStore::default_override_dir(),

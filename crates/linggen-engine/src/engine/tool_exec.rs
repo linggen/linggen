@@ -995,7 +995,6 @@ impl AgentEngine {
                     failed: false,
                     images: Vec::new(),
                     place: None,
-                    kept_to: None,
                 },
             )
             .await;
@@ -1680,7 +1679,7 @@ mod declined_gate_tests {
         perms.set_path_mode(&root.to_string_lossy(), PermissionMode::Read);
         engine.session_permissions = perms;
         engine.tools.set_ask_user_bridge(Arc::new(tools::AskUserBridge {
-            events_tx: crate::engine::event_bus::EventBus::detached(16),
+            events_tx: crate::engine::event_bus::EventBus::new(16),
             pending: pending.clone(),
             session_id: None,
         }));

@@ -234,7 +234,6 @@ pub(crate) async fn persist_and_emit_with_images(
         via_note: via_note.map(str::to_string),
         images: kept,
         place: None,
-        kept_to: None,
     };
     if let Err(e) = store.add_chat_message(sid, &msg) {
         tracing::warn!("Failed to persist chat message to mission store: {}", e);
@@ -270,7 +269,6 @@ pub(crate) async fn persist_message_only(
         failed: false,
         images: Vec::new(),
         place: None,
-        kept_to: None,
     };
     if let Err(e) = manager.global_sessions.add_chat_message(sid, &msg) {
         tracing::warn!("Failed to persist chat message: {}", e);
@@ -479,7 +477,7 @@ mod via_tests {
     async fn a_hand_off_keeps_via_on_the_row_and_the_live_event() {
         let dir = tempfile::tempdir().unwrap();
         let store = crate::state_fs::SessionStore::with_sessions_dir(dir.path().to_path_buf());
-        let tx = crate::engine::event_bus::EventBus::detached(8);
+        let tx = crate::engine::event_bus::EventBus::new(8);
         let mut rx = tx.listen();
         persist_and_emit_to_store(
             &store,
@@ -495,7 +493,7 @@ mod via_tests {
             Some("Let me check how many songs we have here."),
         )
         .await;
-        match rx.recv().await.unwrap().event {
+        match rx.recv().await.unwrap() {
             ServerEvent::Message { via, .. } => assert_eq!(via.as_deref(), Some("iphone")),
             _ => panic!("expected a message event"),
         }
@@ -514,7 +512,7 @@ mod via_tests {
         use base64::Engine as _;
         let dir = tempfile::tempdir().unwrap();
         let store = crate::state_fs::SessionStore::with_sessions_dir(dir.path().to_path_buf());
-        let tx = crate::engine::event_bus::EventBus::detached(8);
+        let tx = crate::engine::event_bus::EventBus::new(8);
         let mut rx = tx.listen();
         // The smallest PNG header the keeper accepts as a picture.
         let mut png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
@@ -535,7 +533,7 @@ mod via_tests {
         let rows = store.get_chat_history("s1").unwrap();
         assert_eq!(rows[0].images.len(), 1, "the row keeps the picture");
         let want = crate::state_fs::session_images::url("s1", &rows[0].images[0]);
-        match rx.recv().await.unwrap().event {
+        match rx.recv().await.unwrap() {
             ServerEvent::Message {
                 images, client_id, ..
             } => {

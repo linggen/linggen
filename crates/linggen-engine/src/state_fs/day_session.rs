@@ -74,8 +74,7 @@ pub fn day_in(session_id: &str) -> Option<NaiveDate> {
 /// answers every message not addressed to Yinyue), Yinyue seated when she
 /// first speaks in it, home's folder `cwd`. Made by `agent`, as Yinyue's own
 /// thread is: the memory scan reads only a person's own chats (`user`), and
-/// app chats and her thread were never read by it — nor is the day, which
-/// holds a private app's talk.
+/// app chats and her thread were never read by it — nor is the day.
 /// `person`: whose day it is (`None`: the builder's own); a page lists it
 /// only to them.
 pub fn new_meta(session_id: &str, day: NaiveDate, cwd: &str, (lead, person): (&str, Option<&str>)) -> SessionMeta {

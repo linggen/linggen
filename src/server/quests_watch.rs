@@ -103,7 +103,7 @@ mod tests {
     #[tokio::test]
     async fn a_written_file_is_announced_once_per_app() {
         let dir = tempfile::tempdir().unwrap();
-        let tx = crate::engine::event_bus::EventBus::detached(16);
+        let tx = crate::engine::event_bus::EventBus::new(16);
         let mut rx = tx.listen();
         watch(dir.path().to_path_buf(), tx, Duration::from_millis(200)).unwrap();
         // Written the way apps write: a temp file, then a rename, then again.
@@ -115,8 +115,7 @@ mod tests {
         let got = tokio::time::timeout(Duration::from_secs(5), rx.recv())
             .await
             .expect("announced")
-            .unwrap()
-            .event;
+            .unwrap();
         assert!(matches!(got, ServerEvent::QuestsChanged { ref app } if app == "health"));
         // The burst settled into that one event.
         let more = tokio::time::timeout(Duration::from_millis(600), rx.recv()).await;

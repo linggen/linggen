@@ -305,7 +305,7 @@ pub(crate) async fn get_skill_session_state(
     State(state): State<Arc<ServerState>>,
     Query(query): Query<SkillSessionStateQuery>,
 ) -> impl IntoResponse {
-    let Some(skill) = query.skill.filter(|s| !s.is_empty()) else {
+    let Some(_skill) = query.skill.filter(|s| !s.is_empty()) else {
         return Json(serde_json::json!({ "messages": [] })).into_response();
     };
     let Some(session_id) = query.session_id.filter(|s| !s.is_empty()) else {
@@ -326,9 +326,9 @@ pub(crate) async fn get_skill_session_state(
             .into_response();
     }
 
-    // An app's page: a private app's talk is shown on its own pages only.
+    // A day is shown to its own person, with each row's place.
     let (messages, day) =
-        crate::server::day_session::rows_for_page(&state.manager, &session_id, (Some(&skill), query.user_id.as_deref())).await;
+        crate::server::day_session::rows_for_page(&state.manager, &session_id, query.user_id.as_deref());
 
     let running = run_calls::session_running(&state.manager, &session_id).await;
     let mapped = run_calls::with_run_calls(

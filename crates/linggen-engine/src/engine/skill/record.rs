@@ -540,9 +540,9 @@ pub struct Skill {
     #[serde(default)]
     pub queue: QueueMode,
     /// What is said in this app's turns is the app's alone
-    /// (`private-talk: true`): in a session several apps write into, what
-    /// its turns write and stream is stamped as kept to it
-    /// (`turn_place::sight::kept_to`).
+    /// (`private-talk: true`): with one session a day on it keeps a session
+    /// of its own, never the day's, and from its turns no tool carries
+    /// words out (`TurnPlace::private_app`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub private_talk: bool,
     /// Which phone facts stamp which of the skill's quests, and how.

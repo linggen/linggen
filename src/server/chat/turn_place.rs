@@ -37,28 +37,15 @@ pub(super) async fn bind_turn_place(engine: &mut crate::engine::AgentEngine, ctx
     if grants_changed {
         let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
     }
-    engine.see_from_place(turn_sight(&ctx.manager, ctx.session_id.as_deref(), &ctx.place).await);
     let day_on = crate::server::day_session::enabled(&ctx.manager).await;
     engine.keep_talk_to(ctx.place.private_app(&*ctx.manager.skills, day_on).await);
 }
 
-/// What a turn standing in `place` of session `session_id` may be given,
-/// and the app what it writes is kept to — decided now, from the skill.
-pub(crate) async fn turn_sight(
-    manager: &crate::engine::agent::AgentManager,
-    session_id: Option<&str>,
-    place: &TurnPlace,
-) -> crate::engine::turn_place::sight::Sight {
-    let meta = session_id.and_then(|sid| manager.global_sessions.get_session_meta(sid).ok().flatten());
-    let meta = meta.unwrap_or_default();
-    crate::engine::turn_place::sight::Sight::of(place, &meta, &*manager.skills).await
-}
-
 /// In a day's session, keep `place` as the running turn's before a turn the
 /// engine starts on its own writes anything (a task's end notice, an
-/// approved plan's run): its rows are then that place's, and a private
-/// app's are kept to it. Elsewhere nothing is kept, and rows are as before.
-pub(crate) async fn keep_in_day(
+/// approved plan's run): its rows are then that place's. Elsewhere nothing
+/// is kept, and rows are as before.
+pub(crate) fn keep_in_day(
     manager: &crate::engine::agent::AgentManager,
     session_id: &str,
     place: &TurnPlace,
@@ -66,30 +53,17 @@ pub(crate) async fn keep_in_day(
     if !crate::state_fs::day_session::is_day_session(session_id) {
         return None;
     }
-    mark_turn(manager, session_id, place).await
+    mark_turn(manager, session_id, place)
 }
 
-/// Keep `place` as the running turn's in `session_id`, and whether its talk
-/// is kept to its app. `None` when a turn's place is kept there already.
-pub(crate) async fn mark_turn(
+/// Keep `place` as the running turn's in `session_id`: the rows it saves
+/// name it. `None` when a turn's place is kept there already.
+pub(crate) fn mark_turn(
     manager: &crate::engine::agent::AgentManager,
     session_id: &str,
     place: &TurnPlace,
 ) -> Option<crate::engine::turn_place::running::PlaceMark> {
-    // Decided before the mark: the turn is kept from its first row.
-    let kept = hidden_app(manager, session_id, place).await.is_some();
-    manager.global_sessions.running_places.mark_kept(session_id, place, kept)
-}
-
-/// The app `place` keeps its talk to in session `session_id`, when it is
-/// hidden from the session's other places (`turn_place::sight`).
-pub(crate) async fn hidden_app(
-    manager: &crate::engine::agent::AgentManager,
-    session_id: &str,
-    place: &TurnPlace,
-) -> Option<String> {
-    let meta = manager.global_sessions.get_session_meta(session_id).ok()??;
-    crate::engine::turn_place::sight::kept_to(place, &meta, &*manager.skills).await
+    manager.global_sessions.running_places.mark(session_id, place)
 }
 
 /// The turn is over: nothing of its place stays on the engine.
@@ -141,8 +115,8 @@ pub(crate) fn of_session_id(
 
 /// Where a turn the engine starts on its own stands — a background task's
 /// end, an approved plan's run: in a day's session, the place `key` its work
-/// began in (the app it is about, so a private app's output stays there);
-/// anywhere else, and with no key, the session's own.
+/// began in (the app it is about); anywhere else, and with no key, the
+/// session's own.
 pub(crate) fn told_in(
     manager: &crate::engine::agent::AgentManager,
     session_id: &str,

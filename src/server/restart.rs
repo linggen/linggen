@@ -1145,7 +1145,6 @@ mod tests {
             steerable: false,
             text: text.into(),
             images: vec![format!("{text}.png")],
-            kept_to: None,
         }
     }
 
