@@ -20,24 +20,24 @@ Every number is tagged **(measured)** — taken on his Mac on 2026-11-15 — or
 
 ## Progress
 
-| Step | State (2026-11-16) |
+| Step | State (2026-11-17) |
 |---|---|
 | 0 Architecture review | Done — `architecture-review.md` |
 | 1 Build speed | Done — `fast` profile, `scripts/worktree-setup.sh` |
-| 2 The merge | Done on main: memory runs inside the engine; an old daemon is taken over at start-up; `ling-mem` is a stand-in; one port — nothing listens on 9528 (no compatibility path; the plugins move to 9527). Who reaches memory from another machine is built (approved machines only; a phone sees its own person's rows — `memory-spec.md`). Open: the plugins (in work), the install scripts, the gate scripts, a real second machine |
+| 2 The merge | Done, published in 2.3.0: memory runs inside the engine; an old daemon is taken over at start-up; `ling-mem` is a stand-in; one port — nothing listens on 9528. The plugins (`linggen@linggen` for Claude Code and Codex), the install scripts and the gate moved with it. Who reaches memory from another machine is built (approved machines only; a phone sees its own person's rows — `memory-spec.md`). Open: a run on a real second machine |
 | 3 Modules | 3.2 done — `ling` (server, cli) and `crates/linggen-engine`. The further cuts (base, model, store, skills) are put off until 2.4 has landed, or dropped (decided 2026-11-16): they move files wholesale, would collide with the 2.4 branch, and with incremental builds a one-file rebuild is already 5–10 s — they would buy tidiness, not time |
-| 4 Upgrades | Patch and minor batch done (329 crates; checks equal before and after; the store still opens in the previous program). The two major groups — the vector database, the embedding stack — moved out of 2.3 into **2.3.1**, a release of their own (decided 2026-11-16): a database upgrade may change the store on disk, and that risk gets its own gate run. Both are built on branch `upgrades/2.3.1`, waiting for the gate: fastembed 5.17.4 on candle 0.11.0 (vectors bit-equal to 2.3.0's); lancedb 0.41 with lance 14.0.2 and datafusion 54 (a 2.3.0 store opens with every row and the same search hits; 2.3.0 still opens the store afterwards, even after 2.3.1 has written to it and compacted it; new tables pinned to Lance file format 2.1). Cost: the `fast` binary is 317 → 373 MB; the database libraries' unused features (step 4.3) are the place to win that back |
-| Slimming | Yinyue's clips baked (done); packaged skills leave out tools, tests and unloaded source art (done); asset packs — engine side built, art sorted into packs; publishing, the app's packaging by pack and the phone are open |
-| 2.4 | On the local `next/2.4` branches (engine and skills), rebased as main moves: the activity log, the world block, notes and look-again, the guardrails, a turn's place; and the one session a day, built behind `agent.one_session_a_day` (off by default): app chats, her moments and phone hand-offs in one session a day from 04:00, each turn in its page's place, a private app in a session of its own, other apps' stretches folded on a page. Open: the phone's side, the live check of the three scenarios. Lands on main only after 2.3 is published |
+| 4 Upgrades | Done, published in **2.3.1** (2026-11-17). Patch and minor batch in 2.3.0 (329 crates). The two major groups in 2.3.1, a release of their own because a database upgrade may change the store on disk: fastembed 5.17.4 on candle 0.11.0 (vectors bit-equal to 2.3.0's); lancedb 0.41 with lance 14.0.2 and datafusion 54 (a 2.3.0 store opens in place with every row; 2.3.0 still opens it afterwards — the gate now checks this upgrade and the way back on every release; new tables pinned to Lance file format 2.1). Cost (measured): `ling` 312.6 → 373.0 MB, the Mac download 219.5 → 238.1 MB. Open: the database libraries' unused features (step 4.3) to win that back; the memory benchmark (`evals/memory`) still speaks to the old two-program setup and was not run — identical vectors and identical search hits stood in for it |
+| Slimming | Mac: done, published in 2.3.0 — Yinyue's clips baked; packaged skills leave out tools, tests and unloaded source art; 灵境's later-chapter art is fetched after install by content hash (133 files, held within seconds of first launch in the gate). Phone: built on branches, not merged — 灵境 in the app 106.7 → 86.1 MB (measured; the careful count), later chapters fetched by hash, everything on Wi-Fi and only the next chapter on cellular. Open: merging it, putting the phone's art set on the storage, a build on a device |
+| 2.4 → ships as 3.0 | Built on the local `next/2.4` branches (engine and skills), merged with main after 2.3.1, checks green; not on main yet. The activity log, the world block, notes and look-again, the guardrails, a turn's place; and the one session a day behind `agent.one_session_a_day` (off by default): app chats, her moments and phone hand-offs in one session a day from 04:00, each turn in its page's place, other apps' stretches folded on a page. Reshaped on 2026-11-16/17 after review: a private app keeps a session of its own (one rule asked by every way into the day); a day is a person's, the person resolved from the device as memory resolves it; her stage and voice are held per person. The phone's side is built on a branch. Open: landing engine, skills and phone together; the setting on by default; the scenario tests and the three scenarios seen live |
 
 ## 2. Milestones
 
 | Release | Holds | Done when |
 |---|---|---|
 | **2.3** (published 2026-11-16) | Structure: architecture review, build speed, the merge, memory as a library the engine calls, the engine split into modules (first cut), patch and minor library upgrades, app slimming | Gate green on first install and on 2.2.1 → 2.3 (the takeover of an existing memory store); one process serving memory to Claude Code and Codex seen live on his Mac; sizes re-measured |
-| **2.3.1** | The two major library groups (vector database; embedding stack), each verified on its own | Gate green; an existing store opens, and the memory benchmark holds |
-| **2.4** | Behaviour: one Ling and one Yinyue (§5) | Gate green; the scenario tests pass; his three scenarios seen live |
-| **3.0** | A release of its own, after 2.4 and likely a 2.5 of fixes | Hanli's call, once everything has settled |
+| **2.3.1** (published 2026-11-17) | The two major library groups (vector database; embedding stack), each verified on its own | Gate green on first install, 2.3.0 → 2.3.1 in place and back, and 2.2.1 → 2.3.1; published with one known cosmetic fault in 灵境 that 2.3.0 has too (a long name touching its status line in a crowded field row) |
+| **2.4** | Not a release of its own (decided 2026-11-16): its work — one Ling and one Yinyue (§5) — ships as 3.0 | — |
+| **3.0** | One Ling and one Yinyue (§5), with the day's session on by default; the phone slimmed and on the same version as the Mac (Hanli, 2026-11-16: 「手机,Mac同步改到3.0吧」) | Gate green; the scenario tests pass; his three scenarios seen live on his Mac and phone; Hanli's word |
 
 ## 3. Rules for the work
 
@@ -276,8 +276,8 @@ Consequence for Yinyue: her animations stay in the program, baked small
 
 - Where the art's source of truth lives once it has left the package, and how
   an art update ships.
-- What the phone gets in each milestone; its App Store train is separate.
-- The phone: careful or lean; and whether 结印's camera (19.8 MB of code and model) is worth its weight there.
+- Decided 2026-11-16: the phone goes to 3.0 with the Mac; the careful count; 结印's camera stays. Open: when the App Store build is submitted (2.2.0 is still in review).
+- How far apart people who share one Mac are kept beyond the day's session, and what a paired device may do.
 - How the world state reaches a session Linggen does not host (Claude Code or
   Codex in a terminal) — through the plugin's hook, or not at all.
 - Whether the gate tests a first launch with no network.
