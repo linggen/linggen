@@ -71,7 +71,7 @@ pub(super) fn forward_event_to_channels(
     // signal straight to the control channel.
     if matches!(event, crate::server::ServerEvent::YinyuePresenterChanged) {
         if let Some(cid) = control_channel_id {
-            let present = state.yinyue_holder() == Some(filter.peer_id);
+            let present = state.yinyue_presents_on(filter.peer_id);
             let seq = state
                 .event_seq
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -105,7 +105,13 @@ pub(super) fn forward_event_to_channels(
     // surfaces open (tabs, apps, the desktop pet) she renders and speaks in just
     // one place. Applies to every peer, admin included (the gate sits above the
     // user-filter, which otherwise whitelists these global kinds to all peers).
-    if !yinyue_cue_reaches(&ui_msg.kind, state.yinyue_holder(), filter.peer_id) {
+    // With one session a day on, a line goes to the holder among the
+    // surfaces of the person whose session she said it in.
+    let holder = match is_her_cue(&ui_msg.kind) {
+        true => state.yinyue_line_holder(her_cue_session(event)),
+        false => None,
+    };
+    if !yinyue_cue_reaches(&ui_msg.kind, holder, filter.peer_id) {
         return;
     }
 
@@ -357,12 +363,27 @@ fn is_ephemeral_stream(kind: &str) -> bool {
 /// voice and expression go to the holder alone — never to every surface that
 /// hosts her, and to nobody while nobody holds her. Everything else passes.
 fn yinyue_cue_reaches(kind: &str, holder: Option<u64>, peer_id: u64) -> bool {
-    !matches!(kind, "pet_speak" | "pet_express") || holder == Some(peer_id)
+    !is_her_cue(kind) || holder == Some(peer_id)
+}
+
+/// Her voice and expression: the cues only the holder gets.
+fn is_her_cue(kind: &str) -> bool {
+    matches!(kind, "pet_speak" | "pet_express")
+}
+
+/// The session a cue of hers was said in (`None`: her own thread).
+fn her_cue_session(event: &crate::server::ServerEvent) -> Option<&str> {
+    use crate::server::ServerEvent::{PetExpress, PetSpeak};
+    match event {
+        PetSpeak { session_id, .. } | PetExpress { session_id, .. } => session_id.as_deref(),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
 mod yinyue_cue_tests {
     use super::yinyue_cue_reaches;
+    use crate::server::day_session::Whose;
     use crate::server::state::{yinyue_holder_of, YinyuePresenter};
 
     /// Two Lingjing tabs, each a stage (2026-09-24): her line is addressed
@@ -375,16 +396,19 @@ mod yinyue_cue_tests {
                 peer_id: 1,
                 stage: false,
                 session: None,
+                person: Whose::Builder,
             },
             YinyuePresenter {
                 peer_id: 4,
                 stage: true,
                 session: None,
+                person: Whose::Builder,
             },
             YinyuePresenter {
                 peer_id: 10,
                 stage: true,
                 session: None,
+                person: Whose::Builder,
             },
         ];
         let holder = yinyue_holder_of(&reg);
@@ -412,6 +436,7 @@ mod yinyue_cue_tests {
             peer_id: 2,
             stage: false,
             session: None,
+            person: Whose::Builder,
         }];
         assert!(yinyue_cue_reaches("pet_speak", yinyue_holder_of(&reg), 2));
     }

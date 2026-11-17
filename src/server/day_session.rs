@@ -120,8 +120,8 @@ pub(crate) async fn is_builders(manager: &AgentManager, session_id: Option<&str>
 /// from the device it named (`rtc::peer::control`, through memory's own
 /// seam, `api::memory::person_behind`); a loopback caller is trusted as it
 /// names itself.
-#[derive(Debug, PartialEq, Eq)]
-enum Whose {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Whose {
     /// No id, this machine's own (`__local__`), or the builder's account.
     Builder,
     /// Another person: a paired phone signed in to another account, or a
@@ -144,7 +144,7 @@ impl Whose {
     }
 }
 
-fn person_of(user_id: Option<&str>) -> Whose {
+pub(crate) fn person_of(user_id: Option<&str>) -> Whose {
     let Some(id) = user_id.map(str::trim).filter(|id| !id.is_empty()) else {
         return Whose::Builder;
     };
@@ -158,6 +158,18 @@ fn person_of(user_id: Option<&str>) -> Whose {
         true => Whose::Builder,
         false => Whose::Person(id.to_string()),
     }
+}
+
+/// Whose session `session_id` is, as its meta keeps it: a day its own
+/// person's, any other session the person it was made for. `None` (her own
+/// thread, what the engine starts itself) and a session not kept are the
+/// builder's.
+pub(crate) fn whose_session(manager: &AgentManager, session_id: Option<&str>) -> Whose {
+    let Some(sid) = session_id else {
+        return Whose::Builder;
+    };
+    let meta = manager.global_sessions.get_session_meta(sid).ok().flatten();
+    person_of(meta.and_then(|m| m.user_id).as_deref())
 }
 
 /// Today's session id for `person` (`state_fs::day_session::today`), made

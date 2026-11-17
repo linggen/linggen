@@ -16,6 +16,7 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
             text,
             emotion,
             voice,
+            ..
         } => Some(
             pet(format!("pet-speak-{seq}"), "pet_speak")
                 .text(text.clone())
@@ -26,7 +27,9 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
                     voice,
                 }),
         ),
-        ServerEvent::PetExpress { emotion, action } => Some(
+        ServerEvent::PetExpress {
+            emotion, action, ..
+        } => Some(
             pet(format!("pet-express-{seq}"), "pet_express")
                 .data(PetExpressData { emotion, action }),
         ),

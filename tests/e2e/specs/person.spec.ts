@@ -242,3 +242,78 @@ test.describe('every route', () => {
     expect(wrong).toEqual([]);
   });
 });
+
+/** Keeps the page's control channel (`window.__control`) and every line she
+ *  is given to speak on it (`window.__heard`). */
+function keepControlAndHer() {
+  const w = window as unknown as { __control?: RTCDataChannel; __heard: string[] };
+  w.__heard = [];
+  const make = RTCPeerConnection.prototype.createDataChannel;
+  RTCPeerConnection.prototype.createDataChannel = function (this: RTCPeerConnection, label: string, init?: RTCDataChannelInit) {
+    const dc = make.call(this, label, init);
+    if (label === 'control') {
+      w.__control = dc;
+      dc.addEventListener('message', (e: MessageEvent) => {
+        try {
+          const msg = JSON.parse(e.data);
+          if (msg.kind === 'pet_speak') w.__heard.push(String(msg.text ?? ''));
+        } catch {
+          // not JSON: not her line
+        }
+      });
+    }
+    return dc;
+  };
+}
+
+/** Opens the friend's phone's page on its own channel. */
+async function openFriendsPage(page: import('@playwright/test').Page, url: string, httpRequests: string[]) {
+  await page.addInitScript(keepControlAndHer);
+  await page.route('**/api/rtc/whip', (route) =>
+    route.continue({
+      headers: { ...route.request().headers(), 'x-linggen-device': PHONE.token, 'x-linggen-actor-device': PHONE.id },
+    }));
+  await page.goto(`${url}/embed?skill=dice&hide_toolbar=1`);
+  await expectWebRtc(page, httpRequests);
+  await expect(composer(page)).toBeVisible();
+}
+
+/** Turns the setting on, with the friend's phone paired; the builder's day. */
+async function dayOnWithFriend(world: { url: string; linggenHome: string }, request: import('@playwright/test').APIRequestContext) {
+  pairFriendsPhone(world.linggenHome);
+  await expect
+    .poll(async () => (await request.get(`${world.url}/api/pair/me`, { headers: { 'x-linggen-device': PHONE.token } })).status())
+    .toBe(200);
+  const config = await (await request.get(`${world.url}/api/config`)).json();
+  config.agent.one_session_a_day = true;
+  await request.post(`${world.url}/api/config`, { data: config });
+  return (await (await request.get(`${world.url}/api/sessions/day`)).json()).id as string;
+}
+
+test.describe('her stage', () => {
+  test.use({ scenario: { scripts: { yinyue: [{ text: 'HER-LINE for the builder.' }] } } });
+
+  test("another person's phone holding her stage is given none of the builder's words nor her lines to them", async ({ page, world, request, httpRequests }) => {
+    const mine = await dayOnWithFriend(world, request);
+    await openFriendsPage(page, world.url, httpRequests);
+    const theirs: string = await page.evaluate(async () => (await (await fetch('/api/sessions/day')).json()).id);
+    expect(theirs).not.toBe(mine);
+    // The phone's app opens her stage, on its own day — as its stage page does.
+    await page.evaluate((session) => {
+      const w = window as unknown as { __control: RTCDataChannel };
+      w.__control.send(JSON.stringify({ type: 'yinyue_subscribe', stage: true, session }));
+    }, theirs);
+    await page.waitForTimeout(500);
+
+    // The builder talks to her on this Mac.
+    await request.post(`${world.url}/api/yinyue/chat`, { data: { text: 'BUILDER-TO-HER hello' } });
+    await expect.poll(async () => (await world.calls()).filter((c) => c.agent === 'yinyue').length).toBeGreaterThan(0);
+    await page.waitForTimeout(1500);
+
+    const heard: string[] = await page.evaluate(() => (window as unknown as { __heard: string[] }).__heard);
+    const wrong: string[] = [];
+    if (rows(world.linggenHome, theirs).includes('BUILDER-TO-HER')) wrong.push("the builder's words landed in the phone's day");
+    if (heard.some((l) => l.includes('HER-LINE'))) wrong.push("the phone was given her line to the builder");
+    expect(wrong).toEqual([]);
+  });
+});

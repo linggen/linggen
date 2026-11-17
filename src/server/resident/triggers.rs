@@ -138,7 +138,7 @@ fn herald_ask(
             "[yinyue-watch] Yinyue heralds ({} chars, neutral)",
             line.len()
         );
-        crate::server::api::yinyue::emit_speak(&state, line, Some("neutral".to_string()));
+        crate::server::api::yinyue::emit_speak(&state, line, Some("neutral".to_string()), None);
     });
 }
 
@@ -169,7 +169,7 @@ fn herald_kept_ask(state: &Arc<ServerState>, app: String, question_id: String, s
         if !ask_still_pending(&state, &question_id).await || user_sees_screen(&state) {
             return;
         }
-        crate::server::api::yinyue::emit_speak(&state, line, Some("neutral".to_string()));
+        crate::server::api::yinyue::emit_speak(&state, line, Some("neutral".to_string()), None);
     });
 }
 
@@ -278,6 +278,7 @@ fn on_agent_chat(
                         &state,
                         line,
                         Some("neutral".to_string()),
+                        None,
                     );
                 } else {
                     tracing::info!("[yinyue-watch] chose silence (agent_chat)");
@@ -353,7 +354,7 @@ pub(super) fn handle_notification(state: &Arc<ServerState>, payload: Notificatio
                 } else {
                     error_line()
                 };
-                crate::server::api::yinyue::emit_speak(&state, line, Some("sad".to_string()));
+                crate::server::api::yinyue::emit_speak(&state, line, Some("sad".to_string()), None);
             });
         }
         // A run finished cleanly. This fires on every reply, so only herald when
@@ -574,6 +575,7 @@ pub(super) async fn wake_and_speak(
     reach: Reach,
     language: Option<String>,
 ) -> Option<String> {
+    let said_in = table.as_ref().map(|t| t.session.clone());
     // `None`: the run failed or she produced nothing.
     let reply = match reach {
         Reach::Open => run_yinyue_turn(&state, kickoff, trigger_source).await,
@@ -598,7 +600,7 @@ pub(super) async fn wake_and_speak(
         "[yinyue-watch] Yinyue heralds ({} chars, {emotion})",
         line.len()
     );
-    crate::server::api::yinyue::emit_speak(&state, line.clone(), Some(emotion.to_string()));
+    crate::server::api::yinyue::emit_speak(&state, line.clone(), Some(emotion.to_string()), said_in.as_deref());
     Some(line)
 }
 

@@ -85,6 +85,11 @@ pub(super) fn handle_control_message(
                 }
             }
             let resolved = identified.map(|i| i.actor);
+            // A stage it holds is now its person's.
+            if let Some(a) = &resolved {
+                let person = person_for(user_ctx, Some(&a.device));
+                state.yinyue_identify(peer_id, crate::server::day_session::person_of(Some(&person)));
+            }
             if resolved.is_none() && !token.is_empty() {
                 tracing::warn!("[rtc] identify with an unknown device token — staying anonymous");
             }
@@ -183,12 +188,18 @@ pub(super) fn handle_control_message(
         "yinyue_subscribe" => {
             let stage = msg.get("stage").and_then(|v| v.as_bool()).unwrap_or(false);
             // A stage on an app page names the page's chat session: what the
-            // user says to her while it holds her goes to that chat.
+            // user says to her while it holds her goes to that chat — one its
+            // person may enter. A stage is held per person: the surface is
+            // its device's person's.
+            let device = actor.lock_ok().as_ref().map(|a| a.device.clone());
+            let person = person_for(user_ctx, device.as_deref());
             let session = msg
                 .get("session")
                 .and_then(|v| v.as_str())
+                .filter(|sid| crate::server::day_session::may_enter(sid, Some(&person)))
                 .map(str::to_string);
-            state.yinyue_subscribe(peer_id, stage, session);
+            let whose = crate::server::day_session::person_of(Some(&person));
+            state.yinyue_subscribe(peer_id, stage, session, whose);
             None
         }
         "yinyue_release" => {

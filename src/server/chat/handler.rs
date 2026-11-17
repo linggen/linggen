@@ -871,7 +871,7 @@ fn hear_her_at_table(
 ) {
     if super::members::is_companion(target_id) && !crate::server::resident::is_own_session(session_id) {
         if let Some(reply) = engine.last_assistant_text.clone() {
-            crate::server::resident::speak_reply(state, &reply);
+            crate::server::resident::speak_reply(state, &reply, Some(session_id));
         }
     }
 }

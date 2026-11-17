@@ -129,9 +129,14 @@ pub(crate) fn is_silent_reply(from_id: &str, content: &str) -> bool {
 }
 
 /// Say her reply aloud: its spoken line, when it has one (not SILENT).
-pub(crate) fn speak_reply(state: &std::sync::Arc<crate::server::ServerState>, reply: &str) {
+/// `session`: where she said it (`None`: her own thread).
+pub(crate) fn speak_reply(
+    state: &std::sync::Arc<crate::server::ServerState>,
+    reply: &str,
+    session: Option<&str>,
+) {
     if let Some(line) = spoken_line(reply) {
-        crate::server::api::yinyue::emit_speak(state, line, None);
+        crate::server::api::yinyue::emit_speak(state, line, None, session);
     }
 }
 

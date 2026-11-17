@@ -344,7 +344,7 @@ fn resend_hers(
             tokio::spawn(async move {
                 let pet = state.manager.get_config_snapshot().await.pet;
                 if let Some(reply) = run_at(&state, &turn, &pet, task, &trigger_source).await {
-                    super::speak_reply(&state, &reply);
+                    super::speak_reply(&state, &reply, Some(&turn.session_id));
                 }
             });
         })

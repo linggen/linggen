@@ -16,9 +16,11 @@ use serde::Deserialize;
 
 use crate::server::{ServerEvent, ServerState};
 
-/// Push a speak cue to all of the user's surfaces. The single producer — the
-/// event-reactive watch loop calls this when Yinyue reacts.
-pub fn emit_speak(state: &Arc<ServerState>, text: String, emotion: Option<String>) {
+/// Push a speak cue to the user's surfaces. The single producer — the
+/// event-reactive watch loop calls this when Yinyue reacts. `session`: where
+/// she said it (`None`: her own thread) — with one session a day on, the
+/// line reaches only the stage that session's person holds.
+pub fn emit_speak(state: &Arc<ServerState>, text: String, emotion: Option<String>, session: Option<&str>) {
     // Not met yet: there is no one to speak.
     if !state
         .manager
@@ -36,6 +38,7 @@ pub fn emit_speak(state: &Arc<ServerState>, text: String, emotion: Option<String
         text,
         emotion,
         voice,
+        session_id: session.map(str::to_string),
     });
 }
 
@@ -220,7 +223,7 @@ pub(crate) async fn chat_handler(
         crate::server::chat::say_in_app(state.clone(), &app, companion, &text).await;
         return (StatusCode::OK, "ok").into_response();
     }
-    if let Some(session_id) = presenting_in_chat(&state).await {
+    if let Some(session_id) = presenting_in_chat(&state, req.user_id.as_deref()).await {
         say_at_table(&state, session_id, &text).await;
         return (StatusCode::OK, "ok").into_response();
     }
@@ -232,18 +235,19 @@ pub(crate) async fn chat_handler(
     tokio::spawn(async move {
         if let Some(reply) = crate::server::resident::run_yinyue_turn(&state, task, "user").await {
             if !reply.eq_ignore_ascii_case("silent") {
-                emit_speak(&state, reply, None);
+                emit_speak(&state, reply, None, None);
             }
         }
     });
     (StatusCode::OK, "ok").into_response()
 }
 
-/// The app chat she is presenting in — a stage on an app page with a chat
-/// holds her — when that chat is there and she is on. One conversation per
-/// app: what the user says to her then is said in that chat.
-async fn presenting_in_chat(state: &Arc<ServerState>) -> Option<String> {
-    let sid = state.yinyue_stage_session()?;
+/// The app chat she is presenting in for the caller `user_id` names — a
+/// stage of theirs on an app page with a chat holds her — when that chat is
+/// there and she is on. One conversation per app: what the user says to her
+/// then is said in that chat.
+async fn presenting_in_chat(state: &Arc<ServerState>, user_id: Option<&str>) -> Option<String> {
+    let sid = state.yinyue_stage_session(crate::server::day_session::person_of(user_id))?;
     if crate::server::resident::is_own_session(&sid)
         || !state.manager.get_config_snapshot().await.pet.enabled
     {

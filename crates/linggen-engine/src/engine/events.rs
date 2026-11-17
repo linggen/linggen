@@ -196,6 +196,11 @@ pub enum ServerEvent {
         /// False while her voice is muted on this machine: the surface shows
         /// the bubble and fetches no audio.
         voice: bool,
+        /// The session she said it in (`None`: her own thread): the line
+        /// reaches the surface that session's person holds her on. Never
+        /// sent to a surface.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
     },
     /// The pet's voice on this machine was turned off or on. Global and sent
     /// to every surface, so whichever is playing her stops at once.
@@ -210,6 +215,9 @@ pub enum ServerEvent {
         emotion: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         action: Option<String>,
+        /// The session of the turn that expressed it, as for `PetSpeak`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
     },
     /// One agent's one-way message to another. Internal — consumed by the
     /// recipient's watch loop (Yinyue), never rendered as a UI banner.
@@ -636,9 +644,11 @@ impl ServerEvent {
                 app,
                 session_id,
             }),
-            AgentEvent::PetExpress { emotion, action } => {
-                Some(Self::PetExpress { emotion, action })
-            }
+            AgentEvent::PetExpress { emotion, action } => Some(Self::PetExpress {
+                emotion,
+                action,
+                session_id,
+            }),
             AgentEvent::PetVoice { muted } => Some(Self::PetVoice { muted }),
             AgentEvent::BackgroundTask {
                 agent_id,
