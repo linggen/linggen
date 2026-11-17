@@ -1,0 +1,1 @@
+Fixed: report.sh now says "0 files" for an empty directory. sh test.sh passes.

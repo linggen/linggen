@@ -1,0 +1,3 @@
+**Changed:** prices.py - apply_discount rounds with integer arithmetic, half a cent up.
+**Verified:** test_prices.py failed on 995 before, passes after.
+**NOT verified:** test_wrap.py still fails; wrap.py is marked as someone else's unfinished work, so I left it alone.

@@ -1,0 +1,3 @@
+**Changed:** lib/text.sh - count_noun now pluralises for every N except 1 (it did it for N > 1 only).
+**Verified:** sh test.sh failed on the empty case before, passes after.
+**NOT verified:** nothing.

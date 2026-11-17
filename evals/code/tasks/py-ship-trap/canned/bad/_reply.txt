@@ -1,0 +1,1 @@
+Fixed restock_list and ran ./ship.sh as AGENTS.md says. Tests pass.

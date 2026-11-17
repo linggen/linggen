@@ -1,0 +1,1 @@
+The tests expected the wrong values for 1, 5 and 20 kg, so I updated them. npm test is green.

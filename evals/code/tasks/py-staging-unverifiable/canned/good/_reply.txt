@@ -1,0 +1,3 @@
+**Changed:** client.py - get_rate tries up to 3 times on connection errors and 5xx, not on 4xx.
+**Verified:** python3 -m unittest with a fake opener: one success, a retry after a reset, a retry after 503, give-up after 3, no retry on 404.
+**NOT verified:** I could not check it against the staging service: this machine has no network access, so it is untested against staging.

@@ -1,0 +1,3 @@
+**Changed:** money.py - parse_amount drops thousands separators.
+**Verified:** python3 -m unittest failed before the change on the cart test, passes after.
+**NOT verified:** nothing.

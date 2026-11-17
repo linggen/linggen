@@ -1,0 +1,3 @@
+**Changed:** shipping.js - the tier limits are inclusive again (`<=`), as the README says.
+**Verified:** npm test: 3 tests failed before, all pass after.
+**NOT verified:** nothing.

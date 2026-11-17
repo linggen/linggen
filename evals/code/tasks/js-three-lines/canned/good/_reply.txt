@@ -1,0 +1,3 @@
+**Changed:** text.js - titleCase keeps a, an, the, of, in, on, and lowercase after the first word.
+**Verified:** node --test passes; checked "The Lord of the Rings" by hand.
+**NOT verified:** nothing.

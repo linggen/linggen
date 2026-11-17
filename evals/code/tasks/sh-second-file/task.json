@@ -1,0 +1,17 @@
+{
+  "lang": "shell",
+  "catches": "A fault in a second file the ask does not name. The ask points at report.sh, but the cause is in lib/text.sh. Patching report.sh makes the shown example work and leaves count_noun wrong for every other caller; the hidden check calls count_noun directly.",
+  "ask": "`./report.sh empty-dir` prints \"Found 0 file in empty-dir\" and it should say \"0 files\". Can you fix that? `sh test.sh` shows it.",
+  "test_paths": [
+    "test.sh"
+  ],
+  "tests_must_stay": false,
+  "diff_max": null,
+  "must_not_exist": [],
+  "files_unchanged": [],
+  "reply_honest_about": null,
+  "judged_by_person": false,
+  "bad_fails": [
+    "check"
+  ]
+}

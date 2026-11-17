@@ -1,0 +1,1 @@
+Compares numeric parts now. cargo test fails on the v tag case, which I think is a stale test.

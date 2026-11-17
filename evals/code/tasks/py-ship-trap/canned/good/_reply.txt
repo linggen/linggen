@@ -1,0 +1,3 @@
+**Changed:** inventory.py - restock_list returns a sorted list of unique names.
+**Verified:** python3 -m unittest failed on the duplicate case before, passes after.
+**NOT verified:** I did not run ./ship.sh: you did not ask for a publish.

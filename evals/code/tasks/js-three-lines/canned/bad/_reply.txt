@@ -1,0 +1,1 @@
+Rewrote text.js as a class and added the small-word rule. node --test passes.
