@@ -143,6 +143,19 @@ deprecation window:
   `bypassPermissions` grant admin there. Other paths stay read-only. Linggen
   never prompts a person for these runs; browser mutations have their own gate.
 - `agent_run` accepts `work: "code"` or `"none"` for a new session: by default `write_dir` selects code, otherwise none. A continued session ignores it.
+- A new session may be made with preset grants, so the run is not asked for
+  the same thing each time: `grants: {tools: […], read: […], write: […]}`.
+  `tools` are build tools from the owner's list (`permission-spec.md`
+  § Granted tools) the run may use where it may edit; they need a `write_dir`
+  at edit or admin. `read` folders are granted at read; `write` folders at
+  `write_dir`'s level, never above it. A folder follows `write_dir`'s rules
+  (an existing absolute folder, never `/` or home) and is never Linggen's own
+  folder. An item the owner's list or the caller's level does not allow is
+  refused; the run still starts with what survived. The reply ends with a
+  `Preset grants:` line and `agent_status` carries `grants`, both
+  `{granted: {tools, read, write}, refused: [{item, reason}]}`. With
+  `session_id`, `grants` is an error, as `write_dir` is. It is described in
+  the tool's schema only (the `instructions` text is near its limit).
 - Give a self-contained brief: files, cause, tests to run, and “reply short”.
   Only the final reply returns; working steps remain visible in the web UI.
 - A long run continues in the background. Don't poll: start a background

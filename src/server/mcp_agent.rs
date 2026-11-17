@@ -35,7 +35,7 @@ use crate::engine::session_spec::{Covered, PresetGrants, SessionSpec, Tools};
 
 /// The folder a write run may change: an existing directory, absolute, and
 /// never `/` or the home folder itself — a task gets a checkout, not a disk.
-fn write_root(dir: &str) -> Result<PathBuf, String> {
+pub(super) fn write_root(dir: &str) -> Result<PathBuf, String> {
     let path = crate::util::resolve_path(std::path::Path::new(dir.trim()));
     if !path.is_absolute() || !path.is_dir() {
         return Err(format!(
@@ -143,6 +143,7 @@ pub async fn run(
     host: Option<&str>,
     model_fallback: Option<bool>,
     work: Option<&str>,
+    grants: Option<&serde_json::Value>,
 ) -> Result<String, String> {
     let prompt = prompt.trim();
     if prompt.is_empty() {
@@ -150,6 +151,8 @@ pub async fn run(
     }
 
     validate_options(session, write_dir, model)?;
+    let grants = super::mcp_grants::parse(grants)?;
+    super::mcp_grants::validate(session, grants.as_ref())?;
     if session.is_some() && permission_mode.is_some() {
         return Err("permission_mode cannot be used with session_id".into());
     }
@@ -283,6 +286,22 @@ pub async fn run(
         crate::engine::session_spec::ask_work(&mut meta, word).map_err(str::to_string)?;
     }
     meta.set_cwd(&root_str);
+    // The caller's preset, kept to what the owner's list and its own level
+    // allow; what was granted and refused is kept for `agent_status`.
+    let sifted = grants.map(|asked| {
+        super::mcp_grants::sift(
+            &asked,
+            &crate::engine::permission::toolchains::owner_list(crate::util::shell_path()),
+            mode,
+            crate::paths::linggen_home(),
+        )
+    });
+    if let Some(sifted) = &sifted {
+        meta.params.insert(
+            super::mcp_grants::GRANTS_PARAM.into(),
+            serde_json::to_string(sifted).unwrap_or_default(),
+        );
+    }
     if let Err(e) = store.add_session(&meta) {
         return Err(format!("failed to create session: {e}"));
     }
@@ -290,12 +309,13 @@ pub async fn run(
     // Persist the permission posture to the session's permission.json BEFORE
     // the run: the engine's `initialize_loop` reloads permissions from disk at
     // the top of `run_agent_loop`, so any in-memory mutation would be clobbered.
-    seed_permissions(
+    seed_permissions_with(
         &mut SessionSpec::of(&meta),
         &crate::paths::global_sessions_dir().join(&session_id),
         &root_str,
         permission_mode.is_none() && write.is_none(),
         mode,
+        sifted.as_ref(),
     );
     let _ = state
         .events_tx
@@ -356,13 +376,18 @@ pub async fn run(
         )
         .await
     });
-    await_run(state, &session_id, run).await
+    let reply = await_run(state, &session_id, run).await;
+    match &sifted {
+        Some(sifted) => reply.map(|text| text + &super::mcp_grants::report_line(sifted)),
+        None => reply,
+    }
 }
 
 /// A new delegated run's `permission.json`, written before any engine.
 /// Safe-by-default — non-interactive (a headless MCP delegate has no
 /// Linggen-side user to answer a prompt) and Read on the workspace
 /// (`workspace_only`), else Read everywhere and `grant` on `root`.
+#[cfg(test)]
 fn seed_permissions(
     spec: &mut SessionSpec,
     session_dir: &std::path::Path,
@@ -370,15 +395,30 @@ fn seed_permissions(
     workspace_only: bool,
     grant: Option<PermissionMode>,
 ) {
+    seed_permissions_with(spec, session_dir, root, workspace_only, grant, None)
+}
+
+/// [`seed_permissions`] with the caller's sifted preset: its reads before
+/// `root`'s grant, its writes after, its tools by name.
+fn seed_permissions_with(
+    spec: &mut SessionSpec,
+    session_dir: &std::path::Path,
+    root: &str,
+    workspace_only: bool,
+    grant: Option<PermissionMode>,
+    preset: Option<&super::mcp_grants::Sifted>,
+) {
     let base = crate::engine::permission::SessionPermissions {
         interactive: false,
         // Beyond the grants, ask the caller (agent_permit) — not refuse.
         ask_caller: true,
         ..Default::default()
     };
+    let (reads, writes) = preset.map(|p| p.paths(grant)).unwrap_or_default();
     spec.grants = PresetGrants {
-        paths: delegate_paths(root, workspace_only, grant),
+        paths: delegate_paths(root, workspace_only, grant, reads, writes),
         covered: Covered::Written,
+        tools: preset.map(|p| p.granted.tools.clone()).unwrap_or_default(),
     };
     spec.seed(base, session_dir);
 }
@@ -388,12 +428,18 @@ fn delegate_paths(
     root: &str,
     workspace_only: bool,
     grant: Option<PermissionMode>,
+    reads: Vec<(String, PermissionMode)>,
+    writes: Vec<(String, PermissionMode)>,
 ) -> Vec<(String, PermissionMode)> {
     if workspace_only {
-        return vec![(root.to_string(), PermissionMode::Read)];
+        let mut paths = vec![(root.to_string(), PermissionMode::Read)];
+        paths.extend(reads);
+        return paths;
     }
     let mut paths = vec![("*".to_string(), PermissionMode::Read)];
+    paths.extend(reads);
     paths.extend(grant.map(|grant| (root.to_string(), grant)));
+    paths.extend(writes);
     paths
 }
 
@@ -755,7 +801,11 @@ fn require_session<T>(session: &str, meta: Option<T>) -> Result<T, String> {
 }
 
 pub async fn status(state: &Arc<ServerState>, session: &str) -> Result<String, String> {
-    session_meta(state, session)?;
+    let meta = session_meta(state, session)?;
+    let grants = meta
+        .params
+        .get(super::mcp_grants::GRANTS_PARAM)
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok());
     let work = super::api::sessions::session_running_work(state, session).await;
     let last = last_run(&state.manager, session);
     let replies = if work.turn {
@@ -763,13 +813,15 @@ pub async fn status(state: &Arc<ServerState>, session: &str) -> Result<String, S
     } else {
         session_replies(session)
     };
-    Ok(
-        serde_json::json!({"running": work.turn, "tasks": work.tasks,
+    let mut out = serde_json::json!({"running": work.turn, "tasks": work.tasks,
         "subagents": work.subagents, "pending": pending_requests(state, session).await,
         "denied": denials(session), "reply": replies.reply, "followup": replies.followup,
-        "status": last.status, "error": last.error, "model": last.model})
-        .to_string(),
-    )
+        "status": last.status, "error": last.error, "model": last.model});
+    // A run made with preset grants: what was granted and refused.
+    if let Some(grants) = grants {
+        out["grants"] = grants;
+    }
+    Ok(out.to_string())
 }
 
 /// The permission requests `session` is waiting on, for its caller.
@@ -1985,6 +2037,21 @@ mod permit_tests {
         }
     }
 
+    /// The kept record of a caller's preset grants changes none of it.
+    #[test]
+    fn a_kept_preset_record_leaves_the_delegate_preset() {
+        use crate::engine::session_spec::{Permission, Preset, SessionSpec, Tools};
+        let mut meta = delegate_meta("s", "t", "ling", None, "claude-code", true, None);
+        meta.params.insert(
+            crate::server::mcp_grants::GRANTS_PARAM.into(),
+            "{}".into(),
+        );
+        let spec = SessionSpec::of(&meta);
+        assert_eq!(spec.preset, Preset::Delegate);
+        assert_eq!(spec.tools, Tools::Delegate { write: true });
+        assert_eq!(spec.permission, Permission::AskCaller);
+    }
+
     #[test]
     fn the_tool_offers_an_optional_model_fallback() {
         let schema = crate::server::mcp::tool_schema("agent_run").unwrap();
@@ -2125,6 +2192,75 @@ mod permit_tests {
             file(false, Some(PermissionMode::Admin)),
             whole(&[row("*", "read"), row("/w/wt", "admin")])
         );
+    }
+
+    /// A caller's sifted preset lands in the file: reads before the run's
+    /// folder, writes after it at its level, tools by name; nothing else moves.
+    #[test]
+    fn a_callers_preset_is_seeded_in_order() {
+        use crate::server::mcp_grants::{Granted, Sifted};
+        let dir = tempfile::tempdir().unwrap();
+        let meta = delegate_meta("s", "t", "ling", None, "claude-code", true, None);
+        let preset = Sifted {
+            granted: Granted {
+                tools: vec!["flutter".into()],
+                read: vec!["/w".into()],
+                write: vec!["/out".into()],
+            },
+            refused: vec![],
+        };
+        seed_permissions_with(
+            &mut SessionSpec::of(&meta),
+            dir.path(),
+            "/w/wt",
+            false,
+            Some(PermissionMode::Edit),
+            Some(&preset),
+        );
+        let perms = SessionPermissions::load(dir.path());
+        let table: Vec<(&str, PermissionMode)> = perms
+            .path_modes
+            .iter()
+            .map(|pm| (pm.path.as_str(), pm.mode))
+            .collect();
+        assert_eq!(
+            table,
+            [
+                ("*", PermissionMode::Read),
+                ("/w", PermissionMode::Read),
+                ("/w/wt", PermissionMode::Edit),
+                ("/out", PermissionMode::Edit),
+            ]
+        );
+        assert_eq!(perms.granted_tools, ["flutter"]);
+        assert!(!perms.interactive && perms.ask_caller);
+        // An empty preset writes the file a run without one gets.
+        let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let mut spec = SessionSpec::of(&meta);
+        seed_permissions(&mut spec, a.path(), "/w/wt", false, Some(PermissionMode::Edit));
+        let empty = Sifted::default();
+        seed_permissions_with(
+            &mut spec,
+            b.path(),
+            "/w/wt",
+            false,
+            Some(PermissionMode::Edit),
+            Some(&empty),
+        );
+        let read =
+            |d: &tempfile::TempDir| std::fs::read(d.path().join("permission.json")).unwrap();
+        assert_eq!(read(&a), read(&b));
+    }
+
+    #[test]
+    fn the_tool_offers_optional_grants() {
+        let schema = crate::server::mcp::tool_schema("agent_run").unwrap();
+        let grants = &schema["properties"]["grants"];
+        assert_eq!(grants["type"], "object");
+        for key in ["tools", "read", "write"] {
+            assert_eq!(grants["properties"][key]["type"], "array", "{key}");
+        }
+        assert!(schema["required"].as_array().unwrap().iter().all(|k| k != "grants"));
     }
 
     #[test]

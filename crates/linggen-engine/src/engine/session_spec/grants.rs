@@ -16,6 +16,8 @@ use std::path::Path;
 pub struct PresetGrants {
     pub paths: Vec<(String, PermissionMode)>,
     pub covered: Covered,
+    /// Build tools from the owner's list it may run where it may edit.
+    pub tools: Vec<String>,
 }
 
 /// What a path already granted at its level gets.
@@ -35,6 +37,7 @@ impl PresetGrants {
         Self {
             paths: owned(perm),
             covered: Covered::Kept,
+            tools: Vec::new(),
         }
     }
 
@@ -48,6 +51,7 @@ impl PresetGrants {
                 .flat_map(owned)
                 .collect(),
             covered: Covered::Written,
+            tools: Vec::new(),
         }
     }
 }
@@ -68,6 +72,12 @@ fn stamp(grants: &PresetGrants, perms: &mut SessionPermissions) -> bool {
         }
         perms.set_path_mode(path, *mode);
         changed = true;
+    }
+    for name in &grants.tools {
+        if !perms.granted_tools.contains(name) {
+            perms.granted_tools.push(name.clone());
+            changed = true;
+        }
     }
     changed
 }

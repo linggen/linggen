@@ -109,15 +109,23 @@ pub fn seed_once(file: &Path, search: &str) -> std::io::Result<bool> {
 }
 
 /// The file a bare program name runs from on `search`: the first folder
-/// holding an executable file of that name.
+/// holding an executable file of that name. A relative or empty entry
+/// before it (the shell reads it from wherever the command runs) leaves
+/// the answer unknown: none.
 pub fn find(name: &str, search: &str) -> Option<PathBuf> {
     if name.is_empty() || name.contains('/') {
         return None;
     }
-    std::env::split_paths(search)
-        .filter(|dir| dir.is_absolute())
-        .map(|dir| dir.join(name))
-        .find(|candidate| is_executable(candidate))
+    for dir in std::env::split_paths(search) {
+        if !dir.is_absolute() {
+            return None;
+        }
+        let candidate = dir.join(name);
+        if is_executable(&candidate) {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 fn is_executable(path: &Path) -> bool {
@@ -211,6 +219,17 @@ mod tests {
         assert!(!seed_once(&file, &search).unwrap());
         let names: Vec<String> = load(&file).tools.into_iter().map(|t| t.name).collect();
         assert_eq!(names, ["cargo"]);
+    }
+
+    #[test]
+    fn a_relative_path_entry_before_the_tool_leaves_it_unknown() {
+        let home = tempfile::tempdir().unwrap();
+        let cargo = executable(home.path(), "cargo");
+        let dir = home.path().to_string_lossy().to_string();
+        assert_eq!(find("cargo", &dir), Some(cargo.clone()));
+        assert_eq!(find("cargo", &format!("{dir}:.")), Some(cargo));
+        assert_eq!(find("cargo", &format!(".:{dir}")), None);
+        assert_eq!(find("cargo", &format!(":{dir}")), None);
     }
 
     #[test]
