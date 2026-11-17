@@ -362,6 +362,13 @@ mod tests {
         ("src/server/resident/session_roll.rs", 1, "her own thread: home"),
     ];
 
+    /// The only files outside this module that make a day's meta.
+    const MAKES_A_DAY: &[(&str, usize, &str)] = &[(
+        "crates/linggen-engine/src/engine/session_spec/tests.rs",
+        2,
+        "fixtures: the daily preset's row in the spec's table test",
+    )];
+
     #[test]
     fn every_way_into_the_day_asks_the_one_rule() {
         check(&[concat!("day_", "for(")], WAYS_IN, "comes into the day");
@@ -370,6 +377,6 @@ mod tests {
             concat!("day_session::", "new_meta("),
             concat!("day_session::", "today("),
         ];
-        check(&own_ids, &[], "names or makes a day's id itself");
+        check(&own_ids, MAKES_A_DAY, "names or makes a day's id itself");
     }
 }

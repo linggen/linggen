@@ -5,8 +5,9 @@ use super::*;
 use crate::engine::{AgentEngine, AgentRole, EngineConfig, InterfaceMode};
 use crate::state_fs::sessions::SessionMember;
 use std::collections::BTreeSet;
-// The day as `server::day_session` keeps it (its own test lists who may make one).
-use crate::state_fs::day_session::new_meta as new_day_meta;
+// The day as `server::day_session` keeps it; its test lists this file as
+// one that makes a day's meta (a fixture, twice).
+use crate::state_fs::day_session;
 
 fn engine() -> AgentEngine {
     let cfg = EngineConfig::from_app_config(
@@ -123,7 +124,7 @@ fn typed_by_spec(meta: &SessionMeta, turn_owner: &str) -> AgentEngine {
 /// The rows of the inventory a person's turn drives: the meta as its
 /// path keeps it, who its turns belong to, and the literal.
 fn typed_rows() -> Vec<(Preset, SessionMeta, &'static str, Seen)> {
-    let day = new_day_meta(
+    let day = day_session::new_meta(
         "sess-day-2026-11-17",
         chrono::NaiveDate::from_ymd_opt(2026, 11, 17).unwrap(),
         "/w",
@@ -251,7 +252,7 @@ fn a_fresh_engine_is_unclaimed() {
 /// What each kind keeps beside its engine: who leads, its thread, its runtime.
 #[test]
 fn each_kind_keeps_its_seat_thread_and_runtime() {
-    let day = new_day_meta(
+    let day = day_session::new_meta(
         "sess-day-2026-11-17",
         chrono::NaiveDate::from_ymd_opt(2026, 11, 17).unwrap(),
         "/w",
