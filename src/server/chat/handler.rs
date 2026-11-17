@@ -966,6 +966,32 @@ pub(crate) async fn say_in_session(
     turn_in_session(state, session_id, agent_id, text.to_string()).await
 }
 
+/// The person's words to `agent_id`, said outside any chat (to her avatar),
+/// that take up the private app `app` by name: a message in the app's own
+/// chat, as one typed there — its turn and its row are the app's, never the
+/// day's.
+pub(crate) async fn say_in_app(state: Arc<ServerState>, app: &str, agent_id: &str, text: &str) {
+    let own = crate::server::day_session::own_chat(&state.manager, app, None);
+    let req = ChatRequest {
+        project_root: crate::paths::ensure_default_workspace().to_string_lossy().to_string(),
+        agent_id: agent_id.to_string(),
+        message: text.to_string(),
+        session_id: own,
+        user_type: super::types::default_user_type(),
+        mission_id: None,
+        skill_name: Some(app.to_string()),
+        model_id: None,
+        user_id: None,
+        images: Vec::new(),
+        sender: None,
+        via: None,
+        via_note: None,
+        followups: false,
+        client_id: None,
+    };
+    start_turn(state, req, TurnOrigin::Person).await;
+}
+
 /// A turn for `agent_id` in an existing session, through the chat pipeline.
 async fn turn_in_session(
     state: Arc<ServerState>,

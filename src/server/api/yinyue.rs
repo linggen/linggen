@@ -213,6 +213,13 @@ pub(crate) async fn chat_handler(
         run_voice_command(&state, muted).await;
         return (StatusCode::OK, "ok").into_response();
     }
+    // A private app taken up by name is carried to its own chat, words and
+    // all: nothing of it is a row of her thread.
+    if let Some(app) = crate::server::day_session::private_app_named(&state.manager, &text).await {
+        let companion = crate::engine::agent::COMPANION_AGENT_ID;
+        crate::server::chat::say_in_app(state.clone(), &app, companion, &text).await;
+        return (StatusCode::OK, "ok").into_response();
+    }
     if let Some(session_id) = presenting_in_chat(&state).await {
         say_at_table(&state, session_id, &text).await;
         return (StatusCode::OK, "ok").into_response();

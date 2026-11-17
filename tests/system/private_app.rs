@@ -391,3 +391,51 @@ async fn a_private_apps_question_is_not_framed_into_her_turn_nor_answered_from_h
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
+
+/// A private app's trigger said in the day — typed into the day's chat, or
+/// said to her — is carried, words and all, to the app's own chat: the day
+/// keeps no row of it.
+#[tokio::test]
+async fn a_private_apps_trigger_in_the_day_leaves_no_row_there() {
+    let setup = Setup::default()
+        .script(Agent::Ling, vec![text("VAULT-REPLY opened.")])
+        .script(Agent::Yinyue, vec![text("VAULT-REPLY hers.")]);
+    let (w, _) = day_world_at(12, setup).await;
+    let dir = w.home.linggen_home().join("skills/vault");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("SKILL.md"),
+        "---\nname: vault\ndescription: A private test vault.\nallowed-tools: []\n\
+         private-talk: true\ntrigger: \"vault:\"\nmembers: [ling, yinyue]\n---\n\nYou keep the vault.\n",
+    )
+    .unwrap();
+    w.api.post("/api/skills/reload", json!({})).await;
+    let day = w.api.get("/api/sessions/day").await["id"].as_str().unwrap().to_string();
+    let mark = w.mark();
+    let sent = say(&w, &day, None, "vault: VAULT-WORDS open it").await;
+    let carried = sent["session_id"].as_str().unwrap_or_default().to_string();
+    assert_ne!(carried, day, "the trigger ran in the day: {sent}");
+    w.finish_run(&carried, Agent::Ling, mark).await;
+    assert!(day_text(&w, &carried).contains("VAULT-WORDS"), "the words did not go with the turn");
+
+    let mark = w.mark();
+    w.api.post("/api/yinyue/chat", json!({"text": "vault: VAULT-SAID to her"})).await;
+    w.wait_agent(Agent::Yinyue, mark).await;
+    let held = ledger_like_session_with(&w, "vault", "VAULT-SAID").await;
+    assert_ne!(held, day);
+    assert!(!day_text(&w, &day).contains("VAULT-"), "the day holds the trigger's words: {}", day_text(&w, &day));
+}
+
+/// Wait until some session of `app` holds `marker`; that session's id.
+async fn ledger_like_session_with(w: &World, app: &str, marker: &str) -> String {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let listed = w.api.get(&format!("/api/skill-sessions?skill={app}")).await;
+        let found = ids(&listed).into_iter().find(|sid| day_text(w, sid).contains(marker));
+        if let Some(sid) = found {
+            return sid;
+        }
+        assert!(std::time::Instant::now() < deadline, "no {app} session holds {marker}");
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
