@@ -24,6 +24,12 @@ ip_snapshot() { ip_backup_dirs >"$IP_BACKUPS"; ip_markers >"$IP_MARKERS"; }
 # does not count against a new one).
 ip_new_backups() { comm -13 "$IP_BACKUPS" <(ip_backup_dirs) | tr '\n' ' ' | sed 's/ $//'; }
 ip_engine_version() { curl -fsS -m 3 "http://127.0.0.1:$EP/api/health" 2>/dev/null | jq -r '.version // .data.version // empty'; }
+# `ling update --rollback` may return before the swapped-in engine answers.
+ip_wait_engine_version() { # want seconds
+  local i
+  for ((i = 0; i < $2; i++)); do [ "$(ip_engine_version)" = "$1" ] && return 0; sleep 1; done
+  return 1
+}
 ip_mem_version() { curl -fsS -m 3 "$ENGINE_MEM/api/health" 2>/dev/null | jq -r '.data.version // empty'; }
 
 # The store lock names the engine serving on EP.
@@ -123,6 +129,7 @@ inplace_after() {
 # `ling update --rollback` restarted the engine on ling.prev (it hosts memory).
 inplace_rollback() { # prev-version
   local p="ling update --rollback" new marker
+  ip_wait_engine_version "$1" 90
   engine_mem_health 90
   check "$p: memory answers through v$1 (/mem/api/health)" $? "no ok from $ENGINE_MEM/api/health — $(tail -2 "$OUT/ling-rollback.log" 2>/dev/null)" "memory v$(ip_mem_version)"
   ip_no_daemon_check "$p"
@@ -147,6 +154,7 @@ inplace_rollback() { # prev-version
 inplace_forward() {
   local p="ling update --rollback again" v
   v="$(ver_of "$LING")"
+  ip_wait_engine_version "$v" 90
   engine_mem_health 60
   check "$p: memory answers through the release" $? "no ok from $ENGINE_MEM/api/health"
   ip_inode_check "$p"
