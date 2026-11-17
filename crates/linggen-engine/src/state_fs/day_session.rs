@@ -16,6 +16,11 @@ use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone};
 pub const DAY_STARTS_AT_HOUR: i64 = 4;
 
 const PREFIX: &str = "sess-day-";
+/// What follows the date in the id of a day that is not the builder's own:
+/// another person's day on this engine is their own session.
+const PERSON: &str = "-p-";
+/// How much of a person's id their day's id keeps.
+const PERSON_MAX: usize = 64;
 
 /// The day `now` belongs to: the calendar date of `now` four hours earlier.
 pub fn day_of<Tz: TimeZone>(now: &DateTime<Tz>) -> NaiveDate {
@@ -32,6 +37,24 @@ pub fn id_of(day: NaiveDate) -> String {
     format!("{PREFIX}{}", day.format("%Y-%m-%d"))
 }
 
+/// The id of `day`'s session for `person`: `None` is the builder's own
+/// ([`id_of`]); anyone else's day is theirs, its id naming them.
+pub fn id_for(day: NaiveDate, person: Option<&str>) -> String {
+    match person.map(person_key).filter(|k| !k.is_empty()) {
+        Some(key) => format!("{}{PERSON}{key}", id_of(day)),
+        None => id_of(day),
+    }
+}
+
+/// A person's id as their day's id keeps it: letters, digits and `_`.
+fn person_key(person: &str) -> String {
+    person
+        .chars()
+        .take(PERSON_MAX)
+        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
+        .collect()
+}
+
 /// Whether `session_id` is a day's session.
 pub fn is_day_session(session_id: &str) -> bool {
     day_in(session_id).is_some()
@@ -39,8 +62,14 @@ pub fn is_day_session(session_id: &str) -> bool {
 
 /// The day a day's session id names.
 pub fn day_in(session_id: &str) -> Option<NaiveDate> {
-    let date = session_id.strip_prefix(PREFIX)?;
-    if date.len() != 10 {
+    let rest = session_id.strip_prefix(PREFIX)?;
+    let date = rest.get(..10)?;
+    let person = &rest[10..];
+    let named = person.is_empty()
+        || person.strip_prefix(PERSON).is_some_and(|k| {
+            !k.is_empty() && k.len() <= PERSON_MAX && k.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+        });
+    if !named {
         return None;
     }
     NaiveDate::parse_from_str(date, "%Y-%m-%d").ok()
@@ -52,8 +81,11 @@ pub fn day_in(session_id: &str) -> Option<NaiveDate> {
 /// thread is: the memory scan reads only a person's own chats (`user`), and
 /// app chats and her thread were never read by it — nor is the day, which
 /// holds a private app's talk.
-pub fn new_meta(session_id: &str, day: NaiveDate, cwd: &str, lead: &str) -> SessionMeta {
+/// `person`: whose day it is (`None`: the builder's own); a page lists it
+/// only to them.
+pub fn new_meta(session_id: &str, day: NaiveDate, cwd: &str, (lead, person): (&str, Option<&str>)) -> SessionMeta {
     SessionMeta {
+        user_id: person.map(str::to_string),
         id: session_id.to_string(),
         title: format!("Linggen · {}", day.format("%Y-%m-%d")),
         created_at: crate::util::now_ts_secs(),
@@ -100,9 +132,24 @@ mod tests {
         assert!(!is_day_session("sess-1758700000-abcd1234"));
     }
 
+    /// Each person has a day of their own; the builder's keeps its id.
+    #[test]
+    fn a_day_is_a_persons() {
+        let d = date("2026-11-16");
+        assert_eq!(id_for(d, None), "sess-day-2026-11-16");
+        let theirs = id_for(d, Some("U-42/x"));
+        assert_eq!(theirs, "sess-day-2026-11-16-p-u_42_x");
+        assert_ne!(theirs, id_for(d, Some("u-43")));
+        assert_eq!(day_in(&theirs), Some(d));
+        assert!(!is_day_session("sess-day-2026-11-16-p-"));
+        assert!(!is_day_session("sess-day-2026-11-16-p-A"));
+        let meta = new_meta(&theirs, d, "/w", ("ling", Some("U-42/x")));
+        assert_eq!(meta.user_id.as_deref(), Some("U-42/x"));
+    }
+
     #[test]
     fn a_new_day_seats_its_lead_and_names_the_day() {
-        let meta = new_meta("sess-day-2026-11-16", date("2026-11-16"), "/w", "ling");
+        let meta = new_meta("sess-day-2026-11-16", date("2026-11-16"), "/w", ("ling", None));
         assert_eq!(meta.title, "Linggen · 2026-11-16");
         assert_eq!(meta.agents.len(), 1);
         assert_eq!(meta.agents[0].id, "ling");

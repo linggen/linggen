@@ -34,8 +34,8 @@ import { fetchMissions, triggerMission, updateMission } from '../lib/missions-ap
 const sessionKind = (s: { creator?: string | null; mission_id?: string | null }): string =>
   s.mission_id ? 'mission' : (s.creator || 'user');
 
-/** The day's session (`sess-day-YYYY-MM-DD`): one row a day, every app's chat. */
-const isDaySession = (id: string): boolean => /^sess-day-\d{4}-\d{2}-\d{2}$/.test(id);
+/** The day's session (`sess-day-YYYY-MM-DD`, another person's `…-p-<person>`): one row a day, every app's chat. */
+const isDaySession = (id: string): boolean => /^sess-day-\d{4}-\d{2}-\d{2}(-p-[a-z0-9_]+)?$/.test(id);
 
 const creatorIcon = (creator?: string, day = false) => {
   if (day) return <CalendarDays size={13} className="text-teal-500 shrink-0" />;

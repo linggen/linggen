@@ -89,7 +89,7 @@ async fn day_for_new_chat(
     if !joins {
         return None;
     }
-    let id = crate::server::day_session::current_if_on(&state.manager).await?;
+    let id = crate::server::day_session::current_for_if_on(&state.manager, req.user_id.as_deref()).await?;
     let meta = state.manager.global_sessions.get_session_meta(&id).ok()??;
     Some(Json(serde_json::json!({ "id": id, "cwd": meta.cwd })))
 }
