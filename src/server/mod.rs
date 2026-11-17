@@ -15,6 +15,7 @@ mod mcp;
 mod mcp_agent;
 mod met_watch;
 pub(crate) mod milestones;
+pub(crate) mod person;
 mod push;
 mod quests_watch;
 mod resident;
