@@ -55,6 +55,23 @@ pub struct SessionSpec {
     pub ceiling: Option<Ceiling>,
 }
 
+/// A caller's word for a session's work: `"code"` turns the coding section
+/// on, `"none"` turns it off. The one rule every way in asks — creating a
+/// session, changing one, `agent_run`: only a kind of session that takes a
+/// work tag ([`Preset::takes_work`]) may be given one.
+pub fn ask_work(meta: &mut SessionMeta, word: &str) -> Result<(), &'static str> {
+    let work = match word {
+        "code" => Some(Work::Code),
+        "none" => None,
+        _ => return Err("unknown work: use \"code\" or \"none\""),
+    };
+    if work.is_some() && !preset_of(meta).takes_work() {
+        return Err("this kind of session does not take a work tag");
+    }
+    meta.work = work;
+    Ok(())
+}
+
 /// A ceiling another design will set. No variant yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ceiling {}

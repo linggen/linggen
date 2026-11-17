@@ -277,8 +277,10 @@ pub async fn run(
         mode.is_some(),
         model_fallback,
     );
-    if let Some(value) = work.or(if write.is_some() { Some("code") } else { None }) {
-        super::api::sessions::set_work(&mut meta, value).map_err(str::to_string)?;
+    // A run given a folder to write is a coding session unless its caller
+    // says otherwise.
+    if let Some(word) = work.or(write.is_some().then_some("code")) {
+        crate::engine::session_spec::ask_work(&mut meta, word).map_err(str::to_string)?;
     }
     meta.set_cwd(&root_str);
     if let Err(e) = store.add_session(&meta) {
