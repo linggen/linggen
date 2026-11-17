@@ -170,8 +170,14 @@ session, prompt and row is as before. On (decided by the builder 2026-11-15/16):
   with 403. An agent's notes and her own thread are the builder's (a
   signed-out phone is its own person, as memory reads it); what the engine
   starts itself (her moments) is the builder's, and a question waiting in
-  another person's day is not heralded in the builder's thread or voice. A
-  day is made once and never written over.
+  another person's day is not heralded in the builder's thread or voice.
+  Her stage is held per person: a line she says in a person's day or
+  session reaches the newest stage that person's own devices hold (none:
+  nowhere), what the builder says to her goes to the builder's stage, and a
+  stage names only a session its person may enter. An app moment is its
+  sender's: another person's is not taken up. Presence, kept topic
+  readings and phone facts are the builder's devices'; another person's are
+  dropped. A day is made once and never written over.
 - **Clear** takes the rows of the place it is pressed in: an app's page its
   app's, the main page home's.
 
