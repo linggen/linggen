@@ -173,8 +173,27 @@ pub(crate) fn peer_lines() -> Vec<String> {
     let Some(peer) = read_peer() else {
         return Vec::new();
     };
+    render_peer(&peer, &super::told::load(), crate::util::now_ts_secs() as i64)
+}
+
+/// The other device's problems as it published them, and its name — what the
+/// glance's sweep reads to decide whether one is due. `None` problems: the
+/// peer said nothing about them, which is not the same as having none.
+pub(crate) fn peer_problems() -> Option<(String, Option<Vec<super::told::PeerProblem>>)> {
+    read_peer().map(|p| (p.host, p.problems))
+}
+
+/// The peer's block. Each problem is shown with where it stands — not told
+/// yet, worse than when told, or already told and when — beside its facts:
+/// what she is handed says whether it is news, rather than asking her to
+/// remember.
+fn render_peer(peer: &Peer, ledger: &super::told::Ledger, now: i64) -> Vec<String> {
     let mut out = vec![format!("on {} ({}):", peer.host, peer.age)];
-    out.extend(peer.lines.into_iter().map(|l| format!("  {l}")));
+    out.extend(peer.lines.iter().map(|l| format!("  {l}")));
+    for p in peer.problems.iter().flatten() {
+        let standing = ledger.peer_standing(super::publish::FROM_PHONE, p);
+        out.push(format!("  {} ({})", p.line, standing.words(now)));
+    }
     out
 }
 
@@ -182,6 +201,9 @@ struct Peer {
     host: String,
     age: String,
     lines: Vec<String>,
+    /// What it says is wrong with it, each with its own record of telling.
+    /// `None` when its payload has no such field (a build before problems).
+    problems: Option<Vec<super::told::PeerProblem>>,
     /// What has been happening over there. Never rendered into the block —
     /// only `recent_activity` asks for it, which is the whole point of history
     /// being a tool.
@@ -222,6 +244,16 @@ fn read_peer() -> Option<Peer> {
         .join(format!("{}.json", super::publish::FROM_PHONE));
     let text = std::fs::read_to_string(&path).ok()?;
     let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let age = std::fs::metadata(&path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .map(|d| super::activity::ago(d.as_secs() as i64))
+        .unwrap_or_else(|| "age unknown".to_string());
+    parse_peer(&v, age)
+}
+
+fn parse_peer(v: &serde_json::Value, age: String) -> Option<Peer> {
     // The host name is printed as the subject of a heading, so it goes through
     // the same door as everything else that crosses.
     let host = super::activity::clean(v.get("host")?.as_str()?, PEER_HOST_MAX);
@@ -229,13 +261,18 @@ fn read_peer() -> Option<Peer> {
         return None;
     }
     let raw: Vec<String> = v
-        .get("lines")?
-        .as_array()?
-        .iter()
-        .filter_map(|l| l.as_str().map(|s| s.to_string()))
-        .collect();
+        .get("lines")
+        .and_then(|l| l.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|l| l.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
     let lines = trust(&raw, PEER_LINES_MAX);
-    if lines.is_empty() {
+    let problems = super::told::parse_problems(v, PEER_LINE_MAX);
+    // A peer with only a problem to report still has something to say.
+    if lines.is_empty() && problems.as_ref().is_none_or(|p| p.is_empty()) {
         return None;
     }
     let recent: Vec<String> = v
@@ -249,16 +286,11 @@ fn read_peer() -> Option<Peer> {
             trust(&raw, PEER_RECENT_MAX)
         })
         .unwrap_or_default();
-    let age = std::fs::metadata(&path)
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| t.elapsed().ok())
-        .map(|d| super::activity::ago(d.as_secs() as i64))
-        .unwrap_or_else(|| "age unknown".to_string());
     Some(Peer {
         host,
         age,
         lines,
+        problems,
         recent,
     })
 }
@@ -511,6 +543,76 @@ mod tests {
         let before = map.len();
         remember(&mut map, &format!("sess-{}", SEEN_MAX + 19), 9_999);
         assert_eq!(map.len(), before);
+    }
+
+    /// The builder's phone as it was on 2026-11-17: 8% free, about 13 days
+    /// of room. The phone's own level for that is 1.
+    fn phone(told: Option<serde_json::Value>) -> Peer {
+        let mut v: serde_json::Value =
+            serde_json::from_str(crate::perception::told::tests::PHONE_WIRE).unwrap();
+        v["problems"][0]["told"] = told.unwrap_or(serde_json::Value::Null);
+        parse_peer(&v, "5m ago".into()).unwrap()
+    }
+
+    fn told_at(at: &str, level: u32) -> serde_json::Value {
+        serde_json::json!({"at": at, "level": level, "by": "phone"})
+    }
+
+    fn now() -> i64 {
+        chrono::DateTime::parse_from_rfc3339("2026-11-17T10:00:00Z")
+            .unwrap()
+            .timestamp()
+    }
+
+    fn storage_line(lines: &[String]) -> String {
+        lines
+            .iter()
+            .find(|l| l.contains("storage:"))
+            .cloned()
+            .unwrap_or_else(|| panic!("the problem's facts are shown: {lines:?}"))
+    }
+
+    #[test]
+    fn a_peer_problem_already_told_and_no_worse_is_not_handed_as_new() {
+        let p = phone(Some(told_at("2026-11-15T10:00:00Z", 1)));
+        let lines = render_peer(&p, &crate::perception::told::Ledger::default(), now());
+        let l = storage_line(&lines);
+        assert!(l.contains("already told 2d ago"), "{lines:?}");
+        assert!(!l.contains("not told yet") && !l.contains("worse than"), "{lines:?}");
+    }
+
+    #[test]
+    fn the_same_problem_a_level_worse_is_handed_as_worse() {
+        let mut p = phone(Some(told_at("2026-11-15T10:00:00Z", 1)));
+        p.problems.as_mut().unwrap()[0].level = 2;
+        let lines = render_peer(&p, &crate::perception::told::Ledger::default(), now());
+        assert!(
+            storage_line(&lines).contains("worse than when told 2d ago"),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
+    fn a_peer_problem_never_told_is_handed_as_not_told() {
+        let lines = render_peer(&phone(None), &crate::perception::told::Ledger::default(), now());
+        assert!(storage_line(&lines).contains("not told yet"), "{lines:?}");
+    }
+
+    #[test]
+    fn what_this_mac_said_counts_before_the_phone_has_filed_it() {
+        let mut ledger = crate::perception::told::Ledger::default();
+        ledger.reported("phone", "storage", 1, now() - 3600);
+        let lines = render_peer(&phone(None), &ledger, now());
+        assert!(storage_line(&lines).contains("already told 1h ago"), "{lines:?}");
+    }
+
+    #[test]
+    fn a_peer_with_only_a_problem_still_has_something_to_say() {
+        let v = serde_json::json!({"host": "this phone", "lines": [],
+            "problems": [{"key": "storage", "level": 1, "line": "storage: 1 GB free"}]});
+        assert!(parse_peer(&v, "now".into()).is_some());
+        let none = serde_json::json!({"host": "this phone", "lines": []});
+        assert!(parse_peer(&none, "now".into()).is_none());
     }
 
     #[test]

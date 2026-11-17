@@ -55,10 +55,18 @@ pub async fn publish_loop(publish: impl Fn(&str, &str, serde_json::Value) + Send
         // thinking of both — which reads as the agent having missed something
         // they just did on the other one.
         let recent = super::state::share_history();
-        // Both halves decide freshness. A song deleted here moves the history
+        // What this Mac told the person about the phone's own problems, so the
+        // phone — whose record it is — files it and does not say it again.
+        let told = super::told::load().reports(FROM_PHONE);
+        // Every part decides freshness. A song deleted here moves the history
         // and not one state line, and a payload we declined to resend over that
         // is a delete the other machine never hears about.
-        let digest = format!("{}\n--\n{}", lines.join("\n"), recent.join("\n"));
+        let digest = format!(
+            "{}\n--\n{}\n--\n{}",
+            lines.join("\n"),
+            recent.join("\n"),
+            serde_json::Value::from(told.clone())
+        );
         if last.as_deref() == Some(digest.as_str()) {
             continue;
         }
@@ -68,6 +76,7 @@ pub async fn publish_loop(publish: impl Fn(&str, &str, serde_json::Value) + Send
             "at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
             "lines": lines,
             "recent": recent,
+            "told": told,
         });
         publish(TOPIC, FROM_MAC, payload);
     }

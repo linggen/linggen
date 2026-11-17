@@ -17,7 +17,9 @@
 //! file — the engine names no app.
 //!
 //! [`conditions`] is what lets a resident start a sentence, and [`trend`] is
-//! what lets it say "in two days" rather than "nearly full".
+//! what lets it say "in two days" rather than "nearly full". [`told`] is the
+//! record of what the person has already been told, so a problem is said once
+//! and again only when it is worse or has come back.
 
 pub mod activity;
 pub mod apps;
@@ -28,6 +30,7 @@ pub mod query;
 pub mod rotation;
 pub mod state;
 pub mod stretch;
+pub mod told;
 pub mod trend;
 pub mod when;
 pub mod world;

@@ -45,20 +45,20 @@ pub(super) async fn ambient_glance(state: &Arc<ServerState>) {
     if let Some(notice) = crate::perception::conditions::sweep() {
         tracing::info!("[yinyue-ambient] condition crossed: {}", notice.topic);
         let kickoff = format!(
-            "Something about this machine crossed a line worth one sentence: {}. \
+            "Something crossed a line worth one sentence: {}. \
              You noticed it — say so in your own voice, one short line, spoken aloud, \
              plain prose, and offer the next step: {}. Never start anything yourself. \
              If this truly isn't the moment, reply with exactly SILENT.",
             notice.situation, notice.verbs
         );
-        // The re-arm starts only if she actually said it. A SILENT reply is
-        // her judging the moment, not the user being told — and this condition
-        // fires two days before the disk is full.
+        // It is told only if she actually said it. A SILENT reply is her
+        // judging the moment, not the user being told — the problem stays due
+        // and comes back at the next glance.
         if wake_and_speak(state.clone(), (kickoff, None), "neutral", "timer", Reach::SpeakOnly, None)
             .await
             .is_some()
         {
-            crate::perception::conditions::spoken(notice.topic);
+            crate::perception::conditions::spoken(&notice);
         }
         return;
     }
@@ -67,8 +67,8 @@ pub(super) async fn ambient_glance(state: &Arc<ServerState>) {
         Only now and then, if a small natural remark genuinely fits — the hour, how the day's \
         gone, the quiet, your own mood — say ONE short line in your voice, spoken aloud, plain \
         prose. This is just you being present, never a report: never narrate their work or what \
-        an agent did. If they're heads-down working, let them be. Don't repeat what you said last \
-        time. You cannot act this turn; if something needs doing, say so in your one line and ask. When in doubt, SILENT."
+        an agent did. If they're heads-down working, let them be. A line marked already told is \
+        not news. You cannot act this turn; if something needs doing, say so in your one line and ask. When in doubt, SILENT."
         .to_string();
     wake_and_speak(state.clone(), (kickoff, None), "neutral", "timer", Reach::SpeakOnly, None).await;
 }

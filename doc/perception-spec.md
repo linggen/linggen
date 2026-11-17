@@ -326,30 +326,41 @@ words. The count and the door stay; every other turn keeps the line.
 Perception is what makes an agent able to start a sentence. It does not make
 every observation worth one.
 
-**Conditions register; the resident judges.** A condition declares what it
-watches, what crosses, and — required — the verb the agent can offer:
+**Conditions register; the resident judges when.** A condition declares what
+it watches, what crosses, how bad it is — a **level**, an integer where higher
+is worse — and, required, the verb the agent can offer:
 
 ```
 storage-filling   free space trend crosses "full within 2 days"
+                  level: 2 days → 1, 1 day → 2, none → 3
                   → offer: scan for duplicates, back up to the Mac
 ```
 
 Three rules, each earned:
 
-1. **Fire on the crossing, not the level.** A condition true every day is said
-   once, not daily. Otherwise the user learns to ignore it, which costs more
-   than never having spoken.
-2. **A "not now" holds.** The resident already declines per topic
-   (`_declinedRecently`); a dismissed condition stays quiet until the situation
-   materially changes, not until the next tick.
-
-   The hold starts when the resident **speaks**, never when it is asked. A
-   companion may answer SILENT, and a week of quiet bought by a sentence nobody
-   heard is how a machine two days from full says nothing at all. Retrying
-   costs nothing: the glance a notice rides was going to run a turn anyway.
+1. **Said once.** A problem — the same thing wrong on the same device — is
+   raised once. It is raised again only when it is materially worse (its level
+   rose: for the phone's storage, free space crossing 10% → 5% → 2%, or the
+   days left halving) or when it went away and came back. Time passing is not
+   a reason. "Went away" is a recovery, not one reading: the record goes only
+   after the problem has been absent for a day of readings.
+2. **Never dropped.** A problem that exists and has not been said is due at
+   every moment the resident's gates allow, until it is said. The record starts
+   when the resident **speaks**, never when it is asked: a SILENT reply or a
+   failed run defers, it does not dismiss.
 3. **Every noticing ends in a verb the agent owns.** "Your storage is filling"
-   with no next step is worse than silence. If there is nothing to offer, the
-   condition does not qualify.
+   with no next step is worse than silence. A problem the agent cannot fix is
+   still said; its verb is to say where the person can.
+
+**One record per problem, kept by the device it is about.** The record of
+what was told (`perception::told` on the Mac, `TellLedger` on the phone) is the
+one place that decides "already told". The other device can tell too: each
+host publishes its problems with their record (§6), and a host that says the
+other's problem publishes a report of having said it, which the owner files.
+What the resident is shown says where each problem stands — `not told yet`,
+`worse than when told 2d ago`, `already told 3h ago, no worse since` — beside
+its facts. A sentence in a prompt asking her not to repeat herself is not the
+mechanism; the mark is.
 
 Silence remains the default. The resident's existing gates — foreground, no
 pushed route, no song playing, time floors — still apply; perception gives it
@@ -383,6 +394,16 @@ count means nothing to a reader who is not the one who last looked.
 
 A host that cannot be reached simply contributes nothing. Its absence is itself
 a state line, and its departure is a log entry.
+
+**Problems cross with their record.** Beside its `lines`, a host publishes
+`problems`: each `{key, level, line, told}`, where `told` is its own record
+(`{at, level, by}`, or absent) — the facts of a problem travel there and not
+also as a plain line. The other host shows each with where it stands, and
+raises one only when it is not told or is worse. When it does say one, it
+publishes `told: [{key, owner, level, at, by}]` on its own payload; the owner
+files that into its record and the report is dropped once filed, or once the
+owner no longer has the problem. A payload with no `problems` field (an older
+build) is unknown, never "no problems".
 
 **History is mirrored by day, one writer per file.** The retained topic carries
 a dozen recent lines — enough for "what just happened over there", not for "how
