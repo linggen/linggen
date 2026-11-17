@@ -139,7 +139,7 @@ pub(super) fn handle_control_message(
         // A paired device saying a kind of thing happened, at a time. The
         // device is this channel's bound identity, never the payload.
         "fact" => {
-            // With one session a day on, another person's facts stamp
+            // With the daily session on, another person's facts stamp
             // nothing of the builder's.
             if !shares_builders(state, user_ctx, actor) {
                 return None;
@@ -221,7 +221,7 @@ pub(super) fn handle_control_message(
             if topic.is_empty() || op.is_empty() {
                 return None;
             }
-            // With one session a day on, a topic is the builder's devices':
+            // With the daily session on, a topic is the builder's devices':
             // another person's neither replaces a kept reading nor reaches
             // the builder's surfaces.
             if !shares_builders(state, user_ctx, actor) {
@@ -318,7 +318,7 @@ pub(super) fn person_for(user_ctx: &crate::server::rtc::UserContext, device: Opt
 }
 
 /// Whether this peer is given what is the builder's alone
-/// (`day_session::shares_builders`): any peer with one session a day off;
+/// (`day_session::shares_builders`): any peer with the daily session off;
 /// with it on, a peer whose person is the builder.
 fn shares_builders(
     state: &Arc<ServerState>,

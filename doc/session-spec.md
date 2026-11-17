@@ -184,8 +184,7 @@ session sees none).
   put back: the next turn, in whatever place, sees nothing of this one. A
   skill taken up mid-turn (`/name`, the Skill tool) is not the place: its
   tools stay for later turns as before. In a day's session a private app
-  is never taken up, as the place or mid-turn (`one-ling-spec.md` § One
-  session a day). A `cd` in another app's place moves
+  is never taken up, as the place or mid-turn (`one-ling-spec.md` § Linggen's daily session). A `cd` in another app's place moves
   only that place's folder, never the session's.
 - **Grants per place.** Each place keeps its own grants in the session's
   `permission.json`: a grant given in one app is not honoured in another
@@ -204,7 +203,7 @@ session sees none).
 With `agent.daily_session` off, a page names the skill its session was
 made for, so every turn of a session shares one place: the session's. On,
 an app's chat is the day's session (`sess-day-YYYY-MM-DD`, from 04:00
-local; `one-ling-spec.md` § One session a day): a page's turn stands in its
+local; `one-ling-spec.md` § Linggen's daily session): a page's turn stands in its
 app, other turns at home. The day's session is made by `agent` (as Yinyue's
 own thread; the memory scan reads only `user` chats), Ling its lead. A
 private app (`private-talk: true`) never joins it: its chat keeps a session

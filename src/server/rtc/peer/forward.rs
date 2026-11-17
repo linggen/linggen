@@ -105,7 +105,7 @@ pub(super) fn forward_event_to_channels(
     // surfaces open (tabs, apps, the desktop pet) she renders and speaks in just
     // one place. Applies to every peer, admin included (the gate sits above the
     // user-filter, which otherwise whitelists these global kinds to all peers).
-    // With one session a day on, a line goes to the holder among the
+    // With the daily session on, a line goes to the holder among the
     // surfaces of the person whose session she said it in.
     let holder = match is_her_cue(&ui_msg.kind) {
         true => state.yinyue_line_holder(her_cue_session(event)),

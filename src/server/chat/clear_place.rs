@@ -1,6 +1,6 @@
 //! Clear in the day's session takes the rows of the place it is pressed in —
 //! an app's page its app's, the main page home's — and every other place's
-//! stay (`doc/one-ling-spec.md` § One session a day). Anywhere else Clear
+//! stay (`doc/one-ling-spec.md` § Linggen's daily session). Anywhere else Clear
 //! empties the session, as it always did.
 
 use super::types::ClearChatRequest;

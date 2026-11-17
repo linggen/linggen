@@ -337,9 +337,8 @@ pub struct AgentConfig {
     /// buttons still show. See `chat-spec.md` § Suggestions.
     #[serde(default = "default_true")]
     pub suggest_followups: bool,
-    /// One session a day (`doc/one-ling-spec.md` § One session a day): app
-    /// chats, Yinyue's unprompted moments and the phone's hand-offs are one
-    /// session a day, Ling and Yinyue both seated, each turn in the place
+    /// Linggen's daily session (`doc/one-ling-spec.md` § Linggen's daily session): app
+    /// chats, Yinyue's unprompted moments and the phone's hand-offs are the daily session, Ling and Yinyue both seated, each turn in the place
     /// of the page it came from. Off (the default): a session per app, as
     /// before. Not written to the file while off.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]

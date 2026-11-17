@@ -146,7 +146,7 @@ pub fn yinyue_holder_of(reg: &[YinyuePresenter]) -> Option<u64> {
         .map(|p| p.peer_id)
 }
 
-/// Who holds her for `person`'s lines: with one session a day on
+/// Who holds her for `person`'s lines: with the daily session on
 /// (`Some`), the holder among that person's own surfaces alone — a stage is
 /// held per person; off (`None`), the one holder of all.
 pub fn yinyue_holder_for(reg: &[YinyuePresenter], person: Option<&Whose>) -> Option<u64> {
@@ -175,8 +175,7 @@ pub fn yinyue_stage_session_for(reg: &[YinyuePresenter], person: Option<&Whose>)
 }
 
 impl ServerState {
-    /// The surfaces a line for `person` may reach: theirs alone with one
-    /// session a day on; every surface with it off.
+    /// The surfaces a line for `person` may reach: theirs alone with the daily session on; every surface with it off.
     fn yinyue_pool(&self, person: Whose) -> Option<Whose> {
         self.manager.daily_session().then_some(person)
     }
@@ -193,7 +192,7 @@ impl ServerState {
     }
 
     /// Whether `peer_id` holds her among its own person's surfaces (all
-    /// surfaces with one session a day off).
+    /// surfaces with the daily session off).
     pub fn yinyue_presents_on(&self, peer_id: u64) -> bool {
         let reg = self.yinyue_presenters.lock_ok();
         let Some(person) = reg

@@ -97,8 +97,7 @@ impl TurnPlace {
         (!self.own).then(|| self.key())
     }
 
-    /// The app a turn standing here keeps its talk to, with one session a
-    /// day on (`day_on`): this place's app when it declares
+    /// The app a turn standing here keeps its talk to, with the daily session on (`day_on`): this place's app when it declares
     /// `private-talk: true`, or does not resolve now — when it is not known
     /// to be shared, it is kept. Home's never is. Such an app keeps a
     /// session of its own, and from its turn no tool carries words out
@@ -140,8 +139,7 @@ pub async fn question_kept_to(
 }
 
 impl crate::engine::tools::Tools {
-    /// Whether this session keeps `skill` out: in a day's session, with one
-    /// session a day on, a private app (`private-talk: true`) never becomes
+    /// Whether this session keeps `skill` out: in a day's session, with the daily session on, a private app (`private-talk: true`) never becomes
     /// a turn's place nor its active skill — it keeps a session of its own.
     /// The two setters ask here (`AgentEngine::activate_skill`,
     /// `AgentEngine::enter_place`), and so does the Skill tool before it

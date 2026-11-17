@@ -540,7 +540,7 @@ pub struct Skill {
     #[serde(default)]
     pub queue: QueueMode,
     /// What is said in this app's turns is the app's alone
-    /// (`private-talk: true`): with one session a day on it keeps a session
+    /// (`private-talk: true`): with the daily session on it keeps a session
     /// of its own, never the day's, and from its turns no tool carries
     /// words out (`TurnPlace::private_app`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]

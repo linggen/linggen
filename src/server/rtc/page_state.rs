@@ -176,7 +176,7 @@ fn queued_entries(
 /// One row of the session list. `updated_at` is #[serde(skip)] so it never
 /// lands in session.yaml — the derived value is put in by hand for the UI
 /// (grouping/sort key on last activity). The day's session is marked
-/// `day: true` (`doc/one-ling-spec.md` § One session a day).
+/// `day: true` (`doc/one-ling-spec.md` § Linggen's daily session).
 fn session_row(s: crate::state_fs::sessions::SessionMeta) -> Option<serde_json::Value> {
     let updated_at = s.updated_at;
     let day = crate::server::day_session::is_day(&s.id);

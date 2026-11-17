@@ -1,6 +1,5 @@
 /**
- * The day's session on one page (`doc/one-ling-spec.md` § One session a
- * day): every app's chat is one thread, and the stretches written in other
+ * The day's session on one page (`doc/one-ling-spec.md` § Linggen's daily session): every app's chat is one thread, and the stretches written in other
  * places than this page's are folded to one line each — the app and how
  * many messages — which opens on a tap. A private app's talk never reaches
  * a page outside it (the engine leaves it out), so it is never folded here.

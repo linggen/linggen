@@ -18,7 +18,7 @@ use crate::server::{ServerEvent, ServerState};
 
 /// Push a speak cue to the user's surfaces. The single producer — the
 /// event-reactive watch loop calls this when Yinyue reacts. `session`: where
-/// she said it (`None`: her own thread) — with one session a day on, the
+/// she said it (`None`: her own thread) — with the daily session on, the
 /// line reaches only the stage that session's person holds.
 pub fn emit_speak(state: &Arc<ServerState>, text: String, emotion: Option<String>, session: Option<&str>) {
     // Not met yet: there is no one to speak.
@@ -91,8 +91,7 @@ pub(crate) struct EventRequest {
     /// in another than Linggen's: her line for this moment is in it.
     #[serde(default)]
     pub lang: Option<String>,
-    /// The sender's person (the channel and the LAN gate set it): with one
-    /// session a day on, only the builder's moments wake her.
+    /// The sender's person (the channel and the LAN gate set it): with the daily session on, only the builder's moments wake her.
     #[serde(default)]
     pub user_id: Option<String>,
 }
@@ -189,7 +188,7 @@ async fn absent_for_moment(state: &Arc<ServerState>, app: &str, session: Option<
 pub(crate) struct ChatRequest {
     pub text: String,
     /// The caller's person (the channel and the LAN gate set it): her own
-    /// thread is the builder's day, so with one session a day on another
+    /// thread is the builder's day, so with the daily session on another
     /// person is refused it.
     #[serde(default)]
     pub user_id: Option<String>,
@@ -362,7 +361,7 @@ pub(crate) struct PresenceBeat {
 /// only recency + focus + a typing flag (never keystroke content); feeds the
 /// `sense` tool so Yinyue can tell whether the user is here, reading, or away.
 /// Generic (not Yinyue-specific) but lives here as the companion is its only
-/// consumer today. With one session a day on, it is the builder's presence:
+/// consumer today. With the daily session on, it is the builder's presence:
 /// another person's beat is taken and dropped.
 pub(crate) async fn presence_handler(
     State(state): State<Arc<ServerState>>,

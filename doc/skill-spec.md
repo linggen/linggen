@@ -330,7 +330,7 @@ A message sent while a session's agent is mid-turn is queued. What happens to th
 
 ## Private talk
 
-`private-talk: true` declares that what is said in the app's turns is the app's alone. It is read with the rest of the frontmatter (a value that is not `true` or `false` is refused like any wrong frontmatter type) and kept on the skill. It acts with one session a day on (`one-ling-spec.md` § One session a day):
+`private-talk: true` declares that what is said in the app's turns is the app's alone. It is read with the rest of the frontmatter (a value that is not `true` or `false` is refused like any wrong frontmatter type) and kept on the skill. It acts with the daily session on (`one-ling-spec.md` § Linggen's daily session):
 
 - **A session of its own.** The app's chat never joins the day's session, by any way in — a new chat, its list, the day's lookup, a hand-off, her moments, a message delivered to an agent in the app. An app that does not resolve (removed, its SKILL.md unreadable) stays apart the same way. In the day it is never the place nor the active skill of a turn: `/<app> …` or its trigger typed there is carried to the app's own chat, and the Skill tool is refused it with a reason the model reads.
 - **Nothing carried out.** From its turns — the person's, hers, a turn the engine starts there (a task's end, an approved plan), a subagent of one — a tool that carries words out is refused with a plain reason: a message to another agent, a note, another turn's question, a new Claude session, the memory review queue or a day record, a memory write asking for `global`, `cwd` or `scope`, and `AppTool` or `RunApp` naming another app. Bash, web search and fetch, and other configured servers are the skill's own `allowed-tools` to grant.

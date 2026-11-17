@@ -378,7 +378,7 @@ impl AgentManager {
         self.pet_muted.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// Whether one session a day is on (`config.agent.daily_session`),
+    /// Whether the daily session is on (`config.agent.daily_session`),
     /// read without the config lock.
     pub fn daily_session(&self) -> bool {
         self.daily_session.load(std::sync::atomic::Ordering::Relaxed)

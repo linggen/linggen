@@ -1,5 +1,5 @@
-//! A private app (`private-talk: true`) with one session a day on
-//! (doc/one-ling-spec.md § One session a day): it keeps a session of its
+//! A private app (`private-talk: true`) with the daily session on
+//! (doc/one-ling-spec.md § Linggen's daily session): it keeps a session of its
 //! own and joins the day by no way in; and a day is its own person's — what
 //! another person's turn asks never reaches the builder's thread or voice.
 

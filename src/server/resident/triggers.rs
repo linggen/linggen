@@ -668,7 +668,7 @@ pub(super) async fn deliver_to_chat_agent(
         None => crate::server::day_session::day_for(&state.manager, None, app.as_deref()).await,
     };
     if let Some(day) = day.as_deref() {
-        // One session a day: the table they share, in the app's place.
+        // Linggen's daily session: the table they share, in the app's place.
         candidates.extend(session_and_root(&state, day));
     } else if let Some(skill) = app.as_deref() {
         if let Ok(sessions) = state.manager.global_sessions.list_sessions() {

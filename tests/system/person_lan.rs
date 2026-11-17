@@ -1,5 +1,5 @@
 //! A day is its own person's over plain HTTP from the LAN too
-//! (doc/one-ling-spec.md § One session a day): the LAN gate resolves the
+//! (doc/one-ling-spec.md § Linggen's daily session): the LAN gate resolves the
 //! person from the paired device's token, as the channel does, and sends
 //! the request as theirs whatever `user_id` it named.
 

@@ -1,4 +1,4 @@
-// One session a day (doc/one-ling-spec.md § One session a day), seen on the
+// Linggen's daily session (doc/one-ling-spec.md § Linggen's daily session), seen on the
 // pages: with the setting on, two apps' chats are the day's session; a
 // private app keeps a session of its own — its reply streams to its own page
 // and to no other page — and the main page lists the day and folds another

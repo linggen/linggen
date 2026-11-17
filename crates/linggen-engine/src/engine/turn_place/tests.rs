@@ -115,7 +115,7 @@ impl crate::engine::skill::SkillRegistry for OneApp {
 }
 
 /// A turn's place keeps its talk to its app when the app declares it, or
-/// does not resolve — with one session a day on; off, nothing is kept.
+/// does not resolve — with the daily session on; off, nothing is kept.
 #[tokio::test]
 async fn a_place_keeps_its_talk_to_a_private_or_unknown_app() {
     let skills = skills_with_private("zz-diary").await;

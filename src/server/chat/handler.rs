@@ -1083,7 +1083,7 @@ pub(crate) fn resend_chat(
     })
 }
 
-/// An app's chat sent with no session yet, with one session a day on: it
+/// An app's chat sent with no session yet, with the daily session on: it
 /// is the day's session's (`server::day_session`). A mission's, a
 /// consumer's, a plain chat's (no app) or a private app's keeps its own.
 async fn into_the_day(state: &Arc<ServerState>, mut req: ChatRequest) -> ChatRequest {

@@ -1,4 +1,4 @@
-// A day is its own person's (doc/one-ling-spec.md § One session a day). A
+// A day is its own person's (doc/one-ling-spec.md § Linggen's daily session). A
 // phone paired to this Mac and signed in to another account reaches it the
 // way a phone on the LAN does: its channel opened with the phone's token,
 // every request riding that channel. It is given its own person's day, a

@@ -1,7 +1,6 @@
-//! The day's session: one session a day that every app's chat, Yinyue's
+//! The day's session: the daily session that every app's chat, Yinyue's
 //! unprompted moments and the phone's hand-offs are part of, when
-//! `agent.daily_session` is on (`doc/one-ling-spec.md` § One session a
-//! day). What it is called and when a day begins; who resolves it is the
+//! `agent.daily_session` is on (`doc/one-ling-spec.md` § Linggen's daily session). What it is called and when a day begins; who resolves it is the
 //! server's (`server::day_session`).
 //!
 //! A day begins at 04:00 local, so late-night play stays in one day. Its id

@@ -1,4 +1,4 @@
-//! One session a day (doc/one-ling-spec.md § One session a day): with
+//! Linggen's daily session (doc/one-ling-spec.md § Linggen's daily session): with
 //! `agent.daily_session` on, the day's session is found by the day —
 //! a day begins at 04:00 local — made on first use and found again after a
 //! restart.

@@ -73,7 +73,7 @@ fn session_cwd(skill: Option<&crate::engine::skill::Skill>, project_root: Option
     dir.to_string_lossy().to_string()
 }
 
-/// An app's new chat, with one session a day on: the day's session, as a
+/// An app's new chat, with the daily session on: the day's session, as a
 /// new session's answer (`server::day_session::takes_new_chat`).
 async fn day_for_new_chat(
     state: &Arc<ServerState>,
@@ -249,7 +249,7 @@ pub(crate) async fn list_skill_sessions(
     }
 }
 
-/// An app's sessions with one session a day on, for an app that joins the
+/// An app's sessions with the daily session on, for an app that joins the
 /// day: the day's first — the one its page picks up — then the ones the app
 /// keeps apart (a test save, an NPC's talk). Its chats from before stay in
 /// the main list, not here. An app that keeps a session of its own (a

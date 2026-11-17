@@ -1,8 +1,7 @@
 //! GET /api/notes?agent= — an agent's open notes, read-only, for another
-//! device (the phone shows them; `doc/one-ling-spec.md` § One session a
-//! day). Notes are written by their agent's own tools alone; nothing here
+//! device (the phone shows them; `doc/one-ling-spec.md` § Linggen's daily session). Notes are written by their agent's own tools alone; nothing here
 //! changes them. A private app's turn writes none (`tools::exit_gate`),
-//! so nothing of its talk is in them. With one session a day on they are
+//! so nothing of its talk is in them. With the daily session on they are
 //! the builder's: another person is given none (the channel and the LAN
 //! gate name the person; `day_session::shares_builders`).
 

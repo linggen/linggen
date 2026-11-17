@@ -388,8 +388,7 @@ fn table_of(moments: &[Moment]) -> Option<String> {
     moments.iter().find_map(|m| m.session.clone())
 }
 
-/// Where her turn for `moments` runs, and the moments it takes. With one
-/// session a day on there is one table: the day's session, in the place of
+/// Where her turn for `moments` runs, and the moments it takes. With the daily session on there is one table: the day's session, in the place of
 /// the app the moments came from — one app a wake: another app's moments
 /// wait for the next, so nothing of one app is told in another's place —
 /// and every moment's line lands there alone. Otherwise the app chat the
@@ -419,8 +418,7 @@ async fn at_the_table(
     (moments, Some(super::resident::Table { session: day, app }))
 }
 
-/// Moments of an app that keeps a session of its own, with one session a
-/// day on: her turn runs at the app chat they name, and her line lands
+/// Moments of an app that keeps a session of its own, with the daily session on: her turn runs at the app chat they name, and her line lands
 /// nowhere else — never in a day. With no such chat named there is no table
 /// for her: her own thread is the day, so they go unanswered.
 fn apart_from_the_day(

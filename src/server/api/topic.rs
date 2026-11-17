@@ -177,7 +177,7 @@ pub(crate) struct PublishBody {
 }
 
 /// POST /api/topic/publish — relay one control message to the user's devices.
-/// With one session a day on, another person's is taken and dropped: it
+/// With the daily session on, another person's is taken and dropped: it
 /// neither replaces a kept reading nor reaches the builder's surfaces.
 pub(crate) async fn publish(
     State(state): State<Arc<ServerState>>,

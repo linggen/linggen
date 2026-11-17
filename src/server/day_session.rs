@@ -1,7 +1,7 @@
 //! The day's session, as the server resolves it (`doc/one-ling-spec.md`
-//! § One session a day). With `agent.daily_session` on, the chats the
+//! § Linggen's daily session). With `agent.daily_session` on, the chats the
 //! person is in — an app's chat, Yinyue's own and unprompted turns, a
-//! hand-off from the phone — are one session a day; each turn stands in the
+//! hand-off from the phone — are the daily session; each turn stands in the
 //! place of the page it came from. Missions, delegated runs (`agent_run`)
 //! and sessions an app makes for a one-off job keep sessions of their own.
 //!
