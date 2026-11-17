@@ -847,3 +847,269 @@ async fn a_private_apps_task_end_is_told_in_that_app() {
         "rows of the day with no place: {unplaced:?}"
     );
 }
+
+/// A made-up app written into the world's home and loaded: `private` keeps
+/// its talk to itself.
+async fn install_app(w: &World, name: &str, tools: &str, private: bool) {
+    let dir = w.home.linggen_home().join(format!("skills/{name}"));
+    std::fs::create_dir_all(&dir).expect("app dir");
+    let body = format!(
+        "---\nname: {name}\ndescription: A test app.\nallowed-tools: [{tools}]\n\
+         private-talk: {private}\ncwd: ~/.linggen/skills/{name}\n---\n\nDo what you are asked.\n"
+    );
+    std::fs::write(dir.join("SKILL.md"), body).expect("SKILL.md");
+    w.api.post("/api/skills/reload", json!({})).await;
+}
+
+/// Each person has a day of their own: neither is handed, shown or lets
+/// write into the other's — by the day's lookup, an app's list, a chat that
+/// names the other's day, or a page's history.
+#[tokio::test]
+async fn each_person_sees_and_writes_only_their_own_day() {
+    let setup = Setup::default().script(
+        Agent::Ling,
+        vec![text("For the builder."), text("For the friend."), text("Friend again.")],
+    );
+    let (w, _) = day_world_at(12, setup).await;
+    let friend = "u-friend";
+    let mine = w.api.get("/api/sessions/day").await["id"].as_str().unwrap().to_string();
+    let theirs = w.api.get(&format!("/api/sessions/day?user_id={friend}")).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_ne!(mine, theirs);
+
+    let chat = |message: &str, user: Option<&str>, sid: Option<&str>| {
+        let mut body = json!({"project_root": w.work(), "message": message, "skill_name": "dice"});
+        if let Some(user) = user {
+            body["user_id"] = json!(user);
+        }
+        if let Some(sid) = sid {
+            body["session_id"] = json!(sid);
+        }
+        body
+    };
+    let mark = w.mark();
+    let sent = w.api.post("/api/chat", chat("BUILDER-WORDS", None, None)).await;
+    assert_eq!(sent["session_id"], mine.as_str());
+    w.finish_run(&mine, Agent::Ling, mark).await;
+    let mark = w.mark();
+    let sent = w.api.post("/api/chat", chat("FRIEND-WORDS", Some(friend), None)).await;
+    assert_eq!(sent["session_id"], theirs.as_str());
+    w.finish_run(&theirs, Agent::Ling, mark).await;
+    // Naming the builder's day, the friend writes into their own.
+    let mark = w.mark();
+    let sent = w.api.post("/api/chat", chat("FRIEND-AGAIN", Some(friend), Some(&mine))).await;
+    assert_eq!(sent["session_id"], theirs.as_str(), "{sent}");
+    w.finish_run(&theirs, Agent::Ling, mark).await;
+
+    let text_of = |sid: &str| serde_json::to_string(&w.raw_rows(sid)).unwrap();
+    assert!(!text_of(&mine).contains("FRIEND-"), "the friend wrote into the builder's day");
+    assert!(!text_of(&theirs).contains("BUILDER-WORDS"));
+    let list = w.api.get(&format!("/api/skill-sessions?skill=dice&user_id={friend}")).await;
+    assert_eq!(list["sessions"][0]["id"], theirs.as_str());
+    let page = format!("/api/skill-sessions/state?skill=dice&session_id={mine}&user_id={friend}");
+    assert!(!history_text(&w.api.get(&page).await).contains("BUILDER-WORDS"));
+    let main = format!(
+        "/api/workspace/state?session_id={mine}&project_root={}&user_id={friend}",
+        urlencoding::encode(&w.work())
+    );
+    assert!(!history_text(&w.api.get(&main).await).contains("BUILDER-WORDS"));
+    let own = format!("/api/skill-sessions/state?skill=dice&session_id={theirs}&user_id={friend}");
+    assert!(history_text(&w.api.get(&own).await).contains("FRIEND-WORDS"));
+}
+
+/// Answer the permission prompts `app`'s page is shown until Ling has made
+/// `n` calls.
+async fn grant_until(w: &World, app: &str, n: usize) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while w.model.calls_of(Agent::Ling).len() < n {
+        assert!(std::time::Instant::now() < deadline, "only {} calls", w.model.calls_of(Agent::Ling).len());
+        let asks = w.api.get(&format!("/api/pending-ask-user?skill={app}")).await;
+        for ask in asks.as_array().cloned().unwrap_or_default() {
+            w.api.answer(&ask, "grant:all").await;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
+/// A question asked while the person is away, in `app`'s place of the day:
+/// she calls them back before it is answered, and what she was told is
+/// returned. The turn that asks it holds the day while it waits.
+async fn herald_while_away(app: &str, private: bool, question: &str) -> String {
+    let setup = Setup::default()
+        .script(
+            Agent::Ling,
+            vec![
+                tool("Bash", json!({"cmd": "sleep 3; echo moved", "run_in_background": true})),
+                text("Started."),
+                tool(
+                    "AskUser",
+                    json!({"questions": [{"question": question, "header": "Box",
+                        "options": [{"label": "Red"}, {"label": "Blue"}]}]}),
+                ),
+                text("Red it is."),
+            ],
+        )
+        .script(Agent::Yinyue, vec![text("I'm here."), text("They need you back.")]);
+    let (w, _) = day_world_at(12, setup).await;
+    install_app(&w, app, "Bash, AskUser", private).await;
+    let mark = w.mark();
+    w.api.post("/api/yinyue/chat", json!({"text": "Hello"})).await;
+    w.wait_agent(Agent::Yinyue, mark).await;
+    let day = w.api.create_session(json!({"title": "App", "skill": app})).await;
+    say(&w, &day, Some(app), "Move the box").await;
+    grant_until(&w, app, 2).await;
+    // Away: the only surface that beat is the turn's own.
+    let away = json!({"surface": "user-turn", "focused": false, "typing": false, "idle_ms": 600_000});
+    w.api.post("/api/presence", away).await;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let asked = loop {
+        assert!(std::time::Instant::now() < deadline, "no question; log:\n{}", w.engine.log());
+        let asks = w.api.get(&format!("/api/pending-ask-user?skill={app}")).await;
+        if let Some(ask) = asks.as_array().and_then(|a| a.first()).cloned() {
+            break ask;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    };
+    while w.model.calls_of(Agent::Yinyue).len() < 2 {
+        assert!(std::time::Instant::now() < deadline, "she never heralded; log:\n{}", w.engine.log());
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let told = w.model.calls_of(Agent::Yinyue)[1].text();
+    let spoke = w.events_when(|e| e.iter().any(|x| x["kind"] == "pet_speak")).await;
+    assert!(spoke.iter().any(|x| x["kind"] == "pet_speak"), "her line was not spoken");
+    w.api.answer(&asked, "Red").await;
+    told
+}
+
+/// The person is away while a turn waits on its question: she calls them
+/// back before it is answered, told what is asked.
+#[tokio::test]
+async fn she_calls_the_person_back_to_a_waiting_question_in_the_day() {
+    let told = herald_while_away("porter", false, "PORTER-QUESTION: which box?").await;
+    assert!(told.contains("PORTER-QUESTION"), "{told}");
+}
+
+/// In a private app she still calls them back, told only that the app waits.
+#[tokio::test]
+async fn from_a_private_app_she_is_told_only_that_it_waits() {
+    let told = herald_while_away("vault", true, "VAULT-QUESTION: which box?").await;
+    assert!(!told.contains("VAULT-QUESTION"), "she was told the question: {told}");
+    assert!(told.contains("vault"), "{told}");
+}
+
+/// A background subagent of a private app's turn streams after that turn
+/// is over: every event of it carries the app's stamp, so only that app's
+/// pages are sent it.
+#[tokio::test]
+async fn a_background_subagent_of_a_private_turn_stays_kept() {
+    let setup = Setup::default().script(
+        Agent::Ling,
+        vec![
+            tool(
+                "Task",
+                json!({"target_agent_id": "ling", "task": "Keep SUB-SECRET", "run_in_background": true}),
+            ),
+            text("SUB-SECRET is with the helper."),
+            text("SUB-SECRET kept."),
+            text("SUB-SECRET came back."),
+        ],
+    );
+    let (w, _) = day_world_at(12, setup).await;
+    install_app(&w, "relay", "Task", true).await;
+    let day = w.api.create_session(json!({"title": "Relay", "skill": "relay"})).await;
+    say(&w, &day, Some("relay"), "Hand it off").await;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while w.model.calls_of(Agent::Ling).len() < 4 {
+        assert!(std::time::Instant::now() < deadline, "log:\n{}", w.engine.log());
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let events = w
+        .events_when(|e| e.iter().filter(|x| x.to_string().contains("SUB-SECRET")).count() >= 3)
+        .await;
+    // The task list is sent whole and judged entry by entry for each page
+    // (each entry carries its own stamp); every other event by its stamp.
+    let secret: Vec<&Value> = events
+        .iter()
+        .filter(|x| x["kind"] != "tasks" && x.to_string().contains("SUB-SECRET"))
+        .collect();
+    assert!(!secret.is_empty());
+    let unkept: Vec<&&Value> = secret.iter().filter(|x| x["kept_to"] != "relay").collect();
+    assert!(unkept.is_empty(), "events of the private turn sent unkept: {unkept:#?}");
+}
+
+/// From a private app a message to another agent is refused, with a reason
+/// the model reads; nothing reaches her.
+#[tokio::test]
+async fn a_private_apps_message_to_another_agent_is_refused() {
+    let setup = Setup::default().script(
+        Agent::Ling,
+        vec![
+            tool("agent_chat", json!({"to": "yinyue", "message": "LEDGER-ONLY news"})),
+            text("Kept it here."),
+        ],
+    );
+    let (w, _) = day_world_at(12, setup).await;
+    install_app(&w, "quiet", "agent_chat", true).await;
+    let day = w.api.create_session(json!({"title": "Quiet", "skill": "quiet"})).await;
+    turn_at(&w, &day, Some("quiet"), "Tell her", Agent::Ling).await;
+    let after = w.model.calls_of(Agent::Ling)[1].text();
+    assert!(after.contains("refused: quiet keeps what is said in it to itself"), "{after}");
+    assert!(w.model.calls_of(Agent::Yinyue).is_empty(), "she was reached");
+}
+
+/// With plans waiting in two places, approving runs the plan being decided
+/// in its own place: the home plan's rows and its run are home's, and the
+/// private app's plan row keeps its stamp.
+#[tokio::test]
+async fn an_approved_plan_runs_in_its_own_place() {
+    let setup = Setup::default().script(
+        Agent::Ling,
+        vec![
+            tool("EnterPlanMode", json!({"reason": "plan it"})),
+            tool("ExitPlanMode", json!({"plan_text": "## Plan\n\n1. PLANNER-SECRET step"})),
+            tool("EnterPlanMode", json!({"reason": "plan it"})),
+            tool("ExitPlanMode", json!({"plan_text": "## Plan\n\n1. HOME-PLAN step"})),
+            text("HOME-RUN done."),
+        ],
+    );
+    let (w, _) = day_world_at(12, setup).await;
+    install_planner(&w).await;
+    let day = w.api.create_session(json!({"title": "Planner", "skill": "planner"})).await;
+    let has = |w: &World, marker: &str| {
+        w.raw_rows(&day).iter().any(|r| r["content"].as_str().is_some_and(|c| c.contains(marker)))
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    say(&w, &day, Some("planner"), "Plan it").await;
+    while !has(&w, "PLANNER-SECRET") {
+        assert!(std::time::Instant::now() < deadline, "log:\n{}", w.engine.log());
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    say(&w, &day, None, "Plan at home").await;
+    while !has(&w, "HOME-PLAN") {
+        assert!(std::time::Instant::now() < deadline, "log:\n{}", w.engine.log());
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let action = json!({"project_root": w.work(), "agent_id": "ling", "session_id": day});
+    w.api.post("/api/plan/approve", action).await;
+    while !has(&w, "HOME-RUN") {
+        assert!(std::time::Instant::now() < deadline, "log:\n{}", w.engine.log());
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let rows = w.raw_rows(&day);
+    let with = |marker: &str| -> Vec<&Value> {
+        rows.iter().filter(|r| r["content"].as_str().is_some_and(|c| c.contains(marker))).collect()
+    };
+    assert!(with("PLANNER-SECRET").iter().all(|r| r["kept_to"] == "planner"), "{rows:#?}");
+    let home = with("HOME-PLAN");
+    assert!(home.len() >= 2, "made and approved: {rows:#?}");
+    assert!(home.iter().all(|r| r["kept_to"] != "planner"), "the home plan was kept to the app: {rows:#?}");
+    assert!(with("HOME-RUN").iter().all(|r| r["kept_to"] != "planner"), "it ran in the app: {rows:#?}");
+    let main = w.api.history(&day, &w.work()).await;
+    assert!(history_text(&main).contains("HOME-RUN"));
+}
