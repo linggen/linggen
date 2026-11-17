@@ -1,3 +1,7 @@
+//! Small helpers every layer may use. One copy of each: look here before
+//! writing another.
+
+/// Mark a file we wrote as runnable (0755). Nothing to do off unix.
 #[cfg(unix)]
 pub fn set_executable(path: &std::path::Path) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
@@ -9,16 +13,21 @@ pub fn set_executable(_path: &std::path::Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Signal the whole process group a child of ours leads.
 #[cfg(unix)]
 pub fn kill_group(pid: Option<u32>, signal: i32) {
     if let Some(pid) = pid {
-        unsafe { libc::killpg(pid as i32, signal); }
+        // SAFETY: a signal to a group this program created; no memory is touched.
+        unsafe {
+            libc::killpg(pid as i32, signal);
+        }
     }
 }
 
 #[cfg(not(unix))]
 pub fn kill_group(_pid: Option<u32>, _signal: i32) {}
 
+/// For `#[serde(default = …)]` on a switch that is on unless turned off.
 pub fn default_true() -> bool {
     true
 }
