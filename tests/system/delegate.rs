@@ -22,6 +22,27 @@ fn delegate_session(w: &World) -> String {
     made.remove(0)
 }
 
+#[tokio::test]
+async fn work_agent_run_switches() {
+    for (write, requested, expected) in [(true, None, Some("code")), (true, Some("none"), None), (false, None, None), (false, Some("code"), Some("code"))] {
+        let w = World::start(Setup::default().script(Agent::Ling, vec![text("Done."), text("Again.")])).await;
+        let mut args = json!({"prompt":"Say done."});
+        if write { args["write_dir"] = json!(w.work()); }
+        if let Some(value) = requested { args["work"] = json!(value); }
+        let call = |args| json!({"jsonrpc":"2.0", "id":1, "method":"tools/call", "params":{"name":"agent_run", "arguments":args}});
+        let result = w.api.post("/mcp", call(args)).await;
+        assert_eq!(result["result"]["content"][0]["text"], "Done.", "{result}");
+        let sid = delegate_session(&w);
+        let path = w.home.linggen_home().join("sessions").join(&sid).join("session.yaml");
+        let read = || -> Value { serde_norway::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap() };
+        assert_eq!(read()["work"].as_str(), expected);
+        let other = if expected.is_some() { "none" } else { "code" };
+        let result = w.api.post("/mcp", call(json!({"prompt":"Again", "session_id":sid, "work":other}))).await;
+        assert_eq!(result["result"]["content"][0]["text"], "Again.", "{result}");
+        assert_eq!(read()["work"].as_str(), expected);
+    }
+}
+
 fn sorted(mut names: Vec<String>) -> Vec<String> {
     names.sort();
     names

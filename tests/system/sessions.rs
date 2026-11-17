@@ -7,6 +7,40 @@ use crate::support::model::Agent;
 use crate::support::{snap, snap_text, text, tool, Setup, World};
 use serde_json::json;
 
+fn work_meta(w: &World, sid: &str) -> serde_json::Value {
+    serde_norway::from_str(&std::fs::read_to_string(w.home.linggen_home().join("sessions").join(sid).join("session.yaml")).unwrap()).unwrap()
+}
+
+#[tokio::test]
+async fn work_create_code() {
+    let w = World::start(Setup::default()).await;
+    let sid = w.api.create_session(json!({"title":"code", "work":"code"})).await;
+    assert_eq!(work_meta(&w, &sid)["work"], "code");
+    let prompt = w.api.export(&sid, "ling", &w.work()).await;
+    assert!(prompt["system_prompt"].as_str().unwrap_or("").contains("## Working on code"));
+}
+
+#[tokio::test]
+async fn work_create_app_refused() {
+    let w = World::start(Setup::default()).await;
+    let dir = w.home.linggen_home().join("sessions");
+    let before = std::fs::read_dir(&dir).unwrap().count();
+    assert_eq!(w.api.post_status("/api/sessions", json!({"title":"app", "skill":"dice", "work":"code"})).await, 400);
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), before);
+}
+
+#[tokio::test]
+async fn work_update_switch() {
+    let w = World::start(Setup::default()).await;
+    let sid = w.api.create_session(json!({"title":"chat"})).await;
+    let client = reqwest::Client::new();
+    for (value, expected, status) in [("code", json!("code"), 200), ("none", json!(null), 200), ("bad", json!(null), 400)] {
+        let response = client.patch(format!("{}/api/sessions", w.engine.base_url())).json(&json!({"session_id":sid, "work":value})).send().await.unwrap();
+        assert_eq!(response.status(), status);
+        assert_eq!(work_meta(&w, &sid)["work"], expected);
+    }
+}
+
 const SHARED: &str = "sess-1790000001-5a1ed001";
 const COMPACTED: &str = "sess-1790000002-c0ac7ed2";
 const INTERRUPTED: &str = "sess-1790000003-1e7e5ed3";

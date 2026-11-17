@@ -358,6 +358,7 @@ const TOOLS: &[McpTool] = &[
                 "model_fallback": {"type": "boolean", "description": "Default false: if the model fails the run ends naming the model and the reason, rather than switching to another model; true allows the automatic switch."},
                 "host": {"type": "string", "description": "Calling host, e.g. claude-code, codex or cursor (default claude-code)"},
                 "permission_mode": {"type": "string", "enum": ["plan", "default", "acceptEdits", "auto", "bypassPermissions"], "description": "Your current permission mode; plan is read-only, default/acceptEdits grant edit, auto/bypassPermissions grant admin in write_dir only. New sessions only."},
+                "work": {"type": "string", "enum": ["code", "none"], "description": "Coding guidance for new sessions; defaults to code with write_dir, otherwise none; ignored on continuation."},
                 "write_dir": {"type": "string", "description": "For code changes, create a git worktree first and pass its existing absolute path. The grant follows permission_mode; other paths stay read-only, and an action beyond that waits for your agent_permit. Omit for read-only; new sessions only (a continued session keeps its grant)."}
             },
             "required": ["prompt"]
@@ -566,6 +567,7 @@ async fn call_tool(deps: &McpDeps<'_>, name: &str, args: Value) -> Result<Value,
                         args.get("permission_mode").and_then(Value::as_str),
                         args.get("host").and_then(Value::as_str),
                         args.get("model_fallback").and_then(Value::as_bool),
+                        args.get("work").and_then(Value::as_str),
                     )
                     .await
                 }

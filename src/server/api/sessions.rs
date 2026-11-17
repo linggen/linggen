@@ -23,6 +23,8 @@ pub(crate) struct CreateSessionRequest {
     project_root: Option<String>,
     title: String,
     #[serde(default)]
+    work: Option<String>,
+    #[serde(default)]
     runtime: crate::state_fs::sessions::SessionRuntime,
     #[serde(default)]
     user_type: String,
@@ -38,6 +40,25 @@ pub(crate) struct CreateSessionRequest {
     /// params (`SessionMeta::params`). Only with `skill`; checked here.
     #[serde(default)]
     params: crate::engine::skill::params::SessionParams,
+}
+
+/// Apply a requested work switch only to a preset that accepts work.
+pub(crate) fn set_work(meta: &mut crate::state_fs::sessions::SessionMeta, value: &str) -> Result<(), &'static str> {
+    use crate::engine::session_spec::{preset_of, Work};
+    let work = match value {
+        "code" => Some(Work::Code),
+        "none" => None,
+        _ => return Err("unknown work value"),
+    };
+    if !preset_of(meta).takes_work() {
+        return Err("this session cannot take work");
+    }
+    meta.work = work;
+    Ok(())
+}
+
+fn work_error(reason: &str) -> axum::response::Response {
+    (StatusCode::BAD_REQUEST, Json(serde_json::json!({"reason": reason}))).into_response()
 }
 
 /// Why a session can't be bound to `params`: no skill to declare them, or
@@ -114,6 +135,9 @@ pub(crate) async fn create_session(
             session_cwd(None, req.project_root.as_deref()),
             None,
         );
+        if let Some(value) = req.work.as_deref() {
+            if let Err(reason) = set_work(&mut meta, value) { return work_error(reason); }
+        }
         meta.user_id = req.user_id;
         meta.withheld_tools = req.withheld_tools;
         if let Err(error) = state.manager.global_sessions.add_session(&meta) {
@@ -125,8 +149,10 @@ pub(crate) async fn create_session(
             .send(crate::server::ServerEvent::StateUpdated);
         return Json(serde_json::json!({"id": meta.id, "cwd": meta.cwd, "runtime": meta.runtime, "agents": meta.agents})).into_response();
     }
-    if let Some(day) = day_for_new_chat(&state, &req).await {
-        return day.into_response();
+    if req.work.is_none() {
+        if let Some(day) = day_for_new_chat(&state, &req).await {
+            return day.into_response();
+        }
     }
     let id = format!(
         "sess-{}-{}",
@@ -175,6 +201,10 @@ pub(crate) async fn create_session(
         model_fallback: None,
         params: req.params,
     };
+    if let Some(value) = req.work.as_deref() {
+        if value != "code" { return work_error("unknown work value"); }
+        if let Err(reason) = set_work(&mut meta, value) { return work_error(reason); }
+    }
     meta.set_cwd(&cwd);
 
     match state.manager.global_sessions.add_session(&meta) {
@@ -422,6 +452,8 @@ pub(crate) async fn remove_skill_session_api(
 pub(crate) struct RenameSessionRequest {
     session_id: String,
     #[serde(default)]
+    work: Option<String>,
+    #[serde(default)]
     title: Option<String>,
     #[serde(default)]
     model_id: Option<String>,
@@ -461,6 +493,13 @@ pub(crate) async fn rename_session_api(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<RenameSessionRequest>,
 ) -> impl IntoResponse {
+    if let Some(value) = req.work.as_deref() {
+        match state.manager.global_sessions.edit(&req.session_id, |meta| set_work(meta, value)) {
+            Ok(Ok(())) => {},
+            Ok(Err(reason)) => return work_error(reason),
+            Err(_) => return StatusCode::NOT_FOUND.into_response(),
+        }
+    }
     if let Ok(Some(meta)) = state
         .manager
         .global_sessions

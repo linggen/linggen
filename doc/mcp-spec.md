@@ -142,6 +142,7 @@ deprecation window:
   is read-only; `default`/`acceptEdits` grant edit there; `auto`/
   `bypassPermissions` grant admin there. Other paths stay read-only. Linggen
   never prompts a person for these runs; browser mutations have their own gate.
+- `agent_run` accepts `work: "code"` or `"none"` for a new session: by default `write_dir` selects code, otherwise none. A continued session ignores it.
 - Give a self-contained brief: files, cause, tests to run, and “reply short”.
   Only the final reply returns; working steps remain visible in the web UI.
 - A long run continues in the background. Don't poll: start a background

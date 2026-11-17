@@ -142,6 +142,7 @@ pub async fn run(
     permission_mode: Option<&str>,
     host: Option<&str>,
     model_fallback: Option<bool>,
+    work: Option<&str>,
 ) -> Result<String, String> {
     let prompt = prompt.trim();
     if prompt.is_empty() {
@@ -276,6 +277,9 @@ pub async fn run(
         mode.is_some(),
         model_fallback,
     );
+    if let Some(value) = work.or(if write.is_some() { Some("code") } else { None }) {
+        super::api::sessions::set_work(&mut meta, value).map_err(str::to_string)?;
+    }
     meta.set_cwd(&root_str);
     if let Err(e) = store.add_session(&meta) {
         return Err(format!("failed to create session: {e}"));

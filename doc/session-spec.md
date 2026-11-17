@@ -135,6 +135,10 @@ Chat, Delegate and Handoff take this tag; all other presets ignore it.
 The guidance is in `prompts/work-code.toml`: core lines followed by the answering model family's lines when available.
 The tag does not change tools, permissions or memory, and Task children inherit it.
 
+Create an independent coding chat with `POST /api/sessions` and `work: "code"`; a normal request without it is unchanged. App and other unsupported presets refuse the switch. `PATCH /api/sessions` sets `work: "code"` or clears it with `work: "none"`; it takes effect on the next turn.
+
+A new `agent_run` session defaults to coding guidance when given `write_dir`, otherwise none; `work: "code"` or `"none"` overrides that default. A continued run ignores `work`. Coding sessions never join the daily session.
+
 The spec is the only writer of a session's prompt profile, tool
 restriction, interactivity, world and framing; a turn's place narrows the
 turn on top of it and puts it back when the turn ends (§ A turn's place). A
