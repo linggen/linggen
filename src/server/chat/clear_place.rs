@@ -1,6 +1,7 @@
-//! Clear, from an app's page in the day's session: that app's part of the
-//! day goes, every other place's stays (`doc/one-ling-spec.md` § One session
-//! a day). Anywhere else Clear empties the session, as it always did.
+//! Clear in the day's session takes the rows of the place it is pressed in —
+//! an app's page its app's, the main page home's — and every other place's
+//! stay (`doc/one-ling-spec.md` § One session a day). Anywhere else Clear
+//! empties the session, as it always did.
 
 use super::types::ClearChatRequest;
 use crate::server::{ServerEvent, ServerState};
@@ -24,11 +25,15 @@ pub(crate) async fn clear_chat_api(
     }
 }
 
-/// The app whose part of the day a page of `skill` clears: its own, in a
-/// day's session. `None`: the whole session is cleared.
+/// The place whose part of the day a page of `skill` clears: its app's, or
+/// home's for a page of none, in a day's session. `None`: the whole
+/// session is cleared.
 fn app_part(session_id: &str, skill: Option<&str>) -> Option<String> {
-    let skill = skill.map(str::trim).filter(|s| !s.is_empty())?;
-    crate::server::day_session::is_day(session_id).then(|| skill.to_string())
+    if !crate::server::day_session::is_day(session_id) {
+        return None;
+    }
+    let skill = skill.map(str::trim).filter(|s| !s.is_empty());
+    Some(skill.unwrap_or(crate::engine::turn_place::HOME_KEY).to_string())
 }
 
 /// Remove the rows written in `app`'s place from the day's session; every
@@ -94,8 +99,8 @@ mod tests {
         }
     }
 
-    /// Clear on an app's page in the day takes that app's rows alone; on
-    /// any other page, or in any other session, the whole session goes.
+    /// Clear in the day takes the rows of the place it is pressed in; in any
+    /// other session the whole session goes.
     #[test]
     fn clear_on_an_apps_page_takes_only_its_part_of_the_day() {
         let day = SessionMeta {
@@ -115,7 +120,9 @@ mod tests {
             app_part("sess-day-2026-11-16", Some("zz-ledger")).as_deref(),
             Some("zz-ledger")
         );
-        assert_eq!(app_part("sess-day-2026-11-16", None), None);
+        assert_eq!(app_part("sess-day-2026-11-16", None).as_deref(), Some(":home"));
+        let home_left = without_place(vec![row(Some("zz-ledger")), row(None), row(Some(":home"))], &day, ":home");
+        assert_eq!(home_left.len(), 1, "home's Clear leaves the apps' rows");
         assert_eq!(app_part("sess-1-zz-ledger", Some("zz-ledger")), None);
     }
 }
