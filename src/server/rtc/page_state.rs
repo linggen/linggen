@@ -173,6 +173,21 @@ fn queued_entries(
         .collect()
 }
 
+/// One row of the session list. `updated_at` is #[serde(skip)] so it never
+/// lands in session.yaml — the derived value is put in by hand for the UI
+/// (grouping/sort key on last activity). The day's session is marked
+/// `day: true` (`doc/one-ling-spec.md` § One session a day).
+fn session_row(s: crate::state_fs::sessions::SessionMeta) -> Option<serde_json::Value> {
+    let updated_at = s.updated_at;
+    let day = crate::server::day_session::is_day(&s.id);
+    let mut v = serde_json::to_value(s).ok()?;
+    v["updated_at"] = serde_json::Value::from(updated_at);
+    if day {
+        v["day"] = serde_json::Value::Bool(true);
+    }
+    Some(v)
+}
+
 /// Dirty-flag bits for tracking which data categories changed.
 pub const DIRTY_GLOBAL: u64 = 0b0000_0001;
 pub const DIRTY_SCOPED: u64 = 0b0000_0010;
@@ -267,15 +282,7 @@ pub async fn build_page_state(
                 sessions
                     .into_iter()
                     .filter(|s| user_session_ids.contains(&s.id) && theirs(&s.id))
-                    .filter_map(|s| {
-                        // `updated_at` is #[serde(skip)] so it never lands in
-                        // session.yaml — inject the derived value by hand for
-                        // the UI (grouping/sort key on last activity).
-                        let updated_at = s.updated_at;
-                        let mut v = serde_json::to_value(s).ok()?;
-                        v["updated_at"] = serde_json::Value::from(updated_at);
-                        Some(v)
-                    })
+                    .filter_map(session_row)
                     .collect(),
             );
         }
@@ -563,6 +570,21 @@ mod tests {
             ..Default::default()
         };
         assert!(!other.shown_to("u-friend").1);
+    }
+
+    /// The day's row in the session list is marked; no other row changes.
+    #[test]
+    fn the_days_row_is_marked() {
+        let day = crate::state_fs::sessions::SessionMeta {
+            id: "sess-day-2026-11-16".into(),
+            ..Default::default()
+        };
+        assert_eq!(session_row(day).unwrap()["day"], true);
+        let other = crate::state_fs::sessions::SessionMeta {
+            id: "sess-1-a".into(),
+            ..Default::default()
+        };
+        assert!(session_row(other).unwrap().get("day").is_none());
     }
 
     #[test]
