@@ -28,7 +28,10 @@ Every number is tagged **(measured)** — taken on his Mac on 2026-11-15 — or
 | 3 Modules | 3.2 done — `ling` (server, cli) and `crates/linggen-engine`. The further cuts (base, model, store, skills) are put off until 2.4 has landed, or dropped (decided 2026-11-16): they move files wholesale, would collide with the 2.4 branch, and with incremental builds a one-file rebuild is already 5–10 s — they would buy tidiness, not time |
 | 4 Upgrades | Done, published in **2.3.1** (2026-11-17). Patch and minor batch in 2.3.0 (329 crates). The two major groups in 2.3.1, a release of their own because a database upgrade may change the store on disk: fastembed 5.17.4 on candle 0.11.0 (vectors bit-equal to 2.3.0's); lancedb 0.41 with lance 14.0.2 and datafusion 54 (a 2.3.0 store opens in place with every row; 2.3.0 still opens it afterwards — the gate now checks this upgrade and the way back on every release; new tables pinned to Lance file format 2.1). Cost (measured): `ling` 312.6 → 373.0 MB, the Mac download 219.5 → 238.1 MB. Open: the database libraries' unused features (step 4.3) to win that back; the memory benchmark (`evals/memory`) still speaks to the old two-program setup and was not run — identical vectors and identical search hits stood in for it |
 | Slimming | Mac: done, published in 2.3.0 — Yinyue's clips baked; packaged skills leave out tools, tests and unloaded source art; 灵境's later-chapter art is fetched after install by content hash (133 files, held within seconds of first launch in the gate). Phone: built on branches, not merged — 灵境 in the app 106.7 → 86.1 MB (measured; the careful count), later chapters fetched by hash, everything on Wi-Fi and only the next chapter on cellular. Open: merging it, putting the phone's art set on the storage, a build on a device |
-| 2.4 → ships as 3.0 | Built on the local `next/2.4` branches (engine and skills), merged with main after 2.3.1, checks green; not on main yet. The activity log, the world block, notes and look-again, the guardrails, a turn's place; and the daily session behind `agent.daily_session` (off by default): app chats, her moments and phone hand-offs in the daily session from 04:00, each turn in its page's place, other apps' stretches folded on a page. Reshaped on 2026-11-16/17 after review: a private app keeps a session of its own (one rule asked by every way into the day); a day is a person's, the person resolved from the device as memory resolves it; her stage and voice are held per person. The phone's side is built on a branch. Open: landing engine, skills and phone together; the setting on by default; the scenario tests and the three scenarios seen live |
+| 2.4 → ships as 3.0 | On main since 2026-11-17 (engine, skills and phone), checks green. The activity log, the world block, notes and look-again, the guardrails, a turn's place; and the daily session behind `agent.daily_session` (off by default): app chats, her moments and phone hand-offs in the daily session from 04:00, each turn in its page's place, other apps' stretches folded on a page. Reshaped on 2026-11-16/17 after review: a private app keeps a session of its own (one rule asked by every way into the day); a day is a person's, the person resolved from the device as memory resolves it; her stage and voice are held per person. The phone's side is on main too (hand-offs join the day; later chapters' art fetched by hash). Seen live once on his Mac with the setting on. Open: the setting on by default; the three scenarios seen live; the phone's art set on the storage and a build on a device |
+| Kinds of session (§5.1) | Designed and agreed 2026-11-17. Part 1 (every kind of session described by one spec, applied in one place; behaviour unchanged) in work. Open: the `code` kind of work, the ways to ask for it, the comparison runs |
+| A paired device's standing (§5.2) | Decided 2026-11-17, designed; not built |
+| Review and refactor before 3.0 (§5.3) | Second review done 2026-11-17 (read-only). First small moves in work |
 
 ## 2. Milestones
 
@@ -37,7 +40,7 @@ Every number is tagged **(measured)** — taken on his Mac on 2026-11-15 — or
 | **2.3** (published 2026-11-16) | Structure: architecture review, build speed, the merge, memory as a library the engine calls, the engine split into modules (first cut), patch and minor library upgrades, app slimming | Gate green on first install and on 2.2.1 → 2.3 (the takeover of an existing memory store); one process serving memory to Claude Code and Codex seen live on his Mac; sizes re-measured |
 | **2.3.1** (published 2026-11-17) | The two major library groups (vector database; embedding stack), each verified on its own | Gate green on first install, 2.3.0 → 2.3.1 in place and back, and 2.2.1 → 2.3.1; published with one known cosmetic fault in 灵境 that 2.3.0 has too (a long name touching its status line in a crowded field row) |
 | **2.4** | Not a release of its own (decided 2026-11-16): its work — one Ling and one Yinyue (§5) — ships as 3.0 | — |
-| **3.0** | One Ling and one Yinyue (§5), with the day's session on by default; the phone slimmed and on the same version as the Mac (Hanli, 2026-11-16: 「手机,Mac同步改到3.0吧」) | Gate green; the scenario tests pass; his three scenarios seen live on his Mac and phone; Hanli's word |
+| **3.0** | One Ling and one Yinyue (§5), with the day's session on by default; kinds of session, with a coding session any model can run (§5.1); a paired device's standing by account (§5.2); the refactor the second review asks for (§5.3); the phone slimmed and on the same version as the Mac (Hanli, 2026-11-16: 「手机,Mac同步改到3.0吧」) | Gate green; the scenario tests pass; his three scenarios seen live on his Mac and phone; Hanli's word |
 
 ## 3. Rules for the work
 
@@ -242,6 +245,61 @@ a tired body, while he is in a game; a machine reading and a game state worth
 acting on, while he is in a coding session; something he told her he cares
 about, set against how the day has gone.
 
+### 5.1 Kinds of session (agreed 2026-11-17)
+
+**The need.** People use Linggen on different occasions — a chat, an app's
+page, a game, writing code — and each wants a session set up for it. Adding a
+new occasion later must not mean another special case.
+
+**The way.** One description of a session (its *spec*): who is seated, which
+tools, which folder, what memory, how permission is asked, how its context is
+kept, where it is listed. A small table of presets names the kinds that exist
+today (a chat the user starts, an app's session, Linggen's daily session,
+Yinyue's own, a hand-off, a mission, a delegated run, a one-off). One place
+applies a spec to a session; nothing else sets those things.
+
+**Coding sessions.** A session's *work* can be `code`: it adds one section to
+the prompt — how to work on code (look first, see a fault fail before fixing
+it, change the least, never loosen a test, check, report what was and was not
+verified) — with a few lines per model family. Nothing else changes: the
+tools, plans, background tasks and permissions a session has already are
+enough. Any model the user has a key for can run one. A coding session is one
+the user (or a plugin: Claude Code, Codex) starts; it stays apart from
+Linggen's daily session.
+
+**Not doing.** No SDK per provider. No per-app switch for the user to set —
+the page a turn comes from already chooses its place (§5).
+
+**Proof.** `evals/code`: the same tasks run three ways — a model with the
+`code` section, the same model without, and a Claude Code session.
+
+### 5.2 A paired device's standing (decided 2026-11-17)
+
+Hanli: 「配对设备, 看账号. 和mac上的账号一致, 是owner, 权限按owner处理. 非owner,
+要可以mac上设置非owner权限. 应该是read权限.」
+
+A paired device signed in to the Mac's own account is the owner's and may do
+what the owner may. Any other paired device gets a level set on the Mac;
+the default is read. A device at read keeps its own records (its chats, its
+saves).
+
+### 5.3 Review and refactor before 3.0
+
+Hanli, 2026-11-17: 「3.0前还需要做一遍架构评审, 重构一下」. The second review
+looked for decisions made in more than one place. Before 3.0:
+
+- One copy of each small helper that had several.
+- One writer for a session file's changes.
+- One rule for which model a turn runs on.
+- A turn's settings set through the session spec's one writer (after §5.1).
+- One type for "who this person is", one ladder of permission levels (with §5.2).
+- The store layer no longer reaches up into the engine.
+- Old-format readers for versions before 2.0 removed (no real users yet).
+
+Left for after 3.0: the further crate cuts, the event forwarder's rewrite,
+typed turn errors, one way to start background work, skills declaring their
+own setup steps.
+
 ## 6. Before a step can ship
 
 Checked on the web 2026-11-15 by a research agent. Several of the licensors'
@@ -277,7 +335,8 @@ Consequence for Yinyue: her animations stay in the program, baked small
 - Where the art's source of truth lives once it has left the package, and how
   an art update ships.
 - Decided 2026-11-16: the phone goes to 3.0 with the Mac; the careful count; 结印's camera stays. Open: when the App Store build is submitted (2.2.0 is still in review).
-- How far apart people who share one Mac are kept beyond the day's session, and what a paired device may do.
+- How far apart people who share one Mac are kept beyond the day's session.
+- Whether a person's "today" starts at 04:00 everywhere (the daily session's does), not only in the daily session.
 - How the world state reaches a session Linggen does not host (Claude Code or
   Codex in a terminal) — through the plugin's hook, or not at all.
 - Whether the gate tests a first launch with no network.
