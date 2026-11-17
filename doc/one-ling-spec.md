@@ -122,69 +122,52 @@ session, prompt and row is as before. On (decided by the builder 2026-11-15/16):
 - **What joins it**: an app's chat (a page asking for its app's session),
   Yinyue's own and unprompted turns, a hand-off from the phone. **What stays
   apart**: missions, delegated runs (`agent_run`), a New chat the person
-  makes, and an app's one-off sessions — one bound to its own values (a test
-  save) or made with tools withheld (an NPC's talk, a prefetch).
+  makes, an app's one-off sessions — one bound to its own values (a test
+  save) or made with tools withheld (an NPC's talk, a prefetch) — and a
+  private app's chat.
+- **One rule into the day.** Every way in — a new chat, a chat that names a
+  day, an app's list, the day's lookup (`GET /api/sessions/day?skill=`), her
+  moments, a message delivered to an agent — asks one rule: home's chat
+  joins; an app's only when it resolves and does not declare
+  `private-talk: true`. An app that does not resolve stays apart.
 - **Each turn in its place** (`session-spec.md` § A turn's place): the page's
   app gives the turn its skill, tools, folder and grants; one turn at a
   time, a message from another app waiting for the running one.
-- **A private app** (`private-talk: true`): its rows — talk, tool calls,
-  results, a summary written in its turn — are given to no turn in another
-  place, nor to Yinyue outside it, nor shown or streamed to a surface
-  outside it — its questions, its queued messages, its turn's whole event
-  stream but the turn's end. Its world line stays. No note is written in
-  its turn (a note is in front of its agent everywhere). A background
-  task's end and an approved plan's run stand where their work began. The
-  day's session is made by `agent`, so the memory scan (which reads a
-  person's own chats) never reads it. A row in an app's own session is
-  never hidden, so nothing changes outside the day's session. Cost,
-  accepted: asked elsewhere what was said there, Ling cannot answer.
+- **A private app** (`private-talk: true`, `skill-spec.md` § Private talk)
+  keeps a session of its own, as every app's chat does with the setting
+  off, so the day holds none of its talk. A chat that names the day from its page stands in the app's own
+  chat instead. From its turns — a subagent's and a turn the engine starts
+  there included — a tool that carries words out is refused; a question
+  waiting there reaches Yinyue only as that the app waits. Its world line
+  stays. The day's session is made by `agent`, so the memory scan (which
+  reads a person's own chats) never reads it.
 - **Her moments** run in the day's session too, standing in the app they
-  came from; her line is a row there and lands nowhere else. With the
-  setting on there is no app session for her to sit in.
+  came from; her line is a row there and lands nowhere else. A private
+  app's moment runs at the app chat it names, never in a day; with none
+  named it goes unanswered.
 - **The list** marks the day's session, one row a day; a page folds each
   stretch from another place to a line (the app, how many messages), which
   opens on a tap. The chats from before stay listed and readable either way.
 - **The phone** (engine side): a hand-off takes the first of
-  `GET /api/skill-sessions?skill=` (the day's) or `GET /api/sessions/day`
-  for the Mac's own chat, and names its app as `skill_name`; open notes read
-  back from `GET /api/notes?agent=`, read-only. Its own thread is unchanged.
-
-Built (2.4 branch, 2026-11-16): all of the above, in `server::day_session`,
-`state_fs::day_session`, `turn_place::sight` and `engine::event_bus`.
-
-- **Kept once, where it is made.** A row of the day is stamped as it is
-  saved with its place and whom it is kept to — its app, or everyone —
-  decided from the skill at that moment (an app that does not resolve keeps
-  its rows; a row naming a place with no stamp is kept to that place). A
-  plan edited, approved or rejected carries the stamp of the plan being
-  decided, and its run reads its place's thread. Every event is stamped as it is sent, from the run
-  that made it (a subagent's from its parent's, decided as the run began) or
-  the turn running then; a background task's entry carries its own. Readers
-  judge the stamp alone: a page is sent a kept event only on its app's
-  page, but its turn's end; the task list shows a kept task only there.
-- **One reader.** Rows reach a model, Yinyue or a page through
-  `rows_seen_by`; a lock test lists every other reader of rows and every
-  listener of the event bus (`EventBus::listen`) with why it may.
-- **One exit.** Every tool says whether a call stays in its place or carries
-  words out (another agent, a note, another turn's question, a new session,
-  the memory review queue or a day record, a memory write asking for
-  `global`, `cwd` or `scope`); from a kept place the second kind is refused
-  with a plain reason. The person's own lookups (web, browser) stay.
-- **Her.** A question waiting while the person is away is heralded at once,
-  even while its turn holds the day: her line is spoken then and kept as her
-  row when the day is free. From a kept place she is told only that the app
-  waits for an answer. A line she says in a kept place is heard only on its
-  app's page; a wake takes one app's moments, the others wait for the next.
+  `GET /api/skill-sessions?skill=` (the day's, for an app that joins it) or
+  `GET /api/sessions/day` for the Mac's own chat, and names its app as
+  `skill_name`; open notes read back from `GET /api/notes?agent=`,
+  read-only. Its own thread is unchanged.
 - **A day per person**: a person other than the builder has a day of their
-  own (`sess-day-YYYY-MM-DD-p-<person's id in hex>`). Every way a request
-  comes into the day — a chat, the day's lookup, an app's list, a page's
-  history — takes the person on the page's channel, and a day is read and
-  written only by its own person; what the engine starts itself (her
-  moments, her own thread) is the builder's. A day is made once and never
-  written over.
+  own (`sess-day-YYYY-MM-DD-p-<person's id in hex>`). The person behind a
+  caller is resolved once, from the device it named, as memory resolves
+  it: the owner's own device is the builder; a phone signed in to another
+  account is that account, a signed-out phone its device. A peer that has
+  not said which device it is is no one and is given no day. A day is read
+  and written only by its own person; what the engine starts itself (her
+  moments, her own thread) is the builder's, and a question waiting in
+  another person's day is not heralded in the builder's thread or voice. A
+  day is made once and never written over.
 - **Clear** takes the rows of the place it is pressed in: an app's page its
   app's, the main page home's.
-- **Compaction**: a private app's thread starts from its own summary.
+
+Built (2.4 branch, 2026-11-16): all of the above, in `server::day_session`,
+`state_fs::day_session`, `TurnPlace::private_app` and `tools::exit_gate`.
 
 Not built: the phone's side (it must send `skill_name` and use the day's
 id); a light turn after her moment stands at home, not in the moment's app;

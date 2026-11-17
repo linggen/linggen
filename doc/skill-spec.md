@@ -330,7 +330,13 @@ A message sent while a session's agent is mid-turn is queued. What happens to th
 
 ## Private talk
 
-`private-talk: true` declares that what is said in the app's turns is the app's alone. It is read with the rest of the frontmatter (a value that is not `true` or `false` is refused like any wrong frontmatter type) and kept on the skill. It acts where turns of several apps share one session — the day's session (`one-ling-spec.md` § One session a day): what the app's turns write and stream is stamped as kept to it when made, and no turn, page, herald or spoken line outside the app is given it; its world line stays. Its own session, holding only its talk, is unchanged.
+`private-talk: true` declares that what is said in the app's turns is the app's alone. It is read with the rest of the frontmatter (a value that is not `true` or `false` is refused like any wrong frontmatter type) and kept on the skill. It acts with one session a day on (`one-ling-spec.md` § One session a day):
+
+- **A session of its own.** The app's chat never joins the day's session, by any way in — a new chat, its list, the day's lookup, a hand-off, her moments, a message delivered to an agent in the app. An app that does not resolve (removed, its SKILL.md unreadable) stays apart the same way.
+- **Nothing carried out.** From its turns — the person's, hers, a turn the engine starts there (a task's end, an approved plan), a subagent of one — a tool that carries words out is refused with a plain reason: a message to another agent, a note, another turn's question, a new Claude session, the memory review queue or a day record, a memory write asking for `global`, `cwd` or `scope`, and `AppTool` or `RunApp` naming another app. Bash, web search and fetch, and other configured servers are the skill's own `allowed-tools` to grant.
+- **Her heralds.** A question waiting there while the person is away reaches her only as that the app waits — never the question, its options or anything said — and her line is made of that alone.
+
+Its world line stays. With the setting off nothing of this applies: every app's chat is its own session, as before.
 
 ## Quests
 
