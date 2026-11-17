@@ -26,6 +26,11 @@ Ling does every action, on every device (`one-ling-spec.md`, 2026-10-08; Yinyue 
 - The **other side** reaches it as a typed call routed to the owner — never by re-phrasing through the other agent.
 - Judgment-shaped asks that need the Mac ("get me the karaoke version") go to the app's latest Mac session as **Ling continuing her own task** — one Ling on two devices, never the phone's Yinyue asking the Mac's Ling.
 - User buttons are never gated. Tiers gate agents only.
+- An offer Yinyue carries with a problem she raises is a user button too
+  (`perception-spec.md` §5): the person's tap runs the declared tool — on the
+  phone through `OfferTap` behind the tool's own confirm card when it is
+  destructive, on the Mac through the skill-tool route a page button uses —
+  and she says the outcome from its result. Neither agent acts on its own.
 
 ## One writer per mutation (Mac)
 

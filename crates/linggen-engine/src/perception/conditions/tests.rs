@@ -175,3 +175,24 @@ fn runway_halving_is_worse() {
     assert_eq!(runway_level(1), 2);
     assert_eq!(runway_level(0), 3);
 }
+
+#[test]
+fn a_phone_not_now_that_ran_out_is_said_once_on_the_mac_not_at_every_glance() {
+    let mut told = Told::new(NOW - 10 * 86_400, 1, "phone");
+    told.answer = Some(crate::perception::told::Answer::NotNow);
+    told.answered_at = Some(NOW - 8 * 86_400);
+    let mut l = Ledger::default();
+    let n = choose(&mut l, vec![], peer(vec![problem(1, Some(told.clone()))]), NOW)
+        .expect("a not-now that ran out is due again");
+    record(&mut l, &n, NOW);
+    // The phone has not filed the report yet: it still publishes its old record.
+    assert!(
+        choose(&mut l, vec![], peer(vec![problem(1, Some(told))]), NOW + 3600).is_none(),
+        "said once — the Mac's newer report holds until the phone files it"
+    );
+    // Filed: the phone's record is the report's telling; the report goes, and
+    // it is still not due.
+    let filed = Told::new(NOW, 1, "mac");
+    assert!(choose(&mut l, vec![], peer(vec![problem(1, Some(filed))]), NOW + 7200).is_none());
+    assert!(l.reports("phone").is_empty(), "filed, so dropped");
+}

@@ -1,11 +1,11 @@
 //! A run that failed, as a fact she words — never a sentence of the engine's.
 //!
 //! Another agent's run failing is handed to her at once, as a fault
-//! ([`super::triggers::wake_fault`]). Her own run failing — or a run that
-//! failed for want of a sign-in, which her model shares — cannot be: waking
+//! ([`super::triggers::wake_fault`]). Her own run failing cannot be: waking
 //! her to say her mind is unreachable runs the very thing that failed, and
-//! loops. So that fact is held, one at a time, and rides the next turn of
-//! hers that is woken, beside whatever woke it. Held is never dropped: a turn
+//! loops. So that fact is held, one at a time, and rides the next unprompted
+//! turn on her own thread, beside whatever woke it. While her model stays
+//! down nothing is said at all — the failed run's own chat shows its error. Held is never dropped: a turn
 //! that fails again holds it again. The hold lives in memory; a restart loses
 //! it, and the failed run's own record stays in its chat.
 

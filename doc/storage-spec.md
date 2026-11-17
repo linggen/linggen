@@ -83,7 +83,7 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 │   ├── {YYYY-MM-DD}.jsonl            # One day of activities (JSONL, kept 400 days)
 │   ├── open-stretch.json             # The stretch of use still open, with when its page came to the front (closed on the next start)
 │   ├── trend.json                    # Daily free-space samples (a fortnight)
-│   └── conditions.json               # What was told per problem (perception::told)
+│   └── conditions.json               # What was told per problem, and the person's answer (perception::told)
 ├── credentials.json                  # API keys for model providers (JSON)
 ├── permissions.json                  # (legacy, ignored — see permission-spec.md)
 ├── missions/

@@ -325,11 +325,12 @@ pub(super) fn handle_notification(state: &Arc<ServerState>, payload: Notificatio
             mission_fact::hand_or_hold(state, run);
         }
         // A run errored — she is handed the facts and words them, never a
-        // line of the engine's. Another agent's failure wakes her as a fault
-        // at once. Her own (or a sign-in failure, which her model shares)
-        // cannot: waking her to say her mind is unreachable runs the very
-        // thing that failed, and loops — so it is held and rides her next
-        // woken turn (`run_fault`). Rate-limited so an error storm is one fact.
+        // line of the engine's. Another agent's failure (a sign-in one too:
+        // her model may not share it) wakes her as a fault at once, and is
+        // held if that turn says nothing. Her own cannot: waking her to say
+        // her mind is unreachable runs the very thing that failed, and loops —
+        // so it is held and rides her next woken turn (`run_fault`).
+        // Rate-limited so an error storm is one fact.
         NotificationPayload::RunFailed {
             agent_id,
             auth_required,
@@ -346,7 +347,7 @@ pub(super) fn handle_notification(state: &Arc<ServerState>, payload: Notificatio
                 let her_own = agent_id == YINYUE_AGENT;
                 let fact = super::run_fault::fact(&agent_id, auth_required, her_own);
                 tracing::info!("[yinyue-watch] run by '{agent_id}' failed; Yinyue is handed the fact");
-                if her_own || auth_required {
+                if her_own {
                     super::run_fault::hold(fact);
                     return;
                 }
@@ -586,8 +587,14 @@ pub(super) async fn wake_and_offer(
         _ => kickoff,
     };
     let said_in = table.as_ref().map(|t| t.session.clone());
-    // A failure of hers held for a turn that can carry it rides this one.
-    let (kickoff, rode) = super::run_fault::ride(kickoff);
+    // A failure of hers held for a turn that can carry it rides this one —
+    // her own thread's unprompted turns only: never an app's table, an asked
+    // reading or a tap's outcome, whose answer is about something else.
+    let carries = table.is_none() && trigger_source != "asked" && reach != Reach::Sealed;
+    let (kickoff, rode) = match carries {
+        true => super::run_fault::ride(kickoff),
+        false => (kickoff, None),
+    };
     // `None`: the run failed or she produced nothing.
     let reply = match reach {
         Reach::Open => run_yinyue_turn(&state, kickoff, trigger_source).await,

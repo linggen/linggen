@@ -119,7 +119,8 @@ const Offers: React.FC<{ raised: SpeechRaised; done: () => void }> = ({ raised, 
           {asking === i ? `${o.label} ✓?` : o.label}
         </button>
       ))}
-      <button
+      {/* The other device's problem is answered where it lives. */}
+      {!raised.problem.includes('/') && <button
         disabled={busy}
         onClick={() => {
           void answer(raised.problem, 'not_now');
@@ -128,7 +129,7 @@ const Offers: React.FC<{ raised: SpeechRaised; done: () => void }> = ({ raised, 
         className="rounded-full px-2 py-1 text-[12px] text-zinc-400 hover:text-zinc-200"
       >
         Not now
-      </button>
+      </button>}
     </div>
   );
 };

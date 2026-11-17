@@ -140,6 +140,12 @@ pub fn standing(level: u32, told: Option<&Told>) -> Standing {
     }
 }
 
+/// The later telling of two: the higher level, and at a tie the more recent —
+/// a re-say after a "not now" ran out is at the same level, and newer.
+fn newer(a: &Told, b: &Told) -> bool {
+    (a.level, a.at) > (b.level, b.at)
+}
+
 /// Whether a problem is worth saying now: [`standing`], and the person's
 /// answer beside it. A "not now" defers, it never drops — once
 /// [`NOT_NOW_SECS`] has passed the problem is due again at the same level.
@@ -270,7 +276,7 @@ impl Ledger {
     fn peer_told<'a>(&'a self, owner: &str, p: &'a PeerProblem) -> Option<&'a Told> {
         let ours = self.get(&report_key(owner, &p.key));
         match (p.told.as_ref(), ours) {
-            (Some(a), Some(b)) => Some(if b.level > a.level { b } else { a }),
+            (Some(a), Some(b)) => Some(if newer(b, a) { b } else { a }),
             (a, b) => a.or(b),
         }
     }
@@ -293,9 +299,12 @@ impl Ledger {
             let Some(name) = k.strip_prefix(&prefix) else {
                 return true;
             };
+            // Filed: the owner's record holds this telling — as high, and
+            // no older. A record as high but older is the one this report
+            // replaced (a re-say after a "not now" ran out), not a filing.
             match problems.iter().find(|p| p.key == name) {
                 None => false,
-                Some(p) => !p.told.as_ref().is_some_and(|t| t.level >= e.told.level),
+                Some(p) => !p.told.as_ref().is_some_and(|t| !newer(&e.told, t)),
             }
         });
     }

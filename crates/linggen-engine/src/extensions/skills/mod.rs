@@ -726,8 +726,13 @@ pub fn parse_skill_text(text: &str, source: SkillSource) -> Result<Skill> {
         &frontmatter.name,
         matches!(source, SkillSource::Global),
     );
+    // Installed skills only, as for world lines: a project's folder must not
+    // put a tool under her button.
     let offers = crate::perception::offer::usable(
-        frontmatter.offers.and_then(|v| serde_json::to_value(v).ok()),
+        frontmatter
+            .offers
+            .filter(|_| matches!(source, SkillSource::Global))
+            .and_then(|v| serde_json::to_value(v).ok()),
         &frontmatter.name,
         &tool_defs
             .iter()
@@ -1117,6 +1122,8 @@ This is the skill content."#;
             ],
             "a tool it does not declare is left out; the skill still loads"
         );
+        let project = parse_skill_text(text, SkillSource::Project).unwrap();
+        assert!(project.offers.is_empty(), "installed skills only");
     }
 
     #[test]

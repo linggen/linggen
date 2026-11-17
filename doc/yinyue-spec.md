@@ -336,11 +336,14 @@ conversation, and she already learns from it passively via shared memory.
   facts (`doc/yinyue-companion-spec.md` § A mission run that went wrong). A
   clean run wakes no one.
 - Shipped: `Notification(RunFailed)` — an interactive/agent run errored
-  (`chat/runtime.rs`, genuine failures only, not cancels) → a **deterministic**
-  in-character apology over the speak spine (`emit_speak`, `sad`). Never an LLM
-  wake: the failure may *be* the model backend, so waking her agent to announce
-  it could fail too (and loop). Guarded `agent_id != yinyue` (no self-loop) + a
-  90s cooldown so an error storm doesn't make her repeat herself.
+  (`chat/runtime.rs`, genuine failures only, not cancels) → **facts she words**
+  (`resident::run_fault`), never a sentence of the engine's (2026-11-17: the
+  four rotated apologies and the sign-in line are gone). Another agent's
+  failure wakes her as a fault at once, held if that turn says nothing. Her
+  own failure is never a wake — the failure may *be* her model, and waking her
+  to announce it would fail too (and loop) — so it is held and rides her next
+  unprompted turn on her own thread; while her model stays down, nothing is
+  said. A 90s cooldown keeps an error storm to one fact.
 - Planned: batch-of-runs-finished (`AgentStatus` working→idle count reaches zero),
   gated to background-only and `agent_id != yinyue`.
 
