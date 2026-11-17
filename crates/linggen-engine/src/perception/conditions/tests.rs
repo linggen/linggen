@@ -7,7 +7,7 @@ fn finding(level: u32) -> Finding {
     Finding {
         level,
         situation: "this Mac has 4.0 GB free".into(),
-        verbs: "offer to look",
+        remedy: Remedy::of(Vec::new(), NOTHING_INSTALLED_OFFERS),
     }
 }
 
@@ -33,20 +33,38 @@ fn told_by_phone(days_ago: i64, level: u32) -> Option<Told> {
 }
 
 #[test]
-fn every_notice_carries_a_verb() {
-    // Rule 3, enforced rather than remembered: a condition with nothing to
-    // offer must not exist.
-    let n = Notice {
-        topic: "t".into(),
-        level: 1,
-        situation: "s".into(),
-        verbs: "v",
-        owner: None,
-    };
-    assert!(!n.verbs.is_empty());
+fn every_notice_carries_offers_or_why_there_are_none() {
+    // Rule 3, enforced by the type: a Remedy cannot be built empty, so a
+    // condition with neither offers nor a reason cannot register.
     let mut l = Ledger::default();
     let peer_notice = choose(&mut l, vec![], peer(vec![problem(1, None)]), NOW).unwrap();
-    assert!(!peer_notice.verbs.is_empty(), "the other device's too");
+    assert_eq!(
+        peer_notice.remedy.none(),
+        Some(ON_THE_OTHER_DEVICE),
+        "the other device's problem: none here, and why"
+    );
+}
+
+#[test]
+fn the_macs_disk_carries_what_the_skills_declare_for_it() {
+    use crate::perception::offer::{declare_for_this_thread, Declared, Offer};
+    let open = Offer::Open { skill: "shifu".into(), view: Some("files".into()) };
+    declare_for_this_thread(vec![Declared { problem: STORAGE_FILLING.into(), offer: open.clone() }]);
+    let r = Remedy::of(crate::perception::offer::declared_for(STORAGE_FILLING), NOTHING_INSTALLED_OFFERS);
+    assert_eq!(r.offers(), &[open]);
+    declare_for_this_thread(vec![]);
+    let r = Remedy::of(crate::perception::offer::declared_for(STORAGE_FILLING), NOTHING_INSTALLED_OFFERS);
+    assert_eq!(r.none(), Some(NOTHING_INSTALLED_OFFERS));
+}
+
+#[test]
+fn no_notice_tells_her_which_tools_to_use() {
+    // The prose that named tools and verbs is gone: what she is handed is
+    // facts and the remedy's facts.
+    let src = include_str!("../conditions.rs");
+    for gone in ["verbs", "never start", "you can offer"] {
+        assert!(!src.contains(gone), "{gone}");
+    }
 }
 
 #[test]

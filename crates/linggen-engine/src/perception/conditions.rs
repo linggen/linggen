@@ -3,8 +3,8 @@
 //! Perception is what makes a resident able to speak first. It does not make
 //! every observation worth speaking (`doc/perception-spec.md` §5). So a
 //! condition declares what it watches, what crosses, how bad it is (a level),
-//! and — required — the verb the agent can offer; the resident still judges
-//! when to say it.
+//! and — required — its [`Remedy`]: the offers the person may tap, or why
+//! there are none. The resident still judges when to say it.
 //!
 //! Three rules, each earned:
 //!
@@ -16,16 +16,18 @@
 //! 2. **Never dropped.** A problem nobody has told is due at every glance until
 //!    it is said. The record starts when the resident **speaks**, never when it
 //!    is asked: a SILENT reply defers, it does not dismiss.
-//! 3. **Every noticing ends in a verb the agent owns.** "Your disk is filling"
-//!    with no next step is worse than silence, so [`Notice::verbs`] is not
-//!    optional.
+//! 3. **Every noticing carries what can be done, or why nothing can.** "Your
+//!    disk is filling" with no next step is worse than silence, so a
+//!    [`Notice`] holds a [`Remedy`], which cannot be built empty. The offers
+//!    are facts; the words — her line and each button's label — are hers.
 
+use super::offer::Remedy;
 use super::told::{Ledger, PeerProblem, Standing};
 
 /// Free space this low, in days of runway, is worth one sentence.
 const FULL_WITHIN_DAYS: i64 = 2;
 
-/// A situation the resident may speak about, and what it can offer to do.
+/// A situation the resident may speak about, and what can be done about it.
 pub struct Notice {
     /// The problem's name in the ledger: this Mac's own, or `<owner>/<name>`
     /// for one the other device reported.
@@ -35,8 +37,8 @@ pub struct Notice {
     /// What is true, in plain words — and whether it was told before. The
     /// resident says it in its own voice.
     pub situation: String,
-    /// The verbs it owns for this. Never empty — see rule 3.
-    pub verbs: &'static str,
+    /// The offers, or why there are none — see rule 3.
+    pub remedy: Remedy,
     /// The device whose problem this is, when it is not this Mac.
     owner: Option<(String, String)>,
 }
@@ -45,15 +47,18 @@ pub struct Notice {
 struct Finding {
     level: u32,
     situation: String,
-    verbs: &'static str,
+    remedy: Remedy,
 }
 
 /// Every condition this machine watches. Exactly one ships enabled: each
 /// enabled condition is a licence to interrupt, and the next is added only
 /// after living with this one.
 fn conditions() -> Vec<(&'static str, fn() -> Option<Finding>)> {
-    vec![("storage-filling", storage_filling)]
+    vec![(STORAGE_FILLING, storage_filling)]
 }
+
+/// The Mac's disk running out of room — the key skills declare offers under.
+pub const STORAGE_FILLING: &str = "storage-filling";
 
 /// The first problem that is due — this Mac's own first, then the other
 /// device's — or none.
@@ -109,15 +114,24 @@ fn choose(
     Some(peer_notice(&host, owner, p, &standing, now))
 }
 
+/// What she is told when the other device's problem is raised here: nothing
+/// on this Mac can change it, and its offers run on that device.
+pub const ON_THE_OTHER_DEVICE: &str =
+    "it is on that device, not this Mac — what can be done is offered there, where it runs";
+
+/// What she is told when no installed skill offers anything for a problem of
+/// this Mac's.
+pub const NOTHING_INSTALLED_OFFERS: &str =
+    "no app installed on this Mac offers a fix for it — System Settings › General › Storage shows the person what holds the space";
+
 /// The other device's problem, as this Mac may raise it. It is that device's
-/// to fix, so the verb is the honest one: say it, and where it is seen to.
+/// to fix, so the remedy is the honest one: none here, and why.
 fn peer_notice(host: &str, owner: &str, p: &PeerProblem, standing: &Standing, now: i64) -> Notice {
     Notice {
         topic: format!("{owner}/{}", p.key),
         level: p.level,
         situation: format!("on {host}: {} ({})", p.line, standing.words(now)),
-        verbs: "it is on that device, not this Mac, and nothing you hold here can change it — \
-                say what it is and that it is seen to there; ask, never start",
+        remedy: Remedy::of(Vec::new(), ON_THE_OTHER_DEVICE),
         owner: Some((owner.to_string(), p.key.clone())),
     }
 }
@@ -127,7 +141,7 @@ fn own_notice(topic: &str, f: Finding, standing: &Standing, now: i64) -> Notice 
         topic: topic.to_string(),
         level: f.level,
         situation: format!("{} ({})", f.situation, standing.words(now)),
-        verbs: f.verbs,
+        remedy: f.remedy,
         owner: None,
     }
 }
@@ -176,8 +190,10 @@ fn storage_filling() -> Option<Finding> {
             if f.days_until_full == 1 { "" } else { "s" },
             f.span_days
         ),
-        verbs: "you can offer to look for what is safe to delete, or to back the \
-                heavy folders up to an external disk — ask first, never start",
+        remedy: Remedy::of(
+            super::offer::declared_for(STORAGE_FILLING),
+            NOTHING_INSTALLED_OFFERS,
+        ),
     })
 }
 

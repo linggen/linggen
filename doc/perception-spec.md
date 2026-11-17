@@ -326,15 +326,33 @@ words. The count and the door stay; every other turn keeps the line.
 Perception is what makes an agent able to start a sentence. It does not make
 every observation worth one.
 
-**Conditions register; the resident judges when.** A condition declares what
-it watches, what crosses, how bad it is — a **level**, an integer where higher
-is worse — and, required, the verb the agent can offer:
+**Conditions register; the resident judges when.** A problem is a record,
+never a sentence. A condition declares what it watches, what crosses, how bad
+it is — a **level**, an integer where higher is worse — and, required, its
+**remedy**: the offers the person may tap, or none with the reason.
 
 ```
 storage-filling   free space trend crosses "full within 2 days"
                   level: 2 days → 1, 1 day → 2, none → 3
-                  → offer: scan for duplicates, back up to the Mac
+                  offers: what the installed skills declare for it
+                  none:   "no app installed on this Mac offers a fix …"
 ```
+
+An offer is one of: a declared tool to run (with its args and tier), or a
+place to open (a skill's page at a view; on the phone, an app screen or
+Linggen's own settings page). The engine names no app: a skill declares what
+it offers for a problem key in its frontmatter —
+
+```yaml
+offers:
+  storage-filling:
+    - { open: files }     # its page, at the Files view
+    - { tool: ScanDisk }  # one of its tools; its tier comes with it
+```
+
+— and a remedy cannot be built empty, so a raiser with neither offers nor a
+reason does not register. The resident words both the line and each offer's
+label; no sentence the person reads comes from code.
 
 Three rules, each earned:
 
@@ -348,9 +366,11 @@ Three rules, each earned:
    every moment the resident's gates allow, until it is said. The record starts
    when the resident **speaks**, never when it is asked: a SILENT reply or a
    failed run defers, it does not dismiss.
-3. **Every noticing ends in a verb the agent owns.** "Your storage is filling"
-   with no next step is worse than silence. A problem the agent cannot fix is
-   still said; its verb is to say where the person can.
+3. **Every noticing carries what can be done, or why nothing can.** "Your
+   storage is filling" with no next step is worse than silence. A problem
+   nothing here can fix is still said, with the reason and where the person
+   can act — the other device's problem is said on this one with none, "it is
+   offered there, where it runs".
 
 **One record per problem, kept by the device it is about.** The record of
 what was told (`perception::told` on the Mac, `TellLedger` on the phone) is the

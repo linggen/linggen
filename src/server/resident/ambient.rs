@@ -45,11 +45,11 @@ pub(super) async fn ambient_glance(state: &Arc<ServerState>) {
     if let Some(notice) = crate::perception::conditions::sweep() {
         tracing::info!("[yinyue-ambient] condition crossed: {}", notice.topic);
         let kickoff = format!(
-            "Something crossed a line worth one sentence: {}. \
+            "Something crossed a line worth one sentence: {}. {}. \
              You noticed it — say so in your own voice, one short line, spoken aloud, \
-             plain prose, and offer the next step: {}. Never start anything yourself. \
+             plain prose. Nothing runs from this turn: an offer runs only when the person taps it. \
              If this truly isn't the moment, reply with exactly SILENT.",
-            notice.situation, notice.verbs
+            notice.situation, notice.remedy.facts()
         );
         // It is told only if she actually said it. A SILENT reply is her
         // judging the moment, not the user being told — the problem stays due

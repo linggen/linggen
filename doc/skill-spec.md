@@ -363,6 +363,15 @@ phone has not told it, she writes it from the skill's `prompt` and the Mac
 seals and pushes it. Code may also raise one with `POST /api/push/notice`.
 Wire, timing and dedupe: [phone-push-spec.md](phone-push-spec.md).
 
+## Offers
+
+A skill may declare what Yinyue offers when the resident raises a problem
+(`offers:`, problem key → up to three of `{tool: <one of its tools>, args?}`
+or `{open: <a view of its page>}`). The person taps the offer; it runs as a
+page button would. An entry naming no declared tool, or a page the skill does
+not have, is logged and left out. See
+[perception-spec.md](perception-spec.md) §5.
+
 ## Place
 
 An agent's soul is the same everywhere (`doc/persona-design.md`). A skill's sessions seat the agents it declares (`members: [ling, yinyue]`, the lead first; absent → the lead agent alone — `doc/shared-session-spec.md`). For the lead, the SKILL.md body already is its place. `place:` is for the other members at the skill's table, keyed by agent id:

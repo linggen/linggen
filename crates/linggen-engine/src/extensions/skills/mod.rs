@@ -407,6 +407,10 @@ struct SkillFrontmatter {
     /// plain YAML so a malformed one is dropped, never the whole skill.
     #[serde(default, rename = "world-line")]
     world_line: Option<serde_norway::Value>,
+    /// What it offers for a problem the resident raises — see
+    /// `Skill::offers`. Plain YAML, so a malformed one costs only itself.
+    #[serde(default)]
+    offers: Option<serde_norway::Value>,
     /// What a session of this skill may be bound to — see `doc/skill-spec.md`
     /// § Session parameters.
     #[serde(default, rename = "session-params")]
@@ -503,6 +507,7 @@ impl SkillLoader {
             }
         }
         mirror_world_lines(&skills);
+        mirror_offers(&skills);
         self.announce();
 
         Ok(())
@@ -609,6 +614,7 @@ impl SkillLoader {
             let mut skills = self.skills.lock().await;
             skills.insert(parsed.name.clone(), parsed.clone());
             mirror_world_lines(&skills);
+            mirror_offers(&skills);
         }
         self.announce();
         Some(parsed)
@@ -643,6 +649,18 @@ fn mirror_world_lines(skills: &HashMap<String, Skill>) {
         })
         .collect();
     crate::perception::apps::declare(apps);
+}
+
+/// Hand the resident's conditions every skill's declared offers, so a glance
+/// reads them without waiting on this loader's lock.
+fn mirror_offers(skills: &HashMap<String, Skill>) {
+    let mut names: Vec<&String> = skills.keys().collect();
+    names.sort();
+    let offers = names
+        .into_iter()
+        .flat_map(|n| skills[n].offers.iter().cloned())
+        .collect();
+    crate::perception::offer::declare(offers);
 }
 
 /// `SkillRegistry` impl — the engine reaches `SkillLoader` only through
@@ -708,6 +726,15 @@ pub fn parse_skill_text(text: &str, source: SkillSource) -> Result<Skill> {
         &frontmatter.name,
         matches!(source, SkillSource::Global),
     );
+    let offers = crate::perception::offer::usable(
+        frontmatter.offers.and_then(|v| serde_json::to_value(v).ok()),
+        &frontmatter.name,
+        &tool_defs
+            .iter()
+            .map(|t| (t.name.clone(), t.tier.clone().unwrap_or_else(|| "admin".into())))
+            .collect::<Vec<_>>(),
+        frontmatter.app.is_some(),
+    );
     let session_params =
         crate::engine::skill::params::usable(&frontmatter.name, frontmatter.session_params);
     for tool_def in &mut tool_defs {
@@ -763,6 +790,7 @@ pub fn parse_skill_text(text: &str, source: SkillSource) -> Result<Skill> {
         senses,
         activity_verbs,
         world_line,
+        offers,
         session_params,
         skill_dir: None,
     })
@@ -1068,6 +1096,27 @@ This is the skill content."#;
 
         let project = parse_skill_text(text, SkillSource::Project).unwrap();
         assert!(project.world_line.is_none(), "installed skills only");
+    }
+
+    #[test]
+    fn a_skill_declares_offers_for_a_problem_with_its_tools_tier() {
+        let text = "---\nname: shifu\ndescription: Tidy\napp:\n  launcher: web\n  entry: index.html\ntools:\n  - name: Scan\n    description: Scan.\n    cmd: \"echo hi\"\n    tier: read\noffers:\n  storage-filling:\n    - { open: files }\n    - { tool: Scan }\n    - { tool: Gone }\n---\nBody";
+        let skill = parse_skill_text(text, SkillSource::Global).unwrap();
+        use crate::perception::offer::Offer;
+        let offers: Vec<&Offer> = skill.offers.iter().map(|d| &d.offer).collect();
+        assert_eq!(
+            offers,
+            vec![
+                &Offer::Open { skill: "shifu".into(), view: Some("files".into()) },
+                &Offer::Tool {
+                    skill: "shifu".into(),
+                    tool: "Scan".into(),
+                    args: serde_json::Value::Null,
+                    tier: "read".into()
+                },
+            ],
+            "a tool it does not declare is left out; the skill still loads"
+        );
     }
 
     #[test]

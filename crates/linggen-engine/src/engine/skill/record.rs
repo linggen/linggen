@@ -572,6 +572,11 @@ pub struct Skill {
     /// only. See `doc/perception-spec.md` §2.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub world_line: Option<crate::perception::apps::WorldLine>,
+    /// What it offers, by problem key, when the resident raises one
+    /// (`offers:`) — a tool of its own or a view of its page, tapped by the
+    /// person. See `doc/perception-spec.md` §5.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub offers: Vec<crate::perception::offer::Declared>,
     /// The values a session of this skill may be bound to (`session-params:`)
     /// — see [`super::params`] and `doc/skill-spec.md` § Session parameters.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
