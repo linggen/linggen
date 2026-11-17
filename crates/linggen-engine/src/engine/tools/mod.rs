@@ -357,6 +357,8 @@ pub struct Tools {
     /// Session policy propagated to subagents via delegation.
     /// Set by the parent engine; applied to subagent engines after spawn.
     pub(crate) session_policy: Option<super::session_policy::SessionPolicy>,
+    /// The session's kind of work, carried to `Task` children (set by
+    /// `SessionSpec::apply`).
     pub(crate) parent_work: Option<super::session_spec::Work>,
     /// Effective tool set of the loop dispatching the current call.
     pub(crate) parent_allowed_tools: Option<std::collections::HashSet<String>>,

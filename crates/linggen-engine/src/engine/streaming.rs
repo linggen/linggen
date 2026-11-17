@@ -475,22 +475,9 @@ impl AgentEngine {
         let mut stalled: Vec<String> = Vec::new();
 
         loop {
-            // Rebuild the stable prefix for the model about to receive this
-            // attempt, including a fallback before it has answered.
-            let adjusted = if self.session_spec().work.is_some() {
-                let old = self.cached_system_prompt.as_ref().map(|c| c.content.clone())
-                    .unwrap_or_else(|| self.build_stable_system_content().0);
-                let previous = std::mem::replace(&mut self.model_id, model_id.clone());
-                let new = self.build_stable_system_content().0;
-                self.model_id = previous;
-                let mut adjusted = messages.to_vec();
-                if let Some(first) = adjusted.first_mut() {
-                    if let Some(suffix) = first.content.strip_prefix(&old) {
-                        first.content = format!("{new}{suffix}");
-                    }
-                }
-                Some(adjusted)
-            } else { None };
+            // A fallback to a model of another family gets that family's
+            // lines of the session's work section (`prompt::work`).
+            let adjusted = self.messages_for_model(&model_id, messages);
             let attempt_messages = adjusted.as_deref().unwrap_or(messages);
             let result = if let Some(ref tool_defs) = tools {
                 self.stream_with_tool_calling(&model_id, attempt_messages, tool_defs.clone())

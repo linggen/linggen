@@ -82,6 +82,33 @@ fn work_code_switch_model_prompt() {
     assert!(!next.contains("not apply_patch"));
 }
 
+/// A call that falls back mid-way to a model of another family carries that
+/// family's lines, not the first model's; the same family changes nothing.
+#[test]
+fn work_code_a_fallback_to_another_family_gets_its_lines() {
+    use crate::engine::prompt::PromptPurpose;
+    let mut e = typed_by_spec(&code_meta("sess-c", "user", None), "user");
+    e.model_id = "test-openai".into();
+    let built = e.prepare_loop_messages("hi", true, PromptPurpose::Preview).0;
+    assert!(e.messages_for_model("test-openai", &built).is_none());
+
+    let deepseek = e.messages_for_model("test-deepseek", &built).unwrap();
+    assert!(deepseek[0].content.contains("Do not describe an edit you have not made"));
+    assert!(!deepseek[0].content.contains("not apply_patch"));
+    assert!(deepseek[0].content.contains("## Working on code"));
+    assert_eq!(deepseek.len(), built.len());
+
+    let claude = e.messages_for_model("test-claude", &built).unwrap();
+    assert!(claude[0].content.contains("## Working on code"));
+    assert!(!claude[0].content.contains("not apply_patch"));
+
+    // A session with no work tag is never touched.
+    let mut plain = typed_by_spec(&meta("sess-c", "user", None), "user");
+    plain.model_id = "test-openai".into();
+    let built = plain.prepare_loop_messages("hi", true, PromptPurpose::Preview).0;
+    assert!(plain.messages_for_model("test-deepseek", &built).is_none());
+}
+
 #[test]
 fn work_code_daily_and_app_ignore_tag() {
     for m in [code_meta("sess-day-2026-11-17", "agent", None), code_meta("sess-app", "skill", Some("dice"))] {

@@ -28,7 +28,20 @@ pub struct SessionStore {
     pub running_places: crate::engine::turn_place::running::RunningPlaces,
 }
 
-fn deserialize_work<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<crate::engine::session_spec::Work>, D::Error> {
+/// The kind of work a session is for (`work: code` in `session.yaml`): it
+/// adds a section to the session's prompt and nothing else
+/// (`engine::session_spec`, `engine::prompt::work`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(any(test, feature = "test-support"), derive(ts_rs::TS), ts(export))]
+#[serde(rename_all = "snake_case")]
+pub enum Work {
+    Code,
+}
+
+/// A work tag this engine does not know reads as none; it never fails the load.
+fn deserialize_work<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Work>, D::Error> {
     let value = serde_norway::Value::deserialize(deserializer)?;
     Ok(serde_norway::from_value(value).ok())
 }
@@ -78,9 +91,13 @@ pub struct SessionMeta {
     pub id: String,
     #[serde(default, skip_serializing_if = "SessionRuntime::is_linggen")]
     pub runtime: SessionRuntime,
-    /// Optional work switch; unknown future values are ignored.
-    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "deserialize_work")]
-    pub work: Option<crate::engine::session_spec::Work>,
+    /// The kind of work the session is for, if any ([`Work`]).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_work"
+    )]
+    pub work: Option<Work>,
     #[serde(default, skip_serializing_if = "ClaudePermissionMode::is_default")]
     pub claude_permission_mode: ClaudePermissionMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1111,7 +1128,7 @@ mod tests {
             store
                 .add_session(&SessionMeta {
                     work: None,
-            runtime: Default::default(),
+                    runtime: Default::default(),
                     claude_permission_mode: Default::default(),
                     parent_session_id: None,
                     id: id.into(),
@@ -1253,7 +1270,7 @@ mod tests {
         store
             .add_session(&SessionMeta {
                 work: None,
-            runtime: Default::default(),
+                runtime: Default::default(),
                 claude_permission_mode: Default::default(),
                 parent_session_id: None,
                 id: "s1".into(),
@@ -1332,7 +1349,7 @@ mod tests {
         store
             .add_session(&SessionMeta {
                 work: None,
-            runtime: Default::default(),
+                runtime: Default::default(),
                 claude_permission_mode: Default::default(),
                 parent_session_id: None,
                 id: "s1".into(),
@@ -1388,7 +1405,7 @@ mod tests {
         store
             .add_session(&SessionMeta {
                 work: None,
-            runtime: Default::default(),
+                runtime: Default::default(),
                 claude_permission_mode: Default::default(),
                 parent_session_id: None,
                 id: "s1".into(),
@@ -1444,7 +1461,7 @@ mod tests {
         assert!(store
             .add_session(&SessionMeta {
                 work: None,
-            runtime: Default::default(),
+                runtime: Default::default(),
                 claude_permission_mode: Default::default(),
                 parent_session_id: None,
                 id: "../escape".into(),
@@ -1471,7 +1488,7 @@ mod tests {
         assert!(store
             .add_session(&SessionMeta {
                 work: None,
-            runtime: Default::default(),
+                runtime: Default::default(),
                 claude_permission_mode: Default::default(),
                 parent_session_id: None,
                 id: "a/b".into(),
@@ -1498,7 +1515,7 @@ mod tests {
         assert!(store
             .add_session(&SessionMeta {
                 work: None,
-            runtime: Default::default(),
+                runtime: Default::default(),
                 claude_permission_mode: Default::default(),
                 parent_session_id: None,
                 id: "".into(),

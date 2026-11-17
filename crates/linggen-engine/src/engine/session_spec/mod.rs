@@ -15,6 +15,7 @@ pub use preset::{is_companion_thread, is_kept_apart, preset_of, Preset, HANDOFF_
 
 use super::session_policy::SessionPolicy;
 use crate::state_fs::sessions::{SessionMeta, SessionRuntime};
+pub use crate::state_fs::sessions::Work;
 use std::collections::HashSet;
 
 /// One session's behaviour, as its preset's row and its meta make it.
@@ -53,12 +54,6 @@ pub struct SessionSpec {
     /// Reserved for the paired-device design: unused.
     pub ceiling: Option<Ceiling>,
 }
-
-/// A session's kind of work.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(any(test, feature = "test-support"), derive(ts_rs::TS), ts(export))]
-#[serde(rename_all = "snake_case")]
-pub enum Work { Code }
 
 /// A ceiling another design will set. No variant yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -323,8 +318,13 @@ impl SessionSpec {
     }
 
     /// A delegated `Task` child of a parent run under `policy`: a task
-    /// whatever the parent's session, prompting only when the parent could.
-    pub fn delegated_child(policy: Option<SessionPolicy>, parent_interactive: bool, work: Option<Work>) -> Self {
+    /// whatever the parent's session, prompting only when the parent could,
+    /// doing the parent's kind of work.
+    pub fn delegated_child(
+        policy: Option<SessionPolicy>,
+        parent_interactive: bool,
+        work: Option<Work>,
+    ) -> Self {
         let mut spec = Self::unclaimed(None);
         spec.work = work;
         spec.policy = policy;

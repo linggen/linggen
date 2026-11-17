@@ -28,6 +28,9 @@ pub enum Preset {
 }
 
 impl Preset {
+    /// Whether a session of this kind may carry a work tag: the ones a
+    /// person or a caller makes for a job of their own. Every other kind
+    /// ignores a tag its file holds.
     pub fn takes_work(self) -> bool {
         matches!(self, Self::Chat | Self::Delegate | Self::Handoff)
     }

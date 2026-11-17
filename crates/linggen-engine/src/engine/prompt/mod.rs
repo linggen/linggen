@@ -14,6 +14,7 @@ mod notes;
 pub mod place;
 pub mod profile;
 pub mod world;
+pub(crate) mod work;
 
 #[cfg(test)]
 mod persona_tests;
@@ -287,28 +288,6 @@ fn mission_prompt(soul: Soul, mission: &ActiveMission, language: String) -> Stri
     join_sections([soul.identity.clone(), soul.with_additions(), body, language])
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Family { OpenAi, Gemini, DeepSeek }
-
-fn family_of(provider: Option<&str>, _model_id: &str) -> Option<Family> {
-    match provider {
-        Some("openai" | "chatgpt") => Some(Family::OpenAi),
-        Some("gemini") => Some(Family::Gemini),
-        Some("deepseek") => Some(Family::DeepSeek),
-        _ => None,
-    }
-}
-
-#[cfg(test)]
-#[test]
-fn work_code_family_table() {
-    for (provider, expected) in [
-        ("openai", Some(Family::OpenAi)), ("chatgpt", Some(Family::OpenAi)),
-        ("gemini", Some(Family::Gemini)), ("deepseek", Some(Family::DeepSeek)),
-        ("anthropic", None), ("ollama", None), ("proxy", None),
-    ] { assert_eq!(family_of(Some(provider), "model"), expected); }
-}
-
 impl AgentEngine {
     /// The persona prompt, in this order: soul (identity + body) → where
     /// the agent is → the skills it may take up → the active skill.
@@ -336,21 +315,10 @@ impl AgentEngine {
             self.soul_body(&soul),
             self.place_section().unwrap_or_default(),
         ]);
-        if self.session_spec.work == Some(crate::engine::session_spec::Work::Code) {
-            use crate::prompts::keys;
-            let family = family_of(self.model_manager.provider_kind(&self.model_id), &self.model_id);
-            let key = match family {
-                Some(Family::OpenAi) => Some(keys::WORK_CODE_OPENAI),
-                Some(Family::Gemini) => Some(keys::WORK_CODE_GEMINI),
-                Some(Family::DeepSeek) => Some(keys::WORK_CODE_DEEPSEEK),
-                None => None,
-            };
+        // What the session's work adds (`work: code`), for the model it runs on.
+        if let Some(section) = self.work_section() {
             prompt.push_str("\n\n");
-            prompt.push_str(&self.prompt_store.render_or_fallback(keys::WORK_CODE_CORE, &[]));
-            if let Some(key) = key {
-                prompt.push_str("\n\n");
-                prompt.push_str(&self.prompt_store.render_or_fallback(key, &[]));
-            }
+            prompt.push_str(&section);
         }
         prompt.push_str(&self.skills_listing());
         // The skill's SKILL.md is its lead's place and rules; another member

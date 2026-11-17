@@ -6,7 +6,7 @@ import type { Work } from "./Work";
 
 export type SessionMeta = { id: string, runtime?: SessionRuntime, 
 /**
- * Optional work switch; unknown future values are ignored.
+ * The kind of work the session is for, if any ([`Work`]).
  */
 work?: Work | null, claude_permission_mode?: ClaudePermissionMode, parent_session_id?: string | null, title: string, created_at: number, 
 /**
