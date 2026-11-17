@@ -28,7 +28,10 @@ use std::sync::Arc;
 use crate::engine::permission::PermissionMode;
 use crate::server::ServerState;
 
-use crate::engine::session_spec::delegate::{tool_scope as delegate_tool_scope, TOOLS_PARAM};
+#[cfg(test)]
+use crate::engine::session_spec::delegate::tool_scope as delegate_tool_scope;
+use crate::engine::session_spec::delegate::TOOLS_PARAM;
+use crate::engine::session_spec::Tools;
 
 /// The folder a write run may change: an existing directory, absolute, and
 /// never `/` or the home folder itself — a task gets a checkout, not a disk.
@@ -417,7 +420,8 @@ async fn keep_delegate_tools(
     let Ok(mut engine) = agent.try_lock() else {
         return;
     };
-    engine.cfg.mission_allowed_tools = delegate_tool_scope(kind == "write");
+    let write = kind == "write";
+    engine.respec(|spec| spec.tools = Tools::Delegate { write });
 }
 
 /// One headless run in its own task, to completion whether or not anyone
@@ -475,7 +479,7 @@ async fn drive(
     // Bash stops the `echo > file` end-run around it. cfg isn't reloaded by
     // initialize_loop, so this sticks. (It also flips the session
     // non-interactive on load, matching the permission.json.)
-    engine.cfg.mission_allowed_tools = delegate_tool_scope(write);
+    engine.respec(|spec| spec.tools = Tools::Delegate { write });
 
     // Register the turn just as typed chat does, including its terminal event.
     let model_label = engine.model_id.clone();

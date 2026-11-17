@@ -844,8 +844,8 @@ async fn dispatch_mission_prompt(
     // - Path-mode grants come from (a) the mission's permission.paths, and
     //   (b) for a skill mission, its skill's declared permission.paths.
     {
-        // Missions never prompt — they pause/fail on permission-needed.
-        engine.session_permissions.interactive = false;
+        // Missions never prompt — they pause/fail on permission-needed
+        // (entering the mission made it unattended).
 
         // Per-path grants from the mission's permission block. No implicit
         // cwd grant — mission authors list cwd in `permission.paths` if they

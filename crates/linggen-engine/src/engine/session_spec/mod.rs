@@ -139,11 +139,8 @@ impl Memory {
     fn narrow(self, profile: &mut super::prompt::profile::PromptProfile) {
         match self {
             Self::Full => {}
-            Self::CoreAndApp => profile.include_memory = false,
-            Self::None => {
-                profile.include_memory = false;
-                profile.include_core = false;
-            }
+            Self::CoreAndApp => profile.narrow_for_creator("skill"),
+            Self::None => profile.narrow_for_creator("mission"),
         }
     }
 }
@@ -345,5 +342,7 @@ impl SessionSpec {
     }
 }
 
+#[cfg(test)]
+mod lock_tests;
 #[cfg(test)]
 mod tests;

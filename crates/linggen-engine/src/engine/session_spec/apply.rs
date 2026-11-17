@@ -76,6 +76,15 @@ impl AgentEngine {
         let kept = PlaceScope::of(&self.prompt_profile);
         spec.write(self, Some(kept));
     }
+
+    /// After a loop loads the session's `permission.json`: a restricted
+    /// session (a consumer's, a mission's, a delegate's) never prompts the
+    /// person, whatever the file says.
+    pub(crate) fn settle_loaded_permissions(&mut self) {
+        if self.cfg.consumer_allowed_tools.is_some() || self.cfg.mission_allowed_tools.is_some() {
+            self.session_permissions.interactive = false;
+        }
+    }
 }
 
 /// The memory scope a turn's place sets on the profile (`turn_place::bind`).

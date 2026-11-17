@@ -156,8 +156,11 @@ pub(crate) async fn get_system_prompt_api(
     let Ok(mut engine) = state.manager.spawn_delegation_engine(&root, agent_id).await else {
         return not_found();
     };
-    // A person's turn: the owner policy, as the chat path applies it.
-    crate::engine::session_policy::SessionPolicy::owner().apply(&mut engine);
+    // A person's turn: the session's spec under the owner policy, as the
+    // chat path applies it — the same creator rule a real turn follows (a
+    // skill's or a mission's session gets no core block and no memory
+    // protocol), and the world as its creator decides.
+    export_spec(session_meta.as_ref()).apply(&mut engine);
     // Seated as the member it is, on the model it runs on there.
     seat_for_export(&state, &mut engine, &root, &members, agent_id).await;
 
@@ -166,19 +169,9 @@ pub(crate) async fn get_system_prompt_api(
     // shows a "cold engine" view missing SKILL.md / mission body.
     if let Some(meta) = session_meta {
         engine.withheld_tools.extend(meta.withheld_tools.clone());
-        // Who made it decides the world block, as on a real turn.
-        engine.session_creator = Some(meta.creator.clone());
-        // The same creator rule a real turn follows: a skill's or a
-        // mission's session gets no core block and no memory protocol.
         // The export has no page: the session's own place, entered as a
         // real turn enters it (its memory index, its tools, its SKILL.md).
         let place = crate::engine::turn_place::TurnPlace::of_session(Some(&meta));
-        engine
-            .prompt_profile
-            .narrow_for_creator(super::turn_place::turn_creator(
-                meta.mission_id.as_deref(),
-                &place,
-            ));
         let skill = match place.skill.as_deref() {
             Some(name) => state.manager.skills.reload_one(name).await,
             None => None,
@@ -206,6 +199,21 @@ pub(crate) async fn get_system_prompt_api(
     }
 
     export_prompt(engine)
+}
+
+/// The spec the export's engine is given: a turn typed into the session's
+/// own place under the owner policy; with no session, an unclaimed one's.
+fn export_spec(
+    meta: Option<&crate::state_fs::sessions::SessionMeta>,
+) -> crate::engine::session_spec::SessionSpec {
+    use crate::engine::session_spec::{Memory, SessionSpec};
+    let owner = crate::engine::session_policy::SessionPolicy::owner();
+    let Some(meta) = meta else {
+        return SessionSpec::unclaimed(None).typed(owner, Memory::Full);
+    };
+    let place = crate::engine::turn_place::TurnPlace::of_session(Some(meta));
+    let turn_owner = super::turn_place::turn_creator(meta.mission_id.as_deref(), &place);
+    SessionSpec::of(meta).typed(owner, Memory::of_turn(turn_owner))
 }
 
 /// Seat the export's engine as its turn is seated (`handler::seat_member`):

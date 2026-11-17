@@ -21,13 +21,6 @@ fn engine() -> AgentEngine {
     AgentEngine::new(cfg, models, "m".to_string(), AgentRole::Lead).unwrap()
 }
 
-/// A fresh engine for `meta`, as `get_or_create_session_agent` makes one today.
-fn engine_today(meta: &SessionMeta) -> AgentEngine {
-    let mut engine = engine();
-    engine.session_creator = Some(meta.creator.clone());
-    engine
-}
-
 /// A fresh engine for `meta`, its creator written by the spec.
 fn engine_for(meta: &SessionMeta) -> AgentEngine {
     let mut engine = engine();
@@ -119,18 +112,6 @@ fn delegate_read() -> Option<BTreeSet<String>> {
     delegate::tool_scope(false).map(|s| s.into_iter().collect())
 }
 
-/// A turn a person typed (`chat::handler`): the mission's restriction
-/// cleared, the owner's policy, memory narrowed by who the turn belongs to.
-fn typed_today(meta: &SessionMeta, turn_owner: &str) -> AgentEngine {
-    let mut e = engine_today(meta);
-    e.cfg.mission_allowed_tools = None;
-    SessionPolicy::owner().apply(&mut e);
-    if turn_owner != "user" {
-        e.prompt_profile.narrow_for_creator(turn_owner);
-    }
-    e
-}
-
 fn typed_by_spec(meta: &SessionMeta, turn_owner: &str) -> AgentEngine {
     let mut e = engine_for(meta);
     SessionSpec::of(meta)
@@ -199,9 +180,7 @@ fn typed_rows() -> Vec<(Preset, SessionMeta, &'static str, Seen)> {
 fn a_persons_turn_runs_as_today() {
     for (preset, meta, owner, want) in typed_rows() {
         assert_eq!(preset_of(&meta), preset, "{}", meta.id);
-        let today = Seen::of(&typed_today(&meta, owner), Some(true));
         let spec = Seen::of(&typed_by_spec(&meta, owner), Some(true));
-        assert_eq!(today, want, "{preset:?} today");
         assert_eq!(spec, want, "{preset:?} by its spec");
     }
 }
@@ -214,16 +193,11 @@ fn a_missions_run_runs_as_today() {
     let meta = crate::extensions::missions::scheduler::mission_session_meta(&mission, "sess-9-m");
     assert_eq!(preset_of(&meta), Preset::Mission);
     let scope = crate::extensions::missions::enter::tool_scope(&mission, None);
-    let mut today = engine_today(&meta);
-    today.cfg.mission_allowed_tools = scope.clone();
-    today.prompt_profile.narrow_for_creator("mission");
-    today.session_permissions.interactive = false;
     let mut by_spec = engine_for(&meta);
     let mut spec = SessionSpec::of(&meta);
     spec.tools = Tools::Mission(scope);
     spec.apply(&mut by_spec);
     let want = expected(false, false, true, set(&["Bash", "Read"]), false, false);
-    assert_eq!(Seen::of(&today, Some(false)), want);
     assert_eq!(Seen::of(&by_spec, Some(false)), want);
     assert!(!by_spec.session_permissions.interactive);
 }
@@ -237,13 +211,10 @@ fn a_delegates_run_runs_as_today() {
         .insert(delegate::TOOLS_PARAM.into(), "read".into());
     meta.model_fallback = Some(false);
     assert_eq!(preset_of(&meta), Preset::Delegate);
-    let mut today = engine_today(&meta);
-    today.cfg.mission_allowed_tools = delegate::tool_scope(false);
     let mut by_spec = engine_for(&meta);
     let spec = SessionSpec::of(&meta);
     spec.apply(&mut by_spec);
     let want = expected(true, true, true, delegate_read(), false, false);
-    assert_eq!(Seen::of(&today, Some(false)), want);
     assert_eq!(Seen::of(&by_spec, Some(false)), want);
     assert_eq!(spec.permission, Permission::AskCaller);
     assert_eq!(spec.model_fallback, Some(false));
@@ -255,15 +226,10 @@ fn a_delegates_run_runs_as_today() {
 #[test]
 fn a_task_child_runs_as_today() {
     for parent_interactive in [true, false] {
-        let mut today = engine();
-        SessionPolicy::owner().apply(&mut today);
-        today.prompt_profile.task_bootstrap = true;
-        today.session_permissions.interactive = parent_interactive;
         let mut by_spec = engine();
         SessionSpec::delegated_child(Some(SessionPolicy::owner()), parent_interactive)
             .apply(&mut by_spec);
         let want = expected(true, true, true, None, parent_interactive, false);
-        assert_eq!(Seen::of(&today, None), want);
         assert_eq!(Seen::of(&by_spec, None), want);
         assert_eq!(
             by_spec.tools.builtins.session_policy,

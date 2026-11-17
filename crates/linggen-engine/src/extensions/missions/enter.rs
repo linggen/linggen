@@ -4,6 +4,7 @@
 
 use crate::engine::mission::record::Mission;
 use crate::engine::mission::MissionRegistry;
+use crate::engine::session_spec::{Memory, Permission, Tools};
 use crate::engine::skill::Skill;
 use crate::engine::skill::SkillRegistry;
 use crate::engine::tool_scope::compute_tool_scope;
@@ -28,11 +29,15 @@ pub async fn enter_mission(
     if let Some(ref skill) = skill {
         engine.lend_skill_tools(skill).await;
     }
-    engine.cfg.mission_allowed_tools = tool_scope(mission, skill.as_ref());
-    // Mission sessions don't write to the user's biographical memory and
-    // don't carry the core block + memory protocol. Any cached prompt
-    // predates the mission body.
-    engine.prompt_profile.narrow_for_creator("mission");
+    // Mission sessions don't write to the user's biographical memory,
+    // don't carry the core block + memory protocol, and never prompt.
+    let scope = tool_scope(mission, skill.as_ref());
+    engine.respec(|spec| {
+        spec.tools = Tools::Mission(scope);
+        spec.memory = Memory::None;
+        spec.permission = Permission::Unattended;
+    });
+    // Any cached prompt predates the mission body.
     engine.cached_system_prompt = None;
     skill
 }

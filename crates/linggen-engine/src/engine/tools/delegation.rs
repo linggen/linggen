@@ -453,16 +453,13 @@ pub(crate) async fn run_delegation(
     engine.tools.builtins.stand_with_parent(parent_place);
     engine.withhold_session_tools(&manager.global_sessions, session_id.as_deref());
 
-    // Inherit consumer restrictions from parent — subagents can only tighten, never widen.
-    if let Some(ref policy) = parent_policy {
-        policy.apply(&mut engine);
-    }
+    // Inherit consumer restrictions from parent — subagents can only tighten,
+    // never widen. A delegated run is a task whatever the parent's session
+    // was: the bootstrap message is the subagent's only delivery of its task.
+    crate::engine::session_spec::SessionSpec::delegated_child(parent_policy, parent_interactive)
+        .apply(&mut engine);
     // A separate ceiling survives policy and skill changes in the child.
     engine.cfg.delegated_allowed_tools = parent_allowed_tools;
-    // A delegated run is a task whatever the parent's session was: the
-    // parent's policy carries a person's-session profile (turns verbatim),
-    // but the bootstrap message is the subagent's only delivery of its task.
-    engine.prompt_profile.task_bootstrap = true;
 
     // Replace, rather than merge, the fresh engine's grants. Preserve the
     // snapshot verbatim: set_path_mode prunes more-specific entries and can

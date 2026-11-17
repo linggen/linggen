@@ -204,9 +204,7 @@ impl AgentEngine {
         // Mission and proxy-consumer sessions are non-interactive — they
         // pause/fail instead of prompting. Re-apply after load, since
         // permission.json may have been written before this flag was set.
-        if self.cfg.consumer_allowed_tools.is_some() || self.cfg.mission_allowed_tools.is_some() {
-            self.session_permissions.interactive = false;
-        }
+        self.settle_loaded_permissions();
 
         // Initialize default path_modes if empty (new user session →
         // configured default mode on starting cwd). Mission/consumer

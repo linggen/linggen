@@ -23,8 +23,8 @@ pub struct ConsumerCeiling {
 
 /// Encapsulates all permission decisions for a session run.
 ///
-/// Built from user type via `from_user_type()`, applied to the engine
-/// via `apply()`. Skill checks use `is_skill_allowed()`. Tool checks
+/// Built from user type via `from_user_type()`, carried to the engine by
+/// its session spec (`session_spec::SessionSpec::apply`). Skill checks use `is_skill_allowed()`. Tool checks
 /// go through `EngineConfig::is_tool_allowed()` (the engine enforcement layer).
 #[derive(Debug, Clone, PartialEq)]
 pub struct SessionPolicy {
@@ -76,23 +76,16 @@ impl SessionPolicy {
             .is_none_or(|s| s.contains(name))
     }
 
-    /// Apply this policy to an engine — the ONLY place engine mutation happens.
-    /// Always applies, even for owner — clears any stale consumer restrictions.
-    /// Also stores the policy on tools so subagents inherit it via delegation.
+    /// A person's turn under this policy, as a test sets an engine up: the
+    /// engine's spec, typed by this policy (`SessionSpec::typed`).
+    #[cfg(test)]
     pub fn apply(&self, engine: &mut super::AgentEngine) {
-        engine.cfg.consumer_allowed_tools = self.allowed_tools.clone();
-        engine.cfg.consumer_allowed_skills = self.allowed_skills.clone();
-        // Consumer sessions are non-interactive (no prompts surface). Owner
-        // sessions stay interactive. Mission sessions are flipped separately
-        // by the mission scheduler.
-        engine.session_permissions.interactive = !self.locked;
-        engine.prompt_profile = self.prompt_profile.clone();
-        // Store on tools for subagent propagation.
-        engine.tools.builtins.session_policy = Some(self.clone());
-        // Only invalidate cached prompt when restrictions change.
-        if self.allowed_tools.is_some() || self.allowed_skills.is_some() || self.locked {
-            engine.cached_system_prompt = None;
-        }
+        let policy = self.clone();
+        engine.respec(|spec| {
+            let tools = spec.tools.clone();
+            *spec = spec.clone().typed(policy, super::session_spec::Memory::Full);
+            spec.tools = tools;
+        });
     }
 }
 

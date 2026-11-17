@@ -117,6 +117,25 @@ Every session has a creator that determines how it was born and what capabilitie
 | `agent` | Sub-agent spawned via `Task` tool | Inherits parent's tools | Ling delegates exploration to itself |
 | `mission` | Cron scheduler triggers a mission run | Mission agent's tools | Nightly code review mission |
 
+### The session spec
+
+Each occasion a session is made for is a **preset**: a person's chat, an
+app's chat, Linggen's daily session, the companion's own thread, a hand-off,
+a mission, an `agent_run` delegate, an app's one-off job (bound values or
+tools withheld), a Claude session. A kept session's preset is read from what
+its `session.yaml` already holds (creator, runtime, id shape, params,
+withheld tools) — nothing new is stored. The preset's row in one table gives
+the session's strategies: who leads, its folder, its tools, which memory,
+how a turn is framed (verbatim or as a task), who answers beyond the grants
+(the person, the caller, or nobody), how its thread is kept (its own,
+the day's, rolling). A new kind of session is a new row.
+
+The spec is the only writer of a session's prompt profile, tool
+restriction, interactivity, world and framing; a turn's place narrows the
+turn on top of it and puts it back when the turn ends (§ A turn's place). A
+person typing into a session runs it under their policy, verbatim, with the
+memory of whom the turn belongs to.
+
 ### Creator inheritance
 
 When a session is created, it inherits configuration from its creator:

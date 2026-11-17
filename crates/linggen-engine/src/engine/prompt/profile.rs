@@ -1,6 +1,6 @@
 //! Prompt profile — declares which system prompt sections to include.
 //!
-//! Set once by `SessionPolicy::apply()`, read by the prompt builder.
+//! Set by the session spec (`session_spec::SessionSpec::apply`), read by the prompt builder.
 //! No scattered if/else — the profile is the single decision point.
 
 /// Which prompt sections to include for this session.
@@ -116,9 +116,8 @@ impl PromptProfile {
     }
 }
 
-/// An engine that no session policy has claimed is running a task, not
-/// talking to a person: missions and headless runs set `task` directly and
-/// never pass through `SessionPolicy::apply()`.
+/// An engine that no session spec has claimed is running a task, not
+/// talking to a person (`SessionSpec::unclaimed`).
 impl Default for PromptProfile {
     fn default() -> Self {
         Self::autonomous()

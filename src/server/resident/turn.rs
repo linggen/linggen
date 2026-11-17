@@ -251,7 +251,7 @@ async fn run_at(
         // At an app's table the session's recall policy is the app's: no
         // biography, no core block (`chat::turn_place::turn_creator`).
         if !turn.home && table_is_not_a_persons(state, turn) {
-            engine.prompt_profile.include_memory = false;
+            engine.respec(|spec| spec.memory = crate::engine::session_spec::Memory::CoreAndApp);
         }
 
         // First turn of a freshly rolled session: bridge the day/size roll with
@@ -424,7 +424,8 @@ fn ready_for_turn(
     // profile, applied to the engine (a fresh engine's default profile
     // frames the turn as an autonomous task — a second "Task:" message).
     let policy = crate::engine::session_policy::SessionPolicy::owner();
-    policy.apply(engine);
+    let typed = policy.clone();
+    engine.respec(|spec| *spec = spec.clone().typed(typed, crate::engine::session_spec::Memory::Full));
 
     // Her memory tools act for the session she speaks in: a write is stamped
     // with it (`source_session`), and a table whose skill keeps memory holds

@@ -721,11 +721,30 @@ async fn promote_mission_session_to_user(
     }
     meta.creator = "user".to_string();
     let _ = state.manager.global_sessions.update_session_meta(&meta);
-    engine.session_creator = Some(meta.creator.clone());
+    engine.respec(|spec| spec.creator = Some(meta.creator.clone()));
 
     let cfg = state.manager.get_config_snapshot().await;
     engine.cfg.tool_permission_mode = cfg.agent.tool_permission_mode;
     engine.cached_system_prompt = None;
+}
+
+/// The spec of a turn a person typed into `session_id` (its meta read after
+/// any promotion): the session's preset, typed by `policy`, its memory that
+/// of who the turn belongs to (`turn_place::turn_creator`).
+fn typed_spec(
+    state: &Arc<ServerState>,
+    session_id: &str,
+    engine: &crate::engine::AgentEngine,
+    policy: &crate::engine::session_policy::SessionPolicy,
+    turn_owner: &str,
+) -> crate::engine::session_spec::SessionSpec {
+    use crate::engine::session_spec::{Memory, SessionSpec};
+    let meta = state.manager.global_sessions.get_session_meta(session_id).ok().flatten();
+    let base = match meta {
+        Some(meta) => SessionSpec::of(&meta),
+        None => SessionSpec::unclaimed(engine.session_spec().creator.clone()),
+    };
+    base.typed(policy.clone(), Memory::of_turn(turn_owner))
 }
 
 /// Route the turn to one of three flows in order: slash-command skill
@@ -1469,10 +1488,7 @@ pub(crate) async fn start_turn(
 
         engine.tools.builtins.set_session_id(session_id.clone());
 
-        // Clear mission-only restrictions — user-initiated chats should never
-        // be restricted by permission tiers (those apply only to automated
-        // scheduler runs via apply_permission_tier).
-        engine.cfg.mission_allowed_tools = None;
+        // Mission-only bash prefixes never reach a person's turn.
         engine.cfg.bash_allow_prefixes = None;
 
         promote_mission_session_to_user(&mut engine, &state_clone, session_id.as_deref()).await;
@@ -1485,7 +1501,11 @@ pub(crate) async fn start_turn(
                     skills: room.allowed_skills,
                 }
             });
-        policy.apply(&mut engine);
+        // A person's turn: the session's spec typed by this policy — the
+        // lead's tools, verbatim, its memory the turn's (an app's or a
+        // mission's keeps less of the biography).
+        typed_spec(&state_clone, &session_id_for_queue, &engine, &policy, session_creator)
+            .apply(&mut engine);
         engine.suggest_followups = req_followups
             && !is_consumer
             && state
@@ -1494,17 +1514,6 @@ pub(crate) async fn start_turn(
                 .await
                 .agent
                 .suggest_followups;
-
-        // Skill- and mission-created sessions don't write to the user's
-        // biographical memory and shouldn't have the core block + memory
-        // protocol injected into their system prompt. The owner-vs-consumer
-        // policy is too coarse to express this — every owner-machine session
-        // gets `include_memory=true` by default — so we narrow it here once
-        // the live creator is known.
-        if session_creator != "user" {
-            engine.prompt_profile.narrow_for_creator(session_creator);
-            engine.cached_system_prompt = None;
-        }
 
         let model_label = engine.model_id.clone();
         state_clone
