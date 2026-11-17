@@ -260,16 +260,29 @@ async fn say_at_table(state: &Arc<ServerState>, session_id: String, text: &str) 
 
 /// If another agent is parked on a prompt, wrap the user's message with that
 /// context (question, options, `question_id`) so Yinyue can relay it with
-/// `answer_prompt`. Plain message through when nothing is waiting.
+/// `answer_prompt`. Plain message through when nothing is waiting. A
+/// question kept to a private app (`turn_place::question_kept_to`) is
+/// framed only as that the app waits: nothing of it, and no id to answer.
 async fn frame_with_pending_prompt(state: &Arc<ServerState>, text: &str) -> String {
-    let pending = state.pending_ask_user.lock().await;
-    let Some((qid, p)) = pending
-        .iter()
-        .find(|(_, p)| p.agent_id != crate::engine::agent::COMPANION_AGENT_ID)
-    else {
+    let first = {
+        let pending = state.pending_ask_user.lock().await;
+        pending
+            .iter()
+            .find(|(_, p)| p.agent_id != crate::engine::agent::COMPANION_AGENT_ID)
+            .map(|(qid, p)| (qid.clone(), p.agent_id.clone(), p.session_id.clone(), p.questions.first().cloned()))
+    };
+    let Some((qid, agent, session, question)) = first else {
         return text.to_string();
     };
-    let q0 = p.questions.first();
+    match crate::engine::turn_place::question_kept_to(&state.manager, session.as_deref()).await {
+        Some(app) => frame_kept(&app, text),
+        None => frame_open(&agent, &qid, question.as_ref(), text),
+    }
+}
+
+/// The user's message with a question it may answer: what it asks, its
+/// options and id.
+fn frame_open(agent: &str, qid: &str, q0: Option<&crate::engine::tools::AskUserQuestion>, text: &str) -> String {
     let question = q0.map(|q| q.question.as_str()).unwrap_or("their input");
     let options = q0
         .map(|q| {
@@ -281,11 +294,19 @@ async fn frame_with_pending_prompt(state: &Arc<ServerState>, text: &str) -> Stri
         })
         .unwrap_or_default();
     format!(
-        "[The agent \"{}\" is blocked, waiting on an answer to: \"{question}\" \
+        "[The agent \"{agent}\" is blocked, waiting on an answer to: \"{question}\" \
          (options: {options}; question_id \"{qid}\"). If the user's message below is their \
          answer, relay it with `answer_prompt` — only their actual words, never your own \
-         decision. Otherwise just talk with them normally.]\n\nUser says: {text}",
-        p.agent_id
+         decision. Otherwise just talk with them normally.]\n\nUser says: {text}"
+    )
+}
+
+/// The user's message beside a question kept to the private app `app`:
+/// only that the app waits, answered in the app's own chat.
+fn frame_kept(app: &str, text: &str) -> String {
+    format!(
+        "[The app \"{app}\" is waiting for the user's answer to a question there; what it asks is \
+         kept to that app and is answered only in its own chat.]\n\nUser says: {text}"
     )
 }
 

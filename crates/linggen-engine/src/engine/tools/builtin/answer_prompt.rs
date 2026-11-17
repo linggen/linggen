@@ -16,6 +16,16 @@ struct AnswerPromptArgs {
     question_id: Option<String>,
 }
 
+/// The private app a question waiting in `session` is kept to, when this
+/// call is not made from that session (`turn_place::question_kept_to`).
+async fn kept_elsewhere(tools: &Tools, session: Option<&str>) -> Option<String> {
+    let manager = tools.get_manager()?;
+    if session.is_some() && tools.session_id.as_deref() == session {
+        return None;
+    }
+    crate::engine::turn_place::question_kept_to(&manager, session).await
+}
+
 pub struct AnswerPromptTool;
 #[async_trait]
 impl Tool for AnswerPromptTool {
@@ -65,17 +75,16 @@ impl Tool for AnswerPromptTool {
         };
 
         // Resolve the target: an explicit id, else the single open prompt that
-        // isn't one of Yinyue's own asks. Remove it (consuming the oneshot).
-        let entry = {
-            let mut pending = bridge.pending.lock().await;
-            let qid = match args.question_id {
-                Some(id) if pending.contains_key(&id) => Some(id),
-                Some(_) => None, // stale / unknown id
+        // isn't one of Yinyue's own asks.
+        let target = {
+            let pending = bridge.pending.lock().await;
+            match args.question_id {
+                Some(id) => pending.get(&id).map(|p| (id.clone(), p.session_id.clone())),
                 None => {
-                    let mut others: Vec<String> = pending
+                    let mut others: Vec<(String, Option<String>)> = pending
                         .iter()
                         .filter(|(_, p)| p.agent_id != crate::engine::agent::COMPANION_AGENT_ID)
-                        .map(|(k, _)| k.clone())
+                        .map(|(k, p)| (k.clone(), p.session_id.clone()))
                         .collect();
                     if others.len() == 1 {
                         others.pop()
@@ -83,8 +92,17 @@ impl Tool for AnswerPromptTool {
                         None
                     }
                 }
-            };
-            qid.and_then(|id| pending.remove(&id).map(|p| (id, p)))
+            }
+        };
+        if let Some(app) = kept_elsewhere(tools, target.as_ref().and_then(|t| t.1.as_deref())).await {
+            return Ok(ToolResult::Success(format!(
+                "refused: that question is kept to {app}; it is answered in {app}'s own chat."
+            )));
+        }
+        // Remove it (consuming the oneshot).
+        let entry = match target {
+            Some((id, _)) => bridge.pending.lock().await.remove(&id).map(|p| (id, p)),
+            None => None,
         };
         let Some((qid, pending)) = entry else {
             return Ok(ToolResult::Success(

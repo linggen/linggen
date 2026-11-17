@@ -349,3 +349,45 @@ async fn the_skill_tool_is_refused_a_private_app_in_the_day() {
         "the day holds the ledger's SKILL.md"
     );
 }
+
+/// A question waiting in a private app's own chat is never framed into her
+/// turn at home — at most that the app waits — and she cannot answer it
+/// from there: it stays open in the app.
+#[tokio::test]
+async fn a_private_apps_question_is_not_framed_into_her_turn_nor_answered_from_home() {
+    let ask = json!({"questions": [{"question": "VAULT-QUESTION which drawer?", "header": "Drawer",
+        "options": [{"label": "Red"}, {"label": "Blue"}]}]});
+    let setup = Setup::default()
+        .script(Agent::Ling, vec![tool("AskUser", ask), text("Red drawer.")])
+        .script(
+            Agent::Yinyue,
+            vec![tool("answer_prompt", json!({"answer": "Red"})), text("Noted.")],
+        );
+    let (w, _) = day_world_at(12, setup).await;
+    crate::day_session::install_app(&w, "vault", "AskUser", true).await;
+    let own = w.api.create_session(json!({"title": "Vault", "skill": "vault"})).await;
+    let mark = w.mark();
+    say(&w, &own, Some("vault"), "Open a drawer").await;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while w.api.get("/api/pending-ask-user?skill=vault").await.as_array().is_none_or(|a| a.is_empty()) {
+        assert!(std::time::Instant::now() < deadline, "no question; log:\n{}", w.engine.log_since(mark));
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let mark = w.mark();
+    w.api.post("/api/yinyue/chat", json!({"text": "Red"})).await;
+    w.wait_agent(Agent::Yinyue, mark).await;
+    let mut wrong = Vec::new();
+    let her = w.model.calls_of(Agent::Yinyue);
+    if her.iter().any(|c| c.text().contains("VAULT-QUESTION")) {
+        wrong.push("the question was framed into her turn".to_string());
+    }
+    let day = w.api.get("/api/sessions/day").await["id"].as_str().unwrap().to_string();
+    if day_text(&w, &day).contains("VAULT-QUESTION") {
+        wrong.push("the day holds the question".into());
+    }
+    let open = w.api.get("/api/pending-ask-user?skill=vault").await;
+    if open.as_array().is_none_or(|a| a.is_empty()) {
+        wrong.push("she answered the private app's question from home".into());
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}

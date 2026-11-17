@@ -66,14 +66,9 @@ fn on_ask(
 }
 
 /// The private app a question in session `session_id` is asked from
-/// (`TurnPlace::private_app`): the place of the turn running there, else
-/// the session's own.
+/// (`turn_place::question_kept_to`, the one rule).
 async fn asked_in_private_app(state: &Arc<ServerState>, session_id: Option<&str>) -> Option<String> {
-    let sid = session_id?;
-    let running = state.manager.global_sessions.running_places.of(sid);
-    let place = running.unwrap_or_else(|| crate::server::chat::turn_place::of_session_id(&state.manager, sid));
-    let day_on = crate::server::day_session::enabled(&state.manager).await;
-    place.private_app(&*state.manager.skills, day_on).await
+    crate::engine::turn_place::question_kept_to(&state.manager, session_id).await
 }
 
 /// An agent parked on a question or a permission prompt — Yinyue heralds

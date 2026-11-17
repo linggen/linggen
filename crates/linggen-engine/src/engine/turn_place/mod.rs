@@ -119,6 +119,26 @@ impl TurnPlace {
     }
 }
 
+/// The private app a question waiting in session `session_id` is kept to
+/// (`TurnPlace::private_app`): the place of the turn running there, else the
+/// session's own. Its words never reach a turn outside that app's own
+/// session — at most that the app waits. `None` with the setting off.
+pub async fn question_kept_to(
+    manager: &crate::engine::agent::AgentManager,
+    session_id: Option<&str>,
+) -> Option<String> {
+    let sid = session_id?;
+    let place = match manager.global_sessions.running_places.of(sid) {
+        Some(place) => place,
+        None => {
+            let meta = manager.global_sessions.get_session_meta(sid).ok().flatten();
+            TurnPlace::of_session(meta.as_ref())
+        }
+    };
+    let day_on = manager.get_config_snapshot().await.agent.one_session_a_day;
+    place.private_app(&*manager.skills, day_on).await
+}
+
 impl crate::engine::tools::Tools {
     /// Whether this session keeps `skill` out: in a day's session, with one
     /// session a day on, a private app (`private-talk: true`) never becomes
