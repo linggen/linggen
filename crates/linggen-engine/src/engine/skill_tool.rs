@@ -248,7 +248,20 @@ impl SkillToolDef {
 
         let rendered = self.render_cmd(args, session)?;
 
-        info!("Skill tool '{}' rendered command: {}", self.name, rendered);
+        // A tool's arguments can be a person's own data (a phone's sync
+        // payload: health samples, ledger rows). The log names the tool and
+        // the command's size; its text is shown only at debug, and only its
+        // head — the script and verb, not the payload.
+        info!(
+            "Skill tool '{}' runs ({} bytes of command)",
+            self.name,
+            rendered.len()
+        );
+        tracing::debug!(
+            "Skill tool '{}' command starts: {}",
+            self.name,
+            rendered.chars().take(160).collect::<String>()
+        );
 
         // Execute via sh -c. Own the process group so a timeout kills the
         // whole pipeline, not just the shell.
