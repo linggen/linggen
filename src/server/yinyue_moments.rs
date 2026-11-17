@@ -388,19 +388,28 @@ fn table_of(moments: &[Moment]) -> Option<String> {
     moments.iter().find_map(|m| m.session.clone())
 }
 
-/// Where her turn for `moments` runs. With one session a day on there is
-/// one table: the day's session, in the place of the app the moments came
-/// from, and every moment's line lands there alone. Otherwise the app chat
-/// the moments name first.
+/// Where her turn for `moments` runs, and the moments it takes. With one
+/// session a day on there is one table: the day's session, in the place of
+/// the app the moments came from — one app a wake: another app's moments
+/// wait for the next, so nothing of one app is told in another's place —
+/// and every moment's line lands there alone. Otherwise the app chat the
+/// moments name first.
 async fn at_the_table(
     state: &Arc<ServerState>,
-    mut moments: Vec<Moment>,
+    moments: Vec<Moment>,
 ) -> (Vec<Moment>, Option<super::resident::Table>) {
     let Some(day) = super::day_session::current_if_on(&state.manager).await else {
         let table = table_of(&moments).map(|session| super::resident::Table { session, app: None });
         return (moments, table);
     };
     let app = app_of(&moments);
+    let (mut moments, later) = one_app(moments, app.as_deref());
+    if !later.is_empty() {
+        let mut q = MOMENTS.lock().unwrap_or_else(|e| e.into_inner());
+        for m in later.into_iter().rev() {
+            q.push_front(m);
+        }
+    }
     for m in moments.iter_mut() {
         m.session = Some(day.clone());
     }
@@ -412,6 +421,11 @@ async fn at_the_table(
 fn app_of(moments: &[Moment]) -> Option<String> {
     let named = moments.iter().find(|m| m.session.is_some());
     named.or(moments.last()).map(|m| m.app.clone())
+}
+
+/// The moments of `app`, and the rest.
+fn one_app(moments: Vec<Moment>, app: Option<&str>) -> (Vec<Moment>, Vec<Moment>) {
+    moments.into_iter().partition(|m| Some(m.app.as_str()) == app)
 }
 
 /// When each session last had a conversational exchange.
@@ -566,12 +580,12 @@ pub async fn yinyue_moment_loop(state: Arc<ServerState>) {
 /// One wake for `taken`: her turn at the table, then her line in the chats
 /// the moments name.
 async fn wake_her(state: Arc<ServerState>, taken: Vec<Moment>, (asked, in_use): (bool, bool), emotion: String) {
+    let (taken, table) = at_the_table(&state, taken).await;
     let words = if asked {
         asked_kickoff(&taken)
     } else {
         kickoff(&taken)
     };
-    let (taken, table) = at_the_table(&state, taken).await;
     let line = super::resident::wake_for_moment(
         state.clone(),
         (words, table.clone()),
@@ -739,6 +753,20 @@ mod tests {
             "idle past five minutes"
         );
         assert_eq!(verdict(from("game"), None), quiet, "no page in front");
+    }
+
+    #[test]
+    fn a_day_wake_takes_one_apps_moments_and_leaves_the_rest() {
+        let other = Moment {
+            app: "dice".into(),
+            ..m(2, false)
+        };
+        let batch = vec![m(1, false), other.clone(), m(3, false)];
+        let app = app_of(&batch);
+        let (now, later) = one_app(batch, app.as_deref());
+        assert!(now.iter().all(|x| x.app == "game"));
+        assert_eq!(now.len(), 2);
+        assert_eq!(later, vec![other]);
     }
 
     #[test]

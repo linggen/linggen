@@ -9,7 +9,7 @@ pub async fn yinyue_watch_loop(state: Arc<ServerState>) {
     tracing::info!("[yinyue-watch] started");
     loop {
         match rx.recv().await {
-            Ok(event) => handle_event(&state, event),
+            Ok(stamped) => handle_event(&state, stamped),
             Err(RecvError::Lagged(n)) => {
                 tracing::warn!("[yinyue-watch] lagged; skipped {n} events");
             }
@@ -20,8 +20,9 @@ pub async fn yinyue_watch_loop(state: Arc<ServerState>) {
 
 /// Cheap, synchronous classifier. Matches the coarse triggers and spawns any
 /// async follow-up; every other event returns immediately.
-pub(super) fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
-    match event {
+pub(super) fn handle_event(state: &Arc<ServerState>, stamped: crate::engine::event_bus::Stamped) {
+    let kept_to = stamped.kept_to;
+    match stamped.event {
         ServerEvent::Notification(payload) => handle_notification(state, payload),
         // An agent parked on a question or a permission prompt — Yinyue heralds
         // "they need you". One hook covers both AskUser-tool questions and
@@ -31,7 +32,11 @@ pub(super) fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
             question_id,
             questions,
             session_id,
-        } => herald_ask(state, agent_id, question_id, questions, session_id),
+        } => match kept_to {
+            // A kept question is the app's: she is told only that it waits.
+            Some(app) => herald_kept_ask(state, app, question_id, session_id),
+            None => herald_ask(state, agent_id, question_id, questions, session_id),
+        },
         // A peer agent sent a message. TO YINYUE → she receives it in her own
         // voice (herald). TO A CHAT AGENT (Ling, …) → it shows in that agent's
         // chat as a message from the sender, and that agent responds. Either way
@@ -41,7 +46,7 @@ pub(super) fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
             to,
             message,
             app,
-        } => on_agent_chat(state, from, to, message, app),
+        } if kept_to.is_none() => on_agent_chat(state, from, to, message, app),
         _ => {} // firehose + everything else dropped here, near-free
     }
 }
@@ -112,6 +117,52 @@ fn herald_ask(
         );
         crate::server::api::yinyue::emit_speak(&state, line, Some("neutral".to_string()));
     });
+}
+
+/// A question asked where the talk is kept to `app`: she calls the person
+/// back to that app, told only that it waits for an answer — never the
+/// question, its options or anything said there.
+fn herald_kept_ask(state: &Arc<ServerState>, app: String, question_id: String, session_id: Option<String>) {
+    if delegated_session(state, session_id.as_deref()) || !state.manager.agent_present(YINYUE_AGENT) {
+        return;
+    }
+    if user_sees_screen(state) {
+        return;
+    }
+    let state = state.clone();
+    tokio::spawn(async move {
+        if !ask_still_pending(&state, &question_id).await {
+            return;
+        }
+        let Some(reply) = run_yinyue_turn(&state, kept_ask_kickoff(&app), "event").await else {
+            return;
+        };
+        let Some(line) = spoken_line(&reply) else {
+            return;
+        };
+        if !ask_still_pending(&state, &question_id).await || user_sees_screen(&state) {
+            return;
+        }
+        crate::server::api::yinyue::emit_speak(&state, line, Some("neutral".to_string()));
+    });
+}
+
+/// Her kickoff for a question kept to `app`: that it waits, nothing of it.
+fn kept_ask_kickoff(app: &str) -> String {
+    format!(
+        "The app \"{app}\" is waiting for the user to answer a question there; what it \
+         asks is kept to that app. The user has stepped away from the screen. Call them back \
+         to it in your voice — one brief line, spoken aloud, plain prose. If it truly \
+         doesn't warrant interrupting now, reply with exactly SILENT."
+    )
+}
+
+/// The app a line said at `table` is kept to: its app's, when that app's
+/// talk is kept in the table's session.
+async fn kept_at(state: &Arc<ServerState>, table: Option<&Table>) -> Option<String> {
+    let table = table?;
+    let place = crate::server::chat::turn_place::told_in(&state.manager, &table.session, table.app.as_deref());
+    crate::server::chat::turn_place::hidden_app(&state.manager, &table.session, &place).await
 }
 
 /// The first question and its options, as her kickoff names them.
@@ -456,6 +507,8 @@ pub(super) async fn wake_and_speak(
     reach: Reach,
     language: Option<String>,
 ) -> Option<String> {
+    // Decided before her turn, from where it stands.
+    let kept = kept_at(&state, table.as_ref()).await;
     // `None`: the run failed or she produced nothing.
     let reply = match reach {
         Reach::Open => run_yinyue_turn(&state, kickoff, trigger_source).await,
@@ -480,7 +533,7 @@ pub(super) async fn wake_and_speak(
         "[yinyue-watch] Yinyue heralds ({} chars, {emotion})",
         line.len()
     );
-    crate::server::api::yinyue::emit_speak(&state, line.clone(), Some(emotion.to_string()));
+    crate::server::api::yinyue::emit_speak_kept(&state, line.clone(), Some(emotion.to_string()), kept);
     Some(line)
 }
 
@@ -897,5 +950,18 @@ mod native_target_tests {
         };
         assert!(is_delegated(Some(&meta)));
         assert!(!is_delegated(None));
+    }
+}
+
+#[cfg(test)]
+mod kept_tests {
+    /// A question kept to an app reaches her only as that the app waits:
+    /// nothing of what it asks, and no way to answer it for the person.
+    #[test]
+    fn a_kept_question_reaches_her_without_its_words() {
+        let kickoff = super::kept_ask_kickoff("zz-ledger");
+        assert!(kickoff.contains("zz-ledger"));
+        assert!(!kickoff.contains("answer_prompt"));
+        assert!(!kickoff.contains("options"));
     }
 }
