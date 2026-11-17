@@ -18,6 +18,7 @@ use std::sync::Mutex;
 pub struct SessionStore {
     sessions_dir: PathBuf,
     append_lock: Mutex<()>,
+    meta_lock: Mutex<()>,
     /// How many times each session's history was rewritten in place (a
     /// compaction, a clear) through this store. A member's cached thread
     /// from before a rewrite is stale (`chat::thread`).
@@ -402,6 +403,7 @@ impl SessionStore {
         Self {
             sessions_dir,
             append_lock: Mutex::new(()),
+            meta_lock: Mutex::new(()),
             rewrites: Mutex::new(std::collections::HashMap::new()),
             running_places: Default::default(),
         }
@@ -462,8 +464,10 @@ impl SessionStore {
                 .unwrap_or_default()
         };
         if meta.migrate_members(answered) {
-            // Once: the moved fields are never written back.
-            let _ = fs::write(&yaml_path, serde_norway::to_string(&meta)?);
+            // Re-read under the edit lock so migration never overwrites another edit.
+            if let Ok(fresh) = self.edit(session_id, |fresh| fresh.clone()) {
+                meta = fresh;
+            }
         }
         Ok(Some(meta))
     }
@@ -564,32 +568,30 @@ impl SessionStore {
     }
 
     pub fn rename_session(&self, session_id: &str, new_title: &str) -> Result<()> {
-        Self::validate_id(session_id)?;
-        let yaml_path = self.session_dir(session_id).join("session.yaml");
-        if !yaml_path.exists() {
-            bail!("Session not found: {}", session_id);
-        }
-        let content = fs::read_to_string(&yaml_path)?;
-        let mut meta = parse_meta(&content)?;
-        meta.title = new_title.to_string();
-        // Any explicit rename — user via the API, or the chat auto-rename
-        // hook — locks the title so the placeholder-overwrite path stays
-        // silent afterwards.
-        meta.title_locked = true;
-        let yaml = serde_norway::to_string(&meta)?;
-        fs::write(yaml_path, yaml)?;
-        Ok(())
+        self.edit(session_id, |meta| {
+            meta.title = new_title.to_string();
+            // Any explicit rename locks the title against auto-rename.
+            meta.title_locked = true;
+        })
     }
 
-    pub fn update_session_meta(&self, meta: &SessionMeta) -> Result<()> {
-        Self::validate_id(&meta.id)?;
-        let yaml_path = self.session_dir(&meta.id).join("session.yaml");
-        if !yaml_path.exists() {
-            bail!("Session not found: {}", meta.id);
+    /// Change an existing session under one lock, publishing a complete file.
+    pub fn edit<R>(&self, session_id: &str, f: impl FnOnce(&mut SessionMeta) -> R) -> Result<R> {
+        Self::validate_id(session_id)?;
+        let _guard = self.meta_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let path = self.session_dir(session_id).join("session.yaml");
+        if !path.exists() {
+            bail!("Session not found: {}", session_id);
         }
-        let yaml = meta_yaml(meta)?;
-        fs::write(yaml_path, yaml)?;
-        Ok(())
+        let mut meta = parse_meta(&fs::read_to_string(&path)?)?;
+        meta.migrate_members(|| self.get_chat_history(session_id)
+            .map(|rows| answering_agents(&rows)).unwrap_or_default());
+        let result = f(&mut meta);
+        let yaml = meta_yaml(&meta)?;
+        let mut temp = tempfile::NamedTempFile::new_in(self.session_dir(session_id))?;
+        temp.write_all(yaml.as_bytes())?;
+        temp.persist(&path)?;
+        Ok(result)
     }
 
     /// Update the per-session compact config (threshold + focus) in session.yaml.
@@ -601,18 +603,10 @@ impl SessionStore {
         threshold: Option<f32>,
         focus: Option<String>,
     ) -> Result<()> {
-        Self::validate_id(session_id)?;
-        let yaml_path = self.session_dir(session_id).join("session.yaml");
-        if !yaml_path.exists() {
-            bail!("Session not found: {}", session_id);
-        }
-        let content = fs::read_to_string(&yaml_path)?;
-        let mut meta = parse_meta(&content)?;
-        meta.compact_threshold = threshold;
-        meta.compact_focus = focus;
-        let yaml = serde_norway::to_string(&meta)?;
-        fs::write(yaml_path, yaml)?;
-        Ok(())
+        self.edit(session_id, |meta| {
+            meta.compact_threshold = threshold;
+            meta.compact_focus = focus;
+        })
     }
 
     /// Whether a failed model call may move to another model in session
@@ -633,9 +627,7 @@ impl SessionStore {
         if !yaml_path.exists() {
             return Ok(false);
         }
-        let mut meta = parse_meta(&fs::read_to_string(&yaml_path)?)?;
-        meta.model_fallback = Some(allowed);
-        fs::write(yaml_path, meta_yaml(&meta)?)?;
+        self.edit(session_id, |meta| meta.model_fallback = Some(allowed))?;
         Ok(true)
     }
 
@@ -831,6 +823,53 @@ mod tests {
         (store, dir)
     }
 
+    #[test]
+    fn concurrent_session_edits_keep_both_fields() {
+        let (store, _dir) = temp_store();
+        store.add_session(&SessionMeta {
+            id: "concurrent".into(), cwd: "/tmp".into(), ..Default::default()
+        }).unwrap();
+        let barrier = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            for title in [true, false] {
+                let store = &store;
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    for i in 0..300 {
+                        barrier.wait();
+                        store.edit("concurrent", |meta| {
+                            if title { meta.title = format!("title-{i}"); }
+                            else { meta.creator = format!("creator-{i}"); }
+                        }).unwrap();
+                        barrier.wait();
+                    }
+                });
+            }
+        });
+        let meta = store.get_session_meta("concurrent").unwrap().unwrap();
+        assert_eq!(meta.title, "title-299");
+        assert_eq!(meta.creator, "creator-299");
+    }
+
+    #[test]
+    fn no_external_update_session_meta() {
+        fn walk(dir: &std::path::Path, files: &mut Vec<PathBuf>) {
+            for entry in fs::read_dir(dir).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() { walk(&path, files); }
+                else if path.extension().is_some_and(|ext| ext == "rs") { files.push(path); }
+            }
+        }
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().parent().unwrap();
+        let mut files = Vec::new();
+        walk(&root.join("src"), &mut files);
+        walk(&root.join("crates/linggen-engine/src"), &mut files);
+        for file in files {
+            if file == root.join("crates/linggen-engine/src/state_fs/sessions.rs") { continue; }
+            assert!(!fs::read_to_string(&file).unwrap().contains("update_session_meta"), "{}", file.display());
+        }
+    }
+
     /// Write a session.yaml as an older engine did: no `cwd:` at all.
     fn legacy_session(store: &SessionStore, id: &str, extra: &str) {
         let dir = store.session_dir(id);
@@ -944,7 +983,7 @@ mod tests {
         );
         store.rename_session("sess-1-plain", "Renamed").unwrap();
         assert!(yaml_of(&store, "sess-1-plain").contains(&format!("cwd: {}", plain.cwd)));
-        store.update_session_meta(&skill).unwrap();
+        store.edit("sess-2-skill", |_| ()).unwrap();
         assert!(yaml_of(&store, "sess-2-skill").contains("skills/dice"));
     }
 

@@ -489,19 +489,13 @@ pub(crate) async fn rename_session_api(
             }
             // The mode change can wait on the SDK while the running turn
             // writes this meta; apply the request to what is stored now.
-            meta = match state
-                .manager
-                .global_sessions
-                .get_session_meta(&req.session_id)
-            {
-                Ok(Some(fresh)) => fresh,
-                _ => return StatusCode::NOT_FOUND.into_response(),
-            };
-            apply_claude_rename(&mut meta, &req);
+            if state.manager.global_sessions.get_session_meta(&req.session_id).ok().flatten().is_none() {
+                return StatusCode::NOT_FOUND.into_response();
+            }
             if state
                 .manager
                 .global_sessions
-                .update_session_meta(&meta)
+                .edit(&req.session_id, |meta| apply_claude_rename(meta, &req))
                 .is_err()
             {
                 return StatusCode::INTERNAL_SERVER_ERROR.into_response();
@@ -553,10 +547,17 @@ pub(crate) async fn rename_session_api(
                 .clone()
                 .filter(|a| !a.trim().is_empty())
                 .unwrap_or_else(|| crate::server::chat::members::default_responder(&members));
-            meta.agents = members;
-            if meta.set_member_model(&member, new_val.clone()) {
-                let _ = state.manager.global_sessions.update_session_meta(&meta);
-            }
+            let skill = match meta.skill.as_deref() {
+                Some(name) => state.manager.skills.get_skill(name).await,
+                None => None,
+            };
+            let _ = state.manager.global_sessions.edit(&req.session_id, |fresh| {
+                let mut updated = fresh.clone();
+                updated.agents = crate::server::chat::members::effective(fresh, skill.as_ref());
+                if updated.set_member_model(&member, new_val.clone()) {
+                    fresh.agents = updated.agents;
+                }
+            });
             // On a mission session the model picker is the only model control
             // the user is shown, so it has to be the mission's model — not a
             // per-session override the next scheduled run overwrites (the

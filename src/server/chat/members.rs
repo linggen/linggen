@@ -94,19 +94,17 @@ pub(crate) async fn of_session(manager: &AgentManager, session_id: &str) -> Vec<
 /// True when it was added.
 pub(crate) async fn seat(manager: &AgentManager, session_id: &str, id: &str) -> bool {
     let store = &manager.global_sessions;
-    let Ok(Some(mut meta)) = store.get_session_meta(session_id) else {
-        return false;
+    let skill = match store.get_session_meta(session_id).ok().flatten().and_then(|m| m.skill) {
+        Some(name) => manager.skills.get_skill(&name).await,
+        None => None,
     };
-    // Another runtime's session keeps the members it was created with.
-    if !meta.runtime.is_linggen() {
-        return false;
-    }
-    let current = of_session(manager, session_id).await;
-    let Some(members) = seated(&current, id) else {
-        return false;
-    };
-    meta.agents = members;
-    let ok = store.update_session_meta(&meta).is_ok();
+    let ok = store.edit(session_id, |meta| {
+        if !meta.runtime.is_linggen() { return false; }
+        let current = effective(meta, skill.as_ref());
+        let Some(members) = seated(&current, id) else { return false; };
+        meta.agents = members;
+        true
+    }).unwrap_or(false);
     if ok {
         tracing::info!("[members] {id} joins {session_id}");
     }
@@ -122,11 +120,17 @@ pub(crate) async fn set_model(
     model: Option<String>,
 ) -> bool {
     let store = &manager.global_sessions;
-    let Ok(Some(mut meta)) = store.get_session_meta(session_id) else {
-        return false;
+    let skill = match store.get_session_meta(session_id).ok().flatten().and_then(|m| m.skill) {
+        Some(name) => manager.skills.get_skill(&name).await,
+        None => None,
     };
-    meta.agents = of_session(manager, session_id).await;
-    meta.set_member_model(id, model) && store.update_session_meta(&meta).is_ok()
+    store.edit(session_id, |meta| {
+        let mut updated = meta.clone();
+        updated.agents = effective(meta, skill.as_ref());
+        if !updated.set_member_model(id, model) { return false; }
+        meta.agents = updated.agents;
+        true
+    }).unwrap_or(false)
 }
 
 /// The model `member` runs on in its session: the model the session keeps

@@ -239,14 +239,10 @@ async fn bridge_agent_events(state: Arc<ServerState>, mut rx: AgentEvents) {
 /// [`SessionMeta::set_cwd`]: crate::state_fs::sessions::SessionMeta::set_cwd
 pub(crate) fn note_working_folder(state: &ServerState, session_id: String, cwd: String) {
     let sessions = &state.manager.global_sessions;
-    let (project, project_name) = match sessions.get_session_meta(&session_id) {
-        Ok(Some(mut meta)) => {
-            meta.set_cwd(&cwd);
-            let _ = sessions.update_session_meta(&meta);
-            (meta.project, meta.project_name)
-        }
-        _ => crate::state_fs::sessions::project_of(&cwd),
-    };
+    let (project, project_name) = sessions.edit(&session_id, |meta| {
+        meta.set_cwd(&cwd);
+        (meta.project.clone(), meta.project_name.clone())
+    }).unwrap_or_else(|_| crate::state_fs::sessions::project_of(&cwd));
     let _ = state.events_tx.send(ServerEvent::WorkingFolderChanged {
         session_id,
         cwd,

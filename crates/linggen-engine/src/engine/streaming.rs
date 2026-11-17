@@ -596,15 +596,12 @@ impl AgentEngine {
         let (Some(manager), Some(session_id)) = (self.tools.get_manager(), &self.session_id) else {
             return;
         };
-        let Ok(Some(mut meta)) = manager.global_sessions.get_session_meta(session_id) else {
-            return;
-        };
         let Some(agent) = self.agent_id.as_deref() else {
             return;
         };
-        if meta.set_member_model(agent, Some(model_id.to_string())) {
-            let _ = manager.global_sessions.update_session_meta(&meta);
-        }
+        let _ = manager.global_sessions.edit(session_id, |meta| {
+            meta.set_member_model(agent, Some(model_id.to_string()));
+        });
     }
 
     /// Emit a ModelFallback event via the agent manager.

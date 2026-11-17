@@ -705,15 +705,21 @@ async fn promote_mission_session_to_user(
     session_id: Option<&str>,
 ) {
     let Some(sid) = session_id else { return };
-    let Ok(Some(mut meta)) = state.manager.global_sessions.get_session_meta(sid) else {
-        return;
-    };
-    if meta.creator != "mission" {
+    let promoted = state
+        .manager
+        .global_sessions
+        .edit(sid, |meta| {
+            if meta.creator != "mission" {
+                return false;
+            }
+            meta.creator = "user".to_string();
+            true
+        })
+        .unwrap_or(false);
+    if !promoted {
         return;
     }
-    meta.creator = "user".to_string();
-    let _ = state.manager.global_sessions.update_session_meta(&meta);
-    engine.respec(|spec| spec.creator = Some(meta.creator.clone()));
+    engine.respec(|spec| spec.creator = Some("user".to_string()));
 
     let cfg = state.manager.get_config_snapshot().await;
     engine.cfg.tool_permission_mode = cfg.agent.tool_permission_mode;
