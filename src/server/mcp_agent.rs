@@ -768,7 +768,7 @@ fn still_running_text(port: u16, session: &str) -> String {
         "Still running in the background in Linggen session {session}. Don't poll: \
         watch ws://127.0.0.1:{port}/api/agent/wait?session_id={session} with a background \
         watcher. It sends {{\"type\":\"permission_request\"}} (answer with agent_permit) and \
-        {{\"type\":\"finished\"}} (then read agent_status). Start a new watch for every agent_run, including continued sessions. If it closes or expires without finished, call agent_status once; if that still says running, start a new watch. Never poll."
+        {{\"type\":\"finished\"}} (read reply and followup there). Start a new watch for every agent_run, including continued sessions. If it closes or expires without finished, call agent_status once; if that still says running, start a new watch. Never poll."
     )
 }
 
@@ -1062,7 +1062,7 @@ pub(crate) async fn wait_socket(
                 frame = rx.recv() => match frame {
                     Some(WatchFrame::Permission(frame)) => if socket.send(axum::extract::ws::Message::Text(frame.to_string().into())).await.is_err() { break; },
                     Some(WatchFrame::Finished) => {
-                        let frame = finished_frame(session, last_run(&state.manager, session), final_reply(session), denials(session));
+                        let frame = finished_frame(session, last_run(&state.manager, session), session_replies(session), denials(session));
                         let _ = socket.send(axum::extract::ws::Message::Text(frame.to_string().into())).await;
                         let _ = socket.send(axum::extract::ws::Message::Close(None)).await;
                         break;
@@ -1153,18 +1153,17 @@ fn new_requests(
         .collect()
 }
 
-/// The stream's last frame: how the session's work ended, its reply, what
-/// was denied, and — for a failed run — `error` (the model named, with the
-/// provider's reason) — plus `model`, the one that answered its last call.
-/// Earlier keys (`session_id`, `status`, `reply`, `denied`) stay.
+/// The stream's last frame: how the work ended, the reply and any followup,
+/// what was denied, the last model, and the error if the run failed.
 fn finished_frame(
     session: &str,
     last: LastRun,
-    reply: Option<String>,
+    replies: TurnReplies,
     denied: Vec<crate::engine::tool_exec::DeniedAction>,
 ) -> serde_json::Value {
     serde_json::json!({"type": FINISHED_EVENT, "session_id": session, "status": last.status,
-        "reply": reply, "denied": denied, "error": last.error, "model": last.model})
+        "reply": replies.reply, "followup": replies.followup, "denied": denied,
+        "error": last.error, "model": last.model})
 }
 
 /// How the session's latest top-level run ended or stands.
@@ -1394,6 +1393,28 @@ mod wait_ready_tests {
             turn_replies(messages).reply.as_deref(),
             Some("agent answer")
         );
+    }
+
+    #[test]
+    fn finished_frame_includes_reply_and_followup() {
+        let replies = turn_replies(vec![
+            row("user", "fix it", false),
+            row("ling", "Fixed.", false),
+            row("system", "Background task ended", false),
+            row("ling", "The watcher ended.", false),
+        ]);
+        let frame = finished_frame(
+            "s1",
+            LastRun {
+                status: "completed",
+                error: None,
+                model: None,
+            },
+            replies,
+            vec![],
+        );
+        assert_eq!(frame["reply"], "Fixed.");
+        assert_eq!(frame["followup"], "The watcher ended.");
     }
 
     #[test]
@@ -2017,7 +2038,10 @@ mod permit_tests {
                 error: None,
                 model: None,
             },
-            Some("ok".into()),
+            TurnReplies {
+                reply: Some("ok".into()),
+                followup: None,
+            },
             vec![],
         );
         assert_eq!(
@@ -2194,9 +2218,10 @@ mod permit_tests {
                 error: Some("MODEL_FAILED: model 'm' failed".into()),
                 model: Some("m".into()),
             },
-            None,
+            TurnReplies::default(),
             vec![],
         );
+        assert_eq!(frame.get("followup"), Some(&serde_json::Value::Null));
         assert_eq!(frame["status"], "failed");
         assert_eq!(frame["error"], "MODEL_FAILED: model 'm' failed");
         assert_eq!(frame["model"], "m");

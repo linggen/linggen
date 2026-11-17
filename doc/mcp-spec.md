@@ -166,16 +166,17 @@ deprecation window:
   frames:
   - `{"type":"permission_request","session_id","request":{id,tool,summary,command?,level,path,dir?,reason?,outward?}}`
     — once per request, including those raised before the watcher connected.
-  - `{"type":"finished","session_id","status","reply","denied","error","model"}`
+  - `{"type":"finished","session_id","status","reply","followup","denied","error","model"}`
     — last, then it closes. `status` is `completed`, `failed` or `cancelled`;
     `error` says why a failed run failed; `model` is the model that answered
     the run's last call. `agent_status` carries the same `status`, `error`
     and `model`.
   - `reply` (in both) is the agent's last message in the turn that answered
     the caller's latest prompt. A turn the engine starts on its own after it —
-    a background task's end — does not replace it; `agent_status` gives that
-    turn's last message as `followup`. A run an engine restart interrupted
-    goes on in the restart's continue turn, which still answers the prompt.
+    a background task's end — does not replace it; both `finished` and
+    `agent_status` give that turn's last message as `followup` (`null` if none).
+    A run an engine restart interrupted goes on in the restart's continue
+    turn, which still answers the prompt.
 - An action beyond the grants (never the hardcoded deny floor) waits for the
   caller. Answer with `agent_permit {session_id, request_id, decision, scope?}`:
   `allow_once` runs that action; `allow_session` grants its `path` or its
