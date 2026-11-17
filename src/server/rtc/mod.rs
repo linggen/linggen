@@ -143,6 +143,11 @@ pub struct UserContext {
     /// How the peer's channel was opened. Decides what the tunnel tells a
     /// handler about a peer that has not named a device ([`Self::tunnel_mark`]).
     pub reached_by: Reach,
+    /// The relay said this peer's account owns this Mac's instance: it dialled
+    /// with that account's credential (the owner's offer), or sent it beside
+    /// its device grant (`owner` on a paired offer). What `identify` verifies
+    /// a phone's claim by; nothing else sets it.
+    pub account_vouched: bool,
 }
 
 /// How a peer's channel was opened.
@@ -175,6 +180,7 @@ impl UserContext {
             room_name: None,
             consumer_type: None,
             reached_by: Reach::Relay,
+            account_vouched: false,
         }
     }
 
@@ -213,6 +219,7 @@ impl UserContext {
             room_name: None,
             consumer_type: None,
             reached_by: Reach::Relay,
+            account_vouched: false,
         }
     }
 
@@ -234,6 +241,7 @@ impl UserContext {
             room_name,
             consumer_type: Some(consumer_type),
             reached_by: Reach::Relay,
+            account_vouched: false,
         }
     }
 

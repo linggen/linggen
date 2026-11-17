@@ -196,6 +196,7 @@ mod tests {
             settings: Default::default(),
             relay_grant: None,
             superseded_grant: None,
+            ..Default::default()
         }
     }
 

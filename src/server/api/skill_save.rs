@@ -12,8 +12,9 @@
 //! Nothing here knows which skill it serves.
 //!
 //! Same account only: the device must be signed in to the account this Mac is
-//! signed in to. Another member's phone paired to the same Mac is refused, and
-//! so is an unidentified peer. The account's copy on linggen.dev is not touched
+//! signed in to, and that claim verified (`PairedDevice::verified_claim`).
+//! Another member's phone paired to the same Mac is refused, and so are an
+//! unidentified peer and a claim the relay has not vouched for. The account's copy on linggen.dev is not touched
 //! here: the Mac's own sync edges (a turn's, the page's) carry a change on.
 
 use axum::{
@@ -35,6 +36,7 @@ pub(crate) enum Refused {
     MacSignedOut,
     NotIdentified,
     OtherAccount,
+    Unverified,
 }
 
 impl Refused {
@@ -43,6 +45,7 @@ impl Refused {
             Refused::MacSignedOut => "mac-signed-out",
             Refused::NotIdentified => "not-identified",
             Refused::OtherAccount => "other-account",
+            Refused::Unverified => "unverified",
         }
     }
 }
@@ -59,16 +62,34 @@ pub(crate) fn same_account(mac: Option<&str>, device: Option<&str>) -> Result<()
     Ok(())
 }
 
+/// The account a device stands for here: its claim once the relay has
+/// verified it. A claim not verified is refused; no claim is no account.
+pub(crate) fn verified_account_of(
+    device: Option<&crate::server::api::pair::PairedDevice>,
+) -> Result<Option<&str>, Refused> {
+    let Some(d) = device else {
+        return Ok(None);
+    };
+    match (&d.account, d.verified_claim()) {
+        (Some(_), None) => Err(Refused::Unverified),
+        (_, verified) => Ok(verified),
+    }
+}
+
 fn gate(headers: &HeaderMap) -> Result<(), Response> {
     let mac = crate::account::load_account().and_then(|a| a.user_id);
-    let device = crate::server::api::pair::actor_for_headers(headers).and_then(|a| a.account);
-    same_account(mac.as_deref(), device.as_deref()).map_err(|r| {
-        (
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({ "refused": r.word() })),
-        )
-            .into_response()
-    })
+    let devices = crate::server::api::pair::load_devices();
+    let device = crate::server::api::pair::actor_for_headers(headers)
+        .and_then(|a| devices.iter().find(|d| d.id == a.device));
+    verified_account_of(device)
+        .and_then(|account| same_account(mac.as_deref(), account))
+        .map_err(|r| {
+            (
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({ "refused": r.word() })),
+            )
+                .into_response()
+        })
 }
 
 async fn save_of(state: &Arc<ServerState>, name: &str) -> Result<SaveTarget, Response> {
@@ -151,5 +172,35 @@ mod tests {
         );
         assert_eq!(same_account(None, Some("u1")), Err(Refused::MacSignedOut));
         assert_eq!(same_account(Some(""), Some("")), Err(Refused::MacSignedOut));
+    }
+
+    /// A device's claim of the Mac's account counts only once the relay has
+    /// verified it; verified, it is the account.
+    #[test]
+    fn an_unverified_claim_does_not_reach_the_save() {
+        use crate::server::api::pair::{AccountRef, PairedDevice};
+        let claimed = PairedDevice {
+            account: Some(AccountRef {
+                id: "u1".into(),
+                email: None,
+                name: None,
+                at: None,
+            }),
+            ..Default::default()
+        };
+        assert_eq!(
+            verified_account_of(Some(&claimed)),
+            Err(Refused::Unverified)
+        );
+        let verified = PairedDevice {
+            verified_account: Some("u1".into()),
+            ..claimed
+        };
+        assert_eq!(verified_account_of(Some(&verified)), Ok(Some("u1")));
+        assert_eq!(verified_account_of(None), Ok(None));
+        assert_eq!(
+            verified_account_of(Some(&PairedDevice::default())),
+            Ok(None)
+        );
     }
 }

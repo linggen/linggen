@@ -199,6 +199,7 @@ mod tests {
             settings: serde_json::Map::new(),
             relay_grant: None,
             superseded_grant: None,
+            ..Default::default()
         }
     }
 

@@ -69,15 +69,26 @@ pub(super) fn handle_control_message(
                 .get("device_token")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            let account = msg
+            let account: Option<crate::server::api::pair::AccountRef> = msg
                 .get("account")
                 .and_then(|v| serde_json::from_value(v.clone()).ok());
-            let identified = crate::server::api::pair::set_device_account(token, account);
+            // The relay vouched for this channel's account: a claim of this
+            // Mac's own account is verified by it (`set_device_account`).
+            let vouched_for = user_ctx
+                .account_vouched
+                .then(|| crate::account::load_account().and_then(|a| a.user_id))
+                .flatten();
+            let identified =
+                crate::server::api::pair::set_device_account(token, account.clone(), vouched_for.as_deref());
             // A phone that wrote memory while signed out did so under its
-            // device id; now that it is somebody, those rows become theirs.
-            // Once, here, because this is the only place a sign-in is seen.
+            // device id; now that it is somebody — or now that it is verified
+            // as the owner's — those rows become theirs. Here, because this
+            // is the only place a sign-in or a verification is seen.
             if let Some(id) = identified.as_ref() {
-                if let Some(gained) = id.signed_in.clone() {
+                let gained = id.signed_in.clone().or_else(|| {
+                    id.verified_now.as_ref().and(account.clone())
+                });
+                if let Some(gained) = gained {
                     let device = id.actor.device.clone();
                     tokio::spawn(async move {
                         crate::server::api::memory::restamp_device(&device, &gained).await;
