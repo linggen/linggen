@@ -7,6 +7,11 @@
 //! values it is bound to (`{{session.<name>}}`). A session of another skill
 //! is refused.
 //!
+//! A caller from off this machine is judged by the lower of the skill's own
+//! grant and the level it stands at (`devices::caller_level`, stamped by the
+//! seam): a tool above that level is refused with
+//! `403 {"error":"beyond_level","level":…,"needs":…}`.
+//!
 //! Instead of a page writing raw shell to `/api/bash`, it names a tool; the
 //! engine knows what may run. The run itself — lock, grant, cloud gate, push —
 //! is `engine::skill::tools`; this is its HTTP shape.
@@ -32,7 +37,9 @@ fn status_of(refusal: &Refusal) -> StatusCode {
         Refusal::NoSkill(_) | Refusal::NoTool(_) => StatusCode::NOT_FOUND,
         Refusal::NotRunnable(_) | Refusal::BadCall(_) => StatusCode::BAD_REQUEST,
         Refusal::SignedOut => StatusCode::UNAUTHORIZED,
-        Refusal::BeyondGrant(_) | Refusal::NotForPet(_) => StatusCode::FORBIDDEN,
+        Refusal::BeyondGrant(_) | Refusal::NotForPet(_) | Refusal::BeyondLevel { .. } => {
+            StatusCode::FORBIDDEN
+        }
         Refusal::Crashed(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
@@ -60,10 +67,25 @@ fn bound_params(
         .ok_or_else(|| format!("'{sid}' is not a session of '{skill}'"))
 }
 
+/// A refusal as the door answers it: the level's fact as JSON, any other
+/// refusal its words.
+fn refused(refusal: &Refusal) -> Response {
+    if let Refusal::BeyondLevel { level, needs } = refusal {
+        let fact = serde_json::json!({
+            "error": "beyond_level",
+            "level": level.to_string(),
+            "needs": needs.to_string(),
+        });
+        return (StatusCode::FORBIDDEN, Json(fact)).into_response();
+    }
+    refuse(status_of(refusal), refusal.to_string())
+}
+
 pub async fn run_tool(
     State(state): State<Arc<ServerState>>,
     Path((skill_name, tool_name)): Path<(String, String)>,
     Query(query): Query<DoorQuery>,
+    headers: axum::http::HeaderMap,
     body: Option<Json<Value>>,
 ) -> Response {
     let args = body
@@ -83,8 +105,9 @@ pub async fn run_tool(
         Ok(p) => p,
         Err(why) => return refuse(StatusCode::BAD_REQUEST, why),
     };
-    match tools::run(&skill, &tool_name, &args, &params).await {
+    let caller = crate::server::api::pair::caller_level(&headers);
+    match tools::run_at(&skill, &tool_name, &args, &params, caller).await {
         Ok(result) => Json(tools::output(result)).into_response(),
-        Err(refusal) => refuse(status_of(&refusal), refusal.to_string()),
+        Err(refusal) => refused(&refusal),
     }
 }
