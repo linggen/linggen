@@ -112,6 +112,10 @@ async fn another_persons_phone_over_the_lan_gets_its_own_day_and_never_the_build
     if named["id"] == json!(mine) {
         wrong.push(format!("naming the builder, the lookup gave the builder's day: {named}"));
     }
+    let aliased = lan.get("/api/sessions/d%61y").await;
+    if aliased["id"] == json!(mine) {
+        wrong.push(format!("a path written another way gave the builder's day: {aliased}"));
+    }
     let page = format!("/api/skill-sessions/state?skill=dice&session_id={mine}");
     let shown = lan.get(&page).await["messages"].to_string();
     if shown.contains("BUILDER-WORDS") {

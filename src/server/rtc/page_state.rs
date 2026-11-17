@@ -461,6 +461,7 @@ pub async fn build_page_state(
                 let project_sessions: Vec<_> = all
                     .into_iter()
                     .filter(|s| s.project.as_deref() == Some(root.as_str()) || s.cwd == *root)
+                    .filter(|s| theirs(&s.id))
                     .take(50)
                     .filter_map(|s| serde_json::to_value(s).ok())
                     .collect();
