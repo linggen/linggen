@@ -61,7 +61,7 @@ fn ling_at_home_gets_soul_then_the_main_chat() {
 #[test]
 fn an_app_session_keeps_the_soul_and_the_skill_is_its_place() {
     let mut engine = engine_as("ling", LING);
-    engine.active_skill = Some(skill("place:\n  ling: IGNORED FOR THE APP'S OWN AGENT.\n"));
+    engine.active_skill.set_for_test(Some(skill("place:\n  ling: IGNORED FOR THE APP'S OWN AGENT.\n")));
     let p = engine.system_prompt();
     let body = at(&p, "## How you work");
     let rules = at(&p, "THE APP'S OWN RULES.");
@@ -79,7 +79,7 @@ fn a_skill_bound_session_has_its_skill_for_a_place_even_without_an_app() {
     let plain = crate::extensions::skills::parse_skill_text(text, SkillSource::Global).unwrap();
     let mut engine = engine_as("ling", LING);
     engine.available_skills_metadata = vec![("other".into(), "OTHER SKILL.".into(), true)];
-    engine.active_skill = Some(plain);
+    engine.active_skill.set_for_test(Some(plain));
     engine.skill_bound = true;
     let p = engine.system_prompt();
     at(&p, "THE SKILL'S OWN RULES.");
@@ -134,7 +134,7 @@ fn a_member_reads_the_skills_place_for_her_never_its_rules() {
     let mut engine = engine_as("yinyue", YINYUE);
     seat_at(&mut engine, "ling");
     engine.available_skills_metadata = vec![("other".into(), "OTHER SKILL.".into(), true)];
-    engine.active_skill = Some(table.clone());
+    engine.active_skill.set_for_test(Some(table.clone()));
     engine.skill_bound = true;
     let p = engine.system_prompt();
     at(&p, "AT THE PLAYER'S SIDE.");
@@ -145,7 +145,7 @@ fn a_member_reads_the_skills_place_for_her_never_its_rules() {
     // The same skill, Ling leading: its SKILL.md is his place.
     let mut ling = engine_as("ling", LING);
     seat_at(&mut ling, "ling");
-    ling.active_skill = Some(table);
+    ling.active_skill.set_for_test(Some(table));
     ling.skill_bound = true;
     at(&ling.system_prompt(), "THE APP'S OWN RULES.");
 }
@@ -199,14 +199,14 @@ fn ling_speaks_of_yinyue_only_once_she_is_met() {
     type Setup = fn(&mut AgentEngine);
     let surfaces: [(&str, Setup); 4] = [
         ("home", |_| {}),
-        ("app", |e| e.active_skill = Some(skill(""))),
+        ("app", |e| e.active_skill.set_for_test(Some(skill("")))),
         ("bound skill", |e| {
             let plain = crate::extensions::skills::parse_skill_text(
                 "---\nname: zz\ndescription: A plain skill.\n---\nTHE SKILL'S OWN RULES.",
                 SkillSource::Global,
             )
             .unwrap();
-            e.active_skill = Some(plain);
+            e.active_skill.set_for_test(Some(plain));
             e.skill_bound = true;
         }),
         ("member", |e| seat_at(e, "someone")),

@@ -67,7 +67,7 @@ fn engine_on(url: &str, root: &std::path::Path) -> AgentEngine {
     let mut engine = AgentEngine::new(cfg, models, "light-test".into(), AgentRole::Lead).unwrap();
     let (spec, body) = crate::extensions::agents::parse_agent_markdown(LING).unwrap();
     engine.set_spec("ling".into(), spec, body);
-    engine.active_skill = Some(app());
+    engine.active_skill.set_for_test(Some(app()));
     engine.skill_bound = true;
     engine
 }

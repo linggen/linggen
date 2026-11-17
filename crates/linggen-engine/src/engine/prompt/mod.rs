@@ -1256,7 +1256,7 @@ impl AgentEngine {
         }
         // When a skill is active and declares allowed-tools, those take
         // precedence — the agent can only use the tools the skill permits.
-        if let Some(skill) = &self.active_skill {
+        if let Some(skill) = &*self.active_skill {
             if let Some(ref tools_list) = skill.allowed_tools {
                 if tools_list.is_empty() {
                     // allowed-tools: [] → no tools at all (not even Skill)

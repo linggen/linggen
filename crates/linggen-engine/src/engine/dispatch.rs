@@ -120,7 +120,7 @@ impl AgentEngine {
                         depth: self.tools.builtins.delegation_depth(),
                         max_depth: self.tools.builtins.max_delegation_depth(),
                         session_id: self.tools.builtins.session_id.clone(),
-                        place: self.tools.builtins.turn_place.clone(),
+                        place: (*self.tools.builtins.turn_place).clone(),
                         policy: self.tools.builtins.session_policy.clone(),
                         allowed_tools: allowed_tools.clone(),
                         path_modes: self.session_permissions.path_modes.clone(),

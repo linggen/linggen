@@ -26,7 +26,7 @@ pub async fn enter_mission(
     });
     let skill = owning_skill(mission, skills).await;
     if let Some(ref skill) = skill {
-        engine.lend_skill_tools(skill);
+        engine.lend_skill_tools(skill).await;
     }
     engine.cfg.mission_allowed_tools = tool_scope(mission, skill.as_ref());
     // Mission sessions don't write to the user's biographical memory and

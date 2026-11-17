@@ -202,10 +202,6 @@ impl ToolRegistry {
         self.builtins.set_run_id(run_id);
     }
 
-    pub fn set_active_skill(&mut self, name: String, dir: Option<std::path::PathBuf>) {
-        self.builtins.set_active_skill(name, dir);
-    }
-
     pub fn get_manager(&self) -> Option<Arc<AgentManager>> {
         self.builtins.get_manager()
     }

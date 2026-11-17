@@ -133,7 +133,7 @@ async fn a_subagent_uses_its_parent_places_grants() {
     user_grants(&mut parent, PermissionMode::Edit);
 
     let mut child = engine(&sid);
-    child.tools.builtins.turn_place = parent.turn_place().cloned();
+    child.tools.builtins.turn_place.set(parent.turn_place().cloned());
     child.join_session_permissions(&sid);
     assert_eq!(
         effective_mode_for_path(&child.session_permissions.path_modes, Path::new(FOLDER)),

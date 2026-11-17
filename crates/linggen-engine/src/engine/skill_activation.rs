@@ -1,7 +1,6 @@
 //! Skill activation: the single entry point for entering a skill context.
 //!
-//! Replaces the four ad-hoc `engine.active_skill = Some(...)` write sites
-//! that used to live in `server/chat/{handler, skill_dispatch, admin}` and
+//! Replaces the four ad-hoc writes of `engine.active_skill` that used to live in `server/chat/{handler, skill_dispatch, admin}` and
 //! consolidates the four different "should I prompt? should I apply
 //! grants?" rules into one place ([`ActivationMode`]).
 
@@ -93,10 +92,7 @@ impl AgentEngine {
             apply_skill_app_scope(self, &skill);
             apply_skill_tool_scope(self, &skill);
             apply_member_tool_scope(self, &skill);
-            self.active_skill = Some(skill);
-            return ActivationOutcome::Activated {
-                grants_changed: false,
-            };
+            return taken_up(self.take_up(skill, false).await, false);
         }
 
         // ToolInvocation: agent-driven Skill tool call. Tools-only mode —
@@ -107,12 +103,7 @@ impl AgentEngine {
         if matches!(mode, ActivationMode::ToolInvocation) {
             register_skill_tools(self, &skill);
             apply_skill_app_scope(self, &skill);
-            self.tools
-                .set_active_skill(skill.name.clone(), skill.skill_dir.clone());
-            self.active_skill = Some(skill);
-            return ActivationOutcome::Activated {
-                grants_changed: false,
-            };
+            return taken_up(self.take_up(skill, true).await, false);
         }
 
         // All remaining real activations (SessionBound, Trigger, and
@@ -134,10 +125,7 @@ impl AgentEngine {
         apply_skill_tool_scope(self, &skill);
         apply_member_tool_scope(self, &skill);
         seed_session_cwd_from_skill(self, &skill);
-        self.tools
-            .set_active_skill(skill.name.clone(), skill.skill_dir.clone());
-        self.active_skill = Some(skill);
-        ActivationOutcome::Activated { grants_changed }
+        taken_up(self.take_up(skill, true).await, grants_changed)
     }
 
     /// Lend a skill's tools to a run that is not the skill's own session —
@@ -145,10 +133,18 @@ impl AgentEngine {
     /// they resolve against. No SKILL.md body (`active_skill` stays unset),
     /// no grants, no cwd seed: the mission body is the whole runbook and
     /// its dispatch applies grants itself.
-    pub fn lend_skill_tools(&mut self, skill: &Skill) {
+    pub async fn lend_skill_tools(&mut self, skill: &Skill) {
         register_skill_tools(self, skill);
-        self.tools
-            .set_active_skill(skill.name.clone(), skill.skill_dir.clone());
+        self.lend_tools_dir(skill).await;
+    }
+}
+
+/// The outcome of an activation whose skill was (`held`) or was not taken
+/// up by the one setter (`turn_place::held`).
+fn taken_up(held: bool, grants_changed: bool) -> ActivationOutcome {
+    match held {
+        true => ActivationOutcome::Activated { grants_changed },
+        false => ActivationOutcome::Refused,
     }
 }
 

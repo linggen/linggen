@@ -100,7 +100,7 @@ impl AgentEngine {
             folder: self.move_to_place_folder(&place, skill.as_ref()),
             ..Entered::default()
         };
-        self.tools.builtins.turn_place = Some(place);
+        self.tools.builtins.turn_place.set(Some(place));
         self.cached_system_prompt = None;
         let Some(skill) = skill else {
             self.entered_place = Some(entered);
@@ -111,7 +111,7 @@ impl AgentEngine {
         entered.scopes = Some(Scopes {
             skill_allowed_tools: self.cfg.skill_allowed_tools.clone(),
             consumer_allowed_skills: self.cfg.consumer_allowed_skills.clone(),
-            tools_active_skill: self.tools.builtins.active_skill.clone(),
+            tools_active_skill: (*self.tools.builtins.active_skill).clone(),
             memory: MemoryScope::of(self),
         });
         // An app's turn reads no biography: core rides via `include_core`,
@@ -138,9 +138,9 @@ impl AgentEngine {
         let Some(entered) = self.entered_place.take() else {
             return;
         };
-        self.active_skill = None;
+        self.active_skill.clear();
         self.skill_bound = false;
-        self.tools.builtins.turn_place = None;
+        self.tools.builtins.turn_place.clear();
         self.tools.builtins.private_app = None;
         self.cached_system_prompt = None;
         for name in &entered.registered {
@@ -149,7 +149,7 @@ impl AgentEngine {
         if let Some(scopes) = entered.scopes {
             self.cfg.skill_allowed_tools = scopes.skill_allowed_tools;
             self.cfg.consumer_allowed_skills = scopes.consumer_allowed_skills;
-            self.tools.builtins.active_skill = scopes.tools_active_skill;
+            self.tools.builtins.active_skill.set(scopes.tools_active_skill);
             scopes.memory.restore(self);
         }
         if let Some(folder) = entered.folder {

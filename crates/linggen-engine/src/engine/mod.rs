@@ -614,7 +614,7 @@ impl AgentEngine {
                         })
                         .await;
                     }
-                    self.active_skill = None;
+                    self.active_skill.clear();
                     return Ok(AgentOutcome::None);
                 }
                 // Push a nudge and retry
@@ -678,7 +678,7 @@ impl AgentEngine {
                         ClosingAsk::Answered => continue,
                         ClosingAsk::Exit(outcome) => return Ok(outcome),
                         ClosingAsk::Unanswered => {
-                            self.active_skill = None;
+                            self.active_skill.clear();
                             return Ok(AgentOutcome::None);
                         }
                         ClosingAsk::NotNeeded => {}
@@ -690,7 +690,7 @@ impl AgentEngine {
                         iterations = iterations.min(self.cfg.max_iters.saturating_sub(1));
                         continue;
                     }
-                    self.active_skill = None;
+                    self.active_skill.clear();
                     return Ok(AgentOutcome::None);
                 }
 
@@ -765,7 +765,7 @@ impl AgentEngine {
                         ClosingAsk::Answered => continue,
                         ClosingAsk::Exit(outcome) => return Ok(outcome),
                         ClosingAsk::Unanswered => {
-                            self.active_skill = None;
+                            self.active_skill.clear();
                             return Ok(AgentOutcome::None);
                         }
                         ClosingAsk::NotNeeded => {}
@@ -777,7 +777,7 @@ impl AgentEngine {
                         iterations = iterations.min(self.cfg.max_iters.saturating_sub(1));
                         continue;
                     }
-                    self.active_skill = None;
+                    self.active_skill.clear();
                     return Ok(AgentOutcome::None);
                 }
                 // Fall through to legacy JSON action parser
@@ -872,7 +872,7 @@ impl AgentEngine {
                             iterations = iterations.min(self.cfg.max_iters.saturating_sub(1));
                             continue;
                         }
-                        self.active_skill = None;
+                        self.active_skill.clear();
                         return Ok(AgentOutcome::None);
                     }
                     let nudge =
@@ -986,7 +986,7 @@ impl AgentEngine {
     /// Tail of `run_agent_loop`: the loop ran out of steps — clear
     /// `active_skill` and emit the loop-limit bailout message + context record.
     async fn emit_loop_limit_bailout(&mut self, session_id: Option<&str>) {
-        self.active_skill = None;
+        self.active_skill.clear();
         self.run_faults.hit_limit = true;
         let fallback = self
             .prompt_store

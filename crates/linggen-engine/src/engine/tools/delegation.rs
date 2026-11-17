@@ -148,7 +148,7 @@ impl Tools {
             self.max_delegation_depth,
             self.ask_user_bridge.clone(),
             self.session_id.clone(),
-            self.turn_place.clone(),
+            (*self.turn_place).clone(),
             self.session_policy.clone(),
             self.parent_allowed_tools.clone(),
             self.parent_path_modes.clone(),
@@ -450,7 +450,7 @@ pub(crate) async fn run_delegation(
         let day_on = manager.get_config_snapshot().await.agent.one_session_a_day;
         engine.tools.builtins.private_app = place.private_app(&*manager.skills, day_on).await;
     }
-    engine.tools.builtins.turn_place = parent_place;
+    engine.tools.builtins.stand_with_parent(parent_place);
     engine.withhold_session_tools(&manager.global_sessions, session_id.as_deref());
 
     // Inherit consumer restrictions from parent — subagents can only tighten, never widen.

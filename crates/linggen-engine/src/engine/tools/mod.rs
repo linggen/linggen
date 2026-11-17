@@ -381,10 +381,10 @@ pub struct Tools {
     /// The active skill's name and folder, set on activation. Tools that
     /// write a skill's own files (pictures) resolve the folder here and
     /// build the `/apps/<name>/...` URL the web UI and phone can load.
-    pub(crate) active_skill: Option<(String, PathBuf)>,
+    pub(crate) active_skill: crate::engine::turn_place::Held<(String, PathBuf)>,
     /// The place the running turn stands in (`turn_place`), set when it
     /// enters and cleared when it leaves; a delegated run gets its parent's.
-    pub(crate) turn_place: Option<crate::engine::turn_place::TurnPlace>,
+    pub(crate) turn_place: crate::engine::turn_place::Held<crate::engine::turn_place::TurnPlace>,
     /// The app the running turn keeps its talk to (`TurnPlace::private_app`),
     /// set as it enters its place and cleared when it leaves; a delegated
     /// run gets its parent's. From it no call carries words out
@@ -416,8 +416,8 @@ impl Tools {
             parent_interactive: true,
             last_ask_user: Arc::new(std::sync::Mutex::new(None)),
             browser_bridge: None,
-            active_skill: None,
-            turn_place: None,
+            active_skill: Default::default(),
+            turn_place: Default::default(),
             private_app: None,
             steer: None,
         })
@@ -499,10 +499,6 @@ impl Tools {
     /// subagent's own work never hands off on its parent's Steer.
     pub(crate) fn steer_pending(&self) -> bool {
         self.delegation_depth == 0 && self.steer.as_ref().is_some_and(|s| s.pending())
-    }
-
-    pub fn set_active_skill(&mut self, name: String, dir: Option<PathBuf>) {
-        self.active_skill = dir.map(|d| (name, d));
     }
 
     pub(crate) fn active_skill(&self) -> Option<&(String, PathBuf)> {
@@ -596,7 +592,7 @@ impl Tools {
     /// Where a call stands: the running turn's place, else — a call no turn
     /// made — the session's own (`TurnPlace::of_session`).
     pub fn place(&self) -> crate::engine::turn_place::TurnPlace {
-        if let Some(place) = &self.turn_place {
+        if let Some(place) = &*self.turn_place {
             return place.clone();
         }
         let meta = match (&self.session_id, self.get_manager()) {

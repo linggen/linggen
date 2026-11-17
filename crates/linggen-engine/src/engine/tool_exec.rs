@@ -1562,7 +1562,7 @@ impl AgentEngine {
                 &[("count", &(*streak + 1).to_string())],
             );
             let _ = self.persist_assistant_message(&message, session_id).await;
-            self.active_skill = None;
+            self.active_skill.clear();
             return Some(LoopControl::Return(AgentOutcome::None));
         }
 

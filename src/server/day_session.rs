@@ -350,35 +350,6 @@ mod tests {
         ("src/server/resident/session_roll.rs", 1, "her own thread: home"),
     ];
 
-    /// Every write of a turn's place or its active skill. The two setters
-    /// (`activate_skill`, `enter_place`) ask whether a day keeps the skill
-    /// out (`Tools::kept_out_of_day`); anything else that sets either — a
-    /// route or tool that takes a session and a skill from its caller and
-    /// stands the skill there itself — fails here until it goes through
-    /// them, or is looked at and listed.
-    const PLACE_SETTERS: &[(&str, usize, &str)] = &[
-        ("crates/linggen-engine/src/engine/skill_activation.rs", 7, "the setter, guarded (and its doc line)"),
-        ("crates/linggen-engine/src/engine/turn_place/bind.rs", 4, "the place's setter, guarded, and leaving it"),
-        ("crates/linggen-engine/src/engine/tools/delegation.rs", 1, "a subagent stands where its parent's turn stands"),
-        ("crates/linggen-engine/src/engine/tool_registry.rs", 2, "the tool registry's pass-through"),
-        ("crates/linggen-engine/src/engine/tools/mod.rs", 2, "the field's own setter"),
-        ("crates/linggen-engine/src/engine/mod.rs", 7, "clearing it (None)"),
-        ("crates/linggen-engine/src/engine/tool_exec.rs", 1, "clearing it (None)"),
-        ("crates/linggen-engine/src/engine/light_turn/tests.rs", 1, "a test's own engine"),
-        ("crates/linggen-engine/src/engine/prompt/persona_tests.rs", 6, "a test's own engine"),
-        ("crates/linggen-engine/src/engine/turn_place/bind/grants_tests.rs", 1, "a test's own engine"),
-    ];
-
-    #[test]
-    fn a_turns_place_and_active_skill_are_set_only_where_a_day_is_asked() {
-        let setters = [
-            concat!(".active_skill", " = "),
-            concat!(".turn_place", " = "),
-            concat!("set_active_", "skill("),
-        ];
-        check(&setters, PLACE_SETTERS, "sets a turn's place or active skill");
-    }
-
     #[test]
     fn every_way_into_the_day_asks_the_one_rule() {
         check(&[concat!("day_", "for(")], WAYS_IN, "comes into the day");

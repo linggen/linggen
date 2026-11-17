@@ -328,7 +328,7 @@ pub struct AgentEngine {
     /// before it — so the next sync rebuilds from that summary.
     pub reload_thread: bool,
     // Active skill if any
-    pub active_skill: Option<Skill>,
+    pub active_skill: crate::engine::turn_place::Held<Skill>,
     // Active mission frame, set when the scheduler dispatches a mission.
     // The mission's body is injected into the system prompt like a skill's
     // body, so the agent treats it as instructions rather than a user turn.
@@ -656,7 +656,7 @@ impl AgentEngine {
             chat_history: Vec::new(),
             thread_mark: None,
             reload_thread: false,
-            active_skill: None,
+            active_skill: Default::default(),
             active_mission: None,
             available_skills_metadata: Vec::new(),
             available_agents_metadata: Vec::new(),
