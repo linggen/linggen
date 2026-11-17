@@ -56,14 +56,16 @@ tk_find_all() { # base file
 }
 
 # The tier each seeded row was written at, read back (staged = episodic).
-tk_tiers_kept() { # base
-  local id tier by got want bad=""
+tk_tiers_kept() { # base [written-by, default "old daemon"]
+  local id tier by got want bad="" n=0
   while IFS=$'\t' read -r id tier by; do
-    [ "$by" = "old daemon" ] || continue
+    [ "$by" = "${2:-old daemon}" ] || continue
+    n=$((n + 1))
     want="$tier"; [ "$tier" = staged ] && want=episodic
     got="$(mem_post "$1" /api/memory/get "$(jq -nc --arg i "$id" '{id: $i}')" | jq -r '.data.tier // empty' 2>/dev/null)"
     [ "$got" = "$want" ] || bad="$bad $id:$want→${got:-gone}"
   done <"$TK_IDS"
+  [ "$n" -gt 0 ] || bad=" no seeded rows to read back"
   TK_TIER_DETAIL="$bad"
   [ -z "$bad" ]
 }

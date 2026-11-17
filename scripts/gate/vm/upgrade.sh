@@ -1,11 +1,14 @@
 # Release gate — upgrade an old user (a clone of linggen-prev) to the release
 # in the mirror, then the refusal and rollback cases (doc/test-design.md § 4).
 # Env from the host: MIRROR, MODEL, DREAM_SHA (the release's built-in dream
-# mission), and expect.env. Memory is inside the engine: no ling-mem upgrade,
-# the takeover checks (takeover.sh) instead.
+# mission), and expect.env. Memory is inside the engine: no ling-mem upgrade.
+# What the baseline runs decides the memory checks: an old ling-mem daemon on
+# the old port (≤ 2.2.x) is taken over (takeover.sh); a `ling` that already
+# hosts memory (2.3.0 on) has its store opened in place (inplace.sh).
 . ./common.sh
 . ./expect.env
 . ./takeover.sh
+. ./inplace.sh
 
 LING="$(ling_bin)"; MEM="$(mem_bin)"
 
@@ -56,7 +59,12 @@ info "upgrade: from" "ling $PREV_LING, ling-mem $PREV_MEM, app ${PREV_APP:-none}
 start_engine 90 || fail "upgrade: old engine runs" "no health"
 # A baseline that hosts memory has the stand-in and nothing on 9528 to wait for.
 is_standin "$MEM" || mem_health 30 || start_mem 60
-takeover_seed
+if [ -n "$(listener_pid "$LP")" ]; then MEM_KIND=takeover; takeover_seed
+elif engine_mem_health 30; then MEM_KIND=inplace; inplace_seed
+else
+  MEM_KIND=none
+  fail "upgrade: the baseline's memory answers" "nothing listens on $LP and $ENGINE_MEM/api/health is not ok"
+fi
 rows_before="$("$MEM" stats 2>/dev/null | jq -r '.total // empty')"
 sessions_before="$(ls "$LG/sessions" 2>/dev/null | wc -l | tr -d ' ')"
 info "upgrade: old state" "$rows_before memory rows, $sessions_before sessions"
@@ -110,12 +118,18 @@ else
   gap "upgrade: 9527 restarted on the new ling" "ling $PREV_LING's \`ling update\` predates the engine restart — the release's own is checked under § Restart"
 fi
 
-# ── Memory: taken over by the engine ──────────────────────────────────────
+# ── Memory: taken over by the engine, or opened in place ──────────────────
 if [ "$TK_SEEDED" = 1 ]; then
   # An old updater that does not restart the engine leaves the old one serving.
   engine_mem_health 5 || { stop_engine; start_engine 90; }
   takeover_after upgrade "$((TK_BACKUPS_BEFORE + 1))"
   TK_BACKUPS_AFTER="$((TK_BACKUPS_BEFORE + 1))"
+elif [ "$IP_SEEDED" = 1 ]; then
+  [ "$(ip_engine_version)" = "$LING_VERSION" ] || { stop_engine; start_engine 90; }
+  inplace_after
+  gap "takeover" "the baseline's ling v$PREV_LING already hosts memory — no old ling-mem daemon to take over; the in-place checks ran instead"
+elif [ "$MEM_KIND" = inplace ]; then
+  gap "in place" "the rows were not written through the baseline engine — the in-place checks did not run"
 else
   gap "takeover" "no old ling-mem daemon served the baseline (a baseline already on 2.3?) — the takeover checks did not run"
 fi
@@ -201,6 +215,10 @@ if real_prev "ling" "$LING" "$OUT/ling.old"; then
   # puts ling-mem.prev back before that engine starts.
   if [ "$TK_SEEDED" = 1 ]; then
     takeover_engine_rollback "$pv" "$prev_hosts_memory"
+  elif [ "$IP_SEEDED" = 1 ] && $prev_hosts_memory; then
+    inplace_rollback "$pv"
+  elif [ "$IP_SEEDED" = 1 ]; then
+    gap "ling update --rollback: memory on ling.prev" "ling.prev (v$pv) does not host memory — not the in-place baseline's engine"
   else
     gap "ling update --rollback: memory on ling.prev" "the baseline had no old ling-mem daemon, so there is no memory to find on the rolled-back engine"
   fi
@@ -209,6 +227,7 @@ if real_prev "ling" "$LING" "$OUT/ling.old"; then
     [ "$(sha "$LING")" = "$a" ]; check "ling update --rollback again returns" $? "sha ${a:0:12} not back"
     if $prev_restarts; then
       if [ "$TK_SEEDED" = 1 ]; then takeover_engine_forward
+      elif [ "$IP_SEEDED" = 1 ] && $prev_hosts_memory; then inplace_forward
       else engine_mem_health 60; check "ling update --rollback again: memory answers through the engine" $? "no ok from $ENGINE_MEM/api/health"; fi
       engine_restarted "ling update --rollback again: 9527 back on the release" "$engine_pid" "$LING_VERSION" "$OUT/ling-rollback.log"
     else
