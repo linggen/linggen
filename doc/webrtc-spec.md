@@ -275,6 +275,14 @@ WHEP (WebRTC-HTTP Egress Protocol) is the counterpart to WHIP — it lets client
 
 Same one-POST pattern as WHIP. Same relay mechanism for remote access.
 
+### Identify, the greeting, and the contract number
+
+A paired phone names itself on the control channel with `identify`: `{device_token, account:{id,email,name}, contract}`. The Mac answers every `identify` with the `user_info` greeting: what the peer is, the level it stands at (`user.level`: chat, read, edit or admin — `permission-spec.md` § A paired device's standing follows its account) and this Mac's contract numbers (`contract`, `oldest_peer`). The greeting is also sent when the control channel opens.
+
+**Contract number.** Each side keeps two numbers in one file — the engine's `src/server/rtc/contract.rs`, the phone's `lib/services/rtc/contract.dart`: the contract it speaks and the oldest contract of the other side it still works with. The Mac sends both in `/api/health` and in the greeting; the phone sends its contract in `identify`, and one that sends none is contract 0. A side below the other's oldest is out of step: the phone shows one "update Linggen on your phone / Mac" notice from one place, in the companion's words; the Mac lists the device as needing an update and gives it chat at most. A test on the phone reads the engine's file and fails when the two differ. This release: contract 1, oldest 1.
+
+**The relay's word on an account.** A paired phone dials the relay on its device grant and may send its own account credential beside it (`x-linggen-account`, to the relay only). When that account owns the instance, the offer the Mac collects carries `owner: true`; an offer made with the owner's own account credential is the owner's. That is how the Mac verifies a phone's claim of its own account.
+
 ## Instance identification
 
 Each linggen instance generates a stable instance ID (stored in `~/.linggen/instance_id`). This is the "address" used by the signaling relay to route offers to the correct linggen server.

@@ -32,6 +32,19 @@ The same kinds decide two more doors. The MCP front door (`/mcp`) is for compute
 
 A phone names its device as its channel opens, and its first requests can overtake that message. A request from a peer that has not named itself waits up to 1.5 s, counted from the peer's first request, for the name to arrive.
 
+### A paired device's standing follows its account
+
+A paired device stands at a level on the ladder sessions use — chat < read < edit < admin — and at most that level reaches this machine through it (`server::person::standing_of`, one answer for a request, a control frame, the media channel and a session stream):
+
+- **The owner's device stands at admin.** An approved machine is the owner's. A phone is the owner's when its account claim is verified as this machine's own account: the relay checks the account credential the phone sends beside its device grant (`x-linggen-account`) and says in the offer (`owner: true`) whether that account owns this instance; at `identify` the claim of this machine's account is then kept as verified on the device row (`verified_account`). A claim alone never verifies. A different claim, or signing out, clears it; a reconnect with no relay (the LAN, no internet) keeps it while the claim stays.
+- **Any other device stands at the level set for it at this machine** — chat, read or edit; read when none is set; admin is the owner's alone. Its person is its account, or its device when it is signed out or claims this machine's account unverified. The level is set by `PUT /api/pair/devices/{id}/permission`, only by someone at this machine (never from a paired device or another machine), and kept across a re-pair.
+- **A peer that has named no device** is the owner at admin only when the tunnel knows it as the owner (this machine's page, the owner's relay login), else no one at chat.
+- **A phone out of step** with this machine's contract number (`webrtc-spec.md` § Contract number) stands at chat at most.
+
+Each route declares its class beside the routes (`server/routes/classes.rs`): chat, read, edit, admin, or **own** — a device's own records, reached at any level. A route not declared is admin, and a lock test fails until a new route has its class. A request whose route is above its caller's level is refused with `403 {"error":"beyond_level","level":"read","needs":"edit"}` — a fact; the companion words it. The level rides on to the handler (`x-linggen-level`; absent means this machine) for what a handler judges within its route: a skill tool called through the page's door is judged by its tier against the lower of the skill's own grant and the caller's level, while the model's own call is unchanged; a device below admin revokes only itself.
+
+What a device at **read** may do: talk in its own chat and day, its own memory rows, push registration, presence, facts and topics, list a sync folder, the read doors (a skill page's files, its declared read tools), and what this machine offers (models, skills, status). Refused by intent at read: clearing a chat and answering plans or questions, hand-offs to the Mac, queueing downloads, syncing edits, photos, a skill's save, setting the Mac's language or config, the raw shell route. Edit opens those writes; the Mac's own settings, files, shell, every session's work, accounts, rooms, devices and memory's own routes stay admin. Below admin a peer is streamed, sent events for and shown in page state only its own person's sessions. A room consumer keeps its room's own rules.
+
 
 ## Session grants
 
