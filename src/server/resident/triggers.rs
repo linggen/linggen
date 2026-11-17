@@ -554,12 +554,37 @@ pub(crate) async fn wake_for_moment(
 /// when the run failed, she produced nothing, or chose silence.
 pub(super) async fn wake_and_speak(
     state: Arc<ServerState>,
-    (kickoff, table): (String, Option<Table>),
+    moment: (String, Option<Table>),
     emotion: &str,
     trigger_source: &str,
     reach: Reach,
     language: Option<String>,
 ) -> Option<String> {
+    wake_and_offer(state, moment, (emotion, trigger_source), reach, language, None).await
+}
+
+/// A problem her line raises, with what can be offered for it.
+pub(super) struct Raised<'a> {
+    pub problem: &'a str,
+    pub offers: &'a [crate::perception::offer::Offer],
+}
+
+/// [`wake_and_speak`] for a line that raises a problem: the kickoff asks her
+/// to label one or two of its offers, and the bubble carries them as buttons.
+/// A problem with offers she labelled none of is not said — a line with no
+/// button is a problem only raised — so it stays due.
+pub(super) async fn wake_and_offer(
+    state: Arc<ServerState>,
+    (kickoff, table): (String, Option<Table>),
+    (emotion, trigger_source): (&str, &str),
+    reach: Reach,
+    language: Option<String>,
+    raised: Option<Raised<'_>>,
+) -> Option<String> {
+    let kickoff = match &raised {
+        Some(r) if !r.offers.is_empty() => format!("{kickoff} {}", super::offer_labels::CONTRACT),
+        _ => kickoff,
+    };
     let said_in = table.as_ref().map(|t| t.session.clone());
     // A failure of hers held for a turn that can carry it rides this one.
     let (kickoff, rode) = super::run_fault::ride(kickoff);
@@ -571,7 +596,9 @@ pub(super) async fn wake_and_speak(
             super::turn::run_home(&state, kickoff, trigger_source, reach, language).await
         }
     };
-    let line = reply.as_deref().and_then(spoken_line);
+    let (shown, unlabelled) =
+        super::offer_labels::shown(raised.as_ref().map(|r| r.offers), reply.as_deref());
+    let line = reply.as_deref().and_then(spoken_line).filter(|_| !unlabelled);
     let Some(line) = line else {
         // Unsaid: the fact it carried waits for the next turn.
         if let Some(f) = rode {
@@ -592,7 +619,13 @@ pub(super) async fn wake_and_speak(
         "[yinyue-watch] Yinyue heralds ({} chars, {emotion})",
         line.len()
     );
-    crate::server::api::yinyue::emit_speak(&state, line.clone(), Some(emotion.to_string()), said_in.as_deref());
+    crate::server::api::yinyue::emit_speak_offering(
+        &state,
+        line.clone(),
+        Some(emotion.to_string()),
+        said_in.as_deref(),
+        raised.map(|r| (r.problem.to_string(), shown)),
+    );
     Some(line)
 }
 

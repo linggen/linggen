@@ -10,6 +10,7 @@ import { liveBubbleOfRun } from './interruptedRun.mts';
 import { afterSealed, bindSealed, bubbleOfRun, claimForRun, isRunBubble, isRunRow, isSealed, runBubbleIndex } from './runBinding.mts';
 import { sameSentMessage } from './sentMessage.mts';
 import { sortByTime } from './timeOrder.mts';
+import { stripOfferMarkers } from './petOffers.mts';
 import { dropLiveEchoes, idsDecide, normalizeFrom, normalizeMessageTextForDedup, sameMessageContent } from './rowIdentity.mts';
 import { dedupeActivityEntries, isProgressLineText, summarizeCollapsedActivity } from '../components/chat/utils/activity';
 
@@ -779,7 +780,12 @@ const parseToolNameFromLine = (line: string): string | null => {
 export const sanitizeAgentMessageText = (text: string) => {
   if (!text) return '';
 
-  const withoutEmbedded = stripEmbeddedStructuredJson(text);
+  // Her labels on a problem's offers: the row keeps them as what she offered
+  // (one quiet line under her words), never as markers.
+  const offered = stripOfferMarkers(text);
+  const withoutEmbedded = stripEmbeddedStructuredJson(
+    offered.labels.length ? `${offered.text}\n\n› ${offered.labels.join(' · ')}` : text,
+  );
   const lines = withoutEmbedded.split('\n');
   const kept: string[] = [];
   let suppressedToolBody: 'read' | 'grep' | 'glob' | null = null;

@@ -354,6 +354,19 @@ offers:
 reason does not register. The resident words both the line and each offer's
 label; no sentence the person reads comes from code.
 
+**How it is shown, and what a tap does.** On the phone her peek carries one
+or two chips, each bound to one offer under her label, beside our "Not now";
+on the Mac her bubble does (`pet_speak` carries `problem` and `offers`; her
+labels ride her reply as `[offer N: label]`, taken out before her voice and
+kept as the thread row's record of what she offered). A problem with offers
+she labelled none of is not said — it stays due. A tap is the person's
+button: on the phone it runs the registry tool through `OfferTap` (its own
+confirm card when destructive), or opens the route; on the Mac it posts the
+skill-tool route a page button uses (a tool above `read` asks once more), or
+the app launch route with `view`. Either way the answer — `not_now`, `done`,
+`failed`, `declined` — is kept on the record (`POST /api/yinyue/answer` on
+the Mac).
+
 Three rules, each earned:
 
 1. **Said once.** A problem — the same thing wrong on the same device — is

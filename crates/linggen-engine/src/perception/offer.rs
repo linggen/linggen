@@ -52,6 +52,13 @@ impl Offer {
     }
 }
 
+/// An offer as the person sees it: her label on it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Shown {
+    pub label: String,
+    pub offer: Offer,
+}
+
 /// The offers, or why there are none. Never neither.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Remedy {

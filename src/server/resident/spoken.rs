@@ -56,6 +56,8 @@ pub(crate) fn is_engine_prompt(from_id: &str, content: &str) -> bool {
 /// What a reply under [`SPOKEN_CONTRACT`] actually says: the final paragraph,
 /// unwrapped from quotes. `None` when it is — or ends in — SILENT.
 pub(crate) fn spoken_line(reply: &str) -> Option<String> {
+    // Her labels on a problem's offers are buttons, never words to say.
+    let reply = super::offer_labels::strip(reply);
     let paragraphs: Vec<&str> = reply
         .split("\n\n")
         .map(str::trim)

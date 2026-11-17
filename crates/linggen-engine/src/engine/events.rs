@@ -201,6 +201,13 @@ pub enum ServerEvent {
         /// sent to a surface.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         session_id: Option<String>,
+        /// The problem this line raised, when it raised one — what a "not
+        /// now" or a tapped offer is answered against.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        problem: Option<String>,
+        /// Its offers, each under her label: buttons the person may tap.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        offers: Vec<crate::perception::offer::Shown>,
     },
     /// The pet's voice on this machine was turned off or on. Global and sent
     /// to every surface, so whichever is playing her stops at once.

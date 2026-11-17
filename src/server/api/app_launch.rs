@@ -17,6 +17,10 @@ use crate::server::{ServerEvent, ServerState};
 #[derive(Deserialize)]
 pub(crate) struct LaunchBody {
     skill: String,
+    /// One of the page's views to land on (a tapped offer's `open`), passed
+    /// to the page as `?view=`. What a view means is the page's own.
+    #[serde(default)]
+    view: Option<String>,
 }
 
 pub(crate) async fn launch(
@@ -34,7 +38,10 @@ pub(crate) async fn launch(
             format!("'{}' has no web app", skill.name),
         );
     };
-    let url = format!("/apps/{}/{}", skill.name, app.entry);
+    let url = match body.view.as_deref().map(str::trim).filter(|v| is_view(v)) {
+        Some(v) => format!("/apps/{}/{}?view={v}", skill.name, app.entry),
+        None => format!("/apps/{}/{}", skill.name, app.entry),
+    };
     tracing::info!("[apps] launch {} over HTTP", skill.name);
     let _ = state.events_tx.send(ServerEvent::AppLaunched {
         skill: skill.name.clone(),
@@ -49,4 +56,19 @@ pub(crate) async fn launch(
         StatusCode::OK,
         Json(serde_json::json!({ "ok": true, "url": url })),
     )
+}
+
+/// A view name fit for a URL: a short slug.
+fn is_view(v: &str) -> bool {
+    (1..=32).contains(&v.len()) && v.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_view_is_a_short_slug() {
+        assert!(super::is_view("files"));
+        assert!(!super::is_view("a&b=c"));
+        assert!(!super::is_view(""));
+    }
 }

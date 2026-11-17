@@ -21,6 +21,18 @@ use crate::server::{ServerEvent, ServerState};
 /// she said it (`None`: her own thread) — with the daily session on, the
 /// line reaches only the stage that session's person holds.
 pub fn emit_speak(state: &Arc<ServerState>, text: String, emotion: Option<String>, session: Option<&str>) {
+    emit_speak_offering(state, text, emotion, session, None);
+}
+
+/// A line that raised a problem, with its offers under her labels — the
+/// buttons the bubble shows (`problem`: its key, what answers are kept on).
+pub(crate) fn emit_speak_offering(
+    state: &Arc<ServerState>,
+    text: String,
+    emotion: Option<String>,
+    session: Option<&str>,
+    problem: Option<(String, Vec<crate::perception::offer::Shown>)>,
+) {
     // Not met yet: there is no one to speak.
     if !state
         .manager
@@ -34,11 +46,17 @@ pub fn emit_speak(state: &Arc<ServerState>, text: String, emotion: Option<String
     // waits for — a line an app had her say directly counts too.
     crate::server::yinyue_moments::note_spoke();
     // Err only means no surface is currently connected — nothing to hear her.
+    let (problem, offers) = match problem {
+        Some((key, offers)) => (Some(key), offers),
+        None => (None, Vec::new()),
+    };
     let _ = state.events_tx.send(ServerEvent::PetSpeak {
         text,
         emotion,
         voice,
         session_id: session.map(str::to_string),
+        problem,
+        offers,
     });
 }
 
@@ -65,6 +83,39 @@ pub(crate) async fn run_voice_command(state: &Arc<ServerState>, muted: bool) -> 
             "Couldn't change Yinyue's voice — try again."
         }
     }
+}
+
+/// The person answered a problem her line raised on this Mac: "not now", or
+/// what a tapped offer came to. Kept on the problem's one record.
+#[derive(Deserialize)]
+pub(crate) struct AnswerRequest {
+    pub problem: String,
+    /// `not_now`, `done`, `failed`, `declined`.
+    pub answer: String,
+}
+
+/// `POST /api/yinyue/answer` — `{problem, answer}`. This Mac's own problems
+/// only: the other device's are answered where they live.
+pub(crate) async fn answer_handler(
+    State(_state): State<Arc<ServerState>>,
+    Json(req): Json<AnswerRequest>,
+) -> impl IntoResponse {
+    let Some(answer) = crate::perception::told::Answer::parse(&req.answer) else {
+        return (StatusCode::BAD_REQUEST, "answer is not_now, done, failed or declined").into_response();
+    };
+    let problem = req.problem.trim();
+    if problem.is_empty() || problem.len() > 32 || problem.contains('/') {
+        return (StatusCode::BAD_REQUEST, "not a problem of this Mac's").into_response();
+    }
+    answer_problem(problem, answer, crate::util::now_ts_secs() as i64);
+    StatusCode::NO_CONTENT.into_response()
+}
+
+/// Keep the answer on the problem's record.
+fn answer_problem(problem: &str, answer: crate::perception::told::Answer, now: i64) {
+    let mut ledger = crate::perception::told::load();
+    ledger.answered(problem, answer, 1, now);
+    crate::perception::told::store(&ledger);
 }
 
 #[derive(Deserialize)]

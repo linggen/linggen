@@ -1,4 +1,5 @@
 import type { SessionMember } from '../lib/sessionMembers.mts';
+import type { OfferButton } from '../types/generated/OfferButton';
 /**
  * UI navigation, overlays, and transient chrome state.
  */
@@ -36,6 +37,14 @@ export interface YinyueSpeech {
   id: string;
   text: string;
   emotion: string;
+  /** The problem this line raised and its offers under her labels — the
+   *  bubble's buttons. Absent for a line that raised nothing. */
+  raised?: SpeechRaised;
+}
+
+export interface SpeechRaised {
+  problem: string;
+  offers: OfferButton[];
 }
 
 /** A pet expression directive (emotion and/or one-shot gesture), driven by
@@ -90,7 +99,7 @@ interface UiState {
 
   // Yinyue speech bubble (driven by the `yinyue_speak` event)
   yinyueSpeech: YinyueSpeech | null;
-  showYinyueSpeech: (text: string, emotion: string, minVisibleMs?: number) => void;
+  showYinyueSpeech: (text: string, emotion: string, minVisibleMs?: number, raised?: SpeechRaised) => void;
   clearYinyueSpeech: () => void;
 
   // Pet expression (driven by the `pet_express` event)
@@ -170,9 +179,9 @@ export const useUiStore = create<UiState>((set) => ({
   removeToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 
   yinyueSpeech: null,
-  showYinyueSpeech: (text, emotion, minVisibleMs) => {
+  showYinyueSpeech: (text, emotion, minVisibleMs, raised) => {
     const id = `ys-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    set({ yinyueSpeech: { id, text, emotion } });
+    set({ yinyueSpeech: { id, text, emotion, raised } });
     // Dismiss countdown runs ONLY while this tab is visible — heralds
     // often fire while the user is on another tab, and the bubble must
     // still be waiting when they switch over. The clock starts (or
@@ -181,7 +190,9 @@ export const useUiStore = create<UiState>((set) => ({
     // The reading-time formula is calibrated for silent text; when her
     // voice is playing, the caller passes the clip's real duration and
     // the bubble may never hide before the audio finishes.
-    const reading = Math.min(45000, Math.max(15000, 2500 + text.length * 55));
+    // A line with buttons stays long enough to read them and reach for one.
+    const floor = raised ? 60000 : 15000;
+    const reading = Math.min(Math.max(45000, floor), Math.max(floor, 2500 + text.length * 55));
     const ms = Math.max(reading, minVisibleMs ?? 0);
     let remaining = ms;
     let timer: number | undefined;

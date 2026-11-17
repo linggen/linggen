@@ -11,6 +11,7 @@ pub(super) fn routes() -> Routes {
         .route("/api/tts", post(api::tts::tts_handler))
         .route("/api/yinyue/chat", post(api::yinyue::chat_handler))
         .route("/api/yinyue/event", post(api::yinyue::event_handler))
+        .route("/api/yinyue/answer", post(api::yinyue::answer_handler))
         .route("/api/presence", post(api::yinyue::presence_handler))
         // Browser bridge and the MCP front door
         .route("/api/bridge/socket", get(bridge::socket_handler))

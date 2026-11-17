@@ -328,6 +328,55 @@ pub(super) struct PetSpeakData {
     /// `/api/tts` for each and plays the first while the rest are made.
     /// Empty when the voice is off.
     pub chunks: Vec<crate::server::api::tts_text::SpokenChunk>,
+    /// The problem this line raised, if it raised one: what the bubble's
+    /// "Not now" and a tapped offer answer (`POST /api/yinyue/answer`).
+    pub problem: Option<String>,
+    /// Its offers, each a button under her label.
+    pub offers: Vec<OfferButton>,
+}
+
+/// One offer as a button: her label, and what a tap runs — a skill's tool
+/// through `POST /api/skills/{skill}/tools/{tool}`, or its page opened.
+#[derive(Serialize)]
+#[cfg_attr(test, derive(TS), ts(export))]
+pub(super) struct OfferButton {
+    pub label: String,
+    /// `tool` or `open`.
+    pub kind: String,
+    pub skill: String,
+    pub tool: Option<String>,
+    #[cfg_attr(test, ts(type = "Record<string, unknown> | null"))]
+    pub args: Option<serde_json::Value>,
+    /// The tool's tier: anything above `read` asks before it runs.
+    pub tier: Option<String>,
+    /// The page's view to land on, for `open`.
+    pub view: Option<String>,
+}
+
+impl From<crate::perception::offer::Shown> for OfferButton {
+    fn from(s: crate::perception::offer::Shown) -> Self {
+        use crate::perception::offer::Offer;
+        match s.offer {
+            Offer::Tool { skill, tool, args, tier } => Self {
+                label: s.label,
+                kind: "tool".into(),
+                skill,
+                tool: Some(tool),
+                args: (!args.is_null()).then_some(args),
+                tier: Some(tier),
+                view: None,
+            },
+            Offer::Open { skill, view } => Self {
+                label: s.label,
+                kind: "open".into(),
+                skill,
+                tool: None,
+                args: None,
+                tier: None,
+                view,
+            },
+        }
+    }
 }
 
 /// `pet_express`.

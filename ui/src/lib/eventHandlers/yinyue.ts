@@ -11,7 +11,8 @@
  */
 import type { UiEventOf } from '../../types';
 import type { SpokenChunk } from '../../types/generated/SpokenChunk';
-import { useUiStore } from '../../stores/uiStore';
+import { useUiStore, type SpeechRaised } from '../../stores/uiStore';
+import type { OfferButton } from '../../types/generated/OfferButton';
 
 // One shared AudioContext, created lazily on first cue.
 let audioCtx: AudioContext | null = null;
@@ -155,15 +156,19 @@ export function handlePetSpeak(item: UiEventOf<'pet_speak'>): void {
   if (!text) return;
   const emotion = (item.data?.emotion as string | undefined) ?? 'neutral';
   console.info(`[yinyue] speak (${emotion}): ${text}`);
+  const problem = item.data?.problem as string | null | undefined;
+  const raised: SpeechRaised | undefined = problem
+    ? { problem, offers: (item.data?.offers as OfferButton[] | undefined) ?? [] }
+    : undefined;
   // Her voice is muted on this Mac: the words, no audio fetched.
   if (item.data?.voice === false) {
-    showWords(text, emotion);
+    showWords(text, emotion, raised);
     return;
   }
   // Keep her in thinking until the voice actually starts (synth lags a few
   // seconds); the bubble, voice, and any held gesture all land together then.
   const chunks = (item.data?.chunks as SpokenChunk[] | undefined) ?? [];
-  void play(text, emotion, chunks.length > 0 ? chunks : [{ text, pause_ms: 0 }]);
+  void play(text, emotion, chunks.length > 0 ? chunks : [{ text, pause_ms: 0 }], raised);
 }
 
 /// Her voice was turned off or on (`/mute`, her Voice tool, Settings). Every
@@ -174,11 +179,11 @@ export function handlePetVoice(item: UiEventOf<'pet_voice'>): void {
 }
 
 /// Her line as words only — the bubble and any held gesture, no talking loop.
-function showWords(text: string, emotion: string): void {
+function showWords(text: string, emotion: string, raised?: SpeechRaised): void {
   synthInFlight = false;
   useUiStore.getState().setPetThinking(false);
   useUiStore.getState().setPetSpeaking(false);
-  useUiStore.getState().showYinyueSpeech(text, emotion);
+  useUiStore.getState().showYinyueSpeech(text, emotion, undefined, raised);
   flushExpress();
 }
 
@@ -199,7 +204,7 @@ function estimateLineMs(chunks: SpokenChunk[]): number {
   return chunks.reduce((ms, c) => ms + c.text.length * BUBBLE_MS_PER_CHAR + c.pause_ms, 0);
 }
 
-async function play(text: string, emotion: string, chunks: SpokenChunk[]): Promise<void> {
+async function play(text: string, emotion: string, chunks: SpokenChunk[], raised?: SpeechRaised): Promise<void> {
   // Speech is coming → hold any pending gesture for the voice onset (not the
   // short silent-gesture fallback), and keep her in thinking until then.
   synthInFlight = true;
@@ -220,7 +225,7 @@ async function play(text: string, emotion: string, chunks: SpokenChunk[]): Promi
     // The bubble must outlive the voice: floor its dismiss countdown at the
     // line's (estimated) duration plus a beat — the reading-time formula alone
     // under-shoots spoken Chinese.
-    useUiStore.getState().showYinyueSpeech(text, emotion, audioMs + 2500);
+    useUiStore.getState().showYinyueSpeech(text, emotion, audioMs + 2500, raised);
     flushExpress();
   };
 
@@ -277,7 +282,7 @@ async function play(text: string, emotion: string, chunks: SpokenChunk[]): Promi
     console.error('[yinyue] speak failed', err);
     // Nothing sounded yet → her words, no audio, no talking loop. Mid-line →
     // the bubble is up; she simply stops after what was said.
-    if (!started && mayStillSpeak(generation)) showWords(text, emotion);
+    if (!started && mayStillSpeak(generation)) showWords(text, emotion, raised);
   } finally {
     lineDone = true;
     settle();

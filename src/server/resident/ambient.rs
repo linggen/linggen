@@ -54,10 +54,20 @@ pub(super) async fn ambient_glance(state: &Arc<ServerState>) {
         // It is told only if she actually said it. A SILENT reply is her
         // judging the moment, not the user being told — the problem stays due
         // and comes back at the next glance.
-        if wake_and_speak(state.clone(), (kickoff, None), "neutral", "timer", Reach::SpeakOnly, None)
-            .await
-            .is_some()
-        {
+        let raised = super::triggers::Raised {
+            problem: &notice.topic,
+            offers: notice.remedy.offers(),
+        };
+        let said = super::triggers::wake_and_offer(
+            state.clone(),
+            (kickoff, None),
+            ("neutral", "timer"),
+            Reach::SpeakOnly,
+            None,
+            Some(raised),
+        )
+        .await;
+        if said.is_some() {
             crate::perception::conditions::spoken(&notice);
         }
         return;
