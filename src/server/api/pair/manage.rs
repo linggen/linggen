@@ -53,9 +53,13 @@ pub(crate) async fn get_pair_info(
 /// single place keys and endpoints live (BYOK syncs from here).
 ///
 /// - `cloud`  → the Linggen Cloud proxy (phone uses its account token)
-/// - `oauth`  → ChatGPT/Codex (phone signs in on-device)
+/// - `oauth`  → ChatGPT/Codex (phone signs in on-device): a built-in, or a
+///   model the person added that uses the ChatGPT sign-in
 /// - `byok`   → a configured provider; the Mac's key + base_url ride along
 /// - `local`  → Ollama/local; not reachable off the Mac
+///
+/// A model the person configured also carries `model`, the provider's own
+/// name for it — the id is only what this Mac calls it.
 pub(super) fn resolve_model_catalog(
     allow: &[String],
     config: &crate::config::Config,
@@ -77,9 +81,13 @@ pub(super) fn resolve_model_catalog(
                 Some(m) if m.provider == "ollama" => {
                     serde_json::json!({ "id": id, "kind": "local" })
                 }
+                Some(m) if m.auth_mode.as_deref() == Some("chatgpt_oauth") => {
+                    serde_json::json!({ "id": id, "kind": "oauth", "model": m.model })
+                }
                 Some(m) => serde_json::json!({
                     "id": id,
                     "kind": "byok",
+                    "model": m.model,
                     "provider": m.provider,
                     "base_url": m.url,
                     "key": crate::credentials::resolve_api_key(m, &creds),
@@ -234,6 +242,31 @@ pub(crate) async fn delete_pair_device(Path(id): Path<String>) -> impl IntoRespo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn configured(id: &str, provider: &str, model: &str, auth_mode: Option<&str>) -> crate::config::ModelConfig {
+        let toml = format!("id = \"{id}\"\nprovider = \"{provider}\"\nurl = \"https://example.test/v1\"\nmodel = \"{model}\"\n");
+        let mut m: crate::config::ModelConfig = toml::from_str(&toml).unwrap();
+        m.auth_mode = auth_mode.map(str::to_string);
+        m
+    }
+
+    /// A model the person added is told to the phone with the provider's
+    /// own name for it, and one that uses the ChatGPT sign-in is `oauth`
+    /// like the built-ins — not a key-based model with no key.
+    #[test]
+    fn a_model_the_person_added_reaches_the_phone_as_what_it_is() {
+        let mut cfg = crate::config::Config::default();
+        cfg.models = vec![
+            configured("my-sol", "chatgpt", "gpt-9-sol", Some("chatgpt_oauth")),
+            configured("my-claude", "anthropic", "claude-next", None),
+        ];
+        let allow = ["my-sol".to_string(), "my-claude".to_string(), "gpt-6-luna".to_string()];
+        let got = resolve_model_catalog(&allow, &cfg);
+        assert_eq!(got[0], serde_json::json!({"id": "my-sol", "kind": "oauth", "model": "gpt-9-sol"}));
+        assert_eq!(got[1]["kind"], "byok");
+        assert_eq!(got[1]["model"], "claude-next");
+        assert_eq!(got[2], serde_json::json!({"id": "gpt-6-luna", "kind": "oauth"}));
+    }
 
     #[test]
     fn each_agent_reports_the_model_it_runs_on() {
