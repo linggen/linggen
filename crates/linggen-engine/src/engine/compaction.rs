@@ -154,7 +154,8 @@ pub(crate) fn commit_compaction(
         client_id: None,
         failed: false,
         images: Vec::new(),
-        place: kept_to,
+        place: kept_to.clone(),
+        kept_to,
     };
     rows = with_summary(rows, cut, row);
     // The summary sits at `cut`. Only the tail after it is shortened; the
@@ -182,6 +183,7 @@ mod tests {
             failed: false,
             images: Vec::new(),
             place: None,
+            kept_to: None,
         }
     }
 

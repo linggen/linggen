@@ -83,10 +83,9 @@ pub(super) async fn sync(engine: &mut AgentEngine, ctx: &ChatRunCtx) -> bool {
 /// message this turn answers. False when the file can't be read.
 pub(super) async fn rebuild(engine: &mut AgentEngine, ctx: &ChatRunCtx) -> bool {
     let sid = ctx.session_id.as_deref().unwrap_or("default");
-    let Ok(rows) = ctx.manager.global_sessions.get_chat_history(sid) else {
+    let Ok(mut rows) = seen_rows(ctx, sid).await else {
         return false;
     };
-    let mut rows = seen_rows(ctx, rows).await;
     if rows.last().is_some_and(|m| {
         !m.is_observation && m.from_id == ctx.from_id() && m.content == ctx.clean_msg
     }) {
@@ -114,10 +113,9 @@ pub(super) async fn rebuild(engine: &mut AgentEngine, ctx: &ChatRunCtx) -> bool 
 /// in it asks for a tool the turn doesn't offer. The engine's cached thread is not touched.
 pub(super) async fn spoken_tail(ctx: &ChatRunCtx, keep: usize) -> Vec<ChatMessage> {
     let sid = ctx.session_id.as_deref().unwrap_or("default");
-    let Ok(rows) = ctx.manager.global_sessions.get_chat_history(sid) else {
+    let Ok(rows) = seen_rows(ctx, sid).await else {
         return Vec::new();
     };
-    let rows = seen_rows(ctx, rows).await;
     let words: Vec<ChatMsg> = since_compaction(&rows)
         .iter()
         .filter(|r| !r.is_observation && !crate::engine::prompt::world::is_world_row(r))
@@ -161,13 +159,9 @@ fn moved_place(engine: &AgentEngine, ctx: &ChatRunCtx) -> bool {
 
 /// The rows of the turn's session its place may be given: a private app's
 /// talk stays in that app (`turn_place::sight`).
-pub(super) async fn seen_rows(ctx: &ChatRunCtx, rows: Vec<ChatMsg>) -> Vec<ChatMsg> {
-    let sid = ctx.session_id.as_deref().unwrap_or("default");
-    let Ok(Some(meta)) = ctx.manager.global_sessions.get_session_meta(sid) else {
-        return rows;
-    };
-    let sight = crate::engine::turn_place::sight::Sight::of(&ctx.place, &*ctx.manager.skills).await;
-    sight.visible(rows, &meta)
+pub(super) async fn seen_rows(ctx: &ChatRunCtx, sid: &str) -> anyhow::Result<Vec<ChatMsg>> {
+    let sight = super::turn_place::turn_sight(&ctx.manager, Some(sid), &ctx.place).await;
+    ctx.manager.global_sessions.rows_seen_by(sid, &sight)
 }
 
 /// Whether a cached thread marked at `mark` no longer matches the file: it
@@ -529,6 +523,7 @@ mod tests {
             failed: false,
             images: Vec::new(),
             place: None,
+            kept_to: None,
         }
     }
 

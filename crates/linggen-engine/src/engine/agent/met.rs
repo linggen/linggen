@@ -433,6 +433,7 @@ mod tests {
             via_note: None,
             images: Vec::new(),
             place: None,
+            kept_to: None,
         }
     }
 

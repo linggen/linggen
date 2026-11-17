@@ -385,9 +385,20 @@ pub struct ChatMsg {
     /// session's own place ([`ChatMsg::place_in`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub place: Option<String>,
+    /// The app this row is kept to (`turn_place::sight`), stamped once as it
+    /// is saved — from the skill the turn stood in at that moment — and
+    /// never looked up again: a reader standing anywhere else is not given
+    /// it, whatever is installed later. `None`: everyone's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kept_to: Option<String>,
 }
 
 impl ChatMsg {
+    /// The row's stamp: where it was written and the app it is kept to.
+    pub fn stamp(&self) -> (Option<String>, Option<String>) {
+        (self.place.clone(), self.kept_to.clone())
+    }
+
     /// The key of the place this row was written in, in session `meta`.
     pub fn place_in(&self, meta: &SessionMeta) -> String {
         match &self.place {
@@ -425,6 +436,31 @@ impl SessionStore {
             fs::write(&msgs_path, "")?;
         }
         Ok(())
+    }
+
+    /// Keep `meta` as a new session — only when none is kept under its id:
+    /// an existing `session.yaml` is never written over, whoever made it
+    /// first and whether or not it can be read. True when this made it.
+    pub fn add_session_if_new(&self, meta: &SessionMeta) -> Result<bool> {
+        Self::validate_id(&meta.id)?;
+        let dir = self.session_dir(&meta.id);
+        fs::create_dir_all(&dir)?;
+        let yaml = meta_yaml(meta)?;
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(dir.join("session.yaml"));
+        let mut file = match file {
+            Ok(file) => file,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => return Ok(false),
+            Err(e) => return Err(e.into()),
+        };
+        file.write_all(yaml.as_bytes())?;
+        let msgs_path = dir.join("messages.jsonl");
+        if !msgs_path.exists() {
+            fs::write(&msgs_path, "")?;
+        }
+        Ok(true)
     }
 
     pub fn get_session_meta(&self, session_id: &str) -> Result<Option<SessionMeta>> {
@@ -646,19 +682,33 @@ impl SessionStore {
         Ok(())
     }
 
-    /// `msg` with the place of the turn running in the session, when it
-    /// names none of its own and a turn's place is kept.
+    /// `msg` with the stamp of the turn running in the session — its place,
+    /// and the app it is kept to — when it carries no stamp of its own and a
+    /// turn's place is kept.
     fn stamped<'a>(&self, session_id: &str, msg: &'a ChatMsg) -> std::borrow::Cow<'a, ChatMsg> {
-        if msg.place.is_some() {
+        if msg.place.is_some() || msg.kept_to.is_some() {
             return std::borrow::Cow::Borrowed(msg);
         }
-        let Some(place) = self.running_places.of(session_id) else {
+        let Some((place, kept_to)) = self.running_places.stamp_of(session_id) else {
             return std::borrow::Cow::Borrowed(msg);
         };
         std::borrow::Cow::Owned(ChatMsg {
-            place: Some(place.key().to_string()),
+            place: Some(place),
+            kept_to,
             ..msg.clone()
         })
+    }
+
+    /// The session's rows a reader standing where `sight` stands may be
+    /// given, in order — by each row's stamp (`turn_place::sight`). Every
+    /// reader that hands rows to a model, to Yinyue or to a page reads them
+    /// here.
+    pub fn rows_seen_by(
+        &self,
+        session_id: &str,
+        sight: &crate::engine::turn_place::sight::Sight,
+    ) -> Result<Vec<ChatMsg>> {
+        Ok(sight.visible(self.get_chat_history(session_id)?))
     }
 
     pub fn get_chat_history(&self, session_id: &str) -> Result<Vec<ChatMsg>> {
@@ -1148,6 +1198,7 @@ mod tests {
             failed: false,
             images: Vec::new(),
             place: None,
+            kept_to: None,
         };
         let msg2 = ChatMsg {
             run_id: None,
@@ -1163,6 +1214,7 @@ mod tests {
             failed: false,
             images: Vec::new(),
             place: None,
+            kept_to: None,
         };
         store.add_chat_message("s1", &msg1).unwrap();
         store.add_chat_message("s1", &msg2).unwrap();
@@ -1191,6 +1243,7 @@ mod tests {
             failed: false,
             images: Vec::new(),
             place: None,
+            kept_to: None,
         };
         let kept = serde_json::to_string(&row(Some("c-1-ab"))).unwrap();
         let back: ChatMsg = serde_json::from_str(&kept).unwrap();
@@ -1251,6 +1304,7 @@ mod tests {
                     failed: false,
                     images: Vec::new(),
                     place: None,
+                    kept_to: None,
                 },
             )
             .unwrap();
@@ -1271,6 +1325,7 @@ mod tests {
                     failed: false,
                     images: Vec::new(),
                     place: None,
+                    kept_to: None,
                 },
             )
             .unwrap();
@@ -1328,6 +1383,7 @@ mod tests {
                     failed: false,
                     images: Vec::new(),
                     place: None,
+                    kept_to: None,
                 },
             )
             .unwrap();
@@ -1383,6 +1439,7 @@ mod tests {
                     failed: false,
                     images: Vec::new(),
                     place: None,
+                    kept_to: None,
                 },
             )
             .unwrap();
@@ -1496,10 +1553,31 @@ mod tests {
                     failed: false,
                     images: Vec::new(),
                     place: None,
+                    kept_to: None,
                 },
             )
             .unwrap();
         let history = store.get_chat_history("auto-created").unwrap();
         assert_eq!(history.len(), 1);
+    }
+
+    /// A session made only if new is made once: a second maker, or one that
+    /// finds a file it cannot read, leaves what is kept as it is.
+    #[test]
+    fn a_session_made_if_new_never_writes_over_a_kept_one() {
+        let (store, _dir) = temp_store();
+        let mut meta = SessionMeta {
+            id: "sess-day-2026-11-16".into(),
+            ..Default::default()
+        };
+        meta.title = "first".into();
+        assert!(store.add_session_if_new(&meta).unwrap());
+        meta.title = "second".into();
+        assert!(!store.add_session_if_new(&meta).unwrap());
+        assert_eq!(store.get_session_meta(&meta.id).unwrap().unwrap().title, "first");
+        let yaml = store.session_dir(&meta.id).join("session.yaml");
+        std::fs::write(&yaml, ": not yaml [").unwrap();
+        assert!(!store.add_session_if_new(&meta).unwrap());
+        assert_eq!(std::fs::read_to_string(&yaml).unwrap(), ": not yaml [");
     }
 }

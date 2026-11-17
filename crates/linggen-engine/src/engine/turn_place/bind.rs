@@ -162,12 +162,9 @@ impl AgentEngine {
     /// The place a summary written in the running turn is kept to: its own,
     /// when its talk is hidden from the session's other places; `None` —
     /// everyone's — otherwise.
-    pub(crate) fn summary_kept_to(&self, meta: &crate::state_fs::sessions::SessionMeta) -> Option<String> {
-        let place = self.turn_place()?;
+    pub(crate) fn summary_kept_to(&self) -> Option<String> {
         let sight = self.tools.builtins.turn_sight.as_ref()?;
-        sight
-            .hides_from_others(place, meta)
-            .then(|| place.key().to_string())
+        sight.keeps().map(str::to_string)
     }
 
     /// The key of the slot the running turn's grants live in, in the

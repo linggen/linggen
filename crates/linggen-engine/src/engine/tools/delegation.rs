@@ -441,7 +441,11 @@ pub(crate) async fn run_delegation(
     // and grants are the parent's place's, and what it may be given of the
     // session's rows (`turn_place::sight`).
     if let Some(place) = &parent_place {
-        let sight = crate::engine::turn_place::sight::Sight::of(place, &*manager.skills).await;
+        let meta = session_id
+            .as_deref()
+            .and_then(|sid| manager.global_sessions.get_session_meta(sid).ok().flatten())
+            .unwrap_or_default();
+        let sight = crate::engine::turn_place::sight::Sight::of(place, &meta, &*manager.skills).await;
         engine.tools.builtins.turn_sight = Some(sight);
     }
     engine.tools.builtins.turn_place = parent_place;

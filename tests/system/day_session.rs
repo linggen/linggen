@@ -394,6 +394,90 @@ async fn a_private_apps_talk_reaches_no_other_place_nor_her() {
     assert!(places.contains(&"dice".to_string()) && !places.contains(&"ledger".to_string()));
 }
 
+/// A private app's rows are stamped kept as they are written: once the app
+/// is gone they stay kept — from the main page and from a turn at home.
+#[tokio::test]
+async fn a_removed_private_apps_talk_stays_kept() {
+    let setup = Setup::default().script(Agent::Ling, vec![text(LEDGER_REPLY), text("Home.")]);
+    let (w, _) = day_world_at(12, setup).await;
+    install_ledger(&w).await;
+    let day = w
+        .api
+        .create_session(json!({"title": "Ledger", "skill": "ledger"}))
+        .await;
+    turn_at(&w, &day, Some("ledger"), SECRET, Agent::Ling).await;
+    std::fs::remove_dir_all(w.home.linggen_home().join("skills/ledger")).expect("remove the ledger");
+    w.api.post("/api/skills/reload", json!({})).await;
+    turn_at(&w, &day, None, "Hello from the main page", Agent::Ling).await;
+
+    let home = w.model.calls_of(Agent::Ling).pop().unwrap();
+    assert!(!holds_secret(&home.text()), "a home turn was given the removed app's talk");
+    let main = w.api.history(&day, &w.work()).await;
+    assert!(!holds_secret(&history_text(&main)), "the main page shows it");
+    let kept: Vec<Value> = w
+        .raw_rows(&day)
+        .into_iter()
+        .filter(|r| r["content"].as_str().is_some_and(holds_secret))
+        .collect();
+    assert!(!kept.is_empty() && kept.iter().all(|r| r["kept_to"] == "ledger"), "{kept:?}");
+}
+
+/// A made-up private app that plans before it acts.
+async fn install_planner(w: &World) {
+    let dir = w.home.linggen_home().join("skills/planner");
+    std::fs::create_dir_all(&dir).expect("planner dir");
+    std::fs::write(
+        dir.join("SKILL.md"),
+        "---\nname: planner\ndescription: A private test planner.\n\
+         allowed-tools: [EnterPlanMode, ExitPlanMode]\nprivate-talk: true\n---\n\nPlan first.\n",
+    )
+    .expect("SKILL.md");
+    w.api.post("/api/skills/reload", json!({})).await;
+}
+
+/// A private app's plan keeps its stamp when it is edited and rejected
+/// later, outside any turn: no row of it is shown on the main page.
+#[tokio::test]
+async fn a_private_apps_plan_stays_kept_when_edited_and_rejected() {
+    let plan = "## Plan\n\n1. PLANNER-SECRET first step";
+    let setup = Setup::default().script(
+        Agent::Ling,
+        vec![
+            tool("EnterPlanMode", json!({"reason": "plan it"})),
+            tool("ExitPlanMode", json!({"plan_text": plan})),
+        ],
+    );
+    let (w, _) = day_world_at(12, setup).await;
+    install_planner(&w).await;
+    let day = w
+        .api
+        .create_session(json!({"title": "Planner", "skill": "planner"}))
+        .await;
+    say(&w, &day, Some("planner"), "Plan it").await;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let has_plan = |w: &World| w.raw_rows(&day).iter().any(|r| r["content"].as_str().is_some_and(|c| c.contains("PLANNER-SECRET")));
+    while !has_plan(&w) {
+        assert!(std::time::Instant::now() < deadline, "no plan; log:\n{}", w.engine.log());
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let action = json!({"project_root": w.work(), "agent_id": "ling", "session_id": day});
+    let mut edit = action.clone();
+    edit["text"] = json!("## Plan\n\n1. PLANNER-SECRET edited step");
+    w.api.post("/api/plan/edit", edit).await;
+    w.api.post("/api/plan/reject", action).await;
+
+    let rows: Vec<Value> = w
+        .raw_rows(&day)
+        .into_iter()
+        .filter(|r| r["content"].as_str().is_some_and(|c| c.contains("PLANNER-SECRET")))
+        .collect();
+    assert!(rows.len() >= 3, "made, edited and rejected: {rows:#?}");
+    assert!(rows.iter().all(|r| r["kept_to"] == "planner"), "a plan row lost its stamp: {rows:#?}");
+    let main = w.api.history(&day, &w.work()).await;
+    assert!(!history_text(&main).contains("PLANNER-SECRET"), "the main page shows the plan");
+}
+
 /// A summary made outside the private app is made without its talk.
 #[tokio::test]
 async fn a_summary_made_at_home_leaves_the_private_apps_talk_out() {

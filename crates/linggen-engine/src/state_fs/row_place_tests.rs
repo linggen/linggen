@@ -19,6 +19,7 @@ fn row(content: &str) -> ChatMsg {
         images: Vec::new(),
         run_id: None,
         place: None,
+        kept_to: None,
     }
 }
 

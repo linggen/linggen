@@ -37,8 +37,19 @@ pub(super) async fn bind_turn_place(engine: &mut crate::engine::AgentEngine, ctx
     if grants_changed {
         let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
     }
-    let sight = crate::engine::turn_place::sight::Sight::of(&ctx.place, &*ctx.manager.skills).await;
-    engine.see_from_place(sight);
+    engine.see_from_place(turn_sight(&ctx.manager, ctx.session_id.as_deref(), &ctx.place).await);
+}
+
+/// What a turn standing in `place` of session `session_id` may be given,
+/// and the app what it writes is kept to — decided now, from the skill.
+pub(crate) async fn turn_sight(
+    manager: &crate::engine::agent::AgentManager,
+    session_id: Option<&str>,
+    place: &TurnPlace,
+) -> crate::engine::turn_place::sight::Sight {
+    let meta = session_id.and_then(|sid| manager.global_sessions.get_session_meta(sid).ok().flatten());
+    let meta = meta.unwrap_or_default();
+    crate::engine::turn_place::sight::Sight::of(place, &meta, &*manager.skills).await
 }
 
 /// Keep the turn running in `session_id` private to its app when its talk
@@ -79,10 +90,7 @@ pub(crate) async fn hidden_app(
     place: &TurnPlace,
 ) -> Option<String> {
     let meta = manager.global_sessions.get_session_meta(session_id).ok()??;
-    let sight = crate::engine::turn_place::sight::Sight::of(place, &*manager.skills).await;
-    sight
-        .hides_from_others(place, &meta)
-        .then(|| place.key().to_string())
+    crate::engine::turn_place::sight::kept_to(place, &meta, &*manager.skills).await
 }
 
 /// The turn is over: nothing of its place stays on the engine.

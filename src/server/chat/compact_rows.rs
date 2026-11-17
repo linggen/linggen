@@ -146,11 +146,11 @@ pub(crate) async fn compact_session(
     let store = &manager.global_sessions;
     let all = store.get_chat_history(session_id).ok()?;
     let meta = store.get_session_meta(session_id).ok()??;
-    let sight = Sight::of(place, &*manager.skills).await;
+    let sight = Sight::of(place, &meta, &*manager.skills).await;
     let (at, rows): (Vec<usize>, Vec<ChatMsg>) = all
         .into_iter()
         .enumerate()
-        .filter(|(_, r)| sight.sees(r, &meta))
+        .filter(|(_, r)| sight.sees(r))
         .unzip();
     let tail_budget = (smallest_window(&models.windows) as f64 * TAIL_SHARE) as usize;
     let cut = tail_cut(&rows, tail_budget)?;
@@ -158,9 +158,7 @@ pub(crate) async fn compact_session(
     let span = &rows[base..cut];
     // Where the summary goes in the file: before the row the tail begins at.
     let file_cut = at[cut];
-    let kept_to = sight
-        .hides_from_others(place, &meta)
-        .then(|| place.key().to_string());
+    let kept_to = sight.keeps().map(str::to_string);
     let model_manager = manager.models.read().await.clone();
     let prompt = summary_prompt(span.len(), &transcript(span), focus);
     let (text, _) =
@@ -183,7 +181,8 @@ pub(crate) async fn compact_session(
         client_id: None,
         failed: false,
         images: Vec::new(),
-        place: kept_to,
+        place: kept_to.clone(),
+        kept_to,
     };
     // The prefix up to `cut` is the snapshot's — rows written meanwhile
     // only append after it — so the summary goes in at the same place.
@@ -260,6 +259,7 @@ mod tests {
             failed: false,
             images: Vec::new(),
             place: None,
+            kept_to: None,
         }
     }
 

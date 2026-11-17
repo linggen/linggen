@@ -217,6 +217,7 @@ mod tests {
             failed: false,
             images: Vec::new(),
             place: None,
+            kept_to: None,
         }
     }
     fn call(name: &str) -> ChatMsg {

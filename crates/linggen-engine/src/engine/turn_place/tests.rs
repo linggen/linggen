@@ -87,7 +87,13 @@ fn home_has_a_key_no_skill_can_take() {
 }
 
 /// A registry holding one made-up app that keeps its talk private.
-struct OneApp(crate::engine::skill::Skill);
+pub(crate) struct OneApp(crate::engine::skill::Skill);
+
+/// [`OneApp`] holding a made-up app `name` that declares `private-talk: true`.
+pub(crate) async fn skills_with_private(name: &str) -> OneApp {
+    let text = format!("---\nname: {name}\ndescription: Write\nprivate-talk: true\n---\nBody");
+    OneApp(crate::extensions::skills::parse_skill_text(&text, crate::engine::skill::SkillSource::Global).unwrap())
+}
 
 #[async_trait::async_trait]
 impl crate::engine::skill::SkillRegistry for OneApp {
