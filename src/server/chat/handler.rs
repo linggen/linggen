@@ -866,6 +866,20 @@ pub(crate) async fn run_session_turn(
     super::turn_place::leave_turn_place(engine);
 }
 
+/// Her words at a table that isn't her own thread are heard, too.
+fn hear_her_at_table(
+    state: &Arc<ServerState>,
+    engine: &crate::engine::AgentEngine,
+    target_id: &str,
+    session_id: &str,
+) {
+    if super::members::is_companion(target_id) && !crate::server::resident::is_own_session(session_id) {
+        if let Some(reply) = engine.last_assistant_text.clone() {
+            crate::server::resident::speak_reply(state, &reply);
+        }
+    }
+}
+
 /// A private turn's run is remembered as it ends: its events still on their
 /// way to a page are kept from pages outside its app (`rtc::peer::forward`).
 fn remember_if_private(manager: &AgentManager, ctx: &ChatRunCtx, engine: &crate::engine::AgentEngine) {
@@ -1484,14 +1498,7 @@ pub(crate) async fn start_turn(
         // The ask was this turn's: the next turn on this engine may be an
         // event turn or a delivery, which shows no hint.
         engine.suggest_followups = false;
-        // Her words at a table that isn't her own thread are heard, too.
-        if super::members::is_companion(&target_id_clone)
-            && !crate::server::resident::is_own_session(&session_id_for_queue)
-        {
-            if let Some(reply) = engine.last_assistant_text.clone() {
-                crate::server::resident::speak_reply(&state_clone, &reply);
-            }
-        }
+        hear_her_at_table(&state_clone, &engine, &target_id_clone, &session_id_for_queue);
 
         // TurnComplete gives the Web UI a single finalizer.
         let run_id = engine.last_run_id.clone();

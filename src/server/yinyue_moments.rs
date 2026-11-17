@@ -559,32 +559,35 @@ pub async fn yinyue_moment_loop(state: Arc<ServerState>) {
         );
         let emotion = mood_of(&taken);
         *IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner()) = taken.clone();
-        let state = state.clone();
-        tokio::spawn(async move {
-            let words = if asked {
-                asked_kickoff(&taken)
-            } else {
-                kickoff(&taken)
-            };
-            let (taken, table) = at_the_table(&state, taken).await;
-            let line = super::resident::wake_for_moment(
-                state.clone(),
-                (words, table.clone()),
-                &emotion,
-                super::resident::moment_source(asked, in_use),
-                language_of(&taken),
-            )
-            .await;
-            IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner()).clear();
-            // An ask that got no line (not there at that table any more, the run failed, or silence) is
-            // said to be unanswered, so the page that asked falls back at once instead of waiting it out.
-            if asked && line.is_none() {
-                tell_unanswered(&state, &taken, "no-line");
-            }
-            let at = table.as_ref().map(|t| t.session.as_str());
-            land_in_chats(&state, &taken, line.as_deref(), at).await;
-        });
+        tokio::spawn(wake_her(state.clone(), taken, (asked, in_use), emotion));
     }
+}
+
+/// One wake for `taken`: her turn at the table, then her line in the chats
+/// the moments name.
+async fn wake_her(state: Arc<ServerState>, taken: Vec<Moment>, (asked, in_use): (bool, bool), emotion: String) {
+    let words = if asked {
+        asked_kickoff(&taken)
+    } else {
+        kickoff(&taken)
+    };
+    let (taken, table) = at_the_table(&state, taken).await;
+    let line = super::resident::wake_for_moment(
+        state.clone(),
+        (words, table.clone()),
+        &emotion,
+        super::resident::moment_source(asked, in_use),
+        language_of(&taken),
+    )
+    .await;
+    IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    // An ask that got no line (not there at that table any more, the run failed, or silence) is
+    // said to be unanswered, so the page that asked falls back at once instead of waiting it out.
+    if asked && line.is_none() {
+        tell_unanswered(&state, &taken, "no-line");
+    }
+    let at = table.as_ref().map(|t| t.session.as_str());
+    land_in_chats(&state, &taken, line.as_deref(), at).await;
 }
 
 #[cfg(test)]

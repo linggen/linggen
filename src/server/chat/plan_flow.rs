@@ -387,38 +387,45 @@ async fn run_approved_plan_task(
         silence_ok: false,
         place,
     };
-    // The plan runs in the place its session's turns stand in: the app's
-    // tools and folder, as the turn that made the plan had them.
-    super::turn_place::bind_turn_place(&mut engine, &ctx).await;
-    run_plan_execution(&ctx, &mut engine).await;
-    super::turn_place::leave_turn_place(&mut engine);
-
-    // Mark plan as completed and rewrite the persisted plan message. The run's
-    // end may already have settled a done checklist to Completed
-    // (`settle_finished_plan`); the saved message still needs the update.
-    if let Some(ref mut plan) = engine.plan {
-        if matches!(
-            plan.status,
-            PlanStatus::Executing | PlanStatus::Approved | PlanStatus::Completed
-        ) {
-            plan.status = PlanStatus::Completed;
-            let completed_snapshot = plan.clone();
-            engine
-                .persist_and_emit_plan(completed_snapshot.clone())
-                .await;
-            persist_plan_message(
-                &manager,
-                &root,
-                &sid_default,
-                &agent_id,
-                &completed_snapshot,
-            )
-            .await;
-        }
-    }
+    run_plan_in_place(&ctx, &mut engine).await;
+    complete_plan(&mut engine, &manager, &root, (&sid_default, &agent_id)).await;
 
     let run_id = engine.last_run_id.clone();
     super::runtime::close_turn(&state, agent_id, session_id, run_id).await;
+}
+
+/// The plan runs in the place its session's turns stand in: the app's
+/// tools and folder, as the turn that made the plan had them.
+async fn run_plan_in_place(ctx: &ChatRunCtx, engine: &mut AgentEngine) {
+    super::turn_place::bind_turn_place(engine, ctx).await;
+    run_plan_execution(ctx, engine).await;
+    super::turn_place::leave_turn_place(engine);
+}
+
+/// Mark plan as completed and rewrite the persisted plan message. The run's
+/// end may already have settled a done checklist to Completed
+/// (`settle_finished_plan`); the saved message still needs the update.
+async fn complete_plan(
+    engine: &mut AgentEngine,
+    manager: &Arc<AgentManager>,
+    root: &Path,
+    (sid, agent_id): (&str, &str),
+) {
+    let Some(ref mut plan) = engine.plan else {
+        return;
+    };
+    if !matches!(
+        plan.status,
+        PlanStatus::Executing | PlanStatus::Approved | PlanStatus::Completed
+    ) {
+        return;
+    }
+    plan.status = PlanStatus::Completed;
+    let completed_snapshot = plan.clone();
+    engine
+        .persist_and_emit_plan(completed_snapshot.clone())
+        .await;
+    persist_plan_message(manager, root, sid, agent_id, &completed_snapshot).await;
 }
 
 /// Persist a plan as the latest `{type:"plan", plan:...}` message in the
