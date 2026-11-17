@@ -225,7 +225,7 @@ fn a_command_naming_the_home_folder_is_judged_by_its_path() {
     let inside = format!("{home}/proj");
     let perms = session_at(&inside, PermissionMode::Edit);
     let at = |cmd: &str, coding: bool| {
-        check_permission_for("Bash", Some(cmd), None, Path::new(&inside), &perms, None, coding)
+        check_permission_for("Bash", Some(cmd), None, Path::new(&inside), &perms, None, coding, None)
     };
     // Inside what the session may edit: allowed, coding or not.
     assert!(allowed(&at("mkdir -p \"$HOME/proj/out\"", false)));
