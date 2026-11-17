@@ -3,7 +3,23 @@ use super::{ToolResult, Tools};
 use anyhow::Result;
 use serde::Deserialize;
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
+
+#[derive(PartialEq, Eq)]
+pub(super) struct FileStamp {
+    modified: SystemTime,
+    len: u64,
+}
+
+impl FileStamp {
+    pub(super) fn at(path: &Path) -> std::io::Result<Self> {
+        let metadata = std::fs::metadata(path)?;
+        Ok(Self {
+            modified: metadata.modified()?,
+            len: metadata.len(),
+        })
+    }
+}
 
 #[derive(Debug, Deserialize)]
 pub(super) struct WriteFileArgs {
@@ -48,6 +64,35 @@ pub(super) struct UnlockPathsArgs {
 }
 
 impl Tools {
+    pub(super) fn record_seen_file(&self, path: &Path, stamp: std::io::Result<FileStamp>) {
+        if let Ok(stamp) = stamp {
+            let key = crate::util::resolve_path(path);
+            self.seen_files
+                .lock()
+                .expect("seen files lock")
+                .entry(self.session_id.clone())
+                .or_default()
+                .insert(key, stamp);
+        }
+    }
+
+    fn check_seen_file(
+        &self,
+        path: &Path,
+        display: &str,
+        current: &std::io::Result<FileStamp>,
+    ) -> Result<()> {
+        let key = crate::util::resolve_path(path);
+        let seen = self.seen_files.lock().expect("seen files lock");
+        let previous = seen.get(&self.session_id).and_then(|files| files.get(&key));
+        if previous.is_some_and(|stamp| current.as_ref().ok() != Some(stamp)) {
+            anyhow::bail!(
+                "{display} changed since it was last read here. Read it again before writing."
+            );
+        }
+        Ok(())
+    }
+
     pub(super) async fn enforce_write_access(&self, rel: &str) -> Result<()> {
         if let (Some(manager), Some(agent_id)) = (&self.manager, &self.agent_id) {
             // 1. Check path access
@@ -100,20 +145,24 @@ impl Tools {
         }
 
         if target.exists() {
-            match tokio::fs::read_to_string(&target).await {
-                Ok(existing) if existing == args.content => {
-                    return Ok(ToolResult::Success(format!(
-                        "File unchanged (content identical): {}",
-                        display
-                    )));
-                }
-                Ok(_) => {}  // content differs, proceed to write
-                Err(_) => {} // file unreadable (e.g. binary), proceed to overwrite
+            let stamp = FileStamp::at(&target);
+            let identical = tokio::fs::read_to_string(&target)
+                .await
+                .is_ok_and(|existing| existing == args.content);
+            let current = FileStamp::at(&target);
+            self.check_seen_file(&target, &display, &current)?;
+            if identical {
+                self.record_seen_file(&target, stamp);
+                return Ok(ToolResult::Success(format!(
+                    "File unchanged (content identical): {}",
+                    display
+                )));
             }
         }
 
         let bytes = args.content.len();
         tokio::fs::write(&target, &args.content).await?;
+        self.record_seen_file(&target, FileStamp::at(&target));
         Ok(ToolResult::Success(format!(
             "File written: {} ({} bytes)",
             display, bytes
@@ -149,6 +198,7 @@ impl Tools {
             );
         }
 
+        let stamp = FileStamp::at(&target);
         let existing = tokio::fs::read_to_string(&target).await?;
         let match_count = existing.matches(&args.old_string).count();
         if match_count == 0 {
@@ -171,6 +221,7 @@ impl Tools {
         };
 
         if updated == existing {
+            self.record_seen_file(&target, stamp);
             return Ok(ToolResult::Success(format!(
                 "File unchanged (no effective edit): {}",
                 display
@@ -178,6 +229,7 @@ impl Tools {
         }
 
         tokio::fs::write(&target, updated).await?;
+        self.record_seen_file(&target, FileStamp::at(&target));
         let replaced = if replace_all { match_count } else { 1 };
         Ok(ToolResult::Success(format!(
             "Edited file: {} ({} replacement{})",
@@ -214,5 +266,115 @@ impl Tools {
 
         manager.locks.lock().await.release(agent_id, args.tokens);
         Ok(ToolResult::Success("Locks released".to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::file_tools::ReadFileArgs;
+    use super::*;
+
+    fn write(path: &str, content: &str) -> WriteFileArgs {
+        WriteFileArgs {
+            path: path.into(),
+            content: content.into(),
+        }
+    }
+
+    async fn read(tools: &Tools, path: &str) {
+        tools
+            .read_file(ReadFileArgs {
+                path: path.into(),
+                max_bytes: None,
+                line_range: None,
+            })
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn write_refuses_an_external_change_until_read_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("note.txt");
+        let tools = Tools::new(dir.path().to_path_buf()).unwrap();
+        std::fs::write(&path, "before").unwrap();
+        read(&tools, path.to_str().unwrap()).await;
+        std::fs::write(&path, "another writer's change").unwrap();
+
+        let err = tools
+            .write_file(write("note.txt", "mine"))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "note.txt changed since it was last read here. Read it again before writing."
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "another writer's change"
+        );
+
+        read(&tools, "note.txt").await;
+        tools.write_file(write("note.txt", "mine")).await.unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "mine");
+    }
+
+    #[tokio::test]
+    async fn write_refuses_changes_since_its_own_write_or_edit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("note.txt");
+        let tools = Tools::new(dir.path().to_path_buf()).unwrap();
+        tools.write_file(write("note.txt", "new")).await.unwrap();
+        tools
+            .write_file(write("note.txt", "own write"))
+            .await
+            .unwrap();
+        std::fs::write(&path, "external change after Write").unwrap();
+        assert!(tools.write_file(write("note.txt", "stale")).await.is_err());
+
+        tools
+            .edit_file(EditFileArgs {
+                path: "note.txt".into(),
+                old_string: "after Write".into(),
+                new_string: "accepted by Edit".into(),
+                replace_all: None,
+            })
+            .await
+            .unwrap();
+        tools
+            .write_file(write("note.txt", "after edit"))
+            .await
+            .unwrap();
+        tools
+            .edit_file(EditFileArgs {
+                path: "note.txt".into(),
+                old_string: "after edit".into(),
+                new_string: "new edit".into(),
+                replace_all: None,
+            })
+            .await
+            .unwrap();
+        std::fs::write(&path, "external change after Edit").unwrap();
+        assert!(tools.write_file(write("note.txt", "stale")).await.is_err());
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "external change after Edit"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unseen_file_is_writable_in_a_separate_engine() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("note.txt");
+        let parent = Tools::new(dir.path().to_path_buf()).unwrap();
+        let child = Tools::new(dir.path().to_path_buf()).unwrap();
+        std::fs::write(&path, "before").unwrap();
+        read(&parent, "note.txt").await;
+        child
+            .write_file(write("note.txt", "child changed it"))
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "child changed it");
+        assert!(parent.write_file(write("note.txt", "stale")).await.is_err());
     }
 }

@@ -343,12 +343,16 @@ pub type ToolProgressSender = tokio::sync::mpsc::UnboundedSender<(String, String
 
 // ── Tools struct ────────────────────────────────────────────────────────
 
+type SeenFiles = HashMap<Option<String>, HashMap<PathBuf, write_tools::FileStamp>>;
+
 #[derive(Clone)]
 pub struct Tools {
     root: PathBuf,
     /// Per-session working directory. Key = session_id, value = cwd.
     /// Sessions without an entry default to `root`.
     cwd_by_session: Arc<std::sync::Mutex<std::collections::HashMap<String, PathBuf>>>,
+    /// Shared by tool-call clones, not by independently created engines.
+    seen_files: Arc<std::sync::Mutex<SeenFiles>>,
     manager: Option<Arc<AgentManager>>,
     agent_id: Option<String>,
     delegation_depth: usize,
@@ -408,6 +412,7 @@ impl Tools {
         Ok(Self {
             root,
             cwd_by_session,
+            seen_files: Default::default(),
             manager: None,
             agent_id: None,
             delegation_depth: 0,

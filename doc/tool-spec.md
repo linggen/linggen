@@ -34,7 +34,7 @@ Built-in tools are the kernel API. Skills are userspace.
 | `Glob` | `globs?, max_results?` | File pattern matching |
 | `Read` | `path, max_bytes?, line_range?` | Read file contents. A picture file (PNG, JPEG, GIF, WebP; HEIC converted with `sips` on macOS, else said so), known by its first bytes, comes back as a picture: numbered (`[turn3image1]`, caption = file name) and kept in the session's `images/` like a screenshot; a model that sees gets it attached once in that turn, scaled like a pasted picture (long edge 1568 px; JPEG q0.85, or PNG when smaller; a small one as it came), a blind one gets the facts (format, width×height, size). Over 20 MB, undecodable or unconvertible: one line of facts. Path rules are Read's own |
 | `Grep` | `query, globs?, max_results?` | Content search (ripgrep) |
-| `Write` | `path, content` | Create/overwrite file |
+| `Write` | `path, content` | Create or overwrite a file; if it changed since this session last read, wrote, or edited it, Read again before writing |
 | `Edit` | `path, old_string, new_string, replace_all?` | String replacement in file |
 | `Bash` | `cmd, timeout_ms?, run_in_background?` | Shell command execution. `run_in_background` starts it beside the chat and returns its task id at once; its end comes back as a turn (`background-tasks-spec.md`) |
 | `GenerateImage` | `prompt, shape?, name?, reference?, seed?, model?` | Draw one picture when the person asks for a drawing (never to show a real thing — that is an ImageSearch or WebFetch photo). Kept with the session and numbered (`[turn3image1]`) like any picture an answer shows; in a skill also saved as `<skill>/data/pictures/<name>.png` |

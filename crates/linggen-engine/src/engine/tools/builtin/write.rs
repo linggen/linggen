@@ -18,7 +18,7 @@ impl Tool for WriteTool {
         "Write"
     }
     fn description(&self) -> &'static str {
-        "Write content to a file (creates or overwrites). Prefer Edit for existing files. Path is relative to workspace root."
+        "Write content to a file (creates or overwrites). If a file changed since this session last read, wrote, or edited it, Read it again before writing. Prefer Edit for existing files. Path is relative to workspace root."
     }
     fn tier(&self) -> PermissionMode {
         PermissionMode::Edit

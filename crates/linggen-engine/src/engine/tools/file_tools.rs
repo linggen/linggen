@@ -310,7 +310,10 @@ impl Tools {
         max_bytes: Option<usize>,
         line_range: Option<[usize; 2]>,
     ) -> Result<ToolResult> {
+        // Snapshot before reading, so a concurrent change isn't marked as seen.
+        let stamp = super::write_tools::FileStamp::at(path);
         if let Some(picture) = super::read_picture::read_picture(rel, path)? {
+            self.record_seen_file(path, stamp);
             return Ok(picture);
         }
         let max = max_bytes.unwrap_or(64 * 1024);
@@ -363,6 +366,7 @@ impl Tools {
             (String::from_utf8_lossy(&buf).to_string(), truncated)
         };
 
+        self.record_seen_file(path, stamp);
         Ok(ToolResult::FileContent {
             path: rel.to_string(),
             content,
