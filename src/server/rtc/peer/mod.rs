@@ -1176,11 +1176,12 @@ impl PeerLoop {
         let tx = self.ctrl_resp_tx.clone();
         let user_ctx_clone = self.user_ctx.clone();
         let ctx = self.view_ctx.clone();
-        let identified = self.peer_actor.lock_ok().is_some();
+        let device = self.peer_actor.lock_ok().as_ref().map(|a| a.device.clone());
+        let identified = device.is_some();
+        let person = control::person_for(&self.user_ctx, device.as_deref());
         tokio::spawn(async move {
-            let ps =
-                super::page_state::build_page_state(&st, &ctx, flags, &user_ctx_clone, identified)
-                    .await;
+            let who = (&user_ctx_clone, identified);
+            let ps = super::page_state::build_page_state(&st, &ctx, flags, who, &person).await;
             if let Ok(data) = serde_json::to_value(&ps) {
                 if forced {
                     let size = data.to_string().len();

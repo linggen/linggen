@@ -24,6 +24,22 @@ pub struct ViewContext {
 }
 
 impl ViewContext {
+    /// The view `person` is shown: a day only its own person's
+    /// (`day_session::may_enter`, as the live channel streams it); another
+    /// person's day is an empty view — no session, nothing pinned to it.
+    /// The bool says the view was emptied.
+    fn shown_to(&self, person: &str) -> (ViewContext, bool) {
+        let refused = self
+            .session_id
+            .as_deref()
+            .is_some_and(|sid| !crate::server::day_session::may_enter(sid, Some(person)));
+        let mut shown = self.clone();
+        if refused {
+            shown.session_id = None;
+        }
+        (shown, refused)
+    }
+
     /// A `channel` peer is a skill page's data path (shared/channel.js): it
     /// only asks, and renders nothing — no page state, no events.
     pub fn wants_pushes(&self) -> bool {
@@ -164,13 +180,18 @@ pub const DIRTY_ALL: u64 = DIRTY_GLOBAL | DIRTY_SCOPED;
 
 /// Build the page state from server state + view context + user context.
 /// All data is filtered by user_id. Permission level controls what data categories are included.
+/// `person`: the person behind the peer (`peer::control::person_for`) — a
+/// day is shown only to its own person.
 pub async fn build_page_state(
     state: &Arc<ServerState>,
     ctx: &ViewContext,
     dirty: u64,
-    user: &super::UserContext,
-    identified: bool,
+    (user, identified): (&super::UserContext, bool),
+    person: &str,
 ) -> PageState {
+    let (shown, refused) = ctx.shown_to(person);
+    let ctx = &shown;
+    let theirs = |sid: &str| crate::server::day_session::may_enter(sid, Some(person));
     let include_global = (dirty & DIRTY_GLOBAL) != 0;
     let include_scoped = (dirty & DIRTY_SCOPED) != 0;
     let is_admin = user.permission.is_admin();
@@ -245,7 +266,7 @@ pub async fn build_page_state(
             ps.all_sessions = Some(
                 sessions
                     .into_iter()
-                    .filter(|s| user_session_ids.contains(&s.id))
+                    .filter(|s| user_session_ids.contains(&s.id) && theirs(&s.id))
                     .filter_map(|s| {
                         // `updated_at` is #[serde(skip)] so it never lands in
                         // session.yaml — inject the derived value by hand for
@@ -364,6 +385,9 @@ pub async fn build_page_state(
             None
         };
         let scope_check = |sid: &str| -> bool {
+            if refused || !theirs(sid) {
+                return false;
+            }
             if let Some(pin) = pinned {
                 sid == pin
             } else {
@@ -379,7 +403,7 @@ pub async fn build_page_state(
                 entry
                     .session_id
                     .as_deref()
-                    .map_or(is_admin && pinned.is_none(), &scope_check)
+                    .map_or(is_admin && pinned.is_none() && !refused, &scope_check)
             })
             .map(|(qid, entry)| {
                 serde_json::json!({
@@ -520,6 +544,25 @@ mod tests {
             text: "hello".into(),
             images: Vec::new(),
         }
+    }
+
+    /// A page that says it views a day is shown it only when it is its
+    /// person's; another person's is an empty view. Other sessions as before.
+    #[test]
+    fn a_day_is_shown_only_to_its_own_person() {
+        let day = ViewContext {
+            session_id: Some("sess-day-2026-11-16".into()),
+            ..Default::default()
+        };
+        let (shown, refused) = day.shown_to("u-friend");
+        assert!(refused && shown.session_id.is_none());
+        let (shown, refused) = day.shown_to("__local__");
+        assert!(!refused && shown.session_id.is_some());
+        let other = ViewContext {
+            session_id: Some("sess-1-a".into()),
+            ..Default::default()
+        };
+        assert!(!other.shown_to("u-friend").1);
     }
 
     #[test]
