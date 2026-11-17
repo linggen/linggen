@@ -861,3 +861,42 @@ async fn an_approved_plan_runs_in_its_own_place() {
     let main = w.api.history(&day, &w.work()).await;
     assert!(history_text(&main).contains("HOME-RUN"));
 }
+
+/// Every MCP tool that takes a session id refuses a day's — the builder's
+/// and another person's alike: a host neither reads, continues, stops,
+/// answers for nor closes a day. The table is the front door's own list.
+#[tokio::test]
+async fn every_mcp_tool_taking_a_session_refuses_a_day() {
+    let (w, _) = day_world_at(12, Setup::default()).await;
+    let mine = w.api.get("/api/sessions/day").await["id"].as_str().unwrap().to_string();
+    let theirs = w.api.get("/api/sessions/day?user_id=u-friend").await["id"].as_str().unwrap().to_string();
+    assert!(theirs.contains("-p-"), "{theirs}");
+    let list = w.api.post("/mcp", json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})).await;
+    let takes: Vec<String> = list["result"]["tools"]
+        .as_array()
+        .expect("the tool list")
+        .iter()
+        .filter(|t| t["inputSchema"]["properties"].get("session_id").is_some())
+        .filter_map(|t| t["name"].as_str().map(str::to_string))
+        .collect();
+    assert!(takes.len() >= 5, "the tools taking a session: {takes:?}");
+    let mut wrong = Vec::new();
+    for day in [&mine, &theirs] {
+        for name in &takes {
+            let args = json!({
+                "session_id": day, "prompt": "DAY-PROMPT", "request_id": "r1",
+                "decision": "deny", "remove_worktree": false,
+            });
+            let call = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                "params": {"name": name, "arguments": args}});
+            let res = w.api.post("/mcp", call).await;
+            let text = res["result"]["content"][0]["text"].as_str().unwrap_or_default();
+            if res["result"]["isError"] != json!(true) || !text.contains("is the day's session") {
+                wrong.push(format!("{name} on {day}: {res}"));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    assert!(w.raw_rows(&mine).is_empty() && w.raw_rows(&theirs).is_empty(), "a day was written");
+    assert!(w.model.calls().is_empty(), "a model was called");
+}
