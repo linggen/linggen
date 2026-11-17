@@ -36,6 +36,11 @@ async fn work_agent_run_switches() {
         let path = w.home.linggen_home().join("sessions").join(&sid).join("session.yaml");
         let read = || -> Value { serde_norway::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap() };
         assert_eq!(read()["work"].as_str(), expected);
+        // What the run itself was sent — not an export of the session: the
+        // section is in the prompt the model saw exactly when the work is code.
+        let sent = w.model.calls_of(Agent::Ling);
+        let saw = sent.iter().any(|c| c.body.to_string().contains("## Working on code"));
+        assert_eq!(saw, expected.is_some(), "write {write}, asked {requested:?}");
         let other = if expected.is_some() { "none" } else { "code" };
         let result = w.api.post("/mcp", call(json!({"prompt":"Again", "session_id":sid, "work":other}))).await;
         assert_eq!(result["result"]["content"][0]["text"], "Again.", "{result}");

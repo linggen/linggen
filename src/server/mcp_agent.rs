@@ -491,7 +491,25 @@ async fn keep_delegate_tools(
         return;
     };
     let write = kind == "write";
-    engine.respec(|spec| spec.tools = Tools::Delegate { write });
+    seat_delegate(&mut engine, Some(meta), write);
+}
+
+/// Make a delegated run's engine its session's: the spec its record gives
+/// (the delegate preset, its kind of work, its caller answering beyond its
+/// grants) with the toolset the run was started with. An engine is built
+/// unclaimed, so a run that only set its toolset had no kind of work: no
+/// work section in its prompt, and never a coding session at the gate.
+fn seat_delegate(
+    engine: &mut crate::engine::AgentEngine,
+    meta: Option<&crate::state_fs::sessions::SessionMeta>,
+    write: bool,
+) {
+    let mut spec = match meta {
+        Some(meta) => SessionSpec::of(meta),
+        None => engine.session_spec().clone(),
+    };
+    spec.tools = Tools::Delegate { write };
+    engine.respec(|current| *current = spec);
 }
 
 /// One headless run in its own task, to completion whether or not anyone
@@ -549,7 +567,8 @@ async fn drive(
     // Bash stops the `echo > file` end-run around it. cfg isn't reloaded by
     // initialize_loop, so this sticks. (It also flips the session
     // non-interactive on load, matching the permission.json.)
-    engine.respec(|spec| spec.tools = Tools::Delegate { write });
+    let meta = state.manager.global_sessions.get_session_meta(&session_id).ok().flatten();
+    seat_delegate(&mut engine, meta.as_ref(), write);
 
     // Register the turn just as typed chat does, including its terminal event.
     let model_label = engine.model_id.clone();
