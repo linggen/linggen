@@ -204,6 +204,8 @@ pub(crate) const CLASSES: &[(&str, &str, RouteClass)] = &[
     ("GET", "/api/ling-mem/primary", At(Admin)),
     ("PUT", "/api/ling-mem/primary", At(Admin)),
     ("POST", "/api/push/notice", At(Admin)),
+    // An answer to one of this Mac's own problems, from her bubble here.
+    ("POST", "/api/yinyue/answer", At(Admin)),
     ("POST", "/api/runtime/js", At(Admin)),
     (
         "POST",
