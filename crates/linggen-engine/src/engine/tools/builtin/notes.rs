@@ -32,6 +32,9 @@ struct DoneArgs {
 pub struct NoteWriteTool;
 #[async_trait]
 impl Tool for NoteWriteTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::CarriesOut
+    }
     fn name(&self) -> &'static str {
         notes::WRITE_TOOL
     }
@@ -86,6 +89,9 @@ impl Tool for NoteWriteTool {
 pub struct NoteDoneTool;
 #[async_trait]
 impl Tool for NoteDoneTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::Stays
+    }
     fn name(&self) -> &'static str {
         notes::DONE_TOOL
     }

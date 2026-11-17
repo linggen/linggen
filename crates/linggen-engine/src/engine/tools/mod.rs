@@ -15,6 +15,7 @@ pub(crate) mod json_schema;
 pub mod memory_http;
 mod memory_mcp;
 mod exit_gate;
+pub(crate) use exit_gate::PlaceReach;
 pub use memory_mcp::{memory_root, place_of, MemoryPlace};
 mod delegation;
 mod drawing;

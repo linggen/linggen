@@ -11,6 +11,9 @@ use std::time::Duration;
 pub struct AskUserTool;
 #[async_trait]
 impl Tool for AskUserTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::Stays
+    }
     fn name(&self) -> &'static str {
         "AskUser"
     }

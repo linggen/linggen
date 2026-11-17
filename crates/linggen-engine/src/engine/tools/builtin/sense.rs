@@ -127,6 +127,9 @@ impl RightNow {
 pub struct SenseTool;
 #[async_trait]
 impl Tool for SenseTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::Stays
+    }
     fn name(&self) -> &'static str {
         "sense"
     }
@@ -176,6 +179,9 @@ impl Tool for SenseTool {
 pub struct RecentActivityTool;
 #[async_trait]
 impl Tool for RecentActivityTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::Stays
+    }
     fn name(&self) -> &'static str {
         "recent_activity"
     }

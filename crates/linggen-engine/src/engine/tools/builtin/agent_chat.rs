@@ -23,6 +23,9 @@ struct AgentChatArgs {
 pub struct AgentChatTool;
 #[async_trait]
 impl Tool for AgentChatTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::CarriesOut
+    }
     fn name(&self) -> &'static str {
         "agent_chat"
     }

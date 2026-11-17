@@ -9,6 +9,9 @@ pub struct ClaudeSessionTool;
 
 #[async_trait]
 impl Tool for ClaudeSessionTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::CarriesOut
+    }
     fn name(&self) -> &'static str {
         "StartClaudeSession"
     }

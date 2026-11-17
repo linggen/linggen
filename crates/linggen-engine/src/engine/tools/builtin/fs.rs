@@ -13,6 +13,9 @@ use std::time::Duration;
 pub struct GlobTool;
 #[async_trait]
 impl Tool for GlobTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::Stays
+    }
     fn name(&self) -> &'static str {
         "Glob"
     }
@@ -65,6 +68,9 @@ impl Tool for GlobTool {
 pub struct ReadTool;
 #[async_trait]
 impl Tool for ReadTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::Stays
+    }
     fn name(&self) -> &'static str {
         "Read"
     }
@@ -122,6 +128,9 @@ impl Tool for ReadTool {
 pub struct GrepTool;
 #[async_trait]
 impl Tool for GrepTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::Stays
+    }
     fn name(&self) -> &'static str {
         "Grep"
     }

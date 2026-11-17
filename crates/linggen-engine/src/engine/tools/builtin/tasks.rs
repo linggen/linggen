@@ -26,6 +26,9 @@ fn scope(tools: &Tools) -> Result<(std::sync::Arc<crate::engine::agent::AgentMan
 pub struct TaskListTool;
 #[async_trait]
 impl Tool for TaskListTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::Stays
+    }
     fn name(&self) -> &'static str { "TaskList" }
     fn description(&self) -> &'static str { "List background tasks you started in this session." }
     fn tier(&self) -> PermissionMode { PermissionMode::Read }
@@ -41,6 +44,9 @@ impl Tool for TaskListTool {
 pub struct TaskOutputTool;
 #[async_trait]
 impl Tool for TaskOutputTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::Stays
+    }
     fn name(&self) -> &'static str {
         "TaskOutput"
     }
@@ -90,6 +96,9 @@ impl Tool for TaskOutputTool {
 pub struct TaskStopTool;
 #[async_trait]
 impl Tool for TaskStopTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::Stays
+    }
     fn name(&self) -> &'static str {
         "TaskStop"
     }

@@ -34,6 +34,9 @@ fn query_schema(what: &str) -> Value {
 pub struct ImageSearchTool;
 #[async_trait]
 impl Tool for ImageSearchTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::Stays
+    }
     fn name(&self) -> &'static str {
         "ImageSearch"
     }
@@ -80,6 +83,9 @@ impl Tool for ImageSearchTool {
 pub struct VideoSearchTool;
 #[async_trait]
 impl Tool for VideoSearchTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::Stays
+    }
     fn name(&self) -> &'static str {
         "VideoSearch"
     }

@@ -12,6 +12,9 @@ use std::time::Duration;
 pub struct TaskTool;
 #[async_trait]
 impl Tool for TaskTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::Stays
+    }
     fn name(&self) -> &'static str {
         "Task"
     }
@@ -72,6 +75,9 @@ mod task_tests {
 pub struct SkillTool;
 #[async_trait]
 impl Tool for SkillTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::Stays
+    }
     fn name(&self) -> &'static str {
         "Skill"
     }
@@ -116,6 +122,9 @@ impl Tool for SkillTool {
 pub struct RunAppTool;
 #[async_trait]
 impl Tool for RunAppTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::Stays
+    }
     fn name(&self) -> &'static str {
         "RunApp"
     }

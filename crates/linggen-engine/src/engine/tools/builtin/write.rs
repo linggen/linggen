@@ -11,6 +11,9 @@ use serde_json::{json, Value};
 pub struct WriteTool;
 #[async_trait]
 impl Tool for WriteTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::Stays
+    }
     fn name(&self) -> &'static str {
         "Write"
     }
@@ -49,6 +52,9 @@ impl Tool for WriteTool {
 pub struct EditTool;
 #[async_trait]
 impl Tool for EditTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::Stays
+    }
     fn name(&self) -> &'static str {
         "Edit"
     }
@@ -92,6 +98,9 @@ impl Tool for EditTool {
 pub struct LockPathsTool;
 #[async_trait]
 impl Tool for LockPathsTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::Stays
+    }
     fn name(&self) -> &'static str {
         "lock_paths"
     }
@@ -120,6 +129,9 @@ impl Tool for LockPathsTool {
 pub struct UnlockPathsTool;
 #[async_trait]
 impl Tool for UnlockPathsTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::Stays
+    }
     fn name(&self) -> &'static str {
         "unlock_paths"
     }

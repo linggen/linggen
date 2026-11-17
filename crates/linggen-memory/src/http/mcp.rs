@@ -125,6 +125,14 @@ fn handle_initialize() -> Value {
 
 // ── tools/list ──────────────────────────────────────────────────────────────
 
+/// The names of the tools this server lists, in order.
+pub fn tool_names() -> Vec<String> {
+    tool_defs()
+        .iter()
+        .filter_map(|t| t["name"].as_str().map(str::to_string))
+        .collect()
+}
+
 fn handle_tools_list() -> Value {
     json!({ "tools": tool_defs() })
 }

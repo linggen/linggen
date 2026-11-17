@@ -76,6 +76,10 @@ pub trait Tool: Send + Sync {
     /// tool can run.
     fn tier(&self) -> PermissionMode;
 
+    /// Whether a call keeps what is said in the turn's place, or carries
+    /// it out to another place (`tools::exit_gate`). Every tool says which.
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach;
+
     /// JSON Schema for the tool's arguments — for the native
     /// function-calling `tools` API parameter.
     fn args_schema(&self) -> Value;

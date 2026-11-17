@@ -11,6 +11,9 @@ use serde_json::{json, Value};
 pub struct WebSearchTool;
 #[async_trait]
 impl Tool for WebSearchTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::Stays
+    }
     fn name(&self) -> &'static str {
         "WebSearch"
     }
@@ -90,6 +93,9 @@ fn search_error_code(msg: &str) -> &'static str {
 pub struct WebFetchTool;
 #[async_trait]
 impl Tool for WebFetchTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::Stays
+    }
     fn name(&self) -> &'static str {
         "WebFetch"
     }

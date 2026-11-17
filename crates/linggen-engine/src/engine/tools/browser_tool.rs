@@ -108,6 +108,9 @@ fn data_str(data: &Value, key: &str) -> String {
 pub struct BrowserNavigateTool;
 #[async_trait]
 impl Tool for BrowserNavigateTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::Stays
+    }
     fn name(&self) -> &'static str {
         "Browser_navigate"
     }
@@ -154,6 +157,9 @@ impl Tool for BrowserNavigateTool {
 pub struct BrowserReadPageTool;
 #[async_trait]
 impl Tool for BrowserReadPageTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::Stays
+    }
     fn name(&self) -> &'static str {
         "Browser_readPage"
     }
@@ -215,6 +221,9 @@ impl Tool for BrowserReadPageTool {
 pub struct BrowserScreenshotTool;
 #[async_trait]
 impl Tool for BrowserScreenshotTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::Stays
+    }
     fn name(&self) -> &'static str {
         "Browser_screenshot"
     }
@@ -269,6 +278,9 @@ impl Tool for BrowserScreenshotTool {
 pub struct BrowserClickTool;
 #[async_trait]
 impl Tool for BrowserClickTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::Stays
+    }
     fn name(&self) -> &'static str {
         "Browser_click"
     }
@@ -319,6 +331,9 @@ impl Tool for BrowserClickTool {
 pub struct BrowserTypeTool;
 #[async_trait]
 impl Tool for BrowserTypeTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::Stays
+    }
     fn name(&self) -> &'static str {
         "Browser_type"
     }
@@ -364,6 +379,9 @@ impl Tool for BrowserTypeTool {
 pub struct BrowserKeyTool;
 #[async_trait]
 impl Tool for BrowserKeyTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::Stays
+    }
     fn name(&self) -> &'static str {
         "Browser_key"
     }
@@ -408,6 +426,9 @@ impl Tool for BrowserKeyTool {
 pub struct BrowserScrollTool;
 #[async_trait]
 impl Tool for BrowserScrollTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::Stays
+    }
     fn name(&self) -> &'static str {
         "Browser_scroll"
     }
@@ -454,6 +475,9 @@ impl Tool for BrowserScrollTool {
 pub struct BrowserWaitTool;
 #[async_trait]
 impl Tool for BrowserWaitTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::Stays
+    }
     fn name(&self) -> &'static str {
         "Browser_wait"
     }
@@ -498,6 +522,9 @@ impl Tool for BrowserWaitTool {
 pub struct BrowserReadConsoleTool;
 #[async_trait]
 impl Tool for BrowserReadConsoleTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::Stays
+    }
     fn name(&self) -> &'static str {
         "Browser_readConsole"
     }
@@ -555,6 +582,9 @@ impl Tool for BrowserReadConsoleTool {
 pub struct BrowserTabsTool;
 #[async_trait]
 impl Tool for BrowserTabsTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::Stays
+    }
     fn name(&self) -> &'static str {
         "Browser_tabs"
     }

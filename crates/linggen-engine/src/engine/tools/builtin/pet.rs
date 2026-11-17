@@ -53,6 +53,9 @@ static PET_INTENTS: LazyLock<Vec<PetIntent>> = LazyLock::new(|| {
 pub struct ExpressTool;
 #[async_trait]
 impl Tool for ExpressTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::Stays
+    }
     fn name(&self) -> &'static str {
         "Express"
     }
@@ -171,6 +174,9 @@ struct VoiceArgs {
 pub struct VoiceTool;
 #[async_trait]
 impl Tool for VoiceTool {
+    fn place_reach(&self) -> crate::engine::tools::PlaceReach {
+        crate::engine::tools::PlaceReach::Stays
+    }
     fn name(&self) -> &'static str {
         "Voice"
     }
