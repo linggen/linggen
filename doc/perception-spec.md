@@ -367,6 +367,11 @@ the app launch route with `view`. Either way the answer — `not_now`, `done`,
 `failed`, `declined` — is kept on the record (`POST /api/yinyue/answer` on
 the Mac).
 
+**She says the outcome.** What the tap returned goes back to her as facts in
+an asked turn — on the phone a wake of her thread, on the Mac a quiet turn
+woken by the answer — outside the budget of unprompted lines. She says what
+was done, or what stopped it, from that result alone; the turn cannot act.
+
 Three rules, each earned:
 
 1. **Said once.** A problem — the same thing wrong on the same device — is

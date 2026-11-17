@@ -92,12 +92,19 @@ pub(crate) struct AnswerRequest {
     pub problem: String,
     /// `not_now`, `done`, `failed`, `declined`.
     pub answer: String,
+    /// What the tapped offer returned — she says the outcome from it.
+    #[serde(default)]
+    pub result: Option<serde_json::Value>,
+    /// Her label on the offer that was tapped.
+    #[serde(default)]
+    pub label: Option<String>,
 }
 
-/// `POST /api/yinyue/answer` — `{problem, answer}`. This Mac's own problems
-/// only: the other device's are answered where they live.
+/// `POST /api/yinyue/answer` — `{problem, answer, result?, label?}`. This
+/// Mac's own problems only: the other device's are answered where they live.
+/// A tap's outcome (`result`) is said by her, as an answer to the person.
 pub(crate) async fn answer_handler(
-    State(_state): State<Arc<ServerState>>,
+    State(state): State<Arc<ServerState>>,
     Json(req): Json<AnswerRequest>,
 ) -> impl IntoResponse {
     let Some(answer) = crate::perception::told::Answer::parse(&req.answer) else {
@@ -108,6 +115,13 @@ pub(crate) async fn answer_handler(
         return (StatusCode::BAD_REQUEST, "not a problem of this Mac's").into_response();
     }
     answer_problem(problem, answer, crate::util::now_ts_secs() as i64);
+    if let (Some(result), Some(label)) = (req.result, req.label) {
+        let result = match result {
+            serde_json::Value::String(s) => s,
+            v => v.to_string(),
+        };
+        crate::server::resident::offer_outcome::say(&state, label, req.answer, result);
+    }
     StatusCode::NO_CONTENT.into_response()
 }
 
