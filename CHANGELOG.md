@@ -1,8 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [2.3.1] - 2026-11-16 — memory on newer embedding and vector-database libraries
 
-Draft for 2.3.1: the two major library groups held back from 2.3.0.
+The two major library groups held back from 2.3.0; nothing else changed.
 
 - **Embedding stack:** fastembed 5.13.4 → 5.17.4 on candle 0.10.2 → 0.11.0
   (ort 2.0.0-rc.12 → rc.13). The embedding vectors are bit-equal to 2.3.0's,
