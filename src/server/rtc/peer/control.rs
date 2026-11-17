@@ -183,8 +183,11 @@ pub(super) fn handle_control_message(
                 .filter(|s| !s.is_empty())
                 .map(|s| s.to_string());
             // Remember the focused session so agent_chat can deliver into the
-            // chat the user actually has open.
-            if let Some(sid) = &view_ctx.session_id {
+            // chat the user actually has open — the owner's chat: a peer
+            // below the owner's standing never moves where it lands.
+            let device = actor.lock_ok().as_ref().map(|a| a.device.clone());
+            let owners = standing_for(user_ctx, device.as_deref()).is_owner();
+            if let Some(sid) = view_ctx.session_id.as_ref().filter(|_| owners) {
                 *state.current_view.lock_ok() = Some((
                     sid.clone(),
                     view_ctx.project_root.clone().unwrap_or_default(),

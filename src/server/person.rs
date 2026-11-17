@@ -70,6 +70,9 @@ pub(crate) enum Refused {
     /// Its path is not the one it would be sent as
     /// (`routes::classes::sent_unchanged`).
     BadPath,
+    /// Its peer has named no device (no one) and the route is not the way
+    /// in (`routes::classes::is_way_in`).
+    Unnamed,
 }
 
 impl Refused {
@@ -80,6 +83,7 @@ impl Refused {
         match self {
             Refused::NotTheirs(n) => serde_json::json!({ "error": n.reason() }),
             Refused::BadPath => serde_json::json!({ "error": "Invalid URL path" }),
+            Refused::Unnamed => serde_json::json!({ "error": "unnamed" }),
             Refused::BeyondLevel { level, needs } => serde_json::json!({
                 "error": "beyond_level",
                 "level": level.to_string(),
@@ -91,7 +95,8 @@ impl Refused {
 
 /// A request from off this machine judged by its caller's standing, then
 /// sent as its person ([`send_as`]): refused ([`Refused::BeyondLevel`]) when
-/// its route's class is above the standing's level. The one seam the
+/// its route's class is above the standing's level, and — for a peer that
+/// has named no device — anywhere but the way in ([`Refused::Unnamed`]). The one seam the
 /// channel's requests and frames and the LAN gate's requests pass.
 pub(crate) fn send_judged(
     method: &str,
@@ -104,6 +109,9 @@ pub(crate) fn send_judged(
         return Err(Refused::BadPath);
     }
     let path = url_path.split_once('?').map_or(url_path, |(p, _)| p);
+    if standing.person() == crate::server::rtc::NO_ONE && !crate::server::routes::classes::is_way_in(method, path) {
+        return Err(Refused::Unnamed);
+    }
     let needs = crate::server::routes::classes::class_of(method, path).needs();
     if needs > standing.level() {
         return Err(Refused::BeyondLevel {
@@ -735,6 +743,39 @@ mod tests {
         assert!(judged("POST", "/api/memory/add", Chat).is_ok(), "its own records at any level");
         assert!(judged("GET", "/api/topic/latest", Chat).is_err());
         assert_eq!(judged("GET", "/assets/%2e%2e/api/credentials", Admin), Err(super::Refused::BadPath));
+    }
+
+    /// A peer that has named no device reaches the way in and nothing else:
+    /// not a chat, not its own-records routes, not the read doors.
+    #[test]
+    fn an_unnamed_peer_reaches_only_the_way_in() {
+        let nobody = super::unnamed(false, "u-owner");
+        let judged = |method: &str, url: &str| {
+            super::send_judged(method, url, &mut serde_json::json!({}), &nobody, "paired")
+        };
+        for (method, url) in [
+            ("GET", "/api/health"),
+            ("POST", "/api/pair/request"),
+            ("POST", "/api/pair/qr-confirm"),
+            ("GET", "/index.html"),
+            ("GET", "/shared/channel.js"),
+        ] {
+            assert!(judged(method, url).is_ok(), "{method} {url}");
+        }
+        for (method, url) in [
+            ("POST", "/api/chat"),
+            ("POST", "/api/sessions"),
+            ("POST", "/api/presence"),
+            ("POST", "/api/memory/search"),
+            ("POST", "/api/push/device"),
+            ("POST", "/api/tts"),
+            ("GET", "/api/rtc/token"),
+            ("POST", "/api/rtc/whip"),
+            ("POST", "/api/agent-cancel"),
+        ] {
+            assert_eq!(judged(method, url), Err(super::Refused::Unnamed), "{method} {url}");
+        }
+        assert!(super::send_judged("POST", "/api/chat", &mut serde_json::json!({}), &at(crate::engine::permission::PermissionMode::Chat), "paired").is_ok());
     }
 
     /// The day rule still holds under the level.

@@ -443,7 +443,10 @@ pub(crate) async fn presence_handler(
     State(state): State<Arc<ServerState>>,
     Json(beat): Json<PresenceBeat>,
 ) -> impl IntoResponse {
-    if !crate::server::day_session::shares_builders(&state.manager, beat.user_id.as_deref()).await {
+    // Presence is the owner's: another person's surface, or a peer that
+    // named no device, says nothing of whether the owner is here.
+    let theirs = !crate::server::day_session::shares_builders(&state.manager, beat.user_id.as_deref()).await;
+    if theirs || !crate::server::day_session::is_builder(beat.user_id.as_deref()) {
         return (StatusCode::OK, "ok").into_response();
     }
     let short = |v: &String| !v.is_empty() && v.len() <= 64;

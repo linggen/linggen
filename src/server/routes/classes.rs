@@ -225,6 +225,27 @@ pub(crate) const CLASSES: &[(&str, &str, RouteClass)] = &[
     ("*", "/mem/{*rest}", At(Admin)),
 ];
 
+/// The way in, all a peer that has named no device reaches (no one,
+/// `person::unnamed`): health, pairing's bootstrap, and the files the page
+/// shares — plus page files ([`STATIC_PAGE`]).
+const WAY_IN: &[(&str, &str)] = &[
+    ("GET", "/api/health"),
+    ("POST", "/api/pair/request"),
+    ("POST", "/api/pair/confirm"),
+    ("POST", "/api/pair/qr-confirm"),
+    ("GET", "/shared/{file}"),
+];
+
+/// Whether `method` on `path` (no query) is the way in ([`WAY_IN`], or a
+/// page file the fallback serves).
+pub(crate) fn is_way_in(method: &str, path: &str) -> bool {
+    let path = path.split('?').next().unwrap_or(path);
+    if method == "GET" && is_page_file(path) && class_of(method, path) == STATIC_PAGE {
+        return true;
+    }
+    WAY_IN.iter().any(|(m, pattern)| *m == method && matches(pattern, path))
+}
+
 /// What a page loads that no route serves (the fallback: the shell, its
 /// assets): read with GET, anything else is admin.
 const STATIC_PAGE: RouteClass = At(Chat);
