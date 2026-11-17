@@ -692,6 +692,10 @@ impl SessionStore {
         let Some((place, kept_to)) = self.running_places.stamp_of(session_id) else {
             return std::borrow::Cow::Borrowed(msg);
         };
+        // A day's row is stamped either way: everyone's, or kept.
+        let everyone = crate::state_fs::day_session::is_day_session(session_id)
+            .then(|| crate::engine::turn_place::sight::EVERYONE.to_string());
+        let kept_to = kept_to.or(everyone);
         std::borrow::Cow::Owned(ChatMsg {
             place: Some(place),
             kept_to,
@@ -708,6 +712,7 @@ impl SessionStore {
         session_id: &str,
         sight: &crate::engine::turn_place::sight::Sight,
     ) -> Result<Vec<ChatMsg>> {
+        let sight = sight.clone().reading(session_id);
         Ok(sight.visible(self.get_chat_history(session_id)?))
     }
 
@@ -736,44 +741,6 @@ impl SessionStore {
             }
         }
         Ok(messages)
-    }
-
-    /// Replace the last plan message in the session's messages.jsonl.
-    /// A plan message has content containing `"type":"plan"`.
-    pub fn update_last_plan_message(&self, session_id: &str, updated: &ChatMsg) -> Result<bool> {
-        Self::validate_id(session_id)?;
-        let msgs_path = self.session_dir(session_id).join("messages.jsonl");
-        if !msgs_path.exists() {
-            return Ok(false);
-        }
-        let file = fs::File::open(&msgs_path)?;
-        let reader = BufReader::new(file);
-        let mut lines: Vec<String> = Vec::new();
-        let mut last_plan_idx: Option<usize> = None;
-        for line in reader.lines() {
-            let line = line?;
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            if trimmed.contains("\"type\":\"plan\"") && trimmed.contains("\"plan\":{") {
-                last_plan_idx = Some(lines.len());
-            }
-            lines.push(line);
-        }
-        let Some(idx) = last_plan_idx else {
-            return Ok(false);
-        };
-        lines[idx] = serde_json::to_string(updated)?;
-        let tmp_path = msgs_path.with_extension("jsonl.tmp");
-        {
-            let mut tmp = fs::File::create(&tmp_path)?;
-            for l in &lines {
-                writeln!(tmp, "{}", l)?;
-            }
-        }
-        fs::rename(&tmp_path, &msgs_path)?;
-        Ok(true)
     }
 
     pub fn clear_chat_history(&self, session_id: &str) -> Result<usize> {

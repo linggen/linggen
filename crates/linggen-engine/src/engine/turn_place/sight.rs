@@ -19,6 +19,11 @@ use crate::engine::compaction::COMPACTION_SENDER;
 use crate::engine::skill::SkillRegistry;
 use crate::state_fs::sessions::{ChatMsg, SessionMeta};
 
+/// The stamp of a row a day's turn writes for everyone. A row of the day
+/// that names a place but carries no stamp at all is kept to that place:
+/// when it is not known to be shared, it is kept.
+pub const EVERYONE: &str = "*";
+
 /// Where a reader stands, and the app its own writes are kept to.
 #[derive(Debug, Clone, Default)]
 pub struct Sight {
@@ -27,6 +32,9 @@ pub struct Sight {
     /// The app what this reader writes is kept to, when it stands in a
     /// private app's place: its thread starts from that app's own summary.
     keeps: Option<String>,
+    /// The rows read are a day's session's: an unstamped row that names a
+    /// place is kept to it.
+    day: bool,
 }
 
 impl Sight {
@@ -36,7 +44,14 @@ impl Sight {
         Self {
             reader: place.key().to_string(),
             keeps: kept_to(place, meta, skills).await,
+            day: crate::state_fs::day_session::is_day_session(&meta.id),
         }
+    }
+
+    /// This sight reading the rows of session `session_id`.
+    pub fn reading(mut self, session_id: &str) -> Self {
+        self.day = crate::state_fs::day_session::is_day_session(session_id);
+        self
     }
 
     /// A page of the place `key` (an app's, or home's): it is shown what that
@@ -45,6 +60,7 @@ impl Sight {
         Self {
             reader: key.to_string(),
             keeps: None,
+            day: false,
         }
     }
 
@@ -61,7 +77,20 @@ impl Sight {
         if !self.starts_from(row) {
             return false;
         }
-        row.kept_to.as_deref().is_none_or(|app| app == self.reader)
+        match row.kept_to.as_deref() {
+            Some(EVERYONE) => true,
+            Some(app) => app == self.reader,
+            None => !self.day || self.unstamped_seen(row),
+        }
+    }
+
+    /// A day's row with no stamp: everyone's when it names no place, or
+    /// home's; else only its own place's.
+    fn unstamped_seen(&self, row: &ChatMsg) -> bool {
+        match row.place.as_deref() {
+            None | Some(super::HOME_KEY) => true,
+            Some(place) => place == self.reader,
+        }
     }
 
     /// A reader in a private app reads its thread from that app's own
@@ -124,7 +153,26 @@ mod tests {
         Sight {
             reader: key.into(),
             keeps: keeps.map(str::to_string),
+            day: false,
         }
+    }
+
+    /// A day's row that names a place but carries no stamp — written before
+    /// stamps — is kept to that place; one stamped for everyone is shown
+    /// everywhere. Outside a day nothing changes.
+    #[test]
+    fn an_unstamped_row_of_the_day_is_kept_to_its_place() {
+        let old = ChatMsg { kept_to: None, ..row(Some("ledger"), "user") };
+        let day = |key: &str| Sight::page(key).reading("sess-day-2026-11-16");
+        assert!(!day(HOME_KEY).sees(&old));
+        assert!(!day("dice").sees(&old));
+        assert!(day("ledger").sees(&old));
+        let home_row = ChatMsg { place: Some(HOME_KEY.into()), kept_to: None, ..row(None, "user") };
+        assert!(day("dice").sees(&home_row));
+        assert!(day("dice").sees(&row(None, "user")));
+        let shared = ChatMsg { kept_to: Some(EVERYONE.into()), ..row(Some("dice"), "user") };
+        assert!(day(HOME_KEY).sees(&shared));
+        assert!(Sight::page(HOME_KEY).reading("sess-1-ledger").sees(&old), "outside a day");
     }
 
     #[test]
