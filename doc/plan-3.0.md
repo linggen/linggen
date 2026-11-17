@@ -29,10 +29,12 @@ Every number is tagged **(measured)** — taken on his Mac on 2026-11-15 — or
 | 4 Upgrades | Done, published in **2.3.1** (2026-11-17). Patch and minor batch in 2.3.0 (329 crates). The two major groups in 2.3.1, a release of their own because a database upgrade may change the store on disk: fastembed 5.17.4 on candle 0.11.0 (vectors bit-equal to 2.3.0's); lancedb 0.41 with lance 14.0.2 and datafusion 54 (a 2.3.0 store opens in place with every row; 2.3.0 still opens it afterwards — the gate now checks this upgrade and the way back on every release; new tables pinned to Lance file format 2.1). Cost (measured): `ling` 312.6 → 373.0 MB, the Mac download 219.5 → 238.1 MB. Open: the database libraries' unused features (step 4.3) to win that back; the memory benchmark (`evals/memory`) still speaks to the old two-program setup and was not run — identical vectors and identical search hits stood in for it |
 | Slimming | Mac: done, published in 2.3.0 — Yinyue's clips baked; packaged skills leave out tools, tests and unloaded source art; 灵境's later-chapter art is fetched after install by content hash (133 files, held within seconds of first launch in the gate). Phone: built on branches, not merged — 灵境 in the app 106.7 → 86.1 MB (measured; the careful count), later chapters fetched by hash, everything on Wi-Fi and only the next chapter on cellular. Open: merging it, putting the phone's art set on the storage, a build on a device |
 | 2.4 → ships as 3.0 | On main since 2026-11-17 (engine, skills and phone), checks green. The activity log, the world block, notes and look-again, the guardrails, a turn's place; and the daily session behind `agent.daily_session` (off by default): app chats, her moments and phone hand-offs in the daily session from 04:00, each turn in its page's place, other apps' stretches folded on a page. Reshaped on 2026-11-16/17 after review: a private app keeps a session of its own (one rule asked by every way into the day); a day is a person's, the person resolved from the device as memory resolves it; her stage and voice are held per person. The phone's side is on main too (hand-offs join the day; later chapters' art fetched by hash). Seen live once on his Mac with the setting on. Open: the setting on by default; the three scenarios seen live; the phone's art set on the storage and a build on a device |
-| Kinds of session (§5.1) | Designed and agreed 2026-11-17. Part 1 on main the same day: every kind of session is described by one spec and applied in one place (`engine/session_spec/`), locked by a test; a person typing into a delegated run's session no longer widens its tools. In work: the `code` kind of work. Open: the ways to ask for it, the comparison runs, a run on a live engine |
+| Kinds of session (§5.1) | Designed and agreed 2026-11-17, on main the same day: every kind of session is described by one spec and applied in one place (`engine/session_spec/`), locked by a test; the `code` kind of work (one prompt section, a few lines per model family); the three ways to ask for it (creating a session, changing one, `agent_run` — on by default with a folder to write); the Coding switch in the web UI. Seen live: a delegated run on his Mac carried the section. Open: the comparison runs (`evals/code`); the switch seen in a browser |
 | A paired device's standing (§5.2) | Decided 2026-11-17, designed; not built |
-| Review and refactor before 3.0 (§5.3) | Engine and phone reviewed 2026-11-17 (read-only). On main: one copy of the small helpers; one locked way to change a session's file. Phone: its checks are green again; the release recipe builds 灵境's files first. The rest of §5.3 and §5.4 is open |
-| The phone and the Mac in step (§5.4) | Decided 2026-11-17; not built |
+| Review and refactor before 3.0 (§5.3) | Engine and phone reviewed 2026-11-17 (read-only). On main: one copy of the small helpers; one locked way to change a session's file. Phone: its checks are green again; the release recipe builds 灵境's files first. The rest of §5.3 is open |
+| The phone and the Mac in step (§5.4) | The phone asks through declared tools: done 2026-11-17 for all four apps (music, 灵境's book, health, money) — the phone sends the Mac no shell text. Open: the contract number, one wording for "the Mac is not there", the session choice on the Mac |
+| Asking less (§5.5) | The Bash gate reads a program's own file and a copy's source as read: on main 2026-11-17. The owner's list of build tools and a caller's preset: designed, in work |
+| When Yinyue raises a problem (§5.6) | Decided and designed 2026-11-17. Part 1 (said once, never dropped) in work |
 
 ## 2. Milestones
 
@@ -300,6 +302,36 @@ looked for decisions made in more than one place. Before 3.0:
 Left for after 3.0: the further crate cuts, the event forwarder's rewrite,
 typed turn errors, one way to start background work, skills declaring their
 own setup steps.
+
+### 5.5 Asking less (decided 2026-11-17)
+
+Hanli: 「创建session的时候可以预设权限, 这样linggen就不用每次问了」. A delegated run
+asked its caller again and again for the same harmless thing.
+
+- **The gate first.** Running a program reads its file; a copy reads its
+  source. Those are judged at read. A move and a hard link keep the full
+  check on the source.
+- **The owner's list.** Build tools and package managers found on the
+  machine, which a delegated run may use without asking; the owner removes
+  from it or adds to it, at the Mac only. Bare interpreters are not on it by
+  default. What it means, said plainly: a granted build tool can run any
+  code the project holds, wherever the session may edit.
+- **A caller's preset**, when the session is made, within the owner's list
+  and the caller's own level. Anything beyond is still asked, one at a time.
+- One part of the session spec, filled the same way by a skill, a mission
+  and a delegated run.
+
+### 5.6 When Yinyue raises a problem (decided 2026-11-17)
+
+Hanli: 「yinyue提示问题是对的, 最好能带一个解决方案, 让用户点一下, 由yinyue来解决问题,
+不能只提出问题」 and 「不能看见问题不提」.
+
+- A problem she raises carries a fix: one tap, and she does it — or, where
+  she cannot, she says why and where the person can.
+- She never stays silent about a problem she sees.
+- Said once; again only when it is worse or has come back.
+- No action without the tap. Every sentence is still hers; code hands her
+  facts and the offer.
 
 ### 5.4 The phone and the Mac in step (decided 2026-11-17)
 
