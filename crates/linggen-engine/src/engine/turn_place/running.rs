@@ -51,13 +51,19 @@ impl RunningPlaces {
     /// dropped. `None` when a turn's place is kept there already: whoever
     /// marked it first holds it for the whole turn.
     pub fn mark(&self, session: &str, place: &TurnPlace) -> Option<PlaceMark> {
+        self.mark_kept(session, place, false)
+    }
+
+    /// [`Self::mark`], with whether the turn's talk is kept to its app
+    /// decided in the same step: nothing is written or sent in between.
+    pub fn mark_kept(&self, session: &str, place: &TurnPlace, private: bool) -> Option<PlaceMark> {
         let mut map = self.map();
         if map.contains_key(session) {
             return None;
         }
         let running = Running {
             place: place.clone(),
-            private: false,
+            private,
         };
         map.insert(session.to_string(), running);
         Some(PlaceMark {
@@ -196,6 +202,15 @@ mod tests {
         assert_eq!(places.private_app("sess-1"), None);
         places.keep_talk_private("sess-1");
         assert_eq!(places.private_app("sess-1"), None, "nothing runs");
+    }
+
+    /// A turn marked kept stamps its rows kept from its very first one.
+    #[test]
+    fn a_turn_marked_kept_is_kept_from_the_start() {
+        let places = RunningPlaces::default();
+        let _mark = places.mark_kept("sess-1", &app("zz-ledger"), true).unwrap();
+        let stamp = places.stamp_of("sess-1");
+        assert_eq!(stamp, Some(("zz-ledger".into(), Some("zz-ledger".into()))));
     }
 
     /// A run is stamped as it begins, from the turn running then; its

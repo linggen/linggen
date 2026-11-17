@@ -52,19 +52,6 @@ pub(crate) async fn turn_sight(
     crate::engine::turn_place::sight::Sight::of(place, &meta, &*manager.skills).await
 }
 
-/// Keep the turn running in `session_id` private to its app when its talk
-/// is hidden from the session's other places (`turn_place::sight`): what it
-/// streams then reaches no surface outside the app (`rtc::peer::forward`).
-pub(crate) async fn keep_private_if_hidden(
-    manager: &crate::engine::agent::AgentManager,
-    session_id: &str,
-    place: &TurnPlace,
-) {
-    if hidden_app(manager, session_id, place).await.is_some() {
-        manager.global_sessions.running_places.keep_talk_private(session_id);
-    }
-}
-
 /// In a day's session, keep `place` as the running turn's before a turn the
 /// engine starts on its own writes anything (a task's end notice, an
 /// approved plan's run): its rows are then that place's, and a private
@@ -87,9 +74,9 @@ pub(crate) async fn mark_turn(
     session_id: &str,
     place: &TurnPlace,
 ) -> Option<crate::engine::turn_place::running::PlaceMark> {
-    let mark = manager.global_sessions.running_places.mark(session_id, place)?;
-    keep_private_if_hidden(manager, session_id, place).await;
-    Some(mark)
+    // Decided before the mark: the turn is kept from its first row.
+    let kept = hidden_app(manager, session_id, place).await.is_some();
+    manager.global_sessions.running_places.mark_kept(session_id, place, kept)
 }
 
 /// The app `place` keeps its talk to in session `session_id`, when it is

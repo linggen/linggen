@@ -217,19 +217,7 @@ async fn run_at(
     let spoken = {
         // Past a restart's snapshot her turn waits in its plan instead.
         let (_held, gate) = her_place(state, turn, &task, trigger_source).await?;
-        let _mark = state
-            .manager
-            .global_sessions
-            .running_places
-            .mark(session_id, &turn.place);
-        if _mark.is_some() {
-            crate::server::chat::turn_place::keep_private_if_hidden(
-                &state.manager,
-                session_id,
-                &turn.place,
-            )
-            .await;
-        }
+        let _mark = crate::server::chat::turn_place::mark_turn(&state.manager, session_id, &turn.place).await;
         // Persist the incoming message to the session store so it survives
         // reload and every member's thread holds it. (The turn core only
         // mirrors it into in-memory history.) Inside the turn lock: two
