@@ -5,7 +5,7 @@ use super::guard::Source;
 use super::*;
 
 pub async fn yinyue_watch_loop(state: Arc<ServerState>) {
-    let mut rx = state.events_tx.subscribe();
+    let mut rx = state.events_tx.listen();
     tracing::info!("[yinyue-watch] started");
     loop {
         match rx.recv().await {
@@ -46,7 +46,8 @@ pub(super) fn handle_event(state: &Arc<ServerState>, stamped: crate::engine::eve
             to,
             message,
             app,
-        } if kept_to.is_none() => on_agent_chat(state, from, to, message, app),
+            session_id,
+        } if kept_to.is_none() => on_agent_chat(state, from, to, message, (app, session_id)),
         _ => {} // firehose + everything else dropped here, near-free
     }
 }
@@ -94,7 +95,7 @@ fn herald_ask(
         if !ask_still_pending(&state, &question_id).await {
             return;
         }
-        let Some(reply) = run_yinyue_turn(&state, kickoff, "event").await else {
+        let Some(reply) = herald_line(&state, kickoff).await else {
             return;
         };
         let Some(line) = spoken_line(&reply) else {
@@ -134,7 +135,7 @@ fn herald_kept_ask(state: &Arc<ServerState>, app: String, question_id: String, s
         if !ask_still_pending(&state, &question_id).await {
             return;
         }
-        let Some(reply) = run_yinyue_turn(&state, kept_ask_kickoff(&app), "event").await else {
+        let Some(reply) = herald_line(&state, kept_ask_kickoff(&app)).await else {
             return;
         };
         let Some(line) = spoken_line(&reply) else {
@@ -165,6 +166,44 @@ async fn kept_at(state: &Arc<ServerState>, table: Option<&Table>) -> Option<Stri
     crate::server::chat::turn_place::hidden_app(&state.manager, &table.session, &place).await
 }
 
+/// Her words for a herald. A question waits inside a turn that holds her
+/// session's turn lock when that session is the day's, so a full turn of
+/// hers would wait for the very answer it is to call for: then she gives one
+/// line now, from home's view of the thread, and it is kept as her row once
+/// the session is free. Elsewhere her own turn runs, as before.
+async fn herald_line(state: &Arc<ServerState>, kickoff: String) -> Option<String> {
+    let sid = super::session_roll::resolve_current_session(state).await;
+    let free = state.manager.session_turn(&sid).try_lock().is_ok();
+    if free {
+        return run_yinyue_turn(state, kickoff, "event").await;
+    }
+    let ask = super::spoken::with_contract(kickoff, "event");
+    let line = crate::server::chat::line_now(state.clone(), &sid, YINYUE_AGENT, &ask).await?;
+    keep_when_free(state.clone(), sid, line.clone());
+    Some(line)
+}
+
+/// Keep her herald line as her row in `sid` once its running turn is over.
+fn keep_when_free(state: Arc<ServerState>, sid: String, line: String) {
+    tokio::spawn(async move {
+        let _turn = state.manager.session_turn(&sid).lock_owned().await;
+        crate::server::chat::helpers::persist_and_emit_to_store(
+            &state.manager.global_sessions,
+            &state.events_tx,
+            YINYUE_AGENT,
+            YINYUE_AGENT,
+            "user",
+            &line,
+            Some(&sid),
+            false,
+            None,
+            None,
+            None,
+        )
+        .await;
+    });
+}
+
 /// The first question and its options, as her kickoff names them.
 fn ask_summary(questions: &[crate::engine::tools::AskUserQuestion]) -> (String, String) {
     let q0 = questions.first();
@@ -185,7 +224,13 @@ fn ask_summary(questions: &[crate::engine::tools::AskUserQuestion]) -> (String, 
 
 /// A peer agent's message: to her, she answers it; to a chat agent, it
 /// lands in that agent's chat.
-fn on_agent_chat(state: &Arc<ServerState>, from: String, to: String, message: String, app: Option<String>) {
+fn on_agent_chat(
+    state: &Arc<ServerState>,
+    from: String,
+    to: String,
+    message: String,
+    (app, sent_in): (Option<String>, Option<String>),
+) {
     if from == to {
         return; // no self-send (also guarded in the tool)
     }
@@ -223,7 +268,7 @@ fn on_agent_chat(state: &Arc<ServerState>, from: String, to: String, message: St
         });
     } else {
         tokio::spawn(async move {
-            deliver_to_chat_agent(state, from, to, message, app).await;
+            deliver_to_chat_agent(state, from, to, message, (app, sent_in)).await;
         });
     }
 }
@@ -366,7 +411,7 @@ fn is_delegated(meta: Option<&crate::state_fs::sessions::SessionMeta>) -> bool {
 /// stands outside every app: a private app's words are never quoted to her.
 pub(super) async fn last_user_line(state: &Arc<ServerState>, session_id: &str) -> Option<String> {
     let (history, _) =
-        crate::server::day_session::rows_for_page(&state.manager, session_id, None).await;
+        crate::server::day_session::rows_for_page(&state.manager, session_id, (None, None)).await;
     let line = history
         .iter()
         .rev()
@@ -585,13 +630,17 @@ pub(super) async fn deliver_to_chat_agent(
     from: String,
     to: String,
     message: String,
-    app: Option<String>,
+    (app, sent_in): (Option<String>, Option<String>),
 ) {
     // With an explicit app target, deliver into that app's (skill's) session so
     // the recipient runs with that app's tools. Otherwise prefer the session the
     // user is viewing; else the agent's latest.
     let mut candidates = Vec::new();
-    let day = crate::server::day_session::current_if_on(&state.manager).await;
+    let day = match sent_in.filter(|sid| crate::server::day_session::is_day(sid)) {
+        // Sent from a day: delivered in that day, its person's.
+        Some(day) => Some(day),
+        None => crate::server::day_session::current_if_on(&state.manager).await,
+    };
     if let Some(day) = day.as_deref() {
         // One session a day: the table they share, in the app's place.
         candidates.extend(session_and_root(&state, day));
@@ -664,7 +713,10 @@ pub(super) async fn deliver_to_chat_agent(
         images: &[],
         sender: Some(&from),
     };
-    let again = || resend_agent_chat(state.clone(), (&from, &to, &message), app.clone());
+    let again = || {
+        let sent_in = Some(session_id.clone());
+        resend_agent_chat(state.clone(), (&from, &to, &message), (app.clone(), sent_in))
+    };
     // admit can capture the message in a frozen restart plan, so validate
     // before calling it, while this session's turn place is still held.
     if !handoff_eligible(&state, &session_id) {
@@ -842,12 +894,12 @@ async fn new_handoff_session(
 fn resend_agent_chat(
     state: Arc<ServerState>,
     (from, to, message): (&str, &str, &str),
-    app: Option<String>,
+    (app, sent_in): (Option<String>, Option<String>),
 ) -> crate::server::admission::Resend {
     let (from, to, message) = (from.to_string(), to.to_string(), message.to_string());
     Box::new(move || {
         Box::pin(async move {
-            tokio::spawn(deliver_to_chat_agent(state, from, to, message, app));
+            tokio::spawn(deliver_to_chat_agent(state, from, to, message, (app, sent_in)));
         })
     })
 }

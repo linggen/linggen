@@ -60,6 +60,23 @@ impl AgentEngine {
         ask: &str,
         session_id: &str,
     ) -> anyhow::Result<Option<String>> {
+        let Some(line) = self.light_line(tail, ask, session_id).await? else {
+            return Ok(None);
+        };
+        let _ = self
+            .persist_assistant_message(&line, Some(session_id))
+            .await;
+        Ok(Some(line))
+    }
+
+    /// [`Self::light_reply`]'s line, kept nowhere: the caller keeps it when
+    /// it can.
+    pub async fn light_line(
+        &mut self,
+        tail: Vec<ChatMessage>,
+        ask: &str,
+        session_id: &str,
+    ) -> anyhow::Result<Option<String>> {
         self.session_id = Some(session_id.to_string());
         let msgs = light_messages(self.light_system_prompt(), tail, ask);
         // No run of its own: a stale one would read as stopped, and nothing
@@ -76,13 +93,7 @@ impl AgentEngine {
                 return Err(e);
             }
         };
-        let Some(line) = kept_line(&reply) else {
-            return Ok(None);
-        };
-        let _ = self
-            .persist_assistant_message(&line, Some(session_id))
-            .await;
-        Ok(Some(line))
+        Ok(kept_line(&reply))
     }
 }
 

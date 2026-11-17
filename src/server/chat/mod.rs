@@ -51,7 +51,7 @@ pub(crate) use handler::{
     run_session_turn,
     resend_chat, say_in_session, start_turn, TurnOrigin,
 };
-pub(crate) use light::reply_in_session;
+pub(crate) use light::{line_now, reply_in_session};
 pub(crate) use plan_flow::{approve_plan_handler, edit_plan_handler, reject_plan_handler};
 pub(crate) use runtime::close_turn;
 

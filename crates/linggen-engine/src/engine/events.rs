@@ -232,6 +232,10 @@ pub enum ServerEvent {
         message: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         app: Option<String>,
+        /// The session of the turn that sent it: a message from a day is
+        /// delivered in that day.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
     },
     Message {
         from: String,
@@ -643,6 +647,7 @@ impl ServerEvent {
                 to,
                 message,
                 app,
+                session_id,
             }),
             AgentEvent::PetExpress { emotion, action } => {
                 Some(Self::PetExpress { emotion, action })
