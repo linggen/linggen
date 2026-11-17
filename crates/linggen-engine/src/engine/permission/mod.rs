@@ -17,6 +17,8 @@
 //! - [`prompt`] — AskUser widget construction and answer parsing.
 
 mod classify;
+#[cfg(test)]
+mod coding_session_tests;
 mod declined;
 mod manifest;
 mod model;
@@ -39,7 +41,7 @@ pub use manifest::{apply_grants, Grants, PathGrant};
 #[cfg(test)]
 use model::{check_permission_with, ToolSource};
 pub use model::{
-    check_permission, display_path, effective_mode_for_path, parse_skill_tier, PathMode,
+    check_permission, check_permission_for, display_path, effective_mode_for_path, parse_skill_tier, PathMode,
     PermissionAction, PermissionCheckResult, PermissionMode, PromptKind,
 };
 pub use prompt::{

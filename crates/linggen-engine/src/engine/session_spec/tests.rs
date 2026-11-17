@@ -128,6 +128,59 @@ fn work_code_task_child_inherits() {
     assert!(child.system_prompt().contains("## Working on code"));
 }
 
+/// A coding session runs any program in its folder unasked; the gate reads
+/// it from the spec (`AgentEngine::is_coding_session`).
+#[test]
+fn work_code_makes_a_coding_session_only_where_the_preset_takes_it() {
+    assert!(typed_by_spec(&code_meta("sess-c", "user", None), "user").is_coding_session());
+    assert!(!typed_by_spec(&meta("sess-c", "user", None), "user").is_coding_session());
+    // An app's session, the daily session and a mission never are.
+    let mut mission_meta =
+        crate::extensions::missions::scheduler::mission_session_meta(&mission(), "sess-9-m");
+    mission_meta.work = Some(Work::Code);
+    for m in [
+        code_meta("sess-day-2026-11-17", "agent", None),
+        code_meta("sess-app", "skill", Some("dice")),
+        mission_meta,
+    ] {
+        let mut e = engine_for(&m);
+        SessionSpec::of(&m).apply(&mut e);
+        assert!(!e.is_coding_session(), "{}", m.id);
+        let typed = typed_by_spec(&m, "user");
+        assert!(!typed.is_coding_session(), "{}", m.id);
+    }
+}
+
+#[test]
+fn work_code_a_task_child_of_a_coding_session_is_one() {
+    for (work, coding) in [(Some(Work::Code), true), (None, false)] {
+        let mut child = engine();
+        SessionSpec::delegated_child(Some(SessionPolicy::owner()), true, work).apply(&mut child);
+        assert_eq!(child.is_coding_session(), coding, "{work:?}");
+    }
+}
+
+/// Turning Coding off is seen at the next check, not only the next turn.
+#[test]
+fn work_code_turned_off_is_seen_at_the_next_check() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = crate::state_fs::sessions::SessionStore::with_sessions_dir(dir.path().into());
+    let m = code_meta("sess-c", "user", None);
+    store.add_session(&m).unwrap();
+    let mut e = typed_by_spec(&m, "user");
+    e.session_dir = Some(store.session_dir("sess-c"));
+    assert!(e.is_coding_session());
+    store.edit("sess-c", |meta| ask_work(meta, "none")).unwrap().unwrap();
+    assert!(!e.is_coding_session());
+    // Back on: this turn's spec still says code. A session whose spec was
+    // made without the tag is not one until its next turn's spec is.
+    store.edit("sess-c", |meta| ask_work(meta, "code")).unwrap().unwrap();
+    assert!(e.is_coding_session());
+    let mut plain = typed_by_spec(&meta("sess-c", "user", None), "user");
+    plain.session_dir = Some(store.session_dir("sess-c"));
+    assert!(!plain.is_coding_session());
+}
+
 #[test]
 fn work_code_preset_table_and_unknown_value() {
     for (preset, accepts) in [

@@ -4,7 +4,9 @@
 //! as the program receives them (quotes and backslashes removed). Unknown
 //! programs, flags and dynamic shell syntax go up a tier, never down.
 
-use super::model::{command_tokens, is_odd_space, BashClass, Joint, Token};
+use super::model::{
+    command_tokens, is_assignment, is_odd_space, BashClass, Joint, Token, RUNS_WHAT_FOLLOWS,
+};
 use super::scripts::{awk_class, sed_class};
 use super::shell_text::strip_heredoc_bodies;
 use BashClass::{Admin, Read, Write};
@@ -182,6 +184,44 @@ fn granted_class(words: &[String], granted: &dyn Fn(&str) -> bool) -> Option<Bas
         return None;
     }
     Some(Write.max(arg_lift(name, &words[1..])))
+}
+
+/// Programs that run text they are given as code (`sh -c '…'`, `eval`,
+/// `perl -e`) or run another command (`xargs`): what they touch is not a
+/// word the path check can see, so a coding session does not lower them.
+const RUNS_TEXT: &[&str] = &[
+    "sh",
+    "bash",
+    "zsh",
+    "dash",
+    "ksh",
+    "fish",
+    "csh",
+    "tcsh",
+    "eval",
+    "source",
+    ".",
+    "xargs",
+    "perl",
+    "ruby",
+    "php",
+    "lua",
+    "osascript",
+    "deno",
+    "bun",
+    "su",
+    "doas",
+];
+
+/// Whether `word`, the first word of a segment, is the program the segment
+/// runs: not a `NAME=value` word, not a wrapper that runs what follows
+/// (`env`, `nice`, `nohup`, …), and not a program that runs text as code.
+pub(super) fn runs_a_program(word: &str) -> bool {
+    let name = word.rsplit('/').next().unwrap_or(word);
+    !name.is_empty()
+        && !is_assignment(word)
+        && !RUNS_WHAT_FOLLOWS.contains(&name)
+        && !RUNS_TEXT.contains(&name)
 }
 
 /// A program the gate has a rule for: it is judged by that rule, granted

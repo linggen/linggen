@@ -2,7 +2,8 @@
 
 /**
  * The kind of work a session is for (`work: code` in `session.yaml`): it
- * adds a section to the session's prompt and nothing else
- * (`engine::session_spec`, `engine::prompt::work`).
+ * adds a section to the session's prompt (`engine::prompt::work`) and lets
+ * the session run programs in its folder without asking
+ * (`AgentEngine::is_coding_session`, `permission-spec.md` § Coding sessions).
  */
 export type Work = "code";

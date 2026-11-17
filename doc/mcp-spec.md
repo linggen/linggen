@@ -142,7 +142,7 @@ deprecation window:
   is read-only; `default`/`acceptEdits` grant edit there; `auto`/
   `bypassPermissions` grant admin there. Other paths stay read-only. Linggen
   never prompts a person for these runs; browser mutations have their own gate.
-- `agent_run` accepts `work: "code"` or `"none"` for a new session: by default `write_dir` selects code, otherwise none. A continued session ignores it.
+- `agent_run` accepts `work: "code"` or `"none"` for a new session: by default `write_dir` selects code, otherwise none. A continued session ignores it. A coding run gets coding guidance and runs any program where it may edit without asking (`permission-spec.md` § Coding sessions); outward commands still wait for the caller.
 - A new session may be made with preset grants, so the run is not asked for
   the same thing each time: `grants: {tools: […], read: […], write: […]}`.
   `tools` are build tools from the owner's list (`permission-spec.md`

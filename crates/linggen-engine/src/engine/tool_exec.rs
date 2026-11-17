@@ -671,13 +671,14 @@ impl AgentEngine {
             // A grant made in another run of this chat (a subagent's prompt,
             // the main chat's, the badge) holds here too.
             self.sync_session_grants();
-            let check_result = permission::check_permission(
+            let check_result = permission::check_permission_for(
                 t.canonical,
                 bash_command.as_deref(),
                 file_path_arg.as_deref(),
                 &self.tools.builtins.cwd(),
                 &self.session_permissions,
                 skill_tier_override,
+                self.is_coding_session(),
             );
 
             let prompt_kind = match check_result {

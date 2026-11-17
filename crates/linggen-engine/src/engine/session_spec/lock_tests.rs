@@ -204,6 +204,11 @@ const GRANT_WRITERS: &[(&str, usize, &str)] = &[
         4,
         "tests",
     ),
+    (
+        "crates/linggen-engine/src/engine/permission/coding_session_tests.rs",
+        2,
+        "tests",
+    ),
 ];
 
 #[test]
@@ -233,6 +238,63 @@ fn preset_grants_are_written_in_one_place() {
             "{rel} writes a session's grants: go through PresetGrants, or list it"
         );
     }
+}
+
+/// What sets a session's work tag. The tag lets a session run programs in
+/// its folder without asking, so a session must never give it to itself.
+const WORK_WRITES: &[&str] = &["ask_work(", ".work = ", "work: Some(", "Work::Code"];
+
+/// Who may set it, by file: the person's create and Coding switch (`POST`
+/// and `PATCH /api/sessions`), and an `agent_run` caller for the run it
+/// makes. No tool and no engine path is here.
+const WORK_WRITERS: &[(&str, usize, &str)] = &[
+    (
+        "src/server/api/sessions.rs",
+        3,
+        "a person's new session, its create, its Coding switch",
+    ),
+    (
+        "src/server/mcp_agent.rs",
+        1,
+        "an agent_run caller's new run",
+    ),
+    (
+        "crates/linggen-engine/src/engine/prompt/work.rs",
+        1,
+        "reads the tag (a match arm)",
+    ),
+];
+
+#[test]
+fn a_session_never_sets_its_own_work_tag() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut files = Vec::new();
+    for dir in ["src", "crates/linggen-engine/src"] {
+        rust_files(&root.join(dir), &mut files);
+    }
+    for file in files {
+        let rel = file
+            .strip_prefix(&root)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        if rel.starts_with("crates/linggen-engine/src/engine/session_spec/") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&file).unwrap();
+        let found: usize = WORK_WRITES.iter().map(|w| text.matches(w).count()).sum();
+        let want = WORK_WRITERS
+            .iter()
+            .find(|(f, _, _)| *f == rel)
+            .map_or(0, |e| e.1);
+        assert_eq!(
+            found, want,
+            "{rel} sets a session's work tag: only a person or a run's caller may"
+        );
+    }
+    assert!(WORK_WRITERS
+        .iter()
+        .all(|(f, _, _)| !f.contains("/engine/tools/")));
 }
 
 #[test]

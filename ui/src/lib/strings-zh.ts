@@ -208,7 +208,7 @@ export const ZH: Record<string, string> = {
   'Interrupted after': '中断于',
   'Session model override': '会话模型覆盖',
   'Coding': '编程',
-  "Adds how to work on code to this chat's instructions.": '给这个会话加上写代码的做法。',
+  "Adds how to work on code, and lets this chat run programs in its folder without asking.": '加上写代码的做法，并且在自己的目录里运行程序不再询问。',
   'Auto switch': '自动切换',
   'On: when the model fails, another model answers.': '开启：模型出错时，由另一个模型回答。',
   'Off: when the model fails, the run ends on that model.': '关闭：模型出错时，在该模型上结束运行。',

@@ -29,13 +29,21 @@ pub struct SessionStore {
 }
 
 /// The kind of work a session is for (`work: code` in `session.yaml`): it
-/// adds a section to the session's prompt and nothing else
-/// (`engine::session_spec`, `engine::prompt::work`).
+/// adds a section to the session's prompt (`engine::prompt::work`) and lets
+/// the session run programs in its folder without asking
+/// (`AgentEngine::is_coding_session`, `permission-spec.md` § Coding sessions).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(any(test, feature = "test-support"), derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "snake_case")]
 pub enum Work {
     Code,
+}
+
+/// The work tag the `session.yaml` in `session_dir` holds now; none when
+/// it holds none, or is missing or unreadable.
+pub fn stored_work(session_dir: &std::path::Path) -> Option<Work> {
+    let text = fs::read_to_string(session_dir.join("session.yaml")).ok()?;
+    serde_norway::from_str::<SessionMeta>(&text).ok()?.work
 }
 
 /// A work tag this engine does not know reads as none; it never fails the load.

@@ -1,7 +1,8 @@
 //! The section a session's work adds to its prompt (`SessionSpec::work`,
 //! `doc/session-spec.md` § The session spec). `code` adds how to work on
 //! code: one text for every model, then the few lines its model's family
-//! needs. The work changes the prompt only — never tools or grants.
+//! needs. The prompt is not all a work changes: a coding session also runs
+//! programs in its folder without asking (`AgentEngine::is_coding_session`).
 
 use crate::engine::session_spec::Work;
 use crate::engine::AgentEngine;

@@ -145,7 +145,8 @@ export const SessionFallbackToggle: React.FC = () => {
   );
 };
 
-/** Coding guidance is a switch on a session of a kind that takes a work tag
+/** Coding (guidance, and programs run in its folder without asking) is a
+ *  switch on a session of a kind that takes a work tag
  *  (`takes_work`, decided by the engine's session spec — never re-derived here). */
 export const SessionCodingToggle: React.FC = () => {
   const sessionId = useSessionStore((s) => s.activeSessionId);
@@ -167,7 +168,7 @@ export const SessionCodingToggle: React.FC = () => {
       ? 'border-current bg-white dark:bg-black/30 text-blue-600 dark:text-blue-400'
       : 'border-slate-200 dark:border-white/10 text-slate-300 dark:text-slate-600'}`}
     onClick={(e) => { e.stopPropagation(); change(); }} aria-pressed={on}
-    title="Adds how to work on code to this chat's instructions.">Coding</button>;
+    title="Adds how to work on code, and lets this chat run programs in its folder without asking.">Coding</button>;
 };
 
 /** Compact per-session permission mode selector shown in the run bar. */

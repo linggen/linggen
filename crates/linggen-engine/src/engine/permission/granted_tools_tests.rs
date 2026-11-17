@@ -68,6 +68,7 @@ impl Mac {
         let source = ToolSource {
             file: &self.list,
             search: &search,
+            coding: false,
         };
         check_permission_with("Bash", Some(cmd), None, Path::new(WD), perms, None, &source)
     }

@@ -4,7 +4,9 @@
 //! All pure logic — no I/O, no UI prompts. The store layer lives in
 //! [`super::store`]; prompt construction in [`super::prompt`].
 
-use super::classify::{classify_bash_command, classify_bash_command_granted, dequote};
+use super::classify::{
+    classify_bash_command, classify_bash_command_granted, dequote, runs_a_program,
+};
 use super::pattern_text::text_words;
 use super::shell_text::strip_heredoc_bodies;
 use super::store::SessionPermissions;
@@ -130,10 +132,11 @@ pub fn is_hardcoded_deny(cmd: &str) -> bool {
 }
 
 /// Programs that only run the command that follows them.
-const RUNS_WHAT_FOLLOWS: &[&str] = &["env", "command", "exec", "nohup", "nice", "time", "builtin"];
+pub(super) const RUNS_WHAT_FOLLOWS: &[&str] =
+    &["env", "command", "exec", "nohup", "nice", "time", "builtin"];
 
 /// `NAME=value`, as a shell reads a word before the command.
-fn is_assignment(word: &str) -> bool {
+pub(super) fn is_assignment(word: &str) -> bool {
     let Some((name, _)) = word.split_once('=') else {
         return false;
     };
@@ -518,10 +521,35 @@ pub fn check_permission(
     session_perms: &SessionPermissions,
     action_tier_override: Option<PermissionMode>,
 ) -> PermissionCheckResult {
+    check_permission_for(
+        tool,
+        bash_command,
+        file_path,
+        session_cwd,
+        session_perms,
+        action_tier_override,
+        false,
+    )
+}
+
+/// [`check_permission`] for a session that is, or is not, a coding session
+/// (`work: code`): one runs a program the gate does not know where it may
+/// edit, without asking ([`super::classify`]'s `coding_class`).
+#[allow(clippy::too_many_arguments)]
+pub fn check_permission_for(
+    tool: &str,
+    bash_command: Option<&str>,
+    file_path: Option<&str>,
+    session_cwd: &Path,
+    session_perms: &SessionPermissions,
+    action_tier_override: Option<PermissionMode>,
+    coding: bool,
+) -> PermissionCheckResult {
     let file = super::toolchains::owner_file();
     let source = ToolSource {
         file: &file,
         search: crate::util::shell_path(),
+        coding,
     };
     check_permission_with(
         tool,
@@ -539,6 +567,8 @@ pub fn check_permission(
 pub(crate) struct ToolSource<'a> {
     pub file: &'a Path,
     pub search: &'a str,
+    /// A coding session: any program the tables do not know is a write.
+    pub coding: bool,
 }
 
 /// The session's granted tools that the owner's list holds now, each at its
@@ -781,10 +811,12 @@ fn check_grants(
 /// A Bash command's class, and whether a granted build tool decided it.
 fn bash_class(cmd: &str, perms: &SessionPermissions, source: &ToolSource) -> (BashClass, bool) {
     let tools = granted_tools(perms, source);
-    if tools.is_empty() {
+    if tools.is_empty() && !source.coding {
         return (classify_bash_command(cmd), false);
     }
-    classify_bash_command_granted(cmd, &|word| runs_granted(word, &tools, source.search))
+    classify_bash_command_granted(cmd, &|word| {
+        (source.coding && runs_a_program(word)) || runs_granted(word, &tools, source.search)
+    })
 }
 
 fn needs_prompt(

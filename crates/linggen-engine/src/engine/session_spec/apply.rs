@@ -3,7 +3,7 @@
 //! place narrows the turn on top of it (`turn_place::bind`) and puts back
 //! what it narrowed when the turn ends.
 
-use super::{Framing, Permission, SessionSpec};
+use super::{Framing, Permission, SessionSpec, Work};
 use crate::engine::prompt::profile::PromptProfile;
 use crate::engine::AgentEngine;
 use std::collections::HashSet;
@@ -77,6 +77,20 @@ impl AgentEngine {
         change(&mut spec);
         let kept = PlaceScope::of(&self.prompt_profile);
         spec.write(self, Some(kept));
+    }
+
+    /// Whether this engine runs a coding session: its spec's work is `code`
+    /// (a preset that takes the tag, or a `Task` child of such a session),
+    /// and the session's stored tag still says so — turning Coding off takes
+    /// effect at the next permission check, not only at the next turn.
+    pub(crate) fn is_coding_session(&self) -> bool {
+        if self.session_spec.work != Some(Work::Code) {
+            return false;
+        }
+        match self.session_dir.as_deref() {
+            Some(dir) => crate::state_fs::sessions::stored_work(dir) == Some(Work::Code),
+            None => true,
+        }
     }
 
     /// After a loop loads the session's `permission.json`: a restricted

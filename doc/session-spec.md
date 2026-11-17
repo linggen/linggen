@@ -144,12 +144,16 @@ keep a mission unattended, a private app private, or a read-only device
 read-only. A new occasion is a new preset row or a work tag, never a wider
 default.
 
-A session may store `work: code` to add coding guidance to its system prompt.
+A session may store `work: code` to add coding guidance to its system prompt
+and to let it run programs in its own folder without asking
+(`permission-spec.md` § Coding sessions).
 Chat, Delegate and Handoff take this tag; all other presets ignore it.
 The guidance is in `prompts/work-code.toml`: core lines followed by the answering model family's lines when available.
-The tag does not change tools, permissions or memory, and Task children inherit it.
+The tag does not change tools or memory, and Task children inherit it. Only
+a person (creating the session, or the Coding switch) or an `agent_run`
+caller sets it; no tool does.
 
-Create an independent coding chat with `POST /api/sessions` and `work: "code"`; a normal request without it is unchanged. App and other unsupported presets refuse the switch. `PATCH /api/sessions` sets `work: "code"` or clears it with `work: "none"`; it takes effect on the next turn.
+Create an independent coding chat with `POST /api/sessions` and `work: "code"`; a normal request without it is unchanged. App and other unsupported presets refuse the switch. `PATCH /api/sessions` sets `work: "code"` or clears it with `work: "none"`; it takes effect on the next turn, except that clearing it stops programs running unasked at the next permission check.
 
 A new `agent_run` session defaults to coding guidance when given `write_dir`, otherwise none; `work: "code"` or `"none"` overrides that default. A continued run ignores `work`. Coding sessions never join the daily session.
 
