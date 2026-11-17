@@ -29,11 +29,6 @@ struct DoneArgs {
     id: String,
 }
 
-/// A note is in front of its agent in every place; a private app's talk
-/// stays in that app (`turn_place::sight`), so no note is written there.
-const PRIVATE_REFUSAL: &str = "This app keeps its talk to itself, and a note is in front of you \
-     everywhere: no note is written here.";
-
 pub struct NoteWriteTool;
 #[async_trait]
 impl Tool for NoteWriteTool {
@@ -83,9 +78,6 @@ impl Tool for NoteWriteTool {
         let agent = tools.agent_id().unwrap_or("agent").to_string();
         if let Err(why) = refuse_time_for_others(&agent, &args) {
             return Ok(refused(why));
-        }
-        if tools.talk_is_private_here() {
-            return Ok(refused(PRIVATE_REFUSAL.to_string()));
         }
         Ok(answer(write(&agent, args, chrono::Local::now())))
     }

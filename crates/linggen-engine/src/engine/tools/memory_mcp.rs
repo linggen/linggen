@@ -66,6 +66,11 @@ fn memory_tool(qualified: &str) -> Option<AdvertisedTool> {
         .filter(|t| t.server == BUILTIN_MEMORY)
 }
 
+/// Whether `qualified` is one of the memory server's tools.
+pub(crate) fn is_memory_tool(qualified: &str) -> bool {
+    crate::mcp_client::is_mcp_tool(qualified) && memory_tool(qualified).is_some()
+}
+
 /// Fill in what the model could not know, and refuse what it may not do.
 ///
 /// Returns the arguments to put on the wire. Non-memory tools pass through

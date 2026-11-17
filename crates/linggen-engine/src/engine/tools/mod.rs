@@ -14,6 +14,7 @@ pub use read_picture::human_size;
 pub(crate) mod json_schema;
 pub mod memory_http;
 mod memory_mcp;
+mod exit_gate;
 pub use memory_mcp::{memory_root, place_of, MemoryPlace};
 mod delegation;
 mod drawing;
@@ -37,7 +38,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::Mutex;
 use tracing::debug;
 
 // ── Public types ────────────────────────────────────────────────────────
@@ -288,7 +289,7 @@ pub(crate) fn is_listed_only(name: &str) -> bool {
 /// Bridge between the synchronous tool executor and the async server state,
 /// allowing the AskUser tool to emit events and block on user responses.
 pub struct AskUserBridge {
-    pub events_tx: broadcast::Sender<crate::engine::events::ServerEvent>,
+    pub events_tx: crate::engine::event_bus::EventBus,
     pub pending: Arc<Mutex<HashMap<String, PendingAskUser>>>,
     pub session_id: Option<String>,
 }
@@ -576,21 +577,10 @@ impl Tools {
         env
     }
 
-    /// Whether the running turn stands in an app whose talk is hidden from
-    /// the session's other places (`turn_place::sight`).
-    pub(crate) fn talk_is_private_here(&self) -> bool {
-        let (Some(place), Some(sight), Some(sid)) =
-            (&self.turn_place, &self.turn_sight, &self.session_id)
-        else {
-            return false;
-        };
-        let Some(manager) = self.get_manager() else {
-            return false;
-        };
-        let Ok(Some(meta)) = manager.global_sessions.get_session_meta(sid) else {
-            return false;
-        };
-        sight.hides_from_others(place, &meta)
+    /// The app the running turn's talk is kept to, if any — decided when
+    /// the turn entered its place (`turn_place::sight`).
+    pub(crate) fn kept_here(&self) -> Option<&str> {
+        self.turn_sight.as_ref()?.keeps()
     }
 
     /// The session's rows the running turn's place may be given
@@ -600,11 +590,10 @@ impl Tools {
         store: &crate::state_fs::SessionStore,
         sid: &str,
     ) -> anyhow::Result<Vec<crate::state_fs::sessions::ChatMsg>> {
-        let rows = store.get_chat_history(sid)?;
-        let (Some(sight), Ok(Some(meta))) = (&self.turn_sight, store.get_session_meta(sid)) else {
-            return Ok(rows);
-        };
-        Ok(sight.visible(rows, &meta))
+        match &self.turn_sight {
+            Some(sight) => store.rows_seen_by(sid, sight),
+            None => store.get_chat_history(sid),
+        }
     }
 
     /// The values the running turn's place is bound to, for a tool of
@@ -699,6 +688,9 @@ impl Tools {
             call.tool,
             summarize_tool_args(&call.tool, &call.args)
         );
+        if let Some(why) = self.exit_refusal(&call) {
+            return Ok(ToolResult::Success(why));
+        }
         if let Some(tool) = builtin::lookup(&call.tool) {
             return tool.execute(self, call).await;
         }
@@ -846,6 +838,7 @@ mod tests {
             failed: false,
             images: Vec::new(),
             place: None,
+            kept_to: None,
         };
         let mut history = vec![
             msg("user", "[HIDDEN] [scene] opened", false),
