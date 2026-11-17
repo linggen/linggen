@@ -125,6 +125,100 @@ fn the_spec_is_the_one_writer_of_a_sessions_behaviour() {
     }
 }
 
+/// Calls that write a session's grant table.
+const GRANTS: &[&str] = &["set_path_mode(", "apply_grants("];
+
+/// The grant writers allowed outside the spec's preset grants (`grants.rs`),
+/// by file: how many, and why. A skill's, a mission's and a delegate's
+/// grants go through `stamp`; none of them is listed.
+const GRANT_WRITERS: &[(&str, usize, &str)] = &[
+    (
+        "crates/linggen-engine/src/engine/permission/store.rs",
+        1,
+        "the writer itself",
+    ),
+    (
+        "crates/linggen-engine/src/engine/permission/manifest.rs",
+        2,
+        "the frontmatter helper itself (a mission test uses it)",
+    ),
+    (
+        "crates/linggen-engine/src/engine/tool_exec.rs",
+        2,
+        "a person's answer to a prompt; a test",
+    ),
+    (
+        "src/server/api/permissions.rs",
+        1,
+        "a person's change from the permission badge",
+    ),
+    (
+        "crates/linggen-engine/src/engine/agent/mod.rs",
+        1,
+        "that same change carried into the live engines",
+    ),
+    (
+        "crates/linggen-engine/src/engine/mod.rs",
+        4,
+        "a new person's session starts at the configured level; tests",
+    ),
+    ("src/server/mcp_agent.rs", 1, "a test"),
+    (
+        "crates/linggen-engine/src/extensions/missions/mod.rs",
+        1,
+        "a test",
+    ),
+    (
+        "crates/linggen-engine/src/engine/tools/delegation.rs",
+        2,
+        "a test",
+    ),
+    (
+        "crates/linggen-engine/src/engine/turn_place/bind/grants_tests.rs",
+        1,
+        "a test",
+    ),
+    (
+        "crates/linggen-engine/src/engine/permission/mod.rs",
+        31,
+        "tests",
+    ),
+    (
+        "crates/linggen-engine/src/engine/permission/gate_copy_tests.rs",
+        2,
+        "tests",
+    ),
+];
+
+#[test]
+fn preset_grants_are_written_in_one_place() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut files = Vec::new();
+    for dir in ["src", "crates/linggen-engine/src"] {
+        rust_files(&root.join(dir), &mut files);
+    }
+    for file in files {
+        let rel = file
+            .strip_prefix(&root)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        if rel.starts_with("crates/linggen-engine/src/engine/session_spec/") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&file).unwrap();
+        let found: usize = GRANTS.iter().map(|g| text.matches(g).count()).sum();
+        let want = GRANT_WRITERS
+            .iter()
+            .find(|(f, _, _)| *f == rel)
+            .map_or(0, |e| e.1);
+        assert_eq!(
+            found, want,
+            "{rel} writes a session's grants: go through PresetGrants, or list it"
+        );
+    }
+}
+
 #[test]
 fn an_assignment_is_told_from_a_comparison() {
     assert_eq!(

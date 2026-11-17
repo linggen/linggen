@@ -153,6 +153,15 @@ Create an independent coding chat with `POST /api/sessions` and `work: "code"`; 
 
 A new `agent_run` session defaults to coding guidance when given `write_dir`, otherwise none; `work: "code"` or `"none"` overrides that default. A continued run ignores `work`. Coding sessions never join the daily session.
 
+**Preset grants.** A spec carries what its session may do without asking,
+set by whoever makes it: a skill's declared paths when it is taken up in a
+person's session, a mission's and its skill's, an `agent_run` delegate's
+posture. One function in the spec writes them into the session's grant
+table, in order (a later path can narrow an earlier one); a skill's leaves a
+path already at its level as it is, so what the person set under it stays.
+A test holds that no other code writes grants, besides a person's own
+answers and the listed tests. A session made from its meta has none.
+
 The spec is the only writer of a session's prompt profile, tool
 restriction, interactivity, world and framing; a turn's place narrows the
 turn on top of it and puts it back when the turn ends (§ A turn's place). A

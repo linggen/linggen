@@ -9,7 +9,10 @@
 
 mod apply;
 pub mod delegate;
+mod grants;
 mod preset;
+
+pub use grants::{Covered, PresetGrants};
 
 pub use preset::{is_companion_thread, is_kept_apart, preset_of, Preset, HANDOFF_PREFIX};
 
@@ -53,6 +56,11 @@ pub struct SessionSpec {
     pub policy: Option<SessionPolicy>,
     /// Reserved for the paired-device design: unused.
     pub ceiling: Option<Ceiling>,
+    /// What it may do without asking, set by whoever makes it; empty from
+    /// its meta. An `agent_run` delegate's are seeded before its run
+    /// ([`SessionSpec::seed`]); a skill's and a mission's are stamped as
+    /// they are taken up (`AgentEngine::stamp_grants`).
+    pub grants: PresetGrants,
 }
 
 /// A caller's word for a session's work: `"code"` turns the coding section
@@ -290,6 +298,7 @@ impl SessionSpec {
             creator: Some(meta.creator.clone()),
             policy,
             ceiling: None,
+            grants: PresetGrants::default(),
         }
     }
 
@@ -311,6 +320,7 @@ impl SessionSpec {
             creator,
             policy: None,
             ceiling: None,
+            grants: PresetGrants::default(),
         }
     }
 

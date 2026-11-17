@@ -851,16 +851,14 @@ async fn dispatch_mission_prompt(
         // Per-path grants from the mission's permission block. No implicit
         // cwd grant — mission authors list cwd in `permission.paths` if they
         // want it granted (matches the skill permission semantics).
-        if let Some(ref perm) = mission.permission {
-            crate::engine::permission::apply_grants(perm, &mut engine.session_permissions);
-        }
-
+        //
         // A skill mission runs with its skill's declared grants — the ones
         // its tools were written against. Longest-path-match lets them
         // narrow a broader mission grant.
-        if let Some(perm) = owning_skill.as_ref().and_then(|s| s.permission.as_ref()) {
-            crate::engine::permission::apply_grants(perm, &mut engine.session_permissions);
-        }
+        engine.stamp_grants(&crate::engine::session_spec::PresetGrants::of_mission(
+            mission.permission.as_ref(),
+            owning_skill.as_ref().and_then(|s| s.permission.as_ref()),
+        ));
 
         // Persist so the UI shows the correct mode if user opens the mission session.
         if let Some(ref sid) = session_id {

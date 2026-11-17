@@ -59,9 +59,9 @@ pub fn parse_mode_str(m: &str) -> PermissionMode {
     }
 }
 
-/// Apply every grant in `perm` to `session` via `set_path_mode`. The only
-/// legitimate writer into `path_modes[]` for skill/mission frontmatter
-/// (the other two are explicit user approvals and the load path).
+/// Apply every grant in `perm` to `session` via `set_path_mode`, in order.
+/// A session takes its skill's and mission's grants through its preset
+/// grants (`session_spec::PresetGrants`), which write them the same way.
 pub fn apply_grants(perm: &Grants, session: &mut SessionPermissions) {
     for (path, mode) in perm.iter_grants() {
         session.set_path_mode(path, mode);

@@ -4,11 +4,11 @@
 //! consolidates the four different "should I prompt? should I apply
 //! grants?" rules into one place ([`ActivationMode`]).
 
-use crate::engine::permission::effective_mode_for_path;
+use crate::engine::session_spec::PresetGrants;
 use crate::engine::skill::Skill;
 use crate::engine::AgentEngine;
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// What kind of activation event is happening — controls whether to prompt
 /// the user, whether to apply declared grants, and whether the engine
@@ -332,15 +332,7 @@ fn write_skill_grants(engine: &mut AgentEngine, skill: &Skill) -> bool {
     let Some(perm) = skill.permission.as_ref() else {
         return false;
     };
-    let mut changed = false;
-    for (path, mode) in perm.iter_grants() {
-        let current =
-            effective_mode_for_path(&engine.session_permissions.path_modes, Path::new(path));
-        if current != Some(mode) {
-            engine.session_permissions.set_path_mode(path, mode);
-            changed = true;
-        }
-    }
+    let changed = engine.stamp_grants(&PresetGrants::of_skill(perm));
     if changed {
         if let Some(ref sdir) = engine.session_dir {
             engine.session_permissions.save(sdir);

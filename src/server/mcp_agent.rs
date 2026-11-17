@@ -31,7 +31,7 @@ use crate::server::ServerState;
 #[cfg(test)]
 use crate::engine::session_spec::delegate::tool_scope as delegate_tool_scope;
 use crate::engine::session_spec::delegate::TOOLS_PARAM;
-use crate::engine::session_spec::Tools;
+use crate::engine::session_spec::{Covered, PresetGrants, SessionSpec, Tools};
 
 /// The folder a write run may change: an existing directory, absolute, and
 /// never `/` or the home folder itself — a task gets a checkout, not a disk.
@@ -290,26 +290,13 @@ pub async fn run(
     // Persist the permission posture to the session's permission.json BEFORE
     // the run: the engine's `initialize_loop` reloads permissions from disk at
     // the top of `run_agent_loop`, so any in-memory mutation would be clobbered.
-    // Safe-by-default — non-interactive (a headless MCP delegate has no
-    // Linggen-side user to answer a prompt, so a permission-needed action
-    // silently denies and the agent continues) and Read on the workspace.
-    {
-        let mut perms = crate::engine::permission::SessionPermissions {
-            interactive: false,
-            // Beyond the grants, ask the caller (agent_permit) — not refuse.
-            ask_caller: true,
-            ..Default::default()
-        };
-        if permission_mode.is_none() && write.is_none() {
-            perms.set_path_mode(&root_str, PermissionMode::Read);
-        } else {
-            perms.set_path_mode("*", PermissionMode::Read);
-            if let Some(grant) = mode {
-                perms.set_path_mode(&root_str, grant);
-            }
-        }
-        perms.save(&crate::paths::global_sessions_dir().join(&session_id));
-    }
+    seed_permissions(
+        &mut SessionSpec::of(&meta),
+        &crate::paths::global_sessions_dir().join(&session_id),
+        &root_str,
+        permission_mode.is_none() && write.is_none(),
+        mode,
+    );
     let _ = state
         .events_tx
         .send(crate::server::ServerEvent::SessionCreated {
@@ -370,6 +357,44 @@ pub async fn run(
         .await
     });
     await_run(state, &session_id, run).await
+}
+
+/// A new delegated run's `permission.json`, written before any engine.
+/// Safe-by-default — non-interactive (a headless MCP delegate has no
+/// Linggen-side user to answer a prompt) and Read on the workspace
+/// (`workspace_only`), else Read everywhere and `grant` on `root`.
+fn seed_permissions(
+    spec: &mut SessionSpec,
+    session_dir: &std::path::Path,
+    root: &str,
+    workspace_only: bool,
+    grant: Option<PermissionMode>,
+) {
+    let base = crate::engine::permission::SessionPermissions {
+        interactive: false,
+        // Beyond the grants, ask the caller (agent_permit) — not refuse.
+        ask_caller: true,
+        ..Default::default()
+    };
+    spec.grants = PresetGrants {
+        paths: delegate_paths(root, workspace_only, grant),
+        covered: Covered::Written,
+    };
+    spec.seed(base, session_dir);
+}
+
+/// A delegate's paths, in the order they are written.
+fn delegate_paths(
+    root: &str,
+    workspace_only: bool,
+    grant: Option<PermissionMode>,
+) -> Vec<(String, PermissionMode)> {
+    if workspace_only {
+        return vec![(root.to_string(), PermissionMode::Read)];
+    }
+    let mut paths = vec![("*".to_string(), PermissionMode::Read)];
+    paths.extend(grant.map(|grant| (root.to_string(), grant)));
+    paths
 }
 
 /// How long a call waits for the run before handing back its session.
@@ -2068,6 +2093,38 @@ mod permit_tests {
         child.parent_run_id = Some("r1".into());
         manager.run_store.record_outcome(&child);
         assert!(manager.run_store.outcome("s1").is_none());
+    }
+
+    /// The `permission.json` a new delegated run starts with, byte for byte:
+    /// a read run on its workspace, a plan run, and a write run.
+    #[test]
+    fn a_delegated_runs_permission_file_is_pinned() {
+        let file = |workspace_only, grant| {
+            let dir = tempfile::tempdir().unwrap();
+            let meta = delegate_meta("s", "t", "ling", None, "claude-code", true, None);
+            let mut spec = SessionSpec::of(&meta);
+            seed_permissions(&mut spec, dir.path(), "/w/wt", workspace_only, grant);
+            std::fs::read_to_string(dir.path().join("permission.json")).unwrap()
+        };
+        let row = |path: &str, mode: &str| {
+            format!("    {{\n      \"path\": \"{path}\",\n      \"mode\": \"{mode}\"\n    }}")
+        };
+        let whole = |rows: &[String]| {
+            format!(
+                "{{\n  \"path_modes\": [\n{}\n  ],\n  \"interactive\": false,\n  \"ask_caller\": true\n}}",
+                rows.join(",\n")
+            )
+        };
+        assert_eq!(file(true, None), whole(&[row("/w/wt", "read")]));
+        assert_eq!(file(false, None), whole(&[row("*", "read")]));
+        assert_eq!(
+            file(false, Some(PermissionMode::Edit)),
+            whole(&[row("*", "read"), row("/w/wt", "edit")])
+        );
+        assert_eq!(
+            file(false, Some(PermissionMode::Admin)),
+            whole(&[row("*", "read"), row("/w/wt", "admin")])
+        );
     }
 
     #[test]
