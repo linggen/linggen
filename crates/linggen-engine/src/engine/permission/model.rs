@@ -725,23 +725,17 @@ fn path_token(word: &str) -> Option<String> {
     (!t.trim_matches('/').is_empty()).then(|| t.to_string())
 }
 
-/// Every path a Bash command reaches, each resolved where the shell would
-/// resolve it. A relative token (`../x`) after `cd <dir>` belongs to `<dir>`,
-/// not to the session's folder — `cd skills && ls ../other` reaches
-/// `linggen/other`, never the session folder's parent. Only a plain `cd`
-/// to a directory that exists, with no variable, glob or subshell syntax
-/// anywhere in the command, is followed, and only across `&&`, `;` and a
-/// newline. After `|`, `||` or `&` the shell's own folder is not known to
-/// have moved (a pipeline stage is a subshell, `||` runs only when the cd
-/// failed, `&` backgrounds it), so the rest resolves from the session's
-/// folder as before.
-///
-/// Text the command carries is not a target: a heredoc body, or the pattern
-/// of grep, sed, awk or jq (see `shell_text`).
+/// What a command does to a path it names: the level that path is judged at.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum TargetKind {
+    /// Acted on by the command: judged at the command's own level.
     Full,
+    /// The program being run, named by a path: its file is read, so it is
+    /// judged at read — and it is not a path the command was "judged" on (a
+    /// command whose only path is its own program is still judged, at its
+    /// full level, in the folder it runs in).
     Program,
+    /// A source of a plain copy: read, never changed.
     Source,
 }
 
@@ -753,8 +747,12 @@ pub(super) fn command_targets(cmd: &str, session_cwd: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-// Only simple, literal operands and known switch-only options qualify. Any
-// ambiguity leaves the entire segment at its original tier.
+/// The words that are sources of a plain copy (`cp`, `rsync`, `install`,
+/// `ln -s`): every operand but the last. Only simple, literal operands and
+/// known switch-only options qualify; any doubt leaves the whole segment at
+/// its original level. `mv` is not here (it removes its source), nor is a
+/// hard link (`ln` without `-s`): the new name is the same file, so writing
+/// it would write the source.
 fn copy_sources(tokens: &[Token]) -> Vec<usize> {
     let mut sources = Vec::new();
     let mut start = 0;
@@ -768,6 +766,7 @@ fn copy_sources(tokens: &[Token]) -> Vec<usize> {
                 let mut operands = Vec::new();
                 let mut safe = true;
                 let mut options = true;
+                let mut symbolic = false;
                 for i in start + 1..end {
                     let Token::Word(w) = &tokens[i] else {
                         unreachable!()
@@ -799,11 +798,12 @@ fn copy_sources(tokens: &[Token]) -> Vec<usize> {
                             safe = false;
                             break;
                         }
+                        symbolic |= w[1..].contains('s');
                     } else {
                         operands.push(i);
                     }
                 }
-                if safe && operands.len() >= 2 {
+                if safe && operands.len() >= 2 && (name != "ln" || symbolic) {
                     sources.extend_from_slice(&operands[..operands.len() - 1]);
                 }
             }
@@ -813,6 +813,19 @@ fn copy_sources(tokens: &[Token]) -> Vec<usize> {
     sources
 }
 
+/// Every path a Bash command reaches, each resolved where the shell would
+/// resolve it. A relative token (`../x`) after `cd <dir>` belongs to `<dir>`,
+/// not to the session's folder — `cd skills && ls ../other` reaches
+/// `linggen/other`, never the session folder's parent. Only a plain `cd`
+/// to a directory that exists, with no variable, glob or subshell syntax
+/// anywhere in the command, is followed, and only across `&&`, `;` and a
+/// newline. After `|`, `||` or `&` the shell's own folder is not known to
+/// have moved (a pipeline stage is a subshell, `||` runs only when the cd
+/// failed, `&` backgrounds it), so the rest resolves from the session's
+/// folder as before.
+///
+/// Text the command carries is not a target: a heredoc body, or the pattern
+/// of grep, sed, awk or jq (see `shell_text`).
 fn command_target_levels(cmd: &str, session_cwd: &Path) -> Vec<(PathBuf, TargetKind)> {
     let cmd = strip_heredoc_bodies(cmd);
     let cmd = cmd.as_str();

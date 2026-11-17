@@ -78,6 +78,22 @@ fn gate_still_cases() {
             true,
         ),
         (format!("mv /outside/a {w}/a"), PermissionMode::Edit, true),
+        // A hard link is the same file under a new name: writing the new
+        // name would write the source.
+        (format!("ln /outside/a {w}/a"), PermissionMode::Edit, true),
+        (format!("ln -f /outside/a {w}/a"), PermissionMode::Edit, true),
+        // A program behind an assignment or a wrapper is not read as "its
+        // own file": it stays judged at the command's level.
+        (
+            "FOO=1 /opt/tools/bin/flutter test".into(),
+            PermissionMode::Edit,
+            true,
+        ),
+        (
+            "sh /outside/script.sh".into(),
+            PermissionMode::Admin,
+            true,
+        ),
         (
             format!("rsync -a --remove-source-files /outside/src/ {w}/dst/"),
             PermissionMode::Edit,
