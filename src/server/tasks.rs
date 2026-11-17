@@ -190,7 +190,7 @@ pub(crate) async fn stop(
 /// Native sessions' tasks: each change the engine reports is listed; a
 /// task's end is told to the agent that started it, in a turn of its own.
 pub(crate) async fn native_watch(state: std::sync::Arc<super::ServerState>) {
-    let mut events = state.events_tx.subscribe();
+    let mut events = state.events_tx.listen();
     loop {
         let event = match events.recv().await {
             Ok(stamped) => stamped.event,

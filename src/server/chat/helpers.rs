@@ -480,7 +480,7 @@ mod via_tests {
         let dir = tempfile::tempdir().unwrap();
         let store = crate::state_fs::SessionStore::with_sessions_dir(dir.path().to_path_buf());
         let tx = crate::engine::event_bus::EventBus::detached(8);
-        let mut rx = tx.subscribe();
+        let mut rx = tx.listen();
         persist_and_emit_to_store(
             &store,
             &tx,
@@ -515,7 +515,7 @@ mod via_tests {
         let dir = tempfile::tempdir().unwrap();
         let store = crate::state_fs::SessionStore::with_sessions_dir(dir.path().to_path_buf());
         let tx = crate::engine::event_bus::EventBus::detached(8);
-        let mut rx = tx.subscribe();
+        let mut rx = tx.listen();
         // The smallest PNG header the keeper accepts as a picture.
         let mut png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
         png.extend_from_slice(&[0u8; 32]);

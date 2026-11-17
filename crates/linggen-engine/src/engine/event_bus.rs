@@ -54,10 +54,13 @@ impl EventBus {
         event: ServerEvent,
         kept_to: Option<String>,
     ) -> Result<usize, broadcast::error::SendError<Stamped>> {
+        // A row's stamp for everyone is no app's.
+        let kept_to = kept_to.filter(|app| app != super::turn_place::sight::EVERYONE);
         self.tx.send(Stamped { event, kept_to })
     }
 
-    pub fn subscribe(&self) -> broadcast::Receiver<Stamped> {
+    /// The one way to listen on the bus.
+    pub fn listen(&self) -> broadcast::Receiver<Stamped> {
         self.tx.subscribe()
     }
 
@@ -196,7 +199,7 @@ mod tests {
     async fn an_event_is_stamped_when_it_is_made() {
         let places = RunningPlaces::default();
         let bus = EventBus::new(16, places.clone());
-        let mut rx = bus.subscribe();
+        let mut rx = bus.listen();
         let day = "sess-day-2026-11-16";
         let mark = places.mark(day, &ledger()).unwrap();
         places.keep_talk_private(day);
@@ -221,7 +224,7 @@ mod tests {
     #[tokio::test]
     async fn a_background_tasks_event_carries_its_own_stamp() {
         let bus = EventBus::detached(4);
-        let mut rx = bus.subscribe();
+        let mut rx = bus.listen();
         let mut task = crate::engine::events::BackgroundTask::running("t1", "shell", "ls");
         task.kept_to = Some("zz-ledger".into());
         bus.send(ServerEvent::BackgroundTask {

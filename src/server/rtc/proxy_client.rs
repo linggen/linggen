@@ -136,7 +136,7 @@ pub async fn connect_to_room(
     let (response_tx, response_rx) = mpsc::channel::<String>(256);
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
     let (disconnect_tx, disconnect_rx) = tokio::sync::oneshot::channel::<()>();
-    let mut events_rx = events_tx.as_ref().map(|tx| tx.subscribe());
+    let mut events_rx = events_tx.as_ref().map(|tx| tx.listen());
     let events_broadcast_tx = events_tx.clone();
 
     // Spawn the peer connection event loop

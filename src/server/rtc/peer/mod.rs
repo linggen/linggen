@@ -221,7 +221,7 @@ async fn create_peer_inner(
 
     // Spawn the peer event loop. Track peer lifetime in active_peer_count
     // so the idle-shutdown watcher knows when no clients remain.
-    let events_rx = state.events_tx.subscribe();
+    let events_rx = state.events_tx.listen();
     // Unique id for the Yinyue presenter registry (FCFS singleton lock).
     let peer_id = state.mint_peer_id();
     state

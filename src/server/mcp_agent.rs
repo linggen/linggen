@@ -414,7 +414,7 @@ async fn await_run(
 ) -> Result<String, String> {
     let deadline = tokio::time::sleep(std::time::Duration::from_secs(WAIT_SECS));
     tokio::pin!(deadline);
-    let mut events = state.events_tx.subscribe();
+    let mut events = state.events_tx.listen();
     tokio::pin!(run);
     loop {
         if !pending_requests(state, session).await.is_empty() {
@@ -984,7 +984,7 @@ pub(crate) async fn wait_socket(
     if session_meta(&state, &query.session_id).is_err() {
         return (axum::http::StatusCode::NOT_FOUND, "unknown session").into_response();
     }
-    let events = state.events_tx.subscribe();
+    let events = state.events_tx.listen();
     ws.on_upgrade(move |mut socket| async move {
         let session = query.session_id.as_str();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();

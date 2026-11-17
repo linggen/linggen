@@ -388,7 +388,7 @@ fn note_event(ev: &ServerEvent, now: &str) {
 }
 
 async fn watch_events(state: Arc<ServerState>) {
-    let mut rx = state.events_tx.subscribe();
+    let mut rx = state.events_tx.listen();
     loop {
         match rx.recv().await {
             Ok(ev) => {

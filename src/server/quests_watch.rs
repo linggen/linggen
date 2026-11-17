@@ -104,7 +104,7 @@ mod tests {
     async fn a_written_file_is_announced_once_per_app() {
         let dir = tempfile::tempdir().unwrap();
         let tx = crate::engine::event_bus::EventBus::detached(16);
-        let mut rx = tx.subscribe();
+        let mut rx = tx.listen();
         watch(dir.path().to_path_buf(), tx, Duration::from_millis(200)).unwrap();
         // Written the way apps write: a temp file, then a rename, then again.
         let tmp = dir.path().join("health.json.tmp");
