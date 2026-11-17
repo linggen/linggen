@@ -896,24 +896,6 @@ impl AgentManager {
         }
     }
 
-    /// Update the last plan message in the session store (instead of appending a duplicate).
-    pub async fn update_last_plan_message(
-        &self,
-        session_id: &str,
-        msg: &crate::state_fs::sessions::ChatMsg,
-    ) -> bool {
-        match self
-            .global_sessions
-            .update_last_plan_message(session_id, msg)
-        {
-            Ok(updated) => updated,
-            Err(e) => {
-                tracing::warn!("Failed to update plan message: {}", e);
-                false
-            }
-        }
-    }
-
     pub async fn send_event(&self, event: AgentEvent, session_id: Option<String>) {
         let _ = self.events.send((event, session_id));
     }
