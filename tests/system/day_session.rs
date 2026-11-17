@@ -291,10 +291,6 @@ async fn a_mission_and_a_delegated_run_stay_outside_the_day() {
     );
 }
 
-/// What the person told the private app — none of it may reach another place.
-const SECRET: &str = "LEDGER-ONLY 120 shares of ACME";
-const LEDGER_REPLY: &str = "LEDGER-REPLY: holding steady at 120.";
-
 /// A made-up private app (`private-talk: true`), written into the world's
 /// home after start and reloaded, as `missions.rs` installs its beacon.
 pub(crate) async fn install_ledger(w: &World) {
@@ -309,233 +305,25 @@ pub(crate) async fn install_ledger(w: &World) {
     w.api.post("/api/skills/reload", json!({})).await;
 }
 
-fn holds_secret(text: &str) -> bool {
-    text.contains("LEDGER-ONLY") || text.contains("LEDGER-REPLY")
-}
-
 fn history_text(v: &Value) -> String {
     v["messages"].to_string()
 }
 
-/// The second scenario: a private app's talk never reaches another place's
-/// turn, nor her outside it — in the bytes each is sent — nor a page
-/// outside it; in its own place it is all there.
-#[tokio::test]
-async fn a_private_apps_talk_reaches_no_other_place_nor_her() {
-    let setup = Setup::default()
-        .script(
-            Agent::Ling,
-            vec![
-                text(LEDGER_REPLY),
-                text("Rolled a two."),
-                text("Home."),
-                text("Still 120."),
-            ],
-        )
-        .script(Agent::Yinyue, vec![text("I'm here.")]);
-    let (w, _) = day_world_at(12, setup).await;
-    install_ledger(&w).await;
-    let day = w
-        .api
-        .create_session(json!({"title": "Ledger", "skill": "ledger"}))
-        .await;
-
-    turn_at(&w, &day, Some("ledger"), SECRET, Agent::Ling).await;
-    turn_at(&w, &day, Some("dice"), "Roll for me", Agent::Ling).await;
-    turn_at(&w, &day, None, "Hello from the main page", Agent::Ling).await;
-    let mark = w.mark();
-    w.api
-        .post("/api/yinyue/chat", json!({"text": "Anything new?"}))
-        .await;
-    w.wait_agent(Agent::Yinyue, mark).await;
-    turn_at(&w, &day, Some("ledger"), "And now?", Agent::Ling).await;
-
-    let ling = w.model.calls_of(Agent::Ling);
-    assert_eq!(ling.len(), 4);
-    assert!(
-        !holds_secret(&ling[1].text()),
-        "the dice turn was given the ledger's talk"
-    );
-    assert!(
-        !holds_secret(&ling[2].text()),
-        "the main page's turn was given it"
-    );
-    let hers = w.model.calls_of(Agent::Yinyue);
-    assert!(
-        !holds_secret(&hers[0].text()),
-        "she was given the ledger's talk"
-    );
-    // Its own place is given all of it, its own reply included.
-    assert!(ling[3].text().contains("LEDGER-ONLY") && ling[3].text().contains("LEDGER-REPLY"));
-    // The other places' talk is everyone's, the ledger's included.
-    assert!(ling[3].text().contains("Rolled a two."));
-
-    // Shown on its own page only.
-    let main = w.api.history(&day, &w.work()).await;
-    assert!(
-        !holds_secret(&history_text(&main)),
-        "the main page shows it"
-    );
-    assert!(history_text(&main).contains("Rolled a two."));
-    let page = |app: &str| format!("/api/skill-sessions/state?skill={app}&session_id={day}");
-    assert!(!holds_secret(&history_text(
-        &w.api.get(&page("dice")).await
-    )));
-    assert!(holds_secret(&history_text(
-        &w.api.get(&page("ledger")).await
-    )));
-    // Each row of the day names its place, for the page to fold.
-    let places: Vec<String> = main["messages"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter_map(|m| m[0]["place"].as_str().map(String::from))
-        .collect();
-    assert!(places.contains(&"dice".to_string()) && !places.contains(&"ledger".to_string()));
-}
-
-/// A private app's rows are stamped kept as they are written: once the app
-/// is gone they stay kept — from the main page and from a turn at home.
-#[tokio::test]
-async fn a_removed_private_apps_talk_stays_kept() {
-    let setup = Setup::default().script(Agent::Ling, vec![text(LEDGER_REPLY), text("Home.")]);
-    let (w, _) = day_world_at(12, setup).await;
-    install_ledger(&w).await;
-    let day = w
-        .api
-        .create_session(json!({"title": "Ledger", "skill": "ledger"}))
-        .await;
-    turn_at(&w, &day, Some("ledger"), SECRET, Agent::Ling).await;
-    std::fs::remove_dir_all(w.home.linggen_home().join("skills/ledger")).expect("remove the ledger");
-    w.api.post("/api/skills/reload", json!({})).await;
-    turn_at(&w, &day, None, "Hello from the main page", Agent::Ling).await;
-
-    let home = w.model.calls_of(Agent::Ling).pop().unwrap();
-    assert!(!holds_secret(&home.text()), "a home turn was given the removed app's talk");
-    let main = w.api.history(&day, &w.work()).await;
-    assert!(!holds_secret(&history_text(&main)), "the main page shows it");
-    let kept: Vec<Value> = w
-        .raw_rows(&day)
-        .into_iter()
-        .filter(|r| r["content"].as_str().is_some_and(holds_secret))
-        .collect();
-    assert!(!kept.is_empty() && kept.iter().all(|r| r["kept_to"] == "ledger"), "{kept:?}");
-}
-
-/// A made-up private app that plans before it acts.
+/// A made-up app that plans before it acts.
 async fn install_planner(w: &World) {
     let dir = w.home.linggen_home().join("skills/planner");
     std::fs::create_dir_all(&dir).expect("planner dir");
     std::fs::write(
         dir.join("SKILL.md"),
-        "---\nname: planner\ndescription: A private test planner.\n\
-         allowed-tools: [EnterPlanMode, ExitPlanMode]\nprivate-talk: true\n---\n\nPlan first.\n",
+        "---\nname: planner\ndescription: A test planner.\n\
+         allowed-tools: [EnterPlanMode, ExitPlanMode]\n---\n\nPlan first.\n",
     )
     .expect("SKILL.md");
     w.api.post("/api/skills/reload", json!({})).await;
 }
 
-/// A private app's plan keeps its stamp when it is edited and rejected
-/// later, outside any turn: no row of it is shown on the main page.
-#[tokio::test]
-async fn a_private_apps_plan_stays_kept_when_edited_and_rejected() {
-    let plan = "## Plan\n\n1. PLANNER-SECRET first step";
-    let setup = Setup::default().script(
-        Agent::Ling,
-        vec![
-            tool("EnterPlanMode", json!({"reason": "plan it"})),
-            tool("ExitPlanMode", json!({"plan_text": plan})),
-        ],
-    );
-    let (w, _) = day_world_at(12, setup).await;
-    install_planner(&w).await;
-    let day = w
-        .api
-        .create_session(json!({"title": "Planner", "skill": "planner"}))
-        .await;
-    say(&w, &day, Some("planner"), "Plan it").await;
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    let has_plan = |w: &World| w.raw_rows(&day).iter().any(|r| r["content"].as_str().is_some_and(|c| c.contains("PLANNER-SECRET")));
-    while !has_plan(&w) {
-        assert!(std::time::Instant::now() < deadline, "no plan; log:\n{}", w.engine.log());
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-    let action = json!({"project_root": w.work(), "agent_id": "ling", "session_id": day});
-    let mut edit = action.clone();
-    edit["text"] = json!("## Plan\n\n1. PLANNER-SECRET edited step");
-    w.api.post("/api/plan/edit", edit).await;
-    w.api.post("/api/plan/reject", action).await;
-
-    let rows: Vec<Value> = w
-        .raw_rows(&day)
-        .into_iter()
-        .filter(|r| r["content"].as_str().is_some_and(|c| c.contains("PLANNER-SECRET")))
-        .collect();
-    assert!(rows.len() >= 3, "made, edited and rejected: {rows:#?}");
-    assert!(rows.iter().all(|r| r["kept_to"] == "planner"), "a plan row lost its stamp: {rows:#?}");
-    let main = w.api.history(&day, &w.work()).await;
-    assert!(!history_text(&main).contains("PLANNER-SECRET"), "the main page shows the plan");
-}
-
-/// A summary made outside the private app is made without its talk.
-#[tokio::test]
-async fn a_summary_made_at_home_leaves_the_private_apps_talk_out() {
-    let filler: String = (0..900)
-        .map(|i| format!("filler-{i:05} the quick brown fox jumps over the lazy dog."))
-        .collect::<Vec<_>>()
-        .join(" ");
-    let setup = Setup::default()
-        .script(
-            Agent::Ling,
-            vec![text(LEDGER_REPLY), text("OK."), text("Fine.")],
-        )
-        .extra("context compaction assistant", "SUMMARY: filler was sent.");
-    let (w, _) = day_world_at(12, setup).await;
-    install_ledger(&w).await;
-    let day = w
-        .api
-        .create_session(json!({"title": "Ledger", "skill": "ledger"}))
-        .await;
-    turn_at(&w, &day, Some("ledger"), SECRET, Agent::Ling).await;
-    turn_at(
-        &w,
-        &day,
-        None,
-        &format!("Ignore this.\n{filler}"),
-        Agent::Ling,
-    )
-    .await;
-    turn_at(&w, &day, None, "Short one.", Agent::Ling).await;
-
-    let resp = w
-        .api
-        .post(
-            "/api/chat/compact",
-            json!({"session_id": day, "project_root": w.work()}),
-        )
-        .await;
-    assert_eq!(resp["compacted"], true, "{resp}");
-    let asked: Vec<String> = w
-        .model
-        .calls()
-        .iter()
-        .map(|c| c.text())
-        .filter(|t| t.contains("ENTRIES TO SUMMARIZE"))
-        .collect();
-    assert_eq!(asked.len(), 1);
-    assert!(
-        asked[0].contains("filler-00001"),
-        "the summary is of the day's talk"
-    );
-    assert!(
-        !holds_secret(&asked[0]),
-        "the summarizer was given the ledger's talk"
-    );
-}
-
-/// With no private app's talk, and the setting off, a session's history and
-/// rows are as before: no place is shown on them.
+/// With the setting off, a session's history and rows are as before: no
+/// place is shown on them.
 #[tokio::test]
 async fn with_the_setting_off_an_apps_session_is_its_own() {
     let w = World::start(Setup::default().script(Agent::Ling, vec![text("Rolled.")])).await;
@@ -762,14 +550,14 @@ async fn switching_off_and_on_again_loses_no_session() {
     );
 }
 
-/// A made-up private app whose agent runs shell commands in its own folder.
+/// A made-up app whose agent runs shell commands in its own folder.
 async fn install_worker(w: &World) {
     let dir = w.home.linggen_home().join("skills/worker");
     std::fs::create_dir_all(&dir).expect("worker dir");
     std::fs::write(
         dir.join("SKILL.md"),
-        "---\nname: worker\ndescription: A private test worker.\nallowed-tools: [Bash]\n\
-         private-talk: true\ncwd: ~/.linggen/skills/worker\n---\n\nRun what you are asked.\n",
+        "---\nname: worker\ndescription: A test worker.\nallowed-tools: [Bash]\n\
+         cwd: ~/.linggen/skills/worker\n---\n\nRun what you are asked.\n",
     )
     .expect("SKILL.md");
     w.api.post("/api/skills/reload", json!({})).await;
@@ -793,11 +581,11 @@ async fn calls_granting_on_its_page(w: &World, n: usize) {
     }
 }
 
-/// A private app's background command ends after its turn: its end — the
-/// output's tail — is told in that app, a row of its place, and the next
-/// turn at home is given none of it. Every row of the day names its place.
+/// An app's background command ends after its turn: its end — the
+/// output's tail — is told in that app, a row of its place. Every row of the
+/// day names its place.
 #[tokio::test]
-async fn a_private_apps_task_end_is_told_in_that_app() {
+async fn an_apps_task_end_is_told_in_that_app() {
     let setup = Setup::default().script(
         Agent::Ling,
         vec![
@@ -807,7 +595,6 @@ async fn a_private_apps_task_end_is_told_in_that_app() {
             ),
             text("Started it."),
             text("It finished."),
-            text("Home."),
         ],
     );
     let (w, _) = day_world_at(12, setup).await;
@@ -822,13 +609,6 @@ async fn a_private_apps_task_end_is_told_in_that_app() {
     assert!(
         told.contains("WORKER-OUT-7"),
         "the end is told with its output: {told}"
-    );
-    turn_at(&w, &day, None, "Anything else?", Agent::Ling).await;
-
-    let home = w.model.calls_of(Agent::Ling).pop().unwrap();
-    assert!(
-        !home.text().contains("WORKER-OUT-7"),
-        "the task's output reached a home turn"
     );
     let rows = w.raw_rows(&day);
     let notice = rows
@@ -850,7 +630,7 @@ async fn a_private_apps_task_end_is_told_in_that_app() {
 
 /// A made-up app written into the world's home and loaded: `private` keeps
 /// its talk to itself.
-async fn install_app(w: &World, name: &str, tools: &str, private: bool) {
+pub(crate) async fn install_app(w: &World, name: &str, tools: &str, private: bool) {
     let dir = w.home.linggen_home().join(format!("skills/{name}"));
     std::fs::create_dir_all(&dir).expect("app dir");
     let body = format!(
@@ -921,7 +701,7 @@ async fn each_person_sees_and_writes_only_their_own_day() {
 
 /// Answer the permission prompts `app`'s page is shown until Ling has made
 /// `n` calls.
-async fn grant_until(w: &World, app: &str, n: usize) {
+pub(crate) async fn grant_until(w: &World, app: &str, n: usize) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     while w.model.calls_of(Agent::Ling).len() < n {
         assert!(std::time::Instant::now() < deadline, "only {} calls", w.model.calls_of(Agent::Ling).len());
@@ -933,9 +713,10 @@ async fn grant_until(w: &World, app: &str, n: usize) {
     }
 }
 
-/// A question asked while the person is away, in `app`'s place of the day:
-/// she calls them back before it is answered, and what she was told is
-/// returned. The turn that asks it holds the day while it waits.
+/// A question asked while the person is away, in `app`'s chat — its place
+/// of the day, or a private app's own session: she calls them back before
+/// it is answered, and what she was told is returned. The turn that asks it
+/// holds its session while it waits.
 async fn herald_while_away(app: &str, private: bool, question: &str) -> String {
     let setup = Setup::default()
         .script(
@@ -1000,46 +781,6 @@ async fn from_a_private_app_she_is_told_only_that_it_waits() {
     assert!(told.contains("vault"), "{told}");
 }
 
-/// A background subagent of a private app's turn streams after that turn
-/// is over: every event of it carries the app's stamp, so only that app's
-/// pages are sent it.
-#[tokio::test]
-async fn a_background_subagent_of_a_private_turn_stays_kept() {
-    let setup = Setup::default().script(
-        Agent::Ling,
-        vec![
-            tool(
-                "Task",
-                json!({"target_agent_id": "ling", "task": "Keep SUB-SECRET", "run_in_background": true}),
-            ),
-            text("SUB-SECRET is with the helper."),
-            text("SUB-SECRET kept."),
-            text("SUB-SECRET came back."),
-        ],
-    );
-    let (w, _) = day_world_at(12, setup).await;
-    install_app(&w, "relay", "Task", true).await;
-    let day = w.api.create_session(json!({"title": "Relay", "skill": "relay"})).await;
-    say(&w, &day, Some("relay"), "Hand it off").await;
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    while w.model.calls_of(Agent::Ling).len() < 4 {
-        assert!(std::time::Instant::now() < deadline, "log:\n{}", w.engine.log());
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-    let events = w
-        .events_when(|e| e.iter().filter(|x| x.to_string().contains("SUB-SECRET")).count() >= 3)
-        .await;
-    // The task list is sent whole and judged entry by entry for each page
-    // (each entry carries its own stamp); every other event by its stamp.
-    let secret: Vec<&Value> = events
-        .iter()
-        .filter(|x| x["kind"] != "tasks" && x.to_string().contains("SUB-SECRET"))
-        .collect();
-    assert!(!secret.is_empty());
-    let unkept: Vec<&&Value> = secret.iter().filter(|x| x["kept_to"] != "relay").collect();
-    assert!(unkept.is_empty(), "events of the private turn sent unkept: {unkept:#?}");
-}
-
 /// From a private app a message to another agent is refused, with a reason
 /// the model reads; nothing reaches her.
 #[tokio::test]
@@ -1061,8 +802,8 @@ async fn a_private_apps_message_to_another_agent_is_refused() {
 }
 
 /// With plans waiting in two places, approving runs the plan being decided
-/// in its own place: the home plan's rows and its run are home's, and the
-/// private app's plan row keeps its stamp.
+/// in its own place: the home plan's rows and its run are home's, the app's
+/// plan row its app's.
 #[tokio::test]
 async fn an_approved_plan_runs_in_its_own_place() {
     let setup = Setup::default().script(
@@ -1105,11 +846,11 @@ async fn an_approved_plan_runs_in_its_own_place() {
     let with = |marker: &str| -> Vec<&Value> {
         rows.iter().filter(|r| r["content"].as_str().is_some_and(|c| c.contains(marker))).collect()
     };
-    assert!(with("PLANNER-SECRET").iter().all(|r| r["kept_to"] == "planner"), "{rows:#?}");
+    assert!(with("PLANNER-SECRET").iter().all(|r| r["place"] == "planner"), "{rows:#?}");
     let home = with("HOME-PLAN");
     assert!(home.len() >= 2, "made and approved: {rows:#?}");
-    assert!(home.iter().all(|r| r["kept_to"] != "planner"), "the home plan was kept to the app: {rows:#?}");
-    assert!(with("HOME-RUN").iter().all(|r| r["kept_to"] != "planner"), "it ran in the app: {rows:#?}");
+    assert!(home.iter().all(|r| r["place"] == ":home"), "the home plan stood in the app: {rows:#?}");
+    assert!(with("HOME-RUN").iter().all(|r| r["place"] == ":home"), "it ran in the app: {rows:#?}");
     let main = w.api.history(&day, &w.work()).await;
     assert!(history_text(&main).contains("HOME-RUN"));
 }

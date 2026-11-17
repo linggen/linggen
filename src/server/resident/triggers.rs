@@ -636,10 +636,14 @@ pub(super) async fn deliver_to_chat_agent(
     // the recipient runs with that app's tools. Otherwise prefer the session the
     // user is viewing; else the agent's latest.
     let mut candidates = Vec::new();
+    // An app that keeps a session of its own is delivered there, never in a
+    // day (`server::day_session::takes`).
     let day = match sent_in.filter(|sid| crate::server::day_session::is_day(sid)) {
         // Sent from a day: delivered in that day, its person's.
-        Some(day) => Some(day),
-        None => crate::server::day_session::current_if_on(&state.manager).await,
+        Some(day) => crate::server::day_session::takes(&state.manager, app.as_deref())
+            .await
+            .then_some(day),
+        None => crate::server::day_session::day_for(&state.manager, None, app.as_deref()).await,
     };
     if let Some(day) = day.as_deref() {
         // One session a day: the table they share, in the app's place.

@@ -1063,29 +1063,32 @@ pub(crate) fn resend_chat(
 
 /// An app's chat sent with no session yet, with one session a day on: it
 /// is the day's session's (`server::day_session`). A mission's, a
-/// consumer's, or a plain chat's (no app) keeps making its own.
+/// consumer's, a plain chat's (no app) or a private app's keeps its own.
 async fn into_the_day(state: &Arc<ServerState>, mut req: ChatRequest) -> ChatRequest {
-    let joins = crate::server::day_session::takes_new_chat(
-        req.skill_name.as_deref(),
-        false,
-        false,
-        req.user_type != "consumer",
-    );
+    use crate::server::day_session as day;
+    let app = req.skill_name.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let named_day = req.session_id.as_deref().filter(|sid| day::is_day(sid));
+    // A day its app does not join: the app's own chat stands in for it.
+    if let (Some(name), Some(_)) = (app, named_day) {
+        if !day::takes(&state.manager, Some(name)).await {
+            req.session_id = day::own_chat(&state.manager, name);
+            return req;
+        }
+    }
     // A day is its own person's: a request naming another's lands in its own.
     let someone_elses = req
         .session_id
         .as_deref()
-        .is_some_and(|sid| !crate::server::day_session::may_enter(sid, req.user_id.as_deref()));
+        .is_some_and(|sid| !day::may_enter(sid, req.user_id.as_deref()));
     if someone_elses {
-        req.session_id =
-            crate::server::day_session::current_for_if_on(&state.manager, req.user_id.as_deref()).await;
+        req.session_id = day::day_for(&state.manager, req.user_id.as_deref(), app).await;
         return req;
     }
+    let joins = day::takes_new_chat(app, false, false, req.user_type != "consumer");
     if req.session_id.is_some() || req.mission_id.is_some() || !joins {
         return req;
     }
-    req.session_id =
-        crate::server::day_session::current_for_if_on(&state.manager, req.user_id.as_deref()).await;
+    req.session_id = day::day_for(&state.manager, req.user_id.as_deref(), app).await;
     req
 }
 

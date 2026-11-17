@@ -23,6 +23,7 @@ mod notes;
 mod pictures;
 mod plan;
 mod presence;
+mod private_app;
 mod prompt;
 mod reading;
 mod restart;

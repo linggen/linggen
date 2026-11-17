@@ -22,19 +22,38 @@ pub(crate) async fn enabled(manager: &AgentManager) -> bool {
     manager.get_config_snapshot().await.agent.one_session_a_day
 }
 
-/// The builder's day's session id when the setting is on — made if it is
-/// not there yet; `None` when it is off.
-pub(crate) async fn current_if_on(manager: &AgentManager) -> Option<String> {
-    current_for_if_on(manager, None).await
-}
-
-/// [`current_if_on`] for the person `user_id` names (a request's): their
-/// own day, the builder's when it names the builder or no one.
-pub(crate) async fn current_for_if_on(manager: &AgentManager, user_id: Option<&str>) -> Option<String> {
-    if !enabled(manager).await {
+/// The day's session a chat from `app` (`None`: home — her own turns, the
+/// main page, the Mac's own chat) of the person `user_id` names joins, made
+/// if it is not there yet: their own day, the builder's when it names the
+/// builder or no one. `None` while the setting is off, and for an app that
+/// keeps a session of its own ([`takes`]). Every way into the day asks
+/// here; nothing else makes or names a day's id (the lock test below).
+pub(crate) async fn day_for(manager: &AgentManager, user_id: Option<&str>, app: Option<&str>) -> Option<String> {
+    if !enabled(manager).await || !takes(manager, app).await {
         return None;
     }
     Some(current(manager, person_of(user_id).as_deref()))
+}
+
+/// Whether a chat from `app` may be the day's: home's is; an app's only
+/// when it resolves now and does not declare `private-talk: true`. A private
+/// app keeps a session of its own, as a mission does; an app that does not
+/// resolve (removed, its SKILL.md unreadable) stays apart too — when it is
+/// not known to be shared, it is not.
+pub(crate) async fn takes(manager: &AgentManager, app: Option<&str>) -> bool {
+    let Some(name) = app else {
+        return true;
+    };
+    manager.skills.get_skill(name).await.is_some_and(|s| !s.private_talk)
+}
+
+/// The app's own chat to stand in when a request names a day its app does
+/// not join: its newest session that is not one of its one-off jobs, else
+/// none — a session is then made for it.
+pub(crate) fn own_chat(manager: &AgentManager, app: &str) -> Option<String> {
+    let mut sessions: Vec<SessionMeta> = manager.global_sessions.list_sessions().ok()?;
+    sessions.retain(|m| m.skill.as_deref() == Some(app) && !kept_apart(m) && !is_day(&m.id));
+    sessions.into_iter().max_by_key(|m| m.created_at).map(|m| m.id)
 }
 
 /// Whether the person `user_id` names may read and write session
@@ -61,7 +80,7 @@ fn person_of(user_id: Option<&str>) -> Option<String> {
 /// Today's session id for `person` (`state_fs::day_session::today`), made
 /// if missing. It is made once: a kept day is never written over, even when
 /// it cannot be read now or another request made it a moment ago.
-pub(crate) fn current(manager: &AgentManager, person: Option<&str>) -> String {
+fn current(manager: &AgentManager, person: Option<&str>) -> String {
     let day = day_session::today();
     let sid = day_session::id_for(day, person);
     let cwd = crate::util::resolve_path(&crate::paths::ensure_default_workspace());
@@ -148,17 +167,22 @@ pub(crate) fn is_day(session_id: &str) -> bool {
 pub(crate) struct Asker {
     #[serde(default)]
     pub(crate) user_id: Option<String>,
+    /// The app the hand-off is for: an app that keeps a session of its own
+    /// is given no day.
+    #[serde(default)]
+    pub(crate) skill: Option<String>,
 }
 
-/// GET /api/sessions/day — the day's session for a surface that joins it
-/// (the phone's hand-off): `{on, id, cwd}`; `id` is null while the setting
-/// is off.
+/// GET /api/sessions/day[?skill=] — the day's session for a surface that
+/// joins it (the phone's hand-off): `{on, id, cwd}`; `id` is null while the
+/// setting is off, and for an app that keeps a session of its own.
 pub(crate) async fn day_session_api(
     axum::extract::State(state): axum::extract::State<std::sync::Arc<crate::server::ServerState>>,
     axum::extract::Query(asker): axum::extract::Query<Asker>,
 ) -> axum::Json<serde_json::Value> {
-    let Some(id) = current_for_if_on(&state.manager, asker.user_id.as_deref()).await else {
-        return axum::Json(serde_json::json!({ "on": false, "id": null }));
+    let on = enabled(&state.manager).await;
+    let Some(id) = day_for(&state.manager, asker.user_id.as_deref(), asker.skill.as_deref()).await else {
+        return axum::Json(serde_json::json!({ "on": on, "id": null }));
     };
     let cwd = state
         .manager
@@ -287,6 +311,28 @@ mod tests {
             let want = listed.iter().find(|(f, _, _)| *f == rel).map_or(0, |e| e.1);
             assert_eq!(found, want, "{rel} {what}: look at it, then list it");
         }
+    }
+
+    /// Every way into the day, each asking the one rule (`day_for`, which
+    /// asks [`takes`]): a new way in fails here until it is looked at and
+    /// listed, and nothing outside this module names or makes a day's id.
+    const WAYS_IN: &[(&str, usize, &str)] = &[
+        ("src/server/chat/handler.rs", 2, "a chat with no session yet, or naming another person's day"),
+        ("src/server/api/sessions.rs", 2, "POST /api/sessions, and an app's list"),
+        ("src/server/yinyue_moments.rs", 1, "her moments, in the app they came from"),
+        ("src/server/resident/triggers.rs", 1, "a message delivered to an agent's chat"),
+        ("src/server/resident/session_roll.rs", 1, "her own thread: home"),
+    ];
+
+    #[test]
+    fn every_way_into_the_day_asks_the_one_rule() {
+        check(&[concat!("day_", "for(")], WAYS_IN, "comes into the day");
+        let own_ids = [
+            concat!("day_session::", "id_for("),
+            concat!("day_session::", "new_meta("),
+            concat!("day_session::", "today("),
+        ];
+        check(&own_ids, &[], "names or makes a day's id itself");
     }
 
     #[test]

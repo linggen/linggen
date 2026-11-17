@@ -398,10 +398,10 @@ async fn at_the_table(
     state: &Arc<ServerState>,
     moments: Vec<Moment>,
 ) -> (Vec<Moment>, Option<super::resident::Table>) {
-    let Some(day) = super::day_session::current_if_on(&state.manager).await else {
+    if !super::day_session::enabled(&state.manager).await {
         let table = table_of(&moments).map(|session| super::resident::Table { session, app: None });
         return (moments, table);
-    };
+    }
     let app = app_of(&moments);
     let (mut moments, later) = one_app(moments, app.as_deref());
     if !later.is_empty() {
@@ -410,10 +410,31 @@ async fn at_the_table(
             q.push_front(m);
         }
     }
+    let Some(day) = super::day_session::day_for(&state.manager, None, app.as_deref()).await else {
+        return apart_from_the_day(state, moments);
+    };
     for m in moments.iter_mut() {
         m.session = Some(day.clone());
     }
     (moments, Some(super::resident::Table { session: day, app }))
+}
+
+/// Moments of an app that keeps a session of its own, with one session a
+/// day on: her turn runs at the app chat they name, and her line lands
+/// nowhere else — never in a day. With no such chat named there is no table
+/// for her: her own thread is the day, so they go unanswered.
+fn apart_from_the_day(
+    state: &Arc<ServerState>,
+    mut moments: Vec<Moment>,
+) -> (Vec<Moment>, Option<super::resident::Table>) {
+    for m in moments.iter_mut() {
+        m.session = m.session.take().filter(|sid| !super::day_session::is_day(sid));
+    }
+    let Some(session) = table_of(&moments) else {
+        tell_unanswered(state, &moments, "apart");
+        return (Vec::new(), None);
+    };
+    (moments, Some(super::resident::Table { session, app: None }))
 }
 
 /// The app her turn stands in, of moments that may come from several: the
@@ -581,6 +602,10 @@ pub async fn yinyue_moment_loop(state: Arc<ServerState>) {
 /// the moments name.
 async fn wake_her(state: Arc<ServerState>, taken: Vec<Moment>, (asked, in_use): (bool, bool), emotion: String) {
     let (taken, table) = at_the_table(&state, taken).await;
+    if taken.is_empty() {
+        IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        return;
+    }
     let words = if asked {
         asked_kickoff(&taken)
     } else {

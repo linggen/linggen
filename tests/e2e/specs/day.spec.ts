@@ -1,7 +1,8 @@
 // One session a day (doc/one-ling-spec.md § One session a day), seen on the
 // pages: with the setting on, two apps' chats are the day's session; a
-// private app's reply streams to its own page and to no other page, and the
-// main page lists the day and folds another app's stretch to a line.
+// private app keeps a session of its own — its reply streams to its own page
+// and to no other page — and the main page lists the day and folds another
+// app's stretch to a line.
 import { mkdirSync, writeFileSync } from 'node:fs';
 import type { APIRequestContext, Page } from '@playwright/test';
 import { test, expect, expectWebRtc, send, composer } from '../support/world';
@@ -28,7 +29,12 @@ async function settingOn(request: APIRequestContext, url: string): Promise<strin
   return (await (await request.get(`${url}/api/sessions/day`)).json()).id;
 }
 
-const embed = (url: string, skill: string, day: string) => `${url}/embed?skill=${skill}&session=${day}&hide_toolbar=1`;
+const embed = (url: string, skill: string, session: string) => `${url}/embed?skill=${skill}&session=${session}&hide_toolbar=1`;
+
+/** The session a new chat of `skill` is given. */
+async function sessionFor(request: APIRequestContext, url: string, skill: string): Promise<string> {
+  return (await (await request.post(`${url}/api/sessions`, { data: { title: skill, skill } })).json()).id;
+}
 
 /** Text a page shows — visible copies only. */
 const seen = (page: Page, text: string) => page.getByText(text).filter({ visible: true });
@@ -43,9 +49,11 @@ test("a private app's reply reaches its own page alone; another app's stretch fo
   await installLedger(request, world.url, world.linggenHome);
   const day = await settingOn(request, world.url);
   expect(day).toMatch(/^sess-day-\d{4}-\d{2}-\d{2}$/);
+  const own = await sessionFor(request, world.url, 'ledger');
+  expect(own, 'the private app was given the day').not.toBe(day);
 
   const ledger = page;
-  await page.goto(embed(world.url, 'ledger', day));
+  await page.goto(embed(world.url, 'ledger', own));
   await expectWebRtc(page, httpRequests);
   const dice = await context.newPage();
   const main = await context.newPage();

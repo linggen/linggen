@@ -89,7 +89,7 @@ async fn day_for_new_chat(
     if !joins {
         return None;
     }
-    let id = crate::server::day_session::current_for_if_on(&state.manager, req.user_id.as_deref()).await?;
+    let id = crate::server::day_session::day_for(&state.manager, req.user_id.as_deref(), req.skill.as_deref()).await?;
     let meta = state.manager.global_sessions.get_session_meta(&id).ok()??;
     Some(Json(serde_json::json!({ "id": id, "cwd": meta.cwd })))
 }
@@ -231,7 +231,8 @@ pub(crate) async fn list_skill_sessions(
     State(state): State<Arc<ServerState>>,
     Query(query): Query<SkillSessionQuery>,
 ) -> impl IntoResponse {
-    let day = crate::server::day_session::current_for_if_on(&state.manager, query.user_id.as_deref()).await;
+    let day =
+        crate::server::day_session::day_for(&state.manager, query.user_id.as_deref(), Some(&query.skill)).await;
     match state.manager.global_sessions.list_sessions() {
         Ok(sessions) => {
             let api_sessions = match day {
@@ -248,9 +249,12 @@ pub(crate) async fn list_skill_sessions(
     }
 }
 
-/// An app's sessions with one session a day on: the day's first — the one
-/// its page picks up — then the ones the app keeps apart (a test save, an
-/// NPC's talk). Its chats from before stay in the main list, not here.
+/// An app's sessions with one session a day on, for an app that joins the
+/// day: the day's first — the one its page picks up — then the ones the app
+/// keeps apart (a test save, an NPC's talk). Its chats from before stay in
+/// the main list, not here. An app that keeps a session of its own (a
+/// private one) is given no day, and lists its sessions as with the
+/// setting off.
 fn with_the_day(
     sessions: Vec<crate::state_fs::sessions::SessionMeta>,
     skill: &str,
