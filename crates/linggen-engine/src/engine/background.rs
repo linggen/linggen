@@ -43,7 +43,6 @@ fn locked<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 impl Background {
     /// A task of this session (never another session's).
-    #[cfg(test)]
     pub fn get(&self, session: &str, id: &str) -> Option<BackgroundTask> {
         locked(&self.entries)
             .get(id)

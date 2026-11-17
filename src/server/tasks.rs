@@ -156,13 +156,16 @@ pub(crate) struct StopRequest {
 }
 
 /// POST /api/tasks/stop — the person stops one background task. Never the
-/// turn, never the session's other tasks.
+/// turn, never the session's other tasks. A native task is found in the
+/// engine's own list too: this list hears of a task through the event bus,
+/// which may not have caught up when the turn that started it has ended.
 pub(crate) async fn stop(
     axum::extract::State(state): axum::extract::State<std::sync::Arc<super::ServerState>>,
     axum::Json(req): axum::Json<StopRequest>,
 ) -> axum::response::Response {
     use axum::{http::StatusCode, response::IntoResponse};
-    let Some(task) = state.tasks.get(&req.session_id, &req.id) else {
+    let listed = state.tasks.get(&req.session_id, &req.id);
+    let Some(task) = listed.or_else(|| state.manager.background.get(&req.session_id, &req.id)) else {
         return (StatusCode::NOT_FOUND, "No such background task.").into_response();
     };
     if !task.is_running() {
