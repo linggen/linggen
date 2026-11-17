@@ -243,22 +243,18 @@ pub(crate) fn own_name_of(caller: &Caller) -> OwnName {
     }
 }
 
-/// The person behind paired device `device_id`, as memory resolves it
-/// ([`person_of`]) — the one seam the day's lookup takes its person from
-/// too: `Some(None)` for the owner's own device, `Some(Some(id))` for
-/// another person (a signed-out phone is its device), `None` for a device
-/// nobody paired.
-pub(crate) fn person_behind(device_id: &str) -> Option<Option<String>> {
-    let devices = crate::state_fs::devices::load_devices();
-    let device = devices.iter().find(|d| d.id == device_id)?;
-    Some(person_behind_device(device))
-}
-
-/// [`person_behind`] for a device found: the owner's other computer is the
-/// owner, as memory's door reads it (`asker_of`); a phone is its person.
-fn person_behind_device(device: &crate::server::api::pair::PairedDevice) -> Option<String> {
+/// The person behind a paired device, as memory resolves it ([`person_for`])
+/// — the one seam the day's lookup takes its person from too
+/// (`server::person::standing_of`), with this Mac's account (`owner_id`):
+/// `None` for the owner's own device, `Some(id)` for another person (a
+/// signed-out phone, and an unverified claim of this Mac's account, are
+/// their device).
+pub(crate) fn person_behind_for(
+    device: &crate::server::api::pair::PairedDevice,
+    owner_id: Option<&str>,
+) -> Option<String> {
     match Caller::of(device.clone()) {
-        Caller::Phone(phone) => person_of(&phone).map(|p| p.id),
+        Caller::Phone(phone) => person_for(&phone, owner_id).map(|p| p.id),
         _ => None,
     }
 }
@@ -409,17 +405,17 @@ mod tests {
             kind: Some(crate::state_fs::devices::DeviceKind::Machine),
             ..device(None)
         };
-        assert_eq!(person_behind_device(&machine), None);
+        assert_eq!(person_behind_for(&machine, None), None);
         let phone = PairedDevice {
             kind: Some(crate::state_fs::devices::DeviceKind::Phone),
             ..device(Some(("u-2", None)))
         };
-        assert_eq!(person_behind_device(&phone).as_deref(), Some("u-2"));
+        assert_eq!(person_behind_for(&phone, None).as_deref(), Some("u-2"));
         let signed_out = PairedDevice {
             kind: Some(crate::state_fs::devices::DeviceKind::Phone),
             ..device(None)
         };
-        assert_eq!(person_behind_device(&signed_out).as_deref(), Some("device:dev-1"));
+        assert_eq!(person_behind_for(&signed_out, None).as_deref(), Some("device:dev-1"));
     }
 
     #[test]

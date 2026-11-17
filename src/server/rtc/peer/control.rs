@@ -311,21 +311,26 @@ pub(super) fn handle_control_message(
     }
 }
 
-/// The person a peer's request is for, resolved once from the device it
-/// named, through memory's own seam (`api::memory::person_behind`): the
-/// owner's own device is the owner; a phone signed in to another account is
-/// that account, a signed-out phone its device. A peer with no device named
-/// is its channel's user when the tunnel knows it as the owner (this
-/// machine's page, the owner's account on the relay), else no one
-/// (`rtc::NO_ONE`) — never the owner by default.
-pub(super) fn person_for(user_ctx: &crate::server::rtc::UserContext, device: Option<&str>) -> String {
+/// The standing a peer's request is judged by, resolved from the device it
+/// named (`person::standing_of`). A peer with no device named is its
+/// channel's user at admin when the tunnel knows it as the owner (this
+/// machine's page, the owner's account on the relay), else no one at chat
+/// (`person::unnamed`) — never the owner by default.
+pub(super) fn standing_for(
+    user_ctx: &crate::server::rtc::UserContext,
+    device: Option<&str>,
+) -> crate::server::person::Standing {
     use crate::server::api::pair::{TUNNEL_LOCAL, TUNNEL_OWNER};
-    let no_one = || crate::server::rtc::NO_ONE.to_string();
     let Some(device) = device else {
         let owner = matches!(user_ctx.tunnel_mark(), TUNNEL_LOCAL | TUNNEL_OWNER);
-        return if owner { user_ctx.user_id.clone() } else { no_one() };
+        return crate::server::person::unnamed(owner, &user_ctx.user_id);
     };
-    crate::server::person::of_device(device)
+    crate::server::person::standing_of(device)
+}
+
+/// The person a peer's request is for ([`standing_for`]).
+pub(super) fn person_for(user_ctx: &crate::server::rtc::UserContext, device: Option<&str>) -> String {
+    standing_for(user_ctx, device).person().to_string()
 }
 
 /// Whether this peer is given what is the builder's alone

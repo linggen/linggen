@@ -132,15 +132,93 @@ pub(crate) fn takes_body(method: &str, path: &str) -> bool {
     method != "GET" && PERSON_BODIES.contains(&path)
 }
 
-/// The person behind paired device `device`, through memory's own seam
-/// (`api::memory::person_behind`): the owner's own device is the owner; a
-/// phone signed in to another account is that account, a signed-out phone
-/// its device; a device not paired is no one (`rtc::NO_ONE`).
-pub(crate) fn of_device(device: &str) -> String {
-    match crate::server::api::memory::person_behind(device) {
-        Some(Some(person)) => person,
-        Some(None) => crate::server::rtc::UserContext::owner(None).user_id,
-        None => crate::server::rtc::NO_ONE.to_string(),
+use crate::engine::permission::PermissionMode;
+
+/// Who a request from off this machine is for, and the level it stands at:
+/// the one answer every check point takes (a request, a frame, the media
+/// channel, a session stream). Made only here ([`standing_of`],
+/// [`unnamed`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Standing {
+    person: String,
+    level: PermissionMode,
+}
+
+impl Standing {
+    /// The person: the owner's id, another account, a device stamp, or no
+    /// one (`rtc::NO_ONE`).
+    pub(crate) fn person(&self) -> &str {
+        &self.person
+    }
+
+    /// The most it may do.
+    pub(crate) fn level(&self) -> PermissionMode {
+        self.level
+    }
+
+    /// The owner's standing.
+    pub(crate) fn is_owner(&self) -> bool {
+        self.level == PermissionMode::Admin
+    }
+}
+
+/// The most a device that is not the owner's may be raised to on this Mac.
+/// Admin — settings, the shell, everything — is the owner's alone.
+pub(crate) const MOST_FOR_ANOTHER: PermissionMode = PermissionMode::Edit;
+
+/// A device's level when nobody has set one on this Mac.
+pub(crate) const DEVICE_DEFAULT: PermissionMode = PermissionMode::Read;
+
+/// The standing of paired device `device`: the owner's device (an approved
+/// machine, or a phone whose claim of this Mac's account is verified,
+/// `PairedDevice::is_owners`) is the owner at admin; any other device is its
+/// person (memory's own seam, `api::memory::person_behind_for`) at the level
+/// set for it on this Mac, read when none is; a device not paired is no one
+/// at chat.
+pub(crate) fn standing_of(device: &str) -> Standing {
+    let mac = crate::account::load_account().and_then(|a| a.user_id);
+    let devices = crate::state_fs::devices::load_devices();
+    let owner = crate::server::rtc::UserContext::owner(mac.clone()).user_id;
+    standing_in(devices.iter().find(|d| d.id == device), mac.as_deref(), &owner)
+}
+
+/// [`standing_of`] for a row found (or not), with this Mac's account
+/// (`mac`) and the owner's person id (`owner`).
+fn standing_in(
+    device: Option<&crate::state_fs::devices::PairedDevice>,
+    mac: Option<&str>,
+    owner: &str,
+) -> Standing {
+    let Some(device) = device else {
+        return unnamed(false, "");
+    };
+    if device.is_owners(mac) {
+        return Standing {
+            person: owner.to_string(),
+            level: PermissionMode::Admin,
+        };
+    }
+    let person = crate::server::api::memory::person_behind_for(device, mac)
+        .unwrap_or_else(|| crate::server::rtc::NO_ONE.to_string());
+    Standing {
+        person,
+        level: device.permission.unwrap_or(DEVICE_DEFAULT).min(MOST_FOR_ANOTHER),
+    }
+}
+
+/// The standing of a peer that has named no device: its channel's user at
+/// admin when the tunnel knows it as the owner (`owner_known`: this
+/// machine's page, the owner's account on the relay), else no one at chat.
+pub(crate) fn unnamed(owner_known: bool, user_id: &str) -> Standing {
+    if owner_known {
+        return Standing {
+            person: user_id.to_string(),
+            level: PermissionMode::Admin,
+        };
+    }
+    Standing {
+        person: crate::server::rtc::NO_ONE.to_string(),
+        level: PermissionMode::Chat,
     }
 }
 
@@ -163,7 +241,7 @@ pub(crate) async fn lan_request_as(
     use axum::extract::FromRequest;
     use axum::http::header::CONTENT_LENGTH;
     use axum::response::IntoResponse;
-    let person = of_device(device);
+    let person = standing_of(device).person;
     let user_type = crate::server::rtc::PeerKind::Paired.as_str();
     let (mut parts, body) = req.into_parts();
     let url_path = parts.uri.path_and_query().map_or("/", |pq| pq.as_str()).to_string();
@@ -337,6 +415,76 @@ mod tests {
 
     /// A page reads the day for the person on its channel: a `user_id` it
     /// names is replaced, and other paths are left alone.
+    fn phone(account: Option<&str>) -> crate::state_fs::devices::PairedDevice {
+        crate::state_fs::devices::PairedDevice {
+            id: "dev-1".into(),
+            kind: Some(crate::state_fs::devices::DeviceKind::Phone),
+            account: account.map(|id| crate::state_fs::devices::AccountRef {
+                id: id.into(),
+                email: None,
+                name: None,
+                at: None,
+            }),
+            ..Default::default()
+        }
+    }
+
+    /// The owner's device is the owner at admin: an approved machine, and a
+    /// phone whose claim of this Mac's account is verified.
+    #[test]
+    fn the_owners_device_stands_as_the_owner() {
+        use crate::engine::permission::PermissionMode::*;
+        let verified = crate::state_fs::devices::PairedDevice {
+            verified_account: Some("u-owner".into()),
+            ..phone(Some("u-owner"))
+        };
+        let s = super::standing_in(Some(&verified), Some("u-owner"), "u-owner");
+        assert_eq!((s.person(), s.level()), ("u-owner", Admin));
+        let machine = crate::state_fs::devices::PairedDevice {
+            kind: Some(crate::state_fs::devices::DeviceKind::Machine),
+            ..phone(None)
+        };
+        assert_eq!(super::standing_in(Some(&machine), None, "__local__").level(), Admin);
+    }
+
+    /// Any other device stands at the level set for it, read when none is,
+    /// never above edit; an unverified claim of the owner's account is its
+    /// device; a device not paired is no one at chat.
+    #[test]
+    fn another_device_stands_at_its_level() {
+        use crate::engine::permission::PermissionMode::*;
+        let claimed = super::standing_in(Some(&phone(Some("u-owner"))), Some("u-owner"), "u-owner");
+        assert_eq!((claimed.person(), claimed.level()), ("device:dev-1", Read));
+        let friend = super::standing_in(Some(&phone(Some("u-friend"))), Some("u-owner"), "u-owner");
+        assert_eq!((friend.person(), friend.level()), ("u-friend", Read));
+        let raised = crate::state_fs::devices::PairedDevice {
+            permission: Some(Edit),
+            ..phone(Some("u-friend"))
+        };
+        assert_eq!(super::standing_in(Some(&raised), Some("u-owner"), "u-owner").level(), Edit);
+        let over = crate::state_fs::devices::PairedDevice {
+            permission: Some(Admin),
+            ..phone(Some("u-friend"))
+        };
+        assert_eq!(super::standing_in(Some(&over), Some("u-owner"), "u-owner").level(), Edit);
+        let lowered = crate::state_fs::devices::PairedDevice {
+            permission: Some(Chat),
+            ..phone(None)
+        };
+        assert_eq!(super::standing_in(Some(&lowered), Some("u-owner"), "u-owner").level(), Chat);
+        let nobody = super::standing_in(None, Some("u-owner"), "u-owner");
+        assert_eq!((nobody.person(), nobody.level()), (crate::server::rtc::NO_ONE, Chat));
+    }
+
+    /// A peer that named no device is the owner only when the tunnel knows it.
+    #[test]
+    fn an_unnamed_peer_is_the_owner_only_when_known() {
+        use crate::engine::permission::PermissionMode::*;
+        assert_eq!(super::unnamed(true, "u-owner").level(), Admin);
+        let stranger = super::unnamed(false, "u-owner");
+        assert_eq!((stranger.person(), stranger.level()), (crate::server::rtc::NO_ONE, Chat));
+    }
+
     #[test]
     fn a_page_reads_the_day_of_its_channels_person() {
         assert_eq!(super::with_person("/api/sessions/day", "u 1"), "/api/sessions/day?user_id=u%201");

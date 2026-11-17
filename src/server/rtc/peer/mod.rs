@@ -27,6 +27,7 @@ mod inbound;
 mod inference;
 mod media_channel;
 mod response;
+mod standing;
 mod stun;
 use control::{handle_control_message, process_control_request_async};
 use forward::{forward_event_to_channels, EventFilter};
@@ -339,8 +340,11 @@ struct PeerLoop {
     /// the peer to name its device is counted from here (`IDENTIFY_GRACE`).
     first_request: Option<Instant>,
     /// Track which session IDs belong to this user (for event filtering).
-    /// Populated from session store on connect, updated on SessionCreated events.
+    /// Populated from session store on connect and again when the peer's
+    /// person changes, updated on SessionCreated events.
     user_session_ids: HashSet<String>,
+    /// The standing this peer is judged by (`standing::PeerStanding`).
+    standing: standing::PeerStanding,
     // -- Page state push (replaces HTTP polling storm) --
     view_ctx: super::page_state::ViewContext,
     dirty_flags: u64,
@@ -530,7 +534,32 @@ async fn run_peer(
     }
 }
 
+/// The ids of the sessions `user_id` owns.
+fn sessions_of(state: &ServerState, user_id: &str) -> HashSet<String> {
+    let Ok(sessions) = state.manager.global_sessions.list_sessions() else {
+        return HashSet::new();
+    };
+    sessions
+        .into_iter()
+        .filter(|s| s.user_id.as_deref() == Some(user_id))
+        .map(|s| s.id)
+        .collect()
+}
+
 impl PeerLoop {
+    /// The standing this peer is judged by now; when its person changed,
+    /// the sessions it is given are that person's.
+    fn standing(&mut self) -> crate::server::person::Standing {
+        let device = self.peer_actor.lock_ok().as_ref().map(|a| a.device.clone());
+        let (now, moved) = self.standing.current(&self.user_ctx, device);
+        if moved {
+            let whose = standing::seen_as(&self.user_ctx, &now);
+            self.user_session_ids =
+                sessions_of(&self.state, whose.as_deref().unwrap_or(&self.user_ctx.user_id));
+        }
+        now
+    }
+
     async fn new(
         rtc: Rtc,
         state: Arc<ServerState>,
@@ -547,14 +576,10 @@ impl PeerLoop {
             let (consumer_used, _) = store.get_usage(&user_ctx.user_id);
             tokens_used.store(consumer_used, std::sync::atomic::Ordering::Relaxed);
         }
-        let mut user_session_ids = HashSet::new();
-        if let Ok(sessions) = state.manager.global_sessions.list_sessions() {
-            for s in sessions {
-                if s.user_id.as_deref() == Some(&user_ctx.user_id) {
-                    user_session_ids.insert(s.id);
-                }
-            }
-        }
+        let device = peer_actor.lock_ok().as_ref().map(|a| a.device.clone());
+        let standing = standing::PeerStanding::new(&user_ctx, device);
+        let whose = standing::seen_as(&user_ctx, standing.resolved());
+        let user_session_ids = sessions_of(&state, whose.as_deref().unwrap_or(&user_ctx.user_id));
         Self {
             rtc,
             state,
@@ -581,6 +606,7 @@ impl PeerLoop {
             born: Instant::now(),
             first_request: None,
             user_session_ids,
+            standing,
             view_ctx: super::page_state::ViewContext::default(),
             dirty_flags: 0,
             force_page_state: false,
@@ -718,22 +744,23 @@ impl PeerLoop {
     /// Whether this peer's person may be streamed session `session_id`: a
     /// day only to its own person, resolved from the device the peer named
     /// (`control::person_for`); any other session as before.
-    fn may_stream_day(&self, session_id: &str) -> bool {
+    fn may_stream_day(&mut self, session_id: &str) -> bool {
         if !crate::server::day_session::is_day(session_id) {
             return true;
         }
-        let device = self.peer_actor.lock_ok().as_ref().map(|a| a.device.clone());
-        let person = control::person_for(&self.user_ctx, device.as_deref());
+        let person = self.standing().person().to_string();
         crate::server::day_session::may_enter(session_id, Some(&person))
     }
 
     fn open_session_channel(&mut self, id: str0m::channel::ChannelId, session_id: &str) {
-        // Verify session ownership for non-admin users.
+        // Verify session ownership below the owner's standing: a peer is
+        // streamed only its own person's sessions (`standing::seen_as`).
         // Check user_session_ids first (fast), then fall back to session store
         // (handles race where channel opens before session_created event).
-        let mut allowed =
-            self.user_ctx.permission.is_admin() || self.user_session_ids.contains(session_id);
-        if !allowed {
+        let now = self.standing();
+        let whose = standing::seen_as(&self.user_ctx, &now);
+        let mut allowed = whose.is_none() || self.user_session_ids.contains(session_id);
+        if let (false, Some(whose)) = (allowed, whose.as_deref()) {
             // Check session store — session may have just been created
             if let Ok(Some(meta)) = self
                 .state
@@ -741,7 +768,7 @@ impl PeerLoop {
                 .global_sessions
                 .get_session_meta(session_id)
             {
-                if meta.user_id.as_deref() == Some(&self.user_ctx.user_id) {
+                if meta.user_id.as_deref() == Some(whose) {
                     self.user_session_ids.insert(session_id.to_string());
                     allowed = true;
                 }
@@ -800,10 +827,13 @@ impl PeerLoop {
 
     async fn on_media_data(&mut self, data: str0m::channel::ChannelData) {
         // Uploads write into the owner's library, so only a
-        // fully paired admin peer may start one; gets follow
-        // the control channel's endpoint rules.
+        // fully paired peer standing at edit may start one;
+        // gets follow the control channel's endpoint rules.
         let pairing = self.user_ctx.pairing_only();
-        let may_put = !pairing && self.user_ctx.permission.is_admin();
+        let level = self.standing().level();
+        let may_put = !pairing
+            && self.user_ctx.permission.is_admin()
+            && level >= crate::engine::permission::PermissionMode::Edit;
         let reply = if data.binary {
             media_channel::handle_binary(&data.data, &mut self.media_transfer).await
         } else {
@@ -1099,10 +1129,12 @@ impl PeerLoop {
         if !self.view_ctx.wants_pushes() {
             return;
         }
+        let now = self.standing();
+        let whose = standing::seen_as(&self.user_ctx, &now);
         let mut filter = EventFilter {
             session_ids: &mut self.user_session_ids,
-            user_id: &self.user_ctx.user_id,
-            is_admin: self.user_ctx.permission.is_admin(),
+            user_id: whose.as_deref().unwrap_or(&self.user_ctx.user_id),
+            is_admin: whose.is_none() && self.user_ctx.permission.is_admin(),
             view: self.view_ctx.view.as_deref(),
             pinned_session_id: if self.view_ctx.view.as_deref() == Some("embed") {
                 self.view_ctx.session_id.as_deref()
@@ -1171,17 +1203,19 @@ impl PeerLoop {
 
     /// Build page state off-loop and hand it back through the control reply
     /// channel. A forced push logs its size.
-    fn spawn_page_state(&self, cid: str0m::channel::ChannelId, flags: u64, forced: bool) {
+    fn spawn_page_state(&mut self, cid: str0m::channel::ChannelId, flags: u64, forced: bool) {
         let st = self.state.clone();
         let tx = self.ctrl_resp_tx.clone();
         let user_ctx_clone = self.user_ctx.clone();
         let ctx = self.view_ctx.clone();
-        let device = self.peer_actor.lock_ok().as_ref().map(|a| a.device.clone());
-        let identified = device.is_some();
-        let person = control::person_for(&self.user_ctx, device.as_deref());
+        let identified = self.peer_actor.lock_ok().is_some();
+        let now = self.standing();
+        let person = now.person().to_string();
+        let whose = standing::seen_as(&self.user_ctx, &now);
         tokio::spawn(async move {
             let who = (&user_ctx_clone, identified);
-            let ps = super::page_state::build_page_state(&st, &ctx, flags, who, &person).await;
+            let seen = (whose.as_deref(), &person[..]);
+            let ps = super::page_state::build_page_state(&st, &ctx, flags, who, seen).await;
             if let Ok(data) = serde_json::to_value(&ps) {
                 if forced {
                     let size = data.to_string().len();
