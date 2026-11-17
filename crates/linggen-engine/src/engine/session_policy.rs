@@ -83,7 +83,9 @@ impl SessionPolicy {
         let policy = self.clone();
         engine.respec(|spec| {
             let tools = spec.tools.clone();
-            *spec = spec.clone().typed(policy, super::session_spec::Memory::Full);
+            *spec = spec
+                .clone()
+                .typed(policy, super::session_spec::Memory::Full);
             spec.tools = tools;
         });
     }
