@@ -22,7 +22,8 @@ python3 -m http.server --directory mirror <port>
 ```
 
 `just release-gate --draft "engine=X.Y.Z app=linggen-vX.Y.Z"` (engine repo,
-`scripts/gate/`) does all of it: builds that mirror (a repo left out serves
+`scripts/gate/`) does all of it (its server is `http.server` without the
+`getfqdn` in `server_bind`, a reverse lookup that can hang the bind): builds that mirror (a repo left out serves
 its latest published release), boots a fresh Tart VM and a clone of
 `linggen-prev`, runs the checks, prints a table, exits non-zero on any FAIL.
 `--local` gates local builds instead of drafts. Exit 0 is the go to publish;
@@ -44,10 +45,17 @@ build --profile fast` binary from `linggen-prev`, without the app, and
 publishes nothing. When the baseline holds the same version number, the
 upgrade runs from the relabelled manifest (same bytes).
 
-Before the first green 2.3 `--draft` replaces `linggen-prev`, freeze the
-2.2.1 baseline (`tart clone linggen-prev linggen-prev-2.2.1`): the takeover
-checks need an old ling-mem daemon, and a baseline already on 2.3 has none
-(they are a GAP there). Pass it with `--prev linggen-prev-2.2.1`.
+Two kinds of baseline, told apart by what the baseline VM runs (never by a
+version typed in): an old `ling-mem` daemon on 9528 (≤ 2.2.x) gets the
+takeover checks; a `ling` that already hosts memory (2.3.0 on, nothing on
+9528) gets the in-place checks. What a kind cannot show is a GAP. Keep one
+of each in every run: `linggen-prev` rolls forward (2.3.x), and the frozen
+`linggen-prev-2.2.1` (`--prev linggen-prev-2.2.1`) keeps the takeover path.
+`--rebuild-prev` builds from the published releases of either kind: from
+2.3.0 on there is no ling-mem to install, the store is written through `ling
+mem`, and Claude Code gets the published `install-plugin.sh`
+(`linggen@linggen`). A rebuild deletes `$GATE_PREV_VM` before the upgrade is
+known green — point `GATE_PREV_VM` at a scratch name to try one.
 
 A train with a new engine and a new app is gated in ONE run, both drafts
 together (`--draft "engine=X.Y.Z app=linggen-vX.Y.Z"`). An engine-only run
@@ -130,6 +138,20 @@ engine that does not host memory puts `ling-mem.prev` back over the stand-in
 before that engine starts (it starts memory through `ling-mem`): the gate
 checks that the old daemon answers on 9528 with every row, including those
 written after the upgrade, and that rolling forward takes the store over again.
+
+In place (2.3.0 on, `scripts/gate/vm/inplace.sh`): rows are written through
+the baseline engine's `/mem` (three long-term, one staged, one core), the
+store's inode, backups and `ling-mem.prev` noted. After the upgrade: memory
+answers through the release, no ling-mem daemon and nothing on 9528, the same
+`memory/memory.lancedb` (opened in place), the lock naming the engine's pid,
+exactly one new `takeover-<stamp>/` named by `takeover-<version>.done` (a
+baseline that already ran this version is a GAP: no backup is due), every
+row by id with its tier, the core row in `ling mem session-start`, the
+stand-in at the release's version with `ling-mem.prev` as it was, MCP at both
+addresses, and a row written through the release. `ling update --rollback`
+to `ling.prev`: every row there, the release's included, no new backup when
+that version's marker was there, and a write; rolling forward finds every
+row and takes no second backup.
 
 Plugins: `linggen-prev` (2.2.x) has `linggen@linggen-memory` in Claude Code,
 as the builder's own Macs do. After `install-plugin.sh`, first install and
