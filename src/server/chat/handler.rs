@@ -1071,6 +1071,16 @@ async fn into_the_day(state: &Arc<ServerState>, mut req: ChatRequest) -> ChatReq
         false,
         req.user_type != "consumer",
     );
+    // A day is its own person's: a request naming another's lands in its own.
+    let someone_elses = req
+        .session_id
+        .as_deref()
+        .is_some_and(|sid| !crate::server::day_session::may_enter(sid, req.user_id.as_deref()));
+    if someone_elses {
+        req.session_id =
+            crate::server::day_session::current_for_if_on(&state.manager, req.user_id.as_deref()).await;
+        return req;
+    }
     if req.session_id.is_some() || req.mission_id.is_some() || !joins {
         return req;
     }

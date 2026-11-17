@@ -284,6 +284,31 @@ pub(super) fn handle_control_message(
 /// Wrapping every body as `data` regardless of status is what made a refused
 /// plan action look like a success — the UI resolved, showed nothing, and the
 /// user was left clicking a button that did nothing.
+/// The ways into the day a page reads by URL: each is answered for the
+/// person on this channel, never for one the page names.
+const PERSON_PATHS: &[&str] = &[
+    "/api/sessions/day",
+    "/api/skill-sessions",
+    "/api/skill-sessions/state",
+    "/api/workspace/state",
+];
+
+/// `url_path` asking for this channel's person when it is a way into the
+/// day: any `user_id` the page put there is replaced by the channel's own.
+fn with_person(url_path: &str, user_id: &str) -> String {
+    let (path, query) = url_path.split_once('?').unwrap_or((url_path, ""));
+    if !PERSON_PATHS.contains(&path) {
+        return url_path.to_string();
+    }
+    let mut pairs: Vec<&str> = query
+        .split('&')
+        .filter(|p| !p.is_empty() && !p.starts_with("user_id="))
+        .collect();
+    let person = format!("user_id={}", urlencoding::encode(user_id));
+    pairs.push(&person);
+    format!("{path}?{}", pairs.join("&"))
+}
+
 fn wrap_endpoint_response(status: u16, body: serde_json::Value) -> serde_json::Value {
     if (200..300).contains(&status) {
         return serde_json::json!({ "data": body });
@@ -455,6 +480,7 @@ pub(super) async fn process_control_request_async(
             {
                 return serde_json::json!({ "error": "Invalid URL path" });
             }
+            let url_path = with_person(&url_path, &user_ctx.user_id);
             let url = format!("http://127.0.0.1:{port}{url_path}");
             // Per-request chatter → debug (fires on every status poll, session save,
             // etc. and drowns out lifecycle events at info level).
@@ -532,6 +558,18 @@ pub(super) async fn process_control_request_async(
 
 #[cfg(test)]
 mod tests {
+    /// A page reads the day for the person on its channel: a `user_id` it
+    /// names is replaced, and other paths are left alone.
+    #[test]
+    fn a_page_reads_the_day_of_its_channels_person() {
+        assert_eq!(super::with_person("/api/sessions/day", "u 1"), "/api/sessions/day?user_id=u%201");
+        assert_eq!(
+            super::with_person("/api/skill-sessions?skill=dice&user_id=other", "u1"),
+            "/api/skill-sessions?skill=dice&user_id=u1"
+        );
+        assert_eq!(super::with_person("/api/sessions?x=1", "u1"), "/api/sessions?x=1");
+    }
+
     use super::{is_text, named_device, reply_data, wrap_endpoint_response, IDENTIFY_GRACE};
     use crate::server::api::pair::Actor;
     use crate::server::rtc::UserContext;

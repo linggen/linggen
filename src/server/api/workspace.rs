@@ -288,6 +288,10 @@ struct WorkspaceStateResponse {
 pub(crate) struct ProjectQuery {
     project_root: String,
     session_id: Option<String>,
+    /// The person asking (set by the page's channel): a day is shown only
+    /// to its own person.
+    #[serde(default)]
+    user_id: Option<String>,
 }
 
 pub(crate) async fn get_workspace_state(
@@ -317,7 +321,10 @@ pub(crate) async fn get_workspace_state(
     // The main page stands at home: a private app's talk is not shown here.
     let (messages, day) = match sid {
         "" => (Vec::new(), None),
-        sid => crate::server::day_session::rows_for_page(&state.manager, sid, None).await,
+        sid => {
+            let asker = query.user_id.as_deref();
+            crate::server::day_session::rows_for_page(&state.manager, sid, (None, asker)).await
+        }
     };
     let running = !sid.is_empty() && run_calls::session_running(&state.manager, sid).await;
 

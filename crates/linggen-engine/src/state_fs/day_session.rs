@@ -19,8 +19,6 @@ const PREFIX: &str = "sess-day-";
 /// What follows the date in the id of a day that is not the builder's own:
 /// another person's day on this engine is their own session.
 const PERSON: &str = "-p-";
-/// How much of a person's id their day's id keeps.
-const PERSON_MAX: usize = 64;
 
 /// The day `now` belongs to: the calendar date of `now` four hours earlier.
 pub fn day_of<Tz: TimeZone>(now: &DateTime<Tz>) -> NaiveDate {
@@ -46,13 +44,10 @@ pub fn id_for(day: NaiveDate, person: Option<&str>) -> String {
     }
 }
 
-/// A person's id as their day's id keeps it: letters, digits and `_`.
+/// A person's id as their day's id keeps it: every byte, as two hex digits
+/// — two ids never share a key.
 fn person_key(person: &str) -> String {
-    person
-        .chars()
-        .take(PERSON_MAX)
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
-        .collect()
+    person.bytes().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Whether `session_id` is a day's session.
@@ -67,7 +62,7 @@ pub fn day_in(session_id: &str) -> Option<NaiveDate> {
     let person = &rest[10..];
     let named = person.is_empty()
         || person.strip_prefix(PERSON).is_some_and(|k| {
-            !k.is_empty() && k.len() <= PERSON_MAX && k.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+            !k.is_empty() && k.len() % 2 == 0 && k.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
         });
     if !named {
         return None;
@@ -137,14 +132,17 @@ mod tests {
     fn a_day_is_a_persons() {
         let d = date("2026-11-16");
         assert_eq!(id_for(d, None), "sess-day-2026-11-16");
-        let theirs = id_for(d, Some("U-42/x"));
-        assert_eq!(theirs, "sess-day-2026-11-16-p-u_42_x");
-        assert_ne!(theirs, id_for(d, Some("u-43")));
+        let theirs = id_for(d, Some("u-42"));
+        assert_eq!(theirs, "sess-day-2026-11-16-p-752d3432");
+        assert_ne!(theirs, id_for(d, Some("u_42")), "two ids never share a day");
+        let long = "u".repeat(90);
+        assert_ne!(id_for(d, Some(&long)), id_for(d, Some(&"u".repeat(91))), "nothing is cut");
         assert_eq!(day_in(&theirs), Some(d));
         assert!(!is_day_session("sess-day-2026-11-16-p-"));
-        assert!(!is_day_session("sess-day-2026-11-16-p-A"));
-        let meta = new_meta(&theirs, d, "/w", ("ling", Some("U-42/x")));
-        assert_eq!(meta.user_id.as_deref(), Some("U-42/x"));
+        assert!(!is_day_session("sess-day-2026-11-16-p-A1"));
+        assert!(!is_day_session("sess-day-2026-11-16-p-abc"));
+        let meta = new_meta(&theirs, d, "/w", ("ling", Some("u-42")));
+        assert_eq!(meta.user_id.as_deref(), Some("u-42"));
     }
 
     #[test]

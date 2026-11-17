@@ -37,6 +37,16 @@ pub(crate) async fn current_for_if_on(manager: &AgentManager, user_id: Option<&s
     Some(current(manager, person_of(user_id).as_deref()))
 }
 
+/// Whether the person `user_id` names may read and write session
+/// `session_id`: a day is its own person's alone; any other session is
+/// left as it is.
+pub(crate) fn may_enter(session_id: &str, user_id: Option<&str>) -> bool {
+    let Some(day) = day_session::day_in(session_id) else {
+        return true;
+    };
+    day_session::id_for(day, person_of(user_id).as_deref()) == session_id
+}
+
 /// Whose day a request's `user_id` is: `None` for the builder — no id, this
 /// machine's own, a paired device not yet named, or the builder's account.
 fn person_of(user_id: Option<&str>) -> Option<String> {
@@ -94,11 +104,16 @@ pub(crate) async fn seat_her(manager: &AgentManager, session_id: &str) {
 /// — the place each was written in, for the page to fold other apps' talk.
 /// A private app's rows are shown only on its own pages
 /// (`turn_place::sight`).
+/// `asker`: the person the page's channel is (`None`: the builder) — a day
+/// is shown only to its own person.
 pub(crate) async fn rows_for_page(
     manager: &AgentManager,
     session_id: &str,
-    page: Option<&str>,
+    (page, asker): (Option<&str>, Option<&str>),
 ) -> (Vec<ChatMsg>, Option<SessionMeta>) {
+    if !may_enter(session_id, asker) {
+        return (Vec::new(), None);
+    }
     let store = &manager.global_sessions;
     let reader = page.unwrap_or(crate::engine::turn_place::HOME_KEY);
     let rows = store.rows_seen_by(session_id, &Sight::page(reader)).unwrap_or_default();
@@ -127,13 +142,22 @@ pub(crate) fn is_day(session_id: &str) -> bool {
     day_session::is_day_session(session_id)
 }
 
+/// Who asks for a day by URL: the person on the page's channel
+/// (`rtc::peer::control` sets it); none is the builder.
+#[derive(serde::Deserialize)]
+pub(crate) struct Asker {
+    #[serde(default)]
+    pub(crate) user_id: Option<String>,
+}
+
 /// GET /api/sessions/day — the day's session for a surface that joins it
 /// (the phone's hand-off): `{on, id, cwd}`; `id` is null while the setting
 /// is off.
 pub(crate) async fn day_session_api(
     axum::extract::State(state): axum::extract::State<std::sync::Arc<crate::server::ServerState>>,
+    axum::extract::Query(asker): axum::extract::Query<Asker>,
 ) -> axum::Json<serde_json::Value> {
-    let Some(id) = current_if_on(&state.manager).await else {
+    let Some(id) = current_for_if_on(&state.manager, asker.user_id.as_deref()).await else {
         return axum::Json(serde_json::json!({ "on": false, "id": null }));
     };
     let cwd = state
@@ -207,23 +231,26 @@ mod tests {
     /// Every place that rewrites rows already kept, and why each row keeps
     /// its stamp: a rewrite never drops a row's place or `kept_to`.
     const ROW_REWRITERS: &[(&str, usize, &str)] = &[
-        ("crates/linggen-engine/src/engine/agent/mod.rs", 2, "passes a plan row through, stamped by its caller"),
         ("crates/linggen-engine/src/engine/context.rs", 1, "in-loop compaction: rows kept whole, the summary stamped"),
         ("src/server/chat/compact_rows.rs", 1, "compaction: rows kept whole, the summary stamped"),
         ("src/server/chat/clear_place.rs", 1, "a clear of one app's part: rows dropped, never changed"),
-        ("src/server/chat/plan_flow.rs", 1, "the plan row: written with the plan's own stamp"),
         ("crates/linggen-engine/src/state_fs/row_place_tests.rs", 1, "tests"),
     ];
 
-    /// Every listener of the event bus, and what it does with a kept event.
+    /// Every listener of the event bus (`EventBus::listen`, its one way in),
+    /// and what it does with a kept event.
     const BUS_LISTENERS: &[(&str, usize, &str)] = &[
         ("src/server/rtc/peer/mod.rs", 1, "the pages: forward judges the stamp"),
+        ("src/server/rtc/proxy_client.rs", 1, "room chat only: no session's words"),
         ("src/server/resident/triggers.rs", 1, "her heralds: a kept question is told only as waiting"),
         ("src/server/tasks.rs", 1, "the task list: entries carry their own stamp"),
         ("src/server/push/mod.rs", 1, "a mission's end: no session's words"),
         ("src/server/milestones.rs", 1, "kinds and times, no words"),
         ("src/server/event_log.rs", 1, "the engine's own local log"),
         ("src/server/mcp_agent.rs", 2, "a delegated run's end: refuses the day's session"),
+        ("src/server/quests_watch.rs", 1, "tests"),
+        ("src/server/chat/helpers.rs", 2, "tests"),
+        ("crates/linggen-engine/src/engine/event_bus.rs", 2, "the bus's own tests"),
     ];
 
     /// Every event sent with a stamp chosen by hand, and why it is right.
@@ -271,7 +298,6 @@ mod tests {
     #[test]
     fn every_rewrite_of_kept_rows_is_known() {
         let writers = [
-            concat!("update_last_plan_message", "("),
             concat!("edit_chat_history", "("),
             concat!("rewrite_chat_history", "("),
         ];
@@ -282,7 +308,7 @@ mod tests {
     /// every listener is listed, and no event is stamped by hand unlisted.
     #[test]
     fn every_listener_and_hand_stamp_of_the_bus_is_known() {
-        check(&[concat!("events_tx", ".subscribe()")], BUS_LISTENERS, "listens on the bus");
+        check(&[concat!(".lis", "ten()")], BUS_LISTENERS, "listens on the bus");
         check(&[concat!(".send", "_kept(")], HAND_STAMPS, "stamps an event by hand");
         check(&[concat!("Sender<", "ServerEvent>")], &[], "sends events past the bus");
     }

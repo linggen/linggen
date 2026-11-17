@@ -222,13 +222,16 @@ pub(crate) async fn get_session_image(
 #[derive(Deserialize)]
 pub(crate) struct SkillSessionQuery {
     skill: String,
+    /// The person asking (set by the page's channel): their own day.
+    #[serde(default)]
+    user_id: Option<String>,
 }
 
 pub(crate) async fn list_skill_sessions(
     State(state): State<Arc<ServerState>>,
     Query(query): Query<SkillSessionQuery>,
 ) -> impl IntoResponse {
-    let day = crate::server::day_session::current_if_on(&state.manager).await;
+    let day = crate::server::day_session::current_for_if_on(&state.manager, query.user_id.as_deref()).await;
     match state.manager.global_sessions.list_sessions() {
         Ok(sessions) => {
             let api_sessions = match day {
@@ -288,6 +291,9 @@ pub(crate) struct SkillSessionStateQuery {
     skill: Option<String>,
     #[serde(default)]
     session_id: Option<String>,
+    /// The person asking (set by the page's channel).
+    #[serde(default)]
+    user_id: Option<String>,
 }
 
 /// GET /api/skill-sessions/state — return messages for a skill session.
@@ -318,7 +324,7 @@ pub(crate) async fn get_skill_session_state(
 
     // An app's page: a private app's talk is shown on its own pages only.
     let (messages, day) =
-        crate::server::day_session::rows_for_page(&state.manager, &session_id, Some(&skill)).await;
+        crate::server::day_session::rows_for_page(&state.manager, &session_id, (Some(&skill), query.user_id.as_deref())).await;
 
     let running = run_calls::session_running(&state.manager, &session_id).await;
     let mapped = run_calls::with_run_calls(

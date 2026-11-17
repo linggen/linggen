@@ -121,7 +121,7 @@ pub(super) async fn last_spoken_line(
     sessions.sort_by_key(|m| std::cmp::Reverse(m.created_at));
     for meta in sessions {
         let (history, _) =
-            crate::server::day_session::rows_for_page(&state.manager, &meta.id, None).await;
+            crate::server::day_session::rows_for_page(&state.manager, &meta.id, (None, None)).await;
         let line = history.iter().rev().find(|m| {
             !m.is_observation
                 && m.from_id != "user"
