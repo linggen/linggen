@@ -114,6 +114,8 @@ export const sessionApi = {
   /** Let (or stop) a failed model call be answered by another model in the session. */
   setModelFallback: (sessionId: string, allowed: boolean) =>
     apiPatch<void>('/api/sessions', { session_id: sessionId, model_fallback: allowed }),
+  setWork: (sessionId: string, work: 'code' | 'none') =>
+    apiPatch<void>('/api/sessions', { session_id: sessionId, work }),
   setPermission: (sessionId: string, path: string, mode: string) =>
     apiPatch<void>('/api/sessions/permission', { session_id: sessionId, path, mode }),
   pendingAskUser: () =>

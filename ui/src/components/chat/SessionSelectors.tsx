@@ -145,6 +145,35 @@ export const SessionFallbackToggle: React.FC = () => {
   );
 };
 
+/** Coding guidance is a switch on a person's chat or a delegated run. */
+export const SessionCodingToggle: React.FC = () => {
+  const sessionId = useSessionStore((s) => s.activeSessionId);
+  const session = useSessionStore((s) => s.allSessions.find((item) => item.id === s.activeSessionId));
+  if (!sessionId || !session || session.runtime === 'claude_agent_sdk'
+    || session.creator === 'mission' || session.mission_id) return null;
+  const delegate = session.creator === 'external';
+  const handoff = sessionId.startsWith('sess-handoff-');
+  if (!delegate && !handoff && (session.skill || /^sess-day-\d{4}-\d{2}-\d{2}(-p-[a-z0-9_]+)?$/.test(sessionId)
+    || /^sess-yinyue($|-)/.test(sessionId))) return null;
+  const on = session.work === 'code';
+  const change = () => {
+    const work: SessionInfo['work'] = on ? null : 'code';
+    const update = (item: SessionInfo) => item.id === sessionId ? { ...item, work } : item;
+    useSessionStore.setState((s) => ({ allSessions: s.allSessions.map(update), sessions: s.sessions.map(update) }));
+    sessionApi.setWork(sessionId, work ?? 'none').catch((error) => {
+      const revert = (item: SessionInfo) => item.id === sessionId ? { ...item, work: session.work } : item;
+      useSessionStore.setState((s) => ({ allSessions: s.allSessions.map(revert), sessions: s.sessions.map(revert) }));
+      useUiStore.getState().addToast({ variant: 'error', message: apiErrorMessage(error) });
+    });
+  };
+  return <button type="button"
+    className={`text-[11px] border rounded px-1.5 py-0.5 font-semibold ${on
+      ? 'border-current bg-white dark:bg-black/30 text-blue-600 dark:text-blue-400'
+      : 'border-slate-200 dark:border-white/10 text-slate-300 dark:text-slate-600'}`}
+    onClick={(e) => { e.stopPropagation(); change(); }} aria-pressed={on}
+    title="Adds how to work on code to this chat's instructions.">Coding</button>;
+};
+
 /** Compact per-session permission mode selector shown in the run bar. */
 export const SessionModeSelector: React.FC = () => {
   const sessionMode = useUiStore((s) => s.sessionMode);

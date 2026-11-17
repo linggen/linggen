@@ -416,6 +416,6 @@ This is how `ling` can delegate exploration to itself: the sub-task runs in an i
 ## UI behavior
 
 - **New chat** — clicking `+` immediately creates a session in the default workspace; the request carries no folder. The page mirrors the open session's folder in memory only, so the folder of the chat open before never reaches the new one. No project picker dialog.
-- **Chat header** — shows the current working folder or project name (read-only). Updated reactively when the agent `cd`s.
+- **Chat header** — shows the current working folder or project name (read-only). Updated reactively when the agent `cd`s. A Coding switch beside the session controls adds or removes coding guidance for the next turn in a person's chat, delegate or hand-off; other sessions do not show it.
 - **Session list** — sessions can be grouped/labeled by their `project_name` field. No manual project management in the sidebar.
 - **Project cards** — removed from sidebar. Projects are auto-discovered, not manually managed.

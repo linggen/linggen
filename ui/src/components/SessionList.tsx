@@ -551,6 +551,7 @@ export const SessionList: React.FC<{
                     )}
                     <div className="flex items-center gap-1.5 mt-0.5">
                       {session.runtime === 'claude_agent_sdk' && <span className="text-[10px] text-orange-600 dark:text-orange-400">Claude</span>}
+                      {session.work === 'code' && <span className="text-[10px] px-1 rounded bg-blue-500/10 text-blue-600" data-no-i18n>code</span>}
                       {session.project_name && (
                         <span className="text-[10px] px-1 py-px rounded bg-slate-200/60 dark:bg-white/5 text-slate-500 truncate max-w-[80px]">
                           {session.project_name}
