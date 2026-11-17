@@ -231,7 +231,16 @@ pub(crate) fn own_name_of(caller: &Caller) -> OwnName {
 pub(crate) fn person_behind(device_id: &str) -> Option<Option<String>> {
     let devices = crate::state_fs::devices::load_devices();
     let device = devices.iter().find(|d| d.id == device_id)?;
-    Some(person_of(device).map(|p| p.id))
+    Some(person_behind_device(device))
+}
+
+/// [`person_behind`] for a device found: the owner's other computer is the
+/// owner, as memory's door reads it (`asker_of`); a phone is its person.
+fn person_behind_device(device: &crate::server::api::pair::PairedDevice) -> Option<String> {
+    match Caller::of(device.clone()) {
+        Caller::Phone(phone) => person_of(&phone).map(|p| p.id),
+        _ => None,
+    }
 }
 
 /// Who is behind this device, for the store. The Mac's own account is the
@@ -359,6 +368,28 @@ mod tests {
             relay_grant: None,
             superseded_grant: None,
         }
+    }
+
+    /// The day's lookup takes its person from this seam: the owner's other
+    /// computer is the owner, a phone signed in to another account is that
+    /// account, a signed-out phone its device.
+    #[test]
+    fn the_person_behind_a_device_is_the_doors() {
+        let machine = PairedDevice {
+            kind: Some(crate::state_fs::devices::DeviceKind::Machine),
+            ..device(None)
+        };
+        assert_eq!(person_behind_device(&machine), None);
+        let phone = PairedDevice {
+            kind: Some(crate::state_fs::devices::DeviceKind::Phone),
+            ..device(Some(("u-2", None)))
+        };
+        assert_eq!(person_behind_device(&phone).as_deref(), Some("u-2"));
+        let signed_out = PairedDevice {
+            kind: Some(crate::state_fs::devices::DeviceKind::Phone),
+            ..device(None)
+        };
+        assert_eq!(person_behind_device(&signed_out).as_deref(), Some("device:dev-1"));
     }
 
     #[test]

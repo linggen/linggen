@@ -715,6 +715,18 @@ impl PeerLoop {
         }
     }
 
+    /// Whether this peer's person may be streamed session `session_id`: a
+    /// day only to its own person, resolved from the device the peer named
+    /// (`control::person_for`); any other session as before.
+    fn may_stream_day(&self, session_id: &str) -> bool {
+        if !crate::server::day_session::is_day(session_id) {
+            return true;
+        }
+        let device = self.peer_actor.lock_ok().as_ref().map(|a| a.device.clone());
+        let person = control::person_for(&self.user_ctx, device.as_deref());
+        crate::server::day_session::may_enter(session_id, Some(&person))
+    }
+
     fn open_session_channel(&mut self, id: str0m::channel::ChannelId, session_id: &str) {
         // Verify session ownership for non-admin users.
         // Check user_session_ids first (fast), then fall back to session store
@@ -740,6 +752,10 @@ impl PeerLoop {
                 "Rejected session channel for {session_id} — not owned by user {}",
                 self.user_ctx.user_id
             );
+            return;
+        }
+        if !self.may_stream_day(session_id) {
+            tracing::warn!("Rejected session channel for {session_id} — another person's day");
             return;
         }
         self.session_channels.insert(session_id.to_string(), id);

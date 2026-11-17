@@ -314,7 +314,7 @@ const PERSON_BODIES: &[&str] = &[
 /// is its channel's user when the tunnel knows it as the owner (this
 /// machine's page, the owner's account on the relay), else no one
 /// (`rtc::NO_ONE`) — never the owner by default.
-fn person_for(user_ctx: &crate::server::rtc::UserContext, device: Option<&str>) -> String {
+pub(super) fn person_for(user_ctx: &crate::server::rtc::UserContext, device: Option<&str>) -> String {
     use crate::server::api::pair::{TUNNEL_LOCAL, TUNNEL_OWNER};
     let no_one = || crate::server::rtc::NO_ONE.to_string();
     let Some(device) = device else {
@@ -542,7 +542,8 @@ pub(super) async fn process_control_request_async(
                 .unwrap_or(&serde_json::Value::Null)
                 .clone();
             // A body that comes into a session is sent as this peer's person.
-            if method != "GET" && PERSON_BODIES.contains(&url_path.as_str()) {
+            let path = url_path.split_once('?').map_or(url_path.as_str(), |(p, _)| p);
+            if method != "GET" && PERSON_BODIES.contains(&path) {
                 let user_type = user_ctx.user_type_for(actor.lock_ok().is_some());
                 as_person(&mut body_val, &person, user_type);
             }

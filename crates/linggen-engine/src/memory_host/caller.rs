@@ -42,7 +42,8 @@ impl Caller {
         matches!(self, Caller::Owner | Caller::Machine(_))
     }
 
-    fn of(device: PairedDevice) -> Self {
+    /// The caller a paired row is, by its kind.
+    pub fn of(device: PairedDevice) -> Self {
         match device.kind() {
             DeviceKind::Machine => Caller::Machine(device),
             DeviceKind::Phone => Caller::Phone(device),

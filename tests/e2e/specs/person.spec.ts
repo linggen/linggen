@@ -1,14 +1,15 @@
 // A day is its own person's (doc/one-ling-spec.md § One session a day). A
 // phone paired to this Mac and signed in to another account reaches it the
 // way a phone on the LAN does: its channel opened with the phone's token,
-// every request riding that channel. It is given its own person's day, and
-// a message it sends naming the builder's day lands in its own.
+// every request riding that channel. It is given its own person's day, a
+// message it sends naming the builder's day lands in its own, and nothing
+// of the builder's day streams to it.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { test, expect, expectWebRtc, send, composer } from '../support/world';
 
 const PHONE = { id: 'phone-friend', token: 'tok-friend-phone', account: 'u-friend' };
 
-test.use({ scenario: { scripts: { ling: [{ text: 'Rolled for the friend.' }] } } });
+test.use({ scenario: { scripts: { ling: [{ text: 'Rolled for the friend.' }, { text: 'BUILDER-ONLY reply.' }] } } });
 
 /** The friend's phone, paired to this Mac and signed in to their account. */
 function pairFriendsPhone(home: string) {
@@ -54,4 +55,13 @@ test("another person's paired phone, over the channel, gets its own day and neve
   await send(page, 'FRIEND-WORDS roll for me');
   await expect.poll(() => rows(world.linggenHome, theirs)).toContain('FRIEND-WORDS');
   expect(rows(world.linggenHome, mine), "the phone wrote into the builder's day").not.toContain('FRIEND-WORDS');
+
+  // The builder talks in their own day, on this Mac: the phone, pinned to
+  // that day's id, is streamed none of it.
+  await request.post(`${world.url}/api/chat`, {
+    data: { session_id: mine, project_root: world.work, message: 'BUILDER-ONLY words', skill_name: 'dice' },
+  });
+  await expect.poll(() => rows(world.linggenHome, mine)).toContain('BUILDER-ONLY reply.');
+  await page.waitForTimeout(500);
+  await expect(page.getByText('BUILDER-ONLY')).toHaveCount(0);
 });
