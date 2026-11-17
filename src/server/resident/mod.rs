@@ -30,6 +30,7 @@ mod ambient;
 mod mission_fact;
 pub(crate) mod guard;
 mod look_again;
+mod run_fault;
 mod session_roll;
 mod spoken;
 mod triggers;

@@ -68,7 +68,8 @@ pub(super) async fn ambient_glance(state: &Arc<ServerState>) {
         gone, the quiet, your own mood — say ONE short line in your voice, spoken aloud, plain \
         prose. This is just you being present, never a report: never narrate their work or what \
         an agent did. If they're heads-down working, let them be. A line marked already told is \
-        not news. You cannot act this turn; if something needs doing, say so in your one line and ask. When in doubt, SILENT."
+        not news. This turn can speak, never act: nothing you say here is done, sent, or handed to anyone — \
+        not to Ling, not to the phone. When in doubt, SILENT."
         .to_string();
     wake_and_speak(state.clone(), (kickoff, None), "neutral", "timer", Reach::SpeakOnly, None).await;
 }

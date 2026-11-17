@@ -365,7 +365,15 @@ Three rules, each earned:
 2. **Never dropped.** A problem that exists and has not been said is due at
    every moment the resident's gates allow, until it is said. The record starts
    when the resident **speaks**, never when it is asked: a SILENT reply or a
-   failed run defers, it does not dismiss.
+   failed run defers, it does not dismiss. The judge chooses when and in what
+   words, never whether: on the phone a `stay_quiet` or an unreachable model
+   puts a problem off (asked again after a while, or when the app comes back)
+   and only news may be judged out. A run of hers that failed is a fact held
+   for her next woken turn, never a sentence of the engine's.
+4. **No false promise.** What a turn can do is told to it as a fact of that
+   turn. A quiet glance speaks and offers; it never acts, sends or hands
+   anything to another agent, and its kickoff says so — she cannot say
+   "I've asked Ling" from a turn that cannot.
 3. **Every noticing carries what can be done, or why nothing can.** "Your
    storage is filling" with no next step is worse than silence. A problem
    nothing here can fix is still said, with the reason and where the person

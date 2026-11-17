@@ -324,13 +324,12 @@ pub(super) fn handle_notification(state: &Arc<ServerState>, payload: Notificatio
             };
             mission_fact::hand_or_hold(state, run);
         }
-        // A run errored — Yinyue surfaces it in her own voice. A DETERMINISTIC
-        // line over the speak spine, never an LLM wake: the failure may be the
-        // model backend itself, so waking her agent to announce it could fail too
-        // (and loop). This INCLUDES her own turns failing (e.g. her model 400s) —
-        // the announce is a fixed TTS line, not a new run, so it can't loop, and a
-        // silent failure is exactly what leaves the user wondering what's wrong.
-        // Rate-limited so an error storm doesn't make her chant.
+        // A run errored — she is handed the facts and words them, never a
+        // line of the engine's. Another agent's failure wakes her as a fault
+        // at once. Her own (or a sign-in failure, which her model shares)
+        // cannot: waking her to say her mind is unreachable runs the very
+        // thing that failed, and loops — so it is held and rides her next
+        // woken turn (`run_fault`). Rate-limited so an error storm is one fact.
         NotificationPayload::RunFailed {
             agent_id,
             auth_required,
@@ -339,22 +338,21 @@ pub(super) fn handle_notification(state: &Arc<ServerState>, payload: Notificatio
             if !error_announce_allowed() {
                 return; // an error storm shouldn't make her repeat herself
             }
-            // Gate on the Pet master switch (async read), then surface it.
             let state = state.clone();
             tokio::spawn(async move {
                 if !state.manager.get_config_snapshot().await.pet.enabled {
                     return;
                 }
-                tracing::info!("[yinyue-watch] run by '{agent_id}' failed; Yinyue surfaces it");
-                // An auth failure has a fix the user can act on — say the fix,
-                // not a vague apology a signed-out install would repeat forever.
-                let line = if auth_required {
-                    "I can't reach my mind right now — it needs a sign-in over in Settings."
-                        .to_string()
-                } else {
-                    error_line()
-                };
-                crate::server::api::yinyue::emit_speak(&state, line, Some("sad".to_string()), None);
+                let her_own = agent_id == YINYUE_AGENT;
+                let fact = super::run_fault::fact(&agent_id, auth_required, her_own);
+                tracing::info!("[yinyue-watch] run by '{agent_id}' failed; Yinyue is handed the fact");
+                if her_own || auth_required {
+                    super::run_fault::hold(fact);
+                    return;
+                }
+                if wake_fault(state, fact.clone()).await.is_none() {
+                    super::run_fault::hold(fact);
+                }
             });
         }
         // A run finished cleanly. This fires on every reply, so only herald when
@@ -464,19 +462,6 @@ pub(super) fn error_announce_allowed() -> bool {
     true
 }
 
-/// A brief, in-character "something's wrong" — her voice, never the raw error,
-/// never jargon. Rotated so repeated failures don't read like a canned alert.
-pub(super) fn error_line() -> String {
-    const LINES: [&str; 4] = [
-        "I'm sorry — something just went wrong behind the scenes.",
-        "Something stumbled just now. I'm sorry to bring it up.",
-        "That didn't go through cleanly — my apologies. I'm keeping an eye on it.",
-        "Something's off just now, and I wanted you to know.",
-    ];
-    let idx = (crate::util::now_ts_secs() as usize) % LINES.len();
-    LINES[idx].to_string()
-}
-
 /// Whether the user is at the screen right now. A herald of what they can
 /// already see — a finished reply, a question with its buttons — is noise: she
 /// speaks only when they have stepped away.
@@ -576,6 +561,8 @@ pub(super) async fn wake_and_speak(
     language: Option<String>,
 ) -> Option<String> {
     let said_in = table.as_ref().map(|t| t.session.clone());
+    // A failure of hers held for a turn that can carry it rides this one.
+    let (kickoff, rode) = super::run_fault::ride(kickoff);
     // `None`: the run failed or she produced nothing.
     let reply = match reach {
         Reach::Open => run_yinyue_turn(&state, kickoff, trigger_source).await,
@@ -583,8 +570,13 @@ pub(super) async fn wake_and_speak(
         Reach::SpeakOnly => {
             super::turn::run_home(&state, kickoff, trigger_source, reach, language).await
         }
-    }?;
-    let Some(line) = spoken_line(&reply) else {
+    };
+    let line = reply.as_deref().and_then(spoken_line);
+    let Some(line) = line else {
+        // Unsaid: the fact it carried waits for the next turn.
+        if let Some(f) = rode {
+            super::run_fault::hold(f);
+        }
         tracing::info!("[yinyue-watch] Yinyue chose silence");
         return None;
     };
