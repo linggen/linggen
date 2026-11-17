@@ -423,11 +423,12 @@ fn paired_device(_: Arc<ServerState>) -> CheckFuture {
     Box::pin(async { Ok(!crate::state_fs::devices::load_devices().is_empty()) })
 }
 
-/// Her voice is on and a surface holds her — she is being heard.
+/// Her voice is on and a surface of the builder's holds her — she is being
+/// heard.
 fn voice_heard(state: Arc<ServerState>) -> CheckFuture {
     Box::pin(async move {
         let pet = state.manager.get_config_snapshot().await.pet;
-        Ok(pet.enabled && !pet.muted && state.yinyue_holder().is_some())
+        Ok(pet.enabled && !pet.muted && state.yinyue_line_holder(None).is_some())
     })
 }
 

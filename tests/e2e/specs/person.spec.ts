@@ -341,3 +341,51 @@ test.describe('an app moment', () => {
     expect(wrong).toEqual([]);
   });
 });
+
+test.describe("the builder's own stage", () => {
+  test.use({ scenario: { scripts: { yinyue: [{ text: 'HER-LINE to the builder.' }] } } });
+
+  test("the builder's page holds her and keeps its readings; another person's phone keeps none", async ({ page, world, request, httpRequests, browser }) => {
+    await dayOnWithFriend(world, request);
+    // The builder's own page on this Mac: its stage holds her for the builder.
+    await page.addInitScript(keepControlAndHer);
+    await page.goto(`${world.url}/embed?skill=dice&hide_toolbar=1`);
+    await expectWebRtc(page, httpRequests);
+    await expect(composer(page)).toBeVisible();
+    await page.evaluate(() => {
+      const w = window as unknown as { __control: RTCDataChannel };
+      w.__control.send(JSON.stringify({ type: 'yinyue_subscribe', stage: true }));
+      w.__control.send(JSON.stringify({ type: 'topic_publish', topic: 'phone', op: 'status', payload: { who: 'BUILDER' }, retain: true }));
+    });
+    // The friend's phone, on its own channel, holds a stage and publishes too.
+    const friend = await (await browser.newContext()).newPage();
+    await friend.addInitScript(keepControlAndHer);
+    await friend.route('**/api/rtc/whip', (route) =>
+      route.continue({
+        headers: { ...route.request().headers(), 'x-linggen-device': PHONE.token, 'x-linggen-actor-device': PHONE.id },
+      }));
+    await friend.goto(`${world.url}/embed?skill=dice&hide_toolbar=1`);
+    await expect(composer(friend)).toBeVisible();
+    await expect
+      .poll(() => friend.evaluate(() => (window as unknown as { __control?: RTCDataChannel }).__control?.readyState))
+      .toBe('open');
+    await friend.evaluate(() => {
+      const w = window as unknown as { __control: RTCDataChannel };
+      w.__control.send(JSON.stringify({ type: 'yinyue_subscribe', stage: true }));
+      w.__control.send(JSON.stringify({ type: 'topic_publish', topic: 'phone', op: 'status', payload: { who: 'FRIEND' }, retain: true }));
+    });
+    await page.waitForTimeout(500);
+
+    await request.post(`${world.url}/api/yinyue/chat`, { data: { text: 'hello' } });
+    await expect
+      .poll(() => page.evaluate(() => (window as unknown as { __heard: string[] }).__heard.join('|')))
+      .toContain('HER-LINE');
+    const kept = await (await request.get(`${world.url}/api/topic/latest?topic=phone&op=status`)).text();
+    const friendHeard: string[] = await friend.evaluate(() => (window as unknown as { __heard: string[] }).__heard);
+    const wrong: string[] = [];
+    if (!kept.includes('BUILDER')) wrong.push(`the builder's reading was not kept: ${kept}`);
+    if (kept.includes('FRIEND')) wrong.push("the friend's reading was kept");
+    if (friendHeard.length > 0) wrong.push("the friend's phone was given her line");
+    expect(wrong).toEqual([]);
+  });
+});

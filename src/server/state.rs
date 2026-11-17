@@ -212,11 +212,6 @@ impl ServerState {
         self.next_peer_id.fetch_add(1, Ordering::Relaxed)
     }
 
-    /// The peer currently holding the Yinyue presenter lock, if any.
-    pub fn yinyue_holder(&self) -> Option<u64> {
-        yinyue_holder_of(&self.yinyue_presenters.lock_ok())
-    }
-
     /// The app chat session she is presenting in for `person`, if any
     /// ([`yinyue_stage_session_for`]).
     pub fn yinyue_stage_session(&self, person: Whose) -> Option<String> {
