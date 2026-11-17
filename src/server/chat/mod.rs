@@ -37,6 +37,7 @@ pub(crate) mod run_calls;
 mod runtime;
 pub(crate) use runtime::owner_turn_memory;
 mod skill_dispatch;
+pub(crate) use skill_dispatch::slash_command;
 mod structured;
 mod thread;
 pub(crate) mod turn_place;

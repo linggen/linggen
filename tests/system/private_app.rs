@@ -286,7 +286,10 @@ const LEDGER_RULES: &str = "You keep the ledger.";
 /// rows and its reply stand there, and the day holds none of it.
 #[tokio::test]
 async fn a_private_apps_slash_command_in_the_day_is_carried_to_its_own_chat() {
-    let setup = Setup::default().script(Agent::Ling, vec![text("LEDGER-REPLY carried.")]);
+    let setup = Setup::default().script(
+        Agent::Ling,
+        vec![text("LEDGER-REPLY carried."), text("LEDGER-REPLY addressed.")],
+    );
     let (w, _) = day_world_at(12, setup).await;
     install_ledger(&w).await;
     let day = w.api.get("/api/sessions/day").await["id"]
@@ -304,6 +307,12 @@ async fn a_private_apps_slash_command_in_the_day_is_carried_to_its_own_chat() {
     );
     let calls = w.model.calls_of(Agent::Ling);
     assert!(calls[0].text().contains(LEDGER_RULES), "the ledger's turn ran without its rules");
+    // Addressed to Ling, the same command is carried too.
+    let mark = w.mark();
+    let sent = say(&w, &day, None, "@ling //ledger LEDGER-ONLY once more").await;
+    let addressed = sent["session_id"].as_str().unwrap_or_default().to_string();
+    assert_ne!(addressed, day, "an addressed slash command ran in the day: {sent}");
+    w.finish_run(&addressed, Agent::Ling, mark).await;
     assert!(
         !holds_ledger(&day_text(&w, &day)),
         "the day holds the ledger's talk: {}",

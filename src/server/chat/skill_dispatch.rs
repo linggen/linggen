@@ -10,12 +10,8 @@ use super::ChatRunCtx;
 
 /// Dispatch a skill (slash command) invocation.
 pub(super) async fn run_skill_dispatch(ctx: &ChatRunCtx, engine: &mut crate::engine::AgentEngine) {
-    let parts: Vec<&str> = ctx.clean_msg.trim().splitn(2, ' ').collect();
-    let cmd = parts[0].trim_start_matches('/');
-    let user_args = parts
-        .get(1)
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
+    let (cmd, user_args) = slash_command(&ctx.clean_msg);
+    let user_args = user_args.map(str::to_string);
 
     // Resolve the skill, run policy/user_invocable checks, and handle
     // app-launcher (`--web`) flows that short-circuit before the agent
@@ -133,6 +129,16 @@ pub(super) async fn run_skill_dispatch(ctx: &ChatRunCtx, engine: &mut crate::eng
         }
         let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
     }
+}
+
+/// A slash command's name and its arguments, from the message without the
+/// `@name` that addressed it. The day's carry (`day_session`) reads it the
+/// same way.
+pub(crate) fn slash_command(words: &str) -> (&str, Option<&str>) {
+    let mut parts = words.trim().splitn(2, ' ');
+    let cmd = parts.next().unwrap_or("").trim_start_matches('/');
+    let args = parts.next().map(str::trim).filter(|s| !s.is_empty());
+    (cmd, args)
 }
 
 /// The line a turn shows when the day's session keeps the app it named out.

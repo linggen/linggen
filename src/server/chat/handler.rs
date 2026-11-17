@@ -1057,10 +1057,8 @@ async fn into_the_day(state: &Arc<ServerState>, mut req: ChatRequest) -> ChatReq
     use crate::server::day_session as day;
     // A private app the message takes up by name, in the day: the turn is
     // the app's, carried to its own chat below.
-    if let Some(name) = day::private_app_named(&state.manager, &req.message).await {
-        if lands_in_day(state, &req).await {
-            req.skill_name = Some(name);
-        }
+    if let Some(name) = private_app_taken_up(state, &req).await {
+        req.skill_name = Some(name);
     }
     let app = req.skill_name.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let named_day = req.session_id.as_deref().filter(|sid| day::is_day(sid));
@@ -1086,6 +1084,18 @@ async fn into_the_day(state: &Arc<ServerState>, mut req: ChatRequest) -> ChatReq
     }
     req.session_id = day::day_for(&state.manager, req.user_id.as_deref(), app).await;
     req
+}
+
+/// The private app `req`'s words take up by name (`/app …`, after any
+/// `@name`), when the request would be a turn of a day's session.
+async fn private_app_taken_up(state: &Arc<ServerState>, req: &ChatRequest) -> Option<String> {
+    use crate::server::day_session as day;
+    if !day::enabled(&state.manager).await || !lands_in_day(state, req).await {
+        return None;
+    }
+    let names = state.manager.mention_names(Path::new(&req.project_root)).await;
+    let words = leading_mention(&req.message, &names).map_or(req.message.as_str(), |(_, w)| w);
+    day::private_app_named(&state.manager, words).await
 }
 
 /// Whether `req`, as sent, would be a turn of a day's session: it names a

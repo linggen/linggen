@@ -46,17 +46,17 @@ pub(crate) async fn takes(manager: &AgentManager, app: Option<&str>) -> bool {
     place.private_app(&*manager.skills, true).await.is_none()
 }
 
-/// The private app a person's message takes up by its own words — `/name
-/// …`, or a trigger prefix the app claims — with the setting on; `None`
-/// otherwise. In a day it is carried to that app's own chat.
-pub(crate) async fn private_app_named(manager: &AgentManager, message: &str) -> Option<String> {
+/// The private app a person's words take up by name — `/name …`, or a
+/// trigger prefix the app claims — with the setting on; `None` otherwise.
+/// `words`: the message without the `@name` that addressed it, read as the
+/// turn's dispatch reads it. In a day it is carried to that app's own chat.
+pub(crate) async fn private_app_named(manager: &AgentManager, words: &str) -> Option<String> {
     if !enabled(manager).await {
         return None;
     }
-    let words = message.trim_start();
-    let name = match words.strip_prefix('/') {
-        Some(rest) => rest.split_whitespace().next()?.to_string(),
-        None => manager.skills.match_trigger(words).await?.0,
+    let name = match words.trim_start().starts_with('/') {
+        true => crate::server::chat::slash_command(words).0.to_string(),
+        false => manager.skills.match_trigger(words).await?.0,
     };
     let skill = manager.skills.get_skill(&name).await?;
     skill.private_talk.then_some(name)
@@ -350,10 +350,12 @@ mod tests {
     /// them, or is looked at and listed.
     const PLACE_SETTERS: &[(&str, usize, &str)] = &[
         ("crates/linggen-engine/src/engine/skill_activation.rs", 7, "the setter, guarded (and its doc line)"),
-        ("crates/linggen-engine/src/engine/turn_place/bind.rs", 2, "the place's setter, guarded, and leaving it"),
+        ("crates/linggen-engine/src/engine/turn_place/bind.rs", 4, "the place's setter, guarded, and leaving it"),
         ("crates/linggen-engine/src/engine/tools/delegation.rs", 1, "a subagent stands where its parent's turn stands"),
         ("crates/linggen-engine/src/engine/tool_registry.rs", 2, "the tool registry's pass-through"),
-        ("crates/linggen-engine/src/engine/tools/mod.rs", 1, "the field's own setter"),
+        ("crates/linggen-engine/src/engine/tools/mod.rs", 2, "the field's own setter"),
+        ("crates/linggen-engine/src/engine/mod.rs", 7, "clearing it (None)"),
+        ("crates/linggen-engine/src/engine/tool_exec.rs", 1, "clearing it (None)"),
         ("crates/linggen-engine/src/engine/light_turn/tests.rs", 1, "a test's own engine"),
         ("crates/linggen-engine/src/engine/prompt/persona_tests.rs", 6, "a test's own engine"),
         ("crates/linggen-engine/src/engine/turn_place/bind/grants_tests.rs", 1, "a test's own engine"),
@@ -362,7 +364,7 @@ mod tests {
     #[test]
     fn a_turns_place_and_active_skill_are_set_only_where_a_day_is_asked() {
         let setters = [
-            concat!(".active_skill", " = Some("),
+            concat!(".active_skill", " = "),
             concat!(".turn_place", " = "),
             concat!("set_active_", "skill("),
         ];
