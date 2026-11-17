@@ -25,11 +25,7 @@ fn peer(ps: Vec<PeerProblem>) -> Option<(String, Option<Vec<PeerProblem>>)> {
 }
 
 fn told_by_phone(days_ago: i64, level: u32) -> Option<Told> {
-    Some(Told {
-        at: NOW - days_ago * 86_400,
-        level,
-        by: "phone".into(),
-    })
+    Some(Told::new(NOW - days_ago * 86_400, level, "phone"))
 }
 
 #[test]

@@ -97,7 +97,7 @@ fn choose(
         ledger.reading(topic, found.is_some(), now);
         let Some(f) = found else { continue };
         let standing = super::told::standing(f.level, ledger.get(topic));
-        if due.is_none() && standing.due() {
+        if due.is_none() && super::told::due_now(f.level, ledger.get(topic), now) {
             due = Some(own_notice(topic, f, &standing, now));
         }
     }
@@ -110,7 +110,7 @@ fn choose(
         return due;
     }
     let problems = problems.unwrap_or_default();
-    let (p, standing) = ledger.peer_due(owner, &problems)?;
+    let (p, standing) = ledger.peer_due(owner, &problems, now)?;
     Some(peer_notice(&host, owner, p, &standing, now))
 }
 

@@ -6,11 +6,7 @@ use super::*;
 pub(crate) const PHONE_WIRE: &str = r#"{"host":"this phone","at":"2026-11-17T10:00:00.000Z","lines":["12 songs on this phone"],"problems":[{"key":"storage","level":1,"line":"storage: 8.3 GB free of 110.0 GB · 8% free","told":{"at":"2026-11-15T10:00:00.000Z","level":1,"by":"phone"}}]}"#;
 
 fn told(at: i64, level: u32) -> Told {
-    Told {
-        at,
-        level,
-        by: "phone".into(),
-    }
+    Told::new(at, level, "phone")
 }
 
 fn problem(level: u32, told: Option<Told>) -> PeerProblem {
@@ -173,4 +169,59 @@ fn one_file_holds_what_was_told() {
     walk(std::path::Path::new(src), &mut hits);
     assert_eq!(hits.len(), 1, "{hits:?}");
     assert!(hits[0].ends_with("perception/told.rs"), "{hits:?}");
+}
+
+const T0: i64 = 1_800_000_000;
+
+#[test]
+fn not_now_keeps_a_problem_quiet_a_week_then_it_is_due_again_at_the_same_level() {
+    let mut l = Ledger::default();
+    l.said("disk", 1, "mac", T0);
+    l.answered("disk", Answer::NotNow, 1, T0);
+    assert!(!due_now(1, l.get("disk"), T0 + 6 * 86_400));
+    assert!(due_now(2, l.get("disk"), T0 + 3600), "worse gives way at once");
+    let later = T0 + NOT_NOW_SECS;
+    assert!(due_now(1, l.get("disk"), later), "a not-now defers, it never drops");
+    // Said again: a new telling, the spent answer gone — not said at every
+    // glance after.
+    l.said("disk", 1, "mac", later);
+    assert_eq!(l.get("disk").unwrap().answer, None);
+    assert!(!due_now(1, l.get("disk"), later + 30 * 86_400));
+}
+
+#[test]
+fn every_other_answer_is_kept_and_leaves_the_rule_as_it_was() {
+    for a in [Answer::Done, Answer::Failed, Answer::Declined] {
+        let mut l = Ledger::default();
+        l.said("disk", 1, "mac", T0);
+        l.answered("disk", a, 1, T0);
+        assert_eq!(l.get("disk").unwrap().answer, Some(a));
+        assert!(!due_now(1, l.get("disk"), T0 + 60 * 86_400), "{a:?}");
+        assert!(due_now(2, l.get("disk"), T0), "{a:?}: worse is news");
+        // The record survives the file.
+        let back = Ledger::parse(std::str::from_utf8(&l.body().unwrap()).unwrap());
+        assert_eq!(back.get("disk").unwrap().answer, Some(a));
+    }
+}
+
+#[test]
+fn an_answer_with_no_telling_makes_the_record() {
+    let mut l = Ledger::default();
+    l.answered("disk", Answer::NotNow, 2, T0);
+    let t = l.get("disk").unwrap();
+    assert_eq!((t.level, t.answer), (2, Some(Answer::NotNow)));
+}
+
+#[test]
+fn the_owners_answer_crosses_and_is_shown_beside_the_telling() {
+    let v = serde_json::json!({"problems": [{"key": "storage", "level": 1, "line": "storage: 8 GB",
+        "told": {"at": "2026-11-15T10:00:00Z", "level": 1, "by": "phone",
+                 "answer": "not_now", "answered_at": "2026-11-16T10:00:00Z"}}]});
+    let p = parse_problems(&v, 200).unwrap().remove(0);
+    let t = p.told.clone().unwrap();
+    assert_eq!(t.answer, Some(Answer::NotNow));
+    let answered = chrono::DateTime::parse_from_rfc3339("2026-11-16T10:00:00Z").unwrap().timestamp();
+    assert_eq!(t.answered_at, Some(answered));
+    let words = Ledger::default().peer_standing("phone", &p).words(answered + 3600);
+    assert!(words.contains("answered not now 1h ago"), "{words}");
 }

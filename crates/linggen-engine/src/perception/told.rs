@@ -27,13 +27,68 @@ use std::path::PathBuf;
 /// not a disk that was cleared.
 pub const RECOVERED_AFTER_SECS: i64 = 86_400;
 
-/// When it was said, how bad it was then, and who said it.
+/// How long a "not now" keeps a problem quiet, unless it gets worse.
+pub const NOT_NOW_SECS: i64 = 7 * 86_400;
+
+/// What the person did with a problem she raised — kept on its one record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Answer {
+    /// Quiet for [`NOT_NOW_SECS`] unless it gets worse; then due again.
+    NotNow,
+    /// An offer ran and did what it says.
+    Done,
+    /// An offer ran and did not.
+    Failed,
+    /// They said no. Quiet until it is worse.
+    Declined,
+}
+
+impl Answer {
+    pub fn parse(s: &str) -> Option<Self> {
+        serde_json::from_value(serde_json::Value::String(s.to_string())).ok()
+    }
+
+    fn words(self) -> &'static str {
+        match self {
+            Answer::NotNow => "not now",
+            Answer::Done => "done",
+            Answer::Failed => "tried, and it failed",
+            Answer::Declined => "declined",
+        }
+    }
+}
+
+/// When it was said, how bad it was then, and who said it — and what the
+/// person answered, if they did.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Told {
     /// Unix seconds.
     pub at: i64,
     pub level: u32,
     pub by: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<Answer>,
+    /// Unix seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answered_at: Option<i64>,
+}
+
+impl Told {
+    pub fn new(at: i64, level: u32, by: &str) -> Self {
+        Self {
+            at,
+            level,
+            by: by.to_string(),
+            answer: None,
+            answered_at: None,
+        }
+    }
+
+    /// A "not now" given before `now`: a telling after it is a new one.
+    fn deferred_before(&self, now: i64) -> bool {
+        self.answer == Some(Answer::NotNow) && self.answered_at.is_some_and(|a| a < now)
+    }
 }
 
 /// Where a problem stands against what has been said about it.
@@ -57,10 +112,20 @@ impl Standing {
     /// the telling, not an instruction: she reads "told 3h ago" and knows.
     pub fn words(&self, now: i64) -> String {
         let ago = |t: &Told| super::activity::ago(now.saturating_sub(t.at));
+        let answered = |t: &Told| match (t.answer, t.answered_at) {
+            (Some(a), Some(at)) => format!(
+                ", answered {} {}",
+                a.words(),
+                super::activity::ago(now.saturating_sub(at))
+            ),
+            _ => String::new(),
+        };
         match self {
             Standing::New => "not told yet".to_string(),
-            Standing::Worse(t) => format!("worse than when told {}", ago(t)),
-            Standing::Told(t) => format!("already told {}, no worse since", ago(t)),
+            Standing::Worse(t) => format!("worse than when told {}{}", ago(t), answered(t)),
+            Standing::Told(t) => {
+                format!("already told {}, no worse since{}", ago(t), answered(t))
+            }
         }
     }
 }
@@ -73,6 +138,21 @@ pub fn standing(level: u32, told: Option<&Told>) -> Standing {
         Some(t) if level > t.level => Standing::Worse(t.clone()),
         Some(t) => Standing::Told(t.clone()),
     }
+}
+
+/// Whether a problem is worth saying now: [`standing`], and the person's
+/// answer beside it. A "not now" defers, it never drops — once
+/// [`NOT_NOW_SECS`] has passed the problem is due again at the same level.
+/// Every other answer leaves the rule as it is: worse is news.
+pub fn due_now(level: u32, told: Option<&Told>, now: i64) -> bool {
+    let s = standing(level, told);
+    if s.due() {
+        return true;
+    }
+    told.is_some_and(|t| {
+        t.answer == Some(Answer::NotNow)
+            && t.answered_at.is_some_and(|a| now - a >= NOT_NOW_SECS)
+    })
 }
 
 /// A problem the other device published about itself, as it crossed.
@@ -114,21 +194,34 @@ impl Ledger {
 
     /// It was said out loud. A telling at a level no higher than the one
     /// already on record changes nothing: "told 3h ago" stays the first time.
+    /// Said again after a "not now" ran out is a new telling: the answer it
+    /// replaces is spent.
     pub fn said(&mut self, key: &str, level: u32, by: &str, now: i64) {
-        if self.get(key).is_some_and(|t| t.level >= level) {
+        if self
+            .get(key)
+            .is_some_and(|t| t.level >= level && !t.deferred_before(now))
+        {
             return;
         }
         self.entries.insert(
             key.to_string(),
             Entry {
-                told: Told {
-                    at: now,
-                    level,
-                    by: by.to_string(),
-                },
+                told: Told::new(now, level, by),
                 clear_since: None,
             },
         );
+    }
+
+    /// The person answered a problem she raised here. A raised problem was
+    /// said, so a record is made at `level` if there is none.
+    pub fn answered(&mut self, key: &str, answer: Answer, level: u32, now: i64) {
+        let e = self.entries.entry(key.to_string()).or_insert_with(|| Entry {
+            told: Told::new(now, level, "mac"),
+            clear_since: None,
+        });
+        e.told.level = e.told.level.max(level);
+        e.told.answer = Some(answer);
+        e.told.answered_at = Some(now);
     }
 
     /// One reading of a problem this Mac owns. Present: any recovery under way
@@ -154,12 +247,7 @@ impl Ledger {
     /// Where the other device's problem stands: against the higher of its own
     /// record and this Mac's report of having said it.
     pub fn peer_standing(&self, owner: &str, p: &PeerProblem) -> Standing {
-        let ours = self.get(&report_key(owner, &p.key));
-        let told = match (p.told.as_ref(), ours) {
-            (Some(a), Some(b)) => Some(if b.level > a.level { b } else { a }),
-            (a, b) => a.or(b),
-        };
-        standing(p.level, told)
+        standing(p.level, self.peer_told(owner, p))
     }
 
     /// The first of the other device's problems that is due, in its order.
@@ -167,11 +255,24 @@ impl Ledger {
         &self,
         owner: &str,
         problems: &'a [PeerProblem],
+        now: i64,
     ) -> Option<(&'a PeerProblem, Standing)> {
         problems
             .iter()
             .map(|p| (p, self.peer_standing(owner, p)))
-            .find(|(_, s)| s.due())
+            .find(|(p, s)| {
+                s.due() || due_now(p.level, self.peer_told(owner, p), now)
+            })
+    }
+
+    /// The record that decides a peer problem: the higher of the owner's and
+    /// this Mac's report.
+    fn peer_told<'a>(&'a self, owner: &str, p: &'a PeerProblem) -> Option<&'a Told> {
+        let ours = self.get(&report_key(owner, &p.key));
+        match (p.told.as_ref(), ours) {
+            (Some(a), Some(b)) => Some(if b.level > a.level { b } else { a }),
+            (a, b) => a.or(b),
+        }
     }
 
     /// This Mac said the other device's problem. Kept until the owner files it.
@@ -230,11 +331,7 @@ impl Ledger {
             .filter_map(|(k, v)| {
                 let entry = match v.as_i64() {
                     Some(at) => Entry {
-                        told: Told {
-                            at,
-                            level: 1,
-                            by: "mac".into(),
-                        },
+                        told: Told::new(at, 1, "mac"),
                         clear_since: None,
                     },
                     None => serde_json::from_value(v).ok()?,
@@ -325,7 +422,15 @@ fn parse_told(v: &serde_json::Value) -> Option<Told> {
         .timestamp();
     let level = v.get("level")?.as_u64()?.min(LEVEL_MAX as u64) as u32;
     let by = super::activity::clean(v.get("by").and_then(|b| b.as_str()).unwrap_or(""), BY_MAX);
-    Some(Told { at, level, by })
+    let mut told = Told::new(at, level, &by);
+    // The owner's answer, when it sent one, and when: shown beside the
+    // telling, and a "not now" holds here as it holds there.
+    told.answer = v.get("answer").and_then(|a| a.as_str()).and_then(Answer::parse);
+    told.answered_at = told.answer.and_then(|_| {
+        let a = v.get("answered_at")?.as_str()?;
+        Some(chrono::DateTime::parse_from_rfc3339(a).ok()?.timestamp())
+    });
+    Some(told)
 }
 
 #[cfg(test)]

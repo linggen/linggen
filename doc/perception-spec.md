@@ -382,6 +382,21 @@ What the resident is shown says where each problem stands — `not told yet`,
 its facts. A sentence in a prompt asking her not to repeat herself is not the
 mechanism; the mark is.
 
+**The answer is kept on the same record.** What the person did with a
+problem she raised — `not_now`, `done`, `failed`, `declined` — is written on
+its told record beside the telling, and crosses with it (`told.answer`,
+`told.answered_at`). A "not now" keeps the problem quiet for 7 days unless it
+gets worse; then it is due again, at the same level, and saying it again is a
+new telling that spends the answer. "Declined" holds until it is worse.
+"Done" and "failed" are kept and quiet nothing. News — something that
+happened, with no level — waved off is quiet for 6 hours. The phone's older
+stores (the sweep's `condition.fired.*`, the resident's `yinyue.declined.*`,
+the weekly Mac-disk check's told weeks) are read once into it and removed.
+Two stores stay apart because they are not about problems: the herald's
+ledger is a daily delivery budget, and the push told keys
+([phone-push-spec.md](phone-push-spec.md)) are delivery receipts for
+skill-declared lines shared by both devices.
+
 Silence remains the default. The resident's existing gates — foreground, no
 pushed route, no song playing, time floors — still apply; perception gives it
 better things to consider, not permission to interrupt more.
