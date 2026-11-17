@@ -42,10 +42,12 @@ how often a test file was changed, mean lines added and removed, mean wall
 time, mean tool calls and permission asks.
 
 - A run that asks permission for something is answered **deny**, and the ask
-  is counted. Linggen runs are given the build tools in `--tools` (default
-  `python3,node,cargo,rustc,sh`) up front and the Claude run gets the same as
-  allowed Bash commands, so running tests is never an ask for either; an ask
-  is something beyond that.
+  is counted. Both Linggen runs get admin on their scratch copy
+  (`permission_mode: auto`), so the `code` and `plain` arms differ by the work
+  section alone and not by what they may run; the Claude run gets the build
+  tools in `--tools` (default `python3,node,cargo,rustc,sh`) as allowed Bash
+  commands. Running tests is never an ask for any arm; an ask is something
+  beyond that — a path outside the copy, or a command that leaves the machine.
 - Tool calls are `n/a` for the Linggen arms: `agent_status` does not report
   them. The Claude arm counts `tool_use` blocks.
 - `*` beside a result: the pass rule reads the final reply with a plain text
@@ -113,8 +115,8 @@ and have only run against stand-ins (`selftest.py`). If a first live run
 misbehaves, check these:
 
 - `/mcp` takes `POST` JSON-RPC (`tools/call`) and answers JSON in one go.
-- `agent_run` with `write_dir`, `work`, `permission_mode: acceptEdits`,
-  `model_fallback: false` and `grants.tools` starts a session; it either
+- `agent_run` with `write_dir`, `work`, `permission_mode: auto` and
+  `model_fallback: false` starts a session; it either
   returns the reply (done inside ~45 s) or text starting `Still running ...
   Linggen session <id>`.
 - The wait socket `ws://<engine>/api/agent/wait?session_id=<id>` needs no

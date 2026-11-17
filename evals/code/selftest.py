@@ -84,8 +84,8 @@ class Handler(BaseHTTPRequestHandler):
         if name == "agent_models":
             return text("fake-model (default)")
         if name == "agent_run":
-            assert args["permission_mode"] == "acceptEdits" and args["model_fallback"] is False
-            assert args["grants"]["tools"], "tools grant missing"
+            assert args["permission_mode"] == "auto" and args["model_fallback"] is False
+            assert "grants" not in args, "a coding session needs no tool grants"
             cell, reply = apply_change(args["work"], args["write_dir"])
             if cell == DIRECT_CELL:
                 return text(reply + '\n\nPreset grants: {"granted":{"tools":["python3"]},"refused":[]}')

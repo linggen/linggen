@@ -48,8 +48,10 @@ DRY_EXPECT = {"dry-none": False, "dry-good": True, "dry-bad": False}
 DRY_DIR = {"dry-good": "good", "dry-bad": "bad"}
 
 DEFAULT_ENGINE = "http://127.0.0.1:9527"
-# Build tools the runs may use where they may edit. The same list goes to the
-# Linggen arms (as preset grants) and to the Claude arm (as allowed Bash).
+# Build tools the Claude arm may run without asking (as allowed Bash). The
+# Linggen arms both get admin on their scratch copy (`permission_mode: auto`),
+# so the two differ by the work section alone, not by what they may run;
+# what leaves the machine still asks, and is answered deny.
 DEFAULT_TOOLS = "python3,node,cargo,rustc,sh"
 ASK_TIMEOUT_S = 15
 MCP_CALL_TIMEOUT_S = 150  # agent_run itself waits up to ~45 s before it hands back
@@ -191,10 +193,9 @@ def run_linggen(args, work, ask, work_dir):
     call_args = {
         "prompt": ask,
         "write_dir": str(work_dir),
-        "permission_mode": "acceptEdits",
+        "permission_mode": "auto",
         "work": work,
         "model_fallback": False,
-        "grants": {"tools": [t for t in args.tools.split(",") if t]},
     }
     if args.model:
         call_args["model"] = args.model
@@ -551,7 +552,7 @@ def parse_args(argv=None):
     ap.add_argument("--claude-model", help="model for the claude arm (default: Claude Code's own)")
     ap.add_argument("--claude-bin", default="claude", help="the Claude Code executable (default %(default)s)")
     ap.add_argument("--claude-args", default="", help="extra flags for claude, split on spaces")
-    ap.add_argument("--tools", default=DEFAULT_TOOLS, help="build tools every run may use (default %(default)s)")
+    ap.add_argument("--tools", default=DEFAULT_TOOLS, help="build tools the Claude arm may run unasked (default %(default)s)")
     ap.add_argument("--arms", default=",".join(LIVE_ARMS), help="comma list from: " + ",".join(LIVE_ARMS))
     ap.add_argument("--tasks", help="comma list of task names (default: all)")
     ap.add_argument("--runs", type=int, default=1, help="repeats per task and arm (default 1)")
