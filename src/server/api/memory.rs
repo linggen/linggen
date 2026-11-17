@@ -223,6 +223,17 @@ pub(crate) fn own_name_of(caller: &Caller) -> OwnName {
     }
 }
 
+/// The person behind paired device `device_id`, as memory resolves it
+/// ([`person_of`]) — the one seam the day's lookup takes its person from
+/// too: `Some(None)` for the owner's own device, `Some(Some(id))` for
+/// another person (a signed-out phone is its device), `None` for a device
+/// nobody paired.
+pub(crate) fn person_behind(device_id: &str) -> Option<Option<String>> {
+    let devices = crate::state_fs::devices::load_devices();
+    let device = devices.iter().find(|d| d.id == device_id)?;
+    Some(person_of(device).map(|p| p.id))
+}
+
 /// Who is behind this device, for the store. The Mac's own account is the
 /// owner and gets no stamp; any other account is stamped as itself; a
 /// signed-out phone is stamped as its device until it signs in.

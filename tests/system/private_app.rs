@@ -203,6 +203,7 @@ async fn another_persons_question_reaches_neither_the_builders_thread_nor_her_vo
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     };
     // Her herald, when there is one, comes at once: give it a few seconds.
+    // Her greeting above is her one line until then.
     let quiet = std::time::Instant::now() + std::time::Duration::from_secs(4);
     while w.model.calls_of(Agent::Yinyue).len() < 2 && std::time::Instant::now() < quiet {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -221,7 +222,7 @@ async fn another_persons_question_reaches_neither_the_builders_thread_nor_her_vo
     let spoke: Vec<Value> = w
         .events()
         .into_iter()
-        .filter(|e| e["kind"] == "pet_speak")
+        .filter(|e| e["kind"] == "pet_speak" && e["text"] != "I'm here.")
         .collect();
     assert!(
         spoke.is_empty(),

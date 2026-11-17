@@ -29,6 +29,10 @@ const rows = (home: string, sid: string) => {
 
 test("another person's paired phone, over the channel, gets its own day and never the builder's", async ({ page, world, request, httpRequests }) => {
   pairFriendsPhone(world.linggenHome);
+  // The Mac knows the phone once its token is answered.
+  await expect
+    .poll(async () => (await request.get(`${world.url}/api/pair/me`, { headers: { 'x-linggen-device': PHONE.token } })).status())
+    .toBe(200);
   const config = await (await request.get(`${world.url}/api/config`)).json();
   config.agent.one_session_a_day = true;
   await request.post(`${world.url}/api/config`, { data: config });

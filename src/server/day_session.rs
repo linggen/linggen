@@ -25,14 +25,16 @@ pub(crate) async fn enabled(manager: &AgentManager) -> bool {
 /// The day's session a chat from `app` (`None`: home — her own turns, the
 /// main page, the Mac's own chat) of the person `user_id` names joins, made
 /// if it is not there yet: their own day, the builder's when it names the
-/// builder or no one. `None` while the setting is off, and for an app that
-/// keeps a session of its own ([`takes`]). Every way into the day asks
-/// here; nothing else makes or names a day's id (the lock test below).
+/// builder or no one. `None` while the setting is off, for an app that
+/// keeps a session of its own ([`takes`]), and for a caller who is no one
+/// yet. Every way into the day asks here; nothing else makes or names a
+/// day's id (the lock test below).
 pub(crate) async fn day_for(manager: &AgentManager, user_id: Option<&str>, app: Option<&str>) -> Option<String> {
     if !enabled(manager).await || !takes(manager, app).await {
         return None;
     }
-    Some(current(manager, person_of(user_id).as_deref()))
+    let person = person_of(user_id).day_key()?;
+    Some(current(manager, person.as_deref()))
 }
 
 /// Whether a chat from `app` may be the day's: home's is; an app's only
@@ -47,12 +49,14 @@ pub(crate) async fn takes(manager: &AgentManager, app: Option<&str>) -> bool {
     manager.skills.get_skill(name).await.is_some_and(|s| !s.private_talk)
 }
 
-/// The app's own chat to stand in when a request names a day its app does
-/// not join: its newest session that is not one of its one-off jobs, else
-/// none — a session is then made for it.
-pub(crate) fn own_chat(manager: &AgentManager, app: &str) -> Option<String> {
+/// The app's own chat to stand in when the person `user_id` names a day
+/// their app does not join: the newest of their sessions of it that is not
+/// one of its one-off jobs, else none — a session is then made for it.
+pub(crate) fn own_chat(manager: &AgentManager, app: &str, user_id: Option<&str>) -> Option<String> {
+    let asker = person_of(user_id);
     let mut sessions: Vec<SessionMeta> = manager.global_sessions.list_sessions().ok()?;
     sessions.retain(|m| m.skill.as_deref() == Some(app) && !kept_apart(m) && !is_day(&m.id));
+    sessions.retain(|m| asker != Whose::NoOne && person_of(m.user_id.as_deref()) == asker);
     sessions.into_iter().max_by_key(|m| m.created_at).map(|m| m.id)
 }
 
@@ -63,18 +67,71 @@ pub(crate) fn may_enter(session_id: &str, user_id: Option<&str>) -> bool {
     let Some(day) = day_session::day_in(session_id) else {
         return true;
     };
-    day_session::id_for(day, person_of(user_id).as_deref()) == session_id
+    let Some(person) = person_of(user_id).day_key() else {
+        return false;
+    };
+    day_session::id_for(day, person.as_deref()) == session_id
 }
 
-/// Whose day a request's `user_id` is: `None` for the builder — no id, this
-/// machine's own, a paired device not yet named, or the builder's account.
-fn person_of(user_id: Option<&str>) -> Option<String> {
-    let id = user_id.map(str::trim).filter(|id| !id.is_empty())?;
-    if matches!(id, "__local__" | "__paired__") {
-        return None;
+/// Whether session `session_id` is the builder's: their day, or — with the
+/// setting on — any session not made for another person. With the setting
+/// off every session is, as before days.
+pub(crate) async fn is_builders(manager: &AgentManager, session_id: Option<&str>) -> bool {
+    let Some(sid) = session_id else {
+        return true;
+    };
+    if day_session::day_in(sid).is_some() {
+        return may_enter(sid, None);
+    }
+    if !enabled(manager).await {
+        return true;
+    }
+    let meta = manager.global_sessions.get_session_meta(sid).ok().flatten();
+    person_of(meta.and_then(|m| m.user_id).as_deref()) == Whose::Builder
+}
+
+/// Whose a request's `user_id` is. The channel resolves it once per caller
+/// from the device it named (`rtc::peer::control`, through memory's own
+/// seam, `api::memory::person_behind`); a loopback caller is trusted as it
+/// names itself.
+#[derive(Debug, PartialEq, Eq)]
+enum Whose {
+    /// No id, this machine's own (`__local__`), or the builder's account.
+    Builder,
+    /// Another person: a paired phone signed in to another account, or a
+    /// signed-out phone (its device).
+    Person(String),
+    /// A peer that has not said which device it is (`__paired__`,
+    /// `__pairing__`): it is given no day.
+    NoOne,
+}
+
+impl Whose {
+    /// The person a day is kept under (`None`: the builder's day); `None`
+    /// for no one.
+    fn day_key(self) -> Option<Option<String>> {
+        match self {
+            Whose::Builder => Some(None),
+            Whose::Person(id) => Some(Some(id)),
+            Whose::NoOne => None,
+        }
+    }
+}
+
+fn person_of(user_id: Option<&str>) -> Whose {
+    let Some(id) = user_id.map(str::trim).filter(|id| !id.is_empty()) else {
+        return Whose::Builder;
+    };
+    match id {
+        "__local__" => return Whose::Builder,
+        crate::server::rtc::NO_ONE | "__pairing__" => return Whose::NoOne,
+        _ => {}
     }
     let builders = crate::account::load_account().and_then(|a| a.user_id);
-    (builders.as_deref() != Some(id)).then(|| id.to_string())
+    match builders.as_deref() == Some(id) {
+        true => Whose::Builder,
+        false => Whose::Person(id.to_string()),
+    }
 }
 
 /// Today's session id for `person` (`state_fs::day_session::today`), made

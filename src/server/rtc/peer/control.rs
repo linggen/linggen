@@ -293,6 +293,51 @@ const PERSON_PATHS: &[&str] = &[
     "/api/workspace/state",
 ];
 
+/// The ways into a session a page sends a body to: each body is sent as
+/// this channel's person, whoever the page names (the control messages
+/// `chat`, `plan_*`, … reach the same routes and are sent the same way).
+const PERSON_BODIES: &[&str] = &[
+    "/api/sessions",
+    "/api/chat",
+    "/api/chat/clear",
+    "/api/chat/compact",
+    "/api/plan/approve",
+    "/api/plan/reject",
+    "/api/plan/edit",
+    "/api/ask-user-response",
+];
+
+/// The person a peer's request is for, resolved once from the device it
+/// named, through memory's own seam (`api::memory::person_behind`): the
+/// owner's own device is the owner; a phone signed in to another account is
+/// that account, a signed-out phone its device. A peer with no device named
+/// is its channel's user when the tunnel knows it as the owner (this
+/// machine's page, the owner's account on the relay), else no one
+/// (`rtc::NO_ONE`) — never the owner by default.
+fn person_for(user_ctx: &crate::server::rtc::UserContext, device: Option<&str>) -> String {
+    use crate::server::api::pair::{TUNNEL_LOCAL, TUNNEL_OWNER};
+    let no_one = || crate::server::rtc::NO_ONE.to_string();
+    let Some(device) = device else {
+        let owner = matches!(user_ctx.tunnel_mark(), TUNNEL_LOCAL | TUNNEL_OWNER);
+        return if owner { user_ctx.user_id.clone() } else { no_one() };
+    };
+    match crate::server::api::memory::person_behind(device) {
+        Some(Some(person)) => person,
+        Some(None) => crate::server::rtc::UserContext::owner(None).user_id,
+        None => no_one(),
+    }
+}
+
+/// `body` sent as `person`, of `user_type`: what the page put there is
+/// replaced.
+fn as_person(body: &mut serde_json::Value, person: &str, user_type: &str) {
+    if !body.is_object() {
+        *body = serde_json::json!({});
+    }
+    body["user_id"] = serde_json::Value::String(person.to_string());
+    body["user_type"] = serde_json::Value::String(user_type.to_string());
+}
+
 /// `url_path` asking for this channel's person when it is a way into the
 /// day: any `user_id` the page put there is replaced by the channel's own.
 fn with_person(url_path: &str, user_id: &str) -> String {
@@ -480,7 +525,13 @@ pub(super) async fn process_control_request_async(
             {
                 return serde_json::json!({ "error": "Invalid URL path" });
             }
-            let url_path = with_person(&url_path, &user_ctx.user_id);
+            // Carry the peer's identity into the loopback request. The phone
+            // speaks only WebRTC, so without this a handler cannot tell which
+            // paired device is asking — which is what per-phone state, like the
+            // delete queue, needs to be correct with more than one phone.
+            let actor_device = named_device(user_ctx, actor, first_request).await;
+            let person = person_for(user_ctx, actor_device.as_deref());
+            let url_path = with_person(&url_path, &person);
             let url = format!("http://127.0.0.1:{port}{url_path}");
             // Per-request chatter → debug (fires on every status poll, session save,
             // etc. and drowns out lifecycle events at info level).
@@ -490,20 +541,11 @@ pub(super) async fn process_control_request_async(
                 .get("body")
                 .unwrap_or(&serde_json::Value::Null)
                 .clone();
-            // Inject user_id into POST /api/sessions for session ownership tracking
-            if url_path == "/api/sessions" && method == "POST" {
-                body_val["user_id"] = serde_json::Value::String(user_ctx.user_id.clone());
-                body_val["user_type"] = serde_json::Value::String(
-                    user_ctx
-                        .user_type_for(actor.lock_ok().is_some())
-                        .to_string(),
-                );
+            // A body that comes into a session is sent as this peer's person.
+            if method != "GET" && PERSON_BODIES.contains(&url_path.as_str()) {
+                let user_type = user_ctx.user_type_for(actor.lock_ok().is_some());
+                as_person(&mut body_val, &person, user_type);
             }
-            // Carry the peer's identity into the loopback request. The phone
-            // speaks only WebRTC, so without this a handler cannot tell which
-            // paired device is asking — which is what per-phone state, like the
-            // delete queue, needs to be correct with more than one phone.
-            let actor_device = named_device(user_ctx, actor, first_request).await;
             let mark = user_ctx.tunnel_mark();
             match loopback(
                 client,
@@ -532,12 +574,12 @@ pub(super) async fn process_control_request_async(
                 "ask_user_response" => "/api/ask-user-response",
                 _ => unreachable!(),
             };
-            // Inject user_type and user_id into the request body
+            // Sent as this peer's person, resolved from the device it named.
+            let actor_device = named_device(user_ctx, actor, first_request).await;
+            let person = person_for(user_ctx, actor_device.as_deref());
             let mut body = req.body.clone();
-            let identified = actor.lock_ok().is_some();
-            body["user_type"] =
-                serde_json::Value::String(user_ctx.user_type_for(identified).to_string());
-            body["user_id"] = serde_json::Value::String(user_ctx.user_id.clone());
+            let user_type = user_ctx.user_type_for(actor.lock_ok().is_some());
+            as_person(&mut body, &person, user_type);
             let url = format!("http://127.0.0.1:{port}{endpoint}");
             match loopback(client, "POST", &url, &body, user_ctx.tunnel_mark(), None).await {
                 Ok(r) => {
@@ -568,6 +610,24 @@ mod tests {
             "/api/skill-sessions?skill=dice&user_id=u1"
         );
         assert_eq!(super::with_person("/api/sessions?x=1", "u1"), "/api/sessions?x=1");
+    }
+
+    /// A peer the tunnel does not know as the owner, with no device named,
+    /// is no one; this machine's own page is its channel's user.
+    #[test]
+    fn a_peer_with_no_device_named_is_no_one_unless_the_tunnel_knows_it() {
+        assert_eq!(super::person_for(&UserContext::paired(), None), crate::server::rtc::NO_ONE);
+        let lan = UserContext {
+            reached_by: crate::server::rtc::Reach::Lan,
+            ..UserContext::owner(Some("u-owner".into()))
+        };
+        assert_eq!(super::person_for(&lan, None), crate::server::rtc::NO_ONE);
+        let here = UserContext {
+            reached_by: crate::server::rtc::Reach::ThisMachine,
+            ..UserContext::owner(Some("u-owner".into()))
+        };
+        assert_eq!(super::person_for(&here, None), "u-owner");
+        assert_eq!(super::person_for(&here, Some("nobody-paired")), crate::server::rtc::NO_ONE);
     }
 
     use super::{is_text, named_device, reply_data, wrap_endpoint_response, IDENTIFY_GRACE};

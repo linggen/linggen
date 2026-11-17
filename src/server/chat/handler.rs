@@ -1071,7 +1071,7 @@ async fn into_the_day(state: &Arc<ServerState>, mut req: ChatRequest) -> ChatReq
     // A day its app does not join: the app's own chat stands in for it.
     if let (Some(name), Some(_)) = (app, named_day) {
         if !day::takes(&state.manager, Some(name)).await {
-            req.session_id = day::own_chat(&state.manager, name);
+            req.session_id = day::own_chat(&state.manager, name, req.user_id.as_deref());
             return req;
         }
     }

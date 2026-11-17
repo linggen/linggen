@@ -76,6 +76,9 @@ fn herald_ask(
     let (summary, options) = ask_summary(&questions);
     let state = state.clone();
     tokio::spawn(async move {
+        if !crate::server::day_session::is_builders(&state.manager, session_id.as_deref()).await {
+            return; // another person's question: never in the builder's thread or voice
+        }
         let opts = if options.is_empty() {
             String::new()
         } else {
@@ -132,6 +135,9 @@ fn herald_kept_ask(state: &Arc<ServerState>, app: String, question_id: String, s
     }
     let state = state.clone();
     tokio::spawn(async move {
+        if !crate::server::day_session::is_builders(&state.manager, session_id.as_deref()).await {
+            return;
+        }
         if !ask_still_pending(&state, &question_id).await {
             return;
         }
