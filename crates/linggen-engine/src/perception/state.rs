@@ -173,14 +173,19 @@ pub(crate) fn peer_lines() -> Vec<String> {
     let Some(peer) = read_peer() else {
         return Vec::new();
     };
-    render_peer(&peer, &super::told::load(), crate::util::now_ts_secs() as i64)
+    // A report about a problem the phone no longer has says nothing about
+    // its return: settled here too, not only at a glance.
+    let mut ledger = super::told::load();
+    ledger.prune_reports(super::publish::FROM_PHONE, peer.problems.as_deref());
+    render_peer(&peer, &ledger, crate::util::now_ts_secs() as i64)
 }
 
-/// The other device's problems as it published them, and its name — what the
-/// glance's sweep reads to decide whether one is due. `None` problems: the
+/// The other device's problems as it published them, and its name with the
+/// reading's age — what the glance's sweep reads to decide whether one is due,
+/// so a weeks-old reading is never raised as current. `None` problems: the
 /// peer said nothing about them, which is not the same as having none.
 pub(crate) fn peer_problems() -> Option<(String, Option<Vec<super::told::PeerProblem>>)> {
-    read_peer().map(|p| (p.host, p.problems))
+    read_peer().map(|p| (format!("{} ({})", p.host, p.age), p.problems))
 }
 
 /// The peer's block. Each problem is shown with where it stands — not told

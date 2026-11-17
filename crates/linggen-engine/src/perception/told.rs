@@ -262,6 +262,21 @@ pub fn load() -> Ledger {
         .unwrap_or_default()
 }
 
+/// This Mac's reports about `owner`'s problems, settled against what the
+/// owner last published, for the publish loop: a report outliving the owner's
+/// recovery would be filed there on the next connect and make a return read as
+/// told on both devices.
+pub fn reports_to_publish(owner: &str) -> Vec<serde_json::Value> {
+    let mut ledger = load();
+    let before = ledger.clone();
+    let peer = super::state::peer_problems();
+    ledger.prune_reports(owner, peer.and_then(|(_, p)| p).as_deref());
+    if ledger != before {
+        store(&ledger);
+    }
+    ledger.reports(owner)
+}
+
 pub fn store(ledger: &Ledger) {
     let dir = super::activity::activity_dir();
     if std::fs::create_dir_all(&dir).is_err() {

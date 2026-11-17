@@ -57,7 +57,7 @@ pub async fn publish_loop(publish: impl Fn(&str, &str, serde_json::Value) + Send
         let recent = super::state::share_history();
         // What this Mac told the person about the phone's own problems, so the
         // phone — whose record it is — files it and does not say it again.
-        let told = super::told::load().reports(FROM_PHONE);
+        let told = super::told::reports_to_publish(FROM_PHONE);
         // Every part decides freshness. A song deleted here moves the history
         // and not one state line, and a payload we declined to resend over that
         // is a delete the other machine never hears about.
