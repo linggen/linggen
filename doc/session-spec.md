@@ -130,6 +130,20 @@ how a turn is framed (verbatim or as a task), who answers beyond the grants
 (the person, the caller, or nobody), how its thread is kept (its own,
 the day's, rolling). A new kind of session is a new row.
 
+**One kind of spec, many presets — not one session that holds everything.**
+What is shared is the mechanism (one spec type, one writer). What differs is
+the content: each occasion gets only what it needs — its tools, its part of
+memory, who answers beyond the grants, whether its talk may leave. A person's
+chat carries a one-line-per-skill menu (about 750 tokens for eight skills,
+measured 2026-11-17) and loads an app's instructions only when it takes that
+app up with the `Skill` tool (7–15 thousand tokens each); an app's own
+session has no menu, has that app's instructions from the start, and keeps
+only core and the app's own memory. A session with every app loaded would
+carry about 75 thousand tokens of instructions on every turn, and could not
+keep a mission unattended, a private app private, or a read-only device
+read-only. A new occasion is a new preset row or a work tag, never a wider
+default.
+
 A session may store `work: code` to add coding guidance to its system prompt.
 Chat, Delegate and Handoff take this tag; all other presets ignore it.
 The guidance is in `prompts/work-code.toml`: core lines followed by the answering model family's lines when available.
