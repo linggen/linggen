@@ -75,15 +75,24 @@ pub(super) type PeerActor = Arc<std::sync::Mutex<Option<crate::server::api::pair
 pub(super) fn user_info_msg(
     user_ctx: &super::UserContext,
     identified: bool,
-    level: crate::engine::permission::PermissionMode,
+    (standing, unverified_owner): (&crate::server::person::Standing, bool),
 ) -> serde_json::Value {
-    let user = serde_json::json!({
-        "user_id": user_ctx.user_id,
+    // The channel's account (on the LAN, this Mac's owner) is told only to
+    // the owner and to a room consumer, whose own it is; any other peer is
+    // told its own person.
+    let told = user_ctx.is_consumer() || standing.is_owner();
+    let mut user = serde_json::json!({
+        "user_id": if told { user_ctx.user_id.as_str() } else { standing.person() },
         "user_type": user_ctx.user_type_for(identified),
-        "user_name": user_ctx.user_name,
-        "avatar_url": user_ctx.avatar_url,
-        "level": level,
+        "user_name": if told { user_ctx.user_name.clone() } else { None },
+        "avatar_url": if told { user_ctx.avatar_url.clone() } else { None },
+        "level": standing.level(),
     });
+    // Its claim is this Mac's own account, not verified yet: it may dial the
+    // relay once to be vouched for (doc/webrtc-spec.md § Verifying a phone).
+    if unverified_owner {
+        user["unverified_owner"] = true.into();
+    }
     let mut data = if user_ctx.is_consumer() {
         let room_cfg = super::room_config::load_room_config();
         serde_json::json!({
@@ -747,8 +756,8 @@ impl PeerLoop {
             // A peer that has not identified yet is greeted as
             // what the channel knows; `identify` answers with a
             // second one of these, with the device's level.
-            let level = self.standing().level();
-            let info_msg = user_info_msg(&self.user_ctx, false, level);
+            let standing = self.standing();
+            let info_msg = user_info_msg(&self.user_ctx, false, (&standing, false));
             self.queue_text(id, info_msg.to_string());
             // Privacy warning for consumers
             if self.user_ctx.is_consumer() {
@@ -1382,16 +1391,43 @@ mod greeting_tests {
     /// The greeting says the level the peer stands at.
     #[test]
     fn the_greeting_says_the_level() {
-        let msg = super::user_info_msg(&crate::server::rtc::UserContext::paired(), true, PermissionMode::Read);
+        let read = crate::server::person::for_test("u-friend", PermissionMode::Read);
+        let msg = super::user_info_msg(&crate::server::rtc::UserContext::paired(), true, (&read, false));
         assert_eq!(msg["kind"], "user_info");
         assert_eq!(msg["data"]["user"]["level"], "read");
         assert_eq!(msg["data"]["user"]["user_type"], "paired");
     }
 
+    /// The greeting tells the channel's account (on the LAN, the owner's)
+    /// only to the owner; another peer is told its own person, and whether
+    /// its claim is this Mac's account unverified — never the account itself.
+    #[test]
+    fn the_greeting_tells_the_owners_account_only_to_the_owner() {
+        let lan = crate::server::rtc::UserContext {
+            user_name: Some("Owner Name".into()),
+            ..crate::server::rtc::UserContext::owner(Some("u-owner".into()))
+        };
+        let lan = crate::server::rtc::UserContext {
+            reached_by: crate::server::rtc::Reach::Lan,
+            ..lan
+        };
+        let below = crate::server::person::standing_of("not-paired");
+        let msg = super::user_info_msg(&lan, true, (&below, true));
+        let told = msg.to_string();
+        assert!(!told.contains("u-owner") && !told.contains("Owner Name"), "{told}");
+        assert_eq!(msg["data"]["user"]["unverified_owner"], true);
+        let owner = crate::server::person::unnamed(true, "u-owner");
+        let msg = super::user_info_msg(&lan, true, (&owner, false));
+        assert_eq!(msg["data"]["user"]["user_id"], "u-owner");
+        assert_eq!(msg["data"]["user"]["user_name"], "Owner Name");
+        assert!(msg["data"]["user"].get("unverified_owner").is_none());
+    }
+
     /// The greeting carries this Mac's contract numbers.
     #[test]
     fn the_greeting_says_the_contract() {
-        let msg = super::user_info_msg(&crate::server::rtc::UserContext::paired(), true, PermissionMode::Read);
+        let read = crate::server::person::for_test("u-friend", PermissionMode::Read);
+        let msg = super::user_info_msg(&crate::server::rtc::UserContext::paired(), true, (&read, false));
         assert_eq!(msg["data"]["contract"], crate::server::rtc::contract::CONTRACT);
         assert_eq!(msg["data"]["oldest_peer"], crate::server::rtc::contract::OLDEST_PEER);
     }

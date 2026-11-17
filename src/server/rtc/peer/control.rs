@@ -122,9 +122,12 @@ pub(super) fn handle_control_message(
             // now (on the LAN the Mac greeted a phone as the owner until it
             // knew), and the level its device stands at.
             let device = actor.lock_ok().as_ref().map(|a| a.device.clone());
-            let level = standing_for(user_ctx, device.as_deref()).level();
+            let standing = standing_for(user_ctx, device.as_deref());
+            let unverified = device
+                .as_deref()
+                .is_some_and(crate::server::person::claims_the_owners_unverified);
             if let Some(mut ch) = rtc.channel(channel_id) {
-                let msg = super::user_info_msg(user_ctx, now_identified, level);
+                let msg = super::user_info_msg(user_ctx, now_identified, (&standing, unverified));
                 let _ = ch.write(false, msg.to_string().as_bytes());
             }
             None

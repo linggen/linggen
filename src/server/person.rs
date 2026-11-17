@@ -241,6 +241,25 @@ pub(crate) fn standing_of(device: &str) -> Standing {
     standing_in(devices.iter().find(|d| d.id == device), mac.as_deref(), &owner)
 }
 
+/// Whether paired device `device` is a phone whose account claim is this
+/// Mac's own account but not verified yet (`PairedDevice::verified_claim`):
+/// what the greeting tells it, so it can dial the relay once to be vouched
+/// for. Nothing of the account itself is told.
+pub(crate) fn claims_the_owners_unverified(device: &str) -> bool {
+    let mac = crate::account::load_account().and_then(|a| a.user_id);
+    let devices = crate::state_fs::devices::load_devices();
+    devices
+        .iter()
+        .find(|d| d.id == device)
+        .is_some_and(|d| claims_unverified(d, mac.as_deref()))
+}
+
+fn claims_unverified(device: &crate::state_fs::devices::PairedDevice, mac: Option<&str>) -> bool {
+    let claim = device.account.as_ref().map(|a| a.id.as_str());
+    let phone = device.kind() == crate::state_fs::devices::DeviceKind::Phone;
+    phone && mac.is_some_and(|m| !m.is_empty() && claim == Some(m)) && device.verified_claim().is_none()
+}
+
 /// [`standing_of`] for a row found (or not), with this Mac's account
 /// (`mac`) and the owner's person id (`owner`).
 fn standing_in(
@@ -280,6 +299,15 @@ pub(crate) fn consumer(user_id: &str) -> Standing {
     Standing {
         person: user_id.to_string(),
         level: PermissionMode::Chat,
+    }
+}
+
+/// A standing of `person` at `level`, for tests elsewhere.
+#[cfg(test)]
+pub(crate) fn for_test(person: &str, level: PermissionMode) -> Standing {
+    Standing {
+        person: person.to_string(),
+        level,
     }
 }
 
@@ -604,6 +632,27 @@ mod tests {
         assert_eq!(super::standing_in(Some(&lowered), Some("u-owner"), "u-owner").level(), Chat);
         let nobody = super::standing_in(None, Some("u-owner"), "u-owner");
         assert_eq!((nobody.person(), nobody.level()), (crate::server::rtc::NO_ONE, Chat));
+    }
+
+    /// A phone claiming this Mac's account unverified is told so; verified,
+    /// another account, signed out, or a machine is not.
+    #[test]
+    fn a_phone_is_told_its_claim_of_the_owners_account_is_unverified() {
+        let claimed = phone(Some("u-owner"));
+        assert!(super::claims_unverified(&claimed, Some("u-owner")));
+        let verified = crate::state_fs::devices::PairedDevice {
+            verified_account: Some("u-owner".into()),
+            ..phone(Some("u-owner"))
+        };
+        assert!(!super::claims_unverified(&verified, Some("u-owner")));
+        assert!(!super::claims_unverified(&phone(Some("u-friend")), Some("u-owner")));
+        assert!(!super::claims_unverified(&phone(None), Some("u-owner")));
+        assert!(!super::claims_unverified(&claimed, None), "a Mac signed out");
+        let machine = crate::state_fs::devices::PairedDevice {
+            kind: Some(crate::state_fs::devices::DeviceKind::Machine),
+            ..phone(Some("u-owner"))
+        };
+        assert!(!super::claims_unverified(&machine, Some("u-owner")));
     }
 
     /// A peer that named no device is the owner only when the tunnel knows it.
