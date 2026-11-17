@@ -349,9 +349,10 @@ async fn a_body_past_the_limit_is_answered_over_the_lan_as_here() {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
     let big = json!({"text": "x".repeat(3 * 1024 * 1024)}).to_string();
+    // No kept connections: one a refused body closed is never reused.
+    let client = reqwest::Client::builder().pool_max_idle_per_host(0).build().unwrap();
     let post = |base: String, token: Option<&'static str>, body: reqwest::Body| {
-        let mut req = lan
-            .client
+        let mut req = client
             .post(format!("{base}/api/presence"))
             .header("content-type", "application/json")
             .body(body);
