@@ -242,8 +242,10 @@ with a **kind**:
   (`/mem/api/connect/request`, `/mem/api/connect/status/<id>`) needs no
   token. Everything else under `/mem` is this machine's. A phone's token is
   refused on all of these (403); its door is `/api/memory/<verb>`.
-- **A phone that is another person** (not signed in to this machine's own
-  account) runs only the verbs kept per person: `search`, `list`, `count`,
+- **A phone that is another person** (not the owner's own phone: one whose
+  claim of this machine's account is verified, `permission-spec.md` § A
+  paired device's standing follows its account — a claim not verified is
+  its device) runs only the verbs kept per person: `search`, `list`, `count`,
   `get`, `add`, `add_batch`, `update`, `delete`, `forget`,
   `session_start`. Any other verb — including one memory gains later — is
   refused (403 `FORBIDDEN`), and so is a body the stamp cannot mark (not a

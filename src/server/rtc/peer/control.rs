@@ -370,8 +370,26 @@ fn refused_reply(refused: &crate::server::person::Refused) -> serde_json::Value 
 /// consumer is judged by its room (`PeerLoop::may_make_request`) and sent
 /// unjudged here; any other peer is judged by its standing
 /// ([`standing_for`]).
+/// A media channel `get` of `url` by this peer: the URL to fetch and the
+/// level to stamp on it, judged and sent as its person as the same GET on
+/// the control channel is; `None` when refused. A peer mid-pairing gets
+/// nothing; a room consumer is judged by its room.
+pub(super) fn media_get(
+    user_ctx: &crate::server::rtc::UserContext,
+    device: Option<&str>,
+    url: &str,
+) -> Option<(String, crate::engine::permission::PermissionMode)> {
+    let room_allows = user_ctx.permission.can_access_endpoint("GET", url);
+    if user_ctx.pairing_only() || !room_allows {
+        return None;
+    }
+    let mut none = serde_json::Value::Null;
+    let user_type = user_ctx.user_type_for(device.is_some());
+    send_for_peer(user_ctx, device, ("GET", url, &mut none), user_type).ok()
+}
+
 /// Returns the URL to send and the level to stamp on it.
-fn send_for_peer(
+pub(super) fn send_for_peer(
     user_ctx: &crate::server::rtc::UserContext,
     device: Option<&str>,
     (method, url_path, body): (&str, &str, &mut serde_json::Value),
@@ -380,6 +398,9 @@ fn send_for_peer(
     let standing = standing_for(user_ctx, device);
     let level = standing.level();
     if user_ctx.is_consumer() {
+        if !crate::server::routes::classes::sent_unchanged(url_path) {
+            return Err(crate::server::person::Refused::BadPath);
+        }
         return crate::server::person::send_as(method, url_path, body, (standing.person(), user_type))
             .map(|url| (url, level))
             .map_err(crate::server::person::Refused::NotTheirs);
@@ -561,6 +582,7 @@ pub(super) async fn process_control_request_async(
                 || url_path == "/index.html"
                 || url_path == "/logo.svg";
             if !path_ok
+                || !crate::server::routes::classes::sent_unchanged(&url_path)
                 || url_path.contains('@')
                 || url_path.contains("://")
                 || url_path.contains("..")
@@ -684,6 +706,26 @@ mod tests {
 
     /// A phone's first request can overtake the message that names it: the
     /// request waits, and is re-issued as that phone's.
+    /// A media get is judged as the control channel's GET: a peer that named
+    /// no device stands at chat and is refused a read route; this machine's
+    /// page reaches it at admin, sent as its person; a path that parsing
+    /// moves is refused to anyone; a peer mid-pairing gets nothing.
+    #[test]
+    fn a_media_get_is_judged_like_the_channels() {
+        use crate::engine::permission::PermissionMode;
+        assert_eq!(super::media_get(&UserContext::paired(), None, "/api/topic/latest?topic=t"), None);
+        let here = UserContext {
+            reached_by: crate::server::rtc::Reach::ThisMachine,
+            ..UserContext::owner(Some("u-owner".into()))
+        };
+        let got = super::media_get(&here, None, "/api/sessions/day").unwrap();
+        assert_eq!(got, ("/api/sessions/day?user_id=u-owner".to_string(), PermissionMode::Admin));
+        assert_eq!(super::media_get(&here, None, "/apps/x/.\t./.\t./api/credentials"), None);
+        assert_eq!(super::media_get(&UserContext::pairing(), None, "/shared/a.js"), None);
+        let unknown = super::media_get(&UserContext::paired(), Some("not-paired"), "/api/skills");
+        assert_eq!(unknown, None, "a device not paired is no one at chat");
+    }
+
     #[tokio::test]
     async fn a_request_waits_for_its_peer_to_name_itself() {
         let actor: super::super::PeerActor = Arc::new(Mutex::new(None));

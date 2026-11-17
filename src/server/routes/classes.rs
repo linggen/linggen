@@ -244,6 +244,19 @@ pub(crate) fn class_of(method: &str, path: &str) -> RouteClass {
     At(Admin)
 }
 
+/// Whether `url` (a path with its query, as a caller gave it) is sent to
+/// loopback as the same path: parsing it as a URL — dot segments, `%2e`,
+/// tabs and line breaks stripped — must not make it another path, or what
+/// is judged is not what is reached.
+pub(crate) fn sent_unchanged(url: &str) -> bool {
+    let path = url.split('?').next().unwrap_or(url);
+    let Ok(parsed) = reqwest::Url::parse(&format!("http://127.0.0.1{url}")) else {
+        return false;
+    };
+    let decode = |p: &str| urlencoding::decode(p).map(|d| d.into_owned()).ok();
+    decode(parsed.path()).is_some() && decode(parsed.path()) == decode(path)
+}
+
 /// A path the fallback serves as a page file: outside the API and memory.
 fn is_page_file(path: &str) -> bool {
     let api = ["/api/", "/mem", "/mcp", "/anthropic/", "/apps/"];
@@ -319,6 +332,20 @@ mod tests {
         assert_eq!(class_of("GET", "/assets/app.js"), At(Chat));
         assert_eq!(class_of("POST", "/index.html"), At(Admin));
         assert_eq!(class_of("GET", "/apps/"), At(Admin));
+    }
+
+    /// A path that parsing makes another — a dot segment written as `%2e`
+    /// or split by a tab — is not sent; a plain path, one with a word in
+    /// another script, and a query with a space are.
+    #[test]
+    fn a_path_that_parsing_moves_is_not_sent() {
+        assert!(!sent_unchanged("/assets/%2e%2e/api/credentials"));
+        assert!(!sent_unchanged("/apps/x/.\t./.\t./api/credentials"));
+        assert!(!sent_unchanged("/apps/x/../../api/bash"));
+        assert!(!sent_unchanged("/api/topic\n/latest"));
+        assert!(sent_unchanged("/api/topic/latest?topic=a b"));
+        assert!(sent_unchanged("/apps/dj/来.png"));
+        assert!(sent_unchanged("/api/sessions/day"));
     }
 
     /// `(path, methods)` for each `.route(...)` call in `text`.

@@ -113,7 +113,7 @@ pub(super) fn spawn_get(
     port: u16,
     channel: str0m::channel::ChannelId,
     out: tokio::sync::mpsc::Sender<super::response::DcWrite>,
-    may_get: impl Fn(&str) -> bool,
+    may_get: impl Fn(&str) -> Option<(String, crate::engine::permission::PermissionMode)>,
 ) -> bool {
     let Ok(msg) = serde_json::from_str::<Value>(text) else {
         return false;
@@ -135,14 +135,15 @@ pub(super) fn spawn_get(
         return true;
     }
     // The same gate the control channel applies: a get is re-issued to
-    // loopback, which the LAN gate trusts, so the peer's own rights decide.
-    if !may_get(&url) {
+    // loopback, which the LAN gate trusts, so the peer's own standing decides
+    // — and the URL is the one it was judged and sent as its person by.
+    let Some((url, level)) = may_get(&url) else {
         let _ = out.try_send(super::response::DcWrite::text(
             channel,
             json!({"type": "get_err", "id": id, "error": "not allowed"}).to_string(),
         ));
         return true;
-    }
+    };
 
     tracing::info!("[media] get {url}");
     tokio::spawn(async move {
@@ -150,6 +151,7 @@ pub(super) fn spawn_get(
         let resp = client
             .get(format!("http://127.0.0.1:{port}{url}"))
             .header(crate::server::api::pair::TUNNEL_HEADER, "1")
+            .header(crate::server::api::pair::LEVEL_HEADER, level.to_string())
             .send()
             .await;
         let result = match resp {

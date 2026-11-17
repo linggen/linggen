@@ -544,6 +544,24 @@ async fn run_peer(
     }
 }
 
+/// Whether a peer may start a media upload: it writes into the owner's
+/// library, so a fully paired peer under the owner's ceiling standing at edit.
+fn may_put(user_ctx: &super::UserContext, level: crate::engine::permission::PermissionMode) -> bool {
+    !user_ctx.pairing_only()
+        && user_ctx.permission.is_admin()
+        && level >= crate::engine::permission::PermissionMode::Edit
+}
+
+/// Whether a peer may be streamed a session: the owner (`whose` is none)
+/// any; another only its own person's (`owns`: the session is among its
+/// known ones; `owner_of`: the session's owner, from the store).
+fn may_stream(whose: Option<&str>, owns: bool, owner_of: Option<&str>) -> bool {
+    match whose {
+        None => true,
+        Some(whose) => owns || owner_of == Some(whose),
+    }
+}
+
 /// The ids of the sessions `user_id` owns.
 fn sessions_of(state: &ServerState, user_id: &str) -> HashSet<String> {
     let Ok(sessions) = state.manager.global_sessions.list_sessions() else {
@@ -769,19 +787,21 @@ impl PeerLoop {
         // (handles race where channel opens before session_created event).
         let now = self.standing();
         let whose = standing::seen_as(&self.user_ctx, &now);
-        let mut allowed = whose.is_none() || self.user_session_ids.contains(session_id);
-        if let (false, Some(whose)) = (allowed, whose.as_deref()) {
+        let owns = self.user_session_ids.contains(session_id);
+        let mut allowed = may_stream(whose.as_deref(), owns, None);
+        if !allowed {
             // Check session store — session may have just been created
-            if let Ok(Some(meta)) = self
+            let owner_of = self
                 .state
                 .manager
                 .global_sessions
                 .get_session_meta(session_id)
-            {
-                if meta.user_id.as_deref() == Some(whose) {
-                    self.user_session_ids.insert(session_id.to_string());
-                    allowed = true;
-                }
+                .ok()
+                .flatten()
+                .and_then(|m| m.user_id);
+            if may_stream(whose.as_deref(), false, owner_of.as_deref()) {
+                self.user_session_ids.insert(session_id.to_string());
+                allowed = true;
             }
         }
         if !allowed {
@@ -839,24 +859,17 @@ impl PeerLoop {
         // Uploads write into the owner's library, so only a
         // fully paired peer standing at edit may start one;
         // gets follow the control channel's endpoint rules.
-        let pairing = self.user_ctx.pairing_only();
         let level = self.standing().level();
-        let may_put = !pairing
-            && self.user_ctx.permission.is_admin()
-            && level >= crate::engine::permission::PermissionMode::Edit;
+        let may_put = may_put(&self.user_ctx, level);
         let reply = if data.binary {
             media_channel::handle_binary(&data.data, &mut self.media_transfer).await
         } else {
             let text = String::from_utf8_lossy(&data.data).to_string();
-            let perm = self.user_ctx.permission.clone();
-            let consumer = self.user_ctx.is_consumer();
-            // A get is judged as the same GET on the control channel: a room
-            // consumer by its room, any other peer by its standing.
-            let may_get = move |url: &str| {
-                let path = url.split('?').next().unwrap_or(url);
-                let judged = crate::server::routes::classes::class_of("GET", path).needs() <= level;
-                !pairing && perm.can_access_endpoint("GET", url) && (consumer || judged)
-            };
+            // A get is judged as the same GET on the control channel
+            // (`control::media_get`).
+            let ctx = self.user_ctx.clone();
+            let device = self.peer_actor.lock_ok().as_ref().map(|a| a.device.clone());
+            let may_get = move |url: &str| control::media_get(&ctx, device.as_deref(), url);
             if media_channel::spawn_get(
                 &text,
                 self.state.port,
@@ -1334,6 +1347,35 @@ mod tests {
 #[cfg(test)]
 mod greeting_tests {
     use crate::engine::permission::PermissionMode;
+
+    /// An upload needs edit; a peer mid-pairing and a room consumer never
+    /// start one.
+    #[test]
+    fn a_media_upload_needs_edit() {
+        let paired = crate::server::rtc::UserContext::paired();
+        assert!(!super::may_put(&paired, PermissionMode::Chat));
+        assert!(!super::may_put(&paired, PermissionMode::Read));
+        assert!(super::may_put(&paired, PermissionMode::Edit));
+        assert!(!super::may_put(&crate::server::rtc::UserContext::pairing(), PermissionMode::Admin));
+        let room = crate::server::rtc::UserContext::consumer(
+            "u".into(),
+            "browser".into(),
+            crate::server::rtc::UserPermission::Edit,
+            None,
+            None,
+        );
+        assert!(!super::may_put(&room, PermissionMode::Edit));
+    }
+
+    /// Below the owner a peer is streamed only its own person's sessions.
+    #[test]
+    fn a_session_stream_below_the_owner_is_its_persons_only() {
+        assert!(super::may_stream(None, false, Some("u-owner")), "the owner, any");
+        assert!(!super::may_stream(Some("u-friend"), false, Some("u-owner")));
+        assert!(!super::may_stream(Some("u-friend"), false, None));
+        assert!(super::may_stream(Some("u-friend"), false, Some("u-friend")));
+        assert!(super::may_stream(Some("u-friend"), true, None));
+    }
 
     /// The greeting says the level the peer stands at.
     #[test]

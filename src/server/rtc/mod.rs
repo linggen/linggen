@@ -82,13 +82,11 @@ impl UserPermission {
 /// What a peer is to this machine — the one fact the rest of the label derives
 /// from, so `user_type` can't say one thing here and another there.
 ///
-/// This is provenance, not permission. A paired device carries the owner's
-/// ceiling, and what any peer may actually do is the `(path, mode)` grant on
-/// its session — an ungranted path is `chat`, for owner and phone alike. So
-/// this enum decides no access today. It records how the peer got here: on a
-/// grant this Mac minted, rather than on an account that owns this instance —
-/// worth saying out loud rather than filing under "owner", and the seam if a
-/// device ever needs a ceiling of its own.
+/// This is provenance, not permission. What a paired device may do is its
+/// standing (`server::person::standing_of`): the owner's device at admin, any
+/// other at the level set for it on this Mac. This enum records how the peer
+/// got here: on a grant this Mac minted, rather than on an account that owns
+/// this instance — worth saying out loud rather than filing under "owner".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PeerKind {
     /// The account that owns this instance, or a local browser on it.
@@ -188,10 +186,10 @@ impl UserContext {
     /// Build for a device this Mac paired, arriving on the grant it minted.
     ///
     /// The ceiling is *the owner's* — taken from [`Self::owner`] rather than
-    /// written out again, so it stays the owner's if that ever moves. This is
-    /// only a ceiling: what a session may actually do is the `(path, mode)`
-    /// grant, and a path nobody granted is `chat` — no tools. The ceiling caps
-    /// that lookup; it never opens anything by itself.
+    /// written out again. It is only a ceiling: what reaches this Mac through
+    /// the peer is bounded by the device's standing
+    /// (`server::person::standing_of`), and what a session may do by its
+    /// `(path, mode)` grant. The ceiling never opens anything by itself.
     ///
     /// Identity is what differs. This peer's real one arrives later, as a
     /// device token on the channel's `identify`, so the user id stays a

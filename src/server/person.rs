@@ -66,6 +66,9 @@ pub(crate) enum Refused {
         level: PermissionMode,
         needs: PermissionMode,
     },
+    /// Its path is not the one it would be sent as
+    /// (`routes::classes::sent_unchanged`).
+    BadPath,
 }
 
 impl Refused {
@@ -75,6 +78,7 @@ impl Refused {
     pub(crate) fn body(&self) -> serde_json::Value {
         match self {
             Refused::NotTheirs(n) => serde_json::json!({ "error": n.reason() }),
+            Refused::BadPath => serde_json::json!({ "error": "Invalid URL path" }),
             Refused::BeyondLevel { level, needs } => serde_json::json!({
                 "error": "beyond_level",
                 "level": level.to_string(),
@@ -95,6 +99,9 @@ pub(crate) fn send_judged(
     standing: &Standing,
     user_type: &str,
 ) -> Result<String, Refused> {
+    if !crate::server::routes::classes::sent_unchanged(url_path) {
+        return Err(Refused::BadPath);
+    }
     let path = url_path.split_once('?').map_or(url_path, |(p, _)| p);
     let needs = crate::server::routes::classes::class_of(method, path).needs();
     if needs > standing.level() {
@@ -554,6 +561,7 @@ mod tests {
         use crate::engine::permission::PermissionMode::*;
         let claimed = super::standing_in(Some(&phone(Some("u-owner"))), Some("u-owner"), "u-owner");
         assert_eq!((claimed.person(), claimed.level()), ("device:dev-1", Read));
+        assert!(!crate::server::day_session::is_builder(Some(claimed.person())), "not the builder's day");
         let friend = super::standing_in(Some(&phone(Some("u-friend"))), Some("u-owner"), "u-owner");
         assert_eq!((friend.person(), friend.level()), ("u-friend", Read));
         let raised = crate::state_fs::devices::PairedDevice {
@@ -618,6 +626,7 @@ mod tests {
         assert!(judged("POST", "/api/bash", Edit).is_err());
         assert!(judged("POST", "/api/memory/add", Chat).is_ok(), "its own records at any level");
         assert!(judged("GET", "/api/topic/latest", Chat).is_err());
+        assert_eq!(judged("GET", "/assets/%2e%2e/api/credentials", Admin), Err(super::Refused::BadPath));
     }
 
     /// The day rule still holds under the level.
