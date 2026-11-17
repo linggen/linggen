@@ -8,8 +8,9 @@
 //! check, and not at start, so a new install with no config keeps none —
 //! from the build tools found on the engine's shell path. After that only
 //! the owner adds or removes, so a removed entry stays removed and a tool
-//! installed later is never added by itself. Interpreters (`node`, `python3`) are not among the defaults: a
-//! grant of one would be "run any script".
+//! installed later is never added by itself. Interpreters and script
+//! runtimes (`node`, `python3`, `bun`, `deno`) are not among the defaults:
+//! a grant of one would be "run any script". The owner may add one.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -22,8 +23,6 @@ pub const DEFAULT_NAMES: &[&str] = &[
     "npm",
     "pnpm",
     "yarn",
-    "bun",
-    "deno",
     "flutter",
     "dart",
     "swift",
