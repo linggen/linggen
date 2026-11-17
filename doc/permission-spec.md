@@ -49,6 +49,8 @@ What a device at **read** may do: talk in its own chat and day, its own memory r
 
 **A turn runs at its device's level.** What a device's chat turn may do is its level too, through the session spec's ceiling (`session-spec.md` § A turn's ceiling): an action above it is refused and never asked for, whatever the session's grants; the model is told the action needs more than the device stands at.
 
+**This machine's models and keys are the owner's.** `GET /api/pair/me` gives the owner's device every model allow-listed for it, a provider's key riding along (`kind: byok`); any other device only the models it reaches with its own credentials (Linggen Cloud, a ChatGPT sign-in) and no key. A device verified as the owner's later gets them at its next sync; one that stops being the owner's is sent none, and the phone deletes every key the Mac no longer sends at that sync. The inference channel (running on this machine's models) is the owner's and a linggen room consumer's; any other peer is refused with `{"error":"beyond_level","level":…,"needs":"admin"}`.
+
 
 ## Session grants
 

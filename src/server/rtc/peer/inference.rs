@@ -10,6 +10,34 @@ use crate::server::ServerState;
 
 use super::ControlRequest;
 
+/// Who may run on this Mac's models over the inference channel: a room
+/// consumer that is a linggen server (its room's shared models) or that its
+/// room makes admin, and the owner (their own page, an approved machine, a
+/// verified phone). Any other room consumer is refused as before; any other peer — a device below the
+/// owner, a peer that named none — with the level fact
+/// (`{"error":"beyond_level","level":…,"needs":"admin"}`).
+pub(super) fn refusal(
+    user_ctx: &crate::server::rtc::UserContext,
+    standing: &crate::server::person::Standing,
+) -> Option<serde_json::Value> {
+    if user_ctx.is_consumer() {
+        let linggen = user_ctx.consumer_type.as_deref() == Some("linggen");
+        return (!linggen && !user_ctx.permission.is_admin()).then(|| {
+            serde_json::json!({
+                "error": "Inference endpoint is only available for linggen server consumers"
+            })
+        });
+    }
+    if standing.is_owner() {
+        return None;
+    }
+    let refused = crate::server::person::Refused::BeyondLevel {
+        level: standing.level(),
+        needs: crate::engine::permission::PermissionMode::Admin,
+    };
+    Some(refused.body())
+}
+
 /// Process inference and list_models requests from proxy room consumers.
 ///
 /// Protocol:
@@ -18,7 +46,7 @@ use super::ControlRequest;
 pub(super) async fn process_inference_request(
     req: &ControlRequest,
     state: &Arc<ServerState>,
-    user_ctx: &crate::server::rtc::UserContext,
+    (user_ctx, standing): (&crate::server::rtc::UserContext, &crate::server::person::Standing),
     tokens_used: &Arc<std::sync::atomic::AtomicI64>,
     tx: &tokio::sync::mpsc::Sender<(Option<String>, str0m::channel::ChannelId, serde_json::Value)>,
     cid: str0m::channel::ChannelId,
@@ -27,17 +55,8 @@ pub(super) async fn process_inference_request(
 
     let rid = req.request_id.clone();
 
-    // Only allow inference from linggen-type consumers (not browser consumers)
-    if user_ctx.consumer_type.as_deref() != Some("linggen") && !user_ctx.permission.is_admin() {
-        let _ = tx
-            .send((
-                rid.clone(),
-                cid,
-                serde_json::json!({
-                    "error": "Inference endpoint is only available for linggen server consumers"
-                }),
-            ))
-            .await;
+    if let Some(refused) = refusal(user_ctx, standing) {
+        let _ = tx.send((rid.clone(), cid, refused)).await;
         return;
     }
 
@@ -266,5 +285,31 @@ pub(super) async fn process_inference_request(
                 ))
                 .await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::server::rtc::{UserContext, UserPermission};
+
+    /// This Mac's models are the owner's: a device below the owner and a
+    /// peer that named none are refused with the level fact; the owner and
+    /// a linggen room consumer reach them.
+    #[test]
+    fn only_the_owner_and_a_linggen_consumer_run_on_this_macs_models() {
+        let lan = UserContext::paired();
+        let owner = crate::server::person::unnamed(true, "u-owner");
+        assert_eq!(super::refusal(&lan, &owner), None);
+        let below = crate::server::person::standing_of("not-paired");
+        assert_eq!(
+            super::refusal(&lan, &below),
+            Some(serde_json::json!({"error": "beyond_level", "level": "chat", "needs": "admin"}))
+        );
+        let consumer = |kind: &str| {
+            UserContext::consumer("u-room".into(), kind.into(), UserPermission::Read, None, None)
+        };
+        let room = crate::server::person::consumer("u-room");
+        assert_eq!(super::refusal(&consumer("linggen"), &room), None);
+        assert!(super::refusal(&consumer("browser"), &room).is_some());
     }
 }

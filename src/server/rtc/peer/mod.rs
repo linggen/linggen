@@ -946,8 +946,9 @@ impl PeerLoop {
 
         if req.msg_type == "inference" || req.msg_type == "list_models" {
             // Inference/model-list: may stream multiple responses
+            let standing = self.standing();
             tokio::spawn(async move {
-                process_inference_request(&req, &st, &ctx_clone, &tok, &tx, cid).await;
+                process_inference_request(&req, &st, (&ctx_clone, &standing), &tok, &tx, cid).await;
             });
         } else {
             tokio::spawn(async move {
@@ -1029,8 +1030,9 @@ impl PeerLoop {
             let ctx_clone = self.user_ctx.clone();
             let tok = self.tokens_used.clone();
             let cid = channel;
+            let standing = self.standing();
             tokio::spawn(async move {
-                process_inference_request(&req, &st, &ctx_clone, &tok, &tx, cid).await;
+                process_inference_request(&req, &st, (&ctx_clone, &standing), &tok, &tx, cid).await;
             });
         } else if msg_type == "room_chat" {
             self.on_room_chat(&msg);

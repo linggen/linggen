@@ -146,6 +146,28 @@ pub(crate) async fn get_pair_me(
     else {
         return err(StatusCode::UNAUTHORIZED, "unknown device");
     };
+    let config = state.manager.get_config_snapshot().await;
+    let owner = crate::server::person::standing_of(&d.id).is_owner();
+    let mut body = me_body(&d, &config, owner);
+    // Where to reach this Mac when the phone is off the LAN: the relay
+    // signals per instance. Not a secret — an address. Absent while
+    // signed out, since the relay leg needs the account credential.
+    body["instance_id"] = crate::account::resolve_token()
+        .and(crate::account::instance_id().ok())
+        .into();
+    Json(body).into_response()
+}
+
+/// A paired device's own row as `/api/pair/me` answers it: its name and
+/// settings, and the models it may run — every allow-listed one for the
+/// owner's device (`owner`), a provider's key riding along; for any other
+/// device only those it reaches with its own credentials (Linggen Cloud, a
+/// ChatGPT sign-in), never a key of this Mac's.
+fn me_body(
+    d: &crate::state_fs::devices::PairedDevice,
+    config: &crate::config::Config,
+    owner: bool,
+) -> serde_json::Value {
     let allow: Vec<String> = d
         .settings
         .get("models")
@@ -156,21 +178,18 @@ pub(crate) async fn get_pair_me(
                 .collect()
         })
         .unwrap_or_default();
-    let config = state.manager.get_config_snapshot().await;
-    Json(serde_json::json!({
+    let mut models = resolve_model_catalog(&allow, config);
+    if !owner {
+        models.retain(|m| matches!(m["kind"].as_str(), Some("cloud" | "oauth")));
+    }
+    serde_json::json!({
         "id": d.id,
         "name": d.name,
         "device_id": d.device_id,
         "settings": d.settings,
-        "models": resolve_model_catalog(&allow, &config),
-        "agent_models": agent_models(&config),
-        // Where to reach this Mac when the phone is off the LAN: the relay
-        // signals per instance. Not a secret — an address. Absent while
-        // signed out, since the relay leg needs the account credential.
-        "instance_id": crate::account::resolve_token()
-            .and(crate::account::instance_id().ok()),
-    }))
-    .into_response()
+        "models": models,
+        "agent_models": agent_models(config),
+    })
 }
 
 /// GET /api/pair/qr — the QR as JSON for embedding in Settings → Phone.
@@ -334,6 +353,30 @@ mod tests {
         assert_eq!(got[1]["kind"], "byok");
         assert_eq!(got[1]["model"], "claude-next");
         assert_eq!(got[2], serde_json::json!({"id": "gpt-6-luna", "kind": "oauth"}));
+    }
+
+    /// The Mac's provider keys are the owner's: the owner's device is given
+    /// every allow-listed model with its key; any other device only the
+    /// models it reaches with its own credentials, and no key anywhere in
+    /// the answer.
+    #[test]
+    fn a_key_never_crosses_to_a_device_not_the_owners() {
+        let mut cfg = crate::config::Config::default();
+        let mut byok = configured("my-claude", "anthropic", "claude-next", None);
+        byok.api_key = Some("sk-THE-MACS-KEY".into());
+        cfg.models = vec![byok, configured("my-sol", "chatgpt", "gpt-9-sol", Some("chatgpt_oauth"))];
+        let mut d = crate::state_fs::devices::PairedDevice::default();
+        d.settings.insert(
+            "models".into(),
+            serde_json::json!(["my-claude", "my-sol", crate::provider::models::LINGGEN_CLOUD_MODEL_ID]),
+        );
+        let owners = me_body(&d, &cfg, true);
+        assert!(owners.to_string().contains("sk-THE-MACS-KEY"));
+        assert_eq!(owners["models"].as_array().map(Vec::len), Some(3));
+        let other = me_body(&d, &cfg, false);
+        assert!(!other.to_string().contains("sk-THE-MACS-KEY"), "{other}");
+        let kinds: Vec<_> = other["models"].as_array().unwrap().iter().map(|m| m["kind"].clone()).collect();
+        assert_eq!(kinds, vec![serde_json::json!("oauth"), serde_json::json!("cloud")]);
     }
 
     /// The level is set only at this Mac: a paired device's request through
