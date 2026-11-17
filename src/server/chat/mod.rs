@@ -48,7 +48,7 @@ pub(crate) use admin::{
     get_system_prompt_api, pending_ask_user_handler,
 };
 pub(crate) use handler::{
-    chat_handler, dequeue_and_emit, enqueue_if_busy, mark_steered, question_open_for_queued,
+    chat_handler, dequeue_and_emit, enqueue_if_busy, mark_steered, question_open_for_queued, queued_session,
     run_session_turn,
     resend_chat, say_in_session, start_turn, TurnOrigin,
 };

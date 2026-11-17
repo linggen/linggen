@@ -226,8 +226,14 @@ async fn lan_gate(
     let device = token.as_deref().and_then(crate::state_fs::devices::device_by_token);
     if let Some(device) = device {
         // Sent as the device's person, as the channel sends a peer's.
-        let req = person::lan_request_as(req, &device.id).await;
-        return next.run(req).await;
+        return match person::lan_request_as(req, &device.id).await {
+            Ok(req) => next.run(req).await,
+            Err(refused) => (
+                axum::http::StatusCode::FORBIDDEN,
+                axum::Json(serde_json::json!({ "error": refused.reason() })),
+            )
+                .into_response(),
+        };
     }
     tracing::info!("[gate] rejected {} {} from {}", req.method(), path, addr);
     (

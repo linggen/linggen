@@ -433,6 +433,13 @@ pub(crate) async fn enqueue_if_busy(
     Some((item, joins))
 }
 
+/// The session queued message `queued_id` waits in, while it waits.
+pub(crate) async fn queued_session(state: &Arc<ServerState>, queued_id: &str) -> Option<String> {
+    let guard = state.queued_chats.lock().await;
+    let item = guard.values().flatten().find(|item| item.id == queued_id)?;
+    Some(item.session_id.clone())
+}
+
 /// Whether the session a queued message waits in has a question open
 /// (AskUser or a permission prompt, its subagents' too): Steer then waits.
 pub(crate) async fn question_open_for_queued(state: &Arc<ServerState>, queued_id: &str) -> bool {

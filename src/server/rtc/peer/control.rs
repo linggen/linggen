@@ -295,6 +295,13 @@ pub(super) fn person_for(user_ctx: &crate::server::rtc::UserContext, device: Opt
     crate::server::person::of_device(device)
 }
 
+/// The `http_request` answer for a request refused at the seam
+/// (`person::send_as`): a 403, as the LAN gate answers it.
+fn refused_reply(refused: &crate::server::person::NotTheirs) -> serde_json::Value {
+    let body = serde_json::json!({ "error": refused.reason() }).to_string();
+    serde_json::json!({ "data": reply_data(403, "application/json", body.as_bytes()) })
+}
+
 /// Wrap a loopback response for the control channel: a success body rides as
 /// `data`, a failure comes back as `error` so the client's promise rejects.
 ///
@@ -485,8 +492,15 @@ pub(super) async fn process_control_request_async(
                 .clone();
             // A request that comes into a session is sent as this peer's person.
             let user_type = user_ctx.user_type_for(actor.lock_ok().is_some());
-            let url_path =
-                crate::server::person::send_as(method, &url_path, &mut body_val, (&person, user_type));
+            let url_path = match crate::server::person::send_as(
+                method,
+                &url_path,
+                &mut body_val,
+                (&person, user_type),
+            ) {
+                Ok(url) => url,
+                Err(refused) => return refused_reply(&refused),
+            };
             let url = format!("http://127.0.0.1:{port}{url_path}");
             // Per-request chatter → debug (fires on every status poll, session save,
             // etc. and drowns out lifecycle events at info level).
@@ -524,7 +538,9 @@ pub(super) async fn process_control_request_async(
             let person = person_for(user_ctx, actor_device.as_deref());
             let mut body = req.body.clone();
             let user_type = user_ctx.user_type_for(actor.lock_ok().is_some());
-            crate::server::person::as_person(&mut body, &person, user_type);
+            if let Err(refused) = crate::server::person::send_as("POST", endpoint, &mut body, (&person, user_type)) {
+                return serde_json::json!({ "error": refused.reason() });
+            }
             let url = format!("http://127.0.0.1:{port}{endpoint}");
             match loopback(client, "POST", &url, &body, user_ctx.tunnel_mark(), None).await {
                 Ok(r) => {

@@ -540,6 +540,10 @@ pub(super) fn may_answer(
     user_type: &str,
     user_id: Option<&str>,
 ) -> bool {
+    // A question in a day is its own person's to answer.
+    if session_id.is_some_and(|sid| !crate::server::day_session::may_enter(sid, user_id)) {
+        return false;
+    }
     match user_type {
         "owner" | "paired" => true,
         "consumer" => session_id
@@ -552,12 +556,19 @@ pub(super) fn may_answer(
 
 /// Return any pending AskUser questions so the UI can restore the widget
 /// after navigating away and back, or after a page refresh.
+/// A question in a day is listed only to its own person (`user_id`, which
+/// the channel and the LAN gate set).
 pub(crate) async fn pending_ask_user_handler(
     State(state): State<Arc<ServerState>>,
+    axum::extract::Query(asker): axum::extract::Query<crate::server::day_session::Asker>,
 ) -> impl IntoResponse {
     let pending = state.pending_ask_user.lock().await;
+    let theirs = |sid: Option<&str>| {
+        sid.is_none_or(|sid| crate::server::day_session::may_enter(sid, asker.user_id.as_deref()))
+    };
     let items: Vec<serde_json::Value> = pending
         .iter()
+        .filter(|(_, entry)| theirs(entry.session_id.as_deref()))
         .map(|(qid, entry)| {
             serde_json::json!({
                 "question_id": qid,

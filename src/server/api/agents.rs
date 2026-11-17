@@ -60,6 +60,10 @@ pub(crate) async fn set_task(
 #[derive(Deserialize)]
 pub(crate) struct CancelRunRequest {
     run_id: String,
+    /// The caller's person (the channel and the LAN gate set it): a run in
+    /// a day is stopped only by its own person.
+    #[serde(default)]
+    user_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -71,6 +75,10 @@ pub(crate) async fn cancel_agent_run(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<CancelRunRequest>,
 ) -> impl IntoResponse {
+    let session = state.manager.run_store.get_run(&req.run_id).map(|r| r.session_id);
+    if session.is_some_and(|sid| !crate::server::day_session::may_enter(&sid, req.user_id.as_deref())) {
+        return (StatusCode::FORBIDDEN, "that day is another person's").into_response();
+    }
     if let Some(result) = crate::server::claude::subagents::cancel(&state, &req.run_id).await {
         return match result {
             Ok(()) => Json(CancelRunResponse {

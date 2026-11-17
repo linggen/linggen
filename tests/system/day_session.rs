@@ -702,12 +702,19 @@ async fn each_person_sees_and_writes_only_their_own_day() {
 /// Answer the permission prompts `app`'s page is shown until Ling has made
 /// `n` calls.
 pub(crate) async fn grant_until(w: &World, app: &str, n: usize) {
+    grant_until_as(w, app, n, None).await
+}
+
+/// [`grant_until`], answered as the person `user` (`None`: the builder) —
+/// a day's questions are its own person's.
+pub(crate) async fn grant_until_as(w: &World, app: &str, n: usize, user: Option<&str>) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let asker = user.map(|u| format!("&user_id={u}")).unwrap_or_default();
     while w.model.calls_of(Agent::Ling).len() < n {
         assert!(std::time::Instant::now() < deadline, "only {} calls", w.model.calls_of(Agent::Ling).len());
-        let asks = w.api.get(&format!("/api/pending-ask-user?skill={app}")).await;
+        let asks = w.api.get(&format!("/api/pending-ask-user?skill={app}{asker}")).await;
         for ask in asks.as_array().cloned().unwrap_or_default() {
-            w.api.answer(&ask, "grant:all").await;
+            w.api.answer_as(&ask, "grant:all", user).await;
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }

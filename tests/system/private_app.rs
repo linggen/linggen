@@ -184,7 +184,7 @@ async fn another_persons_question_reaches_neither_the_builders_thread_nor_her_vo
     let sent = w.api.post("/api/chat", body).await;
     let theirs = sent["session_id"].as_str().unwrap_or_default().to_string();
     assert_ne!(theirs, mine, "{sent}");
-    crate::day_session::grant_until(&w, "porter", 2).await;
+    crate::day_session::grant_until_as(&w, "porter", 2, Some("u-friend")).await;
     let away =
         json!({"surface": "user-turn", "focused": false, "typing": false, "idle_ms": 600_000});
     w.api.post("/api/presence", away).await;
@@ -196,7 +196,7 @@ async fn another_persons_question_reaches_neither_the_builders_thread_nor_her_vo
             "no question; log:\n{}",
             w.engine.log()
         );
-        let asks = w.api.get("/api/pending-ask-user?skill=porter").await;
+        let asks = w.api.get("/api/pending-ask-user?skill=porter&user_id=u-friend").await;
         if let Some(ask) = asks.as_array().and_then(|a| a.first()).cloned() {
             break ask;
         }
@@ -232,7 +232,7 @@ async fn another_persons_question_reaches_neither_the_builders_thread_nor_her_vo
         !day_text(&w, &mine).contains("FRIEND-QUESTION"),
         "the builder's day holds it"
     );
-    w.api.answer(&asked, "Red").await;
+    w.api.answer_as(&asked, "Red", Some("u-friend")).await;
 }
 
 /// A subagent of a private app's turn keeps its talk there too: its

@@ -178,6 +178,11 @@ async fn absent_for_moment(state: &Arc<ServerState>, app: &str, session: Option<
 #[derive(Deserialize)]
 pub(crate) struct ChatRequest {
     pub text: String,
+    /// The caller's person (the channel and the LAN gate set it): her own
+    /// thread is the builder's day, so with one session a day on another
+    /// person is refused it.
+    #[serde(default)]
+    pub user_id: Option<String>,
 }
 
 /// POST /api/yinyue/chat — `{ text }`. The user talks to Yinyue directly (e.g.
@@ -190,6 +195,9 @@ pub(crate) async fn chat_handler(
     let text = req.text.trim().to_string();
     if text.is_empty() {
         return (StatusCode::BAD_REQUEST, "empty text").into_response();
+    }
+    if !crate::server::day_session::shares_builders(&state.manager, req.user_id.as_deref()).await {
+        return (StatusCode::FORBIDDEN, "her own thread is another person's").into_response();
     }
     // Not met yet: she is not here to be talked to.
     if !state

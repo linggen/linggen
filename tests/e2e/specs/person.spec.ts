@@ -2,8 +2,8 @@
 // phone paired to this Mac and signed in to another account reaches it the
 // way a phone on the LAN does: its channel opened with the phone's token,
 // every request riding that channel. It is given its own person's day, a
-// message it sends naming the builder's day lands in its own, and nothing
-// of the builder's day streams to it.
+// message it sends naming the builder's day is refused, and nothing of the
+// builder's day streams to it.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { test, expect, expectWebRtc, send, composer } from '../support/world';
 
@@ -52,9 +52,20 @@ test("another person's paired phone, over the channel, gets its own day and neve
   expect(theirs, "the phone was handed the builder's day").not.toBe(mine);
   expect(theirs).toMatch(/^sess-day-\d{4}-\d{2}-\d{2}-p-[0-9a-f]+$/);
 
+  // A message from a page pinned to the builder's day is refused; one with
+  // no session lands in the phone's own day.
   await send(page, 'FRIEND-WORDS roll for me');
-  await expect.poll(() => rows(world.linggenHome, theirs)).toContain('FRIEND-WORDS');
-  expect(rows(world.linggenHome, mine), "the phone wrote into the builder's day").not.toContain('FRIEND-WORDS');
+  const own = await page.evaluate(async (work) => {
+    const r = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ project_root: work, message: 'FRIEND-OWN roll', skill_name: 'dice' }),
+    });
+    return (await r.json()).session_id;
+  }, world.work);
+  expect(own).toBe(theirs);
+  await expect.poll(() => rows(world.linggenHome, theirs)).toContain('FRIEND-OWN');
+  expect(rows(world.linggenHome, mine), "the phone wrote into the builder's day").not.toContain('FRIEND-');
 
   // The builder talks in their own day, on this Mac: the phone, pinned to
   // that day's id, is streamed none of it.
@@ -146,6 +157,88 @@ test.describe('page state and notes', () => {
     if (states.includes(`"session_id":"${mine}"`)) wrong.push("a page state shows the builder's day");
     if (states.includes('BUILDER-QUESTION')) wrong.push("a page state shows the builder's question");
     if (JSON.stringify(notes).includes('BUILDER-NOTE')) wrong.push("the builder's notes were read");
+    expect(wrong).toEqual([]);
+  });
+});
+
+test.describe('every route', () => {
+  test.use({
+    scenario: {
+      scripts: {
+        ling: [
+          {
+            tool: 'AskUser',
+            args: { questions: [{ question: 'BUILDER-QUESTION which box?', header: 'Box', options: [{ label: 'Red' }, { label: 'Blue' }] }] },
+          },
+          { text: 'Red.' },
+        ],
+      },
+    },
+  });
+
+  test("another person's phone, over the channel, is refused the builder's day by every kind of route", async ({ page, world, request, httpRequests }) => {
+    pairFriendsPhone(world.linggenHome);
+    await expect
+      .poll(async () => (await request.get(`${world.url}/api/pair/me`, { headers: { 'x-linggen-device': PHONE.token } })).status())
+      .toBe(200);
+    const config = await (await request.get(`${world.url}/api/config`)).json();
+    config.agent.one_session_a_day = true;
+    await request.post(`${world.url}/api/config`, { data: config });
+    const mine: string = (await (await request.get(`${world.url}/api/sessions/day`)).json()).id;
+    await request.post(`${world.url}/api/chat`, {
+      data: { session_id: mine, project_root: world.work, message: 'BUILDER-WORDS pick a box', skill_name: 'dice' },
+    });
+    await expect
+      .poll(async () => JSON.stringify(await (await request.get(`${world.url}/api/pending-ask-user?skill=dice`)).json()))
+      .toContain('BUILDER-QUESTION');
+    const asks = await (await request.get(`${world.url}/api/pending-ask-user?skill=dice`)).json();
+    const qid: string = asks[0].question_id;
+
+    await page.route('**/api/rtc/whip', (route) =>
+      route.continue({
+        headers: { ...route.request().headers(), 'x-linggen-device': PHONE.token, 'x-linggen-actor-device': PHONE.id },
+      }));
+    await page.goto(`${world.url}/embed?skill=dice&hide_toolbar=1`);
+    await expectWebRtc(page, httpRequests);
+    await expect(composer(page)).toBeVisible();
+
+    const seen = await page.evaluate(
+      async ({ mine, qid, work }) => {
+        const call = async (method: string, url: string, body?: unknown) => {
+          const init: RequestInit = { method, headers: { 'content-type': 'application/json' } };
+          if (body !== undefined) init.body = JSON.stringify(body);
+          try {
+            const r = await fetch(url, init);
+            return { status: r.status, text: await r.text() };
+          } catch (e) {
+            return { status: 0, text: String(e) };
+          }
+        };
+        const q = encodeURIComponent(mine);
+        return {
+          read: await call('GET', '/api/pending-ask-user?skill=dice'),
+          answer: await call('POST', '/api/ask-user-response', { question_id: qid, answers: [{ question_index: 0, selected: ['Red'], custom_text: null }] }),
+          clear: await call('POST', '/api/chat/clear', { session_id: mine }),
+          plan: await call('POST', '/api/plan/approve', { session_id: mine }),
+          permission: await call('PATCH', '/api/sessions/permission', { session_id: mine, path: work, mode: 'admin' }),
+          pictures: await call('GET', `/api/sessions/images?session_id=${q}&name=x.png`),
+          prompt: await call('GET', `/api/chat/system-prompt?session_id=${q}&agent_id=ling&project_root=${encodeURIComponent(work)}`),
+          her: await call('POST', '/api/yinyue/chat', { text: 'hi' }),
+          remove: await call('DELETE', '/api/sessions/all', { session_id: mine }),
+        };
+      },
+      { mine, qid, work: world.work },
+    );
+    const wrong: string[] = [];
+    if (seen.read.text.includes('BUILDER-QUESTION')) wrong.push('read the question');
+    for (const [what, r] of Object.entries(seen)) {
+      // A question it may not answer looks like an unknown one (404).
+      const refused = what === 'answer' ? [403, 404] : [403];
+      if (what !== 'read' && !refused.includes(r.status)) wrong.push(`${what}: ${r.status} ${r.text.slice(0, 80)}`);
+    }
+    const still = JSON.stringify(await (await request.get(`${world.url}/api/pending-ask-user?skill=dice`)).json());
+    if (!still.includes('BUILDER-QUESTION')) wrong.push('the question was answered');
+    if (!rows(world.linggenHome, mine).includes('BUILDER-WORDS')) wrong.push('the day was cleared or deleted');
     expect(wrong).toEqual([]);
   });
 });

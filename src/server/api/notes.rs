@@ -2,10 +2,11 @@
 //! device (the phone shows them; `doc/one-ling-spec.md` § One session a
 //! day). Notes are written by their agent's own tools alone; nothing here
 //! changes them. A private app's turn writes none (`tools::exit_gate`),
-//! so nothing of its talk is in them. They are the builder's: another
-//! person is given none (the channel and the LAN gate name the person).
+//! so nothing of its talk is in them. With one session a day on they are
+//! the builder's: another person is given none (the channel and the LAN
+//! gate name the person; `day_session::shares_builders`).
 
-use axum::extract::Query;
+use axum::extract::{Query, State};
 use axum::Json;
 use serde::Deserialize;
 
@@ -17,11 +18,16 @@ pub(crate) struct NotesQuery {
 }
 
 /// `{agent, notes: [{id, text, written_at, device, look_again_at?}]}`;
-/// an agent id that is not one, and a person other than the builder, get
-/// no notes.
-pub(crate) async fn list_notes(Query(q): Query<NotesQuery>) -> Json<serde_json::Value> {
+/// an agent id that is not one, and a person the builder's are not shared
+/// with, get no notes.
+pub(crate) async fn list_notes(
+    State(state): State<std::sync::Arc<crate::server::ServerState>>,
+    Query(q): Query<NotesQuery>,
+) -> Json<serde_json::Value> {
     let agent = q.agent.trim();
-    if !is_agent_id(agent) || !crate::server::day_session::is_builder(q.user_id.as_deref()) {
+    let shared =
+        crate::server::day_session::shares_builders(&state.manager, q.user_id.as_deref()).await;
+    if !is_agent_id(agent) || !shared {
         return Json(serde_json::json!({ "agent": agent, "notes": [] }));
     }
     let book = crate::notes::read(agent);

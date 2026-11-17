@@ -5,7 +5,7 @@
 
 use crate::day_session::{day_world_at, say};
 use crate::support::model::Agent;
-use crate::support::{text, Setup, World};
+use crate::support::{text, tool, Setup, World};
 use serde_json::{json, Value};
 
 const TOKEN: &str = "tok-friend-phone";
@@ -80,8 +80,8 @@ impl Lan {
 
 /// Another person's paired phone, over plain HTTP from the LAN, is given
 /// their own day and refused the builder's by its id: the day's lookup,
-/// a page's history of it, and a chat naming it — whatever `user_id` the
-/// request names; nor is it given the builder's notes.
+/// a page's history of it, and a chat naming it (refused) — whatever
+/// `user_id` the request names; nor is it given the builder's notes.
 #[tokio::test]
 async fn another_persons_phone_over_the_lan_gets_its_own_day_and_never_the_builders() {
     let setup = Setup {
@@ -121,13 +121,18 @@ async fn another_persons_phone_over_the_lan_gets_its_own_day_and_never_the_build
     if shown.contains("BUILDER-WORDS") {
         wrong.push("a page's history of the builder's day was shown".into());
     }
-    let mark = w.mark();
     let body = json!({"session_id": mine, "project_root": w.work(), "message": "FRIEND-WORDS", "skill_name": "dice"});
+    let (status, sent) = lan.send(reqwest::Method::POST, "/api/chat", Some(body)).await;
+    if status != 403 {
+        wrong.push(format!("a chat naming the builder's day was not refused: {status} {sent}"));
+    }
+    let mark = w.mark();
+    let body = json!({"project_root": w.work(), "message": "FRIEND-OWN", "skill_name": "dice"});
     let sent = lan.post("/api/chat", body).await;
     let landed = sent["session_id"].as_str().unwrap_or_default().to_string();
-    if landed == mine {
-        wrong.push(format!("a chat naming the builder's day landed in it: {sent}"));
-    } else if !landed.is_empty() {
+    if landed != theirs {
+        wrong.push(format!("the friend's own chat did not land in their day: {sent}"));
+    } else {
         w.finish_run(&landed, Agent::Ling, mark).await;
     }
     let notes = w.home.linggen_home().join("notes");
@@ -140,6 +145,148 @@ async fn another_persons_phone_over_the_lan_gets_its_own_day_and_never_the_build
     let rows = serde_json::to_string(&w.raw_rows(&mine)).unwrap();
     if rows.contains("FRIEND-WORDS") {
         wrong.push("the friend's words are in the builder's day".into());
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// With the setting off, plain HTTP from the LAN is as before: a body the
+/// gate cannot read is passed through untouched (the route refuses it as
+/// it always did, never an empty one in its place), and a phone of the
+/// owner's that is signed out still reads the notes.
+#[tokio::test]
+async fn with_the_setting_off_the_lan_path_is_as_before() {
+    let w = World::start(Setup {
+        lan: true,
+        ..Setup::default()
+    })
+    .await;
+    let row = json!([{
+        "id": "phone-own", "name": "Own phone", "secret": TOKEN, "created_at": 0, "kind": "phone",
+    }]);
+    std::fs::write(w.home.linggen_home().join("paired-devices.json"), row.to_string()).unwrap();
+    let lan = Lan::new(&w);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while lan.status("/api/pair/me", Some(TOKEN)).await != 200 {
+        assert!(std::time::Instant::now() < deadline, "the phone is not known");
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let notes = w.home.linggen_home().join("notes");
+    std::fs::create_dir_all(&notes).unwrap();
+    let book = json!({"next": 2, "notes": [{"id": "n1", "text": "OWN-NOTE", "written_at": 0, "device": "mac"}]});
+    std::fs::write(notes.join("yinyue.json"), book.to_string()).unwrap();
+
+    let mut wrong = Vec::new();
+    let send = |base: String, token: Option<&'static str>| {
+        let mut req = lan
+            .client
+            .post(format!("{base}/api/chat"))
+            .header("content-type", "application/json")
+            .body("{not json");
+        if let Some(t) = token {
+            req = req.header("x-linggen-device", t);
+        }
+        async move { req.send().await.expect("POST").status().as_u16() }
+    };
+    let here = send(w.engine.base_url(), None).await;
+    let over_lan = send(lan.base.clone(), Some(TOKEN)).await;
+    if here != over_lan {
+        wrong.push(format!("a body that is not JSON was replaced: {over_lan} over the LAN, {here} here"));
+    }
+    if !lan.get("/api/notes?agent=yinyue").await.to_string().contains("OWN-NOTE") {
+        wrong.push("the signed-out phone lost the notes".into());
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+impl Lan {
+    /// One request with the friend's token: its status and body.
+    async fn send(&self, method: reqwest::Method, path: &str, body: Option<Value>) -> (u16, Value) {
+        let mut req = self
+            .client
+            .request(method, format!("{}{path}", self.base))
+            .header("x-linggen-device", TOKEN);
+        if let Some(body) = body {
+            req = req.json(&body);
+        }
+        let resp = req.send().await.expect("LAN request");
+        let status = resp.status().as_u16();
+        (status, resp.json().await.unwrap_or(Value::Null))
+    }
+}
+
+/// Every kind of route that takes a session, asked for the builder's day by
+/// another person's phone over the LAN: each is refused, and nothing of
+/// the day is read, answered, cleared or deleted.
+#[tokio::test]
+async fn another_persons_phone_over_the_lan_is_refused_the_builders_day_by_every_route() {
+    use reqwest::Method;
+    let ask = json!({"questions": [{"question": "BUILDER-QUESTION which box?", "header": "Box",
+        "options": [{"label": "Red"}, {"label": "Blue"}]}]});
+    let setup = Setup {
+        lan: true,
+        ..Setup::default()
+    }
+    .script(Agent::Ling, vec![tool("AskUser", ask), text("Red.")]);
+    let (w, _) = day_world_at(12, setup).await;
+    pair_friends_phone(&w);
+    let lan = Lan::new(&w);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while lan.status("/api/pair/me", Some(TOKEN)).await != 200 {
+        assert!(std::time::Instant::now() < deadline, "the phone is not known");
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let mine = w.api.get("/api/sessions/day").await["id"].as_str().unwrap().to_string();
+    let mark = w.mark();
+    say(&w, &mine, Some("dice"), "BUILDER-WORDS pick a box").await;
+    let question = loop {
+        let asks = w.api.get("/api/pending-ask-user?skill=dice").await;
+        if let Some(ask) = asks.as_array().and_then(|a| a.first()).cloned() {
+            break ask;
+        }
+        assert!(std::time::Instant::now() < deadline + std::time::Duration::from_secs(20), "no question");
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    };
+    let run_id = w
+        .engine
+        .log_since(mark)
+        .split("run_id=")
+        .nth(1)
+        .map(|r| r.split(|c: char| !c.is_ascii_alphanumeric() && c != '-').next().unwrap_or("").to_string())
+        .unwrap_or_default();
+    let q = question["question_id"].clone();
+    let refused = |s: u16| s == 403;
+    let mut wrong = Vec::new();
+    let probe = |wrong: &mut Vec<String>, what: &str, (status, body): (u16, Value)| {
+        if !refused(status) {
+            wrong.push(format!("{what}: {status} {body}"));
+        }
+    };
+    let enc = |s: &str| urlencoding::encode(s).into_owned();
+    let read = lan.send(Method::GET, "/api/pending-ask-user?skill=dice", None).await;
+    if read.1.to_string().contains("BUILDER-QUESTION") {
+        wrong.push(format!("read the question: {}", read.1));
+    }
+    let answer = json!({"question_id": q, "answers": [{"question_index": 0, "selected": ["Red"], "custom_text": null}]});
+    lan.send(Method::POST, "/api/ask-user-response", Some(answer)).await;
+    probe(&mut wrong, "clear", lan.send(Method::POST, "/api/chat/clear", Some(json!({"session_id": mine}))).await);
+    probe(&mut wrong, "approve a plan", lan.send(Method::POST, "/api/plan/approve", Some(json!({"session_id": mine}))).await);
+    let grant = json!({"session_id": mine, "path": w.work(), "mode": "admin"});
+    probe(&mut wrong, "change permission", lan.send(Method::PATCH, "/api/sessions/permission", Some(grant)).await);
+    lan.send(Method::POST, "/api/agent-cancel", Some(json!({"run_id": run_id}))).await;
+    let pic = format!("/api/sessions/images?session_id={}&name=x.png", enc(&mine));
+    probe(&mut wrong, "pictures", lan.send(Method::GET, &pic, None).await);
+    let prompt = format!("/api/chat/system-prompt?session_id={}&agent_id=ling&project_root={}", enc(&mine), enc(&w.work()));
+    probe(&mut wrong, "prompt export", lan.send(Method::GET, &prompt, None).await);
+    probe(&mut wrong, "her chat", lan.send(Method::POST, "/api/yinyue/chat", Some(json!({"text": "hi"}))).await);
+    probe(&mut wrong, "delete", lan.send(Method::DELETE, "/api/sessions/all", Some(json!({"session_id": mine}))).await);
+
+    let still = w.api.get("/api/pending-ask-user?skill=dice").await;
+    if !still.to_string().contains("BUILDER-QUESTION") {
+        wrong.push(format!("the question was answered or its turn stopped (run {run_id})"));
+    }
+    let thread = w.home.linggen_home().join("sessions").join(&mine).join("messages.jsonl");
+    if !std::fs::read_to_string(thread).unwrap_or_default().contains("BUILDER-WORDS") {
+        wrong.push("the day was cleared or deleted".into());
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
 }

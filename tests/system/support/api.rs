@@ -124,6 +124,11 @@ impl Api {
 
     /// Answer an open question with the option whose label matches `pick`.
     pub async fn answer(&self, ask: &Value, pick: &str) {
+        self.answer_as(ask, pick, None).await
+    }
+
+    /// [`Self::answer`], as the person `user` (`None`: the builder).
+    pub async fn answer_as(&self, ask: &Value, pick: &str, user: Option<&str>) {
         let options = ask["questions"][0]["options"]
             .as_array()
             .cloned()
@@ -134,10 +139,13 @@ impl Api {
             .find(|l| l.to_lowercase().contains(&pick.to_lowercase()))
             .unwrap_or_else(|| panic!("no '{pick}' option in {ask}"))
             .to_string();
-        let payload = json!({
+        let mut payload = json!({
             "question_id": ask["question_id"],
             "answers": [{"question_index": 0, "selected": [label], "custom_text": null}],
         });
+        if let Some(user) = user {
+            payload["user_id"] = json!(user);
+        }
         self.post("/api/ask-user-response", payload).await;
     }
 

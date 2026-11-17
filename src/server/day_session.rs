@@ -91,6 +91,14 @@ pub(crate) fn is_builder(user_id: Option<&str>) -> bool {
     person_of(user_id) == Whose::Builder
 }
 
+/// Whether the caller `user_id` names is given what is the builder's alone —
+/// an agent's notes, her own thread: with the setting on, the builder only
+/// (a phone signed out is its own person, as memory reads it); with it off,
+/// anyone, as before days.
+pub(crate) async fn shares_builders(manager: &AgentManager, user_id: Option<&str>) -> bool {
+    !enabled(manager).await || is_builder(user_id)
+}
+
 /// Whether session `session_id` is the builder's: their day, or — with the
 /// setting on — any session not made for another person. With the setting
 /// off every session is, as before days.

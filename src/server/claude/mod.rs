@@ -425,6 +425,10 @@ async fn steer_into_turn(
 #[derive(serde::Deserialize)]
 pub(crate) struct SteerRequest {
     id: String,
+    /// The caller's person: a message waiting in a day is steered only by
+    /// its own person.
+    #[serde(default)]
+    user_id: Option<String>,
 }
 
 /// POST /api/queue/steer — send one queued message into the running turn
@@ -435,6 +439,10 @@ pub(crate) async fn steer_queued(
     axum::extract::State(state): axum::extract::State<Arc<ServerState>>,
     Json(req): Json<SteerRequest>,
 ) -> Response {
+    let waits_in = chat::queued_session(&state, &req.id).await;
+    if waits_in.is_some_and(|sid| !crate::server::day_session::may_enter(&sid, req.user_id.as_deref())) {
+        return (StatusCode::FORBIDDEN, "that day is another person's").into_response();
+    }
     if state.claude.steer(&req.id) {
         return Json(json!({"status": "ok"})).into_response();
     }
