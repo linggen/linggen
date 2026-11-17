@@ -673,14 +673,13 @@ impl ClaudeSession {
 
     async fn sync_mode(&mut self, event: &Value) -> Result<()> {
         if let Ok(mode) = serde_json::from_value(event["permissionMode"].clone()) {
-            if self.state.manager.global_sessions.get_session_meta(&self.meta.id)?.is_some() {
+            let sessions = &self.state.manager.global_sessions;
+            if sessions.get_session_meta(&self.meta.id)?.is_some() {
                 self.meta.claude_permission_mode = mode;
                 if mode == crate::state_fs::sessions::ClaudePermissionMode::Auto {
                     state::mark_auto_verified(&self.dir());
                 }
-                self.state.manager.global_sessions.edit(&self.meta.id, |meta| {
-                    meta.claude_permission_mode = mode;
-                })?;
+                sessions.edit(&self.meta.id, |meta| meta.claude_permission_mode = mode)?;
             }
             self.emit(AgentEvent::StateUpdated).await;
         }

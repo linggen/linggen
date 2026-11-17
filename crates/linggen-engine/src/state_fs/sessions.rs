@@ -575,7 +575,13 @@ impl SessionStore {
         })
     }
 
-    /// Change an existing session under one lock, publishing a complete file.
+    /// The one way to change an existing session's file: read it, let `f`
+    /// change it, write it back — all under the store's lock, and written
+    /// through a temporary file so a reader never sees half of one. Two
+    /// changes at once both survive.
+    ///
+    /// `f` must not call back into this store's `edit` or `get_session_meta`
+    /// (the lock is not re-entrant) and cannot await.
     pub fn edit<R>(&self, session_id: &str, f: impl FnOnce(&mut SessionMeta) -> R) -> Result<R> {
         Self::validate_id(session_id)?;
         let _guard = self.meta_lock.lock().unwrap_or_else(|e| e.into_inner());
@@ -584,8 +590,11 @@ impl SessionStore {
             bail!("Session not found: {}", session_id);
         }
         let mut meta = parse_meta(&fs::read_to_string(&path)?)?;
-        meta.migrate_members(|| self.get_chat_history(session_id)
-            .map(|rows| answering_agents(&rows)).unwrap_or_default());
+        meta.migrate_members(|| {
+            self.get_chat_history(session_id)
+                .map(|rows| answering_agents(&rows))
+                .unwrap_or_default()
+        });
         let result = f(&mut meta);
         let yaml = meta_yaml(&meta)?;
         let mut temp = tempfile::NamedTempFile::new_in(self.session_dir(session_id))?;

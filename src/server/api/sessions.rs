@@ -460,7 +460,7 @@ pub(crate) async fn rename_session_api(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<RenameSessionRequest>,
 ) -> impl IntoResponse {
-    if let Ok(Some(mut meta)) = state
+    if let Ok(Some(meta)) = state
         .manager
         .global_sessions
         .get_session_meta(&req.session_id)
@@ -489,7 +489,11 @@ pub(crate) async fn rename_session_api(
             }
             // The mode change can wait on the SDK while the running turn
             // writes this meta; apply the request to what is stored now.
-            if state.manager.global_sessions.get_session_meta(&req.session_id).ok().flatten().is_none() {
+            let stored = state
+                .manager
+                .global_sessions
+                .get_session_meta(&req.session_id);
+            if !matches!(stored, Ok(Some(_))) {
                 return StatusCode::NOT_FOUND.into_response();
             }
             if state
@@ -530,7 +534,7 @@ pub(crate) async fn rename_session_api(
         }
     }
     if let Some(ref model_id) = req.model_id {
-        if let Ok(Some(mut meta)) = state
+        if let Ok(Some(meta)) = state
             .manager
             .global_sessions
             .get_session_meta(&req.session_id)
@@ -547,17 +551,13 @@ pub(crate) async fn rename_session_api(
                 .clone()
                 .filter(|a| !a.trim().is_empty())
                 .unwrap_or_else(|| crate::server::chat::members::default_responder(&members));
-            let skill = match meta.skill.as_deref() {
-                Some(name) => state.manager.skills.get_skill(name).await,
-                None => None,
-            };
-            let _ = state.manager.global_sessions.edit(&req.session_id, |fresh| {
-                let mut updated = fresh.clone();
-                updated.agents = crate::server::chat::members::effective(fresh, skill.as_ref());
-                if updated.set_member_model(&member, new_val.clone()) {
-                    fresh.agents = updated.agents;
-                }
-            });
+            crate::server::chat::members::set_model(
+                &state.manager,
+                &req.session_id,
+                &member,
+                new_val.clone(),
+            )
+            .await;
             // On a mission session the model picker is the only model control
             // the user is shown, so it has to be the mission's model — not a
             // per-session override the next scheduled run overwrites (the
