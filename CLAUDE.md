@@ -65,6 +65,11 @@ in a new turn afterwards — do nothing else in the turn that calls it.
 `scripts/restart-engine.sh` does the builds and this in one go.
 Release builds (`cargo build --release`) are for shipping.
 
+Run the tests with `scripts/scratch-test.sh` (unit) and
+`scripts/scratch-test.sh system`: the engine's tests read and write their
+home folder, and the script points it at a scratch one under `~/.cache` —
+with the real one they would open the owner's own memory and sessions.
+
 In a fresh `git worktree`, run `scripts/worktree-setup.sh` before the first
 build: it clones (copy-on-write) the built UI, the avatar clips and the main
 checkout's `target/fast`, so the first build there compiles only our own code.

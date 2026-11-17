@@ -10,9 +10,14 @@ use std::path::Path;
 const WD: &str = "/coding-session-test/wd";
 
 fn session(cwd_mode: PermissionMode) -> SessionPermissions {
+    session_at(WD, cwd_mode)
+}
+
+/// Read everywhere, `mode` on `dir`.
+fn session_at(dir: &str, mode: PermissionMode) -> SessionPermissions {
     let mut perms = SessionPermissions::default();
     perms.set_path_mode("*", PermissionMode::Read);
-    perms.set_path_mode(WD, cwd_mode);
+    perms.set_path_mode(dir, mode);
     perms
 }
 
@@ -205,4 +210,32 @@ fn the_deny_floor_and_outward_commands_come_first() {
             "{cmd}"
         );
     }
+}
+
+/// `$HOME` is read as the shell reads it: a command naming the home folder
+/// is judged by the path it reaches, not asked about as unreadable.
+#[test]
+fn a_command_naming_the_home_folder_is_judged_by_its_path() {
+    let Some(home) = dirs::home_dir().and_then(|h| h.to_str().map(str::to_string)) else {
+        return;
+    };
+    if !home.chars().all(|c| c.is_ascii_alphanumeric() || "/._-".contains(c)) {
+        return;
+    }
+    let inside = format!("{home}/proj");
+    let perms = session_at(&inside, PermissionMode::Edit);
+    let at = |cmd: &str, coding: bool| {
+        check_permission_for("Bash", Some(cmd), None, Path::new(&inside), &perms, None, coding)
+    };
+    // Inside what the session may edit: allowed, coding or not.
+    assert!(allowed(&at("mkdir -p \"$HOME/proj/out\"", false)));
+    assert!(allowed(&at("ls $HOME/proj", false)));
+    assert!(allowed(&at("./tool \"${HOME}/proj/in.txt\"", true)));
+    // Outside it: asked for that path at the level the command needs — not
+    // for admin as a command that cannot be read.
+    assert_eq!(asks_at(&at("mkdir -p \"$HOME/elsewhere/out\"", false)), Some(PermissionMode::Edit));
+    // Another variable is still unreadable.
+    assert_eq!(asks_at(&at("ls $OTHER/proj", false)), Some(PermissionMode::Admin));
+    // A command that sets HOME is left as it was.
+    assert_eq!(asks_at(&at("HOME=/x ls $HOME/proj", false)), Some(PermissionMode::Admin));
 }

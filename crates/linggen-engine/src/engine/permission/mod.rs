@@ -22,6 +22,7 @@ mod coding_session_tests;
 mod declined;
 mod manifest;
 mod model;
+mod known_vars;
 mod outward;
 mod pattern_text;
 mod prompt;
