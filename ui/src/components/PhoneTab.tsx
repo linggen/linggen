@@ -140,6 +140,8 @@ export const PhoneTab: React.FC<{
     );
     try {
       await pairApi.setPermission(device.id, level);
+    } catch {
+      /* refused away from this Mac: the list below shows what is set */
     } finally {
       fetchInfo();
     }
