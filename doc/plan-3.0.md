@@ -29,9 +29,10 @@ Every number is tagged **(measured)** — taken on his Mac on 2026-11-15 — or
 | 4 Upgrades | Done, published in **2.3.1** (2026-11-17). Patch and minor batch in 2.3.0 (329 crates). The two major groups in 2.3.1, a release of their own because a database upgrade may change the store on disk: fastembed 5.17.4 on candle 0.11.0 (vectors bit-equal to 2.3.0's); lancedb 0.41 with lance 14.0.2 and datafusion 54 (a 2.3.0 store opens in place with every row; 2.3.0 still opens it afterwards — the gate now checks this upgrade and the way back on every release; new tables pinned to Lance file format 2.1). Cost (measured): `ling` 312.6 → 373.0 MB, the Mac download 219.5 → 238.1 MB. Open: the database libraries' unused features (step 4.3) to win that back; the memory benchmark (`evals/memory`) still speaks to the old two-program setup and was not run — identical vectors and identical search hits stood in for it |
 | Slimming | Mac: done, published in 2.3.0 — Yinyue's clips baked; packaged skills leave out tools, tests and unloaded source art; 灵境's later-chapter art is fetched after install by content hash (133 files, held within seconds of first launch in the gate). Phone: built on branches, not merged — 灵境 in the app 106.7 → 86.1 MB (measured; the careful count), later chapters fetched by hash, everything on Wi-Fi and only the next chapter on cellular. Open: merging it, putting the phone's art set on the storage, a build on a device |
 | 2.4 → ships as 3.0 | On main since 2026-11-17 (engine, skills and phone), checks green. The activity log, the world block, notes and look-again, the guardrails, a turn's place; and the daily session behind `agent.daily_session` (off by default): app chats, her moments and phone hand-offs in the daily session from 04:00, each turn in its page's place, other apps' stretches folded on a page. Reshaped on 2026-11-16/17 after review: a private app keeps a session of its own (one rule asked by every way into the day); a day is a person's, the person resolved from the device as memory resolves it; her stage and voice are held per person. The phone's side is on main too (hand-offs join the day; later chapters' art fetched by hash). Seen live once on his Mac with the setting on. Open: the setting on by default; the three scenarios seen live; the phone's art set on the storage and a build on a device |
-| Kinds of session (§5.1) | Designed and agreed 2026-11-17. Part 1 (every kind of session described by one spec, applied in one place; behaviour unchanged) in work. Open: the `code` kind of work, the ways to ask for it, the comparison runs |
+| Kinds of session (§5.1) | Designed and agreed 2026-11-17. Part 1 on main the same day: every kind of session is described by one spec and applied in one place (`engine/session_spec/`), locked by a test; a person typing into a delegated run's session no longer widens its tools. In work: the `code` kind of work. Open: the ways to ask for it, the comparison runs, a run on a live engine |
 | A paired device's standing (§5.2) | Decided 2026-11-17, designed; not built |
-| Review and refactor before 3.0 (§5.3) | Second review done 2026-11-17 (read-only). First small moves in work |
+| Review and refactor before 3.0 (§5.3) | Engine and phone reviewed 2026-11-17 (read-only). On main: one copy of the small helpers; one locked way to change a session's file. Phone: its checks are green again; the release recipe builds 灵境's files first. The rest of §5.3 and §5.4 is open |
+| The phone and the Mac in step (§5.4) | Decided 2026-11-17; not built |
 
 ## 2. Milestones
 
@@ -299,6 +300,29 @@ looked for decisions made in more than one place. Before 3.0:
 Left for after 3.0: the further crate cuts, the event forwarder's rewrite,
 typed turn errors, one way to start background work, skills declaring their
 own setup steps.
+
+### 5.4 The phone and the Mac in step (decided 2026-11-17)
+
+Hanli: 「engine升级时, 手机要同步升级吗?」 Today nothing answers that: the two
+share no version, the phone learns the Mac changed only when a feature stops
+working, and the App Store's review keeps them apart for days.
+
+- **One number each side.** A contract number in one file on the Mac and one
+  on the phone, kept equal by a test. The phone says its number when it
+  connects; the Mac says its own. A side that is too old is told so once, in
+  plain words, from one place — not by each feature failing its own way. No
+  old behaviour is kept for an old phone (no real users yet).
+- **The phone asks through declared tools.** The twelve places where the
+  phone sends the Mac a shell command (the money, health and music apps'
+  sync, 灵境's book) become tools the apps declare, one app at a time. This
+  comes before §5.2: a phone at *read* cannot be allowed a shell.
+- **One wording for "the Mac is not there"**, and the Mac — not a copy on the
+  phone — decides which session a chat joins.
+- **Release order.** The iPhone build goes to review first; the Mac release
+  is published once it is approved; then the phone's release is tapped.
+- **Smaller.** The release recipe builds 灵境's files from the skills first
+  (a stale folder ships every picture). Next: the hand-tracking model fetched
+  after install; code and art split in the board packs (after 3.0).
 
 ## 6. Before a step can ship
 
