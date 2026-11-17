@@ -604,11 +604,24 @@ mod tests {
     fn fake_without_memory(path: &Path, version: &str, web: &str) {
         fake(path, version, web);
         let body = std::fs::read_to_string(path).unwrap();
-        std::fs::write(path, body.replace("case \"$1\" in\n", "case \"$1\" in\nmem) exit 2 ;;\n")).unwrap();
+        std::fs::write(
+            path,
+            body.replace("case \"$1\" in\n", "case \"$1\" in\nmem) exit 2 ;;\n"),
+        )
+        .unwrap();
     }
 
-    /// Serves its working directory, where api/health is a file.
-    const SERVES: &str = "exec python3 -m http.server \"$3\" --bind 127.0.0.1";
+    /// Serves its working directory, where api/health is a file. Not
+    /// `python3 -m http.server`: its `server_bind` calls `getfqdn`, a reverse
+    /// lookup that can hang (an mDNS stall), and the server never listens.
+    const SERVES: &str = r#"exec python3 -c '
+import http.server as h, socketserver, sys
+class S(h.ThreadingHTTPServer):
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+S(("127.0.0.1", int(sys.argv[1])), h.SimpleHTTPRequestHandler).serve_forever()
+' "$3""#;
 
     fn have_python() -> bool {
         std::process::Command::new("python3")
@@ -757,7 +770,11 @@ mod tests {
         let path = rig.opts.ling_mem.clone().unwrap();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "#!/bin/sh\n# linggen-ling-mem-stand-in v=2.0.0\n").unwrap();
-        std::fs::write(path.with_file_name("ling-mem.prev"), [0xcf, 0xfa, 0xed, 0xfe, 7]).unwrap();
+        std::fs::write(
+            path.with_file_name("ling-mem.prev"),
+            [0xcf, 0xfa, 0xed, 0xfe, 7],
+        )
+        .unwrap();
         use std::os::unix::fs::PermissionsExt;
         let perm = std::fs::Permissions::from_mode(0o755);
         std::fs::set_permissions(path.with_file_name("ling-mem.prev"), perm).unwrap();
@@ -765,7 +782,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_unhealthy_engine_rolls_back_to_one_without_memory_and_the_old_ling_mem_comes_back() {
+    async fn an_unhealthy_engine_rolls_back_to_one_without_memory_and_the_old_ling_mem_comes_back()
+    {
         if !have_python() {
             return;
         }
@@ -780,8 +798,14 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(format!("{err:#}").contains("rolled back v2.0.0 -> v1.0.0"), "{err:#}");
-        assert_eq!(std::fs::read(&ling_mem).unwrap(), [0xcf, 0xfa, 0xed, 0xfe, 7]);
+        assert!(
+            format!("{err:#}").contains("rolled back v2.0.0 -> v1.0.0"),
+            "{err:#}"
+        );
+        assert_eq!(
+            std::fs::read(&ling_mem).unwrap(),
+            [0xcf, 0xfa, 0xed, 0xfe, 7]
+        );
         assert!(!ling_mem.with_file_name("ling-mem.prev").exists());
     }
 
@@ -801,36 +825,52 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(std::fs::read_to_string(&ling_mem).unwrap().contains("stand-in"));
+        assert!(std::fs::read_to_string(&ling_mem)
+            .unwrap()
+            .contains("stand-in"));
         assert!(ling_mem.with_file_name("ling-mem.prev").exists());
     }
 
     #[tokio::test]
     async fn current_restart_preserves_binary_and_backup() {
-        if !have_python() { return; }
+        if !have_python() {
+            return;
+        }
         let rig = Rig::new();
         fake(&rig.target(), "1.0.0", SERVES);
         std::fs::write(rig.bin.path().join("ling.prev"), "untouched").unwrap();
         let before = std::fs::read(rig.target()).unwrap();
         let old = rig.running().await;
-        restart_current(&rig.target(), &old, &rig.opts).await.unwrap();
+        restart_current(&rig.target(), &old, &rig.opts)
+            .await
+            .unwrap();
         assert_eq!(std::fs::read(rig.target()).unwrap(), before);
-        assert_eq!(std::fs::read(rig.bin.path().join("ling.prev")).unwrap(), b"untouched");
+        assert_eq!(
+            std::fs::read(rig.bin.path().join("ling.prev")).unwrap(),
+            b"untouched"
+        );
         assert_ne!(rig.engine_pid(), old.pid);
     }
 
     #[tokio::test]
     async fn current_restart_failure_never_rolls_back() {
-        if !have_python() { return; }
+        if !have_python() {
+            return;
+        }
         let mut rig = Rig::new();
         fake(&rig.target(), "1.0.0", SERVES);
         let old = rig.running().await;
         fake(&rig.target(), "1.0.0", "exit 1");
         std::fs::write(rig.bin.path().join("ling.prev"), "untouched").unwrap();
         rig.opts.health_timeout = Duration::from_secs(2);
-        let err = restart_current(&rig.target(), &old, &rig.opts).await.unwrap_err();
+        let err = restart_current(&rig.target(), &old, &rig.opts)
+            .await
+            .unwrap_err();
         assert!(!format!("{err:#}").contains("rolled back"));
-        assert_eq!(std::fs::read(rig.bin.path().join("ling.prev")).unwrap(), b"untouched");
+        assert_eq!(
+            std::fs::read(rig.bin.path().join("ling.prev")).unwrap(),
+            b"untouched"
+        );
     }
 
     #[tokio::test]
