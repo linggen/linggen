@@ -102,6 +102,7 @@ impl AgentEngine {
             allowed_tools: Option<HashSet<String>>,
             path_modes: Vec<crate::engine::permission::PathMode>,
             interactive: bool,
+            work: Option<crate::engine::session_spec::Work>,
             background: bool,
             started: Option<tokio::sync::oneshot::Sender<String>>,
         }
@@ -125,6 +126,7 @@ impl AgentEngine {
                         allowed_tools: allowed_tools.clone(),
                         path_modes: self.session_permissions.path_modes.clone(),
                         interactive: self.session_permissions.interactive,
+                        work: self.tools.builtins.parent_work,
                         background: da.run_in_background,
                         started: None,
                     });
@@ -202,6 +204,7 @@ impl AgentEngine {
                     spawn.allowed_tools,
                     spawn.path_modes,
                     spawn.interactive,
+                    spawn.work,
                     true,
                     spawn.started,
                 ))
@@ -268,6 +271,7 @@ impl AgentEngine {
                     spawn.allowed_tools,
                     spawn.path_modes,
                     spawn.interactive,
+                    spawn.work,
                     false,
                     Some(started_tx),
                 ))

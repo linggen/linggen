@@ -21,7 +21,7 @@ use std::collections::HashSet;
 #[derive(Debug, Clone, PartialEq)]
 pub struct SessionSpec {
     pub preset: Preset,
-    /// The kind of work the session is for. Reserved: no work tag exists yet.
+    /// The kind of work the session is for, when its preset accepts it.
     pub work: Option<Work>,
     /// Which runtime hosts it (a Claude session never gets a native engine).
     pub runtime: SessionRuntime,
@@ -54,9 +54,11 @@ pub struct SessionSpec {
     pub ceiling: Option<Ceiling>,
 }
 
-/// A session's kind of work. No variant yet (part 2 adds `code`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Work {}
+/// A session's kind of work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(any(test, feature = "test-support"), derive(ts_rs::TS), ts(export))]
+#[serde(rename_all = "snake_case")]
+pub enum Work { Code }
 
 /// A ceiling another design will set. No variant yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -263,7 +265,7 @@ impl SessionSpec {
         let policy = matches!(row.framing, Framing::Turn).then(SessionPolicy::owner);
         Self {
             preset,
-            work: None,
+            work: if preset.takes_work() { meta.work } else { None },
             runtime: meta.runtime,
             seat: row.seat,
             folder: row.folder,
@@ -322,8 +324,9 @@ impl SessionSpec {
 
     /// A delegated `Task` child of a parent run under `policy`: a task
     /// whatever the parent's session, prompting only when the parent could.
-    pub fn delegated_child(policy: Option<SessionPolicy>, parent_interactive: bool) -> Self {
+    pub fn delegated_child(policy: Option<SessionPolicy>, parent_interactive: bool, work: Option<Work>) -> Self {
         let mut spec = Self::unclaimed(None);
+        spec.work = work;
         spec.policy = policy;
         spec.permission = match parent_interactive {
             true => Permission::Interactive,

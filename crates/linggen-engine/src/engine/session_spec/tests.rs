@@ -16,7 +16,11 @@ fn engine() -> AgentEngine {
         InterfaceMode::Web,
     );
     let models = std::sync::Arc::new(crate::provider::models::ModelManager::new_with_credentials(
-        Vec::new(),
+        [("test-openai", "openai"), ("test-claude", "anthropic"), ("test-deepseek", "deepseek")].into_iter().map(|(id, provider)| crate::config::ModelConfig {
+            id: id.into(), provider: provider.into(), url: "http://localhost:1".into(), model: id.into(),
+            api_key: None, keep_alive: None, context_window: None, tags: vec![], supports_tools: Some(true),
+            auth_mode: None, reasoning_effort: None, provided_by: None, is_builtin: false,
+        }).collect(),
         &crate::credentials::Credentials::default(),
     ));
     AgentEngine::new(cfg, models, "m".to_string(), AgentRole::Lead).unwrap()
@@ -37,6 +41,75 @@ fn meta(id: &str, creator: &str, skill: Option<&str>) -> SessionMeta {
         agents: vec![SessionMember::new("ling")],
         ..Default::default()
     }
+}
+
+fn code_meta(id: &str, creator: &str, skill: Option<&str>) -> SessionMeta {
+    let plain = meta(id, creator, skill);
+    let yaml = format!("{}\nwork: code\n", serde_norway::to_string(&plain).unwrap());
+    serde_norway::from_str(&yaml).unwrap()
+}
+
+#[test]
+fn work_code_chat_prompt() {
+    let tagged = typed_by_spec(&code_meta("sess-c", "user", None), "user");
+    let plain = typed_by_spec(&meta("sess-c", "user", None), "user");
+    assert!(!plain.system_prompt().contains("## Working on code"));
+    assert!(tagged.system_prompt().contains("## Working on code"));
+}
+
+#[test]
+fn work_code_model_family_prompt() {
+    let mut e = typed_by_spec(&code_meta("sess-c", "user", None), "user");
+    e.model_id = "test-openai".into();
+    assert!(e.system_prompt().contains("not apply_patch"));
+    e.model_id = "test-claude".into();
+    let prompt = e.system_prompt();
+    assert!(!prompt.contains("not apply_patch"));
+    assert!(!prompt.contains("Use absolute paths in every tool call"));
+    assert!(!prompt.contains("Do not describe an edit you have not made"));
+}
+
+#[test]
+fn work_code_switch_model_prompt() {
+    use crate::engine::prompt::PromptPurpose;
+    let mut e = typed_by_spec(&code_meta("sess-c", "user", None), "user");
+    e.model_id = "test-openai".into();
+    let first = e.prepare_loop_messages("hi", true, PromptPurpose::Preview).0[0].content.clone();
+    assert!(first.contains("not apply_patch"));
+    e.model_id = "test-deepseek".into();
+    let next = e.prepare_loop_messages("hi", true, PromptPurpose::Preview).0[0].content.clone();
+    assert!(next.contains("Do not describe an edit you have not made"));
+    assert!(!next.contains("not apply_patch"));
+}
+
+#[test]
+fn work_code_daily_and_app_ignore_tag() {
+    for m in [code_meta("sess-day-2026-11-17", "agent", None), code_meta("sess-app", "skill", Some("dice"))] {
+        let e = typed_by_spec(&m, "user");
+        assert!(!e.system_prompt().contains("## Working on code"));
+    }
+    // The tag must still be recognized on the eligible control.
+    assert!(typed_by_spec(&code_meta("sess-c", "user", None), "user").system_prompt().contains("## Working on code"));
+}
+
+#[test]
+fn work_code_task_child_inherits() {
+    let parent = typed_by_spec(&code_meta("sess-c", "user", None), "user");
+    let mut child = engine();
+    let spec = SessionSpec::delegated_child(parent.tools.builtins.session_policy.clone(), true, parent.tools.builtins.parent_work);
+    spec.apply(&mut child);
+    assert!(child.system_prompt().contains("## Working on code"));
+}
+
+#[test]
+fn work_code_preset_table_and_unknown_value() {
+    for (preset, accepts) in [
+        (Preset::Chat, true), (Preset::Delegate, true), (Preset::Handoff, true),
+        (Preset::App, false), (Preset::OneOff, false), (Preset::Daily, false),
+        (Preset::Companion, false), (Preset::Mission, false), (Preset::Claude, false),
+    ] { assert_eq!(preset.takes_work(), accepts, "{preset:?}"); }
+    let value: SessionMeta = serde_norway::from_str("id: x\ntitle: x\ncreated_at: 0\nwork: future\n").unwrap();
+    assert_eq!(value.work, None);
 }
 
 fn mission() -> crate::engine::mission::record::Mission {
@@ -228,7 +301,7 @@ fn a_delegates_run_runs_as_today() {
 fn a_task_child_runs_as_today() {
     for parent_interactive in [true, false] {
         let mut by_spec = engine();
-        SessionSpec::delegated_child(Some(SessionPolicy::owner()), parent_interactive)
+        SessionSpec::delegated_child(Some(SessionPolicy::owner()), parent_interactive, None)
             .apply(&mut by_spec);
         let want = expected(true, true, true, None, parent_interactive, false);
         assert_eq!(Seen::of(&by_spec, None), want);

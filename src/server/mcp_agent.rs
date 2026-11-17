@@ -576,6 +576,7 @@ fn delegate_meta(
     model_fallback: Option<bool>,
 ) -> crate::state_fs::sessions::SessionMeta {
     let mut meta = crate::state_fs::sessions::SessionMeta {
+        work: None,
         runtime: Default::default(),
         claude_permission_mode: Default::default(),
         parent_session_id: None,

@@ -13,6 +13,10 @@ use std::path::{Path, PathBuf};
 // ---------------------------------------------------------------------------
 
 pub mod keys {
+    pub const WORK_CODE_CORE: &str = "work-code.core";
+    pub const WORK_CODE_OPENAI: &str = "work-code.openai";
+    pub const WORK_CODE_GEMINI: &str = "work-code.gemini";
+    pub const WORK_CODE_DEEPSEEK: &str = "work-code.deepseek";
     // -- system-prompt.* --------------------------------------------------
     pub const SYSTEM_FALLBACK_IDENTITY: &str = "system-prompt.fallback_identity";
     pub const SYSTEM_SKILLS_HEADER: &str = "system-prompt.skills_header";
@@ -102,6 +106,7 @@ pub use keys::{
 // ---------------------------------------------------------------------------
 
 const TOML_DEFAULTS: &[(&str, &str)] = &[
+    ("work-code", include_str!("../../../prompts/work-code.toml")),
     (
         "system-prompt",
         include_str!("../../../prompts/system-prompt.toml"),

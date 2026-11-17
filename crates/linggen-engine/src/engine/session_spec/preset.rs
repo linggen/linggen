@@ -27,6 +27,12 @@ pub enum Preset {
     Claude,
 }
 
+impl Preset {
+    pub fn takes_work(self) -> bool {
+        matches!(self, Self::Chat | Self::Delegate | Self::Handoff)
+    }
+}
+
 /// The id prefix of a hand-off's session.
 pub const HANDOFF_PREFIX: &str = "sess-handoff-";
 

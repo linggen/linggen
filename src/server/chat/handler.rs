@@ -244,6 +244,7 @@ async fn ensure_session(
 
     let (project, project_name) = crate::state_fs::sessions::project_of(project_root_str);
     let make_meta = |id: String| crate::state_fs::sessions::SessionMeta {
+        work: None,
         runtime: Default::default(),
         claude_permission_mode: Default::default(),
         parent_session_id: None,

@@ -35,7 +35,8 @@ impl SessionSpec {
         }
         let tools = self.tools.allowlist();
         let (consumer_tools, consumer_skills) = self.consumer_sets();
-        let changed = engine.prompt_profile != profile
+        let changed = engine.session_spec.work != self.work
+            || engine.prompt_profile != profile
             || engine.cfg.mission_allowed_tools != tools
             || engine.cfg.consumer_allowed_tools != consumer_tools
             || engine.cfg.consumer_allowed_skills != consumer_skills;
@@ -48,6 +49,7 @@ impl SessionSpec {
         engine.session_creator = self.creator.clone();
         // Subagents inherit the asking person's policy through delegation.
         engine.tools.builtins.session_policy = self.policy.clone();
+        engine.tools.builtins.parent_work = self.work;
         if changed {
             engine.cached_system_prompt = None;
         }

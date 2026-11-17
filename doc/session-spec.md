@@ -130,6 +130,11 @@ how a turn is framed (verbatim or as a task), who answers beyond the grants
 (the person, the caller, or nobody), how its thread is kept (its own,
 the day's, rolling). A new kind of session is a new row.
 
+A session may store `work: code` to add coding guidance to its system prompt.
+Chat, Delegate and Handoff take this tag; all other presets ignore it.
+The guidance is in `prompts/work-code.toml`: core lines followed by the answering model family's lines when available.
+The tag does not change tools, permissions or memory, and Task children inherit it.
+
 The spec is the only writer of a session's prompt profile, tool
 restriction, interactivity, world and framing; a turn's place narrows the
 turn on top of it and puts it back when the turn ends (§ A turn's place). A

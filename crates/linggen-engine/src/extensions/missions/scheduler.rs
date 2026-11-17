@@ -361,6 +361,7 @@ pub(crate) fn mission_session_meta(
     // A mission with no `cwd:` works where a plain chat does.
     let cwd = mission_cwd.unwrap_or_else(|| crate::state_fs::sessions::fallback_cwd(None));
     let mut meta = crate::state_fs::sessions::SessionMeta {
+        work: None,
         runtime: Default::default(),
         claude_permission_mode: Default::default(),
         parent_session_id: None,

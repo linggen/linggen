@@ -357,6 +357,7 @@ pub struct Tools {
     /// Session policy propagated to subagents via delegation.
     /// Set by the parent engine; applied to subagent engines after spawn.
     pub(crate) session_policy: Option<super::session_policy::SessionPolicy>,
+    pub(crate) parent_work: Option<super::session_spec::Work>,
     /// Effective tool set of the loop dispatching the current call.
     pub(crate) parent_allowed_tools: Option<std::collections::HashSet<String>>,
     /// Parent engine's path-mode grants, propagated to subagents via delegation.
@@ -411,6 +412,7 @@ impl Tools {
             prompt_store: None,
             session_id: None,
             session_policy: None,
+            parent_work: None,
             parent_allowed_tools: None,
             parent_path_modes: Vec::new(),
             parent_interactive: true,

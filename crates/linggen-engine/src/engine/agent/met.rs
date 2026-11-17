@@ -438,6 +438,7 @@ mod tests {
 
     fn session(store: &SessionStore, id: &str, seated: &[&str], rows: &[ChatMsg]) {
         let mut meta = SessionMeta {
+            work: None,
             runtime: Default::default(),
             claude_permission_mode: Default::default(),
             parent_session_id: None,

@@ -143,6 +143,7 @@ pub(crate) async fn create_session(
     let cwd = session_cwd(skill.as_ref(), req.project_root.as_deref());
     let is_skill = req.skill.is_some();
     let mut meta = crate::state_fs::sessions::SessionMeta {
+        work: None,
         runtime: Default::default(),
         claude_permission_mode: Default::default(),
         parent_session_id: None,

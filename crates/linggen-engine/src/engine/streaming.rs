@@ -475,11 +475,28 @@ impl AgentEngine {
         let mut stalled: Vec<String> = Vec::new();
 
         loop {
+            // Rebuild the stable prefix for the model about to receive this
+            // attempt, including a fallback before it has answered.
+            let adjusted = if self.session_spec().work.is_some() {
+                let old = self.cached_system_prompt.as_ref().map(|c| c.content.clone())
+                    .unwrap_or_else(|| self.build_stable_system_content().0);
+                let previous = std::mem::replace(&mut self.model_id, model_id.clone());
+                let new = self.build_stable_system_content().0;
+                self.model_id = previous;
+                let mut adjusted = messages.to_vec();
+                if let Some(first) = adjusted.first_mut() {
+                    if let Some(suffix) = first.content.strip_prefix(&old) {
+                        first.content = format!("{new}{suffix}");
+                    }
+                }
+                Some(adjusted)
+            } else { None };
+            let attempt_messages = adjusted.as_deref().unwrap_or(messages);
             let result = if let Some(ref tool_defs) = tools {
-                self.stream_with_tool_calling(&model_id, messages, tool_defs.clone())
+                self.stream_with_tool_calling(&model_id, attempt_messages, tool_defs.clone())
                     .await
             } else {
-                self.stream_with_thinking_model(&model_id, messages).await
+                self.stream_with_thinking_model(&model_id, attempt_messages).await
             };
 
             match result {
@@ -494,7 +511,7 @@ impl AgentEngine {
                         );
                     }
                     crate::provider::models::note_healthy(&model_id);
-                    self.remember_call(&model_id, messages, tools.as_ref(), &result);
+                    self.remember_call(&model_id, attempt_messages, tools.as_ref(), &result);
                     self.run_usage.add(&model_id, result.token_usage.as_ref());
                     self.note_run_model(&model_id);
                     crate::engine::cloud_meter::after_call(self, result.token_usage.as_ref());

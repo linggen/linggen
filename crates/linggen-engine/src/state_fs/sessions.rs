@@ -28,6 +28,11 @@ pub struct SessionStore {
     pub running_places: crate::engine::turn_place::running::RunningPlaces,
 }
 
+fn deserialize_work<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<crate::engine::session_spec::Work>, D::Error> {
+    let value = serde_norway::Value::deserialize(deserializer)?;
+    Ok(serde_norway::from_value(value).ok())
+}
+
 fn default_creator() -> String {
     "user".to_string()
 }
@@ -73,6 +78,9 @@ pub struct SessionMeta {
     pub id: String,
     #[serde(default, skip_serializing_if = "SessionRuntime::is_linggen")]
     pub runtime: SessionRuntime,
+    /// Optional work switch; unknown future values are ignored.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "deserialize_work")]
+    pub work: Option<crate::engine::session_spec::Work>,
     #[serde(default, skip_serializing_if = "ClaudePermissionMode::is_default")]
     pub claude_permission_mode: ClaudePermissionMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1012,6 +1020,7 @@ mod tests {
     fn test_session_crud() {
         let (store, _dir) = temp_store();
         let meta = SessionMeta {
+            work: None,
             runtime: Default::default(),
             claude_permission_mode: Default::default(),
             parent_session_id: None,
@@ -1101,7 +1110,8 @@ mod tests {
         for (id, ts) in [("s1", 100u64), ("s2", 300), ("s3", 200)] {
             store
                 .add_session(&SessionMeta {
-                    runtime: Default::default(),
+                    work: None,
+            runtime: Default::default(),
                     claude_permission_mode: Default::default(),
                     parent_session_id: None,
                     id: id.into(),
@@ -1141,6 +1151,7 @@ mod tests {
     fn test_chat_messages_roundtrip() {
         let (store, _dir) = temp_store();
         let meta = SessionMeta {
+            work: None,
             runtime: Default::default(),
             claude_permission_mode: Default::default(),
             parent_session_id: None,
@@ -1241,7 +1252,8 @@ mod tests {
         let (store, _dir) = temp_store();
         store
             .add_session(&SessionMeta {
-                runtime: Default::default(),
+                work: None,
+            runtime: Default::default(),
                 claude_permission_mode: Default::default(),
                 parent_session_id: None,
                 id: "s1".into(),
@@ -1319,7 +1331,8 @@ mod tests {
         let (store, _dir) = temp_store();
         store
             .add_session(&SessionMeta {
-                runtime: Default::default(),
+                work: None,
+            runtime: Default::default(),
                 claude_permission_mode: Default::default(),
                 parent_session_id: None,
                 id: "s1".into(),
@@ -1374,7 +1387,8 @@ mod tests {
         let (store, _dir) = temp_store();
         store
             .add_session(&SessionMeta {
-                runtime: Default::default(),
+                work: None,
+            runtime: Default::default(),
                 claude_permission_mode: Default::default(),
                 parent_session_id: None,
                 id: "s1".into(),
@@ -1429,7 +1443,8 @@ mod tests {
         let (store, _dir) = temp_store();
         assert!(store
             .add_session(&SessionMeta {
-                runtime: Default::default(),
+                work: None,
+            runtime: Default::default(),
                 claude_permission_mode: Default::default(),
                 parent_session_id: None,
                 id: "../escape".into(),
@@ -1455,7 +1470,8 @@ mod tests {
             .is_err());
         assert!(store
             .add_session(&SessionMeta {
-                runtime: Default::default(),
+                work: None,
+            runtime: Default::default(),
                 claude_permission_mode: Default::default(),
                 parent_session_id: None,
                 id: "a/b".into(),
@@ -1481,7 +1497,8 @@ mod tests {
             .is_err());
         assert!(store
             .add_session(&SessionMeta {
-                runtime: Default::default(),
+                work: None,
+            runtime: Default::default(),
                 claude_permission_mode: Default::default(),
                 parent_session_id: None,
                 id: "".into(),

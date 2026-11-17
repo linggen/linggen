@@ -2,8 +2,13 @@
 import type { ClaudePermissionMode } from "./ClaudePermissionMode";
 import type { SessionMember } from "./SessionMember";
 import type { SessionRuntime } from "./SessionRuntime";
+import type { Work } from "./Work";
 
-export type SessionMeta = { id: string, runtime?: SessionRuntime, claude_permission_mode?: ClaudePermissionMode, parent_session_id?: string | null, title: string, created_at: number, 
+export type SessionMeta = { id: string, runtime?: SessionRuntime, 
+/**
+ * Optional work switch; unknown future values are ignored.
+ */
+work?: Work | null, claude_permission_mode?: ClaudePermissionMode, parent_session_id?: string | null, title: string, created_at: number, 
 /**
  * When set, this skill is bound to the session and activated on every message.
  */
