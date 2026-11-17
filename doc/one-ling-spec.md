@@ -136,7 +136,10 @@ session, prompt and row is as before. On (decided by the builder 2026-11-15/16):
 - **A private app** (`private-talk: true`, `skill-spec.md` § Private talk)
   keeps a session of its own, as every app's chat does with the setting
   off, so the day holds none of its talk. A chat that names the day from its page stands in the app's own
-  chat instead. From its turns — a subagent's and a turn the engine starts
+  chat instead, and so does a person's `/<app> …` (or the app's trigger)
+  typed in the day. In a day it never becomes a turn's place nor its
+  active skill: the Skill tool is refused it with a reason the model
+  reads. From its turns — a subagent's and a turn the engine starts
   there included — a tool that carries words out is refused; a question
   waiting there reaches Yinyue only as that the app waits. Its world line
   stays. The day's session is made by `agent`, so the memory scan (which
@@ -145,28 +148,31 @@ session, prompt and row is as before. On (decided by the builder 2026-11-15/16):
   came from; her line is a row there and lands nowhere else. A private
   app's moment runs at the app chat it names, never in a day; with none
   named it goes unanswered.
-- **The list** marks the day's session, one row a day; a page folds each
+- **The list** marks the day's session (`day: true` on its row), one row a day; a page folds each
   stretch from another place to a line (the app, how many messages), which
   opens on a tap. The chats from before stay listed and readable either way.
 - **The phone** (engine side): a hand-off takes the first of
   `GET /api/skill-sessions?skill=` (the day's, for an app that joins it) or
   `GET /api/sessions/day` for the Mac's own chat, and names its app as
-  `skill_name`; open notes read back from `GET /api/notes?agent=`,
-  read-only. Its own thread is unchanged.
+  `skill_name`; a queued hand-off keeps its `client_id` on its row when it
+  runs; open notes read back from `GET /api/notes?agent=`, read-only. Its
+  own thread is unchanged.
 - **A day per person**: a person other than the builder has a day of their
   own (`sess-day-YYYY-MM-DD-p-<person's id in hex>`). The person behind a
   caller is resolved once, from the device it named, as memory resolves
   it: the owner's own device is the builder; a phone signed in to another
-  account is that account, a signed-out phone its device. A peer that has
-  not said which device it is is no one and is given no day. A day is read
-  and written only by its own person; what the engine starts itself (her
+  account is that account, a signed-out phone its device — on the channel
+  and on plain HTTP from the LAN alike. A peer that has not said which
+  device it is is no one and is given no day. A day is read, written and
+  shown (the page state of a page viewing it) only by its own person; an
+  agent's notes are the builder's; what the engine starts itself (her
   moments, her own thread) is the builder's, and a question waiting in
   another person's day is not heralded in the builder's thread or voice. A
   day is made once and never written over.
 - **Clear** takes the rows of the place it is pressed in: an app's page its
   app's, the main page home's.
 
-Built (2.4 branch, 2026-11-16): all of the above, in `server::day_session`,
+Built (2.4 branch, 2026-11-16/17): all of the above, in `server::day_session`, `server::person`,
 `state_fs::day_session`, `TurnPlace::private_app` and `tools::exit_gate`.
 
 Not built: the phone's side (it must send `skill_name` and use the day's

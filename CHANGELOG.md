@@ -16,8 +16,14 @@
   app tool or launch into another app is refused; a question waiting there
   reaches Yinyue only as that the app waits. Each person has a day of their
   own — a paired phone signed in to another account gets its person's day,
-  resolved from the device as memory resolves it — and Clear takes only the
-  part of the place it is pressed in.
+  resolved from the device as memory resolves it, on the channel and on
+  plain HTTP from the LAN alike; a page viewing a day is shown it only when
+  it is its person's — and Clear takes only the part of the place it is
+  pressed in. In the day a private app is never the place or active skill
+  of a turn: `/<app>` or its trigger is carried to the app's own chat, and
+  the Skill tool is refused it. An agent's notes are the builder's alone;
+  the day's row in the session list is marked `day: true`; a queued
+  message keeps its `client_id`.
 - **Yinyue keeps notes of her own and looks again when she said she would.**
   `note_write` (at most 8 notes of 200 characters, an optional look-again
   such as `+40m`, `HH:MM`, `tomorrow 09:00`) and `note_done`; her open notes
