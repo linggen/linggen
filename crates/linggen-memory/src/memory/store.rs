@@ -3232,6 +3232,113 @@ mod tests {
         v1_to_v2(false).await;
     }
 
+    /// Every column added after the first schema, in the order
+    /// `ensure_late_schema_additions` adds them.
+    const LATE_COLUMNS: [&str; 7] = [
+        "host",
+        "expired_at",
+        "superseded_by",
+        "account_id",
+        "account_name",
+        "summary",
+        "indexed",
+    ];
+
+    /// A table from before every late column (the first schema, v2 names):
+    /// opening it adds all seven through lancedb's `add_columns`, the old
+    /// rows read back as they were written, and the table takes writes that
+    /// fill the new columns — on both tables, and again after a reopen.
+    #[tokio::test]
+    async fn an_early_table_gains_every_late_column_and_keeps_its_rows() {
+        let dir = TempDir::new().unwrap();
+        let lancedb_dir = dir.path().join("memory").join("memory.lancedb");
+        std::fs::create_dir_all(&lancedb_dir).unwrap();
+        crate::memory::schema_version::write_version(
+            dir.path(),
+            crate::memory::schema_version::STORE_SCHEMA_VERSION,
+        )
+        .unwrap();
+        let mut old: Vec<Memory> = (0..3)
+            .map(|i| {
+                let mut m = make_fact(&format!("early row {i}"), MemoryType::Decision);
+                m.vector = Some(unit_vec_at(i));
+                m.scope = Some(format!("/w/{i}"));
+                m.source_session = Some("s-early".into());
+                m.occurred_at = Some(m.created_at - chrono::Duration::days(i as i64));
+                m
+            })
+            .collect();
+        old[1].outcome = Some(Outcome::Negative);
+        let full = memories_to_record_batch(&old).unwrap();
+        let keep: Vec<usize> = full
+            .schema()
+            .fields()
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| !LATE_COLUMNS.contains(&f.name().as_str()))
+            .map(|(i, _)| i)
+            .collect();
+        let early = full.project(&keep).unwrap();
+        let conn = connect(lancedb_dir.to_str().unwrap())
+            .execute()
+            .await
+            .unwrap();
+        for name in [SEMANTIC_TABLE_NAME, EPISODIC_TABLE_NAME] {
+            let reader: Box<dyn RecordBatchReader + Send> = Box::new(RecordBatchIterator::new(
+                std::iter::once(Ok(early.clone())),
+                early.schema(),
+            ));
+            conn.create_table(name, reader).execute().await.unwrap();
+            let t = conn.open_table(name).execute().await.unwrap();
+            let before: Vec<String> = t
+                .schema()
+                .await
+                .unwrap()
+                .fields()
+                .iter()
+                .map(|f| f.name().clone())
+                .collect();
+            for late in LATE_COLUMNS {
+                assert!(!before.contains(&late.to_string()), "{late} in {before:?}");
+            }
+        }
+        drop(conn);
+
+        let semantic = MemoryStore::open_semantic(dir.path()).await.unwrap();
+        let episodic = MemoryStore::open_episodic(dir.path()).await.unwrap();
+        for store in [&semantic, &episodic] {
+            let cols = column_names(store).await;
+            for late in LATE_COLUMNS {
+                assert!(cols.contains(&late.to_string()), "{late} missing: {cols:?}");
+            }
+            assert_eq!(store.count().await.unwrap(), old.len());
+            for row in &old {
+                let got = store.get(&row.id).await.unwrap().expect("old row");
+                assert_eq!(&got, row, "an old row reads back as written");
+            }
+        }
+
+        // The new columns take values, and keep them across a reopen.
+        let mut fresh = make_fact("late row", MemoryType::Fact);
+        fresh.vector = Some(unit_vec_at(9));
+        fresh.host = Some("host-a".into());
+        fresh.expired_at = Some(fresh.created_at);
+        fresh.superseded_by = Some(old[0].id.clone());
+        fresh.account_id = Some("acct-1".into());
+        fresh.account_name = Some("Alex".into());
+        fresh.summary = Some("a summary".into());
+        fresh.indexed = true;
+        semantic.insert(std::slice::from_ref(&fresh)).await.unwrap();
+        drop(semantic);
+        drop(episodic);
+        let reopened = MemoryStore::open_semantic(dir.path()).await.unwrap();
+        assert_eq!(reopened.count().await.unwrap(), old.len() + 1);
+        assert_eq!(reopened.get(&fresh.id).await.unwrap().unwrap(), fresh);
+        for row in &old {
+            assert_eq!(&reopened.get(&row.id).await.unwrap().unwrap(), row);
+        }
+    }
+
     // ── evict_expired + core_facts tests ───────────────────────────────────
 
     #[tokio::test]
