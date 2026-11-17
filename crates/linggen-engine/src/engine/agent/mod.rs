@@ -97,9 +97,9 @@ pub struct AgentManager {
     /// `config.pet.muted`, readable without the config lock — every spoken
     /// line checks it.
     pet_muted: AtomicBool,
-    /// `config.agent.one_session_a_day`, readable without the config lock —
+    /// `config.agent.daily_session`, readable without the config lock —
     /// her voice's fan-out, which is sync, reads it per line.
-    one_session_a_day: AtomicBool,
+    daily_session: AtomicBool,
     /// Which agents appear only once met, and which have been
     /// (`met.rs`) — the one gate every surface asks.
     pub met: met::MetGate,
@@ -333,7 +333,7 @@ impl AgentManager {
         let (tx, rx) = mpsc::unbounded_channel();
         let models = Arc::new(ModelManager::new(config.models.clone()));
         let pet_muted = AtomicBool::new(config.pet.muted);
-        let one_session_a_day = AtomicBool::new(config.agent.one_session_a_day);
+        let daily_session = AtomicBool::new(config.agent.daily_session);
         crate::language::set_setting(config.language.clone());
         (
             Arc::new(Self {
@@ -363,7 +363,7 @@ impl AgentManager {
                 agent_chat_sessions: std::sync::Mutex::new(HashSet::new()),
                 latest_session_by_agent: std::sync::Mutex::new(HashMap::new()),
                 pet_muted,
-                one_session_a_day,
+                daily_session,
                 met: met::MetGate::new(crate::paths::met_dir()),
                 background: Default::default(),
                 run_messages: Default::default(),
@@ -378,10 +378,10 @@ impl AgentManager {
         self.pet_muted.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// Whether one session a day is on (`config.agent.one_session_a_day`),
+    /// Whether one session a day is on (`config.agent.daily_session`),
     /// read without the config lock.
-    pub fn one_session_a_day(&self) -> bool {
-        self.one_session_a_day.load(std::sync::atomic::Ordering::Relaxed)
+    pub fn daily_session(&self) -> bool {
+        self.daily_session.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Turn the pet's voice off or on. Saved with the config — without
@@ -854,8 +854,8 @@ impl AgentManager {
         crate::language::set_setting(new_config.language.clone());
         crate::provider::set_first_event_timeout(new_config.routing.first_event_timeout_secs);
         *self.config.write().await = new_config.clone();
-        self.one_session_a_day.store(
-            new_config.agent.one_session_a_day,
+        self.daily_session.store(
+            new_config.agent.daily_session,
             std::sync::atomic::Ordering::Relaxed,
         );
         let was_muted = self

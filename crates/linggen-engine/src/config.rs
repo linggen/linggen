@@ -343,7 +343,7 @@ pub struct AgentConfig {
     /// of the page it came from. Off (the default): a session per app, as
     /// before. Not written to the file while off.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub one_session_a_day: bool,
+    pub daily_session: bool,
 }
 
 fn default_episodic_ttl_days() -> u64 {
@@ -656,7 +656,7 @@ impl Default for Config {
                 memory_inject_min_score: default_memory_inject_min_score(),
                 memory_recall_count: default_memory_recall_count(),
                 suggest_followups: true,
-                one_session_a_day: false,
+                daily_session: false,
             },
             logging: LoggingConfig {
                 level: None,

@@ -1,5 +1,5 @@
 //! The day's session, as the server resolves it (`doc/one-ling-spec.md`
-//! § One session a day). With `agent.one_session_a_day` on, the chats the
+//! § One session a day). With `agent.daily_session` on, the chats the
 //! person is in — an app's chat, Yinyue's own and unprompted turns, a
 //! hand-off from the phone — are one session a day; each turn stands in the
 //! place of the page it came from. Missions, delegated runs (`agent_run`)
@@ -18,7 +18,7 @@ const LEAD: &str = "ling";
 
 /// Whether the setting is on.
 pub(crate) async fn enabled(manager: &AgentManager) -> bool {
-    manager.get_config_snapshot().await.agent.one_session_a_day
+    manager.get_config_snapshot().await.agent.daily_session
 }
 
 /// The day's session a chat from `app` (`None`: home — her own turns, the

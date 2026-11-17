@@ -10,7 +10,7 @@
   declare `private-talk: true`. Today every turn of a session stands in the
   session's own place, so nothing changes in use.
 - **A private app keeps a session of its own** (with
-  `agent.one_session_a_day` on). An app that declares `private-talk: true`,
+  `agent.daily_session` on). An app that declares `private-talk: true`,
   or does not resolve, never joins the day's session, by any way in. From
   its turns a message to another agent, a note, a wider memory write, or an
   app tool or launch into another app is refused; a question waiting there

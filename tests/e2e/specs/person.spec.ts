@@ -35,7 +35,7 @@ test("another person's paired phone, over the channel, gets its own day and neve
     .poll(async () => (await request.get(`${world.url}/api/pair/me`, { headers: { 'x-linggen-device': PHONE.token } })).status())
     .toBe(200);
   const config = await (await request.get(`${world.url}/api/config`)).json();
-  config.agent.one_session_a_day = true;
+  config.agent.daily_session = true;
   await request.post(`${world.url}/api/config`, { data: config });
   const mine: string = (await (await request.get(`${world.url}/api/sessions/day`)).json()).id;
 
@@ -122,7 +122,7 @@ test.describe('page state and notes', () => {
       .poll(async () => (await request.get(`${world.url}/api/pair/me`, { headers: { 'x-linggen-device': PHONE.token } })).status())
       .toBe(200);
     const config = await (await request.get(`${world.url}/api/config`)).json();
-    config.agent.one_session_a_day = true;
+    config.agent.daily_session = true;
     await request.post(`${world.url}/api/config`, { data: config });
     const mine: string = (await (await request.get(`${world.url}/api/sessions/day`)).json()).id;
     mkdirSync(`${world.linggenHome}/notes`, { recursive: true });
@@ -182,7 +182,7 @@ test.describe('every route', () => {
       .poll(async () => (await request.get(`${world.url}/api/pair/me`, { headers: { 'x-linggen-device': PHONE.token } })).status())
       .toBe(200);
     const config = await (await request.get(`${world.url}/api/config`)).json();
-    config.agent.one_session_a_day = true;
+    config.agent.daily_session = true;
     await request.post(`${world.url}/api/config`, { data: config });
     const mine: string = (await (await request.get(`${world.url}/api/sessions/day`)).json()).id;
     await request.post(`${world.url}/api/chat`, {
@@ -285,7 +285,7 @@ async function dayOnWithFriend(world: { url: string; linggenHome: string }, requ
     .poll(async () => (await request.get(`${world.url}/api/pair/me`, { headers: { 'x-linggen-device': PHONE.token } })).status())
     .toBe(200);
   const config = await (await request.get(`${world.url}/api/config`)).json();
-  config.agent.one_session_a_day = true;
+  config.agent.daily_session = true;
   await request.post(`${world.url}/api/config`, { data: config });
   return (await (await request.get(`${world.url}/api/sessions/day`)).json()).id as string;
 }

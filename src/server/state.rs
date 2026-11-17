@@ -178,7 +178,7 @@ impl ServerState {
     /// The surfaces a line for `person` may reach: theirs alone with one
     /// session a day on; every surface with it off.
     fn yinyue_pool(&self, person: Whose) -> Option<Whose> {
-        self.manager.one_session_a_day().then_some(person)
+        self.manager.daily_session().then_some(person)
     }
 
     /// The peer that hears her line said in `session` (`None`: her own
@@ -187,7 +187,7 @@ impl ServerState {
     pub fn yinyue_line_holder(&self, session: Option<&str>) -> Option<u64> {
         let pool = self
             .manager
-            .one_session_a_day()
+            .daily_session()
             .then(|| crate::server::day_session::whose_session(&self.manager, session));
         yinyue_holder_for(&self.yinyue_presenters.lock_ok(), pool.as_ref())
     }

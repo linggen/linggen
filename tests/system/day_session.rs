@@ -1,5 +1,5 @@
 //! One session a day (doc/one-ling-spec.md § One session a day): with
-//! `agent.one_session_a_day` on, the day's session is found by the day —
+//! `agent.daily_session` on, the day's session is found by the day —
 //! a day begins at 04:00 local — made on first use and found again after a
 //! restart.
 //!
@@ -38,7 +38,7 @@ pub(crate) async fn day_world_at(hour: i64, setup: Setup) -> (World, chrono::Nai
         ..setup
     })
     .await;
-    set_agent(&w, json!({ "one_session_a_day": true })).await;
+    set_agent(&w, json!({ "daily_session": true })).await;
     (w, local_date)
 }
 
@@ -351,12 +351,12 @@ async fn an_apps_moment_wakes_her_in_the_day_in_that_apps_place() {
     let setup = Setup::default().script(Agent::Yinyue, vec![text("Clouds over the harbor.")]);
     let (w, _) = day_world_at(12, setup).await;
     // A dice chat from before the setting, held by a page that did not move.
-    set_agent(&w, json!({ "one_session_a_day": false })).await;
+    set_agent(&w, json!({ "daily_session": false })).await;
     let old = w
         .api
         .create_session(json!({"title": "table", "skill": "dice"}))
         .await;
-    set_agent(&w, json!({ "one_session_a_day": true })).await;
+    set_agent(&w, json!({ "daily_session": true })).await;
     let day = w.api.get("/api/sessions/day").await["id"]
         .as_str()
         .unwrap()
@@ -503,7 +503,7 @@ async fn switching_off_and_on_again_loses_no_session() {
         .await;
     turn_at(&w, &day, Some("dice"), "Roll", Agent::Ling).await;
 
-    set_agent(&w, json!({ "one_session_a_day": false })).await;
+    set_agent(&w, json!({ "daily_session": false })).await;
     let own = w
         .api
         .create_session(json!({"title": "Dice", "skill": "dice"}))
@@ -536,7 +536,7 @@ async fn switching_off_and_on_again_loses_no_session() {
     assert_eq!(refused, 403);
     assert!(w.rows_opt(&day).is_some());
 
-    set_agent(&w, json!({ "one_session_a_day": true })).await;
+    set_agent(&w, json!({ "daily_session": true })).await;
     let again = w
         .api
         .create_session(json!({"title": "Dice", "skill": "dice"}))

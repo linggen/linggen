@@ -201,7 +201,7 @@ session sees none).
   no place is kept (a mission or `agent_run` run, a page's own writes) — is
   the session's own place.
 
-With `agent.one_session_a_day` off, a page names the skill its session was
+With `agent.daily_session` off, a page names the skill its session was
 made for, so every turn of a session shares one place: the session's. On,
 an app's chat is the day's session (`sess-day-YYYY-MM-DD`, from 04:00
 local; `one-ling-spec.md` § One session a day): a page's turn stands in its

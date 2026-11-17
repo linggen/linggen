@@ -24,7 +24,7 @@ async function installLedger(request: APIRequestContext, url: string, home: stri
 
 async function settingOn(request: APIRequestContext, url: string): Promise<string> {
   const config = await (await request.get(`${url}/api/config`)).json();
-  config.agent.one_session_a_day = true;
+  config.agent.daily_session = true;
   await request.post(`${url}/api/config`, { data: config });
   return (await (await request.get(`${url}/api/sessions/day`)).json()).id;
 }

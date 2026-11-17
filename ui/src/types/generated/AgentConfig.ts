@@ -51,4 +51,4 @@ suggest_followups: boolean,
  * of the page it came from. Off (the default): a session per app, as
  * before. Not written to the file while off.
  */
-one_session_a_day?: boolean, };
+daily_session?: boolean, };

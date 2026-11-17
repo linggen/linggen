@@ -325,7 +325,7 @@ fn shares_builders(
     user_ctx: &crate::server::rtc::UserContext,
     actor: &super::PeerActor,
 ) -> bool {
-    if !state.manager.one_session_a_day() {
+    if !state.manager.daily_session() {
         return true;
     }
     let device = actor.lock_ok().as_ref().map(|a| a.device.clone());
