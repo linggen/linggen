@@ -447,6 +447,9 @@ pub(crate) async fn run_delegation(
             .unwrap_or_default();
         let sight = crate::engine::turn_place::sight::Sight::of(place, &meta, &*manager.skills).await;
         engine.tools.builtins.turn_sight = Some(sight);
+        // A private app's subagent keeps its talk there too.
+        let day_on = manager.get_config_snapshot().await.agent.one_session_a_day;
+        engine.tools.builtins.private_app = place.private_app(&*manager.skills, day_on).await;
     }
     engine.tools.builtins.turn_place = parent_place;
     engine.withhold_session_tools(&manager.global_sessions, session_id.as_deref());

@@ -389,6 +389,11 @@ pub struct Tools {
     /// (`turn_place::sight`), set by the server as the turn enters its
     /// place and cleared when it leaves.
     pub(crate) turn_sight: Option<crate::engine::turn_place::sight::Sight>,
+    /// The app the running turn keeps its talk to (`TurnPlace::private_app`),
+    /// set as it enters its place and cleared when it leaves; a delegated
+    /// run gets its parent's. From it no call carries words out
+    /// (`exit_gate`).
+    pub(crate) private_app: Option<String>,
     /// The running turn's Steer (`engine/steer.rs`), wired by the server for
     /// a person's turn: a foreground Bash moves to the background on it.
     pub(crate) steer: Option<Arc<crate::engine::steer::SteerSignal>>,
@@ -418,6 +423,7 @@ impl Tools {
             active_skill: None,
             turn_place: None,
             turn_sight: None,
+            private_app: None,
             steer: None,
         })
     }

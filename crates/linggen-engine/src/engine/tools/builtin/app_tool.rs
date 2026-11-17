@@ -26,7 +26,7 @@ pub struct AppTool;
 #[async_trait]
 impl Tool for AppTool {
     fn place_reach(&self) -> crate::engine::tools::PlaceReach {
-        crate::engine::tools::PlaceReach::Stays
+        crate::engine::tools::PlaceReach::IntoApp("app")
     }
     fn name(&self) -> &'static str {
         "AppTool"

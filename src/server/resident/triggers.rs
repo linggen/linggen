@@ -32,11 +32,7 @@ pub(super) fn handle_event(state: &Arc<ServerState>, stamped: crate::engine::eve
             question_id,
             questions,
             session_id,
-        } => match kept_to {
-            // A kept question is the app's: she is told only that it waits.
-            Some(app) => herald_kept_ask(state, app, question_id, session_id),
-            None => herald_ask(state, agent_id, question_id, questions, session_id),
-        },
+        } => on_ask(state, agent_id, question_id, questions, session_id),
         // A peer agent sent a message. TO YINYUE → she receives it in her own
         // voice (herald). TO A CHAT AGENT (Ling, …) → it shows in that agent's
         // chat as a message from the sender, and that agent responds. Either way
@@ -50,6 +46,35 @@ pub(super) fn handle_event(state: &Arc<ServerState>, stamped: crate::engine::eve
         } if kept_to.is_none() => on_agent_chat(state, from, to, message, (app, session_id)),
         _ => {} // firehose + everything else dropped here, near-free
     }
+}
+
+/// A question waits: heralded whole — or, asked from a private app's turn,
+/// only as that the app waits.
+fn on_ask(
+    state: &Arc<ServerState>,
+    agent_id: String,
+    question_id: String,
+    questions: Vec<crate::engine::tools::AskUserQuestion>,
+    session_id: Option<String>,
+) {
+    let state = state.clone();
+    tokio::spawn(async move {
+        match asked_in_private_app(&state, session_id.as_deref()).await {
+            Some(app) => herald_kept_ask(&state, app, question_id, session_id),
+            None => herald_ask(&state, agent_id, question_id, questions, session_id),
+        }
+    });
+}
+
+/// The private app a question in session `session_id` is asked from
+/// (`TurnPlace::private_app`): the place of the turn running there, else
+/// the session's own.
+async fn asked_in_private_app(state: &Arc<ServerState>, session_id: Option<&str>) -> Option<String> {
+    let sid = session_id?;
+    let running = state.manager.global_sessions.running_places.of(sid);
+    let place = running.unwrap_or_else(|| crate::server::chat::turn_place::of_session_id(&state.manager, sid));
+    let day_on = crate::server::day_session::enabled(&state.manager).await;
+    place.private_app(&*state.manager.skills, day_on).await
 }
 
 /// An agent parked on a question or a permission prompt — Yinyue heralds
@@ -123,9 +148,9 @@ fn herald_ask(
     });
 }
 
-/// A question asked where the talk is kept to `app`: she calls the person
-/// back to that app, told only that it waits for an answer — never the
-/// question, its options or anything said there.
+/// A question asked in a private app's turn: she calls the person back to
+/// that app, told only that it waits for an answer — never the question,
+/// its options or anything said there; her line is made of that alone.
 fn herald_kept_ask(state: &Arc<ServerState>, app: String, question_id: String, session_id: Option<String>) {
     if delegated_session(state, session_id.as_deref()) || !state.manager.agent_present(YINYUE_AGENT) {
         return;

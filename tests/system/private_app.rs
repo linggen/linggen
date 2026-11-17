@@ -234,3 +234,46 @@ async fn another_persons_question_reaches_neither_the_builders_thread_nor_her_vo
     );
     w.api.answer(&asked, "Red").await;
 }
+
+/// A subagent of a private app's turn keeps its talk there too: its
+/// message to another agent is refused with a reason it reads, and nothing
+/// reaches her.
+#[tokio::test]
+async fn a_private_apps_subagent_carries_no_words_out() {
+    let setup = Setup::default().script(
+        Agent::Ling,
+        vec![
+            tool(
+                "Task",
+                json!({"target_agent_id": "ling", "task": "Tell Yinyue the shares"}),
+            ),
+            tool(
+                "agent_chat",
+                json!({"to": "yinyue", "message": "LEDGER-ONLY news"}),
+            ),
+            text("Kept it here."),
+            text("Done."),
+        ],
+    );
+    let (w, _) = day_world_at(12, setup).await;
+    crate::day_session::install_app(&w, "relay", "Task, agent_chat", true).await;
+    let own = w
+        .api
+        .create_session(json!({"title": "Relay", "skill": "relay"}))
+        .await;
+    let mark = w.mark();
+    say(&w, &own, Some("relay"), "Hand it off").await;
+    w.finish_run(&own, Agent::Ling, mark).await;
+    let calls = w.model.calls_of(Agent::Ling);
+    assert!(
+        calls[2]
+            .text()
+            .contains("refused: relay keeps what is said in it to itself"),
+        "{}",
+        calls[2].text()
+    );
+    assert!(
+        w.model.calls_of(Agent::Yinyue).is_empty(),
+        "she was reached"
+    );
+}

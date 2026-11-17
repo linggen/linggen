@@ -123,7 +123,7 @@ pub struct RunAppTool;
 #[async_trait]
 impl Tool for RunAppTool {
     fn place_reach(&self) -> crate::engine::tools::PlaceReach {
-        crate::engine::tools::PlaceReach::Stays
+        crate::engine::tools::PlaceReach::IntoApp("skill")
     }
     fn name(&self) -> &'static str {
         "RunApp"

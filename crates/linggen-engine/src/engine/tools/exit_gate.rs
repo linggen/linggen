@@ -2,11 +2,12 @@
 //! in. Every tool says, as a property of its own, whether a call keeps what
 //! is said in the turn's place or carries it out to another
 //! ([`PlaceReach`]): a built-in by `Tool::place_reach`, the memory server's
-//! tools by [`memory_reach`]. From a place whose talk is kept to its app
-//! (`turn_place::sight`), a call that carries words out is refused with a
-//! reason the model can read. The person's own outside lookups (web search
-//! and fetch, the browser) stay. Every tool call goes through
-//! `Tools::execute`, and this is asked there first.
+//! tools by [`memory_reach`]. From a private app's turn
+//! (`TurnPlace::private_app`) a call that carries words out is refused with
+//! a reason the model can read. The person's own outside lookups (web
+//! search and fetch, the browser), Bash and other configured servers are
+//! the skill's own `allowed-tools`' to govern, not this gate's. Every tool
+//! call goes through `Tools::execute`, and this is asked there first.
 
 use super::{memory_mcp, ToolCall, Tools};
 use serde_json::Value;
@@ -24,6 +25,10 @@ pub enum PlaceReach {
     /// out when it asks for a wider one (`global`, a folder or scope of its
     /// own choosing).
     ScopedWrite,
+    /// It reaches the app its call names in this field (`AppTool`'s `app`,
+    /// `RunApp`'s `skill`): it stays when that is the turn's own app, and
+    /// carries words out into any other.
+    IntoApp(&'static str),
 }
 
 /// The fields of a memory write that move a row out of the scope the
@@ -64,8 +69,8 @@ impl Tools {
     /// Why `call` may not run here, when it would carry the turn's words out
     /// of a place whose talk is kept.
     pub(crate) fn exit_refusal(&self, call: &ToolCall) -> Option<String> {
-        let app = self.kept_here()?;
-        leaves(reach_of(&call.tool), &call.args).then(|| refusal(app, &call.tool))
+        let app = self.private_app.as_deref()?;
+        leaves(reach_of(&call.tool), &call.args, app).then(|| refusal(app, &call.tool))
     }
 }
 
@@ -81,12 +86,14 @@ fn reach_of(tool: &str) -> PlaceReach {
     PlaceReach::Stays
 }
 
-/// Whether a call of this class with `args` carries words out.
-fn leaves(reach: PlaceReach, args: &Value) -> bool {
+/// Whether a call of this class with `args`, made in `own` app's turn,
+/// carries words out.
+fn leaves(reach: PlaceReach, args: &Value, own: &str) -> bool {
     match reach {
         PlaceReach::Stays => false,
         PlaceReach::CarriesOut => true,
         PlaceReach::ScopedWrite => widens_memory(args),
+        PlaceReach::IntoApp(field) => args.get(field).and_then(Value::as_str).is_some_and(|app| app != own),
     }
 }
 
@@ -125,6 +132,7 @@ mod tests {
 
     #[test]
     fn what_carries_words_out_is_refused_and_the_rest_stays() {
+        let leaves = |reach, args: &Value| leaves(reach, args, "ledger");
         for tool in ["agent_chat", crate::notes::WRITE_TOOL, "answer_prompt", "StartClaudeSession"] {
             assert!(leaves(reach_of(tool), &json!({})), "{tool}");
         }
@@ -137,5 +145,17 @@ mod tests {
         assert!(!leaves(memory_reach("memory_add"), &json!({"content": "x"})));
         assert!(!leaves(memory_reach("memory_search"), &json!({"query": "x", "scope": "/elsewhere"})));
         assert!(leaves(memory_reach("memory_not_yet_classed"), &json!({})), "unknown fails closed");
+    }
+
+    /// AppTool and RunApp stay in the turn's own app and carry words out
+    /// into any other.
+    #[test]
+    fn reaching_into_another_app_carries_words_out() {
+        let into = |tool: &str, args: Value| leaves(reach_of(tool), &args, "ledger");
+        assert!(into("AppTool", json!({"app": "dice", "tool": "roll"})));
+        assert!(!into("AppTool", json!({"app": "ledger", "tool": "read"})));
+        assert!(!into("AppTool", json!({})), "the listing names no app");
+        assert!(into("RunApp", json!({"skill": "dice"})));
+        assert!(!into("RunApp", json!({"skill": "ledger"})));
     }
 }

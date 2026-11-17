@@ -38,6 +38,8 @@ pub(super) async fn bind_turn_place(engine: &mut crate::engine::AgentEngine, ctx
         let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
     }
     engine.see_from_place(turn_sight(&ctx.manager, ctx.session_id.as_deref(), &ctx.place).await);
+    let day_on = crate::server::day_session::enabled(&ctx.manager).await;
+    engine.keep_talk_to(ctx.place.private_app(&*ctx.manager.skills, day_on).await);
 }
 
 /// What a turn standing in `place` of session `session_id` may be given,

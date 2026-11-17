@@ -114,13 +114,16 @@ impl crate::engine::skill::SkillRegistry for OneApp {
     }
 }
 
-/// A turn's place tells whether its app keeps its talk private.
+/// A turn's place keeps its talk to its app when the app declares it, or
+/// does not resolve — with one session a day on; off, nothing is kept.
 #[tokio::test]
-async fn a_place_tells_whether_its_talk_is_private() {
+async fn a_place_keeps_its_talk_to_a_private_or_unknown_app() {
     let text = "---\nname: zz-diary\ndescription: Write\nprivate-talk: true\n---\nBody";
     let diary = crate::extensions::skills::parse_skill_text(text, crate::engine::skill::SkillSource::Global).unwrap();
     let skills = OneApp(diary);
-    assert!(TurnPlace::of_request(Some("zz-diary"), None).talk_is_private(&skills).await);
-    assert!(!TurnPlace::home().talk_is_private(&skills).await);
-    assert!(!TurnPlace::of_request(Some("zz-gone"), None).talk_is_private(&skills).await);
+    let place = |name: &str| TurnPlace::of_request(Some(name), None);
+    assert_eq!(place("zz-diary").private_app(&skills, true).await.as_deref(), Some("zz-diary"));
+    assert_eq!(place("zz-gone").private_app(&skills, true).await.as_deref(), Some("zz-gone"));
+    assert_eq!(TurnPlace::home().private_app(&skills, true).await, None);
+    assert_eq!(place("zz-diary").private_app(&skills, false).await, None);
 }

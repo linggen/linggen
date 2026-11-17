@@ -43,10 +43,8 @@ pub(crate) async fn day_for(manager: &AgentManager, user_id: Option<&str>, app: 
 /// resolve (removed, its SKILL.md unreadable) stays apart too — when it is
 /// not known to be shared, it is not.
 pub(crate) async fn takes(manager: &AgentManager, app: Option<&str>) -> bool {
-    let Some(name) = app else {
-        return true;
-    };
-    manager.skills.get_skill(name).await.is_some_and(|s| !s.private_talk)
+    let place = crate::engine::turn_place::TurnPlace::of_request(app, None);
+    place.private_app(&*manager.skills, true).await.is_none()
 }
 
 /// The app's own chat to stand in when the person `user_id` names a day

@@ -97,13 +97,19 @@ impl TurnPlace {
         (!self.own).then(|| self.key())
     }
 
-    /// Whether the app this place stands in declares its talk private
-    /// (`private-talk: true`). Home's never is; nor is a skill that is gone.
-    pub async fn talk_is_private(&self, skills: &dyn crate::engine::skill::SkillRegistry) -> bool {
-        let Some(name) = self.skill.as_deref() else {
-            return false;
-        };
-        skills.get_skill(name).await.is_some_and(|s| s.private_talk)
+    /// The app a turn standing here keeps its talk to, with one session a
+    /// day on (`day_on`): this place's app when it declares
+    /// `private-talk: true`, or does not resolve now — when it is not known
+    /// to be shared, it is kept. Home's never is. Such an app keeps a
+    /// session of its own, and from its turn no tool carries words out
+    /// (`tools::exit_gate`).
+    pub async fn private_app(&self, skills: &dyn crate::engine::skill::SkillRegistry, day_on: bool) -> Option<String> {
+        if !day_on {
+            return None;
+        }
+        let name = self.skill.as_deref()?;
+        let shared = skills.get_skill(name).await.is_some_and(|s| !s.private_talk);
+        (!shared).then(|| name.to_string())
     }
 
     /// Whether two turns stand in the same app. The bound values are the
