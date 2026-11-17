@@ -78,8 +78,13 @@ pub(super) fn handle_control_message(
                 .account_vouched
                 .then(|| crate::account::load_account().and_then(|a| a.user_id))
                 .flatten();
-            let identified =
-                crate::server::api::pair::set_device_account(token, account.clone(), vouched_for.as_deref());
+            let contract = crate::server::rtc::contract::told(&msg);
+            let identified = crate::server::api::pair::set_device_account(
+                token,
+                account.clone(),
+                vouched_for.as_deref(),
+                contract,
+            );
             // A phone that wrote memory while signed out did so under its
             // device id; now that it is somebody — or now that it is verified
             // as the owner's — those rows become theirs. Here, because this

@@ -224,7 +224,8 @@ pub(crate) const DEVICE_DEFAULT: PermissionMode = PermissionMode::Read;
 /// `PairedDevice::is_owners`) is the owner at admin; any other device is its
 /// person (memory's own seam, `api::memory::person_behind_for`) at the level
 /// set for it on this Mac, read when none is; a device not paired is no one
-/// at chat.
+/// at chat. A phone out of step with this Mac (`rtc::contract::behind`)
+/// stands at chat at most, whoever it is.
 pub(crate) fn standing_of(device: &str) -> Standing {
     let mac = crate::account::load_account().and_then(|a| a.user_id);
     let devices = crate::state_fs::devices::load_devices();
@@ -242,18 +243,27 @@ fn standing_in(
     let Some(device) = device else {
         return unnamed(false, "");
     };
-    if device.is_owners(mac) {
-        return Standing {
-            person: owner.to_string(),
-            level: PermissionMode::Admin,
-        };
-    }
-    let person = crate::server::api::memory::person_behind_for(device, mac)
-        .unwrap_or_else(|| crate::server::rtc::NO_ONE.to_string());
+    let (person, level) = if device.is_owners(mac) {
+        (owner.to_string(), PermissionMode::Admin)
+    } else {
+        let person = crate::server::api::memory::person_behind_for(device, mac)
+            .unwrap_or_else(|| crate::server::rtc::NO_ONE.to_string());
+        (person, device.permission.unwrap_or(DEVICE_DEFAULT).min(MOST_FOR_ANOTHER))
+    };
     Standing {
         person,
-        level: device.permission.unwrap_or(DEVICE_DEFAULT).min(MOST_FOR_ANOTHER),
+        level: level.min(most_for_contract(device)),
     }
+}
+
+/// The most a device may do for the contract it speaks: chat for a phone
+/// out of step with this Mac; no bound for a machine, which speaks none.
+fn most_for_contract(device: &crate::state_fs::devices::PairedDevice) -> PermissionMode {
+    let phone = device.kind() == crate::state_fs::devices::DeviceKind::Phone;
+    if phone && crate::server::rtc::contract::behind(device.contract.unwrap_or(0)) {
+        return PermissionMode::Chat;
+    }
+    PermissionMode::Admin
 }
 
 /// The standing of a peer that has named no device: its channel's user at
@@ -488,8 +498,34 @@ mod tests {
                 name: None,
                 at: None,
             }),
+            contract: Some(crate::server::rtc::contract::CONTRACT),
             ..Default::default()
         }
+    }
+
+    /// A phone below this Mac's oldest contract (one that never said, too)
+    /// stands at chat at most, owner's or not; a machine is not a phone.
+    #[test]
+    fn a_phone_out_of_step_stands_at_chat() {
+        use crate::engine::permission::PermissionMode::*;
+        let old = crate::state_fs::devices::PairedDevice {
+            contract: None,
+            ..phone(Some("u-friend"))
+        };
+        assert_eq!(super::standing_in(Some(&old), Some("u-owner"), "u-owner").level(), Chat);
+        let owners_old = crate::state_fs::devices::PairedDevice {
+            contract: Some(0),
+            verified_account: Some("u-owner".into()),
+            ..phone(Some("u-owner"))
+        };
+        let s = super::standing_in(Some(&owners_old), Some("u-owner"), "u-owner");
+        assert_eq!((s.person(), s.level()), ("u-owner", Chat));
+        let machine = crate::state_fs::devices::PairedDevice {
+            kind: Some(crate::state_fs::devices::DeviceKind::Machine),
+            contract: None,
+            ..phone(None)
+        };
+        assert_eq!(super::standing_in(Some(&machine), None, "__local__").level(), Admin);
     }
 
     /// The owner's device is the owner at admin: an approved machine, and a

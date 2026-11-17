@@ -8,6 +8,7 @@
 //! str0m is Sans-IO: we drive the event loop ourselves using a UDP socket
 //! in a tokio task per peer connection.
 
+pub(crate) mod contract;
 pub(crate) mod page_state;
 mod peer;
 pub mod proxy_client;

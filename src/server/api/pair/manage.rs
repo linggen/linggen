@@ -33,6 +33,9 @@ pub(crate) async fn get_pair_info(
                 // the level set here (read when none is).
                 "level": crate::server::person::standing_of(&d.id).level(),
                 "verified": d.verified_claim().is_some(),
+                // A phone out of step with this Mac's contract: told to update.
+                "needs_update": d.kind() == crate::state_fs::devices::DeviceKind::Phone
+                    && crate::server::rtc::contract::behind(d.contract.unwrap_or(0)),
                 // Who to call them on screen. `account` above is the truth and
                 // stays absent for a signed-out phone; this is what to print.
                 "person": person_label(&d.account),

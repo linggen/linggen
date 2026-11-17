@@ -387,3 +387,108 @@ async fn a_body_past_the_limit_is_answered_over_the_lan_as_here() {
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
+
+/// The friend's phone row with `extra` fields (its contract, its level).
+fn pair_friends_phone_with(w: &World, extra: Value) {
+    let mut row = json!({
+        "id": "phone-friend", "name": "Friend's phone", "secret": TOKEN, "created_at": 0,
+        "kind": "phone", "account": {"id": "u-friend", "name": "Friend"},
+    });
+    for (k, v) in extra.as_object().cloned().unwrap_or_default() {
+        row[k] = v;
+    }
+    std::fs::write(w.home.linggen_home().join("paired-devices.json"), json!([row]).to_string()).unwrap();
+}
+
+/// A phone's standing over plain HTTP from the LAN (doc/permission-spec.md
+/// § Remote trust): one that never said its contract stands at chat; at
+/// this release's contract, read — a read route passes, an edit route and
+/// the raw shell are refused with its level and what they need; raised to
+/// edit at this Mac, the edit route passes and the shell is still refused.
+/// The level is set only at this Mac, never from the phone. `/api/health`
+/// says the contract numbers.
+#[tokio::test]
+async fn a_phone_over_the_lan_stands_at_its_level() {
+    let w = World::start(Setup {
+        lan: true,
+        ..Setup::default()
+    })
+    .await;
+    let lan = Lan::new(&w);
+    let beyond = |level: &str, needs: &str| json!({"error": "beyond_level", "level": level, "needs": needs});
+    // Waits out the store's re-read after a rewrite of the row: asks until
+    // the answer is (`is`) or is no longer (`!is`) `body`.
+    let until = |path: &'static str, body: Value, is: bool| {
+        let lan = &lan;
+        async move {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                let got = lan.send(reqwest::Method::GET, path, None).await;
+                if (got.1 == body) == is || std::time::Instant::now() > deadline {
+                    return got;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        }
+    };
+    let mut wrong = Vec::new();
+    let health = lan.get("/api/health").await;
+    if health["contract"] != json!(1) || health["oldest_peer"] != json!(1) {
+        wrong.push(format!("health does not say the contract: {health}"));
+    }
+
+    pair_friends_phone(&w);
+    let old = until("/api/topic/latest?topic=t", beyond("chat", "read"), true).await;
+    if old != (403, beyond("chat", "read")) {
+        wrong.push(format!("a phone with no contract was not held at chat: {old:?}"));
+    }
+
+    pair_friends_phone_with(&w, json!({"contract": 1}));
+    let read = until("/api/topic/latest?topic=t", beyond("chat", "read"), false).await;
+    if read.0 == 403 {
+        wrong.push(format!("a read route was refused at read: {read:?}"));
+    }
+    let edit = lan.send(reqwest::Method::POST, "/api/media/backup", Some(json!({}))).await;
+    if edit != (403, beyond("read", "edit")) {
+        wrong.push(format!("an edit route at read: {edit:?}"));
+    }
+    let shell = lan.send(reqwest::Method::POST, "/api/bash", Some(json!({"command": "true"}))).await;
+    if shell != (403, beyond("read", "admin")) {
+        wrong.push(format!("the raw shell at read: {shell:?}"));
+    }
+    let raise = json!({"permission": "edit"});
+    let own_try = lan
+        .send(reqwest::Method::PUT, "/api/pair/devices/phone-friend/permission", Some(raise.clone()))
+        .await;
+    if own_try.0 != 403 {
+        wrong.push(format!("the phone raised its own level: {own_try:?}"));
+    }
+
+    let at_mac = reqwest::Client::new()
+        .put(format!("{}/api/pair/devices/phone-friend/permission", w.engine.base_url()))
+        .json(&raise)
+        .send()
+        .await
+        .expect("PUT at this Mac")
+        .status()
+        .as_u16();
+    if at_mac != 200 {
+        wrong.push(format!("the level was not set at this Mac: {at_mac}"));
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let raised = loop {
+        let got = lan.send(reqwest::Method::POST, "/api/media/backup", Some(json!({}))).await;
+        if got.1 != beyond("read", "edit") || std::time::Instant::now() > deadline {
+            break got;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    };
+    if raised.1.get("error") == Some(&json!("beyond_level")) {
+        wrong.push(format!("an edit route at edit: {raised:?}"));
+    }
+    let shell = lan.send(reqwest::Method::POST, "/api/bash", Some(json!({"command": "true"}))).await;
+    if shell != (403, beyond("edit", "admin")) {
+        wrong.push(format!("the raw shell at edit: {shell:?}"));
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}

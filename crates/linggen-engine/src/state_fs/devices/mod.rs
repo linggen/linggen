@@ -75,6 +75,10 @@ pub struct PairedDevice {
     /// device stands at admin whatever this says.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub permission: Option<crate::engine::permission::PermissionMode>,
+    /// The contract number this phone said it speaks on its last
+    /// `identify`; unset, it has said none (contract 0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract: Option<u32>,
     /// Stable per-phone install id. Re-pairing the same phone replaces its row
     /// (matched on this) rather than stacking duplicates. Optional so rows
     /// written before this field, and older apps that don't send one, still load.
@@ -318,6 +322,8 @@ pub fn commit_device(
             verified_account: None,
             // Set at this Mac; unset reads as read.
             permission: level,
+            // Said on the next `identify`.
+            contract: None,
             secret: random_hex(24),
             created_at: chrono::Utc::now().timestamp(),
             kind: Some(DeviceKind::Phone),
@@ -398,10 +404,13 @@ pub fn set_device_account(
     token: &str,
     account: Option<AccountRef>,
     vouched_for: Option<&str>,
+    contract: u32,
 ) -> Option<Identified> {
     device_by_token(token)?;
     let result = modify_devices(|devices| {
         let d = devices.iter_mut().find(|d| token_matches(d, token))?;
+        // The contract it speaks, as it said on this `identify`.
+        d.contract = Some(contract);
         Some(refresh_account(d, account, vouched_for))
     });
     match result {

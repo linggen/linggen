@@ -51,7 +51,11 @@ pub(crate) async fn health_handler(
         crate::server::unix_secs_now(),
         std::sync::atomic::Ordering::Relaxed,
     );
-    axum::Json(json!({ "ok": true, "version": env!("CARGO_PKG_VERSION") }))
+    // With the contract numbers a phone checks this Mac against (`rtc::contract`).
+    let mut body = crate::server::rtc::contract::numbers();
+    body["ok"] = true.into();
+    body["version"] = env!("CARGO_PKG_VERSION").into();
+    axum::Json(body)
 }
 
 pub(crate) async fn get_ollama_status(State(state): State<Arc<ServerState>>) -> impl IntoResponse {

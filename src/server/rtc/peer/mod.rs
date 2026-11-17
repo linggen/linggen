@@ -65,7 +65,8 @@ fn exit_on_control_close() -> Flow {
 pub(super) type PeerActor = Arc<std::sync::Mutex<Option<crate::server::api::pair::Actor>>>;
 
 /// The `user_info` frame: who we think this peer is, the level it stands at
-/// (`person::standing_of`), and what its room allows.
+/// (`person::standing_of`), this Mac's contract numbers (`rtc::contract`), and
+/// what its room allows.
 ///
 /// Built in one place because it is sent twice — once when the control channel
 /// opens, and again after every `identify`, which is how a device learns its
@@ -83,7 +84,7 @@ pub(super) fn user_info_msg(
         "avatar_url": user_ctx.avatar_url,
         "level": level,
     });
-    let data = if user_ctx.is_consumer() {
+    let mut data = if user_ctx.is_consumer() {
         let room_cfg = super::room_config::load_room_config();
         serde_json::json!({
             "user": user,
@@ -98,6 +99,8 @@ pub(super) fn user_info_msg(
     } else {
         serde_json::json!({ "user": user })
     };
+    data["contract"] = super::contract::CONTRACT.into();
+    data["oldest_peer"] = super::contract::OLDEST_PEER.into();
     serde_json::json!({ "kind": "user_info", "data": data })
 }
 
@@ -1339,5 +1342,13 @@ mod greeting_tests {
         assert_eq!(msg["kind"], "user_info");
         assert_eq!(msg["data"]["user"]["level"], "read");
         assert_eq!(msg["data"]["user"]["user_type"], "paired");
+    }
+
+    /// The greeting carries this Mac's contract numbers.
+    #[test]
+    fn the_greeting_says_the_contract() {
+        let msg = super::user_info_msg(&crate::server::rtc::UserContext::paired(), true, PermissionMode::Read);
+        assert_eq!(msg["data"]["contract"], crate::server::rtc::contract::CONTRACT);
+        assert_eq!(msg["data"]["oldest_peer"], crate::server::rtc::contract::OLDEST_PEER);
     }
 }
