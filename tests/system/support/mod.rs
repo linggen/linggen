@@ -62,6 +62,9 @@ pub struct Setup {
     /// More of the engine's environment, set last (a stand-in service's
     /// address, say).
     pub env: Vec<(&'static str, String)>,
+    /// Bind the engine to every address (`--host 0.0.0.0`), so a test can
+    /// reach it from this machine's own LAN address, as a phone does.
+    pub lan: bool,
 }
 
 impl Setup {
@@ -119,7 +122,8 @@ impl World {
             extra_env.push(("LINGGEN_MACHINE_MEMORY_GB".to_string(), gb.to_string()));
         }
         extra_env.extend(setup.env.iter().map(|(k, v)| (k.to_string(), v.clone())));
-        let engine = Engine::start(&home, port, !setup.no_config, &extra_env).await;
+        let host = setup.lan.then_some("0.0.0.0");
+        let engine = Engine::start(&home, port, !setup.no_config, &extra_env, host).await;
         let memory = Memory::hosted(engine.port);
         if let Some(file) = setup.memory_rows {
             memory.seed(file, &vars).await;

@@ -14,6 +14,7 @@ pub struct Engine {
     proc: Owned,
     has_config: bool,
     extra_env: Vec<(String, String)>,
+    host: Option<String>,
 }
 
 /// How a run the test waited on ended.
@@ -40,6 +41,7 @@ impl Engine {
         port: u16,
         has_config: bool,
         extra_env: &[(String, String)],
+        host: Option<&str>,
     ) -> Self {
         let mut env = hermetic_env(home);
         env.extend_from_slice(extra_env);
@@ -50,6 +52,9 @@ impl Engine {
             let mut cmd = Command::new(env!("CARGO_BIN_EXE_ling"));
             cmd.args(["--web", "--port", &port.to_string(), "--root"])
                 .arg(home.work());
+            if let Some(host) = host {
+                cmd.args(["--host", host]);
+            }
             Owned::spawn(cmd, &env, &home.work(), home.root.join("engine.log"))
         };
         let server = start_server(Some(port), "/api/health", spawn)
@@ -64,6 +69,7 @@ impl Engine {
             proc: server.proc,
             has_config,
             extra_env: extra_env.to_vec(),
+            host: host.map(str::to_string),
         }
     }
 
@@ -72,7 +78,8 @@ impl Engine {
     pub async fn restart(&mut self, home: &Home) {
         self.proc.stop();
         let (port, has_config, env) = (self.port, self.has_config, self.extra_env.clone());
-        *self = Engine::start(home, port, has_config, &env).await;
+        let host = self.host.clone();
+        *self = Engine::start(home, port, has_config, &env, host.as_deref()).await;
     }
 
     pub fn new_port() -> u16 {

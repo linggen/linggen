@@ -187,7 +187,9 @@ fn loopback_rejection(
 /// the network must present a paired-device token; only the health check and
 /// the two pairing handshakes stay open (they are the bootstrap): a phone's
 /// code pairing, and a machine asking memory to connect
-/// (`memory_host::is_open_path`).
+/// (`memory_host::is_open_path`). A request that comes in with a token is
+/// sent as the person behind that device (`person::lan_request_as`), as the
+/// channel sends a peer's.
 async fn lan_gate(
     axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
     req: axum::extract::Request,
@@ -221,10 +223,10 @@ async fn lan_gate(
         return next.run(req).await;
     }
     let token = crate::memory_host::caller::token_from_headers(req.headers());
-    if token
-        .as_deref()
-        .is_some_and(api::pair::is_valid_device_token)
-    {
+    let device = token.as_deref().and_then(crate::state_fs::devices::device_by_token);
+    if let Some(device) = device {
+        // Sent as the device's person, as the channel sends a peer's.
+        let req = person::lan_request_as(req, &device.id).await;
         return next.run(req).await;
     }
     tracing::info!("[gate] rejected {} {} from {}", req.method(), path, addr);

@@ -20,6 +20,7 @@ mod memory_ops;
 mod met;
 mod missions;
 mod notes;
+mod person_lan;
 mod pictures;
 mod plan;
 mod presence;

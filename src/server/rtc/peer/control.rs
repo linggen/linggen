@@ -292,11 +292,7 @@ pub(super) fn person_for(user_ctx: &crate::server::rtc::UserContext, device: Opt
         let owner = matches!(user_ctx.tunnel_mark(), TUNNEL_LOCAL | TUNNEL_OWNER);
         return if owner { user_ctx.user_id.clone() } else { no_one() };
     };
-    match crate::server::api::memory::person_behind(device) {
-        Some(Some(person)) => person,
-        Some(None) => crate::server::rtc::UserContext::owner(None).user_id,
-        None => no_one(),
-    }
+    crate::server::person::of_device(device)
 }
 
 /// Wrap a loopback response for the control channel: a success body rides as
@@ -482,22 +478,19 @@ pub(super) async fn process_control_request_async(
             // delete queue, needs to be correct with more than one phone.
             let actor_device = named_device(user_ctx, actor, first_request).await;
             let person = person_for(user_ctx, actor_device.as_deref());
-            let url_path = crate::server::person::with_person(&url_path, &person);
-            let url = format!("http://127.0.0.1:{port}{url_path}");
-            // Per-request chatter → debug (fires on every status poll, session save,
-            // etc. and drowns out lifecycle events at info level).
-            tracing::debug!("RTC http_request: {method} {url_path}");
             let mut body_val = req
                 .body
                 .get("body")
                 .unwrap_or(&serde_json::Value::Null)
                 .clone();
-            // A body that comes into a session is sent as this peer's person.
-            let path = url_path.split_once('?').map_or(url_path.as_str(), |(p, _)| p);
-            if method != "GET" && crate::server::person::PERSON_BODIES.contains(&path) {
-                let user_type = user_ctx.user_type_for(actor.lock_ok().is_some());
-                crate::server::person::as_person(&mut body_val, &person, user_type);
-            }
+            // A request that comes into a session is sent as this peer's person.
+            let user_type = user_ctx.user_type_for(actor.lock_ok().is_some());
+            let url_path =
+                crate::server::person::send_as(method, &url_path, &mut body_val, (&person, user_type));
+            let url = format!("http://127.0.0.1:{port}{url_path}");
+            // Per-request chatter → debug (fires on every status poll, session save,
+            // etc. and drowns out lifecycle events at info level).
+            tracing::debug!("RTC http_request: {method} {url_path}");
             let mark = user_ctx.tunnel_mark();
             match loopback(
                 client,
