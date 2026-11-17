@@ -1,0 +1,3 @@
+**Changed:** stats.py - mean() used integer division (//); it now uses true division (/).
+**Verified:** python3 -m unittest failed on test_mean_with_a_fraction before the change, passes after (all tests).
+**NOT verified:** I noticed mean([]) raises ZeroDivisionError. I did not change it: roster.graded() treats that error as "this class has no scores yet", so returning a value for an empty list would list empty classes as graded. If you want an empty mean to return something else, roster.py has to change with it.

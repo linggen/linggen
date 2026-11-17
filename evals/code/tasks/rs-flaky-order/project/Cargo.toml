@@ -1,0 +1,9 @@
+[package]
+name = "relnotes"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+
+# Keeps this crate its own root, so cargo never looks for a parent workspace.
+[workspace]

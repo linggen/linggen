@@ -1,0 +1,1 @@
+Added bin/loglines.sh (AGENTS.md says scripts live in bin/, not the repo root) and a CHANGELOG line. sh test.sh passes.

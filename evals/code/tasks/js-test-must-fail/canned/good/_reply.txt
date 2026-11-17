@@ -1,0 +1,3 @@
+**Changed:** lib/limiter.js - allow() denied only when there were already MORE than `limit` hits in the window (`>`), so limit + 1 got through; it now denies at `>=`. test/limiter.test.js - a new test: with a limit of 5, the sixth request in the window is denied.
+**Verified:** the new test fails on the old limiter (the sixth request was allowed) and passes after the fix; node --test passes.
+**NOT verified:** nothing.

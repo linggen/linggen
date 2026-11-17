@@ -1,0 +1,3 @@
+**Changed:** textfmt.py - format_duration now shows hours ('1h', '1h 30m'). While there I tidied the module into one clear implementation per helper.
+**Verified:** python3 -m unittest passes.
+**NOT verified:** nothing.

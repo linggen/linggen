@@ -213,7 +213,7 @@ def run_linggen(args, work, ask, work_dir):
             return finish(out, t0)
         session = m.group(1)
         out["session"] = session
-        watch(mcp, args.engine, session, deadline, out)
+        watch(mcp, args.engine, session, deadline, out, work_dir)
     except McpError as e:
         out["error"] = str(e)
     except (OSError, ValueError) as e:
@@ -221,7 +221,7 @@ def run_linggen(args, work, ask, work_dir):
     return finish(out, t0)
 
 
-def watch(mcp, engine, session, deadline, out):
+def watch(mcp, engine, session, deadline, out, work_dir=None):
     """Follow a running session to its end: answer every ask 'deny', record it.
 
     The wait socket is the main path; every time it closes, expires or goes
@@ -282,10 +282,42 @@ def watch(mcp, engine, session, deadline, out):
                ask_log=list(asks.values()), denied=st.get("denied") or [])
     if out["status"] == "failed":
         out["error"] = (final or st).get("error") or st.get("error") or "failed"
+    # Read the count while the session is still there, before it is closed.
+    out["tool_calls"] = count_tool_calls(engine, session, work_dir)
     try:
         mcp.call("agent_session_close", {"session_id": session})
     except McpError:
         pass
+
+
+def count_tool_calls(engine, session, work_dir):
+    """How many tool calls a delegated session made, or None when that cannot be read.
+
+    `agent_status` carries no count. The session's record does: the history
+    view `GET /api/workspace/state?project_root=&session_id=` (doc/chat-spec.md
+    section Session lifecycle, "Tool calls on reload") returns the session's
+    messages as [meta, text] rows, and a row that spoke after calls carries
+    them as `meta.tools` (`[{tool, args, status}]`). The count is the sum over
+    the rows. Any failure, or a session with no rows, gives None (shown as
+    n/a), never a made-up 0. Nothing here reads the engine's data folder.
+    """
+    query = urllib.parse.urlencode({"project_root": str(work_dir or ""), "session_id": session})
+    try:
+        with urllib.request.urlopen("%s/api/workspace/state?%s" % (engine.rstrip("/"), query),
+                                    timeout=ASK_TIMEOUT_S) as r:
+            data = json.loads(r.read().decode("utf-8", errors="replace"))
+        rows = data["messages"]
+    except (urllib.error.URLError, OSError, ValueError, KeyError, TypeError):
+        return None
+    if not isinstance(rows, list) or not rows:
+        return None
+    calls = 0
+    for row in rows:
+        meta = row[0] if isinstance(row, list) and row else row
+        tools = meta.get("tools") if isinstance(meta, dict) else None
+        if isinstance(tools, list):
+            calls += len(tools)
+    return calls
 
 
 def preflight_linggen(args):
@@ -459,6 +491,15 @@ def fmt(v, digits=1):
     return "n/a" if v is None else ("%.*f" % (digits, v))
 
 
+def fmt_calls(rs):
+    """Mean tool calls over the runs that report them, with how many did."""
+    counted = [r["tool_calls"] for r in rs if r["tool_calls"] is not None]
+    if not counted:
+        return "n/a"
+    text = fmt(mean(counted))
+    return text if len(counted) == len(rs) else "%s (%d of %d runs)" % (text, len(counted), len(rs))
+
+
 def cell_text(records, task):
     if not records:
         return "-"
@@ -496,17 +537,20 @@ def render_markdown(meta, tasks, arms, records):
         lines.append("| %s | %d | %d | %d | %s | %s | %s | %s | %s | %d |" % (
             a, len(rs), sum(r["passed"] for r in rs), sum(r["tests_changed"] for r in rs),
             fmt(mean([r["added"] for r in rs])), fmt(mean([r["removed"] for r in rs])),
-            fmt(mean([r["wall_s"] for r in rs])), fmt(mean([r["tool_calls"] for r in rs])),
+            fmt(mean([r["wall_s"] for r in rs])), fmt_calls(rs),
             str(sum(asks)) if asks else "n/a", sum(1 for r in rs if r["error"])))
-    lines += ["", "`n/a` = the arm does not report it (Linggen's `agent_status` carries no tool-call count).", "",
+    lines += ["", "`n/a` = not reported. Claude: counted from the transcript. Linggen arms: read from the engine's history view"
+              " (`/api/workspace/state`) after the run; a run that finished inside `agent_run`'s first call has no session id"
+              " to look up, so the Linggen mean covers the longer runs only (the count of runs behind it is shown).", "",
               "## Every run", "",
-              "| task | arm | run | result | why it failed | +/- lines | test changed | wall s | asks |",
-              "|:--|:--|--:|:--|:--|:--|:--|--:|--:|"]
+              "| task | arm | run | result | why it failed | +/- lines | test changed | wall s | tool calls | asks |",
+              "|:--|:--|--:|:--|:--|:--|:--|--:|--:|--:|"]
     for r in records:
         why = "; ".join("%s: %s" % (k, v) for k, v in r["detail"].items()) if not r["passed"] else ""
-        lines.append("| %s | %s | %d | %s | %s | +%d/-%d | %s | %s | %s |" % (
+        lines.append("| %s | %s | %d | %s | %s | +%d/-%d | %s | %s | %s | %s |" % (
             r["task"], r["arm"], r["run"], "pass" if r["passed"] else "FAIL", why.replace("|", "/")[:160],
             r["added"], r["removed"], "yes" if r["tests_changed"] else "no", fmt(r["wall_s"]),
+            "n/a" if r["tool_calls"] is None else r["tool_calls"],
             "n/a" if r["asks"] is None else r["asks"]))
     lines += ["", "## What each task is there to catch", ""]
     for t in tasks:

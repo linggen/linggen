@@ -28,6 +28,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -109,6 +110,8 @@ class Handler(BaseHTTPRequestHandler):
         return text("unknown tool " + name, True)
 
     def do_GET(self):
+        if self.path.startswith("/api/workspace/state"):
+            return self.state()
         sid = self.path.split("session_id=")[1]
         s = Fake.sessions[sid]
         key = self.headers["Sec-WebSocket-Key"]
@@ -127,6 +130,28 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(b"\x88\x00")
                 return
             time.sleep(0.1)
+
+    def state(self):
+        """The history view: [meta, text] rows; calls ride on `meta.tools`. The ask cell's
+        session is unknown to this route (404), which the runner must show as n/a."""
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        sid = query["session_id"][0]
+        assert Path(query["project_root"][0]).is_dir(), "project_root must be the scratch copy"
+        cell = Fake.sessions[sid]["cell"]
+        if cell == ASK_CELL:
+            data, code = b"not found", 404
+        else:
+            tool = lambda name: {"tool": name, "args": "{}", "status": "done"}
+            rows = [[{"id": "msg-1", "from": "user"}, "the ask"],
+                    [{"id": "msg-2", "from": "linggen", "tools": [tool("Read"), tool("Grep")]}, "looking"],
+                    [{"id": "msg-3", "from": "linggen", "tools": [tool("Edit"), tool("Bash")]}, "done"]]
+            data, code = json.dumps({"messages": rows, "refs": {}}).encode(), 200
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.wfile.write(data)
 
     def frame(self, obj):
         payload = json.dumps(obj).encode()
@@ -188,13 +213,25 @@ def main():
         if any(cells[(t, "claude")]["tool_calls"] != 3 or cells[(t, "claude")]["asks"] != 1
                for t in {k[0] for k in cells}):
             problems.append("claude tool calls / denials not read from stream-json")
+        counts = {k: r["tool_calls"] for k, r in cells.items() if k[1] in ("code", "plain")}
+        for (task, arm), n in counts.items():
+            want_n = None if (task, arm) in ((ASK_CELL[0], "plain"), (DIRECT_CELL[0], "code")) else 4
+            if n != want_n:
+                problems.append("%s/%s tool calls read as %r, want %r" % (task, arm, n, want_n))
+        # the checks that can fail on a reply, on their own
+        pattern = check.load_task("py-two-faults")["reply_mentions"]
+        quiet = "**Changed:** stats.py - mean() uses / now.\n**Verified:** python3 -m unittest passes.\n**NOT verified:** nothing."
+        aware = "Changed mean() to /. mean([]) still raises ZeroDivisionError; roster.graded relies on it, so I left it."
+        if check.mentions(quiet, pattern)[0] or not check.mentions(aware, pattern)[0]:
+            problems.append("reply_mentions does not tell a reply that saw the other fault from one that did not")
         if "Preset grants" in (out_dir / DIRECT_CELL[0] / "code" / "run1" / "reply.txt").read_text():
             problems.append("grants line left in the reply")
         print("\nselftest: %d cells against the fake engine and fake claude" % len(cells))
         if problems:
             print("PROBLEMS:\n  " + "\n  ".join(problems))
             sys.exit(1)
-        print("selftest ok: code and claude arms pass, plain arm fails (bad change), ask answered 'deny' and counted")
+        print("selftest ok: code and claude arms pass, plain arm fails (bad change), ask answered 'deny' and counted,"
+              " tool calls read from the history view (4) or n/a (404, direct return)")
     finally:
         server.shutdown()
         shutil.rmtree(tmp, ignore_errors=True)

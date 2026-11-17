@@ -1,0 +1,1 @@
+Refactored src/lib.rs: the three fee functions now call one `fee` helper. cargo test passes, so behaviour is unchanged.

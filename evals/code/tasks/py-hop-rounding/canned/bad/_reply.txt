@@ -1,0 +1,1 @@
+Fixed the rounding in tax.py so a half cent of tax rounds up. All tests pass.

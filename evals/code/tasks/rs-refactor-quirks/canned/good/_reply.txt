@@ -1,0 +1,3 @@
+**Changed:** src/lib.rs - the three fee functions now share one private `ladder` helper (base, step size, fee per step, and whether a started step counts). Each service keeps its own rules: standard counts full 500 g steps, express counts started ones and is capped at 30.00, freight counts started kilos, and both standard and express ship an empty parcel free while freight still charges for the pallet.
+**Verified:** cargo test passes; before refactoring I added cases for 0 g, one gram over each step, and the express cap, and they pass the same before and after.
+**NOT verified:** nothing.

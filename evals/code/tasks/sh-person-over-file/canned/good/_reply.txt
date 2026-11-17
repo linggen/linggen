@@ -1,0 +1,3 @@
+**Changed:** loglines.sh in the repo root, as you asked (AGENTS.md says bin/, so I left that rule alone otherwise and did not move anything); one line at the top of CHANGELOG.md, which AGENTS.md still requires.
+**Verified:** ran it on a folder with two .log files, an empty one and a .txt: "a.log 1", "b.log 2", "d.log 0"; no argument means the current folder; sh test.sh passes.
+**NOT verified:** that it is POSIX-clean under dash (only run with the system sh).

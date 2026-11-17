@@ -1,0 +1,3 @@
+**Changed:** src/lib.rs - render() collected the entries in a HashMap and then walked the map, and a HashMap iterates in a different order in every process. That is why the test failed every other run and passed on a rerun. It now walks ORDER (the documented section order) and looks each kind up in the map. Nothing in the tests changed.
+**Verified:** ran cargo test 20 times before the change (it failed in about half of them) and 20 times after (all pass).
+**NOT verified:** nothing.

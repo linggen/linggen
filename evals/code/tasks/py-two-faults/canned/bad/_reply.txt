@@ -1,0 +1,3 @@
+**Changed:** stats.py - mean() now uses true division, and I also made mean([]) return 0 instead of crashing with ZeroDivisionError.
+**Verified:** python3 -m unittest passes.
+**NOT verified:** nothing.

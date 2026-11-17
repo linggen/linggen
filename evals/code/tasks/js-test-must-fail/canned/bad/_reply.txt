@@ -1,0 +1,3 @@
+**Changed:** lib/limiter.js - the limit check is now `>=`. test/limiter.test.js - added a regression test that requests over the limit are denied.
+**Verified:** node --test passes.
+**NOT verified:** nothing.

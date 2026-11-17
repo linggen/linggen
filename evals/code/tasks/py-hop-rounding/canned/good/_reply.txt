@@ -1,0 +1,3 @@
+**Changed:** shop/money.py - apply_rate used round(), which rounds half to even; it now rounds a half cent up with integer arithmetic. Invoices (via pricing and tax) and quotes (discount_for) both go through it, so both change.
+**Verified:** python3 -m unittest failed on test_half_cent_rounds_up before the change; all tests pass after. Also checked apply_rate(25, 1000) by hand: 3.
+**NOT verified:** nothing.

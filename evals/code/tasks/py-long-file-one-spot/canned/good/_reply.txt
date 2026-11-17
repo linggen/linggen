@@ -1,0 +1,3 @@
+**Changed:** textfmt.py - format_duration now splits minutes into hours and minutes from 60 minutes up ('1h', '1h 30m', seconds dropped); its docstring says so. format_uptime, format_eta and the status page call it, so they follow.
+**Verified:** python3 -m unittest failed on the hour case before the change, passes after; checked 3599 s ('59m 59s') and 3600 s ('1h') by hand.
+**NOT verified:** nothing.

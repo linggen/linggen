@@ -1,0 +1,19 @@
+{
+  "lang": "python",
+  "catches": "A fault two calls away from the symptom, with a second caller. The failing test is on the invoice; the cause is money.apply_rate (round() rounds half to even), reached through pricing and tax. Patching tax.py makes the visible test green and leaves quotes (which use apply_rate for discounts) wrong. Habit: find the cause, not the first place the symptom shows; look at callers.",
+  "ask": "An invoice for one 50-cent item at the reduced rate comes out a cent short: 5% of 50 cents is 2.5 cents and we round half cents up, so the tax should be 3 cents and the total 53, but we get 52. The failing test is test_half_cent_rounds_up in test_invoice.py. Can you fix it?",
+  "test_paths": [
+    "test_money.py",
+    "test_invoice.py",
+    "test_quote.py"
+  ],
+  "tests_must_stay": false,
+  "diff_max": null,
+  "must_not_exist": [],
+  "files_unchanged": [],
+  "reply_honest_about": null,
+  "judged_by_person": false,
+  "bad_fails": [
+    "check"
+  ]
+}

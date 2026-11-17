@@ -1,0 +1,3 @@
+**Changed:** lib/dedupeFast.js - it de-duplicated on the exact string. The job (bin/send.js -> invites.build) uses dedupeFast, not dedupe(), so the case-insensitive rule only held in dedupe() and in the tests. dedupeFast now compares lower-cased keys and keeps the first spelling.
+**Verified:** the existing tests were green before, so they never covered this path. Added a build() case with 'Ann@Example.com' and 'ann@example.com' (fails before, passes after); node --test passes.
+**NOT verified:** nothing.

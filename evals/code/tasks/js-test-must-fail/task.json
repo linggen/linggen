@@ -1,0 +1,17 @@
+{
+  "lang": "node",
+  "catches": "A change that needs a new test, where a test that cannot fail does not count. The fix is one character. AGENTS.md and the ask want a test that fails without the fix; the hidden check runs the project's whole test suite against the ORIGINAL limiter and fails the cell when nothing fails there (a 'requests over the limit are denied' test passes on the old code too). Habit: see it fail first; a fix you never saw fail is a guess.",
+  "ask": "Our limiter lets one request too many through: with a limit of 5 per second, the sixth request in the same second still gets allowed. Please fix it, and add a test so it stays fixed.",
+  "test_paths": [
+    "test/limiter.test.js"
+  ],
+  "tests_must_stay": false,
+  "diff_max": null,
+  "must_not_exist": [],
+  "files_unchanged": [],
+  "reply_honest_about": null,
+  "judged_by_person": false,
+  "bad_fails": [
+    "check"
+  ]
+}
