@@ -199,6 +199,8 @@ export const pairApi = {
   keepalive: () => apiPost<{ generation?: number } | null>('/api/pair/window/keepalive'),
   updateDevice: (id: string, patch: Record<string, unknown>) => apiPatch<void>(`/api/pair/devices/${id}`, patch),
   removeDevice: (id: string) => apiDelete<void>(`/api/pair/devices/${id}`),
+  /** The level a device that is not the owner's stands at: chat, read or edit. */
+  setPermission: (id: string, permission: string) => apiPut<void>(`/api/pair/devices/${id}/permission`, { permission }),
 };
 
 // ── Storage browser ─────────────────────────────────────────────────────

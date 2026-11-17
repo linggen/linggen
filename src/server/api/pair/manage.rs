@@ -18,6 +18,7 @@ pub(crate) async fn get_pair_info(
     let config = state.manager.get_config_snapshot().await;
     let lan_live = state.bound_host != "127.0.0.1" && state.bound_host != "localhost";
     let (mac_name, account_name) = mac_identity();
+    let mac_account = crate::account::load_account().and_then(|a| a.user_id);
     let devices: Vec<serde_json::Value> = load_devices()
         .iter()
         .map(|d| {
@@ -33,6 +34,12 @@ pub(crate) async fn get_pair_info(
                 // the level set here (read when none is).
                 "level": crate::server::person::standing_of(&d.id).level(),
                 "verified": d.verified_claim().is_some(),
+                // Whose it is: owner, unverified (claims this Mac's account),
+                // other (another account), signed_out.
+                "whose": crate::server::person::whose_device(d, mac_account.as_deref()),
+                // The level set here for a device not the owner's (what the
+                // choice shows), read when none is.
+                "permission": d.permission.unwrap_or(crate::server::person::DEVICE_DEFAULT),
                 // A phone out of step with this Mac's contract: told to update.
                 "needs_update": d.kind() == crate::state_fs::devices::DeviceKind::Phone
                     && crate::server::rtc::contract::behind(d.contract.unwrap_or(0)),

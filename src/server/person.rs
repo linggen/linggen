@@ -254,6 +254,23 @@ pub(crate) fn claims_the_owners_unverified(device: &str) -> bool {
         .is_some_and(|d| claims_unverified(d, mac.as_deref()))
 }
 
+/// Whose paired device `device` is, as Settings shows it, with this Mac's
+/// account `mac`: `owner` (an approved machine, or a phone whose claim of
+/// this Mac's account is verified), `unverified` (it claims this Mac's
+/// account, not verified yet), `other` (another account), `signed_out`.
+pub(crate) fn whose_device(device: &crate::state_fs::devices::PairedDevice, mac: Option<&str>) -> &'static str {
+    if device.is_owners(mac) {
+        return "owner";
+    }
+    if claims_unverified(device, mac) {
+        return "unverified";
+    }
+    match device.account {
+        Some(_) => "other",
+        None => "signed_out",
+    }
+}
+
 fn claims_unverified(device: &crate::state_fs::devices::PairedDevice, mac: Option<&str>) -> bool {
     let claim = device.account.as_ref().map(|a| a.id.as_str());
     let phone = device.kind() == crate::state_fs::devices::DeviceKind::Phone;
@@ -653,6 +670,25 @@ mod tests {
             ..phone(Some("u-owner"))
         };
         assert!(!super::claims_unverified(&machine, Some("u-owner")));
+    }
+
+    /// Settings is told whose each device is.
+    #[test]
+    fn whose_a_device_is() {
+        let mac = Some("u-owner");
+        let verified = crate::state_fs::devices::PairedDevice {
+            verified_account: Some("u-owner".into()),
+            ..phone(Some("u-owner"))
+        };
+        assert_eq!(super::whose_device(&verified, mac), "owner");
+        assert_eq!(super::whose_device(&phone(Some("u-owner")), mac), "unverified");
+        assert_eq!(super::whose_device(&phone(Some("u-friend")), mac), "other");
+        assert_eq!(super::whose_device(&phone(None), mac), "signed_out");
+        let machine = crate::state_fs::devices::PairedDevice {
+            kind: Some(crate::state_fs::devices::DeviceKind::Machine),
+            ..phone(None)
+        };
+        assert_eq!(super::whose_device(&machine, mac), "owner");
     }
 
     /// A peer that named no device is the owner only when the tunnel knows it.

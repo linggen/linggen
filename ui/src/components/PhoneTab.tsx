@@ -23,7 +23,30 @@ interface PairDevice {
   /// A phone (code pairing) sees its own person's memory; a computer (Allow
   /// on this Mac) is the owner's other machine and sees all of it.
   kind?: 'phone' | 'machine';
+  /// Whose it is: the owner's (verified), one claiming this Mac's account
+  /// not yet verified, another account's, or signed out.
+  whose?: Whose;
+  /// The level set here for a device that is not the owner's.
+  permission?: Level;
+  /// A phone out of step with this Mac's contract.
+  needs_update?: boolean;
 }
+
+type Whose = 'owner' | 'unverified' | 'other' | 'signed_out';
+type Level = 'chat' | 'read' | 'edit';
+
+/// The choice a device that is not the owner's is given.
+const LEVELS: { id: Level; label: string }[] = [
+  { id: 'chat', label: 'Chat' },
+  { id: 'read', label: 'Read' },
+  { id: 'edit', label: 'Edit' },
+];
+
+const WHOSE: Record<Exclude<Whose, 'owner'>, string> = {
+  unverified: 'Your account, not verified',
+  other: 'Another account',
+  signed_out: 'Signed out',
+};
 
 interface PairInfo {
   lan_live: boolean;
@@ -109,6 +132,18 @@ export const PhoneTab: React.FC<{
     return () => clearInterval(t);
   }, [qr, fetchQr]);
 
+
+  // Set the level of a device that is not the owner's.
+  const setLevel = async (device: PairDevice, level: Level) => {
+    setInfo((prev) =>
+      prev && { ...prev, devices: prev.devices.map((d) => (d.id === device.id ? { ...d, permission: level } : d)) },
+    );
+    try {
+      await pairApi.setPermission(device.id, level);
+    } finally {
+      fetchInfo();
+    }
+  };
 
   // Toggle a model in a device's allow-list, then persist via PATCH.
   const toggleModel = async (device: PairDevice, modelId: string) => {
@@ -299,6 +334,7 @@ export const PhoneTab: React.FC<{
                     {d.kind !== 'machine' && d.person ? `${d.person} · ` : ''}
                     Paired {new Date(d.created_at * 1000).toLocaleDateString()}
                   </p>
+                  <DeviceStanding device={d} onLevel={(level) => setLevel(d, level)} />
                 </div>
                 {editingId !== d.id && (
                   <button
@@ -352,6 +388,41 @@ export const PhoneTab: React.FC<{
           Revoking cuts the device off immediately — it re-pairs with eyes on this Mac. Models sync to the phone one-way when it taps Sync.
         </p>
       </section>
+    </div>
+  );
+};
+
+/// Whose a device is and, for one not the owner's, the level it stands at
+/// here (Chat / Read / Edit, Read by default).
+const DeviceStanding: React.FC<{ device: PairDevice; onLevel: (level: Level) => void }> = ({ device, onLevel }) => {
+  const whose = device.whose ?? 'signed_out';
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
+      {whose === 'owner' ? (
+        <span className="px-1.5 py-0.5 rounded bg-green-600/10 text-green-700 dark:text-green-400 font-medium">Owner</span>
+      ) : (
+        <>
+          <span className="text-slate-500 dark:text-slate-400">{WHOSE[whose]}</span>
+          <div className="flex rounded-md border border-slate-200 dark:border-white/10 overflow-hidden">
+            {LEVELS.map(({ id, label }) => (
+              <button
+                key={id}
+                onClick={() => onLevel(id)}
+                className={`px-2 py-0.5 font-medium transition-colors ${
+                  (device.permission ?? 'read') === id
+                    ? 'bg-blue-600 text-white'
+                    : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+      {device.needs_update && (
+        <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium">Needs an update</span>
+      )}
     </div>
   );
 };
