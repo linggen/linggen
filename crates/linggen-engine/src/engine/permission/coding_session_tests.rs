@@ -22,7 +22,7 @@ fn session_at(dir: &str, mode: PermissionMode) -> SessionPermissions {
 }
 
 fn check(cmd: &str, perms: &SessionPermissions, coding: bool) -> PermissionCheckResult {
-    check_permission_for("Bash", Some(cmd), None, Path::new(WD), perms, None, coding)
+    check_permission_for("Bash", Some(cmd), None, Path::new(WD), perms, None, coding, None)
 }
 
 fn allowed(result: &PermissionCheckResult) -> bool {

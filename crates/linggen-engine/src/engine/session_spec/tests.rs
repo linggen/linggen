@@ -123,7 +123,7 @@ fn work_code_daily_and_app_ignore_tag() {
 fn work_code_task_child_inherits() {
     let parent = typed_by_spec(&code_meta("sess-c", "user", None), "user");
     let mut child = engine();
-    let spec = SessionSpec::delegated_child(parent.tools.builtins.session_policy.clone(), true, parent.tools.builtins.parent_work);
+    let spec = SessionSpec::delegated_child(parent.tools.builtins.session_policy.clone(), true, parent.tools.builtins.parent_work, None);
     spec.apply(&mut child);
     assert!(child.system_prompt().contains("## Working on code"));
 }
@@ -155,7 +155,7 @@ fn work_code_makes_a_coding_session_only_where_the_preset_takes_it() {
 fn work_code_a_task_child_of_a_coding_session_is_one() {
     for (work, coding) in [(Some(Work::Code), true), (None, false)] {
         let mut child = engine();
-        SessionSpec::delegated_child(Some(SessionPolicy::owner()), true, work).apply(&mut child);
+        SessionSpec::delegated_child(Some(SessionPolicy::owner()), true, work, None).apply(&mut child);
         assert_eq!(child.is_coding_session(), coding, "{work:?}");
     }
 }
@@ -269,7 +269,7 @@ fn delegate_read() -> Option<BTreeSet<String>> {
 fn typed_by_spec(meta: &SessionMeta, turn_owner: &str) -> AgentEngine {
     let mut e = engine_for(meta);
     SessionSpec::of(meta)
-        .typed(SessionPolicy::owner(), Memory::of_turn(turn_owner))
+        .typed(SessionPolicy::owner(), Memory::of_turn(turn_owner), None)
         .apply(&mut e);
     e
 }
@@ -381,7 +381,7 @@ fn a_delegates_run_runs_as_today() {
 fn a_task_child_runs_as_today() {
     for parent_interactive in [true, false] {
         let mut by_spec = engine();
-        SessionSpec::delegated_child(Some(SessionPolicy::owner()), parent_interactive, None)
+        SessionSpec::delegated_child(Some(SessionPolicy::owner()), parent_interactive, None, None)
             .apply(&mut by_spec);
         let want = expected(true, true, true, None, parent_interactive, false);
         assert_eq!(Seen::of(&by_spec, None), want);
@@ -466,7 +466,7 @@ fn a_typed_turn_in_a_delegates_session_keeps_its_spec() {
     let mut meta = meta("sess-4-d", "external", None);
     meta.params
         .insert(delegate::TOOLS_PARAM.into(), "write".into());
-    let spec = SessionSpec::of(&meta).typed(SessionPolicy::owner(), Memory::of_turn("user"));
+    let spec = SessionSpec::of(&meta).typed(SessionPolicy::owner(), Memory::of_turn("user"), None);
     assert_eq!(spec.tools, Tools::Delegate { write: true });
     assert_eq!(spec.permission, Permission::AskCaller);
     let mut e = engine_for(&meta);
@@ -480,4 +480,35 @@ fn a_typed_turn_in_a_delegates_session_keeps_its_spec() {
         false,
     );
     assert_eq!(Seen::of(&e, Some(false)), want);
+}
+
+/// A turn a device sent is typed at its level: below edit it asks no one
+/// (the device may not answer); at admin it has no ceiling. The owner's
+/// next turn on the same engine has none either, and keeps the session's
+/// grants. A `Task` child takes the turn's ceiling.
+#[test]
+fn a_devices_turn_runs_under_its_level() {
+    use crate::engine::permission::PermissionMode::*;
+    let m = meta("sess-5-c", "user", None);
+    let typed = |level| SessionSpec::of(&m).typed(SessionPolicy::owner(), Memory::of_turn("user"), level);
+    let read = typed(Some(Read));
+    assert_eq!((read.ceiling, read.permission), (Some(Read), Permission::Unattended));
+    let edit = typed(Some(Edit));
+    assert_eq!((edit.ceiling, edit.permission), (Some(Edit), Permission::Interactive));
+    assert_eq!(typed(Some(Admin)).ceiling, None);
+    assert_eq!(typed(None).ceiling, None);
+
+    let mut e = engine_for(&m);
+    e.session_permissions.set_path_mode("*", Edit);
+    read.apply(&mut e);
+    assert_eq!(e.session_spec().ceiling, Some(Read));
+    let mut child = engine();
+    SessionSpec::delegated_child(e.tools.builtins.session_policy.clone(), true, None, e.tools.builtins.parent_ceiling)
+        .apply(&mut child);
+    assert_eq!(child.session_spec().ceiling, Some(Read), "a Task child keeps the turn's ceiling");
+    typed(None).apply(&mut e);
+    assert_eq!(e.session_spec().ceiling, None);
+    assert!(e.session_permissions.interactive);
+    let grant = crate::engine::permission::effective_mode_for_path(&e.session_permissions.path_modes, std::path::Path::new("/x"));
+    assert_eq!(grant, Some(Edit), "the session's grants are the owner's still");
 }

@@ -47,6 +47,8 @@ What a device at **read** may do: talk in its own chat and day, its own memory r
 
 **A session is its person's.** Whose a session is comes from one place, its meta's `user_id` (the person the session was made for; none, or this machine, is the owner), read by `server::day_session::may_enter` — the rule the seam asks for every session a request names, and every route that finds its session from another id (a question, a run, a queued message), the session streams and page state. The owner enters every session. Any other person enters their own day and the sessions made for them; a session id not kept yet is theirs to make; another person's session, a session named by an id no session has, and a run of no session are refused (`403 {"error":"that session is another person's"}`). A peer that has named no device enters no kept session. A room consumer is its own account.
 
+**A turn runs at its device's level.** What a device's chat turn may do is its level too, through the session spec's ceiling (`session-spec.md` § A turn's ceiling): an action above it is refused and never asked for, whatever the session's grants; the model is told the action needs more than the device stands at.
+
 
 ## Session grants
 

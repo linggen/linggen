@@ -182,6 +182,7 @@ fn event_language(tag: Option<&str>) -> Option<String> {
 /// (server/yinyue_moments.rs). A `session` has her line land in that chat.
 pub(crate) async fn event_handler(
     State(state): State<Arc<ServerState>>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<EventRequest>,
 ) -> impl IntoResponse {
     let app = req.app.trim();
@@ -217,6 +218,10 @@ pub(crate) async fn event_handler(
     // An app whose world she hasn't entered yet tells her nothing there.
     if theirs || absent_for_moment(&state, app, session.as_deref()).await {
         return (StatusCode::CONFLICT, "absent").into_response();
+    }
+    // Her turns run as the owner's: a moment below admin wakes none.
+    if let Some(refused) = crate::server::person::owners_only(crate::server::api::pair::caller_level(&headers)) {
+        return refused;
     }
     // Asked while the pet is off: nobody will answer — say so now, rather
     // than let the page wait on a silence.
@@ -264,6 +269,7 @@ pub(crate) struct ChatRequest {
 /// is spoken over the event spine; returns immediately so the UI isn't blocked.
 pub(crate) async fn chat_handler(
     State(state): State<Arc<ServerState>>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<ChatRequest>,
 ) -> impl IntoResponse {
     let text = req.text.trim().to_string();
@@ -272,6 +278,11 @@ pub(crate) async fn chat_handler(
     }
     if !crate::server::day_session::shares_builders(&state.manager, req.user_id.as_deref()).await {
         return (StatusCode::FORBIDDEN, "her own thread is another person's").into_response();
+    }
+    // Her own thread runs with the owner's tools: below admin it is not
+    // talked into (a device talks in its own chat and day).
+    if let Some(refused) = crate::server::person::owners_only(crate::server::api::pair::caller_level(&headers)) {
+        return refused;
     }
     // Not met yet: she is not here to be talked to.
     if !state

@@ -85,7 +85,7 @@ impl SessionPolicy {
             let tools = spec.tools.clone();
             *spec = spec
                 .clone()
-                .typed(policy, super::session_spec::Memory::Full);
+                .typed(policy, super::session_spec::Memory::Full, None);
             spec.tools = tools;
         });
     }

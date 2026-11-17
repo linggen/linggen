@@ -527,12 +527,16 @@ pub fn check_permission(
         session_perms,
         action_tier_override,
         false,
+        None,
     )
 }
 
 /// [`check_permission`] for a session that is, or is not, a coding session
 /// (`work: code`): one runs its programs where it may edit, without asking
-/// ([`super::classify`]'s `coding_class` says which).
+/// ([`super::classify`]'s `coding_class` says which); and for a turn under a
+/// `ceiling` (`SessionSpec::ceiling`, the level of the device that sent it):
+/// an action that needs more is refused, never asked for, whatever the
+/// session's grants.
 #[allow(clippy::too_many_arguments)]
 pub fn check_permission_for(
     tool: &str,
@@ -542,6 +546,7 @@ pub fn check_permission_for(
     session_perms: &SessionPermissions,
     action_tier_override: Option<PermissionMode>,
     coding: bool,
+    ceiling: Option<PermissionMode>,
 ) -> PermissionCheckResult {
     // `$HOME` is read as the shell reads it, so a command naming the home
     // folder is judged by the path it reaches (`known_vars`).
@@ -555,13 +560,29 @@ pub fn check_permission_for(
         file_path,
         session_cwd,
         session_perms,
-        action_tier_override,
+        (action_tier_override, ceiling),
         coding,
     );
-    match bash_command.filter(|cmd| tool == "Bash" && super::outward::is_outward(cmd)) {
+    let result = match bash_command.filter(|cmd| tool == "Bash" && super::outward::is_outward(cmd)) {
         Some(cmd) => ask_outward(result, cmd, session_cwd),
         None => result,
+    };
+    match (&result, ceiling) {
+        (PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling { target_mode, .. }), Some(c))
+            if *target_mode > c =>
+        {
+            beyond_ceiling(*target_mode, c)
+        }
+        _ => result,
     }
+}
+
+/// An action above a turn's ceiling: refused, with what it needs and the
+/// level the turn's device stands at.
+fn beyond_ceiling(needs: PermissionMode, ceiling: PermissionMode) -> PermissionCheckResult {
+    PermissionCheckResult::Blocked(format!(
+        "Beyond this turn's level: the action needs {needs}, and the device that sent the turn stands at {ceiling}."
+    ))
 }
 
 /// The check against the session's grants: the deny floor, then the
@@ -572,7 +593,7 @@ fn check_grants(
     file_path: Option<&str>,
     session_cwd: &Path,
     session_perms: &SessionPermissions,
-    action_tier_override: Option<PermissionMode>,
+    (action_tier_override, ceiling): (Option<PermissionMode>, Option<PermissionMode>),
     coding: bool,
 ) -> PermissionCheckResult {
     // 0a. Hardcoded deny floor (admin mode does not bypass).
@@ -642,6 +663,12 @@ fn check_grants(
     } else {
         tool_action_tier(tool)
     };
+
+    // 1b. A turn under a ceiling: an action above it is refused, whatever
+    // the grants say.
+    if let Some(c) = ceiling.filter(|c| action_tier > *c) {
+        return beyond_ceiling(action_tier, c);
+    }
 
     // 1a. Chat-tier tools (AskUser) are at the floor. Nothing exceeds Chat,
     // and they don't touch the workspace — nothing in `session_cwd`.

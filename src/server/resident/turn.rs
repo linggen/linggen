@@ -425,7 +425,7 @@ fn ready_for_turn(
     // frames the turn as an autonomous task — a second "Task:" message).
     let policy = crate::engine::session_policy::SessionPolicy::owner();
     let typed = policy.clone();
-    engine.respec(|spec| *spec = spec.clone().typed(typed, crate::engine::session_spec::Memory::Full));
+    engine.respec(|spec| *spec = spec.clone().typed(typed, crate::engine::session_spec::Memory::Full, None));
 
     // Her memory tools act for the session she speaks in: a write is stamped
     // with it (`source_session`), and a table whose skill keeps memory holds

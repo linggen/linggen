@@ -4,6 +4,7 @@
 //! the request as theirs whatever `user_id` it named.
 
 use crate::day_session::{day_world_at, say};
+use crate::support::engine::RunEnd;
 use crate::support::model::Agent;
 use crate::support::{text, tool, Setup, World};
 use serde_json::{json, Value};
@@ -541,6 +542,59 @@ async fn another_persons_phone_over_the_lan_may_not_name_the_builders_session() 
     let rows = serde_json::to_string(&w.raw_rows(&mine)).unwrap();
     if rows.contains("FRIEND-WORDS") {
         wrong.push("the friend's words are in the builder's session".into());
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// A turn a phone sends runs at no more than its level (doc/permission-spec.md
+/// § A paired device's standing): at read its model may not write, and is
+/// told so at once, never asking; her own thread and a session another
+/// runtime hosts take no turn below admin.
+#[tokio::test]
+async fn a_phones_turn_runs_at_its_level() {
+    use reqwest::Method;
+    let w = World::start(Setup { lan: true, ..Setup::default() }.script(
+        Agent::Ling,
+        vec![tool("Write", json!({"path": "FRIEND.txt", "content": "x"})), text("Could not.")],
+    ))
+    .await;
+    pair_friends_phone_with(&w, json!({"contract": 1}));
+    let lan = Lan::new(&w);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while lan.status("/api/pair/me", Some(TOKEN)).await != 200 {
+        assert!(std::time::Instant::now() < deadline, "the phone is not known");
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let mut wrong = Vec::new();
+    let own = lan.send(Method::POST, "/api/sessions", Some(json!({"title": "Friend's"}))).await;
+    let sid = own.1["id"].as_str().unwrap_or_default().to_string();
+    let mark = w.mark();
+    let chat = json!({"session_id": sid, "project_root": w.work(), "message": "Write FRIEND.txt"});
+    let sent = lan.send(Method::POST, "/api/chat", Some(chat)).await;
+    if sent.0 != 200 {
+        wrong.push(format!("the friend's chat at read: {sent:?}"));
+    } else if let RunEnd::Asked(ask) = w.wait_run(&sid, Agent::Ling, mark).await {
+        wrong.push(format!("a turn at read asked: {ask}"));
+    }
+    let rows = serde_json::to_string(&w.raw_rows(&sid)).unwrap();
+    if !rows.contains("Beyond this turn's level") {
+        wrong.push(format!("the write was not refused as beyond the level: {rows}"));
+    }
+    if w.home.work().join("FRIEND.txt").exists() || w.home.linggen_home().join("workspace/FRIEND.txt").exists() {
+        wrong.push("the turn at read wrote a file".into());
+    }
+    let her = lan.send(Method::POST, "/api/yinyue/chat", Some(json!({"text": "hi"}))).await;
+    if her.0 != 403 {
+        wrong.push(format!("her own thread at read: {her:?}"));
+    }
+    let claude = lan.send(Method::POST, "/api/sessions", Some(json!({"title": "c", "runtime": "claude"}))).await;
+    if let Some(cid) = claude.1["id"].as_str() {
+        let into = json!({"session_id": cid, "project_root": w.work(), "message": "hi"});
+        let got = lan.send(Method::POST, "/api/chat", Some(into)).await;
+        let beyond = json!({"error": "beyond_level", "level": "read", "needs": "admin"});
+        if got != (403, beyond) {
+            wrong.push(format!("a Claude session's turn at read: {got:?}"));
+        }
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
 }

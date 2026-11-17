@@ -153,7 +153,7 @@ impl Tools {
             self.parent_allowed_tools.clone(),
             self.parent_path_modes.clone(),
             self.parent_interactive,
-            self.parent_work,
+            (self.parent_work, self.parent_ceiling),
             false,
             None,
         ))
@@ -370,7 +370,10 @@ pub(crate) async fn run_delegation(
     parent_allowed_tools: Option<std::collections::HashSet<String>>,
     parent_path_modes: Vec<crate::engine::permission::PathMode>,
     parent_interactive: bool,
-    parent_work: Option<crate::engine::session_spec::Work>,
+    (parent_work, parent_ceiling): (
+        Option<crate::engine::session_spec::Work>,
+        Option<crate::engine::permission::PermissionMode>,
+    ),
     background: bool,
     started: Option<tokio::sync::oneshot::Sender<String>>,
 ) -> Result<ToolResult> {
@@ -462,6 +465,7 @@ pub(crate) async fn run_delegation(
         parent_policy,
         parent_interactive,
         parent_work,
+        parent_ceiling,
     )
     .apply(&mut engine);
     // A separate ceiling survives policy and skill changes in the child.

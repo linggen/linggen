@@ -679,6 +679,7 @@ impl AgentEngine {
                 &self.session_permissions,
                 skill_tier_override,
                 self.is_coding_session(),
+                self.session_spec.ceiling,
             );
 
             let prompt_kind = match check_result {
@@ -686,7 +687,12 @@ impl AgentEngine {
                 permission::PermissionCheckResult::Blocked(reason) => {
                     info!("Permission blocked: {} — {}", t.canonical, reason);
                     self.record_denial(t, "blocked", &reason);
-                    let msg = self.permission_denied_msg(t);
+                    // Under a turn's ceiling the model is told why: no
+                    // person declined it, the device's level did.
+                    let msg = match self.session_spec.ceiling {
+                        Some(_) => format!("Tool {}: {reason}", t.canonical),
+                        None => self.permission_denied_msg(t),
+                    };
                     return self.refuse_saved(t, messages, msg).await;
                 }
                 permission::PermissionCheckResult::NeedsPrompt(prompt_kind) => prompt_kind,

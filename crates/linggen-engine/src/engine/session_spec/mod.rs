@@ -16,6 +16,7 @@ pub use grants::{Covered, PresetGrants};
 
 pub use preset::{is_companion_thread, is_kept_apart, preset_of, Preset, HANDOFF_PREFIX};
 
+use super::permission::PermissionMode;
 use super::session_policy::SessionPolicy;
 use crate::state_fs::sessions::{SessionMeta, SessionRuntime};
 pub use crate::state_fs::sessions::Work;
@@ -54,8 +55,13 @@ pub struct SessionSpec {
     /// ceiling); `None` when no person's policy claimed the run (a mission,
     /// an `agent_run` delegate).
     pub policy: Option<SessionPolicy>,
-    /// Reserved for the paired-device design: unused.
-    pub ceiling: Option<Ceiling>,
+    /// The most a turn may do, when a device below the owner sent it: the
+    /// device's level (`server::person::Standing`). No tool whose action
+    /// needs more runs, whatever the session's grants
+    /// (`permission::check_permission_for`); `None` for the owner's turns
+    /// and this machine's. Set only where a turn is typed ([`SessionSpec::typed`])
+    /// and carried to its `Task` children.
+    pub ceiling: Option<PermissionMode>,
     /// What it may do without asking, set by whoever makes it; empty from
     /// its meta. An `agent_run` delegate's are seeded before its run
     /// ([`SessionSpec::seed`]); a skill's and a mission's are stamped as
@@ -79,10 +85,6 @@ pub fn ask_work(meta: &mut SessionMeta, word: &str) -> Result<(), &'static str> 
     meta.work = work;
     Ok(())
 }
-
-/// A ceiling another design will set. No variant yet.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Ceiling {}
 
 /// Who leads a session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -325,16 +327,22 @@ impl SessionSpec {
     }
 
     /// A turn a person typed, under `policy`, its memory the turn's
-    /// (`Memory::of_turn`), verbatim. A delegate's session keeps its toolset
-    /// and its caller; any other gets the lead's tools and asks the person,
-    /// unless a consumer's policy locks it.
-    pub fn typed(mut self, policy: SessionPolicy, memory: Memory) -> Self {
+    /// (`Memory::of_turn`), verbatim, at no more than `ceiling` (the level of
+    /// the device that sent it; `None` or admin: the owner's turn, no
+    /// ceiling). A delegate's session keeps its toolset and its caller; any
+    /// other gets the lead's tools and asks the person, unless a consumer's
+    /// policy locks it or the turn's ceiling is below edit — a device that
+    /// may not answer a question is never asked one.
+    pub fn typed(mut self, policy: SessionPolicy, memory: Memory, ceiling: Option<PermissionMode>) -> Self {
         let keeps_caller = self.preset == Preset::Delegate;
-        self.permission = match (policy.locked, keeps_caller) {
+        let ceiling = ceiling.filter(|c| *c < PermissionMode::Admin);
+        let unasked = policy.locked || ceiling.is_some_and(|c| c < PermissionMode::Edit);
+        self.permission = match (unasked, keeps_caller) {
             (true, _) => Permission::Unattended,
             (false, true) => Permission::AskCaller,
             (false, false) => Permission::Interactive,
         };
+        self.ceiling = ceiling;
         if !keeps_caller {
             self.tools = Tools::Lead;
         }
@@ -346,14 +354,16 @@ impl SessionSpec {
 
     /// A delegated `Task` child of a parent run under `policy`: a task
     /// whatever the parent's session, prompting only when the parent could,
-    /// doing the parent's kind of work.
+    /// doing the parent's kind of work, under the parent's ceiling.
     pub fn delegated_child(
         policy: Option<SessionPolicy>,
         parent_interactive: bool,
         work: Option<Work>,
+        ceiling: Option<PermissionMode>,
     ) -> Self {
         let mut spec = Self::unclaimed(None);
         spec.work = work;
+        spec.ceiling = ceiling;
         spec.policy = policy;
         spec.permission = match parent_interactive {
             true => Permission::Interactive,

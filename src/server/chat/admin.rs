@@ -209,11 +209,11 @@ fn export_spec(
     use crate::engine::session_spec::{Memory, SessionSpec};
     let owner = crate::engine::session_policy::SessionPolicy::owner();
     let Some(meta) = meta else {
-        return SessionSpec::unclaimed(None).typed(owner, Memory::Full);
+        return SessionSpec::unclaimed(None).typed(owner, Memory::Full, None);
     };
     let place = crate::engine::turn_place::TurnPlace::of_session(Some(meta));
     let turn_owner = super::turn_place::turn_creator(meta.mission_id.as_deref(), &place);
-    SessionSpec::of(meta).typed(owner, Memory::of_turn(turn_owner))
+    SessionSpec::of(meta).typed(owner, Memory::of_turn(turn_owner), None)
 }
 
 /// Seat the export's engine as its turn is seated (`handler::seat_member`):

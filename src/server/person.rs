@@ -380,6 +380,19 @@ fn set_uri(parts: &mut axum::http::request::Parts, url: &str) {
     }
 }
 
+/// What only the owner's own turns reach — a session another runtime hosts
+/// (its tools run under that runtime's own permissions, which no ceiling
+/// reaches), the companion's own thread: refused (403, `beyond_level`, needs
+/// admin) for a request judged at `level` below admin.
+pub(crate) fn owners_only(level: PermissionMode) -> Option<axum::response::Response> {
+    (level < PermissionMode::Admin).then(|| {
+        refused(Refused::BeyondLevel {
+            level,
+            needs: PermissionMode::Admin,
+        })
+    })
+}
+
 /// A request refused at the seam, answered 403 as the channel answers it.
 fn refused(refused: Refused) -> axum::response::Response {
     use axum::response::IntoResponse;

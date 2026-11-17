@@ -368,6 +368,9 @@ pub struct Tools {
     /// The session's kind of work, carried to `Task` children (set by
     /// `SessionSpec::apply`).
     pub(crate) parent_work: Option<super::session_spec::Work>,
+    /// The turn's ceiling, carried to `Task` children (set by
+    /// `SessionSpec::apply`).
+    pub(crate) parent_ceiling: Option<super::permission::PermissionMode>,
     /// Effective tool set of the loop dispatching the current call.
     pub(crate) parent_allowed_tools: Option<std::collections::HashSet<String>>,
     /// Parent engine's path-mode grants, propagated to subagents via delegation.
@@ -424,6 +427,7 @@ impl Tools {
             session_id: None,
             session_policy: None,
             parent_work: None,
+            parent_ceiling: None,
             parent_allowed_tools: None,
             parent_path_modes: Vec::new(),
             parent_interactive: true,
