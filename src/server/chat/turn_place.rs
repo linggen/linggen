@@ -27,14 +27,14 @@ pub(super) async fn bind_turn_place(engine: &mut crate::engine::AgentEngine, ctx
             load_grants(engine, sid, ctx.place.grants_key());
         }
     }
-    let crate::engine::ActivationOutcome::Activated { grants_changed } = engine
+    let outcome = engine
         .enter_place(
             ctx.place.clone(),
             skill,
             crate::engine::ActivationMode::SessionBound,
         )
         .await;
-    if grants_changed {
+    if matches!(outcome, crate::engine::ActivationOutcome::Activated { grants_changed: true }) {
         let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
     }
     let day_on = crate::server::day_session::enabled(&ctx.manager).await;

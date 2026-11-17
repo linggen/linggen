@@ -63,11 +63,17 @@ pub(super) async fn run_skill_dispatch(ctx: &ChatRunCtx, engine: &mut crate::eng
         // SKILL.md declaration is the approval); undeclared runtime access
         // still prompts via the per-operation ceiling check. So no grant
         // prompt fires here regardless of mode.
-        let ActivationOutcome::Activated { grants_changed } = engine
-            .activate_skill(skill, ActivationMode::SlashCommand)
-            .await;
-        if grants_changed {
-            let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
+        let name = skill.name.clone();
+        match engine.activate_skill(skill, ActivationMode::SlashCommand).await {
+            ActivationOutcome::Activated { grants_changed: true } => {
+                let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
+            }
+            ActivationOutcome::Activated { .. } => {}
+            ActivationOutcome::Refused => {
+                unwire_inbox(ctx, engine);
+                say_kept_apart(ctx, &name).await;
+                return;
+            }
         }
     }
 
@@ -127,6 +133,24 @@ pub(super) async fn run_skill_dispatch(ctx: &ChatRunCtx, engine: &mut crate::eng
         }
         let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
     }
+}
+
+/// The line a turn shows when the day's session keeps the app it named out.
+async fn say_kept_apart(ctx: &ChatRunCtx, skill: &str) {
+    let line = format!("{skill} keeps a session of its own; open it from its page.");
+    persist_and_emit_message(
+        &ctx.manager,
+        &ctx.events_tx,
+        &ctx.root,
+        &ctx.agent_id,
+        &ctx.agent_id,
+        "user",
+        &line,
+        ctx.session_id.as_deref(),
+        false,
+        None,
+    )
+    .await;
 }
 
 enum SlashResolution {
@@ -379,8 +403,13 @@ pub(super) async fn run_trigger_dispatch(
                 ));
             }
             // Trigger mode is implicit-approval: prefix opt-in stands in for
-            // the prompt. activate_skill never returns Cancelled here.
-            engine.activate_skill(skill, ActivationMode::Trigger).await;
+            // the prompt. A day's session keeps a private app out.
+            let name = skill.name.clone();
+            let outcome = engine.activate_skill(skill, ActivationMode::Trigger).await;
+            if matches!(outcome, ActivationOutcome::Refused) {
+                say_kept_apart(ctx, &name).await;
+                return;
+            }
         }
     }
 

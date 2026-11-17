@@ -277,3 +277,66 @@ async fn a_private_apps_subagent_carries_no_words_out() {
         "she was reached"
     );
 }
+
+/// The words of the ledger's own SKILL.md.
+const LEDGER_RULES: &str = "You keep the ledger.";
+
+/// In the day, a person's `/ledger …` is carried to the ledger's own chat,
+/// as a chat that names the day from the ledger's page is: its turn, its
+/// rows and its reply stand there, and the day holds none of it.
+#[tokio::test]
+async fn a_private_apps_slash_command_in_the_day_is_carried_to_its_own_chat() {
+    let setup = Setup::default().script(Agent::Ling, vec![text("LEDGER-REPLY carried.")]);
+    let (w, _) = day_world_at(12, setup).await;
+    install_ledger(&w).await;
+    let day = w.api.get("/api/sessions/day").await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let mark = w.mark();
+    let sent = say(&w, &day, None, "/ledger LEDGER-ONLY count the shares").await;
+    let carried = sent["session_id"].as_str().unwrap_or_default().to_string();
+    assert_ne!(carried, day, "the slash command ran in the day: {sent}");
+    w.finish_run(&carried, Agent::Ling, mark).await;
+    assert!(
+        day_text(&w, &carried).contains("LEDGER-REPLY carried."),
+        "the ledger's chat holds no reply"
+    );
+    let calls = w.model.calls_of(Agent::Ling);
+    assert!(calls[0].text().contains(LEDGER_RULES), "the ledger's turn ran without its rules");
+    assert!(
+        !holds_ledger(&day_text(&w, &day)),
+        "the day holds the ledger's talk: {}",
+        day_text(&w, &day)
+    );
+}
+
+/// In the day, Ling's `Skill` tool is refused a private app with a reason
+/// she reads: its SKILL.md never reaches the day, nor its rows.
+#[tokio::test]
+async fn the_skill_tool_is_refused_a_private_app_in_the_day() {
+    let setup = Setup::default().script(
+        Agent::Ling,
+        vec![tool("Skill", json!({"skill": "ledger"})), text("Not here.")],
+    );
+    let (w, _) = day_world_at(12, setup).await;
+    install_ledger(&w).await;
+    let day = w.api.get("/api/sessions/day").await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let mark = w.mark();
+    say(&w, &day, None, "Open the books").await;
+    w.finish_run(&day, Agent::Ling, mark).await;
+    let calls = w.model.calls_of(Agent::Ling);
+    let after = calls[1].text();
+    assert!(
+        after.contains("refused: ledger keeps a session of its own"),
+        "no refusal the model reads: {after}"
+    );
+    assert!(!after.contains(LEDGER_RULES), "the ledger's SKILL.md reached the day's turn");
+    assert!(
+        !day_text(&w, &day).contains(LEDGER_RULES),
+        "the day holds the ledger's SKILL.md"
+    );
+}

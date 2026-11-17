@@ -119,6 +119,29 @@ impl TurnPlace {
     }
 }
 
+impl crate::engine::tools::Tools {
+    /// Whether this session keeps `skill` out: in a day's session, with one
+    /// session a day on, a private app (`private-talk: true`) never becomes
+    /// a turn's place nor its active skill — it keeps a session of its own.
+    /// The two setters ask here (`AgentEngine::activate_skill`,
+    /// `AgentEngine::enter_place`), and so does the Skill tool before it
+    /// reads the SKILL.md out. With no manager to read the setting from, a
+    /// day keeps it out.
+    pub(crate) async fn kept_out_of_day(&self, skill: &crate::engine::skill::Skill) -> bool {
+        let in_day = self
+            .session_id
+            .as_deref()
+            .is_some_and(crate::state_fs::day_session::is_day_session);
+        if !skill.private_talk || !in_day {
+            return false;
+        }
+        match self.get_manager() {
+            Some(manager) => manager.get_config_snapshot().await.agent.one_session_a_day,
+            None => true,
+        }
+    }
+}
+
 pub(crate) mod bind;
 pub mod running;
 

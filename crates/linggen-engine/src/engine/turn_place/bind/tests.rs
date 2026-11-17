@@ -223,3 +223,44 @@ async fn a_skill_borrowed_mid_turn_keeps_its_tools() {
     engine.leave_place();
     assert!(engine.tools.skill_tools.contains_key("XLook"));
 }
+
+/// In a day's session a private app (`private-talk: true`) never becomes a
+/// turn's place nor its active skill, whoever takes it up — a page, a
+/// slash command, a trigger, the Skill tool. A shared app still does, and
+/// outside a day a private one is taken up as before.
+#[tokio::test]
+async fn a_private_app_is_never_taken_up_in_a_day() {
+    let dir = tempfile::tempdir().unwrap();
+    let private = || {
+        let mut s = x_app(&dir.path().join("x"));
+        s.private_talk = true;
+        s
+    };
+    let mut engine = engine();
+    engine.tools.builtins.set_session_id(Some("sess-day-2026-11-16".to_string()));
+    engine
+        .enter_place(place("zz-x", false), Some(private()), ActivationMode::SessionBound)
+        .await;
+    let there = seen(&engine);
+    assert!(!there.prompt_has_x && !there.offers_xlook, "{there:?}");
+    for mode in [
+        ActivationMode::SlashCommand,
+        ActivationMode::Trigger,
+        ActivationMode::ToolInvocation,
+    ] {
+        engine.activate_skill(private(), mode).await;
+        assert!(engine.active_skill.is_none(), "{mode:?} took it up");
+    }
+    engine.activate_skill(y_app(&dir.path().join("y")), ActivationMode::ToolInvocation).await;
+    assert!(engine.active_skill.is_some(), "a shared app is taken up");
+
+    let mut apart = engine_in(SID);
+    apart.activate_skill(private(), ActivationMode::SlashCommand).await;
+    assert!(apart.active_skill.is_some(), "outside a day it is taken up as before");
+}
+
+fn engine_in(sid: &str) -> AgentEngine {
+    let mut engine = engine();
+    engine.tools.builtins.set_session_id(Some(sid.to_string()));
+    engine
+}

@@ -46,6 +46,22 @@ pub(crate) async fn takes(manager: &AgentManager, app: Option<&str>) -> bool {
     place.private_app(&*manager.skills, true).await.is_none()
 }
 
+/// The private app a person's message takes up by its own words — `/name
+/// …`, or a trigger prefix the app claims — with the setting on; `None`
+/// otherwise. In a day it is carried to that app's own chat.
+pub(crate) async fn private_app_named(manager: &AgentManager, message: &str) -> Option<String> {
+    if !enabled(manager).await {
+        return None;
+    }
+    let words = message.trim_start();
+    let name = match words.strip_prefix('/') {
+        Some(rest) => rest.split_whitespace().next()?.to_string(),
+        None => manager.skills.match_trigger(words).await?.0,
+    };
+    let skill = manager.skills.get_skill(&name).await?;
+    skill.private_talk.then_some(name)
+}
+
 /// The app's own chat to stand in when the person `user_id` names a day
 /// their app does not join: the newest of their sessions of it that is not
 /// one of its one-off jobs, else none — a session is then made for it.
@@ -320,6 +336,33 @@ mod tests {
         ("src/server/resident/triggers.rs", 1, "a message delivered to an agent's chat"),
         ("src/server/resident/session_roll.rs", 1, "her own thread: home"),
     ];
+
+    /// Every write of a turn's place or its active skill. The two setters
+    /// (`activate_skill`, `enter_place`) ask whether a day keeps the skill
+    /// out (`Tools::kept_out_of_day`); anything else that sets either — a
+    /// route or tool that takes a session and a skill from its caller and
+    /// stands the skill there itself — fails here until it goes through
+    /// them, or is looked at and listed.
+    const PLACE_SETTERS: &[(&str, usize, &str)] = &[
+        ("crates/linggen-engine/src/engine/skill_activation.rs", 7, "the setter, guarded (and its doc line)"),
+        ("crates/linggen-engine/src/engine/turn_place/bind.rs", 2, "the place's setter, guarded, and leaving it"),
+        ("crates/linggen-engine/src/engine/tools/delegation.rs", 1, "a subagent stands where its parent's turn stands"),
+        ("crates/linggen-engine/src/engine/tool_registry.rs", 2, "the tool registry's pass-through"),
+        ("crates/linggen-engine/src/engine/tools/mod.rs", 1, "the field's own setter"),
+        ("crates/linggen-engine/src/engine/light_turn/tests.rs", 1, "a test's own engine"),
+        ("crates/linggen-engine/src/engine/prompt/persona_tests.rs", 6, "a test's own engine"),
+        ("crates/linggen-engine/src/engine/turn_place/bind/grants_tests.rs", 1, "a test's own engine"),
+    ];
+
+    #[test]
+    fn a_turns_place_and_active_skill_are_set_only_where_a_day_is_asked() {
+        let setters = [
+            concat!(".active_skill", " = Some("),
+            concat!(".turn_place", " = "),
+            concat!("set_active_", "skill("),
+        ];
+        check(&setters, PLACE_SETTERS, "sets a turn's place or active skill");
+    }
 
     #[test]
     fn every_way_into_the_day_asks_the_one_rule() {

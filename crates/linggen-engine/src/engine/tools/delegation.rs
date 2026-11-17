@@ -276,6 +276,12 @@ impl Tools {
                         args.skill, args.skill
                     );
                 }
+                if self.kept_out_of_day(&skill).await {
+                    anyhow::bail!(
+                        "refused: {} keeps a session of its own; it is not taken up in the day's session.",
+                        skill.name
+                    );
+                }
                 // Replace $SKILL_DIR in content so the model sees the actual path.
                 let resolved_content = if let Some(ref dir) = skill.skill_dir {
                     skill.content.replace("$SKILL_DIR", &dir.to_string_lossy())

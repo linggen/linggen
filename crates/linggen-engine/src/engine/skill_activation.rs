@@ -48,6 +48,9 @@ pub enum ActivationOutcome {
     /// `session_permissions` was modified — the caller should emit
     /// `ServerEvent::StateUpdated` so the UI's permission badge refreshes.
     Activated { grants_changed: bool },
+    /// Not taken up: a day's session keeps this private app out
+    /// (`Tools::kept_out_of_day`). Nothing of it was set.
+    Refused,
 }
 
 impl AgentEngine {
@@ -65,6 +68,14 @@ impl AgentEngine {
         skill: Skill,
         mode: ActivationMode,
     ) -> ActivationOutcome {
+        // A day's session never takes up a private app, whoever asks.
+        if self.tools.builtins.kept_out_of_day(&skill).await {
+            tracing::info!(
+                "[day] {} keeps a session of its own: not taken up",
+                skill.name
+            );
+            return ActivationOutcome::Refused;
+        }
         // The session's own skill (bound at creation; an export renders
         // only that one) is the agent's place; one taken up mid-chat is not.
         self.skill_bound = matches!(mode, ActivationMode::SessionBound | ActivationMode::Export);

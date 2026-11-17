@@ -91,6 +91,11 @@ impl AgentEngine {
         mode: ActivationMode,
     ) -> ActivationOutcome {
         self.leave_place();
+        // A day keeps a private app out: the place is entered without it.
+        let skill = match skill {
+            Some(s) if self.tools.builtins.kept_out_of_day(&s).await => None,
+            other => other,
+        };
         let mut entered = Entered {
             folder: self.move_to_place_folder(&place, skill.as_ref()),
             ..Entered::default()
