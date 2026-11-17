@@ -7,7 +7,8 @@
 # inplace_seed is called.
 #
 #   inplace_seed               rows written through the baseline engine's /mem; the store's inode, backups, ling-mem.prev
-#   inplace_after              the release serves the same store: every row and tier, one backup for its version, a new row
+#   inplace_after              the release serves the same store: every row and tier, one backup for its version
+#   inplace_writes             a row written through the release
 #   inplace_rollback <version> `ling update --rollback` ran: ling.prev finds every row, the release's included
 #   inplace_forward            `ling update --rollback` again: the release finds every row, no second backup
 
@@ -119,11 +120,14 @@ inplace_after() {
   check "$p: $EP/mem/mcp answers" $? "$MCP_DETAIL" "$MCP_DETAIL"
   mcp_answers "http://127.0.0.1:$EP/mcp/memory"
   check "$p: $EP/mcp/memory answers" $? "$MCP_DETAIL" "$MCP_DETAIL"
-
-  tk_add "$ENGINE_MEM" "release" semantic "Gate in-place row through the release ($TK_STAMP): Alex mends nets on Sundays."
-  check "$p: a row written through the release" $? "no id back" "$(tail -1 "$TK_IDS" | cut -f1)"
-  awk -F'\t' '$3 == "release" {print $1}' "$TK_IDS" >"$IP_RELEASE_IDS"
   ip_snapshot
+}
+
+# A row written by the release, after upgrade.sh's store checks counted rows.
+inplace_writes() {
+  tk_add "$ENGINE_MEM" "release" semantic "Gate in-place row through the release ($TK_STAMP): Alex mends nets on Sundays."
+  check "in place: a row written through the release" $? "no id back" "$(tail -1 "$TK_IDS" | cut -f1)"
+  awk -F'\t' '$3 == "release" {print $1}' "$TK_IDS" >"$IP_RELEASE_IDS"
 }
 
 # `ling update --rollback` restarted the engine on ling.prev (it hosts memory).

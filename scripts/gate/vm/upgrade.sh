@@ -182,6 +182,7 @@ if [ "$TK_SEEDED" = 1 ]; then
   takeover_rollback "$OUT/ling.old"
   takeover_again
 fi
+[ "$IP_SEEDED" = 1 ] && inplace_writes
 stop_engine
 
 # ── Refusal: every sha256 in the mirror wrong ──────────────────────────────
