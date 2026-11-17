@@ -317,3 +317,27 @@ test.describe('her stage', () => {
     expect(wrong).toEqual([]);
   });
 });
+
+test.describe('an app moment', () => {
+  test.use({ scenario: { scripts: { yinyue: [{ text: 'HER-ANSWER to the moment.' }] } } });
+
+  test("another person's app moment does not wake her in the builder's day", async ({ page, world, request, httpRequests }) => {
+    const mine = await dayOnWithFriend(world, request);
+    await openFriendsPage(page, world.url, httpRequests);
+    const status = await page.evaluate(async () => {
+      const r = await fetch('/api/yinyue/event', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ app: 'dice', text: 'FRIEND-MOMENT the die rolled a six', asked: true }),
+      });
+      return r.status;
+    });
+    // An asked moment wakes her at once; give a busy machine time to.
+    await page.waitForTimeout(10_000);
+    const woken = (await world.calls()).filter((c) => c.agent === 'yinyue').length;
+    const wrong: string[] = [];
+    if (woken > 0) wrong.push(`she was woken ${woken} time(s) (the moment answered ${status})`);
+    if (rows(world.linggenHome, mine).includes('HER-ANSWER')) wrong.push("her answer is in the builder's day");
+    expect(wrong).toEqual([]);
+  });
+});

@@ -91,6 +91,10 @@ pub(crate) struct EventRequest {
     /// in another than Linggen's: her line for this moment is in it.
     #[serde(default)]
     pub lang: Option<String>,
+    /// The sender's person (the channel and the LAN gate set it): with one
+    /// session a day on, only the builder's moments wake her.
+    #[serde(default)]
+    pub user_id: Option<String>,
 }
 
 const EVENT_TEXT_MAX: usize = 300;
@@ -143,8 +147,11 @@ pub(crate) async fn event_handler(
             return (StatusCode::BAD_REQUEST, "unknown session").into_response();
         }
     }
+    // A moment is its sender's: another person's is not taken up, as one
+    // from a world she is not in.
+    let theirs = !crate::server::day_session::shares_builders(&state.manager, req.user_id.as_deref()).await;
     // An app whose world she hasn't entered yet tells her nothing there.
-    if absent_for_moment(&state, app, session.as_deref()).await {
+    if theirs || absent_for_moment(&state, app, session.as_deref()).await {
         return (StatusCode::CONFLICT, "absent").into_response();
     }
     // Asked while the pet is off: nobody will answer — say so now, rather
