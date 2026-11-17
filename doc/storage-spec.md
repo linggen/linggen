@@ -42,7 +42,6 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 ~/.linggen/
 ├── config/
 │   ├── linggen.runtime.toml    # Runtime config overrides (TOML)
-│   └── toolchains.toml         # The owner's list of build tools a session may be granted (permission-spec § Granted tools)
 ├── logs/
 │   └── linggen-{YYYY-MM-DD}.log  # Daily rolling logs (text)
 ├── agents/

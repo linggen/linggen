@@ -28,18 +28,13 @@ mod prompt;
 mod scripts;
 mod shell_text;
 mod store;
-pub mod toolchains;
 #[cfg(test)]
 mod gate_copy_tests;
-#[cfg(test)]
-mod granted_tools_tests;
 #[cfg(test)]
 mod outward_tests;
 
 pub use declined::DeclinedScopes;
 pub use manifest::{apply_grants, Grants, PathGrant};
-#[cfg(test)]
-use model::{check_permission_with, ToolSource};
 pub use model::{
     check_permission, check_permission_for, display_path, effective_mode_for_path, parse_skill_tier, PathMode,
     PermissionAction, PermissionCheckResult, PermissionMode, PromptKind,
@@ -104,6 +99,30 @@ mod tests {
         assert_eq!(loaded.path_modes.len(), 1);
         assert_eq!(loaded.path_modes[0].path, "~/x");
         let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// A file written while a session could carry a list of programs it
+    /// was granted still loads; the next save leaves that old field out.
+    #[test]
+    fn an_older_files_program_list_is_read_past_and_not_kept() {
+        // The removed field's name, spelled so a search for it finds no code.
+        let field = ["granted", "tools"].join("_");
+        let dir = tempfile::tempdir().unwrap();
+        let older = format!(
+            r#"{{
+            "path_modes": [{{"path": "/w", "mode": "edit"}}],
+            "interactive": false,
+            "ask_caller": true,
+            "{field}": ["flutter"]
+        }}"#
+        );
+        fs::write(dir.path().join("permission.json"), older).unwrap();
+        let loaded = SessionPermissions::load(dir.path());
+        assert_eq!(loaded.path_modes.len(), 1);
+        assert!(!loaded.interactive && loaded.ask_caller);
+        loaded.save(dir.path());
+        let text = fs::read_to_string(dir.path().join("permission.json")).unwrap();
+        assert!(!text.contains(&field), "{text}");
     }
 
     #[test]

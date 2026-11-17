@@ -286,16 +286,10 @@ pub async fn run(
         crate::engine::session_spec::ask_work(&mut meta, word).map_err(str::to_string)?;
     }
     meta.set_cwd(&root_str);
-    // The caller's preset, kept to what the owner's list and its own level
-    // allow; what was granted and refused is kept for `agent_status`.
-    let sifted = grants.map(|asked| {
-        super::mcp_grants::sift(
-            &asked,
-            &crate::engine::permission::toolchains::owner_list(crate::util::shell_path()),
-            mode,
-            crate::paths::linggen_home(),
-        )
-    });
+    // The caller's preset, kept to what its own level allows; what was
+    // granted and refused is kept for `agent_status`.
+    let sifted =
+        grants.map(|asked| super::mcp_grants::sift(&asked, mode, crate::paths::linggen_home()));
     if let Some(sifted) = &sifted {
         meta.params.insert(
             super::mcp_grants::GRANTS_PARAM.into(),
@@ -399,7 +393,7 @@ fn seed_permissions(
 }
 
 /// [`seed_permissions`] with the caller's sifted preset: its reads before
-/// `root`'s grant, its writes after, its tools by name.
+/// `root`'s grant, its writes after.
 fn seed_permissions_with(
     spec: &mut SessionSpec,
     session_dir: &std::path::Path,
@@ -418,7 +412,6 @@ fn seed_permissions_with(
     spec.grants = PresetGrants {
         paths: delegate_paths(root, workspace_only, grant, reads, writes),
         covered: Covered::Written,
-        tools: preset.map(|p| p.granted.tools.clone()).unwrap_or_default(),
     };
     spec.seed(base, session_dir);
 }
@@ -2250,7 +2243,7 @@ mod permit_tests {
     }
 
     /// A caller's sifted preset lands in the file: reads before the run's
-    /// folder, writes after it at its level, tools by name; nothing else moves.
+    /// folder, writes after it at its level; nothing else moves.
     #[test]
     fn a_callers_preset_is_seeded_in_order() {
         use crate::server::mcp_grants::{Granted, Sifted};
@@ -2258,7 +2251,6 @@ mod permit_tests {
         let meta = delegate_meta("s", "t", "ling", None, "claude-code", true, None);
         let preset = Sifted {
             granted: Granted {
-                tools: vec!["flutter".into()],
                 read: vec!["/w".into()],
                 write: vec!["/out".into()],
             },
@@ -2287,7 +2279,6 @@ mod permit_tests {
                 ("/out", PermissionMode::Edit),
             ]
         );
-        assert_eq!(perms.granted_tools, ["flutter"]);
         assert!(!perms.interactive && perms.ask_caller);
         // An empty preset writes the file a run without one gets.
         let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
@@ -2312,9 +2303,11 @@ mod permit_tests {
         let schema = crate::server::mcp::tool_schema("agent_run").unwrap();
         let grants = &schema["properties"]["grants"];
         assert_eq!(grants["type"], "object");
-        for key in ["tools", "read", "write"] {
+        for key in ["read", "write"] {
             assert_eq!(grants["properties"][key]["type"], "array", "{key}");
         }
+        assert!(grants["properties"].get("tools").is_none());
+        assert!(!grants["description"].as_str().unwrap().contains("tools"));
         assert!(schema["required"].as_array().unwrap().iter().all(|k| k != "grants"));
     }
 

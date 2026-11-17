@@ -30,7 +30,6 @@ pub(super) mod skill_tools;
 pub(super) mod skills;
 pub(super) mod status;
 pub(super) mod storage;
-pub(super) mod toolchains;
 /// `pub(crate)` rather than `pub(super)`: retained topics are how any reading
 /// reaches the user's other devices, and perception publishes this Mac's own
 /// state on one.

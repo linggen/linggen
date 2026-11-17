@@ -23,8 +23,6 @@ mod search_exec;
 mod tool_helpers;
 mod write_tools;
 
-#[cfg(test)]
-pub(crate) use delegation::inherit_granted_tools;
 pub(crate) use delegation::{run_delegation, DelegationCancelled, TaskArgs};
 pub use search_exec::find_git_root as search_exec_find_git_root;
 pub(crate) use search_exec::kill_process_group;
@@ -374,9 +372,6 @@ pub struct Tools {
     /// granted paths (e.g. `~/.linggen`) don't require re-prompting inside a
     /// delegated run.
     pub(crate) parent_path_modes: Vec<super::permission::PathMode>,
-    /// Parent engine's granted build tools, re-synced with its path modes:
-    /// a subagent runs the build tools its parent may.
-    pub(crate) parent_granted_tools: Vec<String>,
     /// Parent engine's `interactive` flag. Propagated to subagents so that a
     /// non-interactive parent (mission, proxy consumer) yields a non-interactive
     /// child — prompts in unattended runs deadlock.
@@ -426,7 +421,6 @@ impl Tools {
             parent_work: None,
             parent_allowed_tools: None,
             parent_path_modes: Vec::new(),
-            parent_granted_tools: Vec::new(),
             parent_interactive: true,
             last_ask_user: Arc::new(std::sync::Mutex::new(None)),
             browser_bridge: None,

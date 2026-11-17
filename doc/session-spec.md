@@ -161,7 +161,8 @@ A new `agent_run` session defaults to coding guidance when given `write_dir`, ot
 set by whoever makes it: a skill's declared paths when it is taken up in a
 person's session, a mission's and its skill's, an `agent_run` delegate's
 posture with the caller's `grants` (`mcp-spec.md` § agent_* group) — its
-folders and its granted build tools (`permission-spec.md` § Granted tools).
+folders. Programs need no grant: a coding session runs them where it may
+edit (`permission-spec.md` § Coding sessions).
 One function in the spec writes them into the session's grant
 table, in order (a later path can narrow an earlier one); a skill's leaves a
 path already at its level as it is, so what the person set under it stays.

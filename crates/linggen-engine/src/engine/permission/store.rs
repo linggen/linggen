@@ -29,11 +29,6 @@ pub struct SessionPermissions {
     /// the caller's decision instead of being refused at once.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub ask_caller: bool,
-    /// Build tools this session may run where it may edit without being
-    /// asked, by name. A name counts only while the owner's list holds it
-    /// (`toolchains`, read at each check); a known program keeps its tables.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub granted_tools: Vec<String>,
     /// The session's own folder (`sessions/<id>/`): readable without a
     /// grant — its background tasks' logs live there. Never saved; set by
     /// [`SessionPermissions::load`] from where the file lives.
@@ -52,7 +47,6 @@ impl Default for SessionPermissions {
             path_modes: Vec::new(),
             interactive: true,
             ask_caller: false,
-            granted_tools: Vec::new(),
             own_dir: None,
             place: None,
         }

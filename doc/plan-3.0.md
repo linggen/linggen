@@ -33,7 +33,7 @@ Every number is tagged **(measured)** — taken on his Mac on 2026-11-15 — or
 | A paired device's standing (§5.2) | Decided 2026-11-17, designed; not built |
 | Review and refactor before 3.0 (§5.3) | Engine and phone reviewed 2026-11-17 (read-only). On main: one copy of the small helpers; one locked way to change a session's file. Phone: its checks are green again; the release recipe builds 灵境's files first. The rest of §5.3 is open |
 | The phone and the Mac in step (§5.4) | The phone asks through declared tools: done 2026-11-17 for all four apps (music, 灵境's book, health, money) — the phone sends the Mac no shell text. Open: the contract number, one wording for "the Mac is not there", the session choice on the Mac |
-| Asking less (§5.5) | The Bash gate reads a program's own file and a copy's source as read: on main 2026-11-17. The owner's list of build tools and a caller's preset: designed, in work |
+| Asking less (§5.5) | The Bash gate reads a program's own file and a copy's source as read: on main 2026-11-17. A caller's preset of folders: on main. A coding session runs any program in its folder; outward commands always ask: built (branch `grants/code-session`) |
 | When Yinyue raises a problem (§5.6) | Decided and designed 2026-11-17. Part 1 (said once, never dropped) in work |
 
 ## 2. Milestones
@@ -311,13 +311,14 @@ asked its caller again and again for the same harmless thing.
 - **The gate first.** Running a program reads its file; a copy reads its
   source. Those are judged at read. A move and a hard link keep the full
   check on the source.
-- **The owner's list.** Build tools and package managers found on the
-  machine, which a delegated run may use without asking; the owner removes
-  from it or adds to it, at the Mac only. Bare interpreters are not on it by
-  default. What it means, said plainly: a granted build tool can run any
-  code the project holds, wherever the session may edit.
-- **A caller's preset**, when the session is made, within the owner's list
-  and the caller's own level. Anything beyond is still asked, one at a time.
+- **A coding session runs any program in its own folder** without asking
+  (replacing, the same day, an owner's list of build tools: a list of
+  programs stopped the compiler and let publishing through). What still
+  asks, whatever the grants: a path outside the session's, the deny floor,
+  and outward commands — publishing, remote operation, a push that names
+  main/master, forces or deletes. A plain `git push` is not asked.
+- **A caller's preset** of folders, when the session is made, within the
+  caller's own level. Anything beyond is still asked, one at a time.
 - One part of the session spec, filled the same way by a skill, a mission
   and a delegated run.
 

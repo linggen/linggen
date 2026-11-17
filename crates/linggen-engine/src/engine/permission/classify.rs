@@ -11,24 +11,23 @@ use super::scripts::{awk_class, sed_class};
 use super::shell_text::strip_heredoc_bodies;
 use BashClass::{Admin, Read, Write};
 
+/// The tier a command needs outside a coding session (the tables' answer;
+/// the tests read it).
+#[cfg(test)]
 pub fn classify_bash_command(cmd: &str) -> BashClass {
-    classify_bash_command_granted(cmd, &|_| false).0
+    classify_bash(cmd, false).0
 }
 
-/// [`classify_bash_command`] for a session with granted build tools:
-/// `granted` says whether a program word runs one. Such a program the
-/// tables do not know is judged a write where it would be admin; a known
-/// one keeps its tables. Also whether a grant decided any segment.
-pub fn classify_bash_command_granted(
-    cmd: &str,
-    granted: &dyn Fn(&str) -> bool,
-) -> (BashClass, bool) {
+/// The tier a command needs, in a coding session or not: in one, a segment
+/// is judged by [`coding_class`] first. Also whether that lowered any
+/// segment (such a run is still judged where it runs).
+pub(super) fn classify_bash(cmd: &str, coding: bool) -> (BashClass, bool) {
     let cmd = &strip_heredoc_bodies(cmd);
     if cmd.trim().is_empty() || has_dynamic_syntax(cmd) {
         return (Admin, false);
     }
     let mut highest = Read;
-    let mut by_grant = false;
+    let mut lowered = false;
     let mut words = Vec::new();
     for token in command_tokens(cmd)
         .into_iter()
@@ -37,15 +36,15 @@ pub fn classify_bash_command_granted(
         match token {
             Token::Word(w) => words.push(w),
             Token::Op(_) if !words.is_empty() => {
-                let (class, lowered) = classify_segment(&words, granted);
+                let (class, by_code) = classify_segment(&words, coding);
                 highest = highest.max(class);
-                by_grant |= lowered;
+                lowered |= by_code;
                 words.clear();
             }
             Token::Op(_) => {}
         }
     }
-    (highest, by_grant)
+    (highest, lowered)
 }
 
 /// Backticks and `$` outside single quotes change the command or its
@@ -159,28 +158,31 @@ fn has_process_substitution(words: &[String]) -> bool {
     })
 }
 
-fn classify_segment(raw: &[String], granted: &dyn Fn(&str) -> bool) -> (BashClass, bool) {
+fn classify_segment(raw: &[String], coding: bool) -> (BashClass, bool) {
     if has_process_substitution(raw) {
         return (Admin, false);
     }
     let (words, redirect) = split_redirects(raw);
-    let (class, by_grant) = match granted_class(&words, granted) {
+    let coded = coding.then(|| coding_class(&words)).flatten();
+    let (class, by_code) = match coded {
         Some(class) => (class, true),
         None => (classify_words(&words), false),
     };
     if redirect {
-        (class.max(Write), by_grant)
+        (class.max(Write), by_code)
     } else {
-        (class, by_grant)
+        (class, by_code)
     }
 }
 
-/// A segment whose program is a granted build tool the tables do not know
-/// (by its name, written bare or by path): a write, where it would be admin.
-fn granted_class(words: &[String], granted: &dyn Fn(&str) -> bool) -> Option<BashClass> {
+/// How a coding session judges a segment: a program the tables do not
+/// know (`rustc`, `./tool`, `/opt/x/flutter`), when it is the program the
+/// segment runs ([`runs_a_program`]), is a write where it would be admin.
+/// `None` leaves the segment to the tables: a known program keeps its rule.
+fn coding_class(words: &[String]) -> Option<BashClass> {
     let program = words.first()?;
     let name = program.rsplit('/').next().unwrap_or(program);
-    if is_known_program(name) || !granted(program) {
+    if is_known_program(name) || !runs_a_program(program) {
         return None;
     }
     Some(Write.max(arg_lift(name, &words[1..])))
@@ -216,7 +218,7 @@ const RUNS_TEXT: &[&str] = &[
 /// Whether `word`, the first word of a segment, is the program the segment
 /// runs: not a `NAME=value` word, not a wrapper that runs what follows
 /// (`env`, `nice`, `nohup`, …), and not a program that runs text as code.
-pub(super) fn runs_a_program(word: &str) -> bool {
+fn runs_a_program(word: &str) -> bool {
     let name = word.rsplit('/').next().unwrap_or(word);
     !name.is_empty()
         && !is_assignment(word)
@@ -224,8 +226,8 @@ pub(super) fn runs_a_program(word: &str) -> bool {
         && !RUNS_TEXT.contains(&name)
 }
 
-/// A program the gate has a rule for: it is judged by that rule, granted
-/// or not.
+/// A program the gate has a rule for: it is judged by that rule, in a
+/// coding session or not.
 fn is_known_program(name: &str) -> bool {
     matches!(name, "env" | "cd") || known_program(name, &[]).is_some()
 }

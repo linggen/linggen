@@ -75,8 +75,9 @@ pub fn now_ts_ms() -> u64 {
 
 /// Bin directories a user's shell has but launchd's stock
 /// `PATH=/usr/bin:/bin:/usr/sbin:/sbin` does not: package managers,
-/// per-user installers, language toolchains. Only the ones that exist are
-/// used. The Flutter SDK has no standard home, so its usual spots are listed.
+/// per-user installers, language installs (rustup, Go). Only the ones that
+/// exist are used. The Flutter SDK has no standard home, so its usual
+/// spots are listed.
 const EXTRA_BIN_DIRS: [&str; 9] = [
     "~/.local/bin",
     "/usr/local/bin",
