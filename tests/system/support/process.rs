@@ -37,6 +37,10 @@ pub fn hermetic_env(home: &Home) -> Vec<(String, String)> {
         ("NO_COLOR", "1".to_string()),
         // Every UI event the engine sends, one JSON line each (`World::events`).
         ("LINGGEN_EVENT_LOG", path("events.jsonl")),
+        // The disk the world block reads, fixed: the real one moves with
+        // whatever else this machine writes (other worlds, builds), and a
+        // moved reading is a new block in a session's thread.
+        ("LINGGEN_MACHINE_DISK_GB", "500/1000".to_string()),
     ];
     for key in [
         "HTTP_PROXY",

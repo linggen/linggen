@@ -19,6 +19,9 @@ use std::sync::Mutex;
 /// a reading that stale is exactly what §2 forbids, so perception takes its
 /// own — the same number the Finder shows, at the moment it is asked.
 pub fn disk() -> Option<(u64, u64)> {
+    if let Some(set) = disk_from_env() {
+        return Some(set);
+    }
     let home = dirs::home_dir()?;
     let c = std::ffi::CString::new(home.as_os_str().as_encoded_bytes()).ok()?;
     // SAFETY: `buf` is fully written by statvfs before we read it, and the
@@ -35,6 +38,16 @@ pub fn disk() -> Option<(u64, u64)> {
         } as u64;
         Some((buf.f_bavail as u64 * unit, buf.f_blocks as u64 * unit))
     }
+}
+
+/// The disk a test world sets (`LINGGEN_MACHINE_DISK_GB=<free>/<total>`), so
+/// a reading does not move with what the machine's other work writes — as
+/// `LINGGEN_MACHINE_MEMORY_GB` sets the memory the lane gate reads.
+fn disk_from_env() -> Option<(u64, u64)> {
+    let set = std::env::var("LINGGEN_MACHINE_DISK_GB").ok()?;
+    let (free, total) = set.split_once('/')?;
+    let gb = |v: &str| v.trim().parse::<u64>().ok().map(|g| g * 1_000_000_000);
+    Some((gb(free)?, gb(total)?))
 }
 
 fn gb(bytes: u64) -> String {
