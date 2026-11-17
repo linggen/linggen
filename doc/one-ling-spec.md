@@ -164,9 +164,12 @@ session, prompt and row is as before. On (decided by the builder 2026-11-15/16):
   account is that account, a signed-out phone its device — on the channel
   and on plain HTTP from the LAN alike. A peer that has not said which
   device it is is no one and is given no day. A day is read, written and
-  shown (the page state of a page viewing it) only by its own person; an
-  agent's notes are the builder's; what the engine starts itself (her
-  moments, her own thread) is the builder's, and a question waiting in
+  shown (the page state of a page viewing it) only by its own person: from
+  off this Mac, any request naming another person's day (its question, a
+  plan, its grants, a stop, a delete, its pictures, its prompt) is refused
+  with 403. An agent's notes and her own thread are the builder's (a
+  signed-out phone is its own person, as memory reads it); what the engine
+  starts itself (her moments) is the builder's, and a question waiting in
   another person's day is not heralded in the builder's thread or voice. A
   day is made once and never written over.
 - **Clear** takes the rows of the place it is pressed in: an app's page its

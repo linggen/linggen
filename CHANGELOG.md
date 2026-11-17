@@ -21,9 +21,12 @@
   it is its person's — and Clear takes only the part of the place it is
   pressed in. In the day a private app is never the place or active skill
   of a turn: `/<app>` or its trigger is carried to the app's own chat, and
-  the Skill tool is refused it. An agent's notes are the builder's alone;
-  the day's row in the session list is marked `day: true`; a queued
-  message keeps its `client_id`.
+  the Skill tool is refused it, nor is its waiting question framed into her
+  turn at home or answered from there. From off this Mac every request is
+  sent as its person, and one naming another person's day is refused (403).
+  An agent's notes and her own thread are the builder's (shared as before
+  with the setting off); the day's row in the session list is marked
+  `day: true`; a queued message keeps its `client_id`.
 - **Yinyue keeps notes of her own and looks again when she said she would.**
   `note_write` (at most 8 notes of 200 characters, an optional look-again
   such as `+40m`, `HH:MM`, `tomorrow 09:00`) and `note_done`; her open notes
