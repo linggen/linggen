@@ -310,6 +310,7 @@ export interface SessionInfo {
   params?: Record<string, string> | null; // the values a skill session is bound to (its session params)
   model_fallback?: boolean; // false: a failed model call is not answered by another model (absent = true)
   work?: import('./types/generated/Work').Work | null;
+  takes_work?: boolean;     // server-derived: this kind of session may carry a work tag
 }
 
 

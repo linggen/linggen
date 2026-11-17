@@ -145,16 +145,12 @@ export const SessionFallbackToggle: React.FC = () => {
   );
 };
 
-/** Coding guidance is a switch on a person's chat or a delegated run. */
+/** Coding guidance is a switch on a session of a kind that takes a work tag
+ *  (`takes_work`, decided by the engine's session spec — never re-derived here). */
 export const SessionCodingToggle: React.FC = () => {
   const sessionId = useSessionStore((s) => s.activeSessionId);
   const session = useSessionStore((s) => s.allSessions.find((item) => item.id === s.activeSessionId));
-  if (!sessionId || !session || session.runtime === 'claude_agent_sdk'
-    || session.creator === 'mission' || session.mission_id) return null;
-  const delegate = session.creator === 'external';
-  const handoff = sessionId.startsWith('sess-handoff-');
-  if (!delegate && !handoff && (session.skill || /^sess-day-\d{4}-\d{2}-\d{2}(-p-[a-z0-9_]+)?$/.test(sessionId)
-    || /^sess-yinyue($|-)/.test(sessionId))) return null;
+  if (!sessionId || !session?.takes_work) return null;
   const on = session.work === 'code';
   const change = () => {
     const work: SessionInfo['work'] = on ? null : 'code';

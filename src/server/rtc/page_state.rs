@@ -176,14 +176,21 @@ fn queued_entries(
 /// One row of the session list. `updated_at` is #[serde(skip)] so it never
 /// lands in session.yaml — the derived value is put in by hand for the UI
 /// (grouping/sort key on last activity). The day's session is marked
-/// `day: true` (`doc/one-ling-spec.md` § Linggen's daily session).
+/// `day: true` (`doc/one-ling-spec.md` § Linggen's daily session), and a
+/// session of a kind that may carry a work tag `takes_work: true` — the
+/// rule is the spec's (`Preset::takes_work`), told to the page so it does
+/// not keep a copy.
 fn session_row(s: crate::state_fs::sessions::SessionMeta) -> Option<serde_json::Value> {
     let updated_at = s.updated_at;
     let day = crate::server::day_session::is_day(&s.id);
+    let takes_work = crate::engine::session_spec::preset_of(&s).takes_work();
     let mut v = serde_json::to_value(s).ok()?;
     v["updated_at"] = serde_json::Value::from(updated_at);
     if day {
         v["day"] = serde_json::Value::Bool(true);
+    }
+    if takes_work {
+        v["takes_work"] = serde_json::Value::Bool(true);
     }
     Some(v)
 }
@@ -586,6 +593,30 @@ mod tests {
             ..Default::default()
         };
         assert!(session_row(other).unwrap().get("day").is_none());
+    }
+
+    /// The page is told which sessions may carry a work tag; it keeps no
+    /// copy of the rule.
+    #[test]
+    fn a_row_says_whether_its_session_takes_a_work_tag() {
+        use crate::state_fs::sessions::SessionMeta;
+        let chat = SessionMeta {
+            id: "sess-1-a".into(),
+            ..Default::default()
+        };
+        assert_eq!(session_row(chat).unwrap()["takes_work"], true);
+        let app = SessionMeta {
+            id: "sess-2-b".into(),
+            skill: Some("dice".into()),
+            ..Default::default()
+        };
+        assert!(session_row(app).unwrap().get("takes_work").is_none());
+        let mission = SessionMeta {
+            id: "sess-3-c".into(),
+            creator: "mission".into(),
+            ..Default::default()
+        };
+        assert!(session_row(mission).unwrap().get("takes_work").is_none());
     }
 
     #[test]
