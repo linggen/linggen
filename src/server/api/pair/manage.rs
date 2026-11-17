@@ -218,8 +218,15 @@ pub(crate) async fn rename_pair_device(
 }
 
 /// DELETE /api/pair/devices/{id} — revoke one device. Its token stops working
-/// on the next request; the phone re-pairs with eyes on this Mac.
-pub(crate) async fn delete_pair_device(Path(id): Path<String>) -> impl IntoResponse {
+/// on the next request; the phone re-pairs with eyes on this Mac. A device
+/// below the owner's standing revokes only itself (`may_revoke`).
+pub(crate) async fn delete_pair_device(
+    Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if !may_revoke(&headers, &id) {
+        return err(StatusCode::FORBIDDEN, "a device revokes only itself");
+    }
     // Take the relay credential with us: dropping the row here only closes the
     // LAN door, and a revoked phone that kept reaching us from anywhere would
     // make Revoke a lie.
@@ -237,6 +244,13 @@ pub(crate) async fn delete_pair_device(Path(id): Path<String>) -> impl IntoRespo
     }
     tracing::info!("[pair] device {id} revoked");
     Json(serde_json::json!({ "status": "ok" })).into_response()
+}
+
+/// Whether the caller may revoke device `id`: at admin any device; below
+/// it, only the device asking.
+fn may_revoke(headers: &axum::http::HeaderMap, id: &str) -> bool {
+    use crate::engine::permission::PermissionMode;
+    caller_level(headers) == PermissionMode::Admin || caller_device(headers).as_deref() == Some(id)
 }
 
 #[cfg(test)]
@@ -266,6 +280,26 @@ mod tests {
         assert_eq!(got[1]["kind"], "byok");
         assert_eq!(got[1]["model"], "claude-next");
         assert_eq!(got[2], serde_json::json!({"id": "gpt-6-luna", "kind": "oauth"}));
+    }
+
+    /// Below admin a device revokes itself and no other; this machine and
+    /// the owner revoke any.
+    #[test]
+    fn a_device_below_the_owner_revokes_only_itself() {
+        let h = |pairs: &[(&'static str, &'static str)]| {
+            let mut m = axum::http::HeaderMap::new();
+            for (k, v) in pairs {
+                m.insert(*k, v.parse().unwrap());
+            }
+            m
+        };
+        assert!(may_revoke(&h(&[]), "other"));
+        assert!(may_revoke(&h(&[(LEVEL_HEADER, "admin")]), "other"));
+        assert!(!may_revoke(&h(&[(LEVEL_HEADER, "read")]), "other"));
+        assert!(!may_revoke(&h(&[(LEVEL_HEADER, "bogus")]), "other"));
+        // Its own row: the tunnel names the device asking.
+        let own = h(&[(LEVEL_HEADER, "read"), (ACTOR_DEVICE_HEADER, "not-paired")]);
+        assert!(!may_revoke(&own, "other"), "a device not paired is no one");
     }
 
     #[test]

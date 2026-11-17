@@ -151,8 +151,9 @@ pub(super) fn handle_control_message(
         // device is this channel's bound identity, never the payload.
         "fact" => {
             // With the daily session on, another person's facts stamp
-            // nothing of the builder's.
-            if !shares_builders(state, user_ctx, actor) {
+            // nothing of the builder's; below read, a peer's facts are not
+            // taken at all.
+            if !shares_builders(state, user_ctx, actor) || !reads(user_ctx, actor) {
                 return None;
             }
             let device = actor.lock_ok().as_ref().map(|a| a.device.clone());
@@ -234,8 +235,8 @@ pub(super) fn handle_control_message(
             }
             // With the daily session on, a topic is the builder's devices':
             // another person's neither replaces a kept reading nor reaches
-            // the builder's surfaces.
-            if !shares_builders(state, user_ctx, actor) {
+            // the builder's surfaces. Below read, it is not taken.
+            if !shares_builders(state, user_ctx, actor) || !reads(user_ctx, actor) {
                 return None;
             }
             tracing::info!("[topic] {topic}/{op} published by a device");
@@ -348,11 +349,42 @@ fn shares_builders(
     crate::server::day_session::is_builder(Some(&person_for(user_ctx, device.as_deref())))
 }
 
+/// Whether this peer stands at read or above, as the frames that publish
+/// (a fact, a topic) need; a room consumer by its room.
+fn reads(user_ctx: &crate::server::rtc::UserContext, actor: &super::PeerActor) -> bool {
+    if user_ctx.is_consumer() {
+        return true;
+    }
+    let device = actor.lock_ok().as_ref().map(|a| a.device.clone());
+    standing_for(user_ctx, device.as_deref()).level() >= crate::engine::permission::PermissionMode::Read
+}
+
 /// The `http_request` answer for a request refused at the seam
-/// (`person::send_as`): a 403, as the LAN gate answers it.
-fn refused_reply(refused: &crate::server::person::NotTheirs) -> serde_json::Value {
-    let body = serde_json::json!({ "error": refused.reason() }).to_string();
+/// (`person::send_judged`): a 403, as the LAN gate answers it.
+fn refused_reply(refused: &crate::server::person::Refused) -> serde_json::Value {
+    let body = refused.body().to_string();
     serde_json::json!({ "data": reply_data(403, "application/json", body.as_bytes()) })
+}
+
+/// A request from this peer sent as its person, through the seam. A room
+/// consumer is judged by its room (`PeerLoop::may_make_request`) and sent
+/// unjudged here; any other peer is judged by its standing
+/// ([`standing_for`]).
+/// Returns the URL to send and the level to stamp on it.
+fn send_for_peer(
+    user_ctx: &crate::server::rtc::UserContext,
+    device: Option<&str>,
+    (method, url_path, body): (&str, &str, &mut serde_json::Value),
+    user_type: &str,
+) -> Result<(String, crate::engine::permission::PermissionMode), crate::server::person::Refused> {
+    let standing = standing_for(user_ctx, device);
+    let level = standing.level();
+    if user_ctx.is_consumer() {
+        return crate::server::person::send_as(method, url_path, body, (standing.person(), user_type))
+            .map(|url| (url, level))
+            .map_err(crate::server::person::Refused::NotTheirs);
+    }
+    crate::server::person::send_judged(method, url_path, body, &standing, user_type).map(|url| (url, level))
 }
 
 /// Wrap a loopback response for the control channel: a success body rides as
@@ -425,14 +457,15 @@ fn is_text(content_type: &str) -> bool {
 
 /// One loopback request to this engine's own HTTP API. GET carries no body;
 /// every other method sends `body` as JSON. `actor_device` names the paired
-/// device asking, for handlers that keep per-device state.
+/// device asking, for handlers that keep per-device state; `level` is the
+/// standing it was judged at (`LEVEL_HEADER`), for handlers that judge
+/// within a route.
 async fn loopback(
     client: &reqwest::Client,
-    method: &str,
-    url: &str,
-    body: &serde_json::Value,
+    (method, url, body): (&str, &str, &serde_json::Value),
     tunnel_mark: &str,
     actor_device: Option<&str>,
+    level: crate::engine::permission::PermissionMode,
 ) -> reqwest::Result<reqwest::Response> {
     let req = match method {
         "POST" => client.post(url).json(body),
@@ -441,7 +474,9 @@ async fn loopback(
         "DELETE" => client.delete(url).json(body),
         _ => client.get(url),
     };
-    let req = req.header(crate::server::api::pair::TUNNEL_HEADER, tunnel_mark);
+    let req = req
+        .header(crate::server::api::pair::TUNNEL_HEADER, tunnel_mark)
+        .header(crate::server::api::pair::LEVEL_HEADER, level.to_string());
     let req = match actor_device {
         Some(d) => req.header(crate::server::api::pair::ACTOR_DEVICE_HEADER, d),
         None => req,
@@ -537,21 +572,21 @@ pub(super) async fn process_control_request_async(
             // paired device is asking — which is what per-phone state, like the
             // delete queue, needs to be correct with more than one phone.
             let actor_device = named_device(user_ctx, actor, first_request).await;
-            let person = person_for(user_ctx, actor_device.as_deref());
             let mut body_val = req
                 .body
                 .get("body")
                 .unwrap_or(&serde_json::Value::Null)
                 .clone();
-            // A request that comes into a session is sent as this peer's person.
+            // A request is judged by this peer's standing and, when it comes
+            // into a session, sent as its person.
             let user_type = user_ctx.user_type_for(actor.lock_ok().is_some());
-            let url_path = match crate::server::person::send_as(
-                method,
-                &url_path,
-                &mut body_val,
-                (&person, user_type),
+            let (url_path, level) = match send_for_peer(
+                user_ctx,
+                actor_device.as_deref(),
+                (method, &url_path, &mut body_val),
+                user_type,
             ) {
-                Ok(url) => url,
+                Ok(sent) => sent,
                 Err(refused) => return refused_reply(&refused),
             };
             let url = format!("http://127.0.0.1:{port}{url_path}");
@@ -561,11 +596,10 @@ pub(super) async fn process_control_request_async(
             let mark = user_ctx.tunnel_mark();
             match loopback(
                 client,
-                method,
-                &url,
-                &body_val,
+                (method, &url, &body_val),
                 mark,
                 actor_device.as_deref(),
+                level,
             )
             .await
             {
@@ -586,16 +620,18 @@ pub(super) async fn process_control_request_async(
                 "ask_user_response" => "/api/ask-user-response",
                 _ => unreachable!(),
             };
-            // Sent as this peer's person, resolved from the device it named.
+            // Judged by this peer's standing and sent as its person,
+            // resolved from the device it named.
             let actor_device = named_device(user_ctx, actor, first_request).await;
-            let person = person_for(user_ctx, actor_device.as_deref());
             let mut body = req.body.clone();
             let user_type = user_ctx.user_type_for(actor.lock_ok().is_some());
-            if let Err(refused) = crate::server::person::send_as("POST", endpoint, &mut body, (&person, user_type)) {
-                return serde_json::json!({ "error": refused.reason() });
-            }
+            let sent = send_for_peer(user_ctx, actor_device.as_deref(), ("POST", endpoint, &mut body), user_type);
+            let level = match sent {
+                Ok((_, level)) => level,
+                Err(refused) => return refused.body(),
+            };
             let url = format!("http://127.0.0.1:{port}{endpoint}");
-            match loopback(client, "POST", &url, &body, user_ctx.tunnel_mark(), None).await {
+            match loopback(client, ("POST", &url, &body), user_ctx.tunnel_mark(), None, level).await {
                 Ok(r) => {
                     let status = r.status().as_u16();
                     let body: serde_json::Value = r.json().await.unwrap_or(serde_json::Value::Null);

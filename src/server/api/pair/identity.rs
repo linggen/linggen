@@ -6,7 +6,7 @@ use super::*;
 /// The tunnel's headers (`state_fs::devices`): which device a re-issued
 /// request is for, and what the tunnel knows of a peer that named none.
 pub use crate::state_fs::devices::{
-    ACTOR_DEVICE_HEADER, TUNNEL_HEADER, TUNNEL_LOCAL, TUNNEL_OWNER,
+    caller_level, ACTOR_DEVICE_HEADER, LEVEL_HEADER, TUNNEL_HEADER, TUNNEL_LOCAL, TUNNEL_OWNER,
 };
 
 /// Same as [`actor_for_token`] for an HTTP caller carrying the device token.

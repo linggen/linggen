@@ -56,6 +56,56 @@ impl NotTheirs {
     }
 }
 
+/// Why the seam refused a request.
+#[derive(Debug, PartialEq)]
+pub(crate) enum Refused {
+    /// It names a day its person may not enter.
+    NotTheirs(NotTheirs),
+    /// Its route's class (`routes::classes`) is above the caller's level.
+    BeyondLevel {
+        level: PermissionMode,
+        needs: PermissionMode,
+    },
+}
+
+impl Refused {
+    /// The fact a refused caller is answered with, as JSON: the day rule's
+    /// words, or `{"error":"beyond_level","level":…,"needs":…}` — the
+    /// companion words that one; code never does.
+    pub(crate) fn body(&self) -> serde_json::Value {
+        match self {
+            Refused::NotTheirs(n) => serde_json::json!({ "error": n.reason() }),
+            Refused::BeyondLevel { level, needs } => serde_json::json!({
+                "error": "beyond_level",
+                "level": level.to_string(),
+                "needs": needs.to_string(),
+            }),
+        }
+    }
+}
+
+/// A request from off this machine judged by its caller's standing, then
+/// sent as its person ([`send_as`]): refused ([`Refused::BeyondLevel`]) when
+/// its route's class is above the standing's level. The one seam the
+/// channel's requests and frames and the LAN gate's requests pass.
+pub(crate) fn send_judged(
+    method: &str,
+    url_path: &str,
+    body: &mut serde_json::Value,
+    standing: &Standing,
+    user_type: &str,
+) -> Result<String, Refused> {
+    let path = url_path.split_once('?').map_or(url_path, |(p, _)| p);
+    let needs = crate::server::routes::classes::class_of(method, path).needs();
+    if needs > standing.level() {
+        return Err(Refused::BeyondLevel {
+            level: standing.level(),
+            needs,
+        });
+    }
+    send_as(method, url_path, body, (standing.person(), user_type)).map_err(Refused::NotTheirs)
+}
+
 /// `body` sent as `person`, of `user_type`: what the page put there is
 /// replaced.
 pub(crate) fn as_person(body: &mut serde_json::Value, person: &str, user_type: &str) {
@@ -241,14 +291,16 @@ pub(crate) async fn lan_request_as(
     use axum::extract::FromRequest;
     use axum::http::header::CONTENT_LENGTH;
     use axum::response::IntoResponse;
-    let person = standing_of(device).person;
+    let standing = standing_of(device);
     let user_type = crate::server::rtc::PeerKind::Paired.as_str();
     let (mut parts, body) = req.into_parts();
     let url_path = parts.uri.path_and_query().map_or("/", |pq| pq.as_str()).to_string();
     let mut none = serde_json::Value::Null;
     if declared_length(&parts.headers).is_some_and(|n| n > LAN_BODY_LIMIT) {
-        let url = send_as(parts.method.as_str(), &url_path, &mut none, (&person, user_type)).map_err(refused)?;
+        let url = send_judged(parts.method.as_str(), &url_path, &mut none, &standing, user_type)
+            .map_err(refused)?;
         set_uri(&mut parts, &url);
+        stamp_level(&mut parts, standing.level());
         return Ok(axum::extract::Request::from_parts(parts, body));
     }
     let read = axum::extract::Request::from_parts(parts.clone(), body);
@@ -259,9 +311,16 @@ pub(crate) async fn lan_request_as(
         Ok(v) if v.is_object() => Some(v),
         _ => None,
     };
-    let url = send_as(parts.method.as_str(), &url_path, value.as_mut().unwrap_or(&mut none), (&person, user_type))
-        .map_err(refused)?;
+    let url = send_judged(
+        parts.method.as_str(),
+        &url_path,
+        value.as_mut().unwrap_or(&mut none),
+        &standing,
+        user_type,
+    )
+    .map_err(refused)?;
     set_uri(&mut parts, &url);
+    stamp_level(&mut parts, standing.level());
     let bytes = match value {
         Some(v) => serde_json::to_vec(&v).map(axum::body::Bytes::from).unwrap_or(bytes),
         None => bytes,
@@ -280,6 +339,14 @@ fn declared_length(headers: &axum::http::HeaderMap) -> Option<usize> {
         .ok()
 }
 
+/// The level a request was judged at, over whatever the caller sent
+/// (`devices::LEVEL_HEADER`).
+fn stamp_level(parts: &mut axum::http::request::Parts, level: PermissionMode) {
+    if let Ok(value) = level.to_string().parse() {
+        parts.headers.insert(crate::server::api::pair::LEVEL_HEADER, value);
+    }
+}
+
 fn set_uri(parts: &mut axum::http::request::Parts, url: &str) {
     if let Ok(uri) = url.parse() {
         parts.uri = uri;
@@ -287,13 +354,9 @@ fn set_uri(parts: &mut axum::http::request::Parts, url: &str) {
 }
 
 /// A request refused at the seam, answered 403 as the channel answers it.
-fn refused(refused: NotTheirs) -> axum::response::Response {
+fn refused(refused: Refused) -> axum::response::Response {
     use axum::response::IntoResponse;
-    (
-        axum::http::StatusCode::FORBIDDEN,
-        axum::Json(serde_json::json!({ "error": refused.reason() })),
-    )
-        .into_response()
+    (axum::http::StatusCode::FORBIDDEN, axum::Json(refused.body())).into_response()
 }
 
 #[cfg(test)]
@@ -483,6 +546,56 @@ mod tests {
         assert_eq!(super::unnamed(true, "u-owner").level(), Admin);
         let stranger = super::unnamed(false, "u-owner");
         assert_eq!((stranger.person(), stranger.level()), (crate::server::rtc::NO_ONE, Chat));
+    }
+
+    fn at(level: crate::engine::permission::PermissionMode) -> super::Standing {
+        super::Standing {
+            person: "u-friend".into(),
+            level,
+        }
+    }
+
+    /// A device at read: a read route passes; an edit route, the raw shell
+    /// and a `clear` or plan's route are refused with its level and what the
+    /// route needs; raised to edit, the edit route passes.
+    #[test]
+    fn a_route_above_the_level_is_refused() {
+        use crate::engine::permission::PermissionMode::*;
+        let judged = |method: &str, url: &str, level| {
+            super::send_judged(method, url, &mut serde_json::json!({}), &at(level), "paired")
+        };
+        assert!(judged("GET", "/api/topic/latest?topic=x", Read).is_ok());
+        assert!(judged("POST", "/api/chat", Read).is_ok());
+        let refused = judged("POST", "/api/media/backup", Read).unwrap_err();
+        assert_eq!(
+            refused.body(),
+            serde_json::json!({"error": "beyond_level", "level": "read", "needs": "edit"})
+        );
+        assert_eq!(
+            judged("POST", "/api/bash", Read).unwrap_err().body(),
+            serde_json::json!({"error": "beyond_level", "level": "read", "needs": "admin"})
+        );
+        for frame_route in ["/api/chat/clear", "/api/plan/approve", "/api/plan/reject", "/api/plan/edit"] {
+            assert!(judged("POST", frame_route, Read).is_err(), "{frame_route}");
+        }
+        assert!(judged("POST", "/api/media/backup", Edit).is_ok());
+        assert!(judged("POST", "/api/bash", Edit).is_err());
+        assert!(judged("POST", "/api/memory/add", Chat).is_ok(), "its own records at any level");
+        assert!(judged("GET", "/api/topic/latest", Chat).is_err());
+    }
+
+    /// The day rule still holds under the level.
+    #[test]
+    fn a_day_not_theirs_is_refused_whatever_the_level() {
+        let mut body = serde_json::json!({"session_id": "sess-day-2026-11-16"});
+        let got = super::send_judged(
+            "POST",
+            "/api/chat",
+            &mut body,
+            &at(crate::engine::permission::PermissionMode::Edit),
+            "paired",
+        );
+        assert!(matches!(got, Err(super::Refused::NotTheirs(_))));
     }
 
     #[test]

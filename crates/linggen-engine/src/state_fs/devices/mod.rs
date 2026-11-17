@@ -141,6 +141,28 @@ pub const ACTOR_DEVICE_HEADER: &str = "x-linggen-actor-device";
 /// named a device: [`TUNNEL_LOCAL`], [`TUNNEL_OWNER`], or anything else.
 pub const TUNNEL_HEADER: &str = "x-linggen-tunnel";
 
+/// Header the WebRTC tunnel and the LAN gate stamp on every request they
+/// send on for a caller from off this machine: the level it was judged at
+/// (`server::person::send_judged`), for a handler that judges within its
+/// route (a skill tool's tier, a device revoking only itself). Set over
+/// whatever the caller sent; absent, the request is from this machine and
+/// at admin. It can only lower what a request may do ([`caller_level`]).
+pub const LEVEL_HEADER: &str = "x-linggen-level";
+
+/// The level a request stands at, from [`LEVEL_HEADER`]: absent is this
+/// machine, at admin; a value that is not a level is chat.
+pub fn caller_level(headers: &axum::http::HeaderMap) -> crate::engine::permission::PermissionMode {
+    use crate::engine::permission::PermissionMode;
+    let Some(value) = headers.get(LEVEL_HEADER) else {
+        return PermissionMode::Admin;
+    };
+    value
+        .to_str()
+        .ok()
+        .and_then(|v| serde_json::from_value(serde_json::Value::String(v.to_string())).ok())
+        .unwrap_or(PermissionMode::Chat)
+}
+
 /// The peer's channel was opened from this machine (the local web UI, the
 /// app shell).
 pub const TUNNEL_LOCAL: &str = "local";

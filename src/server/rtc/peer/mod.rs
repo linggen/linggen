@@ -839,12 +839,20 @@ impl PeerLoop {
         } else {
             let text = String::from_utf8_lossy(&data.data).to_string();
             let perm = self.user_ctx.permission.clone();
+            let consumer = self.user_ctx.is_consumer();
+            // A get is judged as the same GET on the control channel: a room
+            // consumer by its room, any other peer by its standing.
+            let may_get = move |url: &str| {
+                let path = url.split('?').next().unwrap_or(url);
+                let judged = crate::server::routes::classes::class_of("GET", path).needs() <= level;
+                !pairing && perm.can_access_endpoint("GET", url) && (consumer || judged)
+            };
             if media_channel::spawn_get(
                 &text,
                 self.state.port,
                 data.id,
                 self.media_out_tx.clone(),
-                move |url| !pairing && perm.can_access_endpoint("GET", url),
+                may_get,
             ) {
                 return;
             }

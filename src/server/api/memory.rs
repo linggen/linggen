@@ -798,9 +798,10 @@ mod tests {
         let mut files = code_under(&root.join("src"));
         files.extend(code_under(&root.join("crates/linggen-engine/src")));
         assert!(files.len() > 100, "scanned {} files", files.len());
-        const ALLOWED: [&str; 3] = [
+        const ALLOWED: [&str; 4] = [
             "format!(\"{}/api/memory/{verb}\", url())",
             ".route(\"/api/memory/{verb}\", post(api::memory::passthrough))",
+            "(\"POST\", \"/api/memory/{verb}\", Own),",
             "\"a phone reaches memory at /api/memory/<verb>, and sees its own person's rows\",",
         ];
         for (path, code) in &files {
