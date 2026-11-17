@@ -587,14 +587,17 @@ async fn a_phones_turn_runs_at_its_level() {
     if her.0 != 403 {
         wrong.push(format!("her own thread at read: {her:?}"));
     }
-    let claude = lan.send(Method::POST, "/api/sessions", Some(json!({"title": "c", "runtime": "claude"}))).await;
-    if let Some(cid) = claude.1["id"].as_str() {
-        let into = json!({"session_id": cid, "project_root": w.work(), "message": "hi"});
-        let got = lan.send(Method::POST, "/api/chat", Some(into)).await;
-        let beyond = json!({"error": "beyond_level", "level": "read", "needs": "admin"});
-        if got != (403, beyond) {
-            wrong.push(format!("a Claude session's turn at read: {got:?}"));
+    let claude = lan.send(Method::POST, "/api/sessions", Some(json!({"title": "c", "runtime": "claude_agent_sdk", "project_root": w.work()}))).await;
+    match claude.1["id"].as_str() {
+        Some(cid) => {
+            let into = json!({"session_id": cid, "project_root": w.work(), "message": "hi"});
+            let got = lan.send(Method::POST, "/api/chat", Some(into)).await;
+            let beyond = json!({"error": "beyond_level", "level": "read", "needs": "admin"});
+            if got != (403, beyond) {
+                wrong.push(format!("a Claude session's turn at read: {got:?}"));
+            }
         }
+        None => wrong.push(format!("no Claude session was made to try: {claude:?}")),
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
 }

@@ -215,7 +215,13 @@ pub(super) fn handle_control_message(
             // person may enter. A stage is held per person: the surface is
             // its device's person's.
             let device = actor.lock_ok().as_ref().map(|a| a.device.clone());
-            let person = person_for(user_ctx, device.as_deref());
+            let standing = standing_for(user_ctx, device.as_deref());
+            // With the daily session off every surface holds her for the
+            // owner: one below the owner's standing holds none.
+            if !state.manager.daily_session() && !standing.is_owner() {
+                return None;
+            }
+            let person = standing.person().to_string();
             let session = msg
                 .get("session")
                 .and_then(|v| v.as_str())

@@ -285,6 +285,12 @@ fn claims_unverified(device: &crate::state_fs::devices::PairedDevice, mac: Optio
     phone && mac.is_some_and(|m| !m.is_empty() && claim == Some(m)) && device.verified_claim().is_none()
 }
 
+/// Whether paired device row `device` stands as the owner's with this Mac's
+/// account `mac` (what [`standing_of`] answers for it).
+pub(crate) fn is_owners_device(device: &crate::state_fs::devices::PairedDevice, mac: Option<&str>) -> bool {
+    standing_in(Some(device), mac, mac.unwrap_or_default()).is_owner()
+}
+
 /// [`standing_of`] for a row found (or not), with this Mac's account
 /// (`mac`) and the owner's person id (`owner`).
 fn standing_in(

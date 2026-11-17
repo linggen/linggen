@@ -616,6 +616,11 @@ fn check_grants(
         return PermissionCheckResult::Allowed;
     }
 
+    // 0b'. Under a turn's ceiling no tool runs ungated below: an MCP tool
+    // (the memory server's among them — its store is the owner's) is judged
+    // by its tier like any other, and refused above the ceiling.
+    let ungated_mcp = crate::mcp_client::is_mcp_tool(tool) && !crate::mcp_client::registry().is_gated(tool);
+
     // 0c. An MCP server whose entry declares `gated = false`. The user, who
     // is the host, said they trust it — the direct analogue of a Claude Code
     // allow rule covering a whole server, and the only direction trust flows.
@@ -630,7 +635,7 @@ fn check_grants(
     //
     // `enabled = false` on the entry is how memory is turned off. This
     // decides whether tools *prompt*, never whether they exist.
-    if crate::mcp_client::is_mcp_tool(tool) && !crate::mcp_client::registry().is_gated(tool) {
+    if ungated_mcp && ceiling.is_none() {
         return PermissionCheckResult::Allowed;
     }
 

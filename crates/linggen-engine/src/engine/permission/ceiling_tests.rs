@@ -61,6 +61,15 @@ fn above_the_ceiling_nothing_is_asked() {
     assert!(matches!(asked, PermissionCheckResult::NeedsPrompt(_)), "within the ceiling, asked as before");
 }
 
+/// An MCP tool runs under a ceiling only within it: an unknown server's
+/// tool is admin, and the memory server's is not let through ungated.
+#[test]
+fn an_mcp_tool_is_judged_under_the_ceiling() {
+    use PermissionMode::*;
+    assert!(refused(&check("mcp__memory__memory_search", None, &granted(), Some(Edit))));
+    assert!(refused(&check("mcp__someserver__do_it", None, &granted(), Some(Read))));
+}
+
 /// The owner's turn — no ceiling — is judged by the grants alone.
 #[test]
 fn with_no_ceiling_the_grants_decide() {

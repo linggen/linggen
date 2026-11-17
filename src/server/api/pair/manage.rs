@@ -154,7 +154,8 @@ pub(crate) async fn get_pair_me(
         return err(StatusCode::UNAUTHORIZED, "unknown device");
     };
     let config = state.manager.get_config_snapshot().await;
-    let owner = crate::server::person::standing_of(&d.id).is_owner();
+    let mac = crate::account::load_account().and_then(|a| a.user_id);
+    let owner = crate::server::person::is_owners_device(&d, mac.as_deref());
     let mut body = me_body(&d, &config, owner);
     // Where to reach this Mac when the phone is off the LAN: the relay
     // signals per instance. Not a secret — an address. Absent while
@@ -384,6 +385,24 @@ mod tests {
         assert!(!other.to_string().contains("sk-THE-MACS-KEY"), "{other}");
         let kinds: Vec<_> = other["models"].as_array().unwrap().iter().map(|m| m["kind"].clone()).collect();
         assert_eq!(kinds, vec![serde_json::json!("oauth"), serde_json::json!("cloud")]);
+
+        // The same phone row: claimed, then verified at its next sync, then
+        // signed in to another account.
+        let mac = Some("u-owner");
+        let keyed = |d: &crate::state_fs::devices::PairedDevice| {
+            me_body(d, &cfg, crate::server::person::is_owners_device(d, mac))
+                .to_string()
+                .contains("sk-THE-MACS-KEY")
+        };
+        let claim = |id: &str| crate::state_fs::devices::AccountRef { id: id.into(), email: None, name: None, at: None };
+        d.kind = Some(crate::state_fs::devices::DeviceKind::Phone);
+        d.contract = Some(crate::server::rtc::contract::CONTRACT);
+        d.account = Some(claim("u-owner"));
+        assert!(!keyed(&d), "a claim alone");
+        d.verified_account = Some("u-owner".into());
+        assert!(keyed(&d), "verified: the owner's");
+        d.account = Some(claim("u-other"));
+        assert!(!keyed(&d), "no longer the owner's");
     }
 
     /// The level is set only at this Mac: a paired device's request through

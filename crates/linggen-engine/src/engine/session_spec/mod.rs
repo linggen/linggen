@@ -331,12 +331,13 @@ impl SessionSpec {
     /// the device that sent it; `None` or admin: the owner's turn, no
     /// ceiling). A delegate's session keeps its toolset and its caller; any
     /// other gets the lead's tools and asks the person, unless a consumer's
-    /// policy locks it or the turn's ceiling is below edit — a device that
-    /// may not answer a question is never asked one.
+    /// policy locks it. A turn under a ceiling acts within the session's
+    /// grants and asks no one, and carries none of the owner's memory (the
+    /// store is the owner's).
     pub fn typed(mut self, policy: SessionPolicy, memory: Memory, ceiling: Option<PermissionMode>) -> Self {
         let keeps_caller = self.preset == Preset::Delegate;
         let ceiling = ceiling.filter(|c| *c < PermissionMode::Admin);
-        let unasked = policy.locked || ceiling.is_some_and(|c| c < PermissionMode::Edit);
+        let unasked = policy.locked || ceiling.is_some();
         self.permission = match (unasked, keeps_caller) {
             (true, _) => Permission::Unattended,
             (false, true) => Permission::AskCaller,
@@ -347,7 +348,10 @@ impl SessionSpec {
             self.tools = Tools::Lead;
         }
         self.policy = Some(policy);
-        self.memory = memory;
+        self.memory = match ceiling {
+            Some(_) => Memory::None,
+            None => memory,
+        };
         self.framing = Framing::Turn;
         self
     }

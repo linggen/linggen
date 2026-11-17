@@ -482,8 +482,8 @@ fn a_typed_turn_in_a_delegates_session_keeps_its_spec() {
     assert_eq!(Seen::of(&e, Some(false)), want);
 }
 
-/// A turn a device sent is typed at its level: below edit it asks no one
-/// (the device may not answer); at admin it has no ceiling. The owner's
+/// A turn a device sent is typed at its level: it asks no one and carries
+/// none of the owner's memory; at admin it has no ceiling. The owner's
 /// next turn on the same engine has none either, and keeps the session's
 /// grants. A `Task` child takes the turn's ceiling.
 #[test]
@@ -492,10 +492,11 @@ fn a_devices_turn_runs_under_its_level() {
     let m = meta("sess-5-c", "user", None);
     let typed = |level| SessionSpec::of(&m).typed(SessionPolicy::owner(), Memory::of_turn("user"), level);
     let read = typed(Some(Read));
-    assert_eq!((read.ceiling, read.permission), (Some(Read), Permission::Unattended));
+    assert_eq!((read.ceiling, read.permission, read.memory), (Some(Read), Permission::Unattended, Memory::None));
     let edit = typed(Some(Edit));
-    assert_eq!((edit.ceiling, edit.permission), (Some(Edit), Permission::Interactive));
-    assert_eq!(typed(Some(Admin)).ceiling, None);
+    assert_eq!((edit.ceiling, edit.permission, edit.memory), (Some(Edit), Permission::Unattended, Memory::None));
+    let owners = typed(Some(Admin));
+    assert_eq!((owners.ceiling, owners.permission, owners.memory), (None, Permission::Interactive, Memory::Full));
     assert_eq!(typed(None).ceiling, None);
 
     let mut e = engine_for(&m);

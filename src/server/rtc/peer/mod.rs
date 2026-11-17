@@ -1044,7 +1044,11 @@ impl PeerLoop {
                 process_inference_request(&req, &st, (&ctx_clone, &standing), &tok, &tx, cid).await;
             });
         } else if msg_type == "room_chat" {
-            self.on_room_chat(&msg);
+            // A room's chat is its consumers' and the owner's: no other peer
+            // speaks into it.
+            if self.user_ctx.is_consumer() || self.standing().is_owner() {
+                self.on_room_chat(&msg);
+            }
         } else {
             tracing::warn!("Unknown inference channel message type: {msg_type}");
         }
