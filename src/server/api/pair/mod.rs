@@ -10,8 +10,8 @@
 //! (DHCP churn doesn't unpair).
 
 pub use crate::state_fs::devices::{
-    actor_for_token, device_name, is_valid_device_token, load_devices, person_label,
-    set_device_account, AccountRef, Actor, PairedDevice,
+    actor_for_token, device_name, load_devices, person_label, set_device_account, AccountRef,
+    Actor, PairedDevice,
 };
 use crate::state_fs::devices::{commit_device, device_by_token, modify_devices, random_hex};
 use crate::util::LockExt;
