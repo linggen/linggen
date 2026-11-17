@@ -1041,7 +1041,7 @@ mod tests {
             vec![
                 "gpt-6.1-terra".to_string(),
                 "gpt-6-luna".to_string(),
-                "gpt-6.1-sol".to_string()
+                "gpt-6.2-sol".to_string()
             ]
         );
         assert_eq!(cfg.pet.model, "gpt-6-luna");
@@ -1050,8 +1050,13 @@ mod tests {
         six.routing.default_models = vec!["gpt-6-sol".into()];
         six.pet.model = "gpt-6-sol".into();
         six.migrate_retired_chatgpt_builtins();
-        assert_eq!(six.routing.default_models, vec!["gpt-6.1-sol".to_string()]);
-        assert_eq!(six.pet.model, "gpt-6.1-sol");
+        assert_eq!(six.routing.default_models, vec!["gpt-6.2-sol".to_string()]);
+        assert_eq!(six.pet.model, "gpt-6.2-sol");
+
+        let mut one = Config::default();
+        one.routing.default_models = vec!["gpt-6.1-sol".into()];
+        one.migrate_retired_chatgpt_builtins();
+        assert_eq!(one.routing.default_models, vec!["gpt-6.2-sol".to_string()]);
 
         let mut own = valid_config();
         own.models[0].id = "gpt-5.6-sol".into();

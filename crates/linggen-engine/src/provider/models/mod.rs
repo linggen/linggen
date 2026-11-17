@@ -581,9 +581,10 @@ mod tests {
     #[test]
     fn retired_ids_resolve_to_their_successor() {
         let m = ModelManager::new_with_credentials(vec![], &Credentials::default());
-        // A session or mission still saying the old Sol id lands on 6.1.
+        // A session or mission still saying an old Sol id lands on 6.2.
         assert!(m.has_model("gpt-6-sol"));
-        assert_eq!(m.resolve_id("gpt-6-sol").as_deref(), Some("gpt-6.1-sol"));
+        assert_eq!(m.resolve_id("gpt-6-sol").as_deref(), Some("gpt-6.2-sol"));
+        assert_eq!(m.resolve_id("gpt-6.1-sol").as_deref(), Some("gpt-6.2-sol"));
         assert_eq!(m.provider_kind("gpt-6-sol"), Some("chatgpt"));
         assert_eq!(
             m.resolve_id("gpt-5.5").as_deref(),
@@ -593,7 +594,7 @@ mod tests {
             m.resolve_id("deepseek-v4-flash").as_deref(),
             Some(LINGGEN_CLOUD_MODEL_ID)
         );
-        assert_eq!(m.resolve_id("gpt-6.1-sol").as_deref(), Some("gpt-6.1-sol"));
+        assert_eq!(m.resolve_id("gpt-6.2-sol").as_deref(), Some("gpt-6.2-sol"));
         assert!(m.resolve_id("no-such-model").is_none());
     }
 

@@ -18,6 +18,10 @@ use anyhow::Result;
 use futures_util::{Stream, StreamExt};
 use reqwest::Client;
 
+/// The Codex CLI version this engine presents to the ChatGPT backend, which
+/// routes model slugs by it: one place, bumped with each built-in generation.
+const CODEX_CLI_VERSION: &str = "0.169.0";
+
 /// Reads one SSE `data:` payload of a turn into the chunks it carries. It may
 /// keep state across the stream (the Responses API tracks output items).
 type Parser = Box<dyn FnMut(&str) -> Vec<Result<StreamChunk>> + Send>;
@@ -161,11 +165,12 @@ impl OpenAiClient {
             // internal engine and 404'd ("Model not found"), and a version
             // older than a model's launch refuses it ("not supported when
             // using Codex with a ChatGPT account" — gpt-6-* under 0.144.1,
-            // gpt-6.1-sol under 0.159). Identify as a current Codex CLI
+            // gpt-6.1-sol under 0.159; gpt-6.2-sol launched 2026-11-17, when
+            // the CLI was at 0.169). Identify as a current Codex CLI
             // (openai/codex#31967); bump the version with each built-in
             // generation.
             rb = rb.header("originator", "codex_cli_rs");
-            rb = rb.header("version", "0.159.2");
+            rb = rb.header("version", CODEX_CLI_VERSION);
         } else if self.linggen_account_live {
             if let Some((token, _)) = crate::account::resolve_token() {
                 rb = rb.header("Authorization", format!("Bearer {}", token));
@@ -311,7 +316,9 @@ impl OpenAiClient {
     }
 
     pub(crate) async fn codex_context_window(&self, model: &str) -> anyhow::Result<usize> {
-        let json = self.codex_metadata("models?client_version=0.159.2").await?;
+        let json = self
+            .codex_metadata(&format!("models?client_version={CODEX_CLI_VERSION}"))
+            .await?;
         json.get("models").and_then(|v| v.as_array())
             .and_then(|models| models.iter().find(|m| m.get("slug").and_then(|v| v.as_str()) == Some(model)))
             .and_then(|m| m.get("context_window")).and_then(|v| v.as_u64())

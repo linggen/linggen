@@ -1891,10 +1891,11 @@ mod tests {
         use crate::provider::models::ModelManager;
         let m = ModelManager::new_with_credentials(vec![], &Credentials::default());
         let shared = vec!["gpt-6-sol".to_string()];
-        let live = Some("gpt-6.1-sol".to_string());
+        let live = Some("gpt-6.2-sol".to_string());
         assert_eq!(allowed_model(&m, false, &[], "gpt-6-sol"), live);
-        assert_eq!(allowed_model(&m, true, &shared, "gpt-6.1-sol"), live);
-        assert_eq!(allowed_model(&m, true, &[], "gpt-6.1-sol"), None);
+        assert_eq!(allowed_model(&m, false, &[], "gpt-6.1-sol"), live);
+        assert_eq!(allowed_model(&m, true, &shared, "gpt-6.2-sol"), live);
+        assert_eq!(allowed_model(&m, true, &[], "gpt-6.2-sol"), None);
         assert_eq!(allowed_model(&m, false, &[], "no-such-model"), None);
     }
 }

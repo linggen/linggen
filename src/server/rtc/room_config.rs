@@ -146,7 +146,7 @@ mod tests {
         .with_successors();
         assert_eq!(
             cfg.shared_models,
-            vec!["gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]
+            vec!["gpt-6-sol", "gpt-6-luna", "gpt-6.2-sol"]
         );
     }
 }
