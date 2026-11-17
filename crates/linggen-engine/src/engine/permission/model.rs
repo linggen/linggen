@@ -436,6 +436,22 @@ pub(super) fn is_under_temp(target: &Path) -> bool {
     temp_roots().iter().any(|root| is_within(&t, root))
 }
 
+/// Under a turn's ceiling, Linggen's own folder is the owner's alone: its
+/// settings, its credentials, every session's record. Nothing in it is
+/// reached by a turn another device sent — whatever the session's grants
+/// or a skill's cover — but the session's own folder, read.
+fn owners_alone(
+    perms: &SessionPermissions,
+    (tier, ceiling): (PermissionMode, Option<PermissionMode>),
+    target: &Path,
+) -> bool {
+    if ceiling.is_none() || reads_own_dir(perms, tier, target) {
+        return false;
+    }
+    let home = normalize_path(&crate::paths::linggen_home().to_string_lossy());
+    is_within(&normalize_path(&target.to_string_lossy()), &home)
+}
+
 /// A read inside the session's own folder (its tasks' logs): allowed
 /// without a grant. Never a write, and never another session's folder —
 /// both sides are resolved, so `<own>/../<other>` is the other one.
@@ -703,6 +719,9 @@ fn check_grants(
                     } else {
                         PermissionMode::Read
                     };
+                    if let Some(c) = ceiling.filter(|_| owners_alone(session_perms, (tier, ceiling), arg_path)) {
+                        return beyond_ceiling(PermissionMode::Admin, c);
+                    }
                     // OS temp dir is always-available scratch, and a session
                     // reads its own folder — don't gate them.
                     if is_under_temp(arg_path) || reads_own_dir(session_perms, tier, arg_path) {
@@ -753,6 +772,10 @@ fn check_grants(
             }
         })
         .unwrap_or_else(|| session_cwd.to_path_buf());
+
+    if let Some(c) = ceiling.filter(|_| owners_alone(session_perms, (action_tier, ceiling), &target_path)) {
+        return beyond_ceiling(PermissionMode::Admin, c);
+    }
 
     // 3b. OS temp dir is always-available scratch (deny floor still applies);
     // a session reads its own folder.

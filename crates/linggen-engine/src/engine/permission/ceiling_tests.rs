@@ -77,3 +77,27 @@ fn with_no_ceiling_the_grants_decide() {
     assert!(allowed(&check("Write", None, &perms, None)));
     assert!(allowed(&check("Bash", Some("rm notes.txt"), &perms, None)));
 }
+
+/// Linggen's own folder is the owner's alone under a ceiling: a grant that
+/// covers it — the owner's, or one a skill stamped — reaches nothing there
+/// for a turn another device sent. With no ceiling the grants decide.
+#[test]
+fn a_turn_under_a_ceiling_reaches_nothing_in_linggens_own_folder() {
+    use PermissionMode::*;
+    let perms = granted();
+    let home = crate::paths::linggen_home();
+    let secret = home.join("credentials.json");
+    let secret = secret.to_str().unwrap();
+    let at = |tool: &str, cmd: Option<&str>, file: Option<&str>, ceiling| {
+        check_permission_for(tool, cmd, file, Path::new(WD), &perms, None, false, ceiling)
+    };
+    for ceiling in [Read, Edit] {
+        assert!(refused(&at("Read", None, Some(secret), Some(ceiling))), "{ceiling}");
+        assert!(refused(&at("Bash", Some(&format!("cat {secret}")), None, Some(ceiling))), "{ceiling}");
+        assert!(refused(&at("Glob", None, Some(home.to_str().unwrap()), Some(ceiling))), "{ceiling}");
+    }
+    // Elsewhere a read at read is still a read.
+    assert!(allowed(&at("Read", None, Some("/ceiling-test/wd/notes.txt"), Some(Read))));
+    // The owner's own turn: the grants decide, as before.
+    assert!(allowed(&at("Read", None, Some(secret), None)));
+}
