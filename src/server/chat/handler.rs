@@ -838,12 +838,10 @@ pub(crate) async fn run_session_turn(
     bind_turn_session(engine, ctx.session_id.clone());
     // Its place is the running one while it runs, unless whoever took the
     // turn lock for it kept it already.
-    let _mark = ctx.session_id.as_deref().and_then(|sid| {
-        manager.global_sessions.running_places.mark(sid, &ctx.place)
-    });
-    if let (Some(_), Some(sid)) = (&_mark, ctx.session_id.as_deref()) {
-        super::turn_place::keep_private_if_hidden(manager, sid, &ctx.place).await;
-    }
+    let _mark = match ctx.session_id.as_deref() {
+        Some(sid) => super::turn_place::mark_turn(manager, sid, &ctx.place).await,
+        None => None,
+    };
     // What closes this turn names this turn's run, never the last one's.
     engine.last_run_id = None;
     seat_member(engine, ctx).await;
@@ -1235,13 +1233,10 @@ pub(crate) async fn start_turn(
     let queue = crate::engine::turn_place::running::meets_running(running.as_ref(), &turn_place, rule);
     // Not queued: this turn holds the lock now, and its place is kept
     // before its message is.
-    let mark = (!was_busy)
-        .then(|| running_places.mark(&effective_session_id, &turn_place))
-        .flatten();
-    if mark.is_some() {
-        super::turn_place::keep_private_if_hidden(&state.manager, &effective_session_id, &turn_place)
-            .await;
-    }
+    let mark = match was_busy {
+        false => super::turn_place::mark_turn(&state.manager, &effective_session_id, &turn_place).await,
+        true => None,
+    };
     let kept_to = match was_busy {
         true => super::turn_place::hidden_app(&state.manager, &effective_session_id, &turn_place).await,
         false => None,
@@ -1353,17 +1348,7 @@ pub(crate) async fn start_turn(
         // Its own turn now: its place is the running one until it ends.
         let _mark = match mark {
             Some(mark) => Some(mark),
-            None => {
-                let places = &state_clone.manager.global_sessions.running_places;
-                let mark = places.mark(&session_id_for_queue, &turn_place);
-                super::turn_place::keep_private_if_hidden(
-                    &state_clone.manager,
-                    &session_id_for_queue,
-                    &turn_place,
-                )
-                .await;
-                mark
-            }
+            None => super::turn_place::mark_turn(&state_clone.manager, &session_id_for_queue, &turn_place).await,
         };
         let queued_item_id = queued_item_id.filter(|_| !shown);
         let mut engine = agent.lock().await;

@@ -77,6 +77,16 @@ pub(crate) async fn keep_in_day(
     if !crate::state_fs::day_session::is_day_session(session_id) {
         return None;
     }
+    mark_turn(manager, session_id, place).await
+}
+
+/// Keep `place` as the running turn's in `session_id`, and whether its talk
+/// is kept to its app. `None` when a turn's place is kept there already.
+pub(crate) async fn mark_turn(
+    manager: &crate::engine::agent::AgentManager,
+    session_id: &str,
+    place: &TurnPlace,
+) -> Option<crate::engine::turn_place::running::PlaceMark> {
     let mark = manager.global_sessions.running_places.mark(session_id, place)?;
     keep_private_if_hidden(manager, session_id, place).await;
     Some(mark)
