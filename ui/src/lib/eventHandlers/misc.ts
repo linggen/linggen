@@ -4,7 +4,7 @@ import { useUiStore } from '../../stores/uiStore';
 import { useUserStore, type UserType } from '../../stores/userStore';
 import { useChatStore } from '../../stores/chatStore';
 import { useRoomChatStore } from '../../stores/roomChatStore';
-import { launchInHost } from '../appHost';
+import { launchInHost, viewOf } from '../appHost';
 
 // ---------------------------------------------------------------------------
 // Notification — mission completed, session created, etc.
@@ -60,7 +60,7 @@ export function handleAppLaunched(item: UiEventOf<'app_launched'>): void {
   // event is broadcast, so one it isn't watching reaches it too.
   const view = (window as { __LINGGEN_VIEW__?: string }).__LINGGEN_VIEW__ || 'main';
   if (view === 'launcher') {
-    launchInHost(item.data?.skill || '');
+    launchInHost(item.data?.skill || '', viewOf(url));
     return;
   }
   if (view !== 'main' || item.session_id !== useSessionStore.getState().activeSessionId) return;

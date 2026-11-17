@@ -77,8 +77,8 @@ pub(super) fn bind(offers: &[Offer], labels: &[(usize, String)]) -> Vec<Shown> {
 }
 
 /// What a reply shows for a problem's offers, and whether the line is
-/// unlabelled — offers to show and none named, which is not said: a line with
-/// no button is a problem only raised, and it stays due.
+/// unlabelled — offers to show and none named. Such a line is said without
+/// buttons (`triggers::wake_and_offer`): never silent comes first.
 pub(super) fn shown(offers: Option<&[Offer]>, reply: Option<&str>) -> (Vec<Shown>, bool) {
     let (Some(offers), Some(reply)) = (offers, reply) else {
         return (Vec::new(), false);
@@ -127,7 +127,7 @@ mod tests {
     }
 
     #[test]
-    fn a_problem_whose_offers_she_left_unlabelled_is_not_said() {
+    fn a_line_that_labels_no_offer_is_known_as_unlabelled() {
         let o = offers();
         assert!(shown(Some(&o), Some("Your Mac is nearly full.")).1);
         assert!(!shown(Some(&o), Some("Full. [offer 1: Open Files]")).1);

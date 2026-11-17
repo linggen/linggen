@@ -359,7 +359,8 @@ or two chips, each bound to one offer under her label, beside our "Not now";
 on the Mac her bubble does (`pet_speak` carries `problem` and `offers`; her
 labels ride her reply as `[offer N: label]`, taken out before her voice and
 kept as the thread row's record of what she offered). A problem with offers
-she labelled none of is not said — it stays due. A tap is the person's
+she labelled none of is put off on the phone (it stays due); on the Mac,
+where the line is already a turn of hers, it is said without buttons. A tap is the person's
 button: on the phone it runs the registry tool through `OfferTap` (its own
 confirm card when destructive), or opens the route; on the Mac it posts the
 skill-tool route a page button uses (a tool above `read` asks once more), or

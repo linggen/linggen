@@ -572,8 +572,8 @@ pub(super) struct Raised<'a> {
 
 /// [`wake_and_speak`] for a line that raises a problem: the kickoff asks her
 /// to label one or two of its offers, and the bubble carries them as buttons.
-/// A problem with offers she labelled none of is not said — a line with no
-/// button is a problem only raised — so it stays due.
+/// A line she labelled no offer on is still said, bare: a problem raised
+/// with no button is a lesser thing than a problem kept from the person.
 pub(super) async fn wake_and_offer(
     state: Arc<ServerState>,
     (kickoff, table): (String, Option<Table>),
@@ -605,7 +605,10 @@ pub(super) async fn wake_and_offer(
     };
     let (shown, unlabelled) =
         super::offer_labels::shown(raised.as_ref().map(|r| r.offers), reply.as_deref());
-    let line = reply.as_deref().and_then(spoken_line).filter(|_| !unlabelled);
+    if unlabelled {
+        tracing::warn!("[yinyue-watch] a problem's offers were left unlabelled — said without buttons");
+    }
+    let line = reply.as_deref().and_then(spoken_line);
     let Some(line) = line else {
         // Unsaid: the fact it carried waits for the next turn.
         if let Some(f) = rode {

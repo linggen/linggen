@@ -9,7 +9,8 @@
  * is no IPC and nothing to raise.
  */
 
-type OpenApp = (skill: string) => boolean;
+/** Opens `skill`'s tab — at `view`, one of that page's own views, when the launch names one. */
+type OpenApp = (skill: string, view?: string) => boolean;
 
 let host: OpenApp | null = null;
 
@@ -27,9 +28,15 @@ async function raiseWindow(): Promise<void> {
   }
 }
 
+/** The view a launch URL names (`?view=`), for the host to land on. */
+export function viewOf(url: string): string | undefined {
+  const query = url.split('?')[1] ?? '';
+  return new URLSearchParams(query).get('view') || undefined;
+}
+
 /** Open the app's tab and bring the window up. False: no host, or no such app. */
-export function launchInHost(skill: string): boolean {
-  if (!host || !host(skill)) return false;
+export function launchInHost(skill: string, view?: string): boolean {
+  if (!host || !host(skill, view)) return false;
   void raiseWindow();
   return true;
 }

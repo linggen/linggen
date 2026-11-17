@@ -118,6 +118,9 @@ export const LauncherApp: React.FC = () => {
     };
   }, []);
 
+  // The view each app's frame was last asked to land on (a tapped offer's `open`).
+  const [views, setViews] = useState<Record<string, string>>({});
+
   const open = (name: string) => {
     setActiveName(name);
     setOpened((prev) => (prev.includes(name) ? prev : [...prev, name]));
@@ -129,8 +132,11 @@ export const LauncherApp: React.FC = () => {
   const appsRef = useRef(apps);
   appsRef.current = apps;
   useEffect(() => {
-    setAppHost((name) => {
+    setAppHost((name, view) => {
       if (!appsRef.current.some((a) => a.name === name)) return false;
+      // A launch that names a view reloads that app's frame there: the page
+      // reads `?view=` as it loads, and what a view means is its own.
+      if (view) setViews((prev) => ({ ...prev, [name]: view }));
       open(name);
       return true;
     });
@@ -140,7 +146,8 @@ export const LauncherApp: React.FC = () => {
   // in_launcher=1 tells the app it's hosted inside the unified launcher (vs a
   // standalone branded app) — apps use it to drop their own settings entry
   // point in favor of the launcher's shared settings.
-  const urlFor = (a: AppSkill) => `/apps/${a.name}/${a.app.entry}?app_mode=1&in_launcher=1`;
+  const urlFor = (a: AppSkill) =>
+    `/apps/${a.name}/${a.app.entry}?app_mode=1&in_launcher=1${views[a.name] ? `&view=${encodeURIComponent(views[a.name])}` : ''}`;
 
   return (
     <div className="flex flex-col h-screen bg-white dark:bg-[#0a0a0a] text-slate-900 dark:text-slate-200 overflow-hidden">
