@@ -147,12 +147,16 @@ works, no API key), so it runs before a release, not on every change:
 for parity of the installed copies and the hook proxy runs.
 
 Built (2026-10-05) differently from the plan in three ways:
-- **ling-mem MCP is mocked, not real.** A run passes only an allowlisted
-  environment, so `.mcp.json` can't be pointed off 9528. The hooks go to a
-  scratch daemon with invented rows instead, via the run's
-  `~/.linggen/client.json`. The suite lives in
-  `plugins/linggen/evals-isolated/`, so a bare `claude plugin eval .` finds
-  nothing.
+- **The door's MCP server is mocked, not real.** A run passes only an
+  allowlisted environment, so `.mcp.json` can't be pointed off 9527. The
+  model sees mocks under `mocks/linggen/` (one per tool, answering each of
+  its ops) and the door's tools list as `mocks/linggen/_tools.json`; each
+  case carries the door's server text as its system prompt. The hooks go to
+  a scratch engine with invented rows instead, via the run's
+  `~/.linggen/client.json`. A unit lock (`src/server/mcp/repo_check.rs`)
+  keeps the snapshot and the server text equal to the door's own. The suite
+  lives in `plugins/linggen/evals-isolated/`, so a bare
+  `claude plugin eval .` finds nothing.
 - **No Bash in runs.** The eval sandbox refuses Bash on this Mac (a symlink in
   `~/.docker`), so cases use only Skill and the mocked tools.
 - **Stamps are graded through the mock.** The `memory_add` mock echoes what

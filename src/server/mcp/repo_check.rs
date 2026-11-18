@@ -226,3 +226,65 @@ fn the_eval_snapshot_is_the_doors_list() {
         serde_json::to_string_pretty(&door).unwrap()
     );
 }
+
+/// Each eval case is shown this door's server text for this machine, as a
+/// host shows its MCP server's instructions — not an older server's.
+#[test]
+fn the_eval_cases_carry_the_doors_server_text() {
+    let text = super::instructions(View::Local);
+    let body = format!("# MCP Server Instructions\n\n## plugin:linggen:linggen\n{text}");
+    let block: String = body
+        .split('\n')
+        .map(|l| if l.is_empty() { String::new() } else { format!("  {l}") })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut cases = Vec::new();
+    walk(&root().join("plugins/linggen/evals-isolated"), &mut cases);
+    cases.retain(|p| p.file_name().is_some_and(|n| n == "prompt.md"));
+    assert!(cases.len() >= 5, "{cases:?}");
+    for case in cases {
+        let said = std::fs::read_to_string(&case).unwrap();
+        assert!(said.contains(&format!("append_system_prompt: |\n{block}\n---")), "{} carries another server text", case.display());
+    }
+}
+
+/// What the plugin's hooks send, as their source writes it, is a call the
+/// door takes in both views — the schemas are strict, and a hook drops a
+/// refused answer silently, so a shape the door refuses would turn recall
+/// off without a word. The stamped shapes are stamp-cwd.sh's output.
+#[test]
+fn the_plugins_hook_calls_are_calls_the_door_takes() {
+    use ling_mem::catalog::Resolved;
+    let hooks = root().join("plugins/linggen/hooks");
+    let source = |file: &str| std::fs::read_to_string(hooks.join(file)).unwrap();
+    // The literal shapes, tied to the line in each hook that builds them.
+    let written = [
+        ("autostart.sh", "{op: \"session_start\", cwd: $c}"),
+        ("recall.sh", "{query:$q, limit:$l}"),
+        ("recall.sh", "'{\"op\":\"days\",\"undreamed_only\":true}'"),
+        ("recall-on-delegate.sh", "{query:$q, limit:$l} + (if ($c | length) > 0 then {scope_root:$c} else {} end)"),
+    ];
+    for (file, shape) in written {
+        assert!(source(file).contains(shape), "{file} no longer builds {shape}");
+    }
+    let calls = [
+        ("memory_upkeep", serde_json::json!({"op": "session_start", "cwd": "/w/p", "root": "/w"})),
+        ("memory_search", serde_json::json!({"query": "what does Alex drink", "limit": 5, "scope_root": "/w"})),
+        ("memory_upkeep", serde_json::json!({"op": "days", "undreamed_only": true})),
+        ("memory_search", serde_json::json!({"query": "a delegated brief", "limit": 3})),
+        // stamp-cwd.sh: an add with every stamp, a search with its root.
+        ("memory_add", serde_json::json!({"content": "x", "source_session": "s1", "cwd": "/w/p", "root": "/w", "host": "claude-code"})),
+        ("memory_search", serde_json::json!({"op": "semantic", "query": "q", "scope_root": "/w"})),
+        // The status command's dream read, this machine's view only below.
+        ("memory_upkeep", serde_json::json!({"op": "dream_status"})),
+    ];
+    for view in [View::Local, View::Remote] {
+        for (tool, args) in &calls {
+            match catalog().resolve(view, tool, args.clone()) {
+                Resolved::Call { .. } => {}
+                Resolved::Refused(why) => panic!("{view:?}: {tool} {args} refused: {why}"),
+                Resolved::Unknown => panic!("{view:?}: {tool} unknown"),
+            }
+        }
+    }
+}

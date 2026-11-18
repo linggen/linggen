@@ -262,8 +262,8 @@ async fn the_rpc_shapes_are_locked() {
 
 /// Every name published before the fold, called now: nothing runs, the
 /// answer says to update the plugin, carries `UPGRADE_PLUGIN` and names
-/// what does the work now. Whoever calls it — a hidden tool's retired name
-/// tells an approved computer the same, and names nothing it may not call.
+/// what does the work now. An approved computer is told the same (for a
+/// tool its view lacks, the name it is told is unknown to it too).
 #[tokio::test]
 async fn a_retired_name_is_told_to_update_and_runs_nothing() {
     for retired in catalog().retired() {

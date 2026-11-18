@@ -7,28 +7,12 @@ append_system_prompt: |
   # MCP Server Instructions
 
   ## plugin:linggen:linggen
-  ling-mem is this user's memory, shared by Claude Code, Codex and Linggen. Save what makes a future session predict the user better — the person, not the task.
-
-  # Tiers
-  - core — who they are, always loaded: name, role/job, location, timezone, languages, family/pets. One short fact per row.
-  - semantic — durable, recalled on demand: goals, preferences ("always X / never Y" → type=preference, from=user; never core), decisions with their why, gotchas.
-  - episodic — the default capture (omit tier): events, milestones, run learnings. No search first; the nightly dream promotes what lasts.
-
-  # Saving
-  - Before a core/semantic add, memory_search the subject. Same subject or claim in other words = conflict; when unsure, treat it as one.
-  - Your own rows (from=derived): merge into one current-truth row via memory_add + replace_ids, never add then delete.
-  - The user's rows (from=user): ask first, showing each row's full text and date; then replace_ids + user_directed:true. Never from your own inference.
-  - What the user said is from=user. A replacement keeps the loser's tier and scope. A new status (shipped/fixed/dropped) replaces the old status row.
-  - "remember / forget / update X", in any language: search, act, user_directed:true.
-  - Anchor relative time to dates ("last month" → "2026-08"). occurred_at dates days and TTL; it never ranks.
-  - A row's scope is the directory it is about (default: the host's cwd). Pass scope (one of "Memory scopes here") when it isn't where you stand; global:true when it is about the person.
-  - A standing rule the user states ("always…", "以后都…") gets indexed:true and a summary (one line ≤ 80 chars) — the index loads it at session start under its scope.
-  - Never save secrets or file bodies you can re-read. Project internals stay episodic.
-
-  # Recall
-  Search when the question may touch past preferences, decisions or gotchas. Show each fact you use: "From memory (3 months ago): …". Never pass type, from or outcome to memory_search unless asked.
-
-  Full rules and examples: the memory skill.
+  Linggen memory works without an account. Save durable facts about the person, not project internals or secrets.
+  Core is tiny and always loaded: stable identity (name, role, location, languages, family). Semantic is durable and recalled on demand: preferences, decisions and why. Episodic is default staging for uncertain signal and events; no search first. Dream promotes what lasts.
+  Before saving core or semantic, search the subject. Mark the user's words from=user. Merge your own derived rows atomically with memory_add + replace_ids; never add then delete. Before replacing or rewriting a user row, show its full text and date and ask; set user_directed:true only after their answer or an explicit settled instruction. Keep tier and scope unless directed; supersede old status in the same write. Cite recalled facts you use.
+  For each background agent_run, including a follow-up, start a new background watcher at the returned /api/agent/wait WebSocket URL. Answer permission_request with agent_permit: allow_once, allow_session (path/folder for this session), or deny. Outward requests take allow_once or deny only; the deny floor cannot be granted. No reply in 10 minutes means deny. Read reply, followup, error and cannot_run from finished. If the watch ends first, call agent_status (op=session) once; if still running, start a new watch. Do not poll. Check pending and denied. Continue with session_id without widening grants.
+  On a usage limit, read its reset time (cannot_run.resets_at), then pick a ready model from agent_status (op=models) or come back after it; never retry before.
+  Browser tools control one visible Chrome tab; actions can prompt for per-site permission in Chrome. Read again after page changes. For memory upkeep use the dream, scan or solve runbook; memory_upkeep (op=dream_status) shows backlog and failures.
 ---
 
 Before I push: which weekday am I allowed to deploy to staging, and what is the staging host called?
