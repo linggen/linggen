@@ -399,6 +399,7 @@ async fn tell_in_place(
         sender: Some(sender),
         silence_ok: false,
         place: told_at,
+        turn: None,
     };
     super::chat::run_session_turn(&ctx, &mut engine, &state.manager, None).await;
 }

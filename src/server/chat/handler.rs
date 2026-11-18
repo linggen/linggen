@@ -813,8 +813,12 @@ pub(crate) async fn run_session_turn(
         Some(sid) => super::turn_place::mark_turn(manager, sid, &ctx.place),
         None => None,
     };
-    // What closes this turn names this turn's run, never the last one's.
-    engine.last_run_id = None;
+    // The turn's own settings; what closes it names this turn's run, never
+    // the last one's.
+    match ctx.turn.clone() {
+        Some(turn) => engine.begin_turn(turn),
+        None => engine.last_run_id = None,
+    }
     seat_member(engine, ctx).await;
     engine.withhold_session_tools(&manager.global_sessions, ctx.session_id.as_deref());
     super::thread::sync(engine, ctx).await;
@@ -831,7 +835,10 @@ pub(crate) async fn run_session_turn(
     }
     dispatch_turn(ctx, engine, manager, &ctx.clean_msg).await;
     super::thread::mark(engine, ctx);
-    super::turn_place::leave_turn_place(engine);
+    match ctx.turn {
+        Some(_) => engine.end_turn(),
+        None => super::turn_place::leave_turn_place(engine),
+    }
 }
 
 /// Her words at a table that isn't her own thread are heard, too.
@@ -1444,10 +1451,6 @@ pub(crate) async fn start_turn(
         if super::members::is_companion(&target_id_clone) {
             crate::server::resident::tune_companion(&mut engine, &pet);
         }
-        // Set per turn by whoever drives it; a chat turn withholds nothing
-        // and names no language of its own (its message may: `(lang en)`).
-        engine.chat_turn_begins();
-
         engine.tools.builtins.set_session_id(session_id.clone());
 
         // Mission-only bash prefixes never reach a person's turn.
@@ -1469,14 +1472,14 @@ pub(crate) async fn start_turn(
         // mission's keeps less of the biography).
         typed_spec(&state_clone, &session_id_for_queue, &engine, &policy, (session_creator, req_level))
             .apply(&mut engine);
-        engine.suggest_followups = req_followups
-            && !is_consumer
-            && state
-                .manager
-                .get_config_snapshot()
-                .await
-                .agent
-                .suggest_followups;
+        // A chat turn withholds nothing and names no language of its own
+        // (its message may: `(lang en)`); its surface may show the hint.
+        let turn = crate::engine::turn_place::TurnSettings {
+            followups: req_followups
+                && !is_consumer
+                && state.manager.get_config_snapshot().await.agent.suggest_followups,
+            ..Default::default()
+        };
 
         let model_label = engine.model_id.clone();
         state_clone
@@ -1502,12 +1505,10 @@ pub(crate) async fn start_turn(
             via: via.clone(),
             silence_ok: false,
             place: turn_place,
+            turn: Some(turn),
         };
 
         run_session_turn(&ctx, &mut engine, &manager, None).await;
-        // The ask was this turn's: the next turn on this engine may be an
-        // event turn or a delivery, which shows no hint.
-        engine.suggest_followups = false;
         hear_her_at_table(&state_clone, &engine, &target_id_clone, &session_id_for_queue);
 
         // TurnComplete gives the Web UI a single finalizer.

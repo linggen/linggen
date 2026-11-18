@@ -372,7 +372,7 @@ fn a_chat_turn_after_her_moment_answers_in_the_language_its_message_names() {
     engine.turn_language = Some("zh-Hans".to_string());
     engine.withheld_tools.insert("AppTool".to_string());
     engine.turn_fault = true;
-    engine.chat_turn_begins();
+    engine.begin_turn(crate::engine::turn_place::TurnSettings::default());
     assert_eq!(engine.turn_language, None);
     assert!(engine.withheld_tools.is_empty());
     assert!(!engine.turn_fault, "a fault's turn does not outlive it");

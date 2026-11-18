@@ -277,6 +277,7 @@ async fn run_at(
             // At a table, silence is an answer and leaves no row there.
             silence_ok: !turn.home && trigger_source != "asked",
             place: turn.place.clone(),
+            turn: None,
         };
         let cap = turn.home.then_some(YINYUE_MAX_LIVE_MSGS);
         crate::server::chat::run_session_turn(&ctx, &mut engine, &state.manager, cap).await;

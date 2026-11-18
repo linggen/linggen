@@ -48,6 +48,7 @@ pub(crate) async fn reply_in_session(
         via: None,
         silence_ok: true,
         place,
+        turn: None,
     };
     ready(&ctx, &mut engine).await;
     let tail = super::thread::spoken_tail(&ctx, TAIL_MESSAGES).await;
@@ -90,6 +91,7 @@ pub(crate) async fn line_now(state: Arc<ServerState>, session_id: &str, agent: &
         via: None,
         silence_ok: true,
         place: crate::engine::turn_place::TurnPlace::of_session(Some(&meta)),
+        turn: None,
     };
     ready(&ctx, &mut engine).await;
     let tail = super::thread::spoken_tail(&ctx, TAIL_MESSAGES).await;

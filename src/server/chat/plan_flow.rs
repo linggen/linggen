@@ -458,6 +458,7 @@ async fn run_approved_plan_task(
         via: None,
         silence_ok: false,
         place,
+        turn: None,
     };
     run_plan_in_place(&ctx, &mut engine).await;
     complete_plan(&mut engine, &manager, &root, (&sid_default, &agent_id, &stamp)).await;

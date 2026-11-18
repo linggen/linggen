@@ -62,8 +62,8 @@ const LISTED: &[(&str, usize, &str)] = &[
     ),
     (
         "crates/linggen-engine/src/engine/types.rs",
-        7,
-        "a delegated child's task; a chat turn's start",
+        2,
+        "a delegated child's task",
     ),
     (
         "crates/linggen-engine/src/engine/tools/delegation.rs",
@@ -71,7 +71,7 @@ const LISTED: &[(&str, usize, &str)] = &[
         "a delegated child's task (its own fresh engine)",
     ),
     // Bypasses: a turn's settings written by its caller.
-    ("src/server/chat/handler.rs", 7, "a chat turn's run, seat and hint"),
+    ("src/server/chat/handler.rs", 5, "a turn started with no settings; a member's seat"),
     ("src/server/chat/structured.rs", 11, "a reply's run"),
     ("src/server/chat/plan_flow.rs", 12, "a plan's run and its execution"),
     ("src/server/chat/skill_dispatch.rs", 4, "a skill command's run"),
