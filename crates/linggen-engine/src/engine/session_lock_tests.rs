@@ -54,11 +54,9 @@ const LISTED: &[(&str, usize, &str)] = &[
         2,
         "tests",
     ),
-    ("src/server/chat/admin.rs", 2, "the thread"),
     // The thread's cache.
-    ("src/server/chat/thread.rs", 3, "the thread module itself"),
+    ("src/server/chat/thread.rs", 5, "the thread module itself"),
     ("src/server/chat/runtime.rs", 4, "the thread; a turn's last call"),
-    ("src/server/chat/clear_place.rs", 1, "the thread"),
     ("src/server/resident/session_roll.rs", 1, "the thread"),
     (
         "src/server/mcp_agent.rs",

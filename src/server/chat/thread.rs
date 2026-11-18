@@ -76,6 +76,18 @@ pub(super) async fn sync(engine: &mut AgentEngine, ctx: &ChatRunCtx) -> bool {
     rebuild(engine, ctx).await
 }
 
+/// Forget the engine's thread (a Clear, a `/compact`): its next turn reads
+/// the session's file again.
+pub(crate) fn forget(engine: &mut AgentEngine) {
+    engine.chat_history.clear();
+}
+
+/// The session's file was rewritten under the engine (an app's rows
+/// cleared): its next sync rebuilds the thread, even one marked caught up.
+pub(crate) fn reload_next(engine: &mut AgentEngine) {
+    engine.reload_thread = true;
+}
+
 /// Rebuild the engine's thread from the session's file, without the
 /// message this turn answers. False when the file can't be read.
 pub(super) async fn rebuild(engine: &mut AgentEngine, ctx: &ChatRunCtx) -> bool {

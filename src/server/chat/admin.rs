@@ -75,7 +75,7 @@ pub(crate) async fn clear_chat_history_api(
             // map meanwhile would stall every other session's lookup.
             for engine_mutex in state.manager.session_engines_of(&session_id).await {
                 let mut engine = engine_mutex.lock().await;
-                engine.chat_history.clear();
+                super::thread::forget(&mut engine);
                 engine.forget_observations();
             }
             let _ = state.events_tx.send(ServerEvent::StateUpdated);
@@ -371,7 +371,7 @@ pub(crate) async fn compact_chat_api(
     if result.is_some() {
         for engine in state.manager.session_engines_of(&session_id).await {
             let mut engine = engine.lock().await;
-            engine.chat_history.clear();
+            super::thread::forget(&mut engine);
             engine.forget_observations();
         }
     }

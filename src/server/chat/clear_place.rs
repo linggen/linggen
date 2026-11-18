@@ -58,7 +58,7 @@ async fn clear_place(
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
     for engine in state.manager.session_engines_of(session_id).await {
-        engine.lock().await.reload_thread = true;
+        super::thread::reload_next(&mut *engine.lock().await);
     }
     let _ = state.events_tx.send(ServerEvent::StateUpdated);
     Json(serde_json::json!({ "removed": removed })).into_response()
