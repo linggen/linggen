@@ -1200,7 +1200,6 @@ async fn her_moments_hidden_kickoff_is_hers_alone_in_the_day() {
 /// Right now block, the most present surface winning
 /// (`presence::active_and_idle_focused_surfaces_read_present`).
 #[tokio::test]
-#[ignore = "in the day her talk sits at Ling's table with his `*` set, so no Right now block (it needs `sense` named)"]
 async fn in_the_day_her_call_reads_the_room() {
     let setup = Setup::default().script(Agent::Yinyue, vec![text("Here.")]);
     let (w, _) = day_world_at(12, setup).await;
@@ -1224,7 +1223,6 @@ async fn in_the_day_her_call_reads_the_room() {
 /// Her own talk in the day is offered her own tools — her senses, not
 /// Ling's hands — as her own thread offers them (`agents/yinyue.md`).
 #[tokio::test]
-#[ignore = "in the day her own talk is seated at Ling's table and offered his whole tool set, not hers"]
 async fn in_the_day_her_own_talk_offers_her_own_tools() {
     let setup = Setup::default().script(Agent::Yinyue, vec![text("Here.")]);
     let (w, _) = day_world_at(12, setup).await;
@@ -1237,5 +1235,27 @@ async fn in_the_day_her_own_talk_offers_her_own_tools() {
     assert!(offers(&call, "sense"), "{names:?}");
     for not in ["Bash", "Write", "Edit"] {
         assert!(!offers(&call, not), "she is offered Ling's {not}: {names:?}");
+    }
+}
+
+/// Her prompt export at home in the day shows the tools her talk there is
+/// offered: her own, not Ling's.
+#[tokio::test]
+async fn in_the_day_her_prompt_export_at_home_shows_her_own_tools() {
+    let setup = Setup::default().script(Agent::Yinyue, vec![text("Here.")]);
+    let (w, _) = day_world_at(12, setup).await;
+    let mark = w.mark();
+    w.api.post("/api/yinyue/chat", json!({"text": "Are you there?"})).await;
+    w.wait_agent(Agent::Yinyue, mark).await;
+    let day = w.api.get("/api/sessions/day").await["id"].as_str().unwrap().to_string();
+    let q = format!("/api/chat/system-prompt?project_root=&agent_id=yinyue&session_id={day}");
+    let e = w.api.get(&q).await;
+    let names: Vec<&str> = e["tools"]
+        .as_array()
+        .map(|all| all.iter().filter_map(|t| t["function"]["name"].as_str().or(t["name"].as_str())).collect())
+        .unwrap_or_default();
+    assert!(names.contains(&"sense"), "{names:?}");
+    for not in ["Bash", "Write", "Edit"] {
+        assert!(!names.contains(&not), "her export shows Ling's {not}: {names:?}");
     }
 }

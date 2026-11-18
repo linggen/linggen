@@ -194,6 +194,11 @@ session, prompt and row is as before. On (decided by the builder 2026-11-15/16):
 - **Copy system prompt** shows the prompt and tools of the place it is
   pressed in (the page names its app): an app's page its app's place, the
   main page home's. A private app's page shows none of the app.
+- **Each member is itself at home**: at home in the day a member other
+  than the lead (Yinyue) is offered its own tools, not the lead's set — so
+  her talk there reads the room (Right now) as her own thread does. At an
+  app's place the place says what each member is offered; a shared session
+  a person made keeps the table's set (`shared-session-spec.md`).
 
 Built (2.4 branch, 2026-11-16/17): all of the above, in `server::day_session`, `server::person`,
 `state_fs::day_session`, `TurnPlace::private_app` and `tools::exit_gate`.

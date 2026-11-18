@@ -165,7 +165,8 @@ pub(crate) async fn get_system_prompt_api(
     // protocol), and the world as its creator decides.
     export_spec(session_meta.as_ref(), &place).apply(&mut engine);
     // Seated as the member it is, on the model it runs on there.
-    seat_for_export(&state, &mut engine, &root, &members, agent_id).await;
+    let at = session_meta.as_ref().map(|m| (m.id.as_str(), &place));
+    seat_for_export(&state, &mut engine, (&root, at), &members, agent_id).await;
 
     // Apply session-bound skill or mission so the exported prompt matches what
     // the model actually sees during a chat turn. Without this, the export
@@ -215,27 +216,21 @@ fn export_spec(
     SessionSpec::of(meta).typed(owner, Memory::of_turn(turn_owner), None)
 }
 
-/// Seat the export's engine as its turn is seated (`handler::seat_member`):
-/// another member at the lead's table uses the lead's tools; the companion
-/// gets her Pet tuning; each runs on the model it has in the session.
+/// Seat the export's engine as its turn is seated (`members::seat_of`, at
+/// `at`: the session and the place the page stands in); the companion gets
+/// her Pet tuning; each runs on the model it has in the session.
 async fn seat_for_export(
     state: &Arc<ServerState>,
     engine: &mut crate::engine::AgentEngine,
-    root: &std::path::Path,
+    (root, at): (&std::path::Path, Option<(&str, &crate::engine::turn_place::TurnPlace)>),
     members: &[crate::state_fs::sessions::SessionMember],
     agent_id: &str,
 ) {
-    let lead = super::members::lead(members);
-    if lead != agent_id {
-        let tools = state
-            .manager
-            .agents
-            .find(root, &lead)
-            .await
-            .ok()
-            .flatten()
-            .map(|spec| spec.spec.tools);
-        engine.seat_at(Some((lead, tools)));
+    let home = crate::engine::turn_place::TurnPlace::home();
+    let (sid, place) = at.unwrap_or(("", &home));
+    let seat = super::members::seat_of(&state.manager, root, members, agent_id, sid, place).await;
+    if seat.is_some() {
+        engine.seat_at(seat);
     }
     if super::members::is_companion(agent_id) {
         let pet = state.manager.get_config_snapshot().await.pet;

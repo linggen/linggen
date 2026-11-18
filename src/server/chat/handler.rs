@@ -856,27 +856,15 @@ fn trim_capped(engine: &mut crate::engine::AgentEngine, cap: Option<usize>) {
     }
 }
 
-/// Where this member sits this turn: the session's lead when that is
-/// someone else — its tools are the session's set — or the lead itself.
+/// Where this member sits this turn (`members::seat_of`): at the session's
+/// lead's table when that is someone else, or as the lead itself.
 pub(super) async fn seat_member(engine: &mut crate::engine::AgentEngine, ctx: &ChatRunCtx) {
     let Some(sid) = ctx.session_id.as_deref() else {
         return;
     };
     let members = super::members::of_session(&ctx.manager, sid).await;
-    let lead = super::members::lead(&members);
-    if lead == ctx.agent_id {
-        engine.seat_at(None);
-        return;
-    }
-    let tools = ctx
-        .manager
-        .agents
-        .find(&ctx.root, &lead)
-        .await
-        .ok()
-        .flatten()
-        .map(|spec| spec.spec.tools);
-    engine.seat_at(Some((lead, tools)));
+    let seat = super::members::seat_of(&ctx.manager, &ctx.root, &members, &ctx.agent_id, sid, &ctx.place).await;
+    engine.seat_at(seat);
 }
 
 /// Keep a capped session's live history near `cap` messages — in chunks.

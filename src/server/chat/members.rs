@@ -78,6 +78,40 @@ pub(crate) fn seated(members: &[SessionMember], id: &str) -> Option<Vec<SessionM
     Some(out)
 }
 
+/// Where `agent` sits for a turn standing at `place` of session
+/// `session_id`, as [`AgentEngine::seat_at`] takes it: `None` when it leads
+/// the session; else at the lead's table, with the lead's declared tools as
+/// the session's set — except at home in a day's session (with the setting
+/// on), where a member keeps its own list: a day is no table set up for two
+/// agents to share one set. At an app's place the place says what each
+/// member is offered.
+///
+/// [`AgentEngine::seat_at`]: crate::engine::AgentEngine::seat_at
+pub(crate) async fn seat_of(
+    manager: &AgentManager,
+    root: &std::path::Path,
+    members: &[SessionMember],
+    agent: &str,
+    session_id: &str,
+    place: &crate::engine::turn_place::TurnPlace,
+) -> Option<(String, Option<Vec<String>>)> {
+    let lead = lead(members);
+    if lead == agent {
+        return None;
+    }
+    if place.skill.is_none() && crate::server::day_session::is_day(session_id) && manager.daily_session() {
+        return Some((lead, None));
+    }
+    let tools = manager
+        .agents
+        .find(root, &lead)
+        .await
+        .ok()
+        .flatten()
+        .map(|spec| spec.spec.tools);
+    Some((lead, tools))
+}
+
 /// The session's members, read from its meta and its skill.
 pub(crate) async fn of_session(manager: &AgentManager, session_id: &str) -> Vec<SessionMember> {
     let Ok(Some(meta)) = manager.global_sessions.get_session_meta(session_id) else {
