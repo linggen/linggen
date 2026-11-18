@@ -26,8 +26,9 @@
   outside the folder, or leaving the machine, still asks first.
 - **Outward commands always ask, once.** Publishing, ssh and a push to main
   ask whatever you have granted.
-- **Fewer questions for harmless commands.** Running a program or copying one
-  is judged at read, and `$HOME` in a command is read as the shell reads it.
+- **Fewer questions for harmless commands.** Running a script in the folder,
+  or copying a file out of somewhere you may read, no longer asks; `$HOME` is
+  read as the shell reads it.
 - **A plugin run can come with its folders preset.** `agent_run` takes the
   folders and tools a new run may use without asking, within the caller's own
   level.
@@ -68,6 +69,8 @@
 - **Stopping a background task** right after its turn ended no longer fails.
 - **An agent set to a retired model** now runs on its successor.
 - **A long name on a crowded 灵境 field card** no longer runs into its status.
+- **灵境: a won story fight shows one 所得 card** with everything it paid, and
+  啸月 is greyed while none of his bodies stands.
 
 ### For developers / under the hood
 
