@@ -19,6 +19,8 @@ use std::collections::HashSet;
 pub struct ConsumerCeiling {
     pub tools: Vec<String>,
     pub skills: Vec<String>,
+    /// The models the room shares (`shared_models`).
+    pub models: Vec<String>,
 }
 
 /// Encapsulates all permission decisions for a session run.
@@ -32,6 +34,9 @@ pub struct SessionPolicy {
     pub allowed_tools: Option<HashSet<String>>,
     /// Skills the session is allowed to invoke. None = unrestricted (owner).
     pub allowed_skills: Option<HashSet<String>>,
+    /// Models the session may run on, as the room lists them. None =
+    /// unrestricted (owner). Read through [`Self::asker`].
+    pub allowed_models: Option<Vec<String>>,
     /// When true, the agent never prompts the user for permissions.
     pub locked: bool,
     /// Prompt profile — which system prompt sections to include.
@@ -44,6 +49,7 @@ impl SessionPolicy {
         Self {
             allowed_tools: None,
             allowed_skills: None,
+            allowed_models: None,
             locked: false,
             prompt_profile: super::prompt::profile::PromptProfile::owner(),
         }
@@ -54,6 +60,7 @@ impl SessionPolicy {
         Self {
             allowed_tools: Some(ceiling.tools.into_iter().collect()),
             allowed_skills: Some(ceiling.skills.into_iter().collect()),
+            allowed_models: Some(ceiling.models),
             locked: true,
             prompt_profile: super::prompt::profile::PromptProfile::consumer(),
         }
@@ -66,6 +73,14 @@ impl SessionPolicy {
         match user_type {
             "consumer" => Self::consumer(load_ceiling()),
             _ => Self::owner(),
+        }
+    }
+
+    /// Who asks for a model under this policy (`model_choice`).
+    pub fn asker(&self) -> crate::engine::model_choice::Asker<'_> {
+        match &self.allowed_models {
+            Some(shared) => crate::engine::model_choice::Asker::Guest(shared),
+            None => crate::engine::model_choice::Asker::Owner,
         }
     }
 

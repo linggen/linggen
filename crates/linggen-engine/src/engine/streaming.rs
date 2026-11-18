@@ -447,6 +447,17 @@ impl AgentEngine {
         let session_switch = self.session_allows_fallback();
         let may_switch = self.auto_fallback && session_switch;
 
+        // A room's guest runs only what the room shares — before any call,
+        // whatever the session's switch says.
+        if let Err(why) =
+            crate::engine::model_choice::live(&self.model_manager, self.model_asker(), &model_id)
+        {
+            if why == crate::engine::model_choice::Why::NotShared {
+                self.note_run_model(&model_id);
+                return Err(anyhow::anyhow!("model '{model_id}' is {}", why.says()));
+            }
+        }
+
         // A session that may not switch cannot be saved by the chain either:
         // a model this machine does not have fails here, named, instead of
         // as "Model x not found" from deep in a client.
@@ -580,7 +591,22 @@ impl AgentEngine {
     /// only bail AUTH_REQUIRED would replace the real error (a BYOK rate
     /// limit, say) with a sign-in demand for a model the user never chose.
     fn next_fallback_model(&self, tried: &[String]) -> Option<String> {
-        crate::engine::model_choice::next_down(&self.model_manager, &self.default_models, tried)
+        crate::engine::model_choice::next_down(
+            &self.model_manager,
+            self.model_asker(),
+            &self.default_models,
+            tried,
+        )
+    }
+
+    /// Who this turn asks for models as: a room's guest under its policy,
+    /// else the owner.
+    fn model_asker(&self) -> crate::engine::model_choice::Asker<'_> {
+        self.tools
+            .builtins
+            .session_policy
+            .as_ref()
+            .map_or(crate::engine::model_choice::Asker::Owner, |p| p.asker())
     }
 
     /// Record the model actually in use as this member's in the session, so
@@ -917,6 +943,21 @@ mod fallback_window_tests {
         String,
         String,
     ) {
+        run_session_case_as(flag, None).await
+    }
+
+    /// [`run_session_case`] for a room's guest the room shares only the
+    /// primary (`Some(true)`) or only the backup (`Some(false)`) with.
+    async fn run_session_case_as(
+        flag: Option<bool>,
+        guest_shares_primary: Option<bool>,
+    ) -> (
+        Result<StreamResult>,
+        Vec<String>,
+        Option<String>,
+        String,
+        String,
+    ) {
         let requests = Arc::new(Mutex::new(Vec::new()));
         let fake = Fake {
             requests: requests.clone(),
@@ -978,6 +1019,16 @@ mod fallback_window_tests {
         engine.set_manager_context(manager.clone());
         engine.session_id = Some(session.clone());
         engine.set_run_id(Some(run_id.clone()));
+        if let Some(primary_only) = guest_shares_primary {
+            let shared = if primary_only { &primary } else { &backup };
+            crate::engine::session_policy::SessionPolicy::consumer(
+                crate::engine::session_policy::ConsumerCeiling {
+                    models: vec![shared.clone()],
+                    ..Default::default()
+                },
+            )
+            .apply(&mut engine);
+        }
         let messages = vec![ChatMessage::new("user", "hello")];
         let result = engine.stream_with_fallback(&messages, None).await;
         let asked: Vec<String> = requests
@@ -1026,6 +1077,26 @@ mod fallback_window_tests {
             crate::provider::error::kind_of(&err),
             crate::provider::error::ProviderErrorKind::Server5xx
         );
+    }
+
+    /// A guest's turn falls back only to a model the room shares.
+    #[tokio::test]
+    async fn a_guest_falls_back_only_to_a_shared_model() {
+        let (result, asked, _run_model, _primary, _backup) =
+            run_session_case_as(None, Some(true)).await;
+        assert!(result.is_err(), "the primary's failure is the turn's");
+        assert_eq!(asked, ["primary"], "the unshared backup is never called");
+    }
+
+    /// A guest's turn on a model the room does not share never starts.
+    #[tokio::test]
+    async fn a_guest_never_runs_a_model_the_room_does_not_share() {
+        let (result, asked, _run_model, primary, _backup) =
+            run_session_case_as(None, Some(false)).await;
+        let said = result.err().expect("refused").to_string();
+        assert!(said.contains(&format!("'{primary}'")), "{said}");
+        assert!(said.contains("not shared in this room"), "{said}");
+        assert!(asked.is_empty(), "no model is called: {asked:?}");
     }
 
     #[tokio::test]

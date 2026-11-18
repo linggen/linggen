@@ -47,9 +47,11 @@ pub struct Rule<'a> {
 pub enum Why {
     /// This machine has no model by that id (nor a successor of it).
     NotHere,
-    /// The room does not share it with this guest.
+    /// The room does not share it with this guest. The stream refuses such
+    /// a model (`stream_with_fallback`), so a guest never runs one.
     NotShared,
-    /// The room shares no model this machine has.
+    /// The room shares no model this machine has. The choice names the
+    /// standing model, which the stream then refuses as not shared.
     NothingShared,
 }
 
@@ -197,8 +199,13 @@ fn first_shared(models: &ModelManager, shared: &[String]) -> Option<String> {
 
 /// The next model down when the one in use cannot answer during a call: the
 /// routing chain in order, then the always-present Linggen Cloud model —
-/// each registered, signed in, not benched and not yet tried.
-pub fn next_down(models: &ModelManager, chain: &[String], tried: &[String]) -> Option<String> {
+/// each one this asker may run, signed in, not benched and not yet tried.
+pub fn next_down(
+    models: &ModelManager,
+    asker: Asker<'_>,
+    chain: &[String],
+    tried: &[String],
+) -> Option<String> {
     let cloud = crate::provider::models::LINGGEN_CLOUD_MODEL_ID.to_string();
     chain
         .iter()
@@ -206,7 +213,7 @@ pub fn next_down(models: &ModelManager, chain: &[String], tried: &[String]) -> O
         .chain(std::iter::once(cloud))
         .find(|m| {
             !tried.contains(m)
-                && models.has_model(m)
+                && live(models, asker, m).is_ok()
                 && models.model_auth_ok(m)
                 && !crate::provider::models::in_cooldown(m)
         })

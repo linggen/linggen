@@ -1458,6 +1458,7 @@ pub(crate) async fn start_turn(
                 crate::engine::session_policy::ConsumerCeiling {
                     tools: room.allowed_tools,
                     skills: room.allowed_skills,
+                    models: room.shared_models,
                 }
             });
         // A person's turn: the session's spec typed by this policy — the
