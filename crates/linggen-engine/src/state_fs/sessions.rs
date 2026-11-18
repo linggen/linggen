@@ -417,6 +417,11 @@ pub struct ChatMsg {
     pub place: Option<String>,
 }
 
+/// The pseudo-sender a compaction summary is kept under: context for every
+/// member, never a line of dialogue, and no place's row
+/// ([`ChatMsg::place_of`]).
+pub const COMPACTION_SENDER: &str = "compaction";
+
 impl ChatMsg {
     /// The key of the place this row was written in, in session `meta`.
     pub fn place_in(&self, meta: &SessionMeta) -> String {
@@ -426,6 +431,16 @@ impl ChatMsg {
                 .key()
                 .to_string(),
         }
+    }
+
+    /// The place this row belongs to in session `meta`, as a Clear and a
+    /// page's fold ask it: `None` for the compaction summary, which is the
+    /// whole session's — no place's Clear takes it, no page folds it.
+    pub fn place_of(&self, meta: &SessionMeta) -> Option<String> {
+        if self.from_id == COMPACTION_SENDER {
+            return None;
+        }
+        Some(self.place_in(meta))
     }
 }
 

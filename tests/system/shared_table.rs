@@ -171,7 +171,7 @@ async fn b_her_write_asks_and_deny_writes_nothing() {
 
 /// A message long enough that a compaction has something to summarize: the
 /// verbatim tail keeps 15% of the smallest window (32k tokens here).
-fn filler() -> String {
+pub(crate) fn filler() -> String {
     (0..900)
         .map(|i| format!("filler-{i:05} the quick brown fox jumps over the lazy dog."))
         .collect::<Vec<_>>()
@@ -179,7 +179,7 @@ fn filler() -> String {
 }
 
 /// The first message of a member's built thread.
-fn opening(call: &Call) -> String {
+pub(crate) fn opening(call: &Call) -> String {
     call.thread()
         .first()
         .map(|(_, t)| t.clone())

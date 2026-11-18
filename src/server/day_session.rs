@@ -230,13 +230,14 @@ pub(crate) fn rows_for_page(
 
 /// A history row's meta with the place it was written in, for a day's
 /// session (`meta` is that session's; `None` elsewhere: no place is shown).
+/// The compaction summary is the day's and shows none.
 pub(crate) fn with_place(
     mut row_meta: serde_json::Value,
     row: &ChatMsg,
     meta: Option<&SessionMeta>,
 ) -> serde_json::Value {
-    if let Some(meta) = meta {
-        row_meta["place"] = serde_json::Value::from(row.place_in(meta));
+    if let Some(place) = meta.and_then(|meta| row.place_of(meta)) {
+        row_meta["place"] = serde_json::Value::from(place);
     }
     row_meta
 }

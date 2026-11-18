@@ -11,9 +11,9 @@
 use crate::engine::AgentEngine;
 use crate::state_fs::sessions::ChatMsg;
 
-/// The pseudo-sender a compaction summary is kept under: context for every
-/// member, never a line of dialogue.
-pub const COMPACTION_SENDER: &str = "compaction";
+/// The pseudo-sender a compaction summary is kept under (the store's, which
+/// reads the summary as no place's row).
+pub use crate::state_fs::sessions::COMPACTION_SENDER;
 
 /// The rows from the newest compaction summary on (all of them when none).
 pub fn since_compaction(rows: &[ChatMsg]) -> &[ChatMsg] {

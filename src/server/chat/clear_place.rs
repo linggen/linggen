@@ -64,14 +64,15 @@ async fn clear_place(
     Json(serde_json::json!({ "removed": removed })).into_response()
 }
 
-/// `rows` without those written in `app`'s place of session `meta`.
+/// `rows` without those written in `app`'s place of session `meta`; the
+/// compaction summary is the day's and stays.
 fn without_place(
     rows: Vec<crate::state_fs::sessions::ChatMsg>,
     meta: &crate::state_fs::sessions::SessionMeta,
     app: &str,
 ) -> Vec<crate::state_fs::sessions::ChatMsg> {
     rows.into_iter()
-        .filter(|r| r.place_in(meta) != app)
+        .filter(|r| r.place_of(meta).as_deref() != Some(app))
         .collect()
 }
 

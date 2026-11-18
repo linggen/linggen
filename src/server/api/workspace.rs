@@ -351,7 +351,7 @@ pub(crate) async fn get_workspace_state(
                 false => sanitize_message_for_ui(&m.from_id, &m.content)?,
             };
             let images = std::mem::take(&mut m.images);
-            let place = day.as_ref().map(|d| m.place_in(d));
+            let place = day.as_ref().and_then(|d| m.place_of(d));
             let meta = crate::state_fs::StateFile::Message {
                 id: format!("msg-{}", m.timestamp),
                 from: m.from_id,

@@ -1262,3 +1262,33 @@ async fn in_the_day_her_prompt_export_at_home_shows_her_own_tools() {
         assert!(!names.contains(&not), "her export shows Ling's {not}: {names:?}");
     }
 }
+
+/// The compaction summary is the day's, no place's: Clear on the main page
+/// keeps it, a page never folds it, and the next turn starts at it.
+#[tokio::test]
+async fn clear_at_home_keeps_the_days_summary() {
+    use crate::shared_table::{filler, opening};
+    let setup = Setup::default()
+        .script(Agent::Ling, vec![text("OK."), text("Fine."), text("Still here.")])
+        .extra("context compaction assistant", "SUMMARY: Alex sent filler; Ling said OK.");
+    let (w, _) = day_world_at(12, setup).await;
+    let day = w.api.get("/api/sessions/day").await["id"].as_str().unwrap().to_string();
+    turn_at(&w, &day, None, &format!("Ignore this filler.\n{}", filler()), Agent::Ling).await;
+    turn_at(&w, &day, None, "Short one.", Agent::Ling).await;
+    let resp = w.api.post("/api/chat/compact", json!({"session_id": day, "project_root": w.work()})).await;
+    assert_eq!(resp["compacted"], true, "not compacted: {resp}");
+
+    w.api.post("/api/chat/clear", json!({"session_id": day})).await;
+    let summaries = w.rows(&day).iter().filter(|r| r.from_id == "compaction").count();
+    assert_eq!(summaries, 1, "Clear at home took the day's summary");
+    let history = w.api.history(&day, &w.work()).await;
+    let shown = history["messages"].as_array().cloned().unwrap_or_default();
+    let summary = shown.iter().find(|r| r[1].as_str().is_some_and(|t| t.contains("SUMMARY: Alex")));
+    let summary = summary.unwrap_or_else(|| panic!("no summary in {history:#}"));
+    assert!(summary[0].get("place").is_none(), "the summary shows a place: {summary}");
+
+    turn_at(&w, &day, None, "Still there?", Agent::Ling).await;
+    let call = w.model.calls_of(Agent::Ling).pop().expect("his call");
+    assert!(opening(&call).contains("SUMMARY: Alex sent filler"), "the thread lost the summary");
+    assert!(!call.text().contains("filler-00001"), "the rows before the summary came back");
+}
