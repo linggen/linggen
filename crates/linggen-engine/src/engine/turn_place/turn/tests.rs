@@ -97,18 +97,48 @@ fn the_sessions_withheld_tools_outlive_a_turn() {
 async fn a_run_that_fails_puts_back_its_wiring() {
     let mut engine = engine();
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    engine.begin_run(
-        RunSetup::task("x")
-            .silence_ok(true)
-            .planning()
-            .thinking(Some(tx)),
-    );
-    assert!(engine.plan_mode && engine.silence_ok && engine.thinking_tx.is_some());
+    engine.begin_run(RunSetup::task("x").silence_ok(true).thinking(Some(tx)));
+    assert!(engine.silence_ok && engine.thinking_tx.is_some());
     engine.task = None;
     assert!(engine.run_agent_loop(None).await.is_err());
-    assert!(!engine.plan_mode);
     assert!(!engine.silence_ok);
     assert!(engine.thinking_tx.is_none());
+}
+
+/// Whoever ran a planning loop still sees it planning when the loop returns
+/// — no next-prompt hint is offered for a plan — and the turn's end ends it.
+#[tokio::test]
+async fn plan_mode_holds_past_the_loop_until_the_turn_ends() {
+    let mut engine = engine();
+    engine.begin_turn(TurnSettings::default());
+    engine.begin_run(RunSetup::task("x").planning());
+    engine.task = None;
+    assert!(engine.run_agent_loop(None).await.is_err());
+    assert!(engine.plan_mode, "the caller's check after the loop");
+    engine.end_turn();
+    assert!(!engine.plan_mode);
+    engine.begin_run(RunSetup::task("y").planning());
+    engine.begin_run(RunSetup::task("z"));
+    assert!(!engine.plan_mode, "the next run sets its own");
+}
+
+/// A moment named its language; a light line after the moment's turn ended
+/// answers in the Linggen language, not the moment's.
+#[test]
+fn a_moments_language_does_not_reach_a_light_line_after_it() {
+    let mut engine = engine();
+    let linggen = engine.light_system_prompt();
+    engine.begin_turn(TurnSettings {
+        language: Some("zz-Test".into()),
+        ..Default::default()
+    });
+    assert_ne!(
+        engine.light_system_prompt(),
+        linggen,
+        "the moment's own line"
+    );
+    engine.end_turn();
+    assert_eq!(engine.light_system_prompt(), linggen);
 }
 
 #[test]

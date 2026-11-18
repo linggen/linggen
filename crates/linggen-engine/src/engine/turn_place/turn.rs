@@ -9,7 +9,8 @@
 //! Inside a turn, each run of the loop (a reply, a plan, a plan's execution)
 //! is set up by [`AgentEngine::begin_run`]: its task, its images, how it
 //! streams. The loop puts the run's wiring back when it returns, on every
-//! path (`AgentEngine::run_agent_loop`).
+//! path (`AgentEngine::run_agent_loop`); plan mode stays for the run's
+//! caller until the next run is set up or the turn ends.
 //!
 //! What a turn leaves for its caller to read — its run id, its last words,
 //! what it spent — is cleared when the next turn begins, never when this
@@ -155,6 +156,9 @@ impl AgentEngine {
         self.kickoff_stop.clear();
         self.kickoff_fresh = false;
         self.kickoff_then.clear();
+        // A planning run's caller still reads it once the loop returns (the
+        // next-prompt hint is not offered for a plan); the turn's end ends it.
+        self.plan_mode = false;
     }
 
     /// Set up the next run of the loop inside this turn: its task (what it
@@ -172,11 +176,11 @@ impl AgentEngine {
     }
 
     /// The run is over, however it ended: nothing streams to its channel,
-    /// it plans no more, and its offer of silence and its inbox go.
+    /// and its offer of silence and its inbox go. Plan mode stays until the
+    /// next run is set up or the turn ends.
     pub(crate) fn end_run(&mut self) {
         self.thinking_tx = None;
         self.silence_ok = false;
-        self.plan_mode = false;
         self.inbox = None;
     }
 
