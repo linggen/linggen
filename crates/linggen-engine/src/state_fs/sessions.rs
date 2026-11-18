@@ -23,9 +23,8 @@ pub struct SessionStore {
     /// compaction, a clear) through this store. A member's cached thread
     /// from before a rewrite is stale (`chat::thread`).
     rewrites: Mutex<std::collections::HashMap<String, u64>>,
-    /// The place of each session's running turn, kept beside its turn lock
-    /// (`turn_place::running`).
-    pub running_places: crate::engine::turn_place::running::RunningPlaces,
+    /// The place of each session's running turn, kept beside its turn lock.
+    pub running_places: super::running_places::RunningPlaces,
 }
 
 /// The kind of work a session is for (`work: code` in `session.yaml`): it

@@ -1,5 +1,6 @@
 pub mod day_session;
 pub mod devices;
+pub mod running_places;
 pub mod session_images;
 pub mod sessions;
 #[cfg(test)]
