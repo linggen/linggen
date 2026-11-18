@@ -283,6 +283,35 @@ private app (`private-talk: true`) never joins it: its chat keeps a session
 of its own, and from its turns no tool carries words out (`skill-spec.md`
 § Private talk).
 
+## How a turn is set up
+
+A session's engine outlives its turns, so what one turn sets for itself
+must never reach the next. Every turn — a person's chat, the companion's
+moment, a delivered message, a background task's end, an approved plan's
+run, a mission run, an `agent_run` — starts with one description of its
+own settings: the tools its caller withholds or alone allows, the
+language a turn the person did not type answers in, whether it tells a
+fault, whether its surface shows the next-prompt hint, a mission's
+kickoff queue. Starting a turn first puts back whatever an earlier turn
+left, then applies these; ending it puts them back again, with its place
+(§ A turn's place). A turn that failed, was stopped or never ended leaves
+nothing to the next for the same reason.
+
+Inside a turn each run of the loop — a reply, a plan, a plan's execution —
+is set up the same way: its task, its images, whether it may answer with
+silence, whether it plans, where it streams. The loop puts the run's
+stream, plan mode, silence and inbox back when it returns, however it
+returned.
+
+What a turn leaves for whoever started it — its run, its last words, what
+it spent — stays readable after it ends and is cleared when the next turn
+starts. The session's own withheld tools are the session's, not a turn's:
+ending a turn keeps them. A `Task` child runs on a fresh engine of its own.
+
+The session spec sets what the session is, the turn's place what the app
+gives it, the model choice which model it runs on (`models.md`), and the
+turn's settings the rest; a test fails when another place writes them.
+
 ## System prompt assembly
 
 The system prompt is rebuilt each turn from layers. Which layers are included depends on the session's current state:
