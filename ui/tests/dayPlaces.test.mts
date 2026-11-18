@@ -5,7 +5,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  placeName, queuedHere, runningElsewhere, stopLabel, toldPlaces, waitingFrom, workingIn, HOME_PLACE,
+  foldLabel, foldOthers, placeName, queuedHere, runningElsewhere, stopLabel, toldPlaces, waitingFrom, withLivePlaces,
+  workingIn, HOME_PLACE,
 } from '../src/lib/dayFold.mts';
 
 const skills = [{ name: 'health', app: { title: 'Health' } }, { name: 'dj' }];
@@ -41,4 +42,24 @@ test('a waiting message is Edit and Remove only at the page it came from', () =>
   assert.equal(queuedHere({ place: 'music' }, 'health'), false);
   assert.equal(queuedHere({}, 'health'), true, 'no place told (any other session): as before');
   assert.equal(waitingFrom(placeName('health', skills)), 'Waiting from Health');
+});
+
+test("another place's live rows fold with its stretch, one line saying it works", () => {
+  const rows = [
+    { place: 'music', text: 'mine' },
+    { place: 'health', text: 'theirs', role: 'user' },
+    { live: true, runId: 'r1', text: 'a tool call' },
+    { live: true, runId: 'r1', text: 'streaming', isGenerating: true },
+  ];
+  const placed = withLivePlaces(rows, { r1: 'health' });
+  assert.deepEqual(placed.map((r) => r.place), ['music', 'health', 'health', 'health']);
+  assert.deepEqual(foldOthers(placed, 'music').map((i) => i.kind), ['message', 'fold']);
+  assert.equal(foldLabel('Health', 2, true), 'Health · working…');
+  assert.equal(foldLabel('Health', 1, false), 'Health · 1 message');
+  assert.equal(foldLabel('Health', 3, false), 'Health · 3 messages');
+});
+
+test('rows of a run no place was told for stay as they are', () => {
+  const rows = [{ live: true, runId: 'r9', text: 'x' }];
+  assert.equal(withLivePlaces(rows, { r1: 'health' }), rows, 'unchanged: the same list');
 });

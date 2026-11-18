@@ -201,7 +201,10 @@ export function handleMessage(item: UiEventOf<'message'>): void {
     from === 'user' && item.data?.via_note ? String(item.data.via_note) : undefined,
     clientId ? String(clientId) : undefined,
     images.length ? images : undefined,
-    runId);
+    runId,
+    // Sent from another page in the day: the engine names its place, and
+    // the row folds with that place's turn while it streams.
+    from === 'user' ? item.place ?? undefined : undefined);
 }
 
 // ---------------------------------------------------------------------------

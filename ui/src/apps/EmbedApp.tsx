@@ -25,6 +25,8 @@ import { useSuggestionStore } from '../stores/suggestionStore';
 import type { SessionInfo } from '../types';
 import { useChatActions } from '../hooks/useChatActions';
 import { useRunInfo } from '../hooks/useRunInfo';
+import { useRunningElsewhere } from '../hooks/useRunningElsewhere';
+import { workingIn } from '../lib/dayFold.mts';
 import { postToParent, fromParent } from '../lib/parentFrame';
 import { lastRefusal, openModelsSettings, resendOnOwnModel } from '../lib/ownModel';
 import { pageAgent, setPageAgent } from '../lib/pageAgent';
@@ -114,7 +116,9 @@ export const EmbedApp: React.FC = () => {
   useEffect(() => (pinnedSkill ? startPresenceBeat(pinnedSkill) : undefined), []);
 
   // --- Run info + chat actions (for clipboard bridge) ---
-  const { runningMainRunIds } = useRunInfo();
+  const { runningMainRunIds, runningRunIdBySession } = useRunInfo();
+  // In the day the running turn may stand in another place: say where.
+  const runningAtName = useRunningElsewhere(activeSessionId ? runningRunIdBySession[activeSessionId] : undefined);
   const scrollToBottomNoop = useCallback(() => {}, []);
   const { clearChat, sendChatMessage } = useChatActions(scrollToBottomNoop, runningMainRunIds);
 
@@ -336,7 +340,7 @@ export const EmbedApp: React.FC = () => {
               <Plus size={14} />
             </button>
             <span className={`text-[11px] flex-shrink-0 ${isRunning ? 'text-green-500' : 'text-slate-400'}`}>
-              {isRunning ? 'Running' : 'Idle'}
+              {isRunning ? (runningAtName ? workingIn(runningAtName) : 'Running') : 'Idle'}
             </span>
           </div>
         )}

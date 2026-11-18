@@ -197,7 +197,10 @@ session, prompt and row is as before. On (decided by the builder 2026-11-15/16):
   run on the page state and its status events carry `place`. A waiting
   message carries the place it was sent from (`place` on the queued item):
   another page shows it as "Waiting from Music", and only its own page
-  offers Edit, Remove and Steer.
+  offers Edit, Remove and Steer. What a running turn streams (its tokens,
+  text, blocks, tool output, messages — the person's that started it too)
+  carries its place, so another place's turn folds while it streams, as its
+  saved stretch does: one line ("Health · working…") that opens on a tap.
 - **One model a member for the day**: only the picker keeps one
   (`PATCH /api/sessions`); a model a page sends with a message is for that
   turn and is not kept.

@@ -39,7 +39,8 @@ import { sessionApi } from '../../lib/endpoints';
 import { startNewChat } from '../../lib/newChat';
 import { sessionFolderLabel } from '../../lib/sessionRoot.mts';
 import { runLabel } from '../../lib/runStatus.mts';
-import { pagePlace, placeName, runningElsewhere, stopLabel, workingIn } from '../../lib/dayFold.mts';
+import { pagePlace, stopLabel, withLivePlaces, workingIn } from '../../lib/dayFold.mts';
+import { useRunningElsewhere } from '../../hooks/useRunningElsewhere';
 
 /**
  * Debug action buttons shown inside the expanded session header.
@@ -316,10 +317,18 @@ export const ChatPanel: React.FC<{
   // In the day the engine names the place the running turn stands in: at
   // another place's page the status line and Stop say where (Stop still
   // stops it — one turn at a time).
+  const runningAtName = useRunningElsewhere(selectedMainRunningRunId);
   const here = useSessionStore((s) => pagePlace(s.isSkillSession ? s.activeSkillName : null));
   const runPlaces = useServerStore((s) => s.runPlaces);
-  const runningAt = runningElsewhere(selectedMainRunningRunId, runPlaces, here);
-  const runningAtName = runningAt ? placeName(runningAt, skills) : null;
+  // Another place's live rows fold with its stretch while its turn streams,
+  // the streaming row too (lib/dayFold.mts `withLivePlaces`).
+  const placedHistory = useMemo(() => withLivePlaces(historicalMessages, runPlaces), [historicalMessages, runPlaces]);
+  const streamingAt = streamingMessage ? withLivePlaces([streamingMessage], runPlaces)[0] : null;
+  const foldsStreaming = !!streamingAt?.place && streamingAt.place !== here;
+  const listed = useMemo(
+    () => (foldsStreaming && streamingAt ? [...placedHistory, streamingAt] : placedHistory),
+    [foldsStreaming, streamingAt, placedHistory],
+  );
 
   const streamingPlanProps = useMemo(
     () => ({ pendingPlanAgentId, agentContext, onApprovePlan, onRejectPlan, onEditPlan, inputRef }),
@@ -461,7 +470,7 @@ export const ChatPanel: React.FC<{
           </div>
         )}
         <ChatMessageList
-          messages={historicalMessages}
+          messages={listed}
           from={windowFrom}
           onLoadEarlier={loadEarlier}
           expandedMessages={expandedMessages}
@@ -478,7 +487,7 @@ export const ChatPanel: React.FC<{
           onResend={onResend}
           inputRef={inputRef}
         />
-        {streamingMessage && (
+        {streamingMessage && !foldsStreaming && (
           <ChatMessageRow
             msg={streamingMessage}
             msgKey={`${streamingMessage.timestamp}-${filteredMainMessages.length - 1}-${streamingMessage.from || streamingMessage.role}-${streamingMessage.text.slice(0, 24)}`}

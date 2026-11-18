@@ -86,6 +86,19 @@ async fn in_the_day_a_waiting_message_carries_its_place() {
     }
 }
 
+/// While a turn from the dice page streams, what it streams names its place.
+#[tokio::test]
+async fn in_the_day_a_running_turns_stream_names_its_place() {
+    let (w, _) = day_world_at(12, held_setup()).await;
+    let day = the_day(&w).await;
+    let events = dice_running_quiet_waiting(&w, &day).await;
+    let streamed = of_kinds(&events, &day, &["content_block", "token", "text_segment", "message"]);
+    assert!(!streamed.is_empty(), "nothing streamed: {events:#?}");
+    for e in streamed {
+        assert_eq!(e["place"], "dice", "a streamed event names no place: {e}");
+    }
+}
+
 /// With the setting off, nothing the engine sends names a place.
 #[tokio::test]
 async fn with_the_setting_off_nothing_names_a_place() {

@@ -17,7 +17,7 @@ import { MemoryRecallMessage } from './MemoryRecallMessage';
 import { CompactionMessage } from './CompactionMessage';
 import { ChatImages } from './ChatImages';
 import { showsInterruptedNote } from '../../lib/interruptedRun.mts';
-import { foldOthers, pagePlace, placeName } from '../../lib/dayFold.mts';
+import { foldLabel, foldOthers, pagePlace, placeName } from '../../lib/dayFold.mts';
 
 /** Plumbing rows — context, not a speaker, so never labelled. */
 const UNSPOKEN = UNSPOKEN_SENDERS;
@@ -199,9 +199,11 @@ function isShown(msg: ChatMessage): boolean {
 }
 
 /** Another place's stretch of the day's session: its app and how many
- *  messages, one line that opens it. */
-function FoldedStretch({ place, count, onOpen }: { place: string; count: number; onOpen: () => void }) {
-  const what = count === 1 ? `${placeName(place)} · 1 message` : `${placeName(place)} · ${count} messages`;
+ *  messages (or that it works, while its turn streams), one line that
+ *  opens it. */
+function FoldedStretch({ place, count, working, onOpen }: { place: string; count: number; working: boolean; onOpen: () => void }) {
+  const skills = useServerStore((s) => s.skills);
+  const what = foldLabel(placeName(place, skills), count, working);
   return (
     <button
       type="button"
@@ -321,6 +323,7 @@ export const ChatMessageList = React.memo<{
             key={key}
             place={item.place}
             count={count}
+            working={rows.some((i) => messages[i].isGenerating)}
             onOpen={() => setOpened((prev) => new Set(prev).add(key))}
           />
         );

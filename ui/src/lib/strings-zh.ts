@@ -342,6 +342,7 @@ export const ZH: Record<string, string> = {
   'Linggen keeps one conversation a day for app chats and Yinyue, from 4 am.': '系统每天自建一个会话，应用里的对话和银月共用，凌晨 4 点开始新的一天。',
   '{app} · 1 message': '{app} · 1 条消息',
   '{app} · {n} messages': '{app} · {n} 条消息',
+  '{app} · working…': '{app} · 工作中…',
   'Working in {app}': '正在 {app} 中工作',
   'Stop · {app}': '停止 · {app}',
   'Waiting from {app}': '来自 {app}，等待中',

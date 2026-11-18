@@ -6,8 +6,19 @@
 use crate::engine::events::UiEvent;
 
 /// The kinds of event a running turn sends that a page reads its place
-/// from: its status (the status line and Stop).
-const TOLD_KINDS: &[&str] = &["activity", "run", "turn_complete"];
+/// from: its status (the status line and Stop), and what it streams — its
+/// text, blocks, tool output and messages, the person's that started it
+/// included — so another place's turn folds while it streams.
+const TOLD_KINDS: &[&str] = &[
+    "activity",
+    "run",
+    "turn_complete",
+    "token",
+    "text_segment",
+    "content_block",
+    "tool_progress",
+    "message",
+];
 
 /// `ui` with the place of the turn running in its session, when it is one
 /// of [`TOLD_KINDS`] and a place is told there.

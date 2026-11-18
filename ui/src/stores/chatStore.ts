@@ -82,7 +82,9 @@ interface ChatState {
   sealRunBubble: (agentId: string) => void;
   /** A native session's subagent rows against its runs (`subagentRuns.mts`). */
   reconcileSubagents: (runs: AgentRunInfo[]) => void;
-  finalizeMessage: (agentId: string, content: string, to: string, tsMs: number, elapsed?: number, ctxTokens?: number, isError?: boolean, via?: string, viaNote?: string, clientId?: string, images?: string[], runId?: string) => void;
+  /** `place`: a day's row sent from another page, as the engine named it
+   *  (lib/dayFold.mts) — it folds with that place's turn while it streams. */
+  finalizeMessage: (agentId: string, content: string, to: string, tsMs: number, elapsed?: number, ctxTokens?: number, isError?: boolean, via?: string, viaNote?: string, clientId?: string, images?: string[], runId?: string, place?: string) => void;
   /** The engine kept a message this surface sent (its bubble's `clientId`):
    *  the bubble takes the kept words. False when no bubble has that id. */
   confirmSent: (clientId: string, text: string, to: string, images?: string[]) => boolean;
@@ -360,7 +362,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  finalizeMessage: (agentId, content, to, tsMs, elapsed, ctxTokens, isError, via, viaNote, clientId, images, runId) => set(mutate((state) => {
+  finalizeMessage: (agentId, content, to, tsMs, elapsed, ctxTokens, isError, via, viaNote, clientId, images, runId, place) => set(mutate((state) => {
     const generatingIdx = findLastGeneratingMessageIndex(state, agentId, runId);
     if (generatingIdx >= 0) {
       const next = claimForRun([...state], generatingIdx, runId);
@@ -429,6 +431,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       ...(via ? { via } : {}),
       ...(viaNote ? { viaNote } : {}),
       ...(images?.length ? { images } : {}),
+      ...(place ? { place } : {}),
       ...bubbleOfRun(state, runId),
     };
     // A run's words with no bubble here: the run's row, bound by its id

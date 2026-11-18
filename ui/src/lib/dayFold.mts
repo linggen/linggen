@@ -5,8 +5,11 @@
  * a page outside it (the engine leaves it out), so it is never folded here.
  *
  * A row names its place only in a day's session (`place`: an app's name, or
- * `:home` for the main page and Yinyue's own surfaces); rows without one —
- * any other session, or a live message not reloaded yet — are never folded.
+ * `:home` for the main page and Yinyue's own surfaces). A live row, not
+ * reloaded yet, takes the place the engine told on its events: a person's
+ * message on its own event, a run's rows from their run (`withLivePlaces`),
+ * so another place's turn folds while it streams. Rows without one — any
+ * other session — are never folded.
  */
 
 export const HOME_PLACE = ':home';
@@ -79,6 +82,29 @@ export function foldOthers(messages: ReadonlyArray<{ place?: string }>, here: st
     else out.push({ kind: 'fold', place: elsewhere, indexes: [index] });
   });
   return out;
+}
+
+/** Rows with the place the engine told for the run that wrote them, when
+ *  they name none yet (a live row, not reloaded): another place's turn then
+ *  folds while it streams, as its saved stretch does. The same list when
+ *  nothing changes. */
+export function withLivePlaces<T extends { place?: string; runId?: string }>(
+  messages: T[],
+  places: Record<string, string>,
+): T[] {
+  const told = (m: T) => (!m.place && m.runId ? places[m.runId] : undefined);
+  if (!messages.some(told)) return messages;
+  return messages.map((m) => {
+    const place = told(m);
+    return place ? { ...m, place } : m;
+  });
+}
+
+/** A folded stretch's line: its place, and how many messages — or that it
+ *  is working, while its turn streams. */
+export function foldLabel(name: string, count: number, working: boolean): string {
+  if (working) return `${name} · working…`;
+  return count === 1 ? `${name} · 1 message` : `${name} · ${count} messages`;
 }
 
 /** Whether a waiting message is this page's to change: sent from here, or
