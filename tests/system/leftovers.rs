@@ -122,14 +122,27 @@ async fn an_approved_plans_run_never_shows_the_last_turns_words() {
     let mark = w.mark();
     w.api.chat(SID, &w.work(), "Add a flag, plan it first.").await;
     w.finish_run(SID, Agent::Ling, mark).await;
-    let made = w.events().len();
+    // EnterPlanMode ends the first run, not the chat turn. Wait until
+    // planning has submitted the plan and the whole turn has closed.
+    let turn_end = |event: &serde_json::Value| {
+        event["kind"] == "turn_complete" && event["session_id"] == SID
+    };
+    let events = w.events_when(|events| events.iter().any(turn_end)).await;
+    let made = events.iter().position(turn_end).expect("the planning turn closed");
+    assert!(events[..made].iter().any(|e| {
+        e["kind"] == "message"
+            && e["session_id"] == SID
+            && e["text"].as_str().is_some_and(|t| t.contains("PLAN-WORDS"))
+    }), "the planning turn never showed its words");
 
     let mark = w.mark();
     let action = json!({"project_root": w.work(), "agent_id": "ling", "session_id": SID});
     w.api.post("/api/plan/approve", action).await;
     w.finish_run(SID, Agent::Ling, mark).await;
-    let events = w.events_when(|e| e.iter().skip(made).any(|e| e["kind"] == "turn_complete")).await;
-    let shown: Vec<_> = events[made..]
+    let after_plan = made + 1;
+    let events = w.events_when(|events| events.iter().skip(after_plan).any(turn_end)).await;
+    assert!(events.iter().skip(after_plan).any(turn_end), "the approved turn never closed");
+    let shown: Vec<_> = events[after_plan..]
         .iter()
         .filter(|e| e["kind"] == "message" && e["text"].as_str().is_some_and(|t| t.contains("PLAN-WORDS")))
         .collect();
