@@ -26,6 +26,38 @@ const WRITERS: &[(&str, usize, &str)] = &[
 /// the checks.
 const CHECKS: &[&str] = &["resolve_id(", "has_model("];
 
+/// Callers of the availability checks outside this module, by file: how
+/// many, and why. A new ladder built on them, instead of on `resolve`,
+/// fails here until it is looked at and listed.
+const CHECK_CALLERS: &[(&str, usize, &str)] = &[
+    (
+        "crates/linggen-engine/src/engine/agent/mod.rs",
+        3,
+        "the agent's priority chain: how a standing model is found",
+    ),
+    (
+        "crates/linggen-engine/src/engine/streaming.rs",
+        2,
+        "the stream refuses a guest's unshared model and a missing one with switching off",
+    ),
+    (
+        "src/server/mcp_agent.rs",
+        2,
+        "agent_run refuses an unknown model; the model list marks the default",
+    ),
+    (
+        "src/server/push/compose.rs",
+        1,
+        "a push line names her model: the Pet setting when here, else her chain",
+    ),
+];
+
+const CHECK_CALLS: &[&str] = &["model_choice::live(", "model_choice::is_here("];
+
+fn check_calls(text: &str) -> usize {
+    CHECK_CALLS.iter().map(|c| text.matches(c).count()).sum()
+}
+
 /// Assignments to `.model_id`: an `=` that is not `==`.
 fn writes(text: &str) -> usize {
     text.match_indices(".model_id")
@@ -95,6 +127,21 @@ fn one_place_decides_whether_a_model_can_run() {
             checks(&text),
             0,
             "{rel} checks a model's availability: use model_choice::live, is_here or next_down"
+        );
+    }
+}
+
+#[test]
+fn no_second_ladder_is_built_on_the_checks() {
+    for (rel, text) in scanned() {
+        let want = CHECK_CALLERS
+            .iter()
+            .find(|(f, _, _)| *f == rel)
+            .map_or(0, |e| e.1);
+        assert_eq!(
+            check_calls(&text),
+            want,
+            "{rel} calls model_choice::live or is_here: decide through model_choice::resolve, or list it"
         );
     }
 }
