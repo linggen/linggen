@@ -155,8 +155,8 @@ pub(crate) async fn set_model(
 }
 
 /// The model `member` runs on in its session: the model the session keeps
-/// for it, else (the companion) her pet setting, else its own chain — each
-/// only when this machine has it.
+/// for it, else (the companion) her pet setting — when this machine has
+/// it — else its own chain, as its turn would.
 pub(crate) async fn model_of(
     manager: &AgentManager,
     root: &std::path::Path,
@@ -170,18 +170,28 @@ pub(crate) async fn model_of(
         Some(f) => f.await,
         None => None,
     };
-    let chosen = member
-        .model
-        .iter()
-        .chain(pet.iter())
-        .find_map(|m| {
-            crate::engine::model_choice::live(&models, crate::engine::model_choice::Asker::Owner, m)
-                .ok()
-        });
-    match chosen {
+    match asked_of(&models, member.model.clone(), pet) {
         Some(m) => Some(m),
         None => manager.agent_model_id(root, &member.id).await,
     }
+}
+
+/// The model a member's turn asks for — the kept one, else the pet
+/// setting, as the turn asks (`turn_model`) — when it runs as asked
+/// (`model_choice::resolve`). `None`: the turn runs on the agent's own.
+fn asked_of(
+    models: &crate::provider::models::ModelManager,
+    kept: Option<String>,
+    pet: Option<String>,
+) -> Option<String> {
+    use crate::engine::model_choice::{resolve, Asker, Rule};
+    let asked = kept.or(pet)?;
+    let rule = Rule {
+        asker: Asker::Owner,
+        may_switch: true,
+    };
+    let choice = resolve(models, Some(&asked), "", rule);
+    choice.is_asked().then(|| choice.model().to_string())
 }
 
 /// Whether `id` is the companion.
@@ -192,6 +202,24 @@ pub(crate) fn is_companion(id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The preview and compaction name the model the member's turn runs
+    /// on: a kept model this machine lacks means the agent's own model, as
+    /// in the turn — not the pet setting behind it.
+    #[test]
+    fn the_member_model_named_is_the_one_its_turn_runs_on() {
+        let models = crate::provider::models::ModelManager::new_with_credentials(
+            vec![],
+            &crate::credentials::Credentials::default(),
+        );
+        let luna = Some("gpt-6-luna".to_string());
+        assert_eq!(
+            asked_of(&models, Some("gpt-6-sol".into()), luna.clone()).as_deref(),
+            Some("gpt-6.2-sol")
+        );
+        assert_eq!(asked_of(&models, None, luna.clone()), luna);
+        assert_eq!(asked_of(&models, Some("ghost".into()), luna), None);
+    }
 
     fn skill(members: &[&str]) -> Skill {
         let text = format!(
