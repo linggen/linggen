@@ -1,7 +1,7 @@
 import type { UiEvent, UiEventOf, ContentBlock, ContentBlockEvent, SubagentToolStep } from '../../types';
 import type { ContentBlockStartData } from '../../types/generated/ContentBlockStartData';
 import type { ContentBlockUpdateData } from '../../types/generated/ContentBlockUpdateData';
-import { useChatStore } from '../../stores/chatStore';
+import { dayClearRevision, useChatStore } from '../../stores/chatStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useServerStore } from '../../stores/serverStore';
 import { useInteractionStore } from '../../stores/interactionStore';
@@ -60,8 +60,9 @@ export function sessionMovedOn(sid: string, runId: string | null): boolean {
 
 /** Buffered per agent and run; each entry keeps the session its tokens came
  *  for, and a flush that lands after a switch drops them rather than stream
- *  them into the chat now on screen. */
-type TokenBatch = { agentId: string; runId?: string; text: string; isThinking: boolean; sid: string | null };
+ *  them into the chat now on screen. Clearing the day also drops batches
+ *  queued before the click, without dropping any of the run's next tokens. */
+type TokenBatch = { agentId: string; runId?: string; text: string; isThinking: boolean; sid: string | null; clearRevision: number };
 const _tokenBuffer: Map<string, TokenBatch> = new Map();
 let _tokenFlushScheduled = false;
 
@@ -70,8 +71,9 @@ function flushTokenBuffer(): void {
   if (_tokenBuffer.size === 0) return;
   const chatStore = useChatStore.getState();
   const open = useSessionStore.getState().activeSessionId;
-  for (const { agentId, runId, text, isThinking, sid } of _tokenBuffer.values()) {
-    if (text && stillOn(sid, open)) chatStore.appendToken(agentId, text, isThinking, runId);
+  const revision = dayClearRevision(open);
+  for (const { agentId, runId, text, isThinking, sid, clearRevision } of _tokenBuffer.values()) {
+    if (text && stillOn(sid, open) && clearRevision === revision) chatStore.appendToken(agentId, text, isThinking, runId);
   }
   _tokenBuffer.clear();
   useServerStore.getState().recomputeTokenRate();
@@ -102,12 +104,13 @@ export function handleToken(item: UiEventOf<'token'>): void {
   const runId = runOf(item);
   const key = `${agentId}|${runId || ''}`;
   const existing = _tokenBuffer.get(key);
-  if (existing && existing.isThinking === isThinking && existing.sid === sid) {
+  const clearRevision = dayClearRevision(sid);
+  if (existing && existing.isThinking === isThinking && existing.sid === sid && existing.clearRevision === clearRevision) {
     existing.text += tokenText;
   } else {
-    // Flush if thinking state (or the session on screen) changed for this agent
+    // Flush if the thinking state, session, or Clear boundary changed.
     if (existing) flushTokenBuffer();
-    _tokenBuffer.set(key, { agentId, runId, text: tokenText, isThinking, sid });
+    _tokenBuffer.set(key, { agentId, runId, text: tokenText, isThinking, sid, clearRevision });
   }
 
   if (!_tokenFlushScheduled) {

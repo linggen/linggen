@@ -36,6 +36,14 @@ import { useSessionStore } from './sessionStore';
 import { useUserStore } from './userStore';
 import { useInteractionStore } from './interactionStore';
 
+// The day keeps streaming during Clear. Fence history loads, not live rows:
+// a snapshot from before the acknowledgement can still contain erased rows.
+const dayClears = new Map<string, { pending: number; revision: number }>();
+
+export function dayClearRevision(sessionId: string | null): number {
+  return (sessionId && dayClears.get(sessionId)?.revision) || 0;
+}
+
 interface ChatState {
   messages: ChatMessage[];
   sessionState: SessionState | null;
@@ -59,6 +67,7 @@ interface ChatState {
   setActiveSession: (sessionId: string | null) => void;
   // Actions — one per reducer action type
   clear: (withCooldown?: boolean) => void;
+  beginDayClear: (sessionId: string) => (acknowledged: boolean) => void;
   syncPersisted: (persisted: ChatMessage[]) => void;
   addMessage: (message: ChatMessage) => void;
   removeLastUserMessage: (text: string, agentId: string) => void;
@@ -153,6 +162,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const bySession = { ...get()._messagesBySession };
     delete bySession[sid];
     set({ messages: [], displayMessages: [], sessionState: null, _sessionStateLoad: null, _messagesBySession: bySession, ...(withCooldown ? { _chatClearTs: Date.now() } : {}) });
+  },
+
+  beginDayClear: (sessionId) => {
+    const previous = dayClears.get(sessionId);
+    const clear = { pending: (previous?.pending ?? 0) + 1, revision: (previous?.revision ?? 0) + 1 };
+    dayClears.set(sessionId, clear);
+    get().clear(false);
+    return (acknowledged) => {
+      const current = dayClears.get(sessionId);
+      if (!current || --current.pending > 0 || !acknowledged) return;
+      // A load requested while Clear was pending may have been skipped.
+      if (stillOn(sessionId, useSessionStore.getState().activeSessionId)) {
+        void get().fetchSessionState({ sessionId });
+      }
+    };
   },
 
   syncPersisted: (persisted) => set(mutate((msgs) => {
@@ -701,6 +725,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const activeSessionId = opts?.sessionId ?? projectState.activeSessionId;
     const { isMissionSession, activeMissionId, isSkillSession, activeSkillName } = projectState;
     if (!activeSessionId) return;
+    const clear = dayClears.get(activeSessionId);
+    if (clear?.pending) return;
     if (isMissionSession && !activeMissionId) return;
     if (isSkillSession && !activeSkillName) return;
     // When no project is selected, fall back to the active session's cwd/project.
@@ -724,8 +750,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         url.searchParams.append('session_id', activeSessionId);
       }
 
-      const resp = await dedupFetch(url.toString());
+      // A post-Clear load must not join an in-flight pre-Clear request.
+      const resp = await dedupFetch(url.toString(), undefined, clear?.revision);
       const data: SessionState = await resp.json();
+      if (clear !== dayClears.get(activeSessionId)) return;
       // The load answers the session it asked for: dropped when the person
       // moved on meanwhile, skipped when nothing changed (re-render loops).
       const loaded = loadSnapshot(activeSessionId, data);

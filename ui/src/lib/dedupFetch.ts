@@ -31,14 +31,16 @@ function toResponse(cached: CachedResponse): Response {
 /**
  * Fetch with deduplication. Same-URL GET requests that are already
  * in flight will share the same promise instead of creating a new request.
+ * A revision separates loads across a local history reset.
  */
-export function dedupFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+export function dedupFetch(input: RequestInfo | URL, init?: RequestInit, revision = 0): Promise<Response> {
   const method = init?.method?.toUpperCase() || 'GET';
   if (method !== 'GET') return fetch(input, init);
 
   const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
 
-  const existing = inflight.get(url);
+  const key = `${revision}:${url}`;
+  const existing = inflight.get(key);
   if (existing) return existing.then(toResponse);
 
   const promise = fetch(input, init).then(async (resp) => {
@@ -49,13 +51,13 @@ export function dedupFetch(input: RequestInfo | URL, init?: RequestInit): Promis
       headers: [...resp.headers.entries()],
       body,
     };
-    inflight.delete(url);
+    inflight.delete(key);
     return cached;
   }, (err) => {
-    inflight.delete(url);
+    inflight.delete(key);
     throw err;
   });
 
-  inflight.set(url, promise);
+  inflight.set(key, promise);
   return promise.then(toResponse);
 }

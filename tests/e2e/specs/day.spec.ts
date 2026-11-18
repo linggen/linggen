@@ -224,9 +224,29 @@ test.describe('a turn running from the main page', () => {
     await expect(shown(main, 'Slept well.')).toHaveCount(1, { timeout: 15_000 });
   });
 
-  test.fixme('a reply that arrives after Clear shows without a reload', async () => {
-    // Today the page shows nothing of the turn it cleared under: the reply
-    // lands in the day and appears only when the page is loaded again.
+  test('a reply that arrives after Clear shows without a reload', async ({ page, world, request, httpRequests }) => {
+    const day = await settingOn(request, world.url);
+    await page.goto(`${world.url}/?session=${day}`);
+    await expectWebRtc(page, httpRequests);
+    await expect(composer(page)).toBeVisible();
+    await openBar(page);
+
+    await send(page, 'Take a nap.');
+    const c = chat(page);
+    await c.getByTestId('permission-card').getByTestId('permission-directory').last().click();
+    const bash = c.locator('[data-testid="tool-call"][data-tool="Bash"]');
+    await expect(bash).toHaveAttribute('data-status', 'running');
+    await page.getByTestId('clear-chat').click();
+
+    await expect(shown(page, 'Take a nap.')).toHaveCount(0);
+    await expect(bash).toHaveCount(0);
+    await expect(c.getByTestId('chat-input')).toHaveAttribute('data-busy', 'true');
+    await expect.poll(async () => (await world.calls()).length, { timeout: 30_000 }).toBe(2);
+    await expect(shown(page, 'Slept well.')).toHaveCount(1, { timeout: 15_000 });
+    await expectTurnOver(page);
+    await expect(shown(page, 'Take a nap.')).toHaveCount(0);
+    await expect(bash).toHaveCount(0);
+    await expectScriptedCalls(world, ['ling', 'ling']);
   });
 });
 

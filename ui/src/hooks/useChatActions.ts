@@ -69,11 +69,14 @@ export function useChatActions(
 
     const selectedAgent = chatAgentOf(useServerStore.getState().selectedAgent, useUiStore.getState().sessionMembers);
     const runId = runningMainRunIds[selectedAgent];
-    if (runId && clearCancelsRun(session)) {
+    const cancelsRun = clearCancelsRun(session);
+    if (runId && cancelsRun) {
       useServerStore.getState().cancelAgentRun(runId);
     }
 
-    useChatStore.getState().clear();
+    const chat = useChatStore.getState();
+    const finishDayClear = sid && !cancelsRun ? chat.beginDayClear(sid) : null;
+    if (!finishDayClear) chat.clear();
     const interaction = useInteractionStore.getState();
     interaction.setQueuedMessages([]);
     interaction.setActivePlan(null);
@@ -82,8 +85,12 @@ export function useChatActions(
     if (sid) interaction.replaceAsks(sid, []);
     try {
       await getTransport().sendClear(root, sid);
-      if (onSession(sid)) useChatStore.getState().clear();
-    } catch (e) { console.error('Error clearing chat:', e); }
+      if (finishDayClear) finishDayClear(true);
+      else if (onSession(sid)) useChatStore.getState().clear();
+    } catch (e) {
+      finishDayClear?.(false);
+      console.error('Error clearing chat:', e);
+    }
   }, [runningMainRunIds]);
 
   const sendChatMessage = useCallback(async (userMessage: string, targetAgent?: string, images?: string[], opts?: { resend?: boolean; clientId?: string }) => {
