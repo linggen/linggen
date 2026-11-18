@@ -397,4 +397,7 @@ pub(crate) fn tool_schema(name: &str) -> Option<Value> {
 mod folded_tests;
 
 #[cfg(test)]
+mod repo_check;
+
+#[cfg(test)]
 mod tests;

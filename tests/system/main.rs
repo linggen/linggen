@@ -16,6 +16,7 @@ mod claude_subagents;
 mod day_places;
 mod day_session;
 mod delegate;
+mod door;
 mod drawing;
 mod fixtures;
 mod memory_ops;
