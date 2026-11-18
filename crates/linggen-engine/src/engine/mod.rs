@@ -201,8 +201,7 @@ impl AgentEngine {
     /// on the starting cwd for a new user session.
     fn load_session_permissions(&mut self, sid: &str) {
         let sdir = crate::paths::global_sessions_dir().join(sid);
-        self.session_permissions =
-            permission::SessionPermissions::load_at(&sdir, self.grants_place().as_deref());
+        self.read_session_grants(sid, self.grants_place().as_deref());
 
         // Mission and proxy-consumer sessions are non-interactive — they
         // pause/fail instead of prompting. Re-apply after load, since
@@ -231,6 +230,19 @@ impl AgentEngine {
         }
 
         self.session_dir = Some(sdir);
+    }
+
+    /// Read session `sid`'s grant table, as `place` holds it, into this
+    /// engine — and keep that session's folder for its saves when none is
+    /// kept. A skill taken up before the loop starts writes its grants on
+    /// top of what the session holds, never on an empty table that its save
+    /// would then write over the file.
+    pub fn read_session_grants(&mut self, sid: &str, place: Option<&str>) {
+        let sdir = crate::paths::global_sessions_dir().join(sid);
+        self.session_permissions = permission::SessionPermissions::load_at(&sdir, place);
+        if self.session_dir.is_none() {
+            self.session_dir = Some(sdir);
+        }
     }
 
     /// One chat, one permission set: re-read the session's grant table, so

@@ -386,7 +386,7 @@ pub struct AgentEngine {
     /// the run's end settles any left (`run_scope::OpenCalls`).
     pub(crate) open_calls: super::run_scope::OpenCalls,
     /// Session-scoped permissions (path modes, allows, denied sigs). See permission-spec.md.
-    pub session_permissions: permission::SessionPermissions,
+    pub(crate) session_permissions: permission::SessionPermissions,
     /// Folders the person declined in this run (cleared at its start).
     pub(crate) declined_scopes: permission::DeclinedScopes,
     /// The session's lead member, when it isn't this engine's agent: then
@@ -433,7 +433,7 @@ pub struct AgentEngine {
     /// Prompt profile — which system prompt sections to include (owner vs consumer).
     pub prompt_profile: super::prompt::profile::PromptProfile,
     /// Directory for the current session (for persisting permission.json).
-    pub session_dir: Option<PathBuf>,
+    pub(crate) session_dir: Option<PathBuf>,
     /// Ordered list of default model IDs from routing config (for fallback chain).
     pub default_models: Vec<String>,
     /// Whether to automatically try fallback models on transient errors.

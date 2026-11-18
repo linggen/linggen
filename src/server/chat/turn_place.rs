@@ -24,7 +24,7 @@ pub(super) async fn bind_turn_place(engine: &mut crate::engine::AgentEngine, ctx
     let skill = place_skill(ctx).await;
     if skill.is_some() {
         if let Some(sid) = ctx.session_id.as_deref() {
-            load_grants(engine, sid, ctx.place.grants_key());
+            engine.read_session_grants(sid, ctx.place.grants_key());
         }
     }
     let outcome = engine
@@ -82,25 +82,6 @@ async fn place_skill(ctx: &ChatRunCtx) -> Option<crate::engine::skill::Skill> {
     let skill = ctx.manager.skills.reload_one(name).await?;
     tracing::info!("Place skill entered: {}", skill.name);
     Some(skill)
-}
-
-/// Read the session's grants before the skill's are written over them.
-///
-/// `session_dir` is set so skill-permission saves persist: otherwise
-/// run_agent_loop later loads permission.json from disk and clobbers the
-/// in-memory grants about to be applied. The grants are hydrated from disk
-/// BEFORE the skill is entered — otherwise write_skill_grants merges
-/// SKILL.md grants on top of the empty in-memory default and saves,
-/// clobbering any runtime grants (e.g. pulse's workspace_path) that the
-/// skill iframe PATCHed onto permission.json before the first user turn.
-/// Mirrors the same preload the slash-command path does in skill_dispatch.rs.
-fn load_grants(engine: &mut crate::engine::AgentEngine, sid: &str, place: Option<&str>) {
-    let sdir = crate::paths::global_sessions_dir().join(sid);
-    if engine.session_dir.is_none() {
-        engine.session_dir = Some(sdir.clone());
-    }
-    engine.session_permissions =
-        crate::engine::permission::SessionPermissions::load_at(&sdir, place);
 }
 
 /// The place a turn of session `session_id` stands in when no page sent it

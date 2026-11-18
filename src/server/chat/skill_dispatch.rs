@@ -38,13 +38,8 @@ pub(super) async fn run_skill_dispatch(ctx: &ChatRunCtx, engine: &mut crate::eng
     // on disk. run_agent_loop hydrates later, but the prompt happens first
     // — without this preload it would re-prompt every turn.
     if let Some(ref sid) = ctx.session_id {
-        let sdir = crate::paths::global_sessions_dir().join(sid);
         let place = engine.turn_place().and_then(|p| p.grants_key()).map(str::to_string);
-        engine.session_permissions =
-            crate::engine::permission::SessionPermissions::load_at(&sdir, place.as_deref());
-        if engine.session_dir.is_none() {
-            engine.session_dir = Some(sdir);
-        }
+        engine.read_session_grants(sid, place.as_deref());
     }
 
     // Wire control channels before activation: activate_skill may prompt

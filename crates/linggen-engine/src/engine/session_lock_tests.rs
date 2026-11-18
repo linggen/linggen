@@ -56,8 +56,6 @@ const LISTED: &[(&str, usize, &str)] = &[
         "tests",
     ),
     ("src/server/chat/light.rs", 1, "live models"),
-    ("src/server/chat/turn_place.rs", 2, "the session's grants"),
-    ("src/server/chat/skill_dispatch.rs", 2, "the session's grants"),
     ("src/server/chat/structured.rs", 2, "the plan"),
     ("src/server/chat/plan_flow.rs", 3, "the plan"),
     ("src/server/chat/admin.rs", 2, "the thread"),
