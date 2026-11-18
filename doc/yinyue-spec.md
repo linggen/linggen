@@ -178,7 +178,8 @@ A person mutes her on the device they type on, to whoever they're talking to
 - **Mac:** `[pet] muted` in the engine config, mirrored in memory
   (`AgentManager::pet_muted`). `set_pet_muted` saves it without rebuilding any
   engine and sends `pet_voice {muted}` to every surface, so whichever is
-  playing her stops. `pet_speak` carries `voice`; muted, the holder shows the
+  playing her stops. `pet_speak` carries `voice`; muted — or at the page the line
+  shows on (`yinyue-companion-spec.md` § Heard or read) — the holder shows the
   bubble and fetches no `/api/tts`.
   - `/mute` and `/unmute` are caught in `dispatch_turn` before any model, for
     every Mac chat (web UI, skill pages, a Ling chat relayed from the phone),

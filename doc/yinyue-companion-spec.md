@@ -251,7 +251,8 @@ of it — the user's lines, Ling's replies and his tool use (as notes, `[Ling
 used Look → …]`), recall and compaction notes. The session's tool set and
 `permission.json` are hers there too (a write on her turn asks the person in
 that chat); a skill session's are what the skill names for her. Her reply is a
-row of the session, spoken (`PetSpeak`); her recall row is kept like any
+row of the session, sent to her stage (`PetSpeak`, heard only off that page —
+§ Heard or read); her recall row is kept like any
 member's. One agent speaks at a time (the session's turn lock); Ling reads
 what she said when his turn comes. The system-prompt export takes
 `agent_id=yinyue` for her seat in that session.
