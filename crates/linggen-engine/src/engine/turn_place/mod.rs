@@ -166,4 +166,6 @@ pub use held::Held;
 pub mod running;
 
 #[cfg(test)]
+mod lock_tests;
+#[cfg(test)]
 mod tests;
