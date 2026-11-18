@@ -23,6 +23,8 @@
 //! - a body that names NAME only as `$NAME` or `${NAME}`, with no `=` or
 //!   `+` glued after it (it could become an assignment), and holds no
 //!   compound command (`for`, `while`, `if`, `case`, `{ }`, …);
+//! - no command before the loop naming NAME (it could change how the shell
+//!   keeps it);
 //! - nowhere in the command: a subshell or a substitution (`(`, `)`,
 //!   backticks, `$(`), a heredoc, a comment, a brace other than `${NAME}`,
 //!   a line continuation, or `IFS`.
@@ -46,6 +48,11 @@ fn rewrite(cmd: &str) -> Result<Option<String>, ()> {
         return Err(());
     }
     let parsed = parse_loop(cmd, &items[at..]).ok_or(())?;
+    // A command before the loop that names its variable may change how the
+    // shell keeps it (`declare`, `readonly`): not read.
+    if names_the_word(&cmd[..items[at].start], parsed.name) {
+        return Err(());
+    }
     let rest = &cmd[parsed.end..];
     let rest = rewrite(rest)?.unwrap_or_else(|| rest.to_string());
     let bodies: Vec<String> = parsed
@@ -328,6 +335,17 @@ fn is_plain_value(word: &str) -> bool {
     !word.is_empty()
         && plain
         && (rest.len() == word.len() || rest.is_empty() || rest.starts_with('/'))
+}
+
+/// Whether `text` holds `name` as a word of its own (not inside a longer
+/// name).
+fn names_the_word(text: &str, name: &str) -> bool {
+    let ident = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    text.match_indices(name).any(|(at, _)| {
+        let before = text[..at].chars().next_back();
+        let after = text[at + name.len()..].chars().next();
+        !before.is_some_and(ident) && !after.is_some_and(ident)
+    })
 }
 
 /// Whether every mention of `name` in `body` is `$name` or `${name}`, with
