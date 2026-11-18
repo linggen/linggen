@@ -204,6 +204,6 @@ Without a ceiling a blocking tool owns the run indefinitely: the turn never ends
 ## Bash safety
 
 - Commands executed via `sh -c` in workspace root.
-- Timeout enforced (default 30s).
+- `timeout_ms` limits the foreground wait (default 120,000 ms, capped at 600,000 ms). At the limit, a running command moves to a session background task with its output so far and reports its end in a new turn. Without a session to keep it, Bash kills the command and says why.
 - Output captured (stdout + stderr).
 - Workspace-scoped: working directory set to workspace root.

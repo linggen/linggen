@@ -105,8 +105,8 @@ impl Tools {
             .await
     }
 
-    /// A foreground Bash; one Steer moved is watched as a background task
-    /// (`foreground_shell.rs`).
+    /// Watch a foreground Bash as a background task if Steer or the
+    /// foreground limit moved it (`foreground_shell.rs`).
     pub(super) async fn run_command(&self, args: RunCommandArgs) -> Result<ToolResult> {
         let ran = self
             .run_blocking("run_command", move |tools| tools.run_foreground_shell(args))

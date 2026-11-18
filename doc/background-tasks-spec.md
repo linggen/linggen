@@ -70,7 +70,7 @@ The same in a native Linggen session and in a Claude session.
 
 | Kind | Native session | Claude session |
 |:-----|:---------------|:---------------|
-| Shell | `Bash` with `run_in_background` | SDK background shell |
+| Shell | `Bash` with `run_in_background`, or moved by its foreground limit or Steer | SDK background shell |
 | Subagent | `Task` with `run_in_background` | SDK background subagent |
 | Watch | — | SDK Monitor / MCP task |
 
@@ -140,6 +140,16 @@ A background shell is a child process of the engine, owned by the session.
 Its output goes to a file in the session's directory; the list shows the
 tail. A background subagent runs on its own engine like any delegation,
 but the parent's tool call returns at once with the task's id.
+
+### Moved at the foreground limit
+
+A foreground `Bash` that is still running at `timeout_ms` (default 120,000
+ms, capped at 600,000 ms) moves to the same shell task list as a command
+moved by Steer. The call returns the task id, output file, and output so
+far; the starting agent is told when the command ends. This applies to a
+subagent's own Bash too. If the session cannot keep the task, Bash kills
+the command and says why. Cancel still kills a foreground command; after
+the move, use `TaskStop` or stop the task from the list.
 
 ### Moved by Steer
 

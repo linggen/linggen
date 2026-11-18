@@ -57,6 +57,30 @@ async fn a_background_shell_ends_the_turn_at_once_and_its_end_is_a_turn_of_its_o
 }
 
 #[tokio::test]
+async fn a_shell_past_its_foreground_limit_reports_its_end_in_a_new_turn() {
+    let w = World::start(Setup::default().script(
+        Agent::Ling,
+        vec![
+            tool("Bash", json!({"cmd": "echo started; sleep 1; echo finished", "timeout_ms": 300})),
+            text("It's still running."),
+            text("It finished."),
+        ],
+    ))
+    .await;
+    let sid = w.api.create_session(json!({"title": "Chat"})).await;
+    first_turn(&w, &sid).await;
+    let moved = last_said(&w, 1);
+    assert!(moved.contains("Moved to the background as task sh-"), "{moved}");
+    assert!(moved.contains("Output so far:\nstarted"), "{moved}");
+    assert!(moved.contains("You will be told in a new turn"), "{moved}");
+    until_calls(&w, 3).await;
+    let notice = last_said(&w, 2);
+    assert!(notice.contains("ended: completed (exit code 0)"), "{notice}");
+    assert!(notice.contains("Last output:\nstarted\nfinished"), "{notice}");
+    w.assert_all_scripted();
+}
+
+#[tokio::test]
 async fn the_person_stops_a_background_shell_and_the_agent_is_told() {
     let w = World::start(Setup::default().script(
         Agent::Ling,

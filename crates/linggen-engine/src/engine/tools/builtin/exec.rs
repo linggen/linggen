@@ -18,13 +18,12 @@ impl Tool for BashTool {
     fn name(&self) -> &'static str {
         "Bash"
     }
-    // The user asked for this command; builds and downloads run long, and the
-    // shell layer bounds itself.
+    // The shell layer moves long commands to the background itself.
     fn max_duration(&self) -> Option<Duration> {
         None
     }
     fn description(&self) -> &'static str {
-        "Run a shell command via sh -c on this machine — the person's own computer, the one you run on. Working directory persists across calls (cd is remembered). Use for builds, tests, git, and reading the machine's own live state (memory, disks, processes, network, settings). Prefer dedicated tools (Read, Glob, Grep) over Bash equivalents, and create or change files with Write and Edit, not with here-documents or redirects."
+        "Run a shell command via sh -c on this machine — the person's own computer, the one you run on. Working directory persists across calls (cd is remembered). At the foreground limit (120000 ms by default, capped at 600000 ms), a running command moves to the session's background and you are told in a new turn when it ends. Without a session to keep it, Bash kills the command and says why. Use for builds, tests, git, and reading the machine's own live state (memory, disks, processes, network, settings). Prefer dedicated tools (Read, Glob, Grep) over Bash equivalents, and create or change files with Write and Edit, not with here-documents or redirects."
     }
     fn tier(&self) -> PermissionMode {
         PermissionMode::Admin
@@ -35,7 +34,7 @@ impl Tool for BashTool {
             "properties": {
                 "cmd": {"type": "string", "description": "Shell command to execute"},
                 "description": {"type": "string", "description": "What the command does, in a few plain words (\"Build the UI\", \"Run the engine tests\") — the chat shows it while the command runs"},
-                "timeout_ms": {"type": "integer", "description": "Timeout in milliseconds (default: 30000)"},
+                "timeout_ms": {"type": "integer", "description": "Foreground wait in milliseconds (default: 120000, capped at 600000). A command still running moves to the background if the session can keep it."},
                 "run_in_background": {"type": "boolean", "description": "Start it beside the chat and return at once with a task id — for servers, watches and long builds. You are told in a new turn when it ends; TaskOutput reads its output, TaskStop stops it."}
             },
             "required": ["cmd"]

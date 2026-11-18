@@ -1,8 +1,8 @@
 //! A foreground Bash: the turn waits for the command and reads its output.
 //! It waits on the child's end, its timeout, a kill from the chat, and the
-//! turn's Steer. On Steer the command is not killed: it moves to the
-//! background as a task of the session (`background::watch_shell`), its
-//! output from then on going to the task's file, and the call returns.
+//! turn's Steer. Steer and the foreground limit both hand a running command
+//! to the session's background tasks (`background::watch_shell`). Its output
+//! goes to the task's file and the call returns.
 use super::search_exec::{find_git_root, kill_process_group, RunCommandArgs};
 use super::{ToolProgressSender, ToolResult, Tools};
 use crate::util::{LockExt, CWD_SENTINEL};
@@ -36,7 +36,7 @@ pub(super) enum Ran {
     Moved(Moved),
 }
 
-/// A command Steer moved, ready to be watched as a background task.
+/// A command that left the foreground, ready to be watched as a background task.
 pub(super) struct Moved {
     child: Child,
     readers: Vec<JoinHandle<()>>,
@@ -131,9 +131,13 @@ fn read_lines(
     })
 }
 
+fn foreground_limit(timeout_ms: Option<u64>) -> Duration {
+    Duration::from_millis(timeout_ms.unwrap_or(120_000).min(600_000))
+}
+
 impl Tools {
     pub(super) fn run_foreground_shell(&self, args: RunCommandArgs) -> Result<Ran> {
-        let timeout = Duration::from_millis(args.timeout_ms.unwrap_or(30000));
+        let timeout = foreground_limit(args.timeout_ms);
         let cwd = self.shell_cwd();
         // Wrap the user command to capture the final working directory.
         // Preserves the original exit code while appending a sentinel + pwd.
@@ -156,13 +160,22 @@ impl Tools {
             ),
         ];
 
-        let mut may_move = self.steer.is_some();
-        let waited = loop {
-            let waited =
-                self.wait_child(&mut child, timeout, args.cancel_flag.as_deref(), may_move)?;
-            let Waited::Steered = waited else {
-                break waited;
-            };
+        let deadline = Instant::now() + timeout;
+        let mut allow_steer = self.steer.is_some();
+        let note = loop {
+            let waited = self.wait_child(
+                &mut child,
+                deadline,
+                args.cancel_flag.as_deref(),
+                allow_steer,
+            )?;
+            match waited {
+                Waited::Exited => break None,
+                Waited::Interrupted => {
+                    break Some("linggen: command interrupted by user".to_string());
+                }
+                Waited::TimedOut | Waited::Steered => {}
+            }
             match self.move_capture(&capture) {
                 Ok((id, output)) => {
                     return Ok(Ran::Moved(Moved {
@@ -174,13 +187,24 @@ impl Tools {
                         started: wrapped_cmd,
                     }));
                 }
+                Err(error) if matches!(waited, Waited::TimedOut) => {
+                    break Some(format!(
+                        "linggen: command timed out after {}ms and was killed: {error}",
+                        timeout.as_millis()
+                    ));
+                }
                 Err(error) => {
                     tracing::warn!("Steer could not move the command to the background: {error}");
-                    may_move = false;
+                    allow_steer = false;
                 }
             }
         };
 
+        if note.is_some() {
+            kill_process_group(&child);
+            #[cfg(not(unix))]
+            let _ = child.kill();
+        }
         let exit_status = child.wait()?;
         for reader in readers {
             let _ = reader.join();
@@ -189,14 +213,6 @@ impl Tools {
             stdout, mut stderr, ..
         } = std::mem::take(&mut *capture.lock_ok());
         let stdout = self.strip_cwd_sentinel(stdout);
-        let note = match waited {
-            Waited::TimedOut => Some(format!(
-                "linggen: command timed out after {}ms",
-                timeout.as_millis()
-            )),
-            Waited::Interrupted => Some("linggen: command interrupted by user".to_string()),
-            Waited::Exited | Waited::Steered => None,
-        };
         if let Some(note) = note {
             if !stderr.is_empty() && !stderr.ends_with('\n') {
                 stderr.push('\n');
@@ -260,30 +276,27 @@ impl Tools {
         Ok(command.spawn()?)
     }
 
-    /// Wait for the child's end, its timeout, a kill, or (when `may_move`)
-    /// a Steer it did not end within [`STEER_GRACE`] of.
+    /// Wait for the child's end, its foreground deadline, a cancel, or
+    /// (when `allow_steer`) a Steer it did not end within [`STEER_GRACE`] of.
     fn wait_child(
         &self,
         child: &mut Child,
-        timeout: Duration,
+        deadline: Instant,
         cancel: Option<&AtomicBool>,
-        may_move: bool,
+        allow_steer: bool,
     ) -> Result<Waited> {
-        let start = Instant::now();
         let mut steered_at: Option<Instant> = None;
         loop {
             if child.try_wait()?.is_some() {
                 return Ok(Waited::Exited);
             }
-            if start.elapsed() >= timeout {
-                kill_process_group(child);
-                return Ok(Waited::TimedOut);
-            }
             if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
-                kill_process_group(child);
                 return Ok(Waited::Interrupted);
             }
-            if may_move && steered_at.is_none() && self.steer_pending() {
+            if Instant::now() >= deadline {
+                return Ok(Waited::TimedOut);
+            }
+            if allow_steer && steered_at.is_none() && self.steer_pending() {
                 steered_at = Some(Instant::now());
             }
             if steered_at.is_some_and(|at| at.elapsed() >= STEER_GRACE) {
@@ -449,6 +462,85 @@ mod tests {
         let steer = Arc::new(SteerSignal::default());
         tools.set_steer(Some(steer.clone()));
         (tools, manager, steer)
+    }
+
+    #[test]
+    fn foreground_limit_defaults_to_two_minutes() {
+        assert_eq!(foreground_limit(None), Duration::from_secs(120));
+    }
+
+    #[test]
+    fn foreground_limit_honours_requested_time_up_to_ten_minutes() {
+        assert_eq!(foreground_limit(Some(180_000)), Duration::from_secs(180));
+        assert_eq!(foreground_limit(Some(600_000)), Duration::from_secs(600));
+        assert_eq!(foreground_limit(Some(u64::MAX)), Duration::from_secs(600));
+    }
+
+    #[tokio::test]
+    async fn deadline_moves_a_running_shell_even_without_steer() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut tools, manager, _) = tools_with_steer(dir.path());
+        tools.set_steer(None);
+        let mut args = bash("echo before; sleep 2; echo after");
+        args.timeout_ms = Some(300);
+        let result = tools.run_command(args).await.unwrap();
+        let ToolResult::Success(text) = result else {
+            panic!("expected the deadline to hand off the command: {result:?}");
+        };
+        assert!(
+            text.starts_with("Moved to the background as task sh-"),
+            "{text}"
+        );
+        assert!(text.contains("Output so far:\nbefore"), "{text}");
+        let tasks = manager.background.list_owned("s", Some("ling"));
+        assert_eq!(tasks.len(), 1);
+        assert!(
+            tasks[0].is_running(),
+            "the deadline did not kill the command"
+        );
+        let id = &tasks[0].id;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while manager.background.get("s", id).unwrap().is_running() {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let task = manager.background.get("s", id).unwrap();
+        assert_eq!(task.status, "completed");
+        let log = std::fs::read_to_string(task.output_file.unwrap()).unwrap();
+        assert_eq!(log, "before\nafter\n");
+    }
+
+    #[tokio::test]
+    async fn deadline_without_a_session_kills_the_shell_and_explains_why() {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = Tools::new(dir.path().to_path_buf()).unwrap();
+        let mut args = bash("sleep 1; echo survived");
+        args.timeout_ms = Some(50);
+        let result = tools.run_command(args).await.unwrap();
+        let ToolResult::CommandOutput { stdout, stderr, .. } = result else {
+            panic!("expected command output");
+        };
+        assert!(stdout.is_empty(), "{stdout}");
+        assert!(stderr.contains("was killed"), "{stderr}");
+        assert!(stderr.contains("no session"), "{stderr}");
+    }
+
+    #[tokio::test]
+    async fn cancellation_wins_over_the_deadline() {
+        let dir = tempfile::tempdir().unwrap();
+        let (tools, manager, _) = tools_with_steer(dir.path());
+        let mut args = bash("sleep 1; echo survived");
+        args.timeout_ms = Some(0);
+        args.cancel_flag = Some(Arc::new(AtomicBool::new(true)));
+        let result = tools.run_command(args).await.unwrap();
+        let ToolResult::CommandOutput { stdout, stderr, .. } = result else {
+            panic!("expected command output");
+        };
+        assert!(stdout.is_empty(), "{stdout}");
+        assert!(stderr.contains("interrupted by user"), "{stderr}");
+        assert!(manager.background.list_owned("s", None).is_empty());
     }
 
     /// Steer moves a running foreground command to the background without

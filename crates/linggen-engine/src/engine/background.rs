@@ -336,8 +336,8 @@ fn start_shell(
 
 /// Watch: list a running shell as a task of its session and follow it —
 /// its latest output line, a stop, and its end, told as a turn. `exit`
-/// resolves when the shell has ended. A foreground Bash moved by Steer is
-/// handed here the same way (doc/background-tasks-spec.md).
+/// resolves when the shell has ended. A foreground Bash moved by Steer or
+/// its time limit is handed here the same way (doc/background-tasks-spec.md).
 pub async fn watch_shell(
     manager: &Arc<AgentManager>,
     shell: Shell<'_>,
