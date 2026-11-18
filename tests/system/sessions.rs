@@ -375,3 +375,25 @@ async fn a_queued_message_keeps_its_client_id() {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 }
+
+/// A page removes only its own app's sessions: one of another app, a plain
+/// chat, or a call naming no app is refused, and nothing is removed.
+#[tokio::test]
+async fn a_page_removes_only_its_own_apps_sessions() {
+    let w = World::start(Setup::default().setting_off()).await;
+    let dice = w.api.create_session(json!({"title": "Dice", "skill": "dice"})).await;
+    let plain = w.api.create_session(json!({"title": "chat"})).await;
+    let refused = [
+        (json!({"skill": "quiet", "session_id": dice}), "another app's"),
+        (json!({"session_id": dice}), "no app named"),
+        (json!({"skill": "", "session_id": plain}), "a plain chat, empty name"),
+        (json!({"session_id": plain}), "a plain chat, no app named"),
+    ];
+    for (body, what) in refused {
+        assert_eq!(w.api.delete_status("/api/skill-sessions", body).await, 403, "{what}");
+    }
+    assert!(w.rows_opt(&dice).is_some() && w.rows_opt(&plain).is_some(), "a refused call removed one");
+    let own = json!({"skill": "dice", "session_id": dice});
+    assert_eq!(w.api.delete_status("/api/skill-sessions", own).await, 200);
+    assert!(w.rows_opt(&dice).is_none(), "its own app's session stays");
+}

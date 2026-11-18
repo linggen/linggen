@@ -195,6 +195,10 @@ session, prompt and row is as before. On (decided by the builder 2026-11-15/16):
 - **Compaction settings**: a page's `POST /api/chat/compact_config` sets
   nothing in the day (it answers success); the day compacts at the global
   threshold with no focus.
+- **A page removes only its own app's sessions** (`DELETE
+  /api/skill-sessions`, setting on or off): the session's own skill must be
+  the one the page names; with none named, or another's, it is refused (403)
+  and nothing is removed. The day's session is every app's and is refused.
 - **A `!` command** stands where a turn from the same page stands (its page
   names its app as a chat turn does): at an app's page it starts in the
   app's folder, and its `cd` is kept for that place alone; home's starts in

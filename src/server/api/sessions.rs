@@ -426,6 +426,9 @@ pub(crate) async fn get_skill_session_state(
 #[derive(Deserialize)]
 pub(crate) struct RemoveSkillSessionRequest {
     session_id: String,
+    /// The app whose page asks; only a session of that app is removed.
+    #[serde(default)]
+    skill: Option<String>,
 }
 
 pub(crate) async fn remove_skill_session_api(
@@ -435,6 +438,9 @@ pub(crate) async fn remove_skill_session_api(
     // An app's page removes its own sessions; the day's session is every
     // app's, and the person removes it from the list.
     if crate::server::day_session::is_day(&req.session_id) {
+        return StatusCode::FORBIDDEN;
+    }
+    if !is_the_apps_own(&state, &req) {
         return StatusCode::FORBIDDEN;
     }
     state.manager.remove_session_engine(&req.session_id).await;
@@ -451,6 +457,16 @@ pub(crate) async fn remove_skill_session_api(
         }
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
+}
+
+/// Whether the session `req` names is a session of the app the page names:
+/// its own skill, and a page that names none removes nothing.
+fn is_the_apps_own(state: &ServerState, req: &RemoveSkillSessionRequest) -> bool {
+    let Some(app) = req.skill.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
+        return false;
+    };
+    let meta = state.manager.global_sessions.get_session_meta(&req.session_id);
+    meta.ok().flatten().is_some_and(|m| m.skill.as_deref() == Some(app))
 }
 
 #[derive(Deserialize)]
