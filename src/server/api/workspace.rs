@@ -341,9 +341,8 @@ pub(crate) async fn get_workspace_state(
             {
                 return None;
             }
-            // Silence keeps its calls, never its word.
             let silent = crate::server::resident::is_silent_reply(&m.from_id, &m.content);
-            if silent && calls.is_empty() {
+            if silent && calls.is_empty() && m.from_id != "yinyue" {
                 return None;
             }
             let cleaned = match silent {
@@ -363,6 +362,9 @@ pub(crate) async fn get_workspace_state(
                 via_note: m.via_note,
             };
             let mut meta = serde_json::to_value(meta).ok()?;
+            if silent {
+                meta["silent"] = true.into();
+            }
             if let Some(place) = place {
                 meta["place"] = serde_json::Value::from(place);
             }

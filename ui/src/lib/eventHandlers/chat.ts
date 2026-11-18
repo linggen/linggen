@@ -185,13 +185,13 @@ export function handleMessage(item: UiEventOf<'message'>): void {
   if (from === 'user' && to) chatStore.sealRunBubble(to);
   const { elapsed: msgElapsed, contextTokens: msgCtxTokens } = sid && from !== 'user' ? agentTracker.clearRun(sid) : {};
 
-  // The contract's silence: the turn ends with no words — its bubble keeps
-  // its calls and is marked, and a turn with no bubble on screen adds none.
+  // Keep the silence marker even if we missed Yinyue's bubble: saved tool
+  // rows of that run must still be hidden by the display policy.
   if (from !== 'user' && item.data?.silent) {
     const onScreen = runId
       ? chatStore.messages.some((m) => m.live && m.runId === runId)
       : chatStore.messages.some((m) => m.from === from && m.isGenerating);
-    if (!onScreen) return;
+    if (!onScreen && !(from === 'yinyue' && runId)) return;
     chatStore.finalizeMessage(from, '', to, tsMs, msgElapsed, msgCtxTokens,
       undefined, undefined, undefined, undefined, undefined, runId);
     chatStore.markLastSilent(from, runId);

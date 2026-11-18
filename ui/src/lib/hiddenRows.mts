@@ -1,3 +1,5 @@
+import type { ChatMessage } from '../types.ts';
+
 // Rows the chat never shows as anyone's words. A prompt the engine wrote to
 // an agent carries `[HIDDEN]` (the engine sets it on every kickoff it
 // authors — heralds, ambient moments, a page's report); the model reads it,
@@ -16,6 +18,17 @@ export const shouldHideInternalChatMessage = (_from?: string, text?: string): bo
   if (text.startsWith('Delegated task:')) return true;
   return false;
 };
+
+/** Display policy before binding and folding, so a silent run cannot leave a tool row. */
+export function visibleChatRows(messages: ChatMessage[]): ChatMessage[] {
+  const isYinyueSilence = (m: ChatMessage) => m.from === 'yinyue' && m.silent;
+  const silentRuns = new Set(messages.filter(isYinyueSilence).map((m) => m.runId).filter(Boolean));
+  return messages.filter((m) => {
+    if (m.from === 'world' || m.from === 'system' || shouldHideInternalChatMessage(m.from, m.text)) return false;
+    if (isYinyueSilence(m) || (m.from === 'yinyue' && m.runId && silentRuns.has(m.runId))) return false;
+    return !m.silent || !!m.content?.some((b) => b.type === 'tool_use');
+  });
+}
 
 // The spoken contract's word for "say nothing" — the engine's
 // `resident::spoken::SILENT`, mirrored here (a Rust test locks the two).

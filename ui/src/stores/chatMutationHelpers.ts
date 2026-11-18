@@ -10,6 +10,7 @@ import {
   dedupPlanMessages,
 } from '../lib/messageUtils';
 import { bindRuns } from '../lib/runBinding.mts';
+import { visibleChatRows } from '../lib/hiddenRows.mts';
 import { sortByTime } from '../lib/timeOrder.mts';
 
 /**
@@ -28,7 +29,7 @@ export interface ChatMutationState {
 export function computeDisplay(messages: ChatMessage[]): ChatMessage[] {
   // Hide [BOARD_MOVE] messages — internal game state not meant for display
   // Each run shows as its bubble or its saved rows, bound by run id.
-  const visible = bindRuns(messages).filter(m => !(m.role === 'user' && m.text?.startsWith('[BOARD_MOVE]')));
+  const visible = bindRuns(visibleChatRows(messages)).filter(m => !(m.role === 'user' && m.text?.startsWith('[BOARD_MOVE]')));
   const deduped = dedupPlanMessages(visible);
   const plans: ChatMessage[] = [];
   const nonPlans: ChatMessage[] = [];
@@ -92,10 +93,10 @@ export function mutateLast(fn: (msgs: ChatMessage[]) => ChatMessage[]): (s: Chat
     ) {
       const lastNew = messages[messages.length - 1];
       const lastDisplay = s.displayMessages[s.displayMessages.length - 1];
-      // Match by identity: same role+from means we're updating the same bubble.
-      // Skip fast path for plan messages — computeDisplay moves them to the end,
-      // and the fast path would overwrite the plan entry with streaming token text.
-      if (lastDisplay && lastNew.role === lastDisplay.role && lastNew.from === lastDisplay.from && !isPlanMessage(lastDisplay)) {
+      // Only patch a still-visible streaming bubble. A hidden or bound row
+      // need not be the same object as the last raw row.
+      if (lastDisplay === currentMsgs[currentMsgs.length - 1] && lastNew.isGenerating &&
+          !isPlanMessage(lastDisplay) && visibleChatRows([lastNew]).length > 0) {
         const displayMessages = [...s.displayMessages];
         displayMessages[displayMessages.length - 1] = lastNew;
         return {

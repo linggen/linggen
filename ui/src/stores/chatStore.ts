@@ -803,7 +803,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // The live run's row (a page loaded mid-run) keeps its calls running.
             const live = (meta as RunMeta).run === 'running';
             const tools = !isUser ? savedToolBlocks((meta as RunMeta).tools, `${meta.ts}-${idx}`, live) : [];
-            if (!isUser && !bodyStr && !tools.length) return [];
+            const silent = meta.silent === true;
+            if (!isUser && !bodyStr && !tools.length && !silent) return [];
             const isError = !isUser && bodyStr.startsWith('Error:');
             return [{
               role: meta.from === 'user' ? 'user' : 'agent',
@@ -814,6 +815,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               timestampMs: Number(meta.ts || 0) * 1000,
               rowOrder: idx,
               ...runId,
+              ...(silent ? { silent: true } : {}),
               ...(tools.length ? { content: tools, toolCount: tools.length } : {}),
               ...(Array.isArray(meta.subagents) ? { subagentTree: meta.subagents as SubagentTreeEntry[] } : {}),
               ...(isError ? { isError: true } : {}),

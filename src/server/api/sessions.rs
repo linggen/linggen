@@ -377,9 +377,8 @@ pub(crate) async fn get_skill_session_state(
             {
                 return None;
             }
-            // Silence keeps its calls, never its word.
             let silent = crate::server::resident::is_silent_reply(&m.from_id, &m.content);
-            if silent && calls.is_empty() {
+            if silent && calls.is_empty() && m.from_id != "yinyue" {
                 return None;
             }
             let cleaned = match silent {
@@ -398,7 +397,10 @@ pub(crate) async fn get_skill_session_state(
                 "via": m.via,
                 "via_note": m.via_note
             });
-            let meta = crate::server::day_session::with_place(meta, &m, day.as_ref());
+            let mut meta = crate::server::day_session::with_place(meta, &m, day.as_ref());
+            if silent {
+                meta["silent"] = true.into();
+            }
             let meta = crate::state_fs::session_images::with_urls(meta, &session_id, &m.images);
             Some(serde_json::json!([
                 run_calls::with_tools(meta, m.run_id.as_deref(), calls),

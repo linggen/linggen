@@ -191,13 +191,6 @@ const ChatSkeleton: React.FC = () => (
   </div>
 );
 
-/** Whether a message is drawn at all: an engine kickoff ([HIDDEN]) and a
- *  silent reply with no calls to show are no row. */
-function isShown(msg: ChatMessage): boolean {
-  if (msg.role === 'user' && msg.text.startsWith('[HIDDEN]')) return false;
-  return !(msg.silent && !(msg.content || []).some((b) => b.type === 'tool_use'));
-}
-
 /** Another place's stretch of the day's session: its app and how many
  *  messages (or that it works, while its turn streams), one line that
  *  opens or closes it. */
@@ -263,7 +256,6 @@ export const ChatMessageList = React.memo<{
     // Keys and the floating banner's indexes are positions in the whole
     // history, so they hold as the window grows.
     const msg = messages[i];
-    if (!isShown(msg)) return null;
     const key = `${msg.timestamp}-${i}-${msg.from || msg.role}-${msg.text.slice(0, 24)}`;
     if (msg.via) return <HandOffRow key={key} msg={msg} />;
     const isUser = msg.role === 'user';
@@ -315,9 +307,8 @@ export const ChatMessageList = React.memo<{
       {foldOthers(messages.slice(from), here).map((item) => {
         if (item.kind === 'message') return renderRow(from + item.index);
         const rows = item.indexes.map((j) => from + j);
-        const count = rows.filter((i) => isShown(messages[i])).length;
+        const count = rows.length;
         const key = `fold-${messages[rows[0]].timestamp}-${rows[0]}`;
-        if (count === 0) return null;
         const expanded = opened.has(key);
         return (
           <React.Fragment key={key}>

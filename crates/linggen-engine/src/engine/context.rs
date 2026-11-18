@@ -190,9 +190,7 @@ impl AgentEngine {
         content: &str,
         session_id: Option<&str>,
     ) -> anyhow::Result<()> {
-        if self.silence_ok && is_silence(content) {
-            return Ok(()); // silence was the answer: nothing to show, nothing to keep
-        }
+        let transient_silence = self.silence_ok && is_silence(content);
         if let Some(manager) = self.tools.get_manager() {
             let agent_id = self
                 .agent_id
@@ -236,7 +234,9 @@ impl AgentEngine {
             // event-ordering safety. So the on-disk persist is the only
             // step that needs to skip for delegated runs.
             let is_subagent = self.tools.builtins.delegation_depth() > 0;
-            if !is_subagent {
+            // A silent table turn still tells the live UI to hide its work,
+            // but the silence itself is not a conversation row to keep.
+            if !is_subagent && !transient_silence {
                 self.keep_answer_pictures(session_id, content).await;
                 self.save_row(
                     session_id,
