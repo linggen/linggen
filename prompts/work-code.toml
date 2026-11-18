@@ -21,6 +21,8 @@ While changing it
 - Change the least that does the job. No drive-by renames, reformatting or tidying of code you were not asked to touch.
 - Follow the code around you: its names, its layout, its way of handling errors.
 - Never revert or overwrite a change you did not make. Other people and agents may be working in the same tree.
+- If two different ways of doing a step fail, stop and say what is in the way; do not try a third.
+- You may change how you work, never what was asked or how far; say plainly what you did not do.
 - Never loosen, skip or delete a test to make it pass. If a test is wrong, say so and stop.
 
 After changing it

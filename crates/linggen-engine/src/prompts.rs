@@ -250,6 +250,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn coding_core_says_when_to_stop_and_what_to_report() {
+        let prompts = PromptStore::load(None);
+        let text = prompts.get(keys::WORK_CODE_CORE).unwrap();
+        assert!(text.contains("two different ways"), "missing the stop rule");
+        assert!(text.contains("never what was asked or how far"));
+        assert!(text.contains("say plainly what you did not do"));
+    }
+
+    #[test]
     fn embedded_defaults_load() {
         let store = PromptStore::load(None);
         // Legacy keys (now routed through TOML)
