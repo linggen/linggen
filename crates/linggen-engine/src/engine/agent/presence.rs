@@ -8,6 +8,7 @@
 //! surface the person was working in, a run finishing a moment later read as
 //! "away", and Yinyue heralded a reply to someone watching it arrive.
 
+use crate::front::Front;
 use std::collections::HashMap;
 
 /// Live user-presence signal fed by the clients' throttled beat. Only recency,
@@ -40,15 +41,6 @@ const MAX_SURFACES: usize = 32;
 /// The surface a typed turn stamps (`AgentManager::mark_user_turn_presence`).
 /// It says the person is here, not which page is in front of them.
 pub const USER_TURN_SURFACE: &str = "user-turn";
-
-/// The page in front of the person: the focused live surface with the
-/// freshest input. `app` is the skill the page names; `None` is Linggen's own
-/// main page (or a page too old to name itself).
-#[derive(Debug, Clone, PartialEq)]
-pub struct Front {
-    pub app: Option<String>,
-    pub last_input_at: u64,
-}
 
 impl Presence {
     /// Whether a beat saying "not focused" must be ignored: the same slot said

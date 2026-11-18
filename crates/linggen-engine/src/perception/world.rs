@@ -5,7 +5,7 @@
 //! Readings only. Nothing here judges, compares or concludes; what a reading
 //! means is the agent's to say.
 
-use crate::engine::agent::Front;
+use crate::front::Front;
 
 /// The whole block, in characters, bullets and newlines included. About 400
 /// tokens of English; CJK text runs about a token a character, so a block

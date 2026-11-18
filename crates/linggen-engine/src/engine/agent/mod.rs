@@ -36,7 +36,8 @@ pub mod runs;
 pub mod runs_api;
 
 pub use event::AgentEvent;
-pub use presence::{Beat, Front, Presence, PresenceBoard, USER_TURN_SURFACE};
+pub use crate::front::Front;
+pub use presence::{Beat, Presence, PresenceBoard, USER_TURN_SURFACE};
 pub use runs::{AgentRunRecord, AgentRunStatus, RunStore};
 
 pub struct ProjectContext {

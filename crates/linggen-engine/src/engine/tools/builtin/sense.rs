@@ -27,7 +27,7 @@ pub(crate) struct RightNow {
     pub hour: u32,
     pub part_of_day: &'static str,
     /// The Linggen page in front, for the world's "in front" line.
-    pub front: Option<crate::engine::agent::Front>,
+    pub front: Option<crate::front::Front>,
     pub now: u64,
 }
 

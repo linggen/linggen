@@ -21,7 +21,7 @@
 //! stretch is closed at the last moment it was saved.
 
 use super::activity::Activity;
-use crate::engine::agent::Front;
+use crate::front::Front;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Mutex;
