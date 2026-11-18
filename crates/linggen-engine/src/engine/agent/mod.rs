@@ -182,8 +182,8 @@ impl AgentManager {
         if let Some(choice) =
             Self::normalize_model_choice(Self::model_override_for_agent(config, agent_id))
         {
-            if models.has_model(&choice) {
-                return Ok(choice);
+            if let Some(live) = models.resolve_id(&choice) {
+                return Ok(live);
             }
             warn!(
                 "Agent override model '{}' not found in configured models; falling through",
@@ -193,8 +193,8 @@ impl AgentManager {
 
         // 2. Frontmatter model
         if let Some(choice) = Self::normalize_model_choice(frontmatter_model) {
-            if models.has_model(&choice) {
-                return Ok(choice);
+            if let Some(live) = models.resolve_id(&choice) {
+                return Ok(live);
             }
             warn!(
                 "Agent frontmatter model '{}' not found in configured models; falling through",
@@ -1097,6 +1097,21 @@ mod tests {
             AgentManager::normalize_model_choice(Some(" local_ollama ".to_string())),
             Some("local_ollama".to_string())
         );
+    }
+
+    /// An agent's own model named by a retired built-in id runs as its
+    /// successor, as a chat's, a companion's and a mission's do.
+    #[test]
+    fn a_retired_agent_model_runs_as_its_successor() {
+        let models = crate::provider::models::ModelManager::new_with_credentials(
+            vec![],
+            &crate::credentials::Credentials::default(),
+        );
+        let config = crate::config::Config::default();
+        let chosen =
+            AgentManager::resolve_model_id(&config, &models, "ling", Some("gpt-6-sol".into()), true)
+                .unwrap();
+        assert_eq!(chosen, "gpt-6.2-sol");
     }
 }
 
