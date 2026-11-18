@@ -138,17 +138,15 @@ fn resolve_log_dir(configured: Option<&str>) -> Result<PathBuf> {
 }
 
 fn configured_log_path(path: &str, home: Option<&std::path::Path>) -> PathBuf {
-    // A configured directory named `~` has always been literal.
-    crate::util::expand_tilde(path.as_ref(), home.filter(|_| path != "~"))
+    crate::util::expand_tilde(path.as_ref(), home)
 }
 
 #[cfg(test)]
 #[test]
 fn log_dir_tilde_expansion() {
-    crate::util::tilde_cases::check(
-        |path, home| configured_log_path(path, home).to_string_lossy().into_owned(),
-        false,
-    );
+    crate::util::tilde_cases::check(|path, home| {
+        configured_log_path(path, home).to_string_lossy().into_owned()
+    });
 }
 
 fn cleanup_old_logs(log_dir: &PathBuf, retention_days: u64) -> Result<()> {

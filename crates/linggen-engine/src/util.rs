@@ -189,27 +189,26 @@ pub fn resolve_path(path: &Path) -> PathBuf {
 pub(crate) mod tilde_cases {
     use std::path::Path;
 
-    pub(crate) fn check(expand: impl Fn(&str, Option<&Path>) -> String, bare_tilde: bool) {
+    /// One reading everywhere — the gate, the file tools, the log folder:
+    /// `~` and `~/…` are the home folder; a named user's `~name`, a tilde
+    /// that is not first, and every path when the home folder is unknown
+    /// are left as written. (Until 2026-11-17 the file tools and the log
+    /// folder kept a bare `~` literal while the gate read it as home.)
+    pub(crate) fn check(expand: impl Fn(&str, Option<&Path>) -> String) {
         let home = Path::new("fixture-home");
         let sep = std::path::MAIN_SEPARATOR;
         let child = format!("fixture-home{sep}x");
         let trailing = format!("fixture-home{sep}");
-        // The legacy permission helper expanded bare `~`; tools and logging
-        // kept it literal. Preserve those results at each call site. All
-        // three expand `~/` and agree on the rest. With no home, every
-        // input stays literal. Inject that case because removing HOME can
-        // still leave an OS account directory.
-        for (input, permission, tools_and_logging) in [
-            ("~", "fixture-home", "~"),
-            ("~/x", child.as_str(), child.as_str()),
-            ("~x", "~x", "~x"),
-            ("~user/x", "~user/x", "~user/x"),
-            ("x/~/y", "x/~/y", "x/~/y"),
-            ("", "", ""),
-            ("x/y", "x/y", "x/y"),
-            ("~/", trailing.as_str(), trailing.as_str()),
+        for (input, expected) in [
+            ("~", "fixture-home"),
+            ("~/x", child.as_str()),
+            ("~x", "~x"),
+            ("~user/x", "~user/x"),
+            ("x/~/y", "x/~/y"),
+            ("", ""),
+            ("x/y", "x/y"),
+            ("~/", trailing.as_str()),
         ] {
-            let expected = if bare_tilde { permission } else { tools_and_logging };
             assert_eq!(expand(input, Some(home)), expected, "{input:?} with home");
             assert_eq!(expand(input, None), input, "{input:?} without home");
         }

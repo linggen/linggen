@@ -319,11 +319,10 @@ fn split_command_segments(cmd: &str) -> Vec<String> {
 #[cfg(test)]
 #[test]
 fn permission_tilde_expansion() {
-    // Targets and grants keep the legacy expansion before matching or pruning.
-    crate::util::tilde_cases::check(
-        |path, home| expand_tilde(Path::new(path), home).to_string_lossy().into_owned(),
-        true,
-    );
+    // Targets and grants are expanded before matching or pruning.
+    crate::util::tilde_cases::check(|path, home| {
+        expand_tilde(Path::new(path), home).to_string_lossy().into_owned()
+    });
 }
 
 /// Tilde-expand and resolve symlinks. On macOS, `/tmp` and `/private/tmp` are

@@ -18,9 +18,10 @@ pub(super) fn build_globset(globs: Option<&[String]>) -> Result<Option<GlobSet>>
     Ok(Some(builder.build()?))
 }
 
-/// A bare `~` stays workspace-relative, including as a Glob pattern.
+/// A file tool's path with `~` read as the gate reads it (`util::expand_tilde`),
+/// so the folder a call is judged for is the folder it touches.
 pub(super) fn expand_file_tool_path(path: &str, home: Option<&Path>) -> String {
-    crate::util::expand_tilde(Path::new(path), home.filter(|_| path != "~"))
+    crate::util::expand_tilde(Path::new(path), home)
         .to_string_lossy()
         .into_owned()
 }
@@ -271,7 +272,7 @@ mod tests {
 
     #[test]
     fn tool_path_tilde_expansion() {
-        crate::util::tilde_cases::check(expand_file_tool_path, false);
+        crate::util::tilde_cases::check(expand_file_tool_path);
     }
 
     #[test]
