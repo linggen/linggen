@@ -59,7 +59,9 @@ import '/shared/channel.js'; // the page's data channel (api.js loads it too)
 // by `@name` (Yinyue). onStreamToken / onStreamEnd hear the skill's own
 // agent's turns only — a guest's line never ends the page's turn. A page that
 // wants her lines too passes `guestStreams: true`; each call then says whose
-// (`info.agent`, `info.own`).
+// (`info.agent`, `info.own`). In Linggen's daily session the chat hands on
+// only the turns standing in this app's own place: another place's turn
+// (the main page's, another app's) never reaches these handlers.
 /** Open Settings → Models (a ChatGPT or Claude sign-in, or an API key) on the
  *  nearest host that has it — the launcher, the dev console (ui/src/lib/ownModel.ts
  *  sets `__linggenOpenSettings` there) — else in a new tab. */

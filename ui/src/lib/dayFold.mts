@@ -57,6 +57,20 @@ export function runningElsewhere(runId: string | null | undefined, places: Recor
   return place && place !== here ? place : null;
 }
 
+/** Whether an app's own scripts are handed what a run sends (its stream,
+ *  its blocks, its end, its signs of life) at a page standing in `here`:
+ *  only a run standing in this page's place. The place is the run's as the
+ *  engine first told it, else the one the event names; with none told (the
+ *  setting off, any session not a day) every run is handed on, as before. */
+export function streamsHere(
+  told: { run_id?: string | null; place?: string | null },
+  places: Record<string, string>,
+  here: string,
+): boolean {
+  const place = (told.run_id ? places[told.run_id] : undefined) || told.place;
+  return !place || place === here;
+}
+
 /** The status line while another place's turn runs. */
 export function workingIn(name: string): string {
   return `Working in ${name}`;

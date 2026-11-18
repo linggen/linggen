@@ -201,6 +201,12 @@ session, prompt and row is as before. On (decided by the builder 2026-11-15/16):
   text, blocks, tool output, messages — the person's that started it too)
   carries its place, so another place's turn folds while it streams, as its
   saved stretch does: one line ("Health · working…") that opens on a tap.
+- **An app's own scripts hear only their own place**: the chat relays a
+  run's stream, blocks, end and signs of life to the app's page
+  (`/shared/chat-bridge.js` handlers) only when the run stands in that
+  page's place, as the engine first told it; another place's turn stays in
+  the chat, folded. With no place told (setting off, any other session)
+  every run is relayed as before.
 - **One model a member for the day**: only the picker keeps one
   (`PATCH /api/sessions`); a model a page sends with a message is for that
   turn and is not kept.

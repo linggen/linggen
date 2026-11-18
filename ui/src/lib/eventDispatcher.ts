@@ -21,15 +21,19 @@ import { postToParent } from './parentFrame';
 import { pageAgent } from './pageAgent';
 import { ownsStream, streamEndPayload, streamTokenPayload } from './agentTurns.mts';
 import { rememberRunPlaces } from './eventHandlers/pageState';
+import { useServerStore } from '../stores/serverStore';
+import { pageSkillName } from '../stores/sessionStore';
+import { pagePlace, streamsHere } from './dayFold.mts';
 
 export { suppressPermissionSync } from './eventHandlers/_shared';
 export { handleAskUser } from './eventHandlers';
 
 export function dispatchEvent(item: UiEvent, sessionIdOverride?: string): void {
   if (!passesSessionFilter(item, sessionIdOverride)) return;
-  relayToSkillIframe(item);
-  // In a day the engine names the place the running turn stands in.
+  // In a day the engine names the place the running turn stands in: kept
+  // first, so the relay below reads the run's place.
   if (item.place && item.run_id) rememberRunPlaces([item]);
+  relayToSkillIframe(item);
 
   const kind = asEventKind(item.kind);
   if (!kind) {
@@ -174,9 +178,19 @@ function relayGlobal(item: UiEvent): boolean {
   return false;
 }
 
+/** Whether what a run sends is this page's place's (`streamsHere`): in a
+ *  day an app's own scripts are handed only the turns standing in its own
+ *  place — another place's stream, blocks, end and signs of life stay in the
+ *  chat. Outside a day no place is told, and everything goes as before. */
+function standsHere(item: UiEvent): boolean {
+  const here = pagePlace(pageSkillName());
+  return streamsHere(item, useServerStore.getState().runPlaces, here);
+}
+
 function relayToSkillIframe(item: UiEvent): void {
   if (window.parent === window) return;
   if (relayGlobal(item)) return;
+  if (!standsHere(item)) return;
   relayActivity(item);
 
   // Every stream names its agent: one app chat holds the skill's own agent

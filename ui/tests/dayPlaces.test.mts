@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  foldLabel, foldOthers, placeName, queuedHere, runningElsewhere, stopLabel, toldPlaces, waitingFrom, withLivePlaces,
+  foldLabel, foldOthers, placeName, queuedHere, runningElsewhere, stopLabel, streamsHere, toldPlaces, waitingFrom, withLivePlaces,
   workingIn, HOME_PLACE,
 } from '../src/lib/dayFold.mts';
 
@@ -30,6 +30,17 @@ test('the running turn stands elsewhere only when the engine said so', () => {
   assert.equal(runningElsewhere('r1', places, 'health'), null, "this page's own turn");
   assert.equal(runningElsewhere('r2', places, 'music'), null, 'no place told: as before');
   assert.equal(runningElsewhere(undefined, places, 'music'), null);
+});
+
+test("an app's own scripts are handed only the runs standing in its place", () => {
+  const places = { r1: 'health', r2: 'lingjing' };
+  assert.equal(streamsHere({ run_id: 'r2' }, places, 'lingjing'), true, 'its own turn');
+  assert.equal(streamsHere({ run_id: 'r1' }, places, 'lingjing'), false, "another place's turn");
+  assert.equal(streamsHere({ run_id: 'r1', place: 'lingjing' }, places, 'lingjing'), false, 'the run keeps the place first told');
+  assert.equal(streamsHere({ run_id: 'r3', place: 'health' }, places, 'lingjing'), false, 'a place the event names');
+  assert.equal(streamsHere({ run_id: 'r1' }, places, HOME_PLACE), false, 'the main page is a place too');
+  assert.equal(streamsHere({ run_id: 'r9' }, places, 'lingjing'), true, 'no place told: as before');
+  assert.equal(streamsHere({}, {}, 'lingjing'), true);
 });
 
 test('the status line and Stop name the place the turn stands in', () => {

@@ -338,3 +338,51 @@ test.describe('Yinyue at home in the day', () => {
     await expect(page.locator(`[data-testid="session-row"][data-session-id="${day}"]`)).toHaveCount(1);
   });
 });
+
+// An app's own scripts (its page, through /shared/chat-bridge.js) are handed
+// the stream of the turns standing in its own place only: a turn from the
+// main page streams in the app's chat as a folded line, never into the app.
+test.describe("an app's own scripts in the day", () => {
+  const HOME_WORDS = 'HOME-ONLY words for the main page.';
+  test.use({ scenario: { scripts: { ling: [{ text: HOME_WORDS }, { text: ROLLED }] } } });
+
+  /** What the app's scripts heard from its chat, in order. */
+  const heard = (page: Page) => page.evaluate(() => (window as unknown as { __heard: string[] }).__heard.slice());
+
+  test("hear only their own place's turns", async ({ page, context, world, request }) => {
+    const day = await settingOn(request, world.url);
+    const dice = page;
+    await dice.goto(`${world.url}/apps/dice/index.html`);
+    // The app's page mounts its chat the way every app does.
+    await dice.evaluate(async (sid) => {
+      const bridge = '/shared/chat-bridge.js';
+      const { mount } = await import(bridge);
+      const log: string[] = [];
+      const w = window as unknown as { __heard: string[]; __chat: { send: (t: string) => void } };
+      w.__heard = log;
+      const el = document.createElement('div');
+      el.style.height = '480px';
+      document.body.appendChild(el);
+      w.__chat = await mount(el, {
+        skillName: 'dice', agentId: 'ling', sessionId: sid, guestStreams: true,
+        onStreamToken: (text: string) => log.push(`token:${text}`),
+        onStreamEnd: (text: string) => log.push(`end:${text}`),
+        onContentBlock: (p: { tool?: string }) => log.push(`block:${p.tool}`),
+        onActivity: (p: { kind: string }) => log.push(`activity:${p.kind}`),
+      });
+    }, day);
+    await expect(composer(dice.frameLocator('iframe[src*="/embed"]').locator('body'))).toBeVisible();
+
+    const main = await context.newPage();
+    await opened(main, `${world.url}/?session=${day}`);
+    await send(main, 'Say something at home');
+    await expect(shown(main, HOME_WORDS)).toHaveCount(1);
+    await expectTurnOver(main);
+    expect(await heard(dice), 'the main page\'s turn reached the app').toEqual([]);
+
+    // Its own turn still reaches it, start to end.
+    await dice.evaluate(() => (window as unknown as { __chat: { send: (t: string) => void } }).__chat.send('Roll for me'));
+    await expect.poll(() => heard(dice), { timeout: 15_000 }).toContain(`end:${ROLLED}`);
+    expect((await heard(dice)).join('\n')).not.toContain(HOME_WORDS);
+  });
+});
