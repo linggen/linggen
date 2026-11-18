@@ -666,7 +666,7 @@ async fn dispatch_mission_prompt(
         Ok(a) => a,
         Err(e) => {
             warn!("Mission scheduler: failed to get mission agent: {}", e);
-            let end = RunEnd::failed(e.to_string());
+            let end = RunEnd::not_made(&e);
             end_mission_run(&state, mission, &mission_run_id, session_id.clone(), end);
             return;
         }
@@ -909,6 +909,7 @@ async fn dispatch_mission_prompt(
     let (usage, faults) = engine.take_spend();
     engine.end_turn();
     let mut error = None;
+    let mut cannot_run = None;
 
     let status = match result {
         Ok(outcome) => {
@@ -971,6 +972,7 @@ async fn dispatch_mission_prompt(
                     let _ = state.events_tx.send(ServerEvent::StateUpdated);
                 }
             }
+            cannot_run = manager.run_store.cannot_run(&run_id);
             let _ = manager
                 .finish_agent_run(&run_id, run_status, Some(msg.clone()))
                 .await;
@@ -1009,6 +1011,7 @@ async fn dispatch_mission_prompt(
         usage,
         faults,
         error,
+        cannot_run,
     };
     end_mission_run(&state, mission, &mission_run_id, session_id, end);
 }

@@ -14,6 +14,10 @@ pub struct RunEnd {
     pub faults: RunFaults,
     /// The engine error of a `failed` run.
     pub error: Option<String>,
+    /// Why a `failed` run could not go on, typed where it failed: its
+    /// agent could not be made, or its model call failed
+    /// (`RunStore::cannot_run`).
+    pub cannot_run: Option<crate::cannot_run::CannotRun>,
 }
 
 impl RunEnd {
@@ -22,6 +26,15 @@ impl RunEnd {
             status: "failed",
             error: Some(error),
             ..Default::default()
+        }
+    }
+
+    /// A run whose agent could not be made: the error, and the reason it
+    /// is when it is one (no model configured).
+    pub fn not_made(err: &anyhow::Error) -> Self {
+        Self {
+            cannot_run: crate::cannot_run::CannotRun::of_model_error(err, None, None),
+            ..Self::failed(err.to_string())
         }
     }
 
@@ -37,6 +50,7 @@ impl RunEnd {
             .as_deref()
             .and_then(run_faults::tail)
             .map(|e| run_faults::cap(&e, run_faults::TAIL_MAX_CHARS));
+        entry.cannot_run = self.cannot_run.filter(|_| self.status == "failed");
     }
 }
 
@@ -96,6 +110,20 @@ mod tests {
         assert!(error.starts_with("provider said: / eee"), "{error}");
     }
 
+    /// A mission whose agent cannot be made — no model configured — keeps
+    /// the reason in its record, a field of its own.
+    #[test]
+    fn a_run_whose_agent_cannot_be_made_keeps_why() {
+        let err = anyhow::anyhow!(crate::cannot_run::NO_MODELS_CONFIGURED);
+        let mut entry = MissionRunEntry::default();
+        RunEnd::not_made(&err).apply(&mut entry);
+        assert_eq!(entry.status, "failed");
+        assert_eq!(entry.cannot_run, Some(crate::cannot_run::CannotRun::NoModel));
+        let line = serde_json::to_string(&entry).unwrap();
+        let back: MissionRunEntry = serde_json::from_str(&line).unwrap();
+        assert_eq!(back.cannot_run, entry.cannot_run, "{line}");
+    }
+
     #[test]
     fn a_clean_end_adds_nothing_to_the_record() {
         let mut entry = MissionRunEntry::default();
@@ -105,7 +133,7 @@ mod tests {
         }
         .apply(&mut entry);
         let line = serde_json::to_string(&entry).unwrap();
-        for field in ["failures", "failure_count", "hit_limit", "error"] {
+        for field in ["failures", "failure_count", "hit_limit", "error", "cannot_run"] {
             assert!(!line.contains(field), "{field} in {line}");
         }
         assert_eq!(what_went_wrong(&entry), None);

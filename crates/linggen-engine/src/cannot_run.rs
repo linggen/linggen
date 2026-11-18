@@ -10,14 +10,14 @@
 
 use crate::provider::error::{kind_of, kind_of_message, named_reset, retry_after_of, ProviderErrorKind};
 use crate::provider::models::{cloud_sign_in, rfc3339, usage_limit_line, usage_limit_until, NotReady};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::time::{Duration, SystemTime};
 
 /// What the engine says when no model exists to run a turn.
 pub const NO_MODELS_CONFIGURED: &str = "No models configured";
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "reason", rename_all = "snake_case")]
 pub enum CannotRun {
     /// No generative model is configured.
@@ -72,6 +72,11 @@ impl CannotRun {
         }
         if let Some(store) = Self::of_memory_error(msg) {
             return Some(store);
+        }
+        // A memory call's own refusal or timeout is the store's answer to
+        // one call, not a provider's: its "timed out" is no network failure.
+        if is_memory_call_error(msg) {
+            return None;
         }
         if msg.contains("browser not connected") {
             return Some(Self::ExtensionNotConnected);
@@ -144,12 +149,46 @@ impl CannotRun {
         }
     }
 
-    /// The reason as a field of its own: `{reason, …, line}`.
+    /// The reason as a field of its own: `{reason, …, line}`. A usage
+    /// limit's time left is counted when the fact is read.
     pub fn fact(&self) -> Value {
         let mut v = serde_json::to_value(self).unwrap_or_else(|_| json!({}));
+        if let Self::UsageLimit { resets_at, .. } = self {
+            v["resets_in_secs"] = json!(secs_until(resets_at));
+        }
         v["line"] = json!(self.line());
         v
     }
+
+    /// [`fact`](Self::fact) for a run that ended on it: its session keeps
+    /// the work so far, for `agent_run(session_id)` to continue.
+    pub fn run_fact(&self) -> Value {
+        let mut v = self.fact();
+        v["work_kept"] = json!(true);
+        v
+    }
+
+    /// [`fact`](Self::fact) for a dream run, its line
+    /// [`dream_line`](Self::dream_line).
+    pub fn dream_fact(&self) -> Value {
+        let mut v = self.fact();
+        v["line"] = json!(self.dream_line());
+        v
+    }
+}
+
+/// Whole seconds from now until an RFC 3339 time; 0 once it is past.
+fn secs_until(at: &str) -> u64 {
+    chrono::DateTime::parse_from_rfc3339(at)
+        .map(|t| (t.timestamp() - chrono::Utc::now().timestamp()).max(0) as u64)
+        .unwrap_or(0)
+}
+
+/// A memory tool call's error as the engine reports it: the store's answer
+/// to one call (`MCP tools/call memory_…`, a timeout whose write may have
+/// landed).
+fn is_memory_call_error(msg: &str) -> bool {
+    msg.contains("MCP tools/call memory_") || msg.contains("a write may still have landed")
 }
 
 fn provider(
@@ -235,6 +274,35 @@ mod tests {
         assert!(!other.line().contains("Linggen account"), "{}", other.line());
         let by_text = CannotRun::of_message(&chatgpt.to_string(), Some("g")).unwrap();
         assert!(!matches!(by_text, CannotRun::CloudSignIn { .. }), "{by_text:?}");
+    }
+
+    /// A session that may not switch models ends on its model's usage
+    /// limit with the reset its provider named, kept through the error
+    /// that says no other model was tried.
+    #[test]
+    fn a_usage_limit_keeps_its_reset_when_no_other_model_is_tried() {
+        let ended = crate::provider::error::no_fallback_error("gpt-x", &http(429, USAGE));
+        let why = CannotRun::of_model_error(&ended, Some("gpt-x"), None).unwrap();
+        let CannotRun::UsageLimit { model, resets_at, .. } = &why else {
+            panic!("{why:?}");
+        };
+        assert_eq!(model.as_deref(), Some("gpt-x"));
+        let left = why.fact()["resets_in_secs"].as_u64().unwrap();
+        assert!((8960..=8973).contains(&left), "{left} until {resets_at}");
+        assert_eq!(why.run_fact()["work_kept"], true);
+    }
+
+    /// A memory call that timed out is the store's answer to one call,
+    /// never a provider's network failure; a model stream that timed out is.
+    #[test]
+    fn a_memory_timeout_is_no_provider_failure() {
+        let memory = "tool_error: tool=mcp__memory__memory_add error=MCP tools/call memory_add: MCP error -32603: add timed out after 25s — a write may still have landed; search before retrying";
+        assert_eq!(CannotRun::of_message(memory, None), None);
+        let stream = anyhow::Error::from(ProviderError::new(ProviderErrorKind::Network, "stream timed out".into()));
+        assert_eq!(
+            CannotRun::of_model_error(&stream, Some("m"), None),
+            Some(CannotRun::Provider { model: Some("m".into()), kind: ProviderErrorKind::Network })
+        );
     }
 
     /// No model at all — from the engine's own error or a dream run's

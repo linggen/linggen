@@ -212,6 +212,14 @@ async fn compose_dream_status(state: &Arc<ServerState>) -> anyhow::Result<Value>
         }),
         _ => None,
     };
+    // Why a failed run could not go on, as its record typed it — a field
+    // of its own beside the words of `last_run_error`. Older records have
+    // none.
+    let last_run_cannot_run = last_run
+        .as_ref()
+        .filter(|run| run.status == "failed")
+        .and_then(|run| run.cannot_run.as_ref())
+        .map(|why| why.dream_fact());
 
     Ok(json!({
         "in_flight": in_flight,
@@ -225,6 +233,7 @@ async fn compose_dream_status(state: &Arc<ServerState>) -> anyhow::Result<Value>
         "today": rollup.get("today").cloned().unwrap_or(Value::Null),
         "last_run": last_run.as_ref().map(last_run_json).unwrap_or(Value::Null),
         "last_run_error": last_run_error.unwrap_or(Value::Null),
+        "last_run_cannot_run": last_run_cannot_run.unwrap_or(Value::Null),
     }))
 }
 

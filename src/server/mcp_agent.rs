@@ -530,11 +530,21 @@ async fn drive(
     write: bool,
     model: Option<String>,
 ) -> Result<String, String> {
-    let agent = state
+    let agent = match state
         .manager
         .get_or_create_session_agent(&session_id, &root, &agent_id)
         .await
-        .map_err(|e| format!("failed to create agent '{agent_id}': {e}"))?;
+    {
+        Ok(agent) => agent,
+        Err(e) => {
+            // No run began: the session's outcome says why, as a failed
+            // run's would (no model configured, above all).
+            let error = format!("failed to create agent '{agent_id}': {e}");
+            let why = crate::cannot_run::CannotRun::of_model_error(&e, None, None);
+            state.manager.run_store.record_refusal(&session_id, error.clone(), why);
+            return Err(error);
+        }
+    };
     let mut engine = agent.lock().await;
     // A run is a turn of its own: it starts with nothing an earlier turn
     // in the session set, and puts back what it set when it ends.
@@ -852,7 +862,8 @@ pub async fn status(state: &Arc<ServerState>, session: &str) -> Result<String, S
     let mut out = serde_json::json!({"running": work.turn, "tasks": work.tasks,
         "subagents": work.subagents, "pending": pending_requests(state, session).await,
         "denied": denials(session), "reply": replies.reply, "followup": replies.followup,
-        "status": last.status, "error": last.error, "model": last.model});
+        "status": last.status, "error": last.error, "model": last.model,
+        "cannot_run": last.cannot_run_fact()});
     // A run made with preset grants: what was granted and refused.
     if let Some(grants) = grants {
         out["grants"] = grants;
@@ -1187,7 +1198,7 @@ fn finished_frame(
 ) -> serde_json::Value {
     serde_json::json!({"type": FINISHED_EVENT, "session_id": session, "status": last.status,
         "reply": replies.reply, "followup": replies.followup, "denied": denied,
-        "error": last.error, "model": last.model})
+        "error": last.error, "model": last.model, "cannot_run": last.cannot_run_fact()})
 }
 
 /// How the session's latest top-level run ended or stands.
@@ -1201,6 +1212,18 @@ struct LastRun {
     /// The model that answered the run's last model call (or failed it) —
     /// not the one asked for, when a fallback was allowed and happened.
     model: Option<String>,
+    /// Why a failed run could not go on, typed where it failed.
+    cannot_run: Option<crate::cannot_run::CannotRun>,
+}
+
+impl LastRun {
+    /// The reason as the caller reads it: `{reason, model, resets_at,
+    /// resets_in_secs, line, work_kept}`, or null.
+    fn cannot_run_fact(&self) -> serde_json::Value {
+        self.cannot_run
+            .as_ref()
+            .map_or(serde_json::Value::Null, |why| why.run_fact())
+    }
 }
 
 fn last_run(manager: &crate::engine::agent::AgentManager, session: &str) -> LastRun {
@@ -1216,6 +1239,7 @@ fn last_run(manager: &crate::engine::agent::AgentManager, session: &str) -> Last
             status: "running",
             error: None,
             model: run.model.clone(),
+            cannot_run: None,
         };
     }
     match store.outcome(session) {
@@ -1228,11 +1252,13 @@ fn last_run(manager: &crate::engine::agent::AgentManager, session: &str) -> Last
             },
             error: o.error.map(|e| naming_model(e, o.model.as_deref())),
             model: o.model,
+            cannot_run: o.cannot_run,
         },
         None => LastRun {
             status: "completed",
             error: None,
             model: None,
+            cannot_run: None,
         },
     }
 }
@@ -1433,6 +1459,7 @@ mod wait_ready_tests {
                 status: "completed",
                 error: None,
                 model: None,
+                cannot_run: None,
             },
             replies,
             vec![],
@@ -2084,6 +2111,7 @@ mod permit_tests {
                 status: "completed",
                 error: None,
                 model: None,
+                cannot_run: None,
             },
             TurnReplies {
                 reply: Some("ok".into()),
@@ -2264,6 +2292,11 @@ mod permit_tests {
                 status: "failed",
                 error: Some("MODEL_FAILED: model 'm' failed".into()),
                 model: Some("m".into()),
+                cannot_run: Some(crate::cannot_run::CannotRun::UsageLimit {
+                    model: Some("m".into()),
+                    resets_at: "2999-01-01T00:00:00Z".into(),
+                    resets_in_secs: 0,
+                }),
             },
             TurnReplies::default(),
             vec![],
@@ -2272,6 +2305,15 @@ mod permit_tests {
         assert_eq!(frame["status"], "failed");
         assert_eq!(frame["error"], "MODEL_FAILED: model 'm' failed");
         assert_eq!(frame["model"], "m");
+        // Why it could not go on, a field of its own: the reason, its
+        // reset, the model, and that the session's work is kept.
+        let why = &frame["cannot_run"];
+        assert_eq!(why["reason"], "usage_limit", "{frame}");
+        assert_eq!(why["model"], "m");
+        assert_eq!(why["resets_at"], "2999-01-01T00:00:00Z");
+        assert!(why["resets_in_secs"].as_u64().unwrap() > 0, "counted when read");
+        assert_eq!(why["work_kept"], true);
+        assert!(why["line"].as_str().unwrap().contains("never retry before"));
     }
 
     #[tokio::test]

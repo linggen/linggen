@@ -435,6 +435,45 @@ impl AgentEngine {
         messages: &[ChatMessage],
         tools: Option<Vec<serde_json::Value>>,
     ) -> Result<StreamResult> {
+        let result = self.stream_on_chain(messages, tools).await;
+        if let Err(e) = &result {
+            self.note_cannot_run(e);
+        }
+        result
+    }
+
+    /// Why a failed model call means the run cannot go on, typed here where
+    /// the error still is one (its provider kind, its reset), noted on the
+    /// run: its outcome carries it to `agent_status`, the wait stream's last
+    /// frame and a mission run's record. The model is the one that failed.
+    fn note_cannot_run(&self, err: &anyhow::Error) {
+        let (Some(manager), Some(run_id)) = (self.tools.get_manager(), &self.run_id) else {
+            return;
+        };
+        let model = manager
+            .run_store
+            .get_run(run_id)
+            .and_then(|r| r.model)
+            .unwrap_or_else(|| self.model_id.clone());
+        let auth = self
+            .model_manager
+            .list_models()
+            .into_iter()
+            .find(|m| m.id == model)
+            .and_then(|m| m.auth_mode.clone());
+        let why = crate::cannot_run::CannotRun::of_model_error(err, Some(&model), auth.as_deref());
+        if let Some(why) = why {
+            manager.run_store.set_cannot_run(run_id, why);
+        }
+    }
+
+    /// [`stream_with_fallback`](Self::stream_with_fallback)'s calls: the
+    /// preferred model, then the chain when the session may switch.
+    async fn stream_on_chain(
+        &mut self,
+        messages: &[ChatMessage],
+        tools: Option<Vec<serde_json::Value>>,
+    ) -> Result<StreamResult> {
         crate::engine::cloud_meter::before_call(self).await?;
         let preferred = self.model_id.clone();
         let mut tried: Vec<String> = Vec::new();

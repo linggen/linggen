@@ -1,3 +1,4 @@
+use crate::cannot_run::CannotRun;
 use crate::util::LockExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -46,6 +47,10 @@ pub struct RunOutcome {
     pub error: Option<String>,
     /// The model that answered its last model call, or failed it.
     pub model: Option<String>,
+    /// Why a failed run could not go on, when that is a reason a caller
+    /// acts on (no model, a sign-in, a usage limit and its reset, …) —
+    /// typed where the failure happened (`AgentEngine::stream_with_fallback`).
+    pub cannot_run: Option<CannotRun>,
 }
 
 /// In-memory run store. No file persistence — runs are ephemeral process records
@@ -56,6 +61,8 @@ pub struct RunStore {
     children: Mutex<HashMap<String, Vec<String>>>,
     /// Session id → how its latest top-level run ended.
     outcomes: Mutex<HashMap<String, RunOutcome>>,
+    /// Run id → why the running run cannot go on, noted where it failed.
+    reasons: Mutex<HashMap<String, CannotRun>>,
 }
 
 impl RunStore {
@@ -64,7 +71,36 @@ impl RunStore {
             runs: Mutex::new(HashMap::new()),
             children: Mutex::new(HashMap::new()),
             outcomes: Mutex::new(HashMap::new()),
+            reasons: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Note why a running run cannot go on — where its model call failed,
+    /// with the failure's type at hand. Its outcome carries it.
+    pub fn set_cannot_run(&self, run_id: &str, why: CannotRun) {
+        if self.runs.lock_ok().contains_key(run_id) {
+            self.reasons.lock_ok().insert(run_id.to_string(), why);
+        }
+    }
+
+    /// Why the running run `run_id` cannot go on, if that was noted.
+    pub fn cannot_run(&self, run_id: &str) -> Option<CannotRun> {
+        self.reasons.lock_ok().get(run_id).cloned()
+    }
+
+    /// A session's run that failed before it began (its agent could not be
+    /// made): its outcome, as a finished run's would read.
+    pub fn record_refusal(&self, session_id: &str, error: String, why: Option<CannotRun>) {
+        self.outcomes.lock_ok().insert(
+            session_id.to_string(),
+            RunOutcome {
+                run_id: String::new(),
+                status: AgentRunStatus::Failed,
+                error: Some(error),
+                model: None,
+                cannot_run: why,
+            },
+        );
     }
 
     /// Note the model that answered (or failed) a run's latest model call.
@@ -85,12 +121,12 @@ impl RunStore {
     /// Keep how a finished top-level run ended, as its session's latest.
     /// A subagent's run is part of its parent's and keeps nothing.
     pub fn record_outcome(&self, run: &AgentRunRecord) {
+        let why = self.reasons.lock_ok().remove(&run.run_id);
         if run.parent_run_id.is_some() {
             return;
         }
-        let error = (run.status == AgentRunStatus::Failed)
-            .then(|| run.detail.clone())
-            .flatten();
+        let failed = run.status == AgentRunStatus::Failed;
+        let error = failed.then(|| run.detail.clone()).flatten();
         self.outcomes.lock_ok().insert(
             run.session_id.clone(),
             RunOutcome {
@@ -98,6 +134,7 @@ impl RunStore {
                 status: run.status,
                 error,
                 model: run.model.clone(),
+                cannot_run: why.filter(|_| failed),
             },
         );
     }
@@ -164,6 +201,7 @@ impl RunStore {
 
     pub fn remove_run(&self, run_id: &str) {
         let mut runs = self.runs.lock_ok();
+        self.reasons.lock_ok().remove(run_id);
         if let Some(run) = runs.remove(run_id) {
             // Also clean up the children index.
             if let Some(ref parent_id) = run.parent_run_id {
@@ -327,6 +365,35 @@ mod tests {
         store.record_outcome(&ok);
         assert_eq!(store.outcome("s1").unwrap().error, None);
         assert!(store.outcome("other").is_none());
+    }
+
+    /// Why a run could not go on is its outcome's, only when it failed, and
+    /// goes with the run.
+    #[test]
+    fn a_failed_runs_reason_is_its_outcomes() {
+        let store = RunStore::new();
+        store.set_cannot_run("ghost", CannotRun::NoModel);
+        assert_eq!(store.cannot_run("ghost"), None, "no such run");
+        store.add_run(&make_run("r1", "s1", None, 1000));
+        store.set_cannot_run("r1", CannotRun::NoModel);
+        assert_eq!(store.cannot_run("r1"), Some(CannotRun::NoModel));
+        let mut done = store.get_run("r1").unwrap();
+        done.status = AgentRunStatus::Failed;
+        store.record_outcome(&done);
+        store.remove_run("r1");
+        assert_eq!(store.outcome("s1").unwrap().cannot_run, Some(CannotRun::NoModel));
+        assert_eq!(store.cannot_run("r1"), None);
+
+        store.add_run(&make_run("r2", "s1", None, 2000));
+        store.set_cannot_run("r2", CannotRun::NoModel);
+        let mut ok = store.get_run("r2").unwrap();
+        ok.status = AgentRunStatus::Completed;
+        store.record_outcome(&ok);
+        assert_eq!(store.outcome("s1").unwrap().cannot_run, None, "a completed run has none");
+
+        store.record_refusal("s2", "failed to create agent".into(), Some(CannotRun::NoModel));
+        let refused = store.outcome("s2").unwrap();
+        assert_eq!((refused.status, refused.cannot_run), (AgentRunStatus::Failed, Some(CannotRun::NoModel)));
     }
 
     #[test]

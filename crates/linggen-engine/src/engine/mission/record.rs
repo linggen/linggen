@@ -182,6 +182,11 @@ pub struct MissionRunEntry {
     /// A `failed` run's error, capped (`run_faults::TAIL_MAX_CHARS`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Why a `failed` run could not go on, when that is a reason a caller
+    /// acts on (no model, a sign-in, a usage limit and its reset, …).
+    /// Rows written before this field have none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cannot_run: Option<crate::cannot_run::CannotRun>,
     /// A person was watching: a manual run started as attended.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub attended: bool,

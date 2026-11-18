@@ -10,10 +10,10 @@
 //! clients produced before, so the markers the UI reads (`AUTH_REQUIRED:`,
 //! `BILLING_REQUIRED:`) and the log lines stay as they were.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(any(test, feature = "test-support"), derive(ts_rs::TS), ts(export))]
 pub enum ProviderErrorKind {
@@ -63,25 +63,28 @@ impl ProviderErrorKind {
 
 /// What a failed call becomes when its session may not switch models: the
 /// model named, the provider's reason, and that no other model was tried. The
-/// kind of the refusal is kept (a `ProviderError`), and the provider's own
-/// words lead the reason, so `AUTH_REQUIRED:` / `BILLING_REQUIRED:` markers
-/// inside it still reach the chat.
+/// kind of the refusal and the reset its provider named are kept (a
+/// `ProviderError`), and the provider's own words lead the reason, so
+/// `AUTH_REQUIRED:` / `BILLING_REQUIRED:` markers inside it still reach the
+/// chat.
 pub fn no_fallback_error(model_id: &str, cause: &anyhow::Error) -> anyhow::Error {
     let kind = kind_of(cause);
+    let retry_after = retry_after_of(cause);
     let mut reason = cause.to_string();
     if let Some((cut, _)) = reason.char_indices().nth(300) {
         reason.truncate(cut);
         reason.push('…');
     }
-    ProviderError::new(
+    let mut err = ProviderError::new(
         kind,
         format!(
             "{NO_FALLBACK_MARK} model '{model_id}' failed ({}): {reason}. \
              Automatic model switching is off for this session, so no other model was tried.",
             kind.label()
         ),
-    )
-    .into()
+    );
+    err.retry_after = retry_after;
+    err.into()
 }
 
 /// Leads the message of a call that failed with model switching off; the chat

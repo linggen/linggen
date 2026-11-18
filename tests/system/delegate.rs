@@ -161,3 +161,28 @@ async fn a_run_continued_after_a_model_failure_keeps_what_it_read() {
     assert!(continued.contains("Read notes.txt, then sum it up."), "the brief is kept");
     assert!(continued.contains(MARKER), "the continued turn lost what the run had read");
 }
+
+/// A delegated run that ends because its model failed says why in a field
+/// of its own — the reason, the model, one line on what to do, and that the
+/// session keeps its work — beside the error's words, in `agent_status`.
+#[tokio::test]
+async fn a_run_that_ends_on_its_model_says_why_in_a_field() {
+    let setup = Setup::default().script(Agent::Ling, vec![error(500, "upstream overloaded")]);
+    let w = World::start(setup).await;
+    let ran = w.api.post("/mcp", agent_run(json!({"prompt": "Say done."}))).await;
+    assert!(ran["result"]["content"][0]["text"].as_str().unwrap_or_default().contains("agent run failed"), "{ran}");
+    let sid = delegate_session(&w);
+    let status = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+        "params": {"name": "agent_status", "arguments": {"session_id": sid}}});
+    let status = w.api.post("/mcp", status).await;
+    let text = status["result"]["content"][0]["text"].as_str().unwrap_or_else(|| panic!("{status}"));
+    let status: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(status["status"], "failed", "{status}");
+    assert!(status["error"].as_str().unwrap_or_default().contains("upstream overloaded"), "{status}");
+    let why = &status["cannot_run"];
+    assert_eq!(why["reason"], "provider", "{status}");
+    assert_eq!(why["kind"], "server5xx", "{status}");
+    assert_eq!(why["model"], status["model"], "{status}");
+    assert_eq!(why["work_kept"], true, "{status}");
+    assert!(why["line"].as_str().is_some_and(|l| !l.is_empty()), "{status}");
+}
