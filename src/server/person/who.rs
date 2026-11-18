@@ -87,6 +87,13 @@ impl Person {
         }
     }
 
+    /// Whether `id` is kept as an account's own id — not none, the owner's,
+    /// no one's, a device's, or one written with spaces around it — with
+    /// this Mac's account `mac`.
+    pub(super) fn names_an_account(id: &str, mac: Option<&str>) -> bool {
+        Self::from_wire_with(Some(id), mac) == Self::account(id)
+    }
+
     /// The string this person is kept and sent as, with this Mac's account
     /// as it is now.
     pub(crate) fn wire(&self) -> String {

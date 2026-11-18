@@ -194,7 +194,8 @@ type Refusal = (StatusCode, String, &'static str);
 
 /// Where a device's rows go when it gains `gained`: `Some(true)` to the
 /// owner (the device is the owner's, verified), `Some(false)` to that
-/// account, `None` nowhere (this Mac's account, claimed but not verified).
+/// account, `None` nowhere (this Mac's account, claimed but not verified,
+/// or an id that is not an account's own: `person::names_an_account`).
 fn restamp_to_owner(device_id: &str, gained: &str, owner: Option<&str>) -> Option<bool> {
     let devices = crate::state_fs::devices::load_devices();
     let device = devices.iter().find(|d| d.id == device_id);
@@ -207,7 +208,7 @@ fn owners_rows(
     owner: Option<&str>,
 ) -> Option<bool> {
     if owner != Some(gained) {
-        return Some(false);
+        return crate::server::person::names_an_account(gained, owner).then_some(false);
     }
     device.is_some_and(|d| d.is_owners(owner)).then_some(true)
 }
@@ -420,6 +421,22 @@ mod tests {
         };
         assert_eq!(owners_rows(Some(&verified), "u-owner", Some("u-owner")), Some(true));
         assert_eq!(owners_rows(None, "u-2", Some("u-owner")), Some(false));
+    }
+
+    /// A claimed account id that reads as another kind of person is no
+    /// account: the phone is stamped as its device, and the rows it wrote
+    /// signed out are handed to no one.
+    #[test]
+    fn a_claim_that_reads_as_another_person_is_stamped_as_its_device() {
+        let local = ["__", "local__"].concat();
+        for claim in ["", local.as_str(), "device:dev-2", " u-2"] {
+            for mac in [Some("u-owner"), None] {
+                let d = device(Some((claim, None)));
+                assert_eq!(person_for(&d, mac).unwrap().id, "device:dev-1", "{claim:?} {mac:?}");
+                assert_eq!(owners_rows(Some(&d), claim, mac), None, "{claim:?} {mac:?}");
+            }
+        }
+        assert_eq!(owners_rows(None, "u-2", None), Some(false));
     }
 
     #[test]

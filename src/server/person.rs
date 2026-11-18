@@ -269,17 +269,19 @@ pub(crate) fn claims_the_owners_unverified(device: &str) -> bool {
 /// Whose paired device `device` is, as Settings shows it, with this Mac's
 /// account `mac`: `owner` (an approved machine, or a phone whose claim of
 /// this Mac's account is verified), `unverified` (it claims this Mac's
-/// account, not verified yet), `other` (another account), `signed_out`.
+/// account, not verified yet), `other` (another account), `signed_out` (no
+/// account of its own, [`of_device`]).
 pub(crate) fn whose_device(device: &crate::state_fs::devices::PairedDevice, mac: Option<&str>) -> &'static str {
-    if device.is_owners(mac) {
+    let person = of_device(device, mac);
+    if person.is_owner() {
         return "owner";
     }
     if claims_unverified(device, mac) {
         return "unverified";
     }
-    match device.account {
-        Some(_) => "other",
-        None => "signed_out",
+    match person.is_device() {
+        true => "signed_out",
+        false => "other",
     }
 }
 
@@ -298,17 +300,24 @@ pub(crate) fn is_owners_device(device: &crate::state_fs::devices::PairedDevice, 
 /// Who paired device `device` is, with this Mac's account `mac`: the owner
 /// for the owner's device (an approved machine, or a phone whose claim of
 /// this Mac's account is verified, `PairedDevice::is_owners`); else the
-/// account it is signed in to, or its device — signed out, or claiming this
-/// Mac's account unverified. The one answer a device's standing, its day and
-/// memory's stamp take.
+/// account it is signed in to, or its device — signed out, claiming this
+/// Mac's account unverified, or claiming an id that is not an account's
+/// own ([`names_an_account`]). The one answer a device's standing, its day
+/// and memory's stamp take.
 pub(crate) fn of_device(device: &crate::state_fs::devices::PairedDevice, mac: Option<&str>) -> Person {
     if device.is_owners(mac) {
         return Person::owner();
     }
     match &device.account {
-        Some(a) if Some(a.id.as_str()) != mac => Person::account(&a.id),
+        Some(a) if names_an_account(&a.id, mac) => Person::account(&a.id),
         _ => Person::device(&device.id),
     }
+}
+
+/// Whether `id` is kept as another account's own id with this Mac's account
+/// `mac` — what a phone's claim must be to be that account.
+pub(crate) fn names_an_account(id: &str, mac: Option<&str>) -> bool {
+    Person::names_an_account(id, mac)
 }
 
 /// [`standing_of`] for a row found (or not), with this Mac's account
@@ -682,6 +691,28 @@ mod tests {
         assert_eq!(super::standing_in(Some(&lowered), Some("u-owner"), "u-owner").level(), Chat);
         let nobody = super::standing_in(None, Some("u-owner"), "u-owner");
         assert_eq!((nobody.person(), nobody.level()), (crate::server::rtc::NO_ONE, Chat));
+    }
+
+    /// A claimed account id that reads as another kind of person — none,
+    /// the owner's, no one's, a device's, or padded — is no account: the
+    /// phone is its device, signed in to this Mac or signed out, in its
+    /// standing and in Settings (memory's stamp and the rows it wrote:
+    /// `api::memory`'s own test).
+    #[test]
+    fn a_claim_that_reads_as_another_person_is_its_device() {
+        let local = ["__", "local__"].concat();
+        let paired = ["__", "paired__"].concat();
+        let claims = ["", "  ", local.as_str(), paired.as_str(), "device:dev-2", " u-friend"];
+        for mac in [Some("u-owner"), None] {
+            for claim in claims {
+                let d = phone(Some(claim));
+                let s = super::standing_in(Some(&d), mac, mac.unwrap_or_default());
+                assert_eq!(s.person(), "device:dev-1", "{claim:?} with {mac:?}");
+                assert_eq!(super::whose_device(&d, mac), "signed_out", "{claim:?}");
+            }
+        }
+        let friend = phone(Some("u-friend"));
+        assert_eq!(super::standing_in(Some(&friend), None, "").person(), "u-friend");
     }
 
     /// A phone claiming this Mac's account unverified is told so; verified,
