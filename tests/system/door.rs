@@ -25,13 +25,23 @@ async fn door(w: &World, name: &str, args: Value) -> (String, bool) {
 
 /// The session a "still running" answer names.
 fn session_of(said: &str) -> String {
-    let at = said.find("Linggen session ").unwrap_or_else(|| panic!("no session in: {said}"));
+    let at = said
+        .find("Linggen session ")
+        .unwrap_or_else(|| panic!("no session in: {said}"));
     let rest = &said[at + "Linggen session ".len()..];
-    rest.split(|c: char| c.is_whitespace() || c == '.').next().unwrap().to_string()
+    rest.split(|c: char| c.is_whitespace() || c == '.')
+        .next()
+        .unwrap()
+        .to_string()
 }
 
 async fn status(w: &World, sid: &str) -> Value {
-    let (said, err) = door(w, "agent_status", json!({"op": "session", "session_id": sid})).await;
+    let (said, err) = door(
+        w,
+        "agent_status",
+        json!({"op": "session", "session_id": sid}),
+    )
+    .await;
     assert!(!err, "{said}");
     serde_json::from_str(&said).unwrap()
 }
@@ -60,7 +70,13 @@ fn pending(status: &Value) -> Vec<Value> {
 async fn a_request_before_any_watch_is_answered_through_the_door() {
     let setup = Setup::default().script(
         Agent::Ling,
-        vec![tool("Bash", json!({"cmd": "git push no-such-remote-door-test main"})), text("Tried the push.")],
+        vec![
+            tool(
+                "Bash",
+                json!({"cmd": "git push no-such-remote-door-test main"}),
+            ),
+            text("Tried the push."),
+        ],
     );
     let w = World::start(setup).await;
     let (said, err) = door(
@@ -82,12 +98,27 @@ async fn a_request_before_any_watch_is_answered_through_the_door() {
         json!({"session_id": sid, "request_id": id, "decision": "allow_once", "scope": "dir"}),
     )
     .await;
-    assert!(err && said.contains("allow_session only"), "scope goes with allow_session: {said}");
-    let (said, err) = door(&w, "agent_permit", json!({"session_id": sid, "request_id": id, "decision": "allow_once"})).await;
+    assert!(
+        err && said.contains("allow_session only"),
+        "scope goes with allow_session: {said}"
+    );
+    let (said, err) = door(
+        &w,
+        "agent_permit",
+        json!({"session_id": sid, "request_id": id, "decision": "allow_once"}),
+    )
+    .await;
     assert!(!err, "{said}");
-    let done = status_until(&w, &sid, "the run's end", |s| s["running"] == json!(false) && s["status"] == "completed").await;
+    let done = status_until(&w, &sid, "the run's end", |s| {
+        s["running"] == json!(false) && s["status"] == "completed"
+    })
+    .await;
     assert_eq!(done["reply"], "Tried the push.", "{done}");
-    assert_eq!(w.model.calls_of(Agent::Ling).len(), 2, "the command's answer reached the model");
+    assert_eq!(
+        w.model.calls_of(Agent::Ling).len(),
+        2,
+        "the command's answer reached the model"
+    );
 }
 
 /// An outward command (a push) asks even where the run may run programs:
@@ -97,20 +128,44 @@ async fn a_request_before_any_watch_is_answered_through_the_door() {
 async fn an_outward_request_takes_allow_once_or_deny_only() {
     let setup = Setup::default().script(
         Agent::Ling,
-        vec![tool("Bash", json!({"cmd": "git push no-such-remote-door-test main"})), text("Did not push.")],
+        vec![
+            tool(
+                "Bash",
+                json!({"cmd": "git push no-such-remote-door-test main"}),
+            ),
+            text("Did not push."),
+        ],
     );
     let w = World::start(setup).await;
-    let (said, _) = door(&w, "agent_run", json!({"prompt": "Push it.", "write_dir": w.work(), "permission_mode": "acceptEdits"})).await;
+    let (said, _) = door(
+        &w,
+        "agent_run",
+        json!({"prompt": "Push it.", "write_dir": w.work(), "permission_mode": "acceptEdits"}),
+    )
+    .await;
     assert!(said.contains("Still running"), "{said}");
     let sid = session_of(&said);
     let asked = status_until(&w, &sid, "the outward request", |s| !pending(s).is_empty()).await;
     let request = &pending(&asked)[0];
     assert_eq!(request["outward"], true, "{request}");
     let id = request["id"].as_str().unwrap().to_string();
-    let (said, err) = door(&w, "agent_permit", json!({"session_id": sid, "request_id": id, "decision": "allow_session"})).await;
+    let (said, err) = door(
+        &w,
+        "agent_permit",
+        json!({"session_id": sid, "request_id": id, "decision": "allow_session"}),
+    )
+    .await;
     assert!(err, "a session-wide grant for an outward request: {said}");
-    assert!(!pending(&status(&w, &sid).await).is_empty(), "the refused answer left the request open");
-    let (said, err) = door(&w, "agent_permit", json!({"session_id": sid, "request_id": id, "decision": "deny"})).await;
+    assert!(
+        !pending(&status(&w, &sid).await).is_empty(),
+        "the refused answer left the request open"
+    );
+    let (said, err) = door(
+        &w,
+        "agent_permit",
+        json!({"session_id": sid, "request_id": id, "decision": "deny"}),
+    )
+    .await;
     assert!(!err, "{said}");
     let done = status_until(&w, &sid, "the run's end", |s| s["running"] == json!(false)).await;
     assert_eq!(done["reply"], "Did not push.", "{done}");
@@ -124,31 +179,76 @@ async fn an_outward_request_takes_allow_once_or_deny_only() {
 async fn stop_releases_a_waiting_run_and_close_keeps_what_it_should() {
     let setup = Setup::default().script(
         Agent::Ling,
-        vec![tool("Bash", json!({"cmd": "git push no-such-remote-door-test main"}))],
+        vec![tool(
+            "Bash",
+            json!({"cmd": "git push no-such-remote-door-test main"}),
+        )],
     );
     let w = World::start(setup).await;
-    let (said, _) = door(&w, "agent_run", json!({"prompt": "Push it.", "write_dir": w.work(), "permission_mode": "acceptEdits"})).await;
+    let (said, _) = door(
+        &w,
+        "agent_run",
+        json!({"prompt": "Push it.", "write_dir": w.work(), "permission_mode": "acceptEdits"}),
+    )
+    .await;
     let sid = session_of(&said);
     status_until(&w, &sid, "a pending request", |s| !pending(s).is_empty()).await;
 
-    let (said, err) = door(&w, "agent_end", json!({"op": "stop", "session_id": sid, "remove_worktree": true})).await;
-    assert!(err && said.contains("belongs to op=close"), "stop takes no removal: {said}");
+    let (said, err) = door(
+        &w,
+        "agent_end",
+        json!({"op": "stop", "session_id": sid, "remove_worktree": true}),
+    )
+    .await;
+    assert!(
+        err && said.contains("belongs to op=close"),
+        "stop takes no removal: {said}"
+    );
     let (said, err) = door(&w, "agent_end", json!({"op": "stop", "session_id": sid})).await;
     assert!(!err, "{said}");
-    let stopped = status_until(&w, &sid, "the stopped run", |s| s["running"] == json!(false)).await;
+    let stopped = status_until(&w, &sid, "the stopped run", |s| {
+        s["running"] == json!(false)
+    })
+    .await;
     assert!(pending(&stopped).is_empty(), "{stopped}");
-    assert_eq!(w.model.calls_of(Agent::Ling).len(), 1, "the model was called again after stop");
+    assert_eq!(
+        w.model.calls_of(Agent::Ling).len(),
+        1,
+        "the model was called again after stop"
+    );
 
     // The write_dir is a repository's own checkout, not a linked worktree.
     let git = |args: &[&str]| {
-        let ran = std::process::Command::new("git").args(args).current_dir(w.work()).status().unwrap();
+        let ran = std::process::Command::new("git")
+            .args(args)
+            .current_dir(w.work())
+            .status()
+            .unwrap();
         assert!(ran.success(), "git {args:?}");
     };
     git(&["init", "-q"]);
-    git(&["-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "--allow-empty", "-m", "start"]);
-    let (said, err) = door(&w, "agent_end", json!({"op": "close", "session_id": sid, "remove_worktree": true})).await;
+    git(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@example.invalid",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "start",
+    ]);
+    let (said, err) = door(
+        &w,
+        "agent_end",
+        json!({"op": "close", "session_id": sid, "remove_worktree": true}),
+    )
+    .await;
     assert!(err && said.contains("not a linked worktree"), "{said}");
-    assert!(std::path::Path::new(&w.work()).is_dir(), "close removed the write_dir");
+    assert!(
+        std::path::Path::new(&w.work()).is_dir(),
+        "close removed the write_dir"
+    );
 }
 
 /// An approved computer — a `machine` row's token, over the LAN — reaches
@@ -157,12 +257,20 @@ async fn stop_releases_a_waiting_run_and_close_keeps_what_it_should() {
 /// unknown to it. A phone's token is refused at the door.
 #[tokio::test]
 async fn an_approved_computer_sees_memory_only() {
-    let w = World::start(Setup { lan: true, ..Setup::default() }).await;
+    let w = World::start(Setup {
+        lan: true,
+        ..Setup::default()
+    })
+    .await;
     let rows = json!([
         {"id": "mac-two", "name": "Second Mac", "secret": "tok-mac-two", "created_at": 0, "kind": "machine"},
         {"id": "phone-one", "name": "A phone", "secret": "tok-phone", "created_at": 0, "kind": "phone"},
     ]);
-    std::fs::write(w.home.linggen_home().join("paired-devices.json"), rows.to_string()).unwrap();
+    std::fs::write(
+        w.home.linggen_home().join("paired-devices.json"),
+        rows.to_string(),
+    )
+    .unwrap();
     // The engine trusts its cached device list for a second before it looks
     // at the file again.
     tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
@@ -174,25 +282,63 @@ async fn an_approved_computer_sees_memory_only() {
     let url = format!("http://{ip}:{}/mcp", w.engine.port);
     let client = reqwest::Client::new();
     let post = |token: &'static str, body: Value| {
-        let req = client.post(url.clone()).header("x-linggen-device", token).json(&body);
+        let req = client
+            .post(url.clone())
+            .header("x-linggen-device", token)
+            .json(&body);
         async move {
             let resp = req.send().await.expect("LAN POST");
             let status = resp.status().as_u16();
             (status, resp.json::<Value>().await.unwrap_or(Value::Null))
         }
     };
-    let (status, list) = post("tok-mac-two", json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})).await;
+    let (status, list) = post(
+        "tok-mac-two",
+        json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}),
+    )
+    .await;
     assert_eq!(status, 200, "{list}");
-    let names: Vec<&str> = list["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["memory_search", "memory_add", "memory_update", "memory_delete", "memory_upkeep"]);
+    let names: Vec<&str> = list["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "memory_search",
+            "memory_add",
+            "memory_update",
+            "memory_delete",
+            "memory_upkeep"
+        ]
+    );
     let ops = &list["result"]["tools"][4]["inputSchema"]["properties"]["op"]["enum"];
-    assert!(!ops.as_array().unwrap().contains(&json!("dream_run")), "{ops}");
-    let (_, init) = post("tok-mac-two", json!({"jsonrpc": "2.0", "id": 2, "method": "initialize", "params": {}})).await;
-    assert!(!init["result"]["instructions"].as_str().unwrap().contains("agent_run"), "{init}");
+    assert!(
+        !ops.as_array().unwrap().contains(&json!("dream_run")),
+        "{ops}"
+    );
+    let (_, init) = post(
+        "tok-mac-two",
+        json!({"jsonrpc": "2.0", "id": 2, "method": "initialize", "params": {}}),
+    )
+    .await;
+    assert!(
+        !init["result"]["instructions"]
+            .as_str()
+            .unwrap()
+            .contains("agent_run"),
+        "{init}"
+    );
     let (_, ran) = post("tok-mac-two", rpc("agent_run", json!({"prompt": "hi"}))).await;
     assert_eq!(ran["error"]["message"], "unknown tool: agent_run", "{ran}");
     let (_, days) = post("tok-mac-two", rpc("memory_upkeep", json!({"op": "days"}))).await;
     assert_eq!(days["result"]["isError"], false, "{days}");
-    let (status, _) = post("tok-phone", json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})).await;
+    let (status, _) = post(
+        "tok-phone",
+        json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}),
+    )
+    .await;
     assert_eq!(status, 403, "a phone is not let in");
 }

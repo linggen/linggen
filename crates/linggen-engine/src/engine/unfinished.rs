@@ -67,7 +67,10 @@ fn unfinished_work(messages: &[ChatMessage], opening: &Opening) -> Vec<ChatMessa
     let Some(work) = messages.get(opening.len..).filter(|_| intact) else {
         return Vec::new();
     };
-    let start = work.iter().position(|m| m.role != "tool").unwrap_or(work.len());
+    let start = work
+        .iter()
+        .position(|m| m.role != "tool")
+        .unwrap_or(work.len());
     let work = &work[start..];
     let end = work
         .iter()
@@ -127,18 +130,34 @@ mod tests {
     #[test]
     fn a_failed_runs_reading_is_kept_after_its_opening() {
         let (mut messages, opening) = opened();
-        messages.extend([calls(&["a"]), result("a", "the file's words"), calls(&["b"])]);
+        messages.extend([
+            calls(&["a"]),
+            result("a", "the file's words"),
+            calls(&["b"]),
+        ]);
         let kept = unfinished_work(&messages, &opening);
         let roles: Vec<&str> = kept.iter().map(|m| m.role.as_str()).collect();
         assert_eq!(roles, ["assistant", "tool"]);
         assert_eq!(kept[1].content, "the file's words");
 
         let (mut batch, opening) = opened();
-        batch.extend([calls(&["a"]), result("a", "x"), calls(&["b", "c"]), result("b", "y")]);
+        batch.extend([
+            calls(&["a"]),
+            result("a", "x"),
+            calls(&["b", "c"]),
+            result("b", "y"),
+        ]);
         let kept = unfinished_work(&batch, &opening);
-        assert_eq!(kept.len(), 2, "a batch cut before all its results is left out");
+        assert_eq!(
+            kept.len(),
+            2,
+            "a batch cut before all its results is left out"
+        );
         let (bare, opening) = opened();
-        assert!(unfinished_work(&bare, &opening).is_empty(), "nothing done, nothing kept");
+        assert!(
+            unfinished_work(&bare, &opening).is_empty(),
+            "nothing done, nothing kept"
+        );
     }
 
     /// A run that compacted rewrote its messages: the opening no longer
@@ -154,6 +173,9 @@ mod tests {
             result("b", "y"),
         ];
         assert!(unfinished_work(&compacted, &opening).is_empty());
-        assert!(unfinished_work(&compacted[..1], &opening).is_empty(), "shorter than the opening");
+        assert!(
+            unfinished_work(&compacted[..1], &opening).is_empty(),
+            "shorter than the opening"
+        );
     }
 }

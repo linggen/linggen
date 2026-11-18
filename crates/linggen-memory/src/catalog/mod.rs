@@ -324,7 +324,11 @@ mod tests {
         assert!(why.contains("op `a` twice"), "{why}");
         let why = refused(t(), vec![branch("u", "a")], vec![]);
         assert!(why.contains("unknown tool `u`"), "{why}");
-        let why = refused(vec![doc("t"), doc("lonely")], vec![branch("t", "a")], vec![]);
+        let why = refused(
+            vec![doc("t"), doc("lonely")],
+            vec![branch("t", "a")],
+            vec![],
+        );
         assert!(why.contains("`lonely` has no branch"), "{why}");
         let mut implicit = doc("t");
         implicit.implicit_op = Some("zz");
@@ -350,20 +354,42 @@ mod tests {
             .collect();
         assert_eq!(
             folded,
-            ["memory_search", "memory_add", "memory_update", "memory_delete", "memory_upkeep"]
+            [
+                "memory_search",
+                "memory_add",
+                "memory_update",
+                "memory_delete",
+                "memory_upkeep"
+            ]
         );
-        let upkeep: Vec<&str> = cat.visible(View::Local, "memory_upkeep").iter().map(|b| b.op).collect();
+        let upkeep: Vec<&str> = cat
+            .visible(View::Local, "memory_upkeep")
+            .iter()
+            .map(|b| b.op)
+            .collect();
         assert_eq!(
             upkeep,
             [
-                "session_start", "harvest_day", "days", "remember_day", "dream_lease", "role",
-                "sweep", "issues", "issue_add", "issue_resolve", "chains"
+                "session_start",
+                "harvest_day",
+                "days",
+                "remember_day",
+                "dream_lease",
+                "role",
+                "sweep",
+                "issues",
+                "issue_add",
+                "issue_resolve",
+                "chains"
             ]
         );
         assert_eq!(cat.retired().len(), 13);
         assert_eq!(
             cat.retired_name("memory_get"),
-            Some(&Retired { name: "memory_get", now: "memory_search op=get" })
+            Some(&Retired {
+                name: "memory_get",
+                now: "memory_search op=get"
+            })
         );
     }
 
@@ -380,7 +406,12 @@ mod tests {
         local.views = Views::LOCAL;
         local.note = "b is local.";
         let cat = Catalog::new(tools, vec![branch("t", "a"), local], vec![]).unwrap();
-        let text = |view| cat.tools_list(view)[0]["description"].as_str().unwrap().to_string();
+        let text = |view| {
+            cat.tools_list(view)[0]["description"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
         assert_eq!(text(View::Local), "Ops: a, b. b is local.");
         assert_eq!(text(View::Remote), "Ops: a.");
     }

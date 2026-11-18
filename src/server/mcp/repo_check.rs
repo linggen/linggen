@@ -16,11 +16,17 @@ fn root() -> PathBuf {
 }
 
 fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
-        if name.starts_with('.') && name != ".claude-plugin" && name != ".codex-plugin" && name != ".mcp.json" {
+        if name.starts_with('.')
+            && name != ".claude-plugin"
+            && name != ".codex-plugin"
+            && name != ".mcp.json"
+        {
             continue;
         }
         if ["node_modules", "target", "__pycache__", "results"].contains(&name.as_str()) {
@@ -38,7 +44,15 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
 fn live_files() -> Vec<PathBuf> {
     let root = root();
     let mut files = Vec::new();
-    for dir in ["plugins/linggen", "evals", "scripts/plugin", "scripts/gate", "agents", "missions", "prompts"] {
+    for dir in [
+        "plugins/linggen",
+        "evals",
+        "scripts/plugin",
+        "scripts/gate",
+        "agents",
+        "missions",
+        "prompts",
+    ] {
         walk(&root.join(dir), &mut files);
     }
     for file in [
@@ -83,7 +97,10 @@ fn lines_with_history(path: &Path, text: &str) -> Vec<(usize, String, bool)> {
             let level = line.chars().take_while(|c| *c == '#').count();
             headings.retain(|(l, _)| *l < level);
             let lower = line.to_lowercase();
-            headings.push((level, lower.contains("history") || lower.contains("retired")));
+            headings.push((
+                level,
+                lower.contains("history") || lower.contains("retired"),
+            ));
         }
         let history = headings.iter().any(|(_, h)| *h);
         out.push((n + 1, line.to_string(), history));
@@ -103,8 +120,14 @@ fn no_live_file_names_a_retired_tool_address_or_namespace() {
     let retired: Vec<&str> = catalog().retired().iter().map(|r| r.name).collect();
     let mut stale = Vec::new();
     for path in &files {
-        let Ok(text) = std::fs::read_to_string(path) else { continue };
-        let shown = path.strip_prefix(root()).unwrap_or(path).display().to_string();
+        let Ok(text) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        let shown = path
+            .strip_prefix(root())
+            .unwrap_or(path)
+            .display()
+            .to_string();
         let lines = lines_with_history(path, &text);
         for (i, (n, line, history)) in lines.iter().enumerate() {
             let (n, line, history) = (*n, line.as_str(), *history);
@@ -119,9 +142,11 @@ fn no_live_file_names_a_retired_tool_address_or_namespace() {
                     stale.push(format!("{shown}:{n}: {name}"));
                 }
             }
-            let describes_410 = near
-                .iter()
-                .any(|(_, l, _)| ["410", "UPGRADE_PLUGIN", "retired", "Retired", "RETIRED"].iter().any(|w| l.contains(w)));
+            let describes_410 = near.iter().any(|(_, l, _)| {
+                ["410", "UPGRADE_PLUGIN", "retired", "Retired", "RETIRED"]
+                    .iter()
+                    .any(|w| l.contains(w))
+            });
             if line.contains("plugin_linggen_memory") && !describes_410 {
                 stale.push(format!("{shown}:{n}: the old memory namespace"));
             }
@@ -136,7 +161,11 @@ fn no_live_file_names_a_retired_tool_address_or_namespace() {
             }
         }
     }
-    assert!(stale.is_empty(), "stale names in live files:\n{}", stale.join("\n"));
+    assert!(
+        stale.is_empty(),
+        "stale names in live files:\n{}",
+        stale.join("\n")
+    );
 }
 
 /// The only code that defines an MCP tool (writes an `inputSchema`) is the
@@ -148,17 +177,27 @@ fn no_live_file_names_a_retired_tool_address_or_namespace() {
 fn only_the_catalogue_defines_and_serves_mcp_tools() {
     let root = root();
     let mut files = Vec::new();
-    for dir in ["src", "crates/linggen-engine/src", "crates/linggen-memory/src"] {
+    for dir in [
+        "src",
+        "crates/linggen-engine/src",
+        "crates/linggen-memory/src",
+    ] {
         walk(&root.join(dir), &mut files);
     }
     files.retain(|p| p.extension().is_some_and(|e| e == "rs"));
     assert!(files.len() > 100, "found only {} files", files.len());
     let defines = ["crates/linggen-memory/src/catalog/schema.rs"];
-    let serves = ["src/server/mcp/mod.rs", "crates/linggen-memory/src/http/mcp.rs"];
+    let serves = [
+        "src/server/mcp/mod.rs",
+        "crates/linggen-memory/src/http/mcp.rs",
+    ];
     let mut wrong = Vec::new();
     for path in &files {
         let shown = path.strip_prefix(&root).unwrap().display().to_string();
-        if shown.ends_with("tests.rs") || shown.contains("/tests/") || shown.ends_with("repo_check.rs") {
+        if shown.ends_with("tests.rs")
+            || shown.contains("/tests/")
+            || shown.ends_with("repo_check.rs")
+        {
             continue;
         }
         let text = std::fs::read_to_string(path).unwrap_or_default();
@@ -189,7 +228,10 @@ fn the_list_and_the_dispatch_are_one_table() {
         for tool in cat.tools_list(view) {
             let name = tool["name"].as_str().unwrap().to_string();
             match tool["inputSchema"]["properties"]["op"]["enum"].as_array() {
-                Some(ops) => listed.extend(ops.iter().map(|op| (name.clone(), op.as_str().unwrap().to_string()))),
+                Some(ops) => listed.extend(
+                    ops.iter()
+                        .map(|op| (name.clone(), op.as_str().unwrap().to_string())),
+                ),
                 None => listed.push((name.clone(), cat.visible(view, &name)[0].op.to_string())),
             }
         }
@@ -204,9 +246,19 @@ fn the_list_and_the_dispatch_are_one_table() {
         callable.sort();
         assert_eq!(sorted, callable, "{view:?}");
         for (name, op) in &listed {
-            let args = if cat.visible(view, name).len() > 1 { serde_json::json!({"op": op}) } else { serde_json::json!({}) };
-            let branch = cat.branch_of(view, name, &args).unwrap_or_else(|| panic!("{name} {op}"));
-            assert_eq!((branch.tool, branch.op), (name.as_str(), op.as_str()), "{view:?}");
+            let args = if cat.visible(view, name).len() > 1 {
+                serde_json::json!({"op": op})
+            } else {
+                serde_json::json!({})
+            };
+            let branch = cat
+                .branch_of(view, name, &args)
+                .unwrap_or_else(|| panic!("{name} {op}"));
+            assert_eq!(
+                (branch.tool, branch.op),
+                (name.as_str(), op.as_str()),
+                "{view:?}"
+            );
         }
     }
 }
@@ -217,7 +269,8 @@ fn the_list_and_the_dispatch_are_one_table() {
 #[test]
 fn the_eval_snapshot_is_the_doors_list() {
     let path = root().join("plugins/linggen/evals-isolated/mocks/linggen/_tools.json");
-    let file: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let file: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     let door = serde_json::json!({ "tools": catalog().tools_list(View::Local) });
     assert!(
         file == door,
@@ -235,7 +288,13 @@ fn the_eval_cases_carry_the_doors_server_text() {
     let body = format!("# MCP Server Instructions\n\n## plugin:linggen:linggen\n{text}");
     let block: String = body
         .split('\n')
-        .map(|l| if l.is_empty() { String::new() } else { format!("  {l}") })
+        .map(|l| {
+            if l.is_empty() {
+                String::new()
+            } else {
+                format!("  {l}")
+            }
+        })
         .collect::<Vec<_>>()
         .join("\n");
     let mut cases = Vec::new();
@@ -244,7 +303,11 @@ fn the_eval_cases_carry_the_doors_server_text() {
     assert!(cases.len() >= 5, "{cases:?}");
     for case in cases {
         let said = std::fs::read_to_string(&case).unwrap();
-        assert!(said.contains(&format!("append_system_prompt: |\n{block}\n---")), "{} carries another server text", case.display());
+        assert!(
+            said.contains(&format!("append_system_prompt: |\n{block}\n---")),
+            "{} carries another server text",
+            case.display()
+        );
     }
 }
 
@@ -262,19 +325,43 @@ fn the_plugins_hook_calls_are_calls_the_door_takes() {
         ("autostart.sh", "{op: \"session_start\", cwd: $c}"),
         ("recall.sh", "{query:$q, limit:$l}"),
         ("recall.sh", "'{\"op\":\"days\",\"undreamed_only\":true}'"),
-        ("recall-on-delegate.sh", "{query:$q, limit:$l} + (if ($c | length) > 0 then {scope_root:$c} else {} end)"),
+        (
+            "recall-on-delegate.sh",
+            "{query:$q, limit:$l} + (if ($c | length) > 0 then {scope_root:$c} else {} end)",
+        ),
     ];
     for (file, shape) in written {
-        assert!(source(file).contains(shape), "{file} no longer builds {shape}");
+        assert!(
+            source(file).contains(shape),
+            "{file} no longer builds {shape}"
+        );
     }
     let calls = [
-        ("memory_upkeep", serde_json::json!({"op": "session_start", "cwd": "/w/p", "root": "/w"})),
-        ("memory_search", serde_json::json!({"query": "what does Alex drink", "limit": 5, "scope_root": "/w"})),
-        ("memory_upkeep", serde_json::json!({"op": "days", "undreamed_only": true})),
-        ("memory_search", serde_json::json!({"query": "a delegated brief", "limit": 3})),
+        (
+            "memory_upkeep",
+            serde_json::json!({"op": "session_start", "cwd": "/w/p", "root": "/w"}),
+        ),
+        (
+            "memory_search",
+            serde_json::json!({"query": "what does Alex drink", "limit": 5, "scope_root": "/w"}),
+        ),
+        (
+            "memory_upkeep",
+            serde_json::json!({"op": "days", "undreamed_only": true}),
+        ),
+        (
+            "memory_search",
+            serde_json::json!({"query": "a delegated brief", "limit": 3}),
+        ),
         // stamp-cwd.sh: an add with every stamp, a search with its root.
-        ("memory_add", serde_json::json!({"content": "x", "source_session": "s1", "cwd": "/w/p", "root": "/w", "host": "claude-code"})),
-        ("memory_search", serde_json::json!({"op": "semantic", "query": "q", "scope_root": "/w"})),
+        (
+            "memory_add",
+            serde_json::json!({"content": "x", "source_session": "s1", "cwd": "/w/p", "root": "/w", "host": "claude-code"}),
+        ),
+        (
+            "memory_search",
+            serde_json::json!({"op": "semantic", "query": "q", "scope_root": "/w"}),
+        ),
         // The status command's dream read, this machine's view only below.
         ("memory_upkeep", serde_json::json!({"op": "dream_status"})),
     ];

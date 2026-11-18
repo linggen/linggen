@@ -58,19 +58,58 @@ pub const TOOLS: &[ToolDoc] = &[
 /// The names memory's verbs were published under before the tools were
 /// folded. A host calling one has an old plugin: it is told to update.
 pub const RETIRED: &[Retired] = &[
-    Retired { name: "memory_list", now: "memory_search op=list" },
-    Retired { name: "memory_get", now: "memory_search op=get" },
-    Retired { name: "memory_session_start", now: "memory_upkeep op=session_start" },
-    Retired { name: "memory_harvest_day", now: "memory_upkeep op=harvest_day" },
-    Retired { name: "memory_days", now: "memory_upkeep op=days" },
-    Retired { name: "memory_remember_day", now: "memory_upkeep op=remember_day" },
-    Retired { name: "memory_dream_lease", now: "memory_upkeep op=dream_lease" },
-    Retired { name: "memory_role", now: "memory_upkeep op=role" },
-    Retired { name: "memory_sweep", now: "memory_upkeep op=sweep" },
-    Retired { name: "memory_issues", now: "memory_upkeep op=issues" },
-    Retired { name: "memory_issue_add", now: "memory_upkeep op=issue_add" },
-    Retired { name: "memory_issue_resolve", now: "memory_upkeep op=issue_resolve" },
-    Retired { name: "memory_chains", now: "memory_upkeep op=chains" },
+    Retired {
+        name: "memory_list",
+        now: "memory_search op=list",
+    },
+    Retired {
+        name: "memory_get",
+        now: "memory_search op=get",
+    },
+    Retired {
+        name: "memory_session_start",
+        now: "memory_upkeep op=session_start",
+    },
+    Retired {
+        name: "memory_harvest_day",
+        now: "memory_upkeep op=harvest_day",
+    },
+    Retired {
+        name: "memory_days",
+        now: "memory_upkeep op=days",
+    },
+    Retired {
+        name: "memory_remember_day",
+        now: "memory_upkeep op=remember_day",
+    },
+    Retired {
+        name: "memory_dream_lease",
+        now: "memory_upkeep op=dream_lease",
+    },
+    Retired {
+        name: "memory_role",
+        now: "memory_upkeep op=role",
+    },
+    Retired {
+        name: "memory_sweep",
+        now: "memory_upkeep op=sweep",
+    },
+    Retired {
+        name: "memory_issues",
+        now: "memory_upkeep op=issues",
+    },
+    Retired {
+        name: "memory_issue_add",
+        now: "memory_upkeep op=issue_add",
+    },
+    Retired {
+        name: "memory_issue_resolve",
+        now: "memory_upkeep op=issue_resolve",
+    },
+    Retired {
+        name: "memory_chains",
+        now: "memory_upkeep op=chains",
+    },
 ];
 
 /// Memory's branches.
@@ -79,16 +118,18 @@ pub const BRANCHES: &[Branch<&str>] = &[
         tool: "memory_search",
         op: "semantic",
         note: "",
-        schema: || json!({
-            "type": "object",
-            "properties": {
-                "query":    {"type": "string", "description": "Natural-language description of what to find."},
-                "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Restrict to one tier. Omit to span all."},
-                "scope_root": {"type": "string", "description": "HOST-FILLED — leave it out; the host stamps the session root, which weighs each row by how near its stored scope is to the root (a skill's dir sees only its own rows)."},
-                "limit":    {"type": "integer", "description": "Max rows. Default 10."}
-            },
-            "required": ["query"]
-        }),
+        schema: || {
+            json!({
+                "type": "object",
+                "properties": {
+                    "query":    {"type": "string", "description": "Natural-language description of what to find."},
+                    "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Restrict to one tier. Omit to span all."},
+                    "scope_root": {"type": "string", "description": "HOST-FILLED — leave it out; the host stamps the session root, which weighs each row by how near its stored scope is to the root (a skill's dir sees only its own rows)."},
+                    "limit":    {"type": "integer", "description": "Max rows. Default 10."}
+                },
+                "required": ["query"]
+            })
+        },
         // `min_score` is deliberately absent. The REST handler accepts it
         // and the tool call passes it through, so a *programmatic* caller
         // (Linggen's auto-recall) can set a floor — but advertising a
@@ -110,21 +151,23 @@ pub const BRANCHES: &[Branch<&str>] = &[
         tool: "memory_search",
         op: "list",
         note: "",
-        schema: || json!({
-            "type": "object",
-            "properties": {
-                "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"]},
-                "types":    {"type": "array", "items": {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"]}, "description": "Only rows of these types."},
-                "scope_root": {"type": "string", "description": "A session root: rows whose stored scope is under it or at its parents, and rows about the person (no scope). A skill's dir sees only its own rows."},
-                "indexed":  {"type": "boolean", "description": "Only indexed rows (true) or only the rest (false)."},
-                "past_ttl": {"type": "boolean", "description": "Return only rows past the configured episodic TTL. Implies tier=episodic."},
-                "day":      {"type": "string", "description": "One local calendar day, YYYY-MM-DD — the remember stage lists a single day's worklist with this."},
-                "unjudged": {"type": "boolean", "description": "With day: only the rows no remember pass has judged yet — a re-opened day's new rows, not the whole day."},
-                "sort":     {"type": "string", "enum": ["newest", "oldest"]},
-                "limit":    {"type": "integer"},
-                "offset":   {"type": "integer"}
-            }
-        }),
+        schema: || {
+            json!({
+                "type": "object",
+                "properties": {
+                    "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"]},
+                    "types":    {"type": "array", "items": {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"]}, "description": "Only rows of these types."},
+                    "scope_root": {"type": "string", "description": "A session root: rows whose stored scope is under it or at its parents, and rows about the person (no scope). A skill's dir sees only its own rows."},
+                    "indexed":  {"type": "boolean", "description": "Only indexed rows (true) or only the rest (false)."},
+                    "past_ttl": {"type": "boolean", "description": "Return only rows past the configured episodic TTL. Implies tier=episodic."},
+                    "day":      {"type": "string", "description": "One local calendar day, YYYY-MM-DD — the remember stage lists a single day's worklist with this."},
+                    "unjudged": {"type": "boolean", "description": "With day: only the rows no remember pass has judged yet — a re-opened day's new rows, not the whole day."},
+                    "sort":     {"type": "string", "enum": ["newest", "oldest"]},
+                    "limit":    {"type": "integer"},
+                    "offset":   {"type": "integer"}
+                }
+            })
+        },
         extra: None,
         hidden: &["from", "outcome"],
         fixed: &[],
@@ -137,13 +180,15 @@ pub const BRANCHES: &[Branch<&str>] = &[
         tool: "memory_upkeep",
         op: "session_start",
         note: "",
-        schema: || json!({
-            "type": "object",
-            "properties": {
-                "cwd":  {"type": "string", "description": "HOST-FILLED — the session's working directory."},
-                "root": {"type": "string", "description": "HOST-FILLED — the session's root (git root, or where it started)."}
-            }
-        }),
+        schema: || {
+            json!({
+                "type": "object",
+                "properties": {
+                    "cwd":  {"type": "string", "description": "HOST-FILLED — the session's working directory."},
+                    "root": {"type": "string", "description": "HOST-FILLED — the session's root (git root, or where it started)."}
+                }
+            })
+        },
         extra: None,
         hidden: &[],
         fixed: &[],
@@ -156,11 +201,13 @@ pub const BRANCHES: &[Branch<&str>] = &[
         tool: "memory_search",
         op: "get",
         note: "",
-        schema: || json!({
-            "type": "object",
-            "properties": { "id": {"type": "string"} },
-            "required": ["id"]
-        }),
+        schema: || {
+            json!({
+                "type": "object",
+                "properties": { "id": {"type": "string"} },
+                "required": ["id"]
+            })
+        },
         extra: None,
         hidden: &[],
         fixed: &[],
@@ -173,26 +220,28 @@ pub const BRANCHES: &[Branch<&str>] = &[
         tool: "memory_add",
         op: "add",
         note: "",
-        schema: || json!({
-            "type": "object",
-            "properties": {
-                "content":  {"type": "string", "description": "The fact text the model will see when this row is recalled."},
-                "type":     {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"]},
-                "from":     {"type": "string", "enum": ["user", "agent", "derived"], "description": "Whose words: user = the user stated it (a preference, a decision, a fact about them); agent = you did or observed it; derived (default) = your inference."},
-                "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Destination tier: episodic = per-turn staging (the default when omitted, no search-first); semantic = curated durable facts (search-first); core = tiny always-injected universals (search-first). Doctrine in the server instructions."},
-                "scope":    {"type": "string", "description": "The directory this row is about, when it is not where you stand: one of the session's \"Memory scopes here\" candidates (e.g. skills/lingjing, ~/workspace). Omit for the session's own directory. Stored as the row's `scope` (absolute path; none = about the person)."},
-                "summary":  {"type": "string", "description": "One line, ≤ 80 chars: what this row is for — what the index shows in its place. Matters on indexed rows; without one the index shows the row's opening."},
-                "indexed":  {"type": "boolean", "description": "true = put the row in its scope's index: its summary loads at every session start in that directory or below. For standing rules the user states (\"always…\", \"from now on…\")."},
-                "host":     {"type": "string", "description": "HOST-FILLED — leave it out; the host stamps the committing runtime."},
-                "source_session": {"type": "string", "description": "HOST-FILLED — leave it out; the host stamps this session. Only a promote pass carrying an original row's session forward passes it."},
-                "cwd":      {"type": "string", "description": "HOST-FILLED, request only — leave it out; the host stamps the session's working directory: the stored scope when you name none, and the base a named one is checked against. Never stored under this name."},
-                "root":     {"type": "string", "description": "HOST-FILLED — leave it out; the host stamps the session root that `scope` resolves against."},
-                "global":   {"type": "boolean", "description": "true = the row is about the person, not a directory: stored with no scope, recalled everywhere."},
-                "replace_ids": {"type": "array", "items": {"type": "string"}, "description": "Row ids this row replaces — inserted and deleted atomically. For merges and resolved conflicts; never separate add + delete calls."},
-                "user_directed": {"type": "boolean", "description": "Assert the user directed this change (a settled command/declaration, or they just answered your ask). Required when replace_ids targets from=user rows — memory BLOCKS such writes otherwise. Hedged reflections don't qualify; see the server instructions."}
-            },
-            "required": ["content"]
-        }),
+        schema: || {
+            json!({
+                "type": "object",
+                "properties": {
+                    "content":  {"type": "string", "description": "The fact text the model will see when this row is recalled."},
+                    "type":     {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"]},
+                    "from":     {"type": "string", "enum": ["user", "agent", "derived"], "description": "Whose words: user = the user stated it (a preference, a decision, a fact about them); agent = you did or observed it; derived (default) = your inference."},
+                    "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Destination tier: episodic = per-turn staging (the default when omitted, no search-first); semantic = curated durable facts (search-first); core = tiny always-injected universals (search-first). Doctrine in the server instructions."},
+                    "scope":    {"type": "string", "description": "The directory this row is about, when it is not where you stand: one of the session's \"Memory scopes here\" candidates (e.g. skills/lingjing, ~/workspace). Omit for the session's own directory. Stored as the row's `scope` (absolute path; none = about the person)."},
+                    "summary":  {"type": "string", "description": "One line, ≤ 80 chars: what this row is for — what the index shows in its place. Matters on indexed rows; without one the index shows the row's opening."},
+                    "indexed":  {"type": "boolean", "description": "true = put the row in its scope's index: its summary loads at every session start in that directory or below. For standing rules the user states (\"always…\", \"from now on…\")."},
+                    "host":     {"type": "string", "description": "HOST-FILLED — leave it out; the host stamps the committing runtime."},
+                    "source_session": {"type": "string", "description": "HOST-FILLED — leave it out; the host stamps this session. Only a promote pass carrying an original row's session forward passes it."},
+                    "cwd":      {"type": "string", "description": "HOST-FILLED, request only — leave it out; the host stamps the session's working directory: the stored scope when you name none, and the base a named one is checked against. Never stored under this name."},
+                    "root":     {"type": "string", "description": "HOST-FILLED — leave it out; the host stamps the session root that `scope` resolves against."},
+                    "global":   {"type": "boolean", "description": "true = the row is about the person, not a directory: stored with no scope, recalled everywhere."},
+                    "replace_ids": {"type": "array", "items": {"type": "string"}, "description": "Row ids this row replaces — inserted and deleted atomically. For merges and resolved conflicts; never separate add + delete calls."},
+                    "user_directed": {"type": "boolean", "description": "Assert the user directed this change (a settled command/declaration, or they just answered your ask). Required when replace_ids targets from=user rows — memory BLOCKS such writes otherwise. Hedged reflections don't qualify; see the server instructions."}
+                },
+                "required": ["content"]
+            })
+        },
         extra: Some(add_extra),
         hidden: &["outcome", "skip_dedup", "force"],
         fixed: &[],
@@ -205,11 +254,13 @@ pub const BRANCHES: &[Branch<&str>] = &[
         tool: "memory_delete",
         op: "delete",
         note: "",
-        schema: || json!({
-            "type": "object",
-            "properties": { "id": {"type": "string"} },
-            "required": ["id"]
-        }),
+        schema: || {
+            json!({
+                "type": "object",
+                "properties": { "id": {"type": "string"} },
+                "required": ["id"]
+            })
+        },
         extra: None,
         hidden: &[],
         fixed: &[],
@@ -222,21 +273,23 @@ pub const BRANCHES: &[Branch<&str>] = &[
         tool: "memory_update",
         op: "update",
         note: "",
-        schema: || json!({
-            "type": "object",
-            "properties": {
-                "id":       {"type": "string"},
-                "content":  {"type": "string", "description": "Replacement fact text."},
-                "type":     {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"]},
-                "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Moving tier relocates the row across tables, id preserved."},
-                "scope":    {"type": "string", "description": "Move the row: its stored scope, the absolute directory it is about (~/… allowed)."},
-                "summary":  {"type": "string", "description": "New one-line summary (≤ 80 chars) — what the index shows for an indexed row."},
-                "indexed":  {"type": "boolean", "description": "Put the row in (true) or take it out of (false) its scope's index."},
-                "global":   {"type": "boolean", "description": "true = clear the row's stored scope so it applies everywhere."},
-                "user_directed": {"type": "boolean", "description": "Required when rewriting content on a from=user row — see memory_add.user_directed."}
-            },
-            "required": ["id"]
-        }),
+        schema: || {
+            json!({
+                "type": "object",
+                "properties": {
+                    "id":       {"type": "string"},
+                    "content":  {"type": "string", "description": "Replacement fact text."},
+                    "type":     {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"]},
+                    "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Moving tier relocates the row across tables, id preserved."},
+                    "scope":    {"type": "string", "description": "Move the row: its stored scope, the absolute directory it is about (~/… allowed)."},
+                    "summary":  {"type": "string", "description": "New one-line summary (≤ 80 chars) — what the index shows for an indexed row."},
+                    "indexed":  {"type": "boolean", "description": "Put the row in (true) or take it out of (false) its scope's index."},
+                    "global":   {"type": "boolean", "description": "true = clear the row's stored scope so it applies everywhere."},
+                    "user_directed": {"type": "boolean", "description": "Required when rewriting content on a from=user row — see memory_add.user_directed."}
+                },
+                "required": ["id"]
+            })
+        },
         extra: None,
         hidden: &[],
         fixed: &[],
@@ -249,13 +302,15 @@ pub const BRANCHES: &[Branch<&str>] = &[
         tool: "memory_upkeep",
         op: "harvest_day",
         note: "",
-        schema: || json!({
-            "type": "object",
-            "properties": {
-                "date": {"type": "string", "description": "Local calendar day, YYYY-MM-DD."}
-            },
-            "required": ["date"]
-        }),
+        schema: || {
+            json!({
+                "type": "object",
+                "properties": {
+                    "date": {"type": "string", "description": "Local calendar day, YYYY-MM-DD."}
+                },
+                "required": ["date"]
+            })
+        },
         extra: None,
         hidden: &[],
         fixed: &[],
@@ -268,14 +323,16 @@ pub const BRANCHES: &[Branch<&str>] = &[
         tool: "memory_upkeep",
         op: "days",
         note: "",
-        schema: || json!({
-            "type": "object",
-            "properties": {
-                "undreamed_only": {"type": "boolean", "description": "Only days awaiting a dream pass (the worklist)."},
-                "from": {"type": "string", "description": "Inclusive YYYY-MM-DD lower bound."},
-                "to":   {"type": "string", "description": "Inclusive YYYY-MM-DD upper bound."}
-            }
-        }),
+        schema: || {
+            json!({
+                "type": "object",
+                "properties": {
+                    "undreamed_only": {"type": "boolean", "description": "Only days awaiting a dream pass (the worklist)."},
+                    "from": {"type": "string", "description": "Inclusive YYYY-MM-DD lower bound."},
+                    "to":   {"type": "string", "description": "Inclusive YYYY-MM-DD upper bound."}
+                }
+            })
+        },
         extra: None,
         hidden: &[],
         fixed: &[],
@@ -288,16 +345,18 @@ pub const BRANCHES: &[Branch<&str>] = &[
         tool: "memory_upkeep",
         op: "remember_day",
         note: "",
-        schema: || json!({
-            "type": "object",
-            "properties": {
-                "date":     {"type": "string", "description": "Local calendar day, YYYY-MM-DD."},
-                "judged":   {"type": "integer", "description": "Rows judged in this pass."},
-                "promoted": {"type": "integer", "description": "Rows promoted to semantic in this pass."},
-                "holder":   {"type": "string", "description": "The dream lease holder, when one was taken."}
-            },
-            "required": ["date"]
-        }),
+        schema: || {
+            json!({
+                "type": "object",
+                "properties": {
+                    "date":     {"type": "string", "description": "Local calendar day, YYYY-MM-DD."},
+                    "judged":   {"type": "integer", "description": "Rows judged in this pass."},
+                    "promoted": {"type": "integer", "description": "Rows promoted to semantic in this pass."},
+                    "holder":   {"type": "string", "description": "The dream lease holder, when one was taken."}
+                },
+                "required": ["date"]
+            })
+        },
         extra: None,
         hidden: &[],
         fixed: &[],
@@ -310,15 +369,17 @@ pub const BRANCHES: &[Branch<&str>] = &[
         tool: "memory_upkeep",
         op: "dream_lease",
         note: "",
-        schema: || json!({
-            "type": "object",
-            "properties": {
-                "day":    {"type": "string", "description": "Local calendar day, YYYY-MM-DD."},
-                "holder": {"type": "string", "description": "Who is dreaming, e.g. claude-code@<host>."},
-                "action": {"type": "string", "enum": ["acquire", "renew", "release"]}
-            },
-            "required": ["day", "holder"]
-        }),
+        schema: || {
+            json!({
+                "type": "object",
+                "properties": {
+                    "day":    {"type": "string", "description": "Local calendar day, YYYY-MM-DD."},
+                    "holder": {"type": "string", "description": "Who is dreaming, e.g. claude-code@<host>."},
+                    "action": {"type": "string", "enum": ["acquire", "renew", "release"]}
+                },
+                "required": ["day", "holder"]
+            })
+        },
         extra: None,
         hidden: &[],
         fixed: &[],
@@ -344,12 +405,14 @@ pub const BRANCHES: &[Branch<&str>] = &[
         tool: "memory_upkeep",
         op: "sweep",
         note: "",
-        schema: || json!({
-            "type": "object",
-            "properties": {
-                "dry_run": {"type": "boolean", "description": "Report what would be evicted without deleting."}
-            }
-        }),
+        schema: || {
+            json!({
+                "type": "object",
+                "properties": {
+                    "dry_run": {"type": "boolean", "description": "Report what would be evicted without deleting."}
+                }
+            })
+        },
         extra: None,
         hidden: &[],
         fixed: &[],
@@ -362,13 +425,15 @@ pub const BRANCHES: &[Branch<&str>] = &[
         tool: "memory_upkeep",
         op: "issues",
         note: "",
-        schema: || json!({
-            "type": "object",
-            "properties": {
-                "status": {"type": "string", "enum": ["open", "resolved", "dismissed", "all"], "description": "Which items to list (default open)."},
-                "limit":  {"type": "integer", "description": "Max items (default 50)."}
-            }
-        }),
+        schema: || {
+            json!({
+                "type": "object",
+                "properties": {
+                    "status": {"type": "string", "enum": ["open", "resolved", "dismissed", "all"], "description": "Which items to list (default open)."},
+                    "limit":  {"type": "integer", "description": "Max items (default 50)."}
+                }
+            })
+        },
         extra: None,
         hidden: &[],
         fixed: &[],
@@ -381,15 +446,17 @@ pub const BRANCHES: &[Branch<&str>] = &[
         tool: "memory_upkeep",
         op: "issue_add",
         note: "",
-        schema: || json!({
-            "type": "object",
-            "properties": {
-                "kind":    {"type": "string", "enum": ["chain", "stale-status", "contradiction", "subject"], "description": "What you saw: `chain` = uncertain merge candidate; `stale-status` = a status claim likely overtaken by the world (verify against git/files at solve time); `contradiction` = conflicting rows needing the user's pick; `subject` = digest cluster of doubtful subject coherence (list ALL member ids). Scope, index and summary fixes are not queued — the dream applies them itself."},
-                "row_ids": {"type": "array", "items": {"type": "string"}, "description": "The memory row ids this item is about."},
-                "note":    {"type": "string", "description": "What you saw and what a solver should check — the item's whole context, since the solver starts from this line alone. Write it in plain words; it may become the user's question."}
-            },
-            "required": ["kind", "note"]
-        }),
+        schema: || {
+            json!({
+                "type": "object",
+                "properties": {
+                    "kind":    {"type": "string", "enum": ["chain", "stale-status", "contradiction", "subject"], "description": "What you saw: `chain` = uncertain merge candidate; `stale-status` = a status claim likely overtaken by the world (verify against git/files at solve time); `contradiction` = conflicting rows needing the user's pick; `subject` = digest cluster of doubtful subject coherence (list ALL member ids). Scope, index and summary fixes are not queued — the dream applies them itself."},
+                    "row_ids": {"type": "array", "items": {"type": "string"}, "description": "The memory row ids this item is about."},
+                    "note":    {"type": "string", "description": "What you saw and what a solver should check — the item's whole context, since the solver starts from this line alone. Write it in plain words; it may become the user's question."}
+                },
+                "required": ["kind", "note"]
+            })
+        },
         extra: None,
         hidden: &[],
         fixed: &[],
@@ -402,15 +469,17 @@ pub const BRANCHES: &[Branch<&str>] = &[
         tool: "memory_upkeep",
         op: "issue_resolve",
         note: "",
-        schema: || json!({
-            "type": "object",
-            "properties": {
-                "id":      {"type": "string", "description": "The issue id from op=issues."},
-                "outcome": {"type": "string", "enum": ["resolved", "dismissed"]},
-                "note":    {"type": "string", "description": "One-line record of what was done."}
-            },
-            "required": ["id", "outcome"]
-        }),
+        schema: || {
+            json!({
+                "type": "object",
+                "properties": {
+                    "id":      {"type": "string", "description": "The issue id from op=issues."},
+                    "outcome": {"type": "string", "enum": ["resolved", "dismissed"]},
+                    "note":    {"type": "string", "description": "One-line record of what was done."}
+                },
+                "required": ["id", "outcome"]
+            })
+        },
         extra: None,
         hidden: &[],
         fixed: &[],
@@ -423,15 +492,17 @@ pub const BRANCHES: &[Branch<&str>] = &[
         tool: "memory_upkeep",
         op: "chains",
         note: "",
-        schema: || json!({
-            "type": "object",
-            "properties": {
-                "kind":   {"type": "string", "enum": ["cited", "marker", "subject"], "description": "cited (default) = id-citation chains; marker = provisional-state candidates; subject = same-subject clusters for digests."},
-                "limit":  {"type": "integer", "description": "Clusters per page (default 10)."},
-                "offset": {"type": "integer", "description": "Pagination offset over the cluster list."},
-                "derived_only": {"type": "boolean", "description": "Only clusters mergeable unattended (every row from=derived, tier=semantic). Unattended condense passes MUST set true."}
-            }
-        }),
+        schema: || {
+            json!({
+                "type": "object",
+                "properties": {
+                    "kind":   {"type": "string", "enum": ["cited", "marker", "subject"], "description": "cited (default) = id-citation chains; marker = provisional-state candidates; subject = same-subject clusters for digests."},
+                    "limit":  {"type": "integer", "description": "Clusters per page (default 10)."},
+                    "offset": {"type": "integer", "description": "Pagination offset over the cluster list."},
+                    "derived_only": {"type": "boolean", "description": "Only clusters mergeable unattended (every row from=derived, tier=semantic). Unattended condense passes MUST set true."}
+                }
+            })
+        },
         extra: None,
         hidden: &[],
         fixed: &[],
@@ -439,7 +510,8 @@ pub const BRANCHES: &[Branch<&str>] = &[
         timeout_ms: CALL_TIMEOUT_MS,
         views: Views::ALL,
         dispatch: "chains",
-    },];
+    },
+];
 
 /// Fields only the folded `memory_add` advertises.
 fn add_extra() -> Value {
@@ -483,11 +555,11 @@ fn page_rule(obj: &Map<String, Value>) -> Result<(), String> {
 /// memory tools a host's catalogue composes.
 pub fn catalog() -> &'static Catalog<&'static str> {
     static CATALOG: LazyLock<Catalog<&'static str>> = LazyLock::new(|| {
-        Catalog::new(TOOLS.to_vec(), BRANCHES.to_vec(), RETIRED.to_vec()).expect("memory's catalogue is consistent")
+        Catalog::new(TOOLS.to_vec(), BRANCHES.to_vec(), RETIRED.to_vec())
+            .expect("memory's catalogue is consistent")
     });
     &CATALOG
 }
-
 
 /// Dispatch-boundary fixes ported from `linggen/src/engine/tools/memory_tool.rs`.
 /// These compensate for shapes models commonly produce that the daemon
@@ -596,7 +668,9 @@ pub async fn run(
     let verb = branch.dispatch;
     let (state, owned) = (state.clone(), verb.to_string());
     let task =
-        tokio::spawn(async move { crate::http::verb::answer(state, Who::Owner, &owned, args).await });
+        tokio::spawn(
+            async move { crate::http::verb::answer(state, Who::Owner, &owned, args).await },
+        );
     let wait = Duration::from_millis(branch.timeout_ms);
     let mut data = match tokio::time::timeout(wait, task).await {
         Err(_) => return Err(timed_out(verb, wait)),

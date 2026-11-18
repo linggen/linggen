@@ -8,8 +8,12 @@
 //! that is no reason to give up (the user declined a browser prompt, a
 //! request the store refused as bad) is not one of these.
 
-use crate::provider::error::{kind_of, kind_of_message, named_reset, retry_after_of, ProviderErrorKind};
-use crate::provider::models::{cloud_sign_in, rfc3339, usage_limit_line, usage_limit_until, NotReady};
+use crate::provider::error::{
+    kind_of, kind_of_message, named_reset, retry_after_of, ProviderErrorKind,
+};
+use crate::provider::models::{
+    cloud_sign_in, rfc3339, usage_limit_line, usage_limit_until, NotReady,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::time::{Duration, SystemTime};
@@ -71,10 +75,13 @@ impl CannotRun {
         if format!("{err:#}").contains(NO_MODELS_CONFIGURED) {
             return Some(Self::NoModel);
         }
-        let from_provider = err
-            .chain()
-            .any(|c| c.downcast_ref::<crate::provider::error::ProviderError>().is_some());
-        from_provider.then(|| Self::of_model_error(err, None, None)).flatten()
+        let from_provider = err.chain().any(|c| {
+            c.downcast_ref::<crate::provider::error::ProviderError>()
+                .is_some()
+        });
+        from_provider
+            .then(|| Self::of_model_error(err, None, None))
+            .flatten()
     }
 
     /// A failure that survived only as text — a finished run's error, a
@@ -246,7 +253,12 @@ mod tests {
     #[test]
     fn a_usage_limit_carries_its_model_and_reset() {
         let why = CannotRun::of_model_error(&http(429, USAGE), Some("gpt-x"), None).unwrap();
-        let CannotRun::UsageLimit { model, resets_in_secs, .. } = &why else {
+        let CannotRun::UsageLimit {
+            model,
+            resets_in_secs,
+            ..
+        } = &why
+        else {
             panic!("{why:?}");
         };
         assert_eq!(model.as_deref(), Some("gpt-x"));
@@ -255,7 +267,10 @@ mod tests {
         let fact = why.fact();
         assert_eq!(fact["reason"], "usage_limit");
         assert!(fact["resets_at"].is_string());
-        assert!(fact["line"].as_str().unwrap().contains("never retry before"));
+        assert!(fact["line"]
+            .as_str()
+            .unwrap()
+            .contains("never retry before"));
 
         // The same run's failure, as the text a finished frame carries.
         let text = format!("MODEL_FAILED: model 'gpt-x' failed (rate limit): openai error (429 Too Many Requests): {USAGE}");
@@ -266,7 +281,10 @@ mod tests {
         let blind = CannotRun::of_model_error(&http(429, "{}"), Some("m"), None).unwrap();
         assert_eq!(
             blind,
-            CannotRun::Provider { model: Some("m".into()), kind: ProviderErrorKind::RateLimit }
+            CannotRun::Provider {
+                model: Some("m".into()),
+                kind: ProviderErrorKind::RateLimit
+            }
         );
     }
 
@@ -278,18 +296,35 @@ mod tests {
         let refused = anyhow::anyhow!(
             "AUTH_REQUIRED: Not signed in to linggen.dev for model 'cloud'. Run `ling account login` or sign in from the app."
         );
-        let cloud = CannotRun::of_model_error(&refused, Some("cloud"), Some("linggen_account")).unwrap();
+        let cloud =
+            CannotRun::of_model_error(&refused, Some("cloud"), Some("linggen_account")).unwrap();
         assert!(matches!(cloud, CannotRun::CloudSignIn { .. }), "{cloud:?}");
         assert!(cloud.line().contains("Linggen account"));
         let by_text = CannotRun::of_message(&refused.to_string(), Some("cloud")).unwrap();
-        assert!(matches!(by_text, CannotRun::CloudSignIn { .. }), "{by_text:?}");
+        assert!(
+            matches!(by_text, CannotRun::CloudSignIn { .. }),
+            "{by_text:?}"
+        );
 
         let chatgpt = anyhow::anyhow!("AUTH_REQUIRED: ChatGPT not signed in for model 'g'. Open Settings → Models → Sign in with ChatGPT.");
         let other = CannotRun::of_model_error(&chatgpt, Some("g"), Some("chatgpt_oauth")).unwrap();
-        assert_eq!(other, CannotRun::Provider { model: Some("g".into()), kind: ProviderErrorKind::Auth });
-        assert!(!other.line().contains("Linggen account"), "{}", other.line());
+        assert_eq!(
+            other,
+            CannotRun::Provider {
+                model: Some("g".into()),
+                kind: ProviderErrorKind::Auth
+            }
+        );
+        assert!(
+            !other.line().contains("Linggen account"),
+            "{}",
+            other.line()
+        );
         let by_text = CannotRun::of_message(&chatgpt.to_string(), Some("g")).unwrap();
-        assert!(!matches!(by_text, CannotRun::CloudSignIn { .. }), "{by_text:?}");
+        assert!(
+            !matches!(by_text, CannotRun::CloudSignIn { .. }),
+            "{by_text:?}"
+        );
     }
 
     /// A session that may not switch models ends on its model's usage
@@ -299,7 +334,10 @@ mod tests {
     fn a_usage_limit_keeps_its_reset_when_no_other_model_is_tried() {
         let ended = crate::provider::error::no_fallback_error("gpt-x", &http(429, USAGE));
         let why = CannotRun::of_model_error(&ended, Some("gpt-x"), None).unwrap();
-        let CannotRun::UsageLimit { model, resets_at, .. } = &why else {
+        let CannotRun::UsageLimit {
+            model, resets_at, ..
+        } = &why
+        else {
             panic!("{why:?}");
         };
         assert_eq!(model.as_deref(), Some("gpt-x"));
@@ -314,10 +352,16 @@ mod tests {
     fn a_memory_timeout_is_no_provider_failure() {
         let memory = "tool_error: tool=mcp__memory__memory_add error=MCP tools/call memory_add: MCP error -32603: add timed out after 25s — a write may still have landed; search before retrying";
         assert_eq!(CannotRun::of_message(memory, None), None);
-        let stream = anyhow::Error::from(ProviderError::new(ProviderErrorKind::Network, "stream timed out".into()));
+        let stream = anyhow::Error::from(ProviderError::new(
+            ProviderErrorKind::Network,
+            "stream timed out".into(),
+        ));
         assert_eq!(
             CannotRun::of_model_error(&stream, Some("m"), None),
-            Some(CannotRun::Provider { model: Some("m".into()), kind: ProviderErrorKind::Network })
+            Some(CannotRun::Provider {
+                model: Some("m".into()),
+                kind: ProviderErrorKind::Network
+            })
         );
     }
 
@@ -326,12 +370,25 @@ mod tests {
     #[test]
     fn a_creation_error_is_a_reason_only_when_it_is_one() {
         let none = anyhow::anyhow!(NO_MODELS_CONFIGURED).context("failed to create agent 'ling'");
-        assert_eq!(CannotRun::of_creation_error(&none), Some(CannotRun::NoModel));
-        let missing = anyhow::Error::from(std::io::Error::new(std::io::ErrorKind::NotFound, "agents/ling.md"));
-        assert_eq!(CannotRun::of_model_error(&missing, None, None).map(|c| c.is_usage_limit()), Some(false), "read as a provider's");
+        assert_eq!(
+            CannotRun::of_creation_error(&none),
+            Some(CannotRun::NoModel)
+        );
+        let missing = anyhow::Error::from(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "agents/ling.md",
+        ));
+        assert_eq!(
+            CannotRun::of_model_error(&missing, None, None).map(|c| c.is_usage_limit()),
+            Some(false),
+            "read as a provider's"
+        );
         assert_eq!(CannotRun::of_creation_error(&missing), None);
         let refused = http(401, "{}").context("failed to create agent 'ling'");
-        assert!(matches!(CannotRun::of_creation_error(&refused), Some(CannotRun::Provider { .. })));
+        assert!(matches!(
+            CannotRun::of_creation_error(&refused),
+            Some(CannotRun::Provider { .. })
+        ));
     }
 
     /// No model at all — from the engine's own error or a dream run's
@@ -340,7 +397,10 @@ mod tests {
     #[test]
     fn no_model_is_named_wherever_it_surfaces() {
         let err = anyhow::anyhow!(NO_MODELS_CONFIGURED);
-        assert_eq!(CannotRun::of_model_error(&err, None, None), Some(CannotRun::NoModel));
+        assert_eq!(
+            CannotRun::of_model_error(&err, None, None),
+            Some(CannotRun::NoModel)
+        );
         let recorded = format!("failed to create agent 'ling': {NO_MODELS_CONFIGURED}");
         let why = CannotRun::of_message(&recorded, None).unwrap();
         assert_eq!(why, CannotRun::NoModel);
@@ -352,19 +412,31 @@ mod tests {
     /// user's declined prompt and the store's ordinary refusals are not.
     #[test]
     fn the_extension_and_the_store_have_their_own_reasons() {
-        assert_eq!(CannotRun::of_bridge("no_bridge"), Some(CannotRun::ExtensionNotConnected));
-        assert_eq!(CannotRun::of_bridge("module_unavailable"), Some(CannotRun::ExtensionNotConnected));
+        assert_eq!(
+            CannotRun::of_bridge("no_bridge"),
+            Some(CannotRun::ExtensionNotConnected)
+        );
+        assert_eq!(
+            CannotRun::of_bridge("module_unavailable"),
+            Some(CannotRun::ExtensionNotConnected)
+        );
         assert_eq!(CannotRun::of_bridge("not_permitted"), None);
 
         let closed = json!({"ok": false, "error": "store locked", "code": "MEMORY_UNAVAILABLE"});
         assert_eq!(
             CannotRun::of_memory_answer(503, &closed),
-            Some(CannotRun::StoreUnavailable { detail: "store locked".into() })
+            Some(CannotRun::StoreUnavailable {
+                detail: "store locked".into()
+            })
         );
         let bad = json!({"ok": false, "error": "content must not be empty", "code": "BAD_REQUEST"});
         assert_eq!(CannotRun::of_memory_answer(400, &bad), None);
-        let silent = CannotRun::of_memory_error("memory is not reachable — check `ling status`").unwrap();
+        let silent =
+            CannotRun::of_memory_error("memory is not reachable — check `ling status`").unwrap();
         assert!(silent.line().contains("ling status"));
-        assert_eq!(CannotRun::of_message("invalid JSON in response", None), None);
+        assert_eq!(
+            CannotRun::of_message("invalid JSON in response", None),
+            None
+        );
     }
 }

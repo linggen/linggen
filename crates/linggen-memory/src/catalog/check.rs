@@ -97,13 +97,7 @@ fn pick<'a, D: Copy + 'static>(
     visible: &[&'a Branch<D>],
     obj: &mut Map<String, Value>,
 ) -> Result<&'a Branch<D>, String> {
-    let ops = || {
-        visible
-            .iter()
-            .map(|b| b.op)
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
+    let ops = || visible.iter().map(|b| b.op).collect::<Vec<_>>().join(", ");
     match obj.remove("op") {
         Some(Value::String(op)) => visible
             .iter()
@@ -125,7 +119,11 @@ fn implied<'a, D: Copy + 'static>(
 ) -> Result<&'a Branch<D>, String> {
     // A soft-empty field is a field not given (`check` drops it), so it
     // decides nothing about the branch.
-    let given: Vec<&String> = obj.iter().filter(|(_, v)| !soft_empty(v)).map(|(k, _)| k).collect();
+    let given: Vec<&String> = obj
+        .iter()
+        .filter(|(_, v)| !soft_empty(v))
+        .map(|(k, _)| k)
+        .collect();
     let fits = |b: &Branch<D>| given.iter().all(|k| b.accepts(k));
     if let Some(b) = implicit.and_then(|op| visible.iter().copied().find(|b| b.op == op)) {
         let complete = b.required().iter().all(|k| obj.contains_key(k));
@@ -361,12 +359,18 @@ mod tests {
     fn a_query_alone_is_a_semantic_search() {
         assert_eq!(call("memory_search", json!({"query": "tea"})).0, "semantic");
         let (op, args) = call("memory_search", json!({"query": "tea", "limit": "3"}));
-        assert_eq!((op, args), ("semantic", json!({"query": "tea", "limit": 3})));
+        assert_eq!(
+            (op, args),
+            ("semantic", json!({"query": "tea", "limit": 3}))
+        );
         assert_eq!(
             call("memory_search", json!({"op": "semantic", "query": "tea"})).0,
             "semantic"
         );
-        assert_eq!(call("memory_search", json!({"op": "get", "id": "a"})).0, "get");
+        assert_eq!(
+            call("memory_search", json!({"op": "get", "id": "a"})).0,
+            "get"
+        );
         assert_eq!(call("memory_search", json!({"op": "list"})).0, "list");
 
         let why = refused("memory_search", json!({"id": "a"}));
@@ -374,7 +378,10 @@ mod tests {
         let why = refused("memory_search", json!({"tier": "core", "sort": "oldest"}));
         assert!(why.contains("op=\"list\""), "{why}");
         let why = refused("memory_search", json!({}));
-        assert!(why.contains("needs op") && why.contains("semantic: query"), "{why}");
+        assert!(
+            why.contains("needs op") && why.contains("semantic: query"),
+            "{why}"
+        );
     }
 
     /// The branch a client fills fields in for is the one that will run:
@@ -382,22 +389,53 @@ mod tests {
     /// names no branch has none.
     #[test]
     fn the_branch_of_a_call_is_the_one_that_runs() {
-        let op = |tool: &str, args: Value| catalog().branch_of(View::Local, tool, &args).map(|b| b.op);
-        assert_eq!(op("memory_search", json!({"query": "tea"})), Some("semantic"));
-        assert_eq!(op("memory_search", json!({"op": "get", "id": "a"})), Some("get"));
-        assert_eq!(op("memory_search", json!({"op": "list", "day": "2026-11-01"})), Some("list"));
-        assert_eq!(op("memory_search", json!({"id": "a"})), None, "no op, not a search");
+        let op =
+            |tool: &str, args: Value| catalog().branch_of(View::Local, tool, &args).map(|b| b.op);
+        assert_eq!(
+            op("memory_search", json!({"query": "tea"})),
+            Some("semantic")
+        );
+        assert_eq!(
+            op("memory_search", json!({"op": "get", "id": "a"})),
+            Some("get")
+        );
+        assert_eq!(
+            op("memory_search", json!({"op": "list", "day": "2026-11-01"})),
+            Some("list")
+        );
+        assert_eq!(
+            op("memory_search", json!({"id": "a"})),
+            None,
+            "no op, not a search"
+        );
         assert_eq!(op("memory_add", json!({"content": "x"})), Some("add"));
         assert_eq!(op("memory_add", json!({"content": "x", "op": "add"})), None);
         assert_eq!(op("memory_upkeep", json!({"op": "days"})), Some("days"));
-        assert_eq!(op("memory_upkeep", json!({"op": "dream_run"})), None, "not memory's");
-        assert_eq!(op("memory_get", json!({"id": "a"})), None, "a retired name is no tool");
-        let get = catalog().branch_of(View::Local, "memory_search", &json!({"op": "get"})).unwrap();
+        assert_eq!(
+            op("memory_upkeep", json!({"op": "dream_run"})),
+            None,
+            "not memory's"
+        );
+        assert_eq!(
+            op("memory_get", json!({"id": "a"})),
+            None,
+            "a retired name is no tool"
+        );
+        let get = catalog()
+            .branch_of(View::Local, "memory_search", &json!({"op": "get"}))
+            .unwrap();
         assert!(!get.advertises("scope_root") && get.advertises("id"));
-        let semantic = catalog().branch_of(View::Local, "memory_search", &json!({})).map(|b| b.op);
+        let semantic = catalog()
+            .branch_of(View::Local, "memory_search", &json!({}))
+            .map(|b| b.op);
         assert_eq!(semantic, None, "nothing given fits no branch");
-        let search = catalog().branch_of(View::Local, "memory_search", &json!({"query": "q"})).unwrap();
-        assert!(search.accepts("from") && !search.advertises("from"), "a hidden filter is accepted, never shown");
+        let search = catalog()
+            .branch_of(View::Local, "memory_search", &json!({"query": "q"}))
+            .unwrap();
+        assert!(
+            search.accepts("from") && !search.advertises("from"),
+            "a hidden filter is accepted, never shown"
+        );
         // Auto-recall's exact shapes, the app's one-type search included.
         for recall in [
             json!({"query": "q", "limit": 20, "min_score": 0.3, "scope_root": "/w"}),
@@ -412,13 +450,25 @@ mod tests {
     #[test]
     fn a_bad_search_is_refused_with_the_form_that_works() {
         let why = refused("memory_search", json!({"op": "fly"}));
-        assert!(why.contains("\"fly\" is not one of: semantic, list, get"), "{why}");
+        assert!(
+            why.contains("\"fly\" is not one of: semantic, list, get"),
+            "{why}"
+        );
         let why = refused("memory_search", json!({"op": 3}));
         assert!(why.contains("op must be a string"), "{why}");
         let why = refused("memory_search", json!({"op": "get"}));
-        assert!(why.contains("needs `id`") && why.contains("get: id"), "{why}");
-        let why = refused("memory_search", json!({"op": "get", "id": "a", "query": "q"}));
-        assert!(why.contains("`query` belongs to op=semantic, not op=get"), "{why}");
+        assert!(
+            why.contains("needs `id`") && why.contains("get: id"),
+            "{why}"
+        );
+        let why = refused(
+            "memory_search",
+            json!({"op": "get", "id": "a", "query": "q"}),
+        );
+        assert!(
+            why.contains("`query` belongs to op=semantic, not op=get"),
+            "{why}"
+        );
         let why = refused("memory_search", json!({"op": "list", "bogus": 1}));
         assert!(why.contains("unknown field `bogus`"), "{why}");
         let why = refused("memory_search", json!({"op": "list", "tier": "bogus"}));
@@ -427,7 +477,10 @@ mod tests {
         assert!(why.contains("`limit` must not be negative"), "{why}");
         let why = refused("memory_search", json!({"op": "list", "unjudged": true}));
         assert!(why.contains("`unjudged` needs `day`"), "{why}");
-        let why = refused("memory_search", json!({"op": "list", "past_ttl": true, "tier": "core"}));
+        let why = refused(
+            "memory_search",
+            json!({"op": "list", "past_ttl": true, "tier": "core"}),
+        );
         assert!(why.contains("`past_ttl` reads episodic rows"), "{why}");
         let why = refused("memory_search", json!({"query": 5}));
         assert!(why.contains("`query` must be a string"), "{why}");
@@ -443,7 +496,10 @@ mod tests {
             "memory_search",
             json!({"op": "list", "types": "fact", "indexed": "true", "offset": "10", "day": "", "tier": null}),
         );
-        assert_eq!(args, json!({"types": ["fact"], "indexed": true, "offset": 10}));
+        assert_eq!(
+            args,
+            json!({"types": ["fact"], "indexed": true, "offset": 10})
+        );
         let (_, args) = call(
             "memory_add",
             json!({"content": "x", "indexed": "false", "replace_ids": "abc", "skip_dedup": "true", "scope": ""}),
@@ -474,7 +530,10 @@ mod tests {
         assert!(why.contains("unknown field `colour`"), "{why}");
         let why = refused("memory_add", json!({"content": "x", "from": "someone"}));
         assert!(why.contains("`from` must be one of"), "{why}");
-        assert_eq!(call("memory_update", json!({"id": "a", "summary": "s"})).0, "update");
+        assert_eq!(
+            call("memory_update", json!({"id": "a", "summary": "s"})).0,
+            "update"
+        );
         let why = refused("memory_update", json!({"summary": "s"}));
         assert!(why.contains("needs `id`"), "{why}");
         assert_eq!(call("memory_delete", json!({"id": "a"})).0, "delete");
@@ -506,16 +565,40 @@ mod tests {
         }
         let bad = [
             (json!({"op": "harvest_day"}), "needs `date`"),
-            (json!({"op": "remember_day", "date": "d", "judged": -1}), "`judged` must not be negative"),
-            (json!({"op": "dream_lease", "day": "d", "holder": "h", "action": "steal"}), "`action` must be one of"),
-            (json!({"op": "issues", "status": "closed"}), "`status` must be one of"),
+            (
+                json!({"op": "remember_day", "date": "d", "judged": -1}),
+                "`judged` must not be negative",
+            ),
+            (
+                json!({"op": "dream_lease", "day": "d", "holder": "h", "action": "steal"}),
+                "`action` must be one of",
+            ),
+            (
+                json!({"op": "issues", "status": "closed"}),
+                "`status` must be one of",
+            ),
             (json!({"op": "issues", "limit": -5}), "must not be negative"),
-            (json!({"op": "issue_add", "kind": "rumour", "note": "n"}), "`kind` must be one of"),
+            (
+                json!({"op": "issue_add", "kind": "rumour", "note": "n"}),
+                "`kind` must be one of",
+            ),
             (json!({"op": "issue_add", "kind": "chain"}), "needs `note`"),
-            (json!({"op": "issue_resolve", "id": "i", "outcome": "maybe"}), "`outcome` must be one of"),
-            (json!({"op": "chains", "kind": "chain"}), "`kind` must be one of"),
-            (json!({"op": "sweep", "date": "2026-11-01"}), "`date` belongs to op=harvest_day/remember_day"),
-            (json!({"op": "role", "dry_run": true}), "`dry_run` belongs to op=sweep"),
+            (
+                json!({"op": "issue_resolve", "id": "i", "outcome": "maybe"}),
+                "`outcome` must be one of",
+            ),
+            (
+                json!({"op": "chains", "kind": "chain"}),
+                "`kind` must be one of",
+            ),
+            (
+                json!({"op": "sweep", "date": "2026-11-01"}),
+                "`date` belongs to op=harvest_day/remember_day",
+            ),
+            (
+                json!({"op": "role", "dry_run": true}),
+                "`dry_run` belongs to op=sweep",
+            ),
             (json!({"date": "2026-11-01"}), "needs op"),
         ];
         for (args, want) in bad {
@@ -532,8 +615,14 @@ mod tests {
         let tools = catalog().tools_list(View::Local);
         let search = &tools[0]["inputSchema"];
         assert_eq!(search["additionalProperties"], json!(false));
-        assert!(search.get("required").is_none(), "op is optional on memory_search");
-        assert_eq!(search["properties"]["op"]["enum"], json!(["semantic", "list", "get"]));
+        assert!(
+            search.get("required").is_none(),
+            "op is optional on memory_search"
+        );
+        assert_eq!(
+            search["properties"]["op"]["enum"],
+            json!(["semantic", "list", "get"])
+        );
         let index = search["properties"]["op"]["description"].as_str().unwrap();
         assert!(index.starts_with("omit op for semantic"), "{index}");
         assert!(index.contains("get: id"), "{index}");
@@ -541,14 +630,22 @@ mod tests {
         assert_eq!(add["required"], json!(["content"]));
         assert!(add["properties"].get("op").is_none());
         assert!(add["properties"].get("occurred_at").is_some());
-        assert!(add["properties"].get("skip_dedup").is_none(), "hidden stays hidden");
+        assert!(
+            add["properties"].get("skip_dedup").is_none(),
+            "hidden stays hidden"
+        );
         let upkeep = &tools[4]["inputSchema"];
         assert_eq!(upkeep["required"], json!(["op"]));
         let kinds = upkeep["properties"]["kind"]["enum"].as_array().unwrap();
         for k in ["chain", "contradiction", "cited", "subject"] {
             assert!(kinds.contains(&json!(k)), "{k}");
         }
-        let text = upkeep["properties"]["kind"]["description"].as_str().unwrap();
-        assert!(text.contains("op=issue_add:") && text.contains("op=chains:"), "{text}");
+        let text = upkeep["properties"]["kind"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(
+            text.contains("op=issue_add:") && text.contains("op=chains:"),
+            "{text}"
+        );
     }
 }

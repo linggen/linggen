@@ -171,7 +171,10 @@ pub(crate) fn usage_limit_until(
     kind: ProviderErrorKind,
     reset_at: Option<SystemTime>,
 ) -> Option<SystemTime> {
-    let limited = matches!(kind, ProviderErrorKind::RateLimit | ProviderErrorKind::QuotaExhausted);
+    let limited = matches!(
+        kind,
+        ProviderErrorKind::RateLimit | ProviderErrorKind::QuotaExhausted
+    );
     reset_at.filter(|_| limited)
 }
 
@@ -199,7 +202,8 @@ pub(crate) fn refusing(
     reset_at: Option<SystemTime>,
 ) -> Readiness {
     if let Some(at) = usage_limit_until(kind, reset_at) {
-        return Readiness::not(NotReady::UsageLimit, usage_limit_line(None, &rfc3339(at))).until(at);
+        return Readiness::not(NotReady::UsageLimit, usage_limit_line(None, &rfc3339(at)))
+            .until(at);
     }
     match (kind, reset_at) {
         (ProviderErrorKind::RateLimit, None) => Readiness::not(
@@ -213,8 +217,7 @@ pub(crate) fn refusing(
         ),
         _ => Readiness::not(
             NotReady::ProviderFailing,
-            "The provider is failing right now; pick another model or try again shortly."
-                .into(),
+            "The provider is failing right now; pick another model or try again shortly.".into(),
         )
         .until(until),
     }
@@ -238,7 +241,10 @@ fn on_this_network(url: &str) -> bool {
     let authority = rest.split('/').next().unwrap_or("");
     let host = match authority.strip_prefix('[') {
         Some(v6) => v6.split(']').next().unwrap_or(""),
-        None => authority.rsplit_once(':').map(|(h, _)| h).unwrap_or(authority),
+        None => authority
+            .rsplit_once(':')
+            .map(|(h, _)| h)
+            .unwrap_or(authority),
     };
     if host.is_empty() || host == "localhost" || host.ends_with(".local") {
         return true;
@@ -256,7 +262,13 @@ mod tests {
     use crate::provider::models::note_unavailable;
     use std::time::Duration;
 
-    fn model(id: &str, provider: &str, url: &str, key: Option<&str>, auth: Option<&str>) -> ModelConfig {
+    fn model(
+        id: &str,
+        provider: &str,
+        url: &str,
+        key: Option<&str>,
+        auth: Option<&str>,
+    ) -> ModelConfig {
         let mut cfg: ModelConfig = serde_json::from_value(json!({
             "id": id, "provider": provider, "url": url, "model": id,
         }))
@@ -278,11 +290,41 @@ mod tests {
         ] {
             assert!(!needs_key(&model("m", provider, url, None, None)), "{url}");
         }
-        assert!(needs_key(&model("m", "openai", "https://api.openai.com/v1", None, None)));
-        assert!(needs_key(&model("m", "anthropic", "https://api.anthropic.com", Some(" "), None)));
-        assert!(!needs_key(&model("m", "anthropic", "https://api.anthropic.com", Some("k"), None)));
-        assert!(!needs_key(&model("m", "openai", "https://x", None, Some("chatgpt_oauth"))));
-        assert!(!needs_key(&model("m", "chatgpt", "https://chatgpt.com/backend-api", None, None)));
+        assert!(needs_key(&model(
+            "m",
+            "openai",
+            "https://api.openai.com/v1",
+            None,
+            None
+        )));
+        assert!(needs_key(&model(
+            "m",
+            "anthropic",
+            "https://api.anthropic.com",
+            Some(" "),
+            None
+        )));
+        assert!(!needs_key(&model(
+            "m",
+            "anthropic",
+            "https://api.anthropic.com",
+            Some("k"),
+            None
+        )));
+        assert!(!needs_key(&model(
+            "m",
+            "openai",
+            "https://x",
+            None,
+            Some("chatgpt_oauth")
+        )));
+        assert!(!needs_key(&model(
+            "m",
+            "chatgpt",
+            "https://chatgpt.com/backend-api",
+            None,
+            None
+        )));
     }
 
     /// A usage limit is a fact with its reset; a blind rate limit and a
@@ -291,17 +333,32 @@ mod tests {
     fn a_usage_limit_names_its_reset_time() {
         let now = SystemTime::now();
         let reset = now + Duration::from_secs(8973);
-        let r = refusing(ProviderErrorKind::RateLimit, now + Duration::from_secs(3600), Some(reset));
+        let r = refusing(
+            ProviderErrorKind::RateLimit,
+            now + Duration::from_secs(3600),
+            Some(reset),
+        );
         assert!(!r.ready);
         assert_eq!(r.reason, Some(NotReady::UsageLimit));
         assert_eq!(r.resets_at.as_deref(), Some(rfc3339(reset).as_str()));
         assert!((8900..=8973).contains(&r.resets_in_secs.unwrap()));
         let line = r.line.unwrap();
-        assert!(line.starts_with("Usage limit until ") && line.contains("come back after it"), "{line}");
+        assert!(
+            line.starts_with("Usage limit until ") && line.contains("come back after it"),
+            "{line}"
+        );
 
-        let blind = refusing(ProviderErrorKind::RateLimit, now + Duration::from_secs(60), None);
+        let blind = refusing(
+            ProviderErrorKind::RateLimit,
+            now + Duration::from_secs(60),
+            None,
+        );
         assert_eq!(blind.reason, Some(NotReady::RateLimited));
-        let down = refusing(ProviderErrorKind::Server5xx, now + Duration::from_secs(60), None);
+        let down = refusing(
+            ProviderErrorKind::Server5xx,
+            now + Duration::from_secs(60),
+            None,
+        );
         assert_eq!(down.reason, Some(NotReady::ProviderFailing));
         let broke = refusing(ProviderErrorKind::QuotaExhausted, now, None);
         assert_eq!(broke.reason, Some(NotReady::QuotaUsedUp));
@@ -313,9 +370,27 @@ mod tests {
     #[test]
     fn the_list_marks_each_model_and_says_what_to_do_only_when_none_is_ready() {
         let _board = crate::provider::models::board_test_guard();
-        let local = model("ready-local", "ollama", "http://127.0.0.1:11434", None, None);
-        let hosted = model("readiness-hosted", "acme", "https://api.acme.example/v1", None, None);
-        let limited = model("readiness-limited", "acme", "https://api.acme.example/v1", Some("k"), None);
+        let local = model(
+            "ready-local",
+            "ollama",
+            "http://127.0.0.1:11434",
+            None,
+            None,
+        );
+        let hosted = model(
+            "readiness-hosted",
+            "acme",
+            "https://api.acme.example/v1",
+            None,
+            None,
+        );
+        let limited = model(
+            "readiness-limited",
+            "acme",
+            "https://api.acme.example/v1",
+            Some("k"),
+            None,
+        );
         let body = r#"{"error":{"type":"usage_limit_reached","resets_in_seconds":7200}}"#;
         note_unavailable(
             "readiness-limited",
@@ -341,7 +416,10 @@ mod tests {
         assert_eq!(row("readiness-hosted")["reason"], "no_key");
         assert_eq!(row("readiness-limited")["reason"], "usage_limit");
         assert!(row("readiness-limited")["resets_at"].is_string());
-        assert!(list.get("note").is_none(), "a ready model means no sign-up push");
+        assert!(
+            list.get("note").is_none(),
+            "a ready model means no sign-up push"
+        );
 
         let none = ModelManager::new_with_credentials(vec![hosted], &Default::default());
         assert_eq!(none.readiness_list(None)["note"], NONE_READY);

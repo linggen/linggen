@@ -105,27 +105,91 @@ const TOOLS: &[ToolDoc] = &[
 /// what does their work now. The X reads left the door (the browser
 /// bridge's X module stays, for Linggen's own apps).
 pub(super) const RETIRED: &[Retired] = &[
-    Retired { name: "browser_navigate", now: "browser_open op=navigate" },
-    Retired { name: "browser_read_page", now: "browser_read op=page" },
-    Retired { name: "browser_click", now: "browser_act op=click" },
-    Retired { name: "browser_type", now: "browser_act op=type" },
-    Retired { name: "browser_key", now: "browser_act op=key" },
-    Retired { name: "browser_scroll", now: "browser_act op=scroll" },
-    Retired { name: "browser_screenshot", now: "browser_read op=screenshot" },
-    Retired { name: "browser_wait", now: "browser_act op=wait" },
-    Retired { name: "browser_tabs", now: "browser_open op=tab_open, browser_read op=tabs, browser_act op=tab_switch / tab_close" },
-    Retired { name: "browser_read_console", now: "browser_read op=console" },
-    Retired { name: "x_search", now: "nothing: the X reads left Linggen's MCP door" },
-    Retired { name: "x_targets", now: "nothing: the X reads left Linggen's MCP door" },
-    Retired { name: "x_following", now: "nothing: the X reads left Linggen's MCP door" },
-    Retired { name: "x_whotofollow", now: "nothing: the X reads left Linggen's MCP door" },
-    Retired { name: "x_own", now: "nothing: the X reads left Linggen's MCP door" },
-    Retired { name: "x_mentions", now: "nothing: the X reads left Linggen's MCP door" },
-    Retired { name: "memory_dream_status", now: "memory_upkeep op=dream_status" },
-    Retired { name: "memory_dream_run", now: "memory_upkeep op=dream_run" },
-    Retired { name: "agent_stop", now: "agent_end op=stop" },
-    Retired { name: "agent_models", now: "agent_status op=models" },
-    Retired { name: "agent_session_close", now: "agent_end op=close" },
+    Retired {
+        name: "browser_navigate",
+        now: "browser_open op=navigate",
+    },
+    Retired {
+        name: "browser_read_page",
+        now: "browser_read op=page",
+    },
+    Retired {
+        name: "browser_click",
+        now: "browser_act op=click",
+    },
+    Retired {
+        name: "browser_type",
+        now: "browser_act op=type",
+    },
+    Retired {
+        name: "browser_key",
+        now: "browser_act op=key",
+    },
+    Retired {
+        name: "browser_scroll",
+        now: "browser_act op=scroll",
+    },
+    Retired {
+        name: "browser_screenshot",
+        now: "browser_read op=screenshot",
+    },
+    Retired {
+        name: "browser_wait",
+        now: "browser_act op=wait",
+    },
+    Retired {
+        name: "browser_tabs",
+        now:
+            "browser_open op=tab_open, browser_read op=tabs, browser_act op=tab_switch / tab_close",
+    },
+    Retired {
+        name: "browser_read_console",
+        now: "browser_read op=console",
+    },
+    Retired {
+        name: "x_search",
+        now: "nothing: the X reads left Linggen's MCP door",
+    },
+    Retired {
+        name: "x_targets",
+        now: "nothing: the X reads left Linggen's MCP door",
+    },
+    Retired {
+        name: "x_following",
+        now: "nothing: the X reads left Linggen's MCP door",
+    },
+    Retired {
+        name: "x_whotofollow",
+        now: "nothing: the X reads left Linggen's MCP door",
+    },
+    Retired {
+        name: "x_own",
+        now: "nothing: the X reads left Linggen's MCP door",
+    },
+    Retired {
+        name: "x_mentions",
+        now: "nothing: the X reads left Linggen's MCP door",
+    },
+    Retired {
+        name: "memory_dream_status",
+        now: "memory_upkeep op=dream_status",
+    },
+    Retired {
+        name: "memory_dream_run",
+        now: "memory_upkeep op=dream_run",
+    },
+    Retired {
+        name: "agent_stop",
+        now: "agent_end op=stop",
+    },
+    Retired {
+        name: "agent_models",
+        now: "agent_status op=models",
+    },
+    Retired {
+        name: "agent_session_close",
+        now: "agent_end op=close",
+    },
 ];
 
 /// The engine's branches.
@@ -549,7 +613,12 @@ pub(super) fn compose(
         .map(|b| b.with(Dispatch::Memory(b.dispatch)))
         .chain(engine.branches.iter().copied())
         .collect();
-    let retired = memory.retired.iter().chain(engine.retired).copied().collect();
+    let retired = memory
+        .retired
+        .iter()
+        .chain(engine.retired)
+        .copied()
+        .collect();
     Catalog::new(tools, branches, retired)
 }
 
@@ -654,9 +723,18 @@ mod tests {
         assert_eq!(
             names(View::Local),
             [
-                "memory_search", "memory_add", "memory_update", "memory_delete", "memory_upkeep",
-                "agent_run", "agent_status", "agent_permit", "agent_end",
-                "browser_open", "browser_read", "browser_act",
+                "memory_search",
+                "memory_add",
+                "memory_update",
+                "memory_delete",
+                "memory_upkeep",
+                "agent_run",
+                "agent_status",
+                "agent_permit",
+                "agent_end",
+                "browser_open",
+                "browser_read",
+                "browser_act",
             ]
         );
     }
@@ -668,8 +746,13 @@ mod tests {
     fn every_old_name_is_kept_or_retired_once() {
         let cat = catalog();
         let kept = [
-            "memory_search", "memory_add", "memory_update", "memory_delete",
-            "agent_run", "agent_status", "agent_permit",
+            "memory_search",
+            "memory_add",
+            "memory_update",
+            "memory_delete",
+            "agent_run",
+            "agent_status",
+            "agent_permit",
         ];
         let current: Vec<&str> = cat.tools().iter().map(|t| t.name).collect();
         for name in kept {
@@ -692,23 +775,38 @@ mod tests {
         };
         let mut tools = TOOLS.to_vec();
         tools.push(clash);
-        let engine = Side { tools: &tools, ..engine_side() };
+        let engine = Side {
+            tools: &tools,
+            ..engine_side()
+        };
         let why = compose(memory_side(), engine)
             .err()
             .expect("a second memory_add is refused");
         assert!(why.contains("memory_add"), "{why}");
 
         let mut retired = RETIRED.to_vec();
-        retired.push(Retired { name: "memory_get", now: "" });
-        let engine = Side { retired: &retired, ..engine_side() };
+        retired.push(Retired {
+            name: "memory_get",
+            now: "",
+        });
+        let engine = Side {
+            retired: &retired,
+            ..engine_side()
+        };
         let why = compose(memory_side(), engine)
             .err()
             .expect("a second retired memory_get is refused");
         assert!(why.contains("memory_get"), "{why}");
 
         let mut retired = RETIRED.to_vec();
-        retired.push(Retired { name: "browser_act", now: "" });
-        let engine = Side { retired: &retired, ..engine_side() };
+        retired.push(Retired {
+            name: "browser_act",
+            now: "",
+        });
+        let engine = Side {
+            retired: &retired,
+            ..engine_side()
+        };
         let why = compose(memory_side(), engine)
             .err()
             .expect("a retired name that is a tool is refused");
@@ -718,7 +816,10 @@ mod tests {
         let mut again = *upkeep.iter().find(|b| b.op == "dream_run").unwrap();
         again.op = "sweep";
         upkeep.push(again);
-        let engine = Side { branches: &upkeep, ..engine_side() };
+        let engine = Side {
+            branches: &upkeep,
+            ..engine_side()
+        };
         let why = compose(memory_side(), engine)
             .err()
             .expect("a second upkeep sweep is refused");

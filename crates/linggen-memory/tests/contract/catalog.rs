@@ -33,7 +33,9 @@ async fn folded(m: &Mem, tool: &str, args: Value) -> Result<Value, String> {
 fn same(v: &Value, ids: &[String]) -> Value {
     match v {
         Value::String(s) if ids.contains(s) => json!("<id>"),
-        Value::Object(o) => Value::Object(o.iter().map(|(k, v)| (k.clone(), same(v, ids))).collect()),
+        Value::Object(o) => {
+            Value::Object(o.iter().map(|(k, v)| (k.clone(), same(v, ids))).collect())
+        }
         Value::Array(a) => Value::Array(a.iter().map(|v| same(v, ids)).collect()),
         _ => v.clone(),
     }
@@ -58,64 +60,191 @@ async fn the_tools_answer_and_write_as_the_routes() {
     let b = folded(&new, "memory_add", voice).await.unwrap();
     old_ids.push(id_of(&a, "/fact/id"));
     new_ids.push(id_of(&b, "/fact/id"));
-    assert_eq!(scrub(&same(&a, &old_ids)), scrub(&same(&b, &new_ids)), "add");
+    assert_eq!(
+        scrub(&same(&a, &old_ids)),
+        scrub(&same(&b, &new_ids)),
+        "add"
+    );
 
     let staged = json!({"content": "Alex walked to the harbour", "occurred_at": local_noon(&d3)});
     let a = route(&old, "add", staged.clone()).await.unwrap();
     let b = folded(&new, "memory_add", staged).await.unwrap();
     old_ids.push(id_of(&a, "/fact/id"));
     new_ids.push(id_of(&b, "/fact/id"));
-    assert_eq!(scrub(&same(&a, &old_ids)), scrub(&same(&b, &new_ids)), "episodic add");
-    assert_eq!(b["fact"]["tier"], "episodic", "the default tier is episodic");
+    assert_eq!(
+        scrub(&same(&a, &old_ids)),
+        scrub(&same(&b, &new_ids)),
+        "episodic add"
+    );
+    assert_eq!(
+        b["fact"]["tier"], "episodic",
+        "the default tier is episodic"
+    );
 
     let (o, n) = (old_ids[0].clone(), new_ids[0].clone());
     let steps: Vec<(&str, Value, &str, Value)> = vec![
-        ("search", json!({"query": "green tea"}), "memory_search", json!({"query": "green tea"})),
-        ("get", json!({"id": o}), "memory_search", json!({"op": "get", "id": n})),
-        ("list", json!({"tier": "semantic"}), "memory_search", json!({"op": "list", "tier": "semantic"})),
-        ("list", json!({"day": d3, "unjudged": true}), "memory_search", json!({"op": "list", "day": d3, "unjudged": true})),
-        ("update", json!({"id": o, "summary": "tea"}), "memory_update", json!({"id": n, "summary": "tea"})),
-        ("session_start", json!({}), "memory_upkeep", json!({"op": "session_start"})),
+        (
+            "search",
+            json!({"query": "green tea"}),
+            "memory_search",
+            json!({"query": "green tea"}),
+        ),
+        (
+            "get",
+            json!({"id": o}),
+            "memory_search",
+            json!({"op": "get", "id": n}),
+        ),
+        (
+            "list",
+            json!({"tier": "semantic"}),
+            "memory_search",
+            json!({"op": "list", "tier": "semantic"}),
+        ),
+        (
+            "list",
+            json!({"day": d3, "unjudged": true}),
+            "memory_search",
+            json!({"op": "list", "day": d3, "unjudged": true}),
+        ),
+        (
+            "update",
+            json!({"id": o, "summary": "tea"}),
+            "memory_update",
+            json!({"id": n, "summary": "tea"}),
+        ),
+        (
+            "session_start",
+            json!({}),
+            "memory_upkeep",
+            json!({"op": "session_start"}),
+        ),
         ("days", json!({}), "memory_upkeep", json!({"op": "days"})),
-        ("harvest_day", json!({"date": d3}), "memory_upkeep", json!({"op": "harvest_day", "date": d3})),
-        ("dream_lease", json!({"day": d3, "holder": "h"}), "memory_upkeep", json!({"op": "dream_lease", "day": d3, "holder": "h"})),
-        ("remember_day", json!({"date": d3, "judged": 1, "holder": "h"}), "memory_upkeep", json!({"op": "remember_day", "date": d3, "judged": 1, "holder": "h"})),
-        ("dream_lease", json!({"day": d3, "holder": "h", "action": "release"}), "memory_upkeep", json!({"op": "dream_lease", "day": d3, "holder": "h", "action": "release"})),
+        (
+            "harvest_day",
+            json!({"date": d3}),
+            "memory_upkeep",
+            json!({"op": "harvest_day", "date": d3}),
+        ),
+        (
+            "dream_lease",
+            json!({"day": d3, "holder": "h"}),
+            "memory_upkeep",
+            json!({"op": "dream_lease", "day": d3, "holder": "h"}),
+        ),
+        (
+            "remember_day",
+            json!({"date": d3, "judged": 1, "holder": "h"}),
+            "memory_upkeep",
+            json!({"op": "remember_day", "date": d3, "judged": 1, "holder": "h"}),
+        ),
+        (
+            "dream_lease",
+            json!({"day": d3, "holder": "h", "action": "release"}),
+            "memory_upkeep",
+            json!({"op": "dream_lease", "day": d3, "holder": "h", "action": "release"}),
+        ),
         ("role", json!({}), "memory_upkeep", json!({"op": "role"})),
-        ("sweep", json!({"dry_run": true}), "memory_upkeep", json!({"op": "sweep", "dry_run": true})),
-        ("chains", json!({}), "memory_upkeep", json!({"op": "chains"})),
-        ("days", json!({"undreamed_only": true}), "memory_upkeep", json!({"op": "days", "undreamed_only": true})),
+        (
+            "sweep",
+            json!({"dry_run": true}),
+            "memory_upkeep",
+            json!({"op": "sweep", "dry_run": true}),
+        ),
+        (
+            "chains",
+            json!({}),
+            "memory_upkeep",
+            json!({"op": "chains"}),
+        ),
+        (
+            "days",
+            json!({"undreamed_only": true}),
+            "memory_upkeep",
+            json!({"op": "days", "undreamed_only": true}),
+        ),
     ];
     for (lt, la, ft, fa) in steps {
         let a = route(&old, lt, la).await.unwrap();
         let b = folded(&new, ft, fa).await.unwrap();
-        assert_eq!(scrub(&same(&a, &old_ids)), scrub(&same(&b, &new_ids)), "{lt}");
+        assert_eq!(
+            scrub(&same(&a, &old_ids)),
+            scrub(&same(&b, &new_ids)),
+            "{lt}"
+        );
     }
 
-    let a = route(&old, "issue_add", json!({"kind": "chain", "row_ids": [o], "note": "n"})).await.unwrap();
-    let b = folded(&new, "memory_upkeep", json!({"op": "issue_add", "kind": "chain", "row_ids": [n], "note": "n"})).await.unwrap();
+    let a = route(
+        &old,
+        "issue_add",
+        json!({"kind": "chain", "row_ids": [o], "note": "n"}),
+    )
+    .await
+    .unwrap();
+    let b = folded(
+        &new,
+        "memory_upkeep",
+        json!({"op": "issue_add", "kind": "chain", "row_ids": [n], "note": "n"}),
+    )
+    .await
+    .unwrap();
     old_ids.push(id_of(&a, "/issue/id"));
     new_ids.push(id_of(&b, "/issue/id"));
-    assert_eq!(scrub(&same(&a, &old_ids)), scrub(&same(&b, &new_ids)), "issue_add");
+    assert_eq!(
+        scrub(&same(&a, &old_ids)),
+        scrub(&same(&b, &new_ids)),
+        "issue_add"
+    );
     let (oi, ni) = (old_ids[2].clone(), new_ids[2].clone());
     let steps: Vec<(&str, Value, &str, Value)> = vec![
-        ("issues", json!({}), "memory_upkeep", json!({"op": "issues"})),
-        ("issue_resolve", json!({"id": oi, "outcome": "resolved", "note": "done"}), "memory_upkeep", json!({"op": "issue_resolve", "id": ni, "outcome": "resolved", "note": "done"})),
-        ("issues", json!({"status": "all"}), "memory_upkeep", json!({"op": "issues", "status": "all"})),
-        ("delete", json!({"id": o}), "memory_delete", json!({"id": n})),
-        ("delete", json!({"id": o}), "memory_delete", json!({"id": n})),
+        (
+            "issues",
+            json!({}),
+            "memory_upkeep",
+            json!({"op": "issues"}),
+        ),
+        (
+            "issue_resolve",
+            json!({"id": oi, "outcome": "resolved", "note": "done"}),
+            "memory_upkeep",
+            json!({"op": "issue_resolve", "id": ni, "outcome": "resolved", "note": "done"}),
+        ),
+        (
+            "issues",
+            json!({"status": "all"}),
+            "memory_upkeep",
+            json!({"op": "issues", "status": "all"}),
+        ),
+        (
+            "delete",
+            json!({"id": o}),
+            "memory_delete",
+            json!({"id": n}),
+        ),
+        (
+            "delete",
+            json!({"id": o}),
+            "memory_delete",
+            json!({"id": n}),
+        ),
         ("list", json!({}), "memory_search", json!({"op": "list"})),
     ];
     for (lt, la, ft, fa) in steps {
         let a = route(&old, lt, la).await.unwrap();
         let b = folded(&new, ft, fa).await.unwrap();
-        assert_eq!(scrub(&same(&a, &old_ids)), scrub(&same(&b, &new_ids)), "{lt}");
+        assert_eq!(
+            scrub(&same(&a, &old_ids)),
+            scrub(&same(&b, &new_ids)),
+            "{lt}"
+        );
     }
 
     // What the tools' writes left behind reads the same through the route
     // on that store.
     let a = route(&new, "list", json!({})).await.unwrap();
-    let b = folded(&new, "memory_search", json!({"op": "list"})).await.unwrap();
+    let b = folded(&new, "memory_search", json!({"op": "list"}))
+        .await
+        .unwrap();
     assert_eq!(a, b);
 }
 
@@ -124,28 +253,52 @@ async fn the_tools_answer_and_write_as_the_routes() {
 #[tokio::test]
 async fn refusals_come_from_the_store_or_before_it() {
     let m = Mem::start().await;
-    let voice = folded(&m, "memory_add", json!({"content": "Alex prefers tea", "from": "user", "tier": "semantic"}))
-        .await
-        .unwrap();
+    let voice = folded(
+        &m,
+        "memory_add",
+        json!({"content": "Alex prefers tea", "from": "user", "tier": "semantic"}),
+    )
+    .await
+    .unwrap();
     let id = id_of(&voice, "/fact/id");
 
-    let blank = folded(&m, "memory_add", json!({"content": " "})).await.unwrap_err();
+    let blank = folded(&m, "memory_add", json!({"content": " "}))
+        .await
+        .unwrap_err();
     assert_eq!(blank, "content must not be empty");
-    let guarded = folded(&m, "memory_add", json!({"content": "Alex prefers coffee", "replace_ids": [id]}))
-        .await
-        .unwrap_err();
+    let guarded = folded(
+        &m,
+        "memory_add",
+        json!({"content": "Alex prefers coffee", "replace_ids": [id]}),
+    )
+    .await
+    .unwrap_err();
     assert!(guarded.contains("user-voice"), "{guarded}");
-    let future = folded(&m, "memory_upkeep", json!({"op": "harvest_day", "date": today()}))
+    let future = folded(
+        &m,
+        "memory_upkeep",
+        json!({"op": "harvest_day", "date": today()}),
+    )
+    .await
+    .unwrap_err();
+    let route_future = route(&m, "harvest_day", json!({"date": today()}))
         .await
         .unwrap_err();
-    let route_future = route(&m, "harvest_day", json!({"date": today()})).await.unwrap_err();
     assert_eq!(future, route_future);
 
     let before = m.ok("count", json!({})).await;
-    let strict = folded(&m, "memory_add", json!({"content": "x", "tags": ["a"]})).await.unwrap_err();
+    let strict = folded(&m, "memory_add", json!({"content": "x", "tags": ["a"]}))
+        .await
+        .unwrap_err();
     assert!(strict.starts_with("refused:"), "{strict}");
-    assert_eq!(m.ok("count", json!({})).await, before, "nothing was written");
-    let kept = folded(&m, "memory_search", json!({"op": "get", "id": id})).await.unwrap();
+    assert_eq!(
+        m.ok("count", json!({})).await,
+        before,
+        "nothing was written"
+    );
+    let kept = folded(&m, "memory_search", json!({"op": "get", "id": id}))
+        .await
+        .unwrap();
     assert_eq!(kept["content"], "Alex prefers tea");
 }
 
@@ -164,9 +317,13 @@ async fn a_remote_computer_sees_every_memory_branch() {
 #[tokio::test]
 async fn a_soft_empty_search_needs_no_op_either() {
     let m = Mem::start().await;
-    folded(&m, "memory_add", json!({"content": "Alex keeps bees", "tier": "semantic"}))
-        .await
-        .unwrap();
+    folded(
+        &m,
+        "memory_add",
+        json!({"content": "Alex keeps bees", "tier": "semantic"}),
+    )
+    .await
+    .unwrap();
     let args = json!({"query": "Alex keeps bees", "type": "", "from": "", "until": "", "since": "", "apps": [], "tier": null});
     let hits = folded(&m, "memory_search", args.clone()).await.unwrap();
     assert_eq!(hits.as_array().unwrap().len(), 1);

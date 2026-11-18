@@ -117,7 +117,8 @@ async fn agent(deps: &McpDeps<'_>, op: AgentOp, args: Value) -> Value {
 async fn dream_status(deps: &McpDeps<'_>) -> Value {
     let Some(state) = deps.state else {
         return tool_content(
-            "memory_upkeep op=dream_status is unavailable in this context (no daemon state)".to_string(),
+            "memory_upkeep op=dream_status is unavailable in this context (no daemon state)"
+                .to_string(),
             true,
         );
     };
@@ -133,7 +134,8 @@ async fn dream_status(deps: &McpDeps<'_>) -> Value {
 async fn dream_run(deps: &McpDeps<'_>, args: Value) -> Value {
     let Some(state) = deps.state else {
         return tool_content(
-            "memory_upkeep op=dream_run is unavailable in this context (no daemon state)".to_string(),
+            "memory_upkeep op=dream_run is unavailable in this context (no daemon state)"
+                .to_string(),
             true,
         );
     };

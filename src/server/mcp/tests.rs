@@ -59,7 +59,11 @@ fn the_dream_status_names_a_last_runs_failed_calls_and_old_rows_read_as_before()
 #[tokio::test]
 async fn the_server_text_fits_and_carries_what_a_caller_acts_on() {
     for view in [View::Local, View::Remote] {
-        let res = rpc(view, json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} })).await;
+        let res = rpc(
+            view,
+            json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }),
+        )
+        .await;
         assert_eq!(res["result"]["protocolVersion"], PROTOCOL_VERSION);
         assert_eq!(res["result"]["serverInfo"]["name"], "linggen");
         assert!(res["result"]["capabilities"]["tools"].is_object());
@@ -118,9 +122,27 @@ async fn tools_list_is_the_views_catalogue() {
     let list = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" });
     let local = names(rpc(View::Local, list.clone()).await);
     assert_eq!(local.len(), 12);
-    assert_eq!(&local[..5], ["memory_search", "memory_add", "memory_update", "memory_delete", "memory_upkeep"]);
+    assert_eq!(
+        &local[..5],
+        [
+            "memory_search",
+            "memory_add",
+            "memory_update",
+            "memory_delete",
+            "memory_upkeep"
+        ]
+    );
     let remote = names(rpc(View::Remote, list).await);
-    assert_eq!(remote, ["memory_search", "memory_add", "memory_update", "memory_delete", "memory_upkeep"]);
+    assert_eq!(
+        remote,
+        [
+            "memory_search",
+            "memory_add",
+            "memory_update",
+            "memory_delete",
+            "memory_upkeep"
+        ]
+    );
     // memory_upkeep's text names exactly the ops its view can call.
     for (view, count) in [(View::Local, 13), (View::Remote, 12)] {
         let upkeep = &catalog().tools_list(view)[4];
@@ -132,7 +154,10 @@ async fn tools_list_is_the_views_catalogue() {
             .collect();
         assert_eq!(ops.len(), count, "{view:?}");
         let said = upkeep["description"].as_str().unwrap();
-        assert!(said.contains(&format!("Ops here: {}.", ops.join(", "))), "{view:?}: {said}");
+        assert!(
+            said.contains(&format!("Ops here: {}.", ops.join(", "))),
+            "{view:?}: {said}"
+        );
         assert_eq!(said.contains("dream_run"), view == View::Local, "{said}");
     }
 }
@@ -149,12 +174,26 @@ fn memory_on_the_door_is_memorys_own_branches() {
     for i in 0..4 {
         assert_eq!(door[i], inside[i], "{}", inside[i]["name"]);
     }
-    let ops = |t: &Value| t["inputSchema"]["properties"]["op"]["enum"].as_array().unwrap().clone();
+    let ops = |t: &Value| {
+        t["inputSchema"]["properties"]["op"]["enum"]
+            .as_array()
+            .unwrap()
+            .clone()
+    };
     let (door_ops, inside_ops) = (ops(&door[4]), ops(&inside[4]));
-    assert!(inside_ops.iter().all(|op| door_ops.contains(op)), "{door_ops:?}");
-    assert_eq!(door_ops.len(), inside_ops.len() + 2, "the engine adds dream_status and dream_run");
+    assert!(
+        inside_ops.iter().all(|op| door_ops.contains(op)),
+        "{door_ops:?}"
+    );
+    assert_eq!(
+        door_ops.len(),
+        inside_ops.len() + 2,
+        "the engine adds dream_status and dream_run"
+    );
     for b in memory::catalog().visible(View::Local, "memory_upkeep") {
-        let door_branch = catalog().branch_of(View::Local, "memory_upkeep", &json!({"op": b.op})).unwrap();
+        let door_branch = catalog()
+            .branch_of(View::Local, "memory_upkeep", &json!({"op": b.op}))
+            .unwrap();
         assert_eq!((door_branch.schema)(), (b.schema)(), "{}", b.op);
     }
 }
@@ -200,10 +239,17 @@ async fn the_published_surface_is_locked() {
             .collect()
     };
     let want = |expected: &[(&str, &str)]| -> Vec<(String, String)> {
-        expected.iter().map(|(n, f)| (n.to_string(), f.to_string())).collect()
+        expected
+            .iter()
+            .map(|(n, f)| (n.to_string(), f.to_string()))
+            .collect()
     };
     let print = |actual: &[(String, String)]| -> String {
-        actual.iter().map(|(n, f)| format!("(\"{n}\", \"{f}\"),")).collect::<Vec<_>>().join("\n")
+        actual
+            .iter()
+            .map(|(n, f)| format!("(\"{n}\", \"{f}\"),"))
+            .collect::<Vec<_>>()
+            .join("\n")
     };
     let local = shown(View::Local);
     let expected_local: &[(&str, &str)] = &[
@@ -236,7 +282,10 @@ async fn the_published_surface_is_locked() {
     );
     assert_eq!(
         texts,
-        ("c1363a248e1c4d6f".to_string(), "c018af3021faaa2a".to_string()),
+        (
+            "c1363a248e1c4d6f".to_string(),
+            "c018af3021faaa2a".to_string()
+        ),
         "server texts changed: {texts:?}"
     );
 }
@@ -245,7 +294,11 @@ async fn the_published_surface_is_locked() {
 /// failure is a result with `isError`, an unknown tool is invalid params.
 #[tokio::test]
 async fn the_rpc_shapes_are_locked() {
-    let res = rpc(View::Local, json!({ "jsonrpc": "2.0", "id": 9, "method": "ping" })).await;
+    let res = rpc(
+        View::Local,
+        json!({ "jsonrpc": "2.0", "id": 9, "method": "ping" }),
+    )
+    .await;
     assert_eq!(res, json!({ "jsonrpc": "2.0", "id": 9, "result": {} }));
     let res = call(View::Local, "browser_read", json!({"op": "page"})).await;
     let result = res["result"].as_object().unwrap();
@@ -269,10 +322,20 @@ async fn a_retired_name_is_told_to_update_and_runs_nothing() {
     for retired in catalog().retired() {
         let res = call(View::Local, retired.name, json!({"id": "x", "query": "q"})).await;
         assert_eq!(res["result"]["isError"], true, "{}", retired.name);
-        assert_eq!(res["result"]["structuredContent"]["code"], "UPGRADE_PLUGIN", "{}", retired.name);
+        assert_eq!(
+            res["result"]["structuredContent"]["code"], "UPGRADE_PLUGIN",
+            "{}",
+            retired.name
+        );
         let said = text(&res);
-        assert!(said.contains("update the Linggen plugin and restart your host"), "{said}");
-        assert!(said.contains("nothing ran") && said.contains(retired.now), "{said}");
+        assert!(
+            said.contains("update the Linggen plugin and restart your host"),
+            "{said}"
+        );
+        assert!(
+            said.contains("nothing ran") && said.contains(retired.now),
+            "{said}"
+        );
     }
     let res = call(View::Remote, "memory_get", json!({"id": "x"})).await;
     assert_eq!(res["result"]["structuredContent"]["code"], "UPGRADE_PLUGIN");
@@ -292,9 +355,15 @@ async fn an_old_shape_on_a_new_name_is_told_to_update() {
     ] {
         let res = call(View::Local, name, args).await;
         assert_eq!(res["result"]["isError"], true, "{name}");
-        assert_eq!(res["result"]["structuredContent"]["code"], "UPGRADE_PLUGIN", "{name}");
+        assert_eq!(
+            res["result"]["structuredContent"]["code"], "UPGRADE_PLUGIN",
+            "{name}"
+        );
         let said = text(&res);
-        assert!(said.contains("update the Linggen plugin and reconnect"), "{said}");
+        assert!(
+            said.contains("update the Linggen plugin and reconnect"),
+            "{said}"
+        );
         assert!(said.contains("op"), "the form that works: {said}");
     }
     let res = call(View::Local, "agent_status", json!({"op": "fly"})).await;
@@ -331,10 +400,18 @@ fn nothing_published_names_a_retired_tool() {
     let code_only = ["mod.rs", "catalog.rs"];
     for retired in catalog().retired() {
         for text in &texts {
-            if code_only.iter().any(|f| text.starts_with(&format!("{f}: "))) {
+            if code_only
+                .iter()
+                .any(|f| text.starts_with(&format!("{f}: ")))
+            {
                 continue;
             }
-            assert!(!names_word(text, retired.name), "names {}: {}", retired.name, &text[..60.min(text.len())]);
+            assert!(
+                !names_word(text, retired.name),
+                "names {}: {}",
+                retired.name,
+                &text[..60.min(text.len())]
+            );
         }
     }
 }
@@ -389,7 +466,10 @@ fn the_front_door_is_for_computers() {
         ..Default::default()
     };
     assert_eq!(view_of(&Caller::Owner), Some(View::Local));
-    assert_eq!(view_of(&Caller::Machine(row(DeviceKind::Machine))), Some(View::Remote));
+    assert_eq!(
+        view_of(&Caller::Machine(row(DeviceKind::Machine))),
+        Some(View::Remote)
+    );
     assert_eq!(view_of(&Caller::Phone(row(DeviceKind::Phone))), None);
     assert_eq!(view_of(&Caller::Unknown), None);
 }
@@ -402,7 +482,11 @@ fn mcp_responses_disable_keep_alive() {
 
 #[tokio::test]
 async fn unknown_method_is_rpc_error() {
-    let res = rpc(View::Local, json!({ "jsonrpc": "2.0", "id": 3, "method": "resources/list" })).await;
+    let res = rpc(
+        View::Local,
+        json!({ "jsonrpc": "2.0", "id": 3, "method": "resources/list" }),
+    )
+    .await;
     assert_eq!(res["error"]["code"], -32601);
 }
 
@@ -427,7 +511,10 @@ async fn agent_run_without_state_is_tool_error() {
 
 #[tokio::test]
 async fn dream_ops_without_state_are_tool_errors() {
-    for args in [json!({"op": "dream_status"}), json!({"op": "dream_run", "day": "2026-07-01"})] {
+    for args in [
+        json!({"op": "dream_status"}),
+        json!({"op": "dream_run", "day": "2026-07-01"}),
+    ] {
         let res = call(View::Local, "memory_upkeep", args.clone()).await;
         assert_eq!(res["result"]["isError"], true, "{args}");
         assert!(text(&res).contains("unavailable"), "{args}: {}", text(&res));
