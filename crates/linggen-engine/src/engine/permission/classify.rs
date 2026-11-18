@@ -323,6 +323,10 @@ fn classify_words(words: &[String]) -> BashClass {
     if program == "cd" {
         return Read;
     }
+    // `command -v <name>` only asks where a program is: nothing is run.
+    if program == "command" && matches!(args.first().map(String::as_str), Some("-v" | "-V")) {
+        return Read;
+    }
     // `git -C <dir> <sub> …` is `<sub>` run in <dir>: judge the rest.
     // <dir> stays an argument, so the target check sees it.
     if program == "git" && args.first().map(String::as_str) == Some("-C") && args.len() > 2 {

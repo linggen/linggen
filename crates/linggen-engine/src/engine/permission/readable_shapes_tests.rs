@@ -543,3 +543,23 @@ fn a_semicolon_in_heredoc_prose_does_not_start_a_command() {
     let result = check(cmd, true);
     assert!(allowed(&result), "{cmd:?} gave {result:?}");
 }
+
+/// `command -v` asks where a program is and runs nothing: a read, in any
+/// session. Without `-v` it runs the program, judged as that program is.
+#[test]
+fn asking_where_a_program_is_runs_nothing() {
+    use super::classify::classify_bash;
+    use super::model::BashClass::{Admin, Read};
+    for coding in [true, false] {
+        for cmd in ["command -v jq", "command -V cargo", "command -v jq; git status --short"] {
+            assert_eq!(classify_bash(cmd, coding).0, Read, "coding={coding}: {cmd:?}");
+        }
+        assert!(allowed(&check("command -v jq", coding)), "coding={coding}");
+    }
+    assert_eq!(classify_bash("command some-unknown-program", false).0, Admin);
+    assert_eq!(classify_bash("command -p -v jq", false).0, Admin, "an option cluster it does not read");
+    assert!(is_hardcoded_deny("command -v jq && sudo ls"));
+    assert!(is_hardcoded_deny("command sudo ls"));
+    // A path it names is still a path the session must be able to read.
+    assert!(!allowed(&check("command -v /etc/passwd", true)));
+}
