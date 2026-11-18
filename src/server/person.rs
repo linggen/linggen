@@ -357,10 +357,21 @@ fn most_for_contract(device: &crate::state_fs::devices::PairedDevice) -> Permiss
 }
 
 /// The standing of a proxy room's consumer: its own account, at chat (its
-/// RTC HTTP and media requests use `routes::classes::tunnel_allows`).
+/// RTC HTTP and media requests use `routes::classes::tunnel_allows`); no one
+/// when its id is not an account's own ([`names_an_account`]: none, this
+/// Mac's owner's, no one's, a device's).
 pub(crate) fn consumer(user_id: &str) -> Standing {
+    consumer_in(user_id, crate::account::load_account().and_then(|a| a.user_id).as_deref())
+}
+
+/// [`consumer`] with this Mac's account `mac`.
+fn consumer_in(user_id: &str, mac: Option<&str>) -> Standing {
+    let person = match names_an_account(user_id, mac) {
+        true => Person::account(user_id),
+        false => Person::no_one(),
+    };
     Standing {
-        person: Person::account(user_id),
+        person,
         level: PermissionMode::Chat,
     }
 }
@@ -758,6 +769,23 @@ mod tests {
             ..phone(None)
         };
         assert_eq!(super::whose_device(&machine, mac), "owner");
+    }
+
+    /// A room consumer is its own account, at chat; an id that is not an
+    /// account's own (none, the owner's, no one's, a device's) is no one.
+    #[test]
+    fn a_room_consumer_is_its_own_account_or_no_one() {
+        use crate::engine::permission::PermissionMode::*;
+        let room = super::consumer("u-room");
+        assert_eq!((room.person(), room.level()), (&super::Person::account("u-room"), Chat));
+        let local = ["__", "local__"].concat();
+        for id in ["", local.as_str(), "device:dev-1", " u-room"] {
+            let s = super::consumer(id);
+            assert_eq!((s.person(), s.level()), (&super::Person::no_one(), Chat), "{id:?}");
+        }
+        let owners = super::consumer_in("u-owner", Some("u-owner"));
+        assert_eq!(owners.person(), &super::Person::no_one(), "not the owner through a room");
+        assert_eq!(super::consumer_in("u-room", Some("u-owner")).person(), &super::Person::account("u-room"));
     }
 
     /// A peer that named no device is the owner only when the tunnel knows it.
