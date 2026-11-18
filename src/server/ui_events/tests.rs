@@ -245,3 +245,17 @@ fn a_top_level_message_keeps_its_run_out_of_the_subagent_key() {
     let sub = map(msg(Some("ling")), 2).expect("mapped");
     assert_eq!(sub.data.expect("data")["run_id"], "r1");
 }
+
+/// Room chat reaches a page only while rooms are on.
+#[test]
+fn room_chat_reaches_a_page_only_when_rooms_are_on() {
+    let chat = || ServerEvent::RoomChat {
+        sender_id: "u".into(),
+        sender_name: "A".into(),
+        avatar_url: None,
+        text: "hi".into(),
+    };
+    assert!(super::map_event(chat(), 1, false).is_none());
+    let on = super::map_event(chat(), 1, true).expect("on: mapped");
+    assert_eq!(on.kind, "room_chat");
+}

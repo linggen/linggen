@@ -21,6 +21,7 @@ mod push;
 mod quests_watch;
 mod resident;
 mod restart;
+mod rooms_switch;
 mod routes;
 pub(crate) mod rtc;
 mod shared_pages;

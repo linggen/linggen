@@ -5,6 +5,7 @@ mod apps;
 mod chat;
 pub(crate) mod classes;
 mod devices;
+mod rooms;
 mod settings;
 mod workspace;
 
@@ -17,6 +18,7 @@ type Routes = Router<Arc<ServerState>>;
 pub(super) fn router(state: Arc<ServerState>) -> Router {
     Router::new()
         .merge(settings::routes())
+        .merge(rooms::routes(super::rooms_switch::on()))
         .merge(chat::routes())
         .merge(workspace::routes())
         .merge(devices::routes())

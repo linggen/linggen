@@ -9,6 +9,13 @@ guide: |
 
 # Rooms
 
+> **Off by default.** Rooms are not what the product is for right now, so the
+> whole feature sits behind one switch that is off unless `room_config.toml`
+> says `rooms_on = true` (read once at start). Off, every way into rooms
+> answers "rooms are off", the pages show nothing about them, and room records
+> are left untouched. The code stays as written below and returns with online
+> play in 灵境. The switch lives in `src/server/rooms_switch.rs`.
+
 Community model sharing. An owner opens a **room** to share their models with other users (consumers); the owner's linggen acts as the proxy that calls the AI provider. Consumers get AI access without setting up keys; owners share spare capacity. Built on linggen's existing WebRTC infrastructure.
 
 ## Related docs

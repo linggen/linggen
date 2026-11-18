@@ -67,12 +67,19 @@ impl Ui {
 }
 
 pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiEvent> {
+    map_event(event, seq, crate::server::rooms_switch::on())
+}
+
+/// [`map_server_event_to_ui_message`], with the rooms switch given: room chat
+/// reaches no page while rooms are off, whichever way it was sent.
+fn map_event(event: ServerEvent, seq: u64, rooms_on: bool) -> Option<UiEvent> {
     use ServerEvent::*;
     let ui = Ui {
         seq,
         ts_ms: crate::util::now_ts_ms(),
     };
     match &event {
+        RoomChat { .. } if !rooms_on => None,
         PetVoice { .. } | PetSpeak { .. } | PetExpress { .. } => pet::map(event, ui),
         Message { .. }
         | SessionReset { .. }

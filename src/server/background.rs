@@ -499,6 +499,10 @@ fn run_alive<'a>(
 /// Auto-connect to joined proxy rooms (linggen server consumer mode)
 /// if auto_connect is enabled in room_config.toml.
 fn auto_connect_rooms(state: &Arc<ServerState>) {
+    // With rooms off this asks the site for nothing.
+    if !crate::server::rooms_switch::on() {
+        return;
+    }
     let room_cfg = rtc::room_config::load_room_config();
     if !room_cfg.auto_connect {
         return;

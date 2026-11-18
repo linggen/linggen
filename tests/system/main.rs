@@ -31,6 +31,7 @@ mod private_app;
 mod prompt;
 mod reading;
 mod restart;
+mod rooms;
 mod runs;
 mod sessions;
 mod shared_table;

@@ -161,7 +161,7 @@ async fn offer_poll_loop(link: &Link, state: Arc<ServerState>) {
                         let sdp = data["sdp"].as_str().unwrap_or("").to_string();
 
                         if !nonce.is_empty() && !sdp.is_empty() {
-                            let Some(user_ctx) = context_for_offer(&data, &nonce) else {
+                            let Some(user_ctx) = context_for_offer(&data, &nonce, crate::server::rooms_switch::on()) else {
                                 continue;
                             };
 
@@ -211,8 +211,12 @@ async fn offer_poll_loop(link: &Link, state: Arc<ServerState>) {
 }
 
 /// Who an offer's peer is, by what the relay said of it; `None` for a room
-/// consumer while the room is off.
-fn context_for_offer(data: &serde_json::Value, nonce: &str) -> Option<super::UserContext> {
+/// consumer while rooms are off (`rooms_on`, the switch) or this room is.
+fn context_for_offer(
+    data: &serde_json::Value,
+    nonce: &str,
+    rooms_on: bool,
+) -> Option<super::UserContext> {
     if data["pairing"].as_bool() == Some(true) {
         // A phone that scanned our QR: the relay let it through because our
         // pairing window is open and its secret hashes to ours. It still has
@@ -234,6 +238,10 @@ fn context_for_offer(data: &serde_json::Value, nonce: &str) -> Option<super::Use
         });
     }
     if let Some(ct) = data["consumer_type"].as_str() {
+        if !rooms_on {
+            info!("Rejecting consumer offer ({}, nonce: {nonce})", crate::server::rooms_switch::OFF);
+            return None;
+        }
         // Consumer — check if room is enabled first
         let room_cfg = super::room_config::load_room_config();
         if !room_cfg.room_enabled {
@@ -316,13 +324,26 @@ mod tests {
     /// never is.
     #[test]
     fn an_offer_is_vouched_only_as_the_relay_says() {
-        let paired = context_for_offer(&json!({"paired": true}), "n").unwrap();
+        let paired = context_for_offer(&json!({"paired": true}), "n", true).unwrap();
         assert!(!paired.account_vouched);
-        let owners = context_for_offer(&json!({"paired": true, "owner": true}), "n").unwrap();
+        let owners = context_for_offer(&json!({"paired": true, "owner": true}), "n", true).unwrap();
         assert!(owners.account_vouched);
         assert_eq!(owners.kind, crate::server::rtc::PeerKind::Paired);
-        assert!(context_for_offer(&json!({}), "n").unwrap().account_vouched);
-        let pairing = context_for_offer(&json!({"pairing": true, "owner": true}), "n").unwrap();
+        assert!(context_for_offer(&json!({}), "n", true).unwrap().account_vouched);
+        let pairing = context_for_offer(&json!({"pairing": true, "owner": true}), "n", true).unwrap();
         assert!(!pairing.account_vouched);
+    }
+
+    /// With rooms off no room consumer gets a peer, while the owner, a
+    /// paired phone and one pairing are let in exactly as before.
+    #[test]
+    fn a_consumer_offer_needs_rooms_on_and_no_one_else_does() {
+        let consumer = json!({"consumer_type": "linggen", "consumer_user_id": "u-x"});
+        assert!(context_for_offer(&consumer, "n", false).is_none());
+        let on = context_for_offer(&consumer, "n", true).unwrap();
+        assert_eq!(on.kind, crate::server::rtc::PeerKind::Consumer);
+        for own in [json!({}), json!({"paired": true}), json!({"pairing": true})] {
+            assert!(context_for_offer(&own, "n", false).is_some(), "{own}");
+        }
     }
 }

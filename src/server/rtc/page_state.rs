@@ -65,7 +65,13 @@ pub struct PageState {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub room_name: Option<String>,
 
-    /// Whether the owner's room is enabled (accepting consumers).
+    /// Whether rooms are on at all (the engine's switch). A page shows
+    /// nothing about rooms unless this is true. Not sent to a consumer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rooms_on: Option<bool>,
+
+    /// Whether the owner's room is enabled (accepting consumers); only
+    /// told while rooms are on.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub room_enabled: Option<bool>,
 
@@ -223,6 +229,16 @@ fn listed_for(made_for: Option<&str>, viewer: &str, is_admin: bool) -> bool {
     }
 }
 
+/// What the page is told of rooms: `(rooms_on, room_enabled)`. A consumer is
+/// told neither; the owner always learns whether rooms are on, and whether
+/// its own room is enabled only while they are.
+fn room_facts(rooms_on: bool, is_consumer: bool, enabled: bool) -> (Option<bool>, Option<bool>) {
+    if is_consumer {
+        return (None, None);
+    }
+    (Some(rooms_on), rooms_on.then_some(enabled))
+}
+
 /// Build the page state from server state + view context + user context.
 /// All data is filtered by user_id. Permission level controls what data categories are included.
 /// `person`: the person behind the peer (`peer::control::person_for`) — a
@@ -246,6 +262,11 @@ pub async fn build_page_state(
 
     // Load room config — needed for consumer filtering and owner room_enabled status.
     let room_cfg = super::room_config::load_room_config();
+    let (rooms_on, room_enabled) = room_facts(
+        crate::server::rooms_switch::on(),
+        user.is_consumer(),
+        room_cfg.room_enabled,
+    );
 
     let mut ps = PageState {
         // Corrected by what `identify` revealed, like every other surface that
@@ -254,11 +275,8 @@ pub async fn build_page_state(
         user_type: Some(user.user_type_for(identified).to_string()),
         permission: Some(user.permission.to_string()),
         room_name: user.room_name.clone(),
-        room_enabled: if !user.is_consumer() {
-            Some(room_cfg.room_enabled)
-        } else {
-            None
-        },
+        rooms_on,
+        room_enabled,
         all_sessions: None,
         models: None,
         default_models: None,
@@ -559,6 +577,14 @@ mod tests {
     use super::*;
     use crate::engine::events::QueuedChatItem;
     use std::collections::HashMap;
+
+    #[test]
+    fn a_page_is_told_of_rooms_only_as_the_switch_allows() {
+        assert_eq!(room_facts(false, false, true), (Some(false), None));
+        assert_eq!(room_facts(true, false, true), (Some(true), Some(true)));
+        assert_eq!(room_facts(true, false, false), (Some(true), Some(false)));
+        assert_eq!(room_facts(true, true, true), (None, None));
+    }
 
     fn item(session: &str, agent: &str) -> QueuedChatItem {
         QueuedChatItem {

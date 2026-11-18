@@ -15,6 +15,12 @@ fn default_allowed_tools() -> Vec<String> {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoomConfig {
+    /// The switch for the whole room feature (`server::rooms_switch`): off
+    /// when the key is absent, whatever the other fields say. Only
+    /// [`rooms_switch_from_disk`] reads it.
+    #[serde(default)]
+    rooms_on: bool,
+
     /// Model IDs that are shared with room consumers.
     /// If empty, no models are shared (safe default).
     #[serde(default)]
@@ -54,6 +60,7 @@ pub struct RoomConfig {
 impl Default for RoomConfig {
     fn default() -> Self {
         Self {
+            rooms_on: false,
             shared_models: Vec::new(),
             allowed_tools: default_allowed_tools(),
             allowed_skills: Vec::new(),
@@ -79,6 +86,13 @@ pub fn load_room_config() -> RoomConfig {
         Err(_) => RoomConfig::default(),
     };
     cfg.with_successors()
+}
+
+/// Whether `room_config.toml` turns rooms on: the key `rooms_on = true`. The
+/// one reader of the switch's key; `server::rooms_switch::on` is its one
+/// caller.
+pub(crate) fn rooms_switch_from_disk() -> bool {
+    load_room_config().rooms_on
 }
 
 impl RoomConfig {
@@ -136,6 +150,19 @@ pub fn save_room_config(config: &RoomConfig) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A file written before the switch existed — every other field set,
+    /// the rooms enabled — leaves rooms off.
+    #[test]
+    fn rooms_are_off_unless_the_file_says_so() {
+        let before: RoomConfig =
+            toml::from_str("room_enabled = true\nauto_connect = true\nshared_models = [\"m\"]\n")
+                .unwrap();
+        assert!(!before.rooms_on);
+        assert!(!RoomConfig::default().rooms_on);
+        let on: RoomConfig = toml::from_str("rooms_on = true\n").unwrap();
+        assert!(on.rooms_on);
+    }
 
     #[test]
     fn a_retired_share_also_shares_its_successor() {

@@ -1,5 +1,5 @@
 //! Settings: agents, models, config, credentials, sign-ins, skills and the
-//! marketplace, missions, rooms, account, storage and status.
+//! marketplace, missions, account, storage and status.
 
 use super::Routes;
 use crate::server::api;
@@ -24,10 +24,6 @@ use crate::server::api::missions::{
     create_mission, delete_mission, get_mission_file, get_mission_session_state, list_mission_runs,
     list_missions, trigger_mission, update_mission, upsert_mission_file,
 };
-use crate::server::api::rooms::{
-    connect_proxy_room_api, disconnect_proxy_room_api, get_room_config, proxy_rooms,
-    proxy_status_api, token_usage_api, update_room_config,
-};
 use crate::server::api::skills::{
     delete_skill_file_api, get_skill_file_api, list_skill_files_api, list_skills, reload_skills,
     upsert_skill_file_api,
@@ -39,7 +35,7 @@ use crate::server::api::storage::{
 use crate::server::api::utils::{
     get_ollama_status, get_user_language, get_user_name, health_handler,
 };
-use axum::routing::{any, delete, get, post, put};
+use axum::routing::{delete, get, post, put};
 
 pub(super) fn routes() -> Routes {
     Routes::new()
@@ -108,18 +104,6 @@ pub(super) fn routes() -> Routes {
         .route("/api/account/callback", get(get_account_callback))
         .route("/api/account/logout", post(post_account_logout))
         .route("/api/account/checkout", post(post_account_checkout))
-        // Rooms
-        .route("/api/rooms", any(proxy_rooms))
-        .route("/api/rooms/", any(proxy_rooms))
-        .route("/api/rooms/{*path}", any(proxy_rooms))
-        .route("/api/proxy/connect", post(connect_proxy_room_api))
-        .route("/api/proxy/disconnect", post(disconnect_proxy_room_api))
-        .route("/api/proxy/status", get(proxy_status_api))
-        .route("/api/token-usage", get(token_usage_api))
-        .route(
-            "/api/room-config",
-            get(get_room_config).post(update_room_config),
-        )
         // Utilities
         .route("/api/health", get(health_handler))
         // Which well-known services this machine cannot reach (src/reach.rs).

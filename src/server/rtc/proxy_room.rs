@@ -181,6 +181,9 @@ pub async fn connect_proxy_room(
     owner_name: Option<String>,
     room_name: Option<String>,
 ) -> anyhow::Result<()> {
+    if !crate::server::rooms_switch::on() {
+        anyhow::bail!(crate::server::rooms_switch::OFF);
+    }
     // Serialize connect/disconnect to prevent TOCTOU races.
     let _guard = state.proxy_connections.connect_lock.lock().await;
 

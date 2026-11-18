@@ -68,6 +68,9 @@ pub struct Setup {
     /// `agent.daily_session` saved in the config before the engine starts;
     /// `None` leaves the engine's default.
     pub daily_session: Option<bool>,
+    /// Rooms switched on (`rooms_on = true` in `room_config.toml`) before the
+    /// engine starts; off, as on a machine that never set it, when unset.
+    pub rooms_on: bool,
 }
 
 impl Setup {
@@ -131,6 +134,10 @@ impl World {
             guard::config_text(&config);
         }
         guard::home_files(&home.home(), &home.model_cache());
+        if setup.rooms_on {
+            std::fs::write(home.linggen_home().join("room_config.toml"), "rooms_on = true\n")
+                .expect("room_config.toml");
+        }
         if setup.signed_out {
             let _ = std::fs::remove_file(home.linggen_home().join("codex_auth.json"));
         }
