@@ -488,6 +488,12 @@ fn the_floor_leaves_text_alone() {
         "psql <<'SQL'\nrm -rf /\nSQL",
         "echo fi done then",
         "grep -n sudo README.md",
+        "cat <<'EOF'\nUse a regular account; then sudo is not needed.\nEOF",
+        "echo \"if it fails; then sudo is the usual answer\"",
+        "for item in 'do' sudo; do :; done",
+        "for item in do sudo rm; do :; done",
+        "'./report)sudo'",
+        "printf '%s\\n' '()' sudo",
     ] {
         assert!(!is_hardcoded_deny(cmd), "{cmd:?}");
     }
@@ -505,4 +511,35 @@ fn a_file_named_like_a_shell_word_is_a_program() {
     for cmd in ["./for x", "./select x", "./if x", "bin/done"] {
         assert_eq!(classify_bash(cmd, true).0, super::model::BashClass::Write, "{cmd:?}");
     }
+}
+
+#[test]
+fn quoted_parentheses_in_an_argument_are_not_a_function_definition() {
+    let cmd = "printf '%s\\n' '()' sudo";
+    let result = check(cmd, true);
+    assert!(allowed(&result), "{cmd:?} gave {result:?}");
+}
+
+#[test]
+fn quoted_parenthesis_in_a_filename_is_not_a_case_label() {
+    let cmd = "'./report)sudo'";
+    let result = check(cmd, true);
+    assert!(allowed(&result), "{cmd:?} gave {result:?}");
+}
+
+#[test]
+fn a_quoted_do_in_a_for_list_is_an_item_not_the_body() {
+    let cmd = "for item in 'do' sudo; do :; done";
+    let result = check(cmd, true);
+    assert!(
+        !matches!(result, PermissionCheckResult::Blocked(_)),
+        "{cmd:?} gave {result:?}"
+    );
+}
+
+#[test]
+fn a_semicolon_in_heredoc_prose_does_not_start_a_command() {
+    let cmd = "cat <<'EOF'\nUse a regular account; then sudo is not needed.\nEOF";
+    let result = check(cmd, true);
+    assert!(allowed(&result), "{cmd:?} gave {result:?}");
 }

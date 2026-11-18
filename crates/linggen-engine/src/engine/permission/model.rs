@@ -200,12 +200,19 @@ const LISTS_ONLY: &[&str] = &["for", "select"];
 /// `env -i sudo ls`, `nice -n 19 sudo ls`, `then sudo ls` and `(sudo ls`
 /// are all `sudo ls`. Empty when the segment names no program.
 pub(super) fn command_run<'a>(tokens: &'a [&'a str]) -> &'a [&'a str] {
+    run_of(tokens, true)
+}
+
+/// [`command_run`], reading past the shell's own words or not. Not, for
+/// words that were split without regard to quotes: there a `then` may be a
+/// word of a sentence.
+fn run_of<'a>(tokens: &'a [&'a str], shell_words: bool) -> &'a [&'a str] {
     let mut rest = tokens;
     loop {
         while rest.first().is_some_and(|w| is_assignment(w)) {
             rest = &rest[1..];
         }
-        if let Some(past) = past_shell_words(rest) {
+        if let Some(past) = past_shell_words(rest).filter(|_| shell_words) {
             rest = past;
             continue;
         }
@@ -245,7 +252,7 @@ fn past_shell_words<'a>(rest: &'a [&'a str]) -> Option<&'a [&'a str]> {
     // A shell word is the word itself: `./for` and `bin/if` are programs.
     let word = first.trim_start_matches('(').trim_end_matches(')');
     if LISTS_ONLY.contains(&word) {
-        return Some(past_the_do(&rest[1..]));
+        return Some(past_the_do(rest));
     }
     match word {
         "function" => return Some(rest.get(2..).unwrap_or(&[])),
@@ -273,13 +280,14 @@ fn past_shell_words<'a>(rest: &'a [&'a str]) -> Option<&'a [&'a str]> {
     label.then(|| &rest[1..])
 }
 
-/// A loop head's words past its `do` (`for x do cmd` loops over the
-/// shell's own arguments, with its body on the same line); none when the
-/// head only lists its words.
-fn past_the_do<'a>(words: &'a [&'a str]) -> &'a [&'a str] {
-    match words.iter().position(|w| *w == "do") {
-        Some(at) => &words[at + 1..],
-        None => &[],
+/// A loop head's words past its `do`, when the `do` stands right after the
+/// loop's name (`for x do cmd` loops over the shell's own arguments, with
+/// its body on the same line); none when the head lists its words — a `do`
+/// among them is one of the words.
+fn past_the_do<'a>(head: &'a [&'a str]) -> &'a [&'a str] {
+    match head.get(2) {
+        Some(&"do") => &head[3..],
+        _ => &[],
     }
 }
 
@@ -307,19 +315,36 @@ fn past_first_label<'a>(words: &'a [&'a str]) -> &'a [&'a str] {
 /// `SUDO` from `sudo`.
 pub(super) fn file_name(word: &str) -> String {
     let word = word.trim_end_matches(')');
-    let word = word.rsplit(')').next().unwrap_or(word);
+    let word = past_a_glued_label(word);
     let word = word.rsplit('/').next().unwrap_or(word);
     word.trim_start_matches('(').to_ascii_lowercase()
 }
 
-fn segment_is_hardcoded_deny(seg: &str) -> bool {
-    let words: Vec<String> = seg.split_whitespace().map(dequote).collect();
-    words_are_hardcoded_deny(&words)
+/// `word` past a `case` arm's label glued to it (`x)cmd`, `a|b)cmd`). A
+/// `)` after a `/` is part of a file's name, not a label's end.
+fn past_a_glued_label(word: &str) -> &str {
+    match word.rsplit_once(')') {
+        Some((label, command)) if !label.contains('/') => command,
+        _ => word,
+    }
 }
 
+/// A piece of the command cut at `;`, `&&`, `||`, `|` without regard to
+/// quotes: its program is read past wrappers only.
+fn segment_is_hardcoded_deny(seg: &str) -> bool {
+    let words: Vec<String> = seg.split_whitespace().map(dequote).collect();
+    run_is_hardcoded_deny(&words, false)
+}
+
+/// A command as the shell splits it: its program is read past the shell's
+/// own words too.
 fn words_are_hardcoded_deny(words: &[String]) -> bool {
+    run_is_hardcoded_deny(words, true)
+}
+
+fn run_is_hardcoded_deny(words: &[String], shell_words: bool) -> bool {
     let all: Vec<&str> = words.iter().map(String::as_str).collect();
-    let tokens = command_run(&all);
+    let tokens = run_of(&all, shell_words);
     if tokens.is_empty() {
         return false;
     }
