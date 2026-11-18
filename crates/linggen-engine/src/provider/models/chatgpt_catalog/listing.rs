@@ -21,18 +21,22 @@ pub struct ChatgptBackend {
 impl ChatgptBackend {
     /// None when not signed in to ChatGPT.
     pub fn signed_in() -> Option<Self> {
-        use crate::provider::codex_auth;
-        let tokens = codex_auth::CodexAuthTokens::load(&codex_auth::codex_auth_file());
-        if !tokens.is_valid() {
-            return None;
-        }
-        let client = crate::provider::openai::OpenAiClient::new_chatgpt_oauth(
-            codex_auth::CHATGPT_API_BASE.to_string(),
-            tokens.access_token.unwrap_or_default(),
-            tokens.account_id,
-        );
-        Some(Self { client })
+        signed_in_client().map(|client| Self { client })
     }
+}
+
+/// A client on the ChatGPT sign-in, or None when not signed in.
+pub fn signed_in_client() -> Option<crate::provider::openai::OpenAiClient> {
+    use crate::provider::codex_auth;
+    let tokens = codex_auth::CodexAuthTokens::load(&codex_auth::codex_auth_file());
+    if !tokens.is_valid() {
+        return None;
+    }
+    Some(crate::provider::openai::OpenAiClient::new_chatgpt_oauth(
+        codex_auth::CHATGPT_API_BASE.to_string(),
+        tokens.access_token.unwrap_or_default(),
+        tokens.account_id,
+    ))
 }
 
 #[async_trait]

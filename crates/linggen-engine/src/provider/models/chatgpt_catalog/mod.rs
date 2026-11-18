@@ -18,6 +18,7 @@ use std::sync::{Arc, RwLock};
 
 mod seed;
 pub mod listing;
+pub mod promote;
 pub mod refresh;
 pub mod version;
 

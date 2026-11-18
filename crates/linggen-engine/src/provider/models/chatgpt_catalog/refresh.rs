@@ -4,6 +4,7 @@
 //! turn's path. Each source is injected, so tests reach no network.
 
 use super::listing::{self, Backend};
+use super::promote::{self, Prober};
 use super::version::{self, PublicListing};
 use super::Snapshot;
 
@@ -14,6 +15,7 @@ pub const REFRESH_EVERY_SECS: u64 = 24 * 60 * 60;
 pub struct Sources<'a> {
     pub listing: &'a dyn PublicListing,
     pub backend: &'a dyn Backend,
+    pub prober: &'a dyn Prober,
 }
 
 /// Whether [snap] wants a refresh at [now]: the version or the list never
@@ -24,10 +26,11 @@ pub fn due(snap: &Snapshot, now: u64) -> bool {
 }
 
 /// [snap] brought up to date from [src]: the version, then the list under
-/// it. Every failed read keeps what there was.
+/// it, then each family's move to a newer model that answers. Every failed
+/// read keeps what there was.
 pub async fn refresh(snap: Snapshot, src: &Sources<'_>, now: u64) -> Snapshot {
     let snap = refresh_version(snap, src.listing, now).await;
-    refresh_models(snap, src.backend, now).await
+    refresh_models(snap, src.backend, src.prober, now).await
 }
 
 async fn refresh_version(mut snap: Snapshot, listing: &dyn PublicListing, now: u64) -> Snapshot {
@@ -35,8 +38,14 @@ async fn refresh_version(mut snap: Snapshot, listing: &dyn PublicListing, now: u
     snap
 }
 
-async fn refresh_models(mut snap: Snapshot, backend: &dyn Backend, now: u64) -> Snapshot {
+async fn refresh_models(
+    mut snap: Snapshot,
+    backend: &dyn Backend,
+    prober: &dyn Prober,
+    now: u64,
+) -> Snapshot {
     listing::read_list(&mut snap, backend, now).await;
+    promote::promote(&mut snap, prober, now).await;
     snap
 }
 
@@ -53,7 +62,9 @@ pub fn now() -> u64 {
 /// a version to, and no request leaves the machine. Unless [force] (a fresh
 /// sign-in), only when [`due`]. True when the models to register changed.
 pub async fn refresh_in_force(force: bool) -> bool {
-    let Some(backend) = listing::ChatgptBackend::signed_in() else {
+    let (Some(backend), Some(probe_client)) =
+        (listing::ChatgptBackend::signed_in(), listing::signed_in_client())
+    else {
         return false;
     };
     let before = super::current();
@@ -65,7 +76,8 @@ pub async fn refresh_in_force(force: bool) -> bool {
     // to the backend presents the one in force.
     let versioned = refresh_version((*before).clone(), &version::CodexReleases::new(), now).await;
     keep_if_changed(&before, versioned.clone());
-    let after = refresh_models(versioned, &backend, now).await;
+    let prober = promote::ChatgptProber::new(probe_client);
+    let after = refresh_models(versioned, &backend, &prober, now).await;
     keep_if_changed(&before, after.clone());
     registered_changed(&before, &after)
 }
@@ -107,10 +119,19 @@ mod tests {
         }
     }
 
+    struct Answers;
+
+    #[async_trait]
+    impl Prober for Answers {
+        async fn answers(&self, _slug: &str) -> bool {
+            panic!("the measured list has nothing newer to try")
+        }
+    }
+
     #[tokio::test]
     async fn the_list_is_read_under_the_version_just_read() {
         let backend = Recording(Default::default());
-        let src = Sources { listing: &Listing("0.169.1"), backend: &backend };
+        let src = Sources { listing: &Listing("0.169.1"), backend: &backend, prober: &Answers };
         let s = refresh(Snapshot::seed(), &src, 10).await;
         assert_eq!(*backend.0.lock().unwrap(), vec!["0.169.1".to_string()]);
         assert_eq!(s.listed.len(), 10);
