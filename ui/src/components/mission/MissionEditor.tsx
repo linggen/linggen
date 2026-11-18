@@ -139,7 +139,7 @@ export const MissionEditor: React.FC<{
         </div>
         <div className="flex items-center gap-1.5">
           {skill ? (
-            <span className="text-[12px] text-slate-500">From the {skill} skill — pause or resume it from the list</span>
+            <span className="text-[12px] text-slate-500">{`From the ${skill} skill — pause or resume it from the list`}</span>
           ) : (
           <button
             onClick={handleSave}

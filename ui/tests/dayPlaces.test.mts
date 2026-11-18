@@ -65,6 +65,8 @@ test('a question asked in another place names it; it is still answered here', ()
   // The page's translator reads strings-zh.ts (lib/i18n.ts); its English is the key.
   const zh = readFileSync(new URL('../src/lib/strings-zh.ts', import.meta.url), 'utf8');
   assert.ok(zh.includes("'From {app}': '来自 {app}',"), 'the page translates it');
+  // A pattern takes the first entry that fits: another page's "From the …" text stays its own.
+  assert.ok(zh.indexOf("'From the {skill} skill") < zh.indexOf("'From {app}'"), 'the longer entry first');
 });
 
 test('an open question as the engine lists it keeps the place it was told', () => {

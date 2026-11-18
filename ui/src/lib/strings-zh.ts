@@ -346,6 +346,8 @@ export const ZH: Record<string, string> = {
   'Working in {app}': '正在 {app} 中工作',
   'Stop · {app}': '停止 · {app}',
   'Waiting from {app}': '来自 {app}，等待中',
+  // One text node, kept ahead of the bare From entry below: a pattern takes the first entry that fits.
+  'From the {skill} skill — pause or resume it from the list': '来自 {skill} 技能——在列表中暂停或恢复',
   'From {app}': '来自 {app}',
   'Auto-compact at (%)': '自动压缩阈值（%）',
   'Max iterations': '最大步数',

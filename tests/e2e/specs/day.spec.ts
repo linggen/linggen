@@ -421,6 +421,11 @@ test.describe('a question from another place', () => {
     await main.reload();
     await expect(composer(main)).toBeVisible();
     await expect(main.getByTestId('ask-place')).toHaveText('From dice');
+    // In Chinese the page's translator says it in the person's words.
+    const zh = await context.newPage();
+    await opened(zh, `${world.url}/?session=${day}&lang=zh-Hans`);
+    await expect(zh.getByTestId('ask-place')).toHaveText('来自 dice');
+    await zh.close();
     await main.getByRole('button', { name: 'Red' }).first().click();
     await expect(seen(dice, 'Red it is.')).toHaveCount(1);
   });
