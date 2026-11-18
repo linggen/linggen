@@ -181,7 +181,9 @@ methods, never by the door a turn came through: the mission it runs, its
 grant table, its plan, its compaction settings, the live models, a
 member's recall. Its thread's cache is changed only by the chat's thread
 module. A test holds that no code outside the engine writes an engine's
-field, besides listed ones of other structs that share a name.
+field, besides the thread module and listed tests and other structs'
+fields of the same name, and that those methods are called from the
+listed places only.
 
 **A turn's ceiling.** A turn a paired device sent below the owner's level
 runs at no more than that level: `SessionSpec::typed` takes the level the

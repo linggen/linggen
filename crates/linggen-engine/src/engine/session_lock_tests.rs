@@ -223,6 +223,75 @@ fn an_engines_fields_are_written_by_the_engine() {
     );
 }
 
+/// The doors to a session's settings and the thread's cache, called from
+/// outside the engine: the spec's and the engine's writers, and the chat's
+/// thread module.
+const SETTERS: &[&str] = &[
+    ".take_up_mission(",
+    ".tune_recall(",
+    ".set_compaction(",
+    ".read_session_grants(",
+    ".hold_plan(",
+    ".forget_plan(",
+    ".drop_planned_plan(",
+    ".use_live_models(",
+    ".take_last_call(",
+    "thread::add(",
+    "thread::forget(",
+    "thread::reload_next(",
+    "thread::trim(",
+    "thread::seed_task(",
+];
+
+/// Who calls them from outside the engine, by file: how many, and why. A
+/// new door that changes a session goes here once it is looked at.
+const SETTER_CALLERS: &[(&str, usize, &str)] = &[
+    (
+        "crates/linggen-engine/src/extensions/missions/enter.rs",
+        1,
+        "a mission taken up",
+    ),
+    ("src/server/resident/turn.rs", 1, "the companion's recall"),
+    ("src/server/chat/admin.rs", 3, "compaction settings; Clear, /compact"),
+    ("src/server/chat/turn_place.rs", 1, "a skill's place reads the grants"),
+    ("src/server/chat/skill_dispatch.rs", 1, "a slash command reads the grants"),
+    ("src/server/chat/structured.rs", 2, "a stale plan dropped; an approved one held"),
+    ("src/server/chat/plan_flow.rs", 2, "a new plan run; an approved plan's run"),
+    ("src/server/chat/handler.rs", 2, "live models; a capped thread trimmed"),
+    ("src/server/chat/light.rs", 1, "live models"),
+    ("src/server/chat/runtime.rs", 4, "a turn's last call; what a turn adds"),
+    ("src/server/chat/clear_place.rs", 1, "a cleared place reloads"),
+    ("src/server/resident/session_roll.rs", 1, "a fresh thread's last words"),
+    ("src/server/mcp_agent.rs", 1, "a delegate's task kept first"),
+];
+
+#[test]
+fn a_sessions_settings_are_changed_from_the_listed_places() {
+    let sources = sources();
+    let mut wrong: Vec<(String, usize, usize)> = sources
+        .iter()
+        .filter_map(|(rel, text)| {
+            let found: usize = SETTERS.iter().map(|s| text.matches(s).count()).sum();
+            let want = SETTER_CALLERS
+                .iter()
+                .find(|(f, _, _)| *f == rel)
+                .map_or(0, |e| e.1);
+            (found != want).then(|| (rel.clone(), found, want))
+        })
+        .collect();
+    for (file, want, _) in SETTER_CALLERS {
+        if !sources.iter().any(|(rel, _)| rel == file) {
+            wrong.push((file.to_string(), 0, *want));
+        }
+    }
+    wrong.sort();
+    assert!(
+        wrong.is_empty(),
+        "a new caller of a session's setter — look at whether this door should \
+         change the session, then list it (file, found, listed):\n{wrong:#?}"
+    );
+}
+
 /// A session's settings the binary cannot write at all: each is set
 /// through the spec's writer or an engine method, and read through one.
 /// The thread's cache (`chat_history`, `thread_mark`, `reload_thread`)
