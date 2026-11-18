@@ -49,11 +49,9 @@ flowchart LR
   third["third-party MCP servers<br/>github · playwright · sentry"]
   providers["LLM providers<br/>chatgpt · anthropic · openai<br/>gemini · deepseek"]
 
-  cc -->|"mcp — browser_* x_* agent_*"| ling
-  codex -->|"mcp — browser_* x_* agent_*"| ling
-  cc -->|"mcp — memory_*"| lingmem
-  codex -->|"mcp — memory_*"| lingmem
-  hooks -->|"curl · mcp tools/call"| lingmem
+  cc -->|"mcp — /mcp, twelve tools"| ling
+  codex -->|"mcp — /mcp, twelve tools"| ling
+  hooks -->|"curl · mcp tools/call"| ling
   cli -->|http| lingmem
 
   ling -->|"mcp client — tools + auto-recall"| lingmem
@@ -112,10 +110,8 @@ rather than an agent.
 The phone's Ling tab needs none of it: it drives a session on the Mac, and that
 agent reaches memory on its own loopback like every local caller.
 
-`memory_*` is **gone** from `ling`'s `/mcp` (2026-07-30), in the same release
-that gave the plugin its second MCP entry. Each tool is served in exactly one
-place. `memory_dream_status` / `memory_dream_run` stay — engine capabilities,
-not memory-server ones.
+Each tool is served in exactly one place: since 2.5, `/mcp` on the engine's
+port (memory, agents, browser — twelve tools, `mcp-spec.md`).
 
 ## The two daemons
 
@@ -138,7 +134,7 @@ cannot point it elsewhere.
 
 | From | Transport | Path |
 |:--|:--|:--|
-| Claude Code / Codex plugin | HTTP MCP, JSON-RPC | `/mcp` — browser, x, agents, dream |
+| Claude Code / Codex plugin | HTTP MCP, JSON-RPC | `/mcp` — the one door: memory (5), agents (4), browser (3); the view depends on the caller (`mcp-spec.md` § Views) |
 | Linggen.app shell | HTTP | `/api/health`, every 60s while a window is open |
 | Shell, Web UI, phone on LAN | WebRTC | `/api/rtc/token` → `/api/rtc/whip`; then every `/api/*` call as `http_request` on the channel — the web UI has no HTTP data path (webrtc-spec.md) |
 | Skill pages (`/apps/<skill>/…`) | WebRTC | the same, through `/shared/channel.js`: the launcher's channel when it frames them, else a hidden `/?channel=1` frame's own peer; only their files are HTTP (webrtc-spec.md § Skill pages) |
@@ -146,7 +142,8 @@ cannot point it elsewhere.
 | linggen-browser extension | WebSocket, extension dials in | `/api/bridge/socket` |
 | Skill scripts reaching the browser | HTTP | `POST /api/bridge/call` (a skill page's own call rides its channel) |
 | Phone, for Yinyue's memory | HTTP in the tunnel | `POST /api/memory/<verb>` → `ling-mem`. *2.3:* the hosted store, scoped to the phone's person |
-| *2.3:* another machine, approved (`machine` token) | HTTP | `/mcp/memory` (a plugin-only machine); a replica: `/mem/api/sync/*` and its pushed writes |
+| *2.3:* another machine, approved (`machine` token) | HTTP | `/mcp` — the five memory tools (a plugin-only machine); a replica: `/mem/api/sync/*` and its pushed writes |
+| `/mcp/memory` (retired in 2.5) | HTTP | answers 410 `UPGRADE_PLUGIN`; nothing is forwarded |
 | *2.3:* a machine asking to connect | HTTP, no token | `/mem/api/connect/request`, `/mem/api/connect/status/<id>` |
 
 **Into `ling-mem` (`:9528`)**
@@ -155,9 +152,9 @@ cannot point it elsewhere.
 |:--|:--|:--|
 | `ling`, on behalf of a model | HTTP MCP, JSON-RPC | `/mcp` — the built-in server, URL from `[agent].ling_mem_url` + `/mcp`. *2.3:* the hosted store, `/mem/mcp` on the engine's own port; no address to set |
 | `ling`, as a program | HTTP REST | `POST /api/memory/<verb>` — dream rollup, scheduler stats, core block, skill pages, the phone's passthrough. *2.3:* no edge — an in-process call on memory's runtime |
-| A second machine on the LAN | HTTP MCP, JSON-RPC | `/mcp` with `x-linggen-device`. *2.3:* not on the network — `/mcp/memory` on the engine's port |
+| A second machine on the LAN | HTTP MCP, JSON-RPC | `/mcp` with `x-linggen-device`. *2.3:* not on the network — the engine's port, `/mcp/memory` (retired in 2.5); *2.5:* `/mcp` |
 | `ling-mem` CLI | HTTP REST | port read from `daemon.json`. *2.3:* `ling mem <verb>` — the engine's port from the lock file, `/mem/api/memory/<verb>`; engine down, the store directly under the lock |
-| Plugin hooks | HTTP MCP, JSON-RPC | `/mcp` — `memory_search` per turn, `memory_list` for core, `memory_days` for upkeep. *2.3:* `/mcp/memory` on the engine's port; 9528 no longer answers |
+| Plugin hooks | HTTP MCP, JSON-RPC | `memory_search` per turn, `memory_search op=list` for core, `memory_upkeep op=days` for upkeep. *2.3:* the engine's port, `/mcp/memory` (retired in 2.5); *2.5:* `/mcp`; 9528 no longer answers |
 | Plugin hooks (local only) | spawn the CLI | `ling-mem status`, `start` — daemon lifecycle, skipped on a remote host. *2.3:* `~/.local/bin/ling-mem` is the engine's stand-in: `status` says running at the engine's version, `start`/`restart` do nothing |
 | Linggen UI | WebRTC | Settings → Memory — rows, days and review queue; scan via `/linggen:scan` in the Claude Code / Codex plugin |
 
@@ -166,12 +163,12 @@ cannot point it elsewhere.
 | Caller | Route | Needs the engine? |
 |:--|:--|:--|
 | Linggen's own agents | `mcp__memory__memory_*` → hosted `/mem/mcp` | yes |
-| Outside agent via the plugin | engine `/mcp/memory` | yes |
+| Outside agent via the plugin | engine `/mcp` (the five memory tools among twelve) | yes |
 | Plugin hooks, any agent with Bash | `ling mem` CLI → hosted store, or direct under lock | no |
-| A second machine's agents | engine `/mcp/memory` + `x-linggen-device` | yes |
+| A second machine's agents | engine `/mcp` + `x-linggen-device` (the five memory tools only) | yes |
 
-Any MCP-capable agent can add `http://127.0.0.1:9527/mcp/memory` as an
-MCP server (tools only). A plugin-only second machine needs the engine's URL
+Any MCP-capable agent can add `http://127.0.0.1:9527/mcp` as an
+MCP server. A plugin-only second machine needs the engine's URL
 and a device token, not a store of its own.
 
 **Out of the Mac**
@@ -193,32 +190,27 @@ three days: it addressed `/mcp` for tools the engine had stopped serving, and
 failed silently because the phone reads a missing `result` as "no Mac". Fixed
 2026-07-30 by the passthrough above.
 
-## `ling-mem`'s own `/mcp` — the promoted path now
+## Memory over MCP — one door (2.5)
 
-It was built for outside agents first (`3df4919`, 2026-05-27: "HTTP endpoint
-serving 5 memory tools to CC/Codex/Cursor") — six weeks *before* the engine had
-a `/mcp` at all. `mcp-spec.md` (2026-07-10) then chose one front door for every
-channel and this became the unpromoted one; **that choice was reversed on
-2026-07-29**, and the reversal is written into `mcp-spec.md` itself rather than
-left as a stale page asserting the opposite.
+Memory is served on the engine's `/mcp` with the engine's other tools: twelve
+tools, five of them memory. The engine's own agents use the built-in memory
+server (`/mem/mcp`, this machine only), the plugin's Claude Code / Codex
+sessions use the one `linggen` server entry, the plugin's hooks use curl, and a
+second machine on the LAN uses `/mcp` with its device token and sees the five
+memory tools only. `/mcp/memory` answers 410 `UPGRADE_PLUGIN` (a plugin that
+still points there is told to update and restart its host); nothing is
+forwarded.
 
-Fourteen tools, and everything is on them: the engine's own agents by its MCP
-client, the plugin's Claude Code / Codex sessions by their second server entry,
-the plugin's hooks by curl, and a second machine on the LAN directly. The
-engine's proxy was **cut** on 2026-07-30 in the same release — each tool served
-in exactly one place, which is the point.
+*History.* Memory's own MCP server (`ling-mem`'s `/mcp`, built 2026-05-27) was
+the promoted memory endpoint from 2026-07-29 to 2.2, beside the engine's `/mcp`,
+so a plugin had two server entries. 2.3 moved it onto the engine's port as
+`/mcp/memory` (retired in 2.5); 2.5 merged the two servers into one (`mcp-spec.md` § History).
 
-Two tools do NOT leave `ling`: `memory_dream_status` and `memory_dream_run` are
-**engine** capabilities. The first composes the daemon's rollup with the
-engine's in-flight run state; the second drives the mission executor. `ling-mem`
-cannot serve either. (`mcp-client-spec.md`'s blanket "`memory_*` is removed" is
-wrong on exactly these two.)
-
-The dispatch-normalisation step now lives in one place — `ling-mem`'s
-`src/http/mcp.rs`. Those fixes exist because *models* fill arguments in sloppily
-(`until: ""`, empty arrays narrowing to nothing); CLI arguments come from clap,
-typed, from a human, and REST callers are programs. The engine's copy went with
-the tools.
+The dispatch-normalisation step lives in one place, memory's MCP layer
+(`crates/linggen-memory/src/http/mcp.rs`). Those fixes exist because *models*
+fill arguments in sloppily (`until: ""`, empty arrays narrowing to nothing);
+CLI arguments come from clap, typed, from a human, and REST callers are
+programs.
 
 ## Where an address comes from, today
 
@@ -233,7 +225,7 @@ mistake — on a second machine they are facts about different computers.
 | Daemon | Reads | Notes |
 |:--|:--|:--|
 | `ling` | `[server].url` in `linggen.runtime.toml` | `--port` / `LINGGEN_PORT` override; legacy `host`+`port` still parse and say so at startup |
-| `ling-mem` | `--port` / `--host` | no config file; publishes `daemon.json`. *2.3:* gone; memory is `/mem` and `/mcp/memory` on the engine's port (this machine; an approved machine reaches `/mcp/memory` and the replica protocol); nothing on 9528 |
+| `ling-mem` | `--port` / `--host` | no config file; publishes `daemon.json`. *2.3:* gone; memory is `/mem` and `/mcp` on the engine's port (this machine; an approved machine reaches `/mcp` — the memory tools — and the replica protocol); nothing on 9528 |
 
 Nothing else asserts a bind address. The app shell and the plugin's autostart
 both **read** `[server].url` and no longer pass `--port` — they used to assert
@@ -267,7 +259,7 @@ left in `src/`.)
 
 **A second machine, end to end.** *2.3:* machines share memory as primary
 and replicas, each Linggen with its own store; a machine with only a plugin
-points it at another machine's `/mcp/memory` with that machine's token. Both
+points it at another machine's `/mcp` with that machine's token. Both
 paths run between two engines on one Mac over its LAN address; nobody has yet
 done it from a real second machine. The plugin lives in this repo
 (`plugins/linggen`); its entries and hooks use the engine's port, and an

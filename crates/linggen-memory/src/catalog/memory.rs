@@ -1,9 +1,9 @@
 //! Memory's branches: the seventeen verbs a host reaches over MCP, each one
-//! entry that is both its legacy tool (`memory_list`, as published since
-//! 1.x) and its branch of a folded tool (`memory_search` op `list`), and the
-//! adapters every caller of a memory branch shares — the arguments repaired
-//! the way models get them wrong, the store's answer read back, and the
-//! answers a model reliably misreads said plainly.
+//! entry that is its `op` of one of the five memory tools (`memory_search`
+//! op `list`), the names those verbs had before the tools were folded, and
+//! the adapters every caller of a memory branch shares — the arguments
+//! repaired the way models get them wrong, the store's answer read back,
+//! and the answers a model reliably misreads said plainly.
 //!
 //! Every branch here runs in the store alone: none needs an account or a
 //! generative model, and all are visible to an approved computer as well as
@@ -11,7 +11,7 @@
 //! (`dream_status`, `dream_run`) to `memory_upkeep` when it composes its
 //! catalogue.
 
-use super::{Branch, Catalog, ToolDoc, Views};
+use super::{Branch, Catalog, Retired, ToolDoc, Views};
 use crate::call::Who;
 use crate::http::envelope::ApiError;
 use crate::http::state::SharedState;
@@ -26,21 +26,21 @@ use std::time::Duration;
 /// and the CLI wait, so the caller hears this daemon's own timeout message.
 pub const CALL_TIMEOUT_MS: u64 = 25_000;
 
-/// The folded memory tools, in the order a host lists them.
+/// The memory tools, in the order a host lists them.
 pub const TOOLS: &[ToolDoc] = &[
     ToolDoc {
         name: "memory_search",
-        description: "Read memory. With only a query (op omitted, or op=semantic): rows ranked by relevance — who the user is, their preferences and decisions, not codebase facts. op=get fetches one row by id; op=list browses by filters without ranking (audits, a day's worklist). Pass the fewest filters that answer the question.",
+        description: "Read memory. With only a query (op omitted, or op=semantic): rows ranked by relevance — who the user is, their preferences and decisions, not codebase facts. op=get fetches one row by id; op=list browses by filters without ranking (audits, a day's worklist). Pass the fewest filters that answer the question; scope_root is the host's to fill.",
         implicit_op: Some("semantic"),
     },
     ToolDoc {
         name: "memory_add",
-        description: "Save one durable row — identity, a preference, a decision with its why — not project internals or secrets. Default tier episodic, from derived. Merge your own rows atomically with replace_ids; replacing a from=user row needs the user's answer and user_directed:true. occurred_at (RFC 3339) dates an imported or promoted row.",
+        description: "Save one durable row — identity, a preference, a decision with its why — not project internals or secrets. Default tier episodic, from derived; the user's own words are from=user. scope is the directory the row is about (one of the session's scope candidates), global:true when it is about the person. A standing rule gets indexed:true and a one-line summary. host, source_session, cwd and root are the host's to fill. Merge your own rows atomically with replace_ids, never add then delete; replacing a from=user row needs the user's answer and user_directed:true. occurred_at (RFC 3339) dates an imported or promoted row.",
         implicit_op: None,
     },
     ToolDoc {
         name: "memory_update",
-        description: "Edit one row in place by id (content, type, tier, scope, summary, indexed); a tier change keeps the id. Rewriting a from=user row's content needs user_directed. To merge several rows use memory_add with replace_ids.",
+        description: "Edit one row in place by id (content, type, tier, scope or global, summary, indexed); a tier change keeps the id. Rewriting a from=user row's content needs the user's answer and user_directed:true. To merge several rows use memory_add with replace_ids.",
         implicit_op: None,
     },
     ToolDoc {
@@ -50,18 +50,35 @@ pub const TOOLS: &[ToolDoc] = &[
     },
     ToolDoc {
         name: "memory_upkeep",
-        description: "Memory upkeep, one op per step of the scan, dream and solve runbooks: session_start (hosts call it), harvest_day, days, remember_day, dream_lease, role, sweep, issues, issue_add, issue_resolve, chains, and where Linggen runs them dream_status and dream_run. Each op keeps its own checks: past local days only, the lease and the primary.",
+        description: "Memory upkeep, one op per step of the scan, dream and solve runbooks (the Linggen plugin's skill references). Ops here: {ops}. session_start is the host's call at session start. Each op keeps its own checks: past local days only, the dream lease, the primary. issues lists the review queue; you solve each item from evidence and close it with issue_resolve.",
         implicit_op: None,
     },
 ];
 
-/// Memory's branches, in the order the legacy server lists its tools.
+/// The names memory's verbs were published under before the tools were
+/// folded. A host calling one has an old plugin: it is told to update.
+pub const RETIRED: &[Retired] = &[
+    Retired { name: "memory_list", now: "memory_search op=list" },
+    Retired { name: "memory_get", now: "memory_search op=get" },
+    Retired { name: "memory_session_start", now: "memory_upkeep op=session_start" },
+    Retired { name: "memory_harvest_day", now: "memory_upkeep op=harvest_day" },
+    Retired { name: "memory_days", now: "memory_upkeep op=days" },
+    Retired { name: "memory_remember_day", now: "memory_upkeep op=remember_day" },
+    Retired { name: "memory_dream_lease", now: "memory_upkeep op=dream_lease" },
+    Retired { name: "memory_role", now: "memory_upkeep op=role" },
+    Retired { name: "memory_sweep", now: "memory_upkeep op=sweep" },
+    Retired { name: "memory_issues", now: "memory_upkeep op=issues" },
+    Retired { name: "memory_issue_add", now: "memory_upkeep op=issue_add" },
+    Retired { name: "memory_issue_resolve", now: "memory_upkeep op=issue_resolve" },
+    Retired { name: "memory_chains", now: "memory_upkeep op=chains" },
+];
+
+/// Memory's branches.
 pub const BRANCHES: &[Branch<&str>] = &[
     Branch {
-        tool: Some("memory_search"),
+        tool: "memory_search",
         op: "semantic",
-        legacy: Some("memory_search"),
-        description: "Semantic search over user-biography memory. Returns rows ranked by relevance to the query. Memory holds cross-session identity, preferences, and decisions — not codebase facts.",
+        note: "",
         schema: || json!({
             "type": "object",
             "properties": {
@@ -90,10 +107,9 @@ pub const BRANCHES: &[Branch<&str>] = &[
         dispatch: "search",
     },
     Branch {
-        tool: Some("memory_search"),
+        tool: "memory_search",
         op: "list",
-        legacy: Some("memory_list"),
-        description: "Filter-only browse (no relevance ranking). For audits, sweeps, or showing recent rows. Pass minimal filters — narrow schemas avoid the over-constrain-to-zero failure.",
+        note: "",
         schema: || json!({
             "type": "object",
             "properties": {
@@ -118,10 +134,9 @@ pub const BRANCHES: &[Branch<&str>] = &[
         dispatch: "list",
     },
     Branch {
-        tool: Some("memory_upkeep"),
+        tool: "memory_upkeep",
         op: "session_start",
-        legacy: Some("memory_session_start"),
-        description: "What a session loads at start: the core rows (who the user is), and — for a cwd — the scope candidates line and the index (summaries of indexed rows filed at that directory or a parent). Returns {core, index, candidates, block, chars}; `block` is markdown ready to inject. Hosts call this; a model rarely needs to.",
+        note: "",
         schema: || json!({
             "type": "object",
             "properties": {
@@ -138,10 +153,9 @@ pub const BRANCHES: &[Branch<&str>] = &[
         dispatch: "session_start",
     },
     Branch {
-        tool: Some("memory_search"),
+        tool: "memory_search",
         op: "get",
-        legacy: Some("memory_get"),
-        description: "Fetch one row by id.",
+        note: "",
         schema: || json!({
             "type": "object",
             "properties": { "id": {"type": "string"} },
@@ -156,10 +170,9 @@ pub const BRANCHES: &[Branch<&str>] = &[
         dispatch: "get",
     },
     Branch {
-        tool: Some("memory_add"),
+        tool: "memory_add",
         op: "add",
-        legacy: Some("memory_add"),
-        description: "Insert a new memory row. Only durable, cross-session signal — identity facts, behavioural preferences, decisions with their reasoning. NOT project-internal architecture or implementation detail.",
+        note: "",
         schema: || json!({
             "type": "object",
             "properties": {
@@ -189,10 +202,9 @@ pub const BRANCHES: &[Branch<&str>] = &[
         dispatch: "add",
     },
     Branch {
-        tool: Some("memory_delete"),
+        tool: "memory_delete",
         op: "delete",
-        legacy: Some("memory_delete"),
-        description: "Hard-delete one row by id. For explicit user forgets, exact duplicates, and secrets. For conflict or merge resolution prefer memory_add with replace_ids — one atomic call, never add + delete.",
+        note: "",
         schema: || json!({
             "type": "object",
             "properties": { "id": {"type": "string"} },
@@ -207,10 +219,9 @@ pub const BRANCHES: &[Branch<&str>] = &[
         dispatch: "delete",
     },
     Branch {
-        tool: Some("memory_update"),
+        tool: "memory_update",
         op: "update",
-        legacy: Some("memory_update"),
-        description: "Edit one row in place by id (content, type, tier, scope, summary, indexed). A tier change moves the row across tables (episodic ↔ semantic/core) keeping its id. Rewriting content on a from=user row requires user_directed (same floor as memory_add's replace_ids). For merging MULTIPLE rows prefer memory_add with replace_ids.",
+        note: "",
         schema: || json!({
             "type": "object",
             "properties": {
@@ -235,10 +246,9 @@ pub const BRANCHES: &[Branch<&str>] = &[
         dispatch: "update",
     },
     Branch {
-        tool: Some("memory_upkeep"),
+        tool: "memory_upkeep",
         op: "harvest_day",
-        legacy: Some("memory_harvest_day"),
-        description: "Stamp a day harvested after a scan/backfill pass staged its episodic rows (does NOT mark it remembered — the dream's remember pass still judges it). Only past local days.",
+        note: "",
         schema: || json!({
             "type": "object",
             "properties": {
@@ -255,10 +265,9 @@ pub const BRANCHES: &[Branch<&str>] = &[
         dispatch: "harvest_day",
     },
     Branch {
-        tool: Some("memory_upkeep"),
+        tool: "memory_upkeep",
         op: "days",
-        legacy: Some("memory_days"),
-        description: "Per-day dream-state rollup: each day's episodic row counts + per-verb flags (scanned = a scan walked its session logs; dreamed = a dream pass judged it, late rows clear the flag). Top level carries first_unscanned / first_undreamed / open_issues plus past-day summary counts (total_days / scanned_days / dreamed_days). Use undreamed_only to get the dream worklist — days awaiting a dream pass, oldest first.",
+        note: "",
         schema: || json!({
             "type": "object",
             "properties": {
@@ -276,10 +285,9 @@ pub const BRANCHES: &[Branch<&str>] = &[
         dispatch: "days",
     },
     Branch {
-        tool: Some("memory_upkeep"),
+        tool: "memory_upkeep",
         op: "remember_day",
-        legacy: Some("memory_remember_day"),
-        description: "Stamp a day remembered after judging its episodic rows (promote the durable ones first via memory_add, then stamp). Counts accumulate. Only past local days can be stamped.",
+        note: "",
         schema: || json!({
             "type": "object",
             "properties": {
@@ -299,10 +307,9 @@ pub const BRANCHES: &[Branch<&str>] = &[
         dispatch: "remember_day",
     },
     Branch {
-        tool: Some("memory_upkeep"),
+        tool: "memory_upkeep",
         op: "dream_lease",
-        legacy: Some("memory_dream_lease"),
-        description: "Take (acquire), extend (renew) or free (release) the per-day dream lock before judging a day — one executor per day. Refused when another holder is dreaming that day, or when this machine is a replica (memory is dreamed on the primary): then stop and tell the user the reason verbatim.",
+        note: "",
         schema: || json!({
             "type": "object",
             "properties": {
@@ -321,10 +328,9 @@ pub const BRANCHES: &[Branch<&str>] = &[
         dispatch: "dream_lease",
     },
     Branch {
-        tool: Some("memory_upkeep"),
+        tool: "memory_upkeep",
         op: "role",
-        legacy: Some("memory_role"),
-        description: "Is this machine's memory the primary or a replica? Returns role, upstream, online, last_sync and queued writes. Dream and solve run only on the primary.",
+        note: "",
         schema: || json!({ "type": "object", "properties": {} }),
         extra: None,
         hidden: &[],
@@ -335,10 +341,9 @@ pub const BRANCHES: &[Branch<&str>] = &[
         dispatch: "role",
     },
     Branch {
-        tool: Some("memory_upkeep"),
+        tool: "memory_upkeep",
         op: "sweep",
-        legacy: Some("memory_sweep"),
-        description: "Forget sweep — mechanically evict episodic rows that are past TTL, belong to a remembered day, and were judged (created before the day's remembered_at). Never deletes un-judged rows; safe to call anytime.",
+        note: "",
         schema: || json!({
             "type": "object",
             "properties": {
@@ -354,10 +359,9 @@ pub const BRANCHES: &[Branch<&str>] = &[
         dispatch: "sweep",
     },
     Branch {
-        tool: Some("memory_upkeep"),
+        tool: "memory_upkeep",
         op: "issues",
-        legacy: Some("memory_issues"),
-        description: "Review queue — the leftovers the dream could not settle itself: a user-voice row that would change, rows the user must pick between, or evidence the dream could not read (status=resolved/dismissed lists what the dream settled, with its why). Returns the facts only; YOU are the solver: solve each item yourself first — gather evidence (full rows, git history, code, docs) until it settles the question — and write the fix via memory_add + replace_ids, then close the item with memory_issue_resolve. Ask the user only when evidence cannot settle it or a user-voice row is involved: ONE item at a time, phrased as a simple fact question in plain words with your recommendation — no row ids, commit hashes, or cluster jargon.",
+        note: "",
         schema: || json!({
             "type": "object",
             "properties": {
@@ -374,10 +378,9 @@ pub const BRANCHES: &[Branch<&str>] = &[
         dispatch: "issues",
     },
     Branch {
-        tool: Some("memory_upkeep"),
+        tool: "memory_upkeep",
         op: "issue_add",
-        legacy: Some("memory_issue_add"),
-        description: "Queue one review item. Settle it yourself first from evidence (full rows, a newer row on the subject, git/code/docs when you have them); queue an open item only when a from=user row would change, the user must pick between rows, or the evidence is out of reach here. A ruling you settled yourself is recorded by queuing it and closing it at once with memory_issue_resolve — the closed item is the record and stops the scans re-serving those rows. Idempotent per (kind, row_ids) while open: re-queuing returns the existing item. The note is one plain-word question with your recommendation — it may reach the user as is.",
+        note: "",
         schema: || json!({
             "type": "object",
             "properties": {
@@ -396,14 +399,13 @@ pub const BRANCHES: &[Branch<&str>] = &[
         dispatch: "issue_add",
     },
     Branch {
-        tool: Some("memory_upkeep"),
+        tool: "memory_upkeep",
         op: "issue_resolve",
-        legacy: Some("memory_issue_resolve"),
-        description: "Close one review-queue item by id after solving it (outcome=resolved) or deciding it isn't worth fixing (outcome=dismissed). Pass a one-line note of what was done. Closing an already-closed item is a no-op success.",
+        note: "",
         schema: || json!({
             "type": "object",
             "properties": {
-                "id":      {"type": "string", "description": "The issue id from memory_issues."},
+                "id":      {"type": "string", "description": "The issue id from op=issues."},
                 "outcome": {"type": "string", "enum": ["resolved", "dismissed"]},
                 "note":    {"type": "string", "description": "One-line record of what was done."}
             },
@@ -418,10 +420,9 @@ pub const BRANCHES: &[Branch<&str>] = &[
         dispatch: "issue_resolve",
     },
     Branch {
-        tool: Some("memory_upkeep"),
+        tool: "memory_upkeep",
         op: "chains",
-        legacy: Some("memory_chains"),
-        description: "Condense scan — mechanical, read-only detection of stale same-subject clusters in long-term memory. kind=cited: rows citing another row's id verbatim, grouped into chains (auto-accept quality). kind=marker: rows with provisional-state language (\"OPEN:\", \"uncommitted\", …) plus nearest-neighbor rows — confirm a real supersession before merging. kind=subject: same-subject vector clusters (3+ rows) for the digest pass — condense into ONE focused per-subject row, never a mega state row. Each cluster carries derived_only: merge unattended ONLY when true (the merge law); user-voice clusters need the user. Apply merges via memory_add with replace_ids.",
+        note: "",
         schema: || json!({
             "type": "object",
             "properties": {
@@ -482,49 +483,11 @@ fn page_rule(obj: &Map<String, Value>) -> Result<(), String> {
 /// memory tools a host's catalogue composes.
 pub fn catalog() -> &'static Catalog<&'static str> {
     static CATALOG: LazyLock<Catalog<&'static str>> = LazyLock::new(|| {
-        Catalog::new(TOOLS.to_vec(), BRANCHES.to_vec()).expect("memory's catalogue is consistent")
+        Catalog::new(TOOLS.to_vec(), BRANCHES.to_vec(), RETIRED.to_vec()).expect("memory's catalogue is consistent")
     });
     &CATALOG
 }
 
-/// A legacy call's arguments brought to the types its schema declares.
-///
-/// Models do not always honour a schema's types: a Claude Code session sent
-/// `memory_add` `{"indexed": "false"}` (2026-10-04). The daemon's REST DTOs
-/// are typed, so axum refused the body with a plain-text 422 and the call
-/// died as "error decoding response body". The schema is the contract the
-/// model was shown, so it is the right key for repair: `"true"`/`"false"`
-/// on a boolean field become booleans, a numeric string on a number field
-/// becomes a number, and a lone string on an array field becomes a
-/// one-element array. Anything that does not convert cleanly is left as it
-/// came, and the daemon's error names it.
-///
-/// A key the schema does not advertise (the REST DTO takes more than the
-/// model is shown — `skip_dedup`, `force`, …) has no declared type to go
-/// by; there a `"true"`/`"false"` string becomes a boolean, the one shape
-/// that is never a meaningful string. `memory_add {"skip_dedup": "true"}`
-/// was a 422 before.
-pub fn coerce_legacy<D: Copy + 'static>(branch: &Branch<D>, args: &mut Value) {
-    let Some(obj) = args.as_object_mut() else {
-        return;
-    };
-    let props = (branch.schema)()["properties"]
-        .as_object()
-        .cloned()
-        .unwrap_or_default();
-    for (key, value) in obj.iter_mut() {
-        let kind = match props.get(key) {
-            Some(p) => match p["type"].as_str() {
-                Some(kind) => kind,
-                None => continue,
-            },
-            None => "boolean",
-        };
-        if let Some(fixed) = super::check::coerce_value(kind, value) {
-            *value = fixed;
-        }
-    }
-}
 
 /// Dispatch-boundary fixes ported from `linggen/src/engine/tools/memory_tool.rs`.
 /// These compensate for shapes models commonly produce that the daemon

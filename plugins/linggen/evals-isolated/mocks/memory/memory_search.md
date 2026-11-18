@@ -1,6 +1,0 @@
----
-expect:
-  query: string
----
-
-[]

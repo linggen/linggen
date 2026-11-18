@@ -1,7 +1,5 @@
-//! Memory's MCP endpoints on the router: the legacy surface
-//! (`/mcp/legacy`, what Claude Code and Codex reach through the engine's
-//! `/mcp/memory`) and the folded one (`/mcp`, the engine's own agents).
-//! Their `tools/call` answers a verb as the store's own
+//! Memory's MCP endpoint on the router (`/mcp`, the engine's own agents at
+//! `/mem/mcp`). Its `tools/call` answers a verb as the store's own
 //! `/api/memory/<verb>` route answers it, in-process.
 
 use crate::support::*;
@@ -42,27 +40,8 @@ async fn initialize_and_tools_list() {
         .collect();
     assert_eq!(
         names,
-        [
-            "memory_search",
-            "memory_list",
-            "memory_session_start",
-            "memory_get",
-            "memory_add",
-            "memory_delete",
-            "memory_update",
-            "memory_harvest_day",
-            "memory_days",
-            "memory_remember_day",
-            "memory_dream_lease",
-            "memory_role",
-            "memory_sweep",
-            "memory_issues",
-            "memory_issue_add",
-            "memory_issue_resolve",
-            "memory_chains",
-        ]
+        ["memory_search", "memory_add", "memory_update", "memory_delete", "memory_upkeep"]
     );
-    assert_eq!(names.len(), 17);
     for t in tools.as_array().unwrap() {
         assert!(
             t["description"].as_str().is_some_and(|d| !d.is_empty()),
@@ -98,7 +77,7 @@ async fn add_search_list_and_delete_through_tools_call() {
     assert_eq!(hits[0]["id"], id);
     assert!(hits[0].get("vector").is_none());
 
-    let listed = call(&m, "memory_list", json!({"tier": "semantic", "limit": "5"})).await;
+    let listed = call(&m, "memory_search", json!({"op": "list", "tier": "semantic", "limit": "5"})).await;
     assert_eq!(listed, json!([added["fact"]]));
 
     let removed = call(&m, "memory_delete", json!({"id": id})).await;
@@ -211,7 +190,7 @@ async fn refusals_are_json_rpc_errors() {
 /// (`isError`), or its JSON-RPC error message.
 async fn folded(m: &Mem, tool: &str, args: Value) -> Result<Value, String> {
     let env = m
-        .mcp_folded("tools/call", json!({"name": tool, "arguments": args}))
+        .mcp("tools/call", json!({"name": tool, "arguments": args}))
         .await;
     if let Some(message) = env["error"]["message"].as_str() {
         return Err(message.to_string());
@@ -223,16 +202,15 @@ async fn folded(m: &Mem, tool: &str, args: Value) -> Result<Value, String> {
     Ok(serde_json::from_str(text).unwrap())
 }
 
-/// `/mcp`: the five folded tools, the same server text, and the store's
+/// `/mcp`: the five tools, the server text, and the store's
 /// work through them; a retired name is unknown (no alias), and nothing of
 /// the engine — its dream branches, its agents — is reachable.
 #[tokio::test]
 async fn the_folded_surface_is_five_tools_and_memory_alone() {
     let m = Mem::start().await;
-    let init = m.mcp_folded("initialize", json!({})).await["result"].clone();
-    let legacy_init = m.mcp("initialize", json!({})).await["result"].clone();
-    assert_eq!(init, legacy_init, "one server, one text");
-    let tools = m.mcp_folded("tools/list", json!({})).await["result"]["tools"].clone();
+    let init = m.mcp("initialize", json!({})).await["result"].clone();
+    assert!(init["instructions"].as_str().unwrap().contains("memory_search"), "{init}");
+    let tools = m.mcp("tools/list", json!({})).await["result"]["tools"].clone();
     let names: Vec<&str> = tools.as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
     assert_eq!(
         names,

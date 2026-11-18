@@ -263,7 +263,7 @@ def watch(mcp, engine, session, deadline, out):
             if ws:
                 ws.close()
         if final is None:
-            st = mcp.call_json("agent_status", {"session_id": session})
+            st = mcp.call_json("agent_status", {"op": "session", "session_id": session})
             for request in st.get("pending") or []:
                 deny(request)
             if not st.get("running") and st.get("status") and not st.get("pending"):
@@ -271,10 +271,10 @@ def watch(mcp, engine, session, deadline, out):
     if final is None:
         out["error"] = "timed out"
         try:
-            mcp.call("agent_stop", {"session_id": session})
+            mcp.call("agent_end", {"op": "stop", "session_id": session})
         except McpError:
             pass
-    st = mcp.call_json("agent_status", {"session_id": session})
+    st = mcp.call_json("agent_status", {"op": "session", "session_id": session})
     for request in st.get("pending") or []:
         deny(request)
     reply = (final or {}).get("reply") or st.get("reply") or ""
@@ -286,7 +286,7 @@ def watch(mcp, engine, session, deadline, out):
     # Read the count while the session is still there, before it is closed.
     out["tool_calls"] = count_tool_calls(engine, session)
     try:
-        mcp.call("agent_session_close", {"session_id": session})
+        mcp.call("agent_end", {"op": "close", "session_id": session})
     except McpError:
         pass
 
@@ -335,12 +335,14 @@ def preflight_linggen(args):
     run_tool = tools.get("agent_run")
     if not run_tool:
         raise McpError("this engine's /mcp has no agent_run")
+    if "agent_end" not in tools:
+        raise McpError("this engine's /mcp has no agent_end (older than the one door; update Linggen)")
     if "work" not in run_tool.get("inputSchema", {}).get("properties", {}):
         raise McpError("this engine's agent_run has no `work` option (older than 3.0)")
     if args.model:
-        text, _ = mcp.call("agent_models", {}, timeout=ASK_TIMEOUT_S)
+        text, _ = mcp.call("agent_status", {"op": "models"}, timeout=ASK_TIMEOUT_S)
         if args.model not in text:
-            print("warning: model %r not seen in agent_models:\n%s" % (args.model, text), file=sys.stderr)
+            print("warning: model %r not seen in agent_status op=models:\n%s" % (args.model, text), file=sys.stderr)
 
 
 # ======================================================================
@@ -599,7 +601,7 @@ def parse_args(argv=None):
     ap.add_argument("--dry-run", action="store_true", help="apply canned changes; no engine, no model, no claude")
     ap.add_argument("--yes", action="store_true", help="a live run spends model quota and Claude Code usage: confirm it")
     ap.add_argument("--engine", default=DEFAULT_ENGINE, help="Linggen engine address (default %(default)s)")
-    ap.add_argument("--model", help="Linggen model id for the code and plain arms (agent_models lists them)")
+    ap.add_argument("--model", help="Linggen model id for the code and plain arms (agent_status op=models lists them)")
     ap.add_argument("--claude-model", help="model for the claude arm (default: Claude Code's own)")
     ap.add_argument("--claude-bin", default="claude", help="the Claude Code executable (default %(default)s)")
     ap.add_argument("--claude-args", default="", help="extra flags for claude, split on spaces")

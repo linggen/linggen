@@ -52,8 +52,9 @@ mem_health() { wait_http http://127.0.0.1:9528/api/health "${1:-60}"; }
 mem_version() { curl -fsS -m 3 http://127.0.0.1:9528/api/health 2>/dev/null | jq -r '.data.version // empty'; }
 
 # ── Memory inside the engine ──────────────────────────────────────────────
-# The engine serves memory at /mem/* and /mcp/memory on its own port, and
-# nothing listens on 127.0.0.1:9528 any more. EP is the engine's port, LP the
+# The engine serves memory at /mem/* and, for hosts, at its one MCP door /mcp
+# on its own port; the retired /mcp/memory only answers 410 "update the
+# plugin". Nothing listens on 127.0.0.1:9528 any more. EP is the engine's port, LP the
 # old ling-mem daemon's (a 2.2.1 baseline and a rollback to it serve there);
 # other values only for a rehearsal outside a VM.
 EP="${GATE_ENGINE_PORT:-9527}"
@@ -74,17 +75,30 @@ mem_post() { # base path json → memory's envelope
   curl -sS -m 120 -X POST -H 'content-type: application/json' -d "$3" "$1$2" 2>&1
 }
 
-# initialize + tools/list on an MCP URL; MCP_DETAIL says what answered.
-mcp_answers() { # url
-  local init list n
+# initialize + tools/list on an MCP URL, listing TOOL (default memory_search);
+# MCP_DETAIL says what answered.
+mcp_answers() { # url [tool]
+  local init list n want="${2:-memory_search}"
   init="$(mem_post "$1" "" '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"linggen-gate","version":"1"}}}')"
   list="$(mem_post "$1" "" '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')"
   n="$(jq -r '[.result.tools[]?.name] | length' <<<"$list" 2>/dev/null)"
   MCP_DETAIL="server $(jq -r '.result.serverInfo.name // "?"' <<<"$init" 2>/dev/null) $(jq -r '.result.serverInfo.version // ""' <<<"$init" 2>/dev/null), $n tools"
   jq -e '.result.protocolVersion' >/dev/null 2>&1 <<<"$init" \
-    && jq -e '[.result.tools[]?.name] | index("memory_search") != null' >/dev/null 2>&1 <<<"$list" && return 0
+    && jq -e --arg w "$want" '[.result.tools[]?.name] | index($w) != null' >/dev/null 2>&1 <<<"$list" && return 0
   MCP_DETAIL="initialize: $(head -c 120 <<<"$init") / tools/list: $(head -c 120 <<<"$list")"
   return 1
+}
+
+# The retired memory door: refused with 410 and code UPGRADE_PLUGIN, never
+# served — what a host with the old plugin's `memory` server gets.
+# RETIRED_DETAIL says what answered.
+mcp_retired() { # url
+  local out code body
+  out="$(curl -sS -m 10 -w '\n%{http_code}' -X POST -H 'content-type: application/json' \
+    -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"linggen-gate","version":"1"}}}' "$1" 2>&1)"
+  code="${out##*$'\n'}"; body="${out%$'\n'*}"
+  RETIRED_DETAIL="HTTP $code: $(head -c 160 <<<"$body")"
+  [ "$code" = 410 ] && jq -e '.code == "UPGRADE_PLUGIN"' >/dev/null 2>&1 <<<"$body"
 }
 
 is_standin() { head -c 300 "$1" 2>/dev/null | grep -qF "$STANDIN_MARK"; }
@@ -275,6 +289,8 @@ check_plugins() { # label rc log
     check "$1: claude has no $OLD_PLUGIN_ID" $? "$(claude_plugin_block "$OLD_PLUGIN_ID" | tr '\n' ' ' | cut -c1-200)"
     [ -n "$root" ] && diff -rq "$root/hooks" "$OUT/bundle/plugins/linggen/hooks" >/dev/null
     check "$1: claude loads this release's hooks" $? "hooks at '${root:-none}' differ from the release's"
+    [ -n "$root" ] && jq -e '(.mcpServers | keys) == ["linggen"] and (.mcpServers.linggen.url | endswith("/mcp"))' "$root/.mcp.json" >/dev/null 2>&1
+    check "$1: claude's plugin declares one linggen server at /mcp" $? "$(jq -c '.mcpServers | map_values(.url)' "$root/.mcp.json" 2>&1 | head -c 200)"
   else
     gap "$1: claude plugin" "no claude CLI here"
   fi

@@ -36,8 +36,7 @@ pub enum PlaceReach {
 const WIDER_SCOPE: &[&str] = &["cwd", "scope", "root", "scope_root"];
 
 /// Memory's operations, each classed once by the verb its branch runs
-/// (`ling_mem::catalog::memory`): a folded call by the branch its `op`
-/// names, an older server's legacy tool by the branch it was. An
+/// (`ling_mem::catalog::memory`): a call by the branch its `op` names. An
 /// operation that is not here carries words out until it is looked at
 /// (`tests`).
 const MEMORY_REACH: &[(&str, PlaceReach)] = &[
@@ -61,14 +60,15 @@ const MEMORY_REACH: &[(&str, PlaceReach)] = &[
 ];
 
 /// The class of a call of the memory server's tool `name` (its own name,
-/// unqualified) with `args`: its branch's. A folded call that names no
-/// branch (the server refuses it) is its tool's class when every branch of
-/// the tool has the same one, else it fails closed.
+/// unqualified) with `args`: its branch's. A call that names no branch
+/// (the server refuses it) is its tool's class when every branch of the
+/// tool has the same one, else it fails closed; a name that is no tool (a
+/// retired one included) fails closed.
 fn memory_reach(name: &str, args: &Value) -> PlaceReach {
     use ling_mem::catalog::View;
     let cat = ling_mem::catalog::memory::catalog();
     if !cat.tools().iter().any(|t| t.name == name) {
-        return cat.legacy_branch(name).map_or(PlaceReach::CarriesOut, |b| verb_reach(b.dispatch));
+        return PlaceReach::CarriesOut;
     }
     if let Some(branch) = cat.branch_of(View::Local, name, args) {
         return verb_reach(branch.dispatch);

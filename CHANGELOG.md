@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-Ships as 2.4, on the Mac and the iPhone together.
+Ships as 2.4, on the Mac and the iPhone together. The MCP entries ship as 2.5.
 
 - **One Ling and one Yinyue across apps.** App chats, Yinyue's moments and
   the phone's hand-offs share one conversation a day — Linggen's daily
@@ -98,6 +98,18 @@ Ships as 2.4, on the Mac and the iPhone together.
 - **A long name on a crowded 灵境 field card** no longer runs into its status.
 - **灵境: a won story fight shows one 所得 card** with everything it paid, and
   啸月 is greyed while none of his bodies stands.
+- **One MCP door at /mcp with twelve tools** (memory 5, agents 4, browser 3),
+  in place of two servers with 41 tools. A tool with several jobs takes an
+  `op`.
+- **The X tools left the door.** The browser bridge's X module stays for
+  Linggen's own apps.
+- **`agent_status op=models` says which model can be used now** and, for one
+  that cannot, why and what to do.
+- **A run that stops on a usage limit says so**, with its reset time
+  (`cannot_run`); the server text tells a caller not to retry before it.
+- **An old plugin is told to update.** `/mcp/memory` answers 410
+  `UPGRADE_PLUGIN`; nothing is forwarded.
+- **An approved computer sees the five memory tools only.**
 
 ### For developers / under the hood
 

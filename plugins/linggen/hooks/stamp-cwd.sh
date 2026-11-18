@@ -1,13 +1,21 @@
 #!/usr/bin/env bash
 # PreToolUse hook installed by the linggen plugin. Stamps where the session
-# stands onto every memory call — the facts a host knows and a model would
-# only copy by hand (linggen-memory doc/scope-index-spec.md):
+# stands onto the memory calls that take it — the facts a host knows and a
+# model would only copy by hand (linggen-memory doc/scope-index-spec.md):
 #
-#   memory_add           cwd (the row's default scope), root (what a model's
-#                        `scope` resolves against), source_session, host
-#   memory_search        scope_root = root (recall: rows under the root, at
-#                        its parents, and about the person)
-#   memory_session_start cwd, root
+#   memory_add                     cwd (the row's default scope), root (what a
+#                                  model's `scope` resolves against),
+#                                  source_session, host
+#   memory_search, op omitted /    scope_root = root (recall: rows under the
+#     semantic                     root, at its parents, and about the person)
+#   memory_upkeep op=session_start cwd, root
+#
+# Nothing else is stamped: memory_search op=get and op=list (a browse — a
+# dream's day worklist must see the day's rows wherever they are filed, as
+# the browse always has), every other memory_upkeep
+# op, memory_update and memory_delete take none of these fields, and the
+# door's schemas are strict — a field an op does not take is refused, so a
+# stamp there would break the call.
 #
 # Memory owns the rules — which dirs can hold rows, which a root sees —
 # so this hook only hands it paths. `root` is the SESSION's root (scope.sh
@@ -27,7 +35,7 @@
 # applies `updatedInput` together with permissionDecision "allow" — the
 # rewritten arguments reach the tool. (The old note here, citing
 # openai/codex#18491, was stale.) The tool name there is normalised, e.g.
-# `mcp__memory__memory_search`, which the suffix match below covers. Note
+# `mcp__linggen__memory_search`, which the suffix match below covers. Note
 # "allow" does not skip Codex's own MCP approval gate: a call that needed
 # approval still needs it.
 #
@@ -48,12 +56,15 @@ cwd="$(printf '%s' "$input"  | jq -r '.cwd // empty'       2>/dev/null || true)"
 sid="$(printf '%s' "$input"  | jq -r '.session_id // empty' 2>/dev/null || true)"
 
 # Suffix match, because the tool arrives namespaced by server
-# (`mcp__plugin_linggen_memory__memory_add`) and that prefix is the user's
-# to choose.
-case "$tool" in
-  *memory_add)           verb="add" ;;
-  *memory_search)        verb="search" ;;
-  *memory_session_start) verb="session_start" ;;
+# (`mcp__plugin_linggen_linggen__memory_add`) and that prefix is the user's
+# to choose. The op decides the fields; an absent op is the tool's own
+# default (memory_search: semantic).
+op="$(printf '%s' "$input" | jq -r '.tool_input.op // empty' 2>/dev/null || true)"
+case "$tool:$op" in
+  *__memory_add:|memory_add:)                 verb="add" ;;
+  *__memory_search:|memory_search:)           verb="search" ;;
+  *__memory_search:semantic|memory_search:semantic) verb="search" ;;
+  *__memory_upkeep:session_start|memory_upkeep:session_start) verb="session_start" ;;
   *) exit 0 ;;
 esac
 

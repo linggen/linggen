@@ -14,14 +14,14 @@ a CLI.
 - **Typed facts.** `fact`, `preference`, `decision`, `learned`, plus trajectory-level `tried`, `fixed`, `built`. Searches and filters operate on these types.
 - **Forgetting is first-class.** Delete by id, forget by filter — refuses empty filters as a guardrail.
 - **Local-first storage.** The memory store is on disk in `~/.linggen/memory/` (LanceDB) — no cloud sync. Retrieved facts do enter your agent's prompt context on each turn, so they reach whichever LLM you've configured.
-- **One program, one address.** Linggen serves memory at `http://127.0.0.1:9527/mcp/memory` and its browser/X/agent tools at `/mcp`. A machine with only the plugin points at another machine's Linggen (`/linggen:config`) and installs nothing.
+- **One program, one address.** Linggen serves memory, agents and browser control at one MCP door, `http://127.0.0.1:9527/mcp` (twelve tools; another machine sees the five memory tools). A machine with only the plugin points at another machine's Linggen (`/linggen:config`) and installs nothing.
 
 ## Quick start
 
 Install from your agent's marketplace (pick one per host): Claude Code
 `claude plugin marketplace add linggen/linggen --sparse .claude-plugin plugins` then
 `claude plugin install linggen@linggen`; Codex `codex plugin marketplace add
-linggen/linggen` then `codex plugin add linggen@linggen`. Any MCP agent can add `http://127.0.0.1:9527/mcp/memory` as an MCP server (tools only). Linggen (`ling`)
+linggen/linggen` then `codex plugin add linggen@linggen`. Any MCP agent can add `http://127.0.0.1:9527/mcp` as an MCP server (tools only). Linggen (`ling`)
 installs on first use.
 
 ```bash
@@ -42,9 +42,9 @@ ling mem delete <id>
 
 | Host | Integration |
 |:-----|:------------|
-| Claude Code / Codex | The plugin: SKILL.md, the `memory` and `linggen` MCP servers, and hooks — core memory at session start, recall every prompt (`hooks/recall.sh`), scope stamped on every write. |
+| Claude Code / Codex | The plugin: SKILL.md, the `linggen` MCP server, and hooks — core memory at session start, recall every prompt (`hooks/recall.sh`), scope stamped on every write. |
 | Linggen | The engine's own agents reach the same store directly. |
-| Standalone | Any MCP client at `/mcp/memory`, or a script on the Linggen machine: `ling mem search "query" --format json` |
+| Standalone | Any MCP client at `/mcp`, or a script on the Linggen machine: `ling mem search "query" --format json` |
 
 ## Platforms
 

@@ -4,7 +4,7 @@ description: Linggen status — version + updates, memory size, upkeep (scan/dre
 
 Invoke the linggen skill (Skill tool) and treat this message as `/linggen status` — Status mode. Gather, then render ONE glanceable block. Two fetches, run them in parallel:
 
-1. `memory_dream_status` (MCP, `linggen` server) — firsts, `total_days`/`scanned_days`/`dreamed_days`, `open_issues`, `last_run`, `last_run_error`. Fallback when that server is unavailable: `memory_days` (MCP, `memory` server).
+1. `memory_upkeep` with op=dream_status (MCP, `linggen` server) — firsts, `total_days`/`scanned_days`/`dreamed_days`, `open_issues`, `last_run`, `last_run_error`, `last_run_cannot_run`. Fallback when that op is refused: `memory_upkeep` op=days.
 2. One Bash call combining, all failure-tolerant (`|| true`, `--max-time 2`). Where Linggen lives (the address `/linggen:config` prints on its `linggen` line; by hand: `A="$(jq -r '.ling // empty' ~/.linggen/client.json 2>/dev/null)"; A="${A:-http://127.0.0.1:9527}"` — an old file that also names `ling_mem` on another machine means that machine, port 9527).
    - `curl -s --max-time 2 "$A/api/health"` — Linggen up, its `version`
    - only when `$A` is this machine (127.0.0.1 / localhost): `ling mem stats --format json` — per-tier row counts + `disk_bytes.total`, and `curl -s --max-time 2 "$A/api/bridge/status"` — is the browser extension connected (`connected`)
@@ -23,5 +23,5 @@ next: <verbs>
 - Update available (this machine only) → `linggen 2.3.0 → 2.4.0 available` (running version vs cached manifest `version`).
 - `next:` names only what's due, comma-separated: `/linggen:scan <first_unscanned>`, `/linggen:dream`, `/linggen:solve`, `ling update` (Linggen update — ask before running it). Nothing due → `next: all caught up`.
 - Linggen down → first line says `linggen down — ling --web (or open Linggen.app)` on this machine, `linggen on <host> not answering — /linggen:config` for another machine; skip memory/upkeep lines. Memory on another machine → omit the `memory:` line (its size is that machine's to show). Browser extension not connected → `browser —`.
-- If `last_run_error` is set, show it verbatim on its own line.
+- If `last_run_error` is set, show it verbatim on its own line; if `last_run_cannot_run` is set, show its `line` (what to do) on the next.
 - Do not list every day; the calendar lives in Linggen's memory app.

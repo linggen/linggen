@@ -1,11 +1,13 @@
 //! Memory's routes on the engine's port: `/mem/*` (memory's raw routes, the
-//! prefix stripped) and `/mcp/memory` (memory's MCP server).
+//! prefix stripped) and `/mcp/memory`, the retired MCP address of the
+//! memory server hosts used before Linggen's one door (`/mcp`): it answers
+//! only "update the plugin" (410, `UPGRADE_PLUGIN`) and forwards nothing.
 //!
 //! Who gets through (`caller`, after the engine's LAN gate):
 //! - this machine: everything;
-//! - an approved machine (a `machine` row's token): `/mcp/memory`, for a
-//!   machine with only a plugin, and the replica protocol under `/mem` —
-//!   join, pull, primary state, the push of queued writes ([`machine_may`]);
+//! - an approved machine (a `machine` row's token): the replica protocol
+//!   under `/mem` — join, pull, primary state, the push of queued writes
+//!   ([`machine_may`]) — and `/mcp/memory`'s answer;
 //! - a phone: nothing here (403) — its door is the stamped
 //!   `/api/memory/<verb>`;
 //! - no token: only the two connect routes a machine asks with.
@@ -42,10 +44,19 @@ async fn raw(ConnectInfo(peer): ConnectInfo<SocketAddr>, req: Request) -> Respon
     forward(peer, req, &path, Door::Raw).await
 }
 
+/// An old plugin's memory server: told to update, after the same fence as
+/// before (a caller memory would not answer hears that instead). Nothing
+/// runs and nothing is forwarded — memory is on the engine's one door.
 async fn mcp(ConnectInfo(peer): ConnectInfo<SocketAddr>, req: Request) -> Response {
-    // A host's plugin: the legacy surface, as it has always called it. The
-    // engine's own agents reach memory's folded tools at `/mem/mcp`.
-    forward(peer, req, ling_mem::http::LEGACY_PATH, Door::Mcp).await
+    match admit(&caller::resolve(peer.ip(), req.headers()), Door::Mcp, MCP_PATH) {
+        Admit::Through(_) => retired_door(),
+        Admit::Refused(status, why, code) => refuse(status, why, code),
+    }
+}
+
+/// What `/mcp/memory` says to everyone it admits.
+fn retired_door() -> Response {
+    refuse(StatusCode::GONE, super::UPGRADE_PLUGIN, "UPGRADE_PLUGIN")
 }
 
 /// The paths under [`PREFIX`] the engine's LAN gate leaves open: a machine
@@ -59,7 +70,7 @@ pub fn is_open_path(path: &str) -> bool {
 enum Door {
     /// `/mem/*` — memory's own routes, the prefix stripped.
     Raw,
-    /// `/mcp/memory` — memory's MCP server.
+    /// `/mcp/memory` — the retired memory server's address.
     Mcp,
 }
 
@@ -97,7 +108,7 @@ fn admit(caller: &Caller, door: Door, path: &str) -> Admit {
         }
         Caller::Machine(_) => Admit::Refused(
             StatusCode::FORBIDDEN,
-            "an approved machine reaches the replica protocol and /mcp/memory, not this",
+            "an approved machine reaches the replica protocol here, and memory's tools at /mcp",
             "MACHINE_NOT_ALLOWED",
         ),
         Caller::Phone(_) => Admit::Refused(
@@ -264,6 +275,37 @@ mod tests {
         assert!(req.extensions().get::<u8>().is_none());
         let seen = req.extensions().get::<ConnectInfo<SocketAddr>>().unwrap();
         assert_eq!(seen.0, peer);
+    }
+
+    /// The retired memory server answers everyone it admits with one
+    /// sentence and `UPGRADE_PLUGIN` — whatever was sent — and runs nothing;
+    /// the fence before it is unchanged.
+    #[tokio::test]
+    async fn the_retired_memory_server_says_update_the_plugin() {
+        let rpc = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#;
+        for (method, body) in [("POST", rpc), ("POST", "{}"), ("GET", "")] {
+            let mut req = Request::builder()
+                .method(method)
+                .uri("/mcp/memory")
+                .body(Body::from(body))
+                .unwrap();
+            let peer: SocketAddr = "127.0.0.1:50000".parse().unwrap();
+            req.extensions_mut().insert(ConnectInfo(peer));
+            let res = routes::<()>().oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::GONE, "{method} {body}");
+            let bytes = axum::body::to_bytes(res.into_body(), 1 << 16).await.unwrap();
+            let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(v["code"], "UPGRADE_PLUGIN");
+            assert_eq!(v["ok"], false);
+            assert_eq!(
+                v["error"],
+                "This plugin uses a retired Linggen MCP endpoint; update the Linggen plugin and restart your host."
+            );
+        }
+        assert_eq!(
+            status_from("192.168.1.5:50000", "/mcp/memory").await,
+            StatusCode::UNAUTHORIZED
+        );
     }
 
     #[test]

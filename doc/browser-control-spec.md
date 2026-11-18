@@ -106,11 +106,11 @@ The gate lives in the **extension** (v2, aligned with Claude in Chrome) so every
 
 Browser control as a product for *any* agent, not just Linggen's. The daemon hosts an MCP server; the extension stays the hands. Two mouths, one brain: native `Browser_*` tools (Linggen sessions) and the MCP endpoint (third-party agents) front the same bridge broker.
 
-- **Endpoint** — streamable-HTTP MCP server on the daemon (`http://127.0.0.1:9527/mcp`), localhost-only. Tools mirror the control ops one-to-one: `browser_navigate`, `browser_read_page`, `browser_click`, `browser_type`, `browser_key`, `browser_scroll`, `browser_screenshot`, `browser_wait`, `browser_tabs`, `browser_read_console`.
+- **Endpoint** — streamable-HTTP MCP server on the daemon (`http://127.0.0.1:9527/mcp`), localhost-only. Since 2.5 it is the one Linggen door, and the browser is three of its twelve tools, each with an `op` for the control ops: `browser_open` (`navigate`, `tab_open`), `browser_read` (`page`, `screenshot`, `console`, `tabs`) and `browser_act` (`click`, `type`, `key`, `scroll`, `wait`, `tab_switch`, `tab_close`). Details in `mcp-spec.md`.
 - **Linggen agents stay on the native tools.** The tool name is already the switchable seam; the native path carries what MCP cannot — gate prompts in the calling chat, per-session `browser_origins`, screenshots attached to the conversation. (Claude Code makes the same call: Claude in Chrome is built into its CLI, not an MCP entry.)
 - **Install story for other agents** — daemon (`install.sh`) + extension (Web Store) + one line in the agent's MCP config. Two installs is the floor for any real-browser tool: MV3 forbids the extension being the server, so some OS-side process must exist.
 - **The gate lives in the extension** (see *Permission and safety*): the Allow prompt renders in the browser, trust persists in extension storage until revoked. The extension gate is the floor every caller passes — no agent gets a bypass.
-- **Session reads ride the same endpoint**: `x_search` / `x_targets` / `x_following` / `x_whotofollow` / `x_own` expose the x module's structured logged-in reads to any MCP agent — the capability no generic browser MCP has.
+- **Session reads are not on the endpoint.** The x module's structured logged-in reads left the MCP door in 2.5; the module and `/api/bridge/*` stay for Linggen's own apps.
 - **Open** — whether MCP callers and Linggen sessions share one controlled tab or get one each.
 
 ## Distribution
@@ -124,7 +124,7 @@ Public Chrome Web Store, same channel as the read extension — Pulse-style capa
 ## Phasing
 
 - **v1** — controlled-tab loop with the tool set above, reference-first targeting, the site-trust gate, CDP execution, Web Store listing. Built; verified end-to-end (Chrome and Arc).
-- **v2** — the MCP front door (endpoint built — `/mcp`, stateless streamable HTTP, ten `browser_*` tools) + extension-side gate and trust list (open).
+- **v2** — the MCP front door (endpoint built — `/mcp`, stateless streamable HTTP, three browser tools with ops since 2.5; ten `browser_*` tools before) + extension-side gate and trust list (open).
 - **Deferred** — multi-tab orchestration beyond one controlled tab; non-Chromium browsers.
 
 ## Out of scope

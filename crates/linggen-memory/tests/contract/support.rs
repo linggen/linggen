@@ -161,21 +161,13 @@ impl Mem {
         self.ok("add", body).await["fact"].clone()
     }
 
-    /// One MCP JSON-RPC call to the legacy surface (what a host's plugin
-    /// reaches through `/mcp/memory`): the response's `result` or `error`.
+    /// One MCP JSON-RPC call to `/mcp`, memory's five tools (what the
+    /// engine's own agents reach at `/mem/mcp`): the response's `result` or
+    /// `error`.
     pub async fn mcp(&self, method: &str, params: Value) -> Value {
-        self.rpc(ling_mem::http::LEGACY_PATH, method, params).await
-    }
-
-    /// One MCP JSON-RPC call to `/mcp`, memory's folded tools.
-    pub async fn mcp_folded(&self, method: &str, params: Value) -> Value {
-        self.rpc("/mcp", method, params).await
-    }
-
-    async fn rpc(&self, path: &str, method: &str, params: Value) -> Value {
         let (status, env) = self
             .post(
-                path,
+                "/mcp",
                 json!({ "jsonrpc": "2.0", "id": 7, "method": method, "params": params }),
             )
             .await;

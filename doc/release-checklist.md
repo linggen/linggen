@@ -130,7 +130,7 @@ the upgrade each is its own check — the old daemon gone, nothing listening on
 `takeover-<version>.done`, `memory/.store.lock` naming the engine's pid, every
 row found by id through the engine with its tier, the core row in `ling mem
 session-start`, `~/.local/bin/ling-mem` the stand-in and `ling-mem.prev` the
-old binary, MCP answering at `9527/mem/mcp` and `9527/mcp/memory`, a
+old binary, MCP answering at `9527/mem/mcp` and `9527/mcp` (and `9527/mcp/memory` answering 410), a
 write through the stand-in. Then a rollback — the previous engine and
 `ling-mem.prev` put back and started — must find every row, and the release
 again must take over without a second backup. `ling update --rollback` to an
@@ -147,8 +147,8 @@ answers through the release, no ling-mem daemon and nothing on 9528, the same
 exactly one new `takeover-<stamp>/` named by `takeover-<version>.done` (a
 baseline that already ran this version is a GAP: no backup is due), every
 row by id with its tier, the core row in `ling mem session-start`, the
-stand-in at the release's version with `ling-mem.prev` as it was, MCP at both
-addresses, and a row written through the release. `ling update --rollback`
+stand-in at the release's version with `ling-mem.prev` as it was, MCP at
+`/mem/mcp` and `/mcp` (and 410 at `/mcp/memory`), and a row written through the release. `ling update --rollback`
 to `ling.prev`: every row there, the release's included, no new backup when
 that version's marker was there, and a write; rolling forward finds every
 row and takes no second backup.
@@ -158,6 +158,16 @@ as the builder's own Macs do. After `install-plugin.sh`, first install and
 upgrade alike: `linggen@linggen` enabled in Claude Code and Codex, no
 `linggen@linggen-memory` in either, Claude Code on this release's hooks, the
 stand-in kept, nothing listening on 9528.
+
+The one MCP door (2.5), on Claude Code and on Codex, each on a clean install
+and on an install where the old plugin is still present, with a scratch home
+and store: session start; a search; a save; a delegated run that raises a
+permission request, answered; a browser read. The old plugin sees the update
+message (`/mcp/memory` answers 410 `UPGRADE_PLUGIN`); a host that shows only a
+generic disconnect, or an old hook that hides the error, is a GAP row, not a
+pass. `tools/list` is the twelve tools, in order, and an approved computer sees
+the five memory tools; the server text is at most 2,048 characters in every
+view. The details are in `test-design.md` § The one MCP door.
 
 Asset pack: after the app's first launch, on first install and upgrade,
 灵境's folder lacks the files its `assets.json` lists and the engine holds

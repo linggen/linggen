@@ -687,11 +687,10 @@ mod tests {
     #[test]
     fn the_engines_own_prompts_name_only_the_folded_tools() {
         let cat = catalog();
-        let folded: Vec<&str> = cat.tools().iter().map(|t| t.name).collect();
         let retired: Vec<&str> = cat
-            .legacy()
-            .filter_map(|b| b.legacy)
-            .filter(|name| !folded.contains(name))
+            .retired()
+            .iter()
+            .map(|r| r.name)
             .chain(["memory_dream_status", "memory_dream_run"])
             .collect();
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");

@@ -50,8 +50,12 @@ pub(super) fn bridge_failure(code: &str, message: &str) -> String {
             Ask the user to install or enable it, then retry."
             .to_string(),
         "not_permitted" => format!(
-            "not_permitted: {message} — the user declined this action in the \
-            browser's permission prompt."
+            "not_permitted: {message} — Chrome did not grant permission for this site \
+            (the user declined it in Chrome's prompt); ask the user before retrying."
+        ),
+        "element_gone" => format!(
+            "element_gone: {message} — the page changed since it was read; read it \
+            again (browser_read op=page) and use the new refs."
         ),
         _ => format!("{code}: {message}"),
     }
@@ -79,7 +83,6 @@ async fn agent(deps: &McpDeps<'_>, op: AgentOp, args: Value) -> Value {
             )
             .await
         }
-        AgentOp::Models => Ok(crate::server::mcp_agent::models(state).await),
         AgentOp::Readiness => Ok(crate::server::mcp_agent::readiness(state).await),
         AgentOp::Close => {
             let remove = args
@@ -114,7 +117,7 @@ async fn agent(deps: &McpDeps<'_>, op: AgentOp, args: Value) -> Value {
 async fn dream_status(deps: &McpDeps<'_>) -> Value {
     let Some(state) = deps.state else {
         return tool_content(
-            "memory_dream_status is unavailable in this context (no daemon state)".to_string(),
+            "memory_upkeep op=dream_status is unavailable in this context (no daemon state)".to_string(),
             true,
         );
     };
@@ -130,7 +133,7 @@ async fn dream_status(deps: &McpDeps<'_>) -> Value {
 async fn dream_run(deps: &McpDeps<'_>, args: Value) -> Value {
     let Some(state) = deps.state else {
         return tool_content(
-            "memory_dream_run is unavailable in this context (no daemon state)".to_string(),
+            "memory_upkeep op=dream_run is unavailable in this context (no daemon state)".to_string(),
             true,
         );
     };
@@ -142,7 +145,7 @@ async fn dream_run(deps: &McpDeps<'_>, args: Value) -> Value {
                 "started": true,
                 "session_id": session_id,
                 "day": day,
-                "note": "dream runs take minutes — poll memory_dream_status; if it later reports a failed run, show last_run_error to the user",
+                "note": "dream runs take minutes — read memory_upkeep op=dream_status later; if it reports a failed run, show last_run_error to the user",
             })
             .to_string(),
             false,
@@ -151,7 +154,7 @@ async fn dream_run(deps: &McpDeps<'_>, args: Value) -> Value {
             json!({
                 "started": false,
                 "in_flight": true,
-                "note": "a dream run is already in flight — poll memory_dream_status",
+                "note": "a dream run is already in flight — read memory_upkeep op=dream_status later",
             })
             .to_string(),
             false,

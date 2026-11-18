@@ -1,14 +1,19 @@
-//! MCP front door — the v2 surface of `doc/browser-control-spec.md`.
+//! Linggen's one MCP door: `POST /mcp`, a minimal streamable-HTTP MCP
+//! server (stateless JSON-RPC 2.0: `initialize`, `ping`, `tools/list`,
+//! `tools/call`) for third-party hosts — Claude Code, Codex, Cursor, … —
+//! publishing twelve tools from one catalogue (`catalog`): memory 5, agents
+//! 4, browser 3.
 //!
-//! A minimal streamable-HTTP MCP server at `POST /mcp` so third-party agents
-//! (Claude Code, Cursor, Codex…) can drive the user's browser through the
-//! same bridge the native `Browser_*` tools use. Stateless JSON-RPC 2.0:
-//! `initialize`, `tools/list`, and `tools/call` are the whole protocol here —
-//! each `tools/call` brokers one `control` op over `BridgeHub`, exactly like
-//! `POST /api/bridge/call` but speaking MCP.
+//! The caller decides the view (`view_of`): this machine sees all twelve,
+//! an approved computer the five memory tools (no `dream_run`), anyone else
+//! nothing. `tools/list`, `tools/call` and the server text all read that
+//! one view, so what a caller cannot see it cannot call. A tool name
+//! published before the tools were folded runs nothing: the caller is told
+//! to update the plugin (`UPGRADE_PLUGIN`), as `/mcp/memory` tells an old
+//! plugin (`memory_host::routes`).
 //!
-//! Localhost-only by deployment (the daemon binds loopback); the Origin check
-//! below rejects browser pages to prevent DNS-rebinding reaching the loop.
+//! Localhost-only by deployment for the full view; the Origin check below
+//! rejects browser pages to prevent DNS-rebinding reaching the loop.
 
 use std::sync::Arc;
 
@@ -25,10 +30,38 @@ use crate::server::ServerState;
 mod catalog;
 mod dispatch;
 
-use catalog::{catalog, on_legacy_door, Dispatch, Render};
-use ling_mem::catalog::{Branch, Resolved, View};
+use catalog::{catalog, Render};
+use ling_mem::catalog::{Resolved, Retired, View};
 
 const PROTOCOL_VERSION: &str = "2025-06-18";
+
+// What an old plugin is told, wherever it knocks: one sentence it can act on.
+use crate::memory_host::UPGRADE_PLUGIN as UPGRADE;
+
+/// The server text this machine's hosts read: memory's rules, delegation's,
+/// the usage limit, the browser. At most 2,048 characters — Claude Code
+/// drops the rest of a server's instructions without a word.
+const LOCAL_TEXT: &str = "Linggen memory works without an account. Save durable facts about the person, not project internals or secrets.
+Core is tiny and always loaded: stable identity (name, role, location, languages, family). Semantic is durable and recalled on demand: preferences, decisions and why. Episodic is default staging for uncertain signal and events; no search first. Dream promotes what lasts.
+Before saving core or semantic, search the subject. Mark the user's words from=user. Merge your own derived rows atomically with memory_add + replace_ids; never add then delete. Before replacing or rewriting a user row, show its full text and date and ask; set user_directed:true only after their answer or an explicit settled instruction. Keep tier and scope unless directed; supersede old status in the same write. Cite recalled facts you use.
+For each background agent_run, including a follow-up, start a new background watcher at the returned /api/agent/wait WebSocket URL. Answer permission_request with agent_permit: allow_once, allow_session (path/folder for this session), or deny. Outward requests take allow_once or deny only; the deny floor cannot be granted. No reply in 10 minutes means deny. Read reply, followup, error and cannot_run from finished. If the watch ends first, call agent_status (op=session) once; if still running, start a new watch. Do not poll. Check pending and denied. Continue with session_id without widening grants.
+On a usage limit, read its reset time (cannot_run.resets_at), then pick a ready model from agent_status (op=models) or come back after it; never retry before.
+Browser tools control one visible Chrome tab; actions can prompt for per-site permission in Chrome. Read again after page changes. For memory upkeep use the dream, scan or solve runbook; memory_upkeep (op=dream_status) shows backlog and failures.";
+
+/// The server text an approved computer reads: memory only, its upkeep
+/// with the host's own model.
+const REMOTE_TEXT: &str = "Linggen memory works without an account. Save durable facts about the person, not project internals or secrets.
+Core is tiny and always loaded: stable identity (name, role, location, languages, family). Semantic is durable and recalled on demand: preferences, decisions and why. Episodic is default staging for uncertain signal and events; no search first. Dream promotes what lasts.
+Before saving core or semantic, search the subject. Mark the user's words from=user. Merge your own derived rows atomically with memory_add + replace_ids; never add then delete. Before replacing or rewriting a user row, show its full text and date and ask; set user_directed:true only after their answer or an explicit settled instruction. Keep tier and scope unless directed; supersede old status in the same write. Cite recalled facts you use.
+For memory upkeep use the dream, scan or solve runbook with your own model; memory_upkeep (op=dream_status) shows backlog and failures.";
+
+fn instructions(view: View) -> &'static str {
+    match view {
+        View::Local => LOCAL_TEXT,
+        View::Remote => REMOTE_TEXT,
+    }
+}
+
 fn rpc_result(id: Value, result: Value) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "result": result })
 }
@@ -37,7 +70,7 @@ fn rpc_error(id: Value, code: i64, message: &str) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
 }
 
-fn initialize_result() -> Value {
+fn initialize_result(view: View) -> Value {
     json!({
         "protocolVersion": PROTOCOL_VERSION,
         "capabilities": { "tools": {} },
@@ -46,27 +79,8 @@ fn initialize_result() -> Value {
             "title": "Linggen",
             "version": env!("CARGO_PKG_VERSION"),
         },
-        "instructions": "Linggen front door: browser_* controls one visible Chrome tab via linggen-browser; read_page gives refs for click/type. Mutations may need browser permission; no_bridge means disconnected. x_* reads the signed-in X session. Memory tools are at /mcp/memory on this port; add it for memory_search, memory_add and its protocol. memory_dream_status shows undreamed days, first_unscanned, open_issues and failures: offer /linggen:dream (your model) or memory_dream_run (Linggen); show last_run_error. If open_issues > 0 offer /linggen:solve: read memory_issues, verify each against rows, git, code and docs, fix using memory_add + replace_ids, close with memory_issue_resolve. Ask only when evidence cannot settle it or a user-voice row is involved: one plain fact question with recommendation. agent_* delegates to local agents. For code changes create a git worktree and pass its absolute path as write_dir and your permission_mode: plan is read-only, default/acceptEdits grant edit, auto/bypassPermissions grant admin there; other paths remain read-only. Actions beyond grants wait for your permission. Give a self-contained brief with files, cause, tests and short reply; only the final reply returns, work appears in the web UI. If still running, do not poll: start a new background watcher on the returned ws://127.0.0.1:9527/api/agent/wait?session_id=… URL for every agent_run and session_id follow-up. Answer permission_request with agent_permit (allow_once, allow_session for path/folder this session, or deny); unanswered requests are denied after 10 minutes. Read reply and followup from finished; if the watch closes or expires first, call agent_status once and, if still running, start a new watch; never poll. Check denied and act yourself or request a wider write_dir. Follow up with agent_run(session_id=…), omitting write_dir, permission_mode and model; agent_models lists models. Review the diff before merging; agent_session_close with remove_worktree=true removes only a clean linked worktree whose HEAD is on a remote branch."
+        "instructions": instructions(view),
     })
-}
-
-/// The branch this door publishes as legacy tool `name`.
-fn legacy_branch(name: &str) -> Option<&'static Branch<Dispatch>> {
-    catalog().legacy_branch(name).filter(|b| on_legacy_door(b))
-}
-
-/// The input schema one tool is advertised with.
-pub(crate) fn tool_schema(name: &str) -> Option<Value> {
-    legacy_branch(name).map(|b| (b.schema)())
-}
-
-fn tools_list_result() -> Value {
-    let tools: Vec<Value> = catalog()
-        .legacy()
-        .filter(|b| on_legacy_door(b))
-        .filter_map(|b| b.legacy_def())
-        .collect();
-    json!({ "tools": tools })
 }
 
 /// A tool result: plain text, an image, or a tool-level error (`isError`).
@@ -108,23 +122,8 @@ struct McpDeps<'a> {
     state: Option<&'a Arc<ServerState>>,
 }
 
-/// A legacy call: the branch this door publishes under `name`, run with
-/// its arguments as sent.
-async fn call_tool(deps: &McpDeps<'_>, name: &str, args: Value) -> Result<Value, String> {
-    let Some(branch) = legacy_branch(name) else {
-        return Err(format!("unknown tool: {name}"));
-    };
-    Ok(dispatch::run(deps, branch, args).await)
-}
-
-// ── the twelve-tool door ────────────────────────────────────────────────────
-//
-// Built and tested beside the legacy surface; `/mcp` publishes it when it
-// replaces that surface in one switch, with the plugin that calls it.
-
 /// The view a caller gets: this machine everything, an approved computer
 /// memory only, anyone else nothing.
-#[cfg_attr(not(test), allow(dead_code))]
 fn view_of(caller: &crate::memory_host::caller::Caller) -> Option<View> {
     use crate::memory_host::caller::Caller;
     match caller {
@@ -134,28 +133,68 @@ fn view_of(caller: &crate::memory_host::caller::Caller) -> Option<View> {
     }
 }
 
-/// `tools/list` of the twelve-tool door for `view`.
-#[cfg_attr(not(test), allow(dead_code))]
-fn folded_tools_list(view: View) -> Value {
+fn tools_list_result(view: View) -> Value {
     json!({ "tools": catalog().tools_list(view) })
 }
 
-/// `tools/call` of the twelve-tool door: resolved against the branches
-/// `view` can call — the same filter as its `tools/list` — checked, then
-/// run by the branch's dispatcher. A refusal is a tool error carrying the
-/// form that works; a tool the view cannot see is unknown.
-#[cfg_attr(not(test), allow(dead_code))]
-async fn call_folded(
+/// `tools/call`: resolved against the branches `view` can call — the same
+/// filter as its `tools/list` — checked, then run by the branch's
+/// dispatcher. A refusal is a tool error carrying the form that works; a
+/// retired name, or a call without the `op` its tool needs (an old
+/// plugin's shape), is told to update; a tool the view cannot see is
+/// unknown.
+async fn call_tool(
     deps: &McpDeps<'_>,
     view: View,
     name: &str,
     args: Value,
 ) -> Result<Value, String> {
+    let sent_op = args.get("op").is_some();
     match catalog().resolve(view, name, args) {
-        Resolved::Unknown => Err(format!("unknown tool: {name}")),
+        Resolved::Unknown => match catalog().retired_name(name) {
+            Some(retired) => Ok(upgrade(retired)),
+            None => Err(format!("unknown tool: {name}")),
+        },
+        Resolved::Refused(why) if !sent_op && needs_op(view, name) => Ok(old_shape(name, &why)),
         Resolved::Refused(why) => Ok(tool_content(why, true)),
         Resolved::Call { branch, args } => Ok(dispatch::run(deps, branch, args).await),
     }
+}
+
+/// Whether tool `name` has more than one branch in `view` and no implicit
+/// one: a call must name its `op`.
+fn needs_op(view: View, name: &str) -> bool {
+    let implicit = catalog()
+        .tools()
+        .iter()
+        .any(|t| t.name == name && t.implicit_op.is_some());
+    !implicit && catalog().visible(view, name).len() > 1
+}
+
+/// The answer to a retired tool name: nothing ran; update the plugin.
+fn upgrade(retired: &Retired) -> Value {
+    let text = format!(
+        "`{}` is a retired Linggen tool and nothing ran. {UPGRADE} (Its work is now {}.)",
+        retired.name, retired.now
+    );
+    json!({
+        "content": [{ "type": "text", "text": text }],
+        "isError": true,
+        "structuredContent": { "code": "UPGRADE_PLUGIN", "retired": retired.name, "now": retired.now },
+    })
+}
+
+/// The answer to an old plugin's shape on a current name: nothing ran;
+/// update the plugin, or send the form that works.
+fn old_shape(name: &str, why: &str) -> Value {
+    let text = format!(
+        "{name} was called in an older shape and nothing ran. If a plugin sent this, update the Linggen plugin and reconnect; otherwise: {why}"
+    );
+    json!({
+        "content": [{ "type": "text", "text": text }],
+        "isError": true,
+        "structuredContent": { "code": "UPGRADE_PLUGIN", "tool": name },
+    })
 }
 
 /// One status object answering "is memory upkeep due, and did the last
@@ -251,8 +290,9 @@ fn last_run_json(run: &crate::engine::mission::record::MissionRunEntry) -> Value
     })
 }
 
-/// Handle one JSON-RPC message. `None` means a notification (no response).
-async fn handle_rpc(deps: &McpDeps<'_>, msg: &Value) -> Option<Value> {
+/// Handle one JSON-RPC message for a caller with `view`. `None` means a
+/// notification (no response).
+async fn handle_rpc(deps: &McpDeps<'_>, view: View, msg: &Value) -> Option<Value> {
     let method = msg
         .get("method")
         .and_then(Value::as_str)
@@ -263,9 +303,9 @@ async fn handle_rpc(deps: &McpDeps<'_>, msg: &Value) -> Option<Value> {
     }
     let id = id.unwrap();
     let response = match method {
-        "initialize" => rpc_result(id, initialize_result()),
+        "initialize" => rpc_result(id, initialize_result(view)),
         "ping" => rpc_result(id, json!({})),
-        "tools/list" => rpc_result(id, tools_list_result()),
+        "tools/list" => rpc_result(id, tools_list_result(view)),
         "tools/call" => {
             let params = msg.get("params").cloned().unwrap_or_default();
             let name = params
@@ -276,7 +316,7 @@ async fn handle_rpc(deps: &McpDeps<'_>, msg: &Value) -> Option<Value> {
                 .get("arguments")
                 .cloned()
                 .unwrap_or_else(|| json!({}));
-            match call_tool(deps, name, args).await {
+            match call_tool(deps, view, name, args).await {
                 Ok(result) => rpc_result(id, result),
                 Err(message) => rpc_error(id, -32602, &message),
             }
@@ -299,13 +339,6 @@ fn origin_allowed(headers: &HeaderMap) -> bool {
     }
 }
 
-/// Who may use the front door: this machine and the machines it approved.
-/// Its tools act as the owner (an agent started here reads the owner's
-/// memory), so a phone — its own person — is not let in.
-fn door_open_to(caller: &crate::memory_host::caller::Caller) -> bool {
-    caller.is_owner()
-}
-
 /// Every `/mcp` exchange is one-shot: `Connection: close` keeps client pools
 /// from ever reusing a stale socket (observed intermittently with Claude
 /// Code's MCP client; loopback reconnect cost is negligible).
@@ -316,23 +349,30 @@ fn one_shot(mut resp: Response) -> Response {
 }
 
 /// `POST /mcp` — the streamable-HTTP MCP endpoint (stateless, JSON responses).
+/// An approved computer's request is its presence, as memory's device list
+/// shows it.
 pub(crate) async fn post_handler(
     State(state): State<Arc<ServerState>>,
     axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
+    use crate::memory_host::caller::{self, Caller};
     if !origin_allowed(&headers) {
         return one_shot((StatusCode::FORBIDDEN, "origin not allowed").into_response());
     }
-    if !door_open_to(&crate::memory_host::caller::resolve(peer.ip(), &headers)) {
+    let caller = caller::resolve(peer.ip(), &headers);
+    let Some(view) = view_of(&caller) else {
         return one_shot((StatusCode::FORBIDDEN, "this door is for computers").into_response());
+    };
+    if let Caller::Machine(device) = &caller {
+        crate::memory_host::note_machine(&device.id, peer.ip(), "/mcp");
     }
     let deps = McpDeps {
         bridge: &state.bridge,
         state: Some(&state),
     };
-    match handle_rpc(&deps, &body).await {
+    match handle_rpc(&deps, view, &body).await {
         Some(response) => one_shot(Json(response).into_response()),
         None => one_shot(StatusCode::ACCEPTED.into_response()),
     }
@@ -343,346 +383,18 @@ pub(crate) async fn get_handler() -> Response {
     one_shot(StatusCode::METHOD_NOT_ALLOWED.into_response())
 }
 
+/// The input schema tool `name` is published with to this machine.
+#[cfg(test)]
+pub(crate) fn tool_schema(name: &str) -> Option<Value> {
+    catalog()
+        .tools_list(View::Local)
+        .into_iter()
+        .find(|t| t["name"] == name)
+        .map(|t| t["inputSchema"].clone())
+}
+
 #[cfg(test)]
 mod folded_tests;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn hub() -> BridgeHub {
-        BridgeHub::new()
-    }
-
-    #[test]
-    fn the_dream_status_names_a_last_runs_failed_calls_and_old_rows_read_as_before() {
-        let line = r#"{"run_id":"r","triggered_at":1,"status":"completed","skipped":false,"failures":[{"tool":"fetch","kind":"exit","exit":3,"tail":"down"}],"failure_count":1}"#;
-        let run: crate::engine::mission::record::MissionRunEntry =
-            serde_json::from_str(line).unwrap();
-        let v = last_run_json(&run);
-        assert_eq!(v["status"], "completed");
-        assert_eq!(v["failure_count"], 1);
-        assert_eq!(v["failures"][0]["exit"], 3);
-
-        let old = r#"{"run_id":"r","triggered_at":1,"status":"failed","skipped":false}"#;
-        let run: crate::engine::mission::record::MissionRunEntry =
-            serde_json::from_str(old).unwrap();
-        let v = last_run_json(&run);
-        assert_eq!(
-            (v["status"].clone(), v["failure_count"].clone()),
-            (json!("failed"), json!(0))
-        );
-        assert_eq!(v["failures"], json!([]));
-        assert!(run.error.is_none(), "an old row grew an error");
-    }
-
-    // No ServerState in unit tests — agent_run errors cleanly, everything
-    // else is state-independent.
-    fn deps(hub: &BridgeHub) -> McpDeps<'_> {
-        McpDeps {
-            bridge: hub,
-            state: None,
-        }
-    }
-
-    #[tokio::test]
-    async fn initialize_reports_tools_capability() {
-        let msg = json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} });
-        let res = handle_rpc(&deps(&hub()), &msg).await.unwrap();
-        assert_eq!(res["result"]["protocolVersion"], PROTOCOL_VERSION);
-        assert_eq!(res["result"]["serverInfo"]["name"], "linggen");
-        assert!(res["result"]["capabilities"]["tools"].is_object());
-        let instructions = res["result"]["instructions"].as_str().unwrap();
-        assert!(
-            instructions.chars().count() <= 2048,
-            "instructions: {} characters",
-            instructions.chars().count()
-        );
-        for text in [
-            "git worktree",
-            "permission_mode",
-            "do not poll",
-            "agent_session_close",
-            "agent_permit",
-            "permission_request",
-            "finished",
-            "if still running, start a new watch",
-        ] {
-            assert!(instructions.contains(text), "missing {text}");
-        }
-    }
-
-    #[tokio::test]
-    async fn tools_list_is_browser_x_agent_and_the_two_dream_tools() {
-        let msg = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" });
-        let res = handle_rpc(&deps(&hub()), &msg).await.unwrap();
-        let tools = res["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 24);
-        assert!(tools.iter().any(|t| t["name"] == "browser_navigate"));
-        assert!(tools.iter().any(|t| t["name"] == "x_search"));
-        assert!(tools.iter().any(|t| t["name"] == "x_mentions"));
-        assert!(tools.iter().any(|t| t["name"] == "agent_run"));
-        assert!(tools.iter().any(|t| t["name"] == "agent_permit"));
-        assert!(tools.iter().all(|t| t["inputSchema"]["type"] == "object"));
-    }
-
-    /// Memory is ling-mem's server, and a host that wants it adds that server.
-    /// Serving it here too would put two `memory_search` tools with identical
-    /// schemas in front of one model — the duplication the MCP arc exists to
-    /// remove. This is the test that notices if one comes back.
-    #[tokio::test]
-    async fn memory_is_not_served_here_beyond_the_two_engine_dream_tools() {
-        let msg = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" });
-        let res = handle_rpc(&deps(&hub()), &msg).await.unwrap();
-        let tools = res["result"]["tools"].as_array().unwrap();
-        let memory: Vec<&str> = tools
-            .iter()
-            .filter_map(|t| t["name"].as_str())
-            .filter(|n| n.starts_with("memory_"))
-            .collect();
-        // dream_status composes ling-mem's rollup with the engine's in-flight
-        // run state; dream_run drives the mission executor. Neither is
-        // something ling-mem could serve, so both stay.
-        assert_eq!(memory, ["memory_dream_status", "memory_dream_run"]);
-    }
-
-    /// JSON with every object's keys sorted, so a fingerprint does not depend
-    /// on whether a build preserves insertion order.
-    fn canonical(v: &Value) -> String {
-        match v {
-            Value::Object(map) => {
-                let mut keys: Vec<&String> = map.keys().collect();
-                keys.sort();
-                let fields: Vec<String> = keys
-                    .iter()
-                    .map(|k| format!("{}:{}", Value::String((*k).clone()), canonical(&map[*k])))
-                    .collect();
-                format!("{{{}}}", fields.join(","))
-            }
-            Value::Array(items) => {
-                let items: Vec<String> = items.iter().map(canonical).collect();
-                format!("[{}]", items.join(","))
-            }
-            other => other.to_string(),
-        }
-    }
-
-    fn fingerprint(v: &Value) -> String {
-        use sha2::Digest;
-        let digest = sha2::Sha256::digest(canonical(v).as_bytes());
-        digest.iter().take(8).map(|b| format!("{b:02x}")).collect()
-    }
-
-    /// The twenty-four tools this door publishes, each with its whole
-    /// definition (name, description, input schema) fingerprinted, and the
-    /// server text. Building the one-door catalogue must not change any of
-    /// them by accident: a change here is a change every connected host sees.
-    #[tokio::test]
-    async fn the_published_surface_is_locked() {
-        let msg = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" });
-        let res = handle_rpc(&deps(&hub()), &msg).await.unwrap();
-        let actual: Vec<(String, String)> = res["result"]["tools"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|t| (t["name"].as_str().unwrap().to_string(), fingerprint(t)))
-            .collect();
-        let expected: &[(&str, &str)] = &[
-            ("browser_navigate", "ede6425916ca80bd"),
-            ("browser_read_page", "7f3ac2e5a13d6d0d"),
-            ("browser_click", "21d8ee320d7df0b7"),
-            ("browser_type", "54fe4fd64c77ff4b"),
-            ("browser_key", "87106ed080c7b4d7"),
-            ("browser_scroll", "ad0652d9734ed73d"),
-            ("browser_screenshot", "1c56148ee8d1bcbe"),
-            ("browser_wait", "e13838e1f6e6d952"),
-            ("browser_tabs", "82e4e1b35b8be51d"),
-            ("browser_read_console", "226424d552016e56"),
-            ("x_search", "a2aaae3f477419d2"),
-            ("x_targets", "3a209e6d2b0f6c6c"),
-            ("x_following", "65a1df5d1b583079"),
-            ("x_whotofollow", "a0ca332f28195bb9"),
-            ("x_own", "5ae3eda92299c571"),
-            ("x_mentions", "253a788156648105"),
-            ("memory_dream_status", "8210ce18f2b46074"),
-            ("memory_dream_run", "0ccc699fdb330775"),
-            ("agent_run", "9fdfb9719cf9afcc"),
-            ("agent_status", "4ceddf9574826bb1"),
-            ("agent_permit", "71f9feab2f5f626b"),
-            ("agent_stop", "b0266b865355cc07"),
-            ("agent_models", "62c279cbad122db8"),
-            ("agent_session_close", "0dfce92d6e1636c6"),
-        ];
-        let shown: Vec<String> = actual
-            .iter()
-            .map(|(n, f)| format!("(\"{n}\", \"{f}\"),"))
-            .collect();
-        let want: Vec<(String, String)> = expected
-            .iter()
-            .map(|(n, f)| (n.to_string(), f.to_string()))
-            .collect();
-        assert_eq!(actual, want, "actual:\n{}", shown.join("\n"));
-        let text = fingerprint(&initialize_result()["instructions"]);
-        assert_eq!(text, "08bdcdfc29350c43", "instructions changed: {text}");
-    }
-
-    /// The door's JSON-RPC shapes: `ping` answers an empty object, a tool's
-    /// failure is a result with `isError`, an unknown tool is invalid params.
-    #[tokio::test]
-    async fn the_rpc_shapes_are_locked() {
-        let ping = json!({ "jsonrpc": "2.0", "id": 9, "method": "ping" });
-        let res = handle_rpc(&deps(&hub()), &ping).await.unwrap();
-        assert_eq!(res, json!({ "jsonrpc": "2.0", "id": 9, "result": {} }));
-        let call = json!({
-            "jsonrpc": "2.0", "id": 10, "method": "tools/call",
-            "params": { "name": "browser_read_page", "arguments": {} }
-        });
-        let res = handle_rpc(&deps(&hub()), &call).await.unwrap();
-        let result = res["result"].as_object().unwrap();
-        let mut keys: Vec<&String> = result.keys().collect();
-        keys.sort();
-        assert_eq!(keys, ["content", "isError"]);
-        assert_eq!(res["result"]["content"][0]["type"], "text");
-        let unknown = json!({
-            "jsonrpc": "2.0", "id": 11, "method": "tools/call",
-            "params": { "name": "memory_search", "arguments": { "query": "q" } }
-        });
-        let res = handle_rpc(&deps(&hub()), &unknown).await.unwrap();
-        assert_eq!(
-            res["error"],
-            json!({ "code": -32602, "message": "unknown tool: memory_search" })
-        );
-    }
-
-    /// The catalogue's entry is the only place a tool's name decides
-    /// anything: no dispatcher or renderer matches on a tool name (a second
-    /// list that can drift from the catalogue).
-    #[tokio::test]
-    async fn nothing_outside_the_catalogue_matches_on_a_tool_name() {
-        let msg = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" });
-        let res = handle_rpc(&deps(&hub()), &msg).await.unwrap();
-        let names: Vec<String> = res["result"]["tools"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|t| t["name"].as_str().unwrap().to_string())
-            .collect();
-        for (file, source) in DISPATCH_SOURCES {
-            let code = source.split("#[cfg(test)]").next().unwrap();
-            for name in &names {
-                let arm = format!("\"{name}\" =>");
-                assert!(!code.contains(&arm), "{file} matches on {name}");
-            }
-        }
-    }
-
-    const DISPATCH_SOURCES: &[(&str, &str)] = &[
-        ("mcp/mod.rs", include_str!("mod.rs")),
-        ("mcp/dispatch.rs", include_str!("dispatch.rs")),
-    ];
-
-    #[tokio::test]
-    async fn notifications_get_no_response() {
-        let msg = json!({ "jsonrpc": "2.0", "method": "notifications/initialized" });
-        assert!(handle_rpc(&deps(&hub()), &msg).await.is_none());
-    }
-
-    /// The front door's tools act as the owner, so only the owner's own
-    /// computers come in.
-    #[test]
-    fn the_front_door_is_for_computers() {
-        use crate::memory_host::caller::Caller;
-        use crate::state_fs::devices::{DeviceKind, PairedDevice};
-        let row = |kind| PairedDevice {
-            id: "d".into(),
-            name: "d".into(),
-            secret: "s".into(),
-            created_at: 0,
-            kind: Some(kind),
-            account: None,
-            device_id: None,
-            settings: Default::default(),
-            relay_grant: None,
-            superseded_grant: None,
-            ..Default::default()
-        };
-        assert!(door_open_to(&Caller::Owner));
-        assert!(door_open_to(&Caller::Machine(row(DeviceKind::Machine))));
-        assert!(!door_open_to(&Caller::Phone(row(DeviceKind::Phone))));
-        assert!(!door_open_to(&Caller::Unknown));
-    }
-
-    #[test]
-    fn mcp_responses_disable_keep_alive() {
-        let resp = one_shot((StatusCode::OK, "ok").into_response());
-        assert_eq!(resp.headers().get(CONNECTION).unwrap(), "close");
-    }
-
-    #[tokio::test]
-    async fn unknown_method_is_rpc_error() {
-        let msg = json!({ "jsonrpc": "2.0", "id": 3, "method": "resources/list" });
-        let res = handle_rpc(&deps(&hub()), &msg).await.unwrap();
-        assert_eq!(res["error"]["code"], -32601);
-    }
-
-    #[tokio::test]
-    async fn unknown_tool_is_invalid_params() {
-        let msg = json!({
-            "jsonrpc": "2.0", "id": 4, "method": "tools/call",
-            "params": { "name": "browser_fly", "arguments": {} }
-        });
-        let res = handle_rpc(&deps(&hub()), &msg).await.unwrap();
-        assert_eq!(res["error"]["code"], -32602);
-    }
-
-    #[tokio::test]
-    async fn call_without_bridge_is_tool_error_not_rpc_error() {
-        let msg = json!({
-            "jsonrpc": "2.0", "id": 5, "method": "tools/call",
-            "params": { "name": "browser_tabs", "arguments": { "action": "list" } }
-        });
-        let res = handle_rpc(&deps(&hub()), &msg).await.unwrap();
-        assert_eq!(res["result"]["isError"], true);
-        let text = res["result"]["content"][0]["text"].as_str().unwrap();
-        assert!(text.contains("not connected"));
-    }
-
-    #[tokio::test]
-    async fn agent_run_without_state_is_tool_error() {
-        let msg = json!({
-            "jsonrpc": "2.0", "id": 7, "method": "tools/call",
-            "params": { "name": "agent_run", "arguments": { "prompt": "hi" } }
-        });
-        let res = handle_rpc(&deps(&hub()), &msg).await.unwrap();
-        assert_eq!(res["result"]["isError"], true);
-    }
-
-    #[tokio::test]
-    async fn dream_tools_without_state_are_tool_errors() {
-        for (name, args) in [
-            ("memory_dream_status", json!({})),
-            ("memory_dream_run", json!({ "day": "2026-07-01" })),
-        ] {
-            let msg = json!({
-                "jsonrpc": "2.0", "id": 8, "method": "tools/call",
-                "params": { "name": name, "arguments": args }
-            });
-            let res = handle_rpc(&deps(&hub()), &msg).await.unwrap();
-            assert_eq!(res["result"]["isError"], true, "{name}");
-            let text = res["result"]["content"][0]["text"].as_str().unwrap();
-            assert!(text.contains("unavailable"), "{name}: {text}");
-        }
-    }
-
-    #[test]
-    fn web_origins_must_be_loopback() {
-        let mut headers = HeaderMap::new();
-        assert!(origin_allowed(&headers));
-        headers.insert(ORIGIN, "http://127.0.0.1:9527".parse().unwrap());
-        assert!(origin_allowed(&headers));
-        headers.insert(ORIGIN, "https://evil.example".parse().unwrap());
-        assert!(!origin_allowed(&headers));
-        headers.insert(ORIGIN, "http://localhost.evil.example".parse().unwrap());
-        assert!(!origin_allowed(&headers));
-    }
-}
+mod tests;

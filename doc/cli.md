@@ -362,7 +362,7 @@ These flags can be used with any command:
 | `LINGGEN_CONFIG` | Config file to load first (see `doc/storage-spec.md`) |
 | `LINGGEN_PORT` | Server port, as `--port` |
 
-Memory has no address of its own: the engine serves it on its port (`/mem`, `/mcp/memory`). `LING_MEM_URL` and `[agent].ling_mem_url` are gone; an old config's key is ignored.
+Memory has no address of its own: the engine serves it on its port (`/mem`, and the memory tools on the one MCP door, `/mcp`). `LING_MEM_URL` and `[agent].ling_mem_url` are gone; an old config's key is ignored.
 
 ---
 

@@ -50,11 +50,15 @@ use std::time::Duration;
 /// port as loopback, and the phone's door is the stamped `/api/memory/<verb>`.
 pub const PREFIX: &str = ling_mem::replica::state::PRIMARY_PREFIX;
 
-/// Memory's MCP server for hosts on this machine (Claude Code, Codex, …) and
-/// for an approved machine with only a plugin, beside the engine's own
-/// `/mcp`: the legacy surface (`ling_mem::http::LEGACY_PATH`). The engine's
-/// own agents reach memory's folded tools at `/mem/mcp` (this machine only).
+/// The retired address of memory's MCP server for hosts, from before
+/// Linggen's one door (`/mcp`): it answers [`UPGRADE_PLUGIN`] and nothing
+/// else. The engine's own agents reach memory's tools at `/mem/mcp`.
 pub(crate) const MCP_PATH: &str = "/mcp/memory";
+
+/// What an old plugin is told, wherever it knocks — `/mcp/memory`, or a
+/// retired tool name at `/mcp`.
+pub const UPGRADE_PLUGIN: &str =
+    "This plugin uses a retired Linggen MCP endpoint; update the Linggen plugin and restart your host.";
 
 /// Worker threads of memory's runtime. Its blocking pool (embedding, file
 /// I/O) is capped separately by [`BLOCKING_THREADS`].
@@ -216,6 +220,19 @@ pub async fn local_call(
         Ok(Err(e)) => unavailable(&format!("memory answered unreadably: {e}")),
         Err(e) => unavailable(&format!("memory request failed: {e}")),
     }
+}
+
+/// Note that approved machine `id` was just seen at `ip` asking for `path`
+/// — its presence, as memory's device list shows it. Nothing when this
+/// process hosts no open store.
+pub fn note_machine(id: &str, ip: std::net::IpAddr, path: &str) {
+    let Some(Ok(served)) = HOST.get().map(|h| h.served.as_ref()) else {
+        return;
+    };
+    served
+        .state
+        .presence
+        .record(id, ip, path, std::time::Instant::now());
 }
 
 /// Where an MCP client of this engine reaches memory's MCP server (`/mem/mcp`

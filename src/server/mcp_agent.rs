@@ -802,7 +802,7 @@ fn still_running_text(port: u16, session: &str) -> String {
         "Still running in the background in Linggen session {session}. Don't poll: \
         watch ws://127.0.0.1:{port}/api/agent/wait?session_id={session} with a background \
         watcher. It sends {{\"type\":\"permission_request\"}} (answer with agent_permit) and \
-        {{\"type\":\"finished\"}} (read reply and followup there). Start a new watch for every agent_run, including continued sessions. If it closes or expires without finished, call agent_status once; if that still says running, start a new watch. Never poll."
+        {{\"type\":\"finished\"}} (read reply and followup there). Start a new watch for every agent_run, including continued sessions. If it closes or expires without finished, call agent_status (op=session) once; if that still says running, start a new watch. Never poll."
     )
 }
 
@@ -1368,6 +1368,35 @@ mod wait_ready_tests {
         assert!(frames.recv().await.is_none());
     }
 
+    /// A watch whose caller went away before the run ended sends no
+    /// finished frame and stops; the caller's next watch on the same
+    /// session — after agent_status said it still runs — gets the one
+    /// finished frame when the work ends. The answer that hands out the
+    /// watch says exactly that.
+    #[tokio::test]
+    async fn a_watch_closed_early_says_nothing_and_the_next_watch_finishes() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let ready = Arc::new(AtomicBool::new(false));
+        let (_first_events, first, first_task) = watcher(ready.clone(), Default::default(), None);
+        drop(first);
+        tokio::time::timeout(std::time::Duration::from_millis(300), first_task)
+            .await
+            .expect("a watch with no caller stops")
+            .unwrap();
+        let (_events, mut frames, task) = watcher(ready.clone(), Default::default(), None);
+        ready.store(true, Ordering::SeqCst);
+        assert!(matches!(
+            tokio::time::timeout(std::time::Duration::from_millis(300), frames.recv())
+                .await
+                .unwrap(),
+            Some(WatchFrame::Finished)
+        ));
+        task.await.unwrap();
+        let told = still_running_text(9527, "s1");
+        assert!(told.contains("call agent_status (op=session) once"), "{told}");
+        assert!(told.contains("start a new watch") && told.contains("Never poll"), "{told}");
+    }
+
     #[tokio::test]
     async fn transient_idle_resets_grace() {
         use std::sync::atomic::{AtomicBool, Ordering};
@@ -1582,26 +1611,9 @@ fn live_default(
     })
 }
 
-fn format_models(models: &crate::provider::models::ModelManager, default: Option<&str>) -> String {
-    let default = live_default(models, default);
-    serde_json::json!({"models": models.list_models().iter().map(|m| serde_json::json!({
-        "id": m.id, "provider": m.provider, "default": Some(m.id.as_str()) == default.as_deref()
-    })).collect::<Vec<_>>()})
-    .to_string()
-}
-
-pub async fn models(state: &Arc<ServerState>) -> String {
-    let config = state.manager.get_config_snapshot().await;
-    let models = state.manager.models.read().await;
-    format_models(
-        &models,
-        config.routing.default_models.first().map(String::as_str),
-    )
-}
-
 /// Every model with whether it can be used now — `ready`, or the reason,
 /// its reset time and what to do (`ModelManager::readiness_list`) — the
-/// default marked as [`models`] marks it.
+/// live default marked.
 pub async fn readiness(state: &Arc<ServerState>) -> String {
     let config = state.manager.get_config_snapshot().await;
     let models = state.manager.models.read().await;
@@ -1734,13 +1746,15 @@ mod tests {
     }
     #[test]
     fn mcp_agent_models_format() {
+        // agent_status op=models: every model, its provider, the live
+        // default marked once, and whether it can be used now.
         let manager = crate::provider::models::ModelManager::new_with_credentials(
             vec![],
             &crate::credentials::Credentials::default(),
         );
         let builtin = manager.list_models().first().unwrap().id.clone();
-        let result: serde_json::Value =
-            serde_json::from_str(&format_models(&manager, Some(&builtin))).unwrap();
+        let default = live_default(&manager, Some(&builtin));
+        let result = manager.readiness_list(default.as_deref());
         let rows = result["models"].as_array().unwrap();
         assert_eq!(rows.len(), manager.list_models().len());
         let selected = rows.iter().find(|m| m["id"] == builtin).unwrap();
@@ -1751,6 +1765,7 @@ mod tests {
         );
         assert_eq!(rows.iter().filter(|m| m["default"] == true).count(), 1);
         assert!(rows.iter().any(|m| m["id"] == "deepseek-flash"));
+        assert!(rows.iter().all(|m| m["ready"].is_boolean()), "{result}");
     }
     #[test]
     fn mcp_agent_first_prompt_enters_cached_thread() {

@@ -80,20 +80,22 @@ async fn an_offline_replicas_unreadable_write_is_refused_as_its_route_refuses_it
     assert_eq!(serde_json::from_str::<Value>(&outbox).unwrap(), json!([]));
 }
 
-/// Over MCP, a body the route refuses reads as the route's own words.
+/// Over MCP, a body the route refuses reads as the route's own words — a
+/// hidden field (accepted, never advertised, so the catalogue does not type
+/// it) of the wrong type is the route's to refuse.
 #[tokio::test]
 async fn an_mcp_tool_call_the_route_refuses_says_the_routes_words() {
     let m = Mem::start().await;
     let env = m
         .mcp(
             "tools/call",
-            json!({"name": "memory_get", "arguments": {"id": 5}}),
+            json!({"name": "memory_add", "arguments": {"content": "x", "force": 5}}),
         )
         .await;
     assert_eq!(env["error"]["code"], -32603);
     let message = env["error"]["message"].as_str().unwrap();
     assert!(
-        message.starts_with("get: HTTP 422: Failed to deserialize the JSON body into the target type: id: invalid type"),
+        message.starts_with("add: HTTP 422: Failed to deserialize the JSON body into the target type: force: invalid type"),
         "{message}"
     );
 }

@@ -178,7 +178,8 @@ your machine; no VPN, no port forwarding.
 
 ## Hand work to Linggen from Claude Code or Codex (MCP)
 
-The daemon is an MCP server at `http://127.0.0.1:9527/mcp`. Its `agent_run`
+The daemon is one MCP server at `http://127.0.0.1:9527/mcp`, with twelve
+tools: memory (5), agents (4) and browser (3). Its `agent_run`
 tool lets another agent hand a task to a local Linggen agent:
 
 - **A different model does the work.** The Linggen agent runs on whatever you
@@ -191,18 +192,23 @@ tool lets another agent hand a task to a local Linggen agent:
   over a WebSocket to the agent that called; it answers with `agent_permit`
   (`allow_once`, `allow_session` or `deny`). No answer in ten minutes is a deny.
 - **Long jobs run in the background.** `agent_run` returns a session id, and
-  one frame arrives when the job ends. `agent_status` has the reply.
+  one frame arrives when the job ends. `agent_status` with `op: session` has the reply.
 
 The story of using it day to day, with what the second agent got wrong:
 [My Claude Code quota kept running out…](https://linggen.dev/blog/claude-code-hands-work-to-chatgpt-plan)
 
-The same server carries `browser_*` (drive one visible tab in your own Chrome,
-with per-site permission prompts), `x_*` (structured reads of your logged-in X
-session) and the memory upkeep tools. Durable memory is part of Linggen too,
-served on its own MCP server at `/mcp/memory` on the same port.
+The same server carries the browser tools (`browser_open`, `browser_read`,
+`browser_act`: drive one visible tab in your own Chrome, with per-site
+permission prompts) and Linggen's durable memory (`memory_search`,
+`memory_add`, `memory_update`, `memory_delete`, `memory_upkeep`). Another
+computer you have approved sees the five memory tools only.
+
+`agent_status` with `op: models` says which model can be used now and, for one
+that cannot, why. A run that stops on a usage limit says so with its reset
+time.
 
 On Claude Code / Codex, install the `linggen` plugin (source:
-[`plugins/linggen`](plugins/linggen)). It adds both servers and the per-turn
+[`plugins/linggen`](plugins/linggen)). It adds the one server and the per-turn
 memory recall hook, and installs Linggen on first session start:
 
 ```bash
@@ -215,7 +221,7 @@ codex plugin marketplace add linggen/linggen
 codex plugin add linggen@linggen
 ```
 
-`browser_*` needs the Chrome extension, whose source is in this repo:
+The browser tools need the Chrome extension, whose source is in this repo:
 [`browser-extension/`](browser-extension).
 
 Without git (a fresh Mac): `curl -fsSL https://linggen.dev/install-plugin.sh | bash`.

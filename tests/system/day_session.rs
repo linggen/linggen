@@ -928,33 +928,72 @@ async fn every_mcp_tool_taking_a_session_refuses_a_day() {
     let theirs = w.api.get("/api/sessions/day?user_id=u-friend").await["id"].as_str().unwrap().to_string();
     assert!(theirs.contains("-p-"), "{theirs}");
     let list = w.api.post("/mcp", json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})).await;
-    let takes: Vec<String> = list["result"]["tools"]
-        .as_array()
-        .expect("the tool list")
-        .iter()
-        .filter(|t| t["inputSchema"]["properties"].get("session_id").is_some())
-        .filter_map(|t| t["name"].as_str().map(str::to_string))
-        .collect();
-    assert!(takes.len() >= 5, "the tools taking a session: {takes:?}");
+    let takes = calls_taking_a_session(&list);
+    assert!(takes.len() >= 5, "the calls taking a session: {takes:?}");
     let mut wrong = Vec::new();
     for day in [&mine, &theirs] {
-        for name in &takes {
-            let args = json!({
-                "session_id": day, "prompt": "DAY-PROMPT", "request_id": "r1",
-                "decision": "deny", "remove_worktree": false,
-            });
+        for (name, op, fields) in &takes {
+            let mut args = json!({});
+            for field in fields {
+                args[field.as_str()] = match field.as_str() {
+                    "session_id" => json!(day),
+                    "prompt" => json!("DAY-PROMPT"),
+                    "request_id" => json!("r1"),
+                    "decision" => json!("deny"),
+                    other => panic!("no value for {other}"),
+                };
+            }
+            if let Some(op) = op {
+                args["op"] = json!(op);
+            }
             let call = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
                 "params": {"name": name, "arguments": args}});
             let res = w.api.post("/mcp", call).await;
             let text = res["result"]["content"][0]["text"].as_str().unwrap_or_default();
             if res["result"]["isError"] != json!(true) || !text.contains("is the day's session") {
-                wrong.push(format!("{name} on {day}: {res}"));
+                wrong.push(format!("{name} {op:?} on {day}: {res}"));
             }
         }
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
     assert!(w.raw_rows(&mine).is_empty() && w.raw_rows(&theirs).is_empty(), "a day was written");
     assert!(w.model.calls().is_empty(), "a model was called");
+}
+
+/// Every call of the door's list that takes a session — each tool, and
+/// for a tool with ops each op whose form names `session_id` — with the
+/// fields it needs (its required ones and the session, read from the
+/// published form).
+fn calls_taking_a_session(list: &Value) -> Vec<(String, Option<String>, Vec<String>)> {
+    let mut calls = Vec::new();
+    for tool in list["result"]["tools"].as_array().expect("the tool list") {
+        let name = tool["name"].as_str().unwrap().to_string();
+        let schema = &tool["inputSchema"];
+        if schema["properties"].get("session_id").is_none() {
+            continue;
+        }
+        let Some(index) = schema["properties"]["op"]["description"].as_str() else {
+            let required = schema["required"].as_array().cloned().unwrap_or_default();
+            let mut fields: Vec<String> = required.iter().filter_map(|f| f.as_str().map(str::to_string)).collect();
+            if !fields.iter().any(|f| f == "session_id") {
+                fields.push("session_id".into());
+            }
+            calls.push((name, None, fields));
+            continue;
+        };
+        for form in index.split(" · ") {
+            let Some((op, fields)) = form.split_once(": ") else { continue };
+            let fields: Vec<String> = fields
+                .split(", ")
+                .filter(|f| !f.ends_with('?') && *f != "no fields")
+                .map(str::to_string)
+                .collect();
+            if fields.iter().any(|f| f == "session_id") {
+                calls.push((name.clone(), Some(op.to_string()), fields));
+            }
+        }
+    }
+    calls
 }
 
 // What an app's own session gives a person, held in the day: each test below

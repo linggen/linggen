@@ -3,7 +3,7 @@
 # memories for each turn. Bails silently on any failure — never blocks
 # the user.
 #
-# Talks to Linggen's memory over **MCP** (`/mcp/memory`), not the CLI. A hook
+# Talks to Linggen's memory over **MCP** (the one door, `/mcp`), not the CLI. A hook
 # can't *be* a model's tool call, but it can *make* one: `tools/call` is a
 # JSON-RPC POST, and curl can post JSON. What that buys is the whole point —
 # this hook needs a URL and (off-machine) a token, and **no binary at all**.
@@ -77,7 +77,7 @@ hit_count="$(printf '%s\n' "$hits" | grep -c .)"
 [ -n "$hits" ] && printf '%s\n' "$hits"
 
 # Memory-upkeep nudge — undreamed days + open review items, from ONE
-# `memory_days` call. Cached (default 5 min, so a solve or dream shows within minutes) so the recall path stays
+# `memory_upkeep` op=days call. Cached (default 5 min, so a solve or dream shows within minutes) so the recall path stays
 # fast. Thresholds: ≥2 undreamed days (the
 # engine's own 3am cron usually covers yesterday; nagging about one day
 # is noise) and ≥1 open review item.
@@ -87,14 +87,16 @@ upkeep=""
 if [ -f "$upkeep_cache" ] && [ -n "$(find "$upkeep_cache" -mmin "-$upkeep_ttl_min" 2>/dev/null)" ]; then
   upkeep="$(cat "$upkeep_cache" 2>/dev/null || true)"
 else
-  days_out="$(mcp_call memory_days '{"undreamed_only":true}' "$to")"
+  days_out="$(mcp_call memory_upkeep '{"op":"days","undreamed_only":true}' "$to")"
   if [ -n "$days_out" ]; then
-    upkeep="$(printf '%s' "$days_out" | jq -r '
+    # dream_run is this machine's alone: another machine's host is offered
+    # only the dream with its own model.
+    upkeep="$(printf '%s' "$days_out" | jq -r --argjson here "${LINGGEN_LOCAL:-1}" '
       (.days // [] | length) as $p |
       (.open_issues // 0) as $i |
       ((.days // [])[0].date // "") as $o |
-      [ (if $p >= 2 then "memory upkeep: \($p) days undreamed (oldest \($o)) — offer to run the dream: /linggen:dream runs it with this session'\''s model; memory_dream_run offloads it to the Linggen engine" else empty end),
-        (if $i >= 1 then "memory upkeep: \($i) item(s) awaiting review — offer /linggen:solve (memory_issues has the facts)" else empty end) ]
+      [ (if $p >= 2 then "memory upkeep: \($p) days undreamed (oldest \($o)) — offer to run the dream: /linggen:dream runs it with this session'\''s model" + (if $here == 1 then "; memory_upkeep op=dream_run offloads it to the Linggen engine" else "" end) else empty end),
+        (if $i >= 1 then "memory upkeep: \($i) item(s) awaiting review — offer /linggen:solve (memory_upkeep op=issues has the facts)" else empty end) ]
       | join("\n")
     ' 2>/dev/null || true)"
     printf '%s' "$upkeep" > "$upkeep_cache" 2>/dev/null || true

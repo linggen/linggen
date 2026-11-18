@@ -1,15 +1,11 @@
-//! MCP (Model Context Protocol) Streamable-HTTP endpoint.
+//! MCP (Model Context Protocol) Streamable-HTTP endpoint of the store.
 //!
-//! Exposes the daemon's memory operations as MCP tools so Claude Code,
-//! Codex, Cursor, and any MCP client can register `ling-mem` as a
-//! provider via `.mcp.json` without spawning a stdio subprocess.
-//!
-//! Two endpoints accepting JSON-RPC 2.0, one handler: `POST /mcp` publishes
-//! memory's five folded tools (`memory_search`, `memory_add`,
-//! `memory_update`, `memory_delete`, `memory_upkeep`) — the engine's own
-//! agents' memory — and `POST /mcp/legacy` ([`LEGACY_PATH`]) the seventeen
-//! legacy tools a host's plugin reaches through the engine's
-//! `/mcp/memory`. Both come from the one catalogue. Methods:
+//! `POST /mcp` (JSON-RPC 2.0) publishes memory's five tools
+//! (`memory_search`, `memory_add`, `memory_update`, `memory_delete`,
+//! `memory_upkeep`) from the one catalogue. Its caller is the engine's own
+//! agents, at `/mem/mcp` on the engine's port; a host (Claude Code, Codex,
+//! …) reaches memory through the engine's one door, `/mcp`, which composes
+//! these same branches with its own. Methods:
 //! - `initialize` — protocol handshake, returns server capabilities.
 //! - `tools/list` — enumerate tools with their input schemas.
 //! - `tools/call` — execute a tool. The verb is answered as its route
@@ -71,42 +67,15 @@ Search when the question may touch past preferences, decisions or gotchas. Show 
 
 Full rules and examples: the memory skill."#;
 
-/// Where the legacy surface is served — the seventeen tools as hosts have
-/// called them since 1.x, reached through the engine's `/mcp/memory` until
-/// that door is retired.
-pub const LEGACY_PATH: &str = "/mcp/legacy";
-
-/// Which tools a path publishes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Surface {
-    /// `/mcp`: memory's five folded tools, as the catalogue publishes them
-    /// to this machine — the engine's own agents' memory.
-    Folded,
-    /// [`LEGACY_PATH`]: the seventeen legacy tools.
-    Legacy,
-}
-
 pub fn router() -> Router<SharedState> {
-    Router::new()
-        .route(
-            "/mcp",
-            post(|state, req| handler(Surface::Folded, state, req)),
-        )
-        .route(
-            LEGACY_PATH,
-            post(|state, req| handler(Surface::Legacy, state, req)),
-        )
+    Router::new().route("/mcp", post(handler))
 }
 
 // ── JSON-RPC dispatch ───────────────────────────────────────────────────────
 
 /// Single entrypoint. Parses the JSON-RPC envelope, routes by `method`,
 /// and returns either a JSON-RPC response (200) or 204 for notifications.
-async fn handler(
-    surface: Surface,
-    State(state): State<SharedState>,
-    Json(req): Json<Value>,
-) -> Response {
+async fn handler(State(state): State<SharedState>, Json(req): Json<Value>) -> Response {
     let id = req.get("id").cloned();
     let method = req.get("method").and_then(|v| v.as_str()).unwrap_or("");
     let params = req.get("params").cloned().unwrap_or(Value::Null);
@@ -119,11 +88,8 @@ async fn handler(
 
     let result = match method {
         "initialize" => Ok(handle_initialize()),
-        "tools/list" => Ok(handle_tools_list(surface)),
-        "tools/call" => match surface {
-            Surface::Folded => handle_folded_call(&state, params).await,
-            Surface::Legacy => handle_tools_call(&state, params).await,
-        },
+        "tools/list" => Ok(json!({ "tools": tool_defs() })),
+        "tools/call" => handle_tools_call(&state, params).await,
         other => Err(rpc_error(-32601, format!("method not found: {other}"))),
     };
 
@@ -154,68 +120,20 @@ fn handle_initialize() -> Value {
 
 // ── tools/list ──────────────────────────────────────────────────────────────
 
-/// The names of the tools this server lists, in order.
-pub fn tool_names() -> Vec<String> {
-    catalog()
-        .legacy()
-        .filter_map(|b| b.legacy.map(str::to_string))
-        .collect()
-}
-
-fn handle_tools_list(surface: Surface) -> Value {
-    match surface {
-        Surface::Folded => json!({ "tools": folded_defs() }),
-        Surface::Legacy => json!({ "tools": tool_defs() }),
-    }
-}
-
-/// The folded tools `/mcp` publishes: memory's own branches only — the
+/// The tools this server publishes: memory's own branches only — the
 /// store's work. The engine's dream branches, its agents and its browser
 /// are in the engine's catalogue, never in this one.
-fn folded_defs() -> Vec<Value> {
-    catalog().tools_list(View::Local)
-}
-
-/// The tools this server publishes: memory's branches, each as the tool it
-/// has been since 1.x (`catalog::memory`). Narrow schemas — only fields the
-/// corresponding `/api/memory/<verb>` handler actually consumes for that
-/// operation, so models can't over-fill speculative ones.
 fn tool_defs() -> Vec<Value> {
-    catalog()
-        .legacy()
-        .filter_map(|b| b.legacy_def())
-        .collect()
+    catalog().tools_list(View::Local)
 }
 
 // ── tools/call ──────────────────────────────────────────────────────────────
 
-/// A legacy call: its branch found by the tool's name, its arguments taken
-/// as they always were (repaired to the schema's types, never refused for
-/// a field the schema does not show), then run as the branch runs.
+/// A call: resolved and checked by the catalogue — a refusal is the tool's
+/// answer (`isError`), with the form that works — then run as the branch
+/// runs. A name the catalogue does not have, a retired one included, is
+/// unknown: no alias.
 async fn handle_tools_call(state: &SharedState, params: Value) -> Result<Value, Value> {
-    let name = params
-        .get("name")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| rpc_error(-32602, "tools/call requires `name`"))?
-        .to_string();
-    let mut args = params.get("arguments").cloned().unwrap_or(json!({}));
-
-    let branch = catalog()
-        .legacy_branch(&name)
-        .ok_or_else(|| rpc_error(-32602, format!("unknown tool: {name}")))?;
-
-    memory::coerce_legacy(branch, &mut args);
-    match memory::run(state, branch, args).await {
-        Ok(data) => Ok(memory::text_content(&data)),
-        Err(err) => Err(rpc_error(-32603, err.message)),
-    }
-}
-
-/// A folded call: resolved and checked by the catalogue — a refusal is the
-/// tool's answer (`isError`), with the form that works — then run as the
-/// branch runs. A name the catalogue does not have, a retired legacy name
-/// included, is unknown: no alias.
-async fn handle_folded_call(state: &SharedState, params: Value) -> Result<Value, Value> {
     let name = params
         .get("name")
         .and_then(|v| v.as_str())
@@ -240,17 +158,22 @@ mod tests {
     use crate::catalog::memory::read_answer;
     use crate::http::envelope::ApiError;
 
-    // The legacy names these tests have always called, over the catalogue.
     fn timed_out(verb: &str) -> ApiError {
         let wait = std::time::Duration::from_millis(memory::CALL_TIMEOUT_MS);
         memory::timed_out(verb, wait)
     }
-    fn tool_name_to_verb(name: &str) -> Option<&'static str> {
-        catalog().legacy_branch(name).map(|b| b.dispatch)
+    /// The arguments a call runs with, after the catalogue repaired them.
+    fn ran(tool: &str, args: Value) -> Value {
+        match catalog().resolve(View::Local, tool, args.clone()) {
+            Resolved::Call { args, .. } => args,
+            Resolved::Refused(why) => panic!("{tool} {args}: refused: {why}"),
+            Resolved::Unknown => panic!("{tool}: unknown"),
+        }
     }
-    fn coerce_to_schema(tool: &str, args: &mut Value) {
-        if let Some(branch) = catalog().legacy_branch(tool) {
-            memory::coerce_legacy(branch, args);
+    fn refused(tool: &str, args: Value) -> String {
+        match catalog().resolve(View::Local, tool, args.clone()) {
+            Resolved::Refused(why) => why,
+            _ => panic!("{tool} {args}: not refused"),
         }
     }
     fn apply_dispatch_fixes(args: &mut Value) {
@@ -258,6 +181,12 @@ mod tests {
     }
     fn apply_response_fixes(verb: &str, value: &mut Value) {
         memory::finish(verb, value);
+    }
+    fn tool_names() -> Vec<String> {
+        tool_defs()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_string())
+            .collect()
     }
 
     /// A verb that outlives the wait: the caller is told its write may
@@ -273,58 +202,57 @@ mod tests {
     /// a lone id must reach the daemon as the schema's types.
     #[test]
     fn string_typed_args_take_the_schemas_types() {
-        let mut args = json!({
-            "content": "x",
-            "scope": "~/workspace/linggen/linggen",
-            "summary": "s",
-            "indexed": "false",
-            "global": "TRUE",
-            "replace_ids": "abc123",
-            "user_directed": "maybe"
-        });
-        coerce_to_schema("memory_add", &mut args);
+        let args = ran(
+            "memory_add",
+            json!({
+                "content": "x",
+                "scope": "~/workspace/linggen/linggen",
+                "summary": "s",
+                "indexed": "false",
+                "global": "TRUE",
+                "replace_ids": "abc123"
+            }),
+        );
         assert_eq!(args["indexed"], json!(false));
         assert_eq!(args["global"], json!(true));
         assert_eq!(args["replace_ids"], json!(["abc123"]));
         assert_eq!(args["scope"], json!("~/workspace/linggen/linggen"));
         assert_eq!(args["summary"], json!("s"));
-        // Not a boolean in any spelling: left for the daemon to name.
-        assert_eq!(args["user_directed"], json!("maybe"));
+        // Not a boolean in any spelling: refused, naming the field.
+        let why = refused("memory_add", json!({"content": "x", "user_directed": "maybe"}));
+        assert!(why.contains("`user_directed` must be a boolean"), "{why}");
 
-        let mut search = json!({"query": "q", "limit": "5"});
-        coerce_to_schema("memory_search", &mut search);
+        let search = ran("memory_search", json!({"query": "q", "limit": "5"}));
         assert_eq!(search["limit"], json!(5));
-        let mut list = json!({"indexed": "true", "offset": "10"});
-        coerce_to_schema("memory_list", &mut list);
+        let list = ran("memory_search", json!({"op": "list", "indexed": "true", "offset": "10"}));
         assert_eq!(list["indexed"], json!(true));
         assert_eq!(list["offset"], json!(10));
 
-        let mut ids = json!({"replace_ids": "[\"a\",\"b\"]"});
-        coerce_to_schema("memory_add", &mut ids);
+        let ids = ran("memory_add", json!({"content": "x", "replace_ids": "[\"a\",\"b\"]"}));
         assert_eq!(ids["replace_ids"], json!(["a", "b"]));
     }
 
     /// Params the REST DTO takes but the schema does not show (2026-10-05:
     /// `skip_dedup: "true"` was a 422): a boolean spelled as a string is
-    /// a boolean; any other string stays as sent.
+    /// a boolean; an advertised string stays as sent.
     #[test]
     fn unadvertised_string_booleans_become_booleans() {
-        let mut args = json!({
-            "content": "true",
-            "skip_dedup": "true",
-            "force": "FALSE",
-            "host": "codex",
-            "source_session": "abc"
-        });
-        coerce_to_schema("memory_add", &mut args);
+        let args = ran(
+            "memory_add",
+            json!({
+                "content": "true",
+                "skip_dedup": "true",
+                "force": "FALSE",
+                "host": "codex",
+                "source_session": "abc"
+            }),
+        );
         assert_eq!(args["skip_dedup"], json!(true));
         assert_eq!(args["force"], json!(false));
-        // Advertised strings keep their type, whatever they spell.
         assert_eq!(args["content"], json!("true"));
         assert_eq!(args["host"], json!("codex"));
         assert_eq!(args["source_session"], json!("abc"));
-        let mut sent = json!({"content": "x", "skip_dedup": "true"});
-        coerce_to_schema("memory_add", &mut sent);
+        let sent = ran("memory_add", json!({"content": "x", "skip_dedup": "true"}));
         let req: crate::http::memory::AddRequest = serde_json::from_value(sent).unwrap();
         assert!(req.skip_dedup);
     }
@@ -426,27 +354,18 @@ mod tests {
         assert!(search.get("already_gone").is_none());
     }
 
-    /// An advertised tool nobody can route is a phantom, and a routable verb
-    /// nobody advertises is a capability the model cannot reach — which is
-    /// exactly how `issue_add` went missing while every other verb had a
-    /// tool. The two lists are one surface; test them as one.
+    /// A verb nobody can reach is a capability the model cannot use — which
+    /// is exactly how `issue_add` once went missing while every other verb
+    /// had a tool. Every verb the store routes is one branch of a published
+    /// tool, and every branch runs a verb.
     #[test]
-    fn every_advertised_tool_routes_and_every_route_is_advertised() {
-        let advertised: Vec<String> = tool_defs()
+    fn every_route_is_a_branch_of_a_published_tool() {
+        let names = tool_names();
+        let reached: Vec<&str> = names
             .iter()
-            .map(|t| t["name"].as_str().expect("a tool has a name").to_string())
+            .flat_map(|n| catalog().visible(View::Local, n))
+            .map(|b| b.dispatch)
             .collect();
-
-        for name in &advertised {
-            assert!(
-                tool_name_to_verb(name).is_some(),
-                "advertised tool `{name}` has no verb to route to"
-            );
-        }
-
-        // Every verb the map knows must be advertised. Kept as the map's own
-        // inverse rather than a hand-written list, so adding a route without
-        // a schema fails here.
         for verb in [
             "search",
             "list",
@@ -466,28 +385,22 @@ mod tests {
             "issue_add",
             "issue_resolve",
         ] {
-            let advertised_for_verb = advertised
-                .iter()
-                .any(|name| tool_name_to_verb(name) == Some(verb));
-            assert!(
-                advertised_for_verb,
-                "verb `{verb}` is routable but not advertised"
-            );
+            assert!(reached.contains(&verb), "verb `{verb}` is routable but no tool reaches it");
         }
+        assert_eq!(reached.len(), 17, "{reached:?}");
     }
 
-    /// The audit queues what it cannot solve; without this tool the whole
-    /// review queue is write-only from a model's point of view.
+    /// The audit queues what it cannot solve; without this op the whole
+    /// review queue is write-only from a model's point of view. `kind` +
+    /// `note` are what /api/memory/issue_add rejects a call for missing.
     #[test]
     fn the_audit_can_queue_a_review_item() {
-        assert_eq!(tool_name_to_verb("memory_issue_add"), Some("issue_add"));
-        let def = tool_defs()
-            .into_iter()
-            .find(|t| t["name"] == json!("memory_issue_add"))
-            .expect("memory_issue_add is advertised");
-        // `kind` + `note` are what /api/memory/issue_add rejects a call for
-        // missing, so they are the schema's required pair.
-        assert_eq!(def["inputSchema"]["required"], json!(["kind", "note"]));
+        let ok = ran("memory_upkeep", json!({"op": "issue_add", "kind": "chain", "note": "n"}));
+        assert_eq!(ok, json!({"kind": "chain", "note": "n"}));
+        let why = refused("memory_upkeep", json!({"op": "issue_add", "note": "n"}));
+        assert!(why.contains("needs `kind`"), "{why}");
+        let why = refused("memory_upkeep", json!({"op": "issue_add", "kind": "chain"}));
+        assert!(why.contains("needs `note`"), "{why}");
     }
 
     /// Claude Code cuts server instructions at 2048 characters and drops the
@@ -520,6 +433,7 @@ mod tests {
             "root",
             "source_session",
             "host",
+            "occurred_at",
         ] {
             assert!(props.contains_key(f), "memory_add lacks {f}");
         }
@@ -560,10 +474,10 @@ mod tests {
         h.hex()[..16].to_string()
     }
 
-    /// The seventeen tools this server publishes, each with its whole
-    /// definition (name, description, input schema) fingerprinted, and the
-    /// server text. Building the one-door catalogue must not change any of
-    /// them by accident: a change here is a change every connected host sees.
+    /// The five tools this server publishes to the engine's own agents,
+    /// each with its whole definition (name, description, input schema)
+    /// fingerprinted, and the server text: a change here is a change every
+    /// agent of the engine sees.
     #[test]
     fn the_published_surface_is_locked() {
         let actual: Vec<(String, String)> = tool_defs()
@@ -571,23 +485,11 @@ mod tests {
             .map(|t| (t["name"].as_str().unwrap().to_string(), fingerprint(t)))
             .collect();
         let expected: &[(&str, &str)] = &[
-            ("memory_search", "72943d6bae379810"),
-            ("memory_list", "df0c71a498197be7"),
-            ("memory_session_start", "6308e35d63ff8472"),
-            ("memory_get", "3ac7e4acb602b7bf"),
-            ("memory_add", "f4589342f5c221a1"),
-            ("memory_delete", "1f7a19393cacf49e"),
-            ("memory_update", "b4c034fa182c3d7e"),
-            ("memory_harvest_day", "74d4782e4ac36645"),
-            ("memory_days", "3970ca5e8ae8d6bb"),
-            ("memory_remember_day", "98fb0e4e78cb3a7f"),
-            ("memory_dream_lease", "bc03543d4aeec717"),
-            ("memory_role", "e39c3e46fc9889f0"),
-            ("memory_sweep", "ad9e4a884524b660"),
-            ("memory_issues", "817c0942710abaf5"),
-            ("memory_issue_add", "8184b55c04553ab4"),
-            ("memory_issue_resolve", "0f967175747b4007"),
-            ("memory_chains", "f558e7bae94b4ab0"),
+            ("memory_search", "3961fa2c6c739601"),
+            ("memory_add", "85c36d750751513b"),
+            ("memory_update", "21da0a4313b7b843"),
+            ("memory_delete", "bbc85f7c3b3268e1"),
+            ("memory_upkeep", "f000f2d114882a39"),
         ];
         let shown: Vec<String> = actual
             .iter()
@@ -602,12 +504,13 @@ mod tests {
         assert_eq!(text, "7fb7025cd50abf5f", "instructions changed: {text}");
     }
 
-    /// `/mcp` publishes memory's five folded tools and nothing of the
-    /// engine: no dream branch (a dream run from inside a run would
-    /// delegate itself), no agent and no browser tool.
+    /// `/mcp` publishes memory's five tools and nothing of the engine: no
+    /// dream branch (a dream run from inside a run would delegate itself),
+    /// no agent and no browser tool; `memory_upkeep` names the eleven ops
+    /// this server runs and no other.
     #[test]
-    fn the_folded_surface_is_memory_alone() {
-        let defs = folded_defs();
+    fn the_surface_is_memory_alone() {
+        let defs = tool_defs();
         let names: Vec<&str> = defs.iter().map(|t| t["name"].as_str().unwrap()).collect();
         assert_eq!(
             names,
@@ -616,10 +519,18 @@ mod tests {
         let upkeep = &defs[4]["inputSchema"]["properties"]["op"]["enum"];
         let ops: Vec<&str> = upkeep.as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
         assert_eq!(ops.len(), 11, "{ops:?}");
-        assert!(!ops.iter().any(|op| op.starts_with("dream_") && *op != "dream_lease"), "{ops:?}");
+        let text = defs[4]["description"].as_str().unwrap();
+        assert!(text.contains(&format!("Ops here: {}.", ops.join(", "))), "{text}");
         let all = serde_json::to_string(&defs).unwrap();
-        for engine_only in ["\"dream_run\"", "\"dream_status\"", "agent_run", "browser_"] {
-            assert!(!all.contains(engine_only), "the folded surface names {engine_only}");
+        for engine_only in ["dream_run", "dream_status", "agent_run", "browser_"] {
+            assert!(!all.contains(engine_only), "the surface names {engine_only}");
+        }
+        for retired in catalog().retired() {
+            let named = all.match_indices(retired.name).any(|(at, _)| {
+                let next = all[at + retired.name.len()..].chars().next();
+                !next.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+            });
+            assert!(!named, "the surface names retired {}", retired.name);
         }
     }
 
@@ -628,7 +539,8 @@ mod tests {
     #[test]
     fn nothing_outside_the_catalogue_matches_on_a_tool_name() {
         let code = include_str!("mcp.rs").split("#[cfg(test)]").next().unwrap();
-        for name in tool_names() {
+        let retired = catalog().retired().iter().map(|r| r.name.to_string());
+        for name in tool_names().into_iter().chain(retired) {
             let arm = format!("\"{name}\" =>");
             assert!(!code.contains(&arm), "http/mcp.rs matches on {name}");
             let def = format!("\"name\": \"{name}\"");

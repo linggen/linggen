@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# headersHelper for both of the plugin's MCP servers (`.mcp.json`): this host's
+# headersHelper for the plugin's one MCP server (`.mcp.json`): this host's
 # token for another machine's Linggen, from ~/.linggen/client.json, read at
 # each connect. A token that changes (a new approval on the other machine)
 # applies on reconnect, with no restart. No file, no token, no jq: `{}` — the

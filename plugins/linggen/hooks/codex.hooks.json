@@ -8,7 +8,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "mcp__.*__memory_(add|search|session_start)",
+        "matcher": "mcp__.*__memory_(add|search|upkeep)",
         "hooks": [{ "type": "command", "command": "LINGGEN_CLIENT=codex ${CLAUDE_PLUGIN_ROOT}/hooks/stamp-cwd.sh" }]
       }
     ]

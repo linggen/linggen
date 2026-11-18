@@ -358,6 +358,14 @@ if command -v claude >/dev/null; then
   claude_plugin_block "$OLD_PLUGIN_ID" | grep -q enabled \
     && info "upgrade: before — claude has $OLD_PLUGIN_ID" "as the previous release installed it" \
     || gap "upgrade: before — claude has $OLD_PLUGIN_ID" "linggen-prev has no old plugin enabled — the retire step is not exercised"
+  # The old plugin's memory server, before the new plugin replaces it: the
+  # engine refuses it with "update the plugin", never serves it.
+  if engine_health 5; then
+    mcp_retired "http://127.0.0.1:$EP/mcp/memory"
+    check "upgrade: before — the old plugin's memory address answers 410 UPGRADE_PLUGIN" $? "$RETIRED_DETAIL" "$RETIRED_DETAIL"
+  else
+    gap "upgrade: before — the old plugin's memory address answers 410" "no engine on $EP at this point"
+  fi
   clt_dialog_close
   install_plugin "$OUT/install-plugin.log"
   check_plugins "upgrade" $? "$OUT/install-plugin.log"

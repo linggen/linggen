@@ -337,8 +337,9 @@ else
 fi
 
 section "Memory inside the engine (read only)"
-# The engine serves memory itself at /mem/* and /mcp/memory, on its own port
-# only (2.3 on; an engine before 2.3 had a ling-mem daemon beside it).
+# The engine serves memory itself at /mem/* and, for hosts, at its one MCP
+# door /mcp, on its own port only (2.3 on; an engine before 2.3 had a ling-mem
+# daemon beside it). The retired /mcp/memory answers 410 "update the plugin".
 HOSTED=0
 curl -s -m10 "$API/mem/api/health" | jq -e '.ok == true' >/dev/null 2>&1 && HOSTED=1
 [ -n "$MEM" ] || MEM="$API/mem"
@@ -350,12 +351,15 @@ else
   OLD_PORT_PIDS="$(lsof -nP -iTCP:9528 -sTCP:LISTEN -t 2>/dev/null | sort -u | tr '\n' ' ')"
   [ -z "$OLD_PORT_PIDS" ]
   check "nothing listens on the old memory port 9528" $? "pid(s) ${OLD_PORT_PIDS}listen there" "free"
-  mcp() { curl -sS -m30 -X POST -H 'content-type: application/json' -d "$1" "$API/mcp/memory" 2>&1; }
+  mcp() { curl -sS -m30 -X POST -H 'content-type: application/json' -d "$1" "$API/mcp" 2>&1; }
   I="$(mcp '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"live-check","version":"1"}}}')"
-  expect "/mcp/memory: initialize" "$I" '.result.protocolVersion != null' "no protocolVersion" "$(printf '%s' "$I" | jq -r '.result.serverInfo.name // empty' 2>/dev/null)"
+  expect "/mcp: initialize" "$I" '.result.protocolVersion != null' "no protocolVersion" "$(printf '%s' "$I" | jq -r '.result.serverInfo.name // empty' 2>/dev/null)"
   T="$(mcp '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')"
-  expect "/mcp/memory: tools/list offers memory_search" "$T" '[.result.tools[]?.name] | index("memory_search") != null' "no memory_search" \
+  expect "/mcp: tools/list offers memory_search and memory_upkeep" "$T" '[.result.tools[]?.name] | index("memory_search") != null and index("memory_upkeep") != null' "no memory tools" \
     "$(printf '%s' "$T" | jq '[.result.tools[]?] | length' 2>/dev/null) tools"
+  R="$(curl -sS -m10 -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":3,"method":"tools/list"}' "$API/mcp/memory" 2>&1)"
+  [ "$R" = 410 ]
+  check "the retired /mcp/memory answers 410 (update the plugin)" $? "HTTP $R" "410"
   if [ -n "$PID" ]; then
     LOCK_PID="$(jq -r '.pid // empty' "$LG/memory/.store.lock" 2>/dev/null)"
     [ "$LOCK_PID" = "$PID" ]

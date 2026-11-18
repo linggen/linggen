@@ -118,8 +118,10 @@ inplace_after() {
   [ -n "$IP_PREV_SHA" ] || { [ ! -e "$STANDIN.prev" ]; check "$p: no ling-mem.prev appears" $? "$(ls -l "$STANDIN.prev" 2>&1)"; }
   mcp_answers "$ENGINE_MEM/mcp"
   check "$p: $EP/mem/mcp answers" $? "$MCP_DETAIL" "$MCP_DETAIL"
-  mcp_answers "http://127.0.0.1:$EP/mcp/memory"
-  check "$p: $EP/mcp/memory answers" $? "$MCP_DETAIL" "$MCP_DETAIL"
+  mcp_answers "http://127.0.0.1:$EP/mcp" memory_upkeep
+  check "$p: $EP/mcp (the one door) answers" $? "$MCP_DETAIL" "$MCP_DETAIL"
+  mcp_retired "http://127.0.0.1:$EP/mcp/memory"
+  check "$p: the old plugin's $EP/mcp/memory answers 410 UPGRADE_PLUGIN" $? "$RETIRED_DETAIL" "$RETIRED_DETAIL"
   ip_snapshot
 }
 

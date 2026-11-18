@@ -9,10 +9,11 @@
 # the two facts get confused.
 #
 # One address: where Linggen lives (host + port), and, for another machine,
-# that machine's token. Everything hangs off it:
+# that machine's token. Linggen's one MCP door hangs off it:
 #
-#   $LINGGEN_URL/mcp          the engine's tools (browser, x, agents, dream)
-#   $LINGGEN_URL/mcp/memory   Linggen's memory (the 17 memory_* tools)
+#   $LINGGEN_MCP_URL = $LINGGEN_URL/mcp   memory, agents and browser (twelve
+#                                         tools; another machine sees the five
+#                                         memory tools)
 #
 # Authored in ONE file, `~/.linggen/client.json`, written by
 # `scripts/config.sh` (`/linggen:config`):
@@ -94,7 +95,7 @@ LINGGEN_PORT="$(_ling_port_of "$_ling_addr")"
 LINGGEN_HOST="${LINGGEN_HOST:-127.0.0.1}"
 LINGGEN_PORT="${LINGGEN_PORT:-9527}"
 LINGGEN_URL="http://${LINGGEN_HOST}:${LINGGEN_PORT}"
-LINGGEN_MEMORY_URL="${LINGGEN_URL}/mcp/memory"
+LINGGEN_MCP_URL="${LINGGEN_URL}/mcp"
 
 # Is Linggen on THIS machine? Installing or starting `ling` — or opening the
 # store with `ling mem` — only makes sense if it is: pointed at another machine,
@@ -111,13 +112,13 @@ _ling_auth=()
 
 # ── Calling ─────────────────────────────────────────────────────────────────
 
-# One MCP tool call against Linggen's memory. $1 = tool name, $2 = arguments as
-# JSON, $3 = timeout secs (default 3). Prints the tool's payload — MCP
-# double-encodes it, as a JSON string inside a text content block, so this
-# unwraps one layer and the caller parses the rest.
+# One MCP tool call on Linggen's door. $1 = tool name, $2 = arguments as JSON
+# (with `op` where the tool has ops), $3 = timeout secs (default 3). Prints
+# the tool's payload — MCP double-encodes it, as a JSON string inside a text
+# content block, so this unwraps one layer and the caller parses the rest.
 #
-# Empty output on ANY failure: unreachable engine, gate refusal, malformed
-# reply. Every caller is a hook that must never block a session, so a failure
+# Empty output on ANY failure: unreachable engine, gate refusal, a refused
+# call (`isError`), malformed reply. Every caller is a hook that must never block a session, so a failure
 # here is silence, not an error.
 #
 # `${_ling_auth[@]+…}` because bash 3.2 (stock macOS) treats an empty array
@@ -132,6 +133,24 @@ mcp_call() {
     curl -fsS --max-time "$to" --connect-timeout 1 \
         -H 'Content-Type: application/json' \
         ${_ling_auth[@]+"${_ling_auth[@]}"} \
-        -d "$body" "$LINGGEN_MEMORY_URL" 2>/dev/null \
-        | jq -r '.result.content[0].text // empty' 2>/dev/null || true
+        -d "$body" "$LINGGEN_MCP_URL" 2>/dev/null \
+        | jq -r 'select(.result.isError != true) | .result.content[0].text // empty' 2>/dev/null || true
+}
+
+# Does the engine at this address publish the one door? A short tools/list:
+# prints `yes` when it lists memory_upkeep, `no` when it answers without it
+# (an engine older than this plugin), nothing when it does not answer (not
+# running, not approved — other hooks and hints cover those).
+mcp_door() {
+    local to="${1:-2}" out
+    command -v curl >/dev/null 2>&1 || return 0
+    command -v jq   >/dev/null 2>&1 || return 0
+    out="$(curl -sS --max-time "$to" --connect-timeout 1 \
+        -H 'Content-Type: application/json' \
+        ${_ling_auth[@]+"${_ling_auth[@]}"} \
+        -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' "$LINGGEN_MCP_URL" 2>/dev/null)" || return 0
+    printf '%s' "$out" | jq -r '
+        if (.result.tools | type) == "array" then
+            (if any(.result.tools[]; .name == "memory_upkeep") then "yes" else "no" end)
+        else empty end' 2>/dev/null || true
 }

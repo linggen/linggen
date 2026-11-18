@@ -180,7 +180,7 @@ async fn a_run_that_failed_for_no_reason_a_caller_acts_on_keeps_nothing() {
     assert!(ran["result"]["content"][0]["text"].as_str().unwrap_or_default().contains("agent run failed"), "{ran}");
     let sid = delegate_session(&w);
     let status = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-        "params": {"name": "agent_status", "arguments": {"session_id": sid}}});
+        "params": {"name": "agent_status", "arguments": {"op": "session", "session_id": sid}}});
     let status = w.api.post("/mcp", status).await;
     let status: Value = serde_json::from_str(status["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
     assert_eq!(status["status"], "failed", "{status}");
@@ -198,7 +198,7 @@ async fn a_run_that_ends_on_its_model_says_why_in_a_field() {
     assert!(ran["result"]["content"][0]["text"].as_str().unwrap_or_default().contains("agent run failed"), "{ran}");
     let sid = delegate_session(&w);
     let status = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-        "params": {"name": "agent_status", "arguments": {"session_id": sid}}});
+        "params": {"name": "agent_status", "arguments": {"op": "session", "session_id": sid}}});
     let status = w.api.post("/mcp", status).await;
     let text = status["result"]["content"][0]["text"].as_str().unwrap_or_else(|| panic!("{status}"));
     let status: Value = serde_json::from_str(text).unwrap();
@@ -243,7 +243,7 @@ async fn a_continued_turn_that_fails_says_why_and_keeps_its_reading() {
     let said = failed["result"]["content"][0]["text"].as_str().unwrap_or_default().to_string();
     assert!(said.contains("agent run failed"), "{failed}");
     let status = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-        "params": {"name": "agent_status", "arguments": {"session_id": sid}}});
+        "params": {"name": "agent_status", "arguments": {"op": "session", "session_id": sid}}});
     let status = w.api.post("/mcp", status).await;
     let status: Value = serde_json::from_str(status["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
     assert_eq!(status["cannot_run"]["reason"], "provider", "{status}");

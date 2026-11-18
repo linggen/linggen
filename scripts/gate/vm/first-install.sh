@@ -30,12 +30,15 @@ check "ling: UI page served" $? "GET / gave $(printf '%s' "$page" | head -c 120)
 sleep 5
 pgrep -qx Safari && info "ling: browser opened" "Safari running" || info "ling: browser opened" "no Safari process"
 
-# Memory is served by the engine itself, on its own port only: /mem/*,
-# /mcp/memory, `ling mem`. No ling-mem process, nothing on 9528.
+# Memory is served by the engine itself, on its own port only: /mem/*, the
+# one MCP door /mcp, `ling mem`. No ling-mem process, nothing on 9528; the
+# retired /mcp/memory answers 410 "update the plugin".
 engine_mem_health 60
 check "memory: /mem/api/health through the engine" $? "no ok from $ENGINE_MEM/api/health — $(tail -3 "$LG/ling.log" 2>/dev/null)" "v$(curl -fsS -m 3 "$ENGINE_MEM/api/health" | jq -r '.data.version // empty')"
-mcp_answers "http://127.0.0.1:$EP/mcp/memory"
-check "memory: $EP/mcp/memory initialize + tools/list" $? "$MCP_DETAIL" "$MCP_DETAIL"
+mcp_answers "http://127.0.0.1:$EP/mcp" memory_upkeep
+check "memory: $EP/mcp initialize + tools/list (the one door)" $? "$MCP_DETAIL" "$MCP_DETAIL"
+mcp_retired "http://127.0.0.1:$EP/mcp/memory"
+check "memory: the retired $EP/mcp/memory answers 410 UPGRADE_PLUGIN" $? "$RETIRED_DETAIL" "$RETIRED_DETAIL"
 "$(ling_bin)" mem session-start --format json >"$OUT/session-start.json" 2>&1
 check "memory: ling mem session-start answers" $? "$(head -c 200 "$OUT/session-start.json")" "$(head -c 80 "$OUT/session-start.json")"
 "$(ling_bin)" mem stats >"$OUT/stats.json" 2>&1 && jq -e '.total' "$OUT/stats.json" >/dev/null 2>&1

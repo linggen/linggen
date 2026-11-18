@@ -39,7 +39,7 @@ LINGGEN_DELEGATE=0 silent "$input" || fail 'disabled hook'
 
 # The separate memory attribution hook still supplies host metadata.
 stamp="$here/../stamp-cwd.sh"
-add='{"tool_name":"mcp__memory__memory_add","tool_input":{"content":"x"},"cwd":"/tmp","session_id":"s1"}'
+add='{"tool_name":"mcp__linggen__memory_add","tool_input":{"content":"x"},"cwd":"/tmp","session_id":"s1"}'
 printf '%s' "$add" | LINGGEN_CLIENT=codex bash "$stamp" | jq -e '.hookSpecificOutput.updatedInput | .host == "codex" and .source_session == "s1"' >/dev/null || fail 'Codex stamp'
 printf '%s' "$add" | bash "$stamp" | jq -e '.hookSpecificOutput.updatedInput.host == "claude-code"' >/dev/null || fail 'Claude Code stamp'
 printf 'ok: delegation hooks leave tool input and permission untouched\n'

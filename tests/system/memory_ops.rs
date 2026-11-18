@@ -726,12 +726,14 @@ fn the_scan_reads_a_session_the_person_spoke_in() {
     );
 }
 
-/// The two memory doors on the engine's port: a host's plugin still reaches
-/// the seventeen legacy tools at `/mcp/memory`; the engine's own agents
-/// reach memory's five folded tools at `/mem/mcp`, where a retired name is
-/// unknown and nothing of the engine's dream, agents or browser is listed.
+/// Memory on the engine's port: a host reaches it at the one door `/mcp`
+/// (twelve tools, memory's five among them, and a store's answer through
+/// them); an old plugin's `/mcp/memory` is told to update and runs nothing;
+/// the engine's own agents reach memory's five tools at `/mem/mcp`, where a
+/// retired name is unknown and nothing of the engine's dream, agents or
+/// browser is listed.
 #[tokio::test]
-async fn the_plugins_door_keeps_its_tools_and_the_engines_own_is_folded() {
+async fn hosts_reach_memory_at_the_one_door_and_the_engines_own_at_its_own() {
     let w = World::start(Setup::default()).await;
     let names = |list: &Value| -> Vec<String> {
         list["result"]["tools"]
@@ -742,10 +744,20 @@ async fn the_plugins_door_keeps_its_tools_and_the_engines_own_is_folded() {
             .collect()
     };
     let rpc = |method: &str, params: Value| json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
-    let plugin = w.api.post("/mcp/memory", rpc("tools/list", json!({}))).await;
-    let plugin = names(&plugin);
-    assert_eq!(plugin.len(), 17, "{plugin:?}");
-    assert!(plugin.contains(&"memory_get".to_string()) && plugin.contains(&"memory_days".to_string()));
+    let door = w.api.post("/mcp", rpc("tools/list", json!({}))).await;
+    let door = names(&door);
+    assert_eq!(door.len(), 12, "{door:?}");
+    assert!(door.contains(&"memory_upkeep".to_string()) && door.contains(&"agent_run".to_string()));
+    let call = rpc("tools/call", json!({"name": "memory_upkeep", "arguments": {"op": "days"}}));
+    let days = w.api.post("/mcp", call).await;
+    let text = days["result"]["content"][0]["text"].as_str().unwrap_or_else(|| panic!("{days}"));
+    assert!(serde_json::from_str::<Value>(text).unwrap().get("days").is_some(), "{text}");
+    let call = rpc("tools/call", json!({"name": "memory_days", "arguments": {}}));
+    let old = w.api.post("/mcp", call).await;
+    assert_eq!(old["result"]["structuredContent"]["code"], "UPGRADE_PLUGIN", "{old}");
+
+    let status = w.api.post_status("/mcp/memory", rpc("initialize", json!({}))).await;
+    assert_eq!(status, 410);
 
     let own = w.api.post("/mem/mcp", rpc("tools/list", json!({}))).await;
     assert_eq!(

@@ -4,7 +4,7 @@ reader: Coding agent and users
 guide: |
   Product specification — describe what the system should do and why.
   Keep it brief. Aim to guide design and implementation, not document code.
-status: BUILT, complete. Phase 1 2026-07-29 (client, tool surface, project scope, McpTab); phase 2 2026-07-30 (built-in memory server, auto-recall over MCP, tool-name migration, ling-mem's LAN gate, the plugin's second entry, recall.sh over MCP, memory_* cut from ling's /mcp). Unproven: a real second machine pointed at the store.
+status: BUILT, complete. Phase 1 2026-07-29 (client, tool surface, project scope, McpTab); phase 2 2026-07-30 (built-in memory server, auto-recall over MCP, tool-name migration, LAN gate, recall.sh over MCP). 2.5: the plugin's two servers became one door (`mcp-spec.md`); the sections that describe the two-server layout are marked as history. Unproven: a real second machine pointed at the store.
 ---
 
 # Ling as an MCP client
@@ -27,7 +27,7 @@ program. Verified against the running daemon with nothing but curl — no
 agent, no model, no `initialize` handshake, because the server is stateless:
 
 ```
-POST 127.0.0.1:9527/mcp/memory
+POST 127.0.0.1:9527/mcp
 {"jsonrpc":"2.0","id":1,"method":"tools/call",
  "params":{"name":"memory_search","arguments":{"query":"…","limit":2}}}
 → 2 rows
@@ -35,7 +35,8 @@ POST 127.0.0.1:9527/mcp/memory
 
 So anything in the engine can call an MCP tool, including code paths that run
 before the model. That is what makes auto-recall over MCP possible, and it
-removes the last reason for a separate memory address.
+removes the last reason for a separate memory address (2.5: memory is on the
+one door, `/mcp`).
 
 ## Phase 1 — the generic client — BUILT
 
@@ -198,35 +199,23 @@ own store, which forks memory. Over MCP it needs a URL and a token.
 Consequence for `autostart.sh`: installing and starting the binary should be
 skippable on a host that only *reads* a remote store.
 
-### `memory_*` is REMOVED from ling's `/mcp`
+### One door for memory and the rest (2.5)
 
-One memory service, not two. The tools come from ling-mem, so ling-mem is
-where they are served — a host that wants memory adds ling-mem, a host that
-wants the browser adds ling.
+Memory and Linggen's other capabilities are one MCP server, `linggen`, at
+`/mcp`: twelve tools, five of them memory (`mcp-spec.md`). A host adds one
+server; there is no second memory server and no second `memory_search`.
 
-A proxy on the engine was considered and rejected: with the plugin shipping
-both servers, a proxied `memory_search` and a direct one appear as two
-distinguishable tools with identical schemas, and the model picks between
-them arbitrarily. That is exactly the duplication `mcp-spec.md` warned about,
-self-inflicted.
+The engine's own agents are a different caller. They reach memory through the
+built-in memory server at `/mem/mcp` (this machine only), which publishes the
+five memory tools and is not for hosts.
 
-**Breaking change, deliberately.** `memory_*` had been on the engine's `/mcp`
-since 1.4.0 (2026-07-10). **Cut 2026-07-30** (Hanli's call), in the same
-release that gave the plugin its second entry: the plugin was the only channel
-that wired that door for memory, so it migrates its users atomically, and
-keeping both would have put two identical `memory_search` tools in front of one
-model. A hand-wired config gets `unknown tool` and `mcp-spec.md`.
-
-**Correction to this section's title claim:** `memory_dream_status` and
-`memory_dream_run` are NOT removed, ever. They wear the `memory_` prefix but
-are *engine* capabilities — dream_status composes ling-mem's rollup with the
-engine's in-flight run state, dream_run drives the mission executor. ling-mem
-cannot serve either. They stay after the window closes.
-
-**This reverses the 2026-07-10 decision in `mcp-spec.md`** ("one MCP for all
-users … two servers offering the same memory tools would confuse anyone
-migrating"). The reversal is written into that page too — a doc that still
-asserted the opposite would be the hidden-state failure, not a stale comment.
+**History.** From 2026-07-30 to 2.4 the engine's `/mcp` did not carry memory
+and the plugin shipped two servers (24 + 17 tools), because a proxied
+`memory_search` beside a direct one would have been two identical tools in
+front of one model. 2.3 put memory's server on the engine's port as
+`/mcp/memory`; 2.5 retired that address and merged the two servers. A plugin
+that still points at `/mcp/memory` gets HTTP 410 `UPGRADE_PLUGIN` and is told
+to update the plugin and restart the host; nothing is forwarded.
 
 ### Where the dispatch fixes live
 
@@ -275,22 +264,23 @@ of its operations' fields, so the client reads the call's branch off
 memory's catalogue (`Catalog::branch_of`) — `scope_root` goes on a search
 or a list, never a get; `cwd` and `root` on an add or `session_start`,
 never another upkeep op. The user-voice guard reads each target row with
-`memory_search` op=get. Retired tool names (`memory_get`, `memory_days`, …)
-are unknown there: no alias. That is argument shaping, not the proxy above
+`memory_search` op=get. The retired 2.4 tool names are unknown there: no
+alias. That is argument shaping, not the proxy above
 — nothing republishes ling-mem's tools.
 
 ## Remote memory — a second machine on the LAN
 
-A second machine's `ling` reaches the store by being an MCP client of
-**ling-mem directly**:
+A machine with only a plugin reaches the store by being an MCP client of the
+owner's Linggen:
 
 ```
-DS242 ling ──LAN──► Mac ling-mem :9528/mcp   (x-linggen-device)
+second machine ──LAN──► Mac ling :9527/mcp   (x-linggen-device)
 ```
 
-*2.3:* nothing listens on 9528. A machine with only a plugin uses the Mac's
-`:9527/mcp/memory` with its machine token; a machine with Linggen shares
-memory as a replica (`memory-spec.md` § Across machines).
+An approved computer sees the five memory tools only (`mcp-spec.md` § Views).
+A machine with Linggen shares memory as a replica (`memory-spec.md` § Across
+machines). *History:* before 2.3 this was ling-mem's own `:9528/mcp`; nothing
+listens on 9528 now.
 
 LAN is the scope. No relay, no VPN, no tunnel, no proxy hop.
 
@@ -322,8 +312,8 @@ Safe defaults, so nobody exposes a biography by accident — **built
 
 ## What is left
 
-**A real second machine.** Every piece is built — the plugin ships both server
-entries, both hooks talk MCP over curl, `autostart.sh` installs nothing when
+**A real second machine.** Every piece is built — the plugin's one server entry
+(`/mcp`), both hooks talk MCP over curl, `autostart.sh` installs nothing when
 `LING_MEM_HOST` points elsewhere, and ling-mem's gate checks the token — but no
 second machine has actually been pointed at this store. `LING_MEM_HOST` +
 `LING_MEM_TOKEN`, paired once through Linggen, nothing installed locally. Until

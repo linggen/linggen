@@ -1,0 +1,741 @@
+{
+  "tools": [
+    {
+      "name": "memory_search",
+      "description": "Read memory. With only a query (op omitted, or op=semantic): rows ranked by relevance — who the user is, their preferences and decisions, not codebase facts. op=get fetches one row by id; op=list browses by filters without ranking (audits, a day's worklist). Pass the fewest filters that answer the question; scope_root is the host's to fill.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "semantic",
+              "list",
+              "get"
+            ],
+            "description": "omit op for semantic · semantic: query, tier?, scope_root?, limit? · list: tier?, types?, scope_root?, indexed?, past_ttl?, day?, unjudged?, sort?, limit?, offset? · get: id"
+          },
+          "query": {
+            "type": "string",
+            "description": "Natural-language description of what to find."
+          },
+          "tier": {
+            "type": "string",
+            "enum": [
+              "core",
+              "semantic",
+              "episodic"
+            ],
+            "description": "Restrict to one tier. Omit to span all."
+          },
+          "scope_root": {
+            "type": "string",
+            "description": "op=semantic: HOST-FILLED — leave it out; the host stamps the session root, which weighs each row by how near its stored scope is to the root (a skill's dir sees only its own rows). · op=list: A session root: rows whose stored scope is under it or at its parents, and rows about the person (no scope). A skill's dir sees only its own rows."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Max rows. Default 10."
+          },
+          "types": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "fact",
+                "preference",
+                "decision",
+                "tried",
+                "fixed",
+                "learned",
+                "built"
+              ]
+            },
+            "description": "Only rows of these types."
+          },
+          "indexed": {
+            "type": "boolean",
+            "description": "Only indexed rows (true) or only the rest (false)."
+          },
+          "past_ttl": {
+            "type": "boolean",
+            "description": "Return only rows past the configured episodic TTL. Implies tier=episodic."
+          },
+          "day": {
+            "type": "string",
+            "description": "One local calendar day, YYYY-MM-DD — the remember stage lists a single day's worklist with this."
+          },
+          "unjudged": {
+            "type": "boolean",
+            "description": "With day: only the rows no remember pass has judged yet — a re-opened day's new rows, not the whole day."
+          },
+          "sort": {
+            "type": "string",
+            "enum": [
+              "newest",
+              "oldest"
+            ]
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "memory_add",
+      "description": "Save one durable row — identity, a preference, a decision with its why — not project internals or secrets. Default tier episodic, from derived; the user's own words are from=user. scope is the directory the row is about (one of the session's scope candidates), global:true when it is about the person. A standing rule gets indexed:true and a one-line summary. host, source_session, cwd and root are the host's to fill. Merge your own rows atomically with replace_ids, never add then delete; replacing a from=user row needs the user's answer and user_directed:true. occurred_at (RFC 3339) dates an imported or promoted row.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "The fact text the model will see when this row is recalled."
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "fact",
+              "preference",
+              "decision",
+              "tried",
+              "fixed",
+              "learned",
+              "built"
+            ]
+          },
+          "from": {
+            "type": "string",
+            "enum": [
+              "user",
+              "agent",
+              "derived"
+            ],
+            "description": "Whose words: user = the user stated it (a preference, a decision, a fact about them); agent = you did or observed it; derived (default) = your inference."
+          },
+          "tier": {
+            "type": "string",
+            "enum": [
+              "core",
+              "semantic",
+              "episodic"
+            ],
+            "description": "Destination tier: episodic = per-turn staging (the default when omitted, no search-first); semantic = curated durable facts (search-first); core = tiny always-injected universals (search-first). Doctrine in the server instructions."
+          },
+          "scope": {
+            "type": "string",
+            "description": "The directory this row is about, when it is not where you stand: one of the session's \"Memory scopes here\" candidates (e.g. skills/lingjing, ~/workspace). Omit for the session's own directory. Stored as the row's `scope` (absolute path; none = about the person)."
+          },
+          "summary": {
+            "type": "string",
+            "description": "One line, ≤ 80 chars: what this row is for — what the index shows in its place. Matters on indexed rows; without one the index shows the row's opening."
+          },
+          "indexed": {
+            "type": "boolean",
+            "description": "true = put the row in its scope's index: its summary loads at every session start in that directory or below. For standing rules the user states (\"always…\", \"from now on…\")."
+          },
+          "host": {
+            "type": "string",
+            "description": "HOST-FILLED — leave it out; the host stamps the committing runtime."
+          },
+          "source_session": {
+            "type": "string",
+            "description": "HOST-FILLED — leave it out; the host stamps this session. Only a promote pass carrying an original row's session forward passes it."
+          },
+          "cwd": {
+            "type": "string",
+            "description": "HOST-FILLED, request only — leave it out; the host stamps the session's working directory: the stored scope when you name none, and the base a named one is checked against. Never stored under this name."
+          },
+          "root": {
+            "type": "string",
+            "description": "HOST-FILLED — leave it out; the host stamps the session root that `scope` resolves against."
+          },
+          "global": {
+            "type": "boolean",
+            "description": "true = the row is about the person, not a directory: stored with no scope, recalled everywhere."
+          },
+          "replace_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Row ids this row replaces — inserted and deleted atomically. For merges and resolved conflicts; never separate add + delete calls."
+          },
+          "user_directed": {
+            "type": "boolean",
+            "description": "Assert the user directed this change (a settled command/declaration, or they just answered your ask). Required when replace_ids targets from=user rows — memory BLOCKS such writes otherwise. Hedged reflections don't qualify; see the server instructions."
+          },
+          "occurred_at": {
+            "type": "string",
+            "description": "RFC 3339 time the row is about — for an imported or promoted row; dates its day and TTL, never its rank."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "content"
+        ]
+      }
+    },
+    {
+      "name": "memory_update",
+      "description": "Edit one row in place by id (content, type, tier, scope or global, summary, indexed); a tier change keeps the id. Rewriting a from=user row's content needs the user's answer and user_directed:true. To merge several rows use memory_add with replace_ids.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string",
+            "description": "Replacement fact text."
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "fact",
+              "preference",
+              "decision",
+              "tried",
+              "fixed",
+              "learned",
+              "built"
+            ]
+          },
+          "tier": {
+            "type": "string",
+            "enum": [
+              "core",
+              "semantic",
+              "episodic"
+            ],
+            "description": "Moving tier relocates the row across tables, id preserved."
+          },
+          "scope": {
+            "type": "string",
+            "description": "Move the row: its stored scope, the absolute directory it is about (~/… allowed)."
+          },
+          "summary": {
+            "type": "string",
+            "description": "New one-line summary (≤ 80 chars) — what the index shows for an indexed row."
+          },
+          "indexed": {
+            "type": "boolean",
+            "description": "Put the row in (true) or take it out of (false) its scope's index."
+          },
+          "global": {
+            "type": "boolean",
+            "description": "true = clear the row's stored scope so it applies everywhere."
+          },
+          "user_directed": {
+            "type": "boolean",
+            "description": "Required when rewriting content on a from=user row — see memory_add.user_directed."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      }
+    },
+    {
+      "name": "memory_delete",
+      "description": "Hard-delete one row by id: an explicit forget, an exact duplicate, a secret saved by mistake. Never part of a merge — memory_add with replace_ids does that in one call.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      }
+    },
+    {
+      "name": "memory_upkeep",
+      "description": "Memory upkeep, one op per step of the scan, dream and solve runbooks (the Linggen plugin's skill references). Ops here: session_start, harvest_day, days, remember_day, dream_lease, role, sweep, issues, issue_add, issue_resolve, chains, dream_status, dream_run. session_start is the host's call at session start. Each op keeps its own checks: past local days only, the dream lease, the primary. issues lists the review queue; you solve each item from evidence and close it with issue_resolve. dream_status: undreamed days, first_unscanned, open_issues, in_flight, the last run and its failures; show last_run_error, and last_run_cannot_run says why a run could not go on (reason, model, resets_at, line). Offer the dream with your own model (the dream runbook) when days await it. dream_run runs the dream on this machine's Linggen model and returns at once; read dream_status afterwards.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "session_start",
+              "harvest_day",
+              "days",
+              "remember_day",
+              "dream_lease",
+              "role",
+              "sweep",
+              "issues",
+              "issue_add",
+              "issue_resolve",
+              "chains",
+              "dream_status",
+              "dream_run"
+            ],
+            "description": "session_start: cwd?, root? · harvest_day: date · days: undreamed_only?, from?, to? · remember_day: date, judged?, promoted?, holder? · dream_lease: day, holder, action? · role: no fields · sweep: dry_run? · issues: status?, limit? · issue_add: kind, row_ids?, note · issue_resolve: id, outcome, note? · chains: kind?, limit?, offset?, derived_only? · dream_status: no fields · dream_run: day?"
+          },
+          "cwd": {
+            "type": "string",
+            "description": "HOST-FILLED — the session's working directory."
+          },
+          "root": {
+            "type": "string",
+            "description": "HOST-FILLED — the session's root (git root, or where it started)."
+          },
+          "date": {
+            "type": "string",
+            "description": "Local calendar day, YYYY-MM-DD."
+          },
+          "undreamed_only": {
+            "type": "boolean",
+            "description": "Only days awaiting a dream pass (the worklist)."
+          },
+          "from": {
+            "type": "string",
+            "description": "Inclusive YYYY-MM-DD lower bound."
+          },
+          "to": {
+            "type": "string",
+            "description": "Inclusive YYYY-MM-DD upper bound."
+          },
+          "judged": {
+            "type": "integer",
+            "description": "Rows judged in this pass."
+          },
+          "promoted": {
+            "type": "integer",
+            "description": "Rows promoted to semantic in this pass."
+          },
+          "holder": {
+            "type": "string",
+            "description": "op=remember_day: The dream lease holder, when one was taken. · op=dream_lease: Who is dreaming, e.g. claude-code@<host>."
+          },
+          "day": {
+            "type": "string",
+            "description": "op=dream_lease: Local calendar day, YYYY-MM-DD. · op=dream_run: Optional target day, YYYY-MM-DD — one-day scoped run (the calendar shape)"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "acquire",
+              "renew",
+              "release"
+            ]
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "Report what would be evicted without deleting."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "resolved",
+              "dismissed",
+              "all"
+            ],
+            "description": "Which items to list (default open)."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "op=issues: Max items (default 50). · op=chains: Clusters per page (default 10)."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "chain",
+              "stale-status",
+              "contradiction",
+              "subject",
+              "cited",
+              "marker"
+            ],
+            "description": "op=issue_add: What you saw: `chain` = uncertain merge candidate; `stale-status` = a status claim likely overtaken by the world (verify against git/files at solve time); `contradiction` = conflicting rows needing the user's pick; `subject` = digest cluster of doubtful subject coherence (list ALL member ids). Scope, index and summary fixes are not queued — the dream applies them itself. · op=chains: cited (default) = id-citation chains; marker = provisional-state candidates; subject = same-subject clusters for digests."
+          },
+          "row_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The memory row ids this item is about."
+          },
+          "note": {
+            "type": "string",
+            "description": "op=issue_add: What you saw and what a solver should check — the item's whole context, since the solver starts from this line alone. Write it in plain words; it may become the user's question. · op=issue_resolve: One-line record of what was done."
+          },
+          "id": {
+            "type": "string",
+            "description": "The issue id from op=issues."
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "resolved",
+              "dismissed"
+            ]
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Pagination offset over the cluster list."
+          },
+          "derived_only": {
+            "type": "boolean",
+            "description": "Only clusters mergeable unattended (every row from=derived, tier=semantic). Unattended condense passes MUST set true."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "op"
+        ]
+      }
+    },
+    {
+      "name": "agent_run",
+      "description": "Delegate to a local Linggen agent; only its final reply returns, its steps show in the web UI. For code changes create a git worktree and pass its absolute path as write_dir with your permission_mode (plan = read-only, default/acceptEdits = edit, auto/bypassPermissions = admin there; other paths stay read-only). grants adds read/write folders, screened per folder. Continue with session_id, omitting write_dir, permission_mode and model. model_fallback defaults false: a failing model ends the run naming the model and reason. Watch the returned ws://…/api/agent/wait URL: permission_request (answer with agent_permit) and finished (reply, followup, error, model, and cannot_run when the run could not go on: reason, model, resets_at, line, work_kept).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "description": "Self-contained brief: files, cause, tests to run, and ask for a short reply"
+          },
+          "session_id": {
+            "type": "string",
+            "description": "Continue an existing session with its context; omit write_dir, permission_mode and model"
+          },
+          "model": {
+            "type": "string",
+            "description": "Model for a new session; agent_status op=models lists which are ready"
+          },
+          "agent": {
+            "type": "string",
+            "description": "Agent to run (default: ling). Unknown names return the available list."
+          },
+          "model_fallback": {
+            "type": "boolean",
+            "description": "Default false: if the model fails the run ends naming the model and the reason, rather than switching to another model; true allows the automatic switch."
+          },
+          "host": {
+            "type": "string",
+            "description": "Calling host, e.g. claude-code, codex or cursor (default claude-code)"
+          },
+          "permission_mode": {
+            "type": "string",
+            "enum": [
+              "plan",
+              "default",
+              "acceptEdits",
+              "auto",
+              "bypassPermissions"
+            ],
+            "description": "Your current permission mode; plan is read-only, default/acceptEdits grant edit, auto/bypassPermissions grant admin in write_dir only. New sessions only."
+          },
+          "work": {
+            "type": "string",
+            "enum": [
+              "code",
+              "none"
+            ],
+            "description": "New sessions: code adds coding guidance and lets the run run programs where it may edit without asking (outward commands still ask you); defaults to code with write_dir, otherwise none; ignored on continuation."
+          },
+          "write_dir": {
+            "type": "string",
+            "description": "For code changes, create a git worktree first and pass its existing absolute path. The grant follows permission_mode; other paths stay read-only, and an action beyond that waits for your agent_permit. Omit for read-only; new sessions only (a continued session keeps its grant)."
+          },
+          "grants": {
+            "type": "object",
+            "description": "New sessions only: folders the run may use without asking. read: folders to read. write: more folders at write_dir's level. Folders your level does not allow are refused; the run still starts, and the reply and agent_status (grants) list what was granted and refused, with reasons. Programs need no grant: a run with write_dir runs them where it may edit.",
+            "properties": {
+              "read": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "write": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "prompt"
+        ]
+      }
+    },
+    {
+      "name": "agent_status",
+      "description": "op=session: one session's running work, pending permission requests, status, error, the model that answered, reply, followup, denied actions, grants and cannot_run (why it stopped: a usage limit carries resets_at) — once when a watch ends without finished; never poll. op=models: every model and whether it can be used now (ready, or why not and what to do); pick a ready one for agent_run's model.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "session",
+              "models"
+            ],
+            "description": "session: session_id · models: no fields"
+          },
+          "session_id": {
+            "type": "string",
+            "description": "Linggen session ID"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "op"
+        ]
+      }
+    },
+    {
+      "name": "agent_permit",
+      "description": "Answer a session's permission request (a permission_request event, or agent_status pending). A cut Bash summary carries the whole command: read it first. allow_once runs that action; allow_session grants its path (scope=path) or folder (scope=dir) for the session; an outward request takes allow_once or deny only; deny refuses. Unanswered requests are denied after 10 minutes.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "description": "Linggen session ID"
+          },
+          "request_id": {
+            "type": "string",
+            "description": "The request's id"
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "allow_once",
+              "allow_session",
+              "deny"
+            ]
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "path",
+              "dir"
+            ],
+            "description": "allow_session only: the exact target, or its folder (default dir when grantable)"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "session_id",
+          "request_id",
+          "decision"
+        ]
+      }
+    },
+    {
+      "name": "agent_end",
+      "description": "op=stop cancels a session's running turn and subagents. op=close stops it and, with remove_worktree=true after you reviewed and merged, removes its linked worktree — only a clean one whose HEAD is on a remote branch.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "stop",
+              "close"
+            ],
+            "description": "stop: session_id · close: session_id, remove_worktree?"
+          },
+          "session_id": {
+            "type": "string",
+            "description": "Linggen session ID"
+          },
+          "remove_worktree": {
+            "type": "boolean",
+            "description": "Remove the clean, remote-contained linked worktree after work stops (default false)"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "op"
+        ]
+      }
+    },
+    {
+      "name": "browser_open",
+      "description": "Load a page in the one visible Chrome tab Linggen controls: op=navigate (an absolute URL, or back/forward) or op=tab_open (an absolute URL, creating the tab if needed). Chrome may ask the user to allow this site; they approve or decline there.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "navigate",
+              "tab_open"
+            ],
+            "description": "navigate: url · tab_open: url"
+          },
+          "url": {
+            "type": "string",
+            "description": "op=navigate: Absolute URL to load, or \"back\" / \"forward\" · op=tab_open: Absolute URL to open in the controlled tab, creating it if needed"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "op"
+        ]
+      }
+    },
+    {
+      "name": "browser_read",
+      "description": "Read the controlled tab: op=page (accessibility tree with refs like n42 for browser_act; refs go stale after the page changes, so read again), op=screenshot (an image, for what the tree cannot show), op=console (recent messages), op=tabs (its state).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "page",
+              "screenshot",
+              "tabs",
+              "console"
+            ],
+            "description": "page: filter? · screenshot: region? · tabs: no fields · console: limit?"
+          },
+          "filter": {
+            "type": "string",
+            "enum": [
+              "all",
+              "interactive"
+            ],
+            "description": "\"interactive\" returns only actionable nodes (smaller); default \"all\""
+          },
+          "region": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              },
+              "width": {
+                "type": "number"
+              },
+              "height": {
+                "type": "number"
+              }
+            },
+            "description": "Optional viewport region to capture; omit for the full viewport"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Max messages (default 50)"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "op"
+        ]
+      }
+    },
+    {
+      "name": "browser_act",
+      "description": "Act in the controlled tab: click (ref or coordinate), type, key, scroll, wait (load, selector, or ms), tab_switch, tab_close. Read the page again after it changes. Chrome may ask the user to allow this site; they approve or decline there.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "click",
+              "type",
+              "key",
+              "scroll",
+              "wait",
+              "tab_switch",
+              "tab_close"
+            ],
+            "description": "click: ref?, coordinate?, button?, double? · type: text, ref?, clear? · key: keys, repeat? · scroll: direction, amount?, ref? · wait: for, value? · tab_switch: no fields · tab_close: no fields"
+          },
+          "ref": {
+            "type": "string",
+            "description": "op=click: Node ref from browser_read op=page, e.g. \"n42\" · op=type: Field ref from browser_read op=page; omit to use current focus · op=scroll: Scroll at this node instead of page center"
+          },
+          "coordinate": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "Viewport [x, y] — only when no ref exists for the target"
+          },
+          "button": {
+            "type": "string",
+            "enum": [
+              "left",
+              "middle",
+              "right"
+            ]
+          },
+          "double": {
+            "type": "boolean",
+            "description": "Double-click"
+          },
+          "text": {
+            "type": "string",
+            "description": "Text to type"
+          },
+          "clear": {
+            "type": "boolean",
+            "description": "Clear the field before typing"
+          },
+          "keys": {
+            "type": "string",
+            "description": "Key or chord, e.g. \"Enter\", \"Tab\", \"Ctrl+a\""
+          },
+          "repeat": {
+            "type": "integer",
+            "description": "Press count (default 1, max 20)"
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "up",
+              "down",
+              "left",
+              "right"
+            ]
+          },
+          "amount": {
+            "type": "integer",
+            "description": "Pixels (default 600)"
+          },
+          "for": {
+            "type": "string",
+            "enum": [
+              "load",
+              "selector",
+              "ms"
+            ]
+          },
+          "value": {
+            "type": "string",
+            "description": "CSS selector (for=selector) or milliseconds (for=ms)"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "op"
+        ]
+      }
+    }
+  ]
+}

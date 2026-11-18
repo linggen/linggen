@@ -5,13 +5,13 @@
 //! (`ling_mem::catalog`); the door's handlers read this table and keep no
 //! list of names of their own.
 //!
-//! Two surfaces come from it. The legacy one is what `/mcp` publishes
-//! today: the engine's branches, each as the tool it has been. The folded
-//! one is the twelve-tool door — memory 5, agents 4, browser 3 — with a
-//! view per caller: this machine sees all twelve, an approved computer the
-//! five memory tools without `dream_run`.
+//! `/mcp` publishes it as twelve tools — memory 5, agents 4, browser 3 —
+//! with a view per caller: this machine sees all twelve, an approved
+//! computer the five memory tools without `dream_run`. The names published
+//! before the tools were folded are [`RETIRED`] (memory's are memory's):
+//! a call by one is told to update the plugin.
 
-use ling_mem::catalog::{Branch, Catalog, ToolDoc, Views};
+use ling_mem::catalog::{Branch, Catalog, Retired, ToolDoc, Views};
 use serde_json::json;
 use std::sync::LazyLock;
 
@@ -20,8 +20,6 @@ pub(super) const NAVIGATE_TIMEOUT_MS: u64 = 45_000;
 /// Mutating ops wait on the extension's permission prompt (a human, up to
 /// 120s) before acting.
 pub(super) const GATED_TIMEOUT_MS: u64 = 150_000;
-/// Session reads open a hidden tab and wait for the site's own responses.
-pub(super) const READ_MODULE_TIMEOUT_MS: u64 = 60_000;
 
 /// What runs a branch.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -57,8 +55,6 @@ pub(crate) enum Render {
 pub(crate) enum AgentOp {
     Run,
     Status,
-    /// The legacy list: configured models and the default.
-    Models,
     /// Every model with whether it can be used now, and why not.
     Readiness,
     Permit,
@@ -66,16 +62,16 @@ pub(crate) enum AgentOp {
     Close,
 }
 
-/// The engine's folded tools, after memory's five.
+/// The engine's tools, after memory's five.
 const TOOLS: &[ToolDoc] = &[
     ToolDoc {
         name: "agent_run",
-        description: "Delegate to a local Linggen agent; only its final reply returns, its steps show in the web UI. For code changes create a git worktree and pass its absolute path as write_dir with your permission_mode (plan = read-only, default/acceptEdits = edit, auto/bypassPermissions = admin there; other paths stay read-only). grants adds read/write folders, screened per folder. Continue with session_id, omitting write_dir, permission_mode and model. model_fallback defaults false: a failing model ends the run naming the model and reason. Watch the returned ws://…/api/agent/wait URL: permission_request (answer with agent_permit) and finished (reply, followup, error, model).",
+        description: "Delegate to a local Linggen agent; only its final reply returns, its steps show in the web UI. For code changes create a git worktree and pass its absolute path as write_dir with your permission_mode (plan = read-only, default/acceptEdits = edit, auto/bypassPermissions = admin there; other paths stay read-only). grants adds read/write folders, screened per folder. Continue with session_id, omitting write_dir, permission_mode and model. model_fallback defaults false: a failing model ends the run naming the model and reason. Watch the returned ws://…/api/agent/wait URL: permission_request (answer with agent_permit) and finished (reply, followup, error, model, and cannot_run when the run could not go on: reason, model, resets_at, line, work_kept).",
         implicit_op: None,
     },
     ToolDoc {
         name: "agent_status",
-        description: "op=session: one session's running work, pending permission requests, status, error, the model that answered, reply, followup, denied actions and grants — once when a watch ends without finished; never poll. op=models: every model and whether it can be used now.",
+        description: "op=session: one session's running work, pending permission requests, status, error, the model that answered, reply, followup, denied actions, grants and cannot_run (why it stopped: a usage limit carries resets_at) — once when a watch ends without finished; never poll. op=models: every model and whether it can be used now (ready, or why not and what to do); pick a ready one for agent_run's model.",
         implicit_op: None,
     },
     ToolDoc {
@@ -95,7 +91,7 @@ const TOOLS: &[ToolDoc] = &[
     },
     ToolDoc {
         name: "browser_read",
-        description: "Read the controlled tab: op=page (accessibility tree with refs like n42 for browser_act; refs go stale after the page changes), op=screenshot (an image, for what the tree cannot show), op=console (recent messages), op=tabs (its state).",
+        description: "Read the controlled tab: op=page (accessibility tree with refs like n42 for browser_act; refs go stale after the page changes, so read again), op=screenshot (an image, for what the tree cannot show), op=console (recent messages), op=tabs (its state).",
         implicit_op: None,
     },
     ToolDoc {
@@ -105,14 +101,39 @@ const TOOLS: &[ToolDoc] = &[
     },
 ];
 
-/// The engine's branches, in the order the legacy door lists its tools;
-/// a branch only the folded door has sits beside the one it replaces.
+/// The engine's tool names published before the tools were folded, and
+/// what does their work now. The X reads left the door (the browser
+/// bridge's X module stays, for Linggen's own apps).
+pub(super) const RETIRED: &[Retired] = &[
+    Retired { name: "browser_navigate", now: "browser_open op=navigate" },
+    Retired { name: "browser_read_page", now: "browser_read op=page" },
+    Retired { name: "browser_click", now: "browser_act op=click" },
+    Retired { name: "browser_type", now: "browser_act op=type" },
+    Retired { name: "browser_key", now: "browser_act op=key" },
+    Retired { name: "browser_scroll", now: "browser_act op=scroll" },
+    Retired { name: "browser_screenshot", now: "browser_read op=screenshot" },
+    Retired { name: "browser_wait", now: "browser_act op=wait" },
+    Retired { name: "browser_tabs", now: "browser_open op=tab_open, browser_read op=tabs, browser_act op=tab_switch / tab_close" },
+    Retired { name: "browser_read_console", now: "browser_read op=console" },
+    Retired { name: "x_search", now: "nothing: the X reads left Linggen's MCP door" },
+    Retired { name: "x_targets", now: "nothing: the X reads left Linggen's MCP door" },
+    Retired { name: "x_following", now: "nothing: the X reads left Linggen's MCP door" },
+    Retired { name: "x_whotofollow", now: "nothing: the X reads left Linggen's MCP door" },
+    Retired { name: "x_own", now: "nothing: the X reads left Linggen's MCP door" },
+    Retired { name: "x_mentions", now: "nothing: the X reads left Linggen's MCP door" },
+    Retired { name: "memory_dream_status", now: "memory_upkeep op=dream_status" },
+    Retired { name: "memory_dream_run", now: "memory_upkeep op=dream_run" },
+    Retired { name: "agent_stop", now: "agent_end op=stop" },
+    Retired { name: "agent_models", now: "agent_status op=models" },
+    Retired { name: "agent_session_close", now: "agent_end op=close" },
+];
+
+/// The engine's branches.
 const BRANCHES: &[Branch<Dispatch>] = &[
     Branch {
-        tool: Some("browser_open"),
+        tool: "browser_open",
         op: "navigate",
-        legacy: Some("browser_navigate"),
-        description: "Load a URL (or go \"back\"/\"forward\") in the controlled browser tab. The tab is visible to the user. Follow with browser_read_page to see the result.",
+        note: "",
         schema: || json!({
             "type": "object",
             "properties": {
@@ -129,10 +150,9 @@ const BRANCHES: &[Branch<Dispatch>] = &[
         dispatch: Dispatch::Bridge { module: "control", op: "navigate", render: Render::Text },
     },
     Branch {
-        tool: Some("browser_read"),
+        tool: "browser_read",
         op: "page",
-        legacy: Some("browser_read_page"),
-        description: "Read the controlled tab as an accessibility tree. Actionable nodes carry a ref like [n42] — pass that ref to browser_click / browser_type. Re-read after any action that changes the page; old refs go stale.",
+        note: "",
         schema: || json!({
             "type": "object",
             "properties": {
@@ -152,14 +172,13 @@ const BRANCHES: &[Branch<Dispatch>] = &[
         dispatch: Dispatch::Bridge { module: "control", op: "read_page", render: Render::Page },
     },
     Branch {
-        tool: Some("browser_act"),
+        tool: "browser_act",
         op: "click",
-        legacy: Some("browser_click"),
-        description: "Click a node by ref (from browser_read_page) or a viewport coordinate. Prefer refs — coordinates are the screenshot fallback.",
+        note: "",
         schema: || json!({
             "type": "object",
             "properties": {
-                "ref": {"type": "string", "description": "Node ref from browser_read_page, e.g. \"n42\""},
+                "ref": {"type": "string", "description": "Node ref from browser_read op=page, e.g. \"n42\""},
                 "coordinate": {
                     "type": "array", "items": {"type": "number"},
                     "minItems": 2, "maxItems": 2,
@@ -178,15 +197,14 @@ const BRANCHES: &[Branch<Dispatch>] = &[
         dispatch: Dispatch::Bridge { module: "control", op: "click", render: Render::Text },
     },
     Branch {
-        tool: Some("browser_act"),
+        tool: "browser_act",
         op: "type",
-        legacy: Some("browser_type"),
-        description: "Type text into a field: pass ref to focus it first (clear:true to empty it), or omit ref to type into the currently focused element.",
+        note: "",
         schema: || json!({
             "type": "object",
             "properties": {
                 "text": {"type": "string", "description": "Text to type"},
-                "ref": {"type": "string", "description": "Field ref from browser_read_page; omit to use current focus"},
+                "ref": {"type": "string", "description": "Field ref from browser_read op=page; omit to use current focus"},
                 "clear": {"type": "boolean", "description": "Clear the field before typing"}
             },
             "required": ["text"]
@@ -200,10 +218,9 @@ const BRANCHES: &[Branch<Dispatch>] = &[
         dispatch: Dispatch::Bridge { module: "control", op: "type", render: Render::Text },
     },
     Branch {
-        tool: Some("browser_act"),
+        tool: "browser_act",
         op: "key",
-        legacy: Some("browser_key"),
-        description: "Press a key or chord in the controlled tab, e.g. \"Enter\", \"Escape\", \"Ctrl+a\", \"Meta+Enter\".",
+        note: "",
         schema: || json!({
             "type": "object",
             "properties": {
@@ -221,10 +238,9 @@ const BRANCHES: &[Branch<Dispatch>] = &[
         dispatch: Dispatch::Bridge { module: "control", op: "key", render: Render::Text },
     },
     Branch {
-        tool: Some("browser_act"),
+        tool: "browser_act",
         op: "scroll",
-        legacy: Some("browser_scroll"),
-        description: "Scroll the page (or the element under ref) in the controlled tab.",
+        note: "",
         schema: || json!({
             "type": "object",
             "properties": {
@@ -243,10 +259,9 @@ const BRANCHES: &[Branch<Dispatch>] = &[
         dispatch: Dispatch::Bridge { module: "control", op: "scroll", render: Render::Text },
     },
     Branch {
-        tool: Some("browser_read"),
+        tool: "browser_read",
         op: "screenshot",
-        legacy: Some("browser_screenshot"),
-        description: "Capture the controlled tab as an image. Fallback for visual/canvas content the accessibility tree can't express — prefer browser_read_page for normal pages.",
+        note: "",
         schema: || json!({
             "type": "object",
             "properties": {
@@ -269,10 +284,9 @@ const BRANCHES: &[Branch<Dispatch>] = &[
         dispatch: Dispatch::Bridge { module: "control", op: "screenshot", render: Render::Image },
     },
     Branch {
-        tool: Some("browser_act"),
+        tool: "browser_act",
         op: "wait",
-        legacy: Some("browser_wait"),
-        description: "Wait for the controlled tab to settle before the next read: for \"load\" (page load), \"selector\" (a CSS selector appears, value required), or \"ms\" (fixed delay, max 10000).",
+        note: "",
         schema: || json!({
             "type": "object",
             "properties": {
@@ -290,31 +304,9 @@ const BRANCHES: &[Branch<Dispatch>] = &[
         dispatch: Dispatch::Bridge { module: "control", op: "wait", render: Render::Text },
     },
     Branch {
-        tool: None,
-        op: "tabs",
-        legacy: Some("browser_tabs"),
-        description: "Manage the controlled tab: list (current state), open (a URL, creating the tab if needed), switch (bring it to front), close.",
-        schema: || json!({
-            "type": "object",
-            "properties": {
-                "action": {"type": "string", "enum": ["list", "open", "switch", "close"]},
-                "url": {"type": "string", "description": "URL for action=open"}
-            },
-            "required": ["action"]
-        }),
-        extra: None,
-        hidden: &[],
-        fixed: &[],
-        check: None,
-        timeout_ms: GATED_TIMEOUT_MS,
-        views: Views::LOCAL,
-        dispatch: Dispatch::Bridge { module: "control", op: "tabs", render: Render::Text },
-    },
-    Branch {
-        tool: Some("browser_open"),
+        tool: "browser_open",
         op: "tab_open",
-        legacy: None,
-        description: "",
+        note: "",
         schema: || json!({"type": "object", "properties": {"url": {"type": "string", "description": "Absolute URL to open in the controlled tab, creating it if needed"}}, "required": ["url"]}),
         extra: None,
         hidden: &[],
@@ -325,10 +317,9 @@ const BRANCHES: &[Branch<Dispatch>] = &[
         dispatch: Dispatch::Bridge { module: "control", op: "tabs", render: Render::Text },
     },
     Branch {
-        tool: Some("browser_read"),
+        tool: "browser_read",
         op: "tabs",
-        legacy: None,
-        description: "",
+        note: "",
         schema: || json!({"type": "object", "properties": {}}),
         extra: None,
         hidden: &[],
@@ -339,10 +330,9 @@ const BRANCHES: &[Branch<Dispatch>] = &[
         dispatch: Dispatch::Bridge { module: "control", op: "tabs", render: Render::Text },
     },
     Branch {
-        tool: Some("browser_act"),
+        tool: "browser_act",
         op: "tab_switch",
-        legacy: None,
-        description: "",
+        note: "",
         schema: || json!({"type": "object", "properties": {}}),
         extra: None,
         hidden: &[],
@@ -353,10 +343,9 @@ const BRANCHES: &[Branch<Dispatch>] = &[
         dispatch: Dispatch::Bridge { module: "control", op: "tabs", render: Render::Text },
     },
     Branch {
-        tool: Some("browser_act"),
+        tool: "browser_act",
         op: "tab_close",
-        legacy: None,
-        description: "",
+        note: "",
         schema: || json!({"type": "object", "properties": {}}),
         extra: None,
         hidden: &[],
@@ -367,10 +356,9 @@ const BRANCHES: &[Branch<Dispatch>] = &[
         dispatch: Dispatch::Bridge { module: "control", op: "tabs", render: Render::Text },
     },
     Branch {
-        tool: Some("browser_read"),
+        tool: "browser_read",
         op: "console",
-        legacy: Some("browser_read_console"),
-        description: "Read recent console messages from the controlled tab (debugging).",
+        note: "",
         schema: || json!({
             "type": "object",
             "properties": {
@@ -386,138 +374,9 @@ const BRANCHES: &[Branch<Dispatch>] = &[
         dispatch: Dispatch::Bridge { module: "control", op: "read_console", render: Render::Text },
     },
     Branch {
-        tool: None,
-        op: "search",
-        legacy: Some("x_search"),
-        description: "Search x.com (Twitter) through the user's logged-in session — returns structured posts (author, text, engagement) as JSON, no API keys. Requires being signed in to x.com in the browser.",
-        schema: || json!({
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "X search query (operators like from:, -filter:replies work)"},
-                "max": {"type": "integer", "description": "Max posts (default 15, max 100)"}
-            },
-            "required": ["query"]
-        }),
-        extra: None,
-        hidden: &[],
-        fixed: &[],
-        check: None,
-        timeout_ms: READ_MODULE_TIMEOUT_MS,
-        views: Views::LOCAL,
-        dispatch: Dispatch::Bridge { module: "x", op: "search", render: Render::Text },
-    },
-    Branch {
-        tool: None,
-        op: "targets",
-        legacy: Some("x_targets"),
-        description: "Latest original posts from a set of x.com handles (capped per author for diversity), via the user's logged-in session.",
-        schema: || json!({
-            "type": "object",
-            "properties": {
-                "handles": {"type": "array", "items": {"type": "string"}, "description": "Handles to read (max 25), with or without @"},
-                "per_author": {"type": "integer", "description": "Max posts per author (default 3)"},
-                "max": {"type": "integer", "description": "Max posts overall (default 25, max 100)"}
-            },
-            "required": ["handles"]
-        }),
-        extra: None,
-        hidden: &[],
-        fixed: &[],
-        check: None,
-        timeout_ms: READ_MODULE_TIMEOUT_MS,
-        views: Views::LOCAL,
-        dispatch: Dispatch::Bridge { module: "x", op: "targets", render: Render::Text },
-    },
-    Branch {
-        tool: None,
-        op: "following",
-        legacy: Some("x_following"),
-        description: "List the accounts an x.com handle follows (handle, name, followers, bio), via the user's logged-in session.",
-        schema: || json!({
-            "type": "object",
-            "properties": {
-                "handle": {"type": "string", "description": "Whose following list to read"},
-                "self": {"type": "string", "description": "The user's own handle, excluded from results"},
-                "max": {"type": "integer", "description": "Max accounts (default 400, max 1000)"}
-            },
-            "required": ["handle"]
-        }),
-        extra: None,
-        hidden: &[],
-        fixed: &[],
-        check: None,
-        timeout_ms: READ_MODULE_TIMEOUT_MS,
-        views: Views::LOCAL,
-        dispatch: Dispatch::Bridge { module: "x", op: "following", render: Render::Text },
-    },
-    Branch {
-        tool: None,
-        op: "whotofollow",
-        legacy: Some("x_whotofollow"),
-        description: "X's personalized \"Who to follow\" recommendations for the signed-in user.",
-        schema: || json!({
-            "type": "object",
-            "properties": {
-                "exclude": {"type": "array", "items": {"type": "string"}, "description": "Handles to drop from results"},
-                "self": {"type": "string", "description": "The user's own handle, excluded from results"},
-                "max": {"type": "integer", "description": "Max accounts (default 60, max 100)"}
-            }
-        }),
-        extra: None,
-        hidden: &[],
-        fixed: &[],
-        check: None,
-        timeout_ms: READ_MODULE_TIMEOUT_MS,
-        views: Views::LOCAL,
-        dispatch: Dispatch::Bridge { module: "x", op: "whotofollow", render: Render::Text },
-    },
-    Branch {
-        tool: None,
-        op: "own",
-        legacy: Some("x_own"),
-        description: "The signed-in user's own recent x.com posts with engagement (views, likes), plus the parent posts they already replied to.",
-        schema: || json!({
-            "type": "object",
-            "properties": {
-                "handle": {"type": "string", "description": "The user's x.com handle"},
-                "max": {"type": "integer", "description": "Max posts (default 10, max 100)"}
-            },
-            "required": ["handle"]
-        }),
-        extra: None,
-        hidden: &[],
-        fixed: &[],
-        check: None,
-        timeout_ms: READ_MODULE_TIMEOUT_MS,
-        views: Views::LOCAL,
-        dispatch: Dispatch::Bridge { module: "x", op: "own", render: Render::Text },
-    },
-    Branch {
-        tool: None,
-        op: "mentions",
-        legacy: Some("x_mentions"),
-        description: "Recent mentions of, and replies to, the signed-in user on x.com — read from their Mentions notifications tab. Each item says whether it is a reply to one of their posts or a bare mention, and carries the post it answers when x.com sent it along.",
-        schema: || json!({
-            "type": "object",
-            "properties": {
-                "username": {"type": "string", "description": "The user's x.com handle — tells a reply to them apart from a bare mention"},
-                "max": {"type": "integer", "description": "Max items (default 15, max 100)"}
-            },
-            "required": ["username"]
-        }),
-        extra: None,
-        hidden: &[],
-        fixed: &[],
-        check: None,
-        timeout_ms: READ_MODULE_TIMEOUT_MS,
-        views: Views::LOCAL,
-        dispatch: Dispatch::Bridge { module: "x", op: "mentions", render: Render::Text },
-    },
-    Branch {
-        tool: Some("memory_upkeep"),
+        tool: "memory_upkeep",
         op: "dream_status",
-        legacy: Some("memory_dream_status"),
-        description: "Dream-pipeline status — is memory upkeep due? Returns undreamed days (oldest first, each awaiting a dream pass) with first_undreamed / first_unscanned, past-day summary counts (total_days / scanned_days / dreamed_days), the open review-item count, whether a dream run is in flight, and the last run's outcome (with any tool calls that failed in it: failure_count, failures). If last_run_error is set, surface it to the user verbatim — the engine side may need attention (model not configured, sign-in required, quota). When days await a dream, offer to run it: /linggen:dream runs the pass with YOUR model (no Linggen model needed); memory_dream_run offloads it to the local Linggen engine. When open_issues > 0, offer /linggen:solve.",
+        note: "dream_status: undreamed days, first_unscanned, open_issues, in_flight, the last run and its failures; show last_run_error, and last_run_cannot_run says why a run could not go on (reason, model, resets_at, line). Offer the dream with your own model (the dream runbook) when days await it.",
         schema: || json!({
             "type": "object",
             "properties": {}
@@ -531,10 +390,9 @@ const BRANCHES: &[Branch<Dispatch>] = &[
         dispatch: Dispatch::DreamStatus,
     },
     Branch {
-        tool: Some("memory_upkeep"),
+        tool: "memory_upkeep",
         op: "dream_run",
-        legacy: Some("memory_dream_run"),
-        description: "Run the nightly memory dream on the local Linggen engine (its mission executor and configured model — prefer /linggen:dream to run the pass with YOUR model instead). Optional day (YYYY-MM-DD) scopes the run to one day; omitted runs the full nightly protocol: undreamed days oldest-first, then sweep, then audit. Returns immediately — dream runs take minutes; poll memory_dream_status, and if it reports a failed run surface last_run_error to the user. An in-flight run returns {in_flight: true} — that's state, not an error.",
+        note: "dream_run runs the dream on this machine's Linggen model and returns at once; read dream_status afterwards.",
         schema: || json!({
             "type": "object",
             "properties": {
@@ -550,16 +408,15 @@ const BRANCHES: &[Branch<Dispatch>] = &[
         dispatch: Dispatch::DreamRun,
     },
     Branch {
-        tool: Some("agent_run"),
+        tool: "agent_run",
         op: "run",
-        legacy: Some("agent_run"),
-        description: "Delegate to a local Linggen agent; only its final reply returns, while working steps stay visible in the web UI. A long run returns its session: start a new background watcher for every agent_run, including continued sessions; if it closes or expires without finished, call agent_status once, and if that still says running, start a new watch; never poll. Watch on the ws://…/api/agent/wait URL it gives, which wakes you on {\"type\":\"permission_request\"} (answer with agent_permit) and {\"type\":\"finished\"} (carries reply and followup, null if none; status failed carries the error and model).",
+        note: "",
         schema: || json!({
             "type": "object",
             "properties": {
                 "prompt": {"type": "string", "description": "Self-contained brief: files, cause, tests to run, and ask for a short reply"},
                 "session_id": {"type": "string", "description": "Continue an existing session with its context; omit write_dir, permission_mode and model"},
-                "model": {"type": "string", "description": "Model for a new session; use agent_models to list choices"},
+                "model": {"type": "string", "description": "Model for a new session; agent_status op=models lists which are ready"},
                 "agent": {"type": "string", "description": "Agent to run (default: ling). Unknown names return the available list."},
                 "model_fallback": {"type": "boolean", "description": "Default false: if the model fails the run ends naming the model and the reason, rather than switching to another model; true allows the automatic switch."},
                 "host": {"type": "string", "description": "Calling host, e.g. claude-code, codex or cursor (default claude-code)"},
@@ -582,10 +439,9 @@ const BRANCHES: &[Branch<Dispatch>] = &[
         dispatch: Dispatch::Agent(AgentOp::Run),
     },
     Branch {
-        tool: Some("agent_status"),
+        tool: "agent_status",
         op: "session",
-        legacy: Some("agent_status"),
-        description: "Get running work, pending permission requests (answer with agent_permit), status (completed, failed, cancelled), error, the model that answered, reply (the agent's last message in the turn that answered your latest prompt), followup (its last message from a later turn the engine started itself, such as a background task ending) and denied actions with reasons. Use once if a watch closes or expires without finished; if running is still true, start a new watch; do not poll. Start a new watch for every background agent_run, including continued sessions.",
+        note: "",
         schema: || json!({"type": "object", "properties": {"session_id": {"type": "string", "description": "Linggen session ID"}}, "required": ["session_id"]}),
         extra: None,
         hidden: &[],
@@ -596,10 +452,9 @@ const BRANCHES: &[Branch<Dispatch>] = &[
         dispatch: Dispatch::Agent(AgentOp::Status),
     },
     Branch {
-        tool: Some("agent_permit"),
+        tool: "agent_permit",
         op: "permit",
-        legacy: Some("agent_permit"),
-        description: "Answer a permission request from an agent_run session (a permission_request stream event, or agent_status pending). A Bash request whose summary is cut carries the whole text as command: read it before allowing. allow_once runs that one action; allow_session grants its path or folder at the needed level for the rest of that session only; a request marked outward (it publishes, operates another machine, or force-pushes or pushes main) takes allow_once or deny only; deny refuses it. Unanswered requests count as denied after 10 min.",
+        note: "",
         schema: || json!({"type": "object", "properties": {
             "session_id": {"type": "string", "description": "Linggen session ID"},
             "request_id": {"type": "string", "description": "The request's id"},
@@ -615,10 +470,9 @@ const BRANCHES: &[Branch<Dispatch>] = &[
         dispatch: Dispatch::Agent(AgentOp::Permit),
     },
     Branch {
-        tool: Some("agent_end"),
+        tool: "agent_end",
         op: "stop",
-        legacy: Some("agent_stop"),
-        description: "Cancel a session's running turn and subagents.",
+        note: "",
         schema: || json!({"type": "object", "properties": {"session_id": {"type": "string", "description": "Linggen session ID"}}, "required": ["session_id"]}),
         extra: None,
         hidden: &[],
@@ -629,25 +483,9 @@ const BRANCHES: &[Branch<Dispatch>] = &[
         dispatch: Dispatch::Agent(AgentOp::Stop),
     },
     Branch {
-        tool: None,
+        tool: "agent_status",
         op: "models",
-        legacy: Some("agent_models"),
-        description: "List configured models and the default; pass a model ID to agent_run for a new session.",
-        schema: || json!({"type": "object", "properties": {}}),
-        extra: None,
-        hidden: &[],
-        fixed: &[],
-        check: None,
-        timeout_ms: 0,
-        views: Views::LOCAL,
-        dispatch: Dispatch::Agent(AgentOp::Models),
-    },
-    // The folded discovery: every model with whether it can be used now.
-    Branch {
-        tool: Some("agent_status"),
-        op: "models",
-        legacy: None,
-        description: "",
+        note: "",
         schema: || json!({"type": "object", "properties": {}}),
         extra: None,
         hidden: &[],
@@ -658,10 +496,9 @@ const BRANCHES: &[Branch<Dispatch>] = &[
         dispatch: Dispatch::Agent(AgentOp::Readiness),
     },
     Branch {
-        tool: Some("agent_end"),
+        tool: "agent_end",
         op: "close",
-        legacy: Some("agent_session_close"),
-        description: "Stop a session; after reviewing and merging, optionally remove its linked worktree. Removal requires a clean worktree with HEAD contained in a remote branch.",
+        note: "",
         schema: || json!({"type": "object", "properties": {"session_id": {"type": "string", "description": "Linggen session ID"}, "remove_worktree": {"type": "boolean", "description": "Remove the clean, remote-contained linked worktree after work stops (default false)"}}, "required": ["session_id"]}),
         extra: None,
         hidden: &[],
@@ -672,39 +509,57 @@ const BRANCHES: &[Branch<Dispatch>] = &[
         dispatch: Dispatch::Agent(AgentOp::Close),
     },];
 
+/// One side's part of the catalogue: its tools, branches and retired names.
+#[derive(Clone, Copy)]
+pub(super) struct Side<'a, D: Copy + 'static> {
+    pub tools: &'a [ToolDoc],
+    pub branches: &'a [Branch<D>],
+    pub retired: &'a [Retired],
+}
+
+/// Memory's side as the memory crate defines it.
+pub(super) fn memory_side() -> Side<'static, &'static str> {
+    use ling_mem::catalog::memory;
+    Side {
+        tools: memory::TOOLS,
+        branches: memory::BRANCHES,
+        retired: memory::RETIRED,
+    }
+}
+
+/// The engine's own side.
+pub(super) fn engine_side() -> Side<'static, Dispatch> {
+    Side {
+        tools: TOOLS,
+        branches: BRANCHES,
+        retired: RETIRED,
+    }
+}
+
 /// Memory's branches and the engine's as one catalogue, or why they cannot
 /// be: a name that would decide two things is refused here.
 pub(super) fn compose(
-    memory_tools: &[ToolDoc],
-    memory_branches: &[Branch<&'static str>],
-    tools: &[ToolDoc],
-    branches: &[Branch<Dispatch>],
+    memory: Side<'_, &'static str>,
+    engine: Side<'_, Dispatch>,
 ) -> Result<Catalog<Dispatch>, String> {
-    let all_tools = memory_tools.iter().chain(tools).copied().collect();
-    let all_branches = memory_branches
+    let tools = memory.tools.iter().chain(engine.tools).copied().collect();
+    let branches = memory
+        .branches
         .iter()
         .map(|b| b.with(Dispatch::Memory(b.dispatch)))
-        .chain(branches.iter().copied())
+        .chain(engine.branches.iter().copied())
         .collect();
-    Catalog::new(all_tools, all_branches)
+    let retired = memory.retired.iter().chain(engine.retired).copied().collect();
+    Catalog::new(tools, branches, retired)
 }
 
 /// The door's catalogue.
 pub(crate) fn catalog() -> &'static Catalog<Dispatch> {
     static CATALOG: LazyLock<Catalog<Dispatch>> = LazyLock::new(|| {
-        use ling_mem::catalog::memory;
-        compose(memory::TOOLS, memory::BRANCHES, TOOLS, BRANCHES)
-            .expect("the MCP catalogue is consistent")
+        compose(memory_side(), engine_side()).expect("the MCP catalogue is consistent")
     });
     &CATALOG
 }
-
-/// A branch the engine's legacy door publishes (memory's legacy tools are
-/// memory's own server's).
-pub(super) fn on_legacy_door(b: &Branch<Dispatch>) -> bool {
-    !matches!(b.dispatch, Dispatch::Memory(_))
-}
-
 /// The cross-field rules the folded browser and agent branches check
 /// before anything runs.
 mod rules {
@@ -783,7 +638,7 @@ mod rules {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ling_mem::catalog::{memory, View};
+    use ling_mem::catalog::View;
 
     fn names(view: View) -> Vec<String> {
         catalog()
@@ -793,9 +648,9 @@ mod tests {
             .collect()
     }
 
-    /// The folded door, from the one table: memory 5, agents 4, browser 3.
+    /// The door, from the one table: memory 5, agents 4, browser 3.
     #[test]
-    fn the_folded_door_is_twelve_tools() {
+    fn the_door_is_twelve_tools() {
         assert_eq!(
             names(View::Local),
             [
@@ -806,17 +661,25 @@ mod tests {
         );
     }
 
-    /// The legacy door is the engine's own branches; memory's legacy tools
-    /// stay memory's server's.
+    /// The forty-one tools of the two servers before the fold: seven kept
+    /// their name, the other thirty-four are retired, each once, none a
+    /// tool again; and every branch is published by a tool.
     #[test]
-    fn the_legacy_door_is_the_engines_branches() {
-        let legacy: Vec<&str> = catalog()
-            .legacy()
-            .filter(|b| on_legacy_door(b))
-            .filter_map(|b| b.legacy)
-            .collect();
-        assert_eq!(legacy.len(), 24);
-        assert!(!legacy.iter().any(|n| memory::catalog().legacy_branch(n).is_some()));
+    fn every_old_name_is_kept_or_retired_once() {
+        let cat = catalog();
+        let kept = [
+            "memory_search", "memory_add", "memory_update", "memory_delete",
+            "agent_run", "agent_status", "agent_permit",
+        ];
+        let current: Vec<&str> = cat.tools().iter().map(|t| t.name).collect();
+        for name in kept {
+            assert!(current.contains(&name), "{name}");
+        }
+        assert_eq!(cat.retired().len(), 34);
+        assert_eq!(kept.len() + cat.retired().len(), 41);
+        for b in cat.branches() {
+            assert!(current.contains(&b.tool), "{} {}", b.tool, b.op);
+        }
     }
 
     /// Composing refuses a name memory and the engine would both decide.
@@ -829,27 +692,34 @@ mod tests {
         };
         let mut tools = TOOLS.to_vec();
         tools.push(clash);
-        let why = compose(memory::TOOLS, memory::BRANCHES, &tools, BRANCHES)
+        let engine = Side { tools: &tools, ..engine_side() };
+        let why = compose(memory_side(), engine)
             .err()
             .expect("a second memory_add is refused");
         assert!(why.contains("memory_add"), "{why}");
 
-        let mut branches = BRANCHES.to_vec();
-        let mut legacy = branches[0];
-        legacy.tool = None;
-        legacy.legacy = Some("memory_search");
-        branches.push(legacy);
-        let why = compose(memory::TOOLS, memory::BRANCHES, TOOLS, &branches)
+        let mut retired = RETIRED.to_vec();
+        retired.push(Retired { name: "memory_get", now: "" });
+        let engine = Side { retired: &retired, ..engine_side() };
+        let why = compose(memory_side(), engine)
             .err()
-            .expect("a second legacy memory_search is refused");
-        assert!(why.contains("memory_search"), "{why}");
+            .expect("a second retired memory_get is refused");
+        assert!(why.contains("memory_get"), "{why}");
+
+        let mut retired = RETIRED.to_vec();
+        retired.push(Retired { name: "browser_act", now: "" });
+        let engine = Side { retired: &retired, ..engine_side() };
+        let why = compose(memory_side(), engine)
+            .err()
+            .expect("a retired name that is a tool is refused");
+        assert!(why.contains("browser_act"), "{why}");
 
         let mut upkeep = BRANCHES.to_vec();
         let mut again = *upkeep.iter().find(|b| b.op == "dream_run").unwrap();
         again.op = "sweep";
-        again.legacy = None;
         upkeep.push(again);
-        let why = compose(memory::TOOLS, memory::BRANCHES, TOOLS, &upkeep)
+        let engine = Side { branches: &upkeep, ..engine_side() };
+        let why = compose(memory_side(), engine)
             .err()
             .expect("a second upkeep sweep is refused");
         assert!(why.contains("sweep"), "{why}");

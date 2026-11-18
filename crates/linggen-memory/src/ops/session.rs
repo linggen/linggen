@@ -300,7 +300,7 @@ fn render_index(mut rows: Vec<Row>, place: &Place) -> (Vec<Row>, String, usize) 
     (shown, out, skipped)
 }
 
-const INDEX_FOOTER: &str = "\nThese are standing rows filed for this directory: read one in full by its id (memory_search op=get; memory_get where that is the tool) when its summary bears on the task.";
+const INDEX_FOOTER: &str = "\nThese are standing rows filed for this directory: read one in full by its id (memory_search op=get) when its summary bears on the task.";
 
 fn skipped_note(skipped: usize) -> String {
     format!(

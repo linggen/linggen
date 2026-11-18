@@ -1,8 +1,8 @@
 # Dream flow — remember + forget (canonical runbook)
 
-Two user-facing functions: **scan** (stage a day's session logs) and
-**dream** (= remember + forget). This file is the canonical procedure
-every trigger runs:
+Two user-facing functions: **scan** (stage a day's session logs — its
+runbook is `scan-flow.md`) and **dream** (= remember + forget). This file
+is the canonical dream procedure every trigger runs:
 
 - **Linggen** — the built-in `dream` mission under the `memory` agent
   runs every dream: the nightly cron, the memory app's Run-dream
@@ -10,23 +10,26 @@ every trigger runs:
   skill session runs only **scan** (`/linggen scan <date>`) and
   explicit chat requests.
 - **Claude Code / Codex** — no mission runtime; the host
-  agent runs the same steps via the `ling mem` CLI (or the `memory_*`
-  MCP tools).
+  agent runs the same steps via the memory MCP tools (or the `ling mem`
+  CLI).
 
 Day-granular: the unit of work is one **local calendar day** of
 episodic staging. Pending days drain **oldest first**.
 
 ## Interface
 
-On **Linggen**, use the built-in `Memory_query` / `Memory_write` tools
-(Chat-tier, ungated — zero permission prompts across a pass full of
-writes): verbs `days`, `list` (+`day`), `add`, `remember_day`,
-`harvest_day` (the scan stamp), `sweep`.
-On **other hosts**, the CLI is 1:1: `ling mem days [--undreamed]`,
+Every host — Linggen's own memory agent included — reaches the same five
+memory tools: `memory_search` (`op:"list"` for a day's worklist,
+`op:"get"` for one row, a bare `query` to search), `memory_add`,
+`memory_update`, `memory_delete`, and `memory_upkeep`, whose `op` is the
+step: `days`, `dream_lease`, `remember_day`, `sweep`, `chains`, `issues`,
+`issue_add`, `issue_resolve`, `role`, `dream_status`. Each call below is
+written as `<tool> {arguments}`.
+The CLI is 1:1: `ling mem days [--undreamed]`,
 `ling mem list --tier episodic --day <date>`, `ling mem add`,
 `ling mem remember-day <date>`, `ling mem harvest-day <date>`,
 `ling mem sweep` — only when Linggen runs on this machine (elsewhere the
-`memory_*` MCP tools are the only path). Always pipe CLI list/search output through
+MCP tools are the only path). Always pipe CLI list/search output through
 `jq -c 'del(.vector)'`.
 
 State lives in memory (`.days.json` sidecar + the two tables) —
@@ -65,21 +68,21 @@ never write them.
 Memory is dreamed on the **primary** machine, by its Linggen engine when it
 has one.
 
-- `memory_role` first. `role: replica` → reply exactly
+- `memory_upkeep {"op":"role"}` first. `role: replica` → reply exactly
   `Memory is dreamed on the primary (<upstream>)` and stop.
-- On the primary, if the Linggen engine's `memory_dream_run` tool answers,
-  offload to it (pass the date when one was given), say the engine is
-  dreaming, and stop. Run the pass below yourself only when no engine
+- On the primary, if the Linggen engine answers
+  `memory_upkeep {"op":"dream_run"}`, it has offloaded the dream (pass
+  `day` when a date was given): say the engine is dreaming, and stop. Run the pass below yourself only when no engine
   answers on this machine.
 
 ## `dream` (no argument) — remember all undreamed days
 
 0. **Snapshot + in-flight check.** `ling mem export` once (on the machine that runs Linggen; it works with Linggen running) (a store
    backup before any judged writes — the engine does the same before
-   its mission runs). If the `memory_dream_status` MCP tool is
-   reachable and reports `in_flight: true`, the Linggen engine is
+   its mission runs). If `memory_upkeep {"op":"dream_status"}` answers
+   and reports `in_flight: true`, the Linggen engine is
    already dreaming — stop and say so; never run two dreams at once.
-1. Fetch the worklist: `days` with `undreamed_only` (CLI:
+1. Fetch the worklist: `memory_upkeep {"op":"days","undreamed_only":true}` (CLI:
    `ling mem days --undreamed`). Empty → run **Forget** below, then
    **Audit** below, reply that memory is up to date, done.
 2. Take the **oldest** undreamed day → run **Remember one day** below.
@@ -97,39 +100,16 @@ has one.
   user worked that day.
 - Today / future dates are not dreamable — say so and stop.
 
-## `scan <YYYY-MM-DD>` — stage one day's session logs
-
-Backfill staging, always user-triggered, idempotent:
-
-1. Run `Bash ling mem scan <date>` (zero-LLM session walk →
-   `~/.linggen/memory/.scan-output.jsonl`; the command is part of
-   Linggen, so no path to resolve). In Linggen itself a day can also
-   be scanned from Settings → Memory.
-2. **Skip covered sessions.** `list` the day's existing rows
-   (`tier=episodic` + that `day`, and note promoted twins may live in
-   semantic) and collect their `source_session` ids. Drop every
-   scanned session already in that set — live capture or a prior scan
-   contributed it. This is what makes re-scanning safe on
-   partially-captured days.
-3. Judge the remaining candidates per `extractor-prompt.md` +
-   `routing-rules.md`; write keepers to episodic with `occurred_at`
-   set to the session time.
-4. Stamp scanned — `harvest_day` verb (CLI:
-   `ling mem harvest-day <date>`). This does **not** mark the day
-   remembered: new rows clear its `dreamed` flag, and the next dream (nightly
-   or the day's dream button) judges them. Nothing new staged → still
-   stamp, report `CLEAN`.
-
 ## Remember one day
 
-0. **Lock the day.** `{"verb":"dream_lease","day":"<date>","holder":"claude-code@<host>","action":"acquire"}`
-   (MCP `memory_dream_lease`) before reading anything — one executor per
+0. **Lock the day.** `memory_upkeep {"op":"dream_lease","day":"<date>","holder":"claude-code@<host>","action":"acquire"}`
+   before reading anything — one executor per
    day. Refused → report the reason verbatim and skip the day.
-1. **Re-pend check.** From the `days` rollup, note the day's
+1. **Re-pend check.** From the `op:"days"` rollup, note the day's
    `remembered_at`. If set, only rows created after it need judging —
    earlier rows were already judged, and the worklist leaves them out.
 2. **Worklist.** List the day's unjudged episodic rows:
-   `{"verb":"list","tier":"episodic","day":"<date>","unjudged":true,"limit":25,"sort":"oldest"}`
+   `memory_search {"op":"list","tier":"episodic","day":"<date>","unjudged":true,"limit":25,"sort":"oldest"}`
    (CLI: `ling mem list --tier episodic --day <date> --unjudged --sort oldest`).
    Page with `offset` until every row is seen. Never pass
    `type`/`from`/`outcome` — they narrow the list to zero.
@@ -140,7 +120,7 @@ Backfill staging, always user-triggered, idempotent:
 4. **Judge each cluster** — promote, merge, or skip:
    - **Promote** durable signal (user biography, cross-project
      preference, decision-with-reasoning, re-hit gotcha, state change
-     like a shipped milestone, run learning): `add` with the row's
+     like a shipped milestone, run learning): `memory_add` with the row's
      content **verbatim**, its `type`/`from`, `tier=semantic`
      (always explicit — an omitted tier lands episodic), `occurred_at`
      carried forward (else `created_at`), `source_session` if present,
@@ -151,7 +131,7 @@ Backfill staging, always user-triggered, idempotent:
      directory. Never pass `id`; whether the row joins the index is the
      scope and index lane's call (below); `tier=core` only for a narrow
      universal about the person (core carries no scope). Search-first: a quick
-     semantic `search` on the gist — but a hit with `tier=episodic`
+     `memory_search {"query":…}` on the gist — but a hit with `tier=episodic`
      never counts as "already in semantic". **The promote bar — state
      + lessons, never events.** Test: strip the date and the commit
      hash — still useful in three months? Per-event rows ("committed
@@ -173,15 +153,15 @@ Backfill staging, always user-triggered, idempotent:
      the contradicting row alongside the old one; recall-time
      reconciliation (user present) picks winners. Your own derived
      notes are the exception (Merge above).
-5. **Stamp.** `{"verb":"remember_day","date":"<date>","judged":<seen>,"promoted":<adds>,"holder":"claude-code@<host>"}`
+5. **Stamp.** `memory_upkeep {"op":"remember_day","date":"<date>","judged":<seen>,"promoted":<adds>,"holder":"claude-code@<host>"}`
    (CLI: `ling mem remember-day <date> --judged N --promoted K`).
    Never skip the stamp, even with zero promotions — it's what moves
    the day marked dreamed. Then release the lock:
-   `{"verb":"dream_lease","day":"<date>","holder":"claude-code@<host>","action":"release"}`.
+   `memory_upkeep {"op":"dream_lease","day":"<date>","holder":"claude-code@<host>","action":"release"}`.
 
 ## Forget (the sweep)
 
-`{"verb":"sweep"}` (CLI: `ling mem sweep`). Mechanical, zero-LLM,
+`memory_upkeep {"op":"sweep"}` (CLI: `ling mem sweep`). Mechanical, zero-LLM,
 self-guarding: evicts only rows that are past the episodic TTL **and**
 on a remembered day **and** created before that day's stamp. Un-judged
 rows are untouchable — an undreamed day keeps its rows forever until
@@ -194,12 +174,12 @@ audit would queue, it first tries to settle the way solve does —
 evidence first, then the fix. Main run only: no Task or subagents,
 this run is the only writer. Three capped passes:
 
-1. **Condense cited chains** — `{"verb":"chains","kind":"cited","limit":10,"derived_only":true}`
+1. **Condense cited chains** — `memory_upkeep {"op":"chains","kind":"cited","limit":10,"derived_only":true}`
    (CLI: `ling mem chains --kind cited --derived-only --limit 10`).
    Pre-confirmed id-citation chains of your own notes: collapse each
    into ONE current-truth row via `replace_ids`. See
    `references/condense-flow.md` for drafting rules.
-2. **Markers** — `{"verb":"chains","kind":"marker","limit":5}` (no
+2. **Markers** — `memory_upkeep {"op":"chains","kind":"marker","limit":5}` (no
    `derived_only`: user-voice candidates still need judging). The
    memory excludes rows any review issue names, open or closed
    (`queued_skipped` reports how many). Per candidate, in order:
@@ -212,7 +192,7 @@ this run is the only writer. Three capped passes:
      every qualifying neighbor. Any clause in doubt → the next lane.
    - Skip rows younger than ~14 days (write-time supersede gets
      first chance).
-   - **Settle from evidence.** `memory_get` each row in full,
+   - **Settle from evidence.** `memory_search {"op":"get","id":…}` each row in full,
      `memory_search` the subject for a row that completes, overtakes
      or contradicts it (any tier — recent episodic counts). When the
      claim names a project (the row's `scope` is its directory;
@@ -234,16 +214,16 @@ this run is the only writer. Three capped passes:
        pending now — otherwise it is out of reach: queue it (a kept
        ruling takes the rows out of every later scan).
 
-     Record it either way: `memory_issue_add` (the kind, the row ids,
-     note = what you did + why, one plain line), then at once
-     `memory_issue_resolve` that id — `resolved` for a change,
+     Record it either way: `memory_upkeep` op=issue_add (the kind, the
+     row ids, note = what you did + why, one plain line), then at once
+     op=issue_resolve on that id — `resolved` for a change,
      `dismissed` for keep-as-is — same note. The closed item is the
      record, and it stops the scan re-serving the rows.
    - **Queue only when** a `from=user` row would change (needs the
      user's consent), rows disagree and the user must pick
      (`contradiction`), or the evidence is out of reach on this host
      (permission declined, outside your grants, project not on this
-     machine, no tool to check). `memory_issue_add {"kind":"<k>","row_ids":[...],"note":"..."}`
+     machine, no tool to check). `memory_upkeep {"op":"issue_add","kind":"<k>","row_ids":[...],"note":"..."}`
      (CLI: `ling mem issue-add --kind <k> --row <id> "<note>"`). The
      note is ONE plain-word question with your recommendation — it
      may become the user's question as is. A deduped response
@@ -252,21 +232,21 @@ this run is the only writer. Three capped passes:
    Never pass `user_directed:true` in a dream.
 
 3. **Digest the quiet** —
-   `{"verb":"chains","kind":"subject","limit":5,"derived_only":true}`
+   `memory_upkeep {"op":"chains","kind":"subject","limit":5,"derived_only":true}`
    (CLI: `ling mem chains --kind subject --derived-only --limit 5`).
    Memory serves only QUIET clusters (newest member >30 days),
    only your own notes, never rows a prior subject ruling covers.
    Read the members in full, then per cluster exactly one of:
    - **DIGEST** — the members (or a coherent 3+ subset) share ONE
-     subject: one digest row per the condense drafting rules — `add`
+     subject: one digest row per the condense drafting rules — `memory_add`
      with `"tier":"semantic"` + `replace_ids` = the coherent subset
      only; outliers untouched. Members are archived, not deleted.
-   - **SETTLE kept** — clearly different stories: `issue-add --kind
-     subject` listing ALL member ids, note = "separate — <why>", then
+   - **SETTLE kept** — clearly different stories: op=issue_add, kind
+     `subject`, listing ALL member ids, note = "separate — <why>", then
      resolve it `dismissed` at once. The dismissal is the ruling; the
      cluster never re-forms.
    - **QUEUE** — only when you genuinely cannot tell from the full
-     members: `issue-add --kind subject` listing ALL member ids, note
+     members: op=issue_add, kind `subject`, listing ALL member ids, note
      = one plain question + your guess.
 
 What stays open is the rare leftover for the attended `/linggen:solve`.
@@ -280,7 +260,7 @@ says: change them on any row, `from=user` included, via
 judging, fix:
 
 - **scope** — filed under the wrong directory →
-  `{"id":"<id>","scope":"<absolute dir>"}` (CLI: `--scope <dir>`); about
+  `memory_update {"id":"<id>","scope":"<absolute dir>"}` (CLI: `--scope <dir>`); about
   the person but filed under a project → `{"id":"<id>","global":true}`
   (CLI: `--clear-scope`);
 - **index in** — a `from=user` standing rule ("always…", "never…",
@@ -299,8 +279,8 @@ run, one line each: `FIX <id> <field>=<new value> (was <old>) "<why, ≤60 chars
 
 No PageUpdate is needed: the memory page watches the tool stream and
 repaints tier counts + the calendar from memory's `days` rollup
-after your `Memory_write` calls land. End with the status lines and a
+after your memory writes land. End with the status lines and a
 one-line totals sentence — e.g. *"Remembered 2 days: 5 promoted, 31
 judged; sweep evicted 12; audit settled 4, queued 1."* The closed
-review items (`memory_issues {"status":"resolved"}` / `"dismissed"`)
+review items (`memory_upkeep {"op":"issues","status":"resolved"}` / `"dismissed"`)
 keep each settled ruling with its why.

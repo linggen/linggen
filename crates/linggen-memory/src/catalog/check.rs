@@ -391,7 +391,7 @@ mod tests {
         assert_eq!(op("memory_add", json!({"content": "x", "op": "add"})), None);
         assert_eq!(op("memory_upkeep", json!({"op": "days"})), Some("days"));
         assert_eq!(op("memory_upkeep", json!({"op": "dream_run"})), None, "not memory's");
-        assert_eq!(op("memory_get", json!({"id": "a"})), None, "a legacy name is no folded tool");
+        assert_eq!(op("memory_get", json!({"id": "a"})), None, "a retired name is no tool");
         let get = catalog().branch_of(View::Local, "memory_search", &json!({"op": "get"})).unwrap();
         assert!(!get.advertises("scope_root") && get.advertises("id"));
         let semantic = catalog().branch_of(View::Local, "memory_search", &json!({})).map(|b| b.op);
@@ -435,7 +435,7 @@ mod tests {
         assert!(why.contains("arguments must be an object"), "{why}");
     }
 
-    /// The scalar repairs and soft-empty clean-up the legacy tools always
+    /// The scalar repairs and soft-empty clean-up memory's tools always
     /// had, on the branch's own schema.
     #[test]
     fn a_models_sloppy_types_are_repaired_per_branch() {

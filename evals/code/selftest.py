@@ -68,7 +68,7 @@ class Handler(BaseHTTPRequestHandler):
         elif method == "tools/list":
             props = {k: {} for k in ("prompt", "work", "write_dir", "model", "grants", "permission_mode")}
             result = {"tools": [{"name": "agent_run", "inputSchema": {"properties": props}},
-                                {"name": "agent_status"}, {"name": "agent_permit"}]}
+                                {"name": "agent_status"}, {"name": "agent_permit"}, {"name": "agent_end"}]}
         else:
             result = self.tool(params["name"], params.get("arguments", {}))
         data = json.dumps({"jsonrpc": "2.0", "id": body["id"], "result": result}).encode()
@@ -82,8 +82,9 @@ class Handler(BaseHTTPRequestHandler):
     def tool(self, name, args):
         def text(s, err=False):
             return {"content": [{"type": "text", "text": s}], "isError": err}
-        if name == "agent_models":
-            return text("fake-model (default)")
+        if name == "agent_status" and args.get("op") == "models":
+            assert set(args) == {"op"}, args
+            return text(json.dumps({"models": [{"id": "fake-model", "default": True, "ready": True}]}))
         if name == "agent_run":
             assert args["permission_mode"] == "auto" and args["model_fallback"] is False
             assert "grants" not in args, "a coding session needs no tool grants"
@@ -104,8 +105,11 @@ class Handler(BaseHTTPRequestHandler):
             s["denied"].append(args["request_id"])
             return text(json.dumps({"request_id": args["request_id"], "decision": "deny"}))
         if name == "agent_status":
+            # The door's schemas are strict: the old {session_id}-only shape is refused.
+            if args.get("op") != "session" or set(args) != {"op", "session_id"}:
+                return text("update the Linggen plugin: agent_status needs op", True)
             return text(json.dumps(status(s)))
-        if name in ("agent_session_close", "agent_stop"):
+        if name == "agent_end" and args.get("op") in ("stop", "close"):
             return text("stopped")
         return text("unknown tool " + name, True)
 

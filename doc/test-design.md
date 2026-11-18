@@ -222,7 +222,7 @@ tunnels, so nothing on the host listens beyond loopback.
    its verdict is a GAP.
 3. Pass when: 9527 health; the UI loads (Chromium from `tests/e2e`'s
    Playwright over an SSH tunnel); memory answers through the engine —
-   `/mem/api/health`, `/mcp/memory` initialize + tools/list, `ling mem
+   `/mem/api/health`, `/mcp` initialize + tools/list (twelve tools; `/mcp/memory` answers 410), `ling mem
    session-start` and `stats` — with `~/.local/bin/ling-mem` the stand-in
    (`install.sh` lays down no ling-mem, so there is no `ling-mem.prev`), no
    ling-mem process, nothing listening on 9528, `/mem/mcp` answering on 9527
@@ -255,7 +255,7 @@ plugin `linggen@linggen-memory`; Codex is handed in at the plugin step):
    through the engine, at its tier, and the core row is in `ling mem
    session-start`; `~/.local/bin/ling-mem` is the stand-in and
    `ling-mem.prev` the old binary; MCP answers at `9527/mem/mcp` and
-   `9527/mcp/memory`; a write through the stand-in lands. Rollback: the
+   `9527/mcp` (and `9527/mcp/memory` answers 410); a write through the stand-in lands. Rollback: the
    previous engine and `ling-mem.prev` back and started find every row,
    including those written after the upgrade; the release again stops the
    old daemon again and the marker keeps a second backup from being made.
@@ -291,6 +291,55 @@ points every installer and updater at the gate's mirror of the drafts
 (`cli.md` § Release override); `ling update` keeps
 `.prev`, restore it when the new binary doesn't start, and take
 `--rollback`; the app's updater keeps and restores the previous bundle.
+
+### The one MCP door (2.5)
+
+Before a release that touched `/mcp` or the plugin, on a scratch store and a
+scratch home (never the real store), with fake embeddings and a fake model:
+
+1. **The list.** `tools/list` on this machine is exactly twelve tools, in
+   order: `memory_search`, `memory_add`, `memory_update`, `memory_delete`,
+   `memory_upkeep`, `agent_run`, `agent_status`, `agent_permit`, `agent_end`,
+   `browser_open`, `browser_read`, `browser_act`. The test builds the expected
+   list from the one catalogue, not from a second hand-written list. An
+   approved computer's list is the five memory tools; a phone and an unpaired
+   off-machine caller are refused; a direct `tools/call` of a tool or op
+   outside the caller's view is refused.
+2. **The server text** is at or under 2,048 characters in each view
+   (`instructions.chars().count()`), and still says the key things: the memory
+   rules, the watcher rule, the permission decisions, the usage-limit sentence
+   and the browser sentence in the local view.
+3. **Strict schemas.** Per op: the minimum arguments, a bad value, and a field
+   of another op are each refused with the form that works.
+4. **The agent flow on a fake run.** A permission request raised before the
+   watcher connects; a watch that closes with no `finished` then one
+   `agent_status op=session` and a new watch; a continuation with `session_id`;
+   a request left unanswered is a deny at the timeout; `agent_end op=stop`
+   releases a waiting run; an outward request takes `allow_once` or `deny`
+   only; the deny floor never produces a request that can be approved;
+   `agent_end op=close` never removes a worktree that is not clean and on a
+   remote branch.
+5. **Models and the usage limit.** `agent_status op=models` shows `ready` and
+   the reason for a model that is not; a run that stops on a usage limit
+   carries `cannot_run` with its reset time in `finished` and in
+   `agent_status op=session`.
+6. **The browser.** `browser_read op=page`, then `browser_act`, then a read
+   again after the page changes; the site confirmation in Chrome is answered
+   and a decline is reported.
+7. **The old plugin.** `/mcp/memory` answers HTTP 410 `UPGRADE_PLUGIN` with
+   the update text and forwards nothing; a retired tool name and an old shape
+   (`agent_status` with only `session_id`) run nothing and answer with the
+   update message and the new form. A repo check keeps retired names, the old
+   retired `/mcp/memory` address and the old plugin namespace out of the live plugin,
+   commands, graders and docs, except under a history heading or an explicit
+   upgrade fixture.
+8. **Two hosts, two installs.** On Claude Code and on Codex, each (a) on a
+   clean install and (b) on an install where the old plugin is still present:
+   session start; a search; a save; a delegated run that raises a permission
+   request, answered; a browser read. On (b) the old plugin's connection is
+   refused with the update message; where the host shows only a generic
+   disconnect, or the old per-turn hook hides the error, that row is a GAP,
+   not a pass.
 
 ## 5. Smoke on real data
 

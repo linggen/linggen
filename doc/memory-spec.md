@@ -36,8 +36,10 @@ never writes to project files.
 - **linggen plugin** — the same store in Claude Code and Codex:
   recall each turn, capture protocol, runbooks, and `/linggen:scan` for
   backfilling days. Third-party hosts reach the store through the engine's
-  `/mcp/memory` endpoint (`mcp-spec.md`). Any MCP-capable agent can add
-  `http://127.0.0.1:9527/mcp/memory` as an MCP server (tools only).
+  `/mcp` door (`mcp-spec.md`): memory is five of its twelve tools
+  (`memory_search`, `memory_add`, `memory_update`, `memory_delete`,
+  `memory_upkeep`). Any MCP-capable agent can add `http://127.0.0.1:9527/mcp`
+  as an MCP server.
 
 ## Tiers
 
@@ -207,7 +209,8 @@ at start-up and serves it (`src/memory_host/`, code in `crates/linggen-memory`).
 
 - **One writer.** The engine holds `memory/.store.lock` (flock) for its life;
   the file names its pid and port. A second opener is refused.
-- **Doors.** `/mem/*` (memory's own routes) and `/mcp/memory` on the engine's
+- **Doors.** `/mem/*` (memory's own routes) and `/mcp` (memory's five tools among the
+  door's twelve; `/mcp/memory` is retired and answers 410) on the engine's
   port — the only port; the phone's `/api/memory/<verb>`. Who reaches which
   is below. Nothing listens on the old daemon's 9528.
 - **No address to set.** The engine's own callers use the store it hosts
@@ -243,7 +246,7 @@ with a **kind**:
   page's memory calls). The engine's door decides which caller a request
   is; memory decides what that caller may reach.
 - **Over the network** (through the LAN gate, with a token) a machine
-  reaches `/mcp/memory` — for a machine with only a plugin — and the replica
+  reaches `/mcp` — the five memory tools, for a machine with only a plugin — and the replica
   protocol under `/mem`: `/api/sync/changes`, `/api/sync/rows`,
   `/api/sync/role` and the writes a replica pushes. Asking to connect
   (`/mem/api/connect/request`, `/mem/api/connect/status/<id>`) needs no
@@ -286,7 +289,7 @@ building). The stores form a star: one **primary**, any number of
   ignored. A replica that saved a primary at the old daemon's `host:9528`
   reaches nothing there: it pairs again with `host:9527`.
 - **Plugin only** — a machine with a plugin and no Linggen has no store: the
-  plugin points at another machine's `/mcp/memory` with that machine's
+  plugin points at another machine's `/mcp` with that machine's
   token (`/linggen:config`).
 - **Joining** — a replica asks; the primary's machine shows Allow /
   Deny. Allow issues a device token the replica keeps, on a `machine`

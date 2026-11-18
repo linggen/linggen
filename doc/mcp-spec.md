@@ -4,104 +4,156 @@ reader: Coding agent and users
 guide: |
   Product specification — describe what the system should do and why.
   Keep it brief. Aim to guide design and implementation, not document code.
-status: all shipped — /mcp live (24 tools incl agent_run, agent_permit), linggen plugin published, site/docs routed
+status: 2.5 — one door, twelve tools (memory 5, agents 4, browser 3) at /mcp; the two-server layout (24 + 17 tools) is retired
 ---
 
-# Linggen MCP — the capability front door
+# Linggen MCP — the one door
 
-One MCP server, on the daemon, for **every** outside agent (Claude Code, Codex,
+One MCP server, on the engine, for **every** outside agent (Claude Code, Codex,
 Cursor and others): `http://127.0.0.1:9527/mcp`, streamable HTTP, stateless
-JSON-RPC (`src/server/mcp/`; its tools come from one catalogue, `src/server/mcp/catalog.rs` composed with memory's `crates/linggen-memory/src/catalog/`). Tools are grouped by prefix; each group fronts
-a Linggen component the daemon already talks to. One config line installs the
-whole platform's capabilities; every new group makes the same install more
-valuable.
+JSON-RPC (`initialize`, `ping`, `tools/list`, `tools/call`). Its tools come
+from one catalogue (`src/server/mcp/catalog.rs`, composed with memory's
+`crates/linggen-memory/src/catalog/`). The server is named `linggen`; in Claude
+Code a tool is `mcp__plugin_linggen_linggen__<tool>`.
 
-| Group | Fronts | Status |
-|:------|:-------|:-------|
-| `browser_*` | linggen-browser extension (control module) | live |
-| `x_*` | linggen-browser extension (x session reads) | live |
-| ~~`memory_*`~~ | — | **REMOVED 2026-07-30** — served by ling-mem's own `/mcp`, see below |
-| `memory_dream_*` | the engine's own mission executor | live, and staying — ling-mem cannot serve these |
-| `agent_*` | Linggen agents (delegate a task) | live |
+Twelve tools, in list order:
 
-~~Decided (2026-07-10): one MCP for all users — including memory-only users.~~
-**REVERSED 2026-07-29** — see `mcp-client-spec.md`.
+| Group | Tools | Fronts |
+|:------|:------|:-------|
+| Memory (5) | `memory_search`, `memory_add`, `memory_update`, `memory_delete`, `memory_upkeep` | the store the engine hosts |
+| Agents (4) | `agent_run`, `agent_status`, `agent_permit`, `agent_end` | Linggen's agents (delegate a task) |
+| Browser (3) | `browser_open`, `browser_read`, `browser_act` | the linggen-browser extension (control module) |
 
-The original reasoning was that two servers offering the same memory tools
-would confuse migrating users. That holds, and it is now the argument for the
-other answer: once `ling` becomes an MCP *client* and the plugin ships both
-servers, a proxied `memory_search` and a direct one are two tools with
-identical schemas, and the model picks between them arbitrarily. The way to
-have one memory tool is to serve it in one place.
+A tool with several operations takes `op`. Every schema is strict
+(`additionalProperties: false`): an unknown field, a field of another op, a
+missing required field or a bad value is refused, and the refusal shows the
+form that works.
 
-So **`memory_*` leaves this front door.** Memory is served by ling-mem, whose
-`/mcp` has existed since 2026-05-27 and is part of the frozen 1.x contract;
-this door keeps `browser_*`, `x_*` and `agent_*`. A host adds the servers
-whose capabilities it wants.
+Memory is part of Linggen, not a second product: dreaming, scanning and the
+review queue run on the engine. That is why memory and the other capabilities
+share one door.
 
-The old decision's second premise also weakened: a ling-mem-only install
-can't run the dream missions, which is still true, but that is an argument
-for shipping both binaries — which the plugin already does — not for hiding
-one behind the other.
+## Views — one address, the view by caller
 
-**Cut, not a long window** (2026-07-30, Hanli's call). The group went out in
-the same release that gave the plugin its second MCP entry. The plugin was the
-only channel that ever wired this door for memory, so it migrates its users
-atomically; leaving both would have put two `memory_search` tools with
-identical schemas in front of one model, which is the duplication this whole
-arc exists to remove — self-inflicted. Anyone who wired `:9527` by hand gets
-`unknown tool` and this page.
+| Caller | Sees |
+|:-------|:-----|
+| this machine (loopback) | all twelve tools |
+| an approved computer (token in `x-linggen-device`) | the five memory tools only; `memory_upkeep` without `dream_run` (twelve ops). Delegation and browser control are this machine's alone |
+| a phone, or a caller with no token off this machine | refused (403 / 401 `PAIRING_REQUIRED`). Phones use `/api/memory/<verb>`, not MCP |
 
-## memory_* group — REMOVED
+A tool or op outside the caller's view cannot be called (`unknown tool`, or
+`op` not one of the listed). An approved computer's calls on `/mcp` are
+recorded as that machine's presence (Settings → devices shows it seen).
 
-Gone: `memory_search`, `memory_add`, `memory_get`, `memory_update`,
-`memory_delete`, `memory_list`, `memory_issues`, `memory_issue_resolve`. They
-are memory's, served on `/mcp/memory` on the engine's port (before 2.3:
-ling-mem's `127.0.0.1:9528/mcp`). Add that server.
+The engine's own agents reach memory at `/mem/mcp` (internal, this machine
+only: the five memory tools, eleven upkeep ops). It is not for hosts.
 
-**`memory_dream_status` and `memory_dream_run` stay** — they wear the
-`memory_` prefix but are *engine* capabilities: the first composes ling-mem's
-days rollup with the engine's in-flight run state, the second drives the
-mission executor. ling-mem can serve neither.
-- **Dream + review-queue tools** (2026-07-17): `memory_dream_status` (daemon
-  days rollup + open review items + in-flight flag + last run outcome, with
-  `last_run_error` pulled from a failed run's session tail so the host can
-  show the user why), `memory_dream_run` (triggers the dream mission through
-  `trigger_mission_core` — the same guarded path as the HTTP trigger; quiet
-  variant only, since MCP callers can't receive AskUser), `memory_issues` and
-  `memory_issue_resolve` (proxy the daemon's review-queue sidecar — facts and
-  bookkeeping; the calling agent is the solver). Hosts are steered to run the
-  dream with their own model (`/linggen:dream`) and use `memory_dream_run`
-  only to offload to the engine's executor.
-- The server `instructions` carry the memory protocol (three tiers, voice law,
-  `source_session`, `replace_ids`/`user_directed` guard, the status-supersede
-  rule, and when to offer dream/solve) — same text the ling-mem MCP ships
-  today.
-- Proxy through the engine's existing ling-mem HTTP client path so the
-  first-use autostart (install missing ling-mem, start its port) fires for MCP
-  callers too. ling-mem unreachable after autostart → friendly install-guidance
-  tool error, mirroring `no_bridge`.
+## Memory tools
+
+- **`memory_search`** — `op` omitted or `semantic`: `query` (required), `tier`,
+  `scope_root` (filled by the host), `limit`. `op: get`: `id`. `op: list`:
+  `tier`, `types`, `scope_root`, `indexed`, `past_ttl`, `day`, `unjudged`,
+  `sort`, `limit`, `offset`. A call with only `query` is a semantic search. An
+  `id` or list filters without `op` are refused with the form that works.
+- **`memory_add`** — `content` (required), `type`, `from`, `tier`, `scope`,
+  `summary`, `indexed`, `global`, `replace_ids`, `user_directed`,
+  `occurred_at`, and `host`, `source_session`, `cwd`, `root` (filled by the
+  host).
+- **`memory_update`** — `id` (required), `content`, `type`, `tier`, `scope`,
+  `summary`, `indexed`, `global`, `user_directed`. It takes no `host`, `cwd`,
+  `root` or `source_session`; a stamped one is refused.
+- **`memory_delete`** — `id`.
+- **`memory_upkeep`** — `op` is required: `session_start`, `harvest_day`,
+  `days`, `remember_day`, `dream_lease`, `role`, `sweep`, `issues`,
+  `issue_add`, `issue_resolve`, `chains`, `dream_status`, `dream_run`.
+  `dream_status` is the engine's: undreamed days, first undreamed and first
+  unscanned day, open review items, the in-flight run, the last run, its error
+  and its `last_run_cannot_run`. `dream_run` starts the dream mission (quiet
+  variant only, since MCP callers can't receive AskUser) and is this machine's
+  alone. Hosts are steered to run the dream with their own model
+  (`/linggen:dream`) and use `dream_run` only to offload to the engine's
+  executor. The calling agent is the solver of the review queue
+  (`issues`, `issue_resolve`): the queue holds facts and bookkeeping.
+
+The memory protocol (three tiers, voice law, `replace_ids` / `user_directed`
+guard, the status-replaces-status rule) lives in the server text and in the
+plugin's memory skill; the memory part of the text needs no account.
+
+## Browser tools
+
+- **`browser_open`** — `op: navigate` + `url` (absolute, or back / forward);
+  `op: tab_open` + `url`.
+- **`browser_read`** — `op: page` (`filter`: all or interactive), `screenshot`
+  (`region`), `console` (`limit`), `tabs`.
+- **`browser_act`** — `op: click` (`ref` or `coordinate`, `button`, `double`),
+  `type` (`text`, `ref`, `clear`), `key` (`keys`, `repeat` 1–20), `scroll`
+  (`direction`, `amount`, `ref`), `wait` (`for`: load, selector or ms, and
+  `value`), `tab_switch`, `tab_close`.
+
+The tools drive one visible Chrome tab through the extension; `page` gives refs
+for `click` and `type`. A browser action can make Chrome ask the user to allow
+the site; they approve or decline there. `no_bridge` means the extension is
+disconnected. The X reads that were once MCP tools left the door in 2.5; the
+extension's X module and `/api/bridge/*` stay for Linggen's own apps.
+
+## Server text and usage limits
+
+`initialize.instructions` is at or under 2,048 characters (Claude Code cuts it
+there; a test holds it) and there is one text per view. The local view carries
+the memory rules, the watcher rule for every `agent_run`, how to answer
+`agent_permit`, the browser sentence, and upkeep through the dream / scan /
+solve runbook with `memory_upkeep op=dream_status`. The remote view carries the
+memory part only, and upkeep with the host's own model (no `agent_run`, browser
+or `dream_run`).
+
+A run that cannot go on says so; the server text tells a caller what to do on a
+usage limit: read the reset time, then pick a ready model (`agent_status
+op=models`) or come back after it, and never retry before it.
+
+## Model readiness
+
+`agent_status op=models` lists every model with `ready` true or false, and when
+false, why (`not_signed_in`, `no_key`, `usage_limit` with its reset time, …)
+and one line on what to do. When no model is ready the line says to add a model
+in Settings → Models or sign in to Linggen Cloud; it does not push sign-up when
+a local model works.
+
+A run that ends because it cannot go on carries `cannot_run` in its `finished`
+frame and in `agent_status op=session`: `reason` (`no_model`, `cloud_sign_in`,
+`usage_limit`, `provider`, …), `model`, `resets_at`, `resets_in_secs`, `line`
+(what to do) and `work_kept` (whether a continuation with the same `session_id`
+still has what the run read). The dream's status carries the same as
+`last_run_cannot_run`.
+
+## The old plugin
+
+`/mcp/memory` is retired. Every request there gets HTTP 410 with
+`{"ok": false, "error": "This plugin uses a retired Linggen MCP endpoint; update the Linggen plugin and restart your host.", "code": "UPGRADE_PLUGIN"}`
+(an unpaired off-machine caller still gets 401 `PAIRING_REQUIRED` and a phone
+403 first). Nothing is forwarded and there is no alias. A retired tool name or
+a retired shape, sent to `/mcp`, runs nothing; the answer says to update the
+Linggen plugin and restart the host, and names the form that replaces it. An
+`agent_status` with only `session_id` is the old shape and is answered the same
+way.
 
 ## Distribution
 
 Claude Code and Codex plugins, one product name: **linggen**.
 
 - **Claude Code plugin `linggen`**:
-  - `.mcp.json` → the daemon endpoint (`http://127.0.0.1:9527/mcp`).
+  - `.mcp.json` → one server, `linggen`, at the engine endpoint
+    (`http://127.0.0.1:9527/mcp`).
   - Hooks: the same per-turn recall hook (`recall.sh`, CLI-based — no MCP
     round-trip in a shell hook) + session-start core load.
   - Autostart: start the daemon on `:9527` when the `ling` binary exists; when
     it doesn't, install the engine in the **background** (detached — session
     start never blocks; lock dir prevents races; `LINGGEN_NO_ENGINE_INSTALL=1`
-    opts out) and disclose the install in the session context line. Both
-    binaries are required components of the plugin — decided 2026-07-10,
-    reversing the earlier hint-only rule. Awareness = context line + README +
+    opts out) and disclose the install in the session context line. The engine
+    is a required component of the plugin. Awareness = context line + README +
     plugin description.
-    ling-mem still bootstraps itself (the recall hook needs its CLI).
-  - SKILL.md: the memory protocol (ops via `memory_*` MCP tools — this
-    supersedes the old plugin's CLI-only rule; CLI remains the fallback) plus
-    a short browser-control section (visible tab, permission prompt in the
-    browser).
+  - SKILL.md: the memory protocol (ops via the `memory_*` MCP tools; CLI
+    remains the fallback) plus a short browser-control section (visible tab,
+    permission prompt in the browser).
   - Lives in this repo: the plugin at `plugins/linggen`, the marketplace
     files at the root (`.claude-plugin/marketplace.json`,
     `.agents/plugins/marketplace.json`; marketplace name `linggen`), one
@@ -112,30 +164,16 @@ Claude Code and Codex plugins, one product name: **linggen**.
 - **Codex plugin `linggen`** supports the same memory store and scan workflow
   (`ling mem scan <day>`). Install: `codex plugin marketplace add linggen/linggen`
   then `codex plugin add linggen@linggen`.
-- **Chrome extension** (the `browser_*` and `x_*` groups need it): source in
-  this repo, `browser-extension/`
+- **Chrome extension** (the `browser_*` tools need it): source in this repo,
+  `browser-extension/`
   (`github.com/linggen/linggen/tree/main/browser-extension`).
 - **Manual** (any MCP client):
   `claude mcp add --transport http linggen http://127.0.0.1:9527/mcp` or the
-  equivalent in Cursor/Codex config. Any MCP-capable agent can add
-  `http://127.0.0.1:9527/mcp/memory` as an MCP server (tools only).
+  equivalent in Cursor/Codex config. An approved computer adds the same URL of
+  the Linggen on the owner's machine, with its token, and sees the memory tools
+  only.
 
-## Retirement map
-
-No real user base yet (2026-07-10), so retirement is a clean cut, not a
-deprecation window:
-
-- Memory rows, days and the review queue are in Settings → Memory in Linggen's
-  UI; run `/linggen:scan` from the Claude Code / Codex plugin.
-- **ling-mem's own MCP server** — ~~code stays (harmless) but is no longer
-  promoted anywhere~~. **Reversed 2026-07-29**: it is the promoted memory
-  endpoint. Everything of Linggen's is on it — the engine's agents via its MCP
-  client, a second machine on the LAN directly — and the plugin pointing
-  outside agents there is what closes the window above.
-- Site installers: the retired memory installer points at the plugin channels;
-  `install.sh` is the base for every channel. Done.
-
-## agent_* group
+## Agents (`agent_run`, `agent_status`, `agent_permit`, `agent_end`)
 
 - For code changes, create a git worktree first and pass its absolute path as
   `write_dir` to `agent_run`. Pass the host's current `permission_mode`: `plan`
@@ -149,7 +187,7 @@ deprecation window:
   above it. A folder follows `write_dir`'s rules (an existing absolute
   folder, never `/` or home) and is never Linggen's own folder. An item the
   caller's level does not allow is refused; the run still starts with what
-  survived. The reply ends with a `Preset grants:` line and `agent_status`
+  survived. The reply ends with a `Preset grants:` line and `agent_status op=session`
   carries `grants`, both `{granted: {read, write}, refused: [{item,
   reason}]}`. Programs need no grant — a coding run runs them where it may
   edit (`permission-spec.md` § Coding sessions) — so `grants.tools` is an
@@ -161,7 +199,7 @@ deprecation window:
 - A long run continues in the background. Don't poll: start a background
   watcher on `ws://127.0.0.1:9527/api/agent/wait?session_id=…`. A watch that
   closes or expires without `finished` (a host's watcher has a time cap —
-  Claude Code's Monitor stops at 30 min) gets one `agent_status`; if that
+  Claude Code's Monitor stops at 30 min) gets one `agent_status op=session`; if that
   still says running, the caller starts a new watch. The stream sends JSON
   frames:
   - `{"type":"permission_request","session_id","request":{id,tool,summary,command?,level,path,dir?,reason?,outward?}}`
@@ -169,12 +207,12 @@ deprecation window:
   - `{"type":"finished","session_id","status","reply","followup","denied","error","model"}`
     — last, then it closes. `status` is `completed`, `failed` or `cancelled`;
     `error` says why a failed run failed; `model` is the model that answered
-    the run's last call. `agent_status` carries the same `status`, `error`
+    the run's last call. `agent_status op=session` carries the same `status`, `error`
     and `model`.
   - `reply` (in both) is the agent's last message in the turn that answered
     the caller's latest prompt. A turn the engine starts on its own after it —
     a background task's end — does not replace it; both `finished` and
-    `agent_status` give that turn's last message as `followup` (`null` if none).
+    `agent_status op=session` give that turn's last message as `followup` (`null` if none).
     A run an engine restart interrupted goes on in the restart's continue
     turn, which still answers the prompt.
 - An action beyond the grants (never the hardcoded deny floor) waits for the
@@ -185,9 +223,9 @@ deprecation window:
   tool for the rest of that run. A request with `outward: true` is a command
   whose effect leaves the machine (`permission-spec.md` § Outward commands):
   it is asked whatever the run's grants and takes `allow_once` or `deny`
-  only. No answer in 10 min counts as deny; `agent_stop`
+  only. No answer in 10 min counts as deny; `agent_end op=stop`
   ends a waiting run at once.
-  `agent_run` returns early when a request is raised; `agent_status` lists
+  `agent_run` returns early when a request is raised; `agent_status op=session` lists
   open requests in `pending`. Refusals land in `denied` with their reason.
 - A session made by `agent_run` does not fall back to another model when its
   model fails (`model_fallback`, default `false`; pass `true` to allow it):
@@ -196,10 +234,10 @@ deprecation window:
   the same per-session value.
 - Follow up with `agent_run(session_id=…)` to retain context; omit `write_dir`,
   `permission_mode`, and `model`. The session keeps its first grants, its
-  session grants, and its toolset; continuing never widens them. `agent_models` lists models for new sessions;
-  `agent_stop` cancels a running turn and its subagents.
+  session grants, and its toolset; continuing never widens them. `agent_status op=models` lists models for new sessions;
+  `agent_end op=stop` cancels a running turn and its subagents.
 - Review the diff before merging. When done, call
-  `agent_session_close(session_id, remove_worktree=true)`; removal requires a
+  `agent_end op=close` with `session_id` and `remove_worktree=true`; removal requires a
   clean linked worktree whose HEAD is contained in a remote branch.
 - The MCP `instructions` string stays at or under 2048 characters: Claude
   Code cuts it there (a test holds it).
@@ -208,9 +246,48 @@ deprecation window:
 
 - Group toggles in daemon config for hosts that want a narrower surface.
 
+## History — how the door got here
+
+Kept so the decisions are not lost. Everything in this section is retired.
+
+- **Before 2.3** memory had its own daemon on `127.0.0.1:9528`, and from
+  2026-07-30 the engine's `/mcp` (24 tools: `browser_*`, `x_*`, `agent_*`,
+  `memory_dream_*`) and memory's own server (17 tools) were two MCP servers.
+  The plugin shipped both entries. The reason for two was that two servers
+  offering the same memory tools would be two `memory_search` tools with
+  identical schemas, which the model picks between arbitrarily.
+- **2.3** moved memory into the engine: one process, one port. Memory's server
+  became `/mcp/memory` on 9527, and 9528 stopped answering.
+- **2.5** (2026-11-18, the owner's call) merged the two servers into this one
+  door and cut 41 tools to twelve. The reason: memory needs the engine (dream,
+  scan, review), and one install should show the other tools, such as
+  `agent_run`, beside it.
+
+### Retired in 2.5 — what replaced each
+
+Calling a retired name runs nothing; the answer names the new form.
+
+| Retired | Replaced by |
+|:--------|:------------|
+| `memory_list` | `memory_search` `op=list` |
+| `memory_get` | `memory_search` `op=get` |
+| `memory_session_start` | `memory_upkeep` `op=session_start` |
+| `memory_harvest_day`, `memory_days`, `memory_remember_day`, `memory_dream_lease`, `memory_role`, `memory_sweep`, `memory_issues`, `memory_issue_add`, `memory_issue_resolve`, `memory_chains`, `memory_dream_status`, `memory_dream_run` | `memory_upkeep`, `op` = the name after `memory_` |
+| `agent_stop` | `agent_end` `op=stop` |
+| `agent_session_close` | `agent_end` `op=close` |
+| `agent_models` | `agent_status` `op=models` |
+| `browser_navigate` | `browser_open` `op=navigate` |
+| `browser_tabs` | `browser_open` `op=tab_open`, `browser_read` `op=tabs`, `browser_act` `op=tab_switch` or `tab_close` |
+| `browser_read_page`, `browser_screenshot`, `browser_read_console` | `browser_read` `op=page`, `screenshot`, `console` |
+| `browser_click`, `browser_type`, `browser_key`, `browser_scroll`, `browser_wait` | `browser_act` `op=click`, `type`, `key`, `scroll`, `wait` |
+| `x_search`, `x_targets`, `x_following`, `x_whotofollow`, `x_own`, `x_mentions` | none — they left the door |
+
+Kept names: `memory_search`, `memory_add`, `memory_update`, `memory_delete`,
+`agent_run`, `agent_status`, `agent_permit`. The `mcp__plugin_linggen_memory__*`
+tool namespace is gone with the second server.
+
 ## Phasing
 
-1. **memory_* on `/mcp`** — proxy + instructions + autostart path (engine). Done.
-2. **`linggen` plugin** — new plugin. Done.
-3. **Site/docs** — install pages route to the one endpoint. Done.
-4. Later: `agent_*`.
+1. Memory on `/mcp` (2026-07), taken out for its own server (2026-07-30),
+   served by the engine from 2.3. History.
+2. **2.5: one door, twelve tools.** Done.

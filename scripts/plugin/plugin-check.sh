@@ -91,20 +91,33 @@ for cmd in $(printf '%s' "$CX" | jq -r '.hooks[][] | .hooks[].command | sub("^([
   [ -x "$CCP/$cmd" ] && pass "Codex hooks: $cmd executable" || fail "Codex hooks: $cmd executable" "missing or not +x"
 done
 CCH="$(cat "$CCP/hooks/hooks.json")"
-expect "CC hooks: PreToolUse stamps add/search/session_start" "$CCH" \
-  '.hooks.PreToolUse[0].matcher as $m | ("mcp__plugin_linggen_memory__memory_add" | test($m)) and ("mcp__x__memory_search" | test($m)) and ("mcp__x__memory_session_start" | test($m)) and (("mcp__x__memory_delete" | test($m)) | not)' \
-  "matcher misses a verb"
+for HJ in "$CCH" "$CX"; do
+  expect "hooks: PreToolUse stamp matcher = add/search/upkeep" "$HJ" \
+    '[.hooks.PreToolUse[] | select(.hooks[0].command | test("stamp-cwd"))][0].matcher as $m | ("mcp__plugin_linggen_linggen__memory_add" | test($m)) and ("mcp__linggen__memory_search" | test($m)) and ("mcp__x__memory_upkeep" | test($m)) and (("mcp__x__memory_delete" | test($m)) | not) and (("mcp__x__memory_update" | test($m)) | not)' \
+    "matcher misses a tool, or takes one the hook never stamps"
+done
 
-# One address: every declaration names Linggen's port and nothing else; memory
-# is /mcp/memory beside the engine's /mcp. The retired port never appears.
+# One address, one door: every declaration is the one `linggen` server at
+# Linggen's /mcp. The retired port never appears.
 MJ="$(cat "$CCP/.mcp.json")"
-expect "CC .mcp.json: memory + linggen on one address" "$MJ" \
-  '(.mcpServers | keys) == ["linggen","memory"] and (.mcpServers.memory.url | endswith(":${LINGGEN_PORT:-9527}/mcp/memory")) and (.mcpServers.linggen.url | endswith(":${LINGGEN_PORT:-9527}/mcp")) and ((.mcpServers.memory.url | sub("/memory$"; "")) == .mcpServers.linggen.url)' \
-  "servers or URLs differ"
+expect "CC .mcp.json: one linggen server at /mcp" "$MJ" \
+  '(.mcpServers | keys) == ["linggen"] and (.mcpServers.linggen.url | endswith(":${LINGGEN_PORT:-9527}/mcp"))' \
+  "servers or URL differ"
 CXM="$(cat "$CCP/.codex-plugin/mcp.json")"
-expect "Codex mcp.json: memory + linggen on one address" "$CXM" \
-  '(.mcpServers | keys) == ["linggen","memory"] and .mcpServers.memory.url == "http://127.0.0.1:9527/mcp/memory" and .mcpServers.linggen.url == "http://127.0.0.1:9527/mcp"' \
-  "servers or URLs differ"
+expect "Codex mcp.json: one linggen server at /mcp" "$CXM" \
+  '(.mcpServers | keys) == ["linggen"] and .mcpServers.linggen.url == "http://127.0.0.1:9527/mcp"' \
+  "servers or URL differ"
+# The tool names the door retired, its old memory path and the old memory
+# server's namespace: none is live in the plugin (a historical note may name
+# them as such). The engine answers a retired name with "update the plugin".
+RETIRED_NAMES='memory_(list|get|session_start|harvest_day|days|remember_day|dream_lease|role|sweep|issues|issue_add|issue_resolve|chains|dream_status|dream_run)|agent_(stop|session_close|models)|browser_(navigate|tabs|read_page|screenshot|read_console|click|type|key|scroll|wait)|x_(search|targets|following|whotofollow|own|mentions)|plugin_linggen_memory'
+# Bounded by hand, not -w: `_` is a word character, and a namespaced name
+# (mcp__plugin_linggen_linggen__memory_dream_status) must still be seen.
+gone="$(grep -rnIE "(__|[^A-Za-z0-9_]|^)($RETIRED_NAMES)([^A-Za-z0-9_]|$)" "$CCP" "$REPO/.claude-plugin" 2>/dev/null | grep -vE '/evals-isolated/results/|[Hh]istorical' || true)
+$(grep -rnIF '/mcp/memory' "$CCP" "$REPO/.claude-plugin" 2>/dev/null | grep -vE '/evals-isolated/results/|[Hh]istorical|earlier versions' || true)"
+gone="$(printf '%s' "$gone" | sed '/^$/d')"
+[ -z "$gone" ] && pass "no retired tool names or /mcp/memory in the plugin" \
+  || fail "no retired tool names or /mcp/memory in the plugin" "$(printf '%s' "$gone" | head -3 | tr '\n' ' ')"
 old="$(grep -rnIE '9528|LING_MEM_(HOST|PORT|TOKEN)|ling-mem (start|restart|status|upgrade)|install-bin' "$CCP/.mcp.json" "$CCP/.codex-plugin" "$CCP/hooks" "$CCP/scripts" 2>/dev/null \
   | grep -vE 'retired|old memory|older file|legacy|_ling_pick|pick\(' || true)"
 [ -z "$old" ] && pass "no retired address or daemon verbs in code" \
@@ -160,8 +173,8 @@ PY
     expect "$host autostart: valid JSON, core + candidates + index" "$out" \
       '.hookSpecificOutput.hookEventName == "SessionStart" and (.hookSpecificOutput.additionalContext | test("## Core memory") and test("Memory scopes here") and test("## Index — "))' \
       "SessionStart context incomplete"
-    expect "$host autostart: sends cwd + root" "$(sent memory_session_start)" \
-      '.cwd == "'"$PROJ/story"'" and .root == "'"$PROJ"'"' "session_start args"
+    expect "$host autostart: sends op=session_start, cwd + root" "$(sent session_start)" \
+      '.op == "session_start" and .cwd == "'"$PROJ/story"'" and .root == "'"$PROJ"'"' "session_start args"
     out="$(cd "$rundir" && jq -nc --arg c "$PROJ" '{session_id:"pc-1", hook_event_name:"UserPromptSubmit", prompt:"what is the central artifact in the nine bronze cauldrons novel?", cwd:$c}' \
       | "${hook_env[@]}" CLAUDE_PLUGIN_ROOT="$root" bash "$root/hooks/recall.sh" 2>&1)"
     if printf '%s' "$out" | grep -q '^From memory (.*from=\(user\|derived\|agent\).*id=' && printf '%s' "$out" | grep -q 'Memory capture:'; then
@@ -185,7 +198,7 @@ PY
       | "${hook_env[@]}" ${STAMP_PROJECT:+CLAUDE_PROJECT_DIR="$STAMP_PROJECT"} bash "$CCP/hooks/stamp-cwd.sh" 2>&1
   }
   STAMP_PROJECT="$PROJ"
-  T=mcp__plugin_linggen_memory__memory_add
+  T=mcp__plugin_linggen_linggen__memory_add
   out="$(stamp "$T" '{"content":"x","scope":"~/workspace","summary":"s","indexed":false}' "$PROJ/story")"
   expect "stamp add: fills cwd/root/source_session/host" "$out" \
     '.hookSpecificOutput.permissionDecision == "allow" and (.hookSpecificOutput.updatedInput | .cwd == "'"$PROJ/story"'" and .root == "'"$PROJ"'" and .source_session == "pc-1" and .host == "claude-code")' \
@@ -203,15 +216,22 @@ PY
   expect "stamp add: foreign session keeps its own scope" "$out" \
     '.hookSpecificOutput.updatedInput | (has("cwd") | not) and (has("root") | not) and .source_session == "another-session"' \
     "this session's cwd stamped onto another session's row"
-  out="$(stamp mcp__plugin_linggen_memory__memory_search '{"query":"q"}' "$PROJ/story")"
+  out="$(stamp mcp__plugin_linggen_linggen__memory_search '{"query":"q"}' "$PROJ/story")"
   expect "stamp search: scope_root = root" "$out" '.hookSpecificOutput.updatedInput | .scope_root == "'"$PROJ"'" and (has("cwd_scope") | not)' "scope_root"
-  out="$(stamp mcp__plugin_linggen_memory__memory_search '{"query":"q","scope_root":"/mine"}' "$PROJ")"
+  out="$(stamp mcp__plugin_linggen_linggen__memory_search '{"query":"q","scope_root":"/mine"}' "$PROJ")"
   [ -z "$out" ] && pass "stamp search: caller scope_root kept" || fail "stamp search: caller scope_root kept" "$out"
   # A session started at $HOME (no project dir): a whole-store lookup.
-  out="$(STAMP_PROJECT="" stamp mcp__plugin_linggen_memory__memory_search '{"query":"q"}' "$FHOME")"
+  out="$(STAMP_PROJECT="" stamp mcp__plugin_linggen_linggen__memory_search '{"query":"q"}' "$FHOME")"
   [ -z "$out" ] && pass "stamp search: \$HOME stays a whole-store lookup" || fail "stamp search: \$HOME stays a whole-store lookup" "$out"
-  out="$(stamp mcp__plugin_linggen_memory__memory_session_start '{}' "$PROJ/story")"
-  expect "stamp session_start: cwd + root" "$out" '.hookSpecificOutput.updatedInput | .cwd == "'"$PROJ/story"'" and .root == "'"$PROJ"'"' "session_start stamp"
+  out="$(stamp mcp__plugin_linggen_linggen__memory_upkeep '{"op":"session_start"}' "$PROJ/story")"
+  expect "stamp upkeep session_start: cwd + root" "$out" '.hookSpecificOutput.updatedInput | .op == "session_start" and .cwd == "'"$PROJ/story"'" and .root == "'"$PROJ"'"' "session_start stamp"
+  # The door's schemas are strict: a stamped field an op does not take is refused.
+  out="$(stamp mcp__plugin_linggen_linggen__memory_upkeep '{"op":"days","undreamed_only":true}' "$PROJ/story")"
+  [ -z "$out" ] && pass "stamp upkeep: other ops untouched" || fail "stamp upkeep: other ops untouched" "$out"
+  out="$(stamp mcp__plugin_linggen_linggen__memory_search '{"op":"get","id":"x"}' "$PROJ/story")"
+  [ -z "$out" ] && pass "stamp search op=get: untouched" || fail "stamp search op=get: untouched" "$out"
+  out="$(stamp mcp__plugin_linggen_linggen__memory_search '{"op":"list","day":"2026-11-01"}' "$PROJ/story")"
+  [ -z "$out" ] && pass "stamp search op=list: untouched (a day's worklist is never narrowed)" || fail "stamp search op=list: untouched" "$out"
   if [ -n "$SKILL" ]; then
     out="$(stamp "$T" '{"content":"x"}' "$SKILL/sub")"
     expect "stamp add: skill dir is its own root" "$out" '.hookSpecificOutput.updatedInput.root == "'"$SKILL"'"' "skill root"
@@ -228,7 +248,7 @@ PY
     out="$(STAMP_PROJECT="$WS" stamp "$T" '{"content":"x","scope":"workspace/lingjing"}' "$SIB")"
     expect "stamp add: nested repo keeps the session root" "$out" \
       '.hookSpecificOutput.updatedInput | .root == "'"$WS"'" and .cwd == "'"$SIB"'" and .scope == "workspace/lingjing"' "root = nested git root"
-    out="$(STAMP_PROJECT="$WS" stamp mcp__plugin_linggen_memory__memory_search '{"query":"q"}' "$PROJ/story")"
+    out="$(STAMP_PROJECT="$WS" stamp mcp__plugin_linggen_linggen__memory_search '{"query":"q"}' "$PROJ/story")"
     expect "stamp search: nested repo keeps the session root" "$out" \
       '.hookSpecificOutput.updatedInput.scope_root == "'"$WS"'"' "scope_root = nested git root"
     out="$(STAMP_PROJECT="$PROJ" stamp "$T" '{"content":"x"}' "$SIB")"
@@ -237,7 +257,7 @@ PY
   else
     skip "stamp add: nested repo keeps the session root" "no sibling repo under a non-git $WS"
   fi
-  out="$(stamp mcp__plugin_linggen_memory__memory_delete '{"id":"x"}' "$PROJ")"
+  out="$(stamp mcp__plugin_linggen_linggen__memory_delete '{"id":"x"}' "$PROJ")"
   [ -z "$out" ] && pass "stamp: other tools untouched" || fail "stamp: other tools untouched" "$out"
 
   kill "$PROXY" 2>/dev/null

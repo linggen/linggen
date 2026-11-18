@@ -10,7 +10,7 @@ a recall window; condense cures what no recall ever touches.
   memory app / mission API.
 - **Claude Code / Codex** — no mission runtime; the host
   agent runs the steps below via the `ling mem` CLI (or the
-  `memory_chains` / `memory_add` MCP tools), on demand.
+  `memory_upkeep` op=chains / `memory_add` MCP calls), on demand.
 
 ## Before the first run — back up
 
@@ -32,7 +32,7 @@ ling mem chains --kind marker --derived-only --limit 5    # marker candidates
 ling mem chains --kind subject --derived-only --limit 2   # subject clusters (v2)
 ```
 
-(MCP: `memory_chains {"kind":"cited","derived_only":true,"limit":3}`.)
+(MCP: `memory_upkeep {"op":"chains","kind":"cited","derived_only":true,"limit":3}`.)
 
 Three kinds, one law:
 

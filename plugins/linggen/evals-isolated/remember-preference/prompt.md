@@ -6,7 +6,7 @@ allowed_tools: [Skill]
 append_system_prompt: |
   # MCP Server Instructions
 
-  ## plugin:linggen:memory
+  ## plugin:linggen:linggen
   ling-mem is this user's memory, shared by Claude Code, Codex and Linggen. Save what makes a future session predict the user better — the person, not the task.
 
   # Tiers

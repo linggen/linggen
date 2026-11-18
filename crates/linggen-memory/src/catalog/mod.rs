@@ -1,17 +1,16 @@
 //! The MCP catalogue: one table entry per branch decides a tool's name, its
 //! schema, its timeout, what runs it, and who can see and call it.
 //!
-//! A *branch* is one operation a host can ask for. It is published two ways
-//! from the same entry:
+//! A *branch* is one operation a host can ask for, published as one `op` of
+//! a tool that groups several (`memory_search` with `semantic` / `get` /
+//! `list`), or as a tool of its own when its tool has one branch
+//! (`memory_add`). Calls are checked strictly: an unknown `op`, a field of
+//! another branch, a missing required field or a bad value is refused with
+//! the form that works.
 //!
-//! - **folded** — as one `op` of a tool that groups several (`memory_search`
-//!   with `semantic` / `get` / `list`), or as a tool of its own when its
-//!   tool has one branch (`memory_add`). The folded tools are checked
-//!   strictly: an unknown `op`, a field of another branch, a missing
-//!   required field or a bad value is refused with the form that works.
-//! - **legacy** — as the tool the branch was before the tools were folded
-//!   (`memory_list`), with its schema exactly as it was published and its
-//!   arguments taken as they always were.
+//! Tools that were published before the tools were folded (`memory_list`,
+//! `browser_click`) are [`Retired`] names: listed so a call by one is
+//! answered "update the plugin", never run and never forwarded.
 //!
 //! The shape lives in the memory crate because the engine depends on memory
 //! and never the other way: memory defines its own branches here
@@ -63,27 +62,24 @@ pub type Check = fn(&Map<String, Value>) -> Result<(), String>;
 /// One operation, as the catalogue publishes it.
 #[derive(Clone, Copy)]
 pub struct Branch<D: Copy + 'static> {
-    /// The folded tool this branch belongs to; `None` for a tool that is
-    /// published only in the legacy surface (it retires with it).
-    pub tool: Option<&'static str>,
-    /// The branch's `op` inside its folded tool.
+    /// The tool this branch belongs to.
+    pub tool: &'static str,
+    /// The branch's `op` inside its tool.
     pub op: &'static str,
-    /// The tool this branch is published as in the legacy surface.
-    pub legacy: Option<&'static str>,
-    /// The legacy tool's description; the folded tool's own text is its
-    /// [`ToolDoc`].
-    pub description: &'static str,
-    /// `{type: object, properties, required}` — the legacy tool's input
-    /// schema, and the branch's fields in the folded tool.
+    /// A sentence the tool's description carries while this branch is in
+    /// the caller's view ("" for none) — what a caller must know of this op
+    /// that its fields do not say.
+    pub note: &'static str,
+    /// `{type: object, properties, required}` — the branch's fields.
     pub schema: fn() -> Value,
-    /// Properties only the folded tool advertises (a field the legacy tool
-    /// never showed).
+    /// More advertised properties, kept apart from `schema` where a table
+    /// shares one schema between branches.
     pub extra: Option<fn() -> Value>,
     /// Fields a programmatic caller sends that the schema does not show
     /// to a model; accepted, never advertised.
     pub hidden: &'static [&'static str],
-    /// Arguments the folded branch adds before it runs (the legacy
-    /// `browser_tabs` action a tab branch stands for).
+    /// Arguments the branch adds before it runs (the bridge's tab `action`
+    /// a tab branch stands for).
     pub fixed: &'static [(&'static str, &'static str)],
     pub check: Option<Check>,
     pub timeout_ms: u64,
@@ -98,8 +94,7 @@ impl<D: Copy + 'static> Branch<D> {
         Branch {
             tool: self.tool,
             op: self.op,
-            legacy: self.legacy,
-            description: self.description,
+            note: self.note,
             schema: self.schema,
             extra: self.extra,
             hidden: self.hidden,
@@ -111,7 +106,7 @@ impl<D: Copy + 'static> Branch<D> {
         }
     }
 
-    /// The branch's advertised properties, folded extras included.
+    /// The branch's advertised properties, extras included.
     pub(crate) fn properties(&self) -> Map<String, Value> {
         let mut props = (self.schema)()["properties"]
             .as_object()
@@ -136,7 +131,7 @@ impl<D: Copy + 'static> Branch<D> {
             .unwrap_or_default()
     }
 
-    /// Every field the folded branch takes: advertised and hidden.
+    /// Every field the branch takes: advertised and hidden.
     pub fn accepts(&self, key: &str) -> bool {
         self.advertises(key) || self.hidden.contains(&key)
     }
@@ -146,21 +141,12 @@ impl<D: Copy + 'static> Branch<D> {
     pub fn advertises(&self, key: &str) -> bool {
         self.properties().contains_key(key)
     }
-
-    /// The legacy tool definition, exactly as `tools/list` published it.
-    pub fn legacy_def(&self) -> Option<Value> {
-        let name = self.legacy?;
-        Some(serde_json::json!({
-            "name": name,
-            "description": self.description,
-            "inputSchema": (self.schema)(),
-        }))
-    }
 }
 
-/// A folded tool's own name and text. Its branches are the entries naming
-/// it; `implicit_op` is the branch a call without `op` means, when its
-/// fields fit that branch (`memory_search` with only a `query`).
+/// A tool's own name and text. Its branches are the entries naming it;
+/// `implicit_op` is the branch a call without `op` means, when its fields
+/// fit that branch (`memory_search` with only a `query`). `{ops}` in the
+/// text is the list of ops the caller's view has.
 #[derive(Clone, Copy)]
 pub struct ToolDoc {
     pub name: &'static str,
@@ -168,18 +154,31 @@ pub struct ToolDoc {
     pub implicit_op: Option<&'static str>,
 }
 
+/// A tool name published before the tools were folded, and what does its
+/// work now. A call by it runs nothing: the caller is told to update.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Retired {
+    pub name: &'static str,
+    pub now: &'static str,
+}
+
 /// The tools and their branches, checked once when composed.
 pub struct Catalog<D: Copy + 'static> {
     tools: Vec<ToolDoc>,
     branches: Vec<Branch<D>>,
+    retired: Vec<Retired>,
 }
 
 impl<D: Copy + 'static> Catalog<D> {
-    /// Refuses a catalogue in which any name decides two things: a folded
-    /// tool named twice, an `op` twice in one tool, a legacy name twice, a
-    /// branch whose tool has no text, a tool with no branch, or an implicit
-    /// `op` the tool does not have.
-    pub fn new(tools: Vec<ToolDoc>, branches: Vec<Branch<D>>) -> Result<Self, String> {
+    /// Refuses a catalogue in which any name decides two things: a tool
+    /// named twice, an `op` twice in one tool, a branch whose tool has no
+    /// text, a tool with no branch, an implicit `op` the tool does not
+    /// have, or a retired name that is named twice or is a tool again.
+    pub fn new(
+        tools: Vec<ToolDoc>,
+        branches: Vec<Branch<D>>,
+        retired: Vec<Retired>,
+    ) -> Result<Self, String> {
         let mut names = HashSet::new();
         for doc in &tools {
             if !names.insert(doc.name) {
@@ -187,27 +186,16 @@ impl<D: Copy + 'static> Catalog<D> {
             }
         }
         let mut ops = HashSet::new();
-        let mut legacy = HashSet::new();
         for b in &branches {
-            if let Some(tool) = b.tool {
-                if !names.contains(tool) {
-                    return Err(format!("branch `{}` names unknown tool `{tool}`", b.op));
-                }
-                if !ops.insert((tool, b.op)) {
-                    return Err(format!("tool `{tool}` has op `{}` twice", b.op));
-                }
+            if !names.contains(b.tool) {
+                return Err(format!("branch `{}` names unknown tool `{}`", b.op, b.tool));
             }
-            if let Some(name) = b.legacy {
-                if !legacy.insert(name) {
-                    return Err(format!("legacy tool `{name}` is named twice"));
-                }
-            }
-            if b.tool.is_none() && b.legacy.is_none() {
-                return Err(format!("branch `{}` is published nowhere", b.op));
+            if !ops.insert((b.tool, b.op)) {
+                return Err(format!("tool `{}` has op `{}` twice", b.tool, b.op));
             }
         }
         for doc in &tools {
-            if !branches.iter().any(|b| b.tool == Some(doc.name)) {
+            if !branches.iter().any(|b| b.tool == doc.name) {
                 return Err(format!("tool `{}` has no branch", doc.name));
             }
             if let Some(op) = doc.implicit_op {
@@ -216,7 +204,20 @@ impl<D: Copy + 'static> Catalog<D> {
                 }
             }
         }
-        Ok(Self { tools, branches })
+        let mut gone = HashSet::new();
+        for r in &retired {
+            if names.contains(r.name) {
+                return Err(format!("retired `{}` is a tool again", r.name));
+            }
+            if !gone.insert(r.name) {
+                return Err(format!("retired `{}` is named twice", r.name));
+            }
+        }
+        Ok(Self {
+            tools,
+            branches,
+            retired,
+        })
     }
 
     pub fn tools(&self) -> &[ToolDoc] {
@@ -227,22 +228,20 @@ impl<D: Copy + 'static> Catalog<D> {
         &self.branches
     }
 
-    /// The legacy surface, in the order it was published.
-    pub fn legacy(&self) -> impl Iterator<Item = &Branch<D>> {
-        self.branches.iter().filter(|b| b.legacy.is_some())
+    /// Every retired tool name, with what does its work now.
+    pub fn retired(&self) -> &[Retired] {
+        &self.retired
     }
 
-    /// The branch published as legacy tool `name`.
-    pub fn legacy_branch(&self, name: &str) -> Option<&Branch<D>> {
-        self.legacy().find(|b| b.legacy == Some(name))
+    /// The retired name `name`, if it is one.
+    pub fn retired_name(&self, name: &str) -> Option<&Retired> {
+        self.retired.iter().find(|r| r.name == name)
     }
 
-    /// Every branch of folded tool `name`, whoever is looking.
+    /// Every branch of tool `name`, whoever is looking.
     pub(crate) fn branches_of(&self, name: &str) -> impl Iterator<Item = &Branch<D>> {
         let name = name.to_string();
-        self.branches
-            .iter()
-            .filter(move |b| b.tool == Some(name.as_str()))
+        self.branches.iter().filter(move |b| b.tool == name)
     }
 
     /// The branches of `name` that `view` can see and call.
@@ -252,9 +251,9 @@ impl<D: Copy + 'static> Catalog<D> {
             .collect()
     }
 
-    /// The folded tools `view` sees, as `tools/list` publishes them: a tool
-    /// with no branch in the view is not listed, and a listed tool's schema
-    /// names only the branches the view can call.
+    /// The tools `view` sees, as `tools/list` publishes them: a tool with no
+    /// branch in the view is not listed, and a listed tool's schema and
+    /// text name only the branches the view can call.
     pub fn tools_list(&self, view: View) -> Vec<Value> {
         self.tools
             .iter()
@@ -262,14 +261,14 @@ impl<D: Copy + 'static> Catalog<D> {
             .collect()
     }
 
-    /// The branch a folded call means and the arguments it runs with, or
-    /// the refusal a caller reads. A tool or `op` the view cannot see is
+    /// The branch a call means and the arguments it runs with, or the
+    /// refusal a caller reads. A tool or `op` the view cannot see is
     /// answered as though it did not exist.
     pub fn resolve(&self, view: View, name: &str, args: Value) -> Resolved<'_, D> {
         check::resolve(self, view, name, args)
     }
 
-    /// The branch a folded call names, read the way [`resolve`](Self::resolve)
+    /// The branch a call names, read the way [`resolve`](Self::resolve)
     /// picks it (an `op`, or the implicit one when the fields fit), without
     /// checking its fields. `None` when the call names no branch the view
     /// has. For a client that fills fields in before the call goes out: it
@@ -284,12 +283,11 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn branch(tool: Option<&'static str>, op: &'static str, legacy: Option<&'static str>) -> Branch<u8> {
+    fn branch(tool: &'static str, op: &'static str) -> Branch<u8> {
         Branch {
             tool,
             op,
-            legacy,
-            description: "",
+            note: "",
             schema: || json!({"type": "object", "properties": {}}),
             extra: None,
             hidden: &[],
@@ -309,8 +307,8 @@ mod tests {
         }
     }
 
-    fn refused(tools: Vec<ToolDoc>, branches: Vec<Branch<u8>>) -> String {
-        match Catalog::new(tools, branches) {
+    fn refused(tools: Vec<ToolDoc>, branches: Vec<Branch<u8>>, retired: Vec<Retired>) -> String {
+        match Catalog::new(tools, branches, retired) {
             Ok(_) => panic!("a catalogue in which one name decides two things was built"),
             Err(why) => why,
         }
@@ -320,35 +318,31 @@ mod tests {
     #[test]
     fn a_name_that_would_decide_two_things_is_refused() {
         let t = || vec![doc("t")];
-        let why = refused(vec![doc("t"), doc("t")], vec![branch(Some("t"), "a", None)]);
+        let why = refused(vec![doc("t"), doc("t")], vec![branch("t", "a")], vec![]);
         assert!(why.contains("named twice"), "{why}");
-        let why = refused(t(), vec![branch(Some("t"), "a", None), branch(Some("t"), "a", None)]);
+        let why = refused(t(), vec![branch("t", "a"), branch("t", "a")], vec![]);
         assert!(why.contains("op `a` twice"), "{why}");
-        let why = refused(
-            t(),
-            vec![branch(Some("t"), "a", Some("old")), branch(Some("t"), "b", Some("old"))],
-        );
-        assert!(why.contains("legacy tool `old`"), "{why}");
-        let why = refused(t(), vec![branch(Some("u"), "a", None)]);
+        let why = refused(t(), vec![branch("u", "a")], vec![]);
         assert!(why.contains("unknown tool `u`"), "{why}");
-        let why = refused(vec![doc("t"), doc("lonely")], vec![branch(Some("t"), "a", None)]);
+        let why = refused(vec![doc("t"), doc("lonely")], vec![branch("t", "a")], vec![]);
         assert!(why.contains("`lonely` has no branch"), "{why}");
-        let why = refused(t(), vec![branch(Some("t"), "a", None), branch(None, "b", None)]);
-        assert!(why.contains("published nowhere"), "{why}");
         let mut implicit = doc("t");
         implicit.implicit_op = Some("zz");
-        let why = refused(vec![implicit], vec![branch(Some("t"), "a", None)]);
+        let why = refused(vec![implicit], vec![branch("t", "a")], vec![]);
         assert!(why.contains("no op `zz`"), "{why}");
+        let old = |name| Retired { name, now: "t" };
+        let why = refused(t(), vec![branch("t", "a")], vec![old("t")]);
+        assert!(why.contains("retired `t` is a tool again"), "{why}");
+        let why = refused(t(), vec![branch("t", "a")], vec![old("o"), old("o")]);
+        assert!(why.contains("retired `o` is named twice"), "{why}");
     }
 
-    /// Memory's own catalogue: its legacy surface is the seventeen tools in
-    /// the order they were published, and its folded surface the five.
+    /// Memory's own catalogue: the five tools, eleven upkeep ops the store
+    /// runs, and the thirteen names its tools were published under before
+    /// they were folded.
     #[test]
-    fn memory_publishes_seventeen_legacy_tools_and_five_folded_ones() {
+    fn memory_publishes_five_tools_and_retires_thirteen_names() {
         let cat = memory::catalog();
-        let legacy: Vec<&str> = cat.legacy().filter_map(|b| b.legacy).collect();
-        assert_eq!(legacy.len(), 17);
-        assert_eq!(legacy[0], "memory_search");
         let folded: Vec<String> = cat
             .tools_list(View::Local)
             .iter()
@@ -366,5 +360,28 @@ mod tests {
                 "sweep", "issues", "issue_add", "issue_resolve", "chains"
             ]
         );
+        assert_eq!(cat.retired().len(), 13);
+        assert_eq!(
+            cat.retired_name("memory_get"),
+            Some(&Retired { name: "memory_get", now: "memory_search op=get" })
+        );
+    }
+
+    /// `{ops}` in a tool's text is the view's own op list, and a branch's
+    /// note is in the text only while the branch is in the view.
+    #[test]
+    fn a_tools_text_names_the_ops_its_view_has() {
+        let tools = vec![ToolDoc {
+            name: "t",
+            description: "Ops: {ops}.",
+            implicit_op: None,
+        }];
+        let mut local = branch("t", "b");
+        local.views = Views::LOCAL;
+        local.note = "b is local.";
+        let cat = Catalog::new(tools, vec![branch("t", "a"), local], vec![]).unwrap();
+        let text = |view| cat.tools_list(view)[0]["description"].as_str().unwrap().to_string();
+        assert_eq!(text(View::Local), "Ops: a, b. b is local.");
+        assert_eq!(text(View::Remote), "Ops: a.");
     }
 }

@@ -18,9 +18,16 @@
 # ISOLATION. An eval run gets a temp HOME and only an allowlisted environment
 # (LINGGEN_PORT is not on it), so neither the plugin's .mcp.json nor its hooks
 # can be pointed away from 9527 by env. Instead:
-#   - MCP: the memory and linggen servers are MOCKED (evals-isolated/mocks,
-#     per-case mocks/). Real plugin servers are never started — never pass
-#     --allow-real-servers or --mocks off: .mcp.json would then reach 9527.
+#   - MCP: the plugin's one server, `linggen`, is MOCKED (evals-isolated/
+#     mocks/linggen, per-case mocks/linggen). Real plugin servers are never
+#     started — never pass --allow-real-servers or --mocks off: .mcp.json
+#     would then reach 9527. A mock is one file per TOOL (mocks/<server>/
+#     <tool>.md), not per op: a folded tool's mock answers every op with one
+#     body, so a case that needs one op's answer (status-renders:
+#     memory_upkeep op=dream_status) overrides that tool's file in its own
+#     mocks/ and a grader checks the op in the call's input.
+#     mocks/linggen/_tools.json is the door's tools/list (this machine's view,
+#     twelve tools), so the mocked tools carry the real schemas.
 #   - Hooks: each case's scaffold.sh writes the run's ~/.linggen/client.json
 #     pointing at the scratch Linggen this script starts on 29548 (a `ling`
 #     binary, LINGGEN_BIN), seeded with invented rows. The host is written
@@ -30,7 +37,7 @@
 #     session id or an eval temp path. Exit 3 if one does.
 #
 # The mocked server carries no MCP instructions, so each case appends the
-# scratch engine's memory instructions (/mcp/memory) as a system prompt; this
+# scratch engine's instructions (initialize on /mcp) as a system prompt; this
 # script re-syncs them before every run (a diff in prompt.md = the server text
 # moved).
 
@@ -107,13 +114,13 @@ curl -sf -H 'content-type: application/json' -d "$SEED" "http://127.0.0.1:$PORT/
 # ── Server instructions → each case's append_system_prompt ──────────────────
 
 INIT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"plugin-eval","version":"1"}}}'
-curl -sf -H 'content-type: application/json' -d "$INIT" "http://127.0.0.1:$PORT/mcp/memory" \
+curl -sf -H 'content-type: application/json' -d "$INIT" "http://127.0.0.1:$PORT/mcp" \
   | jq -r '.result.instructions // empty' >"$WORK/instructions.txt"
 [ -s "$WORK/instructions.txt" ] || { echo "plugin-eval: no MCP instructions from the scratch engine" >&2; exit 1; }
 python3 - "$WORK/instructions.txt" "$PLUGIN/$SUITE" <<'PY'
 import pathlib, re, sys
 text = open(sys.argv[1]).read().rstrip("\n")
-body = "# MCP Server Instructions\n\n## plugin:linggen:memory\n" + text
+body = "# MCP Server Instructions\n\n## plugin:linggen:linggen\n" + text
 block = "append_system_prompt: |\n" + "\n".join(("  " + l) if l else "" for l in body.split("\n")) + "\n"
 for p in sorted(pathlib.Path(sys.argv[2]).glob("*/prompt.md")):
     s = p.read_text()
@@ -122,6 +129,20 @@ for p in sorted(pathlib.Path(sys.argv[2]).glob("*/prompt.md")):
         p.write_text(new)
         print(f"plugin-eval: synced server instructions into {p.parent.name}/prompt.md")
 PY
+
+# ── The door's tools/list → mocks/linggen/_tools.json ───────────────────────
+#
+# The mocked tools carry the scratch engine's real names, descriptions and
+# schemas; a diff in _tools.json = the catalogue moved.
+TOOLS_JSON="$PLUGIN/$SUITE/mocks/linggen/_tools.json"
+curl -sf -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+  "http://127.0.0.1:$PORT/mcp" | jq '{tools: .result.tools}' >"$WORK/tools.json" 2>/dev/null
+jq -e '.tools | length > 0' "$WORK/tools.json" >/dev/null 2>&1 \
+  || { echo "plugin-eval: no tools/list from the scratch engine's /mcp" >&2; exit 1; }
+if ! jq -e --slurpfile want "$WORK/tools.json" '. == $want[0]' "$TOOLS_JSON" >/dev/null 2>&1; then
+  cp "$WORK/tools.json" "$TOOLS_JSON"
+  echo "plugin-eval: synced the door's tools/list into mocks/linggen/_tools.json"
+fi
 
 # ── Real store, before (read-only) ──────────────────────────────────────────
 

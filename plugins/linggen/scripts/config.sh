@@ -2,7 +2,7 @@
 # Point this host at a Linggen — `/linggen:config`.
 #
 # The CLIENT declaration: where THIS machine goes to find Linggen — one address
-# (host + port; memory is at /mcp/memory there, the engine's tools at /mcp) and,
+# (host + port; every tool, memory included, is at its one MCP door /mcp) and,
 # for another machine, that machine's token. On the machine that runs Linggen
 # it is loopback and nobody ever needs this. A machine with only the plugin
 # points it at another machine's Linggen, and nothing is installed or started
@@ -25,7 +25,7 @@
 # the hooks read. Also mirrors the address into each host's own MCP wiring,
 # because a plugin's MCP declaration cannot read a file: Claude Code's
 # settings.json `env` (its `.mcp.json` takes `${VAR}`, expanded at startup), and
-# Codex's config.toml `[mcp_servers.*]` tables (Codex expands nothing in a URL,
+# Codex's config.toml `[mcp_servers.linggen]` table (Codex expands nothing in a URL,
 # so its plugin declaration is literal loopback and an off-machine address must
 # override it there). Then says plainly whether that took.
 
@@ -102,12 +102,12 @@ _ling_is_local "$(_ling_host_of "$new_addr")" && new_local=1 || new_local=0
 # request in Linggen; a click on Allow there hands this host a token, which is
 # saved below like a typed --token. Nobody sees or copies it.
 
-mcp_code() { # $1 base, $2 token — HTTP status of a memory tools/list
+mcp_code() { # $1 base, $2 token — HTTP status of a tools/list on the door
     local auth=()
     [ -n "${2:-}" ] && auth=(-H "x-linggen-device: $2")
     curl -s -o /dev/null -w '%{http_code}' --max-time 5 --connect-timeout 2 \
         -H 'Content-Type: application/json' ${auth[@]+"${auth[@]}"} \
-        -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' "$1/mcp/memory" 2>/dev/null
+        -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' "$1/mcp" 2>/dev/null
 }
 
 new_uuid() {
@@ -180,8 +180,9 @@ mirror_cc_env() {
 # Codex reads the plugin's own `.codex-plugin/mcp.json`, which is literal
 # loopback — Codex expands no `${VAR}` in a URL. A `[mcp_servers.<name>]` table
 # in config.toml overrides a plugin server of the same name, so that is where an
-# address other than the default goes. On the default the tables are removed and
-# the plugin's declaration stands, so a default install leaves no trace here.
+# address other than the default goes: one `[mcp_servers.linggen]` table. On the
+# default it is removed and the plugin's declaration stands, so a default
+# install leaves no trace here.
 
 mirror_codex_toml() { # exit 2 = no Codex on this machine
     [ -d "$(dirname "$CODEX_CONFIG")" ] || return 2
@@ -189,9 +190,10 @@ mirror_codex_toml() { # exit 2 = no Codex on this machine
     local tmp="$CODEX_CONFIG.tmp.$$"
     # Drop the tables this script writes (sub-tables included) wherever a
     # TOML-aware writer left them — a table runs from its header to the next
-    # header or EOF. `linggen` and the retired `ling-mem` are always ours;
-    # `memory` is a common name, so only a table whose url ends in /mcp/memory
-    # goes. No BEGIN/END markers: Codex rewrites this file itself and moves
+    # header or EOF. `linggen` and the retired `ling-mem` are always ours.
+    # So is a `memory` table pointing at the retired memory door (url ending
+    # in /mcp/memory), which earlier versions of this script wrote; `memory`
+    # is a common name, so any other `memory` table stays. No BEGIN/END markers: Codex rewrites this file itself and moves
     # comments. The blank line we put before our tables goes with them when
     # they sat at EOF, so a round trip leaves the file byte-equal.
     awk '
@@ -230,8 +232,6 @@ mirror_codex_toml() { # exit 2 = no Codex on this machine
     if [ "$new_addr" != "$DEFAULT_LINGGEN" ]; then
         {
             printf '\n[mcp_servers.linggen]\nurl = "%s/mcp"\n' "$new_addr"
-            [ -n "$new_token" ] && printf 'http_headers = { "x-linggen-device" = "%s" }\n' "$new_token"
-            printf '\n[mcp_servers.memory]\nurl = "%s/mcp/memory"\n' "$new_addr"
             [ -n "$new_token" ] && printf 'http_headers = { "x-linggen-device" = "%s" }\n' "$new_token"
         } >> "$tmp"
     fi
@@ -431,10 +431,10 @@ else
 fi
 case "$codex_mirrored" in
     1) if [ "$new_addr" != "$DEFAULT_LINGGEN" ]; then
-           printf 'Codex: mirrored into %s ([mcp_servers.linggen], [mcp_servers.memory]). Restart it.\n' "$CODEX_CONFIG"
+           printf 'Codex: mirrored into %s ([mcp_servers.linggen]). Restart it.\n' "$CODEX_CONFIG"
        else
            printf 'Codex: loopback — the plugin declaration stands; nothing written to %s.\n' "$CODEX_CONFIG"
        fi ;;
     2) ;;
-    *) printf 'Codex: could not write %s — add [mcp_servers.memory] url = "%s/mcp/memory" yourself.\n' "$CODEX_CONFIG" "$new_addr" ;;
+    *) printf 'Codex: could not write %s — add [mcp_servers.linggen] url = "%s/mcp" yourself.\n' "$CODEX_CONFIG" "$new_addr" ;;
 esac

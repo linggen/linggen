@@ -1,11 +1,11 @@
-//! The twelve-tool door, before it is published: its views, every browser,
-//! agent and engine-upkeep branch resolved to the dispatcher, bridge op,
-//! arguments and timeout the legacy tool used, the refusals, and memory
-//! reached through the engine's own path with no account and no model.
+//! The twelve-tool door's branches: its views, every browser, agent and
+//! engine-upkeep branch resolved to its dispatcher, bridge op, arguments
+//! and timeout, the refusals, and memory reached through the engine's own
+//! path with no account and no model.
 
-use super::catalog::{catalog, AgentOp, Dispatch};
+use super::catalog::{catalog, AgentOp, Dispatch, Render, CALL_TIMEOUT_MS, GATED_TIMEOUT_MS, NAVIGATE_TIMEOUT_MS};
 use super::*;
-use ling_mem::catalog::{Resolved, View};
+use ling_mem::catalog::{Branch, Resolved, View};
 
 fn hub() -> BridgeHub {
     BridgeHub::new()
@@ -19,7 +19,7 @@ fn deps(hub: &BridgeHub) -> McpDeps<'_> {
 }
 
 fn names(view: View) -> Vec<String> {
-    folded_tools_list(view)["tools"]
+    tools_list_result(view)["tools"]
         .as_array()
         .unwrap()
         .iter()
@@ -60,7 +60,7 @@ fn each_caller_sees_its_view() {
         ["memory_search", "memory_add", "memory_update", "memory_delete", "memory_upkeep"]
     );
     let ops = |view| {
-        let tools = folded_tools_list(view);
+        let tools = tools_list_result(view);
         tools["tools"][4]["inputSchema"]["properties"]["op"]["enum"].clone()
     };
     let (local, remote) = (ops(View::Local), ops(View::Remote));
@@ -91,47 +91,53 @@ async fn a_hidden_tool_or_op_cannot_be_called() {
         ("browser_read", json!({"op": "page"})),
         ("browser_act", json!({"op": "click", "ref": "n1"})),
     ] {
-        let err = call_folded(&deps(&hub), View::Remote, tool, args).await.unwrap_err();
+        let err = call_tool(&deps(&hub), View::Remote, tool, args).await.unwrap_err();
         assert_eq!(err, format!("unknown tool: {tool}"));
     }
-    let res = call_folded(&deps(&hub), View::Remote, "memory_upkeep", json!({"op": "dream_run"}))
+    let res = call_tool(&deps(&hub), View::Remote, "memory_upkeep", json!({"op": "dream_run"}))
         .await
         .unwrap();
     assert_eq!(res["isError"], true);
     assert!(text(&res).contains("\"dream_run\" is not one of"), "{}", text(&res));
-    let legacy = call_folded(&deps(&hub), View::Local, "memory_dream_run", json!({})).await;
-    assert_eq!(legacy.unwrap_err(), "unknown tool: memory_dream_run");
+    let retired = call_tool(&deps(&hub), View::Local, "memory_dream_run", json!({})).await.unwrap();
+    assert_eq!(retired["structuredContent"]["code"], "UPGRADE_PLUGIN", "a retired name runs nothing");
 }
 
-/// The legacy tool a folded bridge branch stands for: same module and op,
-/// the same timeout, and for a tab branch the `action` the legacy
-/// `browser_tabs` call carried.
+/// Every bridge branch: the bridge module and op it runs, its timeout (a
+/// gated op waits on the user's answer in Chrome), and for a tab branch the
+/// `action` the bridge's tab op takes.
 #[test]
-fn every_browser_branch_runs_the_legacy_bridge_call() {
+fn every_browser_branch_runs_its_bridge_call() {
     let url = "https://example.com/a";
+    let (gated, plain, settle) = (GATED_TIMEOUT_MS, CALL_TIMEOUT_MS, NAVIGATE_TIMEOUT_MS);
     let cases = [
-        ("browser_open", json!({"op": "navigate", "url": url}), "browser_navigate", json!({"url": url})),
-        ("browser_open", json!({"op": "navigate", "url": "back"}), "browser_navigate", json!({"url": "back"})),
-        ("browser_open", json!({"op": "tab_open", "url": url}), "browser_tabs", json!({"url": url, "action": "open"})),
-        ("browser_read", json!({"op": "page", "filter": "interactive"}), "browser_read_page", json!({"filter": "interactive"})),
-        ("browser_read", json!({"op": "screenshot", "region": {"x": 0, "y": 0, "width": 9, "height": 9}}), "browser_screenshot", json!({"region": {"x": 0, "y": 0, "width": 9, "height": 9}})),
-        ("browser_read", json!({"op": "console", "limit": "5"}), "browser_read_console", json!({"limit": 5})),
-        ("browser_read", json!({"op": "tabs"}), "browser_tabs", json!({"action": "list"})),
-        ("browser_act", json!({"op": "click", "ref": "n4", "double": "true"}), "browser_click", json!({"ref": "n4", "double": true})),
-        ("browser_act", json!({"op": "click", "coordinate": [10, 20]}), "browser_click", json!({"coordinate": [10, 20]})),
-        ("browser_act", json!({"op": "type", "text": "hi", "ref": "n2", "clear": true}), "browser_type", json!({"text": "hi", "ref": "n2", "clear": true})),
-        ("browser_act", json!({"op": "key", "keys": "Enter", "repeat": "3"}), "browser_key", json!({"keys": "Enter", "repeat": 3})),
-        ("browser_act", json!({"op": "scroll", "direction": "down", "amount": 300}), "browser_scroll", json!({"direction": "down", "amount": 300})),
-        ("browser_act", json!({"op": "wait", "for": "ms", "value": "500"}), "browser_wait", json!({"for": "ms", "value": "500"})),
-        ("browser_act", json!({"op": "wait", "for": "selector", "value": "#go"}), "browser_wait", json!({"for": "selector", "value": "#go"})),
-        ("browser_act", json!({"op": "tab_switch"}), "browser_tabs", json!({"action": "switch"})),
-        ("browser_act", json!({"op": "tab_close"}), "browser_tabs", json!({"action": "close"})),
+        ("browser_open", json!({"op": "navigate", "url": url}), "navigate", gated, json!({"url": url})),
+        ("browser_open", json!({"op": "navigate", "url": "back"}), "navigate", gated, json!({"url": "back"})),
+        ("browser_open", json!({"op": "tab_open", "url": url}), "tabs", gated, json!({"url": url, "action": "open"})),
+        ("browser_read", json!({"op": "page", "filter": "interactive"}), "read_page", plain, json!({"filter": "interactive"})),
+        ("browser_read", json!({"op": "screenshot", "region": {"x": 0, "y": 0, "width": 9, "height": 9}}), "screenshot", plain, json!({"region": {"x": 0, "y": 0, "width": 9, "height": 9}})),
+        ("browser_read", json!({"op": "console", "limit": "5"}), "read_console", plain, json!({"limit": 5})),
+        ("browser_read", json!({"op": "tabs"}), "tabs", gated, json!({"action": "list"})),
+        ("browser_act", json!({"op": "click", "ref": "n4", "double": "true"}), "click", gated, json!({"ref": "n4", "double": true})),
+        ("browser_act", json!({"op": "click", "coordinate": [10, 20]}), "click", gated, json!({"coordinate": [10, 20]})),
+        ("browser_act", json!({"op": "type", "text": "hi", "ref": "n2", "clear": true}), "type", gated, json!({"text": "hi", "ref": "n2", "clear": true})),
+        ("browser_act", json!({"op": "key", "keys": "Enter", "repeat": "3"}), "key", gated, json!({"keys": "Enter", "repeat": 3})),
+        ("browser_act", json!({"op": "scroll", "direction": "down", "amount": 300}), "scroll", plain, json!({"direction": "down", "amount": 300})),
+        ("browser_act", json!({"op": "wait", "for": "ms", "value": "500"}), "wait", settle, json!({"for": "ms", "value": "500"})),
+        ("browser_act", json!({"op": "wait", "for": "selector", "value": "#go"}), "wait", settle, json!({"for": "selector", "value": "#go"})),
+        ("browser_act", json!({"op": "tab_switch"}), "tabs", gated, json!({"action": "switch"})),
+        ("browser_act", json!({"op": "tab_close"}), "tabs", gated, json!({"action": "close"})),
     ];
-    for (tool, args, legacy, sent) in cases {
+    for (tool, args, bridge_op, timeout, sent) in cases {
         let (branch, got) = call(tool, args.clone());
-        let old = catalog().legacy_branch(legacy).unwrap();
-        assert_eq!(branch.dispatch, old.dispatch, "{tool} {args}");
-        assert_eq!(branch.timeout_ms, old.timeout_ms, "{tool} {args}: timeout");
+        let render = match bridge_op {
+            "read_page" => Render::Page,
+            "screenshot" => Render::Image,
+            _ => Render::Text,
+        };
+        let want = Dispatch::Bridge { module: "control", op: bridge_op, render };
+        assert_eq!(branch.dispatch, want, "{tool} {args}");
+        assert_eq!(branch.timeout_ms, timeout, "{tool} {args}: timeout");
         assert_eq!(got, sent, "{tool} {args}");
     }
 }
@@ -226,14 +232,14 @@ fn the_engines_upkeep_ops_join_memorys() {
     assert!(why.contains("`day` belongs to op=dream_lease/dream_run"), "{why}");
 }
 
-/// A folded call runs as the legacy one does: the bridge reached (and
-/// refused without an extension), the agent and dream dispatchers reached
-/// (and unavailable without the daemon), a refusal a tool error.
+/// A call reaches its dispatcher: the bridge (refused without an
+/// extension), the agent and dream dispatchers (unavailable without the
+/// daemon); a refusal is a tool error.
 #[tokio::test]
-async fn a_folded_call_reaches_the_legacy_dispatcher() {
+async fn a_call_reaches_its_dispatcher() {
     let hub = hub();
     let d = deps(&hub);
-    let res = call_folded(&d, View::Local, "browser_read", json!({"op": "tabs"})).await.unwrap();
+    let res = call_tool(&d, View::Local, "browser_read", json!({"op": "tabs"})).await.unwrap();
     assert_eq!(res["isError"], true);
     assert!(text(&res).contains("not connected"));
     let reason = crate::cannot_run::CannotRun::of_message(text(&res), None);
@@ -243,15 +249,15 @@ async fn a_folded_call_reaches_the_legacy_dispatcher() {
         ("memory_upkeep", json!({"op": "dream_status"})),
         ("memory_upkeep", json!({"op": "dream_run"})),
     ] {
-        let res = call_folded(&d, View::Local, tool, args).await.unwrap();
+        let res = call_tool(&d, View::Local, tool, args).await.unwrap();
         assert_eq!(res["isError"], true, "{tool}");
         assert!(text(&res).contains("unavailable"), "{tool}: {}", text(&res));
     }
-    let res = call_folded(&d, View::Local, "browser_act", json!({"op": "fly"})).await.unwrap();
+    let res = call_tool(&d, View::Local, "browser_act", json!({"op": "fly"})).await.unwrap();
     assert_eq!(res["isError"], true);
     assert!(text(&res).contains("is not one of"));
     assert_eq!(
-        call_folded(&d, View::Local, "browser_fly", json!({})).await.unwrap_err(),
+        call_tool(&d, View::Local, "browser_fly", json!({})).await.unwrap_err(),
         "unknown tool: browser_fly"
     );
 }
@@ -271,7 +277,7 @@ async fn memory_runs_through_the_engines_door_without_an_account_or_a_model() {
         let host = TestHost::Store(store.clone());
         let hub = &hub;
         TEST_HOST.scope(host, async move {
-            call_folded(&deps(hub), View::Local, tool, args).await.unwrap()
+            call_tool(&deps(hub), View::Local, tool, args).await.unwrap()
         })
     };
     let added = run("memory_add", json!({"content": "Alex keeps bees", "tier": "semantic"})).await;
@@ -283,6 +289,12 @@ async fn memory_runs_through_the_engines_door_without_an_account_or_a_model() {
     assert_eq!(hits[0]["id"], json!(id));
     let got = run("memory_search", json!({"op": "get", "id": id})).await;
     assert!(text(&got).contains("Alex keeps bees"));
+    let updated = run("memory_update", json!({"id": id, "summary": "bees"})).await;
+    assert_eq!(updated["isError"], false, "{updated}");
+    let listed = run("memory_search", json!({"op": "list", "tier": "semantic"})).await;
+    assert!(text(&listed).contains("\"summary\":\"bees\""), "{}", text(&listed));
+    let started = run("memory_upkeep", json!({"op": "session_start"})).await;
+    assert_eq!(started["isError"], false, "{started}");
     let days = run("memory_upkeep", json!({"op": "days"})).await;
     assert_eq!(days["isError"], false, "{days}");
     run("memory_delete", json!({"id": id})).await;
@@ -291,7 +303,7 @@ async fn memory_runs_through_the_engines_door_without_an_account_or_a_model() {
 
     let closed = TEST_HOST
         .scope(TestHost::NotOpen("store locked by another process".into()), async {
-            call_folded(&deps(&hub), View::Local, "memory_search", json!({"query": "q"})).await.unwrap()
+            call_tool(&deps(&hub), View::Local, "memory_search", json!({"query": "q"})).await.unwrap()
         })
         .await;
     assert_eq!(closed["isError"], true);
@@ -299,7 +311,7 @@ async fn memory_runs_through_the_engines_door_without_an_account_or_a_model() {
     assert!(text(&closed).contains("ling status"), "{}", text(&closed));
     let absent = TEST_HOST
         .scope(TestHost::Absent, async {
-            call_folded(&deps(&hub), View::Local, "memory_add", json!({"content": "x"})).await.unwrap()
+            call_tool(&deps(&hub), View::Local, "memory_add", json!({"content": "x"})).await.unwrap()
         })
         .await;
     assert_eq!(absent["isError"], true);
@@ -311,10 +323,91 @@ async fn memory_runs_through_the_engines_door_without_an_account_or_a_model() {
 /// refusal can show.
 #[test]
 fn every_folded_schema_is_strict() {
-    for t in folded_tools_list(View::Local)["tools"].as_array().unwrap() {
+    for t in tools_list_result(View::Local)["tools"].as_array().unwrap() {
         let s = &t["inputSchema"];
         assert_eq!(s["type"], "object", "{}", t["name"]);
         assert_eq!(s["additionalProperties"], false, "{}", t["name"]);
         assert!(t["description"].as_str().is_some_and(|d| !d.is_empty()), "{}", t["name"]);
+    }
+}
+
+/// A stand-in extension's page: its refs are good until the page changes
+/// (a click here navigates), then a stale ref is refused as the extension
+/// refuses it; a fresh read hands out the new refs.
+fn page_extension() -> impl FnMut(&str, &str, &Value) -> Value + Send + 'static {
+    let mut generation = 1;
+    move |module, op, params| {
+        assert_eq!(module, "control");
+        let live = format!("n{generation}");
+        match op {
+            "read_page" => json!({"ok": true, "data": {"url": "https://a.example/", "title": "A", "tree": format!("[{live}] button \"Go\"")}}),
+            "click" if params["ref"] == json!(live) => {
+                generation += 1;
+                json!({"ok": true, "data": {"clicked": live}})
+            }
+            "click" => {
+                let sent = params["ref"].as_str().unwrap_or_default();
+                json!({"ok": false, "code": "element_gone", "message": format!("unknown ref '{sent}' — re-run read_page")})
+            }
+            other => panic!("unexpected op {other}"),
+        }
+    }
+}
+
+/// Read, act, act on the same ref after the page changed (refused, told to
+/// read again), read again, act on the new ref: what a caller of the door
+/// sees at each step.
+#[tokio::test]
+async fn an_act_after_the_page_changed_is_told_to_read_again() {
+    let hub = std::sync::Arc::new(hub());
+    let _extension = crate::server::bridge::fake_extension(hub.clone(), page_extension()).await;
+    let d = deps(&hub);
+    let read = call_tool(&d, View::Local, "browser_read", json!({"op": "page"})).await.unwrap();
+    assert_eq!(read["isError"], false, "{read}");
+    assert!(text(&read).contains("[n1]"), "{}", text(&read));
+    let acted = call_tool(&d, View::Local, "browser_act", json!({"op": "click", "ref": "n1"})).await.unwrap();
+    assert_eq!(acted["isError"], false, "{acted}");
+    let stale = call_tool(&d, View::Local, "browser_act", json!({"op": "click", "ref": "n1"})).await.unwrap();
+    assert_eq!(stale["isError"], true, "{stale}");
+    assert!(text(&stale).contains("read it again (browser_read op=page)"), "{}", text(&stale));
+    let again = call_tool(&d, View::Local, "browser_read", json!({"op": "page"})).await.unwrap();
+    assert!(text(&again).contains("[n2]"), "{}", text(&again));
+    let acted = call_tool(&d, View::Local, "browser_act", json!({"op": "click", "ref": "n2"})).await.unwrap();
+    assert_eq!(acted["isError"], false, "{acted}");
+}
+
+/// A site Chrome asks the user about: the gated op waits as long as the
+/// prompt may take, an approval acts, a refusal reaches the caller as a
+/// tool error that says Chrome did not grant it and to ask before retrying
+/// — never as something an account or agent_permit could lift.
+#[tokio::test]
+async fn the_per_site_prompt_answer_reaches_the_caller() {
+    let hub = std::sync::Arc::new(hub());
+    let mut approve = true;
+    let _extension = crate::server::bridge::fake_extension(hub.clone(), move |_, op, params| {
+        assert_eq!(op, "navigate");
+        assert_eq!(params["url"], "https://b.example/");
+        let ok = approve;
+        approve = false;
+        if ok {
+            json!({"ok": true, "data": {"url": "https://b.example/"}})
+        } else {
+            json!({"ok": false, "code": "not_permitted", "message": "b.example was not allowed"})
+        }
+    })
+    .await;
+    let d = deps(&hub);
+    let (branch, _) = call("browser_open", json!({"op": "navigate", "url": "https://b.example/"}));
+    assert_eq!(branch.timeout_ms, GATED_TIMEOUT_MS, "a gated op waits on the user's answer");
+    let go = json!({"op": "navigate", "url": "https://b.example/"});
+    let allowed = call_tool(&d, View::Local, "browser_open", go.clone()).await.unwrap();
+    assert_eq!(allowed["isError"], false, "{allowed}");
+    let declined = call_tool(&d, View::Local, "browser_open", go).await.unwrap();
+    assert_eq!(declined["isError"], true, "{declined}");
+    let said = text(&declined);
+    assert!(said.contains("Chrome did not grant permission for this site"), "{said}");
+    assert!(said.contains("ask the user before retrying"), "{said}");
+    for not_this in ["agent_permit", "sign in", "account"] {
+        assert!(!said.contains(not_this), "{said}");
     }
 }

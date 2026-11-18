@@ -4,7 +4,8 @@
 #
 # One program, one address. Linggen (`ling`, the engine) hosts memory; the
 # plugin reaches it at the one address mcp.sh resolves (default
-# 127.0.0.1:9527): memory at /mcp/memory, the engine's tools at /mcp.
+# 127.0.0.1:9527), and every tool — memory, agents, browser — at its one MCP
+# door, /mcp.
 #
 # 1. Address on THIS machine: make sure Linggen is up. Running → nothing to
 #    do. `ling` installed → start it (`ling --web`) and give it a few seconds.
@@ -16,8 +17,8 @@
 #    nothing, start nothing. A local Linggen would open a second, empty store
 #    — the forked memory this whole arrangement exists to prevent. Such a host
 #    needs the address and that machine's token, nothing more.
-# 3. Emit what a session loads at start (one `memory_session_start` call with
-#    the session's cwd and root): core memory, the "Memory scopes here"
+# 3. Emit what a session loads at start (one `memory_upkeep` op=session_start
+#    call with the session's cwd and root): core memory, the "Memory scopes here"
 #    candidates line, and the index of standing rows filed for this directory
 #    and its parents — as `hookSpecificOutput.additionalContext` so the host
 #    injects it into the agent's system prompt. Claude Code has no cd hook, so
@@ -25,6 +26,9 @@
 #    MCP, so it works the same whether memory is on this machine or another.
 #    CC honors the field natively; Codex ignores unknown JSON and keeps the
 #    side effect (Linggen started). Either way the session never breaks.
+# 4. When that call comes back empty, one short tools/list tells an engine
+#    older than this plugin (no `memory_upkeep` on /mcp) from one that is
+#    just not answering; the old one gets a one-line "update Linggen" note.
 #
 # Bails silently on any failure — never blocks the session.
 
@@ -93,7 +97,7 @@ if [ "$LINGGEN_LOCAL" = 1 ] && ! healthy; then
     # comes from it rather than from nothing.
     for _ in $(seq 1 "${LINGGEN_START_WAIT:-10}"); do healthy && break; sleep 1; done
   elif [ -n "${LINGGEN_NO_ENGINE_INSTALL:-}" ]; then
-    install_hint="Linggen is not installed (auto-install disabled via LINGGEN_NO_ENGINE_INSTALL) — memory and the browser/x/agent tools are offline. Install: curl -fsSL https://linggen.dev/install.sh | bash"
+    install_hint="Linggen is not installed (auto-install disabled via LINGGEN_NO_ENGINE_INSTALL) — memory and the browser and agent tools are offline. Install: curl -fsSL https://linggen.dev/install.sh | bash"
   else
     # The installer that ships in this plugin (skills/linggen/scripts/
     # install-engine.sh, the linggen.dev installer vendored verbatim) — never
@@ -106,7 +110,7 @@ if [ "$LINGGEN_LOCAL" = 1 ] && ! healthy; then
     mkdir -p "$HOME/.linggen" 2>/dev/null || true
     [ -d "$LOCK" ] && find "$LOCK" -maxdepth 0 -mmin +30 -exec rmdir {} \; 2>/dev/null
     if [ ! -f "$INSTALLER" ]; then
-      install_hint="Linggen is not installed and this plugin's installer is missing ($INSTALLER) — memory and the browser/x/agent tools are offline. Install: curl -fsSL https://linggen.dev/install.sh | bash"
+      install_hint="Linggen is not installed and this plugin's installer is missing ($INSTALLER) — memory and the browser and agent tools are offline. Install: curl -fsSL https://linggen.dev/install.sh | bash"
     elif mkdir "$LOCK" 2>/dev/null; then
       (cd "$HOME" || exit 0; LINGGEN_NO_REMOTE_SCRIPT=1 \
         LINGGEN_SOURCE="${LINGGEN_SOURCE:-plugin}" LINGGEN_AGENT="${LINGGEN_AGENT:-$PLUGIN_AGENT}" \
@@ -117,9 +121,9 @@ if [ "$LINGGEN_LOCAL" = 1 ] && ! healthy; then
           if [ -n "$LING" ]; then nohup "$LING" --web >/dev/null 2>&1 & fi
           rmdir "$3" 2>/dev/null
         ' _ "$INSTALLER" "$LOG" "$LOCK" >/dev/null 2>&1 &) || true
-      install_hint="Installing Linggen in the background (one-time, ~100MB; log: ~/.linggen/engine-install.log). Memory and the browser/x/agent tools come online when it finishes."
+      install_hint="Installing Linggen in the background (one-time, ~100MB; log: ~/.linggen/engine-install.log). Memory and the browser and agent tools come online when it finishes."
     else
-      install_hint="Linggen install already in progress (log: ~/.linggen/engine-install.log) — memory and the browser/x/agent tools come online when it finishes."
+      install_hint="Linggen install already in progress (log: ~/.linggen/engine-install.log) — memory and the browser and agent tools come online when it finishes."
     fi
   fi
 fi
@@ -140,7 +144,8 @@ fi
 
 # ── Inject what a session loads at start ────────────────────────────────────
 #
-# One call: `memory_session_start` with this session's cwd and root returns
+# One call: `memory_upkeep` op=session_start with this session's cwd and root
+# returns
 # the core rows (who the user is), the scope candidates line and the index,
 # already rendered as `block`. Linggen renders it so every host injects the
 # same text. Everything else surfaces through per-turn recall (recall.sh).
@@ -159,13 +164,13 @@ if command -v session_root >/dev/null 2>&1; then
   session_root="$(session_root "$session_cwd")"
 fi
 start_args="$(jq -nc --arg c "$session_cwd" --arg r "$session_root" '
-  {cwd: $c} + (if ($r | length) > 0 then {root: $r} else {} end)
-' 2>/dev/null || printf '{}')"
+  {op: "session_start", cwd: $c} + (if ($r | length) > 0 then {root: $r} else {} end)
+' 2>/dev/null || printf '{"op":"session_start"}')"
 
 # A slightly longer budget than a per-turn recall: this runs once, at session
 # start, and an engine that just started may still be opening the store.
 to="${LINGGEN_CORE_TIMEOUT:-5}"
-start_out="$(mcp_call memory_session_start "$start_args" "$to")"
+start_out="$(mcp_call memory_upkeep "$start_args" "$to")"
 
 # Defensive guard: a malformed payload would make the pipeline below fail
 # silently, and the session would start with no core context and no log of
@@ -176,11 +181,23 @@ if [ -n "$start_out" ]; then
   if printf '%s' "$start_out" | jq -e 'type == "object"' >/dev/null 2>&1; then
     core_block="$(printf '%s' "$start_out" | jq -r '.block // empty' 2>/dev/null || true)"
   else
-    printf 'linggen autostart: memory_session_start returned non-JSON; skipping memory injection\n' >&2
+    printf 'linggen autostart: memory_upkeep op=session_start returned non-JSON; skipping memory injection\n' >&2
   fi
 fi
 
-for hint in "$mirror_hint" "$install_hint"; do
+# ── An engine older than this plugin ────────────────────────────────────────
+#
+# Nothing came back: either Linggen is not answering (the install/start hints
+# above cover that) or it answers without the one door this plugin calls. One
+# short tools/list tells the two apart; the second gets one line, and the
+# session goes on.
+version_hint=""
+if [ -z "$start_out" ] && [ "$(mcp_door 2)" = no ]; then
+  where="on ${LINGGEN_HOST}"; [ "$LINGGEN_LOCAL" = 1 ] && where="on this machine"
+  version_hint="Linggen ${where} is older than this plugin: memory and the Linggen tools need a newer Linggen. Update it there (Linggen.app checks for updates, or: ling update), then restart this session."
+fi
+
+for hint in "$mirror_hint" "$install_hint" "$version_hint"; do
   [ -n "$hint" ] || continue
   core_block="${core_block}${core_block:+
 

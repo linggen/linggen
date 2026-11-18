@@ -488,6 +488,32 @@ pub(crate) async fn status_handler(State(state): State<Arc<ServerState>>) -> imp
     Json(state.bridge.status().await)
 }
 
+/// A stand-in for the browser extension, for tests of what calls the
+/// bridge: attached to `hub` as the extension's socket is, it answers each
+/// `req` with `answer(module, op, params)` — `{ok, data}` or `{ok: false,
+/// code, message}`, the extension's own `res` fields.
+#[cfg(test)]
+pub(crate) async fn fake_extension<F>(hub: Arc<BridgeHub>, mut answer: F) -> tokio::task::JoinHandle<()>
+where
+    F: FnMut(&str, &str, &Value) -> Value + Send + 'static,
+{
+    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+    hub.attach(tx).await;
+    tokio::spawn(async move {
+        while let Some(frame) = rx.recv().await {
+            let Ok(req) = serde_json::from_str::<Value>(&frame) else { continue };
+            if req["t"] != "req" {
+                continue;
+            }
+            let field = |k: &str| req[k].as_str().unwrap_or_default().to_string();
+            let mut res = answer(&field("module"), &field("op"), &req["params"]);
+            res["t"] = json!("res");
+            res["id"] = req["id"].clone();
+            hub.on_frame(&res.to_string()).await;
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

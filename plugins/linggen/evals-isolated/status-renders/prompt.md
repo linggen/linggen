@@ -1,12 +1,12 @@
 ---
-description: /linggen:status renders the one glanceable block from memory_dream_status.
+description: /linggen:status renders the one glanceable block from memory_upkeep op=dream_status.
 tags: [status]
 max_turns: 12
 allowed_tools: [Skill]
 append_system_prompt: |
   # MCP Server Instructions
 
-  ## plugin:linggen:memory
+  ## plugin:linggen:linggen
   ling-mem is this user's memory, shared by Claude Code, Codex and Linggen. Save what makes a future session predict the user better — the person, not the task.
 
   # Tiers

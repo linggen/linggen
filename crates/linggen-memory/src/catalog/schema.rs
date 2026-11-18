@@ -28,9 +28,21 @@ pub(super) fn tool_def<D: Copy + 'static>(
     };
     Some(json!({
         "name": doc.name,
-        "description": doc.description,
+        "description": description(doc, &visible),
         "inputSchema": schema,
     }))
+}
+
+/// The tool's text for one view: `{ops}` is that view's ops, and each
+/// visible branch's note follows.
+fn description<D: Copy + 'static>(doc: &ToolDoc, visible: &[&Branch<D>]) -> String {
+    let ops: Vec<&str> = visible.iter().map(|b| b.op).collect();
+    let mut text = doc.description.replace("{ops}", &ops.join(", "));
+    for note in visible.iter().map(|b| b.note).filter(|n| !n.is_empty()) {
+        text.push(' ');
+        text.push_str(note);
+    }
+    text
 }
 
 fn single_schema<D: Copy + 'static>(b: &Branch<D>) -> Value {
