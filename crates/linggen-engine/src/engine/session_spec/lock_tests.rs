@@ -286,6 +286,66 @@ fn a_session_never_sets_its_own_work_tag() {
         .all(|(f, _, _)| !f.contains("/engine/tools/")));
 }
 
+/// Remaining upward references, by file, exact count, and reason.
+const UPWARD_EDGES: &[(&str, usize, &str)] = &[
+    (
+        "state_fs/devices/mod.rs",
+        3,
+        "paired-device records and HTTP callers use the engine's permission mode",
+    ),
+    (
+        "state_fs/row_place_tests.rs",
+        1,
+        "row persistence tests construct turn places",
+    ),
+    (
+        "state_fs/running_places.rs",
+        1,
+        "the store keeps the engine's TurnPlace value while a turn runs",
+    ),
+    (
+        "state_fs/sessions.rs",
+        3,
+        "lead agent for an empty roster, repo lookup, and fallback row place",
+    ),
+    (
+        "perception/activity.rs",
+        1,
+        "the activity actor list uses the engine's companion id",
+    ),
+];
+
+#[test]
+fn store_and_perception_do_not_add_upward_edges() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut listed: std::collections::BTreeMap<_, _> = UPWARD_EDGES
+        .iter()
+        .map(|&(file, count, why)| (root.join(file), (count, why)))
+        .collect();
+    for (dir, paths) in [
+        ("state_fs", &["crate::engine::", "crate::extensions::"][..]),
+        (
+            "perception",
+            &[
+                "crate::agent::",
+                "crate::engine::agent::",
+                "crate::extensions::",
+            ][..],
+        ),
+    ] {
+        let mut files = Vec::new();
+        rust_files(&root.join(dir), &mut files);
+        for file in files {
+            let text = std::fs::read_to_string(&file).unwrap();
+            let found: usize = paths.iter().map(|path| text.matches(path).count()).sum();
+            let (want, why) = listed.remove(&file).unwrap_or((0, "no upward edge allowed"));
+            let rel = file.strip_prefix(&root).unwrap();
+            assert_eq!(found, want, "{}: {why}", rel.display());
+        }
+    }
+    assert!(listed.is_empty(), "stale upward edge entries: {listed:?}");
+}
+
 #[test]
 fn an_assignment_is_told_from_a_comparison() {
     assert_eq!(
