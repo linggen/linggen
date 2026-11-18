@@ -249,7 +249,7 @@ pub(crate) fn own_name_of(caller: &Caller) -> OwnName {
 /// The owner's own device gets no stamp; anyone else is stamped as the
 /// person they are, named as their account or their device is.
 fn person_of(device: &crate::server::api::pair::PairedDevice) -> Option<Person> {
-    let owner = crate::account::load_account().and_then(|a| a.user_id);
+    let owner = crate::server::person::mac_account();
     person_for(device, owner.as_deref())
 }
 
@@ -282,7 +282,7 @@ fn person_for(
 /// device's. Failure is logged, not surfaced: the rows are still there under
 /// the device stamp, and the next sign-in tries again.
 pub async fn restamp_device(device_id: &str, gained: &crate::server::api::pair::AccountRef) {
-    let owner = crate::account::load_account().and_then(|a| a.user_id);
+    let owner = crate::server::person::mac_account();
     let Some(to_owner) = restamp_to_owner(device_id, &gained.id, owner.as_deref()) else {
         return;
     };

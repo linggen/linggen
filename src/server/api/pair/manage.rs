@@ -18,7 +18,7 @@ pub(crate) async fn get_pair_info(
     let config = state.manager.get_config_snapshot().await;
     let lan_live = state.bound_host != "127.0.0.1" && state.bound_host != "localhost";
     let (mac_name, account_name) = mac_identity();
-    let mac_account = crate::account::load_account().and_then(|a| a.user_id);
+    let mac_account = crate::server::person::mac_account();
     let devices: Vec<serde_json::Value> = load_devices()
         .iter()
         .map(|d| {
@@ -154,7 +154,7 @@ pub(crate) async fn get_pair_me(
         return err(StatusCode::UNAUTHORIZED, "unknown device");
     };
     let config = state.manager.get_config_snapshot().await;
-    let mac = crate::account::load_account().and_then(|a| a.user_id);
+    let mac = crate::server::person::mac_account();
     let owner = crate::server::person::is_owners_device(&d, mac.as_deref());
     let mut body = me_body(&d, &config, owner);
     // Where to reach this Mac when the phone is off the LAN: the relay

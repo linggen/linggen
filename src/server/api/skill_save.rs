@@ -77,7 +77,7 @@ pub(crate) fn verified_account_of(
 }
 
 fn gate(headers: &HeaderMap) -> Result<(), Response> {
-    let mac = crate::account::load_account().and_then(|a| a.user_id);
+    let mac = crate::server::person::mac_account();
     let devices = crate::server::api::pair::load_devices();
     let device = crate::server::api::pair::actor_for_headers(headers)
         .and_then(|a| devices.iter().find(|d| d.id == a.device));

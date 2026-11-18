@@ -58,7 +58,7 @@ impl PeerKind {
 /// Consumer = UserContext { user_id: "xyz", permission: Read, ... }
 #[derive(Debug, Clone)]
 pub struct UserContext {
-    /// User ID on linggen.dev (or "__local__" for owner without remote login).
+    /// User ID on linggen.dev (for the owner, `person::owner`'s id).
     pub user_id: String,
     /// Display name (from linggen.dev profile or relay signaling).
     pub user_name: Option<String>,
@@ -97,13 +97,13 @@ pub enum Reach {
 }
 
 impl UserContext {
-    /// Build for owner (local or remote).
+    /// Build for owner (local or remote): `user_id`, else the owner's own
+    /// id (`person::owner`). The account is read here for the name and face
+    /// the owner's page shows.
     pub fn owner(user_id: Option<String>) -> Self {
         let account = crate::account::load_account();
         Self {
-            user_id: user_id
-                .or_else(|| account.as_ref().and_then(|a| a.user_id.clone()))
-                .unwrap_or_else(|| "__local__".to_string()),
+            user_id: user_id.unwrap_or_else(|| crate::server::person::owner().wire()),
             user_name: account
                 .as_ref()
                 .and_then(|a| a.user_name.clone())

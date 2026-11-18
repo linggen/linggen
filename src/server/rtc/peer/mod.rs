@@ -129,7 +129,7 @@ pub async fn create_peer(
     // whose token opened it from the LAN is the peer from the start.
     let user_ctx = super::UserContext {
         reached_by,
-        ..super::UserContext::owner(crate::account::load_account().and_then(|a| a.user_id))
+        ..super::UserContext::owner(None)
     };
     create_peer_inner(offer_sdp, state, false, user_ctx, device).await
 }

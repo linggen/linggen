@@ -202,7 +202,6 @@ pub(crate) fn takes_body(method: &str, path: &str) -> bool {
 use crate::engine::permission::PermissionMode;
 
 mod who;
-#[allow(unused_imports)]
 pub(crate) use who::{mac_account, pairing_wire, stamp_of, Person};
 
 /// Who a request from off this machine is for, and the level it stands at:
@@ -257,7 +256,7 @@ pub(crate) fn no_one() -> Person {
 /// at chat. A phone out of step with this Mac (`rtc::contract::behind`)
 /// stands at chat at most, whoever it is.
 pub(crate) fn standing_of(device: &str) -> Standing {
-    let mac = crate::account::load_account().and_then(|a| a.user_id);
+    let mac = mac_account();
     let devices = crate::state_fs::devices::load_devices();
     standing_in(devices.iter().find(|d| d.id == device), mac.as_deref())
 }
@@ -267,7 +266,7 @@ pub(crate) fn standing_of(device: &str) -> Standing {
 /// what the greeting tells it, so it can dial the relay once to be vouched
 /// for. Nothing of the account itself is told.
 pub(crate) fn claims_the_owners_unverified(device: &str) -> bool {
-    let mac = crate::account::load_account().and_then(|a| a.user_id);
+    let mac = mac_account();
     let devices = crate::state_fs::devices::load_devices();
     devices
         .iter()
@@ -361,7 +360,7 @@ fn most_for_contract(device: &crate::state_fs::devices::PairedDevice) -> Permiss
 /// when its id is not an account's own ([`names_an_account`]: none, this
 /// Mac's owner's, no one's, a device's).
 pub(crate) fn consumer(user_id: &str) -> Standing {
-    consumer_in(user_id, crate::account::load_account().and_then(|a| a.user_id).as_deref())
+    consumer_in(user_id, mac_account().as_deref())
 }
 
 /// [`consumer`] with this Mac's account `mac`.

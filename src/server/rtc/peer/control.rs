@@ -76,7 +76,7 @@ pub(super) fn handle_control_message(
             // Mac's own account is verified by it (`set_device_account`).
             let vouched_for = user_ctx
                 .account_vouched
-                .then(|| crate::account::load_account().and_then(|a| a.user_id))
+                .then(|| crate::server::person::mac_account())
                 .flatten();
             let contract = crate::server::rtc::contract::told(&msg);
             let identified = crate::server::api::pair::set_device_account(

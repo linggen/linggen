@@ -259,7 +259,7 @@ fn context_for_offer(data: &serde_json::Value, nonce: &str) -> Option<super::Use
     info!("Received remote offer (nonce: {nonce})");
     Some(super::UserContext {
         account_vouched: true,
-        ..super::UserContext::owner(crate::account::load_account().and_then(|a| a.user_id))
+        ..super::UserContext::owner(None)
     })
 }
 
