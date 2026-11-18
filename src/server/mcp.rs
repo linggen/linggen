@@ -921,6 +921,114 @@ mod tests {
         assert_eq!(memory, ["memory_dream_status", "memory_dream_run"]);
     }
 
+    /// JSON with every object's keys sorted, so a fingerprint does not depend
+    /// on whether a build preserves insertion order.
+    fn canonical(v: &Value) -> String {
+        match v {
+            Value::Object(map) => {
+                let mut keys: Vec<&String> = map.keys().collect();
+                keys.sort();
+                let fields: Vec<String> = keys
+                    .iter()
+                    .map(|k| format!("{}:{}", Value::String((*k).clone()), canonical(&map[*k])))
+                    .collect();
+                format!("{{{}}}", fields.join(","))
+            }
+            Value::Array(items) => {
+                let items: Vec<String> = items.iter().map(canonical).collect();
+                format!("[{}]", items.join(","))
+            }
+            other => other.to_string(),
+        }
+    }
+
+    fn fingerprint(v: &Value) -> String {
+        use sha2::Digest;
+        let digest = sha2::Sha256::digest(canonical(v).as_bytes());
+        digest.iter().take(8).map(|b| format!("{b:02x}")).collect()
+    }
+
+    /// The twenty-four tools this door publishes, each with its whole
+    /// definition (name, description, input schema) fingerprinted, and the
+    /// server text. Building the one-door catalogue must not change any of
+    /// them by accident: a change here is a change every connected host sees.
+    #[tokio::test]
+    async fn the_published_surface_is_locked() {
+        let msg = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" });
+        let res = handle_rpc(&deps(&hub()), &msg).await.unwrap();
+        let actual: Vec<(String, String)> = res["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| (t["name"].as_str().unwrap().to_string(), fingerprint(t)))
+            .collect();
+        let expected: &[(&str, &str)] = &[
+            ("browser_navigate", "ede6425916ca80bd"),
+            ("browser_read_page", "7f3ac2e5a13d6d0d"),
+            ("browser_click", "21d8ee320d7df0b7"),
+            ("browser_type", "54fe4fd64c77ff4b"),
+            ("browser_key", "87106ed080c7b4d7"),
+            ("browser_scroll", "ad0652d9734ed73d"),
+            ("browser_screenshot", "1c56148ee8d1bcbe"),
+            ("browser_wait", "e13838e1f6e6d952"),
+            ("browser_tabs", "82e4e1b35b8be51d"),
+            ("browser_read_console", "226424d552016e56"),
+            ("x_search", "a2aaae3f477419d2"),
+            ("x_targets", "3a209e6d2b0f6c6c"),
+            ("x_following", "65a1df5d1b583079"),
+            ("x_whotofollow", "a0ca332f28195bb9"),
+            ("x_own", "5ae3eda92299c571"),
+            ("x_mentions", "253a788156648105"),
+            ("memory_dream_status", "8210ce18f2b46074"),
+            ("memory_dream_run", "0ccc699fdb330775"),
+            ("agent_run", "9fdfb9719cf9afcc"),
+            ("agent_status", "4ceddf9574826bb1"),
+            ("agent_permit", "71f9feab2f5f626b"),
+            ("agent_stop", "b0266b865355cc07"),
+            ("agent_models", "62c279cbad122db8"),
+            ("agent_session_close", "0dfce92d6e1636c6"),
+        ];
+        let shown: Vec<String> = actual
+            .iter()
+            .map(|(n, f)| format!("(\"{n}\", \"{f}\"),"))
+            .collect();
+        let want: Vec<(String, String)> = expected
+            .iter()
+            .map(|(n, f)| (n.to_string(), f.to_string()))
+            .collect();
+        assert_eq!(actual, want, "actual:\n{}", shown.join("\n"));
+        let text = fingerprint(&initialize_result()["instructions"]);
+        assert_eq!(text, "08bdcdfc29350c43", "instructions changed: {text}");
+    }
+
+    /// The door's JSON-RPC shapes: `ping` answers an empty object, a tool's
+    /// failure is a result with `isError`, an unknown tool is invalid params.
+    #[tokio::test]
+    async fn the_rpc_shapes_are_locked() {
+        let ping = json!({ "jsonrpc": "2.0", "id": 9, "method": "ping" });
+        let res = handle_rpc(&deps(&hub()), &ping).await.unwrap();
+        assert_eq!(res, json!({ "jsonrpc": "2.0", "id": 9, "result": {} }));
+        let call = json!({
+            "jsonrpc": "2.0", "id": 10, "method": "tools/call",
+            "params": { "name": "browser_read_page", "arguments": {} }
+        });
+        let res = handle_rpc(&deps(&hub()), &call).await.unwrap();
+        let result = res["result"].as_object().unwrap();
+        let mut keys: Vec<&String> = result.keys().collect();
+        keys.sort();
+        assert_eq!(keys, ["content", "isError"]);
+        assert_eq!(res["result"]["content"][0]["type"], "text");
+        let unknown = json!({
+            "jsonrpc": "2.0", "id": 11, "method": "tools/call",
+            "params": { "name": "memory_search", "arguments": { "query": "q" } }
+        });
+        let res = handle_rpc(&deps(&hub()), &unknown).await.unwrap();
+        assert_eq!(
+            res["error"],
+            json!({ "code": -32602, "message": "unknown tool: memory_search" })
+        );
+    }
+
     #[tokio::test]
     async fn notifications_get_no_response() {
         let msg = json!({ "jsonrpc": "2.0", "method": "notifications/initialized" });

@@ -911,6 +911,75 @@ mod tests {
         assert!(!all.contains("\"hook\""), "a tool still advertises hook");
     }
 
+    /// JSON with every object's keys sorted, so a fingerprint does not depend
+    /// on whether a build preserves insertion order.
+    fn canonical(v: &Value) -> String {
+        match v {
+            Value::Object(map) => {
+                let mut keys: Vec<&String> = map.keys().collect();
+                keys.sort();
+                let fields: Vec<String> = keys
+                    .iter()
+                    .map(|k| format!("{}:{}", Value::String((*k).clone()), canonical(&map[*k])))
+                    .collect();
+                format!("{{{}}}", fields.join(","))
+            }
+            Value::Array(items) => {
+                let items: Vec<String> = items.iter().map(canonical).collect();
+                format!("[{}]", items.join(","))
+            }
+            other => other.to_string(),
+        }
+    }
+
+    fn fingerprint(v: &Value) -> String {
+        let mut h = crate::hash::Sha256::new();
+        h.update(canonical(v).as_bytes());
+        h.hex()[..16].to_string()
+    }
+
+    /// The seventeen tools this server publishes, each with its whole
+    /// definition (name, description, input schema) fingerprinted, and the
+    /// server text. Building the one-door catalogue must not change any of
+    /// them by accident: a change here is a change every connected host sees.
+    #[test]
+    fn the_published_surface_is_locked() {
+        let actual: Vec<(String, String)> = tool_defs()
+            .iter()
+            .map(|t| (t["name"].as_str().unwrap().to_string(), fingerprint(t)))
+            .collect();
+        let expected: &[(&str, &str)] = &[
+            ("memory_search", "72943d6bae379810"),
+            ("memory_list", "df0c71a498197be7"),
+            ("memory_session_start", "6308e35d63ff8472"),
+            ("memory_get", "3ac7e4acb602b7bf"),
+            ("memory_add", "f4589342f5c221a1"),
+            ("memory_delete", "1f7a19393cacf49e"),
+            ("memory_update", "b4c034fa182c3d7e"),
+            ("memory_harvest_day", "74d4782e4ac36645"),
+            ("memory_days", "3970ca5e8ae8d6bb"),
+            ("memory_remember_day", "98fb0e4e78cb3a7f"),
+            ("memory_dream_lease", "bc03543d4aeec717"),
+            ("memory_role", "e39c3e46fc9889f0"),
+            ("memory_sweep", "ad9e4a884524b660"),
+            ("memory_issues", "817c0942710abaf5"),
+            ("memory_issue_add", "8184b55c04553ab4"),
+            ("memory_issue_resolve", "0f967175747b4007"),
+            ("memory_chains", "f558e7bae94b4ab0"),
+        ];
+        let shown: Vec<String> = actual
+            .iter()
+            .map(|(n, f)| format!("(\"{n}\", \"{f}\"),"))
+            .collect();
+        let want: Vec<(String, String)> = expected
+            .iter()
+            .map(|(n, f)| (n.to_string(), f.to_string()))
+            .collect();
+        assert_eq!(actual, want, "actual:\n{}", shown.join("\n"));
+        let text = fingerprint(&Value::String(INSTRUCTIONS.to_string()));
+        assert_eq!(text, "7fb7025cd50abf5f", "instructions changed: {text}");
+    }
+
     /// The routing rule whose loss started this: a role reaches core.
     #[test]
     fn instructions_route_a_role_to_core() {
