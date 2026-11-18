@@ -1322,9 +1322,9 @@ impl AgentEngine {
         }
     }
 
-    /// The session's own withheld tools (`SessionMeta::withheld_tools`) join
-    /// what this turn's driver withheld: no member of the session is offered
-    /// them, nor a run delegated from one.
+    /// The session's own withheld tools (`SessionMeta::withheld_tools`),
+    /// withheld on top of what this turn's driver withheld: no member of the
+    /// session is offered them, nor a run delegated from one.
     pub fn withhold_session_tools(
         &mut self,
         sessions: &crate::state_fs::sessions::SessionStore,
@@ -1334,7 +1334,7 @@ impl AgentEngine {
             return;
         };
         if let Ok(Some(meta)) = sessions.get_session_meta(sid) {
-            self.withheld_tools.extend(meta.withheld_tools);
+            self.session_withheld = meta.withheld_tools.into_iter().collect();
         }
     }
 
@@ -1343,9 +1343,11 @@ impl AgentEngine {
     pub fn is_withheld(&self, tool: &str) -> bool {
         let name = crate::engine::tools::canonical_tool_name(tool).unwrap_or(tool);
         self.turn_tool_allowlist.as_ref().is_some_and(|allowed| !allowed.contains(name))
-            || self.withheld_tools
-            .iter()
-            .any(|entry| crate::engine::tool_scope::entry_covers(entry, name))
+            || self
+                .withheld_tools
+                .iter()
+                .chain(&self.session_withheld)
+                .any(|entry| crate::engine::tool_scope::entry_covers(entry, name))
     }
 
     /// The native tool definitions offered this turn: the allowed set's,

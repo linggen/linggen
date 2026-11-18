@@ -773,12 +773,17 @@ async fn dispatch_mission_prompt(
         )
         .await;
 
-    engine.observations.clear();
-    engine.task = Some(first_message.clone());
-    engine.kickoff_queue = queued.into();
-    engine.kickoff_stop = mission.kickoff_stop.clone();
-    engine.kickoff_fresh = mission.kickoff_fresh;
-    engine.kickoff_then = mission.kickoff_then.clone();
+    // The run is a turn of its own: its kickoff is set for it and taken
+    // back when it ends, so none of it reaches a later turn in the session.
+    engine.begin_turn(crate::engine::turn_place::TurnSettings {
+        kickoff: crate::engine::turn_place::Kickoff {
+            queue: queued,
+            stop: mission.kickoff_stop.clone(),
+            fresh: mission.kickoff_fresh,
+            then: mission.kickoff_then.clone(),
+        },
+        ..Default::default()
+    });
     engine.set_parent_agent(None);
     engine.set_run_id(Some(run_id.clone()));
 
@@ -879,7 +884,9 @@ async fn dispatch_mission_prompt(
     // allowing the UI to stream mission output in real time.
     let (thinking_tx, mut thinking_rx) =
         tokio::sync::mpsc::unbounded_channel::<crate::engine::StreamedToken>();
-    engine.thinking_tx = Some(thinking_tx);
+    engine.begin_run(
+        crate::engine::turn_place::RunSetup::task(first_message.clone()).thinking(Some(thinking_tx)),
+    );
 
     let events_tx_stream = events_tx.clone();
     let agent_id_stream = agent_id.to_string();
@@ -903,13 +910,10 @@ async fn dispatch_mission_prompt(
         }
     });
 
-    engine.run_usage = Default::default();
-    engine.run_faults = Default::default();
     let result = engine.run_agent_loop(session_id.as_deref()).await;
-    engine.thinking_tx = None;
     engine.set_run_id(None);
-    let usage = std::mem::take(&mut engine.run_usage);
-    let faults = std::mem::take(&mut engine.run_faults);
+    let (usage, faults) = engine.take_spend();
+    engine.end_turn();
     let mut error = None;
 
     let status = match result {

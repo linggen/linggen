@@ -433,6 +433,7 @@ impl AgentEngine {
         self.settle_open_calls().await;
         // A finished checklist ends with its run (every caller: chat, agent_run, missions).
         self.settle_finished_plan().await;
+        self.end_run();
         outcome
     }
 

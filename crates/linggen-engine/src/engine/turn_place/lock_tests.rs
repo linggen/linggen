@@ -57,8 +57,8 @@ const LISTED: &[(&str, usize, &str)] = &[
     ),
     (
         "crates/linggen-engine/src/engine/prompt/mod.rs",
-        2,
-        "the first message takes the pending images; the session's withheld tools",
+        1,
+        "the first message takes the pending images",
     ),
     (
         "crates/linggen-engine/src/engine/types.rs",
@@ -71,11 +71,6 @@ const LISTED: &[(&str, usize, &str)] = &[
         "a delegated child's task (its own fresh engine)",
     ),
     // Bypasses: a turn's settings written by its caller.
-    (
-        "crates/linggen-engine/src/extensions/missions/scheduler.rs",
-        12,
-        "a mission run's task, kickoff, stream and spend",
-    ),
     ("src/server/chat/handler.rs", 7, "a chat turn's run, seat and hint"),
     ("src/server/chat/structured.rs", 11, "a reply's run"),
     ("src/server/chat/plan_flow.rs", 12, "a plan's run and its execution"),

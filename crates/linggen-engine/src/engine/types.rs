@@ -415,6 +415,10 @@ pub struct AgentEngine {
     /// companion woken by an app moment speaks its own line and reaches no
     /// other agent); empty for an ordinary turn.
     pub withheld_tools: std::collections::HashSet<String>,
+    /// Tools the session withholds from every member and every turn
+    /// (`SessionMeta::withheld_tools`), read again when a turn starts
+    /// (`withhold_session_tools`). Not a turn's: ending a turn keeps them.
+    pub(crate) session_withheld: std::collections::HashSet<String>,
     /// Exact tools permitted on this turn, if restricted.
     pub turn_tool_allowlist: Option<std::collections::HashSet<String>>,
     /// The language a turn the person did not type answers in, when its caller
@@ -689,6 +693,7 @@ impl AgentEngine {
             skill_bound: false,
             entered_place: None,
             withheld_tools: Default::default(),
+            session_withheld: Default::default(),
             turn_tool_allowlist: None,
             turn_language: None,
             turn_fault: false,
