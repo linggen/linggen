@@ -23,6 +23,12 @@ const hoursAgo = h => NOW - h * 3600;
 const spoken = (id, created, forSec = 60) => ({ id, created_at: created, updated_at: created + forSec });
 const empty = (id, created) => ({ id, created_at: created, updated_at: created });
 
+test('the daily session wins even when empty and an earlier chat was active more recently', () => {
+  const day = { ...empty('day', hoursAgo(2)), day: true };
+  const earlier = spoken('earlier', hoursAgo(1));
+  assert.equal(pickResumable([day, earlier], NOW), 'day');
+});
+
 test('the newest chat spoken in today is picked up', () => {
   assert.equal(pickResumable([spoken('old', hoursAgo(5)), spoken('new', hoursAgo(1))], NOW), 'new');
 });

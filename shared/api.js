@@ -70,7 +70,13 @@ export function boundTo(sessions, params = {}) {
 /// in carries its creation time — which is what a lost kickoff leaves behind.
 /// That is not a reopened day: it is passed over, and the newest session that
 /// holds a conversation is the day's — if it began less than a day ago.
+///
+/// With the daily session on the list marks the day's row (`day: true`) and
+/// also holds the app's earlier chats: the day is the one to pick up, spoken
+/// in yet or not — a new message belongs there, not in an older chat.
 export function pickResumable(sessions, nowSec = Date.now() / 1000, maxAgeHours = 24) {
+  const day = (sessions || []).find(s => s.day === true);
+  if (day) return day.id;
   const spoken = (sessions || []).filter(s => (s.updated_at || 0) > (s.created_at || 0));
   if (!spoken.length) return null;
   spoken.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));

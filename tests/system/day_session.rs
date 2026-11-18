@@ -170,11 +170,66 @@ async fn an_apps_page_finds_the_day_and_its_one_off_jobs_stay_apart() {
         .iter()
         .filter_map(|s| s["id"].as_str())
         .collect();
-    assert_eq!(
-        ids,
-        vec![day.as_str(), npc.as_str()],
-        "the day's first: {listed}"
-    );
+    // The day's first, then the app's other sessions: its one-off job, and
+    // the chat it had before the day (the fixture's), which its page still
+    // shows. Another app's sessions and a New chat are not this app's.
+    assert_eq!(ids.first(), Some(&day.as_str()), "the day's first: {listed}");
+    assert_eq!(listed["sessions"][0]["day"], json!(true), "the day's row says so: {listed}");
+    assert!(ids.contains(&npc.as_str()), "its one-off job: {listed}");
+    assert!(ids.contains(&EARLIER_DICE_CHAT), "its chat from before the day: {listed}");
+    assert!(!ids.contains(&chat.as_str()), "a New chat is not the app's: {listed}");
+    assert_eq!(ids.len(), 3, "{listed}");
+}
+
+/// The fixture's dice chat from before any day (`fixtures/`), also named in
+/// `sessions.rs`.
+const EARLIER_DICE_CHAT: &str = "sess-1790000001-5a1ed001";
+
+#[tokio::test]
+async fn an_apps_page_lists_earlier_chats_below_the_day() {
+    let setup = Setup::default().script(Agent::Ling, vec![text("In the day.")]);
+    let (w, _) = day_world_at(12, setup).await;
+    set_agent(&w, json!({ "daily_session": false })).await;
+    let older = w.api.create_session(json!({"title": "Earlier", "skill": "dice"})).await;
+    let newer = w.api.create_session(json!({"title": "Later", "skill": "dice"})).await;
+    w.api.create_session(json!({"title": "Other app", "skill": "quiet"})).await;
+    // Give the fixtures distinct timestamps even when both were made in one second.
+    for (id, created) in [(&older, 100), (&newer, 200)] {
+        let path = w.home.linggen_home().join("sessions").join(id).join("session.yaml");
+        let mut saved: Value = serde_norway::from_str(&meta(&w, id)).unwrap();
+        saved["created_at"] = json!(created);
+        saved["agents"] = json!([{"id": "ling", "model": "saved-model"}]);
+        std::fs::write(path, serde_norway::to_string(&saved).unwrap()).unwrap();
+        std::fs::remove_file(w.home.linggen_home().join("sessions").join(id).join("messages.jsonl")).unwrap();
+    }
+
+    set_agent(&w, json!({ "daily_session": true })).await;
+    let day = w.api.get("/api/sessions/day").await["id"].as_str().unwrap().to_string();
+    let listed = w.api.get("/api/skill-sessions?skill=dice").await;
+    let rows = listed["sessions"].as_array().unwrap();
+    let ids: Vec<_> = rows.iter().map(|row| row["id"].as_str().unwrap()).collect();
+    // The day's first and marked; then the app's earlier chats — these two
+    // and the fixture's — each with its own members and model, so one opened
+    // from the page is not given the default model.
+    assert_eq!(ids.first(), Some(&day.as_str()), "{listed}");
+    assert_eq!(rows[0]["day"], json!(true), "{listed}");
+    for earlier in [older.as_str(), newer.as_str(), EARLIER_DICE_CHAT] {
+        assert!(ids[1..].contains(&earlier), "{earlier} is listed below the day: {listed}");
+    }
+    assert_eq!(ids.len(), 4, "another app's chat is not listed here: {listed}");
+    for row in rows.iter().filter(|row| [older.as_str(), newer.as_str()].contains(&row["id"].as_str().unwrap())) {
+        assert_eq!(row["agents"], json!([{"id": "ling", "model": "saved-model"}]), "{row}");
+        assert!(row.get("day").is_none(), "only the day's row is marked: {row}");
+    }
+
+    let mark = w.mark();
+    let sent = w
+        .api
+        .post("/api/chat", json!({"project_root": w.work(), "message": "Roll", "skill_name": "dice"}))
+        .await;
+    assert_eq!(sent["session_id"], day, "{sent}");
+    w.finish_run(&day, Agent::Ling, mark).await;
+    assert_eq!(user_places(&w, &day), ["dice"]);
 }
 
 /// The first scenario: a day that moves between two apps and the main page,

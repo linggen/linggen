@@ -112,7 +112,8 @@ become typed tool calls with no second turn at all.
 
 ## Linggen's daily session (2.4, behind a setting)
 
-`agent.daily_session` (Settings → Session), off by default. Off, every
+`agent.daily_session` (Settings → Session), off by default. An explicit
+On or Off is saved; no choice means the engine's default. Off, every
 session, prompt and row is as before. On (decided by the builder 2026-11-15/16):
 
 - **The day's session** — `sess-day-YYYY-MM-DD`, the day beginning at 04:00

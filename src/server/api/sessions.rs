@@ -279,22 +279,29 @@ pub(crate) async fn list_skill_sessions(
 }
 
 /// An app's sessions with the daily session on, for an app that joins the
-/// day: the day's first — the one its page picks up — then the ones the app
-/// keeps apart (a test save, an NPC's talk). Its chats from before stay in
-/// the main list, not here. An app that keeps a session of its own (a
-/// private one) is given no day, and lists its sessions as with the
-/// setting off.
+/// day: the day's first — the one its page picks up, and where a new message
+/// lands — then every other session of the app, in the order the list has
+/// with the setting off: its chats from before the day, and the ones it
+/// keeps apart (a test save, an NPC's talk). So the page's picker still
+/// shows an earlier chat, and one opened from it is found with its own
+/// members and model. An app that keeps a session of its own (a private
+/// one) is given no day, and lists its sessions as with the setting off.
 fn with_the_day(
     sessions: Vec<crate::state_fs::sessions::SessionMeta>,
     skill: &str,
     day: &str,
 ) -> Vec<serde_json::Value> {
     let (days, rest): (Vec<_>, Vec<_>) = sessions.into_iter().partition(|s| s.id == day);
-    let apart = rest
-        .into_iter()
-        .filter(|s| s.skill.as_deref() == Some(skill))
-        .filter(crate::server::day_session::kept_apart);
-    days.into_iter().chain(apart).map(skill_session_row).collect()
+    let own = rest.into_iter().filter(|s| s.skill.as_deref() == Some(skill));
+    let day_rows = days.into_iter().map(skill_session_row).map(marked_as_the_day);
+    day_rows.chain(own.map(skill_session_row)).collect()
+}
+
+/// The day's row says so (`day: true`): a page picks it up whether or not it
+/// has been spoken in yet, over an earlier chat that was (`pickResumable`).
+fn marked_as_the_day(mut row: serde_json::Value) -> serde_json::Value {
+    row["day"] = serde_json::Value::Bool(true);
+    row
 }
 
 fn skill_session_row(s: crate::state_fs::sessions::SessionMeta) -> serde_json::Value {
