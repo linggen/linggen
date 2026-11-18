@@ -173,6 +173,9 @@ export function absorbRows(bubble: ChatMessage, rows: readonly ChatMessage[]): C
 /** One run as the chat shows it. */
 function showRun(bubble: ChatMessage, rows: readonly ChatMessage[]): ChatMessage[] {
   if (rows.length === 0) return [bubble];
+  // A late live event can miss the place; the saved rows of this same run know it.
+  const place = rows.find((r) => r.place)?.place;
+  if (!bubble.place && place) bubble = { ...bubble, place };
   if (bubble.isGenerating) return [...rows.slice(0, bubble.seenSaved ?? 0), bubble];
   if (holdsRun(bubble, rows)) return [absorbRows(bubble, rows)];
   return [...rows];

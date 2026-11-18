@@ -26,6 +26,12 @@ const row = (runId: string, text: string, tools: ContentBlock[] = [], over: Part
   runId, content: tools, ...over,
 });
 
+test('a live Yinyue reply inherits the place of its saved run', () => {
+  const live = bubble('reading', [words('Your fortune')], { from: 'yinyue', text: 'Your fortune' });
+  const saved = row('reading', 'Your fortune', [], { from: 'yinyue', place: 'lingjing' });
+  assert.deepEqual(bindRuns([saved, live]), [{ ...live, place: 'lingjing' }]);
+});
+
 test("a stopped run's late events never reach the next turn's bubble", () => {
   // Run a stopped with its Bash still showing running; the next turn opened
   // a placeholder before its run began.
