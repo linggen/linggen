@@ -19,10 +19,14 @@ fn targets(cmd: &str) -> Vec<String> {
         .collect()
 }
 
-/// Edit on the project folder and nothing else.
-fn folder_session() -> SessionPermissions {
+/// A grant on the project folder and nothing else.
+fn folder_session(mode: PermissionMode) -> SessionPermissions {
+    grant_at(WD, mode)
+}
+
+fn grant_at(path: &str, mode: PermissionMode) -> SessionPermissions {
     let mut perms = SessionPermissions::default();
-    perms.set_path_mode(WD, PermissionMode::Edit);
+    perms.set_path_mode(path, mode);
     perms
 }
 
@@ -32,7 +36,7 @@ fn check(cmd: &str, coding: bool) -> PermissionCheckResult {
         Some(cmd),
         None,
         Path::new(WD),
-        &folder_session(),
+        &folder_session(PermissionMode::Edit),
         None,
         coding,
         None,
@@ -41,6 +45,66 @@ fn check(cmd: &str, coding: bool) -> PermissionCheckResult {
 
 fn allowed(result: &PermissionCheckResult) -> bool {
     matches!(result, PermissionCheckResult::Allowed)
+}
+
+#[test]
+fn inspection_needs_only_a_read_grant() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let perms = grant_at(root.to_str().unwrap(), PermissionMode::Read);
+    let reads = [
+        "sed -n '1,80p' file",
+        "cd @ && sed -n '1,80p' file ; cat other | head ; git grep -n word -- src",
+        "cd @ && git grep -n word -- src",
+        "cd @ && git log -5",
+        "cd @ && git show HEAD",
+        "cd @ && git ls-files",
+        "cd @ && git status --short",
+        "cat other | head",
+    ];
+    let asks = [
+        "cd @ && touch new",
+        "cd @ && cat other > new",
+        "cd @ && sed -ni '1,80p' file",
+        "cd @ && sed --in-place -n '1,80p' file",
+        "cd @ && sed -f script.sed file",
+        "cd @ && ./inspect.sh",
+        "cd @ && bash inspect.sh",
+        "cd @ && git log --output=log",
+        "cd @ && git grep --open-files-in-pager word",
+        "cd /ungranted && git status",
+        "cd /ungranted && sed -n '1,80p' @/file",
+        "cd @ && sed -n '1,80p' /ungranted/file",
+        "cd @ && git push",
+        "cd @ && sed -n '1,80p' file | tee new",
+    ];
+    assert!(asks.len() >= reads.len());
+    for coding in [false, true] {
+        let check = |cmd: &str, cwd: &Path| {
+            check_permission_for(
+                "Bash",
+                Some(&cmd.replace('@', root.to_str().unwrap())),
+                None,
+                cwd,
+                &perms,
+                None,
+                coding,
+                None,
+            )
+        };
+        for cmd in asks {
+            let result = check(cmd, root);
+            assert!(matches!(result, PermissionCheckResult::NeedsPrompt(_)), "{cmd}: {result:?}");
+        }
+        for cmd in reads {
+            let cwd = if cmd.starts_with("cd ") {
+                Path::new("/ungranted")
+            } else {
+                root
+            };
+            let result = check(cmd, cwd);
+            assert!(allowed(&result), "{cmd}: {result:?}");
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

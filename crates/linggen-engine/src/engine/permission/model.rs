@@ -4,7 +4,7 @@
 //! All pure logic — no I/O, no UI prompts. The store layer lives in
 //! [`super::store`]; prompt construction in [`super::prompt`].
 
-use super::classify::{classify_bash, dequote, literal_shell_commands};
+use super::classify::{classify_bash, dequote, literal_shell_commands, reads_sed_lines};
 use super::pattern_text::text_words;
 use super::shell_text::strip_heredoc_bodies;
 use super::store::SessionPermissions;
@@ -1227,9 +1227,11 @@ fn command_target_levels(cmd: &str, session_cwd: &Path) -> Vec<(PathBuf, TargetK
     let tokens = command_tokens(cmd);
     let text = text_words(&tokens);
     let sources = copy_sources(&tokens);
-    for (index, (token, text)) in tokens.into_iter().zip(text).enumerate() {
+    let mut sed_files_from = None;
+    for (index, (token, text)) in tokens.iter().zip(text).enumerate() {
         let w = match token {
             Token::Op(joint) => {
+                let joint = *joint;
                 // A bare `cd` goes home — not followed.
                 let unknown = cd_pending
                     || joint == Joint::Break
@@ -1247,6 +1249,19 @@ fn command_target_levels(cmd: &str, session_cwd: &Path) -> Vec<(PathBuf, TargetK
             Token::Word(w) => w,
         };
         let w = w.as_str();
+        if at_command {
+            sed_files_from = None;
+            if w == "sed" {
+                let segment: Vec<_> = tokens[index..]
+                    .iter()
+                    .map_while(|token| match token {
+                        Token::Word(word) => Some(word.clone()),
+                        Token::Op(_) => None,
+                    })
+                    .collect();
+                sed_files_from = reads_sed_lines(&segment).then_some(index + 3);
+            }
+        }
         // A redirection glued to its file (`>/x`, `2>>/x`, `hi>/x`, `</x`).
         for file in redirect_files(w) {
             if let Some(token) = path_token(file) {
@@ -1271,7 +1286,8 @@ fn command_target_levels(cmd: &str, session_cwd: &Path) -> Vec<(PathBuf, TargetK
             }
         } else if let Some(token) = path_token(w).or_else(|| {
             let t = dequote(w);
-            (t.starts_with("./")
+            (sed_files_from.is_some_and(|start| index >= start) && !t.is_empty()
+                || t.starts_with("./")
                 || t == "."
                 || (file_operands
                     && !t.starts_with('-')
