@@ -5,8 +5,8 @@ and Claude, 2026-11-15. Claude plans and keeps the whole in hand; the work itsel
 goes to Linggen agents and Claude subagents. It replaces `merge-and-slim-draft.md` and `dynamic-session-draft.md` (kept for
 the measurements and the talk that led here).
 
-**Version numbers, changed 2026-11-18** (Hanli: 「2.4 要发布一版, 2.5 也要按进度
-发. 3.0 是暂定的, 可能会到2.9以后才发… 3.0是长期目标」): the work this plan
+**Version numbers, changed 2026-11-18** (Hanli: 「2.4 要发布一版, 2.5 也要等安度发. 3.0
+是暂定的, 可能会到2.9以后才发, 到时候再说. 3.0是长期目标」): the work this plan
 calls 2.4 and, in places written on 2026-11-16/17, "3.0" — everything in §5 —
 ships as **2.4**. **2.5** follows on its own schedule (first item: one MCP
 door). **3.0** is a long-term goal, perhaps after 2.9, half a year to a year
