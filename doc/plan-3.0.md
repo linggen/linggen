@@ -63,6 +63,11 @@ Every number is tagged **(measured)** — taken on his Mac on 2026-11-15 — or
    code; it changes nothing a user or a test can see.
 3. **Everything lands on main as it goes**, tests green; no long branch.
 4. **Each release passes the gate** (`release-checklist.md`).
+5. **The phone and the Mac ship together**, as far as the case allows (Hanli,
+   2026-11-18: 「每次发版本, 手机, mac要一起发, 尽量, 根据情况定」). Same version
+   number; the iPhone build goes to App Review first and the Mac is published
+   when it is approved. A release that touches only one side may go alone —
+   say so when planning it.
 
 ## 4. 2.3 — structure
 
