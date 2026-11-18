@@ -24,6 +24,8 @@ use tokio::sync::mpsc::UnboundedSender;
 /// withheld, the Linggen language, no hint, no kickoff.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TurnSettings {
+    /// This turn answers a person's message in this session, not a relay.
+    pub person_spoke: bool,
     /// Tools this turn's caller withholds, on top of the session's own.
     pub withheld: HashSet<String>,
     /// The only tools this turn may use, when its caller restricts it.
@@ -104,6 +106,7 @@ impl AgentEngine {
         self.run_usage = Default::default();
         self.run_faults = Default::default();
         let TurnSettings {
+            person_spoke,
             withheld,
             allowlist,
             language,
@@ -111,6 +114,7 @@ impl AgentEngine {
             followups,
             kickoff,
         } = turn;
+        self.tools.builtins.person_spoke = person_spoke;
         self.withheld_tools = withheld;
         self.turn_tool_allowlist = allowlist;
         self.turn_language = language;
@@ -132,6 +136,7 @@ impl AgentEngine {
     /// The settings of the running turn, as it was started.
     pub fn turn_settings(&self) -> TurnSettings {
         TurnSettings {
+            person_spoke: self.tools.builtins.person_spoke,
             withheld: self.withheld_tools.clone(),
             allowlist: self.turn_tool_allowlist.clone(),
             language: self.turn_language.clone(),
@@ -147,6 +152,7 @@ impl AgentEngine {
     }
 
     fn put_back_turn_settings(&mut self) {
+        self.tools.builtins.person_spoke = false;
         self.withheld_tools.clear();
         self.turn_tool_allowlist = None;
         self.turn_language = None;

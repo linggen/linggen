@@ -21,6 +21,7 @@ fn engine() -> AgentEngine {
 /// mission's kickoff waiting.
 fn moment() -> TurnSettings {
     TurnSettings {
+        person_spoke: true,
         withheld: ["agent_chat".to_string()].into(),
         allowlist: Some(["sense".to_string()].into()),
         language: Some("zh-Hans".into()),

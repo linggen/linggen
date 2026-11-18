@@ -51,6 +51,8 @@ impl SessionSpec {
         // Subagents inherit the asking person's policy through delegation.
         engine.tools.builtins.session_policy = self.policy.clone();
         engine.tools.builtins.parent_work = self.work;
+        engine.tools.builtins.delegated_session = self.preset == super::Preset::Delegate
+            || matches!(self.tools, super::Tools::Delegate { .. });
         engine.tools.builtins.parent_ceiling = self.ceiling;
         if changed {
             engine.cached_system_prompt = None;

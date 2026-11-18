@@ -1463,6 +1463,7 @@ pub(crate) async fn start_turn(
         // A chat turn withholds nothing and names no language of its own
         // (its message may: `(lang en)`); its surface may show the hint.
         let turn = crate::engine::turn_place::TurnSettings {
+            person_spoke: sender.is_none(),
             followups: req_followups
                 && !is_consumer
                 && state.manager.get_config_snapshot().await.agent.suggest_followups,

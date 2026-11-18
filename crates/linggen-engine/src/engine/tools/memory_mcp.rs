@@ -135,8 +135,25 @@ pub(crate) async fn augment(tools: &Tools, qualified: &str, mut args: Value) -> 
         }
     }
 
+    attribute_row(tools, &tool.input_schema, &mut args);
     guard_user_voice(tools, &tool.server, &mut args).await?;
     Ok(args)
+}
+
+/// A delegated brief is not the person's words. File such a claim as a
+/// derived row, and leave authorization of changes to user rows to the guard.
+fn attribute_row(tools: &Tools, schema: &Value, args: &mut Value) {
+    if !tools.delegated_session || tools.person_spoke {
+        return;
+    }
+    if declares(schema, "from")
+        && args.get("from").and_then(Value::as_str).is_some_and(|s| s.eq_ignore_ascii_case("user"))
+    {
+        set(args, "from", Value::String("derived".into()));
+    }
+    if let Some(obj) = args.as_object_mut() {
+        obj.remove("user_directed");
+    }
 }
 
 /// Where a session's memory stands: its cwd (a row's default scope) and its
@@ -338,6 +355,26 @@ async fn guard_user_voice(tools: &Tools, server: &str, args: &mut Value) -> Resu
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_delegates_brief_is_not_user_voice() {
+        let mut tools = Tools::new(std::path::PathBuf::from("/workspace")).unwrap();
+        let schema = json!({"properties": {"from": {}}});
+        let mut args = json!({"content": "A caller's finding", "from": "user", "user_directed": true});
+        let original = args.clone();
+        attribute_row(&tools, &schema, &mut args);
+        assert_eq!(args, original);
+
+        tools.delegated_session = true;
+        attribute_row(&tools, &schema, &mut args);
+        assert_eq!(args["from"], "derived");
+        assert!(!has(&args, "user_directed"));
+
+        tools.person_spoke = true;
+        let mut typed = original.clone();
+        attribute_row(&tools, &schema, &mut typed);
+        assert_eq!(typed, original);
+    }
 
     /// The rule that keeps this file from carrying a list of tool names: a
     /// field is filled only where the server said it takes one.

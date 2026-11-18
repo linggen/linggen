@@ -368,6 +368,10 @@ pub struct Tools {
     /// The session's kind of work, carried to `Task` children (set by
     /// `SessionSpec::apply`).
     pub(crate) parent_work: Option<super::session_spec::Work>,
+    /// The session spec came from a delegated run.
+    pub(crate) delegated_session: bool,
+    /// The current turn answers a person directly.
+    pub(crate) person_spoke: bool,
     /// The turn's ceiling, carried to `Task` children (set by
     /// `SessionSpec::apply`).
     pub(crate) parent_ceiling: Option<super::permission::PermissionMode>,
@@ -427,6 +431,8 @@ impl Tools {
             session_id: None,
             session_policy: None,
             parent_work: None,
+            delegated_session: false,
+            person_spoke: false,
             parent_ceiling: None,
             parent_allowed_tools: None,
             parent_path_modes: Vec::new(),

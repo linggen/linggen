@@ -50,6 +50,26 @@ fn code_meta(id: &str, creator: &str, skill: Option<&str>) -> SessionMeta {
 }
 
 #[test]
+fn a_delegates_typed_followup_does_not_change_the_sessions_origin() {
+    let mut e = engine();
+    let m = meta("sess-delegate", "external", None);
+    let spec = SessionSpec::of(&m);
+    spec.apply(&mut e);
+    assert!(e.tools.builtins.delegated_session);
+    assert!(!e.tools.builtins.person_spoke);
+
+    spec.typed(SessionPolicy::owner(), Memory::Full, None).apply(&mut e);
+    e.begin_turn(crate::engine::turn_place::TurnSettings {
+        person_spoke: true,
+        ..Default::default()
+    });
+    assert!(e.tools.builtins.delegated_session);
+    assert!(e.tools.builtins.person_spoke);
+    e.end_turn();
+    assert!(!e.tools.builtins.person_spoke);
+}
+
+#[test]
 fn work_code_chat_prompt() {
     let tagged = typed_by_spec(&code_meta("sess-c", "user", None), "user");
     let plain = typed_by_spec(&meta("sess-c", "user", None), "user");
