@@ -198,6 +198,11 @@ const GRANT_WRITERS: &[(&str, usize, &str)] = &[
         2,
         "tests",
     ),
+    (
+        "crates/linggen-engine/src/engine/permission/readable_shapes_tests.rs",
+        1,
+        "tests",
+    ),
 ];
 
 #[test]

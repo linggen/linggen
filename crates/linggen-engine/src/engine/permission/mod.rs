@@ -28,6 +28,8 @@ mod known_vars;
 mod outward;
 mod pattern_text;
 mod prompt;
+#[cfg(test)]
+mod readable_shapes_tests;
 mod scripts;
 mod shell_text;
 mod store;

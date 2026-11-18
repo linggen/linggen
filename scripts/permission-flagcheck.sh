@@ -15,7 +15,7 @@
 # as a value must never print PROGRAM RAN. Run it on all three before a flag
 # is added to a table (last full run 2026-11-14: BSD grep 2.6.0 / sed, awk
 # 20200816 and 20231127, GNU grep 3.11, GNU sed 4.9, gawk 5.2-5.3, mawk 1.3.4,
-# busybox 1.36-1.37, jq 1.7-1.8.2, rg 14.1-15.1).
+# busybox 1.36-1.37, jq 1.7-1.8.2, rg 14.1-15.1; git grep: git 2.54 on 2026-11-18).
 L=${1:-here}
 W=$(mktemp -d "${TMPDIR:-/tmp}/flagcheck.XXXXXX") && cd "$W" || exit 1
 printf 'a\nfoo\nb\n' > f
@@ -100,5 +100,20 @@ if has rg; then
     out=$(rg --no-config -N $fl foo f </dev/null 2>/dev/null)
     if printf '%s\n' "$out" | grep -q '^foo$'; then say rg "$fl foo f" "SWITCH (next word was the pattern)"; else say rg "$fl foo f" "takes-value-or-error"; fi
   done
+fi
+# --- git grep (outside a repository, so --no-index) ---------------------------
+if has git; then
+  say "git grep" version "$(git --version)"
+  for fl in -A -B -C -m --after-context --before-context --context --max-count \
+            --threads --max-depth -O --open-files-in-pager --color; do
+    out=$(git grep --no-index $fl foo f </dev/null 2>/dev/null)
+    if printf '%s\n' "$out" | grep -q foo; then say "git grep" "$fl foo f" "SWITCH (next word was the pattern)"
+    else say "git grep" "$fl foo f" "takes-value-or-error"; fi
+  done
+  # A `--` before the pattern is skipped; one after it starts the pathspecs.
+  out=$(git grep --no-index -- foo f </dev/null 2>/dev/null)
+  case "$out" in *foo*) say "git grep" "-- foo f" "foo is the pattern";; *) say "git grep" "-- foo f" "foo is NOT the pattern";; esac
+  out=$(git grep --no-index -e foo -- f </dev/null 2>/dev/null)
+  case "$out" in *foo*) say "git grep" "-e foo -- f" "f is a pathspec";; *) say "git grep" "-e foo -- f" "f is NOT a pathspec";; esac
 fi
 cd / && rm -rf "$W"

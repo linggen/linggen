@@ -1,5 +1,5 @@
-//! The pattern or program operand of grep, rg, sed, awk and jq: text, not
-//! a path (`grep -E '/a/b' src` searches for `/a/b`).
+//! The pattern or program operand of grep, rg, sed, awk, jq and `git grep`:
+//! text, not a path (`grep -E '/a/b' src` searches for `/a/b`).
 //!
 //! Failing closed: a flag form not listed here that may carry the pattern
 //! makes the whole command opaque, and every word is judged as a path as
@@ -134,6 +134,29 @@ const JQ: PatternFlags = PatternFlags {
     no_pattern: &[],
 };
 
+/// `git grep` (git 2.54, `scripts/permission-flagcheck.sh`): words after
+/// the pattern are revisions or pathspecs, judged as paths; a `--` before
+/// the pattern is skipped, one after it starts the pathspecs. Its long
+/// options may be abbreviated: an unlisted one before the would-be pattern
+/// makes the segment opaque, as it may take that word as its value.
+const GIT_GREP: PatternFlags = PatternFlags {
+    pattern: &["-e"],
+    file: &["-f"],
+    letters: "ef",
+    long: &[],
+    value_letters: "ABCm",
+    value_long: &[
+        "--after-context",
+        "--before-context",
+        "--context",
+        "--max-count",
+        "--threads",
+        "--max-depth",
+    ],
+    value_long2: &[],
+    no_pattern: &[],
+};
+
 fn pattern_flags(program: &str) -> Option<&'static PatternFlags> {
     match program {
         "grep" | "egrep" | "fgrep" => Some(&GREP),
@@ -146,7 +169,8 @@ fn pattern_flags(program: &str) -> Option<&'static PatternFlags> {
 }
 
 /// For each token of `tokens`, whether it is pattern or program text of a
-/// grep / rg / sed / awk / jq command rather than a possible path.
+/// grep / rg / sed / awk / jq / `git grep` command rather than a possible
+/// path.
 pub(super) fn text_words(tokens: &[Token]) -> Vec<bool> {
     let mut mask = vec![false; tokens.len()];
     let mut segment = Vec::new();
@@ -164,13 +188,37 @@ fn mark_segment(segment: &[(usize, &str)], mask: &mut [bool]) {
     let Some(((_, program), args)) = segment.split_first() else {
         return;
     };
-    let Some(flags) = pattern_flags(&dequote(program)) else {
+    let program = dequote(program);
+    let found = match pattern_flags(&program) {
+        Some(flags) => Some((flags, args)),
+        None if program == "git" => git_grep_args(args).map(|rest| (&GIT_GREP, rest)),
+        None => None,
+    };
+    let Some((flags, args)) = found else {
         return;
     };
     let words: Vec<&str> = args.iter().map(|(_, w)| *w).collect();
     for at in text_operands(&flags, &words).unwrap_or_default() {
         mask[args[at].0] = true;
     }
+}
+
+/// The words after `grep` in `git [-C <dir>]… grep …`. `None` for any
+/// other git command, any other option before `grep`, or a `(` or `)`
+/// word (`git grep` reads them as grouping, not as a pattern).
+fn git_grep_args<'a>(args: &'a [(usize, &'a str)]) -> Option<&'a [(usize, &'a str)]> {
+    let mut rest = args;
+    while rest.first().is_some_and(|(_, w)| dequote(w) == "-C") {
+        rest = rest.get(2..)?;
+    }
+    let ((_, sub), tail) = rest.split_first()?;
+    if dequote(sub) != "grep" {
+        return None;
+    }
+    let grouping = tail
+        .iter()
+        .any(|(_, w)| matches!(dequote(w).as_str(), "(" | ")"));
+    (!grouping).then_some(tail)
 }
 
 /// Which of `args` are pattern text; `None` when a flag form is not
