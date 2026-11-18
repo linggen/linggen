@@ -33,6 +33,32 @@ const TURN_FIELDS: &[&str] = &[
     "run_faults",
 ];
 
+/// The turn's fields only the engine may touch: the binary cannot write
+/// them at all. What a turn leaves for its caller (`last_run_id`,
+/// `last_assistant_text`) stays readable; the scan above holds its writers.
+const PRIVATE: &[&str] = &[
+    "task",
+    "observations",
+    "pending_images",
+    "silence_ok",
+    "thinking_tx",
+    "inbox",
+    "plan_mode",
+    "turn_language",
+    "turn_fault",
+    "turn_tool_allowlist",
+    "withheld_tools",
+    "suggest_followups",
+    "kickoff_queue",
+    "kickoff_stop",
+    "kickoff_fresh",
+    "kickoff_then",
+    "session_lead",
+    "session_tools",
+    "run_usage",
+    "run_faults",
+];
+
 /// Calls that change a field in place.
 const MUTATORS: &[&str] = &[
     "clear()", "extend(", "insert(", "push(", "push_back(", "pop_front(", "take()",
@@ -261,6 +287,17 @@ fn the_agent_loop_is_started_from_the_listed_places() {
         "a new caller of the agent loop — start a turn through run_session_turn \
          or begin_turn, or list it (file, found, listed):\n{wrong:#?}"
     );
+}
+
+#[test]
+fn a_turns_fields_are_private_to_the_engine() {
+    let types = include_str!("../types.rs");
+    let open: Vec<&str> = PRIVATE
+        .iter()
+        .copied()
+        .filter(|f| !types.contains(&format!("pub(crate) {f}:")))
+        .collect();
+    assert!(open.is_empty(), "a turn's field the binary may write: {open:?}");
 }
 
 #[test]

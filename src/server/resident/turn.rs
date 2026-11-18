@@ -659,7 +659,7 @@ mod tests {
             .collect();
         assert!(system.contains("Reply in English."), "{system}");
         ready(&mut engine, &turn(false));
-        assert_eq!(engine.turn_language, None);
+        assert_eq!(engine.turn_settings().language, None);
     }
 
     /// At a table her memory tools act for that session — its skill's
@@ -673,7 +673,7 @@ mod tests {
             engine.tools.builtins.session_id.as_deref(),
             Some("sess-1758700000-cfo")
         );
-        assert!(engine.withheld_tools.contains("agent_chat"));
+        assert!(engine.turn_settings().withheld.contains("agent_chat"));
     }
 
     /// Her recall is persisted as a row wherever she speaks: every member

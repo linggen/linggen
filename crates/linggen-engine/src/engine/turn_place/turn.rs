@@ -218,6 +218,11 @@ impl AgentEngine {
         self.observations.clear();
     }
 
+    /// Whether images wait for the next run's first message.
+    pub fn has_pending_images(&self) -> bool {
+        !self.pending_images.is_empty()
+    }
+
     /// Where a person's messages sent during this run wait.
     pub fn take_messages_from(&mut self, inbox: Option<crate::engine::types::Inbox>) {
         self.inbox = inbox;

@@ -97,7 +97,12 @@ fn the_sessions_withheld_tools_outlive_a_turn() {
 async fn a_run_that_fails_puts_back_its_wiring() {
     let mut engine = engine();
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    engine.begin_run(RunSetup::task("x").silence_ok(true).planning().thinking(Some(tx)));
+    engine.begin_run(
+        RunSetup::task("x")
+            .silence_ok(true)
+            .planning()
+            .thinking(Some(tx)),
+    );
     assert!(engine.plan_mode && engine.silence_ok && engine.thinking_tx.is_some());
     engine.task = None;
     assert!(engine.run_agent_loop(None).await.is_err());
@@ -109,15 +114,21 @@ async fn a_run_that_fails_puts_back_its_wiring() {
 #[test]
 fn a_run_takes_its_task_and_drops_what_the_last_observed() {
     let mut engine = engine();
-    engine.observations.push(crate::engine::types::ObservationRecord {
-        observation_type: "t".into(),
-        name: "n".into(),
-        content: "c".into(),
-    });
+    engine
+        .observations
+        .push(crate::engine::types::ObservationRecord {
+            observation_type: "t".into(),
+            name: "n".into(),
+            content: "c".into(),
+        });
     engine.begin_run(RunSetup::task("now").images(vec!["img".into()]));
     assert_eq!(engine.task.as_deref(), Some("now"));
     assert!(engine.observations.is_empty());
     assert_eq!(engine.pending_images, vec!["img".to_string()]);
     engine.begin_run(RunSetup::task("again"));
-    assert_eq!(engine.pending_images, vec!["img".to_string()], "kept when none given");
+    assert_eq!(
+        engine.pending_images,
+        vec!["img".to_string()],
+        "kept when none given"
+    );
 }

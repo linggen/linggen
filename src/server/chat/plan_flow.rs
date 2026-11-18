@@ -37,7 +37,7 @@ pub(super) async fn run_plan_dispatch(ctx: &ChatRunCtx, engine: &mut crate::engi
         .thinking(Some(thinking_tx));
     // Forward images so the plan-mode sub-loop can see them (pending_images
     // was consumed by std::mem::take in the previous loop's prepare_loop_messages).
-    if engine.pending_images.is_empty() && !ctx.images.is_empty() {
+    if !engine.has_pending_images() && !ctx.images.is_empty() {
         run = run.images(ctx.images.clone());
     }
     engine.begin_run(run);

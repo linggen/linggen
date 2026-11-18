@@ -305,7 +305,7 @@ pub struct AgentEngine {
     pub reasoning_effort: Option<String>,
     pub tools: ToolRegistry,
     pub role: AgentRole,
-    pub task: Option<String>,
+    pub(crate) task: Option<String>,
     /// Prompt template store (loaded from ~/.linggen/prompts/ with embedded fallbacks).
     pub prompt_store: std::sync::Arc<crate::prompts::PromptStore>,
     // Agent spec and runtime context
@@ -313,7 +313,7 @@ pub struct AgentEngine {
     pub spec_system_prompt: Option<String>,
     pub agent_id: Option<String>,
     // Rolling observations with metadata that we feed back to the model.
-    pub observations: Vec<ObservationRecord>,
+    pub(crate) observations: Vec<ObservationRecord>,
     pub context_records: Vec<ContextRecord>,
     pub next_context_id: u64,
     // Conversational history for chat — a cache of the session's thread
@@ -352,37 +352,37 @@ pub struct AgentEngine {
     /// Session this engine is running in — threaded into every emitted event
     /// so the server can route events without a shared mutable map.
     pub session_id: Option<String>,
-    pub thinking_tx: Option<mpsc::UnboundedSender<StreamedToken>>,
+    pub(crate) thinking_tx: Option<mpsc::UnboundedSender<StreamedToken>>,
     /// This turn may answer with silence: a final reply that is exactly the
     /// silence marker (`SILENT`) is neither shown nor kept. Set per turn by
     /// whoever woke the agent with a kickoff that offers silence.
-    pub silence_ok: bool,
+    pub(crate) silence_ok: bool,
     /// Where a person's messages sent during this turn wait: each step takes
     /// them in, so they join the running turn instead of ending it.
-    pub inbox: Option<Inbox>,
+    pub(crate) inbox: Option<Inbox>,
     // Plan mode
-    pub plan_mode: bool,
+    pub(crate) plan_mode: bool,
     pub plan: Option<Plan>,
     /// Base64-encoded images to attach to the next user message.
-    pub pending_images: Vec<String>,
+    pub(crate) pending_images: Vec<String>,
     /// Mission kickoff items still waiting to fire as user turns. Drained
     /// one-per-assistant-final-reply by the agent loop. Empty for normal
     /// sessions; populated by the mission scheduler with `Mission.kickoff[1..]`
     /// after item 0 has been used as the initial task.
-    pub kickoff_queue: VecDeque<String>,
+    pub(crate) kickoff_queue: VecDeque<String>,
     /// Completion sentinels for the kickoff queue (`Mission.kickoff_stop`).
     /// When the assistant's final reply is exactly one of these, the loop
     /// discards the remaining `kickoff_queue` — an early-finished mission
     /// run skips its leftover nudge turns. Empty = never early-drain.
-    pub kickoff_stop: Vec<String>,
+    pub(crate) kickoff_stop: Vec<String>,
     /// `Mission.kickoff_fresh`: fold each finished kickoff turn down to its
     /// opening item and final reply before the next item goes in.
-    pub kickoff_fresh: bool,
+    pub(crate) kickoff_fresh: bool,
     /// Where the running kickoff turn opened in the loop's messages.
     pub(crate) kickoff_turn: Option<KickoffTurn>,
     /// `Mission.kickoff_then`: sentinel → the items that replace the queue.
     /// A branch is removed when it fires, so it runs once per run.
-    pub kickoff_then: std::collections::BTreeMap<String, Vec<String>>,
+    pub(crate) kickoff_then: std::collections::BTreeMap<String, Vec<String>>,
     /// The question the active skill's latest tool result handed this turn
     /// (`closing-ask`), as AskUser arguments — asked by the engine if the
     /// model ends the turn without asking. Cleared by any AskUser.
@@ -400,10 +400,10 @@ pub struct AgentEngine {
     /// this agent is another member at the lead's table — the session's
     /// tools are the lead's, a bound skill's SKILL.md is the lead's place,
     /// and this agent's place is a member's. Set per turn.
-    pub session_lead: Option<String>,
+    pub(crate) session_lead: Option<String>,
     /// The lead's declared tool list, used by another member in a session
     /// with no skill (the session's tool set). Set per turn with the lead.
-    pub session_tools: Option<Vec<String>>,
+    pub(crate) session_tools: Option<Vec<String>>,
     /// The active skill is the one the session is bound to, not one taken up
     /// mid-chat: like an app's, its SKILL.md is the agent's place.
     pub(crate) skill_bound: bool,
@@ -414,21 +414,21 @@ pub struct AgentEngine {
     /// and refused if called anyway. Set per turn by whoever drives it (a
     /// companion woken by an app moment speaks its own line and reaches no
     /// other agent); empty for an ordinary turn.
-    pub withheld_tools: std::collections::HashSet<String>,
+    pub(crate) withheld_tools: std::collections::HashSet<String>,
     /// Tools the session withholds from every member and every turn
     /// (`SessionMeta::withheld_tools`), read again when a turn starts
     /// (`withhold_session_tools`). Not a turn's: ending a turn keeps them.
     pub(crate) session_withheld: std::collections::HashSet<String>,
     /// Exact tools permitted on this turn, if restricted.
-    pub turn_tool_allowlist: Option<std::collections::HashSet<String>>,
+    pub(crate) turn_tool_allowlist: Option<std::collections::HashSet<String>>,
     /// The language a turn the person did not type answers in, when its caller
     /// knows it — an app moment that names its own (`/api/yinyue/event` `lang`).
     /// Set per turn by whoever drives it; `None` is the Linggen language.
-    pub turn_language: Option<String>,
+    pub(crate) turn_language: Option<String>,
     /// This turn's kickoff hands the agent a mission fault in the engine's
     /// own words, so the world block's doorbell does not also say the Mac
     /// recorded it. Set per turn by whoever drives it; false for any other.
-    pub turn_fault: bool,
+    pub(crate) turn_fault: bool,
     /// Who made the session this engine serves (`SessionMeta::creator`):
     /// `user`, `skill`, `agent`, `mission`, `external`. `None` for an engine
     /// no stored session owns — a delegated `Task` child, a headless run.
@@ -464,18 +464,18 @@ pub struct AgentEngine {
     /// Every model call this engine made since the caller last took it —
     /// a mission run takes it to record what the run spent. A delegated
     /// agent's calls are its own engine's.
-    pub run_usage: crate::provider::models::RunUsage,
+    pub(crate) run_usage: crate::provider::models::RunUsage,
     /// The tool calls that ended in failure, and whether the step limit was
     /// reached, since the caller last took it — a mission run takes it to
     /// record what failed (`run_faults`). Like `run_usage`, a delegated
     /// agent's failures are its own engine's.
-    pub run_faults: crate::engine::run_faults::RunFaults,
+    pub(crate) run_faults: crate::engine::run_faults::RunFaults,
     /// This turn's surface shows the next-prompt hint: once the turn ends, its
     /// last call is forked to predict what the person types next
     /// (`suggestion.rs`). Set for one turn by the web chat handler, which
     /// resets it after — any other turn on this engine (an event turn, an
     /// `agent_chat` delivery, a mission) never asks.
-    pub suggest_followups: bool,
+    pub(crate) suggest_followups: bool,
     /// The turn's last model call that ended in words — the prefix the
     /// next-prompt suggestion forks from. Kept only when `suggest_followups`;
     /// cleared when a turn begins and taken when one ends, on every path.
