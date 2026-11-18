@@ -55,14 +55,11 @@ impl PeerStanding {
     }
 }
 
-/// Whose sessions and events a peer is given when it is not the owner: a
-/// room consumer's are its own account's, any other peer's its person's —
+/// Whose sessions and events a peer is given when it is not the owner: its
+/// person's (a room consumer's is its own account, `person::consumer`) —
 /// never the channel's user id, which for a device on the LAN is the
 /// owner's. `None` for the owner, who is given everything.
-pub(super) fn seen_as(user_ctx: &UserContext, standing: &Standing) -> Option<String> {
-    if user_ctx.is_consumer() {
-        return Some(user_ctx.user_id.clone());
-    }
+pub(super) fn seen_as(standing: &Standing) -> Option<String> {
     (!standing.is_owner()).then(|| standing.person().wire())
 }
 
@@ -82,12 +79,12 @@ mod tests {
         };
         let unnamed = PeerStanding::new(&lan, None);
         assert_eq!(
-            seen_as(&lan, unnamed.resolved()).as_deref(),
+            seen_as(unnamed.resolved()).as_deref(),
             Some(crate::server::person::no_one().wire().as_str())
         );
         let unknown = PeerStanding::new(&lan, Some("not-paired".into()));
         assert_eq!(
-            seen_as(&lan, unknown.resolved()).as_deref(),
+            seen_as(unknown.resolved()).as_deref(),
             Some(crate::server::person::no_one().wire().as_str())
         );
         let here = UserContext {
@@ -95,7 +92,7 @@ mod tests {
             ..UserContext::owner(Some("u-owner".into()))
         };
         assert_eq!(
-            seen_as(&here, PeerStanding::new(&here, None).resolved()),
+            seen_as(PeerStanding::new(&here, None).resolved()),
             None
         );
         let room = UserContext::consumer(
@@ -106,8 +103,25 @@ mod tests {
             None,
         );
         assert_eq!(
-            seen_as(&room, PeerStanding::new(&room, None).resolved()).as_deref(),
+            seen_as(PeerStanding::new(&room, None).resolved()).as_deref(),
             Some("u-room")
+        );
+    }
+
+    /// A room consumer whose id is not an account's own is given what no one
+    /// is, never what its id would name.
+    #[test]
+    fn a_consumer_that_is_no_one_is_given_no_ones() {
+        let room = UserContext::consumer(
+            crate::server::person::stamp_of("dev-1"),
+            "browser".into(),
+            crate::engine::permission::PermissionMode::Read,
+            None,
+            None,
+        );
+        assert_eq!(
+            seen_as(PeerStanding::new(&room, None).resolved()),
+            Some(crate::server::person::no_one().wire())
         );
     }
 

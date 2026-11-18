@@ -591,7 +591,7 @@ impl PeerLoop {
         let device = self.peer_actor.lock_ok().as_ref().map(|a| a.device.clone());
         let (now, moved) = self.standing.current(&self.user_ctx, device);
         if moved {
-            let whose = standing::seen_as(&self.user_ctx, &now);
+            let whose = standing::seen_as(&now);
             self.user_session_ids =
                 sessions_of(&self.state, whose.as_deref().unwrap_or(&self.user_ctx.user_id));
         }
@@ -616,7 +616,7 @@ impl PeerLoop {
         }
         let device = peer_actor.lock_ok().as_ref().map(|a| a.device.clone());
         let standing = standing::PeerStanding::new(&user_ctx, device);
-        let whose = standing::seen_as(&user_ctx, standing.resolved());
+        let whose = standing::seen_as(standing.resolved());
         let user_session_ids = sessions_of(&state, whose.as_deref().unwrap_or(&user_ctx.user_id));
         Self {
             rtc,
@@ -796,7 +796,7 @@ impl PeerLoop {
         // Check user_session_ids first (fast), then fall back to session store
         // (handles race where channel opens before session_created event).
         let now = self.standing();
-        let whose = standing::seen_as(&self.user_ctx, &now);
+        let whose = standing::seen_as(&now);
         let owns = self.user_session_ids.contains(session_id);
         let mut allowed = may_stream(whose.as_deref(), owns, None);
         if !allowed {
@@ -1177,7 +1177,7 @@ impl PeerLoop {
             return;
         }
         let now = self.standing();
-        let whose = standing::seen_as(&self.user_ctx, &now);
+        let whose = standing::seen_as(&now);
         let mut filter = EventFilter {
             session_ids: &mut self.user_session_ids,
             user_id: whose.as_deref().unwrap_or(&self.user_ctx.user_id),
@@ -1258,7 +1258,7 @@ impl PeerLoop {
         let identified = self.peer_actor.lock_ok().is_some();
         let now = self.standing();
         let person = now.person().clone();
-        let whose = standing::seen_as(&self.user_ctx, &now);
+        let whose = standing::seen_as(&now);
         tokio::spawn(async move {
             let who = (&user_ctx_clone, identified);
             let seen = (whose.as_deref(), &person);
