@@ -472,7 +472,7 @@ pub struct AgentEngine {
     /// The turn's last model call that ended in words — the prefix the
     /// next-prompt suggestion forks from. Kept only when `suggest_followups`;
     /// cleared when a turn begins and taken when one ends, on every path.
-    pub last_call: Option<crate::engine::suggestion::LastCall>,
+    pub(crate) last_call: Option<crate::engine::suggestion::LastCall>,
     /// The running next-prompt fork, aborted when the next turn begins.
     pub(crate) suggestion_fork: Option<tokio::task::AbortHandle>,
     /// Cached stable portion of the system prompt.

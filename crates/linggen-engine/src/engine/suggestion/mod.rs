@@ -70,6 +70,12 @@ Format: match their language and style, one line — 2–12 words, or 2–40 cha
 Reply with ONLY the suggestion — no quotes, no explanation. Do not call any tool.";
 
 impl AgentEngine {
+    /// The run's last model call that ended in words, taken by whoever
+    /// ends the run: only a finished, uncancelled turn forks it.
+    pub fn take_last_call(&mut self) -> Option<LastCall> {
+        self.last_call.take()
+    }
+
     /// A turn begins: the last turn's hint is stale. Stop its fork if it is
     /// still asking the model, and forget the call it would fork from.
     pub(crate) fn begin_suggestion_turn(&mut self) {

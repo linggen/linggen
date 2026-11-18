@@ -25,7 +25,7 @@ pub(super) async fn run_loop_with_tracking(
     let result = super::cloud_gate::run_gated(engine, session_id, events_tx).await;
     engine.set_run_id(None);
     // Taken on every path: only a finished, uncancelled turn forks it.
-    let last_call = engine.last_call.take();
+    let last_call = engine.take_last_call();
 
     if let Some(run_id) = run_id {
         match &result {
