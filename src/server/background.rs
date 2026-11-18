@@ -145,7 +145,7 @@ pub(crate) fn refresh_chatgpt_catalog(state: Arc<ServerState>, force: bool) {
 async fn catalog_pass(state: &Arc<ServerState>, force: bool) {
     if crate::provider::models::chatgpt_catalog::refresh::refresh_in_force(force).await {
         api::config::reload_models(state).await;
-        info!("ChatGPT built-ins changed; models reloaded");
+        info!("ChatGPT catalog changed; models reloaded");
     }
 }
 

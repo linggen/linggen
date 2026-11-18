@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 mod seed;
+pub mod listing;
 pub mod refresh;
 pub mod version;
 
