@@ -138,12 +138,25 @@ fn resolve_log_dir(configured: Option<&str>) -> Result<PathBuf> {
 }
 
 fn expand_tilde(path: &str) -> PathBuf {
+    expand_tilde_with_home(path, dirs::home_dir().as_deref())
+}
+
+fn expand_tilde_with_home(path: &str, home: Option<&std::path::Path>) -> PathBuf {
     if let Some(rest) = path.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = home {
             return home.join(rest);
         }
     }
     PathBuf::from(path)
+}
+
+#[cfg(test)]
+#[test]
+fn log_dir_tilde_expansion() {
+    crate::util::tilde_cases::check(
+        |path, home| expand_tilde_with_home(path, home).to_string_lossy().into_owned(),
+        false,
+    );
 }
 
 fn cleanup_old_logs(log_dir: &PathBuf, retention_days: u64) -> Result<()> {

@@ -20,8 +20,12 @@ pub(super) fn build_globset(globs: Option<&[String]>) -> Result<Option<GlobSet>>
 
 /// Expand `~/` prefix to the user's home directory.
 pub(crate) fn expand_tilde(path: &str) -> String {
+    expand_tilde_with_home(path, dirs::home_dir().as_deref())
+}
+
+fn expand_tilde_with_home(path: &str, home: Option<&Path>) -> String {
     if let Some(rest) = path.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = home {
             return home.join(rest).to_string_lossy().to_string();
         }
     }
@@ -271,6 +275,11 @@ pub(crate) fn full_tool_schema_entries() -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tool_path_tilde_expansion() {
+        crate::util::tilde_cases::check(expand_tilde_with_home, false);
+    }
 
     #[test]
     fn normalize_glob_pattern_to_globs() {

@@ -178,6 +178,36 @@ pub fn resolve_path(path: &std::path::Path) -> std::path::PathBuf {
     expanded.canonicalize().unwrap_or(expanded)
 }
 
+#[cfg(test)]
+pub(crate) mod tilde_cases {
+    use std::path::Path;
+
+    pub(crate) fn check(expand: impl Fn(&str, Option<&Path>) -> String, bare_tilde: bool) {
+        let home = Path::new("fixture-home");
+        let sep = std::path::MAIN_SEPARATOR;
+        let child = format!("fixture-home{sep}x");
+        let trailing = format!("fixture-home{sep}");
+        // Only the permission helper expands bare `~`. Tools and logging
+        // keep it literal. All three expand `~/` and agree on the rest;
+        // with no home, every input stays literal. Inject the missing home
+        // because removing HOME can still leave an OS account directory.
+        for (input, permission, tools_and_logging) in [
+            ("~", "fixture-home", "~"),
+            ("~/x", child.as_str(), child.as_str()),
+            ("~x", "~x", "~x"),
+            ("~user/x", "~user/x", "~user/x"),
+            ("x/~/y", "x/~/y", "x/~/y"),
+            ("", "", ""),
+            ("x/y", "x/y", "x/y"),
+            ("~/", trailing.as_str(), trailing.as_str()),
+        ] {
+            let expected = if bare_tilde { permission } else { tools_and_logging };
+            assert_eq!(expand(input, Some(home)), expected, "{input:?} with home");
+            assert_eq!(expand(input, None), input, "{input:?} without home");
+        }
+    }
+}
+
 /// The text a panic carried — `panic!("…")` and failed assertions give a
 /// `&str` or a `String`; anything else has no words.
 pub fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {

@@ -318,16 +318,26 @@ fn split_command_segments(cmd: &str) -> Vec<String> {
 /// Pure tilde expansion (no canonicalization). Used by the store layer to
 /// compare grant paths during pruning.
 pub(super) fn expand_tilde(path: &str) -> String {
+    expand_tilde_with_home(path, dirs::home_dir().as_deref())
+}
+
+fn expand_tilde_with_home(path: &str, home: Option<&Path>) -> String {
     if let Some(rest) = path.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = home {
             return home.join(rest).to_string_lossy().to_string();
         }
     } else if path == "~" {
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = home {
             return home.to_string_lossy().to_string();
         }
     }
     path.to_string()
+}
+
+#[cfg(test)]
+#[test]
+fn permission_tilde_expansion() {
+    crate::util::tilde_cases::check(|path, home| expand_tilde_with_home(path, home), true);
 }
 
 /// Tilde-expand and resolve symlinks. On macOS, `/tmp` and `/private/tmp` are
