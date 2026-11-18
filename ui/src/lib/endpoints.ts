@@ -142,8 +142,9 @@ export const sessionApi = {
 export interface BashResult { stdout?: string; stderr?: string; output?: string; exit_code?: number }
 
 export const workspaceApi = {
-  bash: (projectRoot: string, command: string, sessionId?: string | null) =>
-    apiPost<BashResult>('/api/bash', { project_root: projectRoot, command, session_id: sessionId ?? undefined }),
+  /** `skillName`: the app whose page sends it — the command stands at that app's place. */
+  bash: (projectRoot: string, command: string, sessionId?: string | null, skillName?: string) =>
+    apiPost<BashResult>('/api/bash', { project_root: projectRoot, command, session_id: sessionId ?? undefined, skill_name: skillName }),
   files: <T>(projectRoot: string, path: string) =>
     apiGet<T[]>(`/api/files?${q({ project_root: projectRoot, path })}`),
   searchFiles: <T>(projectRoot: string, query: string) =>

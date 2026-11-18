@@ -999,7 +999,6 @@ async fn a_turn_in_an_app_works_in_that_apps_folder() {
 /// folder, as it does in the app's own session — the page names its app as
 /// a chat does (`workspace::a_skill_session_keeps_its_declared_cwd`).
 #[tokio::test]
-#[ignore = "`/api/bash` takes no place: a `!` command at an app's page in the day runs in home's workspace"]
 async fn a_bang_command_at_an_apps_page_in_the_day_starts_in_its_folder() {
     let (w, _) = day_world_at(12, Setup::default()).await;
     let day = w.api.create_session(json!({"title": "Dice", "skill": "dice"})).await;
@@ -1007,6 +1006,45 @@ async fn a_bang_command_at_an_apps_page_in_the_day_starts_in_its_folder() {
     let ran = w.api.post("/api/bash", body).await;
     let want = w.home.linggen_home().join("skills/dice");
     assert_eq!(ran["stdout"].as_str().unwrap_or_default().trim(), want.display().to_string(), "{ran}");
+}
+
+/// The `pwd` of a `!` command sent to session `sid` from the page of
+/// `skill` (`None`: a page of no app).
+async fn bang_pwd(w: &World, sid: &str, skill: Option<&str>, command: &str) -> String {
+    let mut body = json!({"session_id": sid, "project_root": w.work(), "command": command});
+    if let Some(skill) = skill {
+        body["skill_name"] = json!(skill);
+    }
+    let ran = w.api.post("/api/bash", body).await;
+    ran["stdout"].as_str().unwrap_or_default().trim().to_string()
+}
+
+/// A `cd` at an app's page in the day stays that place's: home's next `!`
+/// starts where home's last one ended, and the day's own folder is not
+/// moved to the app's.
+#[tokio::test]
+async fn a_bang_cd_at_an_apps_page_never_moves_homes() {
+    let (w, _) = day_world_at(12, Setup::default()).await;
+    let day = w.api.create_session(json!({"title": "Dice", "skill": "dice"})).await;
+    let home = bang_pwd(&w, &day, None, "pwd").await;
+    let tmp = w.home.linggen_home().join("skills");
+    let moved = bang_pwd(&w, &day, Some("dice"), &format!("cd {} && pwd", tmp.display())).await;
+    assert_eq!(moved, tmp.display().to_string());
+    assert_eq!(bang_pwd(&w, &day, None, "pwd").await, home, "home's `!` moved");
+    assert_eq!(bang_pwd(&w, &day, Some("dice"), "pwd").await, moved, "the app's `cd` was lost");
+    assert!(!meta(&w, &day).contains("skills/dice"), "{}", meta(&w, &day));
+}
+
+/// A private app is never a place in the day: a `!` sent from its page
+/// with the day's id stands at home's workspace, never in the app's folder.
+#[tokio::test]
+async fn a_bang_command_naming_a_private_app_in_the_day_gets_no_folder_of_its() {
+    let (w, _) = day_world_at(12, Setup::default()).await;
+    install_ledger(&w).await;
+    let day = w.api.get("/api/sessions/day").await["id"].as_str().unwrap().to_string();
+    let ran = bang_pwd(&w, &day, Some("ledger"), "pwd").await;
+    assert_ne!(ran, w.home.linggen_home().join("skills/ledger").display().to_string());
+    assert_eq!(ran, w.home.linggen_home().join("workspace").display().to_string());
 }
 
 /// A skill's `tier: edit` tool, from its page in the day, runs under the

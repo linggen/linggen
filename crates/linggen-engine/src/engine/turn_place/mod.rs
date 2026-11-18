@@ -116,6 +116,53 @@ impl TurnPlace {
     pub fn same_app(&self, other: &TurnPlace) -> bool {
         self.skill == other.skill
     }
+
+    /// The folder a turn standing here works in when this is not the
+    /// session's own place: `skill`'s (the place's skill as entered), else
+    /// home's default workspace. `None` for the session's own place — its
+    /// folder is the session's.
+    pub fn folder(&self, skill: Option<&crate::engine::skill::Skill>) -> Option<std::path::PathBuf> {
+        if self.own {
+            return None;
+        }
+        Some(match skill {
+            Some(s) => s.working_dir(),
+            None => crate::util::resolve_path(&crate::paths::default_workspace()),
+        })
+    }
+}
+
+/// The folder a page's own command (a `!` line) starts in at `place` of
+/// session `session_id` — where a turn standing there works
+/// ([`TurnPlace::folder`]): a private app kept out of a day leaves home's
+/// workspace, as entering the place leaves it. `None` for the session's
+/// own place.
+pub async fn folder_at(
+    manager: &crate::engine::agent::AgentManager,
+    session_id: &str,
+    place: &TurnPlace,
+) -> Option<std::path::PathBuf> {
+    if place.own {
+        return None;
+    }
+    let skill = match place.skill.as_deref() {
+        Some(name) => manager.skills.get_skill(name).await,
+        None => None,
+    };
+    let day_on = Some(manager.daily_session());
+    let skill = skill.filter(|s| !kept_out(s, Some(session_id), day_on));
+    place.folder(skill.as_ref())
+}
+
+/// Whether session `session_id` keeps `skill` out: a day's session, with the
+/// daily session on (`day_on`; `None` when it cannot be read, and a day then
+/// keeps it out), keeps a private app (`private-talk: true`) out.
+fn kept_out(skill: &crate::engine::skill::Skill, session_id: Option<&str>, day_on: Option<bool>) -> bool {
+    let in_day = session_id.is_some_and(crate::state_fs::day_session::is_day_session);
+    if !skill.private_talk || !in_day {
+        return false;
+    }
+    day_on.unwrap_or(true)
 }
 
 /// The private app a question waiting in session `session_id` is kept to
@@ -146,17 +193,8 @@ impl crate::engine::tools::Tools {
     /// reads the SKILL.md out. With no manager to read the setting from, a
     /// day keeps it out.
     pub(crate) async fn kept_out_of_day(&self, skill: &crate::engine::skill::Skill) -> bool {
-        let in_day = self
-            .session_id
-            .as_deref()
-            .is_some_and(crate::state_fs::day_session::is_day_session);
-        if !skill.private_talk || !in_day {
-            return false;
-        }
-        match self.get_manager() {
-            Some(manager) => manager.daily_session(),
-            None => true,
-        }
+        let day_on = self.get_manager().map(|m| m.daily_session());
+        kept_out(skill, self.session_id.as_deref(), day_on)
     }
 }
 

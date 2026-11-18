@@ -232,3 +232,13 @@ async function refreshPendingAskFor(sessionId: string | null): Promise<void> {
     // Daemon unreachable — live events and page state can still restore asks.
   }
 }
+
+/**
+ * The app whose page this is, as a request from it names its place
+ * (`skill_name`): an app page's own skill, else none (home, or the
+ * session's own app). Every door that acts at a page sends it.
+ */
+export function pageSkillName(): string | undefined {
+  const { isSkillSession, activeSkillName } = useSessionStore.getState();
+  return isSkillSession && activeSkillName ? activeSkillName : undefined;
+}

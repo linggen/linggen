@@ -197,13 +197,7 @@ impl AgentEngine {
     /// from it. Returns where the session stood; `None` when the place is
     /// the session's own (its folder is the session's).
     fn move_to_place_folder(&mut self, place: &TurnPlace, skill: Option<&Skill>) -> Option<Folder> {
-        if place.own {
-            return None;
-        }
-        let folder = match skill {
-            Some(s) => s.working_dir(),
-            None => crate::util::resolve_path(&crate::paths::default_workspace()),
-        };
+        let folder = place.folder(skill)?;
         let stood = Folder {
             cwd: self.tools.builtins.replace_session_cwd(Some(folder)),
             ws_root: self.cfg.ws_root.clone(),

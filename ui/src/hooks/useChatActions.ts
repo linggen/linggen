@@ -3,7 +3,7 @@
  * All state is read via getState() — only scrollToBottom and projectRoot are injected.
  */
 import { useCallback, useEffect, useRef } from 'react';
-import { useSessionStore, effectiveProjectRoot } from '../stores/sessionStore';
+import { useSessionStore, effectiveProjectRoot, pageSkillName } from '../stores/sessionStore';
 import { useServerStore } from '../stores/serverStore';
 import { useChatStore } from '../stores/chatStore';
 import { useUiStore } from '../stores/uiStore';
@@ -142,7 +142,7 @@ export function useChatActions(
       });
       scrollToBottom();
       try {
-        const data = await workspaceApi.bash(root, cmd, sid);
+        const data = await workspaceApi.bash(root, cmd, sid, pageSkillName());
         if (!onSession(sid)) return;
         const resultTs = new Date();
         const output = [data.stdout, data.stderr].filter(Boolean).join('\n').trim();
@@ -290,7 +290,8 @@ export function useChatActions(
       if (sid) useServerStore.getState().setPendingSend(sid, true, agentToUse);
       // The hint answered the turn before this one.
       if (sid) useSuggestionStore.getState().clearHint(sid);
-      const { isMissionSession, activeMissionId, isSkillSession, activeSkillName } = useSessionStore.getState();
+      const { isMissionSession, activeMissionId } = useSessionStore.getState();
+      const skillName = pageSkillName();
       const sessionModel = useUiStore.getState().sessionModel;
       const data = await getTransport().sendChat({
         project_root: root,
@@ -298,7 +299,7 @@ export function useChatActions(
         message: userMessage,
         session_id: sid,
         ...(isMissionSession && activeMissionId ? { mission_id: activeMissionId } : {}),
-        ...(isSkillSession && activeSkillName ? { skill_name: activeSkillName } : {}),
+        ...(skillName ? { skill_name: skillName } : {}),
         ...(sessionModel ? { model_id: sessionModel } : {}),
         ...(images && images.length > 0 ? { images } : {}),
         followups: true,

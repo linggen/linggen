@@ -491,21 +491,52 @@ pub(crate) struct BashRequest {
     pub session_id: Option<String>,
     #[serde(default = "default_bash_timeout")]
     pub timeout_ms: u64,
+    /// The app whose page sends the command, as a chat turn names it: the
+    /// command stands where a turn from that page stands
+    /// (`turn_place::folder_at`). None names home, or the session's own app.
+    #[serde(default)]
+    pub skill_name: Option<String>,
 }
 
 fn default_bash_timeout() -> u64 {
     30_000
 }
 
-/// Where a `!` command starts: where the last one in this session ended,
-/// else the session's own folder, else the request's, else the default
-/// workspace. The session's folder beats the request's — a surface's idea of
-/// the folder can be another session's, and the sentinel below would write it
-/// onto this one.
-async fn bash_start_dir(state: &ServerState, req: &BashRequest) -> PathBuf {
-    if let Some(sid) = &req.session_id {
-        if let Some(dir) = state.user_bash_cwd.lock().await.get(sid).cloned() {
+/// Where a `!` command stands in its session: the place a turn from the
+/// same page stands in (`TurnPlace::of_request`), and the folder that place
+/// works in when it is not the session's own (`turn_place::folder_at`).
+struct BashPlace {
+    /// What the command's `cd` is kept under: the session's id for its own
+    /// place, else the session's id and the place's key — a `cd` at one
+    /// app's page never moves another place's next command.
+    key: String,
+    /// The place's own folder; `None` for the session's own place.
+    folder: Option<PathBuf>,
+}
+
+async fn bash_place(state: &ServerState, sid: &str, req: &BashRequest) -> BashPlace {
+    let meta = state.manager.global_sessions.get_session_meta(sid).ok().flatten();
+    let place = crate::engine::turn_place::TurnPlace::of_request(req.skill_name.as_deref(), meta.as_ref());
+    let folder = crate::engine::turn_place::folder_at(&state.manager, sid, &place).await;
+    let key = match folder {
+        Some(_) => format!("{sid}\n{}", place.key()),
+        None => sid.to_string(),
+    };
+    BashPlace { key, folder }
+}
+
+/// Where a `!` command starts: where the last one at its place ended, else
+/// its place's own folder, else the session's own folder, else the
+/// request's, else the default workspace. The session's folder beats the
+/// request's — a surface's idea of the folder can be another session's, and
+/// the sentinel below would write it onto this one.
+async fn bash_start_dir(state: &ServerState, req: &BashRequest, place: Option<&BashPlace>) -> PathBuf {
+    if let (Some(sid), Some(place)) = (&req.session_id, place) {
+        if let Some(dir) = state.user_bash_cwd.lock().await.get(&place.key).cloned() {
             return dir;
+        }
+        if let Some(folder) = &place.folder {
+            return folder.clone();
         }
         let own = state
             .manager
@@ -537,7 +568,11 @@ pub(crate) async fn run_bash_api(
 
     use crate::util::CWD_SENTINEL;
 
-    let base_cwd = bash_start_dir(&state, &req).await;
+    let place = match req.session_id.as_deref() {
+        Some(sid) => Some(bash_place(&state, sid, &req).await),
+        None => None,
+    };
+    let base_cwd = bash_start_dir(&state, &req, place.as_ref()).await;
 
     // Fall back to home directory when the session's cwd no longer exists
     // (e.g. project directory was deleted). This lets the user `! cd` elsewhere.
@@ -610,18 +645,20 @@ pub(crate) async fn run_bash_api(
             .unwrap_or(stdout.len());
         let new_cwd = PathBuf::from(stdout[after_sent..pwd_end].to_string());
         if new_cwd.is_absolute() && new_cwd.exists() {
-            if let Some(sid) = &req.session_id {
+            if let (Some(sid), Some(place)) = (&req.session_id, &place) {
                 let old_cwd: Option<PathBuf> = {
                     let guard = state.user_bash_cwd.lock().await;
-                    guard.get(sid).cloned()
+                    guard.get(&place.key).cloned()
                 };
                 {
                     let mut guard = state.user_bash_cwd.lock().await;
-                    guard.insert(sid.clone(), new_cwd.clone());
+                    guard.insert(place.key.clone(), new_cwd.clone());
                 }
 
-                // Record the move (and its project) if cwd actually changed.
-                if old_cwd.as_ref() != Some(&new_cwd) {
+                // Record the move (and its project) if cwd actually changed
+                // — the session's own place only: another place's folder is
+                // that place's, never the session's.
+                if place.folder.is_none() && old_cwd.as_ref() != Some(&new_cwd) {
                     crate::server::background::note_working_folder(
                         &state,
                         sid.clone(),
